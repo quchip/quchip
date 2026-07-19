@@ -2,7 +2,7 @@
 
 This document states the physics contracts implemented by quchip. It answers what the public `.hamiltonian()` methods mean, where frames are applied, where RWA is applied, and which assumptions the engine makes.
 
-## 1. Units and the Single Hamiltonian-Assembly 2π Boundary
+## 1. Units and the 2π Convention
 
 quchip uses `hbar = 1` with these user-facing units:
 

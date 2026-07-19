@@ -28,6 +28,7 @@ viz = ["pyvis"]
 scqubits = ["scqubits>=4.2,<5.0"]
 test = ["pytest", "pyvis", "scqubits>=4.2,<5.0"]
 dev = ["ruff", "mypy", "pytest", "pyvis"]
+docs = ["sphinx", "furo", "myst-parser", "sphinx-copybutton"]
 
 [project.urls]
 Homepage = "https://github.com/Quchip/quchip"

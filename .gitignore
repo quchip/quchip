@@ -23,3 +23,7 @@ build/
 examples/figures/
 examples/inspection/
 *.log
+
+# Generated documentation
+docs/_build/
+docs/generated/
