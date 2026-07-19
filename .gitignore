@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[co]
+*.egg-info/
+dist/
+build/
+.venv*/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Environment
+.env
+.env.*
+
+# Generated example outputs
+examples/figures/
+examples/inspection/
+*.log

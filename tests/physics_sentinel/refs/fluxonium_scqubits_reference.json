@@ -1,0 +1,23 @@
+{
+  "description": "Fluxonium eigenvalues at a representative half-flux operating point, E_0 shifted to 0. Generated with scqubits from the params below; Nguyen et al., PRX Quantum 3, 037001 (2022) is cited as model context only, not as the source of these numbers.",
+  "params": {
+    "E_C": 1.0,
+    "E_J": 4.0,
+    "E_L": 1.0,
+    "phi_ext": 0.5,
+    "levels": 10
+  },
+  "scqubits_version": "4.3.1",
+  "eigvals_shifted": [
+    0.0,
+    0.5818489963974405,
+    3.970435554849485,
+    6.574488472163193,
+    9.864473236189308,
+    13.229087316443351,
+    16.64368296697191,
+    19.979068202851323,
+    23.137444297023883,
+    26.029204950073563
+  ]
+}
