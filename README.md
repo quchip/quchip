@@ -21,7 +21,7 @@ QuTiP is the default backend. The dynamiqs backend is JAX-native and keeps decla
 `quchip` requires Python 3.11 or newer. Install the current source:
 
 ```bash
-git clone https://github.com/Quchip/quchip.git
+git clone https://github.com/quchip/quchip.git
 cd quchip
 python -m pip install .
 ```
@@ -60,9 +60,13 @@ fig = result.plot_populations(trace_out=readout)
 fig.savefig("populations.png", dpi=200)
 ```
 
-The pulse carrier comes from the dressed chip frequency. The printed value is the excited-state population after a nominal π pulse. The last two lines plot the qubit populations with the readout resonator traced out. The figure below is the saved output of the snippet.
+The pulse carrier comes from the dressed chip frequency. The printed value is the excited-state population after a nominal π pulse. The last two lines plot the qubit populations with the readout resonator traced out. The figure below is the output of the snippet.
 
-![Qubit populations during the π pulse](https://quchip.org/assets/populations.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://quchip.org/assets/populations-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://quchip.org/assets/populations.svg">
+  <img src="https://quchip.org/assets/populations.svg" alt="Qubit populations during the π pulse" width="560">
+</picture>
 
 ## Tests
 

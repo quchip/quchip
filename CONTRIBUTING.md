@@ -7,7 +7,7 @@ Contributions from scientists and developers are welcome. Bug reports, physics d
 quchip requires Python 3.11 or newer.
 
 ```bash
-git clone https://github.com/Quchip/quchip.git
+git clone https://github.com/quchip/quchip.git
 cd quchip
 python3 -m venv .venv
 source .venv/bin/activate

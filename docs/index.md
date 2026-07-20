@@ -63,10 +63,17 @@ fig = result.plot_populations(trace_out=readout)
 fig.savefig("populations.png", dpi=200)
 ```
 
-The pulse carrier comes from the dressed chip frequency; the printed value is the excited-state population after a nominal π pulse. The last two lines plot the qubit populations with the readout resonator traced out — the figure below is the saved output of the snippet.
+The pulse carrier comes from the dressed chip frequency; the printed value is the excited-state population after a nominal π pulse. The last two lines plot the qubit populations with the readout resonator traced out — the figure below is the output of the snippet.
 
-```{figure} images/populations.png
+```{figure} images/populations.svg
 :width: 560px
+:class: only-light
+:alt: Qubit populations during the pi pulse
+```
+
+```{figure} images/populations-dark.svg
+:width: 560px
+:class: only-dark
 :alt: Qubit populations during the pi pulse
 ```
 
