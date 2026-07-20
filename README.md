@@ -1,7 +1,8 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/quchip-wordmark-dark.png">
-    <img src="docs/images/quchip-wordmark-light.png" alt="quchip" width="400">
+    <source media="(prefers-color-scheme: dark)" srcset="https://quchip.org/assets/quchip-wordmark-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="https://quchip.org/assets/quchip-wordmark-light.png">
+    <img src="https://quchip.org/assets/quchip-wordmark-dark.png" alt="quchip" width="400">
   </picture>
 </p>
 
@@ -61,7 +62,7 @@ fig.savefig("populations.png", dpi=200)
 
 The pulse carrier comes from the dressed chip frequency. The printed value is the excited-state population after a nominal π pulse. The last two lines plot the qubit populations with the readout resonator traced out. The figure below is the saved output of the snippet.
 
-![Qubit populations during the π pulse](docs/images/populations.png)
+![Qubit populations during the π pulse](https://quchip.org/assets/populations.png)
 
 ## Tests
 
