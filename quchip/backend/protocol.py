@@ -79,7 +79,8 @@ class Backend(ABC):
     * **IR lowering & solve dispatch** — ``prepare_hamiltonian`` /
       ``prepare_batch`` convert engine IR into native RHS form;
       ``sesolve`` / ``mesolve`` run the solver; ``solve_problem`` /
-      ``solve_batch`` drive the full engine-to-result pipeline.
+      ``parallel_solve_problems`` / ``solve_batch`` drive the full
+      engine-to-result pipeline.
 
     Defaults provided here are NumPy-based and correct for any backend, so
     concrete subclasses only override where they can do better (e.g. QuTiP
@@ -681,6 +682,30 @@ class Backend(ABC):
                                 e_ops=e_ops_arg, options=opts)
         return self.mesolve(prepared.rhs, psi0, tlist_arr,
                             c_ops=c_ops, e_ops=e_ops_arg, options=opts)
+
+    def parallel_solve_problems(
+        self,
+        problems: list["SolveProblem"],
+        *,
+        progress: bool = True,
+    ) -> list[SolverResult] | None:
+        """Dispatch structurally heterogeneous problems in parallel.
+
+        Parameters
+        ----------
+        problems
+            Problems that cannot be merged into one structural batch.
+        progress
+            Display solver progress when supported.
+
+        Returns
+        -------
+        list[SolverResult] | None
+            Backend results in input order, or ``None`` to retain the engine's
+            structural-group dispatch.
+        """
+        _ = problems, progress
+        return None
 
     def prepare_batch(
         self,

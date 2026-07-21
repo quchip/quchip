@@ -457,9 +457,10 @@ def solve_problem_list(
 ) -> Any:
     """Group problems by shared operator skeleton and dispatch as :class:`SolveBatch`es.
 
-    Problems that share an operator skeleton are merged into one batched solve;
-    those that cannot be structurally batched fall back to per-problem
-    ``backend.solve_problem`` calls.
+    Problems that share an operator skeleton are merged into one batched solve.
+    A backend may dispatch a large heterogeneous list independently; otherwise
+    each structural group follows the normal batch path, with incompatible
+    descriptions falling back to per-problem ``backend.solve_problem`` calls.
 
     Grouping is a two-stage filter. The cheap identity-based prefilter here
     (:func:`_skeleton_prefilter_key`) buckets problems by ``id()`` of their
@@ -525,6 +526,20 @@ def solve_problem_list(
     groups: dict[tuple, list[tuple[int, SolveProblem]]] = {}
     for idx, problem in enumerate(problems):
         groups.setdefault(_skeleton_prefilter_key(problem), []).append((idx, problem))
+
+    if len(groups) > 1:
+        parallel_results = backend.parallel_solve_problems(problems, progress=progress)
+        if parallel_results is not None:
+            if len(parallel_results) != len(problems):
+                raise RuntimeError(
+                    "parallel_solve_problems returned "
+                    f"{len(parallel_results)} results for {len(problems)} problems."
+                )
+            wrapped = [
+                wrap_solver_result(result, problem, backend)
+                for problem, result in zip(problems, parallel_results)
+            ]
+            return SimulationBatchResult(wrapped)
 
     ordered_results: list[Any] = [None] * len(problems)
     for group in groups.values():

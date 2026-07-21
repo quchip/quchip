@@ -1,0 +1,1021 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../../../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><link rel="index" title="Index" href="../../../genindex.html"><link rel="search" title="Search" href="../../../search.html">
+        <link rel="prefetch" href="../../../_static/quchip-wordmark-light.png" as="image">
+        <link rel="prefetch" href="../../../_static/quchip-wordmark-dark.png" as="image">
+
+    <link rel="shortcut icon" href="../../../_static/favicon.png"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>quchip.engine.stage4_problem - quchip 0.1.0</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/custom.css?v=208c35cd" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #c92f33;
+  --color-brand-content: #c92f33;
+  --color-link: #c92f33;
+  --color-link--visited: #c92f33;
+  --color-link--visited--hover: #c92f33;
+  --color-foreground-primary: #16181c;
+  --color-background-primary: #fafbfc;
+  --color-background-secondary: #f2f4f6;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #ef6661;
+  --color-brand-content: #ef6661;
+  --color-link: #ef6661;
+  --color-link--hover: #ff8a80;
+  --color-link--visited: #ef6661;
+  --color-link--visited--hover: #ff8a80;
+  --color-foreground-primary: #f2f4f6;
+  --color-background-primary: #14161a;
+  --color-background-secondary: #101216;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #ef6661;
+  --color-brand-content: #ef6661;
+  --color-link: #ef6661;
+  --color-link--hover: #ff8a80;
+  --color-link--visited: #ef6661;
+  --color-link--visited--hover: #ff8a80;
+  --color-foreground-primary: #f2f4f6;
+  --color-background-primary: #14161a;
+  --color-background-secondary: #101216;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../../../index.html"><div class="brand">quchip 0.1.0</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon no-toc" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../../../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo only-light" src="../../../_static/quchip-wordmark-light.png" alt="Light Logo"/>
+    <img class="sidebar-logo only-dark" src="../../../_static/quchip-wordmark-dark.png" alt="Dark Logo"/>
+  </div>
+  
+  
+</a><form class="sidebar-search-container" method="get" action="../../../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../examples/hello-chip.html">Hello, drive and readout</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../cookbook.html">Cookbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../physics.html">quchip Physics Reference</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../../api.html">API reference</a><input aria-label="Toggle navigation of API reference" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../../generated/quchip.html">quchip</a><input aria-label="Toggle navigation of quchip" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.analysis.html">quchip.analysis</a><input aria-label="Toggle navigation of quchip.analysis" class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" role="switch" type="checkbox"/><label for="toctree-checkbox-3"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.analysis.cross_resonance.html">quchip.analysis.cross_resonance</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.analysis.dispersive_readout.html">quchip.analysis.dispersive_readout</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.analysis.effective_hamiltonian.html">quchip.analysis.effective_hamiltonian</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.backend.html">quchip.backend</a><input aria-label="Toggle navigation of quchip.backend" class="toctree-checkbox" id="toctree-checkbox-4" name="toctree-checkbox-4" role="switch" type="checkbox"/><label for="toctree-checkbox-4"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.backend.containers.html">quchip.backend.containers</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.backend.dynamiqs.html">quchip.backend.dynamiqs</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.backend.protocol.html">quchip.backend.protocol</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.backend.qutip.html">quchip.backend.qutip</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.chip.html">quchip.chip</a><input aria-label="Toggle navigation of quchip.chip" class="toctree-checkbox" id="toctree-checkbox-5" name="toctree-checkbox-5" role="switch" type="checkbox"/><label for="toctree-checkbox-5"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.analysis.html">quchip.chip.analysis</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.baths.html">quchip.chip.baths</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.chip.html">quchip.chip.chip</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.coupling_base.html">quchip.chip.coupling_base</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.couplings.html">quchip.chip.couplings</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.describe.html">quchip.chip.describe</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.dressing.html">quchip.chip.dressing</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.observables.html">quchip.chip.observables</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.partition.html">quchip.chip.partition</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.retarget.html">quchip.chip.retarget</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.rwa.html">quchip.chip.rwa</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.serialization.html">quchip.chip.serialization</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.states.html">quchip.chip.states</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.sw.html">quchip.chip.sw</a></li>
+<li class="toctree-l4 has-children"><a class="reference internal" href="../../../generated/quchip.chip.transformations.html">quchip.chip.transformations</a><input aria-label="Toggle navigation of quchip.chip.transformations" class="toctree-checkbox" id="toctree-checkbox-6" name="toctree-checkbox-6" role="switch" type="checkbox"/><label for="toctree-checkbox-6"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.chip.transformations.active_patch.html">quchip.chip.transformations.active_patch</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.chip.transformations.dispatch.html">quchip.chip.transformations.dispatch</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.chip.transformations.eliminate_coupling.html">quchip.chip.transformations.eliminate_coupling</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.chip.transformations.eliminate_device.html">quchip.chip.transformations.eliminate_device</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.chip.transformations.methods.html">quchip.chip.transformations.methods</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.chip.transformations.plumbing.html">quchip.chip.transformations.plumbing</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.chip.transformations.result.html">quchip.chip.transformations.result</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.control.html">quchip.control</a><input aria-label="Toggle navigation of quchip.control" class="toctree-checkbox" id="toctree-checkbox-7" name="toctree-checkbox-7" role="switch" type="checkbox"/><label for="toctree-checkbox-7"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.control.batch.html">quchip.control.batch</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.control.drive.html">quchip.control.drive</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.control.drives_two_photon.html">quchip.control.drives_two_photon</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.control.envelopes.html">quchip.control.envelopes</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.control.equipment.html">quchip.control.equipment</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.control.sequence.html">quchip.control.sequence</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.control.signal.html">quchip.control.signal</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.control.signal_spec.html">quchip.control.signal_spec</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.declarative.html">quchip.declarative</a><input aria-label="Toggle navigation of quchip.declarative" class="toctree-checkbox" id="toctree-checkbox-8" name="toctree-checkbox-8" role="switch" type="checkbox"/><label for="toctree-checkbox-8"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.declarative.envelope_shape.html">quchip.declarative.envelope_shape</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.declarative.expr.html">quchip.declarative.expr</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.declarative.models.html">quchip.declarative.models</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.declarative.ops.html">quchip.declarative.ops</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.declarative.parameters.html">quchip.declarative.parameters</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.declarative.qnp.html">quchip.declarative.qnp</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.devices.html">quchip.devices</a><input aria-label="Toggle navigation of quchip.devices" class="toctree-checkbox" id="toctree-checkbox-9" name="toctree-checkbox-9" role="switch" type="checkbox"/><label for="toctree-checkbox-9"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.devices.base.html">quchip.devices.base</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.devices.circuit.html">quchip.devices.circuit</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.devices.fluxonium.html">quchip.devices.fluxonium</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.devices.kerr_cavity.html">quchip.devices.kerr_cavity</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.devices.protocols.html">quchip.devices.protocols</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.devices.resonator.html">quchip.devices.resonator</a></li>
+<li class="toctree-l4 has-children"><a class="reference internal" href="../../../generated/quchip.devices.transmon.html">quchip.devices.transmon</a><input aria-label="Toggle navigation of quchip.devices.transmon" class="toctree-checkbox" id="toctree-checkbox-10" name="toctree-checkbox-10" role="switch" type="checkbox"/><label for="toctree-checkbox-10"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.devices.transmon.charge_basis.html">quchip.devices.transmon.charge_basis</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.devices.transmon.duffing.html">quchip.devices.transmon.duffing</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.devices.transmon.flux_tunable.html">quchip.devices.transmon.flux_tunable</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.engine.html">quchip.engine</a><input aria-label="Toggle navigation of quchip.engine" class="toctree-checkbox" id="toctree-checkbox-11" name="toctree-checkbox-11" role="switch" type="checkbox"/><label for="toctree-checkbox-11"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.engine.bands.html">quchip.engine.bands</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.engine.ir.html">quchip.engine.ir</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.engine.partitioned.html">quchip.engine.partitioned</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.engine.solver_hints.html">quchip.engine.solver_hints</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.engine.stage1_frames.html">quchip.engine.stage1_frames</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.engine.stage2_assembly.html">quchip.engine.stage2_assembly</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.engine.stage3_observables.html">quchip.engine.stage3_observables</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.engine.stage4_problem.html">quchip.engine.stage4_problem</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.interop.html">quchip.interop</a><input aria-label="Toggle navigation of quchip.interop" class="toctree-checkbox" id="toctree-checkbox-12" name="toctree-checkbox-12" role="switch" type="checkbox"/><label for="toctree-checkbox-12"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.interop.base.html">quchip.interop.base</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.interop.eigenbasis.html">quchip.interop.eigenbasis</a></li>
+<li class="toctree-l4 has-children"><a class="reference internal" href="../../../generated/quchip.interop.scqubits.html">quchip.interop.scqubits</a><input aria-label="Toggle navigation of quchip.interop.scqubits" class="toctree-checkbox" id="toctree-checkbox-13" name="toctree-checkbox-13" role="switch" type="checkbox"/><label for="toctree-checkbox-13"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.interop.scqubits.composite.html">quchip.interop.scqubits.composite</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.interop.scqubits.devices.html">quchip.interop.scqubits.devices</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.inverse_design.html">quchip.inverse_design</a><input aria-label="Toggle navigation of quchip.inverse_design" class="toctree-checkbox" id="toctree-checkbox-14" name="toctree-checkbox-14" role="switch" type="checkbox"/><label for="toctree-checkbox-14"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.inverse_design.fit.html">quchip.inverse_design.fit</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.inverse_design.observables.html">quchip.inverse_design.observables</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.inverse_design.subsystems.html">quchip.inverse_design.subsystems</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.inverse_design.types.html">quchip.inverse_design.types</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.results.html">quchip.results</a><input aria-label="Toggle navigation of quchip.results" class="toctree-checkbox" id="toctree-checkbox-15" name="toctree-checkbox-15" role="switch" type="checkbox"/><label for="toctree-checkbox-15"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.results.partitioned.html">quchip.results.partitioned</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.results.results.html">quchip.results.results</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../generated/quchip.sweep.html">quchip.sweep</a></li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.utils.html">quchip.utils</a><input aria-label="Toggle navigation of quchip.utils" class="toctree-checkbox" id="toctree-checkbox-16" name="toctree-checkbox-16" role="switch" type="checkbox"/><label for="toctree-checkbox-16"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.utils.constants.html">quchip.utils.constants</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.utils.jax_utils.html">quchip.utils.jax_utils</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.utils.labeling.html">quchip.utils.labeling</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.utils.registry.html">quchip.utils.registry</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.utils.state_versioning.html">quchip.utils.state_versioning</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.viz.html">quchip.viz</a><input aria-label="Toggle navigation of quchip.viz" class="toctree-checkbox" id="toctree-checkbox-17" name="toctree-checkbox-17" role="switch" type="checkbox"/><label for="toctree-checkbox-17"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.viz.chip.html">quchip.viz.chip</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.viz.control.html">quchip.viz.control</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.viz.device.html">quchip.viz.device</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.viz.results.html">quchip.viz.results</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../../contributing.html">Contributing to quchip</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../conduct.html">Code of Conduct</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon no-toc" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <h1>Source code for quchip.engine.stage4_problem</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;Stage 4: pack stage outputs + collapse operators into a frozen :class:`SolveProblem`.</span>
+
+<span class="sd">Responsibilities</span>
+<span class="sd">----------------</span>
+<span class="sd">* Ensure the chip is dressed and run stage 1 (:func:`resolve_frame`).</span>
+<span class="sd">* Run stage 3 (:func:`decompose_eops`) to flatten ``e_ops`` into</span>
+<span class="sd">  solver-ready bands.</span>
+<span class="sd">* Collect and embed every Lindblad collapse operator contributed by</span>
+<span class="sd">  devices, drive lines, and couplings (see :func:`_collect_c_ops`).</span>
+<span class="sd">* Run stage 2 (:func:`build_hamiltonian_description`) for each variant</span>
+<span class="sd">  and pack into a single :class:`SolveProblem`, or merge homogeneous</span>
+<span class="sd">  variants into a :class:`SolveBatch` (``N`` identical skeletons with</span>
+<span class="sd">  per-element :class:`ScalarModulation` signals).</span>
+
+<span class="sd">Collapse operators enter the standard Lindblad master equation</span>
+<span class="sd">``dρ/dt = −i[H, ρ] + Σₖ D[Lₖ]ρ``. Rates are stored in 1/ns.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">TYPE_CHECKING</span><span class="p">,</span> <span class="n">Any</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">quchip.backend</span><span class="w"> </span><span class="kn">import</span> <span class="n">_backend_context</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">quchip.engine.bands</span><span class="w"> </span><span class="kn">import</span> <span class="n">embed_on_support</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">quchip.engine.ir</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">BatchedHamiltonianDescription</span><span class="p">,</span>
+    <span class="n">DriveOp</span><span class="p">,</span>
+    <span class="n">HamiltonianDescription</span><span class="p">,</span>
+    <span class="n">ScalarModulation</span><span class="p">,</span>
+    <span class="n">SolveBatch</span><span class="p">,</span>
+    <span class="n">SolveProblem</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">quchip.engine.stage1_frames</span><span class="w"> </span><span class="kn">import</span> <span class="n">resolve_frame</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">quchip.engine.stage2_assembly</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_hamiltonian_description</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">quchip.engine.stage3_observables</span><span class="w"> </span><span class="kn">import</span> <span class="n">decompose_eops</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">quchip.utils.jax_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">contains_tracer</span><span class="p">,</span> <span class="n">maybe_concrete_scalar</span>
+
+<span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">quchip.chip.chip</span><span class="w"> </span><span class="kn">import</span> <span class="n">Chip</span>
+
+
+<div class="viewcode-block" id="SolveProblemContext">
+<a class="viewcode-back" href="../../../generated/quchip.engine.stage4_problem.html#quchip.engine.stage4_problem.SolveProblemContext">[docs]</a>
+<span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">SolveProblemContext</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Shared solve metadata reused across a homogeneous problem batch.</span>
+
+<span class="sd">    Built once by :func:`prepare_solve_problem_context` so sweep points can</span>
+<span class="sd">    skip redundant collapse-operator collection and e_ops normalization.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">chip</span><span class="p">:</span> <span class="n">Chip</span>
+    <span class="n">tlist</span><span class="p">:</span> <span class="n">Any</span>
+    <span class="n">c_ops</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span>
+    <span class="n">e_ops</span><span class="p">:</span> <span class="n">Any</span>
+    <span class="n">e_ops_meta</span><span class="p">:</span> <span class="n">Any</span>
+    <span class="n">resolved_frame</span><span class="p">:</span> <span class="n">Any</span>
+    <span class="n">solver</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span>
+    <span class="n">options</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+    <span class="n">default_initial_state</span><span class="p">:</span> <span class="n">Any</span>
+
+<div class="viewcode-block" id="SolveProblemContext.from_problem">
+<a class="viewcode-back" href="../../../generated/quchip.engine.stage4_problem.html#quchip.engine.stage4_problem.SolveProblemContext.from_problem">[docs]</a>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_problem</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">ref</span><span class="p">:</span> <span class="n">SolveProblem</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;SolveProblemContext&quot;</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Reconstruct a shared context from an existing :class:`SolveProblem`.</span>
+
+<span class="sd">        Mirrors :meth:`SolveBatch.element`: it lifts a single concrete problem</span>
+<span class="sd">        back into the context shape so a homogeneous group of problems can be</span>
+<span class="sd">        re-batched. The reference problem&#39;s already-built ``initial_state`` is</span>
+<span class="sd">        wrapped in a :class:`PrematerializedState` (no chip ground state is</span>
+<span class="sd">        recomputed), and ``options`` is defensively copied.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">cls</span><span class="p">(</span>
+            <span class="n">chip</span><span class="o">=</span><span class="n">ref</span><span class="o">.</span><span class="n">chip</span><span class="p">,</span>
+            <span class="n">tlist</span><span class="o">=</span><span class="n">ref</span><span class="o">.</span><span class="n">tlist</span><span class="p">,</span>
+            <span class="n">c_ops</span><span class="o">=</span><span class="n">ref</span><span class="o">.</span><span class="n">c_ops</span><span class="p">,</span>
+            <span class="n">e_ops</span><span class="o">=</span><span class="n">ref</span><span class="o">.</span><span class="n">e_ops</span><span class="p">,</span>
+            <span class="n">e_ops_meta</span><span class="o">=</span><span class="n">ref</span><span class="o">.</span><span class="n">e_ops_meta</span><span class="p">,</span>
+            <span class="n">resolved_frame</span><span class="o">=</span><span class="n">ref</span><span class="o">.</span><span class="n">resolved_frame</span><span class="p">,</span>
+            <span class="n">solver</span><span class="o">=</span><span class="n">ref</span><span class="o">.</span><span class="n">solver</span><span class="p">,</span>
+            <span class="n">options</span><span class="o">=</span><span class="nb">dict</span><span class="p">(</span><span class="n">ref</span><span class="o">.</span><span class="n">options</span><span class="p">),</span>
+            <span class="n">default_initial_state</span><span class="o">=</span><span class="n">PrematerializedState</span><span class="p">(</span><span class="n">ref</span><span class="o">.</span><span class="n">initial_state</span><span class="p">),</span>
+        <span class="p">)</span></div>
+</div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_collect_c_ops</span><span class="p">(</span><span class="n">chip</span><span class="p">:</span> <span class="n">Chip</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="o">...</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Embed every collapse operator the chip&#39;s components contribute.</span>
+
+<span class="sd">    The chip enumerates its component families</span>
+<span class="sd">    (:meth:`~quchip.chip.chip.Chip.collapse_contributions`); this stage only</span>
+<span class="sd">    embeds each operator by its support arity, so a new physics-bearing</span>
+<span class="sd">    component family never touches the engine.</span>
+
+<span class="sd">    Collapse operators arrive in Lindblad-ready units (rates in 1/ns). No</span>
+<span class="sd">    additional scaling happens here: each device owns its physics, including</span>
+<span class="sd">    any 2π that belongs to a rate formula (e.g. κ = 2πf/Q). This is</span>
+<span class="sd">    deliberately distinct from the Hamiltonian path, where the blanket 2π</span>
+<span class="sd">    conversion lives at the stage-2 boundary.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">backend</span> <span class="o">=</span> <span class="n">chip</span><span class="o">.</span><span class="n">backend</span>
+    <span class="k">with</span> <span class="n">_backend_context</span><span class="p">(</span><span class="n">backend</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">tuple</span><span class="p">(</span>
+            <span class="n">embed_on_support</span><span class="p">(</span><span class="n">backend</span><span class="p">,</span> <span class="n">c_op</span><span class="p">,</span> <span class="n">support</span><span class="p">,</span> <span class="n">chip</span><span class="o">.</span><span class="n">dims</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">c_op</span><span class="p">,</span> <span class="n">support</span> <span class="ow">in</span> <span class="n">chip</span><span class="o">.</span><span class="n">collapse_contributions</span><span class="p">()</span>
+        <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_validate_tlist</span><span class="p">(</span><span class="n">tlist</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Validate a solve-time grid; shape checks run regardless of tracing.</span>
+
+<span class="sd">    ``tlist`` must be one-dimensional and hold at least two points -- both</span>
+<span class="sd">    static array facts available on a JAX tracer&#39;s abstract shape without</span>
+<span class="sd">    forcing concretization, so they raise even under ``jax.jit``.</span>
+<span class="sd">    Finiteness and strict monotonicity are value-dependent and validated</span>
+<span class="sd">    only when ``tlist`` is concrete.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">tlist</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;tlist must be one-dimensional; got shape </span><span class="si">{</span><span class="n">tlist</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">.&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">tlist</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">&lt;</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;tlist must have at least two points; got </span><span class="si">{</span><span class="n">tlist</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">.&quot;</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">contains_tracer</span><span class="p">(</span><span class="n">tlist</span><span class="p">):</span>
+        <span class="k">return</span>
+    <span class="n">arr</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">tlist</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">np</span><span class="o">.</span><span class="n">all</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">isfinite</span><span class="p">(</span><span class="n">arr</span><span class="p">)):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;tlist must be finite everywhere.&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">np</span><span class="o">.</span><span class="n">all</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">diff</span><span class="p">(</span><span class="n">arr</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;tlist must be strictly increasing.&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_validate_drive_op_window</span><span class="p">(</span><span class="n">drive_op</span><span class="p">:</span> <span class="n">DriveOp</span><span class="p">,</span> <span class="n">tlist</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Require *drive_op*&#39;s pulse window to overlap ``tlist`` with positive measure.</span>
+
+<span class="sd">    Raises ``ValueError`` unless</span>
+<span class="sd">    ``start_time + envelope.duration &gt; tlist[0]`` and</span>
+<span class="sd">    ``start_time &lt; tlist[-1]`` -- a window that only touches an endpoint</span>
+<span class="sd">    contributes no evolution. Concrete-only: skipped when the drive&#39;s</span>
+<span class="sd">    ``start_time``/``duration`` or either ``tlist`` endpoint is traced.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">start</span> <span class="o">=</span> <span class="n">maybe_concrete_scalar</span><span class="p">(</span><span class="n">drive_op</span><span class="o">.</span><span class="n">start_time</span><span class="p">)</span>
+    <span class="n">duration</span> <span class="o">=</span> <span class="n">maybe_concrete_scalar</span><span class="p">(</span><span class="n">drive_op</span><span class="o">.</span><span class="n">envelope</span><span class="o">.</span><span class="n">duration</span><span class="p">)</span>
+    <span class="n">t_start</span> <span class="o">=</span> <span class="n">maybe_concrete_scalar</span><span class="p">(</span><span class="n">tlist</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+    <span class="n">t_stop</span> <span class="o">=</span> <span class="n">maybe_concrete_scalar</span><span class="p">(</span><span class="n">tlist</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span>
+    <span class="k">if</span> <span class="n">start</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">duration</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">t_start</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">t_stop</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span>
+    <span class="n">stop</span> <span class="o">=</span> <span class="n">start</span> <span class="o">+</span> <span class="n">duration</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="n">stop</span> <span class="o">&gt;</span> <span class="n">t_start</span> <span class="ow">and</span> <span class="n">start</span> <span class="o">&lt;</span> <span class="n">t_stop</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;Drive &#39;</span><span class="si">{</span><span class="n">drive_op</span><span class="o">.</span><span class="n">drive_label</span><span class="si">}</span><span class="s2">&#39; on target &#39;</span><span class="si">{</span><span class="n">drive_op</span><span class="o">.</span><span class="n">target_label</span><span class="si">}</span><span class="s2">&#39; has pulse window &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="n">start</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">stop</span><span class="si">}</span><span class="s2">] with no positive-measure overlap with the solve interval &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="n">t_start</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">t_stop</span><span class="si">}</span><span class="s2">].&quot;</span>
+        <span class="p">)</span>
+
+
+<div class="viewcode-block" id="validate_drive_ops_window">
+<a class="viewcode-back" href="../../../generated/quchip.engine.stage4_problem.html#quchip.engine.stage4_problem.validate_drive_ops_window">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">validate_drive_ops_window</span><span class="p">(</span><span class="n">drive_ops</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">DriveOp</span><span class="p">],</span> <span class="n">tlist</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Validate every ``DriveOp`` in *drive_ops* against :func:`_validate_drive_op_window`.&quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">drive_op</span> <span class="ow">in</span> <span class="n">drive_ops</span><span class="p">:</span>
+        <span class="n">_validate_drive_op_window</span><span class="p">(</span><span class="n">drive_op</span><span class="p">,</span> <span class="n">tlist</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="prepare_solve_problem_context">
+<a class="viewcode-back" href="../../../generated/quchip.engine.stage4_problem.html#quchip.engine.stage4_problem.prepare_solve_problem_context">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">prepare_solve_problem_context</span><span class="p">(</span>
+    <span class="n">chip</span><span class="p">:</span> <span class="n">Chip</span><span class="p">,</span>
+    <span class="n">tlist</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">solver</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">options</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">e_ops</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">drive_ops</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">DriveOp</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">SolveProblemContext</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Resolve the frame, normalize e_ops, collect c_ops, and prepare a default state.</span>
+
+<span class="sd">    The dressed dict-keyed analysis is deliberately *not* triggered here: anything</span>
+<span class="sd">    downstream that needs dressed quantities must use the array-only kernel</span>
+<span class="sd">    (``chip.freq``, ``chip.energy``, etc.) so this stage stays JAX-traceable. The</span>
+<span class="sd">    default initial state is computed lazily via a thunk so callers that always</span>
+<span class="sd">    pass ``initial_state`` never pay for it (and so the thunk&#39;s eager dict-based</span>
+<span class="sd">    state construction never runs under ``jax.jit``).</span>
+
+<span class="sd">    ``tlist`` is validated by :func:`_validate_tlist`. When *drive_ops* is</span>
+<span class="sd">    given, each entry&#39;s pulse window is checked against ``tlist`` via</span>
+<span class="sd">    :func:`validate_drive_ops_window`; omit it (the default) when the</span>
+<span class="sd">    caller validates its own per-variant drive ops elsewhere (see</span>
+<span class="sd">    :meth:`~quchip.control.sequence.QuantumSequence.build_batch`).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">backend</span> <span class="o">=</span> <span class="n">chip</span><span class="o">.</span><span class="n">backend</span>
+    <span class="n">tlist_arr</span> <span class="o">=</span> <span class="n">backend</span><span class="o">.</span><span class="n">array_module</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">tlist</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+    <span class="n">_validate_tlist</span><span class="p">(</span><span class="n">tlist_arr</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">drive_ops</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">validate_drive_ops_window</span><span class="p">(</span><span class="n">drive_ops</span><span class="p">,</span> <span class="n">tlist_arr</span><span class="p">)</span>
+
+    <span class="n">merged_options</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;store_states&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span> <span class="s2">&quot;store_final_state&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
+    <span class="k">if</span> <span class="n">options</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">merged_options</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">options</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">e_ops</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">e_ops_solver</span><span class="p">,</span> <span class="n">dict_meta</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span>
+    <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">e_ops</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
+        <span class="n">e_ops_solver</span><span class="p">,</span> <span class="n">dict_meta</span> <span class="o">=</span> <span class="n">decompose_eops</span><span class="p">(</span><span class="n">e_ops</span><span class="p">,</span> <span class="n">chip</span><span class="p">,</span> <span class="n">backend</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="s2">&quot;e_ops must be dict or None&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">SolveProblemContext</span><span class="p">(</span>
+        <span class="n">chip</span><span class="o">=</span><span class="n">chip</span><span class="p">,</span>
+        <span class="n">tlist</span><span class="o">=</span><span class="n">tlist_arr</span><span class="p">,</span>
+        <span class="n">c_ops</span><span class="o">=</span><span class="n">_collect_c_ops</span><span class="p">(</span><span class="n">chip</span><span class="p">),</span>
+        <span class="n">e_ops</span><span class="o">=</span><span class="n">e_ops_solver</span><span class="p">,</span>
+        <span class="n">e_ops_meta</span><span class="o">=</span><span class="n">dict_meta</span><span class="p">,</span>
+        <span class="n">resolved_frame</span><span class="o">=</span><span class="n">resolve_frame</span><span class="p">(</span><span class="n">chip</span><span class="p">,</span> <span class="n">chip</span><span class="o">.</span><span class="n">frame</span><span class="p">),</span>
+        <span class="n">solver</span><span class="o">=</span><span class="n">solver</span><span class="p">,</span>
+        <span class="n">options</span><span class="o">=</span><span class="n">merged_options</span><span class="p">,</span>
+        <span class="n">default_initial_state</span><span class="o">=</span><span class="n">_LazyDefaultState</span><span class="p">(</span><span class="n">chip</span><span class="p">),</span>
+    <span class="p">)</span></div>
+
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">_LazyDefaultState</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Wraps ``chip.state()`` so ground-state computation is deferred until ``materialize()`` is called.</span>
+
+<span class="sd">    Keeps :func:`prepare_solve_problem_context` cheap: callers that always</span>
+<span class="sd">    pass ``initial_state`` never pay for the dressed ground state. Under</span>
+<span class="sd">    tracing ``chip.state()`` routes through the array kernel; the result is</span>
+<span class="sd">    never memoized — caching a tracer would leak it into a later trace.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="vm">__slots__</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;_chip&quot;</span><span class="p">,</span> <span class="s2">&quot;_cached&quot;</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">chip</span><span class="p">:</span> <span class="n">Chip</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_chip</span> <span class="o">=</span> <span class="n">chip</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_cached</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">materialize</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cached</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cached</span>
+        <span class="n">state</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_chip</span><span class="o">.</span><span class="n">state</span><span class="p">()</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">contains_tracer</span><span class="p">(</span><span class="n">state</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_cached</span> <span class="o">=</span> <span class="n">state</span>
+        <span class="k">return</span> <span class="n">state</span>
+
+
+<div class="viewcode-block" id="PrematerializedState">
+<a class="viewcode-back" href="../../../generated/quchip.engine.stage4_problem.html#quchip.engine.stage4_problem.PrematerializedState">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">PrematerializedState</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Adapter giving an already-built state the ``materialize()`` surface.</span>
+
+<span class="sd">    Used where a :class:`SolveProblemContext` is assembled from an existing</span>
+<span class="sd">    :class:`SolveProblem` (whose ``initial_state`` is already a concrete</span>
+<span class="sd">    ket/DM) rather than from a chip.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="vm">__slots__</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;_state&quot;</span><span class="p">,)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">state</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_state</span> <span class="o">=</span> <span class="n">state</span>
+
+<div class="viewcode-block" id="PrematerializedState.materialize">
+<a class="viewcode-back" href="../../../generated/quchip.engine.stage4_problem.html#quchip.engine.stage4_problem.PrematerializedState.materialize">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">materialize</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_state</span></div>
+</div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_aggregate_batch_metadata</span><span class="p">(</span><span class="n">descriptions</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">HamiltonianDescription</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Aggregate advisory solver-hint metadata across every description in a batch.</span>
+
+<span class="sd">    Copying the reference element&#39;s metadata verbatim is unsafe once</span>
+<span class="sd">    durations or frequencies are swept per element: each variant&#39;s own</span>
+<span class="sd">    ``max_carrier_freq_ghz`` / ``spectral_bound_ghz`` / ``max_step_ns`` can</span>
+<span class="sd">    differ. Carrier and spectral bounds take the maximum across elements</span>
+<span class="sd">    (the batch as a whole is bounded by its fastest/most-spread element);</span>
+<span class="sd">    ``max_step_ns`` takes the minimum (bounded by its narrowest pulse) and</span>
+<span class="sd">    is present only when every element reports one -- a single traced</span>
+<span class="sd">    window anywhere in the batch means the ceiling is incomplete for the</span>
+<span class="sd">    whole batch. Non-advisory keys (e.g. ``&quot;frame&quot;``) are carried through</span>
+<span class="sd">    from the reference element, since batching already requires a shared</span>
+<span class="sd">    template.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">metadata</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">descriptions</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">metadata</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;max_carrier_freq_ghz&quot;</span><span class="p">,</span> <span class="s2">&quot;spectral_bound_ghz&quot;</span><span class="p">,</span> <span class="s2">&quot;max_step_ns&quot;</span><span class="p">):</span>
+        <span class="n">metadata</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+
+    <span class="n">carrier_values</span> <span class="o">=</span> <span class="p">[</span><span class="n">d</span><span class="o">.</span><span class="n">metadata</span><span class="p">[</span><span class="s2">&quot;max_carrier_freq_ghz&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">descriptions</span> <span class="k">if</span> <span class="s2">&quot;max_carrier_freq_ghz&quot;</span> <span class="ow">in</span> <span class="n">d</span><span class="o">.</span><span class="n">metadata</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">carrier_values</span><span class="p">:</span>
+        <span class="n">metadata</span><span class="p">[</span><span class="s2">&quot;max_carrier_freq_ghz&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">carrier_values</span><span class="p">)</span>
+
+    <span class="n">spectral_values</span> <span class="o">=</span> <span class="p">[</span><span class="n">d</span><span class="o">.</span><span class="n">metadata</span><span class="p">[</span><span class="s2">&quot;spectral_bound_ghz&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">descriptions</span> <span class="k">if</span> <span class="s2">&quot;spectral_bound_ghz&quot;</span> <span class="ow">in</span> <span class="n">d</span><span class="o">.</span><span class="n">metadata</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">spectral_values</span><span class="p">:</span>
+        <span class="n">metadata</span><span class="p">[</span><span class="s2">&quot;spectral_bound_ghz&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">spectral_values</span><span class="p">)</span>
+
+    <span class="n">step_values</span> <span class="o">=</span> <span class="p">[</span><span class="n">d</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;max_step_ns&quot;</span><span class="p">)</span> <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">descriptions</span><span class="p">]</span>
+    <span class="n">non_none</span> <span class="o">=</span> <span class="p">[</span><span class="n">v</span> <span class="k">for</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">step_values</span> <span class="k">if</span> <span class="n">v</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">]</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">non_none</span><span class="p">)</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">step_values</span><span class="p">)</span> <span class="ow">and</span> <span class="n">non_none</span><span class="p">:</span>
+        <span class="n">metadata</span><span class="p">[</span><span class="s2">&quot;max_step_ns&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">non_none</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">metadata</span>
+
+
+<div class="viewcode-block" id="build_solve_batch_from_descriptions">
+<a class="viewcode-back" href="../../../generated/quchip.engine.stage4_problem.html#quchip.engine.stage4_problem.build_solve_batch_from_descriptions">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">build_solve_batch_from_descriptions</span><span class="p">(</span>
+    <span class="n">context</span><span class="p">:</span> <span class="n">SolveProblemContext</span><span class="p">,</span>
+    <span class="n">descriptions</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">HamiltonianDescription</span><span class="p">],</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">initial_states</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">SolveBatch</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Merge N homogeneous :class:`HamiltonianDescription`s into one :class:`SolveBatch`.</span>
+
+<span class="sd">    All descriptions must share ``static_terms`` identity, the same number</span>
+<span class="sd">    of dynamic terms, and matching operator payloads per slot (by identity</span>
+<span class="sd">    or by canonical fingerprint — crosstalk rebuilds equal-by-value</span>
+<span class="sd">    operators on every instantiation). ``initial_states=None`` fills every</span>
+<span class="sd">    element with ``context.default_initial_state``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">descriptions</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;build_solve_batch_from_descriptions requires at least one description&quot;</span><span class="p">)</span>
+
+    <span class="n">ref</span> <span class="o">=</span> <span class="n">descriptions</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">batch_size</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">descriptions</span><span class="p">)</span>
+    <span class="n">n_dyn</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">ref</span><span class="o">.</span><span class="n">dynamic_terms</span><span class="p">)</span>
+    <span class="n">_prefix</span> <span class="o">=</span> <span class="s2">&quot;build_solve_batch_from_descriptions: &quot;</span>
+
+    <span class="c1"># --- Skeleton checks: static terms, dim shape, dynamic term count ---</span>
+    <span class="k">for</span> <span class="n">idx</span><span class="p">,</span> <span class="n">desc</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">descriptions</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">desc</span><span class="o">.</span><span class="n">static_terms</span> <span class="ow">is</span> <span class="ow">not</span> <span class="n">ref</span><span class="o">.</span><span class="n">static_terms</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="n">_prefix</span> <span class="o">+</span> <span class="s2">&quot;all descriptions must share identical static_terms (by identity); &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;element </span><span class="si">{</span><span class="n">idx</span><span class="si">}</span><span class="s2"> differs.&quot;</span>
+            <span class="p">)</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">desc</span><span class="o">.</span><span class="n">dynamic_terms</span><span class="p">)</span> <span class="o">!=</span> <span class="n">n_dyn</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="n">_prefix</span> <span class="o">+</span> <span class="s2">&quot;all descriptions must have the same number of dynamic terms; &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;element </span><span class="si">{</span><span class="n">idx</span><span class="si">}</span><span class="s2"> has </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">desc</span><span class="o">.</span><span class="n">dynamic_terms</span><span class="p">)</span><span class="si">}</span><span class="s2">, expected </span><span class="si">{</span><span class="n">n_dyn</span><span class="si">}</span><span class="s2">.&quot;</span>
+            <span class="p">)</span>
+        <span class="k">if</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">desc</span><span class="o">.</span><span class="n">dims</span><span class="p">)</span> <span class="o">!=</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">ref</span><span class="o">.</span><span class="n">dims</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="n">_prefix</span> <span class="o">+</span> <span class="s2">&quot;all descriptions must share identical dims; &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;element </span><span class="si">{</span><span class="n">idx</span><span class="si">}</span><span class="s2"> has </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">desc</span><span class="o">.</span><span class="n">dims</span><span class="p">)</span><span class="si">}</span><span class="s2">, expected </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">ref</span><span class="o">.</span><span class="n">dims</span><span class="p">)</span><span class="si">}</span><span class="s2">.&quot;</span>
+            <span class="p">)</span>
+
+    <span class="c1"># --- Per-slot compatibility + signal collection ---</span>
+    <span class="c1"># Per element, verify the dynamic term matches the reference in</span>
+    <span class="c1"># (operator payload, origin, tag) and is a ScalarModulation; collect</span>
+    <span class="c1"># its signal. Crosstalk rebuilds operators every instantiation, so</span>
+    <span class="c1"># equality is by canonical fingerprint, not by object identity.</span>
+    <span class="n">dynamic_operators</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">dynamic_origins</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">dynamic_tags</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">dynamic_signals</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="n">ScalarModulation</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">slot</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_dyn</span><span class="p">):</span>
+        <span class="n">ref_term</span> <span class="o">=</span> <span class="n">ref</span><span class="o">.</span><span class="n">dynamic_terms</span><span class="p">[</span><span class="n">slot</span><span class="p">]</span>
+        <span class="n">shared_operator</span> <span class="o">=</span> <span class="n">ref_term</span><span class="o">.</span><span class="n">operator</span>
+        <span class="n">canonical_key</span> <span class="o">=</span> <span class="n">shared_operator</span><span class="o">.</span><span class="n">fingerprint</span><span class="p">()</span>
+        <span class="n">dynamic_origins</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">ref_term</span><span class="o">.</span><span class="n">origin</span><span class="p">)</span>
+        <span class="n">dynamic_tags</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">ref_term</span><span class="o">.</span><span class="n">tag</span><span class="p">)</span>
+
+        <span class="n">slot_signals</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">ScalarModulation</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">idx</span><span class="p">,</span> <span class="n">desc</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">descriptions</span><span class="p">):</span>
+            <span class="n">term</span> <span class="o">=</span> <span class="n">desc</span><span class="o">.</span><span class="n">dynamic_terms</span><span class="p">[</span><span class="n">slot</span><span class="p">]</span>
+            <span class="n">where</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;slot </span><span class="si">{</span><span class="n">slot</span><span class="si">}</span><span class="s2">, element </span><span class="si">{</span><span class="n">idx</span><span class="si">}</span><span class="s2">&quot;</span>
+
+            <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">term</span><span class="o">.</span><span class="n">time_dependence</span><span class="p">,</span> <span class="n">ScalarModulation</span><span class="p">):</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                    <span class="n">_prefix</span> <span class="o">+</span> <span class="sa">f</span><span class="s2">&quot;only ScalarModulation time dependencies are supported (</span><span class="si">{</span><span class="n">where</span><span class="si">}</span><span class="s2">).&quot;</span>
+                <span class="p">)</span>
+            <span class="k">if</span> <span class="n">term</span><span class="o">.</span><span class="n">origin</span> <span class="o">!=</span> <span class="n">ref_term</span><span class="o">.</span><span class="n">origin</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                    <span class="n">_prefix</span> <span class="o">+</span> <span class="sa">f</span><span class="s2">&quot;dynamic term origin differs at </span><span class="si">{</span><span class="n">where</span><span class="si">}</span><span class="s2"> &quot;</span>
+                    <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="n">term</span><span class="o">.</span><span class="n">origin</span><span class="si">!r}</span><span class="s2"> vs </span><span class="si">{</span><span class="n">ref_term</span><span class="o">.</span><span class="n">origin</span><span class="si">!r}</span><span class="s2">).&quot;</span>
+                <span class="p">)</span>
+            <span class="k">if</span> <span class="n">term</span><span class="o">.</span><span class="n">tag</span> <span class="o">!=</span> <span class="n">ref_term</span><span class="o">.</span><span class="n">tag</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                    <span class="n">_prefix</span> <span class="o">+</span> <span class="sa">f</span><span class="s2">&quot;dynamic term tag differs at </span><span class="si">{</span><span class="n">where</span><span class="si">}</span><span class="s2"> &quot;</span>
+                    <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="n">term</span><span class="o">.</span><span class="n">tag</span><span class="si">!r}</span><span class="s2"> vs </span><span class="si">{</span><span class="n">ref_term</span><span class="o">.</span><span class="n">tag</span><span class="si">!r}</span><span class="s2">).&quot;</span>
+                <span class="p">)</span>
+            <span class="k">if</span> <span class="n">term</span><span class="o">.</span><span class="n">operator</span> <span class="ow">is</span> <span class="ow">not</span> <span class="n">shared_operator</span> <span class="ow">and</span> <span class="n">term</span><span class="o">.</span><span class="n">operator</span><span class="o">.</span><span class="n">fingerprint</span><span class="p">()</span> <span class="o">!=</span> <span class="n">canonical_key</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                    <span class="n">_prefix</span> <span class="o">+</span> <span class="sa">f</span><span class="s2">&quot;dynamic operator </span><span class="si">{</span><span class="n">where</span><span class="si">}</span><span class="s2"> differs from the slot reference; &quot;</span>
+                    <span class="s2">&quot;batched IR requires equivalent operator payloads across the batch.&quot;</span>
+                <span class="p">)</span>
+
+            <span class="n">slot_signals</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">term</span><span class="o">.</span><span class="n">time_dependence</span><span class="p">)</span>
+
+        <span class="n">dynamic_operators</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">shared_operator</span><span class="p">)</span>
+        <span class="n">dynamic_signals</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">slot_signals</span><span class="p">)</span>
+
+    <span class="n">batched</span> <span class="o">=</span> <span class="n">BatchedHamiltonianDescription</span><span class="p">(</span>
+        <span class="n">batch_size</span><span class="o">=</span><span class="n">batch_size</span><span class="p">,</span>
+        <span class="n">static_terms</span><span class="o">=</span><span class="n">ref</span><span class="o">.</span><span class="n">static_terms</span><span class="p">,</span>
+        <span class="n">dynamic_operators</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="n">dynamic_operators</span><span class="p">),</span>
+        <span class="n">dynamic_origins</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="n">dynamic_origins</span><span class="p">),</span>
+        <span class="n">dynamic_tags</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="n">dynamic_tags</span><span class="p">),</span>
+        <span class="n">dynamic_signals</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="nb">tuple</span><span class="p">(</span><span class="n">sigs</span><span class="p">)</span> <span class="k">for</span> <span class="n">sigs</span> <span class="ow">in</span> <span class="n">dynamic_signals</span><span class="p">),</span>
+        <span class="n">dims</span><span class="o">=</span><span class="n">ref</span><span class="o">.</span><span class="n">dims</span><span class="p">,</span>
+        <span class="n">metadata</span><span class="o">=</span><span class="n">_aggregate_batch_metadata</span><span class="p">(</span><span class="n">descriptions</span><span class="p">),</span>
+        <span class="n">dropped_terms_by_element</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">dropped_terms</span> <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">descriptions</span><span class="p">),</span>
+    <span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">initial_states</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">default</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="n">default_initial_state</span><span class="o">.</span><span class="n">materialize</span><span class="p">()</span>
+        <span class="n">states</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">default</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">batch_size</span><span class="p">))</span>
+    <span class="k">elif</span> <span class="nb">len</span><span class="p">(</span><span class="n">initial_states</span><span class="p">)</span> <span class="o">!=</span> <span class="n">batch_size</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;initial_states length </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">initial_states</span><span class="p">)</span><span class="si">}</span><span class="s2"> does not match batch_size </span><span class="si">{</span><span class="n">batch_size</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">default</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="n">default_initial_state</span>
+        <span class="n">states</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span>
+            <span class="p">(</span><span class="n">default</span><span class="o">.</span><span class="n">materialize</span><span class="p">()</span> <span class="k">if</span> <span class="n">s</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">s</span><span class="p">)</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">initial_states</span>
+        <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">SolveBatch</span><span class="p">(</span>
+        <span class="n">chip</span><span class="o">=</span><span class="n">context</span><span class="o">.</span><span class="n">chip</span><span class="p">,</span>
+        <span class="n">hamiltonian</span><span class="o">=</span><span class="n">batched</span><span class="p">,</span>
+        <span class="n">initial_states</span><span class="o">=</span><span class="n">states</span><span class="p">,</span>
+        <span class="n">tlist</span><span class="o">=</span><span class="n">context</span><span class="o">.</span><span class="n">tlist</span><span class="p">,</span>
+        <span class="n">c_ops</span><span class="o">=</span><span class="n">context</span><span class="o">.</span><span class="n">c_ops</span><span class="p">,</span>
+        <span class="n">e_ops</span><span class="o">=</span><span class="n">context</span><span class="o">.</span><span class="n">e_ops</span><span class="p">,</span>
+        <span class="n">e_ops_meta</span><span class="o">=</span><span class="n">context</span><span class="o">.</span><span class="n">e_ops_meta</span><span class="p">,</span>
+        <span class="n">resolved_frame</span><span class="o">=</span><span class="n">context</span><span class="o">.</span><span class="n">resolved_frame</span><span class="p">,</span>
+        <span class="n">solver</span><span class="o">=</span><span class="n">context</span><span class="o">.</span><span class="n">solver</span><span class="p">,</span>
+        <span class="n">options</span><span class="o">=</span><span class="n">context</span><span class="o">.</span><span class="n">options</span><span class="p">,</span>
+    <span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="build_solve_problem">
+<a class="viewcode-back" href="../../../generated/quchip.engine.stage4_problem.html#quchip.engine.stage4_problem.build_solve_problem">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">build_solve_problem</span><span class="p">(</span>
+    <span class="n">chip</span><span class="p">:</span> <span class="n">Chip</span><span class="p">,</span>
+    <span class="n">drive_ops</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">DriveOp</span><span class="p">],</span>
+    <span class="n">tlist</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">solver</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">options</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">e_ops</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">initial_state</span><span class="p">:</span> <span class="n">Any</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">SolveProblem</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Run stages 1-4 end-to-end and return a frozen :class:`SolveProblem`.</span>
+
+<span class="sd">    Equivalent to :func:`prepare_solve_problem_context` followed by</span>
+<span class="sd">    :func:`build_hamiltonian_description`. For many variants sharing one</span>
+<span class="sd">    chip configuration, prefer that two-step form with</span>
+<span class="sd">    :func:`build_solve_batch_from_descriptions`.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">context</span> <span class="o">=</span> <span class="n">prepare_solve_problem_context</span><span class="p">(</span>
+        <span class="n">chip</span><span class="p">,</span> <span class="n">tlist</span><span class="p">,</span> <span class="n">solver</span><span class="o">=</span><span class="n">solver</span><span class="p">,</span> <span class="n">options</span><span class="o">=</span><span class="n">options</span><span class="p">,</span> <span class="n">e_ops</span><span class="o">=</span><span class="n">e_ops</span><span class="p">,</span> <span class="n">drive_ops</span><span class="o">=</span><span class="n">drive_ops</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="n">build_hamiltonian_description</span><span class="p">(</span>
+        <span class="n">chip</span><span class="p">,</span> <span class="n">drive_ops</span><span class="p">,</span> <span class="n">resolved_frame</span><span class="o">=</span><span class="n">context</span><span class="o">.</span><span class="n">resolved_frame</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">SolveProblem</span><span class="p">(</span>
+        <span class="n">chip</span><span class="o">=</span><span class="n">context</span><span class="o">.</span><span class="n">chip</span><span class="p">,</span>
+        <span class="n">hamiltonian</span><span class="o">=</span><span class="n">description</span><span class="p">,</span>
+        <span class="n">initial_state</span><span class="o">=</span><span class="n">context</span><span class="o">.</span><span class="n">default_initial_state</span><span class="o">.</span><span class="n">materialize</span><span class="p">()</span> <span class="k">if</span> <span class="n">initial_state</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">initial_state</span><span class="p">,</span>
+        <span class="n">tlist</span><span class="o">=</span><span class="n">context</span><span class="o">.</span><span class="n">tlist</span><span class="p">,</span>
+        <span class="n">c_ops</span><span class="o">=</span><span class="n">context</span><span class="o">.</span><span class="n">c_ops</span><span class="p">,</span>
+        <span class="n">e_ops</span><span class="o">=</span><span class="n">context</span><span class="o">.</span><span class="n">e_ops</span><span class="p">,</span>
+        <span class="n">e_ops_meta</span><span class="o">=</span><span class="n">context</span><span class="o">.</span><span class="n">e_ops_meta</span><span class="p">,</span>
+        <span class="n">resolved_frame</span><span class="o">=</span><span class="n">context</span><span class="o">.</span><span class="n">resolved_frame</span><span class="p">,</span>
+        <span class="n">solver</span><span class="o">=</span><span class="n">context</span><span class="o">.</span><span class="n">solver</span><span class="p">,</span>
+        <span class="n">options</span><span class="o">=</span><span class="n">context</span><span class="o">.</span><span class="n">options</span><span class="p">,</span>
+    <span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="solve_problem_list">
+<a class="viewcode-back" href="../../../generated/quchip.engine.stage4_problem.html#quchip.engine.stage4_problem.solve_problem_list">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">solve_problem_list</span><span class="p">(</span>
+    <span class="n">problems</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">SolveProblem</span><span class="p">],</span>
+    <span class="n">backend</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">progress</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Group problems by shared operator skeleton and dispatch as :class:`SolveBatch`es.</span>
+
+<span class="sd">    Problems that share an operator skeleton are merged into one batched solve;</span>
+<span class="sd">    those that cannot be structurally batched fall back to per-problem</span>
+<span class="sd">    ``backend.solve_problem`` calls.</span>
+
+<span class="sd">    Grouping is a two-stage filter. The cheap identity-based prefilter here</span>
+<span class="sd">    (:func:`_skeleton_prefilter_key`) buckets problems by ``id()`` of their</span>
+<span class="sd">    shared operators/metadata so that obviously-incompatible problems are never</span>
+<span class="sd">    compared by value. The canonical by-value compatibility check is intentionally</span>
+<span class="sd">    a *separate* concern that lives inside</span>
+<span class="sd">    :func:`build_solve_batch_from_descriptions` (operator ``fingerprint``):</span>
+<span class="sd">    the prefilter is an identity prefilter, the fingerprint is the value check.</span>
+<span class="sd">    Returns a :class:`~quchip.results.results.SimulationBatchResult`.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">quchip.results.results</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+        <span class="n">SimulationBatchResult</span><span class="p">,</span>
+        <span class="n">wrap_solver_result</span><span class="p">,</span>
+        <span class="n">wrap_solver_results_from_batch</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">_tlist_cache</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_options_key</span><span class="p">(</span><span class="n">opts</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">:</span>
+        <span class="n">items</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">opts</span><span class="o">.</span><span class="n">keys</span><span class="p">(),</span> <span class="n">key</span><span class="o">=</span><span class="nb">str</span><span class="p">):</span>
+            <span class="n">val</span> <span class="o">=</span> <span class="n">opts</span><span class="p">[</span><span class="n">key</span><span class="p">]</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="nb">hash</span><span class="p">(</span><span class="n">val</span><span class="p">)</span>
+                <span class="n">items</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="nb">str</span><span class="p">(</span><span class="n">key</span><span class="p">),</span> <span class="n">val</span><span class="p">))</span>
+            <span class="k">except</span> <span class="ne">TypeError</span><span class="p">:</span>
+                <span class="n">items</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="nb">str</span><span class="p">(</span><span class="n">key</span><span class="p">),</span> <span class="nb">repr</span><span class="p">(</span><span class="n">val</span><span class="p">)))</span>
+        <span class="k">return</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">items</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_tlist_key</span><span class="p">(</span><span class="n">tlist</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">tlist</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">(</span><span class="s2">&quot;none&quot;</span><span class="p">,)</span>
+        <span class="n">obj_id</span> <span class="o">=</span> <span class="nb">id</span><span class="p">(</span><span class="n">tlist</span><span class="p">)</span>
+        <span class="n">cached</span> <span class="o">=</span> <span class="n">_tlist_cache</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">obj_id</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">cached</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">cached</span>
+        <span class="n">arr</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">tlist</span><span class="p">)</span>
+        <span class="n">key</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;tlist&quot;</span><span class="p">,</span> <span class="n">arr</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">arr</span><span class="o">.</span><span class="n">dtype</span><span class="p">),</span> <span class="n">arr</span><span class="o">.</span><span class="n">tobytes</span><span class="p">())</span>
+        <span class="n">_tlist_cache</span><span class="p">[</span><span class="n">obj_id</span><span class="p">]</span> <span class="o">=</span> <span class="n">key</span>
+        <span class="k">return</span> <span class="n">key</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_op_list_key</span><span class="p">(</span><span class="n">ops</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">ops</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">(</span><span class="s2">&quot;none&quot;</span><span class="p">,)</span>
+        <span class="k">return</span> <span class="p">(</span><span class="s2">&quot;ops&quot;</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">(</span><span class="nb">id</span><span class="p">(</span><span class="n">o</span><span class="p">)</span> <span class="k">for</span> <span class="n">o</span> <span class="ow">in</span> <span class="n">ops</span><span class="p">))</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_skeleton_prefilter_key</span><span class="p">(</span><span class="n">problem</span><span class="p">:</span> <span class="n">SolveProblem</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">:</span>
+        <span class="n">desc</span> <span class="o">=</span> <span class="n">problem</span><span class="o">.</span><span class="n">hamiltonian</span>
+        <span class="n">solver_name</span> <span class="o">=</span> <span class="n">problem</span><span class="o">.</span><span class="n">solver</span> <span class="ow">or</span> <span class="p">(</span><span class="s2">&quot;mesolve&quot;</span> <span class="k">if</span> <span class="n">problem</span><span class="o">.</span><span class="n">c_ops</span> <span class="k">else</span> <span class="s2">&quot;sesolve&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="p">(</span>
+            <span class="n">solver_name</span><span class="p">,</span>
+            <span class="nb">id</span><span class="p">(</span><span class="n">desc</span><span class="o">.</span><span class="n">static_terms</span><span class="p">),</span>
+            <span class="nb">tuple</span><span class="p">(</span><span class="nb">id</span><span class="p">(</span><span class="n">term</span><span class="o">.</span><span class="n">operator</span><span class="p">)</span> <span class="k">for</span> <span class="n">term</span> <span class="ow">in</span> <span class="n">desc</span><span class="o">.</span><span class="n">dynamic_terms</span><span class="p">),</span>
+            <span class="nb">tuple</span><span class="p">(</span><span class="n">term</span><span class="o">.</span><span class="n">origin</span> <span class="k">for</span> <span class="n">term</span> <span class="ow">in</span> <span class="n">desc</span><span class="o">.</span><span class="n">dynamic_terms</span><span class="p">),</span>
+            <span class="nb">tuple</span><span class="p">(</span><span class="n">term</span><span class="o">.</span><span class="n">tag</span> <span class="k">for</span> <span class="n">term</span> <span class="ow">in</span> <span class="n">desc</span><span class="o">.</span><span class="n">dynamic_terms</span><span class="p">),</span>
+            <span class="n">_tlist_key</span><span class="p">(</span><span class="n">problem</span><span class="o">.</span><span class="n">tlist</span><span class="p">),</span>
+            <span class="n">_op_list_key</span><span class="p">(</span><span class="n">problem</span><span class="o">.</span><span class="n">e_ops</span><span class="p">),</span>
+            <span class="n">_op_list_key</span><span class="p">(</span><span class="n">problem</span><span class="o">.</span><span class="n">c_ops</span><span class="p">),</span>
+            <span class="n">_options_key</span><span class="p">(</span><span class="n">problem</span><span class="o">.</span><span class="n">options</span><span class="p">),</span>
+            <span class="nb">id</span><span class="p">(</span><span class="n">problem</span><span class="o">.</span><span class="n">resolved_frame</span><span class="p">),</span>
+        <span class="p">)</span>
+
+    <span class="n">groups</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">tuple</span><span class="p">,</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">SolveProblem</span><span class="p">]]]</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">idx</span><span class="p">,</span> <span class="n">problem</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">problems</span><span class="p">):</span>
+        <span class="n">groups</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">_skeleton_prefilter_key</span><span class="p">(</span><span class="n">problem</span><span class="p">),</span> <span class="p">[])</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">idx</span><span class="p">,</span> <span class="n">problem</span><span class="p">))</span>
+
+    <span class="n">ordered_results</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="kc">None</span><span class="p">]</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="n">problems</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">group</span> <span class="ow">in</span> <span class="n">groups</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
+        <span class="n">indices</span> <span class="o">=</span> <span class="p">[</span><span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">group</span><span class="p">]</span>
+        <span class="n">group_problems</span> <span class="o">=</span> <span class="p">[</span><span class="n">p</span> <span class="k">for</span> <span class="n">_</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">group</span><span class="p">]</span>
+        <span class="n">ref</span> <span class="o">=</span> <span class="n">group_problems</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">ctx</span> <span class="o">=</span> <span class="n">SolveProblemContext</span><span class="o">.</span><span class="n">from_problem</span><span class="p">(</span><span class="n">ref</span><span class="p">)</span>
+            <span class="n">batch</span> <span class="o">=</span> <span class="n">build_solve_batch_from_descriptions</span><span class="p">(</span>
+                <span class="n">ctx</span><span class="p">,</span>
+                <span class="p">[</span><span class="n">p</span><span class="o">.</span><span class="n">hamiltonian</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">group_problems</span><span class="p">],</span>
+                <span class="n">initial_states</span><span class="o">=</span><span class="p">[</span><span class="n">p</span><span class="o">.</span><span class="n">initial_state</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">group_problems</span><span class="p">],</span>
+            <span class="p">)</span>
+        <span class="k">except</span> <span class="ne">ValueError</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">idx_original</span><span class="p">,</span> <span class="n">problem</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">indices</span><span class="p">,</span> <span class="n">group_problems</span><span class="p">):</span>
+                <span class="n">result</span> <span class="o">=</span> <span class="n">backend</span><span class="o">.</span><span class="n">solve_problem</span><span class="p">(</span><span class="n">problem</span><span class="p">)</span>
+                <span class="n">ordered_results</span><span class="p">[</span><span class="n">idx_original</span><span class="p">]</span> <span class="o">=</span> <span class="n">wrap_solver_result</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">problem</span><span class="p">,</span> <span class="n">backend</span><span class="p">)</span>
+            <span class="k">continue</span>
+
+        <span class="n">solver_results</span> <span class="o">=</span> <span class="n">backend</span><span class="o">.</span><span class="n">solve_batch</span><span class="p">(</span><span class="n">batch</span><span class="p">,</span> <span class="n">progress</span><span class="o">=</span><span class="n">progress</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">idx_original</span><span class="p">,</span> <span class="n">wrapped_result</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span>
+            <span class="n">indices</span><span class="p">,</span> <span class="n">wrap_solver_results_from_batch</span><span class="p">(</span><span class="n">solver_results</span><span class="p">,</span> <span class="n">batch</span><span class="p">,</span> <span class="n">backend</span><span class="p">)</span>
+        <span class="p">):</span>
+            <span class="n">ordered_results</span><span class="p">[</span><span class="n">idx_original</span><span class="p">]</span> <span class="o">=</span> <span class="n">wrapped_result</span>
+
+    <span class="n">missing</span> <span class="o">=</span> <span class="p">[</span><span class="n">idx</span> <span class="k">for</span> <span class="n">idx</span><span class="p">,</span> <span class="n">result</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">ordered_results</span><span class="p">)</span> <span class="k">if</span> <span class="n">result</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">missing</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;solve_problem_list failed to populate results for problem indices </span><span class="si">{</span><span class="n">missing</span><span class="si">}</span><span class="s2">; &quot;</span>
+            <span class="s2">&quot;backend returned incomplete results.&quot;</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">SimulationBatchResult</span><span class="p">(</span><span class="n">ordered_results</span><span class="p">)</span></div>
+
+</pre></div>
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          
+          
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 2026, Ibraheem AlYousef
+            </div>
+            Made with 
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            <div class="icons">
+              <a class="muted-link fa-brands fa-solid fa-github fa-2x" href="https://github.com/quchip/quchip" aria-label="GitHub"></a>
+              
+            </div>
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer no-toc">
+      
+      
+      
+    </aside>
+  </div>
+</div><script src="../../../_static/documentation_options.js?v=2caa9db7"></script>
+    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../../_static/copybutton.js?v=f281be69"></script>
+    </body>
+</html>

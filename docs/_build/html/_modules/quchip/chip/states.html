@@ -1,0 +1,744 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../../../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><link rel="index" title="Index" href="../../../genindex.html"><link rel="search" title="Search" href="../../../search.html">
+        <link rel="prefetch" href="../../../_static/quchip-wordmark-light.png" as="image">
+        <link rel="prefetch" href="../../../_static/quchip-wordmark-dark.png" as="image">
+
+    <link rel="shortcut icon" href="../../../_static/favicon.png"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>quchip.chip.states - quchip 0.1.0</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/custom.css?v=208c35cd" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #c92f33;
+  --color-brand-content: #c92f33;
+  --color-link: #c92f33;
+  --color-link--visited: #c92f33;
+  --color-link--visited--hover: #c92f33;
+  --color-foreground-primary: #16181c;
+  --color-background-primary: #fafbfc;
+  --color-background-secondary: #f2f4f6;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #ef6661;
+  --color-brand-content: #ef6661;
+  --color-link: #ef6661;
+  --color-link--hover: #ff8a80;
+  --color-link--visited: #ef6661;
+  --color-link--visited--hover: #ff8a80;
+  --color-foreground-primary: #f2f4f6;
+  --color-background-primary: #14161a;
+  --color-background-secondary: #101216;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #ef6661;
+  --color-brand-content: #ef6661;
+  --color-link: #ef6661;
+  --color-link--hover: #ff8a80;
+  --color-link--visited: #ef6661;
+  --color-link--visited--hover: #ff8a80;
+  --color-foreground-primary: #f2f4f6;
+  --color-background-primary: #14161a;
+  --color-background-secondary: #101216;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../../../index.html"><div class="brand">quchip 0.1.0</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon no-toc" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../../../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo only-light" src="../../../_static/quchip-wordmark-light.png" alt="Light Logo"/>
+    <img class="sidebar-logo only-dark" src="../../../_static/quchip-wordmark-dark.png" alt="Dark Logo"/>
+  </div>
+  
+  
+</a><form class="sidebar-search-container" method="get" action="../../../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../examples/hello-chip.html">Hello, drive and readout</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../cookbook.html">Cookbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../physics.html">quchip Physics Reference</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../../api.html">API reference</a><input aria-label="Toggle navigation of API reference" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../../generated/quchip.html">quchip</a><input aria-label="Toggle navigation of quchip" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.analysis.html">quchip.analysis</a><input aria-label="Toggle navigation of quchip.analysis" class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" role="switch" type="checkbox"/><label for="toctree-checkbox-3"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.analysis.cross_resonance.html">quchip.analysis.cross_resonance</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.analysis.dispersive_readout.html">quchip.analysis.dispersive_readout</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.analysis.effective_hamiltonian.html">quchip.analysis.effective_hamiltonian</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.backend.html">quchip.backend</a><input aria-label="Toggle navigation of quchip.backend" class="toctree-checkbox" id="toctree-checkbox-4" name="toctree-checkbox-4" role="switch" type="checkbox"/><label for="toctree-checkbox-4"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.backend.containers.html">quchip.backend.containers</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.backend.dynamiqs.html">quchip.backend.dynamiqs</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.backend.protocol.html">quchip.backend.protocol</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.backend.qutip.html">quchip.backend.qutip</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.chip.html">quchip.chip</a><input aria-label="Toggle navigation of quchip.chip" class="toctree-checkbox" id="toctree-checkbox-5" name="toctree-checkbox-5" role="switch" type="checkbox"/><label for="toctree-checkbox-5"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.analysis.html">quchip.chip.analysis</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.baths.html">quchip.chip.baths</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.chip.html">quchip.chip.chip</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.coupling_base.html">quchip.chip.coupling_base</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.couplings.html">quchip.chip.couplings</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.describe.html">quchip.chip.describe</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.dressing.html">quchip.chip.dressing</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.observables.html">quchip.chip.observables</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.partition.html">quchip.chip.partition</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.retarget.html">quchip.chip.retarget</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.rwa.html">quchip.chip.rwa</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.serialization.html">quchip.chip.serialization</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.states.html">quchip.chip.states</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.sw.html">quchip.chip.sw</a></li>
+<li class="toctree-l4 has-children"><a class="reference internal" href="../../../generated/quchip.chip.transformations.html">quchip.chip.transformations</a><input aria-label="Toggle navigation of quchip.chip.transformations" class="toctree-checkbox" id="toctree-checkbox-6" name="toctree-checkbox-6" role="switch" type="checkbox"/><label for="toctree-checkbox-6"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.chip.transformations.active_patch.html">quchip.chip.transformations.active_patch</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.chip.transformations.dispatch.html">quchip.chip.transformations.dispatch</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.chip.transformations.eliminate_coupling.html">quchip.chip.transformations.eliminate_coupling</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.chip.transformations.eliminate_device.html">quchip.chip.transformations.eliminate_device</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.chip.transformations.methods.html">quchip.chip.transformations.methods</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.chip.transformations.plumbing.html">quchip.chip.transformations.plumbing</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.chip.transformations.result.html">quchip.chip.transformations.result</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.control.html">quchip.control</a><input aria-label="Toggle navigation of quchip.control" class="toctree-checkbox" id="toctree-checkbox-7" name="toctree-checkbox-7" role="switch" type="checkbox"/><label for="toctree-checkbox-7"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.control.batch.html">quchip.control.batch</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.control.drive.html">quchip.control.drive</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.control.drives_two_photon.html">quchip.control.drives_two_photon</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.control.envelopes.html">quchip.control.envelopes</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.control.equipment.html">quchip.control.equipment</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.control.sequence.html">quchip.control.sequence</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.control.signal.html">quchip.control.signal</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.control.signal_spec.html">quchip.control.signal_spec</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.declarative.html">quchip.declarative</a><input aria-label="Toggle navigation of quchip.declarative" class="toctree-checkbox" id="toctree-checkbox-8" name="toctree-checkbox-8" role="switch" type="checkbox"/><label for="toctree-checkbox-8"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.declarative.envelope_shape.html">quchip.declarative.envelope_shape</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.declarative.expr.html">quchip.declarative.expr</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.declarative.models.html">quchip.declarative.models</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.declarative.ops.html">quchip.declarative.ops</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.declarative.parameters.html">quchip.declarative.parameters</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.declarative.qnp.html">quchip.declarative.qnp</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.devices.html">quchip.devices</a><input aria-label="Toggle navigation of quchip.devices" class="toctree-checkbox" id="toctree-checkbox-9" name="toctree-checkbox-9" role="switch" type="checkbox"/><label for="toctree-checkbox-9"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.devices.base.html">quchip.devices.base</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.devices.circuit.html">quchip.devices.circuit</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.devices.fluxonium.html">quchip.devices.fluxonium</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.devices.kerr_cavity.html">quchip.devices.kerr_cavity</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.devices.protocols.html">quchip.devices.protocols</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.devices.resonator.html">quchip.devices.resonator</a></li>
+<li class="toctree-l4 has-children"><a class="reference internal" href="../../../generated/quchip.devices.transmon.html">quchip.devices.transmon</a><input aria-label="Toggle navigation of quchip.devices.transmon" class="toctree-checkbox" id="toctree-checkbox-10" name="toctree-checkbox-10" role="switch" type="checkbox"/><label for="toctree-checkbox-10"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.devices.transmon.charge_basis.html">quchip.devices.transmon.charge_basis</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.devices.transmon.duffing.html">quchip.devices.transmon.duffing</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.devices.transmon.flux_tunable.html">quchip.devices.transmon.flux_tunable</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.engine.html">quchip.engine</a><input aria-label="Toggle navigation of quchip.engine" class="toctree-checkbox" id="toctree-checkbox-11" name="toctree-checkbox-11" role="switch" type="checkbox"/><label for="toctree-checkbox-11"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.engine.bands.html">quchip.engine.bands</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.engine.ir.html">quchip.engine.ir</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.engine.partitioned.html">quchip.engine.partitioned</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.engine.solver_hints.html">quchip.engine.solver_hints</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.engine.stage1_frames.html">quchip.engine.stage1_frames</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.engine.stage2_assembly.html">quchip.engine.stage2_assembly</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.engine.stage3_observables.html">quchip.engine.stage3_observables</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.engine.stage4_problem.html">quchip.engine.stage4_problem</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.interop.html">quchip.interop</a><input aria-label="Toggle navigation of quchip.interop" class="toctree-checkbox" id="toctree-checkbox-12" name="toctree-checkbox-12" role="switch" type="checkbox"/><label for="toctree-checkbox-12"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.interop.base.html">quchip.interop.base</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.interop.eigenbasis.html">quchip.interop.eigenbasis</a></li>
+<li class="toctree-l4 has-children"><a class="reference internal" href="../../../generated/quchip.interop.scqubits.html">quchip.interop.scqubits</a><input aria-label="Toggle navigation of quchip.interop.scqubits" class="toctree-checkbox" id="toctree-checkbox-13" name="toctree-checkbox-13" role="switch" type="checkbox"/><label for="toctree-checkbox-13"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.interop.scqubits.composite.html">quchip.interop.scqubits.composite</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.interop.scqubits.devices.html">quchip.interop.scqubits.devices</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.inverse_design.html">quchip.inverse_design</a><input aria-label="Toggle navigation of quchip.inverse_design" class="toctree-checkbox" id="toctree-checkbox-14" name="toctree-checkbox-14" role="switch" type="checkbox"/><label for="toctree-checkbox-14"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.inverse_design.fit.html">quchip.inverse_design.fit</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.inverse_design.observables.html">quchip.inverse_design.observables</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.inverse_design.subsystems.html">quchip.inverse_design.subsystems</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.inverse_design.types.html">quchip.inverse_design.types</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.results.html">quchip.results</a><input aria-label="Toggle navigation of quchip.results" class="toctree-checkbox" id="toctree-checkbox-15" name="toctree-checkbox-15" role="switch" type="checkbox"/><label for="toctree-checkbox-15"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.results.partitioned.html">quchip.results.partitioned</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.results.results.html">quchip.results.results</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../generated/quchip.sweep.html">quchip.sweep</a></li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.utils.html">quchip.utils</a><input aria-label="Toggle navigation of quchip.utils" class="toctree-checkbox" id="toctree-checkbox-16" name="toctree-checkbox-16" role="switch" type="checkbox"/><label for="toctree-checkbox-16"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.utils.constants.html">quchip.utils.constants</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.utils.jax_utils.html">quchip.utils.jax_utils</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.utils.labeling.html">quchip.utils.labeling</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.utils.registry.html">quchip.utils.registry</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.utils.state_versioning.html">quchip.utils.state_versioning</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.viz.html">quchip.viz</a><input aria-label="Toggle navigation of quchip.viz" class="toctree-checkbox" id="toctree-checkbox-17" name="toctree-checkbox-17" role="switch" type="checkbox"/><label for="toctree-checkbox-17"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.viz.chip.html">quchip.viz.chip</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.viz.control.html">quchip.viz.control</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.viz.device.html">quchip.viz.device</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.viz.results.html">quchip.viz.results</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../../contributing.html">Contributing to quchip</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../conduct.html">Code of Conduct</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon no-toc" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <h1>Source code for quchip.chip.states</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;State factories for :class:`~quchip.chip.chip.Chip`.</span>
+
+<span class="sd">These helpers build bare tensor-product kets, dressed eigenstates, and</span>
+<span class="sd">normalized superpositions, plus the ``chip.set_state_order(...)`` +</span>
+<span class="sd">string-shorthand machinery where ``&quot;eg1&quot;``-style specs name one</span>
+<span class="sd">level per device. The chip forwards its public state surface</span>
+<span class="sd">(:meth:`Chip.state`, :meth:`Chip.bare_state`, :meth:`Chip.superposition`,</span>
+<span class="sd">:meth:`Chip.set_state_order`) here; users normally call the chip methods,</span>
+<span class="sd">not these functions directly.</span>
+
+<span class="sd">Module-level functions (taking ``chip`` as the first argument) mirror</span>
+<span class="sd">:mod:`quchip.chip.serialization`. The only per-chip state involved — the</span>
+<span class="sd">declared device order and level symbols — lives on the chip itself</span>
+<span class="sd">(``chip._state_order`` / ``chip._level_symbols``), set by</span>
+<span class="sd">:func:`set_state_order`.</span>
+
+<span class="sd">All spec inputs route through :func:`normalize_device_state_mapping`,</span>
+<span class="sd">which is the single place the ``str`` shorthand is parsed into a</span>
+<span class="sd">``{label: value}`` dict, so the public factories never repeat the</span>
+<span class="sd">``isinstance(..., str)`` guard.</span>
+
+<span class="sd">The dressed :func:`state` path stays JAX-traceable: it forwards to</span>
+<span class="sd">:meth:`ChipAnalysis.state`, which selects the assigned eigenvector</span>
+<span class="sd">column through the :func:`~quchip.chip.dressing.label_eigensystem`</span>
+<span class="sd">array kernel.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">TYPE_CHECKING</span><span class="p">,</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Mapping</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">quchip.backend.protocol</span><span class="w"> </span><span class="kn">import</span> <span class="n">State</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">quchip.utils.jax_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">maybe_concrete_scalar</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">quchip.utils.labeling</span><span class="w"> </span><span class="kn">import</span> <span class="n">merge_labeled_values</span><span class="p">,</span> <span class="n">resolve_label</span>
+
+<span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">quchip.chip.chip</span><span class="w"> </span><span class="kn">import</span> <span class="n">Chip</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">quchip.devices.base</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseDevice</span>
+
+
+<span class="c1"># Default letter → Fock-index map for ``chip.bare_state(&quot;eg1&quot;)`` shorthand.</span>
+<span class="c1"># Covers the ``g``/``e``/``f``/``h`` bra-ket convention common in</span>
+<span class="c1"># superconducting-qubit papers. Users may pass their own via</span>
+<span class="c1"># :func:`set_state_order` (``levels=...``).</span>
+<span class="n">_DEFAULT_LEVEL_SYMBOLS</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;g&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;e&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">&quot;f&quot;</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span> <span class="s2">&quot;h&quot;</span><span class="p">:</span> <span class="mi">3</span><span class="p">}</span>
+
+
+<div class="viewcode-block" id="set_state_order">
+<a class="viewcode-back" href="../../../generated/quchip.chip.states.html#quchip.chip.states.set_state_order">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">set_state_order</span><span class="p">(</span>
+    <span class="n">chip</span><span class="p">:</span> <span class="s2">&quot;Chip&quot;</span><span class="p">,</span>
+    <span class="o">*</span><span class="n">devices</span><span class="p">:</span> <span class="s2">&quot;str | BaseDevice&quot;</span><span class="p">,</span>
+    <span class="n">levels</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Declare the device order used to parse string-state shorthands.</span>
+
+<span class="sd">    After this is called, :meth:`Chip.bare_state`, :meth:`Chip.state`, and</span>
+<span class="sd">    :meth:`Chip.superposition` accept single-string specifications where</span>
+<span class="sd">    each character is one level per device in *devices* order.</span>
+<span class="sd">    Level symbols default to ``g=0, e=1, f=2, h=3``; digits ``0..9``</span>
+<span class="sd">    are always accepted as raw Fock indices.</span>
+
+<span class="sd">    Every chip device must be named exactly once.</span>
+
+<span class="sd">    Examples</span>
+<span class="sd">    --------</span>
+<span class="sd">    &gt;&gt;&gt; from quchip import DuffingTransmon, Resonator, Chip</span>
+<span class="sd">    &gt;&gt;&gt; qb = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label=&quot;qb&quot;)</span>
+<span class="sd">    &gt;&gt;&gt; tc = DuffingTransmon(freq=5.5, anharmonicity=-0.20, levels=3, label=&quot;tc&quot;)</span>
+<span class="sd">    &gt;&gt;&gt; cr = Resonator(freq=7.0, levels=4, label=&quot;cr&quot;)</span>
+<span class="sd">    &gt;&gt;&gt; chip = Chip([qb, tc, cr])</span>
+<span class="sd">    &gt;&gt;&gt; chip.set_state_order(qb, tc, cr)</span>
+<span class="sd">    &gt;&gt;&gt; _ = chip.bare_state(&quot;eg1&quot;)  # {qb: 1, tc: 0, cr: 1}</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">order</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">resolve_label</span><span class="p">(</span><span class="n">d</span><span class="p">)</span> <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">devices</span><span class="p">)</span>
+    <span class="n">available</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">chip</span><span class="o">.</span><span class="n">_device_map</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
+    <span class="n">unknown</span> <span class="o">=</span> <span class="p">[</span><span class="n">lbl</span> <span class="k">for</span> <span class="n">lbl</span> <span class="ow">in</span> <span class="n">order</span> <span class="k">if</span> <span class="n">lbl</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">chip</span><span class="o">.</span><span class="n">_device_map</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">unknown</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unknown device(s) in state order: </span><span class="si">{</span><span class="n">unknown</span><span class="si">}</span><span class="s2">. Available: </span><span class="si">{</span><span class="n">available</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="nb">set</span><span class="p">(</span><span class="n">order</span><span class="p">))</span> <span class="o">!=</span> <span class="nb">len</span><span class="p">(</span><span class="n">order</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Duplicate device in state order: </span><span class="si">{</span><span class="n">order</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">missing</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="nb">set</span><span class="p">(</span><span class="n">available</span><span class="p">)</span> <span class="o">-</span> <span class="nb">set</span><span class="p">(</span><span class="n">order</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">missing</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;set_state_order must name every device; missing </span><span class="si">{</span><span class="n">missing</span><span class="si">}</span><span class="s2">. &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;Available: </span><span class="si">{</span><span class="n">available</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+    <span class="n">chip</span><span class="o">.</span><span class="n">_state_order</span> <span class="o">=</span> <span class="n">order</span>
+    <span class="k">if</span> <span class="n">levels</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">chip</span><span class="o">.</span><span class="n">_level_symbols</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">levels</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="parse_state_string">
+<a class="viewcode-back" href="../../../generated/quchip.chip.states.html#quchip.chip.states.parse_state_string">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">parse_state_string</span><span class="p">(</span><span class="n">chip</span><span class="p">:</span> <span class="s2">&quot;Chip&quot;</span><span class="p">,</span> <span class="n">s</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Parse ``chip.bare_state(&quot;eg1&quot;)`` style strings into ``{label: index}``.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">chip</span><span class="o">.</span><span class="n">_state_order</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="s2">&quot;String-state shorthand requires chip.set_state_order(...) to &quot;</span>
+            <span class="s2">&quot;declare device order first.&quot;</span>
+        <span class="p">)</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">s</span><span class="p">)</span> <span class="o">!=</span> <span class="nb">len</span><span class="p">(</span><span class="n">chip</span><span class="o">.</span><span class="n">_state_order</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;State string </span><span class="si">{</span><span class="n">s</span><span class="si">!r}</span><span class="s2"> has </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">s</span><span class="p">)</span><span class="si">}</span><span class="s2"> chars but </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">chip</span><span class="o">.</span><span class="n">_state_order</span><span class="p">)</span><span class="si">}</span><span class="s2"> &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;devices are declared in state order </span><span class="si">{</span><span class="n">chip</span><span class="o">.</span><span class="n">_state_order</span><span class="si">}</span><span class="s2">.&quot;</span>
+        <span class="p">)</span>
+    <span class="n">out</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">label</span><span class="p">,</span> <span class="n">ch</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">chip</span><span class="o">.</span><span class="n">_state_order</span><span class="p">,</span> <span class="n">s</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">ch</span><span class="o">.</span><span class="n">isdigit</span><span class="p">():</span>
+            <span class="n">out</span><span class="p">[</span><span class="n">label</span><span class="p">]</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">ch</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="n">ch</span> <span class="ow">in</span> <span class="n">chip</span><span class="o">.</span><span class="n">_level_symbols</span><span class="p">:</span>
+            <span class="n">out</span><span class="p">[</span><span class="n">label</span><span class="p">]</span> <span class="o">=</span> <span class="n">chip</span><span class="o">.</span><span class="n">_level_symbols</span><span class="p">[</span><span class="n">ch</span><span class="p">]</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">known</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">chip</span><span class="o">.</span><span class="n">_level_symbols</span><span class="p">)</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;Unknown level symbol </span><span class="si">{</span><span class="n">ch</span><span class="si">!r}</span><span class="s2"> in state </span><span class="si">{</span><span class="n">s</span><span class="si">!r}</span><span class="s2">. &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;Known symbols: </span><span class="si">{</span><span class="n">known</span><span class="si">}</span><span class="s2">; digits 0-9 always accepted.&quot;</span>
+            <span class="p">)</span>
+    <span class="k">return</span> <span class="n">out</span></div>
+
+
+
+<div class="viewcode-block" id="normalize_device_state_mapping">
+<a class="viewcode-back" href="../../../generated/quchip.chip.states.html#quchip.chip.states.normalize_device_state_mapping">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">normalize_device_state_mapping</span><span class="p">(</span>
+    <span class="n">chip</span><span class="p">:</span> <span class="s2">&quot;Chip&quot;</span><span class="p">,</span>
+    <span class="n">device_states</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span> <span class="o">|</span> <span class="s2">&quot;BaseDevice&quot;</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">keyword_states</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Merge a mapping (or string shorthand) and kwargs into ``{label: value}``.</span>
+
+<span class="sd">    A ``str`` *device_states* is the single place the ``&quot;eg1&quot;`` shorthand</span>
+<span class="sd">    is parsed (via :func:`parse_state_string`), so every public state</span>
+<span class="sd">    factory routes through here instead of repeating the guard. After the</span>
+<span class="sd">    string shorthand and the mapping type-check, the resolve-and-dedup step</span>
+<span class="sd">    is delegated to :func:`~quchip.utils.labeling.merge_labeled_values` — the</span>
+<span class="sd">    same primitive the bare-tuple builder uses, so a duplicate device</span>
+<span class="sd">    specification means the same thing here and in spectroscopy sweeps.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">mapping</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span>
+    <span class="n">mapping</span> <span class="o">=</span> <span class="n">parse_state_string</span><span class="p">(</span><span class="n">chip</span><span class="p">,</span> <span class="n">device_states</span><span class="p">)</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">device_states</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="k">else</span> <span class="n">device_states</span>
+
+    <span class="k">if</span> <span class="n">mapping</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">mapping</span><span class="p">,</span> <span class="n">Mapping</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span>
+            <span class="s2">&quot;device_states must be a mapping keyed by device label or &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;BaseDevice, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">mapping</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">merge_labeled_values</span><span class="p">(</span><span class="n">mapping</span><span class="p">,</span> <span class="n">keyword_states</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="superposition">
+<a class="viewcode-back" href="../../../generated/quchip.chip.states.html#quchip.chip.states.superposition">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">superposition</span><span class="p">(</span>
+    <span class="n">chip</span><span class="p">:</span> <span class="s2">&quot;Chip&quot;</span><span class="p">,</span>
+    <span class="o">*</span><span class="n">components</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span> <span class="o">|</span> <span class="s2">&quot;BaseDevice&quot;</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">State</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Normalized bare-basis superposition of tensor-product states.</span>
+
+<span class="sd">    Each component is either a bare-state spec (dict keyed by device or</span>
+<span class="sd">    label, or a string when :func:`set_state_order` has been called) or</span>
+<span class="sd">    an ``(amplitude, spec)`` tuple for weighted mixing. Uniform weights</span>
+<span class="sd">    by default; results are normalized to unit norm.</span>
+
+<span class="sd">    Unlike :func:`state`, this stays in the bare product basis — no</span>
+<span class="sd">    dressed diagonalization — so the probe basis is explicit.</span>
+
+<span class="sd">    Examples</span>
+<span class="sd">    --------</span>
+<span class="sd">    &gt;&gt;&gt; import numpy as np</span>
+<span class="sd">    &gt;&gt;&gt; from quchip import DuffingTransmon, Resonator, Chip</span>
+<span class="sd">    &gt;&gt;&gt; qb = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label=&quot;qb&quot;)</span>
+<span class="sd">    &gt;&gt;&gt; cr = Resonator(freq=7.0, levels=4, label=&quot;cr&quot;)</span>
+<span class="sd">    &gt;&gt;&gt; chip = Chip([qb, cr])</span>
+<span class="sd">    &gt;&gt;&gt; _ = chip.superposition({qb: 0}, {qb: 1})  # equal |00&gt; + |10&gt;</span>
+<span class="sd">    &gt;&gt;&gt; _ = chip.superposition(                   # weighted mix</span>
+<span class="sd">    ...     (np.sqrt(0.3), {qb: 1, cr: 0}),</span>
+<span class="sd">    ...     (np.sqrt(0.7), {qb: 1, cr: 1}),</span>
+<span class="sd">    ... )</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">components</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;superposition requires at least one component&quot;</span><span class="p">)</span>
+
+    <span class="n">amps</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">kets</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">State</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">component</span> <span class="ow">in</span> <span class="n">components</span><span class="p">:</span>
+        <span class="k">if</span> <span class="p">(</span>
+            <span class="nb">isinstance</span><span class="p">(</span><span class="n">component</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">)</span>
+            <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">component</span><span class="p">)</span> <span class="o">==</span> <span class="mi">2</span>
+            <span class="ow">and</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">component</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="p">(</span><span class="nb">dict</span><span class="p">,</span> <span class="nb">str</span><span class="p">,</span> <span class="n">Mapping</span><span class="p">))</span>
+        <span class="p">):</span>
+            <span class="n">amp</span><span class="p">,</span> <span class="n">spec</span> <span class="o">=</span> <span class="n">component</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">amp</span><span class="p">,</span> <span class="n">spec</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">,</span> <span class="n">component</span>
+        <span class="c1"># ``spec`` may still be a str shorthand — bare_state normalizes it.</span>
+        <span class="n">kets</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">bare_state</span><span class="p">(</span><span class="n">chip</span><span class="p">,</span> <span class="n">spec</span><span class="p">))</span>
+        <span class="n">amps</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">amp</span><span class="p">)</span>
+
+    <span class="n">psi</span> <span class="o">=</span> <span class="n">amps</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="n">kets</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="k">for</span> <span class="n">amp</span><span class="p">,</span> <span class="n">ket</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">amps</span><span class="p">[</span><span class="mi">1</span><span class="p">:],</span> <span class="n">kets</span><span class="p">[</span><span class="mi">1</span><span class="p">:]):</span>
+        <span class="n">psi</span> <span class="o">=</span> <span class="n">psi</span> <span class="o">+</span> <span class="n">amp</span> <span class="o">*</span> <span class="n">ket</span>
+    <span class="n">backend</span> <span class="o">=</span> <span class="n">chip</span><span class="o">.</span><span class="n">backend</span>
+    <span class="n">norm</span> <span class="o">=</span> <span class="n">backend</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">psi</span><span class="p">)</span>
+    <span class="c1"># Backend.norm may return a traced 0-d array (dynamiqs). The zero-norm</span>
+    <span class="c1"># short-circuit runs directly when concretely readable. Otherwise the</span>
+    <span class="c1"># divisor itself must be guarded (mirrors Bath._bose&#39;s safe-denominator</span>
+    <span class="c1"># pattern): xp.where evaluates both branches, so dividing by the</span>
+    <span class="c1"># (possibly zero) traced norm directly would still produce 0/0 -&gt; NaN</span>
+    <span class="c1"># in the unselected branch. Replacing the zero norm with 1.0 before the</span>
+    <span class="c1"># division makes an all-zero traced amplitude set return the</span>
+    <span class="c1"># already-zero (unnormalized) state instead of NaN.</span>
+    <span class="n">concrete_norm</span> <span class="o">=</span> <span class="n">maybe_concrete_scalar</span><span class="p">(</span><span class="n">norm</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">concrete_norm</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">psi</span> <span class="k">if</span> <span class="n">concrete_norm</span> <span class="o">&lt;=</span> <span class="mi">0</span> <span class="k">else</span> <span class="n">psi</span> <span class="o">/</span> <span class="n">norm</span>
+    <span class="n">xp</span> <span class="o">=</span> <span class="n">backend</span><span class="o">.</span><span class="n">array_module</span>
+    <span class="n">safe_norm</span> <span class="o">=</span> <span class="n">xp</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">norm</span> <span class="o">==</span> <span class="mi">0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="n">norm</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">psi</span> <span class="o">/</span> <span class="n">safe_norm</span></div>
+
+
+
+<div class="viewcode-block" id="state">
+<a class="viewcode-back" href="../../../generated/quchip.chip.states.html#quchip.chip.states.state">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">state</span><span class="p">(</span>
+    <span class="n">chip</span><span class="p">:</span> <span class="s2">&quot;Chip&quot;</span><span class="p">,</span>
+    <span class="n">device_states</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span> <span class="o">|</span> <span class="s2">&quot;BaseDevice&quot;</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="o">/</span><span class="p">,</span>
+    <span class="o">**</span><span class="n">device_state_kwargs</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">State</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Dressed eigenstate for the given Fock-indexed bare-state labels.</span>
+
+<span class="sd">    Accepts a string shorthand (e.g. ``&quot;eg1&quot;``) when</span>
+<span class="sd">    :func:`set_state_order` has been called.</span>
+
+<span class="sd">    Safe inside ``jax.jit``/``grad``/``vmap``: under tracing the</span>
+<span class="sd">    assigned eigenvector column is selected through the</span>
+<span class="sd">    :func:`~quchip.chip.dressing.label_eigensystem` array kernel, so</span>
+<span class="sd">    dressed initial states are differentiable end-to-end. The global</span>
+<span class="sd">    phase is gauge-dependent (``eigh`` column convention) —</span>
+<span class="sd">    populations and ``|overlap|`` figures of merit are unaffected.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">chip</span><span class="o">.</span><span class="n">_analysis</span><span class="o">.</span><span class="n">state</span><span class="p">(</span><span class="n">device_states</span><span class="p">,</span> <span class="o">**</span><span class="n">device_state_kwargs</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="bare_state">
+<a class="viewcode-back" href="../../../generated/quchip.chip.states.html#quchip.chip.states.bare_state">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">bare_state</span><span class="p">(</span>
+    <span class="n">chip</span><span class="p">:</span> <span class="s2">&quot;Chip&quot;</span><span class="p">,</span>
+    <span class="n">device_states</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span> <span class="o">|</span> <span class="s2">&quot;BaseDevice&quot;</span><span class="p">,</span> <span class="nb">int</span> <span class="o">|</span> <span class="n">State</span><span class="p">]</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="o">/</span><span class="p">,</span>
+    <span class="o">**</span><span class="n">device_state_kwargs</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="n">State</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">State</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Bare tensor-product state from per-device Fock indices or kets.</span>
+
+<span class="sd">    Each device may be specified as either a Fock index (``int``) or a</span>
+<span class="sd">    ket vector in that device&#39;s local space. Devices not mentioned</span>
+<span class="sd">    default to the ground state (Fock index 0). Unlike :func:`state`</span>
+<span class="sd">    this does **not** diagonalize the coupled system.</span>
+
+<span class="sd">    Accepts a string shorthand (e.g. ``&quot;eg1&quot;``) when</span>
+<span class="sd">    :func:`set_state_order` has been called.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">resolved</span> <span class="o">=</span> <span class="n">normalize_device_state_mapping</span><span class="p">(</span><span class="n">chip</span><span class="p">,</span> <span class="n">device_states</span><span class="p">,</span> <span class="n">device_state_kwargs</span><span class="p">)</span>
+    <span class="n">backend</span> <span class="o">=</span> <span class="n">chip</span><span class="o">.</span><span class="n">backend</span>
+    <span class="n">available</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">chip</span><span class="o">.</span><span class="n">_device_map</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
+
+    <span class="k">for</span> <span class="n">label</span> <span class="ow">in</span> <span class="n">resolved</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">label</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">chip</span><span class="o">.</span><span class="n">_device_map</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unknown device label &#39;</span><span class="si">{</span><span class="n">label</span><span class="si">}</span><span class="s2">&#39;. Available labels: </span><span class="si">{</span><span class="n">available</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">label</span><span class="p">,</span> <span class="n">val</span> <span class="ow">in</span> <span class="n">resolved</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">val</span><span class="p">,</span> <span class="nb">bool</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Fock index for &#39;</span><span class="si">{</span><span class="n">label</span><span class="si">}</span><span class="s2">&#39; must be an integer, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">val</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">val</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">dev</span> <span class="o">=</span> <span class="n">chip</span><span class="o">.</span><span class="n">_device_map</span><span class="p">[</span><span class="n">label</span><span class="p">]</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">val</span><span class="p">,</span> <span class="nb">int</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">val</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Fock index for &#39;</span><span class="si">{</span><span class="n">label</span><span class="si">}</span><span class="s2">&#39; must be &gt;= 0, got </span><span class="si">{</span><span class="n">val</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">val</span> <span class="o">&gt;=</span> <span class="n">dev</span><span class="o">.</span><span class="n">levels</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">&quot;Fock index </span><span class="si">{</span><span class="n">val</span><span class="si">}</span><span class="s2"> for &#39;</span><span class="si">{</span><span class="n">label</span><span class="si">}</span><span class="s2">&#39; exceeds device &quot;</span>
+                    <span class="sa">f</span><span class="s2">&quot;dimension (</span><span class="si">{</span><span class="n">dev</span><span class="o">.</span><span class="n">levels</span><span class="si">}</span><span class="s2"> levels, max index &quot;</span>
+                    <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">dev</span><span class="o">.</span><span class="n">levels</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="si">}</span><span class="s2">). &quot;</span>
+                    <span class="sa">f</span><span class="s2">&quot;Hint: Increase device levels, e.g. &quot;</span>
+                    <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">dev</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">(..., levels=</span><span class="si">{</span><span class="n">val</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="si">}</span><span class="s2">)&quot;</span>
+                <span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">backend</span><span class="o">.</span><span class="n">is_ket</span><span class="p">(</span><span class="n">val</span><span class="p">):</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;State for &#39;</span><span class="si">{</span><span class="n">label</span><span class="si">}</span><span class="s2">&#39; must be a ket vector, got a non-ket state&quot;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">val</span><span class="p">,</span> <span class="s2">&quot;shape&quot;</span><span class="p">)</span> <span class="ow">and</span> <span class="n">val</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="n">dev</span><span class="o">.</span><span class="n">levels</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">&quot;State dimension for &#39;</span><span class="si">{</span><span class="n">label</span><span class="si">}</span><span class="s2">&#39; is </span><span class="si">{</span><span class="n">val</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">, expected </span><span class="si">{</span><span class="n">dev</span><span class="o">.</span><span class="n">levels</span><span class="si">}</span><span class="s2"> (device levels)&quot;</span>
+                <span class="p">)</span>
+
+    <span class="n">kets</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">State</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">dev</span> <span class="ow">in</span> <span class="n">chip</span><span class="o">.</span><span class="n">devices</span><span class="p">:</span>
+        <span class="n">val</span> <span class="o">=</span> <span class="n">resolved</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">dev</span><span class="o">.</span><span class="n">label</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">val</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">kets</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">backend</span><span class="o">.</span><span class="n">basis</span><span class="p">(</span><span class="n">dev</span><span class="o">.</span><span class="n">levels</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
+        <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">val</span><span class="p">,</span> <span class="nb">int</span><span class="p">):</span>
+            <span class="n">kets</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">backend</span><span class="o">.</span><span class="n">basis</span><span class="p">(</span><span class="n">dev</span><span class="o">.</span><span class="n">levels</span><span class="p">,</span> <span class="n">val</span><span class="p">))</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">kets</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">val</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">kets</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">kets</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">backend</span><span class="o">.</span><span class="n">tensor_states</span><span class="p">(</span><span class="o">*</span><span class="n">kets</span><span class="p">)</span></div>
+
+</pre></div>
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          
+          
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 2026, Ibraheem AlYousef
+            </div>
+            Made with 
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            <div class="icons">
+              <a class="muted-link fa-brands fa-solid fa-github fa-2x" href="https://github.com/quchip/quchip" aria-label="GitHub"></a>
+              
+            </div>
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer no-toc">
+      
+      
+      
+    </aside>
+  </div>
+</div><script src="../../../_static/documentation_options.js?v=2caa9db7"></script>
+    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../../_static/copybutton.js?v=f281be69"></script>
+    </body>
+</html>

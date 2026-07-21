@@ -1,0 +1,786 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html"><link rel="next" title="Cookbook" href="../cookbook.html"><link rel="prev" title="Documentation" href="../index.html">
+        <link rel="prefetch" href="../_static/quchip-wordmark-light.png" as="image">
+        <link rel="prefetch" href="../_static/quchip-wordmark-dark.png" as="image">
+
+    <link rel="shortcut icon" href="../_static/favicon.png"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>Hello, drive and readout - quchip 0.1.0</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=208c35cd" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #c92f33;
+  --color-brand-content: #c92f33;
+  --color-link: #c92f33;
+  --color-link--visited: #c92f33;
+  --color-link--visited--hover: #c92f33;
+  --color-foreground-primary: #16181c;
+  --color-background-primary: #fafbfc;
+  --color-background-secondary: #f2f4f6;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #ef6661;
+  --color-brand-content: #ef6661;
+  --color-link: #ef6661;
+  --color-link--hover: #ff8a80;
+  --color-link--visited: #ef6661;
+  --color-link--visited--hover: #ff8a80;
+  --color-foreground-primary: #f2f4f6;
+  --color-background-primary: #14161a;
+  --color-background-secondary: #101216;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #ef6661;
+  --color-brand-content: #ef6661;
+  --color-link: #ef6661;
+  --color-link--hover: #ff8a80;
+  --color-link--visited: #ef6661;
+  --color-link--visited--hover: #ff8a80;
+  --color-foreground-primary: #f2f4f6;
+  --color-background-primary: #14161a;
+  --color-background-secondary: #101216;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../index.html"><div class="brand">quchip 0.1.0</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo only-light" src="../_static/quchip-wordmark-light.png" alt="Light Logo"/>
+    <img class="sidebar-logo only-dark" src="../_static/quchip-wordmark-dark.png" alt="Dark Logo"/>
+  </div>
+  
+  
+</a><form class="sidebar-search-container" method="get" action="../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <ul class="current">
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Hello, drive and readout</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../cookbook.html">Cookbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../physics.html">quchip Physics Reference</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../api.html">API reference</a><input aria-label="Toggle navigation of API reference" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../generated/quchip.html">quchip</a><input aria-label="Toggle navigation of quchip" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../generated/quchip.analysis.html">quchip.analysis</a><input aria-label="Toggle navigation of quchip.analysis" class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" role="switch" type="checkbox"/><label for="toctree-checkbox-3"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.analysis.cross_resonance.html">quchip.analysis.cross_resonance</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.analysis.dispersive_readout.html">quchip.analysis.dispersive_readout</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.analysis.effective_hamiltonian.html">quchip.analysis.effective_hamiltonian</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../generated/quchip.backend.html">quchip.backend</a><input aria-label="Toggle navigation of quchip.backend" class="toctree-checkbox" id="toctree-checkbox-4" name="toctree-checkbox-4" role="switch" type="checkbox"/><label for="toctree-checkbox-4"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.backend.containers.html">quchip.backend.containers</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.backend.dynamiqs.html">quchip.backend.dynamiqs</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.backend.protocol.html">quchip.backend.protocol</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.backend.qutip.html">quchip.backend.qutip</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../generated/quchip.chip.html">quchip.chip</a><input aria-label="Toggle navigation of quchip.chip" class="toctree-checkbox" id="toctree-checkbox-5" name="toctree-checkbox-5" role="switch" type="checkbox"/><label for="toctree-checkbox-5"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.chip.analysis.html">quchip.chip.analysis</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.chip.baths.html">quchip.chip.baths</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.chip.chip.html">quchip.chip.chip</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.chip.coupling_base.html">quchip.chip.coupling_base</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.chip.couplings.html">quchip.chip.couplings</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.chip.describe.html">quchip.chip.describe</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.chip.dressing.html">quchip.chip.dressing</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.chip.observables.html">quchip.chip.observables</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.chip.partition.html">quchip.chip.partition</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.chip.retarget.html">quchip.chip.retarget</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.chip.rwa.html">quchip.chip.rwa</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.chip.serialization.html">quchip.chip.serialization</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.chip.states.html">quchip.chip.states</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.chip.sw.html">quchip.chip.sw</a></li>
+<li class="toctree-l4 has-children"><a class="reference internal" href="../generated/quchip.chip.transformations.html">quchip.chip.transformations</a><input aria-label="Toggle navigation of quchip.chip.transformations" class="toctree-checkbox" id="toctree-checkbox-6" name="toctree-checkbox-6" role="switch" type="checkbox"/><label for="toctree-checkbox-6"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l5"><a class="reference internal" href="../generated/quchip.chip.transformations.active_patch.html">quchip.chip.transformations.active_patch</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../generated/quchip.chip.transformations.dispatch.html">quchip.chip.transformations.dispatch</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../generated/quchip.chip.transformations.eliminate_coupling.html">quchip.chip.transformations.eliminate_coupling</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../generated/quchip.chip.transformations.eliminate_device.html">quchip.chip.transformations.eliminate_device</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../generated/quchip.chip.transformations.methods.html">quchip.chip.transformations.methods</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../generated/quchip.chip.transformations.plumbing.html">quchip.chip.transformations.plumbing</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../generated/quchip.chip.transformations.result.html">quchip.chip.transformations.result</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../generated/quchip.control.html">quchip.control</a><input aria-label="Toggle navigation of quchip.control" class="toctree-checkbox" id="toctree-checkbox-7" name="toctree-checkbox-7" role="switch" type="checkbox"/><label for="toctree-checkbox-7"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.control.batch.html">quchip.control.batch</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.control.drive.html">quchip.control.drive</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.control.drives_two_photon.html">quchip.control.drives_two_photon</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.control.envelopes.html">quchip.control.envelopes</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.control.equipment.html">quchip.control.equipment</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.control.sequence.html">quchip.control.sequence</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.control.signal.html">quchip.control.signal</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.control.signal_spec.html">quchip.control.signal_spec</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../generated/quchip.declarative.html">quchip.declarative</a><input aria-label="Toggle navigation of quchip.declarative" class="toctree-checkbox" id="toctree-checkbox-8" name="toctree-checkbox-8" role="switch" type="checkbox"/><label for="toctree-checkbox-8"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.declarative.envelope_shape.html">quchip.declarative.envelope_shape</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.declarative.expr.html">quchip.declarative.expr</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.declarative.models.html">quchip.declarative.models</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.declarative.ops.html">quchip.declarative.ops</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.declarative.parameters.html">quchip.declarative.parameters</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.declarative.qnp.html">quchip.declarative.qnp</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../generated/quchip.devices.html">quchip.devices</a><input aria-label="Toggle navigation of quchip.devices" class="toctree-checkbox" id="toctree-checkbox-9" name="toctree-checkbox-9" role="switch" type="checkbox"/><label for="toctree-checkbox-9"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.devices.base.html">quchip.devices.base</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.devices.circuit.html">quchip.devices.circuit</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.devices.fluxonium.html">quchip.devices.fluxonium</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.devices.kerr_cavity.html">quchip.devices.kerr_cavity</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.devices.protocols.html">quchip.devices.protocols</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.devices.resonator.html">quchip.devices.resonator</a></li>
+<li class="toctree-l4 has-children"><a class="reference internal" href="../generated/quchip.devices.transmon.html">quchip.devices.transmon</a><input aria-label="Toggle navigation of quchip.devices.transmon" class="toctree-checkbox" id="toctree-checkbox-10" name="toctree-checkbox-10" role="switch" type="checkbox"/><label for="toctree-checkbox-10"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l5"><a class="reference internal" href="../generated/quchip.devices.transmon.charge_basis.html">quchip.devices.transmon.charge_basis</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../generated/quchip.devices.transmon.duffing.html">quchip.devices.transmon.duffing</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../generated/quchip.devices.transmon.flux_tunable.html">quchip.devices.transmon.flux_tunable</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../generated/quchip.engine.html">quchip.engine</a><input aria-label="Toggle navigation of quchip.engine" class="toctree-checkbox" id="toctree-checkbox-11" name="toctree-checkbox-11" role="switch" type="checkbox"/><label for="toctree-checkbox-11"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.engine.bands.html">quchip.engine.bands</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.engine.ir.html">quchip.engine.ir</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.engine.partitioned.html">quchip.engine.partitioned</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.engine.solver_hints.html">quchip.engine.solver_hints</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.engine.stage1_frames.html">quchip.engine.stage1_frames</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.engine.stage2_assembly.html">quchip.engine.stage2_assembly</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.engine.stage3_observables.html">quchip.engine.stage3_observables</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.engine.stage4_problem.html">quchip.engine.stage4_problem</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../generated/quchip.interop.html">quchip.interop</a><input aria-label="Toggle navigation of quchip.interop" class="toctree-checkbox" id="toctree-checkbox-12" name="toctree-checkbox-12" role="switch" type="checkbox"/><label for="toctree-checkbox-12"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.interop.base.html">quchip.interop.base</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.interop.eigenbasis.html">quchip.interop.eigenbasis</a></li>
+<li class="toctree-l4 has-children"><a class="reference internal" href="../generated/quchip.interop.scqubits.html">quchip.interop.scqubits</a><input aria-label="Toggle navigation of quchip.interop.scqubits" class="toctree-checkbox" id="toctree-checkbox-13" name="toctree-checkbox-13" role="switch" type="checkbox"/><label for="toctree-checkbox-13"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l5"><a class="reference internal" href="../generated/quchip.interop.scqubits.composite.html">quchip.interop.scqubits.composite</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../generated/quchip.interop.scqubits.devices.html">quchip.interop.scqubits.devices</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../generated/quchip.inverse_design.html">quchip.inverse_design</a><input aria-label="Toggle navigation of quchip.inverse_design" class="toctree-checkbox" id="toctree-checkbox-14" name="toctree-checkbox-14" role="switch" type="checkbox"/><label for="toctree-checkbox-14"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.inverse_design.fit.html">quchip.inverse_design.fit</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.inverse_design.observables.html">quchip.inverse_design.observables</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.inverse_design.subsystems.html">quchip.inverse_design.subsystems</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.inverse_design.types.html">quchip.inverse_design.types</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../generated/quchip.results.html">quchip.results</a><input aria-label="Toggle navigation of quchip.results" class="toctree-checkbox" id="toctree-checkbox-15" name="toctree-checkbox-15" role="switch" type="checkbox"/><label for="toctree-checkbox-15"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.results.partitioned.html">quchip.results.partitioned</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.results.results.html">quchip.results.results</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../generated/quchip.sweep.html">quchip.sweep</a></li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../generated/quchip.utils.html">quchip.utils</a><input aria-label="Toggle navigation of quchip.utils" class="toctree-checkbox" id="toctree-checkbox-16" name="toctree-checkbox-16" role="switch" type="checkbox"/><label for="toctree-checkbox-16"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.utils.constants.html">quchip.utils.constants</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.utils.jax_utils.html">quchip.utils.jax_utils</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.utils.labeling.html">quchip.utils.labeling</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.utils.registry.html">quchip.utils.registry</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.utils.state_versioning.html">quchip.utils.state_versioning</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../generated/quchip.viz.html">quchip.viz</a><input aria-label="Toggle navigation of quchip.viz" class="toctree-checkbox" id="toctree-checkbox-17" name="toctree-checkbox-17" role="switch" type="checkbox"/><label for="toctree-checkbox-17"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.viz.chip.html">quchip.viz.chip</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.viz.control.html">quchip.viz.control</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.viz.device.html">quchip.viz.device</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../generated/quchip.viz.results.html">quchip.viz.results</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../contributing.html">Contributing to quchip</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../conduct.html">Code of Conduct</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          
+
+<div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section class="tex2jax_ignore mathjax_ignore" id="hello-drive-and-readout">
+<h1>Hello, drive and readout<a class="headerlink" href="#hello-drive-and-readout" title="Link to this heading">¶</a></h1>
+<p>This example couples a Duffing transmon to a lossy resonator. First we compare leakage from two qubit pulses; then we drive the resonator and follow its response for qubit <span class="math notranslate nohighlight">\(|0\rangle\)</span> and <span class="math notranslate nohighlight">\(|1\rangle\)</span>.</p>
+<p>quchip uses GHz for frequencies and ns for time. The chip and coupling use the RWA in a per-device rotating frame; both drives inherit <code class="docutils literal notranslate"><span class="pre">chip.rwa=True</span></code>.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.pyplot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">plt</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">scipy</span><span class="w"> </span><span class="kn">import</span> <span class="n">integrate</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">quchip</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">Capacitive</span><span class="p">,</span>
+    <span class="n">ChargeDrive</span><span class="p">,</span>
+    <span class="n">Chip</span><span class="p">,</span>
+    <span class="n">DuffingTransmon</span><span class="p">,</span>
+    <span class="n">Gaussian</span><span class="p">,</span>
+    <span class="n">GaussianEdge</span><span class="p">,</span>
+    <span class="n">QuantumSequence</span><span class="p">,</span>
+    <span class="n">Resonator</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">resonator_linewidth</span> <span class="o">=</span> <span class="mf">0.001</span>
+<span class="n">truncation_threshold</span> <span class="o">=</span> <span class="mf">1.0e-3</span>
+
+<span class="n">qubit</span> <span class="o">=</span> <span class="n">DuffingTransmon</span><span class="p">(</span>
+    <span class="n">freq</span><span class="o">=</span><span class="mf">5.0</span><span class="p">,</span>
+    <span class="n">anharmonicity</span><span class="o">=-</span><span class="mf">0.30</span><span class="p">,</span>
+    <span class="n">levels</span><span class="o">=</span><span class="mi">6</span><span class="p">,</span>
+    <span class="n">label</span><span class="o">=</span><span class="s2">&quot;qubit&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">readout</span> <span class="o">=</span> <span class="n">Resonator</span><span class="p">(</span>
+    <span class="n">freq</span><span class="o">=</span><span class="mf">6.8</span><span class="p">,</span>
+    <span class="n">levels</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+    <span class="n">quality_factor</span><span class="o">=</span><span class="mf">6.8</span> <span class="o">/</span> <span class="n">resonator_linewidth</span><span class="p">,</span>
+    <span class="n">label</span><span class="o">=</span><span class="s2">&quot;readout&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">chip</span> <span class="o">=</span> <span class="n">Chip</span><span class="p">(</span>
+    <span class="p">[</span><span class="n">qubit</span><span class="p">,</span> <span class="n">readout</span><span class="p">],</span>
+    <span class="n">couplings</span><span class="o">=</span><span class="p">[</span>
+        <span class="n">Capacitive</span><span class="p">(</span><span class="n">qubit</span><span class="p">,</span> <span class="n">readout</span><span class="p">,</span> <span class="n">g</span><span class="o">=</span><span class="mf">0.060</span><span class="p">,</span> <span class="n">rwa</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;qubit-readout&quot;</span><span class="p">)</span>
+    <span class="p">],</span>
+    <span class="n">frame</span><span class="o">=</span><span class="s2">&quot;rotating&quot;</span><span class="p">,</span>
+    <span class="n">rwa</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">qubit_line</span> <span class="o">=</span> <span class="n">ChargeDrive</span><span class="p">(</span><span class="n">qubit</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;qubit-charge&quot;</span><span class="p">)</span>
+<span class="n">readout_line</span> <span class="o">=</span> <span class="n">ChargeDrive</span><span class="p">(</span><span class="n">readout</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;readout-charge&quot;</span><span class="p">)</span>
+<span class="n">_</span> <span class="o">=</span> <span class="n">chip</span><span class="o">.</span><span class="n">wire</span><span class="p">(</span><span class="n">qubit_line</span><span class="p">,</span> <span class="n">readout_line</span><span class="p">)</span>
+</pre></div>
+</div>
+<section id="part-1-qubit-drive-and-leakage">
+<h2>Part 1: Qubit drive and leakage<a class="headerlink" href="#part-1-qubit-drive-and-leakage" title="Link to this heading">¶</a></h2>
+<p>The coupled chip’s dressed transitions set the carrier and the neighboring line to avoid. Ask quchip for <span class="math notranslate nohighlight">\(f_{01}\)</span> and the dressed <span class="math notranslate nohighlight">\(1\rightarrow2\)</span> transition:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">f01</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">chip</span><span class="o">.</span><span class="n">freq</span><span class="p">(</span><span class="n">qubit</span><span class="p">))</span>
+<span class="n">f12</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">chip</span><span class="o">.</span><span class="n">freq</span><span class="p">(</span><span class="n">qubit</span><span class="p">,</span> <span class="n">when</span><span class="o">=</span><span class="p">{</span><span class="n">qubit</span><span class="p">:</span> <span class="mi">1</span><span class="p">}))</span>
+</pre></div>
+</div>
+<p>Both pulses are three-sigma Gaussians with the same nominal-<span class="math notranslate nohighlight">\(\pi\)</span> area. The short pulse has bandwidth <span class="math notranslate nohighlight">\(|f_{12}-f_{01}|\)</span>; the four-times-longer pulse is more selective. <code class="docutils literal notranslate"><span class="pre">pi_gaussian</span></code> rescales each waveform so <span class="math notranslate nohighlight">\(2\pi\int E(t)\,dt=\pi\)</span>.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">drive_durations</span> <span class="o">=</span> <span class="mf">3.0</span> <span class="o">/</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="nb">abs</span><span class="p">(</span><span class="n">f12</span> <span class="o">-</span> <span class="n">f01</span><span class="p">))</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">4.0</span><span class="p">])</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">pi_gaussian</span><span class="p">(</span><span class="n">duration</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Gaussian</span><span class="p">:</span>
+    <span class="n">unit_pulse</span> <span class="o">=</span> <span class="n">Gaussian</span><span class="p">(</span><span class="n">duration</span><span class="o">=</span><span class="n">duration</span><span class="p">,</span> <span class="n">sigmas</span><span class="o">=</span><span class="mf">3.0</span><span class="p">,</span> <span class="n">amplitude</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+    <span class="n">integration_times</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">duration</span><span class="p">,</span> <span class="mi">20001</span><span class="p">)</span>
+    <span class="n">unit_area</span> <span class="o">=</span> <span class="n">integrate</span><span class="o">.</span><span class="n">trapezoid</span><span class="p">(</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">unit_pulse</span><span class="o">.</span><span class="n">waveform</span><span class="p">(</span><span class="n">integration_times</span><span class="p">))</span><span class="o">.</span><span class="n">real</span><span class="p">,</span>
+        <span class="n">integration_times</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">Gaussian</span><span class="p">(</span>
+        <span class="n">duration</span><span class="o">=</span><span class="n">duration</span><span class="p">,</span>
+        <span class="n">sigmas</span><span class="o">=</span><span class="mf">3.0</span><span class="p">,</span>
+        <span class="n">amplitude</span><span class="o">=</span><span class="mf">0.5</span> <span class="o">/</span> <span class="n">unit_area</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<span class="n">drive_pulses</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">pi_gaussian</span><span class="p">(</span><span class="n">duration</span><span class="p">)</span> <span class="k">for</span> <span class="n">duration</span> <span class="ow">in</span> <span class="n">drive_durations</span><span class="p">)</span>
+<span class="n">drive_times</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">drive_durations</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span> <span class="mi">601</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Both pulses start at <span class="math notranslate nohighlight">\(t=0\)</span> from dressed <span class="math notranslate nohighlight">\(|0,0\rangle\)</span>. The batch varies duration and amplitude on one shared grid; after the short pulse ends, that trajectory evolves freely.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">drive_sequence</span> <span class="o">=</span> <span class="n">QuantumSequence</span><span class="p">(</span><span class="n">chip</span><span class="p">)</span>
+<span class="n">drive</span> <span class="o">=</span> <span class="n">drive_sequence</span><span class="o">.</span><span class="n">schedule</span><span class="p">(</span><span class="n">qubit_line</span><span class="p">,</span> <span class="n">envelope</span><span class="o">=</span><span class="n">drive_pulses</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">freq</span><span class="o">=</span><span class="n">f01</span><span class="p">)</span>
+<span class="n">drive_batch</span> <span class="o">=</span> <span class="n">drive_sequence</span><span class="o">.</span><span class="n">simulate_batch</span><span class="p">(</span>
+    <span class="n">drive_sequence</span><span class="o">.</span><span class="n">zip</span><span class="p">(</span>
+        <span class="n">drive</span><span class="o">.</span><span class="n">vary</span><span class="p">(</span><span class="s2">&quot;duration&quot;</span><span class="p">,</span> <span class="n">drive_durations</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;duration&quot;</span><span class="p">),</span>
+        <span class="n">drive</span><span class="o">.</span><span class="n">vary</span><span class="p">(</span>
+            <span class="s2">&quot;amplitude&quot;</span><span class="p">,</span>
+            <span class="p">[</span><span class="n">pulse</span><span class="o">.</span><span class="n">amplitude</span> <span class="k">for</span> <span class="n">pulse</span> <span class="ow">in</span> <span class="n">drive_pulses</span><span class="p">],</span>
+            <span class="n">name</span><span class="o">=</span><span class="s2">&quot;amplitude&quot;</span><span class="p">,</span>
+        <span class="p">),</span>
+    <span class="p">),</span>
+    <span class="n">tlist</span><span class="o">=</span><span class="n">drive_times</span><span class="p">,</span>
+    <span class="n">initial_state</span><span class="o">=</span><span class="n">chip</span><span class="o">.</span><span class="n">state</span><span class="p">({</span><span class="n">qubit</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span> <span class="n">readout</span><span class="p">:</span> <span class="mi">0</span><span class="p">}),</span>
+    <span class="n">progress</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="n">truncation_threshold</span><span class="o">=</span><span class="n">truncation_threshold</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="inspect-the-batch-with-quchip">
+<h2>Inspect the batch with Quchip<a class="headerlink" href="#inspect-the-batch-with-quchip" title="Link to this heading">¶</a></h2>
+<p>Each batch element is a <code class="docutils literal notranslate"><span class="pre">SimulationResult</span></code>. With <code class="docutils literal notranslate"><span class="pre">trace_out=readout</span></code>, <code class="docutils literal notranslate"><span class="pre">plot_populations</span></code> shows the qubit populations directly. The first result contains the short pulse followed by idle evolution.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">drive_batch</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">plot_populations</span><span class="p">(</span><span class="n">trace_out</span><span class="o">=</span><span class="n">readout</span><span class="p">)</span>
+<span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+</pre></div>
+</div>
+<p>The second result is the long pulse, which fills the shared window.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">drive_batch</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">plot_populations</span><span class="p">(</span><span class="n">trace_out</span><span class="o">=</span><span class="n">readout</span><span class="p">)</span>
+<span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+</pre></div>
+</div>
+</section>
+<section id="customize-the-comparison">
+<h2>Customize the comparison<a class="headerlink" href="#customize-the-comparison" title="Link to this heading">¶</a></h2>
+<p>For the shared-grid comparison, read <span class="math notranslate nohighlight">\(P_0\)</span>, <span class="math notranslate nohighlight">\(P_1\)</span>, and <span class="math notranslate nohighlight">\(P_2\)</span> from the batch. Each call returns an array indexed by <code class="docutils literal notranslate"><span class="pre">(pulse,</span> <span class="pre">time)</span></code>.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">drive_populations</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span>
+    <span class="p">[</span><span class="n">drive_batch</span><span class="o">.</span><span class="n">population</span><span class="p">(</span><span class="n">qubit</span><span class="p">,</span> <span class="n">level</span><span class="p">)</span> <span class="k">for</span> <span class="n">level</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">3</span><span class="p">)]</span>
+<span class="p">)</span><span class="o">.</span><span class="n">real</span>
+<span class="n">drive_receipt</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;drive_plot&quot;</span><span class="p">:</span> <span class="s2">&quot;../docs/images/hello_qubit_drive_leakage.png&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;durations_ns&quot;</span><span class="p">:</span> <span class="nb">dict</span><span class="p">(</span><span class="nb">zip</span><span class="p">((</span><span class="s2">&quot;short&quot;</span><span class="p">,</span> <span class="s2">&quot;long&quot;</span><span class="p">),</span> <span class="n">drive_durations</span><span class="p">,</span> <span class="n">strict</span><span class="o">=</span><span class="kc">True</span><span class="p">)),</span>
+    <span class="s2">&quot;f01_ghz&quot;</span><span class="p">:</span> <span class="n">f01</span><span class="p">,</span>
+    <span class="s2">&quot;f12_ghz&quot;</span><span class="p">:</span> <span class="n">f12</span><span class="p">,</span>
+    <span class="s2">&quot;final_p1&quot;</span><span class="p">:</span> <span class="nb">dict</span><span class="p">(</span>
+        <span class="nb">zip</span><span class="p">(</span>
+            <span class="p">(</span><span class="s2">&quot;short&quot;</span><span class="p">,</span> <span class="s2">&quot;long&quot;</span><span class="p">),</span>
+            <span class="n">drive_batch</span><span class="o">.</span><span class="n">population</span><span class="p">(</span><span class="n">qubit</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">reduce</span><span class="o">=</span><span class="s2">&quot;last&quot;</span><span class="p">),</span>
+            <span class="n">strict</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="p">),</span>
+    <span class="s2">&quot;peak_p2&quot;</span><span class="p">:</span> <span class="nb">dict</span><span class="p">(</span>
+        <span class="nb">zip</span><span class="p">(</span>
+            <span class="p">(</span><span class="s2">&quot;short&quot;</span><span class="p">,</span> <span class="s2">&quot;long&quot;</span><span class="p">),</span>
+            <span class="n">drive_batch</span><span class="o">.</span><span class="n">population</span><span class="p">(</span><span class="n">qubit</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="n">reduce</span><span class="o">=</span><span class="s2">&quot;max&quot;</span><span class="p">),</span>
+            <span class="n">strict</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="p">),</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The panels show the actual scheduled envelopes and <span class="math notranslate nohighlight">\(P(|0\rangle)\)</span>, <span class="math notranslate nohighlight">\(P(|1\rangle)\)</span>, and <span class="math notranslate nohighlight">\(P(|2\rangle)\)</span>. The short pulse reaches the adjacent transition; the long pulse suppresses that leakage.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">state_colors</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;#0072B2&quot;</span><span class="p">,</span> <span class="s2">&quot;#D55E00&quot;</span><span class="p">,</span> <span class="s2">&quot;#009E73&quot;</span><span class="p">)</span>
+<span class="n">drive_figure</span><span class="p">,</span> <span class="n">drive_axes</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span>
+    <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mf">11.0</span><span class="p">,</span> <span class="mf">4.8</span><span class="p">),</span> <span class="n">sharex</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">sharey</span><span class="o">=</span><span class="kc">True</span>
+<span class="p">)</span>
+<span class="k">for</span> <span class="n">pulse_index</span><span class="p">,</span> <span class="p">(</span><span class="n">axis</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">duration</span><span class="p">,</span> <span class="n">envelope</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span>
+    <span class="nb">zip</span><span class="p">(</span><span class="n">drive_axes</span><span class="p">,</span> <span class="p">(</span><span class="s2">&quot;short&quot;</span><span class="p">,</span> <span class="s2">&quot;long&quot;</span><span class="p">),</span> <span class="n">drive_durations</span><span class="p">,</span> <span class="n">drive_pulses</span><span class="p">,</span> <span class="n">strict</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="p">):</span>
+    <span class="k">for</span> <span class="n">level</span><span class="p">,</span> <span class="n">color</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">state_colors</span><span class="p">):</span>
+        <span class="n">axis</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span>
+            <span class="n">drive_times</span><span class="p">,</span> <span class="n">drive_populations</span><span class="p">[</span><span class="n">level</span><span class="p">,</span> <span class="n">pulse_index</span><span class="p">],</span>
+            <span class="n">color</span><span class="o">=</span><span class="n">color</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="sa">fr</span><span class="s2">&quot;$P(|</span><span class="si">{</span><span class="n">level</span><span class="si">}</span><span class="s2">\rangle)$&quot;</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="n">envelope_axis</span> <span class="o">=</span> <span class="n">axis</span><span class="o">.</span><span class="n">twinx</span><span class="p">()</span>
+    <span class="n">envelope_axis</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span>
+        <span class="n">drive_times</span><span class="p">,</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span>
+            <span class="n">drive_times</span> <span class="o">&lt;=</span> <span class="n">duration</span><span class="p">,</span> <span class="n">envelope</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="n">drive_times</span><span class="p">,</span> <span class="n">real</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span> <span class="mf">0.0</span>
+        <span class="p">),</span>
+        <span class="n">color</span><span class="o">=</span><span class="s2">&quot;0.25&quot;</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mf">1.2</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.55</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;envelope&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">envelope_axis</span><span class="o">.</span><span class="n">set_ylim</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.05</span> <span class="o">*</span> <span class="nb">max</span><span class="p">(</span><span class="n">pulse</span><span class="o">.</span><span class="n">amplitude</span> <span class="k">for</span> <span class="n">pulse</span> <span class="ow">in</span> <span class="n">drive_pulses</span><span class="p">))</span>
+    <span class="n">envelope_axis</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s2">&quot;Envelope (GHz)&quot;</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s2">&quot;0.35&quot;</span><span class="p">)</span>
+    <span class="n">envelope_axis</span><span class="o">.</span><span class="n">tick_params</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="s2">&quot;y&quot;</span><span class="p">,</span> <span class="n">colors</span><span class="o">=</span><span class="s2">&quot;0.35&quot;</span><span class="p">)</span>
+    <span class="n">axis</span><span class="o">.</span><span class="n">set</span><span class="p">(</span>
+        <span class="n">xlim</span><span class="o">=</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">drive_durations</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]),</span>
+        <span class="n">ylim</span><span class="o">=</span><span class="p">(</span><span class="o">-</span><span class="mf">0.02</span><span class="p">,</span> <span class="mf">1.02</span><span class="p">),</span>
+        <span class="n">xlabel</span><span class="o">=</span><span class="s2">&quot;Time (ns)&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">axis</span><span class="o">.</span><span class="n">set_title</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">name</span><span class="o">.</span><span class="n">capitalize</span><span class="p">()</span><span class="si">}</span><span class="s2"> Gaussian (</span><span class="si">{</span><span class="n">duration</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> ns)&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">pulse_index</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">axis</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s2">&quot;Qubit population&quot;</span><span class="p">)</span>
+        <span class="n">state_handles</span><span class="p">,</span> <span class="n">state_labels</span> <span class="o">=</span> <span class="n">axis</span><span class="o">.</span><span class="n">get_legend_handles_labels</span><span class="p">()</span>
+        <span class="n">envelope_handles</span><span class="p">,</span> <span class="n">envelope_labels</span> <span class="o">=</span> <span class="n">envelope_axis</span><span class="o">.</span><span class="n">get_legend_handles_labels</span><span class="p">()</span>
+
+<span class="n">drive_figure</span><span class="o">.</span><span class="n">legend</span><span class="p">(</span>
+    <span class="n">state_handles</span> <span class="o">+</span> <span class="n">envelope_handles</span><span class="p">,</span>
+    <span class="n">state_labels</span> <span class="o">+</span> <span class="n">envelope_labels</span><span class="p">,</span>
+    <span class="n">frameon</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="n">loc</span><span class="o">=</span><span class="s2">&quot;lower center&quot;</span><span class="p">,</span>
+    <span class="n">bbox_to_anchor</span><span class="o">=</span><span class="p">(</span><span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.02</span><span class="p">),</span>
+    <span class="n">ncols</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">drive_figure</span><span class="o">.</span><span class="n">subplots_adjust</span><span class="p">(</span><span class="n">bottom</span><span class="o">=</span><span class="mf">0.22</span><span class="p">,</span> <span class="n">wspace</span><span class="o">=</span><span class="mf">0.30</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;RESULT drive=</span><span class="si">{</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">drive_receipt</span><span class="p">,</span><span class="w"> </span><span class="n">sort_keys</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span><span class="w"> </span><span class="n">separators</span><span class="o">=</span><span class="p">(</span><span class="s1">&#39;,&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;:&#39;</span><span class="p">))</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="n">drive_figure</span><span class="o">.</span><span class="n">savefig</span><span class="p">(</span><span class="n">drive_receipt</span><span class="p">[</span><span class="s2">&quot;drive_plot&quot;</span><span class="p">],</span> <span class="n">dpi</span><span class="o">=</span><span class="mi">180</span><span class="p">)</span>
+<span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+</pre></div>
+</div>
+</section>
+<section id="part-2-dispersive-readout">
+<h2>Part 2: Dispersive readout<a class="headerlink" href="#part-2-dispersive-readout" title="Link to this heading">¶</a></h2>
+<p>The resonator frequency depends on whether the qubit is in <span class="math notranslate nohighlight">\(|0\rangle\)</span> or <span class="math notranslate nohighlight">\(|1\rangle\)</span>. Ask quchip for both conditional frequencies:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">readout_frequencies</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="nb">float</span><span class="p">(</span><span class="n">chip</span><span class="o">.</span><span class="n">freq</span><span class="p">(</span><span class="n">readout</span><span class="p">,</span> <span class="n">when</span><span class="o">=</span><span class="p">{</span><span class="n">qubit</span><span class="p">:</span> <span class="mi">0</span><span class="p">})),</span>
+    <span class="nb">float</span><span class="p">(</span><span class="n">chip</span><span class="o">.</span><span class="n">freq</span><span class="p">(</span><span class="n">readout</span><span class="p">,</span> <span class="n">when</span><span class="o">=</span><span class="p">{</span><span class="n">qubit</span><span class="p">:</span> <span class="mi">1</span><span class="p">})),</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>The readout lasts for the larger of five resonator lifetimes and half the inverse conditional pull, rounded up to the 5 ns grid. Its amplitude is set directly.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">readout_time_step</span> <span class="o">=</span> <span class="mf">5.0</span>
+<span class="n">readout_duration</span> <span class="o">=</span> <span class="n">readout_time_step</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span>
+    <span class="nb">max</span><span class="p">(</span>
+        <span class="mf">5.0</span> <span class="o">/</span> <span class="p">(</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="n">resonator_linewidth</span><span class="p">),</span>
+        <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="mf">2.0</span> <span class="o">*</span> <span class="nb">abs</span><span class="p">(</span><span class="n">readout_frequencies</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="n">readout_frequencies</span><span class="p">[</span><span class="mi">0</span><span class="p">])),</span>
+    <span class="p">)</span>
+    <span class="o">/</span> <span class="n">readout_time_step</span>
+<span class="p">)</span>
+<span class="n">readout_times</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span>
+    <span class="mf">0.0</span><span class="p">,</span>
+    <span class="n">readout_duration</span><span class="p">,</span>
+    <span class="nb">int</span><span class="p">(</span><span class="nb">round</span><span class="p">(</span><span class="n">readout_duration</span> <span class="o">/</span> <span class="n">readout_time_step</span><span class="p">))</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>Schedule that pulse and simulate both prepared states in one quchip batch:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">readout_sequence</span> <span class="o">=</span> <span class="n">QuantumSequence</span><span class="p">(</span><span class="n">chip</span><span class="p">)</span>
+<span class="n">readout_sequence</span><span class="o">.</span><span class="n">schedule</span><span class="p">(</span>
+    <span class="n">readout_line</span><span class="p">,</span>
+    <span class="n">envelope</span><span class="o">=</span><span class="n">GaussianEdge</span><span class="p">(</span>
+        <span class="n">duration</span><span class="o">=</span><span class="n">readout_duration</span><span class="p">,</span>
+        <span class="n">edge_duration</span><span class="o">=</span><span class="mf">40.0</span><span class="p">,</span>
+        <span class="n">sigmas</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+        <span class="n">amplitude</span><span class="o">=</span><span class="mf">0.0012</span><span class="p">,</span>
+    <span class="p">),</span>
+    <span class="n">freq</span><span class="o">=</span><span class="nb">sum</span><span class="p">(</span><span class="n">readout_frequencies</span><span class="p">)</span> <span class="o">/</span> <span class="mf">2.0</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">readout_batch</span> <span class="o">=</span> <span class="n">readout_sequence</span><span class="o">.</span><span class="n">simulate_batch</span><span class="p">(</span>
+    <span class="n">readout_sequence</span><span class="o">.</span><span class="n">vary</span><span class="p">(</span>
+        <span class="s2">&quot;initial_state&quot;</span><span class="p">,</span>
+        <span class="p">[</span>
+            <span class="n">chip</span><span class="o">.</span><span class="n">state</span><span class="p">({</span><span class="n">qubit</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span> <span class="n">readout</span><span class="p">:</span> <span class="mi">0</span><span class="p">}),</span>
+            <span class="n">chip</span><span class="o">.</span><span class="n">state</span><span class="p">({</span><span class="n">qubit</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="n">readout</span><span class="p">:</span> <span class="mi">0</span><span class="p">}),</span>
+        <span class="p">],</span>
+        <span class="n">name</span><span class="o">=</span><span class="s2">&quot;prepared_qubit&quot;</span><span class="p">,</span>
+    <span class="p">),</span>
+    <span class="n">tlist</span><span class="o">=</span><span class="n">readout_times</span><span class="p">,</span>
+    <span class="n">e_ops</span><span class="o">=</span><span class="n">chip</span><span class="o">.</span><span class="n">e_ops</span><span class="p">(</span><span class="n">readout</span><span class="o">=</span><span class="s2">&quot;a&quot;</span><span class="p">),</span>
+    <span class="n">progress</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="n">truncation_threshold</span><span class="o">=</span><span class="n">truncation_threshold</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>The solver returns <span class="math notranslate nohighlight">\(\alpha(t)=\langle a\rangle\)</span>; its real and imaginary parts trace the IQ response for each prepared state.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">alpha</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">readout_batch</span><span class="o">.</span><span class="n">expect</span><span class="p">(</span><span class="s2">&quot;readout&quot;</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">complex</span><span class="p">)</span>
+<span class="n">readout_receipt</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;conditional_resonator_frequencies_ghz&quot;</span><span class="p">:</span> <span class="n">readout_frequencies</span><span class="p">,</span>
+    <span class="s2">&quot;final_iq_separation&quot;</span><span class="p">:</span> <span class="nb">float</span><span class="p">(</span><span class="nb">abs</span><span class="p">(</span><span class="n">alpha</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="n">alpha</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">])),</span>
+    <span class="s2">&quot;iq_plot&quot;</span><span class="p">:</span> <span class="s2">&quot;../docs/images/hello_dispersive_readout_iq.png&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;readout_carrier_ghz&quot;</span><span class="p">:</span> <span class="nb">sum</span><span class="p">(</span><span class="n">readout_frequencies</span><span class="p">)</span> <span class="o">/</span> <span class="mf">2.0</span><span class="p">,</span>
+    <span class="s2">&quot;readout_duration_ns&quot;</span><span class="p">:</span> <span class="n">readout_duration</span><span class="p">,</span>
+    <span class="s2">&quot;solver&quot;</span><span class="p">:</span> <span class="n">readout_batch</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">solver</span><span class="p">,</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Plot both paths on equal <span class="math notranslate nohighlight">\(I/Q\)</span> scales and mark their final points.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">iq_figure</span><span class="p">,</span> <span class="n">iq_axis</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mf">7.0</span><span class="p">,</span> <span class="mf">5.8</span><span class="p">),</span> <span class="n">layout</span><span class="o">=</span><span class="s2">&quot;constrained&quot;</span><span class="p">)</span>
+
+<span class="k">for</span> <span class="n">prepared_level</span><span class="p">,</span> <span class="n">color</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">((</span><span class="s2">&quot;#0072B2&quot;</span><span class="p">,</span> <span class="s2">&quot;#D55E00&quot;</span><span class="p">)):</span>
+    <span class="n">iq_axis</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span>
+        <span class="n">alpha</span><span class="p">[</span><span class="n">prepared_level</span><span class="p">]</span><span class="o">.</span><span class="n">real</span><span class="p">,</span>
+        <span class="n">alpha</span><span class="p">[</span><span class="n">prepared_level</span><span class="p">]</span><span class="o">.</span><span class="n">imag</span><span class="p">,</span>
+        <span class="n">color</span><span class="o">=</span><span class="n">color</span><span class="p">,</span>
+        <span class="n">linewidth</span><span class="o">=</span><span class="mf">2.2</span><span class="p">,</span>
+        <span class="n">label</span><span class="o">=</span><span class="sa">fr</span><span class="s2">&quot;prepared $|</span><span class="si">{</span><span class="n">prepared_level</span><span class="si">}</span><span class="s2">\rangle$&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">iq_axis</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span>
+        <span class="n">alpha</span><span class="p">[</span><span class="n">prepared_level</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">real</span><span class="p">,</span>
+        <span class="n">alpha</span><span class="p">[</span><span class="n">prepared_level</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">imag</span><span class="p">,</span>
+        <span class="n">marker</span><span class="o">=</span><span class="s2">&quot;o&quot;</span><span class="p">,</span>
+        <span class="n">markersize</span><span class="o">=</span><span class="mi">9</span><span class="p">,</span>
+        <span class="n">markeredgecolor</span><span class="o">=</span><span class="s2">&quot;white&quot;</span><span class="p">,</span>
+        <span class="n">markeredgewidth</span><span class="o">=</span><span class="mf">1.2</span><span class="p">,</span>
+        <span class="n">color</span><span class="o">=</span><span class="n">color</span><span class="p">,</span>
+        <span class="n">linestyle</span><span class="o">=</span><span class="s2">&quot;none&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+<span class="n">iq_axis</span><span class="o">.</span><span class="n">axhline</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s2">&quot;0.85&quot;</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mf">0.8</span><span class="p">,</span> <span class="n">zorder</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">iq_axis</span><span class="o">.</span><span class="n">axvline</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s2">&quot;0.85&quot;</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mf">0.8</span><span class="p">,</span> <span class="n">zorder</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">iq_axis</span><span class="o">.</span><span class="n">set_xlabel</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;$\langle I\rangle = \mathrm</span><span class="si">{Re}</span><span class="s2">\,\langle a\rangle$&quot;</span><span class="p">)</span>
+<span class="n">iq_axis</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;$\langle Q\rangle = \mathrm</span><span class="si">{Im}</span><span class="s2">\,\langle a\rangle$&quot;</span><span class="p">)</span>
+<span class="n">iq_axis</span><span class="o">.</span><span class="n">set_title</span><span class="p">(</span><span class="s2">&quot;Pulse-level dispersive readout&quot;</span><span class="p">)</span>
+<span class="n">iq_axis</span><span class="o">.</span><span class="n">set_aspect</span><span class="p">(</span><span class="s2">&quot;equal&quot;</span><span class="p">,</span> <span class="n">adjustable</span><span class="o">=</span><span class="s2">&quot;datalim&quot;</span><span class="p">)</span>
+<span class="n">iq_axis</span><span class="o">.</span><span class="n">legend</span><span class="p">(</span><span class="n">frameon</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">loc</span><span class="o">=</span><span class="s2">&quot;upper left&quot;</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;RESULT readout=</span><span class="si">{</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">readout_receipt</span><span class="p">,</span><span class="w"> </span><span class="n">sort_keys</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span><span class="w"> </span><span class="n">separators</span><span class="o">=</span><span class="p">(</span><span class="s1">&#39;,&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;:&#39;</span><span class="p">))</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="n">iq_figure</span><span class="o">.</span><span class="n">savefig</span><span class="p">(</span><span class="n">readout_receipt</span><span class="p">[</span><span class="s2">&quot;iq_plot&quot;</span><span class="p">],</span> <span class="n">dpi</span><span class="o">=</span><span class="mi">180</span><span class="p">)</span>
+<span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+</pre></div>
+</div>
+<p>One chip now shows both effects: pulse bandwidth controls leakage, and the qubit state shifts the resonator response.</p>
+<figure class="align-default" id="id1">
+<a class="reference internal image-reference" href="../_images/hello_qubit_drive_leakage.png"><img alt="Short and long Gaussian pulses with multilevel qubit populations" src="../_images/hello_qubit_drive_leakage.png" style="width: 760px;" />
+</a>
+<figcaption>
+<p><span class="caption-text">The same nominal-pi area produces very different leakage when the Gaussian bandwidth approaches the adjacent dressed transition.</span><a class="headerlink" href="#id1" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+<figure class="align-default" id="id2">
+<a class="reference internal image-reference" href="../_images/hello_dispersive_readout_iq.png"><img alt="Conditional resonator IQ paths with emphasized final points" src="../_images/hello_dispersive_readout_iq.png" style="width: 560px;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Pulse-level dispersive-readout IQ paths for prepared dressed qubit states <span class="math notranslate nohighlight">\(|0\rangle\)</span> and <span class="math notranslate nohighlight">\(|1\rangle\)</span>, with the final points emphasized.</span><a class="headerlink" href="#id2" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="../cookbook.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">Cookbook</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="../index.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">Home</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 2026, Ibraheem AlYousef
+            </div>
+            Made with 
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            <div class="icons">
+              <a class="muted-link fa-brands fa-solid fa-github fa-2x" href="https://github.com/quchip/quchip" aria-label="GitHub"></a>
+              
+            </div>
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Hello, drive and readout</a><ul>
+<li><a class="reference internal" href="#part-1-qubit-drive-and-leakage">Part 1: Qubit drive and leakage</a></li>
+<li><a class="reference internal" href="#inspect-the-batch-with-quchip">Inspect the batch with Quchip</a></li>
+<li><a class="reference internal" href="#customize-the-comparison">Customize the comparison</a></li>
+<li><a class="reference internal" href="#part-2-dispersive-readout">Part 2: Dispersive readout</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../_static/documentation_options.js?v=2caa9db7"></script>
+    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=f281be69"></script>
+    <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
+    </body>
+</html>
