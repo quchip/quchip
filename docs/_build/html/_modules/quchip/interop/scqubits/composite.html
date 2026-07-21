@@ -1,0 +1,960 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../../../../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><link rel="index" title="Index" href="../../../../genindex.html"><link rel="search" title="Search" href="../../../../search.html">
+        <link rel="prefetch" href="../../../../_static/quchip-wordmark-light.png" as="image">
+        <link rel="prefetch" href="../../../../_static/quchip-wordmark-dark.png" as="image">
+
+    <link rel="shortcut icon" href="../../../../_static/favicon.png"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>quchip.interop.scqubits.composite - quchip 0.1.0</title>
+      <link rel="stylesheet" type="text/css" href="../../../../_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/custom.css?v=208c35cd" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #c92f33;
+  --color-brand-content: #c92f33;
+  --color-link: #c92f33;
+  --color-link--visited: #c92f33;
+  --color-link--visited--hover: #c92f33;
+  --color-foreground-primary: #16181c;
+  --color-background-primary: #fafbfc;
+  --color-background-secondary: #f2f4f6;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #ef6661;
+  --color-brand-content: #ef6661;
+  --color-link: #ef6661;
+  --color-link--hover: #ff8a80;
+  --color-link--visited: #ef6661;
+  --color-link--visited--hover: #ff8a80;
+  --color-foreground-primary: #f2f4f6;
+  --color-background-primary: #14161a;
+  --color-background-secondary: #101216;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #ef6661;
+  --color-brand-content: #ef6661;
+  --color-link: #ef6661;
+  --color-link--hover: #ff8a80;
+  --color-link--visited: #ef6661;
+  --color-link--visited--hover: #ff8a80;
+  --color-foreground-primary: #f2f4f6;
+  --color-background-primary: #14161a;
+  --color-background-secondary: #101216;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../../../../index.html"><div class="brand">quchip 0.1.0</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon no-toc" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../../../../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo only-light" src="../../../../_static/quchip-wordmark-light.png" alt="Light Logo"/>
+    <img class="sidebar-logo only-dark" src="../../../../_static/quchip-wordmark-dark.png" alt="Dark Logo"/>
+  </div>
+  
+  
+</a><form class="sidebar-search-container" method="get" action="../../../../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../../examples/hello-chip.html">Hello, drive and readout</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../cookbook.html">Cookbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../physics.html">quchip Physics Reference</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../../../api.html">API reference</a><input aria-label="Toggle navigation of API reference" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../../../generated/quchip.html">quchip</a><input aria-label="Toggle navigation of quchip" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../../generated/quchip.analysis.html">quchip.analysis</a><input aria-label="Toggle navigation of quchip.analysis" class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" role="switch" type="checkbox"/><label for="toctree-checkbox-3"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.analysis.cross_resonance.html">quchip.analysis.cross_resonance</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.analysis.dispersive_readout.html">quchip.analysis.dispersive_readout</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.analysis.effective_hamiltonian.html">quchip.analysis.effective_hamiltonian</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../../generated/quchip.backend.html">quchip.backend</a><input aria-label="Toggle navigation of quchip.backend" class="toctree-checkbox" id="toctree-checkbox-4" name="toctree-checkbox-4" role="switch" type="checkbox"/><label for="toctree-checkbox-4"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.backend.containers.html">quchip.backend.containers</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.backend.dynamiqs.html">quchip.backend.dynamiqs</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.backend.protocol.html">quchip.backend.protocol</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.backend.qutip.html">quchip.backend.qutip</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../../generated/quchip.chip.html">quchip.chip</a><input aria-label="Toggle navigation of quchip.chip" class="toctree-checkbox" id="toctree-checkbox-5" name="toctree-checkbox-5" role="switch" type="checkbox"/><label for="toctree-checkbox-5"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.chip.analysis.html">quchip.chip.analysis</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.chip.baths.html">quchip.chip.baths</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.chip.chip.html">quchip.chip.chip</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.chip.coupling_base.html">quchip.chip.coupling_base</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.chip.couplings.html">quchip.chip.couplings</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.chip.describe.html">quchip.chip.describe</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.chip.dressing.html">quchip.chip.dressing</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.chip.observables.html">quchip.chip.observables</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.chip.partition.html">quchip.chip.partition</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.chip.retarget.html">quchip.chip.retarget</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.chip.rwa.html">quchip.chip.rwa</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.chip.serialization.html">quchip.chip.serialization</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.chip.states.html">quchip.chip.states</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.chip.sw.html">quchip.chip.sw</a></li>
+<li class="toctree-l4 has-children"><a class="reference internal" href="../../../../generated/quchip.chip.transformations.html">quchip.chip.transformations</a><input aria-label="Toggle navigation of quchip.chip.transformations" class="toctree-checkbox" id="toctree-checkbox-6" name="toctree-checkbox-6" role="switch" type="checkbox"/><label for="toctree-checkbox-6"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l5"><a class="reference internal" href="../../../../generated/quchip.chip.transformations.active_patch.html">quchip.chip.transformations.active_patch</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../../generated/quchip.chip.transformations.dispatch.html">quchip.chip.transformations.dispatch</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../../generated/quchip.chip.transformations.eliminate_coupling.html">quchip.chip.transformations.eliminate_coupling</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../../generated/quchip.chip.transformations.eliminate_device.html">quchip.chip.transformations.eliminate_device</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../../generated/quchip.chip.transformations.methods.html">quchip.chip.transformations.methods</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../../generated/quchip.chip.transformations.plumbing.html">quchip.chip.transformations.plumbing</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../../generated/quchip.chip.transformations.result.html">quchip.chip.transformations.result</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../../generated/quchip.control.html">quchip.control</a><input aria-label="Toggle navigation of quchip.control" class="toctree-checkbox" id="toctree-checkbox-7" name="toctree-checkbox-7" role="switch" type="checkbox"/><label for="toctree-checkbox-7"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.control.batch.html">quchip.control.batch</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.control.drive.html">quchip.control.drive</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.control.drives_two_photon.html">quchip.control.drives_two_photon</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.control.envelopes.html">quchip.control.envelopes</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.control.equipment.html">quchip.control.equipment</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.control.sequence.html">quchip.control.sequence</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.control.signal.html">quchip.control.signal</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.control.signal_spec.html">quchip.control.signal_spec</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../../generated/quchip.declarative.html">quchip.declarative</a><input aria-label="Toggle navigation of quchip.declarative" class="toctree-checkbox" id="toctree-checkbox-8" name="toctree-checkbox-8" role="switch" type="checkbox"/><label for="toctree-checkbox-8"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.declarative.envelope_shape.html">quchip.declarative.envelope_shape</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.declarative.expr.html">quchip.declarative.expr</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.declarative.models.html">quchip.declarative.models</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.declarative.ops.html">quchip.declarative.ops</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.declarative.parameters.html">quchip.declarative.parameters</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.declarative.qnp.html">quchip.declarative.qnp</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../../generated/quchip.devices.html">quchip.devices</a><input aria-label="Toggle navigation of quchip.devices" class="toctree-checkbox" id="toctree-checkbox-9" name="toctree-checkbox-9" role="switch" type="checkbox"/><label for="toctree-checkbox-9"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.devices.base.html">quchip.devices.base</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.devices.circuit.html">quchip.devices.circuit</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.devices.fluxonium.html">quchip.devices.fluxonium</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.devices.kerr_cavity.html">quchip.devices.kerr_cavity</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.devices.protocols.html">quchip.devices.protocols</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.devices.resonator.html">quchip.devices.resonator</a></li>
+<li class="toctree-l4 has-children"><a class="reference internal" href="../../../../generated/quchip.devices.transmon.html">quchip.devices.transmon</a><input aria-label="Toggle navigation of quchip.devices.transmon" class="toctree-checkbox" id="toctree-checkbox-10" name="toctree-checkbox-10" role="switch" type="checkbox"/><label for="toctree-checkbox-10"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l5"><a class="reference internal" href="../../../../generated/quchip.devices.transmon.charge_basis.html">quchip.devices.transmon.charge_basis</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../../generated/quchip.devices.transmon.duffing.html">quchip.devices.transmon.duffing</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../../generated/quchip.devices.transmon.flux_tunable.html">quchip.devices.transmon.flux_tunable</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../../generated/quchip.engine.html">quchip.engine</a><input aria-label="Toggle navigation of quchip.engine" class="toctree-checkbox" id="toctree-checkbox-11" name="toctree-checkbox-11" role="switch" type="checkbox"/><label for="toctree-checkbox-11"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.engine.bands.html">quchip.engine.bands</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.engine.ir.html">quchip.engine.ir</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.engine.partitioned.html">quchip.engine.partitioned</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.engine.solver_hints.html">quchip.engine.solver_hints</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.engine.stage1_frames.html">quchip.engine.stage1_frames</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.engine.stage2_assembly.html">quchip.engine.stage2_assembly</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.engine.stage3_observables.html">quchip.engine.stage3_observables</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.engine.stage4_problem.html">quchip.engine.stage4_problem</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../../generated/quchip.interop.html">quchip.interop</a><input aria-label="Toggle navigation of quchip.interop" class="toctree-checkbox" id="toctree-checkbox-12" name="toctree-checkbox-12" role="switch" type="checkbox"/><label for="toctree-checkbox-12"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.interop.base.html">quchip.interop.base</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.interop.eigenbasis.html">quchip.interop.eigenbasis</a></li>
+<li class="toctree-l4 has-children"><a class="reference internal" href="../../../../generated/quchip.interop.scqubits.html">quchip.interop.scqubits</a><input aria-label="Toggle navigation of quchip.interop.scqubits" class="toctree-checkbox" id="toctree-checkbox-13" name="toctree-checkbox-13" role="switch" type="checkbox"/><label for="toctree-checkbox-13"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l5"><a class="reference internal" href="../../../../generated/quchip.interop.scqubits.composite.html">quchip.interop.scqubits.composite</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../../generated/quchip.interop.scqubits.devices.html">quchip.interop.scqubits.devices</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../../generated/quchip.inverse_design.html">quchip.inverse_design</a><input aria-label="Toggle navigation of quchip.inverse_design" class="toctree-checkbox" id="toctree-checkbox-14" name="toctree-checkbox-14" role="switch" type="checkbox"/><label for="toctree-checkbox-14"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.inverse_design.fit.html">quchip.inverse_design.fit</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.inverse_design.observables.html">quchip.inverse_design.observables</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.inverse_design.subsystems.html">quchip.inverse_design.subsystems</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.inverse_design.types.html">quchip.inverse_design.types</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../../generated/quchip.results.html">quchip.results</a><input aria-label="Toggle navigation of quchip.results" class="toctree-checkbox" id="toctree-checkbox-15" name="toctree-checkbox-15" role="switch" type="checkbox"/><label for="toctree-checkbox-15"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.results.partitioned.html">quchip.results.partitioned</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.results.results.html">quchip.results.results</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../../generated/quchip.sweep.html">quchip.sweep</a></li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../../generated/quchip.utils.html">quchip.utils</a><input aria-label="Toggle navigation of quchip.utils" class="toctree-checkbox" id="toctree-checkbox-16" name="toctree-checkbox-16" role="switch" type="checkbox"/><label for="toctree-checkbox-16"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.utils.constants.html">quchip.utils.constants</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.utils.jax_utils.html">quchip.utils.jax_utils</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.utils.labeling.html">quchip.utils.labeling</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.utils.registry.html">quchip.utils.registry</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.utils.state_versioning.html">quchip.utils.state_versioning</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../../generated/quchip.viz.html">quchip.viz</a><input aria-label="Toggle navigation of quchip.viz" class="toctree-checkbox" id="toctree-checkbox-17" name="toctree-checkbox-17" role="switch" type="checkbox"/><label for="toctree-checkbox-17"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.viz.chip.html">quchip.viz.chip</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.viz.control.html">quchip.viz.control</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.viz.device.html">quchip.viz.device</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.viz.results.html">quchip.viz.results</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../contributing.html">Contributing to quchip</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../conduct.html">Code of Conduct</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon no-toc" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <h1>Source code for quchip.interop.scqubits.composite</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;Composite import — scqubits ``HilbertSpace`` -&gt; quchip :class:`~quchip.chip.chip.Chip`.</span>
+
+<span class="sd">An scqubits ``HilbertSpace`` bundles a list of subsystems and a list of</span>
+<span class="sd">``InteractionTerm`` couplings between them. :func:`import_hilbertspace` imports</span>
+<span class="sd">each subsystem individually through the shipped device mappings</span>
+<span class="sd">(:mod:`quchip.interop.scqubits.devices`), preserving order and each subsystem&#39;s</span>
+<span class="sd">``id_str`` as the device label, then transcribes every ``InteractionTerm`` into</span>
+<span class="sd">a callable-form :class:`~quchip.chip.couplings.Coupling` whose operator matrices</span>
+<span class="sd">are the term&#39;s subsystem operators expressed in the *gauge of the imported</span>
+<span class="sd">device* they act on.</span>
+
+<span class="sd">Gauge consistency (Principle 3). Each imported circuit device</span>
+<span class="sd">(:class:`~quchip.devices.circuit.CircuitDevice`, e.g. ``ChargeBasisTransmon``)</span>
+<span class="sd">re-diagonalizes its own native Hamiltonian, fixing an eigenvector gauge — an</span>
+<span class="sd">arbitrary per-eigenvector phase/sign — that need not agree with scqubits&#39; own</span>
+<span class="sd">diagonalization of the same Hamiltonian. The undriven spectrum is</span>
+<span class="sd">gauge-invariant, but a drive on such a device that also participates in a</span>
+<span class="sd">coupling mixes the two gauges, corrupting the driven dynamics. So a coupling</span>
+<span class="sd">factor is projected through the *device&#39;s* eigenvectors</span>
+<span class="sd">(:meth:`~quchip.devices.circuit.CircuitDevice.project_operator`) whenever the</span>
+<span class="sd">device re-diagonalizes the same native basis scqubits stores the operator in.</span>
+
+<span class="sd">Limitation (declared, Principle 12). When the imported device&#39;s native basis</span>
+<span class="sd">differs in dimension from scqubits&#39; native basis for that subsystem — e.g. a</span>
+<span class="sd">:class:`~quchip.devices.fluxonium.Fluxonium` (quchip phase grid vs scqubits&#39;</span>
+<span class="sd">harmonic-oscillator basis) — the factor cannot be re-projected into the device</span>
+<span class="sd">gauge and is frozen in the *source&#39;s* eigenbasis gauge instead; a</span>
+<span class="sd">:class:`UserWarning` names the device, and driven dynamics through it may carry</span>
+<span class="sd">gauge-inconsistent matrix elements. Declarative devices without a native basis</span>
+<span class="sd">of their own (``Resonator``, ``KerrCavity``, whose Fock eigenbasis matches</span>
+<span class="sd">scqubits ``Oscillator``&#39;s by construction) and</span>
+<span class="sd">:class:`~quchip.interop.eigenbasis.EigenbasisDevice` (whose native basis *is*</span>
+<span class="sd">scqubits&#39; eigenbasis) are already in the device gauge and take the source</span>
+<span class="sd">eigenbasis path without warning.</span>
+
+<span class="sd">Scope of v1 (declared, Principle 12): only pairwise ``InteractionTerm``</span>
+<span class="sd">products of two operators are translated. Each term&#39;s operator matrices are a</span>
+<span class="sd">frozen snapshot at the source parameter point, so the coupling is not</span>
+<span class="sd">differentiable with respect to the source circuit parameters (the same</span>
+<span class="sd">frozen-snapshot contract :class:`~quchip.interop.eigenbasis.EigenbasisDevice`</span>
+<span class="sd">carries). ``InteractionTermStr`` string expressions and non-pairwise products</span>
+<span class="sd">raise :class:`NotImplementedError` rather than importing a partial model.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">warnings</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Callable</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">quchip.chip.chip</span><span class="w"> </span><span class="kn">import</span> <span class="n">Chip</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">quchip.chip.coupling_base</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseCoupling</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">quchip.chip.couplings</span><span class="w"> </span><span class="kn">import</span> <span class="n">Capacitive</span><span class="p">,</span> <span class="n">Coupling</span><span class="p">,</span> <span class="n">CrossKerr</span><span class="p">,</span> <span class="n">TunableCapacitive</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">quchip.interop.base</span><span class="w"> </span><span class="kn">import</span> <span class="n">export_object</span><span class="p">,</span> <span class="n">import_object</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">quchip.interop.eigenbasis</span><span class="w"> </span><span class="kn">import</span> <span class="n">EigenbasisDevice</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">quchip.utils.jax_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">maybe_concrete_scalar</span>
+
+<span class="n">_SUPPORTED_EXPORT_COUPLINGS</span> <span class="o">=</span> <span class="s2">&quot;Capacitive, TunableCapacitive, CrossKerr, or product-form Coupling&quot;</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_native_matrix</span><span class="p">(</span><span class="n">operator</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return *operator* as a dense matrix in scqubits&#39; native (undiagonalized) basis.</span>
+
+<span class="sd">    A bound method is called bare (no ``energy_esys=``) so scqubits returns the</span>
+<span class="sd">    operator in the subsystem&#39;s native basis rather than its eigenbasis; raw</span>
+<span class="sd">    ndarray / sparse entries are already native and are densified.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="nb">callable</span><span class="p">(</span><span class="n">operator</span><span class="p">):</span>
+        <span class="n">matrix</span> <span class="o">=</span> <span class="n">operator</span><span class="p">()</span>
+        <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">matrix</span><span class="o">.</span><span class="n">todense</span><span class="p">()</span> <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">matrix</span><span class="p">,</span> <span class="s2">&quot;todense&quot;</span><span class="p">)</span> <span class="k">else</span> <span class="n">matrix</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">complex</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">operator</span><span class="o">.</span><span class="n">todense</span><span class="p">()</span> <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">operator</span><span class="p">,</span> <span class="s2">&quot;todense&quot;</span><span class="p">)</span> <span class="k">else</span> <span class="n">operator</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">complex</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_eigenbasis_matrix</span><span class="p">(</span><span class="n">subsys</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">operator</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return *operator* on *subsys* as a truncated energy-eigenbasis matrix.</span>
+
+<span class="sd">    scqubits stores an ``InteractionTerm`` operator either as a bound method</span>
+<span class="sd">    (evaluated in the eigenbasis on demand) or as a raw matrix in the</span>
+<span class="sd">    subsystem&#39;s native basis:</span>
+
+<span class="sd">    * A callable is invoked with ``energy_esys=True`` so scqubits returns the</span>
+<span class="sd">      ``truncated_dim x truncated_dim`` eigenbasis matrix directly. Operators</span>
+<span class="sd">      that are already in their eigenbasis (e.g. an ``Oscillator`` in the Fock</span>
+<span class="sd">      basis) expose a no-argument method; those are called bare, mirroring</span>
+<span class="sd">      scqubits&#39; own ``identity_wrap`` fallback.</span>
+<span class="sd">    * A raw native-basis matrix is projected with the subsystem&#39;s eigenvectors,</span>
+<span class="sd">      ``V^\\dagger O V`` with ``V`` the lowest ``truncated_dim`` columns of</span>
+<span class="sd">      ``subsys.eigensys`` — the same projection scqubits applies internally.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="nb">callable</span><span class="p">(</span><span class="n">operator</span><span class="p">):</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">matrix</span> <span class="o">=</span> <span class="n">operator</span><span class="p">(</span><span class="n">energy_esys</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">TypeError</span><span class="p">:</span>
+            <span class="n">matrix</span> <span class="o">=</span> <span class="n">operator</span><span class="p">()</span>
+        <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">matrix</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">complex</span><span class="p">)</span>
+
+    <span class="n">native</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">operator</span><span class="o">.</span><span class="n">todense</span><span class="p">()</span> <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">operator</span><span class="p">,</span> <span class="s2">&quot;todense&quot;</span><span class="p">)</span> <span class="k">else</span> <span class="n">operator</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">complex</span><span class="p">)</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">evecs</span> <span class="o">=</span> <span class="n">subsys</span><span class="o">.</span><span class="n">eigensys</span><span class="p">(</span><span class="n">evals_count</span><span class="o">=</span><span class="n">subsys</span><span class="o">.</span><span class="n">truncated_dim</span><span class="p">)</span>
+    <span class="n">v</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">evecs</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">complex</span><span class="p">)[:,</span> <span class="p">:</span> <span class="n">subsys</span><span class="o">.</span><span class="n">truncated_dim</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">v</span><span class="o">.</span><span class="n">conj</span><span class="p">()</span><span class="o">.</span><span class="n">T</span> <span class="o">@</span> <span class="n">native</span> <span class="o">@</span> <span class="n">v</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_device_gauge_matrix</span><span class="p">(</span><span class="n">subsys</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">operator</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">device</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Return *operator* on *subsys* in the eigenvector gauge of *device*.</span>
+
+<span class="sd">    When *device* re-diagonalizes its native Hamiltonian</span>
+<span class="sd">    (:class:`~quchip.devices.circuit.CircuitDevice` subclasses, which expose</span>
+<span class="sd">    :meth:`~quchip.devices.circuit.CircuitDevice.project_operator`) and its</span>
+<span class="sd">    native dimension matches scqubits&#39; native dimension for *subsys*, the</span>
+<span class="sd">    native-basis operator is projected through the *device&#39;s* own eigenvectors,</span>
+<span class="sd">    ``V_dev^\dagger O V_dev`` — so the coupling factor and the device&#39;s drive</span>
+<span class="sd">    operators live in one consistent gauge.</span>
+
+<span class="sd">    Otherwise the source&#39;s eigenbasis gauge is used (see</span>
+<span class="sd">    :func:`_eigenbasis_matrix`). Two of those cases are already in the device</span>
+<span class="sd">    gauge and pass silently: a device with no ``project_operator`` (declarative</span>
+<span class="sd">    ``Resonator`` / ``KerrCavity``, matching scqubits ``Oscillator``&#39;s Fock</span>
+<span class="sd">    basis) and :class:`~quchip.interop.eigenbasis.EigenbasisDevice` (whose</span>
+<span class="sd">    native basis *is* scqubits&#39; eigenbasis, so its native dimension equals the</span>
+<span class="sd">    truncated eigenbasis dimension). The remaining case — a device that</span>
+<span class="sd">    diagonalizes a *different* native basis (e.g. fluxonium) — cannot be</span>
+<span class="sd">    re-projected and warns, since driven dynamics through it may carry</span>
+<span class="sd">    gauge-inconsistent matrix elements.</span>
+
+<span class="sd">    The native-basis operator (:func:`_native_matrix`) is only ever</span>
+<span class="sd">    materialized when there is a real chance of using it: an</span>
+<span class="sd">    :class:`~quchip.interop.eigenbasis.EigenbasisDevice` never re-diagonalizes</span>
+<span class="sd">    a native basis of its own (its &quot;native basis&quot; *is* the truncated</span>
+<span class="sd">    eigenbasis scqubits already handed over), so it short-circuits to the</span>
+<span class="sd">    eigenbasis path immediately; for every other project-capable device, the</span>
+<span class="sd">    native dimension is compared against ``subsys.hilbertdim()`` — a cheap</span>
+<span class="sd">    lookup, not a matrix build — before ever calling :func:`_native_matrix`.</span>
+<span class="sd">    A ZeroPi subsystem&#39;s native basis is a dense joint phi-grid / charge-basis</span>
+<span class="sd">    product space (thousands of dimensions); densifying its operator just to</span>
+<span class="sd">    discover the dimensions do not match wastes gigabytes for nothing.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">project</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">device</span><span class="p">,</span> <span class="s2">&quot;project_operator&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">project</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">device</span><span class="p">,</span> <span class="n">EigenbasisDevice</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">_eigenbasis_matrix</span><span class="p">(</span><span class="n">subsys</span><span class="p">,</span> <span class="n">operator</span><span class="p">)</span>
+
+    <span class="n">native_dim</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">device</span><span class="o">.</span><span class="n">eigenvectors</span><span class="p">())</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+    <span class="k">if</span> <span class="n">native_dim</span> <span class="o">!=</span> <span class="n">subsys</span><span class="o">.</span><span class="n">hilbertdim</span><span class="p">():</span>
+        <span class="n">eigenbasis</span> <span class="o">=</span> <span class="n">_eigenbasis_matrix</span><span class="p">(</span><span class="n">subsys</span><span class="p">,</span> <span class="n">operator</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">native_dim</span> <span class="o">!=</span> <span class="n">eigenbasis</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span>
+            <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;Imported device </span><span class="si">{</span><span class="n">device</span><span class="o">.</span><span class="n">label</span><span class="si">!r}</span><span class="s2"> diagonalizes a native basis of a &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;different dimension than scqubits&#39; for this subsystem, so its coupling &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;matrix is frozen in the source&#39;s eigenbasis gauge rather than the device &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;gauge; driven dynamics through this device may carry gauge-inconsistent &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;matrix elements.&quot;</span><span class="p">,</span>
+                <span class="ne">UserWarning</span><span class="p">,</span>
+                <span class="n">stacklevel</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="k">return</span> <span class="n">eigenbasis</span>
+
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">project</span><span class="p">(</span><span class="n">_native_matrix</span><span class="p">(</span><span class="n">operator</span><span class="p">)),</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">complex</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_product_interaction</span><span class="p">(</span>
+    <span class="n">g_strength</span><span class="p">:</span> <span class="nb">complex</span><span class="p">,</span>
+    <span class="n">matrix_a</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">matrix_b</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">add_hc</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Any</span><span class="p">,</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span> <span class="n">Any</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Build the callable-form interaction ``g·A⊗B`` (plus h.c. when *add_hc*).</span>
+
+<span class="sd">    ``g_strength`` is folded into the first factor so the returned closure needs</span>
+<span class="sd">    no scalar prefactor and the host :class:`~quchip.chip.couplings.Coupling`</span>
+<span class="sd">    keeps ``g = 1.0`` (``g_strength`` may be complex, which the coupling&#39;s real</span>
+<span class="sd">    ``g`` could not carry). The closure builds ``M = A_g ⊗ B`` from the frozen</span>
+<span class="sd">    matrices via the backend and returns ``M + M^\\dagger`` for the type-2</span>
+<span class="sd">    (``add_hc``) interaction, matching scqubits&#39; ``V = g A B + h.c.``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">matrix_a_g</span> <span class="o">=</span> <span class="n">g_strength</span> <span class="o">*</span> <span class="n">matrix_a</span>
+    <span class="n">matrix_b</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">matrix_b</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">complex</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">interaction</span><span class="p">(</span><span class="n">_a</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">_b</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">bk</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+        <span class="n">m</span> <span class="o">=</span> <span class="n">bk</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">bk</span><span class="o">.</span><span class="n">from_array</span><span class="p">(</span><span class="n">matrix_a_g</span><span class="p">),</span> <span class="n">bk</span><span class="o">.</span><span class="n">from_array</span><span class="p">(</span><span class="n">matrix_b</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">add_hc</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">m</span> <span class="o">+</span> <span class="n">bk</span><span class="o">.</span><span class="n">dag</span><span class="p">(</span><span class="n">m</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">m</span>
+
+    <span class="k">return</span> <span class="n">interaction</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_coupling_from_term</span><span class="p">(</span>
+    <span class="n">term</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+    <span class="n">subsystems</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Any</span><span class="p">],</span>
+    <span class="n">devices</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Any</span><span class="p">],</span>
+    <span class="n">index</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Coupling</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Transcribe one scqubits ``InteractionTerm`` into a quchip ``Coupling``.</span>
+
+<span class="sd">    Rejects the two shapes v1 does not model: string-expression interactions</span>
+<span class="sd">    (``InteractionTermStr``) and products of other than two operators. Both</span>
+<span class="sd">    raise :class:`NotImplementedError` with a re-expression hint rather than</span>
+<span class="sd">    importing a partial interaction.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">scqubits.core.hilbert_space</span><span class="w"> </span><span class="kn">import</span> <span class="n">InteractionTermStr</span>
+
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">term</span><span class="p">,</span> <span class="n">InteractionTermStr</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
+            <span class="s2">&quot;string-expression interactions are not translated; re-express as operator products&quot;</span>
+        <span class="p">)</span>
+
+    <span class="n">operator_list</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">term</span><span class="o">.</span><span class="n">operator_list</span><span class="p">)</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">operator_list</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;only pairwise interaction terms are translated; term </span><span class="si">{</span><span class="n">index</span><span class="si">}</span><span class="s2"> couples &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">operator_list</span><span class="p">)</span><span class="si">}</span><span class="s2"> operators. Re-express as two-operator products.&quot;</span>
+        <span class="p">)</span>
+
+    <span class="p">(</span><span class="n">index_a</span><span class="p">,</span> <span class="n">op_a</span><span class="p">),</span> <span class="p">(</span><span class="n">index_b</span><span class="p">,</span> <span class="n">op_b</span><span class="p">)</span> <span class="o">=</span> <span class="n">operator_list</span>
+    <span class="n">matrix_a</span> <span class="o">=</span> <span class="n">_device_gauge_matrix</span><span class="p">(</span><span class="n">subsystems</span><span class="p">[</span><span class="n">index_a</span><span class="p">],</span> <span class="n">op_a</span><span class="p">,</span> <span class="n">devices</span><span class="p">[</span><span class="n">index_a</span><span class="p">])</span>
+    <span class="n">matrix_b</span> <span class="o">=</span> <span class="n">_device_gauge_matrix</span><span class="p">(</span><span class="n">subsystems</span><span class="p">[</span><span class="n">index_b</span><span class="p">],</span> <span class="n">op_b</span><span class="p">,</span> <span class="n">devices</span><span class="p">[</span><span class="n">index_b</span><span class="p">])</span>
+
+    <span class="c1"># An scqubits InteractionTerm is a full bilinear operator with no</span>
+    <span class="c1"># rotating-wave truncation of its own, so the imported coupling is</span>
+    <span class="c1"># marked rwa=False — the imported chip reproduces the scqubits</span>
+    <span class="c1"># composite spectrum exactly, independent of the chip&#39;s RWA default.</span>
+    <span class="k">return</span> <span class="n">Coupling</span><span class="p">(</span>
+        <span class="n">devices</span><span class="p">[</span><span class="n">index_a</span><span class="p">],</span>
+        <span class="n">devices</span><span class="p">[</span><span class="n">index_b</span><span class="p">],</span>
+        <span class="n">g</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>
+        <span class="n">interaction</span><span class="o">=</span><span class="n">_product_interaction</span><span class="p">(</span><span class="n">term</span><span class="o">.</span><span class="n">g_strength</span><span class="p">,</span> <span class="n">matrix_a</span><span class="p">,</span> <span class="n">matrix_b</span><span class="p">,</span> <span class="nb">bool</span><span class="p">(</span><span class="n">term</span><span class="o">.</span><span class="n">add_hc</span><span class="p">)),</span>
+        <span class="n">rwa</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;scq_interaction_</span><span class="si">{</span><span class="n">index</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<div class="viewcode-block" id="import_hilbertspace">
+<a class="viewcode-back" href="../../../../generated/quchip.interop.scqubits.composite.html#quchip.interop.scqubits.composite.import_hilbertspace">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">import_hilbertspace</span><span class="p">(</span><span class="n">hs</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="o">**</span><span class="n">opts</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Chip</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Import an scqubits ``HilbertSpace`` into a quchip :class:`Chip`.</span>
+
+<span class="sd">    Each subsystem imports through the shipped device mappings (order and</span>
+<span class="sd">    ``id_str`` label preserved); each ``InteractionTerm`` becomes a</span>
+<span class="sd">    callable-form :class:`~quchip.chip.couplings.Coupling`.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    hs : scqubits.HilbertSpace</span>
+<span class="sd">        The composite system to import.</span>
+<span class="sd">    **opts</span>
+<span class="sd">        ``frame`` and ``rwa`` are forwarded to the :class:`Chip` constructor.</span>
+<span class="sd">        Device-level options are not forwarded in v1: every subsystem imports</span>
+<span class="sd">        at its own ``truncated_dim`` and native noise defaults.</span>
+
+<span class="sd">    Raises</span>
+<span class="sd">    ------</span>
+<span class="sd">    NotImplementedError</span>
+<span class="sd">        A string-expression (``InteractionTermStr``) or non-pairwise</span>
+<span class="sd">        interaction term is present.</span>
+<span class="sd">    LookupError</span>
+<span class="sd">        A subsystem has no registered device mapping.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">subsystems</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">hs</span><span class="o">.</span><span class="n">subsystem_list</span><span class="p">)</span>
+    <span class="n">devices</span> <span class="o">=</span> <span class="p">[</span><span class="n">import_object</span><span class="p">(</span><span class="n">subsys</span><span class="p">)</span> <span class="k">for</span> <span class="n">subsys</span> <span class="ow">in</span> <span class="n">subsystems</span><span class="p">]</span>
+    <span class="n">couplings</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">BaseCoupling</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="n">_coupling_from_term</span><span class="p">(</span><span class="n">term</span><span class="p">,</span> <span class="n">subsystems</span><span class="p">,</span> <span class="n">devices</span><span class="p">,</span> <span class="n">index</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">index</span><span class="p">,</span> <span class="n">term</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">hs</span><span class="o">.</span><span class="n">interaction_list</span><span class="p">)</span>
+    <span class="p">]</span>
+
+    <span class="n">chip_kwargs</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;frame&quot;</span><span class="p">,</span> <span class="s2">&quot;rwa&quot;</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">opts</span><span class="p">:</span>
+            <span class="n">chip_kwargs</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">opts</span><span class="p">[</span><span class="n">key</span><span class="p">]</span>
+
+    <span class="k">return</span> <span class="n">Chip</span><span class="p">(</span><span class="n">devices</span><span class="o">=</span><span class="n">devices</span><span class="p">,</span> <span class="n">couplings</span><span class="o">=</span><span class="n">couplings</span><span class="p">,</span> <span class="o">**</span><span class="n">chip_kwargs</span><span class="p">)</span></div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_concrete_strength</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">coupling</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return *value* as a concrete scalar, or raise on a JAX tracer.</span>
+
+<span class="sd">    Export is eager and terminal (Principle 2): a coupling strength carrying a</span>
+<span class="sd">    tracer (inside ``jit``/``grad``) cannot be written into a static scqubits</span>
+<span class="sd">    object, so it fails here rather than silently dropping the swept value.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">scalar</span> <span class="o">=</span> <span class="n">maybe_concrete_scalar</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">scalar</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;export_chip requires a concrete coupling strength for </span><span class="si">{</span><span class="n">coupling</span><span class="o">.</span><span class="n">label</span><span class="si">!r}</span><span class="s2">; &quot;</span>
+            <span class="s2">&quot;call outside jit/grad or substitute concrete values first.&quot;</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">scalar</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_coupling_product_factors</span><span class="p">(</span><span class="n">coupling</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">backend</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Return ``(g, A, B)`` reproducing the coupling&#39;s non-RWA ``H_int = g·A⊗B``.</span>
+
+<span class="sd">    Each supported coupling factorizes into a scalar strength and two device</span>
+<span class="sd">    operators; the factors are the coupling&#39;s own operator definitions,</span>
+<span class="sd">    evaluated on the endpoint devices and densified through *backend*, so the</span>
+<span class="sd">    exported interaction is term-for-term identical to the one quchip assembles</span>
+<span class="sd">    (:meth:`~quchip.chip.couplings.CouplingModel.interaction_hamiltonian` at</span>
+<span class="sd">    ``rwa=False``):</span>
+
+<span class="sd">    * :class:`~quchip.chip.couplings.Capacitive` /</span>
+<span class="sd">      :class:`~quchip.chip.couplings.TunableCapacitive` — the full dipole form</span>
+<span class="sd">      ``g·(a + a†)(b + b†)``, so ``A = a + a†`` and ``B = b + b†``. The full</span>
+<span class="sd">      (non-RWA) form is always exported: scqubits interaction terms are the</span>
+<span class="sd">      bare operator product, with no rotating-wave truncation of their own.</span>
+<span class="sd">    * :class:`~quchip.chip.couplings.CrossKerr` — ``χ·n̂_a n̂_b``, so</span>
+<span class="sd">      ``A = n̂_a`` and ``B = n̂_b``.</span>
+<span class="sd">    * product-form :class:`~quchip.chip.couplings.Coupling` — the user&#39;s</span>
+<span class="sd">      ``g·op_a(a)⊗op_b(b)``, so ``A``/``B`` are exactly those two factors.</span>
+
+<span class="sd">    A callable-form :class:`~quchip.chip.couplings.Coupling` (whose interaction</span>
+<span class="sd">    is an opaque two-device closure, not a factorizable product) and any other</span>
+<span class="sd">    coupling type raise :class:`NotImplementedError` naming the supported set.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">matrix</span><span class="p">(</span><span class="n">op</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">backend</span><span class="o">.</span><span class="n">to_array</span><span class="p">(</span><span class="n">op</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">complex</span><span class="p">)</span>
+
+    <span class="n">device_a</span><span class="p">,</span> <span class="n">device_b</span> <span class="o">=</span> <span class="n">coupling</span><span class="o">.</span><span class="n">device_a</span><span class="p">,</span> <span class="n">coupling</span><span class="o">.</span><span class="n">device_b</span>
+    <span class="c1"># coupling_strength is the one scalar-strength property every coupling</span>
+    <span class="c1"># type defines (BaseCoupling.coupling_strength): g for Capacitive/</span>
+    <span class="c1"># Coupling, g_0 for TunableCapacitive, chi for CrossKerr. Reading it</span>
+    <span class="c1"># uniformly here means a new coupling type with its own scalar-strength</span>
+    <span class="c1"># field needs no change to this dispatch — only the operator structure</span>
+    <span class="c1"># below is type-specific.</span>
+    <span class="n">g</span> <span class="o">=</span> <span class="n">_concrete_strength</span><span class="p">(</span><span class="n">coupling</span><span class="o">.</span><span class="n">coupling_strength</span><span class="p">,</span> <span class="n">coupling</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">coupling</span><span class="p">,</span> <span class="p">(</span><span class="n">TunableCapacitive</span><span class="p">,</span> <span class="n">Capacitive</span><span class="p">)):</span>
+        <span class="k">return</span> <span class="n">g</span><span class="p">,</span> <span class="n">_quadrature</span><span class="p">(</span><span class="n">device_a</span><span class="p">,</span> <span class="n">matrix</span><span class="p">),</span> <span class="n">_quadrature</span><span class="p">(</span><span class="n">device_b</span><span class="p">,</span> <span class="n">matrix</span><span class="p">)</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">coupling</span><span class="p">,</span> <span class="n">CrossKerr</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">g</span><span class="p">,</span> <span class="n">matrix</span><span class="p">(</span><span class="n">device_a</span><span class="o">.</span><span class="n">number_operator</span><span class="p">()),</span> <span class="n">matrix</span><span class="p">(</span><span class="n">device_b</span><span class="o">.</span><span class="n">number_operator</span><span class="p">())</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">coupling</span><span class="p">,</span> <span class="n">Coupling</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">coupling</span><span class="o">.</span><span class="n">_interaction</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;callable-form Coupling </span><span class="si">{</span><span class="n">coupling</span><span class="o">.</span><span class="n">label</span><span class="si">!r}</span><span class="s2"> carries an opaque two-device closure that &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;does not factorize into a single operator product; scqubits export supports &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">_SUPPORTED_EXPORT_COUPLINGS</span><span class="si">}</span><span class="s2">. Re-express it in product form (op_a, op_b).&quot;</span>
+            <span class="p">)</span>
+        <span class="c1"># op_a/op_b are both non-None in product form (guaranteed by Coupling.__init__,</span>
+        <span class="c1"># given _interaction is None here).</span>
+        <span class="k">assert</span> <span class="n">coupling</span><span class="o">.</span><span class="n">_op_a</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">coupling</span><span class="o">.</span><span class="n">_op_b</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="k">return</span> <span class="n">g</span><span class="p">,</span> <span class="n">matrix</span><span class="p">(</span><span class="n">coupling</span><span class="o">.</span><span class="n">_op_a</span><span class="p">(</span><span class="n">device_a</span><span class="p">)),</span> <span class="n">matrix</span><span class="p">(</span><span class="n">coupling</span><span class="o">.</span><span class="n">_op_b</span><span class="p">(</span><span class="n">device_b</span><span class="p">))</span>
+
+    <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">coupling</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">coupling</span><span class="o">.</span><span class="n">label</span><span class="si">!r}</span><span class="s2"> is not exportable to scqubits; &quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;supported couplings are </span><span class="si">{</span><span class="n">_SUPPORTED_EXPORT_COUPLINGS</span><span class="si">}</span><span class="s2">.&quot;</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_quadrature</span><span class="p">(</span><span class="n">device</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">matrix</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the unnormalized quadrature ``a + a†`` on *device* as a matrix.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">matrix</span><span class="p">(</span><span class="n">device</span><span class="o">.</span><span class="n">lowering_operator</span><span class="p">())</span> <span class="o">+</span> <span class="n">matrix</span><span class="p">(</span><span class="n">device</span><span class="o">.</span><span class="n">raising_operator</span><span class="p">())</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_lift_to_native</span><span class="p">(</span><span class="n">subsys</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">matrix</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Lift a truncated-eigenbasis operator into *subsys*&#39; native basis.</span>
+
+<span class="sd">    scqubits assembles an ``op1``/``op2`` interaction by projecting each raw</span>
+<span class="sd">    matrix from the subsystem&#39;s *native* basis into its truncated eigenbasis</span>
+<span class="sd">    (``V^\dagger O V`` with ``V`` the native eigenvectors). quchip supplies the</span>
+<span class="sd">    operator already in the truncated eigenbasis, so the inverse lift</span>
+<span class="sd">    ``V O V^\dagger`` is applied first: scqubits&#39; projection then recovers the</span>
+<span class="sd">    quchip matrix exactly (``V^\dagger V = I`` on the kept subspace). For a</span>
+<span class="sd">    subsystem whose native dimension already equals its truncated dimension</span>
+<span class="sd">    (an ``Oscillator``) the lift is the identity. This keeps the exported</span>
+<span class="sd">    interaction a plain ndarray product term — re-importable through</span>
+<span class="sd">    :func:`import_hilbertspace` unchanged — rather than an opaque full-space</span>
+<span class="sd">    ``qobj`` scqubits&#39; assembly would take verbatim but the importer could not</span>
+<span class="sd">    factorize.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">evecs</span> <span class="o">=</span> <span class="n">subsys</span><span class="o">.</span><span class="n">eigensys</span><span class="p">(</span><span class="n">evals_count</span><span class="o">=</span><span class="n">subsys</span><span class="o">.</span><span class="n">truncated_dim</span><span class="p">)</span>
+    <span class="n">v</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">evecs</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">complex</span><span class="p">)[:,</span> <span class="p">:</span> <span class="n">subsys</span><span class="o">.</span><span class="n">truncated_dim</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">v</span> <span class="o">@</span> <span class="n">matrix</span> <span class="o">@</span> <span class="n">v</span><span class="o">.</span><span class="n">conj</span><span class="p">()</span><span class="o">.</span><span class="n">T</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_warn_if_cross_basis</span><span class="p">(</span><span class="n">device</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">subsys</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Warn when *device* and its exported *subsys* diagonalize different-sized bases.</span>
+
+<span class="sd">    Mirrors the import-side gauge caveat (:func:`_device_gauge_matrix`). A device</span>
+<span class="sd">    that re-diagonalizes its own native Hamiltonian (exposes ``eigenvectors()``)</span>
+<span class="sd">    at a native dimension that differs from the exported subsystem&#39;s</span>
+<span class="sd">    ``hilbertdim()`` — e.g. a :class:`~quchip.devices.fluxonium.Fluxonium`, whose</span>
+<span class="sd">    phase grid does not match scqubits&#39; harmonic-oscillator ``cutoff`` — cannot</span>
+<span class="sd">    hand scqubits its own native basis; scqubits rebuilds the spectrum in its</span>
+<span class="sd">    basis instead, so the two composites agree only to the cross-discretization</span>
+<span class="sd">    level (the same ``atol=1e-6`` the per-device import already carries). A</span>
+<span class="sd">    :class:`~quchip.devices.transmon.ChargeBasisTransmon` (whose charge basis</span>
+<span class="sd">    exports one-to-one) does not trigger it.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">eigenvectors</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">device</span><span class="p">,</span> <span class="s2">&quot;eigenvectors&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">eigenvectors</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span>
+    <span class="n">native_dim</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">eigenvectors</span><span class="p">())</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+    <span class="k">if</span> <span class="n">native_dim</span> <span class="o">!=</span> <span class="n">subsys</span><span class="o">.</span><span class="n">hilbertdim</span><span class="p">():</span>
+        <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;Exported device </span><span class="si">{</span><span class="n">device</span><span class="o">.</span><span class="n">label</span><span class="si">!r}</span><span class="s2"> diagonalizes a native basis of a different &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;dimension than its scqubits subsystem, which rebuilds the spectrum in a different &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;native basis; the two composites agree only to the cross-discretization level.&quot;</span><span class="p">,</span>
+            <span class="ne">UserWarning</span><span class="p">,</span>
+            <span class="n">stacklevel</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+        <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_check_rwa_exportable</span><span class="p">(</span><span class="n">chip</span><span class="p">:</span> <span class="n">Chip</span><span class="p">,</span> <span class="n">coupling</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Raise when *coupling* factorizes RWA-sensitively and the chip resolves ``rwa=True`` for it.</span>
+
+<span class="sd">    scqubits export always emits the full (non-RWA) operator product</span>
+<span class="sd">    (:func:`_coupling_product_factors`). For :class:`~quchip.chip.couplings.Capacitive`,</span>
+<span class="sd">    :class:`~quchip.chip.couplings.TunableCapacitive`, and product-form</span>
+<span class="sd">    :class:`~quchip.chip.couplings.Coupling`, the RWA form is a genuinely</span>
+<span class="sd">    different operator than the full form, so exporting one of these under a</span>
+<span class="sd">    resolved ``rwa=True`` would silently reproduce different physics than the</span>
+<span class="sd">    chip&#39;s own dressed dynamics. :class:`~quchip.chip.couplings.CrossKerr` is</span>
+<span class="sd">    exempt: its interaction is diagonal in the excitation-number basis, so RWA</span>
+<span class="sd">    masking is a no-op on it.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">coupling</span><span class="p">,</span> <span class="n">CrossKerr</span><span class="p">):</span>
+        <span class="k">return</span>
+    <span class="n">rwa_sensitive</span> <span class="o">=</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">coupling</span><span class="p">,</span> <span class="p">(</span><span class="n">Capacitive</span><span class="p">,</span> <span class="n">TunableCapacitive</span><span class="p">))</span> <span class="ow">or</span> <span class="p">(</span>
+        <span class="nb">isinstance</span><span class="p">(</span><span class="n">coupling</span><span class="p">,</span> <span class="n">Coupling</span><span class="p">)</span> <span class="ow">and</span> <span class="n">coupling</span><span class="o">.</span><span class="n">_interaction</span> <span class="ow">is</span> <span class="kc">None</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="n">rwa_sensitive</span> <span class="ow">and</span> <span class="n">chip</span><span class="o">.</span><span class="n">resolve_rwa</span><span class="p">(</span><span class="n">coupling</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;Coupling </span><span class="si">{</span><span class="n">coupling</span><span class="o">.</span><span class="n">label</span><span class="si">!r}</span><span class="s2"> resolves rwa=True on this chip, but scqubits export always &quot;</span>
+            <span class="s2">&quot;emits the full (non-RWA) operator product — exporting it would silently reproduce &quot;</span>
+            <span class="s2">&quot;different physics than the chip&#39;s RWA-resolved dynamics. Export an explicitly non-RWA &quot;</span>
+            <span class="s2">&quot;chip (Chip(..., rwa=False)), or set rwa=False on this coupling, to proceed.&quot;</span>
+        <span class="p">)</span>
+
+
+<div class="viewcode-block" id="export_chip">
+<a class="viewcode-back" href="../../../../generated/quchip.interop.scqubits.composite.html#quchip.interop.scqubits.composite.export_chip">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">export_chip</span><span class="p">(</span><span class="n">chip</span><span class="p">:</span> <span class="n">Chip</span><span class="p">,</span> <span class="o">**</span><span class="n">opts</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Export a quchip :class:`Chip` to an scqubits ``HilbertSpace``.</span>
+
+<span class="sd">    Each device exports through the shipped device mappings</span>
+<span class="sd">    (:mod:`quchip.interop.scqubits.devices`) in chip order, and every</span>
+<span class="sd">    :class:`~quchip.chip.couplings.Coupling` factorizes into a scalar strength</span>
+<span class="sd">    and two device operators (see :func:`_coupling_product_factors`) added as</span>
+<span class="sd">    one ``InteractionTerm`` per edge. scqubits carries the *bare diagonal*</span>
+<span class="sd">    energies of each subsystem (gauge-invariant) plus these interaction</span>
+<span class="sd">    matrices, so the whole composite lives in one consistent gauge — quchip&#39;s —</span>
+<span class="sd">    and its dressed spectrum reproduces the chip&#39;s.</span>
+
+<span class="sd">    Couplings are exported in their **full (non-RWA) operator form**: scqubits</span>
+<span class="sd">    interaction terms are bare operator products and apply no rotating-wave</span>
+<span class="sd">    truncation of their own. Exporting a chip whose *resolved* RWA actually</span>
+<span class="sd">    masks a :class:`~quchip.chip.couplings.Capacitive`,</span>
+<span class="sd">    :class:`~quchip.chip.couplings.TunableCapacitive`, or product-form</span>
+<span class="sd">    :class:`~quchip.chip.couplings.Coupling` therefore fails closed with</span>
+<span class="sd">    :class:`ValueError`: silently exporting the full form anyway would</span>
+<span class="sd">    reproduce different physics than the chip&#39;s own RWA-resolved dynamics.</span>
+<span class="sd">    :class:`~quchip.chip.couplings.CrossKerr` is exempt — its RWA and full</span>
+<span class="sd">    forms coincide, since ``n̂_a n̂_b`` conserves excitation number and is</span>
+<span class="sd">    never touched by the RWA mask. Export an explicitly non-RWA chip</span>
+<span class="sd">    (``Chip(..., rwa=False)``, or ``rwa=False`` on the coupling) to proceed.</span>
+
+<span class="sd">    Chip-level control equipment and baths have no scqubits counterpart (it</span>
+<span class="sd">    models neither drives nor dissipation) and are dropped with a single</span>
+<span class="sd">    :class:`UserWarning` naming what was dropped.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    chip : Chip</span>
+<span class="sd">        The composite system to export. Coupling strengths must be concrete —</span>
+<span class="sd">        a strength carrying a JAX tracer raises :class:`ValueError`.</span>
+
+<span class="sd">    Raises</span>
+<span class="sd">    ------</span>
+<span class="sd">    NotImplementedError</span>
+<span class="sd">        A coupling is neither :class:`~quchip.chip.couplings.Capacitive`,</span>
+<span class="sd">        :class:`~quchip.chip.couplings.TunableCapacitive`,</span>
+<span class="sd">        :class:`~quchip.chip.couplings.CrossKerr`, nor a product-form</span>
+<span class="sd">        :class:`~quchip.chip.couplings.Coupling`.</span>
+<span class="sd">    ValueError</span>
+<span class="sd">        A coupling strength is a JAX tracer rather than a concrete value, or</span>
+<span class="sd">        a Capacitive/TunableCapacitive/product-form Coupling resolves</span>
+<span class="sd">        ``rwa=True`` on the chip (see above).</span>
+<span class="sd">    LookupError</span>
+<span class="sd">        A device has no registered scqubits export mapping.</span>
+<span class="sd">    TypeError</span>
+<span class="sd">        An unexpected keyword option is passed (composite export takes none).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">scqubits</span>
+
+    <span class="k">if</span> <span class="n">opts</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;export_chip got unexpected keyword argument(s): </span><span class="si">{</span><span class="s1">&#39;, &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">opts</span><span class="p">))</span><span class="si">}</span><span class="s2">. &quot;</span>
+            <span class="s2">&quot;Composite export takes no options.&quot;</span>
+        <span class="p">)</span>
+
+    <span class="n">dropped</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">if</span> <span class="n">chip</span><span class="o">.</span><span class="n">control_equipment</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">dropped</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;control equipment (drive lines and signal chain)&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">chip</span><span class="o">.</span><span class="n">baths</span><span class="p">:</span>
+        <span class="n">dropped</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;chip-level baths&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">dropped</span><span class="p">:</span>
+        <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;scqubits models neither drives nor dissipation; dropping </span><span class="si">{</span><span class="s1">&#39; and &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">dropped</span><span class="p">)</span><span class="si">}</span><span class="s2"> &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;from the exported HilbertSpace.&quot;</span><span class="p">,</span>
+            <span class="ne">UserWarning</span><span class="p">,</span>
+            <span class="n">stacklevel</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="n">subsystems</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">device</span> <span class="ow">in</span> <span class="n">chip</span><span class="o">.</span><span class="n">devices</span><span class="p">:</span>
+        <span class="n">subsys</span> <span class="o">=</span> <span class="n">export_object</span><span class="p">(</span><span class="n">device</span><span class="p">,</span> <span class="s2">&quot;scqubits&quot;</span><span class="p">)</span>
+        <span class="n">_warn_if_cross_basis</span><span class="p">(</span><span class="n">device</span><span class="p">,</span> <span class="n">subsys</span><span class="p">)</span>
+        <span class="n">subsystems</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">subsys</span><span class="p">)</span>
+    <span class="n">label_to_subsys</span> <span class="o">=</span> <span class="p">{</span><span class="n">device</span><span class="o">.</span><span class="n">label</span><span class="p">:</span> <span class="n">subsys</span> <span class="k">for</span> <span class="n">device</span><span class="p">,</span> <span class="n">subsys</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">chip</span><span class="o">.</span><span class="n">devices</span><span class="p">,</span> <span class="n">subsystems</span><span class="p">)}</span>
+
+    <span class="n">hs</span> <span class="o">=</span> <span class="n">scqubits</span><span class="o">.</span><span class="n">HilbertSpace</span><span class="p">(</span><span class="n">subsystems</span><span class="p">)</span>  <span class="c1"># type: ignore[abstract]  # scqubits stub marks HilbertSpace abstract</span>
+    <span class="n">backend</span> <span class="o">=</span> <span class="n">chip</span><span class="o">.</span><span class="n">backend</span>
+    <span class="k">for</span> <span class="n">coupling</span> <span class="ow">in</span> <span class="n">chip</span><span class="o">.</span><span class="n">couplings</span><span class="p">:</span>
+        <span class="n">_check_rwa_exportable</span><span class="p">(</span><span class="n">chip</span><span class="p">,</span> <span class="n">coupling</span><span class="p">)</span>
+        <span class="n">g</span><span class="p">,</span> <span class="n">matrix_a</span><span class="p">,</span> <span class="n">matrix_b</span> <span class="o">=</span> <span class="n">_coupling_product_factors</span><span class="p">(</span><span class="n">coupling</span><span class="p">,</span> <span class="n">backend</span><span class="p">)</span>
+        <span class="n">subsys_a</span> <span class="o">=</span> <span class="n">label_to_subsys</span><span class="p">[</span><span class="n">coupling</span><span class="o">.</span><span class="n">device_a_label</span><span class="p">]</span>
+        <span class="n">subsys_b</span> <span class="o">=</span> <span class="n">label_to_subsys</span><span class="p">[</span><span class="n">coupling</span><span class="o">.</span><span class="n">device_b_label</span><span class="p">]</span>
+        <span class="n">hs</span><span class="o">.</span><span class="n">add_interaction</span><span class="p">(</span>
+            <span class="n">g</span><span class="o">=</span><span class="n">g</span><span class="p">,</span>
+            <span class="n">op1</span><span class="o">=</span><span class="p">(</span><span class="n">_lift_to_native</span><span class="p">(</span><span class="n">subsys_a</span><span class="p">,</span> <span class="n">matrix_a</span><span class="p">),</span> <span class="n">subsys_a</span><span class="p">),</span>
+            <span class="n">op2</span><span class="o">=</span><span class="p">(</span><span class="n">_lift_to_native</span><span class="p">(</span><span class="n">subsys_b</span><span class="p">,</span> <span class="n">matrix_b</span><span class="p">),</span> <span class="n">subsys_b</span><span class="p">),</span>
+            <span class="n">add_hc</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">hs</span></div>
+
+</pre></div>
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          
+          
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 2026, Ibraheem AlYousef
+            </div>
+            Made with 
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            <div class="icons">
+              <a class="muted-link fa-brands fa-solid fa-github fa-2x" href="https://github.com/quchip/quchip" aria-label="GitHub"></a>
+              
+            </div>
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer no-toc">
+      
+      
+      
+    </aside>
+  </div>
+</div><script src="../../../../_static/documentation_options.js?v=2caa9db7"></script>
+    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../../../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../../../_static/copybutton.js?v=f281be69"></script>
+    </body>
+</html>

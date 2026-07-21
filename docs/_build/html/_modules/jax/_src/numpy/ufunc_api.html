@@ -1,0 +1,1081 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../../../../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><link rel="index" title="Index" href="../../../../genindex.html"><link rel="search" title="Search" href="../../../../search.html">
+        <link rel="prefetch" href="../../../../_static/quchip-wordmark-light.png" as="image">
+        <link rel="prefetch" href="../../../../_static/quchip-wordmark-dark.png" as="image">
+
+    <link rel="shortcut icon" href="../../../../_static/favicon.png"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>jax._src.numpy.ufunc_api - quchip 0.1.0</title>
+      <link rel="stylesheet" type="text/css" href="../../../../_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/custom.css?v=208c35cd" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #c92f33;
+  --color-brand-content: #c92f33;
+  --color-link: #c92f33;
+  --color-link--visited: #c92f33;
+  --color-link--visited--hover: #c92f33;
+  --color-foreground-primary: #16181c;
+  --color-background-primary: #fafbfc;
+  --color-background-secondary: #f2f4f6;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #ef6661;
+  --color-brand-content: #ef6661;
+  --color-link: #ef6661;
+  --color-link--hover: #ff8a80;
+  --color-link--visited: #ef6661;
+  --color-link--visited--hover: #ff8a80;
+  --color-foreground-primary: #f2f4f6;
+  --color-background-primary: #14161a;
+  --color-background-secondary: #101216;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #ef6661;
+  --color-brand-content: #ef6661;
+  --color-link: #ef6661;
+  --color-link--hover: #ff8a80;
+  --color-link--visited: #ef6661;
+  --color-link--visited--hover: #ff8a80;
+  --color-foreground-primary: #f2f4f6;
+  --color-background-primary: #14161a;
+  --color-background-secondary: #101216;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../../../../index.html"><div class="brand">quchip 0.1.0</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon no-toc" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../../../../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo only-light" src="../../../../_static/quchip-wordmark-light.png" alt="Light Logo"/>
+    <img class="sidebar-logo only-dark" src="../../../../_static/quchip-wordmark-dark.png" alt="Dark Logo"/>
+  </div>
+  
+  
+</a><form class="sidebar-search-container" method="get" action="../../../../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../../examples/hello-chip.html">Hello, drive and readout</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../cookbook.html">Cookbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../physics.html">quchip Physics Reference</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../../../api.html">API reference</a><input aria-label="Toggle navigation of API reference" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../../../generated/quchip.html">quchip</a><input aria-label="Toggle navigation of quchip" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../../generated/quchip.analysis.html">quchip.analysis</a><input aria-label="Toggle navigation of quchip.analysis" class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" role="switch" type="checkbox"/><label for="toctree-checkbox-3"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.analysis.cross_resonance.html">quchip.analysis.cross_resonance</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.analysis.dispersive_readout.html">quchip.analysis.dispersive_readout</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.analysis.effective_hamiltonian.html">quchip.analysis.effective_hamiltonian</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../../generated/quchip.backend.html">quchip.backend</a><input aria-label="Toggle navigation of quchip.backend" class="toctree-checkbox" id="toctree-checkbox-4" name="toctree-checkbox-4" role="switch" type="checkbox"/><label for="toctree-checkbox-4"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.backend.containers.html">quchip.backend.containers</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.backend.dynamiqs.html">quchip.backend.dynamiqs</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.backend.protocol.html">quchip.backend.protocol</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.backend.qutip.html">quchip.backend.qutip</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../../generated/quchip.chip.html">quchip.chip</a><input aria-label="Toggle navigation of quchip.chip" class="toctree-checkbox" id="toctree-checkbox-5" name="toctree-checkbox-5" role="switch" type="checkbox"/><label for="toctree-checkbox-5"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.chip.analysis.html">quchip.chip.analysis</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.chip.baths.html">quchip.chip.baths</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.chip.chip.html">quchip.chip.chip</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.chip.coupling_base.html">quchip.chip.coupling_base</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.chip.couplings.html">quchip.chip.couplings</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.chip.describe.html">quchip.chip.describe</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.chip.dressing.html">quchip.chip.dressing</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.chip.observables.html">quchip.chip.observables</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.chip.partition.html">quchip.chip.partition</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.chip.retarget.html">quchip.chip.retarget</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.chip.rwa.html">quchip.chip.rwa</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.chip.serialization.html">quchip.chip.serialization</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.chip.states.html">quchip.chip.states</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.chip.sw.html">quchip.chip.sw</a></li>
+<li class="toctree-l4 has-children"><a class="reference internal" href="../../../../generated/quchip.chip.transformations.html">quchip.chip.transformations</a><input aria-label="Toggle navigation of quchip.chip.transformations" class="toctree-checkbox" id="toctree-checkbox-6" name="toctree-checkbox-6" role="switch" type="checkbox"/><label for="toctree-checkbox-6"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l5"><a class="reference internal" href="../../../../generated/quchip.chip.transformations.active_patch.html">quchip.chip.transformations.active_patch</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../../generated/quchip.chip.transformations.dispatch.html">quchip.chip.transformations.dispatch</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../../generated/quchip.chip.transformations.eliminate_coupling.html">quchip.chip.transformations.eliminate_coupling</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../../generated/quchip.chip.transformations.eliminate_device.html">quchip.chip.transformations.eliminate_device</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../../generated/quchip.chip.transformations.methods.html">quchip.chip.transformations.methods</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../../generated/quchip.chip.transformations.plumbing.html">quchip.chip.transformations.plumbing</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../../generated/quchip.chip.transformations.result.html">quchip.chip.transformations.result</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../../generated/quchip.control.html">quchip.control</a><input aria-label="Toggle navigation of quchip.control" class="toctree-checkbox" id="toctree-checkbox-7" name="toctree-checkbox-7" role="switch" type="checkbox"/><label for="toctree-checkbox-7"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.control.batch.html">quchip.control.batch</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.control.drive.html">quchip.control.drive</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.control.drives_two_photon.html">quchip.control.drives_two_photon</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.control.envelopes.html">quchip.control.envelopes</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.control.equipment.html">quchip.control.equipment</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.control.sequence.html">quchip.control.sequence</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.control.signal.html">quchip.control.signal</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.control.signal_spec.html">quchip.control.signal_spec</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../../generated/quchip.declarative.html">quchip.declarative</a><input aria-label="Toggle navigation of quchip.declarative" class="toctree-checkbox" id="toctree-checkbox-8" name="toctree-checkbox-8" role="switch" type="checkbox"/><label for="toctree-checkbox-8"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.declarative.envelope_shape.html">quchip.declarative.envelope_shape</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.declarative.expr.html">quchip.declarative.expr</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.declarative.models.html">quchip.declarative.models</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.declarative.ops.html">quchip.declarative.ops</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.declarative.parameters.html">quchip.declarative.parameters</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.declarative.qnp.html">quchip.declarative.qnp</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../../generated/quchip.devices.html">quchip.devices</a><input aria-label="Toggle navigation of quchip.devices" class="toctree-checkbox" id="toctree-checkbox-9" name="toctree-checkbox-9" role="switch" type="checkbox"/><label for="toctree-checkbox-9"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.devices.base.html">quchip.devices.base</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.devices.circuit.html">quchip.devices.circuit</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.devices.fluxonium.html">quchip.devices.fluxonium</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.devices.kerr_cavity.html">quchip.devices.kerr_cavity</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.devices.protocols.html">quchip.devices.protocols</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.devices.resonator.html">quchip.devices.resonator</a></li>
+<li class="toctree-l4 has-children"><a class="reference internal" href="../../../../generated/quchip.devices.transmon.html">quchip.devices.transmon</a><input aria-label="Toggle navigation of quchip.devices.transmon" class="toctree-checkbox" id="toctree-checkbox-10" name="toctree-checkbox-10" role="switch" type="checkbox"/><label for="toctree-checkbox-10"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l5"><a class="reference internal" href="../../../../generated/quchip.devices.transmon.charge_basis.html">quchip.devices.transmon.charge_basis</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../../generated/quchip.devices.transmon.duffing.html">quchip.devices.transmon.duffing</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../../generated/quchip.devices.transmon.flux_tunable.html">quchip.devices.transmon.flux_tunable</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../../generated/quchip.engine.html">quchip.engine</a><input aria-label="Toggle navigation of quchip.engine" class="toctree-checkbox" id="toctree-checkbox-11" name="toctree-checkbox-11" role="switch" type="checkbox"/><label for="toctree-checkbox-11"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.engine.bands.html">quchip.engine.bands</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.engine.ir.html">quchip.engine.ir</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.engine.partitioned.html">quchip.engine.partitioned</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.engine.solver_hints.html">quchip.engine.solver_hints</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.engine.stage1_frames.html">quchip.engine.stage1_frames</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.engine.stage2_assembly.html">quchip.engine.stage2_assembly</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.engine.stage3_observables.html">quchip.engine.stage3_observables</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.engine.stage4_problem.html">quchip.engine.stage4_problem</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../../generated/quchip.interop.html">quchip.interop</a><input aria-label="Toggle navigation of quchip.interop" class="toctree-checkbox" id="toctree-checkbox-12" name="toctree-checkbox-12" role="switch" type="checkbox"/><label for="toctree-checkbox-12"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.interop.base.html">quchip.interop.base</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.interop.eigenbasis.html">quchip.interop.eigenbasis</a></li>
+<li class="toctree-l4 has-children"><a class="reference internal" href="../../../../generated/quchip.interop.scqubits.html">quchip.interop.scqubits</a><input aria-label="Toggle navigation of quchip.interop.scqubits" class="toctree-checkbox" id="toctree-checkbox-13" name="toctree-checkbox-13" role="switch" type="checkbox"/><label for="toctree-checkbox-13"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l5"><a class="reference internal" href="../../../../generated/quchip.interop.scqubits.composite.html">quchip.interop.scqubits.composite</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../../generated/quchip.interop.scqubits.devices.html">quchip.interop.scqubits.devices</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../../generated/quchip.inverse_design.html">quchip.inverse_design</a><input aria-label="Toggle navigation of quchip.inverse_design" class="toctree-checkbox" id="toctree-checkbox-14" name="toctree-checkbox-14" role="switch" type="checkbox"/><label for="toctree-checkbox-14"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.inverse_design.fit.html">quchip.inverse_design.fit</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.inverse_design.observables.html">quchip.inverse_design.observables</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.inverse_design.subsystems.html">quchip.inverse_design.subsystems</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.inverse_design.types.html">quchip.inverse_design.types</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../../generated/quchip.results.html">quchip.results</a><input aria-label="Toggle navigation of quchip.results" class="toctree-checkbox" id="toctree-checkbox-15" name="toctree-checkbox-15" role="switch" type="checkbox"/><label for="toctree-checkbox-15"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.results.partitioned.html">quchip.results.partitioned</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.results.results.html">quchip.results.results</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../../generated/quchip.sweep.html">quchip.sweep</a></li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../../generated/quchip.utils.html">quchip.utils</a><input aria-label="Toggle navigation of quchip.utils" class="toctree-checkbox" id="toctree-checkbox-16" name="toctree-checkbox-16" role="switch" type="checkbox"/><label for="toctree-checkbox-16"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.utils.constants.html">quchip.utils.constants</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.utils.jax_utils.html">quchip.utils.jax_utils</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.utils.labeling.html">quchip.utils.labeling</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.utils.registry.html">quchip.utils.registry</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.utils.state_versioning.html">quchip.utils.state_versioning</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../../generated/quchip.viz.html">quchip.viz</a><input aria-label="Toggle navigation of quchip.viz" class="toctree-checkbox" id="toctree-checkbox-17" name="toctree-checkbox-17" role="switch" type="checkbox"/><label for="toctree-checkbox-17"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.viz.chip.html">quchip.viz.chip</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.viz.control.html">quchip.viz.control</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.viz.device.html">quchip.viz.device</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../../generated/quchip.viz.results.html">quchip.viz.results</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../contributing.html">Contributing to quchip</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../conduct.html">Code of Conduct</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon no-toc" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <h1>Source code for jax._src.numpy.ufunc_api</h1><div class="highlight"><pre>
+<span></span><span class="c1"># Copyright 2023 The JAX Authors.</span>
+<span class="c1">#</span>
+<span class="c1"># Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="c1"># you may not use this file except in compliance with the License.</span>
+<span class="c1"># You may obtain a copy of the License at</span>
+<span class="c1">#</span>
+<span class="c1">#     https://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Unless required by applicable law or agreed to in writing, software</span>
+<span class="c1"># distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="c1"># WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="c1"># See the License for the specific language governing permissions and</span>
+<span class="c1"># limitations under the License.</span>
+
+<span class="sd">&quot;&quot;&quot;Tools to create numpy-style ufuncs.&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">functools</span><span class="w"> </span><span class="kn">import</span> <span class="n">partial</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">operator</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">jax._src</span><span class="w"> </span><span class="kn">import</span> <span class="n">api</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">jax._src.typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Array</span><span class="p">,</span> <span class="n">ArrayLike</span><span class="p">,</span> <span class="n">DTypeLike</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">jax._src.lax</span><span class="w"> </span><span class="kn">import</span> <span class="n">control_flow</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">jax._src.lax</span><span class="w"> </span><span class="kn">import</span> <span class="n">slicing</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">jax._src.lax</span><span class="w"> </span><span class="kn">import</span> <span class="n">lax</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">jax._src.numpy</span><span class="w"> </span><span class="kn">import</span> <span class="n">indexing</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">jax._src.numpy.lax_numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">jnp</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">jax._src.numpy.reductions</span><span class="w"> </span><span class="kn">import</span> <span class="n">_moveaxis</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">jax._src.numpy.util</span><span class="w"> </span><span class="kn">import</span> <span class="n">check_arraylike</span><span class="p">,</span> <span class="n">_broadcast_to</span><span class="p">,</span> <span class="n">_where</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">jax._src.numpy.vectorize</span><span class="w"> </span><span class="kn">import</span> <span class="n">vectorize</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">jax._src.util</span><span class="w"> </span><span class="kn">import</span> <span class="n">canonicalize_axis</span><span class="p">,</span> <span class="n">set_module</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+
+<span class="n">export</span> <span class="o">=</span> <span class="n">set_module</span><span class="p">(</span><span class="s2">&quot;jax.numpy&quot;</span><span class="p">)</span>
+
+<span class="n">_AT_INPLACE_WARNING</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span><span class="se">\</span>
+<span class="s2">Because JAX arrays are immutable, jnp.ufunc.at() cannot operate inplace like</span>
+<span class="s2">np.ufunc.at(). Instead, you can pass inplace=False and capture the result; e.g.</span>
+<span class="s2">&gt;&gt;&gt; arr = jnp.add.at(arr, ind, val, inplace=False)</span>
+<span class="s2">&quot;&quot;&quot;</span>
+
+
+<span class="nd">@export</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ufunc</span><span class="p">:</span>
+<span class="w">  </span><span class="sd">&quot;&quot;&quot;Universal functions which operation element-by-element on arrays.</span>
+
+<span class="sd">  JAX implementation of :class:`numpy.ufunc`.</span>
+
+<span class="sd">  This is a class for JAX-backed implementations of NumPy&#39;s ufunc APIs.</span>
+<span class="sd">  Most users will never need to instantiate :class:`ufunc`, but rather</span>
+<span class="sd">  will use the pre-defined ufuncs in :mod:`jax.numpy`.</span>
+
+<span class="sd">  For constructing your own ufuncs, see :func:`jax.numpy.frompyfunc`.</span>
+
+<span class="sd">  Examples:</span>
+<span class="sd">    Universal functions are functions that apply element-wise to broadcasted</span>
+<span class="sd">    arrays, but they also come with a number of extra attributes and methods.</span>
+
+<span class="sd">    As an example, consider the function :obj:`jax.numpy.add`. The object</span>
+<span class="sd">    acts as a function that applies addition to broadcasted arrays in an</span>
+<span class="sd">    element-wise manner:</span>
+
+<span class="sd">    &gt;&gt;&gt; x = jnp.array([1, 2, 3, 4, 5])</span>
+<span class="sd">    &gt;&gt;&gt; jnp.add(x, 1)</span>
+<span class="sd">    Array([2, 3, 4, 5, 6], dtype=int32)</span>
+
+<span class="sd">    Each :class:`ufunc` object includes a number of attributes that describe</span>
+<span class="sd">    its behavior:</span>
+
+<span class="sd">    &gt;&gt;&gt; jnp.add.nin  # number of inputs</span>
+<span class="sd">    2</span>
+<span class="sd">    &gt;&gt;&gt; jnp.add.nout  # number of outputs</span>
+<span class="sd">    1</span>
+<span class="sd">    &gt;&gt;&gt; jnp.add.identity  # identity value, or None if no identity exists</span>
+<span class="sd">    0</span>
+
+<span class="sd">    Binary ufuncs like :obj:`jax.numpy.add` include  number of methods to</span>
+<span class="sd">    apply the function to arrays in different manners.</span>
+
+<span class="sd">    The :meth:`~ufunc.outer` method applies the function to the</span>
+<span class="sd">    pair-wise outer-product of the input array values:</span>
+
+<span class="sd">    &gt;&gt;&gt; jnp.add.outer(x, x)</span>
+<span class="sd">    Array([[ 2,  3,  4,  5,  6],</span>
+<span class="sd">           [ 3,  4,  5,  6,  7],</span>
+<span class="sd">           [ 4,  5,  6,  7,  8],</span>
+<span class="sd">           [ 5,  6,  7,  8,  9],</span>
+<span class="sd">           [ 6,  7,  8,  9, 10]], dtype=int32)</span>
+
+<span class="sd">    The :meth:`ufunc.reduce` method performs a reduction over the array.</span>
+<span class="sd">    For example, :meth:`jnp.add.reduce` is equivalent to ``jnp.sum``:</span>
+
+<span class="sd">    &gt;&gt;&gt; jnp.add.reduce(x)</span>
+<span class="sd">    Array(15, dtype=int32)</span>
+
+<span class="sd">    The :meth:`ufunc.accumulate` method performs a cumulative reduction</span>
+<span class="sd">    over the array. For example, :meth:`jnp.add.accumulate` is equivalent</span>
+<span class="sd">    to :func:`jax.numpy.cumulative_sum`:</span>
+
+<span class="sd">    &gt;&gt;&gt; jnp.add.accumulate(x)</span>
+<span class="sd">    Array([ 1,  3,  6, 10, 15], dtype=int32)</span>
+
+<span class="sd">    The :meth:`ufunc.at` method applies the function at particular indices in the</span>
+<span class="sd">    array; for ``jnp.add`` the computation is similar to :func:`jax.lax.scatter_add`:</span>
+
+<span class="sd">    &gt;&gt;&gt; jnp.add.at(x, 0, 100, inplace=False)</span>
+<span class="sd">    Array([101,   2,   3,   4,   5], dtype=int32)</span>
+
+<span class="sd">    And the :meth:`ufunc.reduceat` method performs a number of ``reduce``</span>
+<span class="sd">    operations between specified indices of an array; for ``jnp.add`` the</span>
+<span class="sd">    operation is similar to :func:`jax.ops.segment_sum`:</span>
+
+<span class="sd">    &gt;&gt;&gt; jnp.add.reduceat(x, jnp.array([0, 2]))</span>
+<span class="sd">    Array([ 3, 12], dtype=int32)</span>
+
+<span class="sd">    In this case, the first element is ``x[0:2].sum()``, and the second element</span>
+<span class="sd">    is ``x[2:].sum()``.</span>
+<span class="sd">  &quot;&quot;&quot;</span>
+  <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">func</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span> <span class="o">/</span><span class="p">,</span>
+               <span class="n">nin</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">nout</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span>
+               <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+               <span class="n">nargs</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+               <span class="n">identity</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+               <span class="n">call</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+               <span class="n">reduce</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+               <span class="n">accumulate</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+               <span class="n">at</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+               <span class="n">reduceat</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+               <span class="p">):</span>
+    <span class="bp">self</span><span class="o">.</span><span class="vm">__doc__</span> <span class="o">=</span> <span class="n">func</span><span class="o">.</span><span class="vm">__doc__</span>
+    <span class="bp">self</span><span class="o">.</span><span class="vm">__name__</span> <span class="o">=</span> <span class="n">name</span> <span class="ow">or</span> <span class="n">func</span><span class="o">.</span><span class="vm">__name__</span>
+    <span class="c1"># We want ufunc instances to work properly when marked as static,</span>
+    <span class="c1"># and for this reason it&#39;s important that their properties not be</span>
+    <span class="c1"># mutated. We prevent this by storing them in a dunder attribute,</span>
+    <span class="c1"># and accessing them via read-only properties.</span>
+    <span class="bp">self</span><span class="o">.</span><span class="n">__static_props</span> <span class="o">=</span> <span class="p">{</span>
+      <span class="s1">&#39;func&#39;</span><span class="p">:</span> <span class="n">func</span><span class="p">,</span>
+      <span class="s1">&#39;nin&#39;</span><span class="p">:</span> <span class="n">operator</span><span class="o">.</span><span class="n">index</span><span class="p">(</span><span class="n">nin</span><span class="p">),</span>
+      <span class="s1">&#39;nout&#39;</span><span class="p">:</span> <span class="n">operator</span><span class="o">.</span><span class="n">index</span><span class="p">(</span><span class="n">nout</span><span class="p">),</span>
+      <span class="s1">&#39;nargs&#39;</span><span class="p">:</span> <span class="n">operator</span><span class="o">.</span><span class="n">index</span><span class="p">(</span><span class="n">nargs</span> <span class="ow">or</span> <span class="n">nin</span><span class="p">),</span>
+      <span class="s1">&#39;identity&#39;</span><span class="p">:</span> <span class="n">identity</span><span class="p">,</span>
+      <span class="s1">&#39;call&#39;</span><span class="p">:</span> <span class="n">call</span><span class="p">,</span>
+      <span class="s1">&#39;reduce&#39;</span><span class="p">:</span> <span class="n">reduce</span><span class="p">,</span>
+      <span class="s1">&#39;accumulate&#39;</span><span class="p">:</span> <span class="n">accumulate</span><span class="p">,</span>
+      <span class="s1">&#39;at&#39;</span><span class="p">:</span> <span class="n">at</span><span class="p">,</span>
+      <span class="s1">&#39;reduceat&#39;</span><span class="p">:</span> <span class="n">reduceat</span><span class="p">,</span>
+    <span class="p">}</span>
+
+  <span class="n">_func</span> <span class="o">=</span> <span class="nb">property</span><span class="p">(</span><span class="k">lambda</span> <span class="bp">self</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">__static_props</span><span class="p">[</span><span class="s1">&#39;func&#39;</span><span class="p">])</span>
+  <span class="n">nin</span> <span class="o">=</span> <span class="nb">property</span><span class="p">(</span><span class="k">lambda</span> <span class="bp">self</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">__static_props</span><span class="p">[</span><span class="s1">&#39;nin&#39;</span><span class="p">])</span>
+  <span class="n">nout</span> <span class="o">=</span> <span class="nb">property</span><span class="p">(</span><span class="k">lambda</span> <span class="bp">self</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">__static_props</span><span class="p">[</span><span class="s1">&#39;nout&#39;</span><span class="p">])</span>
+  <span class="n">nargs</span> <span class="o">=</span> <span class="nb">property</span><span class="p">(</span><span class="k">lambda</span> <span class="bp">self</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">__static_props</span><span class="p">[</span><span class="s1">&#39;nargs&#39;</span><span class="p">])</span>
+  <span class="n">identity</span> <span class="o">=</span> <span class="nb">property</span><span class="p">(</span><span class="k">lambda</span> <span class="bp">self</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">__static_props</span><span class="p">[</span><span class="s1">&#39;identity&#39;</span><span class="p">])</span>
+
+  <span class="k">def</span><span class="w"> </span><span class="fm">__hash__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="c1"># In both __hash__ and __eq__, we do not consider call, reduce, etc.</span>
+    <span class="c1"># because they are considered implementation details rather than</span>
+    <span class="c1"># necessary parts of object identity.</span>
+    <span class="k">return</span> <span class="nb">hash</span><span class="p">((</span><span class="bp">self</span><span class="o">.</span><span class="n">_func</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">identity</span><span class="p">,</span>
+                 <span class="bp">self</span><span class="o">.</span><span class="n">nin</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">nout</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">nargs</span><span class="p">))</span>
+
+  <span class="k">def</span><span class="w"> </span><span class="fm">__eq__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+    <span class="k">return</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">ufunc</span><span class="p">)</span> <span class="ow">and</span> <span class="p">(</span>
+      <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_func</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">identity</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">nin</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">nout</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">nargs</span><span class="p">)</span> <span class="o">==</span>
+      <span class="p">(</span><span class="n">other</span><span class="o">.</span><span class="n">_func</span><span class="p">,</span> <span class="n">other</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span> <span class="n">other</span><span class="o">.</span><span class="n">identity</span><span class="p">,</span> <span class="n">other</span><span class="o">.</span><span class="n">nin</span><span class="p">,</span> <span class="n">other</span><span class="o">.</span><span class="n">nout</span><span class="p">,</span> <span class="n">other</span><span class="o">.</span><span class="n">nargs</span><span class="p">))</span>
+
+  <span class="k">def</span><span class="w"> </span><span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;&lt;jnp.ufunc &#39;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&#39;&gt;&quot;</span>
+
+  <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">ArrayLike</span><span class="p">,</span> <span class="n">out</span><span class="p">:</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">where</span><span class="p">:</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+    <span class="n">check_arraylike</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">out</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+      <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;out argument of </span><span class="si">{</span><span class="bp">self</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">where</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+      <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;where argument of </span><span class="si">{</span><span class="bp">self</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">call</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">__static_props</span><span class="p">[</span><span class="s1">&#39;call&#39;</span><span class="p">]</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_call_vectorized</span>
+    <span class="k">return</span> <span class="n">call</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">)</span>
+
+  <span class="nd">@partial</span><span class="p">(</span><span class="n">api</span><span class="o">.</span><span class="n">jit</span><span class="p">,</span> <span class="n">static_argnames</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;self&#39;</span><span class="p">])</span>
+  <span class="k">def</span><span class="w"> </span><span class="nf">_call_vectorized</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">vectorize</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_func</span><span class="p">)(</span><span class="o">*</span><span class="n">args</span><span class="p">)</span>
+
+<div class="viewcode-block" id="ufunc.reduce">
+<a class="viewcode-back" href="../../../../generated/quchip.declarative.qnp.html#quchip.declarative.qnp.ufunc.reduce">[docs]</a>
+  <span class="nd">@partial</span><span class="p">(</span><span class="n">api</span><span class="o">.</span><span class="n">jit</span><span class="p">,</span> <span class="n">static_argnames</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;self&#39;</span><span class="p">,</span> <span class="s1">&#39;axis&#39;</span><span class="p">,</span> <span class="s1">&#39;dtype&#39;</span><span class="p">,</span> <span class="s1">&#39;out&#39;</span><span class="p">,</span> <span class="s1">&#39;keepdims&#39;</span><span class="p">])</span>
+  <span class="k">def</span><span class="w"> </span><span class="nf">reduce</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">a</span><span class="p">:</span> <span class="n">ArrayLike</span><span class="p">,</span> <span class="n">axis</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+             <span class="n">dtype</span><span class="p">:</span> <span class="n">DTypeLike</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+             <span class="n">out</span><span class="p">:</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">keepdims</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="n">initial</span><span class="p">:</span> <span class="n">ArrayLike</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+             <span class="n">where</span><span class="p">:</span> <span class="n">ArrayLike</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Reduction operation derived from a binary function.</span>
+
+<span class="sd">    JAX implementation of :meth:`numpy.ufunc.reduce`.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">      a: Input array.</span>
+<span class="sd">      axis: integer specifying the axis over which to reduce. default=0</span>
+<span class="sd">      dtype: optionally specify the type of the output array.</span>
+<span class="sd">      out: Unused by JAX</span>
+<span class="sd">      keepdims: If True, reduced axes are left in the result with size 1.</span>
+<span class="sd">        If False (default) then reduced axes are squeezed out.</span>
+<span class="sd">      initial: int or array, Default=None. Initial value for the reduction.</span>
+<span class="sd">      where: boolean mask, default=None. The elements to be used in the sum. Array</span>
+<span class="sd">        should be broadcast compatible to the input.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">      array containing the result of the reduction operation.</span>
+
+<span class="sd">    Examples:</span>
+<span class="sd">      Consider the following array:</span>
+
+<span class="sd">      &gt;&gt;&gt; x = jnp.array([[1, 2, 3],</span>
+<span class="sd">      ...                [4, 5, 6]])</span>
+
+<span class="sd">      :meth:`jax.numpy.add.reduce` is equivalent to :func:`jax.numpy.sum`</span>
+<span class="sd">      along ``axis=0``:</span>
+
+<span class="sd">      &gt;&gt;&gt; jnp.add.reduce(x)</span>
+<span class="sd">      Array([5, 7, 9], dtype=int32)</span>
+<span class="sd">      &gt;&gt;&gt; x.sum(0)</span>
+<span class="sd">      Array([5, 7, 9], dtype=int32)</span>
+
+<span class="sd">      Similarly, :meth:`jax.numpy.logical_and.reduce` is equivalent to</span>
+<span class="sd">      :func:`jax.numpy.all`:</span>
+
+<span class="sd">      &gt;&gt;&gt; jnp.logical_and.reduce(x &gt; 2)</span>
+<span class="sd">      Array([False, False,  True], dtype=bool)</span>
+<span class="sd">      &gt;&gt;&gt; jnp.all(x &gt; 2, axis=0)</span>
+<span class="sd">      Array([False, False,  True], dtype=bool)</span>
+
+<span class="sd">      Some reductions do not correspond to any built-in aggregation function;</span>
+<span class="sd">      for example here is the reduction of :func:`jax.numpy.bitwise_or` along</span>
+<span class="sd">      the first axis of ``x``:</span>
+
+<span class="sd">      &gt;&gt;&gt; jnp.bitwise_or.reduce(x, axis=1)</span>
+<span class="sd">      Array([3, 7], dtype=int32)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">check_arraylike</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">.reduce&quot;</span><span class="p">,</span> <span class="n">a</span><span class="p">)</span>
+    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">nin</span> <span class="o">!=</span> <span class="mi">2</span><span class="p">:</span>
+      <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;reduce only supported for binary ufuncs&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">nout</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
+      <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;reduce only supported for functions returning a single value&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">out</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+      <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;out argument of </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">.reduce()&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">initial</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+      <span class="n">check_arraylike</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">.reduce&quot;</span><span class="p">,</span> <span class="n">initial</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">where</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+      <span class="n">check_arraylike</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">.reduce&quot;</span><span class="p">,</span> <span class="n">where</span><span class="p">)</span>
+      <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">identity</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">initial</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;reduction operation </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="vm">__name__</span><span class="si">!r}</span><span class="s2"> does not have an identity, &quot;</span>
+                         <span class="s2">&quot;so to use a where mask one has to specify &#39;initial&#39;.&quot;</span><span class="p">)</span>
+      <span class="k">if</span> <span class="n">lax</span><span class="o">.</span><span class="n">_dtype</span><span class="p">(</span><span class="n">where</span><span class="p">)</span> <span class="o">!=</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;where argument must have dtype=bool; got dtype=</span><span class="si">{</span><span class="n">lax</span><span class="o">.</span><span class="n">_dtype</span><span class="p">(</span><span class="n">where</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">reduce</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">__static_props</span><span class="p">[</span><span class="s1">&#39;reduce&#39;</span><span class="p">]</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reduce_via_scan</span>
+    <span class="k">return</span> <span class="n">reduce</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="n">axis</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">keepdims</span><span class="o">=</span><span class="n">keepdims</span><span class="p">,</span> <span class="n">initial</span><span class="o">=</span><span class="n">initial</span><span class="p">,</span> <span class="n">where</span><span class="o">=</span><span class="n">where</span><span class="p">)</span></div>
+
+
+  <span class="k">def</span><span class="w"> </span><span class="nf">_reduce_via_scan</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">arr</span><span class="p">:</span> <span class="n">ArrayLike</span><span class="p">,</span> <span class="n">axis</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">dtype</span><span class="p">:</span> <span class="n">DTypeLike</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                       <span class="n">keepdims</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="n">initial</span><span class="p">:</span> <span class="n">ArrayLike</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                       <span class="n">where</span><span class="p">:</span> <span class="n">ArrayLike</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Array</span><span class="p">:</span>
+    <span class="k">assert</span> <span class="bp">self</span><span class="o">.</span><span class="n">nin</span> <span class="o">==</span> <span class="mi">2</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">nout</span> <span class="o">==</span> <span class="mi">1</span>
+    <span class="n">arr</span> <span class="o">=</span> <span class="n">lax</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">arr</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">initial</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+      <span class="n">initial</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">identity</span>
+    <span class="k">if</span> <span class="n">dtype</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+      <span class="n">dtype</span> <span class="o">=</span> <span class="n">api</span><span class="o">.</span><span class="n">eval_shape</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_func</span><span class="p">,</span> <span class="n">lax</span><span class="o">.</span><span class="n">_one</span><span class="p">(</span><span class="n">arr</span><span class="p">),</span> <span class="n">lax</span><span class="o">.</span><span class="n">_one</span><span class="p">(</span><span class="n">arr</span><span class="p">))</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="k">if</span> <span class="n">where</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+      <span class="n">where</span> <span class="o">=</span> <span class="n">_broadcast_to</span><span class="p">(</span><span class="n">where</span><span class="p">,</span> <span class="n">arr</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">axis</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">):</span>
+      <span class="n">axis</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">canonicalize_axis</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">arr</span><span class="o">.</span><span class="n">ndim</span><span class="p">)</span> <span class="k">for</span> <span class="n">a</span> <span class="ow">in</span> <span class="n">axis</span><span class="p">)</span>
+      <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;tuple of axes&quot;</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">axis</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+      <span class="k">if</span> <span class="n">keepdims</span><span class="p">:</span>
+        <span class="n">final_shape</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1</span><span class="p">,)</span> <span class="o">*</span> <span class="n">arr</span><span class="o">.</span><span class="n">ndim</span>
+      <span class="k">else</span><span class="p">:</span>
+        <span class="n">final_shape</span> <span class="o">=</span> <span class="p">()</span>
+      <span class="n">arr</span> <span class="o">=</span> <span class="n">arr</span><span class="o">.</span><span class="n">ravel</span><span class="p">()</span>
+      <span class="k">if</span> <span class="n">where</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">where</span> <span class="o">=</span> <span class="n">where</span><span class="o">.</span><span class="n">ravel</span><span class="p">()</span>
+      <span class="n">axis</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">else</span><span class="p">:</span>
+      <span class="n">axis</span> <span class="o">=</span> <span class="n">canonicalize_axis</span><span class="p">(</span><span class="n">axis</span><span class="p">,</span> <span class="n">arr</span><span class="o">.</span><span class="n">ndim</span><span class="p">)</span>
+      <span class="k">if</span> <span class="n">keepdims</span><span class="p">:</span>
+        <span class="n">final_shape</span> <span class="o">=</span> <span class="p">(</span><span class="o">*</span><span class="n">arr</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="n">axis</span><span class="p">],</span> <span class="mi">1</span><span class="p">,</span> <span class="o">*</span><span class="n">arr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="n">axis</span> <span class="o">+</span> <span class="mi">1</span><span class="p">:])</span>
+      <span class="k">else</span><span class="p">:</span>
+        <span class="n">final_shape</span> <span class="o">=</span> <span class="p">(</span><span class="o">*</span><span class="n">arr</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="n">axis</span><span class="p">],</span> <span class="o">*</span><span class="n">arr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="n">axis</span> <span class="o">+</span> <span class="mi">1</span><span class="p">:])</span>
+
+    <span class="c1"># TODO: handle without transpose?</span>
+    <span class="k">if</span> <span class="n">axis</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+      <span class="n">arr</span> <span class="o">=</span> <span class="n">_moveaxis</span><span class="p">(</span><span class="n">arr</span><span class="p">,</span> <span class="n">axis</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+      <span class="k">if</span> <span class="n">where</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">where</span> <span class="o">=</span> <span class="n">_moveaxis</span><span class="p">(</span><span class="n">where</span><span class="p">,</span> <span class="n">axis</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">initial</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">arr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+      <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;zero-size array to reduction operation </span><span class="si">{self.__name__}</span><span class="s2"> which has no ideneity&quot;</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">body_fun</span><span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="n">val</span><span class="p">):</span>
+      <span class="k">if</span> <span class="n">where</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="p">(</span><span class="n">val</span><span class="p">,</span> <span class="n">arr</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">dtype</span><span class="p">))</span>
+      <span class="k">else</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">_where</span><span class="p">(</span><span class="n">where</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="bp">self</span><span class="p">(</span><span class="n">val</span><span class="p">,</span> <span class="n">arr</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">dtype</span><span class="p">)),</span> <span class="n">val</span><span class="p">)</span>
+
+    <span class="n">start_value</span><span class="p">:</span> <span class="n">ArrayLike</span>
+    <span class="k">if</span> <span class="n">initial</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+      <span class="n">start_index</span> <span class="o">=</span> <span class="mi">1</span>
+      <span class="n">start_value</span> <span class="o">=</span> <span class="n">arr</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="k">else</span><span class="p">:</span>
+      <span class="n">start_index</span> <span class="o">=</span> <span class="mi">0</span>
+      <span class="n">start_value</span> <span class="o">=</span> <span class="n">initial</span>
+    <span class="n">start_value</span> <span class="o">=</span> <span class="n">_broadcast_to</span><span class="p">(</span><span class="n">lax</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">start_value</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">dtype</span><span class="p">),</span> <span class="n">arr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">:])</span>
+
+    <span class="n">result</span> <span class="o">=</span> <span class="n">control_flow</span><span class="o">.</span><span class="n">fori_loop</span><span class="p">(</span><span class="n">start_index</span><span class="p">,</span> <span class="n">arr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">body_fun</span><span class="p">,</span> <span class="n">start_value</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">keepdims</span><span class="p">:</span>
+      <span class="n">result</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">final_shape</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">result</span>
+
+<div class="viewcode-block" id="ufunc.accumulate">
+<a class="viewcode-back" href="../../../../generated/quchip.declarative.qnp.html#quchip.declarative.qnp.ufunc.accumulate">[docs]</a>
+  <span class="nd">@partial</span><span class="p">(</span><span class="n">api</span><span class="o">.</span><span class="n">jit</span><span class="p">,</span> <span class="n">static_argnames</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;self&#39;</span><span class="p">,</span> <span class="s1">&#39;axis&#39;</span><span class="p">,</span> <span class="s1">&#39;dtype&#39;</span><span class="p">])</span>
+  <span class="k">def</span><span class="w"> </span><span class="nf">accumulate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">a</span><span class="p">:</span> <span class="n">ArrayLike</span><span class="p">,</span> <span class="n">axis</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">dtype</span><span class="p">:</span> <span class="n">DTypeLike</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                 <span class="n">out</span><span class="p">:</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Accumulate operation derived from binary ufunc.</span>
+
+<span class="sd">    JAX implementation of :func:`numpy.ufunc.accumulate`.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">      a: N-dimensional array over which to accumulate.</span>
+<span class="sd">      axis: integer axis over which accumulation will be performed (default = 0)</span>
+<span class="sd">      dtype: optionally specify the type of the output array.</span>
+<span class="sd">      out: Unused by JAX</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">      An array containing the accumulated result.</span>
+
+<span class="sd">    Examples:</span>
+<span class="sd">      Consider the following array:</span>
+
+<span class="sd">      &gt;&gt;&gt; x = jnp.array([[1, 2, 3],</span>
+<span class="sd">      ...                [4, 5, 6]])</span>
+
+<span class="sd">      :meth:`jax.numpy.add.accumulate` is equivalent to</span>
+<span class="sd">      :func:`jax.numpy.cumsum` along the specified axis:</span>
+<span class="sd">      &gt;&gt;&gt; jnp.add.accumulate(x, axis=1)</span>
+<span class="sd">      Array([[ 1,  3,  6],</span>
+<span class="sd">             [ 4,  9, 15]], dtype=int32)</span>
+<span class="sd">      &gt;&gt;&gt; jnp.cumsum(x, axis=1)</span>
+<span class="sd">      Array([[ 1,  3,  6],</span>
+<span class="sd">             [ 4,  9, 15]], dtype=int32)</span>
+
+<span class="sd">      Similarly, :meth:`jax.numpy.multiply.accumulate` is equivalent to</span>
+<span class="sd">      :func:`jax.numpy.cumprod` along the specified axis:</span>
+
+<span class="sd">      &gt;&gt;&gt; jnp.multiply.accumulate(x, axis=1)</span>
+<span class="sd">      Array([[  1,   2,   6],</span>
+<span class="sd">             [  4,  20, 120]], dtype=int32)</span>
+<span class="sd">      &gt;&gt;&gt; jnp.cumprod(x, axis=1)</span>
+<span class="sd">      Array([[  1,   2,   6],</span>
+<span class="sd">             [  4,  20, 120]], dtype=int32)</span>
+
+<span class="sd">      For other binary ufuncs, the accumulation is an operation not available</span>
+<span class="sd">      via standard APIs. For example, :meth:`jax.numpy.bitwise_or.accumulate`</span>
+<span class="sd">      is essentially a bitwise cumulative ``any``:</span>
+
+<span class="sd">      &gt;&gt;&gt; jnp.bitwise_or.accumulate(x, axis=1)</span>
+<span class="sd">      Array([[1, 3, 3],</span>
+<span class="sd">             [4, 5, 7]], dtype=int32)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">nin</span> <span class="o">!=</span> <span class="mi">2</span><span class="p">:</span>
+      <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;accumulate only supported for binary ufuncs&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">nout</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
+      <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;accumulate only supported for functions returning a single value&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">out</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+      <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;out argument of </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">.accumulate()&quot;</span><span class="p">)</span>
+    <span class="n">accumulate</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">__static_props</span><span class="p">[</span><span class="s1">&#39;accumulate&#39;</span><span class="p">]</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_accumulate_via_scan</span>
+    <span class="k">return</span> <span class="n">accumulate</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="n">axis</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span></div>
+
+
+  <span class="k">def</span><span class="w"> </span><span class="nf">_accumulate_via_scan</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">arr</span><span class="p">:</span> <span class="n">ArrayLike</span><span class="p">,</span> <span class="n">axis</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+                           <span class="n">dtype</span><span class="p">:</span> <span class="n">DTypeLike</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Array</span><span class="p">:</span>
+    <span class="k">assert</span> <span class="bp">self</span><span class="o">.</span><span class="n">nin</span> <span class="o">==</span> <span class="mi">2</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">nout</span> <span class="o">==</span> <span class="mi">1</span>
+    <span class="n">check_arraylike</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">.accumulate&quot;</span><span class="p">,</span> <span class="n">arr</span><span class="p">)</span>
+    <span class="n">arr</span> <span class="o">=</span> <span class="n">lax</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">arr</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">dtype</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+      <span class="n">dtype</span> <span class="o">=</span> <span class="n">api</span><span class="o">.</span><span class="n">eval_shape</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_func</span><span class="p">,</span> <span class="n">lax</span><span class="o">.</span><span class="n">_one</span><span class="p">(</span><span class="n">arr</span><span class="p">),</span> <span class="n">lax</span><span class="o">.</span><span class="n">_one</span><span class="p">(</span><span class="n">arr</span><span class="p">))</span><span class="o">.</span><span class="n">dtype</span>
+
+    <span class="k">if</span> <span class="n">axis</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">axis</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">):</span>
+      <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;accumulate does not allow multiple axes&quot;</span><span class="p">)</span>
+    <span class="n">axis</span> <span class="o">=</span> <span class="n">canonicalize_axis</span><span class="p">(</span><span class="n">axis</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndim</span><span class="p">(</span><span class="n">arr</span><span class="p">))</span>
+
+    <span class="n">arr</span> <span class="o">=</span> <span class="n">_moveaxis</span><span class="p">(</span><span class="n">arr</span><span class="p">,</span> <span class="n">axis</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">scan_fun</span><span class="p">(</span><span class="n">carry</span><span class="p">,</span> <span class="n">_</span><span class="p">):</span>
+      <span class="n">i</span><span class="p">,</span> <span class="n">x</span> <span class="o">=</span> <span class="n">carry</span>
+      <span class="n">y</span> <span class="o">=</span> <span class="n">_where</span><span class="p">(</span><span class="n">i</span> <span class="o">==</span> <span class="mi">0</span><span class="p">,</span> <span class="n">arr</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">dtype</span><span class="p">),</span> <span class="bp">self</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">dtype</span><span class="p">),</span> <span class="n">arr</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">dtype</span><span class="p">)))</span>
+      <span class="k">return</span> <span class="p">(</span><span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">y</span><span class="p">),</span> <span class="n">y</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">result</span> <span class="o">=</span> <span class="n">control_flow</span><span class="o">.</span><span class="n">scan</span><span class="p">(</span><span class="n">scan_fun</span><span class="p">,</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">arr</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">dtype</span><span class="p">)),</span> <span class="kc">None</span><span class="p">,</span> <span class="n">length</span><span class="o">=</span><span class="n">arr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">_moveaxis</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">axis</span><span class="p">)</span>
+
+<div class="viewcode-block" id="ufunc.at">
+<a class="viewcode-back" href="../../../../generated/quchip.declarative.qnp.html#quchip.declarative.qnp.ufunc.at">[docs]</a>
+  <span class="nd">@partial</span><span class="p">(</span><span class="n">api</span><span class="o">.</span><span class="n">jit</span><span class="p">,</span> <span class="n">static_argnums</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">static_argnames</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;inplace&#39;</span><span class="p">])</span>
+  <span class="k">def</span><span class="w"> </span><span class="nf">at</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">a</span><span class="p">:</span> <span class="n">ArrayLike</span><span class="p">,</span> <span class="n">indices</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">b</span><span class="p">:</span> <span class="n">ArrayLike</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="o">/</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span>
+         <span class="n">inplace</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Update elements of an array via the specified unary or binary ufunc.</span>
+
+<span class="sd">    JAX implementation of :func:`numpy.ufunc.at`.</span>
+
+<span class="sd">    Note:</span>
+<span class="sd">      :meth:`numpy.ufunc.at` mutates arrays in-place. JAX arrays are immutable,</span>
+<span class="sd">      so :meth:`jax.numpy.ufunc.at` cannot replicate these semantics. Instead, JAX</span>
+<span class="sd">      will return the updated value, but requires explicitly passing ``inplace=False``</span>
+<span class="sd">      as a reminder of this difference.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">      a: N-dimensional array to update</span>
+<span class="sd">      indices: index, slice, or tuple of indices and slices.</span>
+<span class="sd">      b: array of values for binary ufunc updates.</span>
+<span class="sd">      inplace: must be set to False to indicate that an updated copy will be returned.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">      an updated copy of the input array.</span>
+
+<span class="sd">    Examples:</span>
+
+<span class="sd">      Add numbers to specified indices:</span>
+
+<span class="sd">      &gt;&gt;&gt; x = jnp.ones(10, dtype=int)</span>
+<span class="sd">      &gt;&gt;&gt; indices = jnp.array([2, 5, 7])</span>
+<span class="sd">      &gt;&gt;&gt; values = jnp.array([10, 20, 30])</span>
+<span class="sd">      &gt;&gt;&gt; jnp.add.at(x, indices, values, inplace=False)</span>
+<span class="sd">      Array([ 1,  1, 11,  1,  1, 21,  1, 31,  1,  1], dtype=int32)</span>
+
+<span class="sd">      This is roughly equivalent to JAX&#39;s :meth:`jax.numpy.ndarray.at` method</span>
+<span class="sd">      called this way:</span>
+
+<span class="sd">      &gt;&gt;&gt; x.at[indices].add(values)</span>
+<span class="sd">      Array([ 1,  1, 11,  1,  1, 21,  1, 31,  1,  1], dtype=int32)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">inplace</span><span class="p">:</span>
+      <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="n">_AT_INPLACE_WARNING</span><span class="p">)</span>
+
+    <span class="n">at</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">__static_props</span><span class="p">[</span><span class="s1">&#39;at&#39;</span><span class="p">]</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_at_via_scan</span>
+    <span class="k">return</span> <span class="n">at</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">indices</span><span class="p">)</span> <span class="k">if</span> <span class="n">b</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">at</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">indices</span><span class="p">,</span> <span class="n">b</span><span class="p">)</span></div>
+
+
+  <span class="k">def</span><span class="w"> </span><span class="nf">_at_via_scan</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">a</span><span class="p">:</span> <span class="n">ArrayLike</span><span class="p">,</span> <span class="n">indices</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Array</span><span class="p">:</span>
+    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">args</span><span class="p">)</span> <span class="ow">in</span> <span class="p">{</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">}</span>
+    <span class="n">check_arraylike</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">.at&quot;</span><span class="p">,</span> <span class="n">a</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">)</span>
+    <span class="n">dtype</span> <span class="o">=</span> <span class="n">api</span><span class="o">.</span><span class="n">eval_shape</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_func</span><span class="p">,</span> <span class="n">lax</span><span class="o">.</span><span class="n">_one</span><span class="p">(</span><span class="n">a</span><span class="p">),</span> <span class="o">*</span><span class="p">(</span><span class="n">lax</span><span class="o">.</span><span class="n">_one</span><span class="p">(</span><span class="n">arg</span><span class="p">)</span> <span class="k">for</span> <span class="n">arg</span> <span class="ow">in</span> <span class="n">args</span><span class="p">))</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="n">a</span> <span class="o">=</span> <span class="n">lax</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">a</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">dtype</span><span class="p">)</span>
+    <span class="n">args</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">lax</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">arg</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">dtype</span><span class="p">)</span> <span class="k">for</span> <span class="n">arg</span> <span class="ow">in</span> <span class="n">args</span><span class="p">)</span>
+    <span class="n">indices</span> <span class="o">=</span> <span class="n">indexing</span><span class="o">.</span><span class="n">eliminate_deprecated_list_indexing</span><span class="p">(</span><span class="n">indices</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">indices</span><span class="p">:</span>
+      <span class="k">return</span> <span class="n">a</span>
+
+    <span class="n">shapes</span> <span class="o">=</span> <span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">shape</span><span class="p">(</span><span class="n">i</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">indices</span> <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="nb">slice</span><span class="p">)]</span>
+    <span class="n">shape</span> <span class="o">=</span> <span class="n">shapes</span> <span class="ow">and</span> <span class="n">lax</span><span class="o">.</span><span class="n">broadcast_shapes</span><span class="p">(</span><span class="o">*</span><span class="n">shapes</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">shape</span><span class="p">:</span>
+      <span class="k">return</span> <span class="n">a</span><span class="o">.</span><span class="n">at</span><span class="p">[</span><span class="n">indices</span><span class="p">]</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="bp">self</span><span class="p">(</span><span class="n">a</span><span class="o">.</span><span class="n">at</span><span class="p">[</span><span class="n">indices</span><span class="p">]</span><span class="o">.</span><span class="n">get</span><span class="p">(),</span> <span class="o">*</span><span class="n">args</span><span class="p">))</span>
+
+    <span class="k">if</span> <span class="n">args</span><span class="p">:</span>
+      <span class="n">arg</span> <span class="o">=</span> <span class="n">_broadcast_to</span><span class="p">(</span><span class="n">args</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="p">(</span><span class="o">*</span><span class="n">shape</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="n">shape</span><span class="p">):]))</span>
+      <span class="n">args</span> <span class="o">=</span> <span class="p">(</span><span class="n">arg</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">prod</span><span class="p">(</span><span class="n">shape</span><span class="p">),</span> <span class="o">*</span><span class="n">args</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="n">shape</span><span class="p">):]),)</span>
+    <span class="n">indices</span> <span class="o">=</span> <span class="p">[</span><span class="n">idx</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="nb">slice</span><span class="p">)</span> <span class="k">else</span> <span class="n">_broadcast_to</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">shape</span><span class="p">)</span><span class="o">.</span><span class="n">ravel</span><span class="p">()</span> <span class="k">for</span> <span class="n">idx</span> <span class="ow">in</span> <span class="n">indices</span><span class="p">]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">scan_fun</span><span class="p">(</span><span class="n">carry</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+      <span class="n">i</span><span class="p">,</span> <span class="n">a</span> <span class="o">=</span> <span class="n">carry</span>
+      <span class="n">idx</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">ind</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">ind</span><span class="p">,</span> <span class="nb">slice</span><span class="p">)</span> <span class="k">else</span> <span class="n">ind</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="k">for</span> <span class="n">ind</span> <span class="ow">in</span> <span class="n">indices</span><span class="p">)</span>
+      <span class="n">a</span> <span class="o">=</span> <span class="n">a</span><span class="o">.</span><span class="n">at</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="bp">self</span><span class="p">(</span><span class="n">a</span><span class="o">.</span><span class="n">at</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span><span class="o">.</span><span class="n">get</span><span class="p">(),</span> <span class="o">*</span><span class="p">(</span><span class="n">arg</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="k">for</span> <span class="n">arg</span> <span class="ow">in</span> <span class="n">args</span><span class="p">)))</span>
+      <span class="k">return</span> <span class="p">(</span><span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">a</span><span class="p">),</span> <span class="n">x</span>
+    <span class="n">carry</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">control_flow</span><span class="o">.</span><span class="n">scan</span><span class="p">(</span><span class="n">scan_fun</span><span class="p">,</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">a</span><span class="p">),</span> <span class="kc">None</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">indices</span><span class="p">[</span><span class="mi">0</span><span class="p">]))</span>  <span class="c1"># type: ignore[arg-type]</span>
+    <span class="k">return</span> <span class="n">carry</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+
+<div class="viewcode-block" id="ufunc.reduceat">
+<a class="viewcode-back" href="../../../../generated/quchip.declarative.qnp.html#quchip.declarative.qnp.ufunc.reduceat">[docs]</a>
+  <span class="nd">@partial</span><span class="p">(</span><span class="n">api</span><span class="o">.</span><span class="n">jit</span><span class="p">,</span> <span class="n">static_argnames</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;self&#39;</span><span class="p">,</span> <span class="s1">&#39;axis&#39;</span><span class="p">,</span> <span class="s1">&#39;dtype&#39;</span><span class="p">])</span>
+  <span class="k">def</span><span class="w"> </span><span class="nf">reduceat</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">a</span><span class="p">:</span> <span class="n">ArrayLike</span><span class="p">,</span> <span class="n">indices</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">axis</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+               <span class="n">dtype</span><span class="p">:</span> <span class="n">DTypeLike</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">out</span><span class="p">:</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Reduce an array between specified indices via a binary ufunc.</span>
+
+<span class="sd">    JAX implementation of :meth:`numpy.ufunc.reduceat`</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">      a: N-dimensional array to reduce</span>
+<span class="sd">      indices: a 1-dimensional array of increasing integer values which encodes</span>
+<span class="sd">        segments of the array to be reduced.</span>
+<span class="sd">      axis: integer specifying the axis along which to reduce: default=0.</span>
+<span class="sd">      dtype: optionally specify the dtype of the output array.</span>
+<span class="sd">      out: unused by JAX</span>
+<span class="sd">    Returns:</span>
+<span class="sd">      An array containing the reduced values.</span>
+
+<span class="sd">    Examples:</span>
+<span class="sd">      The ``reduce`` method lets you efficiently compute reduction operations</span>
+<span class="sd">      over array segments. For example:</span>
+
+<span class="sd">      &gt;&gt;&gt; x = jnp.array([1, 2, 3, 4, 5, 6, 7, 8])</span>
+<span class="sd">      &gt;&gt;&gt; indices = jnp.array([0, 2, 5])</span>
+<span class="sd">      &gt;&gt;&gt; jnp.add.reduce(x, indices)</span>
+<span class="sd">      Array([ 3, 12, 21], dtype=int32)</span>
+
+<span class="sd">      This is more-or-less equivalent to the following:</span>
+
+<span class="sd">      &gt;&gt;&gt; jnp.array([x[0:2].sum(), x[2:5].sum(), x[5:].sum()])</span>
+<span class="sd">      Array([ 3, 12, 21], dtype=int32)</span>
+
+<span class="sd">      For some binary ufuncs, JAX provides similar APIs within :mod:`jax.ops`.</span>
+<span class="sd">      For example, :meth:`jax.add.reduceat` is similar to :func:`jax.ops.segment_sum`,</span>
+<span class="sd">      although in this case the segments are defined via an array of segment ids:</span>
+
+<span class="sd">      &gt;&gt;&gt; segments = jnp.array([0, 0, 1, 1, 1, 2, 2, 2])</span>
+<span class="sd">      &gt;&gt;&gt; jax.ops.segment_sum(x, segments)</span>
+<span class="sd">      Array([ 3, 12, 21], dtype=int32)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">nin</span> <span class="o">!=</span> <span class="mi">2</span><span class="p">:</span>
+      <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;reduceat only supported for binary ufuncs&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">nout</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
+      <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;reduceat only supported for functions returning a single value&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">out</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+      <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;out argument of </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">.reduceat()&quot;</span><span class="p">)</span>
+
+    <span class="n">reduceat</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">__static_props</span><span class="p">[</span><span class="s1">&#39;reduceat&#39;</span><span class="p">]</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reduceat_via_scan</span>
+    <span class="k">return</span> <span class="n">reduceat</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">indices</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="n">axis</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span></div>
+
+
+  <span class="k">def</span><span class="w"> </span><span class="nf">_reduceat_via_scan</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">a</span><span class="p">:</span> <span class="n">ArrayLike</span><span class="p">,</span> <span class="n">indices</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">axis</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+                         <span class="n">dtype</span><span class="p">:</span> <span class="n">DTypeLike</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Array</span><span class="p">:</span>
+    <span class="n">check_arraylike</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">.reduceat&quot;</span><span class="p">,</span> <span class="n">a</span><span class="p">,</span> <span class="n">indices</span><span class="p">)</span>
+    <span class="n">a</span> <span class="o">=</span> <span class="n">lax</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">a</span><span class="p">)</span>
+    <span class="n">idx_tuple</span> <span class="o">=</span> <span class="n">indexing</span><span class="o">.</span><span class="n">eliminate_deprecated_list_indexing</span><span class="p">(</span><span class="n">indices</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">idx_tuple</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span>
+    <span class="n">indices</span> <span class="o">=</span> <span class="n">idx_tuple</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">a</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+      <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;reduceat: a must have 1 or more dimension, got </span><span class="si">{</span><span class="n">a</span><span class="o">.</span><span class="n">shape</span><span class="si">=}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">indices</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
+      <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;reduceat: indices must be one-dimensional, got </span><span class="si">{</span><span class="n">indices</span><span class="o">.</span><span class="n">shape</span><span class="si">=}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">dtype</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+      <span class="n">dtype</span> <span class="o">=</span> <span class="n">a</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="k">if</span> <span class="n">axis</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">axis</span><span class="p">,</span> <span class="p">(</span><span class="nb">tuple</span><span class="p">,</span> <span class="nb">list</span><span class="p">)):</span>
+      <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;reduceat requires a single integer axis.&quot;</span><span class="p">)</span>
+    <span class="n">axis</span> <span class="o">=</span> <span class="n">canonicalize_axis</span><span class="p">(</span><span class="n">axis</span><span class="p">,</span> <span class="n">a</span><span class="o">.</span><span class="n">ndim</span><span class="p">)</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">indexing</span><span class="o">.</span><span class="n">take</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">indices</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="n">axis</span><span class="p">)</span>
+    <span class="n">ind</span> <span class="o">=</span> <span class="n">lax</span><span class="o">.</span><span class="n">expand_dims</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">indices</span><span class="p">,</span> <span class="n">a</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="n">axis</span><span class="p">]),</span>
+                                   <span class="nb">list</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">delete</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">out</span><span class="o">.</span><span class="n">ndim</span><span class="p">),</span> <span class="n">axis</span><span class="p">)))</span>
+    <span class="n">ind_start</span> <span class="o">=</span> <span class="n">slicing</span><span class="o">.</span><span class="n">slice_in_dim</span><span class="p">(</span><span class="n">ind</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">ind</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="n">axis</span><span class="p">]</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="n">axis</span><span class="p">)</span>
+    <span class="n">ind_end</span> <span class="o">=</span> <span class="n">slicing</span><span class="o">.</span><span class="n">slice_in_dim</span><span class="p">(</span><span class="n">ind</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">ind</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="n">axis</span><span class="p">],</span> <span class="n">axis</span><span class="o">=</span><span class="n">axis</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">loop_body</span><span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="n">out</span><span class="p">):</span>
+      <span class="k">return</span> <span class="n">_where</span><span class="p">((</span><span class="n">i</span> <span class="o">&gt;</span> <span class="n">ind_start</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">i</span> <span class="o">&lt;</span> <span class="n">ind_end</span><span class="p">),</span>
+                    <span class="bp">self</span><span class="p">(</span><span class="n">out</span><span class="p">,</span> <span class="n">indexing</span><span class="o">.</span><span class="n">take</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">lax</span><span class="o">.</span><span class="n">expand_dims</span><span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="p">(</span><span class="mi">0</span><span class="p">,)),</span> <span class="n">axis</span><span class="o">=</span><span class="n">axis</span><span class="p">)),</span>
+                    <span class="n">out</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">control_flow</span><span class="o">.</span><span class="n">fori_loop</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">a</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="n">axis</span><span class="p">],</span> <span class="n">loop_body</span><span class="p">,</span> <span class="n">out</span><span class="p">)</span>
+
+<div class="viewcode-block" id="ufunc.outer">
+<a class="viewcode-back" href="../../../../generated/quchip.declarative.qnp.html#quchip.declarative.qnp.ufunc.outer">[docs]</a>
+  <span class="nd">@partial</span><span class="p">(</span><span class="n">api</span><span class="o">.</span><span class="n">jit</span><span class="p">,</span> <span class="n">static_argnums</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+  <span class="k">def</span><span class="w"> </span><span class="nf">outer</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">A</span><span class="p">:</span> <span class="n">ArrayLike</span><span class="p">,</span> <span class="n">B</span><span class="p">:</span> <span class="n">ArrayLike</span><span class="p">,</span> <span class="o">/</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Apply the function to all pairs of values in ``A`` and ``B``.</span>
+
+<span class="sd">    JAX implementation of :meth:`numpy.ufunc.outer`.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">      A: N-dimensional array</span>
+<span class="sd">      B: N-dimensional array</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">      An array of shape `tuple(*A.shape, *B.shape)`</span>
+
+<span class="sd">    Examples:</span>
+<span class="sd">      A times-table for integers 1...10 created via</span>
+<span class="sd">      :meth:`jax.numpy.multiply.outer`:</span>
+
+<span class="sd">      &gt;&gt;&gt; x = jnp.arange(1, 11)</span>
+<span class="sd">      &gt;&gt;&gt; print(jnp.multiply.outer(x, x))</span>
+<span class="sd">      [[  1   2   3   4   5   6   7   8   9  10]</span>
+<span class="sd">       [  2   4   6   8  10  12  14  16  18  20]</span>
+<span class="sd">       [  3   6   9  12  15  18  21  24  27  30]</span>
+<span class="sd">       [  4   8  12  16  20  24  28  32  36  40]</span>
+<span class="sd">       [  5  10  15  20  25  30  35  40  45  50]</span>
+<span class="sd">       [  6  12  18  24  30  36  42  48  54  60]</span>
+<span class="sd">       [  7  14  21  28  35  42  49  56  63  70]</span>
+<span class="sd">       [  8  16  24  32  40  48  56  64  72  80]</span>
+<span class="sd">       [  9  18  27  36  45  54  63  72  81  90]</span>
+<span class="sd">       [ 10  20  30  40  50  60  70  80  90 100]]</span>
+
+<span class="sd">      For input arrays with ``N`` and ``M`` dimensions respectively, the output</span>
+<span class="sd">      will have dimension ``N + M``:</span>
+
+<span class="sd">      &gt;&gt;&gt; x = jnp.ones((1, 3, 5))</span>
+<span class="sd">      &gt;&gt;&gt; y = jnp.ones((2, 4))</span>
+<span class="sd">      &gt;&gt;&gt; jnp.add.outer(x, y).shape</span>
+<span class="sd">      (1, 3, 5, 2, 4)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">nin</span> <span class="o">!=</span> <span class="mi">2</span><span class="p">:</span>
+      <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;outer only supported for binary ufuncs&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">nout</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
+      <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;outer only supported for functions returning a single value&quot;</span><span class="p">)</span>
+    <span class="n">check_arraylike</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">.outer&quot;</span><span class="p">,</span> <span class="n">A</span><span class="p">,</span> <span class="n">B</span><span class="p">)</span>
+    <span class="n">_ravel</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">A</span><span class="p">:</span> <span class="n">lax</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">A</span><span class="p">,</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="n">A</span><span class="p">),))</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">api</span><span class="o">.</span><span class="n">vmap</span><span class="p">(</span><span class="n">api</span><span class="o">.</span><span class="n">vmap</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="mi">0</span><span class="p">)),</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="kc">None</span><span class="p">))(</span><span class="n">_ravel</span><span class="p">(</span><span class="n">A</span><span class="p">),</span> <span class="n">_ravel</span><span class="p">(</span><span class="n">B</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">result</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">shape</span><span class="p">(</span><span class="n">A</span><span class="p">),</span> <span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">shape</span><span class="p">(</span><span class="n">B</span><span class="p">))</span></div>
+
+
+
+<span class="nd">@export</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">frompyfunc</span><span class="p">(</span><span class="n">func</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span> <span class="o">/</span><span class="p">,</span> <span class="n">nin</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">nout</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+               <span class="o">*</span><span class="p">,</span> <span class="n">identity</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ufunc</span><span class="p">:</span>
+<span class="w">  </span><span class="sd">&quot;&quot;&quot;Create a JAX ufunc from an arbitrary JAX-compatible scalar function.</span>
+
+<span class="sd">  Args:</span>
+<span class="sd">    func : a callable that takes `nin` scalar arguments and returns `nout` outputs.</span>
+<span class="sd">    nin: integer specifying the number of scalar inputs</span>
+<span class="sd">    nout: integer specifying the number of scalar outputs</span>
+<span class="sd">    identity: (optional) a scalar specifying the identity of the operation, if any.</span>
+
+<span class="sd">  Returns:</span>
+<span class="sd">    wrapped : jax.numpy.ufunc wrapper of func.</span>
+
+<span class="sd">  Examples:</span>
+<span class="sd">    Here is an example of creating a ufunc similar to :obj:`jax.numpy.add`:</span>
+
+<span class="sd">    &gt;&gt;&gt; import operator</span>
+<span class="sd">    &gt;&gt;&gt; add = frompyfunc(operator.add, nin=2, nout=1, identity=0)</span>
+
+<span class="sd">    Now all the standard :class:`jax.numpy.ufunc` methods are available:</span>
+
+<span class="sd">    &gt;&gt;&gt; x = jnp.arange(4)</span>
+<span class="sd">    &gt;&gt;&gt; add(x, 10)</span>
+<span class="sd">    Array([10, 11, 12, 13], dtype=int32)</span>
+<span class="sd">    &gt;&gt;&gt; add.outer(x, x)</span>
+<span class="sd">    Array([[0, 1, 2, 3],</span>
+<span class="sd">           [1, 2, 3, 4],</span>
+<span class="sd">           [2, 3, 4, 5],</span>
+<span class="sd">           [3, 4, 5, 6]], dtype=int32)</span>
+<span class="sd">    &gt;&gt;&gt; add.reduce(x)</span>
+<span class="sd">    Array(6, dtype=int32)</span>
+<span class="sd">    &gt;&gt;&gt; add.accumulate(x)</span>
+<span class="sd">    Array([0, 1, 3, 6], dtype=int32)</span>
+<span class="sd">    &gt;&gt;&gt; add.at(x, 1, 10, inplace=False)</span>
+<span class="sd">    Array([ 0, 11,  2,  3], dtype=int32)</span>
+<span class="sd">  &quot;&quot;&quot;</span>
+  <span class="k">return</span> <span class="n">ufunc</span><span class="p">(</span><span class="n">func</span><span class="p">,</span> <span class="n">nin</span><span class="p">,</span> <span class="n">nout</span><span class="p">,</span> <span class="n">identity</span><span class="o">=</span><span class="n">identity</span><span class="p">)</span>
+</pre></div>
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          
+          
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 2026, Ibraheem AlYousef
+            </div>
+            Made with 
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            <div class="icons">
+              <a class="muted-link fa-brands fa-solid fa-github fa-2x" href="https://github.com/quchip/quchip" aria-label="GitHub"></a>
+              
+            </div>
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer no-toc">
+      
+      
+      
+    </aside>
+  </div>
+</div><script src="../../../../_static/documentation_options.js?v=2caa9db7"></script>
+    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../../../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../../../_static/copybutton.js?v=f281be69"></script>
+    </body>
+</html>

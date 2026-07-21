@@ -1,0 +1,1209 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../../../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><link rel="index" title="Index" href="../../../genindex.html"><link rel="search" title="Search" href="../../../search.html">
+        <link rel="prefetch" href="../../../_static/quchip-wordmark-light.png" as="image">
+        <link rel="prefetch" href="../../../_static/quchip-wordmark-dark.png" as="image">
+
+    <link rel="shortcut icon" href="../../../_static/favicon.png"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>quchip.inverse_design.fit - quchip 0.1.0</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/custom.css?v=208c35cd" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #c92f33;
+  --color-brand-content: #c92f33;
+  --color-link: #c92f33;
+  --color-link--visited: #c92f33;
+  --color-link--visited--hover: #c92f33;
+  --color-foreground-primary: #16181c;
+  --color-background-primary: #fafbfc;
+  --color-background-secondary: #f2f4f6;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #ef6661;
+  --color-brand-content: #ef6661;
+  --color-link: #ef6661;
+  --color-link--hover: #ff8a80;
+  --color-link--visited: #ef6661;
+  --color-link--visited--hover: #ff8a80;
+  --color-foreground-primary: #f2f4f6;
+  --color-background-primary: #14161a;
+  --color-background-secondary: #101216;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #ef6661;
+  --color-brand-content: #ef6661;
+  --color-link: #ef6661;
+  --color-link--hover: #ff8a80;
+  --color-link--visited: #ef6661;
+  --color-link--visited--hover: #ff8a80;
+  --color-foreground-primary: #f2f4f6;
+  --color-background-primary: #14161a;
+  --color-background-secondary: #101216;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../../../index.html"><div class="brand">quchip 0.1.0</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon no-toc" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../../../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo only-light" src="../../../_static/quchip-wordmark-light.png" alt="Light Logo"/>
+    <img class="sidebar-logo only-dark" src="../../../_static/quchip-wordmark-dark.png" alt="Dark Logo"/>
+  </div>
+  
+  
+</a><form class="sidebar-search-container" method="get" action="../../../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../examples/hello-chip.html">Hello, drive and readout</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../cookbook.html">Cookbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../physics.html">quchip Physics Reference</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../../api.html">API reference</a><input aria-label="Toggle navigation of API reference" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../../generated/quchip.html">quchip</a><input aria-label="Toggle navigation of quchip" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.analysis.html">quchip.analysis</a><input aria-label="Toggle navigation of quchip.analysis" class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" role="switch" type="checkbox"/><label for="toctree-checkbox-3"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.analysis.cross_resonance.html">quchip.analysis.cross_resonance</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.analysis.dispersive_readout.html">quchip.analysis.dispersive_readout</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.analysis.effective_hamiltonian.html">quchip.analysis.effective_hamiltonian</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.backend.html">quchip.backend</a><input aria-label="Toggle navigation of quchip.backend" class="toctree-checkbox" id="toctree-checkbox-4" name="toctree-checkbox-4" role="switch" type="checkbox"/><label for="toctree-checkbox-4"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.backend.containers.html">quchip.backend.containers</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.backend.dynamiqs.html">quchip.backend.dynamiqs</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.backend.protocol.html">quchip.backend.protocol</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.backend.qutip.html">quchip.backend.qutip</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.chip.html">quchip.chip</a><input aria-label="Toggle navigation of quchip.chip" class="toctree-checkbox" id="toctree-checkbox-5" name="toctree-checkbox-5" role="switch" type="checkbox"/><label for="toctree-checkbox-5"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.analysis.html">quchip.chip.analysis</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.baths.html">quchip.chip.baths</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.chip.html">quchip.chip.chip</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.coupling_base.html">quchip.chip.coupling_base</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.couplings.html">quchip.chip.couplings</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.describe.html">quchip.chip.describe</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.dressing.html">quchip.chip.dressing</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.observables.html">quchip.chip.observables</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.partition.html">quchip.chip.partition</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.retarget.html">quchip.chip.retarget</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.rwa.html">quchip.chip.rwa</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.serialization.html">quchip.chip.serialization</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.states.html">quchip.chip.states</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.chip.sw.html">quchip.chip.sw</a></li>
+<li class="toctree-l4 has-children"><a class="reference internal" href="../../../generated/quchip.chip.transformations.html">quchip.chip.transformations</a><input aria-label="Toggle navigation of quchip.chip.transformations" class="toctree-checkbox" id="toctree-checkbox-6" name="toctree-checkbox-6" role="switch" type="checkbox"/><label for="toctree-checkbox-6"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.chip.transformations.active_patch.html">quchip.chip.transformations.active_patch</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.chip.transformations.dispatch.html">quchip.chip.transformations.dispatch</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.chip.transformations.eliminate_coupling.html">quchip.chip.transformations.eliminate_coupling</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.chip.transformations.eliminate_device.html">quchip.chip.transformations.eliminate_device</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.chip.transformations.methods.html">quchip.chip.transformations.methods</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.chip.transformations.plumbing.html">quchip.chip.transformations.plumbing</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.chip.transformations.result.html">quchip.chip.transformations.result</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.control.html">quchip.control</a><input aria-label="Toggle navigation of quchip.control" class="toctree-checkbox" id="toctree-checkbox-7" name="toctree-checkbox-7" role="switch" type="checkbox"/><label for="toctree-checkbox-7"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.control.batch.html">quchip.control.batch</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.control.drive.html">quchip.control.drive</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.control.drives_two_photon.html">quchip.control.drives_two_photon</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.control.envelopes.html">quchip.control.envelopes</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.control.equipment.html">quchip.control.equipment</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.control.sequence.html">quchip.control.sequence</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.control.signal.html">quchip.control.signal</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.control.signal_spec.html">quchip.control.signal_spec</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.declarative.html">quchip.declarative</a><input aria-label="Toggle navigation of quchip.declarative" class="toctree-checkbox" id="toctree-checkbox-8" name="toctree-checkbox-8" role="switch" type="checkbox"/><label for="toctree-checkbox-8"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.declarative.envelope_shape.html">quchip.declarative.envelope_shape</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.declarative.expr.html">quchip.declarative.expr</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.declarative.models.html">quchip.declarative.models</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.declarative.ops.html">quchip.declarative.ops</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.declarative.parameters.html">quchip.declarative.parameters</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.declarative.qnp.html">quchip.declarative.qnp</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.devices.html">quchip.devices</a><input aria-label="Toggle navigation of quchip.devices" class="toctree-checkbox" id="toctree-checkbox-9" name="toctree-checkbox-9" role="switch" type="checkbox"/><label for="toctree-checkbox-9"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.devices.base.html">quchip.devices.base</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.devices.circuit.html">quchip.devices.circuit</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.devices.fluxonium.html">quchip.devices.fluxonium</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.devices.kerr_cavity.html">quchip.devices.kerr_cavity</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.devices.protocols.html">quchip.devices.protocols</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.devices.resonator.html">quchip.devices.resonator</a></li>
+<li class="toctree-l4 has-children"><a class="reference internal" href="../../../generated/quchip.devices.transmon.html">quchip.devices.transmon</a><input aria-label="Toggle navigation of quchip.devices.transmon" class="toctree-checkbox" id="toctree-checkbox-10" name="toctree-checkbox-10" role="switch" type="checkbox"/><label for="toctree-checkbox-10"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.devices.transmon.charge_basis.html">quchip.devices.transmon.charge_basis</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.devices.transmon.duffing.html">quchip.devices.transmon.duffing</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.devices.transmon.flux_tunable.html">quchip.devices.transmon.flux_tunable</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.engine.html">quchip.engine</a><input aria-label="Toggle navigation of quchip.engine" class="toctree-checkbox" id="toctree-checkbox-11" name="toctree-checkbox-11" role="switch" type="checkbox"/><label for="toctree-checkbox-11"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.engine.bands.html">quchip.engine.bands</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.engine.ir.html">quchip.engine.ir</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.engine.partitioned.html">quchip.engine.partitioned</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.engine.solver_hints.html">quchip.engine.solver_hints</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.engine.stage1_frames.html">quchip.engine.stage1_frames</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.engine.stage2_assembly.html">quchip.engine.stage2_assembly</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.engine.stage3_observables.html">quchip.engine.stage3_observables</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.engine.stage4_problem.html">quchip.engine.stage4_problem</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.interop.html">quchip.interop</a><input aria-label="Toggle navigation of quchip.interop" class="toctree-checkbox" id="toctree-checkbox-12" name="toctree-checkbox-12" role="switch" type="checkbox"/><label for="toctree-checkbox-12"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.interop.base.html">quchip.interop.base</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.interop.eigenbasis.html">quchip.interop.eigenbasis</a></li>
+<li class="toctree-l4 has-children"><a class="reference internal" href="../../../generated/quchip.interop.scqubits.html">quchip.interop.scqubits</a><input aria-label="Toggle navigation of quchip.interop.scqubits" class="toctree-checkbox" id="toctree-checkbox-13" name="toctree-checkbox-13" role="switch" type="checkbox"/><label for="toctree-checkbox-13"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.interop.scqubits.composite.html">quchip.interop.scqubits.composite</a></li>
+<li class="toctree-l5"><a class="reference internal" href="../../../generated/quchip.interop.scqubits.devices.html">quchip.interop.scqubits.devices</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.inverse_design.html">quchip.inverse_design</a><input aria-label="Toggle navigation of quchip.inverse_design" class="toctree-checkbox" id="toctree-checkbox-14" name="toctree-checkbox-14" role="switch" type="checkbox"/><label for="toctree-checkbox-14"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.inverse_design.fit.html">quchip.inverse_design.fit</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.inverse_design.observables.html">quchip.inverse_design.observables</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.inverse_design.subsystems.html">quchip.inverse_design.subsystems</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.inverse_design.types.html">quchip.inverse_design.types</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.results.html">quchip.results</a><input aria-label="Toggle navigation of quchip.results" class="toctree-checkbox" id="toctree-checkbox-15" name="toctree-checkbox-15" role="switch" type="checkbox"/><label for="toctree-checkbox-15"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.results.partitioned.html">quchip.results.partitioned</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.results.results.html">quchip.results.results</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../../../generated/quchip.sweep.html">quchip.sweep</a></li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.utils.html">quchip.utils</a><input aria-label="Toggle navigation of quchip.utils" class="toctree-checkbox" id="toctree-checkbox-16" name="toctree-checkbox-16" role="switch" type="checkbox"/><label for="toctree-checkbox-16"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.utils.constants.html">quchip.utils.constants</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.utils.jax_utils.html">quchip.utils.jax_utils</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.utils.labeling.html">quchip.utils.labeling</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.utils.registry.html">quchip.utils.registry</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.utils.state_versioning.html">quchip.utils.state_versioning</a></li>
+</ul>
+</li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="../../../generated/quchip.viz.html">quchip.viz</a><input aria-label="Toggle navigation of quchip.viz" class="toctree-checkbox" id="toctree-checkbox-17" name="toctree-checkbox-17" role="switch" type="checkbox"/><label for="toctree-checkbox-17"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.viz.chip.html">quchip.viz.chip</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.viz.control.html">quchip.viz.control</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.viz.device.html">quchip.viz.device</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../../../generated/quchip.viz.results.html">quchip.viz.results</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../../contributing.html">Contributing to quchip</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../conduct.html">Code of Conduct</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon no-toc" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <h1>Source code for quchip.inverse_design.fit</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;Dressed-observable fitting of bare chip parameters.</span>
+
+<span class="sd">Calibration data arrives in the dressed frame: a spectroscopy peak is</span>
+<span class="sd">a dressed eigenvalue, a Ramsey shift is a dispersive ``chi``, a</span>
+<span class="sd">parked-qubit detuning is a static ``zz``. The chip model, on the</span>
+<span class="sd">other hand, is parameterized by *bare* quantities — device ``freq``</span>
+<span class="sd">and ``anharmonicity``, a coupling&#39;s scalar strength (``g``, ``g_0``,</span>
+<span class="sd">``chi``, depending on the coupling type — see</span>
+<span class="sd">:attr:`~quchip.chip.coupling_base.BaseCoupling.coupling_strength`).</span>
+<span class="sd">:func:`fit_a_dress` closes that gap: given targets on dressed</span>
+<span class="sd">observables, it finds bare parameters whose dressed spectrum</span>
+<span class="sd">reproduces them.</span>
+
+<span class="sd">References</span>
+<span class="sd">----------</span>
+
+<span class="sd">Dispersive regime (``chi``, ``zz``, and dressed frequencies):</span>
+
+<span class="sd">- Koch et al., *Phys. Rev. A* **76**, 042319 (2007),</span>
+<span class="sd">  &quot;Charge-insensitive qubit design derived from the Cooper pair box&quot;</span>
+<span class="sd">  — the DuffingTransmon approximation and its dispersive shifts.</span>
+<span class="sd">- Gambetta et al., *Phys. Rev. A* **74**, 042318 (2006),</span>
+<span class="sd">  &quot;Qubit-photon interactions in a cavity&quot; — the</span>
+<span class="sd">  ``chi = g^2 / Delta`` qubit-resonator dispersive shift at leading</span>
+<span class="sd">  order, the dispersive-regime intuition behind the ``chi`` seed search</span>
+<span class="sd">  (:func:`_estimate_bare_g`). The ``zz`` seed makes no leading-order</span>
+<span class="sd">  claim of its own: the seed search only requires the target to be</span>
+<span class="sd">  *bracketed* by the observable at the endpoints of</span>
+<span class="sd">  ``seed_strength_bounds`` (checked, not assumed) — it does not require</span>
+<span class="sd">  the observable to be monotone in between; :func:`scipy.optimize.brentq`</span>
+<span class="sd">  finds a consistent root regardless of the observable&#39;s direction</span>
+<span class="sd">  (increasing or decreasing) within the bracket.</span>
+
+<span class="sd">JAX traceability</span>
+<span class="sd">----------------</span>
+
+<span class="sd">Every bare parameter here (``device.freq``, ``device.anharmonicity``, a</span>
+<span class="sd">coupling&#39;s ``coupling_strength``) is a sweepable, differentiable</span>
+<span class="sd">quantity. A chip using a JAX-native backend supplies a traced</span>
+<span class="sd">dressed-observable residual and exact Jacobian; SciPy consumes their concrete</span>
+<span class="sd">values only at the bounded trust-region boundary. The optimizer itself is not</span>
+<span class="sd">JAX-traceable, while the output :class:`~quchip.chip.chip.Chip` remains fully</span>
+<span class="sd">traceable for every downstream operation.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">warnings</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Mapping</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">jax</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">jax.numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">jnp</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">scipy.optimize</span><span class="w"> </span><span class="kn">import</span> <span class="n">brentq</span><span class="p">,</span> <span class="n">least_squares</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">quchip.analysis.effective_hamiltonian</span><span class="w"> </span><span class="kn">import</span> <span class="n">effective_hamiltonian_between_states</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">quchip.backend</span><span class="w"> </span><span class="kn">import</span> <span class="n">_backend_context</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">quchip.chip</span><span class="w"> </span><span class="kn">import</span> <span class="n">Chip</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">quchip.inverse_design.observables</span><span class="w"> </span><span class="kn">import</span> <span class="n">TargetSpec</span><span class="p">,</span> <span class="n">build_target_specs</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">quchip.inverse_design.subsystems</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">build_local_subsystem</span><span class="p">,</span>
+    <span class="n">choose_evaluator</span><span class="p">,</span>
+    <span class="n">device_labels_for_local_eval</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">quchip.inverse_design.types</span><span class="w"> </span><span class="kn">import</span> <span class="n">FitADressResult</span><span class="p">,</span> <span class="n">ObservableReport</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">quchip.utils.labeling</span><span class="w"> </span><span class="kn">import</span> <span class="n">resolve_label</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_pair_labels</span><span class="p">(</span><span class="n">label</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">kind</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Validate a 2-tuple label for pair observables (``zz``, ``exchange``).&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">label</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">)</span> <span class="ow">or</span> <span class="nb">len</span><span class="p">(</span><span class="n">label</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">kind</span><span class="si">}</span><span class="s2"> targets require a 2-tuple of device labels, got </span><span class="si">{</span><span class="n">label</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">label</span><span class="p">[</span><span class="mi">0</span><span class="p">]),</span> <span class="nb">str</span><span class="p">(</span><span class="n">label</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_static_exchange_rate</span><span class="p">(</span><span class="n">chip</span><span class="p">:</span> <span class="n">Chip</span><span class="p">,</span> <span class="n">label</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Off-diagonal element of the single-excitation effective Hamiltonian.</span>
+
+<span class="sd">    Returns the static exchange rate between two devices in GHz, via the</span>
+<span class="sd">    public :func:`~quchip.analysis.effective_hamiltonian.effective_hamiltonian_between_states`</span>
+<span class="sd">    seam — no direct access to chip/analysis internals here.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="n">_pair_labels</span><span class="p">(</span><span class="n">label</span><span class="p">,</span> <span class="s2">&quot;exchange&quot;</span><span class="p">)</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">chip</span><span class="o">.</span><span class="n">devices</span><span class="p">)</span>
+    <span class="n">state_a</span> <span class="o">=</span> <span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="n">n</span>
+    <span class="n">state_b</span> <span class="o">=</span> <span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="n">n</span>
+    <span class="n">state_a</span><span class="p">[</span><span class="n">chip</span><span class="o">.</span><span class="n">device_index</span><span class="p">(</span><span class="n">a</span><span class="p">)]</span> <span class="o">=</span> <span class="mi">1</span>
+    <span class="n">state_b</span><span class="p">[</span><span class="n">chip</span><span class="o">.</span><span class="n">device_index</span><span class="p">(</span><span class="n">b</span><span class="p">)]</span> <span class="o">=</span> <span class="mi">1</span>
+    <span class="n">h_eff</span> <span class="o">=</span> <span class="n">effective_hamiltonian_between_states</span><span class="p">(</span><span class="n">chip</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">state_a</span><span class="p">),</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">state_b</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">jnp</span><span class="o">.</span><span class="n">real</span><span class="p">(</span><span class="n">h_eff</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">])</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_chi</span><span class="p">(</span><span class="n">chip</span><span class="p">:</span> <span class="n">Chip</span><span class="p">,</span> <span class="n">coupling</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Dispersive shift ``chi = (omega_r|1&gt; - omega_r|0&gt;) / 2`` for one coupling.</span>
+
+<span class="sd">    The single definition of the dispersive shift used everywhere in the</span>
+<span class="sd">    fit. Devices are resolved from ``chip`` by the coupling&#39;s labels, so</span>
+<span class="sd">    the shift is evaluated on whatever (sub)chip the caller passes — the</span>
+<span class="sd">    isolated two-device sub-chip during the seed root solve, or the</span>
+<span class="sd">    one-hop local neighborhood (or the full chip) during residual</span>
+<span class="sd">    evaluation. The computational device is the qubit ``q``; the other</span>
+<span class="sd">    is the readout mode ``r``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">a_dev</span> <span class="o">=</span> <span class="n">chip</span><span class="p">[</span><span class="n">coupling</span><span class="o">.</span><span class="n">device_a_label</span><span class="p">]</span>
+    <span class="n">b_dev</span> <span class="o">=</span> <span class="n">chip</span><span class="p">[</span><span class="n">coupling</span><span class="o">.</span><span class="n">device_b_label</span><span class="p">]</span>
+    <span class="n">q</span> <span class="o">=</span> <span class="n">a_dev</span> <span class="k">if</span> <span class="n">a_dev</span><span class="o">.</span><span class="n">computational</span> <span class="k">else</span> <span class="n">b_dev</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">b_dev</span> <span class="k">if</span> <span class="ow">not</span> <span class="n">b_dev</span><span class="o">.</span><span class="n">computational</span> <span class="k">else</span> <span class="n">a_dev</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">chip</span><span class="o">.</span><span class="n">freq</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">when</span><span class="o">=</span><span class="p">{</span><span class="n">q</span><span class="p">:</span> <span class="mi">1</span><span class="p">})</span> <span class="o">-</span> <span class="n">chip</span><span class="o">.</span><span class="n">freq</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">when</span><span class="o">=</span><span class="p">{</span><span class="n">q</span><span class="p">:</span> <span class="mi">0</span><span class="p">}))</span> <span class="o">/</span> <span class="mf">2.0</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_estimate_bare_g</span><span class="p">(</span>
+    <span class="n">chip</span><span class="p">:</span> <span class="n">Chip</span><span class="p">,</span>
+    <span class="n">coupling</span><span class="p">,</span>
+    <span class="n">spec</span><span class="p">:</span> <span class="n">TargetSpec</span><span class="p">,</span>
+    <span class="n">seed_strength_bounds</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="mf">1e-6</span><span class="p">,</span> <span class="mf">0.25</span><span class="p">),</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Root-solve a 2-device sub-chip to find a bare coupling strength that matches the target ``chi`` or ``zz``.</span>
+
+<span class="sd">    A good seed matters because the outer least-squares problem is</span>
+<span class="sd">    non-convex in the coupling strength near the dispersive regime. The</span>
+<span class="sd">    only requirement here is that the target observable be *bracketed*</span>
+<span class="sd">    by the endpoints of ``seed_strength_bounds`` — checked below, not</span>
+<span class="sd">    merely assumed. The observable need not be monotone in between:</span>
+<span class="sd">    :func:`scipy.optimize.brentq` finds a strength consistent with the</span>
+<span class="sd">    target regardless of whether the observable increases or decreases</span>
+<span class="sd">    across the bracket. The search runs on a 2-device sub-chip — no</span>
+<span class="sd">    neighbors, no crosstalk — for a strength that reproduces the target</span>
+<span class="sd">    observable, handing that value to the full fit.</span>
+
+<span class="sd">    The sub-chip is built via the coupling&#39;s own structural copy/rebind</span>
+<span class="sd">    path (:meth:`~quchip.chip.coupling_base.BaseCoupling.copy`), which</span>
+<span class="sd">    preserves the coupling&#39;s RWA override and any constructor-only</span>
+<span class="sd">    subclass state — no coupling-type reconstruction, so this works for</span>
+<span class="sd">    any coupling, not only ``g``-attribute ones — and</span>
+<span class="sd">    :meth:`~quchip.chip.coupling_base.BaseCoupling.set_coupling_strength`</span>
+<span class="sd">    writes each trial magnitude. It also carries over the parent chip&#39;s</span>
+<span class="sd">    backend, isolated from chip-context-dependent conveniences such as</span>
+<span class="sd">    ``device.drive_freq`` / ``device.dressed_freq``.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    seed_strength_bounds</span>
+<span class="sd">        ``(lo, hi)`` magnitude bounds for the root solve.</span>
+
+<span class="sd">    Raises</span>
+<span class="sd">    ------</span>
+<span class="sd">    ValueError</span>
+<span class="sd">        The target observable is not bracketed by the endpoint values —</span>
+<span class="sd">        seeding never returns a saturated endpoint silently.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">target_val</span> <span class="o">=</span> <span class="nb">abs</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">target</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">target_val</span> <span class="o">==</span> <span class="mf">0.0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mf">0.01</span>
+    <span class="n">dev_a</span> <span class="o">=</span> <span class="n">coupling</span><span class="o">.</span><span class="n">device_a</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+    <span class="n">dev_b</span> <span class="o">=</span> <span class="n">coupling</span><span class="o">.</span><span class="n">device_b</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+    <span class="n">device_map</span> <span class="o">=</span> <span class="p">{</span><span class="n">dev_a</span><span class="o">.</span><span class="n">label</span><span class="p">:</span> <span class="n">dev_a</span><span class="p">,</span> <span class="n">dev_b</span><span class="o">.</span><span class="n">label</span><span class="p">:</span> <span class="n">dev_b</span><span class="p">}</span>
+    <span class="n">sub_coupling</span> <span class="o">=</span> <span class="n">coupling</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">device_map</span><span class="p">)</span>
+    <span class="n">sub</span> <span class="o">=</span> <span class="n">Chip</span><span class="p">(</span>
+        <span class="p">[</span><span class="n">dev_a</span><span class="p">,</span> <span class="n">dev_b</span><span class="p">],</span>
+        <span class="p">[</span><span class="n">sub_coupling</span><span class="p">],</span>
+        <span class="n">frame</span><span class="o">=</span><span class="n">chip</span><span class="o">.</span><span class="n">frame</span><span class="p">,</span>
+        <span class="n">rwa</span><span class="o">=</span><span class="n">chip</span><span class="o">.</span><span class="n">rwa</span><span class="p">,</span>
+        <span class="n">backend</span><span class="o">=</span><span class="n">chip</span><span class="o">.</span><span class="n">_backend</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">obs_at_strength</span><span class="p">(</span><span class="n">strength</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+        <span class="c1"># Only reached for chi/zz seeds (see _pack_initial_params), so the</span>
+        <span class="c1"># final branch is the zz case — there is no g fallback.</span>
+        <span class="n">sub_coupling</span><span class="o">.</span><span class="n">set_coupling_strength</span><span class="p">(</span><span class="n">strength</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">spec</span><span class="o">.</span><span class="n">kind</span> <span class="o">==</span> <span class="s2">&quot;chi&quot;</span><span class="p">:</span>
+            <span class="k">return</span> <span class="nb">abs</span><span class="p">(</span><span class="n">_chi</span><span class="p">(</span><span class="n">sub</span><span class="p">,</span> <span class="n">sub_coupling</span><span class="p">))</span>
+        <span class="k">return</span> <span class="nb">abs</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">sub</span><span class="o">.</span><span class="n">static_zz</span><span class="p">(</span><span class="n">sub_coupling</span><span class="o">.</span><span class="n">device_a</span><span class="p">,</span> <span class="n">sub_coupling</span><span class="o">.</span><span class="n">device_b</span><span class="p">)))</span>
+
+    <span class="n">lo</span><span class="p">,</span> <span class="n">hi</span> <span class="o">=</span> <span class="n">seed_strength_bounds</span>
+    <span class="n">obs_lo</span><span class="p">,</span> <span class="n">obs_hi</span> <span class="o">=</span> <span class="n">obs_at_strength</span><span class="p">(</span><span class="n">lo</span><span class="p">),</span> <span class="n">obs_at_strength</span><span class="p">(</span><span class="n">hi</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">min</span><span class="p">(</span><span class="n">obs_lo</span><span class="p">,</span> <span class="n">obs_hi</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="n">target_val</span> <span class="o">&lt;=</span> <span class="nb">max</span><span class="p">(</span><span class="n">obs_lo</span><span class="p">,</span> <span class="n">obs_hi</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;Cannot seed a bare coupling strength for </span><span class="si">{</span><span class="n">coupling</span><span class="o">.</span><span class="n">label</span><span class="si">!r}</span><span class="s2">&#39;s target &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">spec</span><span class="o">.</span><span class="n">kind</span><span class="si">}</span><span class="s2">=</span><span class="si">{</span><span class="n">target_val</span><span class="si">!r}</span><span class="s2">: not bracketed by the observable at &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;seed_strength_bounds=</span><span class="si">{</span><span class="n">seed_strength_bounds</span><span class="si">!r}</span><span class="s2"> &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;(observable(lo)=</span><span class="si">{</span><span class="n">obs_lo</span><span class="si">!r}</span><span class="s2">, observable(hi)=</span><span class="si">{</span><span class="n">obs_hi</span><span class="si">!r}</span><span class="s2">).&quot;</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">brentq</span><span class="p">(</span><span class="k">lambda</span> <span class="n">strength</span><span class="p">:</span> <span class="n">obs_at_strength</span><span class="p">(</span><span class="n">strength</span><span class="p">)</span> <span class="o">-</span> <span class="n">target_val</span><span class="p">,</span> <span class="n">lo</span><span class="p">,</span> <span class="n">hi</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_selected_tunable_names</span><span class="p">(</span>
+    <span class="n">device</span><span class="p">,</span> <span class="n">device_selection</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Declared tunable-parameter names free for *device* (all of them, when *device_selection* is ``None``).&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">device_selection</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">device</span><span class="o">.</span><span class="n">tunable_params</span><span class="p">())</span>
+    <span class="k">return</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">device_selection</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">device</span><span class="o">.</span><span class="n">label</span><span class="p">,</span> <span class="p">()))</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_coupling_is_selected</span><span class="p">(</span><span class="n">coupling</span><span class="p">,</span> <span class="n">coupling_selection</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Whether *coupling*&#39;s scalar strength is free (always, when *coupling_selection* is ``None``).&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">coupling_selection</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">True</span>
+    <span class="k">return</span> <span class="n">coupling</span><span class="o">.</span><span class="n">coupling_strength_name</span> <span class="ow">in</span> <span class="n">coupling_selection</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">coupling</span><span class="o">.</span><span class="n">label</span><span class="p">,</span> <span class="p">())</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_selected_parameter_names</span><span class="p">(</span>
+    <span class="n">chip</span><span class="p">:</span> <span class="n">Chip</span><span class="p">,</span>
+    <span class="n">device_selection</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">coupling_selection</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Names of every free parameter, in chip order and each component&#39;s declared parameter order.</span>
+
+<span class="sd">    ``device_selection``/``coupling_selection`` of ``None`` means every</span>
+<span class="sd">    declared device tunable and every coupling strength is free (the</span>
+<span class="sd">    ``fit_parameters=None`` default). A mapping restricts each component to</span>
+<span class="sd">    its listed names; a component absent from the mapping is fully frozen.</span>
+<span class="sd">    This is a structural computation only — no seed root-solving — so a</span>
+<span class="sd">    caller that just needs the free-parameter *count* (the identifiability</span>
+<span class="sd">    check in :func:`fit_a_dress`) does not pay for :func:`_estimate_bare_g`.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">names</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">device</span> <span class="ow">in</span> <span class="n">chip</span><span class="o">.</span><span class="n">devices</span><span class="p">:</span>
+        <span class="n">selected</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">_selected_tunable_names</span><span class="p">(</span><span class="n">device</span><span class="p">,</span> <span class="n">device_selection</span><span class="p">))</span>
+        <span class="k">for</span> <span class="n">param_name</span> <span class="ow">in</span> <span class="n">device</span><span class="o">.</span><span class="n">tunable_params</span><span class="p">():</span>
+            <span class="k">if</span> <span class="n">param_name</span> <span class="ow">in</span> <span class="n">selected</span><span class="p">:</span>
+                <span class="n">names</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">device</span><span class="o">.</span><span class="n">label</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="n">param_name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">coupling</span> <span class="ow">in</span> <span class="n">chip</span><span class="o">.</span><span class="n">couplings</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">_coupling_is_selected</span><span class="p">(</span><span class="n">coupling</span><span class="p">,</span> <span class="n">coupling_selection</span><span class="p">):</span>
+            <span class="n">names</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">coupling</span><span class="o">.</span><span class="n">label</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="n">coupling</span><span class="o">.</span><span class="n">coupling_strength_name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">names</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_resolve_fit_parameters</span><span class="p">(</span>
+    <span class="n">chip</span><span class="p">:</span> <span class="n">Chip</span><span class="p">,</span> <span class="n">fit_parameters</span><span class="p">:</span> <span class="n">Mapping</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]],</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Resolve a ``fit_parameters`` mapping into per-device and per-coupling free-parameter allowlists.</span>
+
+<span class="sd">    ``fit_parameters`` is the *complete* free-parameter selection: a</span>
+<span class="sd">    component (device or coupling, given as the object or its label) absent</span>
+<span class="sd">    from the mapping is fully frozen, and an empty name-collection value</span>
+<span class="sd">    explicitly freezes a listed component. Device parameter names validate</span>
+<span class="sd">    against :meth:`~quchip.devices.base.BaseDevice.tunable_params` (which</span>
+<span class="sd">    walks the device&#39;s declared ``tunable_param_names`` — the generic seam</span>
+<span class="sd">    a user-authored :class:`~quchip.devices.base.BaseDevice` subclass</span>
+<span class="sd">    already gets for free); coupling names validate against exactly</span>
+<span class="sd">    ``(coupling.coupling_strength_name,)``.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    tuple[dict[str, tuple[str, ...]], dict[str, tuple[str, ...]]]</span>
+<span class="sd">        ``(device_selection, coupling_selection)``, each ``{label: names}``</span>
+<span class="sd">        for the components actually listed in ``fit_parameters``.</span>
+
+<span class="sd">    Raises</span>
+<span class="sd">    ------</span>
+<span class="sd">    ValueError</span>
+<span class="sd">        A key does not match any device or coupling label on ``chip``; a</span>
+<span class="sd">        name is not among the resolved component&#39;s declared tunables; two</span>
+<span class="sd">        keys resolve to the same label; or a value is a bare string rather</span>
+<span class="sd">        than a collection of names.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">devices_by_label</span> <span class="o">=</span> <span class="p">{</span><span class="n">device</span><span class="o">.</span><span class="n">label</span><span class="p">:</span> <span class="n">device</span> <span class="k">for</span> <span class="n">device</span> <span class="ow">in</span> <span class="n">chip</span><span class="o">.</span><span class="n">devices</span><span class="p">}</span>
+    <span class="n">couplings_by_label</span> <span class="o">=</span> <span class="p">{</span><span class="n">coupling</span><span class="o">.</span><span class="n">label</span><span class="p">:</span> <span class="n">coupling</span> <span class="k">for</span> <span class="n">coupling</span> <span class="ow">in</span> <span class="n">chip</span><span class="o">.</span><span class="n">couplings</span><span class="p">}</span>
+    <span class="n">known_labels</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="nb">set</span><span class="p">(</span><span class="n">devices_by_label</span><span class="p">)</span> <span class="o">|</span> <span class="nb">set</span><span class="p">(</span><span class="n">couplings_by_label</span><span class="p">))</span>
+
+    <span class="n">device_selection</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="n">coupling_selection</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="n">seen_labels</span><span class="p">:</span> <span class="nb">set</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+
+    <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">fit_parameters</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">label</span> <span class="o">=</span> <span class="n">resolve_label</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">label</span> <span class="ow">in</span> <span class="n">seen_labels</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;fit_parameters has duplicate entries resolving to component </span><span class="si">{</span><span class="n">label</span><span class="si">!r}</span><span class="s2">.&quot;</span><span class="p">)</span>
+        <span class="n">seen_labels</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">label</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;fit_parameters[</span><span class="si">{</span><span class="n">label</span><span class="si">!r}</span><span class="s2">] must be a collection of parameter names (e.g. (&#39;</span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&#39;,)), &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;got the bare string </span><span class="si">{</span><span class="n">value</span><span class="si">!r}</span><span class="s2">.&quot;</span>
+            <span class="p">)</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">names</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">name</span><span class="p">)</span> <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">value</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">TypeError</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;fit_parameters[</span><span class="si">{</span><span class="n">label</span><span class="si">!r}</span><span class="s2">] must be an iterable of parameter names, got </span><span class="si">{</span><span class="n">value</span><span class="si">!r}</span><span class="s2">.&quot;</span>
+            <span class="p">)</span> <span class="kn">from</span><span class="w"> </span><span class="nn">exc</span>
+
+        <span class="k">if</span> <span class="n">label</span> <span class="ow">in</span> <span class="n">devices_by_label</span><span class="p">:</span>
+            <span class="n">device</span> <span class="o">=</span> <span class="n">devices_by_label</span><span class="p">[</span><span class="n">label</span><span class="p">]</span>
+            <span class="n">available</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">device</span><span class="o">.</span><span class="n">tunable_params</span><span class="p">())</span>
+            <span class="n">unknown</span> <span class="o">=</span> <span class="p">[</span><span class="n">name</span> <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">names</span> <span class="k">if</span> <span class="n">name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">available</span><span class="p">]</span>
+            <span class="k">if</span> <span class="n">unknown</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">&quot;fit_parameters[</span><span class="si">{</span><span class="n">label</span><span class="si">!r}</span><span class="s2">] names </span><span class="si">{</span><span class="n">unknown</span><span class="si">}</span><span class="s2"> are not tunable parameters of &quot;</span>
+                    <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">label</span><span class="si">!r}</span><span class="s2">. Available: </span><span class="si">{</span><span class="nb">list</span><span class="p">(</span><span class="n">available</span><span class="p">)</span><span class="si">}</span><span class="s2">.&quot;</span>
+                <span class="p">)</span>
+            <span class="n">device_selection</span><span class="p">[</span><span class="n">label</span><span class="p">]</span> <span class="o">=</span> <span class="n">names</span>
+        <span class="k">elif</span> <span class="n">label</span> <span class="ow">in</span> <span class="n">couplings_by_label</span><span class="p">:</span>
+            <span class="n">coupling</span> <span class="o">=</span> <span class="n">couplings_by_label</span><span class="p">[</span><span class="n">label</span><span class="p">]</span>
+            <span class="n">available</span> <span class="o">=</span> <span class="p">(</span><span class="n">coupling</span><span class="o">.</span><span class="n">coupling_strength_name</span><span class="p">,)</span>
+            <span class="n">unknown</span> <span class="o">=</span> <span class="p">[</span><span class="n">name</span> <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">names</span> <span class="k">if</span> <span class="n">name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">available</span><span class="p">]</span>
+            <span class="k">if</span> <span class="n">unknown</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">&quot;fit_parameters[</span><span class="si">{</span><span class="n">label</span><span class="si">!r}</span><span class="s2">] names </span><span class="si">{</span><span class="n">unknown</span><span class="si">}</span><span class="s2"> are not the declared coupling-strength &quot;</span>
+                    <span class="sa">f</span><span class="s2">&quot;parameter of </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">coupling</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">label</span><span class="si">!r}</span><span class="s2">. Available: </span><span class="si">{</span><span class="nb">list</span><span class="p">(</span><span class="n">available</span><span class="p">)</span><span class="si">}</span><span class="s2">.&quot;</span>
+                <span class="p">)</span>
+            <span class="n">coupling_selection</span><span class="p">[</span><span class="n">label</span><span class="p">]</span> <span class="o">=</span> <span class="n">names</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;fit_parameters key </span><span class="si">{</span><span class="n">label</span><span class="si">!r}</span><span class="s2"> does not match any device or coupling on the chip. &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;Available labels: </span><span class="si">{</span><span class="n">known_labels</span><span class="si">}</span><span class="s2">.&quot;</span>
+            <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">device_selection</span><span class="p">,</span> <span class="n">coupling_selection</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_pack_initial_params</span><span class="p">(</span>
+    <span class="n">chip</span><span class="p">:</span> <span class="n">Chip</span><span class="p">,</span>
+    <span class="n">target_specs</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">TargetSpec</span><span class="p">,</span> <span class="o">...</span><span class="p">],</span>
+    <span class="n">seed_strength_bounds</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="mf">1e-6</span><span class="p">,</span> <span class="mf">0.25</span><span class="p">),</span>
+    <span class="n">device_selection</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">coupling_selection</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Flatten the chip&#39;s free bare parameters into a (names, values) pair.</span>
+
+<span class="sd">    Every parameter that a device declares via</span>
+<span class="sd">    :meth:`~quchip.devices.base.BaseDevice.tunable_params` is packed by</span>
+<span class="sd">    default (``device_selection is None``) — the optimizer is free to move</span>
+<span class="sd">    any of them, regardless of which targets are active. This keeps</span>
+<span class="sd">    :func:`fit_a_dress` agnostic to the specific device model: a</span>
+<span class="sd">    :class:`DuffingTransmon` exposes ``freq``/``anharmonicity``, a</span>
+<span class="sd">    :class:`Fluxonium` exposes ``E_C``/``E_J``/``E_L``/``phi_ext``, and so</span>
+<span class="sd">    on. ``device_selection``/``coupling_selection`` (see</span>
+<span class="sd">    :func:`_resolve_fit_parameters`) restrict packing to a per-component</span>
+<span class="sd">    allowlist; a component absent from a non-``None`` selection is skipped</span>
+<span class="sd">    entirely — its bare value stays whatever the seed chip declares. Each</span>
+<span class="sd">    packed coupling is named ``f&quot;{coupling.label}.{coupling.coupling_strength_name}&quot;``</span>
+<span class="sd">    — ``g`` for :class:`~quchip.chip.couplings.Capacitive`, ``g_0`` for</span>
+<span class="sd">    :class:`~quchip.chip.couplings.TunableCapacitive`, ``chi`` for</span>
+<span class="sd">    :class:`~quchip.chip.couplings.CrossKerr`, or whatever a custom</span>
+<span class="sd">    coupling declares. A packed coupling whose target is ``chi`` or ``zz``</span>
+<span class="sd">    gets a physically motivated seed via :func:`_estimate_bare_g`; all</span>
+<span class="sd">    others start at their current</span>
+<span class="sd">    :attr:`~quchip.chip.coupling_base.BaseCoupling.coupling_strength`.</span>
+
+<span class="sd">    INVARIANT: ``names`` is always a subset of the complete key set</span>
+<span class="sd">    :func:`_rebuild_candidate` can dispatch — a name absent from the</span>
+<span class="sd">    packed vector simply leaves that parameter at its cloned value.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    seed_strength_bounds</span>
+<span class="sd">        Forwarded to :func:`_estimate_bare_g` for ``chi``/``zz`` seeds.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">names</span> <span class="o">=</span> <span class="n">_selected_parameter_names</span><span class="p">(</span><span class="n">chip</span><span class="p">,</span> <span class="n">device_selection</span><span class="p">,</span> <span class="n">coupling_selection</span><span class="p">)</span>
+    <span class="n">name_set</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">names</span><span class="p">)</span>
+    <span class="n">values</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">device</span> <span class="ow">in</span> <span class="n">chip</span><span class="o">.</span><span class="n">devices</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">param_name</span><span class="p">,</span> <span class="n">param_value</span> <span class="ow">in</span> <span class="n">device</span><span class="o">.</span><span class="n">tunable_params</span><span class="p">()</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="k">if</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">device</span><span class="o">.</span><span class="n">label</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="n">param_name</span><span class="si">}</span><span class="s2">&quot;</span> <span class="ow">in</span> <span class="n">name_set</span><span class="p">:</span>
+                <span class="n">values</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">param_value</span><span class="p">))</span>
+    <span class="n">coupling_specs</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="n">spec</span><span class="o">.</span><span class="n">label</span><span class="p">:</span> <span class="n">spec</span> <span class="k">for</span> <span class="n">spec</span> <span class="ow">in</span> <span class="n">target_specs</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">label</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="ow">and</span> <span class="n">spec</span><span class="o">.</span><span class="n">kind</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;chi&quot;</span><span class="p">,</span> <span class="s2">&quot;zz&quot;</span><span class="p">)</span>
+    <span class="p">}</span>
+    <span class="k">for</span> <span class="n">coupling</span> <span class="ow">in</span> <span class="n">chip</span><span class="o">.</span><span class="n">couplings</span><span class="p">:</span>
+        <span class="n">key</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">coupling</span><span class="o">.</span><span class="n">label</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="n">coupling</span><span class="o">.</span><span class="n">coupling_strength_name</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="k">if</span> <span class="n">key</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">name_set</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="n">spec</span> <span class="o">=</span> <span class="n">coupling_specs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">coupling</span><span class="o">.</span><span class="n">label</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">spec</span> <span class="ow">and</span> <span class="n">spec</span><span class="o">.</span><span class="n">kind</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;chi&quot;</span><span class="p">,</span> <span class="s2">&quot;zz&quot;</span><span class="p">):</span>
+            <span class="n">values</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">_estimate_bare_g</span><span class="p">(</span><span class="n">chip</span><span class="p">,</span> <span class="n">coupling</span><span class="p">,</span> <span class="n">spec</span><span class="p">,</span> <span class="n">seed_strength_bounds</span><span class="p">))</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">values</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">coupling</span><span class="o">.</span><span class="n">coupling_strength</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">names</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">values</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_rebuild_candidate</span><span class="p">(</span><span class="n">chip</span><span class="p">:</span> <span class="n">Chip</span><span class="p">,</span> <span class="n">names</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">values</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Chip</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Clone the seed and overwrite bare parameters from the packed vector.</span>
+
+<span class="sd">    ``names`` may be a strict subset of the chip&#39;s full parameter set (see</span>
+<span class="sd">    :func:`_pack_initial_params` and ``fit_parameters`` selection) — a</span>
+<span class="sd">    device parameter or coupling strength absent from ``names`` is simply</span>
+<span class="sd">    left at its cloned (seed) value, i.e. frozen. Each device parameter</span>
+<span class="sd">    present is dispatched through</span>
+<span class="sd">    :meth:`~quchip.devices.base.BaseDevice.set_tunable_param`, which is the</span>
+<span class="sd">    single seam every concrete device customizes — no</span>
+<span class="sd">    ``freq``/``anharmonicity`` hardcoding here. Each coupling parameter</span>
+<span class="sd">    present is dispatched through</span>
+<span class="sd">    :meth:`~quchip.chip.coupling_base.BaseCoupling.set_coupling_strength`,</span>
+<span class="sd">    the matching seam for a coupling&#39;s own scalar strength — no ``.g``</span>
+<span class="sd">    hardcoding here either.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">candidate</span> <span class="o">=</span> <span class="n">chip</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+    <span class="n">value_map</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">names</span><span class="p">,</span> <span class="n">values</span><span class="p">,</span> <span class="n">strict</span><span class="o">=</span><span class="kc">True</span><span class="p">))</span>
+    <span class="k">for</span> <span class="n">device</span> <span class="ow">in</span> <span class="n">candidate</span><span class="o">.</span><span class="n">devices</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">param_name</span> <span class="ow">in</span> <span class="n">device</span><span class="o">.</span><span class="n">tunable_params</span><span class="p">():</span>
+            <span class="n">key</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">device</span><span class="o">.</span><span class="n">label</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="n">param_name</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="k">if</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">value_map</span><span class="p">:</span>
+                <span class="n">device</span><span class="o">.</span><span class="n">set_tunable_param</span><span class="p">(</span><span class="n">param_name</span><span class="p">,</span> <span class="n">value_map</span><span class="p">[</span><span class="n">key</span><span class="p">])</span>
+    <span class="k">for</span> <span class="n">coupling</span> <span class="ow">in</span> <span class="n">candidate</span><span class="o">.</span><span class="n">couplings</span><span class="p">:</span>
+        <span class="n">key</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">coupling</span><span class="o">.</span><span class="n">label</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="n">coupling</span><span class="o">.</span><span class="n">coupling_strength_name</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="k">if</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">value_map</span><span class="p">:</span>
+            <span class="n">coupling</span><span class="o">.</span><span class="n">set_coupling_strength</span><span class="p">(</span><span class="n">value_map</span><span class="p">[</span><span class="n">key</span><span class="p">])</span>
+    <span class="c1"># Sanity: any leftover keys would silently no-op above. Catch wiring drift.</span>
+    <span class="n">expected</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">device</span><span class="o">.</span><span class="n">label</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="k">for</span> <span class="n">device</span> <span class="ow">in</span> <span class="n">candidate</span><span class="o">.</span><span class="n">devices</span>
+        <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">device</span><span class="o">.</span><span class="n">tunable_params</span><span class="p">()</span>
+    <span class="p">}</span> <span class="o">|</span> <span class="p">{</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">coupling</span><span class="o">.</span><span class="n">label</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="n">coupling</span><span class="o">.</span><span class="n">coupling_strength_name</span><span class="si">}</span><span class="s2">&quot;</span> <span class="k">for</span> <span class="n">coupling</span> <span class="ow">in</span> <span class="n">candidate</span><span class="o">.</span><span class="n">couplings</span><span class="p">}</span>
+    <span class="n">unexpected</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">value_map</span><span class="p">)</span> <span class="o">-</span> <span class="n">expected</span>
+    <span class="k">if</span> <span class="n">unexpected</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;_rebuild_candidate received parameters with no destination: </span><span class="si">{</span><span class="nb">sorted</span><span class="p">(</span><span class="n">unexpected</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">candidate</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_working_chip</span><span class="p">(</span><span class="n">candidate</span><span class="p">:</span> <span class="n">Chip</span><span class="p">,</span> <span class="n">label</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">evaluator</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Chip</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Pick the full chip or a one-hop local neighborhood for this target.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">evaluator</span> <span class="o">!=</span> <span class="s2">&quot;local&quot;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">candidate</span>
+    <span class="k">return</span> <span class="n">build_local_subsystem</span><span class="p">(</span><span class="n">candidate</span><span class="p">,</span> <span class="n">device_labels_for_local_eval</span><span class="p">(</span><span class="n">candidate</span><span class="p">,</span> <span class="n">label</span><span class="p">))</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_coupling_by_label</span><span class="p">(</span><span class="n">chip</span><span class="p">:</span> <span class="n">Chip</span><span class="p">,</span> <span class="n">label</span><span class="p">:</span> <span class="n">Any</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the coupling on *chip* with the given label.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="nb">next</span><span class="p">(</span><span class="n">c</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">chip</span><span class="o">.</span><span class="n">couplings</span> <span class="k">if</span> <span class="n">c</span><span class="o">.</span><span class="n">label</span> <span class="o">==</span> <span class="n">label</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_evaluate_spec</span><span class="p">(</span><span class="n">candidate</span><span class="p">:</span> <span class="n">Chip</span><span class="p">,</span> <span class="n">spec</span><span class="p">:</span> <span class="n">TargetSpec</span><span class="p">,</span> <span class="n">evaluator</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute the observable this ``spec`` anchors, on the appropriate working chip.&quot;&quot;&quot;</span>
+    <span class="k">match</span> <span class="n">spec</span><span class="o">.</span><span class="n">kind</span><span class="p">:</span>
+        <span class="k">case</span> <span class="s2">&quot;freq&quot;</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">_working_chip</span><span class="p">(</span><span class="n">candidate</span><span class="p">,</span> <span class="n">spec</span><span class="o">.</span><span class="n">label</span><span class="p">,</span> <span class="n">evaluator</span><span class="p">)</span><span class="o">.</span><span class="n">freq</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">label</span><span class="p">)</span>
+        <span class="k">case</span> <span class="s2">&quot;anharmonicity&quot;</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">_working_chip</span><span class="p">(</span><span class="n">candidate</span><span class="p">,</span> <span class="n">spec</span><span class="o">.</span><span class="n">label</span><span class="p">,</span> <span class="n">evaluator</span><span class="p">)</span><span class="o">.</span><span class="n">dressed_anharmonicity</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">label</span><span class="p">)</span>
+        <span class="k">case</span> <span class="s2">&quot;chi&quot;</span><span class="p">:</span>
+            <span class="n">coupling</span> <span class="o">=</span> <span class="n">_coupling_by_label</span><span class="p">(</span><span class="n">candidate</span><span class="p">,</span> <span class="n">spec</span><span class="o">.</span><span class="n">label</span><span class="p">)</span>
+            <span class="n">working</span> <span class="o">=</span> <span class="n">_working_chip</span><span class="p">(</span><span class="n">candidate</span><span class="p">,</span> <span class="p">(</span><span class="n">coupling</span><span class="o">.</span><span class="n">device_a_label</span><span class="p">,</span> <span class="n">coupling</span><span class="o">.</span><span class="n">device_b_label</span><span class="p">),</span> <span class="n">evaluator</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">_chi</span><span class="p">(</span><span class="n">working</span><span class="p">,</span> <span class="n">coupling</span><span class="p">)</span>
+        <span class="k">case</span> <span class="s2">&quot;zz&quot;</span><span class="p">:</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">label</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">):</span>
+                <span class="n">working</span> <span class="o">=</span> <span class="n">_working_chip</span><span class="p">(</span><span class="n">candidate</span><span class="p">,</span> <span class="n">spec</span><span class="o">.</span><span class="n">label</span><span class="p">,</span> <span class="n">evaluator</span><span class="p">)</span>
+                <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="n">_pair_labels</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">label</span><span class="p">,</span> <span class="s2">&quot;zz&quot;</span><span class="p">)</span>
+                <span class="k">return</span> <span class="n">working</span><span class="o">.</span><span class="n">static_zz</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">)</span>
+            <span class="n">coupling</span> <span class="o">=</span> <span class="n">_coupling_by_label</span><span class="p">(</span><span class="n">candidate</span><span class="p">,</span> <span class="n">spec</span><span class="o">.</span><span class="n">label</span><span class="p">)</span>
+            <span class="n">working</span> <span class="o">=</span> <span class="n">_working_chip</span><span class="p">(</span><span class="n">candidate</span><span class="p">,</span> <span class="p">(</span><span class="n">coupling</span><span class="o">.</span><span class="n">device_a_label</span><span class="p">,</span> <span class="n">coupling</span><span class="o">.</span><span class="n">device_b_label</span><span class="p">),</span> <span class="n">evaluator</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">working</span><span class="o">.</span><span class="n">static_zz</span><span class="p">(</span><span class="n">coupling</span><span class="o">.</span><span class="n">device_a_label</span><span class="p">,</span> <span class="n">coupling</span><span class="o">.</span><span class="n">device_b_label</span><span class="p">)</span>
+        <span class="k">case</span> <span class="s2">&quot;exchange&quot;</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">_static_exchange_rate</span><span class="p">(</span><span class="n">_working_chip</span><span class="p">(</span><span class="n">candidate</span><span class="p">,</span> <span class="n">spec</span><span class="o">.</span><span class="n">label</span><span class="p">,</span> <span class="n">evaluator</span><span class="p">),</span> <span class="n">spec</span><span class="o">.</span><span class="n">label</span><span class="p">)</span>
+        <span class="k">case</span> <span class="s2">&quot;g&quot;</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">_coupling_by_label</span><span class="p">(</span><span class="n">candidate</span><span class="p">,</span> <span class="n">spec</span><span class="o">.</span><span class="n">label</span><span class="p">)</span><span class="o">.</span><span class="n">coupling_strength</span>
+        <span class="k">case</span><span class="w"> </span><span class="k">_</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unknown spec kind </span><span class="si">{</span><span class="n">spec</span><span class="o">.</span><span class="n">kind</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_auto_bounds</span><span class="p">(</span><span class="n">chip</span><span class="p">:</span> <span class="n">Chip</span><span class="p">,</span> <span class="n">names</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">x0</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Per-parameter box bounds that keep the TRF solver physical.</span>
+
+<span class="sd">    A coupling&#39;s scalar strength (``g``, ``g_0``, ``chi``, …) is symmetric</span>
+<span class="sd">    around zero — the *sign* of a capacitive-type coupling carries physical</span>
+<span class="sd">    meaning and must not be frozen. Every device-side parameter delegates</span>
+<span class="sd">    to :meth:`~quchip.devices.base.BaseDevice.tunable_param_bounds` so</span>
+<span class="sd">    each device declares the valid range for its own bare parameters</span>
+<span class="sd">    (``freq``, ``anharmonicity``, ``E_C``/``E_J``/``E_L``/``phi_ext``,</span>
+<span class="sd">    ``n_g``, …) without any global registry.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">devices_by_label</span> <span class="o">=</span> <span class="p">{</span><span class="n">device</span><span class="o">.</span><span class="n">label</span><span class="p">:</span> <span class="n">device</span> <span class="k">for</span> <span class="n">device</span> <span class="ow">in</span> <span class="n">chip</span><span class="o">.</span><span class="n">devices</span><span class="p">}</span>
+    <span class="n">couplings_by_label</span> <span class="o">=</span> <span class="p">{</span><span class="n">coupling</span><span class="o">.</span><span class="n">label</span><span class="p">:</span> <span class="n">coupling</span> <span class="k">for</span> <span class="n">coupling</span> <span class="ow">in</span> <span class="n">chip</span><span class="o">.</span><span class="n">couplings</span><span class="p">}</span>
+    <span class="n">lower</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">upper</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">names</span><span class="p">,</span> <span class="n">x0</span><span class="p">,</span> <span class="n">strict</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+        <span class="n">owner_label</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">param_name</span> <span class="o">=</span> <span class="n">name</span><span class="o">.</span><span class="n">rpartition</span><span class="p">(</span><span class="s2">&quot;.&quot;</span><span class="p">)</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">devices_by_label</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">owner_label</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">lo</span><span class="p">,</span> <span class="n">hi</span> <span class="o">=</span> <span class="n">device</span><span class="o">.</span><span class="n">tunable_param_bounds</span><span class="p">(</span><span class="n">param_name</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="n">value</span><span class="p">))</span>
+            <span class="n">lower</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">lo</span><span class="p">))</span>
+            <span class="n">upper</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">hi</span><span class="p">))</span>
+            <span class="k">continue</span>
+        <span class="n">coupling</span> <span class="o">=</span> <span class="n">couplings_by_label</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">owner_label</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">coupling</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">param_name</span> <span class="o">==</span> <span class="n">coupling</span><span class="o">.</span><span class="n">coupling_strength_name</span><span class="p">:</span>
+            <span class="n">mag</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mf">0.25</span><span class="p">,</span> <span class="mf">2.0</span> <span class="o">*</span> <span class="nb">abs</span><span class="p">(</span><span class="n">value</span><span class="p">))</span> <span class="k">if</span> <span class="n">value</span> <span class="o">!=</span> <span class="mf">0.0</span> <span class="k">else</span> <span class="mf">0.25</span>
+            <span class="n">lower</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="o">-</span><span class="n">mag</span><span class="p">)</span>
+            <span class="n">upper</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">mag</span><span class="p">)</span>
+            <span class="k">continue</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unsupported latent parameter </span><span class="si">{</span><span class="n">name</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">lower</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">upper</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_coerce_mapping</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="n">Mapping</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return *value* as a plain dict, treating ``None`` as empty and rejecting non-``Mapping`` input.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">value</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">{}</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="n">Mapping</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">dict</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+    <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2"> must be None or a Mapping, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">value</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_jax_residual_functions</span><span class="p">(</span>
+    <span class="n">chip</span><span class="p">:</span> <span class="n">Chip</span><span class="p">,</span>
+    <span class="n">names</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">target_specs</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">TargetSpec</span><span class="p">,</span> <span class="o">...</span><span class="p">],</span>
+    <span class="n">evaluator</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">targets</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">scales</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return JAX residual functions for a JAX-backed chip, else ``None``.&quot;&quot;&quot;</span>
+    <span class="n">backend</span> <span class="o">=</span> <span class="n">chip</span><span class="o">.</span><span class="n">backend</span>
+    <span class="k">if</span> <span class="n">backend</span><span class="o">.</span><span class="n">array_module</span> <span class="ow">is</span> <span class="ow">not</span> <span class="n">jnp</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+    <span class="n">targets_jax</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">targets</span><span class="p">)</span>
+    <span class="n">scales_jax</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">scales</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">residual</span><span class="p">(</span><span class="n">values</span><span class="p">):</span>
+        <span class="k">with</span> <span class="n">_backend_context</span><span class="p">(</span><span class="n">backend</span><span class="p">):</span>
+            <span class="n">candidate</span> <span class="o">=</span> <span class="n">_rebuild_candidate</span><span class="p">(</span><span class="n">chip</span><span class="p">,</span> <span class="n">names</span><span class="p">,</span> <span class="n">values</span><span class="p">)</span>
+            <span class="n">observed</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span>
+                <span class="n">jnp</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">_evaluate_spec</span><span class="p">(</span><span class="n">candidate</span><span class="p">,</span> <span class="n">spec</span><span class="p">,</span> <span class="n">evaluator</span><span class="p">))</span>
+                <span class="k">for</span> <span class="n">spec</span> <span class="ow">in</span> <span class="n">target_specs</span>
+            <span class="p">])</span>
+        <span class="k">return</span> <span class="p">(</span><span class="n">observed</span> <span class="o">-</span> <span class="n">targets_jax</span><span class="p">)</span> <span class="o">/</span> <span class="n">scales_jax</span>
+
+    <span class="k">return</span> <span class="n">jax</span><span class="o">.</span><span class="n">jit</span><span class="p">(</span><span class="n">residual</span><span class="p">),</span> <span class="n">jax</span><span class="o">.</span><span class="n">jit</span><span class="p">(</span><span class="n">jax</span><span class="o">.</span><span class="n">jacrev</span><span class="p">(</span><span class="n">residual</span><span class="p">))</span>
+
+
+<div class="viewcode-block" id="fit_a_dress">
+<a class="viewcode-back" href="../../../generated/quchip.inverse_design.fit.html#quchip.fit_a_dress">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">fit_a_dress</span><span class="p">(</span>
+    <span class="n">chip</span><span class="p">:</span> <span class="n">Chip</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">coupling_targets</span><span class="p">:</span> <span class="n">Mapping</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">observable_targets</span><span class="p">:</span> <span class="n">Mapping</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">fit_parameters</span><span class="p">:</span> <span class="n">Mapping</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">max_hilbert_dim</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">10_000</span><span class="p">,</span>
+    <span class="n">seed_strength_bounds</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="mf">1e-6</span><span class="p">,</span> <span class="mf">0.25</span><span class="p">),</span>
+    <span class="n">max_nfev</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1000</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">FitADressResult</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Fit bare chip parameters so dressed observables match targets.</span>
+
+<span class="sd">    With ``fit_parameters=None`` (the default), every device ``freq`` /</span>
+<span class="sd">    ``anharmonicity`` and every coupling&#39;s scalar strength</span>
+<span class="sd">    (:attr:`~quchip.chip.coupling_base.BaseCoupling.coupling_strength`) is a</span>
+<span class="sd">    free variable in a bounded non-linear least-squares problem (scipy</span>
+<span class="sd">    Trust-Region Reflective). A ``fit_parameters`` mapping instead is the</span>
+<span class="sd">    *complete* free-parameter allowlist — see ``fit_parameters`` below — so</span>
+<span class="sd">    any device or coupling it does not list is frozen instead of free. The</span>
+<span class="sd">    fitted chip is returned as a clone — the input chip is never mutated.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    chip</span>
+<span class="sd">        Seed chip. Seeds only set the optimizer&#39;s starting point.</span>
+<span class="sd">    coupling_targets</span>
+<span class="sd">        Mapping from coupling (or its label) to a target mode:</span>
+<span class="sd">        ``&quot;chi&quot;``, ``&quot;zz&quot;``, or ``&quot;g&quot;``. For listed couplings, the</span>
+<span class="sd">        coupling&#39;s current strength is interpreted as the target value</span>
+<span class="sd">        for that mode. With ``fit_parameters=None``, couplings not listed</span>
+<span class="sd">        here are still free — they are optimized, just without a dedicated</span>
+<span class="sd">        anchor; a ``fit_parameters`` mapping can freeze them regardless (a</span>
+<span class="sd">        coupling target does not itself make a coupling free). A ``&quot;chi&quot;``</span>
+<span class="sd">        target requires the coupling to have exactly one computational</span>
+<span class="sd">        endpoint; both-computational or neither-computational raises</span>
+<span class="sd">        :class:`ValueError` at construction.</span>
+<span class="sd">    observable_targets</span>
+<span class="sd">        Mapping of target observables. Keys are devices/labels or</span>
+<span class="sd">        ``(device_a, device_b)`` tuples; values are ``{kind: value}``</span>
+<span class="sd">        dicts. Supported kinds: ``&quot;freq&quot;``, ``&quot;anharmonicity&quot;``</span>
+<span class="sd">        (device), ``&quot;exchange&quot;``, ``&quot;zz&quot;`` (pair). Device-level</span>
+<span class="sd">        targets override the auto-targeted defaults for the same</span>
+<span class="sd">        ``(kind, label)``.</span>
+<span class="sd">    fit_parameters</span>
+<span class="sd">        ``None`` (default): every declared device tunable</span>
+<span class="sd">        (:meth:`~quchip.devices.base.BaseDevice.tunable_params`) and every</span>
+<span class="sd">        coupling&#39;s scalar strength is free — the pre-existing behavior.</span>
+<span class="sd">        A mapping is instead the *complete* free-parameter allowlist:</span>
+<span class="sd">        ``{component_or_label: name_collection}``, where a device&#39;s</span>
+<span class="sd">        ``name_collection`` is a subset of its declared tunable names and</span>
+<span class="sd">        a coupling&#39;s is a subset of</span>
+<span class="sd">        ``(coupling.coupling_strength_name,)``. A component (device or</span>
+<span class="sd">        coupling, given as the object or its label) absent from the</span>
+<span class="sd">        mapping is fully frozen — it does **not** default to free. An</span>
+<span class="sd">        empty ``name_collection`` explicitly freezes a listed component.</span>
+<span class="sd">        A bare string value (e.g. ``&quot;E_J&quot;`` instead of ``(&quot;E_J&quot;,)``) is</span>
+<span class="sd">        rejected, since a string is itself a collection of characters.</span>
+<span class="sd">        Selected parameters are packed in chip order and each component&#39;s</span>
+<span class="sd">        own declared parameter order, not mapping or tuple order.</span>
+<span class="sd">        :attr:`~quchip.inverse_design.types.FitADressResult.initial_params`</span>
+<span class="sd">        / :attr:`~quchip.inverse_design.types.FitADressResult.final_params`</span>
+<span class="sd">        contain only the selected (free) parameters.</span>
+<span class="sd">    max_hilbert_dim</span>
+<span class="sd">        Above this total Hilbert-space size the fit switches from</span>
+<span class="sd">        dressing the whole chip to dressing one-hop subsystems per</span>
+<span class="sd">        target (see :mod:`quchip.inverse_design.subsystems`).</span>
+<span class="sd">    seed_strength_bounds</span>
+<span class="sd">        ``(lo, hi)`` magnitude bounds for the bare-coupling-strength</span>
+<span class="sd">        seed root solve (:func:`_estimate_bare_g`) used for ``chi``/``zz``</span>
+<span class="sd">        coupling targets. The target observable must be bracketed by the</span>
+<span class="sd">        values at these two endpoints, or seeding raises</span>
+<span class="sd">        :class:`ValueError` rather than silently returning a saturated</span>
+<span class="sd">        endpoint.</span>
+<span class="sd">    max_nfev</span>
+<span class="sd">        Maximum number of residual evaluations for the SciPy</span>
+<span class="sd">        Trust-Region Reflective solver.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    FitADressResult</span>
+<span class="sd">        Fitted chip clone, loss, residual history, per-target</span>
+<span class="sd">        :class:`ObservableReport` tuples, packed parameters, and</span>
+<span class="sd">        solver metadata.</span>
+
+<span class="sd">    Raises</span>
+<span class="sd">    ------</span>
+<span class="sd">    ValueError</span>
+<span class="sd">        A ``&quot;chi&quot;`` coupling target does not have exactly one</span>
+<span class="sd">        computational endpoint, or a ``chi``/``zz`` seed&#39;s target</span>
+<span class="sd">        observable is not bracketed within ``seed_strength_bounds``; a</span>
+<span class="sd">        ``fit_parameters`` key does not resolve to a device or coupling</span>
+<span class="sd">        label on ``chip``, names a parameter the resolved component does</span>
+<span class="sd">        not declare, resolves the same label twice, or is a bare string</span>
+<span class="sd">        rather than a name collection; or ``fit_parameters`` selects zero</span>
+<span class="sd">        free parameters overall.</span>
+
+<span class="sd">    Warns</span>
+<span class="sd">    -----</span>
+<span class="sd">    UserWarning</span>
+<span class="sd">        The number of free parameters exceeds the number of target</span>
+<span class="sd">        residuals (underdetermined by count). This is a necessary, not</span>
+<span class="sd">        sufficient, identifiability condition: it does not analyze the</span>
+<span class="sd">        Jacobian&#39;s rank, so a count-sufficient fit can still be</span>
+<span class="sd">        practically underdetermined.</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    Residuals are normalized by ``max(|target|, 1e-9)`` so every anchor</span>
+<span class="sd">    contributes on equal *relative*-error footing. A coupling&#39;s scalar</span>
+<span class="sd">    strength bounds are symmetric around zero — the sign of a</span>
+<span class="sd">    capacitive-type coupling is physical and must not be constrained.</span>
+<span class="sd">    The solver&#39;s convergence tolerances (``ftol``/``xtol``/``gtol`` =</span>
+<span class="sd">    ``1e-11``) and its ``x_scale`` floor (``1e-3``, applied per parameter</span>
+<span class="sd">    as ``max(abs(x0), 1e-3)``) are fixed fitter policy, not exposed as</span>
+<span class="sd">    options.</span>
+
+<span class="sd">    **Two identifiability hazards the count check above does not catch.**</span>
+<span class="sd">    The free-parameter-vs-residual count is necessary but not sufficient: it</span>
+<span class="sd">    cannot detect a flat Jacobian direction — a free parameter no target</span>
+<span class="sd">    observable actually responds to — which stays underdetermined regardless</span>
+<span class="sd">    of the count. And a custom :class:`~quchip.declarative.models.DeviceModel`</span>
+<span class="sd">    whose ``tunable_param_names`` is discovered (the derived default, not an</span>
+<span class="sd">    explicit declaration) is not automatically fit-ready: an unbounded</span>
+<span class="sd">    parameter still needs a :meth:`~quchip.devices.base.BaseDevice.tunable_param_bounds`</span>
+<span class="sd">    rule before the optimizer can search it.</span>
+
+<span class="sd">    **JAX traceability.** When the chip uses a JAX-native backend, the</span>
+<span class="sd">    complete parameter-to-residual map and its exact Jacobian are</span>
+<span class="sd">    JAX-traceable; SciPy receives their concrete values for bounded</span>
+<span class="sd">    trust-region control. The optimizer itself is not differentiated.</span>
+<span class="sd">    Other backends retain SciPy&#39;s numerical Jacobian. The returned chip</span>
+<span class="sd">    remains fully traceable and differentiable in either case.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">ct</span> <span class="o">=</span> <span class="n">_coerce_mapping</span><span class="p">(</span><span class="n">coupling_targets</span><span class="p">,</span> <span class="s2">&quot;coupling_targets&quot;</span><span class="p">)</span>
+    <span class="n">ot_mapping</span> <span class="o">=</span> <span class="n">_coerce_mapping</span><span class="p">(</span><span class="n">observable_targets</span><span class="p">,</span> <span class="s2">&quot;observable_targets&quot;</span><span class="p">)</span> <span class="k">if</span> <span class="n">observable_targets</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="kc">None</span>
+
+    <span class="n">target_specs</span> <span class="o">=</span> <span class="n">build_target_specs</span><span class="p">(</span><span class="n">chip</span><span class="p">,</span> <span class="n">ct</span><span class="p">,</span> <span class="n">ot_mapping</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">fit_parameters</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">device_selection</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="n">coupling_selection</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">fp_mapping</span> <span class="o">=</span> <span class="n">_coerce_mapping</span><span class="p">(</span><span class="n">fit_parameters</span><span class="p">,</span> <span class="s2">&quot;fit_parameters&quot;</span><span class="p">)</span>
+        <span class="n">device_selection</span><span class="p">,</span> <span class="n">coupling_selection</span> <span class="o">=</span> <span class="n">_resolve_fit_parameters</span><span class="p">(</span><span class="n">chip</span><span class="p">,</span> <span class="n">fp_mapping</span><span class="p">)</span>
+
+    <span class="n">n_free_parameters</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">_selected_parameter_names</span><span class="p">(</span><span class="n">chip</span><span class="p">,</span> <span class="n">device_selection</span><span class="p">,</span> <span class="n">coupling_selection</span><span class="p">))</span>
+    <span class="n">n_target_residuals</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">target_specs</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">n_free_parameters</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="s2">&quot;fit_parameters selects zero free parameters; fit_a_dress has nothing to optimize. &quot;</span>
+            <span class="s2">&quot;List at least one device parameter or coupling strength with a non-empty selection.&quot;</span>
+        <span class="p">)</span>
+    <span class="n">underdetermined_by_count</span> <span class="o">=</span> <span class="n">n_free_parameters</span> <span class="o">&gt;</span> <span class="n">n_target_residuals</span>
+    <span class="k">if</span> <span class="n">underdetermined_by_count</span><span class="p">:</span>
+        <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;fit_a_dress has </span><span class="si">{</span><span class="n">n_free_parameters</span><span class="si">}</span><span class="s2"> free parameters but only </span><span class="si">{</span><span class="n">n_target_residuals</span><span class="si">}</span><span class="s2"> target &quot;</span>
+            <span class="s2">&quot;residuals; the fit is underdetermined by count. Select fewer parameters with fit_parameters. &quot;</span>
+            <span class="s2">&quot;Target count alone does not guarantee identifiability.&quot;</span><span class="p">,</span>
+            <span class="ne">UserWarning</span><span class="p">,</span>
+            <span class="n">stacklevel</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="n">names</span><span class="p">,</span> <span class="n">x0</span> <span class="o">=</span> <span class="n">_pack_initial_params</span><span class="p">(</span><span class="n">chip</span><span class="p">,</span> <span class="n">target_specs</span><span class="p">,</span> <span class="n">seed_strength_bounds</span><span class="p">,</span> <span class="n">device_selection</span><span class="p">,</span> <span class="n">coupling_selection</span><span class="p">)</span>
+    <span class="n">targets_arr</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">([</span><span class="n">spec</span><span class="o">.</span><span class="n">target</span> <span class="k">for</span> <span class="n">spec</span> <span class="ow">in</span> <span class="n">target_specs</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+    <span class="n">scales</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">maximum</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">targets_arr</span><span class="p">),</span> <span class="mf">1e-9</span><span class="p">)</span>
+    <span class="n">lower</span><span class="p">,</span> <span class="n">upper</span> <span class="o">=</span> <span class="n">_auto_bounds</span><span class="p">(</span><span class="n">chip</span><span class="p">,</span> <span class="n">names</span><span class="p">,</span> <span class="n">x0</span><span class="p">)</span>
+    <span class="n">evaluator</span> <span class="o">=</span> <span class="n">choose_evaluator</span><span class="p">(</span><span class="n">chip</span><span class="p">,</span> <span class="n">max_hilbert_dim</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">concrete_residuals</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+        <span class="n">candidate</span> <span class="o">=</span> <span class="n">_rebuild_candidate</span><span class="p">(</span><span class="n">chip</span><span class="p">,</span> <span class="n">names</span><span class="p">,</span> <span class="n">x</span><span class="p">)</span>
+        <span class="n">values</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">([</span><span class="n">_evaluate_spec</span><span class="p">(</span><span class="n">candidate</span><span class="p">,</span> <span class="n">spec</span><span class="p">,</span> <span class="n">evaluator</span><span class="p">)</span> <span class="k">for</span> <span class="n">spec</span> <span class="ow">in</span> <span class="n">target_specs</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+        <span class="k">return</span> <span class="p">(</span><span class="n">values</span> <span class="o">-</span> <span class="n">targets_arr</span><span class="p">)</span> <span class="o">/</span> <span class="n">scales</span>
+
+    <span class="n">jacobian_mode</span> <span class="o">=</span> <span class="s2">&quot;finite-difference&quot;</span>
+    <span class="n">residuals</span> <span class="o">=</span> <span class="n">concrete_residuals</span>
+    <span class="n">jacobian</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="s2">&quot;2-point&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">jax_functions</span> <span class="o">=</span> <span class="n">_jax_residual_functions</span><span class="p">(</span>
+            <span class="n">chip</span><span class="p">,</span>
+            <span class="n">names</span><span class="p">,</span>
+            <span class="n">target_specs</span><span class="p">,</span>
+            <span class="n">evaluator</span><span class="p">,</span>
+            <span class="n">targets_arr</span><span class="p">,</span>
+            <span class="n">scales</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
+        <span class="n">jax_functions</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="k">if</span> <span class="n">jax_functions</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">residual_jax</span><span class="p">,</span> <span class="n">jacobian_jax</span> <span class="o">=</span> <span class="n">jax_functions</span>
+
+        <span class="k">def</span><span class="w"> </span><span class="nf">residuals</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">residual_jax</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">x</span><span class="p">)),</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+
+        <span class="k">def</span><span class="w"> </span><span class="nf">jacobian</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">jacobian_jax</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">x</span><span class="p">)),</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+
+        <span class="n">jacobian_mode</span> <span class="o">=</span> <span class="s2">&quot;jax&quot;</span>
+
+    <span class="n">r0</span> <span class="o">=</span> <span class="n">residuals</span><span class="p">(</span><span class="n">x0</span><span class="p">)</span>
+    <span class="n">history</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="nb">float</span><span class="p">(</span><span class="n">r0</span> <span class="o">@</span> <span class="n">r0</span><span class="p">)]</span>
+
+    <span class="n">result</span> <span class="o">=</span> <span class="n">least_squares</span><span class="p">(</span>
+        <span class="n">residuals</span><span class="p">,</span>
+        <span class="n">x0</span><span class="o">=</span><span class="n">x0</span><span class="p">,</span>
+        <span class="n">jac</span><span class="o">=</span><span class="n">jacobian</span><span class="p">,</span>
+        <span class="n">bounds</span><span class="o">=</span><span class="p">(</span><span class="n">lower</span><span class="p">,</span> <span class="n">upper</span><span class="p">),</span>
+        <span class="n">method</span><span class="o">=</span><span class="s2">&quot;trf&quot;</span><span class="p">,</span>
+        <span class="n">x_scale</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">maximum</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">x0</span><span class="p">),</span> <span class="mf">1e-3</span><span class="p">),</span>
+        <span class="n">ftol</span><span class="o">=</span><span class="mf">1e-11</span><span class="p">,</span>
+        <span class="n">xtol</span><span class="o">=</span><span class="mf">1e-11</span><span class="p">,</span>
+        <span class="n">gtol</span><span class="o">=</span><span class="mf">1e-11</span><span class="p">,</span>
+        <span class="n">max_nfev</span><span class="o">=</span><span class="n">max_nfev</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">history</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">result</span><span class="o">.</span><span class="n">cost</span><span class="p">))</span>
+
+    <span class="n">fitted_chip</span> <span class="o">=</span> <span class="n">_rebuild_candidate</span><span class="p">(</span><span class="n">chip</span><span class="p">,</span> <span class="n">names</span><span class="p">,</span> <span class="n">result</span><span class="o">.</span><span class="n">x</span><span class="p">)</span>
+
+    <span class="c1"># Reconstruct observed values at start/end by inverting the residual scaling.</span>
+    <span class="n">initial_vec</span> <span class="o">=</span> <span class="n">r0</span> <span class="o">*</span> <span class="n">scales</span> <span class="o">+</span> <span class="n">targets_arr</span>
+    <span class="n">final_vec</span> <span class="o">=</span> <span class="n">residuals</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">x</span><span class="p">)</span> <span class="o">*</span> <span class="n">scales</span> <span class="o">+</span> <span class="n">targets_arr</span>
+    <span class="n">initial_reports</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span>
+        <span class="n">ObservableReport</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">kind</span><span class="p">,</span> <span class="n">spec</span><span class="o">.</span><span class="n">label</span><span class="p">,</span> <span class="n">spec</span><span class="o">.</span><span class="n">target</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="n">initial</span><span class="p">),</span> <span class="nb">float</span><span class="p">(</span><span class="n">initial</span><span class="p">),</span> <span class="n">evaluator</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">spec</span><span class="p">,</span> <span class="n">initial</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">target_specs</span><span class="p">,</span> <span class="n">initial_vec</span><span class="p">,</span> <span class="n">strict</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="p">)</span>
+    <span class="n">final_reports</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span>
+        <span class="n">ObservableReport</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">kind</span><span class="p">,</span> <span class="n">spec</span><span class="o">.</span><span class="n">label</span><span class="p">,</span> <span class="n">spec</span><span class="o">.</span><span class="n">target</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="n">initial</span><span class="p">),</span> <span class="nb">float</span><span class="p">(</span><span class="n">final</span><span class="p">),</span> <span class="n">evaluator</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">spec</span><span class="p">,</span> <span class="n">initial</span><span class="p">,</span> <span class="n">final</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">target_specs</span><span class="p">,</span> <span class="n">initial_vec</span><span class="p">,</span> <span class="n">final_vec</span><span class="p">,</span> <span class="n">strict</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">FitADressResult</span><span class="p">(</span>
+        <span class="n">chip</span><span class="o">=</span><span class="n">fitted_chip</span><span class="p">,</span>
+        <span class="n">loss</span><span class="o">=</span><span class="nb">float</span><span class="p">(</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">result</span><span class="o">.</span><span class="n">cost</span><span class="p">),</span>
+        <span class="n">history</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">history</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">),</span>
+        <span class="n">initial_targets</span><span class="o">=</span><span class="n">initial_reports</span><span class="p">,</span>
+        <span class="n">final_targets</span><span class="o">=</span><span class="n">final_reports</span><span class="p">,</span>
+        <span class="n">initial_params</span><span class="o">=</span><span class="nb">dict</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">names</span><span class="p">,</span> <span class="n">x0</span><span class="p">,</span> <span class="n">strict</span><span class="o">=</span><span class="kc">True</span><span class="p">)),</span>
+        <span class="n">final_params</span><span class="o">=</span><span class="nb">dict</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">names</span><span class="p">,</span> <span class="n">result</span><span class="o">.</span><span class="n">x</span><span class="p">,</span> <span class="n">strict</span><span class="o">=</span><span class="kc">True</span><span class="p">)),</span>
+        <span class="n">solver_info</span><span class="o">=</span><span class="p">{</span>
+            <span class="s2">&quot;method&quot;</span><span class="p">:</span> <span class="s2">&quot;trf&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="nb">int</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">status</span><span class="p">),</span>
+            <span class="s2">&quot;message&quot;</span><span class="p">:</span> <span class="n">result</span><span class="o">.</span><span class="n">message</span><span class="p">,</span>
+            <span class="s2">&quot;nfev&quot;</span><span class="p">:</span> <span class="nb">int</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">nfev</span><span class="p">),</span>
+            <span class="s2">&quot;jacobian&quot;</span><span class="p">:</span> <span class="n">jacobian_mode</span><span class="p">,</span>
+            <span class="s2">&quot;n_free_parameters&quot;</span><span class="p">:</span> <span class="n">n_free_parameters</span><span class="p">,</span>
+            <span class="s2">&quot;n_target_residuals&quot;</span><span class="p">:</span> <span class="n">n_target_residuals</span><span class="p">,</span>
+            <span class="s2">&quot;underdetermined_by_count&quot;</span><span class="p">:</span> <span class="n">underdetermined_by_count</span><span class="p">,</span>
+        <span class="p">},</span>
+    <span class="p">)</span></div>
+
+</pre></div>
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          
+          
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 2026, Ibraheem AlYousef
+            </div>
+            Made with 
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            <div class="icons">
+              <a class="muted-link fa-brands fa-solid fa-github fa-2x" href="https://github.com/quchip/quchip" aria-label="GitHub"></a>
+              
+            </div>
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer no-toc">
+      
+      
+      
+    </aside>
+  </div>
+</div><script src="../../../_static/documentation_options.js?v=2caa9db7"></script>
+    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../../_static/copybutton.js?v=f281be69"></script>
+    </body>
+</html>
