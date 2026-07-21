@@ -16,12 +16,13 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
       - run: uv venv --python 3.11
-      - run: uv pip install -e '.[dev]'
+      - run: uv pip install -e '.[dev,test,dynamiqs]'
       - run: uv run ruff check .
       - run: uv run mypy quchip
 
@@ -31,10 +32,11 @@ jobs:
         python: ["3.11", "3.12"]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
       - run: uv venv --python ${{ matrix.python }}
       - run: uv pip install -e '.[test]'
       - run: uv run pytest -m "core or physics_sentinel"
@@ -43,10 +45,11 @@ jobs:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
       - run: uv venv --python 3.11
       - run: uv pip install -e '.[test,dynamiqs]'
       - run: uv run pytest
