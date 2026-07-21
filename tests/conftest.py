@@ -48,6 +48,10 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             item.add_marker(pytest.mark.physics_sentinel)
             continue
 
+        if "examples" in rel_path.parts:
+            item.add_marker(pytest.mark.examples)
+            continue
+
         if "extended" in rel_path.parts:
             item.add_marker(pytest.mark.extended)
             if filename in VIZ_FILES:
