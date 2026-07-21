@@ -20,7 +20,7 @@ import pytest
 from jupytext.compare import compare_notebooks
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE_MD = ROOT / "examples" / "00_hello_chip.md"
 EXAMPLE_IPYNB = ROOT / "examples" / "00_hello_chip.ipynb"
 DRIVE_IMAGE = ROOT / "docs" / "images" / "hello_qubit_drive_leakage.png"

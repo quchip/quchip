@@ -46,6 +46,7 @@ markers = [
     "core: fast analytical and API-contract coverage for the default developer loop",
     "physics_sentinel: compact simulation-backed regression coverage for critical physics invariants",
     "extended: slower long-tail coverage outside the default developer loop",
+    "examples: freshness and receipt coverage for the shipped examples",
     "optional_backend: tests that require the dynamiqs optional backend",
     "viz: visualization coverage",
 ]
