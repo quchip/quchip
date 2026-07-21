@@ -4,10 +4,10 @@ QuTiP stores operators as ``qutip.Qobj`` (sparse CSR by default, dense on
 request). This backend lowers engine IR into ``Qobj`` / ``QobjEvo`` form and
 dispatches the ``sesolve``/``mesolve`` drivers directly.
 
-Batched sweeps are parallelized via the ``loky`` reusable process pool —
-QuTiP solvers release the GIL only partially, so processes beat threads.
-Final ``QobjEvo`` assembly happens inside the workers so the main process
-never pays for it.
+Batched sweeps and heterogeneous problem lists are parallelized via the
+``loky`` reusable process pool. QuTiP solvers release the GIL only partially,
+so processes beat threads. Final ``QobjEvo`` assembly happens inside the
+workers so the main process never pays for it.
 
 References
 ----------
@@ -741,6 +741,23 @@ class QuTiPBackend(Backend):
     # ------------------------------------------------------------------
     # Batched solver dispatch (parallel via loky)
     # ------------------------------------------------------------------
+
+    def parallel_solve_problems(
+        self,
+        problems: list[Any],
+        *,
+        progress: bool = True,
+    ) -> list[SolverResult] | None:
+        """Solve large structurally heterogeneous problem lists through loky workers."""
+        if len(problems) < self._PARALLEL_MIN_BATCH:
+            return None
+        return self._parallel_map(
+            task=self.solve_problem,
+            items=problems,
+            n_jobs=-1,
+            progress=progress,
+            desc="Sweep (independent)",
+        )
 
     def batched_sesolve(
         self,

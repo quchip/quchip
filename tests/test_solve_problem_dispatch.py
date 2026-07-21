@@ -600,6 +600,59 @@ class TestChipSolveMany:
         for r in results:
             assert r.populations is not None
 
+    def test_solve_many_parallelizes_heterogeneous_qutip_problems(self, monkeypatch: pytest.MonkeyPatch):
+        """Heterogeneous QuTiP problems reach one thresholded executor dispatch."""
+        q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+        chip = Chip([q], frame="rotating")
+        problems = [
+            build_problem(chip, [], np.linspace(0.0, duration, 21 + index))
+            for index, duration in enumerate(np.linspace(10.0, 80.0, 8))
+        ]
+
+        mapped_items: list[list[SolveProblem]] = []
+        requested_jobs: list[int] = []
+
+        class InlineExecutor:
+            def map(self, task, items):
+                batch = list(items)
+                mapped_items.append(batch)
+                return map(task, batch)
+
+        def get_executor(n_jobs):
+            requested_jobs.append(n_jobs)
+            return InlineExecutor()
+
+        monkeypatch.setattr(chip.backend, "_get_executor", get_executor)
+
+        results = chip.solve_many(problems, progress=False)
+
+        assert requested_jobs == [-1]
+        assert mapped_items == [problems]
+        assert len(results) == 8
+
+    def test_solve_many_retains_structural_dispatch_below_qutip_threshold(self, monkeypatch: pytest.MonkeyPatch):
+        """Small heterogeneous QuTiP lists retain structural-group dispatch."""
+        q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+        chip = Chip([q], frame="rotating")
+        problems = [
+            build_problem(chip, [], np.linspace(0.0, duration, 21 + index))
+            for index, duration in enumerate((10.0, 20.0, 30.0))
+        ]
+
+        original_solve_batch = chip.backend.solve_batch
+        solve_batch_sizes: list[int] = []
+
+        def counted_solve_batch(batch, *, progress=True):
+            solve_batch_sizes.append(batch.batch_size)
+            return original_solve_batch(batch, progress=progress)
+
+        monkeypatch.setattr(chip.backend, "solve_batch", counted_solve_batch)
+
+        results = chip.solve_many(problems, progress=False)
+
+        assert solve_batch_sizes == [1, 1, 1]
+        assert len(results) == 3
+
     @pytest.mark.optional_backend
     def test_solve_many_groups_homogeneous_subbatches(self, monkeypatch: pytest.MonkeyPatch):
         """Two build_batch() results concatenated into a list should reach solve_batch in two groups."""
