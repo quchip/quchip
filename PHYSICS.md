@@ -35,7 +35,7 @@ It does not:
 
 ### 2.2 Coupling `.interaction_hamiltonian()`
 
-`BaseCoupling.interaction_hamiltonian()` returns the coupling's full two-body operator in the pair subspace, still in the lab frame, still in ordinary GHz. It takes no RWA argument — a coupling authors exactly one interaction; RWA is resolved and applied structurally by the chip and engine, not chosen here (§6.1).
+`BaseCoupling.interaction_hamiltonian()` returns the coupling's full two-body operator in the pair subspace, still in the lab frame, still in ordinary GHz. It takes no RWA argument — a coupling defines exactly one interaction; RWA is resolved and applied structurally by the chip and engine, not chosen here (§6.1).
 
 For `Capacitive`:
 
@@ -47,7 +47,7 @@ full: g * (a + a†)(b + b†)
 
 ### 2.3 `Chip.hamiltonian()`
 
-`Chip.hamiltonian()` returns the full static lab-frame Hamiltonian after embedding device and coupling operators into the total Hilbert space. For each coupling where `Chip.resolve_rwa(coupling)` is `True`, the full interaction is masked to the excitation-change bands its `rwa_keeps_band` predicate accepts (§6.1) before embedding — RWA is already structurally baked into this Hamiltonian, not deferred to the engine.
+`Chip.hamiltonian()` returns the full static lab-frame Hamiltonian after embedding device and coupling operators into the total Hilbert space. For each coupling where `Chip.resolve_rwa(coupling)` is `True`, the full interaction is masked to the excitation-change bands its `rwa_keeps_band` predicate accepts (§6.1) before embedding. RWA is therefore already included in this Hamiltonian rather than deferred to the engine.
 
 It is still not the solver-ready Hamiltonian. The engine later:
 
@@ -57,7 +57,7 @@ It is still not the solver-ready Hamiltonian. The engine later:
 4. attaches explicit time-dependent phases where needed
 5. adds drive and crosstalk terms
 
-So if you ask "what Hamiltonian are we writing when we define `.hamiltonian()`?", the answer is:
+The resulting contracts are:
 
 - device `.hamiltonian()` means local static lab-frame physics
 - coupling `.interaction_hamiltonian()` means local static lab-frame interaction physics
@@ -145,7 +145,7 @@ So `"rotating"` is not a special solver mode. It is just a specific choice of `o
 
 Source: [`quchip/devices/base.py`](quchip/devices/base.py)
 
-`device.reference_freq` is the frequency the rotating frame co-rotates at *and* the reference observables are reported in (§8). It defaults to `drive_freq`, so an unset device co-rotates at its own transition and behavior is unchanged. Setting it off the transition surfaces a residual detuning `Δ = omega - omega_ref` in `H0` — idle Ramsey precession — which is how a control/LO calibration error is modelled.
+`device.reference_freq` is the frequency the rotating frame co-rotates at *and* the reference observables are reported in (§8). It defaults to `drive_freq`, so an unset device co-rotates at its own transition and behavior is unchanged. Setting it off the transition leaves a residual detuning `Δ = omega - omega_ref` in `H0` — idle Ramsey precession — which is how a control/LO calibration error is modelled.
 
 It is a *frame / readout* reference only: it does **not** detune drives (the drive carrier is a separate choice, so a real LO error must also set the drive frequency). It is ordinary GHz, tracked (mutating it invalidates engine caches), and JAX-traceable / differentiable / sweepable.
 
@@ -183,7 +183,7 @@ exp(-i 2π (delta_a * omega_ref,a + delta_b * omega_ref,b) * t)
 
 If that effective frequency is zero, the band stays static in `H0`. If not, it becomes an explicit time-dependent term.
 
-This is the whole frame-tracking mechanism. Nothing more hidden is happening.
+This band decomposition is the frame-tracking mechanism.
 
 ## 6. RWA
 
@@ -195,10 +195,10 @@ There are two places where that can happen.
 
 Source: [`quchip/chip/rwa.py`](quchip/chip/rwa.py)
 
-Coupling RWA is a chip-resolved structural policy, not an operator choice authored per coupling class. A coupling implements exactly one interaction, `interaction_hamiltonian()` (§2.2) — always the full, non-RWA form — and, optionally, `rwa_keeps_band(delta_a, delta_b)`, a predicate over the two-body excitation-change bands `(delta_a, delta_b)` the interaction decomposes into (default: total-excitation-conserving, `delta_a + delta_b == 0`, the beam-splitter selection). `Chip.resolve_rwa(coupling)` resolves whether RWA applies — per-coupling override, else the chip default — and that one boolean drives two independent views that are kept in agreement by construction:
+Coupling RWA is a chip-resolved policy, not a second operator defined by each coupling class. A coupling implements exactly one interaction, `interaction_hamiltonian()` (§2.2) — always the full, non-RWA form — and, optionally, `rwa_keeps_band(delta_a, delta_b)`, a predicate over the two-body excitation-change bands `(delta_a, delta_b)` the interaction decomposes into (default: total-excitation-conserving, `delta_a + delta_b == 0`, the beam-splitter selection). `Chip.resolve_rwa(coupling)` chooses the per-coupling override when present and otherwise uses the chip default. The resolved value is used in both paths:
 
 - `Chip.hamiltonian()` masks the full local operator down to the bands `rwa_keeps_band` accepts (`apply_rwa_mask`), before embedding it into the static lab-frame Hamiltonian (§2.3).
-- Stage 2 (`_collect_coupling_terms` in [`quchip/engine/stage2_assembly.py`](quchip/engine/stage2_assembly.py)) band-decomposes the same full operator and filters with the same predicate. Rejected bands become advisory `DroppedTerm` records (`reason="counter-rotating under RWA"`, carrying the band's `(delta_a, delta_b)` weights, the coupling strength, and the band's frame frequency). Retained bands follow the general per-band static/dynamic fold of §5.2: a band whose carrier `delta_a*omega_a + delta_b*omega_b` is concretely zero stays folded into `H0`; every other retained band is subtracted back out and carried as an explicit time-dependent term.
+- Stage 2 (`_collect_coupling_terms` in [`quchip/engine/stage2_assembly.py`](quchip/engine/stage2_assembly.py)) band-decomposes the same full operator and filters with the same predicate. Rejected bands become advisory `DroppedTerm` records with `reason="counter-rotating under RWA"`. Each record carries the band's `(delta_a, delta_b)` weights, its largest matrix-element magnitude, and its frame frequency. The amplitude equals `|g|` for a two-level `Capacitive` interaction, but ladder-operator factors can make it larger when either mode has more levels. Retained bands follow the general per-band static/dynamic fold of §5.2: a band whose carrier `delta_a*omega_a + delta_b*omega_b` is concretely zero stays folded into `H0`; every other retained band is subtracted back out and carried as an explicit time-dependent term.
 
 For `Capacitive`:
 
@@ -210,7 +210,7 @@ full: g * (a + a†)(b + b†)
 - `a†b + ab†` is the `delta_a + delta_b == 0` band — the exchange term the default predicate keeps
 - `ab + a†b†` is the `|delta_a + delta_b| == 2` band — counter-rotating, dropped under RWA
 
-`interaction_hamiltonian()` always returns the full form; the RWA form `g * (a†b + ab†)` is never authored — it is exactly the retained band of the full form, reconstructed by the mask. A coupling wanting a different retained band set (e.g. a two-photon coupling keeping `|delta_a + delta_b| == 2` instead) overrides `rwa_keeps_band`; the override must stay symmetric under joint sign flip (`keeps_band(-delta_a, -delta_b) == keeps_band(delta_a, delta_b)`) so the retained operator stays Hermitian. Because the predicate depends only on integer band offsets — never on frequency values, which may be traced — the mask is a concrete constant regardless of tracing in the operator it multiplies.
+`interaction_hamiltonian()` always returns the full form; the RWA form `g * (a†b + ab†)` is never defined separately — it is exactly the retained band of the full form, reconstructed by the mask. A coupling that needs a different retained band set (e.g. a two-photon coupling keeping `|delta_a + delta_b| == 2` instead) overrides `rwa_keeps_band`; the override must stay symmetric under joint sign flip (`keeps_band(-delta_a, -delta_b) == keeps_band(delta_a, delta_b)`) so the retained operator stays Hermitian. Because the predicate depends only on integer band offsets — never on frequency values, which may be traced — the mask is a concrete constant regardless of tracing in the operator it multiplies.
 
 The static/dynamic decision is made per band, not per coupling: in a *shared* frame (multiple devices detuned to a common reference), the coupling's counter-rotating band can carry a nonzero carrier even when its co-rotating band is frame-static. The per-band fold evaluates each band's own carrier independently, so a shared frame never suppresses the counter-rotating band's true rotation.
 
@@ -270,18 +270,20 @@ This makes `result.expect` a **co-rotating readout**: observables are always rep
 
 Source: [`quchip/chip/chip.py`](quchip/chip/chip.py)
 
-`Chip.dress()` diagonalizes the full static lab-frame Hamiltonian, matches bare product states to dressed eigenstates by maximum overlap, and caches:
+`Chip.dress()` diagonalizes the full static lab-frame Hamiltonian, assigns bare product states to dressed eigenstates by overlap, and stores a `DressedResult` containing:
 
-- eigenvalues
-- eigenstates
-- bare-to-dressed state assignments
-- dressed `0 -> 1` frequencies
+- eigenvalues and lazily materialized eigenstates
+- bare-to-dressed state assignments and the assigned eigenvalue for each bare label
+- assignment overlaps and labels below the requested overlap threshold
+- the dressed eigenvector matrix used by dressed-basis analysis
+
+`Chip.freq()` evaluates dressed `0 -> 1` frequencies through the traceable array-labeling cache; those frequencies are not stored in `DressedResult`.
 
 Dressing is lab-frame analysis. It is not part of the runtime frame transform.
 
 ### 9.1 Dressed drive matrix elements
 
-Source: [`quchip/chip/analysis.py`](quchip/chip/analysis.py)
+Sources: [`quchip/chip/analysis.py`](quchip/chip/analysis.py), [`quchip/control/equipment.py`](quchip/control/equipment.py)
 
 For a drive line `j` with local Hamiltonian operator `D_j`, quchip defines the dressed matrix element
 
@@ -297,33 +299,11 @@ the matrix element is evaluated, every dressed eigenvector is phase-fixed so tha
 state is real and nonnegative. This removes backend-dependent eigenvector signs from comparisons between conditioned
 transitions, such as the sum and difference used for the weak-drive `IX` and `ZX` coefficients.
 
-In the weak-drive projection, a control-line phasor multiplying `D_j` contributes a transition amplitude
-proportional to `m_j^(fi)`. Relative to a reference line `k` on the same transition,
-
-```text
-lambda_kj^(fi) = m_j^(fi) / m_k^(fi).
-```
-
-This ratio is invariant under the arbitrary common phase of the dressed initial and final eigenvectors. If `C_lj`
-is the declared signal-chain phasor from source `j` onto physical line `l`, the transition-projected absolute map
-relative to reference matrix element `m_k^(fi)` is
-
-```text
-Q_kj = sum_l [m_l^(fi) / m_k^(fi)] C_lj.
-P_kj = Q_kj / Q_kk.
-```
-
-For the two-line Balewski study, where `C_jj = 1`, row normalization by the isolated programmed response gives
-
-```text
-P_kj = (C_kj + lambda_kj) / (1 + lambda_kj * C_jk).
-```
-
-The denominator is the reciprocal-line contribution to the nominally isolated command. Omitting it loses the
-second-order product of the dressed cross-drive response and reciprocal declared leakage. The relation is a
-weak-drive, transition-projected prediction. Detuning, strong-drive effects, leakage, and non-RWA dynamics can
-shift a fitted effective map away from `P`; the study therefore tests the prediction against a full simulation and
-continues to invert the **fitted effective map** for correction.
+`drive_matrix_elements` evaluates the physical drive operators without applying the signal chain. Declared
+control-line mixing is represented separately by `ControlEquipment.crosstalk_matrix()`: column `j` is the source
+line, row `l` is the victim line, and each entry carries an amplitude, phase, and delay. The returned matrix
+elements can then be combined with those declared line phasors in a chosen weak-drive effective-Hamiltonian model.
+Keeping the two pieces separate distinguishes dressed quantum response from microwave-path mixing.
 
 This projection follows the effective driven-Hamiltonian treatment of E. Magesan and J. M. Gambetta,
 Phys. Rev. A 101, 052308 (2020), DOI [`10.1103/PhysRevA.101.052308`](https://doi.org/10.1103/PhysRevA.101.052308).
@@ -362,23 +342,23 @@ This convention follows the effective-Hamiltonian decompositions of Magesan and 
 
 Sources: [`quchip/chip/transformations/`](quchip/chip/transformations/), [`quchip/analysis/dispersive_readout.py`](quchip/analysis/dispersive_readout.py)
 
-`eliminate(chip, target, method="sw"|"exact")` performs model reduction, dispatched on the target: a *device* target removes a far-detuned mode and folds its 2nd-order effect into the survivors — Lamb shift `g^2/Delta` into `freq`, Purcell decay `(g/Delta)^2 * kappa` into `T1`, and, for a mode touching two or more survivors, the mediated exchange `J = (g_a*g_b/2)(1/Delta_a + 1/Delta_b)` into one modulable `TunableCapacitive` edge per survivor pair (F. Yan et al., PRApplied 10, 054062 (2018)); a *coupling* target keeps both endpoints and replaces the edge with a `CrossKerr` at the dressed pull. Readout quantities `chi` and `kappa` are reported in `effective_params` so an eliminated resonator's *purpose* (measurement) survives the reduction. Sources for the reduction math: [`quchip/chip/sw.py`](quchip/chip/sw.py).
+`eliminate(chip, target, method="sw"|"exact")` performs model reduction, dispatched on the target. A *device* target removes a far-detuned mode and folds its 2nd-order effect into the survivors: the Lamb shift `g^2/Delta` into `freq`, the Purcell rate `(g/Delta)^2 * kappa` into `T1`, and, for a mode touching two or more survivors, the mediated exchange `J = (g_a*g_b/2)(1/Delta_a + 1/Delta_b)` into each survivor pair (F. Yan et al., PRApplied 10, 054062 (2018)). A fixed-frequency eliminated mode produces a `Capacitive` edge; a frequency-controlled mode produces a `TunableCapacitive` edge. If a compatible direct edge already joins the pair, the exchange is folded into that edge while preserving any existing tunability. A *coupling* target keeps both endpoints and replaces the edge with a `CrossKerr` at the dressed pull. Readout quantities `chi` and `kappa` remain available in `effective_params` after a resonator is eliminated. Sources for the reduction math: [`quchip/chip/sw.py`](quchip/chip/sw.py).
 
-### 10.1 The χ convention (and its in-tree relatives)
+### 10.1 The χ convention and related quantities
 
 ```text
 chi ≡ chi_pull ≡ f_r(qubit in |1>) − f_r(qubit in |0>)     [GHz]
 ```
 
-the *full* resonator pull per qubit excitation. This is **2×** the σ_z-convention χ of `H_disp = (omega_r + chi_sigma_z * sigma_z) * a†a` used in most textbooks. Three related quantities live in the codebase — do not conflate them:
+the *full* resonator pull per qubit excitation. This is **2×** the σ_z-convention χ of `H_disp = (omega_r + chi_sigma_z * sigma_z) * a†a` used in most textbooks. Three related quantities use different conventions:
 
-- `eliminate(...).effective_params[q]["chi"]` — χ_pull as defined above, computed *numerically* from the pre-elimination dressed spectrum (identically `Chip.dispersive_shift(r, q)`: `E(1,1) − E(1,0) − E(0,1) + E(0,0)`, one shared diagonalization), exact and device-agnostic (works for any survivor type, not just Duffing transmons). The entry is deferred — evaluated and cached on first access — so reductions that never read `chi` pay no diagonalization.
+- `eliminate(...).effective_params[q]["chi"]` — χ_pull as defined above, computed *numerically* from the pre-elimination dressed spectrum (identically `Chip.dispersive_shift(r, q)`: `E(1,1) − E(1,0) − E(0,1) + E(0,0)`, one shared diagonalization), exact and device-agnostic (works for any survivor type, not just Duffing transmons). The entry is evaluated and cached on first access, so the diagonalization occurs only when `chi` is read.
 - the `"chi"` fit target of `fit_a_dress` ([`quchip/inverse_design/fit.py`](quchip/inverse_design/fit.py)) — the σ_z convention, i.e. **χ_pull / 2**.
 - `Chip.dispersive_shift(a, b)` (alias `static_zz`) — the general two-mode cross-Kerr `E(1,1) − E(1,0) − E(0,1) + E(0,0)`. For a qubit–resonator pair this *is* χ_pull (which is exactly how the `chi` entry is computed); between two qubits the same expression is the static-ZZ ζ — do not read a qubit–qubit `dispersive_shift` as a readout χ.
 
 Analytic cross-checks (2nd-order dispersive): two-level `chi = 2g^2/Delta`; Duffing transmon `chi = 2g^2*alpha/(Delta*(Delta+alpha))` with `Delta = f_q − f_r` (Koch et al., PRA 76, 042319, §IV). Critical photon number `n_crit = Delta^2/(4g^2)`.
 
-`kappa = 2π*f_r/Q` is a rate in 1/ns — the same κ the Purcell fold and `Resonator.collapse_operators` use (§3.2); `0.0` when the mode carries no quality factor. Bridge legs report `chi = 0.0`: bus/coupler modes are not readout modes, and their dressed pull would double-count the mediated exchange.
+`effective_params[q]["kappa"]` is the eliminated mode's total downward decay rate, in 1/ns, as returned by `intrinsic_decay_rate()`. For a resonator it includes `2π*f_r/Q` when `quality_factor` is set and the inherited thermal-emission rate when `T1` or `thermal_population` is set. The latter is `(nbar + 1)/T1` with `T1`, or `nbar + 1` when only `thermal_population` is present. The reported value is `0.0` only when none of these lowering channels is configured. Bridge legs report `chi = 0.0`: bus/coupler modes are not readout modes, and their dressed pull would double-count the mediated exchange.
 
 Gradients through `chi` follow the same rule as `Chip.freq` (§13): the eigensystem must come from a JAX-capable backend.
 
@@ -410,23 +390,23 @@ S_ij = V_ij / (E_i − E_j)        (i, j straddling P/Q; E = diag H)
 H_eff = P (H + (1/2)[S, V]) P
 ```
 
-(Bravyi, DiVincenzo & Loss, Ann. Phys. 326, 2793 (2011), 2nd order). The division is double-`where` guarded: an exactly degenerate cross pair with no matrix element between it contributes zero with a *finite gradient* — plain `where` alone would propagate a `NaN` backward through the unselected branch. Survivor parameters are pure indexing on `H_eff`: `freq_after(s) = E(1_s) − E(0)`; the pair exchange is the `<1_a|H_eff|1_b>` element. Because a pre-existing direct edge rides through the projection inside `H_eff`, the emitted edge's `g_0` is that *total* (overwriting, never adding — adding would double-count) while the reported `j_eff` subtracts the direct base back out. Alongside `J`, the bridge fold records its linearization
+(Bravyi, DiVincenzo & Loss, Ann. Phys. 326, 2793 (2011), 2nd order). Nested `where` guards handle the division: an exactly degenerate cross pair with no matrix element contributes zero with a *finite gradient*, whereas a single `where` would propagate a `NaN` backward through the unselected branch. Survivor parameters are obtained by indexing `H_eff`: `freq_after(s) = E(1_s) − E(0)`; the pair exchange is the `<1_a|H_eff|1_b>` element. A pre-existing direct edge is already included in `H_eff`, so the emitted edge carries the total coupling and the reported `j_eff` subtracts the direct contribution. Alongside `J`, the bridge fold records its linearization
 
 ```text
 dJ/domega_c = (g_a*g_b/2)(1/Delta_a^2 + 1/Delta_b^2)
 ```
 
-— the weight the flux-drive retarget rule uses (§11). Per-element virtual-state attribution (`pathways`) is `(1/2) V_ik V_kj (1/(E_i−E_k) + 1/(E_j−E_k))` summed over intermediate `|k>`, same guard.
+— the weight the flux-drive retarget rule uses (§11). Per-element virtual-state attribution (`pathways`) is `(1/2) V_ik V_kj (1/(E_i−E_k) + 1/(E_j−E_k))` summed over intermediate `|k>`, with the same guarded denominator.
 
 ### 10.4 The exact route (`method="exact"`)
 
-One full diagonalization; parameters are read off the *labeled* dressed spectrum (`label_eigensystem`, §9), so kept-block energies are exact to all orders — which is what residual ZZ needs:
+One full diagonalization; parameters are read off the *labeled* dressed spectrum (`label_eigensystem`, §9), so kept-block energies are exact to all orders, as required for residual ZZ:
 
 ```text
 zz(a, b) = E(1,1) − E(1,0) − E(0,1) + E(0,0)        (≡ Chip.dispersive_shift)
 ```
 
-The pair exchange is read through the symmetrically (Löwdin-)orthonormalized subspace projection `S^(−1/2) (W E W†) S^(−1/2)` with `W` the overlap block and `S = W W†` — the des-Cloizeaux effective Hamiltonian, whose spectrum equals the labeled energies exactly. Caveat: energies are exact, but this basis is not the canonical SW rotation, so off-diagonal reads agree with `method="sw"` only through 2nd order. The route *raises* when a kept bare label has no majority dressed eigenstate (or two kept labels claim the same one): near-degenerate dressed states straddle the bare labels — exactly the regime near a coupler idle point — and no number read off them is label-meaningful. `method="sw"` remains available there, or shift the operating point.
+The pair exchange is read through the symmetrically (Löwdin-)orthonormalized subspace projection `S^(−1/2) (W E W†) S^(−1/2)` with `W` the overlap block and `S = W W†` — the des-Cloizeaux effective Hamiltonian, whose spectrum equals the labeled energies exactly. The energies are exact, but this basis is not the canonical SW rotation, so off-diagonal reads agree with `method="sw"` only through 2nd order. `method="exact"` raises when a kept bare label has no majority dressed eigenstate, or when two kept labels claim the same one. In that regime, near-degenerate dressed states straddle the bare labels and quantities assigned to a single label are not well defined. Use `method="sw"` or shift the operating point.
 
 ### 10.5 Collapse transforms and validity metrics
 
@@ -437,7 +417,7 @@ c_eff = P (c + [S, c]) P            (sw — 1st order in S, matching H_eff's 2nd
 c_eff = P U† c U P                  (exact — U the labeled eigenvector matrix)
 ```
 
-and the survivor-lowering amplitude gives the inherited (Purcell) rate `|amplitude|^2 * kappa`. Honesty note (recorded in the result's `notes`): the projection is exact for the *spectrum* but approximate for *dissipation* — the discarded `Q`-block dynamics dephase and decay too. `validity` reports, per eliminated coupling, `g_over_delta` (2nd-order smallness; `is_valid` gates at `< 0.1`) and `min_block_gap` — the smallest bare-energy gap the Sylvester generator actually crossed. A small gap with a nonzero matrix element is the perturbative expansion's failure mode even when every `g/Delta` looks fine.
+and the survivor-lowering amplitude gives the inherited (Purcell) rate `|amplitude|^2 * kappa`. The result's `notes` record that the projection is exact for the *spectrum* but approximate for *dissipation*: the discarded `Q`-block dynamics also dephase and decay. `validity` reports, per eliminated coupling, `g_over_delta` (2nd-order smallness; `is_valid` gates at `< 0.1`) and `min_block_gap` — the smallest bare-energy gap the Sylvester generator crossed. A small gap with a nonzero matrix element is the perturbative expansion's failure mode even when every `g/Delta` is small.
 
 ## 11. Parametric Edge Control
 
@@ -456,20 +436,20 @@ The tone is never RWA-split by the engine: the *coupling's* `parametric_interact
 
 ### 11.2 Retargeting stranded control (`chip/retarget.py`)
 
-`eliminate()` converts control lines whose target vanished, through a registry keyed `(drive type, target type, result kind)` — MRO-aware on both types, so a rule registered for a base type covers subclasses, and extending it never edits `eliminate()`. The shipped rule: a `FluxDrive` on an eliminated exchange-mediating mode was a knob on `omega_c`; each emitted edge responds with its own linearized weight, so the conversion emits one baseband `ParametricDrive` per edge — the first pair's pump keeps the flux line's label, further edges are fed unit-amplitude `Crosstalk` copies of the scheduled signal, and every pump carries its own `Gain(dJ_ab/domega_c)`. Small-signal contract: exact to first order in `delta_omega_c`, valid for `delta_omega_c ≪ Delta`; the second-order pieces (Lamb-shift modulation of the survivors) are dropped and declared.
+`eliminate()` converts control lines whose target was removed through a registry keyed by `(drive type, target type, result kind)`. The registry follows each type's MRO, so a rule registered for a base type also covers its subclasses. The built-in rule converts a `FluxDrive` on an eliminated exchange-mediating mode into one baseband `ParametricDrive` per emitted edge. The first pair's pump keeps the flux line's label; further edges receive unit-amplitude `Crosstalk` copies of the scheduled signal; and every pump carries its own `Gain(dJ_ab/domega_c)`. This small-signal conversion is exact to first order in `delta_omega_c` and assumes `delta_omega_c ≪ Delta`; second-order Lamb-shift modulation of the survivors is omitted and recorded.
 
-### 11.3 The portability guarantee
+### 11.3 Schedule portability
 
-The retargeted line keeps its label and `schedule()` resolves drive-line labels (device → coupling → line), so the *same* schedule call replays on the full and reduced chips — the reduced model is a drop-in for the sequences the user already wrote. This is enforced by the sentinel ladder in [`tests/physics_sentinel/test_eliminate_portability.py`](tests/physics_sentinel/test_eliminate_portability.py): identical schedules on full vs reduced chips, agreement asserted within tolerances *derived* from the validity metrics (`g/Delta`, `delta_omega/Delta`), with the measured discrepancies recorded next to each assert.
+The retargeted line keeps its label, and `schedule()` resolves drive-line labels in device → coupling → line order. The same schedule call can therefore run on the full and reduced chips. [`tests/physics_sentinel/test_eliminate_portability.py`](tests/physics_sentinel/test_eliminate_portability.py) applies identical schedules to both models and compares them using tolerances derived from the validity metrics (`g/Delta`, `delta_omega/Delta`).
 
-## 12. What the Engine Is Allowed to Assume
+## 12. Engine Assumptions
 
-The engine is intentionally physics-aware only in a narrow, centralized way. The assumptions it makes are:
+The engine relies on four physics assumptions:
 
 1. Frame generators are built from per-device number operators `n_i`.
 2. Single-device and two-device operators can be decomposed by excitation-change bands.
 3. The default `"rotating"` frame uses each device's best available drive frequency.
-4. A drive channel must declare whether it is a `single_tone` quadrature channel or a `direct_real` modulation channel.
+4. Each drive channel declares one `DriveModulation`: `single_tone` for an IQ-style carrier, `direct_real` for real baseband modulation, or `edge_pump` for modulation of a coupling strength.
 
 What the engine does not hardcode:
 
@@ -478,18 +458,18 @@ What the engine does not hardcode:
 - backend-native operator types
 - device-specific noise models beyond asking each device for its collapse operators
 
-So the domain-specific physics lives in devices, couplings, and drives. The engine only owns the generic frame/RWA bookkeeping shared by those objects.
+Devices, couplings, and drives supply the domain-specific physics. The engine handles the frame and RWA bookkeeping shared by them.
 
 ## 13. JAX Traceability Boundaries
 
-The array-preserving path is meant to stay trace-friendly through band decomposition, coefficient construction, observable recombination, and the backend-free Hamiltonian IR.
+Band decomposition, coefficient construction, observable recombination, and the backend-free Hamiltonian IR preserve JAX arrays.
 
-Known explicit boundaries:
+The following operations require concrete Python values:
 
-- `Chip.dress()` returns a concrete dict-based view and is not traceable. The bare→dressed assignment itself is discrete and piecewise. Traced callers should use `Chip.energy()`, `Chip.freq(target, when=...)`, or `Chip.dispersive_shift()`, which route through the pure-JAX kernel in `quchip/chip/dressing.py`: labeled energy lookup stays differentiable away from label discontinuities (see `label_eigensystem` and `track_path`).
+- `Chip.dress()` returns a concrete dict-based view and is not traceable. The bare→dressed assignment itself is discrete and piecewise. Traced callers should use `Chip.energy()`, `Chip.freq(target, when=...)`, or `Chip.dispersive_shift()`, which route through `label_eigensystem` in the pure-JAX kernel in `quchip/chip/dressing.py`; labeled energy lookup stays differentiable away from label discontinuities. `track_path` is a separate continuation utility for following labels through a stacked eigensystem along a parameter sweep.
 - Human-facing serialization and diagnostics coerce to Python scalars.
 
-Those boundaries should be explicit. Silent host-array coercion inside the engine is a bug.
+Other engine paths avoid implicit conversion to host arrays.
 
 ## 14. Audit Pointers
 
@@ -499,7 +479,7 @@ When you need to audit a physics path, start here:
 - frame resolution: [`quchip/engine/stage1_frames.py`](quchip/engine/stage1_frames.py)
 - observable preparation: [`quchip/engine/stage3_observables.py`](quchip/engine/stage3_observables.py)
 - observables and demodulation: [`quchip/engine/stage3_observables.py`](quchip/engine/stage3_observables.py)
-- dressing and public Hamiltonian surfaces: [`quchip/chip/chip.py`](quchip/chip/chip.py)
+- dressing and public Hamiltonian APIs: [`quchip/chip/chip.py`](quchip/chip/chip.py)
 - adiabatic elimination and χ/κ reporting: [`quchip/chip/transformations/`](quchip/chip/transformations/)
 - Schrieffer-Wolff kernels and the exact reduction route: [`quchip/chip/sw.py`](quchip/chip/sw.py)
 - control-line retargeting across reductions: [`quchip/chip/retarget.py`](quchip/chip/retarget.py)
