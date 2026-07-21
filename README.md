@@ -39,34 +39,29 @@ Extras can be combined in one install.
 ## A minimal chip
 
 ```python
-import numpy as np
-from quchip import Capacitive, ChargeDrive, Chip, DuffingTransmon, Gaussian, QuantumSequence, Resonator
+from quchip import Capacitive, ChargeDrive, Chip, DuffingTransmon, Resonator
 
-qubit = DuffingTransmon(freq=5.24, anharmonicity=-0.26, levels=3)
-readout = Resonator(freq=6.65, levels=4)
-chip = Chip([qubit, readout], couplings=[Capacitive(qubit, readout, g=0.060)], frame="rotating")
-drive = ChargeDrive(qubit)
-chip.wire(drive)
-sequence = QuantumSequence(chip)
-sequence.schedule(drive, envelope=Gaussian(duration=40.0, amplitude=0.030), freq=chip.freq(qubit))
-result = sequence.simulate(
-    tlist=np.linspace(0.0, 40.0, 81),
-    initial_state=chip.state({qubit: 0, readout: 0}),
-    e_ops={qubit: qubit.projector(1, 1)},
-)
-print(float(result.expect_final(qubit).real))
+qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.30, levels=6, label="qubit")
+readout = Resonator(freq=6.8, levels=10, quality_factor=6800, label="readout")
+coupling = Capacitive(qubit, readout, g=0.060, rwa=True, label="qubit-readout")
+chip = Chip([qubit, readout], couplings=[coupling], frame="rotating", rwa=True)
+qubit_line = ChargeDrive(qubit, label="qubit-charge")
+readout_line = ChargeDrive(readout, label="readout-charge")
+chip.wire(qubit_line, readout_line)
 
-fig = result.plot_populations(trace_out=readout)
-fig.savefig("populations.png", dpi=200)
+f01 = chip.freq(qubit)
+f12 = chip.freq(qubit, when={qubit: 1})
+fr0 = chip.freq(readout, when={qubit: 0})
+fr1 = chip.freq(readout, when={qubit: 1})
 ```
 
-The pulse carrier comes from the dressed chip frequency. The printed value is the excited-state population after a nominal π pulse. The last two lines plot the qubit populations with the readout resonator traced out. The figure below is the output of the snippet.
+The complete example derives short and selective nominal-pi Gaussian drives from $|f_{12}-f_{01}|$, then derives a Gaussian-edge readout duration from the conditional pull and resonator linewidth. Both parts run the real multilevel, lossy chip with compact reproducibility receipts.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://quchip.org/assets/populations-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="https://quchip.org/assets/populations.svg">
-  <img src="https://quchip.org/assets/populations.svg" alt="Qubit populations during the π pulse" width="560">
-</picture>
+![Short and long Gaussian pulses with multilevel qubit populations](docs/images/hello_qubit_drive_leakage.png)
+
+![Conditional resonator IQ paths with emphasized final points](docs/images/hello_dispersive_readout_iq.png)
+
+The complete walkthrough is available as [authored Markdown](examples/00_hello_chip.md) and an [executed notebook](examples/00_hello_chip.ipynb).
 
 ## Tests
 
@@ -92,7 +87,8 @@ python -m pytest -m extended
 
 ## Examples
 
-Worked examples are being added incrementally.
+- [Hello, drive and readout](examples/00_hello_chip.md): compare qubit-drive leakage, then resolve pulse-level dispersive readout on the same chip.
+- [Cookbook](docs/cookbook.md): practical conventions and task recipes.
 
 ## Paper and citation
 

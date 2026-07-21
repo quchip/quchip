@@ -30,51 +30,16 @@ Optional extras: `quchip[dynamiqs]` for the JAX-native backend, `quchip[viz]` fo
 
 ## A minimal chip
 
-```python
-import numpy as np
-from quchip import (
-    Capacitive, ChargeDrive, Chip, DuffingTransmon,
-    Gaussian, QuantumSequence, Resonator,
-)
+Start with {doc}`Hello, drive and readout <examples/hello-chip>` to declare an explicitly labeled Duffing transmon and lossy resonator, compare broadband and selective nominal-pi qubit drives, then follow the conditional readout responses for a duration derived from the resonator pull and linewidth. The {doc}`cookbook` collects the conventions behind executable quchip recipes.
 
-qubit = DuffingTransmon(freq=5.24, anharmonicity=-0.26, levels=3)
-readout = Resonator(freq=6.65, levels=4)
-chip = Chip(
-    [qubit, readout],
-    couplings=[Capacitive(qubit, readout, g=0.060)],
-    frame="rotating",
-)
-drive = ChargeDrive(qubit)
-chip.wire(drive)
-sequence = QuantumSequence(chip)
-sequence.schedule(
-    drive,
-    envelope=Gaussian(duration=40.0, amplitude=0.030),
-    freq=chip.freq(qubit),
-)
-result = sequence.simulate(
-    tlist=np.linspace(0.0, 40.0, 81),
-    initial_state=chip.state({qubit: 0, readout: 0}),
-    e_ops={qubit: qubit.projector(1, 1)},
-)
-print(float(result.expect_final(qubit).real))
-
-fig = result.plot_populations(trace_out=readout)
-fig.savefig("populations.png", dpi=200)
+```{figure} images/hello_qubit_drive_leakage.png
+:width: 760px
+:alt: Short and long Gaussian pulses with multilevel qubit populations
 ```
 
-The pulse carrier comes from the dressed chip frequency; the printed value is the excited-state population after a nominal π pulse. The last two lines plot the qubit populations with the readout resonator traced out — the figure below is the output of the snippet.
-
-```{figure} images/populations.svg
+```{figure} images/hello_dispersive_readout_iq.png
 :width: 560px
-:class: only-light
-:alt: Qubit populations during the pi pulse
-```
-
-```{figure} images/populations-dark.svg
-:width: 560px
-:class: only-dark
-:alt: Qubit populations during the pi pulse
+:alt: Conditional resonator IQ paths with emphasized final points
 ```
 
 `quchip` uses GHz for ordinary frequencies, ns for time, and mK for temperature. The implemented conventions and approximations are recorded in the {doc}`physics reference <physics>`.
@@ -87,6 +52,8 @@ Worked examples and guides are being added incrementally.
 :maxdepth: 1
 :hidden:
 
+examples/hello-chip
+cookbook
 physics
 api
 contributing
