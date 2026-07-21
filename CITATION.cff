@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use quchip in your work, please cite the paper below."
+type: software
+title: "quchip"
+authors:
+  - family-names: "AlYousef"
+    given-names: "Ibraheem"
+    email: "ibraheem@quchip.org"
+repository-code: "https://github.com/quchip/quchip"
+url: "https://quchip.org"
+license: Apache-2.0
+version: "0.1.0"
+date-released: "2026-07-19"
+preferred-citation:
+  type: article
+  title: "quchip: A Differentiable Toolkit for Modeling Quantum Devices"
+  authors:
+    - family-names: "AlYousef"
+      given-names: "Ibraheem"
+      email: "ibraheem@quchip.org"
+  year: 2026
+  doi: "10.48550/arXiv.2607.17081"
+  url: "https://arxiv.org/abs/2607.17081"

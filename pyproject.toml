@@ -31,9 +31,11 @@ dev = ["ruff", "mypy", "pytest", "pyvis"]
 docs = ["sphinx", "furo", "myst-parser", "sphinx-copybutton"]
 
 [project.urls]
-Homepage = "https://github.com/quchip/quchip"
+Homepage = "https://quchip.org"
+Documentation = "https://docs.quchip.org"
 Repository = "https://github.com/quchip/quchip"
 Issues = "https://github.com/quchip/quchip/issues"
+Paper = "https://arxiv.org/abs/2607.17081"
 
 [tool.setuptools.dynamic]
 version = {attr = "quchip.__version__"}

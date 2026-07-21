@@ -96,9 +96,24 @@ Worked examples are being added incrementally.
 
 ## Paper and citation
 
-Paper reference: pending.
+The accompanying paper is [quchip: A Differentiable Toolkit for Modeling Quantum Devices](https://arxiv.org/abs/2607.17081) (arXiv:2607.17081).
 
-Citation metadata: pending.
+If you use quchip in your work, please cite it:
+
+```bibtex
+@misc{alyousef2026quchip,
+      title={quchip: A Differentiable Toolkit for Modeling Quantum Devices},
+      author={Ibraheem AlYousef},
+      year={2026},
+      eprint={2607.17081},
+      archivePrefix={arXiv},
+      primaryClass={quant-ph},
+      doi={10.48550/arXiv.2607.17081},
+      url={https://arxiv.org/abs/2607.17081},
+}
+```
+
+Citation metadata for the software itself is in [CITATION.cff](CITATION.cff).
 
 ## License
 
