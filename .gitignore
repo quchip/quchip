@@ -27,3 +27,4 @@ examples/inspection/
 # Generated documentation
 docs/_build/
 docs/generated/
+docs/.wrangler/
