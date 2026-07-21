@@ -28,6 +28,7 @@ jobs:
 
   test-fast:
     strategy:
+      fail-fast: false
       matrix:
         python: ["3.11", "3.12"]
     runs-on: ubuntu-latest
