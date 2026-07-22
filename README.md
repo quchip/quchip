@@ -1,9 +1,17 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://quchip.org/assets/quchip-wordmark-dark.png">
-    <source media="(prefers-color-scheme: light)" srcset="https://quchip.org/assets/quchip-wordmark-light.png">
-    <img src="https://quchip.org/assets/quchip-wordmark-dark.png" alt="quchip" width="400">
-  </picture>
+  <a href="https://quchip.org">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/quchip/quchip/main/docs/images/quchip-wordmark-dark.png">
+      <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/quchip/quchip/main/docs/images/quchip-wordmark-light.png">
+      <img src="https://raw.githubusercontent.com/quchip/quchip/main/docs/images/quchip-wordmark-light.png" alt="quchip" width="400">
+    </picture>
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://quchip.org">Website</a> ·
+  <a href="https://docs.quchip.org">Documentation</a> ·
+  <a href="https://arxiv.org/abs/2607.17081">Paper</a>
 </p>
 
 `quchip` is an open-source Python toolkit for modeling superconducting quantum chips.
@@ -12,29 +20,41 @@ A predictive chip model needs more than a Hamiltonian: device physics, control-l
 
 Declare the chip once. The same declaration drives dressed-state analysis, model reduction, control sequencing, open-system simulation, parameter sweeps, and exact JAX gradients. The engine resolves each device's frame, applies the requested approximations, and records the bands it drops.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/quchip/quchip/main/docs/images/quchip_pipeline_dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/quchip/quchip/main/docs/images/quchip_pipeline_light.png">
+  <img src="https://raw.githubusercontent.com/quchip/quchip/main/docs/images/quchip_pipeline_light.png" alt="quchip pipeline from declared devices and control parameters through frame resolution, Hamiltonian assembly, observable preparation, backend solving, and one reverse-mode gradient" width="1084">
+</picture>
+
+`Chip + QuantumSequence` → `ResolvedFrame` → `HamiltonianDescription` → `SolveProblem` → QuTiP or dynamiqs → `SimulationResult`
+
 QuTiP is the default backend. The dynamiqs backend is JAX-native and keeps declared device and control parameters differentiable through the solve.
 
-`quchip` uses GHz for ordinary frequencies, ns for time, and mK for temperature. The implemented conventions and approximations are recorded in [PHYSICS.md](PHYSICS.md).
+`quchip` uses GHz for ordinary frequencies, ns for time, and mK for temperature. The implemented conventions and approximations are documented in the [physics guide](https://docs.quchip.org/physics).
 
 ## Install
 
-`quchip` requires Python 3.11 or newer. Install the current source:
+`quchip` requires Python 3.11 or newer.
+
+```bash
+python -m pip install quchip
+```
+
+Optional extras are available for the dynamiqs backend, graph visualization, and scqubits interoperability:
+
+```bash
+python -m pip install 'quchip[dynamiqs]'
+python -m pip install 'quchip[viz]'
+python -m pip install 'quchip[scqubits]'
+```
+
+Extras can be combined. To install the current source instead:
 
 ```bash
 git clone https://github.com/quchip/quchip.git
 cd quchip
 python -m pip install .
 ```
-
-Optional extras are available for the dynamiqs backend, graph visualization, scqubits interoperability, tests, and development:
-
-```bash
-python -m pip install '.[dynamiqs]'
-python -m pip install '.[viz]'
-python -m pip install '.[scqubits]'
-```
-
-Extras can be combined in one install.
 
 ## A minimal chip
 
@@ -57,11 +77,11 @@ fr1 = chip.freq(readout, when={qubit: 1})
 
 The complete example derives short and selective nominal-pi Gaussian drives from $|f_{12}-f_{01}|$, then derives a Gaussian-edge readout duration from the conditional pull and resonator linewidth. Both parts run the real multilevel, lossy chip with compact reproducibility receipts.
 
-![Short and long Gaussian pulses with multilevel qubit populations](docs/images/hello_qubit_drive_leakage.png)
+![Short and long Gaussian pulses with multilevel qubit populations](https://raw.githubusercontent.com/quchip/quchip/main/docs/images/hello_qubit_drive_leakage.png)
 
-![Conditional resonator IQ paths with emphasized final points](docs/images/hello_dispersive_readout_iq.png)
+![Conditional resonator IQ paths with emphasized final points](https://raw.githubusercontent.com/quchip/quchip/main/docs/images/hello_dispersive_readout_iq.png)
 
-The complete walkthrough is available as [authored Markdown](examples/00_hello_chip.md) and an [executed notebook](examples/00_hello_chip.ipynb).
+The complete walkthrough is available as [authored Markdown](https://github.com/quchip/quchip/blob/main/examples/00_hello_chip.md) and an [executed notebook](https://github.com/quchip/quchip/blob/main/examples/00_hello_chip.ipynb).
 
 ## Tests
 
@@ -87,12 +107,14 @@ python -m pytest -m extended
 
 ## Examples
 
-- [Hello, drive and readout](examples/00_hello_chip.md): compare qubit-drive leakage, then resolve pulse-level dispersive readout on the same chip.
-- [Cookbook](docs/cookbook.md): practical conventions and task recipes.
+- [Hello, drive and readout](https://github.com/quchip/quchip/blob/main/examples/00_hello_chip.md): compare qubit-drive leakage, then resolve pulse-level dispersive readout on the same chip.
+- [Cookbook](https://docs.quchip.org/cookbook): practical conventions and task recipes.
 
 ## Paper and citation
 
 The accompanying paper is [quchip: A Differentiable Toolkit for Modeling Quantum Devices](https://arxiv.org/abs/2607.17081) (arXiv:2607.17081).
+
+The [interactive walkthrough](https://quchip.org) follows one five-device model through declaration, crosstalk identification and correction, adiabatic reduction from 576 to 16 dimensions, and gradient-based recovery of four directed crosstalk parameters.
 
 If you use quchip in your work, please cite it:
 
@@ -109,8 +131,8 @@ If you use quchip in your work, please cite it:
 }
 ```
 
-Citation metadata for the software itself is in [CITATION.cff](CITATION.cff).
+Citation metadata for the software itself is in [CITATION.cff](https://github.com/quchip/quchip/blob/main/CITATION.cff).
 
 ## License
 
-`quchip` is distributed under the Apache License 2.0. See [LICENSE](LICENSE).
+`quchip` is distributed under the Apache License 2.0. See [LICENSE](https://github.com/quchip/quchip/blob/main/LICENSE).
