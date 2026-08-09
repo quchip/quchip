@@ -48,6 +48,7 @@ from quchip.chip.transformations.plumbing import (
 )
 from quchip.chip.transformations.result import EliminationResult, LazyEffectiveParams, _HasFreq
 from quchip.control.drive import FluxDrive
+from quchip.declarative.expr import materialize_expr
 from quchip.devices.protocols import FrequencyControlled
 from quchip.utils.labeling import LabelKeyedDict, resolve_label
 
@@ -93,7 +94,7 @@ def _exchange_matrix_element(coupling: Any, row_label: str, chip: "Chip") -> Any
     """
     backend = chip.backend
     with _backend_context(backend):
-        h_int = coupling.interaction_hamiltonian()
+        h_int = materialize_expr(coupling.interaction_hamiltonian(), backend)
         if chip.resolve_rwa(coupling):
             h_int = apply_rwa_mask(
                 h_int,

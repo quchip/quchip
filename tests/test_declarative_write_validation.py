@@ -9,15 +9,15 @@ from quchip.declarative import CouplingModel, DeviceModel, EnvelopeShape, Scalar
 class _Oscillator(DeviceModel):
     freq: Scalar = parameter(positive=True, unit="GHz")
 
-    def local_hamiltonian(self, op):
-        return self.freq * op.n
+    def local_hamiltonian(self, op, p):
+        return p.freq * op.n
 
 
 class _ExchangeCoupling(CouplingModel):
     g: Scalar = parameter(positive=True, unit="GHz")
 
-    def interaction(self, a, b):
-        return self.g * (a.a * b.adag + a.adag * b.a)
+    def interaction(self, a, b, p):
+        return p.g * (a.a * b.adag + a.adag * b.a)
 
 
 class _LinearEnvelope(EnvelopeShape):

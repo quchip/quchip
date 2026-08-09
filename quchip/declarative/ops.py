@@ -34,7 +34,7 @@ class LocalOps:
     levels: int
 
     def _op(self, name: str) -> PhysicsExpr:
-        return PhysicsExpr(kind="op", args=(name,), labels=(self.label,))
+        return PhysicsExpr(kind="op", args=(name, self.levels), labels=(self.label,))
 
     @property
     def a(self) -> PhysicsExpr:

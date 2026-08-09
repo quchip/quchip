@@ -138,8 +138,8 @@ def test_coupling_model_default_repr_covers_extensions() -> None:
         _type_prefix = "xx"
         j: Scalar = parameter(unit="GHz")
 
-        def interaction(self, a, b) -> PhysicsExpr:
-            return self.j * (a.a @ b.adag + a.adag @ b.a)
+        def interaction(self, a, b, p) -> PhysicsExpr:
+            return p.j * (a.a * b.adag + a.adag * b.a)
 
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
     r = Resonator(freq=7.0, levels=4, label="r")

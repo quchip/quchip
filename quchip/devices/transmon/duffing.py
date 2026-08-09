@@ -68,7 +68,7 @@ Example
 from __future__ import annotations
 
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from quchip.declarative.expr import PhysicsExpr
 from quchip.declarative.models import DeviceModel
@@ -124,15 +124,15 @@ class DuffingTransmon(DeviceModel):
     approximation = "Duffing expansion: cosine Josephson potential truncated at 4th order."
     computational = True
 
-    freq: Scalar = parameter(positive=True, unit="GHz")
-    anharmonicity: Scalar = parameter(unit="GHz")
+    freq: Scalar = parameter(positive=True, unit="GHz", symbol=r"\omega")
+    anharmonicity: Scalar = parameter(unit="GHz", symbol=r"\alpha")
 
     # --- generated __init__ stub (tools/gen_device_stubs.py); do not edit ---
     if TYPE_CHECKING:
         def __init__(
             self,
-            freq: Scalar,
-            anharmonicity: Scalar,
+            freq: Scalar = ...,
+            anharmonicity: Scalar = ...,
             *,
             levels: int = 3,
             label: str | None = None,
@@ -142,9 +142,9 @@ class DuffingTransmon(DeviceModel):
         ) -> None: ...
     # --- end generated stub ---
 
-    def local_hamiltonian(self, op: LocalOps) -> PhysicsExpr:
+    def local_hamiltonian(self, op: LocalOps, p: Any) -> PhysicsExpr:
         """Return the local Duffing Hamiltonian ``H = omega n + (alpha/2) n (n - I)``."""
-        return duffing_expr(op, self.freq, self.anharmonicity)
+        return duffing_expr(op, p.freq, p.anharmonicity)
 
     def physics_notes(self) -> list[str]:
         """Return declared Duffing-approximation validity notes."""

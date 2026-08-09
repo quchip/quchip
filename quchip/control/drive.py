@@ -538,6 +538,7 @@ class ParametricDrive(BaseDrive):
 
 def _probe_modulable(coupling: Any) -> None:
     """Raise the teaching TypeError when *coupling* declines the parametric hook."""
+    from quchip.declarative.models import _symbolic_parameters
     from quchip.declarative.ops import EndpointOps
 
     probe = getattr(coupling, "parametric_interaction", None)
@@ -546,6 +547,7 @@ def _probe_modulable(coupling: Any) -> None:
         expr = probe(
             EndpointOps(label=coupling.device_a_label, levels=2),
             EndpointOps(label=coupling.device_b_label, levels=2),
+            _symbolic_parameters(coupling),
         )
     if expr is None:
         raise TypeError(

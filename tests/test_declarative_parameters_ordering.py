@@ -1,47 +1,28 @@
 from __future__ import annotations
 
-import pytest
-
 from quchip.declarative import DeviceModel, EnvelopeShape, Scalar, parameter
+from quchip.declarative.parameters import UNBOUND
 
 
-def test_device_model_required_after_optional_raises_naming_class_and_fields():
-    """A DeviceModel subclass with a required field after an optional one raises, naming the class and both fields."""
-    with pytest.raises(TypeError, match=r"Bad.*'b'.*'a'"):
-
-        class Bad(DeviceModel):
-            a: Scalar = parameter(default=1.0)
-            b: Scalar = parameter()
-
-
-def test_device_model_inherited_required_after_optional_raises():
-    """An optional field inherited from a DeviceModel base, followed by a required field in the subclass, raises."""
-
-    class Base(DeviceModel):
+def test_device_model_parameter_without_default_can_remain_unbound_after_defaulted_field():
+    """Declaration order does not prevent a later parameter from remaining symbolic."""
+    class SymbolicDevice(DeviceModel):
         a: Scalar = parameter(default=1.0)
+        b: Scalar = parameter()
 
-    with pytest.raises(TypeError, match=r"Child.*'b'.*'a'"):
+    device = SymbolicDevice()
+    assert device.a == 1.0
+    assert device.b is UNBOUND
 
-        class Child(Base):
-            b: Scalar = parameter()
-
-
-def test_envelope_shape_required_after_optional_raises_naming_class_and_fields():
-    """An EnvelopeShape subclass with a required field after an optional one raises, naming the class and fields."""
-    with pytest.raises(TypeError, match=r"BadEnvelope.*'edge'.*'duration'"):
-
-        class BadEnvelope(EnvelopeShape):
-            duration: Scalar = parameter(default=10.0)
-            edge: Scalar = parameter()
-
-
-def test_envelope_shape_inherited_required_after_optional_raises():
-    """An optional field inherited from an EnvelopeShape base, followed by a required field in the subclass, raises."""
+def test_inherited_envelope_parameter_without_default_can_remain_unbound():
+    """Inherited defaults and symbolic child parameters compose without constructor ordering rules."""
 
     class BaseEnv(EnvelopeShape):
         duration: Scalar = parameter(default=10.0)
 
-    with pytest.raises(TypeError, match=r"ChildEnv.*'edge'.*'duration'"):
+    class SymbolicEnvelope(BaseEnv):
+        edge: Scalar = parameter()
 
-        class ChildEnv(BaseEnv):
-            edge: Scalar = parameter()
+    envelope = SymbolicEnvelope()
+    assert envelope.duration == 10.0
+    assert envelope.edge is UNBOUND

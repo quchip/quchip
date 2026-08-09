@@ -28,14 +28,14 @@ class HarmonicMode(DeviceModel):
     freq: Scalar = parameter(positive=True)
     approximation = None
 
-    def local_hamiltonian(self, op):
-        return self.freq * op.n
+    def local_hamiltonian(self, op, p):
+        return p.freq * op.n
 
 
 def test_custom_device_hamiltonian_compiles_without_backend_calls():
     """A custom DeviceModel subclass compiles its local Hamiltonian to an operator sized to its Fock truncation."""
     mode = HarmonicMode(freq=7.0, levels=4, label="m")
-    h = mode.hamiltonian()
+    h = mode.hamiltonian().matrix()
     assert h.shape == (4, 4)
 
 
@@ -52,8 +52,8 @@ def test_tunable_param_names_derived_default_covers_all_declared_fields():
         freq: Scalar = parameter(positive=True)
         anharm: Scalar = parameter()
 
-        def local_hamiltonian(self, op):
-            return self.freq * op.n
+        def local_hamiltonian(self, op, p):
+            return p.freq * op.n
 
     dev = _DerivedTunables(freq=5.0, anharm=-0.2, levels=3)
     assert dev.tunable_param_names == ("freq", "anharm")
@@ -67,8 +67,8 @@ def test_tunable_param_names_explicit_curation_is_exact():
         quality_factor: Scalar = parameter(default=None)
         tunable_param_names = ("freq",)
 
-        def local_hamiltonian(self, op):
-            return self.freq * op.n
+        def local_hamiltonian(self, op, p):
+            return p.freq * op.n
 
     dev = _CuratedTunables(freq=5.0, levels=3)
     assert set(dev.tunable_params()) == {"freq"}
@@ -80,8 +80,8 @@ def test_tunable_param_names_explicit_empty_freezes_device():
         freq: Scalar = parameter(positive=True)
         tunable_param_names = ()
 
-        def local_hamiltonian(self, op):
-            return self.freq * op.n
+        def local_hamiltonian(self, op, p):
+            return p.freq * op.n
 
     dev = _FrozenTunables(freq=5.0, levels=3)
     assert dev.tunable_params() == {}
@@ -94,8 +94,8 @@ def test_tunable_param_names_inherited_explicit_curation_is_not_re_derived():
         quality_factor: Scalar = parameter(default=None)
         tunable_param_names = ()
 
-        def local_hamiltonian(self, op):
-            return self.freq * op.n
+        def local_hamiltonian(self, op, p):
+            return p.freq * op.n
 
     class _CuratedChild(_CuratedParent):
         extra: Scalar = parameter(default=1.0)
@@ -111,8 +111,8 @@ def test_tunable_param_names_derived_lineage_re_derives_with_new_fields():
         a: Scalar = parameter(positive=True)
         b: Scalar = parameter(default=0.0)
 
-        def local_hamiltonian(self, op):
-            return self.a * op.n
+        def local_hamiltonian(self, op, p):
+            return p.a * op.n
 
     class _DerivedChild(_DerivedParent):
         c: Scalar = parameter(default=0.0)
@@ -128,8 +128,8 @@ def test_tunable_param_names_accepts_a_plain_class_attribute():
         derived_freq = 0.0
         tunable_param_names = ("freq", "derived_freq")
 
-        def local_hamiltonian(self, op):
-            return self.freq * op.n
+        def local_hamiltonian(self, op, p):
+            return p.freq * op.n
 
     dev = _WithClassAttr(freq=5.0, levels=3)
     assert set(dev.tunable_param_names) == {"freq", "derived_freq"}
@@ -142,8 +142,8 @@ def test_tunable_param_names_unresolved_name_raises_at_class_definition():
             freq: Scalar = parameter(positive=True)
             tunable_param_names = ("not_a_field",)
 
-            def local_hamiltonian(self, op):
-                return self.freq * op.n
+            def local_hamiltonian(self, op, p):
+                return p.freq * op.n
 
 
 def test_tunable_param_names_duplicate_entry_raises_at_class_definition():
@@ -153,8 +153,8 @@ def test_tunable_param_names_duplicate_entry_raises_at_class_definition():
             freq: Scalar = parameter(positive=True)
             tunable_param_names = ("freq", "freq")
 
-            def local_hamiltonian(self, op):
-                return self.freq * op.n
+            def local_hamiltonian(self, op, p):
+                return p.freq * op.n
 
 
 def test_tunable_param_names_bare_string_raises_at_class_definition():
@@ -164,8 +164,8 @@ def test_tunable_param_names_bare_string_raises_at_class_definition():
             freq: Scalar = parameter(positive=True)
             tunable_param_names = "freq"
 
-            def local_hamiltonian(self, op):
-                return self.freq * op.n
+            def local_hamiltonian(self, op, p):
+                return p.freq * op.n
 
 
 def test_tunable_param_names_non_string_entry_raises_at_class_definition():
@@ -175,15 +175,15 @@ def test_tunable_param_names_non_string_entry_raises_at_class_definition():
             freq: Scalar = parameter(positive=True)
             tunable_param_names = (1,)
 
-            def local_hamiltonian(self, op):
-                return self.freq * op.n
+            def local_hamiltonian(self, op, p):
+                return p.freq * op.n
 
 
 class NumberNumber(CouplingModel):
     chi: Scalar = parameter()
 
-    def interaction(self, a, b):
-        return self.chi * a.n * b.n
+    def interaction(self, a, b, p):
+        return p.chi * a.n * b.n
 
 
 def test_custom_coupling_compiles_without_backend_tensor_calls():
@@ -191,7 +191,7 @@ def test_custom_coupling_compiles_without_backend_tensor_calls():
     a = HarmonicMode(freq=5.0, levels=3, label="a")
     b = HarmonicMode(freq=6.0, levels=4, label="b")
     coupling = NumberNumber(a, b, chi=0.01)
-    h = coupling.interaction_hamiltonian()
+    h = coupling.interaction_hamiltonian().matrix()
     assert h.shape == (12, 12)
 
 
@@ -200,11 +200,11 @@ def test_time_dependent_without_dynamic_source_errors():
     class BadDynamic(CouplingModel):
         g: Scalar = parameter()
 
-        def interaction(self, a, b):
-            return self.g * a.x * b.x
+        def interaction(self, a, b, p):
+            return p.g * a.x * b.x
 
-        def time_dependent(self, a, b):
-            return self.g * a.x * b.x
+        def time_dependent(self, a, b, p):
+            return p.g * a.x * b.x
 
     a = HarmonicMode(freq=5.0, levels=3, label="a")
     b = HarmonicMode(freq=6.0, levels=4, label="b")
@@ -280,8 +280,8 @@ def test_declarative_physics_notes_include_approximation():
         freq: Scalar = parameter(positive=True)
         approximation = "Toy expansion."
 
-        def local_hamiltonian(self, op):
-            return self.freq * op.n
+        def local_hamiltonian(self, op, p):
+            return p.freq * op.n
 
     notes = ApproxDevice(freq=5.0).physics_notes()
     assert "Toy expansion." in notes
@@ -314,7 +314,7 @@ def test_duffing_transmon_is_declarative_and_keeps_hamiltonian_shape():
 
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3)
     assert isinstance(q, DeviceModel)
-    assert q.hamiltonian().shape == (3, 3)
+    assert q.hamiltonian().matrix().shape == (3, 3)
     assert any("Duffing" in note or "quartic" in note.lower() for note in q.physics_notes())
 
 
