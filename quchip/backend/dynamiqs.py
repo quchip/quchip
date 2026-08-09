@@ -539,10 +539,10 @@ class DynamiqsBackend(Backend):
             return super().solve_problem(problem)
 
         # The single-problem reuse routes through the shared batch-config
-        # resolver: ``problem`` exposes the same ``tlist``/``c_ops``/``solver``/
-        # ``options``/``e_ops`` surface, and ``engine_result`` carries ``.metadata``.
+        # resolver: ``problem`` exposes the same solve-request surface and
+        # ``engine_result`` carries physics plus advisory metadata.
         tlist_arr, c_ops, solver_name, opts, e_ops_arg = self._resolve_batch_config(
-            problem, engine_result
+            problem, engine_result, engine_result=engine_result
         )
         options_obj = self._options_from_dict(opts)
         method_obj = self._method_from_dict(opts)

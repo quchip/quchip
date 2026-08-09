@@ -43,6 +43,7 @@ if TYPE_CHECKING:
 
 from quchip.engine.ir import (
     CanonicalOperator,
+    CollapseTerm,
     Carrier,
     DroppedTerm,
     DynamicTerm,
@@ -62,6 +63,7 @@ __all__ = [
     "solve_batch",
     "build_engine_result",
     "CanonicalOperator",
+    "CollapseTerm",
     "Carrier",
     "DroppedTerm",
     "DynamicTerm",
@@ -302,7 +304,8 @@ def simulate(
         chip, drive_ops, tlist,
         solver=solver, options=options, e_ops=e_ops, initial_state=initial_state,
     )
-    chosen_solver = problem.solver or ("mesolve" if problem.c_ops else "sesolve")
+    collapse_terms = problem.engine_result.collapse_terms
+    chosen_solver = problem.solver or ("mesolve" if collapse_terms else "sesolve")
 
     try:
         return solve_problem(
@@ -316,7 +319,7 @@ def simulate(
             f"Solver '{chosen_solver}' failed. "
             f"Devices: {[d.label for d in chip.devices]}, "
             f"time: {float(tlist_arr[0]):.1f}-{float(tlist_arr[-1]):.1f} ns, "
-            f"c_ops: {len(problem.c_ops)}."
+            f"collapse terms: {len(collapse_terms)}."
         ) from e
 
 

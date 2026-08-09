@@ -105,10 +105,14 @@ def test_reduced_readout_does_not_force_density_matrix_solve():
         reduced, list(seq_reduced.scheduled_ops), tlist, initial_state=reduced.state(q=0, r=0)
     )
 
-    assert problem_full.c_ops == ()
-    assert problem_reduced.c_ops == ()
-    chosen_full = problem_full.solver or ("mesolve" if problem_full.c_ops else "sesolve")
-    chosen_reduced = problem_reduced.solver or ("mesolve" if problem_reduced.c_ops else "sesolve")
+    assert problem_full.engine_result.collapse_terms == ()
+    assert problem_reduced.engine_result.collapse_terms == ()
+    chosen_full = problem_full.solver or (
+        "mesolve" if problem_full.engine_result.collapse_terms else "sesolve"
+    )
+    chosen_reduced = problem_reduced.solver or (
+        "mesolve" if problem_reduced.engine_result.collapse_terms else "sesolve"
+    )
     assert chosen_full == chosen_reduced == "sesolve"
 
 
@@ -130,4 +134,8 @@ def test_reduced_readout_collapse_profile_matches_full_chip():
         reduced, list(seq_reduced.scheduled_ops), tlist, initial_state=reduced.state(q=0, r=0)
     )
 
-    assert len(problem_full.c_ops) == len(problem_reduced.c_ops) == 1
+    assert (
+        len(problem_full.engine_result.collapse_terms)
+        == len(problem_reduced.engine_result.collapse_terms)
+        == 1
+    )

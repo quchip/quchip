@@ -1,12 +1,10 @@
-"""Stage 4: pack stage outputs + collapse operators into a frozen :class:`SolveProblem`.
+"""Stage 4: pack engine physics and solve inputs into a frozen :class:`SolveProblem`.
 
 Responsibilities
 ----------------
 * Ensure the chip is dressed and run stage 1 (:func:`resolve_frame`).
 * Run stage 3 (:func:`decompose_eops`) to flatten ``e_ops`` into
   solver-ready bands.
-* Collect and embed every Lindblad collapse operator contributed by
-  devices, drive lines, and couplings (see :func:`_collect_c_ops`).
 * Run stage 2 (:func:`build_engine_result`) for each variant
   and pack into a single :class:`SolveProblem`, or merge homogeneous
   variants into a :class:`SolveBatch` (``N`` identical skeletons with
@@ -23,9 +21,6 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from quchip.backend import _backend_context
-from quchip.declarative.expr import materialize_expr
-from quchip.engine.bands import embed_on_support
 from quchip.engine.ir import (
     DriveOp,
     EngineResult,
@@ -48,12 +43,11 @@ class SolveProblemContext:
     """Shared solve metadata reused across a homogeneous problem batch.
 
     Built once by :func:`prepare_solve_problem_context` so sweep points can
-    skip redundant collapse-operator collection and e_ops normalization.
+    skip redundant observable normalization.
     """
 
     chip: Chip
     tlist: Any
-    c_ops: tuple[Any, ...]
     e_ops: Any
     e_ops_meta: Any
     resolved_frame: Any
@@ -74,35 +68,12 @@ class SolveProblemContext:
         return cls(
             chip=ref.chip,
             tlist=ref.tlist,
-            c_ops=ref.c_ops,
             e_ops=ref.e_ops,
             e_ops_meta=ref.e_ops_meta,
             resolved_frame=ref.resolved_frame,
             solver=ref.solver,
             options=dict(ref.options),
             default_initial_state=PrematerializedState(ref.initial_state),
-        )
-
-
-def _collect_c_ops(chip: Chip) -> tuple[Any, ...]:
-    """Embed every collapse operator the chip's components contribute.
-
-    The chip enumerates its component families
-    (:meth:`~quchip.chip.chip.Chip.collapse_contributions`); this stage only
-    embeds each operator by its support arity, so a new physics-bearing
-    component family never touches the engine.
-
-    Collapse operators arrive in Lindblad-ready units (rates in 1/ns). No
-    additional scaling happens here: each device owns its physics, including
-    any 2π that belongs to a rate formula (e.g. κ = 2πf/Q). This is
-    deliberately distinct from the Hamiltonian path, where the blanket 2π
-    conversion lives at the stage-2 boundary.
-    """
-    backend = chip.backend
-    with _backend_context(backend):
-        return tuple(
-            embed_on_support(backend, materialize_expr(c_op, backend), support, chip.dims)
-            for c_op, support in chip.collapse_contributions()
         )
 
 
@@ -168,7 +139,7 @@ def prepare_solve_problem_context(
     e_ops: dict | None = None,
     drive_ops: list[DriveOp] | None = None,
 ) -> SolveProblemContext:
-    """Resolve the frame, normalize e_ops, collect c_ops, and prepare a default state.
+    """Resolve the frame, normalize observables, and prepare a default state.
 
     The dressed dict-keyed analysis is deliberately *not* triggered here: anything
     downstream that needs dressed quantities must use the array-only kernel
@@ -202,7 +173,6 @@ def prepare_solve_problem_context(
     return SolveProblemContext(
         chip=chip,
         tlist=tlist_arr,
-        c_ops=_collect_c_ops(chip),
         e_ops=e_ops_solver,
         e_ops_meta=dict_meta,
         resolved_frame=resolve_frame(chip, chip.frame),
@@ -388,7 +358,6 @@ def build_solve_batch_from_results(
         engine_result=replace(ref, metadata=shared_metadata),
         initial_state=states[0],
         tlist=context.tlist,
-        c_ops=context.c_ops,
         e_ops=context.e_ops,
         e_ops_meta=context.e_ops_meta,
         resolved_frame=context.resolved_frame,
@@ -430,14 +399,13 @@ def build_solve_problem(
         chip, tlist, solver=solver, options=options, e_ops=e_ops, drive_ops=drive_ops,
     )
     engine_result = build_engine_result(
-        chip, drive_ops, resolved_frame=context.resolved_frame,
+        chip, drive_ops, resolved_frame=context.resolved_frame
     )
     return SolveProblem(
         chip=context.chip,
         engine_result=engine_result,
         initial_state=context.default_initial_state.materialize() if initial_state is None else initial_state,
         tlist=context.tlist,
-        c_ops=context.c_ops,
         e_ops=context.e_ops,
         e_ops_meta=context.e_ops_meta,
         resolved_frame=context.resolved_frame,
@@ -506,7 +474,7 @@ def solve_problem_list(
 
     def _skeleton_prefilter_key(problem: SolveProblem) -> tuple:
         desc = problem.engine_result
-        solver_name = problem.solver or ("mesolve" if problem.c_ops else "sesolve")
+        solver_name = problem.solver or ("mesolve" if desc.collapse_terms else "sesolve")
         return (
             solver_name,
             id(desc.static_terms),
@@ -515,7 +483,7 @@ def solve_problem_list(
             tuple(term.tag for term in desc.dynamic_terms),
             _tlist_key(problem.tlist),
             _op_list_key(problem.e_ops),
-            _op_list_key(problem.c_ops),
+            tuple(id(term.operator) for term in desc.collapse_terms),
             _options_key(problem.options),
             id(problem.resolved_frame),
         )

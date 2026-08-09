@@ -74,3 +74,36 @@ def test_chip_with_params_is_differentiable_on_dynamiqs() -> None:
         return energies[1] - energies[0]
 
     assert jax.grad(first_transition)(5.0) == pytest.approx(1.0)
+
+
+def test_active_noise_is_rebindable_and_retained_in_engine_result() -> None:
+    pytest.importorskip("dynamiqs")
+    import jax
+    import jax.numpy as jnp
+
+    from quchip.backend.dynamiqs import DynamiqsBackend
+    from quchip.engine import build_problem
+
+    q = DuffingTransmon(
+        freq=5.0,
+        anharmonicity=-0.2,
+        levels=3,
+        label="q",
+        T1=100.0,
+    )
+    chip = Chip([q], backend=DynamiqsBackend())
+
+    assert chip.parameters["q.T1"] == 100.0
+    assert "q.T2" not in chip.parameters
+
+    def decay_rate(T1):
+        rebound = chip.with_params({"q.T1": T1})
+        problem = build_problem(rebound, [], jnp.asarray([0.0, 1.0]))
+        term = problem.engine_result.collapse_terms[0]
+        matrix = term.operator.to_dense()
+        return jnp.real(matrix[0, 1] * jnp.conj(matrix[0, 1]))
+
+    assert jax.grad(decay_rate)(100.0) == pytest.approx(-1e-4)
+    term = build_problem(chip, [], jnp.asarray([0.0, 1.0])).engine_result.collapse_terms[0]
+    assert term.parameter_paths == ("q.T1",)
+    assert term.latex() == r"\hat L_{q,thermal_emission}\!\left(T_{1,q}\right)"

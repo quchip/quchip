@@ -671,7 +671,7 @@ class Backend(ABC):
         prepared = self.prepare_hamiltonian(problem.engine_result, problem.tlist)
         tlist_arr = self.array_module.asarray(problem.tlist, dtype=float)
 
-        c_ops = list(problem.c_ops) if problem.c_ops else []
+        c_ops = self._collapse_operators(problem.engine_result)
         solver = problem.solver or ("mesolve" if c_ops else "sesolve")
         opts = self._merge_options(problem.options, metadata=prepared.metadata, tlist=tlist_arr)
         e_ops_arg = problem.e_ops if isinstance(problem.e_ops, list) else None
@@ -843,6 +843,8 @@ class Backend(ABC):
         self,
         batch: Any,
         prepared: Any,
+        *,
+        engine_result: "EngineResult | None" = None,
     ) -> tuple[Any, list[Any], str, dict[str, Any], list[Any] | None]:
         """Resolve the per-batch solve configuration shared by every backend.
 
@@ -853,17 +855,24 @@ class Backend(ABC):
         ``(tlist_arr, c_ops, solver_name, opts, e_ops_arg)``; each backend
         contributes only its RHS-sourcing + native-solve dispatch tail.
 
-        *prepared* is any payload exposing ``.metadata`` — a
-        :class:`PreparedBatch` on the batched paths, or the
-        :class:`EngineResult` when the dynamiqs single-solve reuses
-        this resolver.
+        *prepared* supplies advisory metadata. Single-problem callers pass
+        *engine_result* explicitly; batches use their shared problem.
         """
+        if engine_result is None:
+            engine_result = batch.problem.engine_result
         tlist_arr = self.array_module.asarray(batch.tlist, dtype=float)
-        c_ops = list(batch.c_ops) if batch.c_ops else []
+        c_ops = self._collapse_operators(engine_result)
         solver_name = batch.solver or ("mesolve" if c_ops else "sesolve")
         opts = self._merge_options(batch.options, metadata=prepared.metadata, tlist=tlist_arr)
         e_ops_arg = batch.e_ops if isinstance(batch.e_ops, list) else None
         return tlist_arr, c_ops, solver_name, opts, e_ops_arg
+
+    def _collapse_operators(self, engine_result: "EngineResult") -> list[Operator]:
+        """Materialize canonical collapse terms for this backend."""
+        return [
+            self.from_canonical_operator(term.operator)
+            for term in engine_result.collapse_terms
+        ]
 
     @staticmethod
     def _element_solver_kwargs(
