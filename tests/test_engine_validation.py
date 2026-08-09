@@ -358,6 +358,18 @@ class TestBatchMetadataAggregation:
 class TestSolveBindingsDroppedTermsRetention:
     """SolveBatch.element() restores each binding's dropped terms."""
 
+    def test_batch_rejects_incomplete_dynamic_bindings(self):
+        from quchip.engine.ir import EngineResult, SolveBatch, SolveBinding, SolveProblem
+
+        problem = SolveProblem(
+            chip=None,
+            engine_result=EngineResult(static_terms=(), dynamic_terms=(object(),)),  # type: ignore[arg-type]
+            initial_state=None,
+            tlist=(0.0, 1.0),
+        )
+        with pytest.raises(ValueError, match="expected 1"):
+            SolveBatch(problem=problem, bindings=(SolveBinding(None, ()),))
+
     def test_element_restores_dropped_terms(self):
         """dropped_terms set on a single-element batch reappear on the reconstructed element."""
         from quchip.engine.ir import DroppedTerm, EngineResult, SolveBatch, SolveBinding, SolveProblem

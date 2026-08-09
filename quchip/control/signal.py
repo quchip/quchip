@@ -27,6 +27,7 @@ Examples
 
 from __future__ import annotations
 
+import copy
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
@@ -50,6 +51,20 @@ class SignalTransform(Registrable, ABC, registry_root=True):
     :meth:`to_dict` / :meth:`from_dict`.
     """
 
+    _parameter_names: tuple[str, ...] = ()
+
+    def parameter_values(self) -> dict[str, Any]:
+        """Return transform-owned bindable values declared by the subclass."""
+        return {name: getattr(self, name) for name in self._parameter_names}
+
+    def with_parameter_value(self, name: str, value: Any) -> "SignalTransform":
+        """Return this transform with one declared numerical value replaced."""
+        if name not in self._parameter_names:
+            raise KeyError(name)
+        rebound = copy.copy(self)
+        object.__setattr__(rebound, name, value)
+        return rebound
+
     @abstractmethod
     def apply(self, signals: SignalMap) -> SignalMap:
         """Return the transformed signal map."""
@@ -69,6 +84,7 @@ class Delay(SignalTransform):
 
     line: str
     delta_t: float
+    _parameter_names = ("delta_t",)
 
     def __init__(self, line: str | Any, delta_t: float) -> None:
         object.__setattr__(self, "line", resolve_label(line))
@@ -103,6 +119,7 @@ class Gain(SignalTransform):
 
     line: str
     factor: complex
+    _parameter_names = ("factor",)
 
     def __init__(self, line: str | Any, factor: complex) -> None:
         object.__setattr__(self, "line", resolve_label(line))
@@ -177,6 +194,7 @@ class Crosstalk(SignalTransform):
     beta: float
     theta: float = 0.0
     delay: float = 0.0
+    _parameter_names = ("beta", "theta", "delay")
 
     def __init__(
         self,

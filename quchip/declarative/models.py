@@ -138,7 +138,7 @@ def _synthesize_device_init(cls: Any) -> Any:
         inspect.Parameter("label", inspect.Parameter.KEYWORD_ONLY, default=None),
         *(inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY, default=None) for name in _NOISE_FIELDS),
     )
-    signature = build_declared_signature(param_fields, trailing, owner=cls)
+    signature = build_declared_signature(param_fields, trailing)
 
     def __init__(self: Any, *args: Any, **kwargs: Any) -> None:
         bound = signature.bind(self, *args, **kwargs)

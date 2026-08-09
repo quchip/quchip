@@ -31,7 +31,7 @@ def _synthesize_envelope_init(cls: Any) -> Any:
     :meth:`EnvelopeShape.__init__`, which resolves / validates them — so
     envelope authors get a clean signature without hand-writing one.
     """
-    signature = build_declared_signature(parameter_fields(cls), owner=cls)
+    signature = build_declared_signature(parameter_fields(cls))
 
     def __init__(self: Any, *args: Any, **kwargs: Any) -> None:
         bound = signature.bind(self, *args, **kwargs)

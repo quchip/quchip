@@ -115,11 +115,12 @@ def test_bath_zero_temperature_collapse_operators_relaxation_only():
 
 
 def test_baths_flow_into_collected_c_ops():
-    """Collected chip collapse operators include each bath's ops and are empty for a chip with no baths."""
-    from quchip.engine.stage4_problem import _collect_c_ops
+    """Canonical engine results include each bath's collapse terms."""
+    from quchip.engine import build_problem
 
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=2, label="q")
     no_bath = Chip([q])
     with_bath = Chip([q.copy()], baths=[Bath("thermal", temperature=200.0, rate=1e-3)])
-    assert len(_collect_c_ops(no_bath)) == 0
-    assert len(_collect_c_ops(with_bath)) == 2  # relaxation + absorption
+    tlist = np.asarray([0.0, 1.0])
+    assert len(build_problem(no_bath, [], tlist).engine_result.collapse_terms) == 0
+    assert len(build_problem(with_bath, [], tlist).engine_result.collapse_terms) == 2

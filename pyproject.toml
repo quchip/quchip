@@ -25,8 +25,8 @@ dependencies = [
 [project.optional-dependencies]
 dynamiqs = ["dynamiqs>=0.3.4"]
 viz = ["pyvis"]
-scqubits = ["scqubits>=4.2,<5.0"]
-test = ["pytest", "pyvis", "scqubits>=4.2,<5.0", "jupytext", "nbconvert", "ipykernel"]
+scqubits = ["scqubits>=4.2,<5.0", "qutip<5.3"]
+test = ["pytest", "pyvis", "scqubits>=4.2,<5.0", "qutip<5.3", "jupytext", "nbconvert", "ipykernel"]
 dev = ["ruff", "mypy", "pytest", "pyvis", "jupytext", "nbconvert", "ipykernel"]
 docs = ["sphinx", "furo", "myst-parser", "sphinx-copybutton"]
 

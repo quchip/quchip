@@ -182,6 +182,18 @@ class QuantumSequence:
     """
 
     def __init__(self, chip: Chip) -> None:
+        ambiguous = [
+            path
+            for path in chip.parameters
+            if len((parts := path.split(".", 2))) == 3
+            and parts[0] == "pulse"
+            and parts[1].isdigit()
+        ]
+        if ambiguous:
+            raise ValueError(
+                "Component labels matching 'pulse.<integer>' are reserved for "
+                f"scheduled-pulse parameters; conflicting paths: {ambiguous}"
+            )
         self._chip = chip
         # ``_entries`` is the single source of truth for all timing. Cursors,
         # floors, and virtual-Z phase frames are reconstructed on demand by

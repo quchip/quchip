@@ -1031,25 +1031,25 @@ class EngineResult:
         from quchip.declarative.expr import PhysicsExpr
 
         expressions: list[PhysicsExpr] = []
-        for index, term in enumerate(self.static_terms):
-            tag = term.operator.tag or term.origin
+        for index, static_term in enumerate(self.static_terms):
+            tag = static_term.operator.tag or static_term.origin
             operator = PhysicsExpr.from_matrix(
-                term.operator.to_dense(),
-                labels=term.operator.subsystem_labels,
-                dims=term.operator.dims,
+                static_term.operator.to_dense(),
+                labels=static_term.operator.subsystem_labels,
+                dims=static_term.operator.dims,
                 name=r"\hat H_0" if tag == "H0" else rf"\hat H_{{{tag},{index}}}",
             )
-            expressions.append(term.coefficient * operator)
-        for index, term in enumerate(self.dynamic_terms):
-            tag = term.tag or term.operator.tag or term.origin
+            expressions.append(static_term.coefficient * operator)
+        for index, dynamic_term in enumerate(self.dynamic_terms):
+            tag = dynamic_term.tag or dynamic_term.operator.tag or dynamic_term.origin
             operator = PhysicsExpr.from_matrix(
-                term.operator.to_dense(),
-                labels=term.operator.subsystem_labels,
-                dims=term.operator.dims,
+                dynamic_term.operator.to_dense(),
+                labels=dynamic_term.operator.subsystem_labels,
+                dims=dynamic_term.operator.dims,
                 name=rf"\hat H_{{{tag},{index}}}",
             )
             signal = PhysicsExpr.from_signal(
-                term.time_dependence.signal,
+                dynamic_term.time_dependence.signal,
                 name=rf"f_{{{tag},{index}}}",
             )
             expressions.append(signal * operator)
@@ -1078,10 +1078,8 @@ class EngineResult:
         signal_leaves = jtu.tree_leaves(
             (t, tuple(term.time_dependence for term in self.dynamic_terms))
         )
-        operator_values = [
-            term.operator.values
-            for term in (*self.static_terms, *self.dynamic_terms)
-        ]
+        operator_values = [term.operator.values for term in self.static_terms]
+        operator_values.extend(term.operator.values for term in self.dynamic_terms)
         prefer_jax = any(
             is_jax_namespace(array_namespace(value))
             for value in (*operator_values, *signal_leaves)
@@ -1293,6 +1291,17 @@ class SolveBatch:
     params: Any = None
     shape: tuple[int, ...] = ()
     axes: tuple[tuple[str, Any], ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.problem is None:
+            return
+        expected = len(self.problem.engine_result.dynamic_terms)
+        for index, binding in enumerate(self.bindings):
+            actual = len(binding.dynamic_signals)
+            if actual != expected:
+                raise ValueError(
+                    f"SolveBinding {index} has {actual} dynamic signals; expected {expected}."
+                )
 
     @property
     def batch_size(self) -> int:

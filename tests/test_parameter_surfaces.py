@@ -3,7 +3,18 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quchip import Capacitive, ChargeDrive, Chip, DuffingTransmon, Gaussian, QuantumSequence, Resonator
+from quchip import (
+    Bath,
+    Capacitive,
+    ChargeDrive,
+    Chip,
+    ControlEquipment,
+    Crosstalk,
+    DuffingTransmon,
+    Gaussian,
+    QuantumSequence,
+    Resonator,
+)
 
 
 def _chip() -> Chip:
@@ -59,6 +70,13 @@ def test_sequence_parameters_rebind_chip_and_pulse_values_directly() -> None:
     assert rebound.settings["entries"] == ("PulseEntry",)
 
 
+def test_sequence_reserves_scheduled_pulse_parameter_namespace() -> None:
+    device = DuffingTransmon(freq=5.0, anharmonicity=-0.2, label="pulse.3")
+
+    with pytest.raises(ValueError, match="reserved"):
+        QuantumSequence(Chip([device]))
+
+
 def test_sequence_hamiltonian_is_the_engine_result_view() -> None:
     chip = _chip()
     drive = ChargeDrive(chip["q"], label="xy")
@@ -93,6 +111,50 @@ def test_chip_with_params_is_differentiable_on_dynamiqs() -> None:
         return energies[1] - energies[0]
 
     assert jax.grad(first_transition)(5.0) == pytest.approx(1.0)
+
+
+def test_chip_parameter_inventory_includes_drive_control_and_bath_owners() -> None:
+    class LossyDrive(ChargeDrive):
+        _parameter_names = ("loss_rate",)
+
+        def __init__(self, target, *, loss_rate, label):
+            super().__init__(target, label=label)
+            self.loss_rate = loss_rate
+
+        def collapse_operators(self, device):
+            return [np.sqrt(self.loss_rate) * device.lowering_operator()]
+
+    q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=2, label="q0")
+    q1 = DuffingTransmon(freq=5.2, anharmonicity=-0.2, levels=2, label="q1")
+    source = LossyDrive(q0, loss_rate=0.01, label="source")
+    victim = ChargeDrive(q1, label="victim")
+    equipment = ControlEquipment(
+        [source, victim],
+        signal_chain=[Crosstalk(source, victim, beta=0.02, theta=0.1, delay=0.5)],
+    )
+    bath = Bath("thermal", targets=[q0], temperature=20.0, rate=0.005, label="cold")
+    chip = Chip([q0, q1], control_equipment=equipment, baths=[bath])
+
+    assert chip.parameters["drive.source.loss_rate"] == 0.01
+    assert chip.parameters["control.0.beta"] == 0.02
+    assert chip.parameters["bath.cold.temperature"] == 20.0
+    rebound = chip.with_params(
+        {
+            "drive.source.loss_rate": 0.03,
+            "control.0.beta": 0.04,
+            "bath.cold.temperature": 25.0,
+        }
+    )
+
+    assert chip.parameters["drive.source.loss_rate"] == 0.01
+    assert rebound.parameters["drive.source.loss_rate"] == 0.03
+    assert rebound.parameters["control.0.beta"] == 0.04
+    assert rebound.parameters["bath.cold.temperature"] == 25.0
+    from quchip.engine import build_problem
+
+    engine_result = build_problem(rebound, [], np.asarray([0.0, 1.0])).engine_result
+    paths = {path for term in engine_result.collapse_terms for path in term.parameter_paths}
+    assert {"drive.source.loss_rate", "bath.cold.temperature", "bath.cold.rate"} <= paths
 
 
 def test_active_noise_is_rebindable_and_retained_in_engine_result() -> None:

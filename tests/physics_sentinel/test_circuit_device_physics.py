@@ -153,8 +153,7 @@ def test_t1_decay_mesolve_matches_between_charge_basis_and_duffing():
     H_cb = qutip.Qobj(_to_ndarray(q_cb.hamiltonian()))
     c_ops_cb = [qutip.Qobj(_to_ndarray(op)) for op in q_cb.collapse_operators()]
 
-    # DuffingTransmon's hamiltonian and collapse ops are already Qobj; feed them straight.
-    H_duff = q_duff.hamiltonian()
+    H_duff = qutip.Qobj(_to_ndarray(q_duff.hamiltonian().matrix()))
     c_ops_duff = q_duff.collapse_operators()
 
     e_op = qutip.basis(3, 1) * qutip.basis(3, 1).dag()
