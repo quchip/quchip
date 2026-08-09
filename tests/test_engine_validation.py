@@ -188,6 +188,12 @@ def test_symbolic_drive_channel_reaches_engine_without_custom_dispatch():
         resolved_frame=resolve_frame(chip, chip.frame),
     )
     assert result.dynamic_terms
+    expression = result.hamiltonian()
+    np.testing.assert_allclose(
+        expression.matrix(t=2.0, backend=chip.backend),
+        result.matrix(t=2.0),
+    )
+    assert r"f_{drive,0}\!\left(t\right)" in result.latex()
 
 
 class TestWeightZeroRwaDrop:

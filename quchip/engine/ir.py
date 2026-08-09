@@ -48,6 +48,7 @@ from quchip.utils.jax_utils import (
 
 if TYPE_CHECKING:
     from quchip.control.envelopes import BaseEnvelope
+    from quchip.declarative.expr import PhysicsExpr
     from quchip.devices.base import BaseDevice
 
 # ── Signal Program AST ──────────────────────────────────────────────
@@ -1019,6 +1020,49 @@ class EngineResult:
     metadata: dict[str, Any] = field(default_factory=dict)
     dropped_terms: tuple[DroppedTerm, ...] = ()
     collapse_terms: tuple[CollapseTerm, ...] = ()
+
+    def hamiltonian(self) -> PhysicsExpr:
+        """Return the exact canonical Hamiltonian as an inspectable expression.
+
+        This view is derived from the same terms backends receive. Matrix
+        leaves remain opaque, while each dynamic coefficient renders as a
+        named function of time.
+        """
+        from quchip.declarative.expr import PhysicsExpr
+
+        expressions: list[PhysicsExpr] = []
+        for index, term in enumerate(self.static_terms):
+            tag = term.operator.tag or term.origin
+            operator = PhysicsExpr.from_matrix(
+                term.operator.to_dense(),
+                labels=term.operator.subsystem_labels,
+                dims=term.operator.dims,
+                name=r"\hat H_0" if tag == "H0" else rf"\hat H_{{{tag},{index}}}",
+            )
+            expressions.append(term.coefficient * operator)
+        for index, term in enumerate(self.dynamic_terms):
+            tag = term.tag or term.operator.tag or term.origin
+            operator = PhysicsExpr.from_matrix(
+                term.operator.to_dense(),
+                labels=term.operator.subsystem_labels,
+                dims=term.operator.dims,
+                name=rf"\hat H_{{{tag},{index}}}",
+            )
+            signal = PhysicsExpr.from_signal(
+                term.time_dependence.signal,
+                name=rf"f_{{{tag},{index}}}",
+            )
+            expressions.append(signal * operator)
+        if not expressions:
+            raise ValueError("EngineResult contains no Hamiltonian terms.")
+        return sum(expressions[1:], start=expressions[0])
+
+    def latex(self) -> str:
+        """Render the canonical Hamiltonian with named time functions."""
+        return self.hamiltonian().latex()
+
+    def _repr_latex_(self) -> str:
+        return f"${self.latex()}$"
 
     def matrix(self, t: Any | None = None) -> Any:
         """Return the dense Hamiltonian matrix the backend receives.

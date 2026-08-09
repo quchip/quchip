@@ -94,6 +94,11 @@ class PhysicsExpr:
             tuple(labels),
         )
 
+    @classmethod
+    def from_signal(cls, signal: Any, *, name: str = "f") -> "PhysicsExpr":
+        """Create a scalar time-function leaf backed by an engine signal."""
+        return cls("signal", (signal, name))
+
     def embed(self, labels: tuple[str, ...], dims: tuple[int, ...]) -> "PhysicsExpr":
         """Embed this local contribution into an ordered composite Hilbert space."""
         if len(labels) != len(dims):
@@ -118,7 +123,7 @@ class PhysicsExpr:
         values: list[Any] = []
         for node in _walk_expr(self):
             values.extend(node._bindings.values())
-            if node.kind in ("literal", "matrix"):
+            if node.kind in ("literal", "matrix", "signal"):
                 values.append(node.args[0])
         return tuple(values)
 
@@ -253,6 +258,7 @@ class PhysicsExpr:
         self,
         bindings: Mapping[str, Any] | None = None,
         *,
+        t: Any | None = None,
         backend: Any = None,
         op_lookup: Mapping[tuple[str, str], Any] | None = None,
     ) -> Any:
@@ -261,7 +267,13 @@ class PhysicsExpr:
             from quchip.backend import get_default_backend
 
             backend = get_default_backend()
-        native = materialize_expr(self, backend, bindings=bindings, op_lookup=op_lookup)
+        native = materialize_expr(
+            self,
+            backend,
+            bindings=bindings,
+            op_lookup=op_lookup,
+            t=t,
+        )
         return backend.to_array(native)
 
 
@@ -315,6 +327,7 @@ def materialize_expr(
     *,
     bindings: Mapping[str, Any] | None = None,
     op_lookup: Mapping[tuple[str, str], Any] | None = None,
+    t: Any | None = None,
 ) -> Any:
     """Lower symbolic physics, passing an already-native contribution through."""
     if not isinstance(expr, PhysicsExpr):
@@ -333,6 +346,12 @@ def materialize_expr(
             return node.args[0]
         if node.kind == "parameter":
             return values[node.args[0]]
+        if node.kind == "signal":
+            if t is None:
+                raise ValueError("t is required to materialize a time-dependent expression.")
+            from quchip.engine.ir import evaluate_signal_program
+
+            return evaluate_signal_program(node.args[0], t, xp=backend.array_module)
         if node.kind == "matrix":
             value, dims, _name = node.args
             return backend.from_array(value, dims=[list(dims), list(dims)])
@@ -411,7 +430,7 @@ def _expanded_terms(expr: PhysicsExpr) -> list[tuple[int, PhysicsExpr]]:
 
 def _band_weights(expr: PhysicsExpr) -> dict[str, int]:
     """Return one excitation-change weight per endpoint for a monomial."""
-    if expr.kind in ("literal", "parameter"):
+    if expr.kind in ("literal", "parameter", "signal"):
         return {}
     if expr.kind == "op":
         name, _levels = expr.args
@@ -480,6 +499,9 @@ def _latex(expr: PhysicsExpr, parent_precedence: int = 0) -> str:
         path, symbol, _unit = expr.args
         scope = path.rsplit(".", 1)[0]
         return _scoped_symbol(symbol, scope)
+    if expr.kind == "signal":
+        _signal, name = expr.args
+        return rf"{name}\!\left(t\right)"
     if expr.kind == "matrix":
         _value, _dims, name = expr.args
         if name is not None:
