@@ -66,6 +66,34 @@ class PhysicsExpr:
             raise ValueError("Matrix labels and dimensions must have the same length.")
         return cls("matrix", (value, tuple(dims), name), tuple(labels))
 
+    @classmethod
+    def from_function(
+        cls,
+        function: Any,
+        *arguments: Any,
+        labels: tuple[str, ...],
+        dims: tuple[int, ...],
+        name: str | None = None,
+    ) -> "PhysicsExpr":
+        """Create an opaque matrix-valued contribution from a pure function.
+
+        The function runs only during numerical materialization. Display keeps
+        its declared name and arguments, such as ``X(a, b)``, without exposing
+        the implementation as symbolic algebra.
+        """
+        if len(labels) != len(dims):
+            raise ValueError("Function labels and dimensions must have the same length.")
+        if not callable(function):
+            raise TypeError("function must be callable.")
+        display_name = name or getattr(function, "__name__", None)
+        if not display_name or display_name == "<lambda>":
+            raise ValueError("Anonymous functions require a symbolic name.")
+        return cls(
+            "function",
+            (function, tuple(dims), display_name, *(ensure_expr(arg) for arg in arguments)),
+            tuple(labels),
+        )
+
     def embed(self, labels: tuple[str, ...], dims: tuple[int, ...]) -> "PhysicsExpr":
         """Embed this local contribution into an ordered composite Hilbert space."""
         if len(labels) != len(dims):
@@ -90,7 +118,7 @@ class PhysicsExpr:
         values: list[Any] = []
         for node in _walk_expr(self):
             values.extend(node._bindings.values())
-            if node.kind == "matrix":
+            if node.kind in ("literal", "matrix"):
                 values.append(node.args[0])
         return tuple(values)
 
@@ -101,7 +129,7 @@ class PhysicsExpr:
             raise AttributeError("Scalar expressions do not have a matrix shape.")
         if self.kind == "op":
             return (self.args[1],) * 2
-        if self.kind == "matrix":
+        if self.kind in ("matrix", "function"):
             dimension = prod(self.args[1])
             return (dimension, dimension)
         if self.kind == "embed":
@@ -308,6 +336,10 @@ def materialize_expr(
         if node.kind == "matrix":
             value, dims, _name = node.args
             return backend.from_array(value, dims=[list(dims), list(dims)])
+        if node.kind == "function":
+            function, dims, _name, *arguments = node.args
+            value = function(*(lower(argument) for argument in arguments))
+            return backend.from_array(value, dims=[list(dims), list(dims)])
         if node.kind == "op":
             name, levels = node.args
             label = node.labels[0]
@@ -388,7 +420,7 @@ def _band_weights(expr: PhysicsExpr) -> dict[str, int]:
         except KeyError as exc:
             raise TypeError(f"Operator {name!r} does not have one excitation-change band.") from exc
         return {expr.labels[0]: weight}
-    if expr.kind in ("matrix", "embed"):
+    if expr.kind in ("matrix", "function", "embed"):
         raise TypeError(f"{expr.kind.capitalize()} contributions do not expose symbolic excitation bands.")
     if expr.kind == "pow":
         raise TypeError("Scalar powers do not define operator excitation bands.")
@@ -453,6 +485,10 @@ def _latex(expr: PhysicsExpr, parent_precedence: int = 0) -> str:
         if name is not None:
             return name
         return rf"\hat H_{{{','.join(expr.labels)}}}"
+    if expr.kind == "function":
+        _function, _dims, name, *arguments = expr.args
+        rendered = ", ".join(_latex(argument) for argument in arguments)
+        return rf"{name}\!\left({rendered}\right)"
     if expr.kind == "op":
         name, _levels = expr.args
         scope = expr.labels[0]

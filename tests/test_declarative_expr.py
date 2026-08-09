@@ -144,3 +144,31 @@ def test_tensor_labels_preserve_authored_order_for_unequal_dimensions():
     b = EndpointOps(label="b", levels=5)
     assert (a.n * b.n).labels == ("a", "b")
     assert (b.n * a.n).labels == ("b", "a")
+
+
+def test_opaque_function_displays_arguments_and_stays_differentiable():
+    """A matrix function remains opaque in display while its bound values trace through JAX."""
+    omega = PhysicsExpr.parameter(scope="q", name="freq", symbol=r"\omega")
+    expr = PhysicsExpr.from_function(
+        lambda value: jnp.diag(jnp.asarray([0.0, value], dtype=complex)),
+        omega,
+        labels=("q",),
+        dims=(2,),
+        name=r"\hat X",
+    )
+
+    class ArrayBackend:
+        @staticmethod
+        def from_array(value, *, dims):
+            _ = dims
+            return value
+
+        @staticmethod
+        def to_array(value):
+            return value
+
+    assert expr.latex() == r"\hat X\!\left(\omega_{q}\right)"
+    def loss(value):
+        return jnp.real(expr.matrix({"q.freq": value}, backend=ArrayBackend())[1, 1])
+
+    assert jax.grad(loss)(jnp.asarray(5.0)) == pytest.approx(1.0)

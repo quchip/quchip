@@ -852,6 +852,7 @@ class Chip:
     # ``static_zz`` is the same physics under a different name: the static ZZ
     # interaction strength equals the dressed dispersive (cross-Kerr) shift.
     static_zz = dispersive_shift
+    zz = dispersive_shift
 
     def dressed_anharmonicity(self, device: str | BaseDevice) -> float:
         """Dressed anharmonicity of one device with others grounded (GHz).

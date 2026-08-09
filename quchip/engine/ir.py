@@ -32,12 +32,19 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
+from math import prod
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, cast
 
 import jax.tree_util as jtu
 import numpy as np
 
-from quchip.utils.jax_utils import array_namespace, contains_tracer, is_jax_namespace, maybe_concrete_scalar
+from quchip.utils.jax_utils import (
+    array_namespace,
+    contains_tracer,
+    is_jax_namespace,
+    maybe_concrete_scalar,
+    select_array_module,
+)
 
 if TYPE_CHECKING:
     from quchip.control.envelopes import BaseEnvelope
@@ -980,6 +987,45 @@ class EngineResult:
     dims: tuple[int, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
     dropped_terms: tuple[DroppedTerm, ...] = ()
+
+    def matrix(self, t: Any | None = None) -> Any:
+        """Return the dense Hamiltonian matrix the backend receives.
+
+        The result is in angular units (rad/ns): every operator already
+        crossed the engine's single ``2π`` boundary. A time value is required
+        when dynamic terms are present. Array types are preserved, including
+        JAX values and tracers.
+        """
+        if self.dynamic_terms and t is None:
+            raise ValueError("t is required for a time-dependent Hamiltonian.")
+
+        signal_leaves = jtu.tree_leaves(
+            (t, tuple(term.time_dependence for term in self.dynamic_terms))
+        )
+        operator_values = [
+            term.operator.values
+            for term in (*self.static_terms, *self.dynamic_terms)
+        ]
+        prefer_jax = any(
+            is_jax_namespace(array_namespace(value))
+            for value in (*operator_values, *signal_leaves)
+        )
+        xp = select_array_module(prefer_jax)
+
+        terms: list[Any] = [
+            term.coefficient * term.operator.to_dense()
+            for term in self.static_terms
+        ]
+        if t is not None:
+            terms.extend(
+                term.operator.to_dense()
+                * evaluate_signal_program(term.time_dependence.signal, t, xp=xp)
+                for term in self.dynamic_terms
+            )
+        if not terms:
+            dimension = prod(self.dims)
+            return xp.zeros((dimension, dimension), dtype=complex)
+        return sum(terms[1:], start=terms[0])
 
     def dropped_terms_summary(self) -> str:
         """Format :attr:`dropped_terms` as a multi-line human-readable string.

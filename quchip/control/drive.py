@@ -61,7 +61,7 @@ class DriveChannel:
     contributes both in-phase and quadrature couplings.
     """
 
-    operator: Operator
+    operator: Any
     modulation: DriveModulation
 
 

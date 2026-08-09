@@ -150,6 +150,46 @@ class TestResolveDrivesValidation:
             _resolve_drives(_FakeChip(), [op])
 
 
+def test_symbolic_drive_channel_reaches_engine_without_custom_dispatch():
+    """A drive extension may return the shared symbolic expression directly."""
+    from quchip.chip.chip import Chip
+    from quchip.control.drive import DriveChannel, FluxDrive
+    from quchip.control.envelopes import Square
+    from quchip.control.equipment import ControlEquipment
+    from quchip.control.signal_spec import DriveModulation
+    from quchip.declarative.ops import LocalOps
+    from quchip.devices.transmon.duffing import DuffingTransmon
+    from quchip.engine.ir import DriveOp
+    from quchip.engine.stage1_frames import resolve_frame
+    from quchip.engine.stage2_assembly import build_engine_result
+
+    class SymbolicFluxDrive(FluxDrive):
+        def local_channels(self, device):
+            return [
+                DriveChannel(
+                    operator=LocalOps(device.label, device.levels).n,
+                    modulation=DriveModulation.DIRECT_REAL,
+                )
+            ]
+
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+    drive = SymbolicFluxDrive(q, label="flux")
+    chip = Chip([q], control_equipment=ControlEquipment([drive]))
+    drive_op = DriveOp(
+        target_label="q",
+        envelope=Square(duration=10.0, amplitude=0.01),
+        freq=None,
+        start_time=0.0,
+        drive_label="flux",
+    )
+    result = build_engine_result(
+        chip,
+        [drive_op],
+        resolved_frame=resolve_frame(chip, chip.frame),
+    )
+    assert result.dynamic_terms
+
+
 class TestWeightZeroRwaDrop:
     """A SINGLE_TONE band at weight 0 is dropped structurally under RWA, with an audit record."""
 
