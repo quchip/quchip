@@ -720,9 +720,10 @@ def _compile_drive_terms(
         with _backend_context(backend):
             channels = drive.local_channels(device)
         for ch in channels:
+            local_operator = materialize_expr(ch.operator, backend)
             for weight, embedded in embed_single_mode_bands(
                 backend,
-                ch.operator,
+                local_operator,
                 device_index=idx,
                 dim=device.levels,
                 label=device.label,
@@ -823,9 +824,10 @@ def _compile_extra_signal_terms(
         with _backend_context(backend):
             victim_channels = victim_drive.local_channels(victim_device)
         for ch in victim_channels:
+            local_operator = materialize_expr(ch.operator, backend)
             for weight, embedded in embed_single_mode_bands(
                 backend,
-                ch.operator,
+                local_operator,
                 device_index=victim_idx,
                 dim=victim_device.levels,
                 label=victim_label,

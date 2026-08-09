@@ -246,6 +246,28 @@ class TestTermTypes:
         assert desc.dims == (3,)
         assert desc.metadata["frame_mode"] == "rotating"
 
+    def test_engine_result_matrix_is_the_exact_time_slice(self):
+        """Dense inspection sums the same scaled static and dynamic terms sent to a backend."""
+        op = CanonicalOperator.from_dense(
+            np.eye(2, dtype=complex),
+            dims=(2,),
+            basis="fock",
+            subsystem_labels=("q",),
+        )
+        result = EngineResult(
+            static_terms=(StaticTerm(operator=op, coefficient=2.0),),
+            dynamic_terms=(
+                DynamicTerm(
+                    operator=op,
+                    time_dependence=ScalarModulation(signal=Carrier(freq=1.0)),
+                ),
+            ),
+            dims=(2,),
+        )
+        with pytest.raises(ValueError, match="t is required"):
+            result.matrix()
+        np.testing.assert_allclose(result.matrix(t=0.0), 3.0 * np.eye(2))
+
 
 class TestPolarScale:
     def test_polar_scale_evaluates_amplitude_times_exp_theta(self):
