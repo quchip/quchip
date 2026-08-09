@@ -60,6 +60,7 @@ from quchip.backend import _backend_context
 from quchip.backend.protocol import Backend, Operator
 from quchip.control.drive import BaseDrive
 from quchip.control.signal_spec import DriveSignalSpec, DriveModulation
+from quchip.declarative.expr import materialize_expr
 from quchip.engine.ir import HamiltonianTemplate
 from quchip.engine.ir import (
     CanonicalOperator,
@@ -443,7 +444,7 @@ def _collect_coupling_terms(
                 continue
 
         with _backend_context(backend):
-            h_full = coupling.interaction_hamiltonian()
+            h_full = materialize_expr(coupling.interaction_hamiltonian(), backend)
 
         d_a = chip.devices[idx_a].levels
         d_b = chip.devices[idx_b].levels

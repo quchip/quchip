@@ -126,14 +126,14 @@ class Resonator(DeviceModel):
     _default_levels: int = 10
     tunable_param_names = ("freq",)
 
-    freq: Scalar = parameter(positive=True, unit="GHz")
+    freq: Scalar = parameter(positive=True, unit="GHz", symbol=r"\omega")
     quality_factor: Scalar = parameter(default=None, positive=True)
 
     # --- generated __init__ stub (tools/gen_device_stubs.py); do not edit ---
     if TYPE_CHECKING:
         def __init__(
             self,
-            freq: Scalar,
+            freq: Scalar = ...,
             quality_factor: Scalar = None,
             *,
             levels: int = 10,
@@ -146,9 +146,9 @@ class Resonator(DeviceModel):
 
     approximation = "Linear harmonic oscillator with no Kerr or cross-Kerr self-interaction."
 
-    def local_hamiltonian(self, op: LocalOps) -> PhysicsExpr:
+    def local_hamiltonian(self, op: LocalOps, p: Any) -> PhysicsExpr:
         """Return the harmonic oscillator Hamiltonian ``H = freq * n``."""
-        return self.freq * op.n
+        return p.freq * op.n
 
     def physics_notes(self) -> list[str]:
         """Return declared harmonic-oscillator and dissipation assumptions."""

@@ -10,34 +10,34 @@ from quchip.declarative import CouplingModel, DeviceModel, DynamicScalar, Scalar
 class _Oscillator(DeviceModel):
     freq: Scalar = parameter(positive=True, unit="GHz")
 
-    def local_hamiltonian(self, op):
-        return self.freq * op.n
+    def local_hamiltonian(self, op, p):
+        return p.freq * op.n
 
 
 class _ForwardCoupling(CouplingModel):
     g: Scalar = parameter(unit="GHz")
 
-    def interaction(self, a, b):
-        return self.g * (a.a * b.adag + a.adag * b.a)
+    def interaction(self, a, b, p):
+        return p.g * (a.a * b.adag + a.adag * b.a)
 
 
 class _ReversedCoupling(CouplingModel):
     g: Scalar = parameter(unit="GHz")
 
-    def interaction(self, a, b):
-        return self.g * (b.a * a.adag + b.adag * a.a)
+    def interaction(self, a, b, p):
+        return p.g * (b.a * a.adag + b.adag * a.a)
 
 
 class _DynamicCouplingRwaNone(CouplingModel):
     g: Scalar = parameter(unit="GHz")
 
-    def interaction(self, a, b):
-        return self.g * (a.a * b.adag + a.adag * b.a)
+    def interaction(self, a, b, p):
+        return p.g * (a.a * b.adag + a.adag * b.a)
 
-    def time_dependent(self, a, b):
+    def time_dependent(self, a, b, p):
         return DynamicScalar(object()) * (a.a * b.adag + a.adag * b.a)
 
-    def rwa_time_dependent(self, a, b):
+    def rwa_time_dependent(self, a, b, p):
         return None
 
 

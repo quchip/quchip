@@ -54,8 +54,8 @@ def test_traced_scalar_left_multiply_does_not_raise():
     omega = jnp.asarray(5.0)
     expr = omega * op.n
     assert isinstance(expr, PhysicsExpr)
-    assert expr.kind == "op"
-    assert float(expr.scalar) == 5.0
+    assert expr.kind == "scale"
+    assert float(expr.args[0].args[0]) == 5.0
 
 
 def test_traced_scalar_right_multiply_does_not_raise():
@@ -64,7 +64,8 @@ def test_traced_scalar_right_multiply_does_not_raise():
     omega = jnp.asarray(5.0)
     expr = op.n * omega
     assert isinstance(expr, PhysicsExpr)
-    assert float(expr.scalar) == 5.0
+    assert expr.kind == "scale"
+    assert float(expr.args[0].args[0]) == 5.0
 
 
 def test_traced_scalar_flows_through_jax_grad():
@@ -72,7 +73,7 @@ def test_traced_scalar_flows_through_jax_grad():
     op = LocalOps(label="q", levels=3)
 
     def coefficient(omega):
-        return (omega * op.n).scalar
+        return (omega * op.n).args[0].args[0]
 
     grad_fn = jax.grad(coefficient)
     assert float(grad_fn(jnp.asarray(3.0))) == 1.0
@@ -82,8 +83,8 @@ def test_python_scalar_still_works():
     """Plain Python scalars scale an operator from either side."""
     op = LocalOps(label="q", levels=3)
     expr = 2.0 * op.n
-    assert expr.scalar == 2.0
-    assert (op.n * 3).scalar == 3
+    assert expr.args[0].args[0] == 2.0
+    assert (op.n * 3).args[0].args[0] == 3
 
 
 def test_array_operand_rejected():
@@ -131,9 +132,9 @@ def test_dynamic_scalar_times_scalar_times_operator_scales_not_tensors():
     op = LocalOps(label="q", levels=3)
     dynamic = DynamicScalar("env")
     expr = (dynamic * 2.0) * op.n
-    assert expr.kind == "op"
+    assert expr.kind == "scale"
     assert expr.labels == ("q",)
-    assert expr.scalar == 2.0
+    assert expr.args[0].args[0] == 2.0
     assert expr.dynamic_sources == (dynamic,)
 
 

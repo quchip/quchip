@@ -26,7 +26,7 @@ from quchip.chip.coupling_base import BaseCoupling as _BaseCoupling
 from quchip.declarative.expr import PhysicsExpr
 from quchip.declarative.models import CouplingModel
 from quchip.declarative.ops import EndpointOps
-from quchip.declarative.parameters import Scalar, parameter
+from quchip.declarative.parameters import Scalar, UNBOUND, parameter
 from quchip.devices.base import BaseDevice
 
 if TYPE_CHECKING:
@@ -102,14 +102,14 @@ class Capacitive(CouplingModel):
     folds_exchange: bool = True
     reduces_to_crosskerr: bool = True
 
-    g: Scalar = parameter(unit="GHz")
+    g: Scalar = parameter(unit="GHz", symbol="g")
 
     def __init__(
         self,
         device_a: BaseDevice | str,
         device_b: BaseDevice | str,
         *,
-        g: Scalar,
+        g: Scalar = UNBOUND,
         rwa: bool | None = None,
         label: str | None = None,
     ) -> None:
@@ -122,9 +122,9 @@ class Capacitive(CouplingModel):
         """
         super().__init__(device_a, device_b, label=label, rwa=rwa, g=g)
 
-    def interaction(self, a: EndpointOps, b: EndpointOps) -> PhysicsExpr:
+    def interaction(self, a: EndpointOps, b: EndpointOps, p: Any) -> PhysicsExpr:
         """Return the full capacitive interaction ``g * (a + a†)(b + b†)``."""
-        return _full(self.g, a, b)
+        return _full(p.g, a, b)
 
     def physics_notes(self) -> list[str]:
         """Return declared capacitive-coupling and RWA assumptions."""
@@ -226,14 +226,14 @@ class TunableCapacitive(CouplingModel):
     folds_exchange: bool = True
     reduces_to_crosskerr: bool = True
 
-    g_0: Scalar = parameter(unit="GHz")
+    g_0: Scalar = parameter(unit="GHz", symbol="g_0")
 
     def __init__(
         self,
         device_a: BaseDevice | str,
         device_b: BaseDevice | str,
         *,
-        g_0: Scalar,
+        g_0: Scalar = UNBOUND,
         rwa: bool | None = None,
         label: str | None = None,
     ) -> None:
@@ -246,16 +246,18 @@ class TunableCapacitive(CouplingModel):
         """
         super().__init__(device_a, device_b, label=label, rwa=rwa, g_0=g_0)
 
-    def interaction(self, a: EndpointOps, b: EndpointOps) -> PhysicsExpr:
+    def interaction(self, a: EndpointOps, b: EndpointOps, p: Any) -> PhysicsExpr:
         """Static contribution ``g_0 · (a + a†)(b + b†)``."""
-        return _full(self.g_0, a, b)
+        return _full(p.g_0, a, b)
 
-    def parametric_interaction(self, a: EndpointOps, b: EndpointOps) -> PhysicsExpr:
+    def parametric_interaction(self, a: EndpointOps, b: EndpointOps, p: Any) -> PhysicsExpr:
         """Modulable structure ``(a + a†)(b + b†)`` a scheduled pump multiplies."""
+        _ = p
         return a.x * b.x
 
-    def rwa_parametric_interaction(self, a: EndpointOps, b: EndpointOps) -> PhysicsExpr:
+    def rwa_parametric_interaction(self, a: EndpointOps, b: EndpointOps, p: Any) -> PhysicsExpr:
         """Beam-splitter structure ``a†b + a b†`` retained under RWA."""
+        _ = p
         return a.adag * b.a + a.a * b.adag
 
     def physics_notes(self) -> list[str]:
@@ -310,26 +312,27 @@ class CrossKerr(CouplingModel):
     _type_prefix: str = "crosskerr"
     is_effective: bool = True
 
-    chi: Scalar = parameter(unit="GHz")
+    chi: Scalar = parameter(unit="GHz", symbol=r"\chi")
 
     def __init__(
         self,
         device_a: BaseDevice | str,
         device_b: BaseDevice | str,
         *,
-        chi: Scalar,
+        chi: Scalar = UNBOUND,
         rwa: bool | None = None,
         label: str | None = None,
     ) -> None:
         """Initialize a cross-Kerr coupling between two devices or labels."""
         super().__init__(device_a, device_b, label=label, rwa=rwa, chi=chi)
 
-    def interaction(self, a: EndpointOps, b: EndpointOps) -> PhysicsExpr:
+    def interaction(self, a: EndpointOps, b: EndpointOps, p: Any) -> PhysicsExpr:
         """Full form ``χ · n̂_a n̂_b`` (diagonal; identical under RWA)."""
-        return self.chi * (a.n * b.n)
+        return p.chi * (a.n * b.n)
 
-    def parametric_interaction(self, a: EndpointOps, b: EndpointOps) -> PhysicsExpr:
+    def parametric_interaction(self, a: EndpointOps, b: EndpointOps, p: Any) -> PhysicsExpr:
         """Modulable structure ``n̂_a n̂_b`` — δχ(t) pumps ride this."""
+        _ = p
         return a.n * b.n
 
     def physics_notes(self) -> list[str]:

@@ -19,9 +19,9 @@ class SpinHalf(DeviceModel):
 
     freq: Scalar = parameter(positive=True)
 
-    def local_hamiltonian(self, op):
+    def local_hamiltonian(self, op, p):
         # H = -(freq/2)·sigma_z, so |1> sits `freq` above |0>.
-        return (-0.5 * self.freq) * op.sigma_z
+        return (-0.5 * p.freq) * op.sigma_z
 
 
 def test_sigma_ops_author_a_spin_device():

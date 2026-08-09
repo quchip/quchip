@@ -169,17 +169,17 @@ class FluxTunableTransmon(DeviceModel):
         "no Landau-Zener)."
     )
 
-    freq: Scalar = parameter(positive=True, unit="GHz")
-    anharmonicity: Scalar = parameter(unit="GHz")
-    flux_bias: Scalar = parameter(default=0.0, unit="Phi_0")
-    asymmetry: Scalar = parameter(default=0.0)
+    freq: Scalar = parameter(positive=True, unit="GHz", symbol=r"\omega")
+    anharmonicity: Scalar = parameter(unit="GHz", symbol=r"\alpha")
+    flux_bias: Scalar = parameter(default=0.0, unit="Phi_0", symbol=r"\Phi")
+    asymmetry: Scalar = parameter(default=0.0, symbol="d")
 
     # --- generated __init__ stub (tools/gen_device_stubs.py); do not edit ---
     if TYPE_CHECKING:
         def __init__(
             self,
-            freq: Scalar,
-            anharmonicity: Scalar,
+            freq: Scalar = ...,
+            anharmonicity: Scalar = ...,
             flux_bias: Scalar = 0.0,
             asymmetry: Scalar = 0.0,
             *,
@@ -213,12 +213,12 @@ class FluxTunableTransmon(DeviceModel):
         elif name == "flux_bias":
             _check_flux_bias_dispersion(value, self.asymmetry)
 
-    def local_hamiltonian(self, op: LocalOps) -> PhysicsExpr:
+    def local_hamiltonian(self, op: LocalOps, p: Any) -> PhysicsExpr:
         """Return the Duffing Hamiltonian built from the calibrated freq and anharmonicity.
 
         ``H = ω n + (α/2) n(n − I)``. Does not reference ``flux_bias``.
         """
-        return duffing_expr(op, self.freq, self.anharmonicity)
+        return duffing_expr(op, p.freq, p.anharmonicity)
 
     # -- Derived-on-read SQUID parameters ----------------------------------
 

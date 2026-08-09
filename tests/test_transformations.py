@@ -110,8 +110,8 @@ def test_eliminate_bridge_preserves_non_foldable_direct_edge_without_double_coun
 
         j: Scalar = parameter(unit="GHz")
 
-        def interaction(self, a, b):
-            return self.j * (a.adag * b.a + a.a * b.adag)
+        def interaction(self, a, b, p):
+            return p.j * (a.adag * b.a + a.a * b.adag)
 
     q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=2, label="q0")
     q1 = DuffingTransmon(freq=5.1, anharmonicity=-0.25, levels=2, label="q1")
@@ -159,8 +159,8 @@ def test_eliminate_bridge_direct_edge_whose_rwa_rejects_exchange_contributes_not
 
         j: Scalar = parameter(unit="GHz")
 
-        def interaction(self, a, b):
-            return self.j * (a.adag * b.a + a.a * b.adag)
+        def interaction(self, a, b, p):
+            return p.j * (a.adag * b.a + a.a * b.adag)
 
         def rwa_keeps_band(self, delta_a, delta_b):
             return False
@@ -206,8 +206,8 @@ def test_eliminate_bridge_fold_target_and_preserved_edge_are_each_counted_exactl
 
         j: Scalar = parameter(unit="GHz")
 
-        def interaction(self, a, b):
-            return self.j * (a.adag * b.a + a.a * b.adag)
+        def interaction(self, a, b, p):
+            return p.j * (a.adag * b.a + a.a * b.adag)
 
     q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=2, label="q0")
     q1 = DuffingTransmon(freq=5.1, anharmonicity=-0.25, levels=2, label="q1")

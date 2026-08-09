@@ -9,8 +9,8 @@ from quchip.declarative import DeviceModel, Scalar, parameter
 class _Oscillator(DeviceModel):
     freq: Scalar = parameter(positive=True, unit="GHz")
 
-    def local_hamiltonian(self, op):
-        return self.freq * op.n
+    def local_hamiltonian(self, op, p):
+        return p.freq * op.n
 
 
 def test_device_model_pytree_round_trip_preserves_declared_noise_and_reference_freq():

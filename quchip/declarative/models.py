@@ -17,8 +17,10 @@ from typing import Any, cast, dataclass_transform
 import jax.tree_util as jtu
 
 from quchip.chip.coupling_base import BaseCoupling
+from quchip.declarative.expr import ParameterNamespace, PhysicsExpr, materialize_expr
 from quchip.declarative.parameters import (
     Parameter,
+    UNBOUND,
     build_declared_signature,
     parameter_fields,
     resolve_declared_params,
@@ -36,9 +38,24 @@ from quchip.utils.state_versioning import _wrap_init_for_finish
 def _serialize_declared_params(obj: Any, data: dict[str, Any]) -> dict[str, Any]:
     """Write each serializable declared parameter of *obj* into *data*, in place."""
     for name, spec in type(obj).__quchip_param_fields__.items():
-        if spec.serialize:
-            data[name] = serializable_value(getattr(obj, name))
+        value = getattr(obj, name)
+        if spec.serialize and value is not UNBOUND:
+            data[name] = serializable_value(value)
     return data
+
+
+def _symbolic_parameters(obj: Any) -> ParameterNamespace:
+    """Return symbolic leaves for an object's declared parameters."""
+    return ParameterNamespace(obj.label, type(obj).__quchip_param_fields__)
+
+
+def _parameter_bindings(obj: Any) -> dict[str, Any]:
+    """Return the object's available declared-parameter values."""
+    return {
+        f"{obj.label}.{name}": value
+        for name in type(obj).__quchip_param_fields__
+        if (value := getattr(obj, name)) is not UNBOUND and value is not None
+    }
 
 
 _MISSING = object()
@@ -170,8 +187,8 @@ class DeviceModel(BaseDevice):
     >>> class DuffingOscillator(DeviceModel):
     ...     freq: Scalar = parameter(positive=True, unit="GHz")
     ...     anharmonicity: Scalar = parameter(unit="GHz")
-    ...     def local_hamiltonian(self, op):
-    ...         return self.freq * op.n + 0.5 * self.anharmonicity * op.n @ (op.n - op.I)
+    ...     def local_hamiltonian(self, op, p):
+    ...         return p.freq * op.n + 0.5 * p.anharmonicity * op.n @ (op.n - op.I)
     >>> device = DuffingOscillator(freq=5.0, anharmonicity=-0.3, levels=4)
     >>> device.freq
     5.0
@@ -312,7 +329,7 @@ class DeviceModel(BaseDevice):
         parts.append(f"levels={self.levels}")
         return f"{type(self).__name__}({', '.join(parts)})"
 
-    def local_hamiltonian(self, op: Any) -> Any:
+    def local_hamiltonian(self, op: Any, p: Any) -> Any:
         """Return this device's local Hamiltonian as a declarative expression.
 
         Parameters
@@ -321,6 +338,8 @@ class DeviceModel(BaseDevice):
             Operator namespace for this device's endpoint, exposing ``a``,
             ``adag``, ``n``, ``I`` and the Pauli handles as composable
             :class:`~quchip.declarative.expr.PhysicsExpr` nodes.
+        p : ParameterNamespace
+            Symbolic leaves for the parameters declared on this model.
 
         Returns
         -------
@@ -330,15 +349,13 @@ class DeviceModel(BaseDevice):
         raise NotImplementedError
 
     def hamiltonian(self) -> Any:
-        """Compile :meth:`local_hamiltonian` for the active default backend."""
-        from quchip.backend import get_default_backend
-        from quchip.declarative.expr import compile_expr
+        """Return the authored symbolic local Hamiltonian."""
         from quchip.declarative.ops import LocalOps
 
-        backend = get_default_backend()
         op = LocalOps(label=self.label, levels=self.levels)
-        expr = self.local_hamiltonian(op)
-        return compile_expr(expr, self.declarative_ops(), backend)
+        return self.local_hamiltonian(op, _symbolic_parameters(self)).with_bindings(
+            _parameter_bindings(self)
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize common device state plus declared parameter values."""
@@ -400,8 +417,8 @@ class CouplingModel(BaseCoupling):
     >>> from quchip.declarative import CouplingModel, parameter, Scalar
     >>> class ExchangeCoupling(CouplingModel):
     ...     g: Scalar = parameter(unit="GHz")
-    ...     def interaction(self, a, b):
-    ...         return self.g * (a.a * b.adag + a.adag * b.a)
+    ...     def interaction(self, a, b, p):
+    ...         return p.g * (a.a * b.adag + a.adag * b.a)
     >>> c = ExchangeCoupling("q0", "q1", g=0.01)
     >>> c.coupling_strength
     0.01
@@ -474,7 +491,7 @@ class CouplingModel(BaseCoupling):
 
     # --- Physics overrides for subclasses ---
 
-    def interaction(self, a: Any, b: Any) -> Any:
+    def interaction(self, a: Any, b: Any, p: Any) -> Any:
         """Return the full two-body interaction expression.
 
         Parameters
@@ -492,7 +509,7 @@ class CouplingModel(BaseCoupling):
         """
         raise NotImplementedError
 
-    def time_dependent(self, a: Any, b: Any) -> Any:
+    def time_dependent(self, a: Any, b: Any, p: Any) -> Any:
         """Return an optional time-dependent interaction expression.
 
         Parameters
@@ -508,7 +525,7 @@ class CouplingModel(BaseCoupling):
         """
         return None
 
-    def rwa_time_dependent(self, a: Any, b: Any) -> Any:
+    def rwa_time_dependent(self, a: Any, b: Any, p: Any) -> Any:
         """Return the RWA time-dependent expression, defaulting to full form.
 
         Mirrors the parametric RWA split for the dynamic term: subclasses
@@ -520,21 +537,21 @@ class CouplingModel(BaseCoupling):
         a, b : EndpointOps
             Operator namespaces for the two coupled endpoints.
         """
-        return self.time_dependent(a, b)
+        return self.time_dependent(a, b, p)
 
-    def parametric_interaction(self, a: Any, b: Any) -> Any:
+    def parametric_interaction(self, a: Any, b: Any, p: Any) -> Any:
         """Return the parametric interaction structure, or ``None`` when this coupling is not modulable.
 
         The coupling-side mirror of the device drive-dispatch protocols: a
         :class:`~quchip.control.drive.ParametricDrive` accepts any coupling
         whose hook returns a :class:`~quchip.declarative.expr.PhysicsExpr`.
         """
-        _ = (a, b)
+        _ = (a, b, p)
         return None
 
-    def rwa_parametric_interaction(self, a: Any, b: Any) -> Any:
+    def rwa_parametric_interaction(self, a: Any, b: Any, p: Any) -> Any:
         """RWA-retained parametric structure; defaults to the full form."""
-        return self.parametric_interaction(a, b)
+        return self.parametric_interaction(a, b, p)
 
     def parametric_operator(self, chip: Any) -> Any | None:
         """Compile the parametric structure for *chip*'s resolved RWA policy.
@@ -544,17 +561,23 @@ class CouplingModel(BaseCoupling):
         the coupling is chip-resolved (same contract as
         :meth:`interaction_hamiltonian`).
         """
-        from quchip.declarative.expr import compile_expr
-
         a_ops, b_ops = self._endpoint_ops()
+        p = _symbolic_parameters(self)
         rwa = chip.resolve_rwa(self)
-        expr = self.rwa_parametric_interaction(a_ops, b_ops) if rwa else self.parametric_interaction(a_ops, b_ops)
+        expr = (
+            self.rwa_parametric_interaction(a_ops, b_ops, p)
+            if rwa
+            else self.parametric_interaction(a_ops, b_ops, p)
+        )
         if expr is None:
             return None
         self._check_endpoint_order(expr, "rwa_parametric_interaction" if rwa else "parametric_interaction")
-        from quchip.backend import get_default_backend
-
-        return compile_expr(expr, self._endpoint_lookup(), get_default_backend())
+        return materialize_expr(
+            expr,
+            chip.backend,
+            bindings=_parameter_bindings(self),
+            op_lookup=self._endpoint_lookup(),
+        )
 
     # --- Compilation ---
 
@@ -590,7 +613,7 @@ class CouplingModel(BaseCoupling):
     def _check_endpoint_order(self, expr: Any, method_name: str) -> None:
         """Reject a two-endpoint expression whose labels are not in ``(a, b)`` order.
 
-        :func:`~quchip.declarative.expr.compile_expr`'s tensor branch
+        :func:`~quchip.declarative.expr.materialize_expr`'s tensor branch
         preserves the expression tree's argument order into the backend
         ``tensor()`` call, and the chip and engine embed the compiled
         two-body operator positionally against
@@ -611,15 +634,12 @@ class CouplingModel(BaseCoupling):
             )
 
     def interaction_hamiltonian(self) -> Any:
-        """Compile the full interaction expression for the default backend."""
-        from quchip.backend import get_default_backend
-        from quchip.declarative.expr import compile_expr
+        """Return the authored symbolic interaction Hamiltonian."""
 
-        backend = get_default_backend()
         a_ops, b_ops = self._endpoint_ops()
-        expr = self.interaction(a_ops, b_ops)
+        expr = self.interaction(a_ops, b_ops, _symbolic_parameters(self))
         self._check_endpoint_order(expr, "interaction")
-        return compile_expr(expr, self._endpoint_lookup(), backend)
+        return expr.with_bindings(_parameter_bindings(self))
 
     @classmethod
     def from_dict(cls, d: dict[str, Any], device_a: Any, device_b: Any) -> "CouplingModel":
@@ -654,8 +674,6 @@ class CouplingModel(BaseCoupling):
         RWA, so a malformed RWA override cannot skip the check the full
         form passed.
         """
-        from quchip.declarative.expr import PhysicsExpr
-
         if not isinstance(expr, PhysicsExpr) or len(expr.dynamic_sources) != 1:
             raise ValueError(
                 f"{type(self).__name__}.{method_name}() must return an expression containing "
@@ -677,24 +695,29 @@ class CouplingModel(BaseCoupling):
             One ``(static_operator, scalar_modulation)`` pair when
             :meth:`time_dependent` returns an expression, else an empty list.
         """
-        from quchip.declarative.expr import compile_expr
-
         a_ops, b_ops = self._endpoint_ops()
-        expr = self.time_dependent(a_ops, b_ops)
+        p = _symbolic_parameters(self)
+        expr = self.time_dependent(a_ops, b_ops, p)
         if expr is None:
             return []
         self._validate_dynamic_expr(expr, "time_dependent")
         method_name = "time_dependent"
         if chip.resolve_rwa(self):
-            expr = self.rwa_time_dependent(a_ops, b_ops)
+            expr = self.rwa_time_dependent(a_ops, b_ops, p)
             self._validate_dynamic_expr(expr, "rwa_time_dependent")
             method_name = "rwa_time_dependent"
         self._check_endpoint_order(expr, method_name)
-        from quchip.backend import get_default_backend
         from quchip.engine.ir import as_scalar_modulation
 
         source = expr.dynamic_sources[0].source
         mod_signal = as_scalar_modulation(source, owner=type(self).__name__)
         static_expr = expr.without_dynamic_sources()
-        backend = get_default_backend()
-        return [(compile_expr(static_expr, self._endpoint_lookup(), backend), mod_signal)]
+        return [(
+            materialize_expr(
+                static_expr,
+                chip.backend,
+                bindings=_parameter_bindings(self),
+                op_lookup=self._endpoint_lookup(),
+            ),
+            mod_signal,
+        )]

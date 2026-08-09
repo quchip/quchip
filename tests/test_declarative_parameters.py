@@ -6,6 +6,7 @@ import jax.tree_util as jtu
 import pytest
 
 from quchip import DeviceModel, Scalar, parameter
+from quchip.declarative.parameters import UNBOUND
 
 
 class ToyDevice(DeviceModel):
@@ -13,8 +14,8 @@ class ToyDevice(DeviceModel):
     detuning: Scalar = parameter(default=0.0)
     approximation = None
 
-    def local_hamiltonian(self, op):
-        return (self.freq + self.detuning) * op.n
+    def local_hamiltonian(self, op, p):
+        return (p.freq + p.detuning) * op.n
 
 
 def test_parameter_fields_generate_constructor_and_attributes():
@@ -24,6 +25,15 @@ def test_parameter_fields_generate_constructor_and_attributes():
     assert dev.detuning == 0.0
     assert dev.levels == 3
     assert dev.label == "q"
+
+
+def test_unbound_construction_keeps_symbolic_hamiltonian_and_accepts_values_at_materialization():
+    dev = ToyDevice(levels=3, label="q")
+    assert dev.freq is UNBOUND
+    hamiltonian = dev.hamiltonian()
+    assert hamiltonian.parameter_paths() == ("q.freq", "q.detuning")
+    matrix = hamiltonian.matrix({"q.freq": 5.0})
+    assert matrix.shape == (3, 3)
 
 
 def test_positive_parameter_validation_uses_concrete_only_path():

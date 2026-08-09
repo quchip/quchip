@@ -29,6 +29,7 @@ from quchip.chip.states import _DEFAULT_LEVEL_SYMBOLS
 from quchip.control.drive import BaseDrive
 from quchip.control.equipment import ControlEquipment
 from quchip.control.signal import Crosstalk, SignalTransform
+from quchip.declarative.expr import materialize_expr
 from quchip.declarative.parameters import validate_sign
 from quchip.devices.base import BaseDevice, _validate_noise_params
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
@@ -250,13 +251,14 @@ class Chip:
         with _backend_context(backend):
             H: Operator | None = None
             for i, dev in enumerate(self._devices):
-                h_emb = backend.embed(dev.hamiltonian(), i, self._dims)
+                h_local = materialize_expr(dev.hamiltonian(), backend)
+                h_emb = backend.embed(h_local, i, self._dims)
                 H = h_emb if H is None else H + h_emb
 
             for coupling in self._couplings:
                 idx_a = self._label_to_index[coupling.device_a_label]
                 idx_b = self._label_to_index[coupling.device_b_label]
-                h_int = coupling.interaction_hamiltonian()
+                h_int = materialize_expr(coupling.interaction_hamiltonian(), backend)
                 if self.resolve_rwa(coupling):
                     rwa_dims = (self._devices[idx_a].levels, self._devices[idx_b].levels)
                     rwa_labels = (coupling.device_a_label, coupling.device_b_label)

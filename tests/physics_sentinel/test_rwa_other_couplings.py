@@ -115,8 +115,8 @@ class _BlueCoupling(CouplingModel):
 
     g: Scalar = parameter(unit="GHz")
 
-    def interaction(self, a, b):
-        return self.g * (a.x * b.x)
+    def interaction(self, a, b, p):
+        return p.g * (a.x * b.x)
 
     def rwa_keeps_band(self, delta_a: int, delta_b: int) -> bool:
         return abs(delta_a + delta_b) == 2 or (delta_a, delta_b) == (0, 0)
