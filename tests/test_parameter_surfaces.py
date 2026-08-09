@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from quchip import Capacitive, ChargeDrive, Chip, DuffingTransmon, Gaussian, QuantumSequence, Resonator
@@ -56,6 +57,24 @@ def test_sequence_parameters_rebind_chip_and_pulse_values_directly() -> None:
     assert rebound.parameters["q.freq"] == 5.1
     assert rebound.parameters["pulse.0.amplitude"] == 0.04
     assert rebound.settings["entries"] == ("PulseEntry",)
+
+
+def test_sequence_hamiltonian_is_the_engine_result_view() -> None:
+    chip = _chip()
+    drive = ChargeDrive(chip["q"], label="xy")
+    chip.wire(drive)
+    sequence = QuantumSequence(chip)
+    sequence.schedule(
+        drive,
+        envelope=Gaussian(duration=20.0, amplitude=0.02, sigmas=3.0),
+        freq=5.0,
+    )
+
+    result = sequence.engine_result()
+    np.testing.assert_allclose(
+        sequence.hamiltonian().matrix(t=10.0, backend=chip.backend),
+        result.matrix(t=10.0),
+    )
 
 
 def test_chip_with_params_is_differentiable_on_dynamiqs() -> None:

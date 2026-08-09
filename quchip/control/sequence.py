@@ -54,16 +54,18 @@ from quchip.control.batch import (
 from quchip.control.drive import BaseDrive, ChargeDrive, FluxDrive, PhaseDrive
 from quchip.control.envelopes import BaseEnvelope
 from quchip.devices.base import BaseDevice
-from quchip.engine.ir import DriveOp, HamiltonianTemplate
+from quchip.engine.ir import DriveOp, EngineResult, HamiltonianTemplate
+from quchip.engine.stage1_frames import resolve_frame
+from quchip.engine.stage2_assembly import (
+    build_engine_result,
+    compile_hamiltonian_template,
+    instantiate_engine_result,
+)
 from quchip.engine.stage4_problem import (
     build_solve_batch_from_results,
     build_solve_problem,
     prepare_solve_problem_context,
     validate_drive_ops_window,
-)
-from quchip.engine.stage2_assembly import (
-    compile_hamiltonian_template,
-    instantiate_engine_result,
 )
 from quchip.utils.jax_utils import maybe_concrete_scalar
 from quchip.utils.jax_utils import array_namespace, is_jax_namespace
@@ -73,6 +75,7 @@ from quchip.utils.labeling import resolve_label
 
 if TYPE_CHECKING:
     from quchip.chip.transformations.active_patch import ActivePatchResult
+    from quchip.declarative.expr import PhysicsExpr
     from quchip.engine.ir import SolveBatch, SolveProblem
     from quchip.results.results import SimulationBatchResult, SimulationResult
 
@@ -800,6 +803,19 @@ class QuantumSequence:
             e_ops=e_ops,
             initial_state=resolved_state,
         )
+
+    def engine_result(self) -> EngineResult:
+        """Build the backend-neutral Hamiltonian and noise description."""
+        drive_ops = self._materialize_drive_ops()
+        return build_engine_result(
+            self._chip,
+            drive_ops,
+            resolved_frame=resolve_frame(self._chip, self._chip.frame),
+        )
+
+    def hamiltonian(self) -> PhysicsExpr:
+        """Return this sequence's canonical time-dependent Hamiltonian."""
+        return self.engine_result().hamiltonian()
 
     def vary(self, field: str, values: Any, *, name: str | None = None) -> BatchAxis:
         """Create a :class:`BatchAxis` over a sequence-level field.
