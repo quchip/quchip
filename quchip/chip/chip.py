@@ -1490,21 +1490,17 @@ class Chip:
         )
 
     def solve_many(self, batch_or_problems: Any, *, progress: bool = True) -> "SimulationBatchResult":
-        """Solve a :class:`SolveBatch`, :class:`ProblemBatch`, or list of problems.
+        """Solve a :class:`SolveBatch` or list of problems.
 
         Chip-level validation only enforces what needs ``self`` (every input
         was built for *this* chip); the input-shape dispatch and batching are
         delegated to :func:`quchip.engine.solve_many`, which owns the single
-        ProblemBatch / SolveBatch / list ladder.
+        SolveBatch / list dispatch.
         """
-        from quchip.control.batch import ProblemBatch
         from quchip.engine import solve_many
         from quchip.engine.ir import SolveBatch
 
-        if isinstance(batch_or_problems, ProblemBatch):
-            if batch_or_problems.batch.chip is not self:
-                raise ValueError("ProblemBatch was built for a different chip.")
-        elif isinstance(batch_or_problems, SolveBatch):
+        if isinstance(batch_or_problems, SolveBatch):
             if batch_or_problems.chip is not self:
                 raise ValueError("SolveBatch was built for a different chip.")
         else:

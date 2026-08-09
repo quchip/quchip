@@ -39,17 +39,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from quchip.control.batch import ProblemBatch
     from quchip.results.results import SimulationBatchResult, SimulationResult
 
 from quchip.engine.ir import (
-    BatchedEngineResult,
     CanonicalOperator,
     Carrier,
     DroppedTerm,
     DynamicTerm,
     EngineResult,
     ScalarModulation,
+    SolveBinding,
     SolveBatch,
     SolveProblem,
     StaticTerm,
@@ -62,13 +61,13 @@ __all__ = [
     "solve_many",
     "solve_batch",
     "build_engine_result",
-    "BatchedEngineResult",
     "CanonicalOperator",
     "Carrier",
     "DroppedTerm",
     "DynamicTerm",
     "EngineResult",
     "ScalarModulation",
+    "SolveBinding",
     "SolveBatch",
     "SolveProblem",
     "StaticTerm",
@@ -357,29 +356,22 @@ def solve_batch(batch: "SolveBatch", *, progress: bool = True) -> "SimulationBat
 
     backend = batch.chip.backend
     solver_results = backend.solve_batch(batch, progress=progress)
-    return SimulationBatchResult(wrap_solver_results_from_batch(solver_results, batch, backend))
+    result = SimulationBatchResult(wrap_solver_results_from_batch(solver_results, batch, backend))
+    return result.with_sweep_metadata(shape=batch.shape, axes=batch.axes) if batch.axes else result
 
 
 def solve_many(
-    batch_or_problems: "ProblemBatch | SolveBatch | list[SolveProblem]",
+    batch_or_problems: "SolveBatch | list[SolveProblem]",
     *,
     progress: bool = True,
 ) -> "SimulationBatchResult":
     """Batch-dispatch typed solve requests that share one chip configuration.
 
-    Accepts a :class:`SolveBatch`, a :class:`~quchip.control.batch.ProblemBatch`,
-    or a flat list of :class:`SolveProblem` objects. The batched paths are
+    Accepts a :class:`SolveBatch` or a flat list of :class:`SolveProblem`
+    objects. The batched path is
     preferred: backends convert shared operators exactly once and stitch
     per-element coefficients into one parallel solve.
     """
-    from quchip.control.batch import ProblemBatch
-
-    if isinstance(batch_or_problems, ProblemBatch):
-        return solve_batch(batch_or_problems.batch, progress=progress).with_sweep_metadata(
-            shape=batch_or_problems.shape,
-            axes=batch_or_problems.axes,
-        )
-
     if isinstance(batch_or_problems, SolveBatch):
         return solve_batch(batch_or_problems, progress=progress)
 

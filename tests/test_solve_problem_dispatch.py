@@ -410,8 +410,8 @@ class TestQuantumSequenceBuildProblem:
         assert len(problems) == 2
         # Element-level EngineResults are materialised on demand; identity equality
         # of static_terms holds against the SolveBatch and across elements, not just within one.
-        batch = problems.batch
-        assert batch.engine_result.static_terms is problems[0].engine_result.static_terms
+        batch = problems
+        assert batch.problem.engine_result.static_terms is problems[0].engine_result.static_terms
         assert problems[0].engine_result.static_terms is problems[1].engine_result.static_terms
         for slot in range(len(problems[0].engine_result.dynamic_terms)):
             assert (

@@ -309,29 +309,30 @@ class TestBatchMetadataAggregation:
         assert metadata["spectral_bound_ghz"] == pytest.approx(1.0)
 
 
-class TestBatchedDroppedTermsRetention:
-    """BatchedEngineResult.element() restores each element's own dropped_terms."""
+class TestSolveBindingsDroppedTermsRetention:
+    """SolveBatch.element() restores each binding's dropped terms."""
 
     def test_element_restores_dropped_terms(self):
         """dropped_terms set on a single-element batch reappear on the reconstructed element."""
-        from quchip.engine.ir import BatchedEngineResult, DroppedTerm
+        from quchip.engine.ir import DroppedTerm, EngineResult, SolveBatch, SolveBinding, SolveProblem
 
         record = DroppedTerm(source="d0", operator="drive band w=+0 on q0", reason="test", band_weights=(0,))
-        batched = BatchedEngineResult(
-            batch_size=1,
-            static_terms=(),
-            dynamic_operators=(),
-            dynamic_origins=(),
-            dynamic_tags=(),
-            dynamic_signals=(),
-            dropped_terms_by_element=((record,),),
+        problem = SolveProblem(
+            chip=None,
+            engine_result=EngineResult(static_terms=(), dynamic_terms=()),
+            initial_state=None,
+            tlist=(0.0, 1.0),
         )
-        element = batched.element(0)
-        assert element.dropped_terms == (record,)
+        batch = SolveBatch(
+            problem=problem,
+            bindings=(SolveBinding(None, (), dropped_terms=(record,)),),
+        )
+        element = batch.element(0)
+        assert element.engine_result.dropped_terms == (record,)
 
     def test_element_restores_its_own_frequency_not_another_elements(self):
         """Two elements with different dropped-term frequencies each restore their own, not the reference's."""
-        from quchip.engine.ir import BatchedEngineResult, DroppedTerm
+        from quchip.engine.ir import DroppedTerm, EngineResult, SolveBatch, SolveBinding, SolveProblem
 
         record_a = DroppedTerm(
             source="d0", operator="drive band w=+0 on q0", reason="test", band_weights=(0,), frequency=5.0
@@ -339,30 +340,18 @@ class TestBatchedDroppedTermsRetention:
         record_b = DroppedTerm(
             source="d0", operator="drive band w=+0 on q0", reason="test", band_weights=(0,), frequency=6.0
         )
-        batched = BatchedEngineResult(
-            batch_size=2,
-            static_terms=(),
-            dynamic_operators=(),
-            dynamic_origins=(),
-            dynamic_tags=(),
-            dynamic_signals=(),
-            dropped_terms_by_element=((record_a,), (record_b,)),
+        problem = SolveProblem(
+            chip=None,
+            engine_result=EngineResult(static_terms=(), dynamic_terms=()),
+            initial_state=None,
+            tlist=(0.0, 1.0),
         )
-        assert batched.element(0).dropped_terms[0].frequency == pytest.approx(5.0)
-        assert batched.element(1).dropped_terms[0].frequency == pytest.approx(6.0)
-
-    def test_length_mismatch_raises(self):
-        """dropped_terms_by_element whose length disagrees with batch_size raises ValueError."""
-        from quchip.engine.ir import BatchedEngineResult, DroppedTerm
-
-        record = DroppedTerm(source="d0", operator="drive band w=+0 on q0", reason="test", band_weights=(0,))
-        with pytest.raises(ValueError, match="dropped_terms_by_element"):
-            BatchedEngineResult(
-                batch_size=2,
-                static_terms=(),
-                dynamic_operators=(),
-                dynamic_origins=(),
-                dynamic_tags=(),
-                dynamic_signals=(),
-                dropped_terms_by_element=((record,),),
-            )
+        batch = SolveBatch(
+            problem=problem,
+            bindings=(
+                SolveBinding(None, (), dropped_terms=(record_a,)),
+                SolveBinding(None, (), dropped_terms=(record_b,)),
+            ),
+        )
+        assert batch.element(0).engine_result.dropped_terms[0].frequency == pytest.approx(5.0)
+        assert batch.element(1).engine_result.dropped_terms[0].frequency == pytest.approx(6.0)

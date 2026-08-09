@@ -18,7 +18,7 @@ Collapse operators enter the standard Lindblad master equation
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -27,10 +27,10 @@ from quchip.backend import _backend_context
 from quchip.declarative.expr import materialize_expr
 from quchip.engine.bands import embed_on_support
 from quchip.engine.ir import (
-    BatchedEngineResult,
     DriveOp,
     EngineResult,
     ScalarModulation,
+    SolveBinding,
     SolveBatch,
     SolveProblem,
 )
@@ -341,18 +341,10 @@ def build_solve_batch_from_results(
     # (operator payload, origin, tag) and is a ScalarModulation; collect
     # its signal. Crosstalk rebuilds operators every instantiation, so
     # equality is by canonical fingerprint, not by object identity.
-    dynamic_operators: list[Any] = []
-    dynamic_origins: list[Any] = []
-    dynamic_tags: list[str | None] = []
-    dynamic_signals: list[list[ScalarModulation]] = []
     for slot in range(n_dyn):
         ref_term = ref.dynamic_terms[slot]
         shared_operator = ref_term.operator
         canonical_key = shared_operator.fingerprint()
-        dynamic_origins.append(ref_term.origin)
-        dynamic_tags.append(ref_term.tag)
-
-        slot_signals: list[ScalarModulation] = []
         for idx, result in enumerate(engine_results):
             term = result.dynamic_terms[slot]
             where = f"slot {slot}, element {idx}"
@@ -377,23 +369,6 @@ def build_solve_batch_from_results(
                     "batched IR requires equivalent operator payloads across the batch."
                 )
 
-            slot_signals.append(term.time_dependence)
-
-        dynamic_operators.append(shared_operator)
-        dynamic_signals.append(slot_signals)
-
-    batched = BatchedEngineResult(
-        batch_size=batch_size,
-        static_terms=ref.static_terms,
-        dynamic_operators=tuple(dynamic_operators),
-        dynamic_origins=tuple(dynamic_origins),
-        dynamic_tags=tuple(dynamic_tags),
-        dynamic_signals=tuple(tuple(sigs) for sigs in dynamic_signals),
-        dims=ref.dims,
-        metadata=_aggregate_batch_metadata(engine_results),
-        dropped_terms_by_element=tuple(result.dropped_terms for result in engine_results),
-    )
-
     if initial_states is None:
         default = context.default_initial_state.materialize()
         states: tuple[Any, ...] = tuple(default for _ in range(batch_size))
@@ -407,10 +382,11 @@ def build_solve_batch_from_results(
             (default.materialize() if s is None else s) for s in initial_states
         )
 
-    return SolveBatch(
+    shared_metadata = _aggregate_batch_metadata(engine_results)
+    problem = SolveProblem(
         chip=context.chip,
-        engine_result=batched,
-        initial_states=states,
+        engine_result=replace(ref, metadata=shared_metadata),
+        initial_state=states[0],
         tlist=context.tlist,
         c_ops=context.c_ops,
         e_ops=context.e_ops,
@@ -419,6 +395,18 @@ def build_solve_batch_from_results(
         solver=context.solver,
         options=context.options,
     )
+    bindings = tuple(
+        SolveBinding(
+            initial_state=state,
+            dynamic_signals=tuple(
+                term.time_dependence for term in result.dynamic_terms
+            ),
+            metadata=dict(result.metadata),
+            dropped_terms=result.dropped_terms,
+        )
+        for state, result in zip(states, engine_results)
+    )
+    return SolveBatch(problem=problem, bindings=bindings)
 
 
 def build_solve_problem(
