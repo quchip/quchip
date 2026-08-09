@@ -483,7 +483,7 @@ class TestCacheInvalidation:
         chip.set_frame("rotating")
         H_rotating = chip.hamiltonian()
 
-        assert (H_lab - H_rotating).norm() < 1e-12
+        np.testing.assert_allclose(H_lab.matrix(), H_rotating.matrix(), atol=1e-12)
 
     def test_chi_removed(self, dispersive_system) -> None:
         """chip.chi() is not part of the public API."""

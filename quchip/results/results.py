@@ -708,7 +708,7 @@ def wrap_solver_results_from_batch(
     """Wrap backend results from a batched solve that shares one :class:`SolveBatch` context.
 
     Avoids rematerializing a per-element :class:`~quchip.engine.ir.SolveProblem`
-    (and its per-element :class:`~quchip.engine.ir.HamiltonianDescription`)
+    (and its per-element :class:`~quchip.engine.ir.EngineResult`)
     just to read the shared fields.
     """
     chip = batch.chip

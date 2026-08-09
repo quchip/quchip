@@ -15,6 +15,8 @@ def _chip(coupling_cls, **kw):
 
 
 def _arr(op):
+    if hasattr(op, "matrix"):
+        return np.asarray(op.matrix())
     return np.asarray(op.full() if hasattr(op, "full") else op)
 
 

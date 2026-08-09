@@ -29,7 +29,7 @@ from quchip.chip.states import _DEFAULT_LEVEL_SYMBOLS
 from quchip.control.drive import BaseDrive
 from quchip.control.equipment import ControlEquipment
 from quchip.control.signal import Crosstalk, SignalTransform
-from quchip.declarative.expr import materialize_expr
+from quchip.declarative.expr import PhysicsExpr, filter_expr_bands, materialize_expr
 from quchip.declarative.parameters import validate_sign
 from quchip.devices.base import BaseDevice, _validate_noise_params
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
@@ -66,6 +66,20 @@ def _same_concrete_value(a: Any, b: Any) -> bool:
     concrete_a = maybe_concrete_scalar(a)
     concrete_b = maybe_concrete_scalar(b)
     return concrete_a is not None and concrete_b is not None and concrete_a == concrete_b
+
+
+def _as_physics_expr(
+    authored: Any,
+    backend: Backend,
+    *,
+    labels: tuple[str, ...],
+    dims: tuple[int, ...],
+    name: str,
+) -> PhysicsExpr:
+    """Return an authored expression or wrap a native matrix contribution."""
+    if isinstance(authored, PhysicsExpr):
+        return authored
+    return PhysicsExpr.from_matrix(backend.to_array(authored), labels=labels, dims=dims, name=name)
 
 
 class Chip:
@@ -199,7 +213,7 @@ class Chip:
         # the backend kind + per-device/per-coupling ``state_version`` so any
         # parameter or level change invalidates it. Never cached under a JAX
         # trace (the ``contains_tracer`` guard), so differentiability is intact.
-        self._hamiltonian_cache: tuple[Any, Operator] | None = None
+        self._hamiltonian_cache: tuple[Any, PhysicsExpr] | None = None
 
         if frame != "lab":
             self.set_frame(frame)
@@ -208,7 +222,7 @@ class Chip:
     # Hamiltonian
     # ------------------------------------------------------------------
 
-    def hamiltonian(self) -> Operator:
+    def hamiltonian(self) -> PhysicsExpr:
         """Lab-frame static Hamiltonian.
 
         Embeds every device Hamiltonian into the full tensor space and
@@ -234,8 +248,9 @@ class Chip:
 
         Returns
         -------
-        Operator
-            Backend-native operator on ``⨂_d H_d``.
+        PhysicsExpr
+            Symbolic Hamiltonian on ``⨂_d H_d``. Call ``.matrix()`` for a
+            dense numerical view using current bindings.
         """
         backend = self.backend
         signature = (
@@ -249,26 +264,52 @@ class Chip:
             return cache[1]
 
         with _backend_context(backend):
-            H: Operator | None = None
+            labels = tuple(device.label for device in self._devices)
+            H: PhysicsExpr | None = None
             for i, dev in enumerate(self._devices):
-                h_local = materialize_expr(dev.hamiltonian(), backend)
-                h_emb = backend.embed(h_local, i, self._dims)
+                h_local = _as_physics_expr(
+                    dev.hamiltonian(),
+                    backend,
+                    labels=(dev.label,),
+                    dims=(dev.levels,),
+                    name=rf"\hat H_{{{dev.label}}}",
+                )
+                h_emb = h_local.embed(labels, self._dims)
                 H = h_emb if H is None else H + h_emb
 
             for coupling in self._couplings:
                 idx_a = self._label_to_index[coupling.device_a_label]
                 idx_b = self._label_to_index[coupling.device_b_label]
-                h_int = materialize_expr(coupling.interaction_hamiltonian(), backend)
+                local_labels = (coupling.device_a_label, coupling.device_b_label)
+                local_dims = (self._devices[idx_a].levels, self._devices[idx_b].levels)
+                h_int = _as_physics_expr(
+                    coupling.interaction_hamiltonian(),
+                    backend,
+                    labels=local_labels,
+                    dims=local_dims,
+                    name=rf"\hat H_{{{coupling.label}}}",
+                )
                 if self.resolve_rwa(coupling):
-                    rwa_dims = (self._devices[idx_a].levels, self._devices[idx_b].levels)
-                    rwa_labels = (coupling.device_a_label, coupling.device_b_label)
-                    masked = apply_rwa_mask(
-                        h_int,
-                        dims=rwa_dims,
-                        labels=rwa_labels,
-                        keeps_band=coupling.rwa_keeps_band,
-                        backend=backend,
-                    )
+                    try:
+                        masked = filter_expr_bands(h_int, coupling.rwa_keeps_band)
+                    except TypeError:
+                        numeric = materialize_expr(h_int, backend)
+                        masked_numeric = apply_rwa_mask(
+                            numeric,
+                            dims=local_dims,
+                            labels=local_labels,
+                            keeps_band=coupling.rwa_keeps_band,
+                            backend=backend,
+                        )
+                        if masked_numeric is None:
+                            masked = None
+                        else:
+                            masked = PhysicsExpr.from_matrix(
+                                backend.to_array(masked_numeric),
+                                labels=local_labels,
+                                dims=local_dims,
+                                name=rf"\hat H^{{\mathrm{{RWA}}}}_{{{coupling.label}}}",
+                            )
                     if masked is None:
                         # No band survived rwa_keeps_band. An interaction that was
                         # already exactly zero has no band to reject in the first
@@ -277,9 +318,9 @@ class Chip:
                         # nonzero interaction every one of whose populated bands the
                         # predicate rejected (a policy surprise worth a warning).
                         has_any_band = apply_rwa_mask(
-                            h_int,
-                            dims=rwa_dims,
-                            labels=rwa_labels,
+                            materialize_expr(h_int, backend),
+                            dims=local_dims,
+                            labels=local_labels,
                             keeps_band=lambda *_: True,
                             backend=backend,
                         ) is not None
@@ -293,12 +334,12 @@ class Chip:
                             )
                         continue
                     h_int = masked
-                H = H + backend.embed_two_body(h_int, idx_a, idx_b, self._dims)
+                H = H + h_int.embed(labels, self._dims)
 
-        # Only memoize concrete operators: under jax.jit/grad/vmap the device
-        # params are tracers, so H carries tracers and must not be cached.
-        if not contains_tracer(H):
+        # Do not cache expressions whose values belong to a JAX trace.
+        if not contains_tracer(H.numeric_values()):
             self._hamiltonian_cache = (signature, H)
+        assert H is not None
         return H
 
     # ------------------------------------------------------------------
@@ -1333,7 +1374,7 @@ class Chip:
         ``problems[index]`` list position (used by :meth:`solve_many`);
         otherwise it is phrased for a single problem (used by :meth:`solve`).
         """
-        if not hasattr(problem, "hamiltonian") or not hasattr(problem, "chip"):
+        if not hasattr(problem, "engine_result") or not hasattr(problem, "chip"):
             type_name = type(problem).__name__
             if index is None:
                 raise TypeError(f"Expected SolveProblem, got {type_name}")

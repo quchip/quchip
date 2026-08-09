@@ -37,7 +37,7 @@ class TestKerrCavityHamiltonian:
         cav = KerrCavity(freq=omega, kerr=K, levels=levels, label="cav")
         from quchip.backend import get_default_backend
         backend = get_default_backend()
-        evals = np.sort(np.real(np.array(backend.eigenenergies(cav.hamiltonian()))))
+        evals = np.sort(np.linalg.eigvalsh(cav.hamiltonian().matrix(backend=backend)).real)
         expected = np.array([omega * n - K * n * (n - 1) for n in range(levels)])
         expected_sorted = np.sort(expected)
         npt.assert_allclose(evals, expected_sorted, atol=1e-10)
@@ -48,15 +48,14 @@ class TestKerrCavityHamiltonian:
         cav = KerrCavity(freq=omega, kerr=0.0, levels=6, label="cav")
         from quchip.backend import get_default_backend
         backend = get_default_backend()
-        evals = np.sort(np.real(np.array(backend.eigenenergies(cav.hamiltonian()))))
+        evals = np.sort(np.linalg.eigvalsh(cav.hamiltonian().matrix(backend=backend)).real)
         expected = np.array([omega * n for n in range(6)])
         npt.assert_allclose(evals, expected, atol=1e-10)
 
     def test_hamiltonian_is_hermitian(self):
         """H must be Hermitian."""
         cav = KerrCavity(freq=4.0, kerr=0.5, levels=10, label="cav")
-        H = cav.hamiltonian()
-        H_arr = np.array(H.full()) if hasattr(H, "full") else np.asarray(H)
+        H_arr = np.asarray(cav.hamiltonian().matrix())
         npt.assert_allclose(H_arr, H_arr.conj().T, atol=1e-12)
 
     def test_repr(self):

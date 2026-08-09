@@ -1,4 +1,4 @@
-"""Engine pipeline: ``Chip → ResolvedFrame → HamiltonianDescription → SolveProblem``.
+"""Engine pipeline: ``Chip → ResolvedFrame → EngineResult → SolveProblem``.
 
 The engine is the physics-to-solver layer. It owns no solvers and no
 backend-specific types; it produces structured, backend-agnostic
@@ -13,7 +13,7 @@ Pipeline
   (per-device frame frequencies, demodulation frequencies, and the
   frame mode).
 * **Stage 2** (:mod:`quchip.engine.stage2_assembly`) — assemble a
-  :class:`~quchip.engine.ir.HamiltonianDescription` with static terms,
+  :class:`~quchip.engine.ir.EngineResult` with static terms,
   dynamic terms, and their :class:`~quchip.engine.ir.ScalarModulation`
   signal programs. Applies 2π, rotating-frame subtraction, RWA band
   decomposition (Jaynes & Cummings 1963; Gambetta et al., *PRA* **74**,
@@ -43,12 +43,12 @@ if TYPE_CHECKING:
     from quchip.results.results import SimulationBatchResult, SimulationResult
 
 from quchip.engine.ir import (
-    BatchedHamiltonianDescription,
+    BatchedEngineResult,
     CanonicalOperator,
     Carrier,
     DroppedTerm,
     DynamicTerm,
-    HamiltonianDescription,
+    EngineResult,
     ScalarModulation,
     SolveBatch,
     SolveProblem,
@@ -61,13 +61,13 @@ __all__ = [
     "solve_problem",
     "solve_many",
     "solve_batch",
-    "build_hamiltonian_description",
-    "BatchedHamiltonianDescription",
+    "build_engine_result",
+    "BatchedEngineResult",
     "CanonicalOperator",
     "Carrier",
     "DroppedTerm",
     "DynamicTerm",
-    "HamiltonianDescription",
+    "EngineResult",
     "ScalarModulation",
     "SolveBatch",
     "SolveProblem",
@@ -158,8 +158,8 @@ def build_problem(
     )
 
 
-def build_hamiltonian_description(chip: Any, drive_ops: list, **kwargs: Any) -> HamiltonianDescription:
-    """Build a :class:`HamiltonianDescription` (stages 1-2 only).
+def build_engine_result(chip: Any, drive_ops: list, **kwargs: Any) -> EngineResult:
+    """Build a :class:`EngineResult` (stages 1-2 only).
 
     Parameters
     ----------
@@ -169,15 +169,15 @@ def build_hamiltonian_description(chip: Any, drive_ops: list, **kwargs: Any) -> 
         Scheduled drive operations to embed as dynamic terms.
     **kwargs
         Forwarded to
-        :func:`quchip.engine.stage2_assembly.build_hamiltonian_description`
+        :func:`quchip.engine.stage2_assembly.build_engine_result`
         (notably ``resolved_frame``).
 
     Returns
     -------
-    HamiltonianDescription
+    EngineResult
         Static and dynamic terms plus dropped-term records.
     """
-    from quchip.engine.stage2_assembly import build_hamiltonian_description as _build
+    from quchip.engine.stage2_assembly import build_engine_result as _build
 
     return _build(chip, drive_ops, **kwargs)
 
@@ -390,7 +390,7 @@ def solve_many(
         return SimulationBatchResult([])
 
     for i, problem in enumerate(problems):
-        if not hasattr(problem, "hamiltonian") or not hasattr(problem, "chip"):
+        if not hasattr(problem, "engine_result") or not hasattr(problem, "chip"):
             raise TypeError(f"problems[{i}]: expected SolveProblem, got {type(problem).__name__}")
 
     chip = problems[0].chip

@@ -1,7 +1,7 @@
 """Advisory solver-hint heuristics (post-assembly metadata only).
 
 These helpers summarize an already-assembled
-:class:`~quchip.engine.ir.HamiltonianDescription` into advisory hints
+:class:`~quchip.engine.ir.EngineResult` into advisory hints
 (``max_carrier_freq_ghz``, ``spectral_bound_ghz``) that backends may
 consult to pick a conservative solver step. They live outside
 ``stage2_assembly`` because they assemble no terms and never cross the

@@ -8,6 +8,7 @@ import pytest
 from quchip import Capacitive, Chip, Coupling, DuffingTransmon, Resonator
 from quchip.backend import get_default_backend
 from quchip.chip.rwa import apply_rwa_mask
+from quchip.declarative.expr import materialize_expr
 
 
 @pytest.fixture()
@@ -117,7 +118,7 @@ class TestCouplingHamiltonian:
             backend=backend,
         )
         H_cap = apply_rwa_mask(
-            cap.interaction_hamiltonian(),
+            materialize_expr(cap.interaction_hamiltonian(), backend),
             dims=(q0.levels, res.levels),
             labels=(q0.label, res.label),
             keeps_band=cap.rwa_keeps_band,

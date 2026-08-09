@@ -19,6 +19,7 @@ from quchip.backend.protocol import Backend
 from quchip.chip.chip import Chip
 from quchip.utils.labeling import reset_label_counters
 from quchip.devices.transmon.duffing import DuffingTransmon
+from quchip.declarative.expr import materialize_expr
 from quchip.devices.resonator import Resonator
 from quchip.chip.couplings import Capacitive
 from quchip.chip.rwa import apply_rwa_mask
@@ -57,7 +58,7 @@ class TestDuffingTransmon:
         """Eigenvalues match E_n = ω·n + (α/2)·n·(n−1)."""
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=4)
         H = q.hamiltonian()
-        evals = backend.eigenenergies(H)
+        evals = np.linalg.eigvalsh(H.matrix(backend=backend))
         # levels=4, freq=5.0, alpha=-0.25: E_0=0.0, E_1=5.0,
         # E_2=10.0+(-0.125)*2=9.75, E_3=15.0+(-0.125)*6=14.25
         expected = [0.0, 5.0, 9.75, 14.25]
@@ -99,7 +100,7 @@ class TestResonator:
         """Eigenvalues match E_n = ω·n for freq=6.0, levels=5."""
         r = Resonator(freq=6.0, levels=5)
         H = r.hamiltonian()
-        evals = backend.eigenenergies(H)
+        evals = np.linalg.eigvalsh(H.matrix(backend=backend))
         expected = [0.0, 6.0, 12.0, 18.0, 24.0]
         np.testing.assert_allclose(evals, expected, atol=1e-10)
 
@@ -149,7 +150,7 @@ class TestCapacitive:
         r = Resonator(freq=6.0, levels=5)
         c = Capacitive(q, r, g=g, rwa=True)
         H_int = apply_rwa_mask(
-            c.interaction_hamiltonian(),
+            materialize_expr(c.interaction_hamiltonian(), backend),
             dims=(q.levels, r.levels),
             labels=(q.label, r.label),
             keeps_band=c.rwa_keeps_band,
@@ -175,7 +176,7 @@ class TestCapacitive:
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3)
         r = Resonator(freq=6.0, levels=5)
         c = Capacitive(q, r, g=g, rwa=False)
-        H_int = c.interaction_hamiltonian()
+        H_int = materialize_expr(c.interaction_hamiltonian(), backend)
 
         bra_00 = backend.tensor_states(backend.basis(3, 0), backend.basis(5, 0))
         ket_11 = backend.tensor_states(backend.basis(3, 1), backend.basis(5, 1))
@@ -238,7 +239,7 @@ class TestCapacitive:
 
         H_str = chip_str.hamiltonian()
         H_obj = chip_obj.hamiltonian()
-        np.testing.assert_allclose(H_str.full(), H_obj.full(), atol=0.0)
+        np.testing.assert_allclose(H_str.matrix(), H_obj.matrix(), atol=0.0)
 
     def test_accepts_mixed_string_and_object(self) -> None:
         """One label string + one device object resolves correctly."""

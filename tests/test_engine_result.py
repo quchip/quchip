@@ -10,7 +10,7 @@ from quchip.engine.ir import (
     CanonicalOperator,
     Carrier,
     DynamicTerm,
-    HamiltonianDescription,
+    EngineResult,
     ScalarModulation,
     SolveProblem,
     StaticTerm,
@@ -222,7 +222,7 @@ class TestTermTypes:
         assert term.time_dependence.signal.freq == pytest.approx(5.0)
 
     def test_hamiltonian_description_assembly(self):
-        """HamiltonianDescription assembles static/dynamic terms with dims and metadata."""
+        """EngineResult assembles static/dynamic terms with dims and metadata."""
         op = CanonicalOperator.from_dense(
             np.eye(3, dtype=complex),
             dims=(3,),
@@ -235,7 +235,7 @@ class TestTermTypes:
             time_dependence=ScalarModulation(signal=Carrier(freq=1.0, sign=-1)),
             origin="coupling",
         )
-        desc = HamiltonianDescription(
+        desc = EngineResult(
             static_terms=(static,),
             dynamic_terms=(dynamic,),
             dims=(3,),
@@ -282,7 +282,7 @@ class TestSolveProblem:
         with pytest.raises(ValueError, match="must not contain 'backend'"):
             SolveProblem(
                 chip=None,
-                hamiltonian=None,
+                engine_result=None,
                 initial_state=None,
                 tlist=None,
                 options={"backend": "something"},
@@ -292,7 +292,7 @@ class TestSolveProblem:
         """SolveProblem stores arbitrary non-'backend' options."""
         problem = SolveProblem(
             chip=None,
-            hamiltonian=None,
+            engine_result=None,
             initial_state=None,
             tlist=np.linspace(0, 100, 200),
             options={"nsteps": 5000},
@@ -301,7 +301,7 @@ class TestSolveProblem:
 
 
 class TestDroppedTerms:
-    """Surface RWA-dropped terms on HamiltonianDescription (issue #59)."""
+    """Surface RWA-dropped terms on EngineResult (issue #59)."""
 
     def test_capacitive_rwa_reports_counter_rotating_drops(self):
         """RWA on a Capacitive coupling records the dropped counter-rotating terms."""
@@ -310,14 +310,14 @@ class TestDroppedTerms:
         from quchip.devices.transmon.duffing import DuffingTransmon
         from quchip.engine.ir import DroppedTerm
         from quchip.engine.stage1_frames import resolve_frame
-        from quchip.engine.stage2_assembly import build_hamiltonian_description
+        from quchip.engine.stage2_assembly import build_engine_result
 
         q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
         q1 = DuffingTransmon(freq=5.2, anharmonicity=-0.25, levels=3, label="q1")
         cap = Capacitive(q0, q1, g=0.01, rwa=True, label="cap_q0_q1")
         chip = Chip([q0, q1], couplings=[cap], frame="rotating")
 
-        description = build_hamiltonian_description(
+        description = build_engine_result(
             chip, [], resolved_frame=resolve_frame(chip, chip.frame)
         )
 
@@ -352,7 +352,7 @@ class TestDroppedTerms:
         from quchip.chip.couplings import Capacitive
         from quchip.devices.transmon.duffing import DuffingTransmon
         from quchip.engine.stage1_frames import resolve_frame
-        from quchip.engine.stage2_assembly import build_hamiltonian_description
+        from quchip.engine.stage2_assembly import build_engine_result
 
         q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="qa")
         q1 = DuffingTransmon(freq=5.2, anharmonicity=-0.25, levels=3, label="qb")
@@ -362,7 +362,7 @@ class TestDroppedTerms:
             frame="rotating",
             rwa=False,
         )
-        description = build_hamiltonian_description(
+        description = build_engine_result(
             chip, [], resolved_frame=resolve_frame(chip, chip.frame)
         )
         assert description.dropped_terms == ()
@@ -393,7 +393,7 @@ class TestDroppedTerms:
             tlist=np.linspace(0.0, 20.0, 21), initial_state=chip.bare_state(q0=0)
         )
 
-        records = problem.hamiltonian.dropped_terms
+        records = problem.engine_result.dropped_terms
         assert {dt.band_weights for dt in records} == {(-1,), (1,)}
         for dt in records:
             assert dt.source == "d0"
@@ -424,7 +424,7 @@ class TestDroppedTerms:
         problem = sequence.build_problem(
             tlist=np.linspace(0.0, 20.0, 21), initial_state=chip.bare_state(q0=0)
         )
-        assert problem.hamiltonian.dropped_terms == ()
+        assert problem.engine_result.dropped_terms == ()
 
     def test_summary_prints_traced_values_as_placeholder(self):
         """Traced amplitudes format as 'traced' — the summary never concretizes them."""
@@ -441,7 +441,7 @@ class TestDroppedTerms:
                 source="c", operator="a·b", reason="counter-rotating under RWA",
                 band_weights=(-1, -1), amplitude=g, frequency=10.2,
             )
-            description = HamiltonianDescription(
+            description = EngineResult(
                 static_terms=(), dynamic_terms=(), dropped_terms=(record,)
             )
             seen["summary"] = description.dropped_terms_summary()

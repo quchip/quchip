@@ -7,7 +7,7 @@ Responsibilities
   solver-ready bands.
 * Collect and embed every Lindblad collapse operator contributed by
   devices, drive lines, and couplings (see :func:`_collect_c_ops`).
-* Run stage 2 (:func:`build_hamiltonian_description`) for each variant
+* Run stage 2 (:func:`build_engine_result`) for each variant
   and pack into a single :class:`SolveProblem`, or merge homogeneous
   variants into a :class:`SolveBatch` (``N`` identical skeletons with
   per-element :class:`ScalarModulation` signals).
@@ -24,17 +24,18 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from quchip.backend import _backend_context
+from quchip.declarative.expr import materialize_expr
 from quchip.engine.bands import embed_on_support
 from quchip.engine.ir import (
-    BatchedHamiltonianDescription,
+    BatchedEngineResult,
     DriveOp,
-    HamiltonianDescription,
+    EngineResult,
     ScalarModulation,
     SolveBatch,
     SolveProblem,
 )
 from quchip.engine.stage1_frames import resolve_frame
-from quchip.engine.stage2_assembly import build_hamiltonian_description
+from quchip.engine.stage2_assembly import build_engine_result
 from quchip.engine.stage3_observables import decompose_eops
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
 
@@ -100,7 +101,7 @@ def _collect_c_ops(chip: Chip) -> tuple[Any, ...]:
     backend = chip.backend
     with _backend_context(backend):
         return tuple(
-            embed_on_support(backend, c_op, support, chip.dims)
+            embed_on_support(backend, materialize_expr(c_op, backend), support, chip.dims)
             for c_op, support in chip.collapse_contributions()
         )
 
@@ -252,8 +253,8 @@ class PrematerializedState:
         return self._state
 
 
-def _aggregate_batch_metadata(descriptions: list[HamiltonianDescription]) -> dict[str, Any]:
-    """Aggregate advisory solver-hint metadata across every description in a batch.
+def _aggregate_batch_metadata(engine_results: list[EngineResult]) -> dict[str, Any]:
+    """Aggregate advisory solver-hint metadata across every engine result in a batch.
 
     Copying the reference element's metadata verbatim is unsafe once
     durations or frequencies are swept per element: each variant's own
@@ -267,19 +268,27 @@ def _aggregate_batch_metadata(descriptions: list[HamiltonianDescription]) -> dic
     from the reference element, since batching already requires a shared
     template.
     """
-    metadata = dict(descriptions[0].metadata)
+    metadata = dict(engine_results[0].metadata)
     for key in ("max_carrier_freq_ghz", "spectral_bound_ghz", "max_step_ns"):
         metadata.pop(key, None)
 
-    carrier_values = [d.metadata["max_carrier_freq_ghz"] for d in descriptions if "max_carrier_freq_ghz" in d.metadata]
+    carrier_values = [
+        result.metadata["max_carrier_freq_ghz"]
+        for result in engine_results
+        if "max_carrier_freq_ghz" in result.metadata
+    ]
     if carrier_values:
         metadata["max_carrier_freq_ghz"] = max(carrier_values)
 
-    spectral_values = [d.metadata["spectral_bound_ghz"] for d in descriptions if "spectral_bound_ghz" in d.metadata]
+    spectral_values = [
+        result.metadata["spectral_bound_ghz"]
+        for result in engine_results
+        if "spectral_bound_ghz" in result.metadata
+    ]
     if spectral_values:
         metadata["spectral_bound_ghz"] = max(spectral_values)
 
-    step_values = [d.metadata.get("max_step_ns") for d in descriptions]
+    step_values = [result.metadata.get("max_step_ns") for result in engine_results]
     non_none = [v for v in step_values if v is not None]
     if len(non_none) == len(step_values) and non_none:
         metadata["max_step_ns"] = min(non_none)
@@ -287,44 +296,44 @@ def _aggregate_batch_metadata(descriptions: list[HamiltonianDescription]) -> dic
     return metadata
 
 
-def build_solve_batch_from_descriptions(
+def build_solve_batch_from_results(
     context: SolveProblemContext,
-    descriptions: list[HamiltonianDescription],
+    engine_results: list[EngineResult],
     *,
     initial_states: list[Any] | None = None,
 ) -> SolveBatch:
-    """Merge N homogeneous :class:`HamiltonianDescription`s into one :class:`SolveBatch`.
+    """Merge N homogeneous :class:`EngineResult`s into one :class:`SolveBatch`.
 
-    All descriptions must share ``static_terms`` identity, the same number
+    All results must share ``static_terms`` identity, the same number
     of dynamic terms, and matching operator payloads per slot (by identity
     or by canonical fingerprint — crosstalk rebuilds equal-by-value
     operators on every instantiation). ``initial_states=None`` fills every
     element with ``context.default_initial_state``.
     """
-    if not descriptions:
-        raise ValueError("build_solve_batch_from_descriptions requires at least one description")
+    if not engine_results:
+        raise ValueError("build_solve_batch_from_results requires at least one engine result")
 
-    ref = descriptions[0]
-    batch_size = len(descriptions)
+    ref = engine_results[0]
+    batch_size = len(engine_results)
     n_dyn = len(ref.dynamic_terms)
-    _prefix = "build_solve_batch_from_descriptions: "
+    _prefix = "build_solve_batch_from_results: "
 
     # --- Skeleton checks: static terms, dim shape, dynamic term count ---
-    for idx, desc in enumerate(descriptions):
-        if desc.static_terms is not ref.static_terms:
+    for idx, result in enumerate(engine_results):
+        if result.static_terms is not ref.static_terms:
             raise ValueError(
-                _prefix + "all descriptions must share identical static_terms (by identity); "
+                _prefix + "all engine results must share identical static_terms (by identity); "
                 f"element {idx} differs."
             )
-        if len(desc.dynamic_terms) != n_dyn:
+        if len(result.dynamic_terms) != n_dyn:
             raise ValueError(
-                _prefix + "all descriptions must have the same number of dynamic terms; "
-                f"element {idx} has {len(desc.dynamic_terms)}, expected {n_dyn}."
+                _prefix + "all engine results must have the same number of dynamic terms; "
+                f"element {idx} has {len(result.dynamic_terms)}, expected {n_dyn}."
             )
-        if tuple(desc.dims) != tuple(ref.dims):
+        if tuple(result.dims) != tuple(ref.dims):
             raise ValueError(
-                _prefix + "all descriptions must share identical dims; "
-                f"element {idx} has {tuple(desc.dims)}, expected {tuple(ref.dims)}."
+                _prefix + "all engine results must share identical dims; "
+                f"element {idx} has {tuple(result.dims)}, expected {tuple(ref.dims)}."
             )
 
     # --- Per-slot compatibility + signal collection ---
@@ -344,8 +353,8 @@ def build_solve_batch_from_descriptions(
         dynamic_tags.append(ref_term.tag)
 
         slot_signals: list[ScalarModulation] = []
-        for idx, desc in enumerate(descriptions):
-            term = desc.dynamic_terms[slot]
+        for idx, result in enumerate(engine_results):
+            term = result.dynamic_terms[slot]
             where = f"slot {slot}, element {idx}"
 
             if not isinstance(term.time_dependence, ScalarModulation):
@@ -373,7 +382,7 @@ def build_solve_batch_from_descriptions(
         dynamic_operators.append(shared_operator)
         dynamic_signals.append(slot_signals)
 
-    batched = BatchedHamiltonianDescription(
+    batched = BatchedEngineResult(
         batch_size=batch_size,
         static_terms=ref.static_terms,
         dynamic_operators=tuple(dynamic_operators),
@@ -381,8 +390,8 @@ def build_solve_batch_from_descriptions(
         dynamic_tags=tuple(dynamic_tags),
         dynamic_signals=tuple(tuple(sigs) for sigs in dynamic_signals),
         dims=ref.dims,
-        metadata=_aggregate_batch_metadata(descriptions),
-        dropped_terms_by_element=tuple(d.dropped_terms for d in descriptions),
+        metadata=_aggregate_batch_metadata(engine_results),
+        dropped_terms_by_element=tuple(result.dropped_terms for result in engine_results),
     )
 
     if initial_states is None:
@@ -400,7 +409,7 @@ def build_solve_batch_from_descriptions(
 
     return SolveBatch(
         chip=context.chip,
-        hamiltonian=batched,
+        engine_result=batched,
         initial_states=states,
         tlist=context.tlist,
         c_ops=context.c_ops,
@@ -425,19 +434,19 @@ def build_solve_problem(
     """Run stages 1-4 end-to-end and return a frozen :class:`SolveProblem`.
 
     Equivalent to :func:`prepare_solve_problem_context` followed by
-    :func:`build_hamiltonian_description`. For many variants sharing one
+    :func:`build_engine_result`. For many variants sharing one
     chip configuration, prefer that two-step form with
-    :func:`build_solve_batch_from_descriptions`.
+    :func:`build_solve_batch_from_results`.
     """
     context = prepare_solve_problem_context(
         chip, tlist, solver=solver, options=options, e_ops=e_ops, drive_ops=drive_ops,
     )
-    description = build_hamiltonian_description(
+    engine_result = build_engine_result(
         chip, drive_ops, resolved_frame=context.resolved_frame,
     )
     return SolveProblem(
         chip=context.chip,
-        hamiltonian=description,
+        engine_result=engine_result,
         initial_state=context.default_initial_state.materialize() if initial_state is None else initial_state,
         tlist=context.tlist,
         c_ops=context.c_ops,
@@ -460,14 +469,14 @@ def solve_problem_list(
     Problems that share an operator skeleton are merged into one batched solve.
     A backend may dispatch a large heterogeneous list independently; otherwise
     each structural group follows the normal batch path, with incompatible
-    descriptions falling back to per-problem ``backend.solve_problem`` calls.
+    results falling back to per-problem ``backend.solve_problem`` calls.
 
     Grouping is a two-stage filter. The cheap identity-based prefilter here
     (:func:`_skeleton_prefilter_key`) buckets problems by ``id()`` of their
     shared operators/metadata so that obviously-incompatible problems are never
     compared by value. The canonical by-value compatibility check is intentionally
     a *separate* concern that lives inside
-    :func:`build_solve_batch_from_descriptions` (operator ``fingerprint``):
+    :func:`build_solve_batch_from_results` (operator ``fingerprint``):
     the prefilter is an identity prefilter, the fingerprint is the value check.
     Returns a :class:`~quchip.results.results.SimulationBatchResult`.
     """
@@ -508,7 +517,7 @@ def solve_problem_list(
         return ("ops", tuple(id(o) for o in ops))
 
     def _skeleton_prefilter_key(problem: SolveProblem) -> tuple:
-        desc = problem.hamiltonian
+        desc = problem.engine_result
         solver_name = problem.solver or ("mesolve" if problem.c_ops else "sesolve")
         return (
             solver_name,
@@ -548,9 +557,9 @@ def solve_problem_list(
         ref = group_problems[0]
         try:
             ctx = SolveProblemContext.from_problem(ref)
-            batch = build_solve_batch_from_descriptions(
+            batch = build_solve_batch_from_results(
                 ctx,
-                [p.hamiltonian for p in group_problems],
+                [p.engine_result for p in group_problems],
                 initial_states=[p.initial_state for p in group_problems],
             )
         except ValueError:

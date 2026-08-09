@@ -806,7 +806,7 @@ class QuTiPBackend(Backend):
         description: Any,
         tlist: Any | None = None,
     ) -> PreparedHamiltonian:
-        """Convert a :class:`HamiltonianDescription` into a ``Qobj`` or ``QobjEvo``.
+        """Convert a :class:`EngineResult` into a ``Qobj`` or ``QobjEvo``.
 
         Each dynamic coefficient is band-normalized: every carrier stays
         analytic while only its slow, carrier-free envelope is sampled
@@ -821,7 +821,7 @@ class QuTiPBackend(Backend):
 
         if not description.dynamic_terms:
             if static_rhs is None:
-                raise ValueError("HamiltonianDescription must contain at least one static or dynamic term.")
+                raise ValueError("EngineResult must contain at least one static or dynamic term.")
             return PreparedHamiltonian(rhs=static_rhs, metadata=metadata)
 
         sample_tlist = self._resolve_envelope_sample_tlist(tlist)
@@ -868,7 +868,7 @@ class QuTiPBackend(Backend):
         if batch.batch_size == 0:
             return []
 
-        prepared = self.prepare_batch(batch.hamiltonian, batch.tlist)
+        prepared = self.prepare_batch(batch.engine_result, batch.tlist)
         tlist_arr, c_ops, solver_name, opts, e_ops_arg = self._resolve_batch_config(batch, prepared)
 
         shared = prepared.shared

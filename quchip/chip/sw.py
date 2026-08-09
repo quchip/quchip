@@ -44,7 +44,9 @@ def bare_hamiltonian(chip: "Chip", backend: Any) -> tuple[Any, list[str], tuple[
     ``backend.to_array``. This is an analysis kernel, not a solver path; the
     dense conversion is the point, not a cost to avoid.
     """
-    h = jnp.asarray(backend.to_array(chip.hamiltonian()), dtype=complex)
+    from quchip.declarative.expr import materialize_expr
+
+    h = jnp.asarray(backend.to_array(materialize_expr(chip.hamiltonian(), backend)), dtype=complex)
     labels = [dev.label for dev in chip.devices]
     return h, labels, tuple(chip.dims)
 

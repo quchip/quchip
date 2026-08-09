@@ -1,4 +1,4 @@
-"""Backend preparation tests for the HamiltonianDescription IR."""
+"""Backend preparation tests for the EngineResult IR."""
 
 from __future__ import annotations
 
@@ -11,9 +11,10 @@ from quchip.control import ChargeDrive
 from quchip.control.envelopes import Square
 from quchip.control.equipment import ControlEquipment
 from quchip.devices.transmon.duffing import DuffingTransmon
-from quchip.engine.ir import CanonicalOperator, Carrier, DynamicTerm, HamiltonianDescription, ScalarModulation
+from quchip.declarative.expr import materialize_expr
+from quchip.engine.ir import CanonicalOperator, Carrier, DynamicTerm, EngineResult, ScalarModulation
 from quchip.engine.stage1_frames import resolve_frame
-from quchip.engine.stage2_assembly import build_hamiltonian_description
+from quchip.engine.stage2_assembly import build_engine_result
 
 
 class TestPrepareHamiltonian:
@@ -27,7 +28,7 @@ class TestPrepareHamiltonian:
         resolved = resolve_frame(chip, chip.frame)
         tlist = np.linspace(0, 50, 201)
 
-        desc = build_hamiltonian_description(chip, [], resolved_frame=resolved)
+        desc = build_engine_result(chip, [], resolved_frame=resolved)
         backend = chip.backend
         prepared = backend.prepare_hamiltonian(desc, tlist)
 
@@ -42,7 +43,7 @@ class TestPrepareHamiltonian:
         resolved = resolve_frame(chip, chip.frame)
         tlist = np.linspace(0, 50, 201)
 
-        desc = build_hamiltonian_description(chip, [], resolved_frame=resolved)
+        desc = build_engine_result(chip, [], resolved_frame=resolved)
         prepared = chip.backend.prepare_hamiltonian(desc, tlist)
 
         assert isinstance(prepared.rhs, qutip.Qobj)
@@ -67,7 +68,7 @@ class TestPrepareHamiltonian:
             start_time=0.0,
             drive_label=drive.label,
         )
-        desc = build_hamiltonian_description(
+        desc = build_engine_result(
             chip,
             [drive_op],
             resolved_frame=resolved,
@@ -98,7 +99,7 @@ class TestPrepareHamiltonian:
             basis="fock",
             subsystem_labels=("q",),
         )
-        desc = HamiltonianDescription(
+        desc = EngineResult(
             static_terms=(),
             dynamic_terms=(
                 DynamicTerm(
@@ -128,7 +129,7 @@ class TestPrepareHamiltonian:
         resolved = resolve_frame(chip, chip.frame)
         tlist = np.linspace(0, 50, 201)
 
-        desc = build_hamiltonian_description(chip, [], resolved_frame=resolved)
+        desc = build_engine_result(chip, [], resolved_frame=resolved)
         prepared = chip.backend.prepare_hamiltonian(desc, tlist)
 
         assert "frame" in prepared.metadata
@@ -147,8 +148,8 @@ class TestPrepareHamiltonian:
 
         assert simplify_signal(signal) == Constant(2.0 + 0.0j)
 
-    def test_build_hamiltonian_description_records_simplified_carrier_hint(self):
-        """build_hamiltonian_description records carrier-frequency solver hints even after signal simplification."""
+    def test_build_engine_result_records_simplified_carrier_hint(self):
+        """build_engine_result records carrier-frequency solver hints even after signal simplification."""
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=3, label="q")
         drive = ChargeDrive(target=q)
         chip = Chip([q])
@@ -158,7 +159,7 @@ class TestPrepareHamiltonian:
 
         from quchip.engine.ir import DriveOp
 
-        desc = build_hamiltonian_description(
+        desc = build_engine_result(
             chip,
             [
                 DriveOp(
@@ -194,7 +195,7 @@ class TestPrepareHamiltonian:
         chip_rwa.connect(ControlEquipment(lines=[drive]))
         chip_rwa.dress()
         resolved_rwa = resolve_frame(chip_rwa, chip_rwa.frame)
-        desc_rwa = build_hamiltonian_description(
+        desc_rwa = build_engine_result(
             chip_rwa,
             [drive_op],
             resolved_frame=resolved_rwa,
@@ -213,7 +214,7 @@ class TestPrepareHamiltonian:
             start_time=0.0,
             drive_label=drive_full.label,
         )
-        desc_full = build_hamiltonian_description(
+        desc_full = build_engine_result(
             chip_full,
             [drive_op_full],
             resolved_frame=resolved_full,
@@ -229,7 +230,10 @@ class TestPrepareHamiltonian:
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=3, label="q")
         chip = Chip([q])
         chip.dress()
-        prepared = PreparedHamiltonian(rhs=chip.hamiltonian(), metadata={"spectral_bound_ghz": 20.0})
+        prepared = PreparedHamiltonian(
+            rhs=materialize_expr(chip.hamiltonian(), chip.backend),
+            metadata={"spectral_bound_ghz": 20.0},
+        )
         opts = chip.backend.resolve_solver_options({}, metadata=prepared.metadata, tlist=np.linspace(0.0, 10.0, 11))
         assert "nsteps" in opts
 
@@ -318,7 +322,7 @@ class TestEnvelopeSampleGrid:
             start_time=start_time,
             drive_label=drive.label,
         )
-        desc = build_hamiltonian_description(chip, [drive_op], resolved_frame=resolved)
+        desc = build_engine_result(chip, [drive_op], resolved_frame=resolved)
         band = decompose_carrier_bands(desc.dynamic_terms[0].time_dependence.signal)[0]
         return band.envelope, np.array([0.0, span])
 

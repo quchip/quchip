@@ -447,7 +447,7 @@ def test_concrete_build_ships_no_dead_zero_structure_to_dynamiqs() -> None:
         tlist=np.linspace(0.0, 20.0, 41),
         initial_state=chip.bare_state(q0=0, q1=0),
     )
-    description = problem.hamiltonian
+    description = problem.engine_result
 
     # RWA exchange bands (±1, ∓1) on one coupling + two drive bands — no zero operators.
     assert len(description.dynamic_terms) == 4
@@ -467,7 +467,7 @@ def test_dropped_term_audit_survives_traced_coupling() -> None:
     # DroppedTerm amplitude/frequency fields hold raw (possibly traced) GHz values by
     # contract, since chip parameters legitimately arrive as tracers on this backend.
     from quchip.engine.stage1_frames import resolve_frame
-    from quchip.engine.stage2_assembly import build_hamiltonian_description
+    from quchip.engine.stage2_assembly import build_engine_result
 
     seen: dict[str, str] = {}
 
@@ -481,7 +481,7 @@ def test_dropped_term_audit_survives_traced_coupling() -> None:
             rwa=True,
             backend="dynamiqs",
         )
-        description = build_hamiltonian_description(
+        description = build_engine_result(
             chip, [], resolved_frame=resolve_frame(chip, chip.frame)
         )
         seen["summary"] = description.dropped_terms_summary()

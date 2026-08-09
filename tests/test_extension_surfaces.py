@@ -28,7 +28,7 @@ def test_sigma_ops_author_a_spin_device():
     """A sigma_z-authored device gives a diagonal Hamiltonian split by ±freq/2."""
     spin = SpinHalf(freq=4.0, levels=2)
     chip = Chip([spin])
-    h = np.asarray(chip.backend.to_array(chip.hamiltonian()))
+    h = np.asarray(chip.hamiltonian().matrix(backend=chip.backend))
     np.testing.assert_allclose(h, np.diag([-2.0, 2.0]), atol=1e-12)
 
 

@@ -33,8 +33,7 @@ class TestFluxTunableTransmon:
         alpha = -0.2006
         q = FluxTunableTransmon(freq=freq, anharmonicity=alpha, levels=3)
         H = q.hamiltonian()
-        H_qt = H
-        evals = sorted(H_qt.eigenenergies())
+        evals = sorted(np.linalg.eigvalsh(H.matrix()).real)
         npt.assert_allclose(evals[0], 0.0, atol=1e-10)
         npt.assert_allclose(evals[1], freq, rtol=1e-8)
         npt.assert_allclose(evals[2], 2 * freq + alpha, rtol=1e-6)
@@ -156,9 +155,9 @@ class TestFluxTunableTransmon:
         from quchip import FluxTunableTransmon
 
         q = FluxTunableTransmon(freq=4.47, anharmonicity=-0.2006, flux_bias=0.0, levels=3)
-        H_before = np.asarray(q.hamiltonian().full())
+        H_before = np.asarray(q.hamiltonian().matrix())
         q.flux_bias = 0.3
-        H_after = np.asarray(q.hamiltonian().full())
+        H_after = np.asarray(q.hamiltonian().matrix())
         npt.assert_allclose(H_before, H_after, atol=1e-12)
 
     def test_anharmonicity_zero_rejected_at_construction(self):

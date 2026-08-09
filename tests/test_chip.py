@@ -14,6 +14,7 @@ from quchip.backend.protocol import Backend
 from quchip.chip.chip import Chip
 from quchip.chip.couplings import Capacitive, Coupling
 from quchip.control.drive import ChargeDrive
+from quchip.declarative.expr import UnboundParameterError
 from quchip.devices.resonator import Resonator
 from quchip.devices.transmon.duffing import DuffingTransmon
 
@@ -31,10 +32,45 @@ class TestChipHamiltonian:
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
         chip = Chip(devices=[q])
         H = chip.hamiltonian()
-        evals = np.sort(np.real(backend.eigenenergies(H)))
+        evals = np.sort(np.linalg.eigvalsh(H.matrix(backend=backend)).real)
 
         expected = np.array([0.0, 5.0, 9.75])
         np.testing.assert_allclose(evals, expected, atol=1e-10)
+
+    def test_symbolic_chip_hamiltonian_exposes_real_terms_and_parameter_paths(self) -> None:
+        """Chip inspection preserves authored device terms and structurally retained RWA exchange terms."""
+        q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+        r = Resonator(freq=7.0, levels=4, label="r")
+        chip = Chip([q, r], [Capacitive(q, r, g=0.02)], rwa=True)
+
+        hamiltonian = chip.hamiltonian()
+
+        assert hamiltonian.shape == (12, 12)
+        assert hamiltonian.parameter_paths() == (
+            "q.freq",
+            "q.anharmonicity",
+            "r.freq",
+            "cap_0.g",
+        )
+        latex = hamiltonian.latex()
+        assert r"\omega_{q}\,\hat n_{q}" in latex
+        assert r"\alpha_{q}" in latex
+        assert r"\hat a_{q}\,\hat a^\dagger_{r}" in latex
+        assert r"\hat a^\dagger_{q}\,\hat a_{r}" in latex
+        assert r"\hat a_{q}\,\hat a_{r}" not in latex
+
+    def test_unbound_chip_only_requires_values_at_materialization(self) -> None:
+        """A fully symbolic Chip remains inspectable and names every missing value on numerical use."""
+        q = DuffingTransmon(levels=3, label="q")
+        r = Resonator(levels=4, label="r")
+        hamiltonian = Chip([q, r], [Capacitive(q, r)], rwa=True).hamiltonian()
+
+        assert r"\omega_{q}" in hamiltonian.latex()
+        with pytest.raises(
+            UnboundParameterError,
+            match=r"q\.freq, q\.anharmonicity, r\.freq, cap_0\.g",
+        ):
+            hamiltonian.matrix()
 
     def test_two_device_hamiltonian_no_coupling(self, backend: Backend) -> None:
         """Uncoupled two-device eigenvalues equal the tensor sums of each device's own eigenvalues."""
@@ -42,7 +78,7 @@ class TestChipHamiltonian:
         r = Resonator(freq=6.0, levels=4, label="r")
         chip = Chip(devices=[q, r])
         H = chip.hamiltonian()
-        evals = np.sort(np.real(backend.eigenenergies(H)))
+        evals = np.sort(np.linalg.eigvalsh(H.matrix(backend=backend)).real)
 
         q_evals = [0.0, 5.0, 9.75]
         r_evals = [0.0, 6.0, 12.0, 18.0]
@@ -56,9 +92,8 @@ class TestChipHamiltonian:
         coupling = Capacitive(q, r, g=0.02)
         chip = Chip(devices=[q, r], couplings=[coupling])
         H = chip.hamiltonian()
-
-        H_dag = backend.dag(H)
-        diff = (H - H_dag).norm()
+        matrix = H.matrix(backend=backend)
+        diff = np.linalg.norm(matrix - matrix.conj().T)
         assert diff < 1e-12, f"H is not Hermitian: ||H - H†|| = {diff}"
 
     def test_coupled_system_hamiltonian_dimension(self) -> None:
@@ -78,7 +113,7 @@ class TestChipHamiltonian:
         coupling = Capacitive(q, r, g=0.02)
         chip = Chip(devices=[q, r], couplings=[coupling])
         H = chip.hamiltonian()
-        evals = np.sort(np.real(backend.eigenenergies(H)))
+        evals = np.sort(np.linalg.eigvalsh(H.matrix(backend=backend)).real)
 
         q_evals = [0.0, 5.0, 9.75]
         r_evals = [0.0, 6.0, 12.0, 18.0]
@@ -144,7 +179,7 @@ class TestFrameSpec:
         H_lab = chip.hamiltonian()
         chip.set_frame("rotating")
         H_rot = chip.hamiltonian()
-        assert (H_lab - H_rot).norm() < 1e-12
+        np.testing.assert_allclose(H_lab.matrix(), H_rot.matrix(), atol=1e-12)
 
     def test_invalid_frame_raises(self) -> None:
         """Invalid frame string raises ValueError."""

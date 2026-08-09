@@ -24,18 +24,19 @@ from quchip.chip.couplings import Capacitive  # noqa: E402
 from quchip.control import ChargeDrive  # noqa: E402
 from quchip.control.sequence import QuantumSequence  # noqa: E402
 from quchip.control.envelopes import Square  # noqa: E402
+from quchip.declarative.expr import materialize_expr  # noqa: E402
 from quchip.engine import simulate  # noqa: E402
 from quchip.engine.ir import (  # noqa: E402
     CanonicalOperator,
     Carrier,
     Constant,
     DynamicTerm,
-    HamiltonianDescription,
+    EngineResult,
     ScalarModulation,
     Window,
 )
 from quchip.engine.stage1_frames import resolve_frame  # noqa: E402
-from quchip.engine.stage2_assembly import build_hamiltonian_description  # noqa: E402
+from quchip.engine.stage2_assembly import build_engine_result  # noqa: E402
 from quchip.engine.stage3_observables import decompose_eops  # noqa: E402
 
 
@@ -177,7 +178,7 @@ def test_prepare_static_hamiltonian_preserves_sparse_layout() -> None:
     chip.dress()
     tlist = np.linspace(0.0, 10.0, 11)
     resolved = resolve_frame(chip, chip.frame)
-    desc = build_hamiltonian_description(chip, [], resolved_frame=resolved)
+    desc = build_engine_result(chip, [], resolved_frame=resolved)
     prepared = backend.prepare_hamiltonian(desc, tlist)
 
     assert getattr(prepared.rhs, "layout", None) == dynamiqs.dia
@@ -205,7 +206,7 @@ def test_prepare_driven_hamiltonian_remains_callable() -> None:
         drive_label=drive.label,
     )
 
-    desc = build_hamiltonian_description(chip, [drive_op], resolved_frame=resolved)
+    desc = build_engine_result(chip, [drive_op], resolved_frame=resolved)
     assert desc.dynamic_terms
     assert all(isinstance(term.time_dependence, ScalarModulation) for term in desc.dynamic_terms)
 
@@ -225,7 +226,7 @@ def test_prepare_scalar_modulation_hamiltonian_remains_callable() -> None:
         basis="fock",
         subsystem_labels=("q",),
     )
-    desc = HamiltonianDescription(
+    desc = EngineResult(
         static_terms=(),
         dynamic_terms=(
             DynamicTerm(
@@ -255,7 +256,7 @@ def test_prepare_windowed_scalar_modulation_supports_traced_stop_time() -> None:
 
     @jax.jit
     def sample_rhs(stop):
-        desc = HamiltonianDescription(
+        desc = EngineResult(
             static_terms=(),
             dynamic_terms=(
                 DynamicTerm(
@@ -302,13 +303,13 @@ def test_chip_hamiltonian_emits_no_sparse_dense_warning() -> None:
 
     with warnings.catch_warnings(record=True) as captured:
         warnings.simplefilter("always")
-        chip.hamiltonian()
+        materialize_expr(chip.hamiltonian(), backend)
 
     assert not [w for w in captured if "sparse qarray has been converted to dense layout" in str(w.message)]
 
 
 def test_rotating_frame_assembly_emits_no_sparse_dense_warning() -> None:
-    """build_hamiltonian_description in the rotating frame does not trigger the sparse-to-dense warning."""
+    """build_engine_result in the rotating frame does not trigger the sparse-to-dense warning."""
     backend = DynamiqsBackend()
     qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=3, label="q")
     resonator = Resonator(freq=6.8, levels=5, label="r", quality_factor=1e6)
@@ -323,7 +324,7 @@ def test_rotating_frame_assembly_emits_no_sparse_dense_warning() -> None:
 
     with warnings.catch_warnings(record=True) as captured:
         warnings.simplefilter("always")
-        build_hamiltonian_description(chip, [], resolved_frame=resolved)
+        build_engine_result(chip, [], resolved_frame=resolved)
 
     assert not [w for w in captured if "sparse qarray has been converted to dense layout" in str(w.message)]
 
@@ -409,7 +410,7 @@ def test_frequency_sweep_lowers_to_single_native_batched_solve(
 ) -> None:
     """A carrier-frequency sweep sharing operator structure fans out as a single native-batched call."""
     # build_batch over pulse.vary("freq", ...) produces one SolveBatch whose
-    # BatchedHamiltonianDescription carries a shared operator skeleton and per-element
+    # BatchedEngineResult carries a shared operator skeleton and per-element
     # ScalarModulation signals; the dynamiqs backend lowers it to one vmapped RHS via
     # prepare_batch and solves it in one call to solve_batch.
     from quchip.control.envelopes import Square as SquareEnv

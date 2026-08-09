@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
+from math import prod
 from typing import Any, Mapping
 
 
@@ -50,25 +52,68 @@ class PhysicsExpr:
         """Create a literal scalar leaf."""
         return cls("literal", (value,))
 
+    @classmethod
+    def from_matrix(
+        cls,
+        value: Any,
+        *,
+        labels: tuple[str, ...],
+        dims: tuple[int, ...],
+        name: str | None = None,
+    ) -> "PhysicsExpr":
+        """Create a named backend-neutral matrix contribution."""
+        if len(labels) != len(dims):
+            raise ValueError("Matrix labels and dimensions must have the same length.")
+        return cls("matrix", (value, tuple(dims), name), tuple(labels))
+
+    def embed(self, labels: tuple[str, ...], dims: tuple[int, ...]) -> "PhysicsExpr":
+        """Embed this local contribution into an ordered composite Hilbert space."""
+        if len(labels) != len(dims):
+            raise ValueError("Composite labels and dimensions must have the same length.")
+        missing = set(self.labels) - set(labels)
+        if missing:
+            raise ValueError(f"Cannot embed labels absent from the composite space: {sorted(missing)}")
+        return PhysicsExpr("embed", (self, tuple(labels), tuple(dims)), tuple(labels))
+
     def with_bindings(self, bindings: Mapping[str, Any]) -> "PhysicsExpr":
         """Attach default values used only by direct numerical inspection."""
         return replace(self, _bindings=dict(bindings))
 
     def parameter_paths(self) -> tuple[str, ...]:
         """Return referenced dotted parameter paths in authored order."""
-        paths: list[str] = []
+        return tuple(dict.fromkeys(
+            node.args[0] for node in _walk_expr(self) if node.kind == "parameter"
+        ))
 
-        def visit(node: PhysicsExpr) -> None:
-            if node.kind == "parameter":
-                path = node.args[0]
-                if path not in paths:
-                    paths.append(path)
-            for arg in node.args:
-                if isinstance(arg, PhysicsExpr):
-                    visit(arg)
+    def numeric_values(self) -> tuple[Any, ...]:
+        """Return bound and matrix payloads for tracer-safe cache decisions."""
+        values: list[Any] = []
+        for node in _walk_expr(self):
+            values.extend(node._bindings.values())
+            if node.kind == "matrix":
+                values.append(node.args[0])
+        return tuple(values)
 
-        visit(self)
-        return tuple(paths)
+    @property
+    def shape(self) -> tuple[int, int]:
+        """Matrix shape implied by this operator expression's static support."""
+        if not self.labels:
+            raise AttributeError("Scalar expressions do not have a matrix shape.")
+        if self.kind == "op":
+            return (self.args[1],) * 2
+        if self.kind == "matrix":
+            dimension = prod(self.args[1])
+            return (dimension, dimension)
+        if self.kind == "embed":
+            dimension = prod(self.args[2])
+            return (dimension, dimension)
+        if self.kind == "tensor":
+            dimension = self.args[0].shape[0] * self.args[1].shape[0]
+            return (dimension, dimension)
+        for arg in self.args:
+            if isinstance(arg, PhysicsExpr) and arg.labels:
+                return arg.shape
+        raise AttributeError("Operator shape is not available for this expression.")
 
     def _binary(self, other: Any, kind: str) -> "PhysicsExpr":
         rhs = ensure_expr(other)
@@ -228,6 +273,14 @@ def ensure_expr(value: Any) -> PhysicsExpr:
     raise TypeError(f"Expected a scalar or PhysicsExpr, got {type(value).__name__}.")
 
 
+def _walk_expr(expr: PhysicsExpr) -> Iterator[PhysicsExpr]:
+    """Yield an expression tree in authored preorder."""
+    yield expr
+    for arg in expr.args:
+        if isinstance(arg, PhysicsExpr):
+            yield from _walk_expr(arg)
+
+
 def materialize_expr(
     expr: Any,
     backend: Any,
@@ -238,7 +291,9 @@ def materialize_expr(
     """Lower symbolic physics, passing an already-native contribution through."""
     if not isinstance(expr, PhysicsExpr):
         return expr
-    values = dict(expr._bindings)
+    values: dict[str, Any] = {}
+    for node in _walk_expr(expr):
+        values.update(node._bindings)
     if bindings is not None:
         values.update(bindings)
     missing = [path for path in expr.parameter_paths() if path not in values]
@@ -250,12 +305,26 @@ def materialize_expr(
             return node.args[0]
         if node.kind == "parameter":
             return values[node.args[0]]
+        if node.kind == "matrix":
+            value, dims, _name = node.args
+            return backend.from_array(value, dims=[list(dims), list(dims)])
         if node.kind == "op":
             name, levels = node.args
             label = node.labels[0]
             if op_lookup is not None and (label, name) in op_lookup:
                 return op_lookup[(label, name)]
             return _standard_operator(backend, name, levels)
+        if node.kind == "embed":
+            local = lower(node.args[0])
+            labels, dims = node.args[1:]
+            support = tuple(labels.index(label) for label in node.args[0].labels)
+            if len(support) == 1:
+                return backend.embed(local, support[0], dims)
+            if len(support) == 2:
+                return backend.embed_two_body(local, support[0], support[1], dims)
+            if support == tuple(range(len(dims))):
+                return local
+            raise ValueError(f"Cannot embed a contribution with support {support}.")
         left = lower(node.args[0])
         right = lower(node.args[1])
         if node.kind == "add":
@@ -273,6 +342,74 @@ def materialize_expr(
         raise TypeError(f"Unknown PhysicsExpr kind {node.kind!r}.")
 
     return lower(expr)
+
+
+def filter_expr_bands(expr: PhysicsExpr, keeps_band: Any) -> PhysicsExpr | None:
+    """Keep additive operator terms whose excitation-change band is accepted."""
+    kept: list[tuple[int, PhysicsExpr]] = []
+    for sign, term in _expanded_terms(expr):
+        weights = _band_weights(term)
+        if keeps_band(*(weights.get(label, 0) for label in expr.labels)):
+            kept.append((sign, term))
+    if not kept:
+        return None
+    result = kept[0][1] if kept[0][0] > 0 else -kept[0][1]
+    for sign, term in kept[1:]:
+        result = result + term if sign > 0 else result - term
+    return result.with_bindings(expr._bindings)
+
+
+def _expanded_terms(expr: PhysicsExpr) -> list[tuple[int, PhysicsExpr]]:
+    """Expand additive children just enough to expose independently filterable bands."""
+    if expr.kind == "add":
+        return _expanded_terms(expr.args[0]) + _expanded_terms(expr.args[1])
+    if expr.kind == "sub":
+        return _expanded_terms(expr.args[0]) + [(-sign, term) for sign, term in _expanded_terms(expr.args[1])]
+    if expr.kind in ("scale", "mul", "matmul", "tensor"):
+        left_terms = _expanded_terms(expr.args[0])
+        right_terms = _expanded_terms(expr.args[1])
+        terms: list[tuple[int, PhysicsExpr]] = []
+        for left_sign, left in left_terms:
+            for right_sign, right in right_terms:
+                combined = left @ right if expr.kind == "matmul" else left * right
+                terms.append((left_sign * right_sign, combined))
+        return terms
+    return [(1, expr)]
+
+
+def _band_weights(expr: PhysicsExpr) -> dict[str, int]:
+    """Return one excitation-change weight per endpoint for a monomial."""
+    if expr.kind in ("literal", "parameter"):
+        return {}
+    if expr.kind == "op":
+        name, _levels = expr.args
+        try:
+            weight = _OPERATOR_BAND_WEIGHTS[name]
+        except KeyError as exc:
+            raise TypeError(f"Operator {name!r} does not have one excitation-change band.") from exc
+        return {expr.labels[0]: weight}
+    if expr.kind in ("matrix", "embed"):
+        raise TypeError(f"{expr.kind.capitalize()} contributions do not expose symbolic excitation bands.")
+    if expr.kind == "pow":
+        raise TypeError("Scalar powers do not define operator excitation bands.")
+    if expr.kind in ("add", "sub"):
+        raise TypeError("Additive expressions must be expanded before band inspection.")
+    weights: dict[str, int] = {}
+    for child in expr.args[:2]:
+        for label, weight in _band_weights(child).items():
+            weights[label] = weights.get(label, 0) + weight
+    return weights
+
+
+_OPERATOR_BAND_WEIGHTS = {
+    "a": -1,
+    "adag": 1,
+    "n": 0,
+    "I": 0,
+    "sigma_plus": 1,
+    "sigma_minus": -1,
+    "sigma_z": 0,
+}
 
 
 def _standard_operator(backend: Any, name: str, levels: int) -> Any:
@@ -311,6 +448,11 @@ def _latex(expr: PhysicsExpr, parent_precedence: int = 0) -> str:
         path, symbol, _unit = expr.args
         scope = path.rsplit(".", 1)[0]
         return _scoped_symbol(symbol, scope)
+    if expr.kind == "matrix":
+        _value, _dims, name = expr.args
+        if name is not None:
+            return name
+        return rf"\hat H_{{{','.join(expr.labels)}}}"
     if expr.kind == "op":
         name, _levels = expr.args
         scope = expr.labels[0]
@@ -326,6 +468,8 @@ def _latex(expr: PhysicsExpr, parent_precedence: int = 0) -> str:
             "sigma_minus": r"\hat\sigma_-",
         }
         return _scoped_symbol(symbols[name], scope)
+    if expr.kind == "embed":
+        return _latex(expr.args[0], parent_precedence)
     precedence = 1 if expr.kind in ("add", "sub") else 2 if expr.kind in ("scale", "mul", "tensor") else 3
     left = _latex(expr.args[0], precedence)
     right = _latex(expr.args[1], precedence + (1 if expr.kind == "sub" else 0))

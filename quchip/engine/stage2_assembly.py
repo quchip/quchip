@@ -1,4 +1,4 @@
-"""Stage 2: assemble a :class:`HamiltonianDescription` from chip, drive ops, and frame.
+"""Stage 2: assemble a :class:`EngineResult` from chip, drive ops, and frame.
 
 Responsibilities
 ----------------
@@ -69,7 +69,7 @@ from quchip.engine.ir import (
     DroppedTerm,
     DynamicTerm,
     EnvelopeRef,
-    HamiltonianDescription,
+    EngineResult,
     Multiply,
     RealPart,
     Scale,
@@ -309,7 +309,7 @@ def _build_static_h0(chip: "Chip", resolved_frame: "ResolvedFrame", backend: Bac
     per-device frame reference from stage 1. This function is one of the
     four places in the engine where the 2π boundary is crossed.
     """
-    h0 = TWO_PI * chip.hamiltonian()
+    h0 = TWO_PI * materialize_expr(chip.hamiltonian(), backend)
     dims = chip.dims
     for idx, dev in enumerate(chip.devices):
         omega_ref = resolved_frame.frequencies.get(dev.label, 0.0)
@@ -602,7 +602,7 @@ class _StructuralDrop:
     drive frequency, but resolving it into a
     :class:`~quchip.engine.ir.DroppedTerm` audit record does; this record
     stays a pointer into ``drive_ops`` until
-    :func:`instantiate_hamiltonian_description` knows the variant's
+    :func:`instantiate_engine_result` knows the variant's
     frequency.
     """
 
@@ -1021,7 +1021,7 @@ def compile_hamiltonian_template(
     the template: static Hamiltonian, static-coupling folds, invariant
     dynamic couplings, and band-decomposed drive operators pre-embedded
     and pre-scaled by 2π. Per-sweep instantiation
-    (:func:`instantiate_hamiltonian_description`) rebuilds only the
+    (:func:`instantiate_engine_result`) rebuilds only the
     :class:`~quchip.engine.ir.SignalProgram` leaves, so envelope
     parameters, drive frequencies, phases, and frame scalars can sweep
     through JAX without retracing operator tensors.
@@ -1123,11 +1123,11 @@ def compile_hamiltonian_template(
     )
 
 
-def instantiate_hamiltonian_description(
+def instantiate_engine_result(
     template: HamiltonianTemplate,
     drive_ops: list["DriveOp"],
     chip: "Chip",
-) -> HamiltonianDescription:
+) -> EngineResult:
     """Rebuild signal-program leaves from *drive_ops* and attach them to the template's operators."""
     _validate_variant_drive_ops(template, drive_ops, chip)
     backend = chip.backend
@@ -1204,7 +1204,7 @@ def instantiate_hamiltonian_description(
     metadata: dict[str, Any] = {"frame": str(template.resolved_frame)}
     metadata.update(_solver_hint_metadata(template.static_spectral_bound_ghz, dynamic_terms))
 
-    return HamiltonianDescription(
+    return EngineResult(
         static_terms=template.static_terms,
         dynamic_terms=dynamic_terms,
         dims=dims,
@@ -1213,17 +1213,17 @@ def instantiate_hamiltonian_description(
     )
 
 
-def build_hamiltonian_description(
+def build_engine_result(
     chip: "Chip",
     drive_ops: list["DriveOp"],
     *,
     resolved_frame: "ResolvedFrame",
-) -> HamiltonianDescription:
+) -> EngineResult:
     """One-shot stage 2: compile the template then instantiate a single variant.
 
     Equivalent to
     :func:`compile_hamiltonian_template` followed by
-    :func:`instantiate_hamiltonian_description` with the same
+    :func:`instantiate_engine_result` with the same
     ``drive_ops``. Prefer the two-step form when solving many variants
     that share the same chip topology.
 
@@ -1240,9 +1240,9 @@ def build_hamiltonian_description(
 
     Returns
     -------
-    HamiltonianDescription
+    EngineResult
         Static terms, dynamic terms, and dropped-term records for the
         single variant.
     """
     template = compile_hamiltonian_template(chip, drive_ops, resolved_frame=resolved_frame)
-    return instantiate_hamiltonian_description(template, drive_ops, chip)
+    return instantiate_engine_result(template, drive_ops, chip)
