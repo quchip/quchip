@@ -17,9 +17,6 @@ through the eigenbasis projection without concretization. Backend
 composition entry points (``Backend.tensor``, ``Backend.dag``) coerce
 array-likes via :meth:`~quchip.backend.protocol.Backend.coerce_operator`,
 so the accessors' output composes directly with native operators.
-
-See ``docs/superpowers/specs/2026-04-21-circuit-level-devices-design.md``
-for the full rationale.
 """
 
 from __future__ import annotations

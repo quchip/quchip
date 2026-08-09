@@ -60,6 +60,7 @@ class CrosstalkMatrix(SignalTransform):
     beta: Any
     theta: Any
     delay: Any
+    _parameter_names = ("beta", "theta", "delay")
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "labels", tuple(self.labels))

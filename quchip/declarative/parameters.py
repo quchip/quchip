@@ -126,17 +126,13 @@ def validate_sign(name: str, spec: Parameter, value: Any) -> None:
 def build_declared_signature(
     param_fields: dict[str, Parameter],
     trailing: tuple[inspect.Parameter, ...] = (),
-    *,
-    owner: type | None = None,
 ) -> inspect.Signature:
     """Build a synthesized ``__init__`` signature from declared param fields.
 
     Declared parameters become optional positional-or-keyword arguments in
     declaration order. *trailing* appends structural keyword-only parameters
-    such as ``levels`` and ``label``. *owner* is retained for callers that
-    construct signatures for a specific model class.
+    such as ``levels`` and ``label``.
     """
-    _ = owner
     params = [inspect.Parameter("self", inspect.Parameter.POSITIONAL_OR_KEYWORD)]
     for name, spec in param_fields.items():
         params.append(inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD, default=spec.default))

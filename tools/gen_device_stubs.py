@@ -87,6 +87,8 @@ def _field_annotation(cls: type, name: str) -> str:
 
 def _stub_lines(cls: type) -> list[str]:
     """Render the marker-delimited stub block for *cls* as a list of lines (no trailing newlines)."""
+    from quchip.declarative.parameters import UNBOUND
+
     signature = inspect.signature(cls.__init__)
     params = list(signature.parameters.values())[1:]  # drop `self`
 
@@ -101,7 +103,7 @@ def _stub_lines(cls: type) -> list[str]:
             annotation = _field_annotation(cls, param.name)
         piece = f"            {param.name}: {annotation}"
         if param.default is not inspect.Parameter.empty:
-            piece += f" = {param.default!r}"
+            piece += " = ..." if param.default is UNBOUND else f" = {param.default!r}"
         lines.append(piece + ",")
     lines.append("        ) -> None: ...")
     lines.append(MARKER_END)

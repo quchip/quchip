@@ -139,6 +139,7 @@ class BaseDrive(Registrable, registry_root=True):
     _modulation: DriveModulation | None = None
     #: ``physics_notes`` line declaring the coupling operator and modulation.
     _coupling_note: str | None = None
+    _parameter_names: tuple[str, ...] = ()
 
     def __init__(
         self,
@@ -165,6 +166,20 @@ class BaseDrive(Registrable, registry_root=True):
             old_target._connected_drives = [d for d in old_target._connected_drives if d is not self]
         self._target = device
         device.connect(self)
+
+    def parameter_values(self) -> dict[str, Any]:
+        """Return drive-owned bindable values declared by the subclass."""
+        return {name: getattr(self, name) for name in self._parameter_names}
+
+    def set_parameter_value(self, name: str, value: Any) -> None:
+        """Apply one drive-owned value on an isolated drive copy."""
+        if name not in self._parameter_names:
+            raise KeyError(name)
+        setattr(self, name, value)
+
+    def collapse_parameter_names(self) -> tuple[str, ...]:
+        """Return drive parameters that may affect drive-owned noise."""
+        return self._parameter_names
 
     @property
     def device_label(self) -> str | None:

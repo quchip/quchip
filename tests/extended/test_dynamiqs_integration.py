@@ -258,6 +258,45 @@ def test_rotating_frame_coupled_sequence_supports_jax_grad_on_traced_chip_param(
     assert jnp.isfinite(grad)
 
 
+def test_multi_experiment_cr_batch_loss_supports_jax_grad() -> None:
+    """One loss may differentiate a native batch of CR experiments."""
+    _set_backend("dynamiqs")
+    control = DuffingTransmon(freq=5.2, anharmonicity=-0.3, levels=2, label="c")
+    target = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=2, label="t")
+    drive = ChargeDrive(target=control, label="cr")
+    chip = Chip(
+        devices=[control, target],
+        couplings=[Capacitive(control, target, g=0.01, rwa=True)],
+        control_equipment=ControlEquipment(lines=[drive]),
+        frame="rotating",
+        rwa=True,
+    )
+    sequence = QuantumSequence(chip)
+    pulse = sequence.schedule(
+        drive,
+        envelope=Gaussian(duration=8.0, amplitude=0.02, sigmas=3),
+        freq=target.freq,
+    )
+    tlist = jnp.linspace(0.0, 8.0, 17)
+    initial_state = chip.state(c=0, t=0)
+
+    def loss(amplitude: jax.Array) -> jax.Array:
+        amplitudes = amplitude * jnp.asarray([0.8, 1.0, 1.2])
+        batch = sequence.build_batch(
+            pulse.vary("amplitude", amplitudes, name="cr_amplitude"),
+            tlist=tlist,
+            initial_state=initial_state,
+        )
+        results = chip.solve_many(batch, progress=False)
+        populations = results.population("t", level=1, reduce="last")
+        targets = jnp.asarray([0.01, 0.02, 0.03])
+        return jnp.sum((populations - targets) ** 2)
+
+    value, grad = jax.value_and_grad(loss)(jnp.asarray(0.02))
+    assert jnp.isfinite(value)
+    assert jnp.isfinite(grad)
+
+
 def test_unified_expect_method_on_dynamiqs() -> None:
     """The unified expect() method returns full trace on dynamiqs backend."""
     _set_backend("dynamiqs")

@@ -337,10 +337,10 @@ class Chip:
                     h_int = masked
                 H = H + h_int.embed(labels, self._dims)
 
+        assert H is not None
         # Do not cache expressions whose values belong to a JAX trace.
         if not contains_tracer(H.numeric_values()):
             self._hamiltonian_cache = (signature, H)
-        assert H is not None
         return H
 
     # ------------------------------------------------------------------
@@ -426,20 +426,32 @@ class Chip:
                     if line.device_label is None:
                         continue
                     idx = self._label_to_index[line.device_label]
+                    parameter_paths = tuple(
+                        f"drive.{line.label}.{name}"
+                        for name in line.collapse_parameter_names()
+                    )
                     out.extend(
-                        (op, (idx,), line.label, f"drive_{position}", ())
+                        (op, (idx,), line.label, f"drive_{position}", parameter_paths)
                         for position, op in enumerate(line.collapse_operators(self._devices[idx]))
                     )
             for coupling in self._couplings:
                 idx_a = self._label_to_index[coupling.device_a_label]
                 idx_b = self._label_to_index[coupling.device_b_label]
+                parameter_paths = tuple(
+                    f"{coupling.label}.{name}"
+                    for name in coupling.collapse_parameter_names()
+                )
                 out.extend(
-                    (op, (idx_a, idx_b), coupling.label, f"coupling_{position}", ())
+                    (op, (idx_a, idx_b), coupling.label, f"coupling_{position}", parameter_paths)
                     for position, op in enumerate(coupling.collapse_operators(self))
                 )
             for bath in self.baths:
+                parameter_paths = tuple(
+                    f"bath.{bath.label}.{name}"
+                    for name in bath.collapse_parameter_names()
+                )
                 out.extend(
-                    (op, (), bath.label, f"bath_{position}", ())
+                    (op, (), bath.label, f"bath_{position}", parameter_paths)
                     for position, op in enumerate(bath.collapse_operators(self))
                 )
         return out
@@ -991,35 +1003,46 @@ class Chip:
 
         return clone_chip(self)
 
+    def _parameter_targets(self) -> dict[str, tuple[str, int, str, Any]]:
+        """Map public parameter paths to component-owned local values."""
+        targets: dict[str, tuple[str, int, str, Any]] = {}
+
+        def add(path: str, target: tuple[str, int, str, Any]) -> None:
+            if path in targets:
+                raise ValueError(
+                    f"Parameter path {path!r} is ambiguous; give the colliding components distinct labels."
+                )
+            targets[path] = target
+
+        for index, device in enumerate(self._devices):
+            for name, value in device.parameter_values().items():
+                add(f"{device.label}.{name}", ("device", index, name, value))
+        for index, coupling in enumerate(self._couplings):
+            for name, value in coupling.parameter_values().items():
+                add(f"{coupling.label}.{name}", ("coupling", index, name, value))
+        if self._control_equipment is not None:
+            for index, line in enumerate(self._control_equipment.lines):
+                for name, value in line.parameter_values().items():
+                    add(f"drive.{line.label}.{name}", ("drive", index, name, value))
+            for index, transform in enumerate(self._control_equipment.signal_chain):
+                for name, value in transform.parameter_values().items():
+                    add(f"control.{index}.{name}", ("control", index, name, value))
+        for index, bath in enumerate(self._baths):
+            for name, value in bath.parameter_values().items():
+                add(f"bath.{bath.label}.{name}", ("bath", index, name, value))
+        return targets
+
     @property
     def parameters(self) -> Mapping[str, Any]:
         """Bindable numerical values keyed by stable component paths."""
-        values: dict[str, Any] = {}
-        for device in self._devices:
-            values.update(
-                (f"{device.label}.{name}", value)
-                for name, value in device.tunable_params().items()
-            )
-            values.update(
-                (f"{device.label}.{name}", value)
-                for name in type(device).noise_parameter_names()
-                if (value := getattr(device, name)) is not None
-            )
-        for coupling in self._couplings:
-            fields = getattr(type(coupling), "__quchip_param_fields__", {})
-            if fields:
-                values.update(
-                    (f"{coupling.label}.{name}", getattr(coupling, name))
-                    for name in fields
-                )
-            else:
-                name = coupling.coupling_strength_name
-                values[f"{coupling.label}.{name}"] = coupling.coupling_strength
-        return MappingProxyType(values)
+        return MappingProxyType({path: target[3] for path, target in self._parameter_targets().items()})
 
     @property
     def settings(self) -> Mapping[str, Any]:
         """Read-only structural choices that are not numerical fit parameters."""
+        equipment = self._control_equipment
+        lines = () if equipment is None else equipment.lines
+        signal_chain = () if equipment is None else equipment.signal_chain
         return MappingProxyType(
             {
                 "devices": tuple(
@@ -1035,6 +1058,18 @@ class Chip:
                     )
                     for coupling in self._couplings
                 ),
+                "drives": tuple(
+                    (line.label, type(line).__name__, line.target_label)
+                    for line in lines
+                ),
+                "signal_chain": tuple(
+                    type(transform).__name__
+                    for transform in signal_chain
+                ),
+                "baths": tuple(
+                    (bath.label, bath.recipe, tuple(bath.resolve_targets(self)))
+                    for bath in self._baths
+                ),
                 "frame": self._frame_spec,
                 "rwa": self._rwa,
                 "backend": type(self.backend).__name__,
@@ -1042,33 +1077,31 @@ class Chip:
         )
 
     def with_params(self, bindings: Mapping[str, Any]) -> "Chip":
-        """Return an isolated Chip with the supplied dotted parameter paths rebound."""
-        available = self.parameters
-        unknown = set(bindings) - set(available)
+        """Return an isolated structural copy with component-owned values rebound."""
+        targets = self._parameter_targets()
+        unknown = set(bindings) - set(targets)
         if unknown:
             raise KeyError(
                 f"Unknown Chip parameter paths: {sorted(unknown)}. "
-                f"Available: {list(available)}"
+                f"Available: {list(targets)}"
             )
 
         cloned = self.clone()
         for path, value in bindings.items():
-            label, name = path.rsplit(".", 1)
-            if label in cloned._device_map:
-                device = cloned._device_map[label]
-                if name in device.tunable_params():
-                    device.set_tunable_param(name, value)
-                else:
-                    setattr(device, name, value)
-                continue
-            coupling = cloned._coupling_map[label]
-            fields = getattr(type(coupling), "__quchip_param_fields__", {})
-            if name in fields:
-                setattr(coupling, name, value)
-            elif name == coupling.coupling_strength_name:
-                coupling.set_coupling_strength(value)
-            else:  # pragma: no cover - guarded by the inventory above
-                raise KeyError(path)
+            kind, index, name, _ = targets[path]
+            if kind == "device":
+                cloned._devices[index].set_parameter_value(name, value)
+            elif kind == "coupling":
+                cloned._couplings[index].set_parameter_value(name, value)
+            elif kind == "drive":
+                assert cloned._control_equipment is not None
+                cloned._control_equipment._lines[index].set_parameter_value(name, value)
+            elif kind == "control":
+                assert cloned._control_equipment is not None
+                transform = cloned._control_equipment._signal_chain[index]
+                cloned._control_equipment._signal_chain[index] = transform.with_parameter_value(name, value)
+            else:
+                cloned._baths[index].set_parameter_value(name, value)
         return cloned
 
     def partition(self) -> "PartitionResult":

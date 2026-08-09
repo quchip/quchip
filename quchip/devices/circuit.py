@@ -38,8 +38,6 @@ called during ``__init__``. Mutation tracking — which gates
 automatically once the outermost ``__init__`` returns
 (:class:`~quchip.utils.state_versioning.StateVersioned`); subclasses do not
 call ``_finish_init`` by hand.
-
-See ``docs/superpowers/specs/2026-04-21-circuit-level-devices-design.md``.
 """
 
 from __future__ import annotations

@@ -436,6 +436,27 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         object.__setattr__(cloned, "_owner_chips", weakref.WeakSet())
         return cloned
 
+    def parameter_values(self) -> dict[str, Any]:
+        """Return this device's active bindable values by local field name."""
+        values = dict(self.tunable_params())
+        values.update(
+            (name, value)
+            for name in type(self).noise_parameter_names()
+            if (value := getattr(self, name)) is not None
+        )
+        return values
+
+    def set_parameter_value(self, name: str, value: Any) -> None:
+        """Apply one validated local parameter value on an isolated device copy."""
+        tunable = self.tunable_params()
+        if name in tunable:
+            self.set_tunable_param(name, value)
+            return
+        if name in type(self).noise_parameter_names():
+            setattr(self, name, value)
+            return
+        raise KeyError(name)
+
     def _attach_chip(self, chip: "Chip") -> None:
         """Register *chip* as an owner for context-dependent device properties."""
         self._owner_chips.add(chip)

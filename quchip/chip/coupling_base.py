@@ -117,6 +117,28 @@ class BaseCoupling(StateVersioned, Registrable, ABC, registry_root=True):
         object.__setattr__(cloned, "device_b", device_map[self.device_b_label])
         return cloned
 
+    def parameter_values(self) -> dict[str, Any]:
+        """Return this coupling's bindable values by local field name."""
+        fields = getattr(type(self), "__quchip_param_fields__", {})
+        if fields:
+            return {name: getattr(self, name) for name in fields}
+        return {self.coupling_strength_name: self.coupling_strength}
+
+    def set_parameter_value(self, name: str, value: Any) -> None:
+        """Apply one local parameter value on an isolated coupling copy."""
+        fields = getattr(type(self), "__quchip_param_fields__", {})
+        if name in fields:
+            setattr(self, name, value)
+            return
+        if name == self.coupling_strength_name:
+            self.set_coupling_strength(value)
+            return
+        raise KeyError(name)
+
+    def collapse_parameter_names(self) -> tuple[str, ...]:
+        """Return local parameters that may affect this coupling's noise."""
+        return tuple(self.parameter_values())
+
     @property
     def device_a_label(self) -> str:
         """Label of the first coupled device (works pre- and post-binding)."""

@@ -71,6 +71,7 @@ class Bath:
     """
 
     _type_prefix = "bath"
+    _parameter_names = ("temperature", "rate")
 
     def __init__(
         self,
@@ -200,6 +201,24 @@ class Bath:
         values stay traced.
         """
         return Bath.from_dict(self.to_dict())
+
+    def parameter_values(self) -> dict[str, Any]:
+        """Return active bath values by local field name."""
+        return {
+            name: value
+            for name in self._parameter_names
+            if (value := getattr(self, name)) is not None
+        }
+
+    def set_parameter_value(self, name: str, value: Any) -> None:
+        """Apply one bath value on an isolated bath copy."""
+        if name not in self._parameter_names:
+            raise KeyError(name)
+        setattr(self, name, value)
+
+    def collapse_parameter_names(self) -> tuple[str, ...]:
+        """Return active bath values that affect its collapse operators."""
+        return tuple(self.parameter_values())
 
     def _bose(self, freq: Any, xp: Any) -> Any:
         """Thermal occupation n̄(freq, T); JAX-safe (no branch on traced T), T=0-safe.
