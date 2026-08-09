@@ -385,10 +385,13 @@ class Chip:
                 )
         return out
 
-    def collapse_contributions(self) -> list[tuple[Operator, tuple[int, ...]]]:
+    def collapse_contributions(
+        self,
+    ) -> list[tuple[Operator, tuple[int, ...], str, str, tuple[str, ...]]]:
         """Every Lindblad collapse operator on the chip, with its support.
 
-        Returns ``(operator, support)`` pairs: one device index for a
+        Returns ``(operator, support, source, channel, parameter_paths)``
+        tuples: one device index for a
         device- or drive-line-local operator, two for a coupling's
         two-body operator, and an empty tuple for an operator already
         embedded in the full space (baths). Rates are in 1/ns,
@@ -405,22 +408,40 @@ class Chip:
         :meth:`physics_notes`.
         """
         backend = self.backend
-        out: list[tuple[Operator, tuple[int, ...]]] = []
+        out: list[tuple[Operator, tuple[int, ...], str, str, tuple[str, ...]]] = []
         with _backend_context(backend):
             for i, dev in enumerate(self._devices):
-                out.extend((op, (i,)) for op in dev.collapse_operators())
+                out.extend(
+                    (
+                        op,
+                        (i,),
+                        dev.label,
+                        channel,
+                        tuple(f"{dev.label}.{name}" for name in params if getattr(dev, name) is not None),
+                    )
+                    for op, channel, params in dev.collapse_contributions()
+                )
             if self.control_equipment is not None:
                 for line in self.control_equipment.lines:
                     if line.device_label is None:
                         continue
                     idx = self._label_to_index[line.device_label]
-                    out.extend((op, (idx,)) for op in line.collapse_operators(self._devices[idx]))
+                    out.extend(
+                        (op, (idx,), line.label, f"drive_{position}", ())
+                        for position, op in enumerate(line.collapse_operators(self._devices[idx]))
+                    )
             for coupling in self._couplings:
                 idx_a = self._label_to_index[coupling.device_a_label]
                 idx_b = self._label_to_index[coupling.device_b_label]
-                out.extend((op, (idx_a, idx_b)) for op in coupling.collapse_operators(self))
+                out.extend(
+                    (op, (idx_a, idx_b), coupling.label, f"coupling_{position}", ())
+                    for position, op in enumerate(coupling.collapse_operators(self))
+                )
             for bath in self.baths:
-                out.extend((op, ()) for op in bath.collapse_operators(self))
+                out.extend(
+                    (op, (), bath.label, f"bath_{position}", ())
+                    for position, op in enumerate(bath.collapse_operators(self))
+                )
         return out
 
     # ------------------------------------------------------------------
@@ -979,22 +1000,21 @@ class Chip:
                 (f"{device.label}.{name}", value)
                 for name, value in device.tunable_params().items()
             )
+            values.update(
+                (f"{device.label}.{name}", value)
+                for name in type(device).noise_parameter_names()
+                if (value := getattr(device, name)) is not None
+            )
         for coupling in self._couplings:
             fields = getattr(type(coupling), "__quchip_param_fields__", {})
             if fields:
-                coupling_values = {
-                    f"{coupling.label}.{name}": getattr(coupling, name)
+                values.update(
+                    (f"{coupling.label}.{name}", getattr(coupling, name))
                     for name in fields
-                }
+                )
             else:
                 name = coupling.coupling_strength_name
-                coupling_values = {
-                    f"{coupling.label}.{name}": coupling.coupling_strength
-                }
-            collision = values.keys() & coupling_values.keys()
-            if collision:
-                raise ValueError(f"Chip parameter paths are ambiguous: {sorted(collision)}")
-            values.update(coupling_values)
+                values[f"{coupling.label}.{name}"] = coupling.coupling_strength
         return MappingProxyType(values)
 
     @property
@@ -1035,7 +1055,11 @@ class Chip:
         for path, value in bindings.items():
             label, name = path.rsplit(".", 1)
             if label in cloned._device_map:
-                cloned._device_map[label].set_tunable_param(name, value)
+                device = cloned._device_map[label]
+                if name in device.tunable_params():
+                    device.set_tunable_param(name, value)
+                else:
+                    setattr(device, name, value)
                 continue
             coupling = cloned._coupling_map[label]
             fields = getattr(type(coupling), "__quchip_param_fields__", {})

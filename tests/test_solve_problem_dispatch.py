@@ -100,7 +100,7 @@ class TestBuildSolveProblem:
         assert len(problem.engine_result.dynamic_terms) > 0
 
     def test_problem_collects_drive_level_collapse_operators(self):
-        """build_problem() collects a drive's own collapse_operators() into problem.c_ops."""
+        """build_problem() retains a drive's collapse operator in the engine result."""
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=3, label="q")
         drive = _NoisyChargeDrive(target=q)
         chip = Chip([q])
@@ -108,10 +108,10 @@ class TestBuildSolveProblem:
 
         problem = build_problem(chip, [], np.linspace(0.0, 10.0, 11))
 
-        assert len(problem.c_ops) == 1
+        assert len(problem.engine_result.collapse_terms) == 1
 
     def test_problem_collects_coupling_level_collapse_operators(self):
-        """build_problem() collects a coupling's own collapse_operators() into problem.c_ops."""
+        """build_problem() retains a coupling's collapse operator in the engine result."""
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=3, label="q")
         r = DuffingTransmon(freq=5.4, anharmonicity=-0.2, levels=3, label="r")
         coupling = _NoisyCapacitive(q, r, g=0.01)
@@ -119,7 +119,7 @@ class TestBuildSolveProblem:
 
         problem = build_problem(chip, [], np.linspace(0.0, 10.0, 11))
 
-        assert len(problem.c_ops) == 1
+        assert len(problem.engine_result.collapse_terms) == 1
 
 
 class TestSolveProblemDispatch:

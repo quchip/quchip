@@ -65,6 +65,7 @@ from quchip.engine.ir import HamiltonianTemplate
 from quchip.engine.ir import (
     CanonicalOperator,
     Carrier,
+    CollapseTerm,
     Conjugate,
     DroppedTerm,
     DynamicTerm,
@@ -336,6 +337,31 @@ def _apply_2pi_canonical(backend: Backend, embedded: Operator, *, dims, labels, 
         subsystem_labels=labels,
         tag=tag,
     )
+
+
+def _collect_collapse_terms(chip: "Chip", backend: Backend) -> tuple[CollapseTerm, ...]:
+    """Canonicalize every component-owned collapse operator."""
+    labels = tuple(device.label for device in chip.devices)
+    terms: list[CollapseTerm] = []
+    with _backend_context(backend):
+        for operator, support, source, channel, parameter_paths in chip.collapse_contributions():
+            embedded = embed_on_support(
+                backend, materialize_expr(operator, backend), support, chip.dims
+            )
+            canonical = backend.to_canonical_operator(embedded).with_metadata(
+                dims=tuple(chip.dims),
+                subsystem_labels=labels,
+                tag=f"collapse:{source}:{channel}",
+            )
+            terms.append(
+                CollapseTerm(
+                    operator=canonical,
+                    source=source,
+                    channel=channel,
+                    parameter_paths=parameter_paths,
+                )
+            )
+    return tuple(terms)
 
 
 def _dynamic_term(
@@ -1122,6 +1148,7 @@ def compile_hamiltonian_template(
         dropped_terms=_collect_dropped_terms(chip, resolved_frame) + tuple(coupling_dropped),
         weight_zero_drops=weight_zero_drops,
         static_spectral_bound_ghz=static_spectral_bound_ghz,
+        collapse_terms=_collect_collapse_terms(chip, backend),
     )
 
 
@@ -1212,6 +1239,7 @@ def instantiate_engine_result(
         dims=dims,
         metadata=metadata,
         dropped_terms=template.dropped_terms + tuple(fresh_dropped),
+        collapse_terms=template.collapse_terms,
     )
 
 

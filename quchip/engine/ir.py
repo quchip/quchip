@@ -909,6 +909,37 @@ class DynamicTerm:
 
 
 @dataclass(frozen=True)
+class CollapseTerm:
+    """Backend-neutral Lindblad operator with its physical owner."""
+
+    operator: CanonicalOperator
+    source: str
+    channel: str
+    parameter_paths: tuple[str, ...] = ()
+
+    def latex(self) -> str:
+        """Render this collapse channel as an opaque named operator."""
+        symbols = {
+            "T1": "T_1",
+            "T2": "T_2",
+            "thermal_population": r"\bar n",
+            "quality_factor": "Q",
+        }
+        rendered: list[str] = []
+        for path in self.parameter_paths:
+            scope, name = path.rsplit(".", 1)
+            symbol = symbols.get(name, name)
+            if "_" in symbol and not symbol.startswith("\\"):
+                base, subscript = symbol.split("_", 1)
+                rendered.append(rf"{base}_{{{subscript},{scope}}}")
+            else:
+                rendered.append(rf"{symbol}_{{{scope}}}")
+        arguments = ", ".join(rendered)
+        suffix = rf"\!\left({arguments}\right)" if arguments else ""
+        return rf"\hat L_{{{self.source},{self.channel}}}{suffix}"
+
+
+@dataclass(frozen=True)
 class DroppedTerm:
     """Advisory record for a Hamiltonian term elided by an approximation.
 
@@ -987,6 +1018,7 @@ class EngineResult:
     dims: tuple[int, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
     dropped_terms: tuple[DroppedTerm, ...] = ()
+    collapse_terms: tuple[CollapseTerm, ...] = ()
 
     def matrix(self, t: Any | None = None) -> Any:
         """Return the dense Hamiltonian matrix the backend receives.
@@ -1078,6 +1110,7 @@ class HamiltonianTemplate:
     * ``drive_terms`` — pre-embedded, 2π-scaled drive bands
       (:class:`~quchip.engine.stage2_assembly.CompiledDriveTerm`) ready
       for per-variant reinstantiation.
+    * ``collapse_terms`` — canonical component-owned Lindblad operators.
     * ``reference_drive_ops`` — the structural yardstick used by
       :func:`~quchip.engine.stage2_assembly.instantiate_engine_result`
       to reject drive-ops that change the template's skeleton (device,
@@ -1108,6 +1141,7 @@ class HamiltonianTemplate:
     #: fully concrete (a traced coefficient stays dynamic). Only the
     #: variant-specific carrier-frequency hint is recomputed per instantiation.
     static_spectral_bound_ghz: float | None = None
+    collapse_terms: tuple[Any, ...] = ()            # tuple[CollapseTerm, ...]
 
 
 # ── Frame Types ─────────────────────────────────────────────────────
@@ -1173,8 +1207,8 @@ def _reject_backend_option(options: dict[str, Any], *, cls_name: str) -> dict[st
 class SolveProblem:
     """Immutable simulation request handed from the chip pipeline to a backend.
 
-    Bundles the stage-2 :class:`EngineResult`, an
-    ``initial_state``, solver time grid, collapse operators, decomposed
+    Bundles the :class:`EngineResult` (Hamiltonian and collapse terms), an
+    ``initial_state``, solver time grid, decomposed
     ``e_ops`` + their :class:`BandMeta`, the :class:`ResolvedFrame`, and
     solver options. ``chip`` owns backend selection, so ``options`` must
     not contain a ``"backend"`` key (enforced in ``__post_init__``).
@@ -1186,7 +1220,6 @@ class SolveProblem:
     engine_result: Any  # EngineResult
     initial_state: Any
     tlist: Any
-    c_ops: tuple[Any, ...] = ()
     e_ops: Any = None
     e_ops_meta: Any = None
     resolved_frame: Any = None
@@ -1232,10 +1265,6 @@ class SolveBatch:
     @property
     def tlist(self) -> Any:
         return self.problem.tlist
-
-    @property
-    def c_ops(self) -> tuple[Any, ...]:
-        return self.problem.c_ops
 
     @property
     def e_ops(self) -> Any:

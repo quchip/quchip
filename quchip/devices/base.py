@@ -808,7 +808,15 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         2002), Ch. 3. For circuit-QED conventions see Krantz et al.,
         *Applied Physics Reviews* **6**, 021318 (2019), §V.
         """
-        return [op for channel in type(self)._noise_channels for op in channel.build(self)]
+        return [op for op, _channel, _params in self.collapse_contributions()]
+
+    def collapse_contributions(self) -> list[tuple[Operator, str, tuple[str, ...]]]:
+        """Return local collapse operators with channel and parameter ownership."""
+        return [
+            (operator, channel.name, channel.params)
+            for channel in type(self)._noise_channels
+            for operator in channel.build(self)
+        ]
 
     @classmethod
     def noise_parameter_names(cls) -> tuple[str, ...]:
