@@ -286,7 +286,9 @@ class ChipAnalysis:
         saved_frame = chip._frame_spec
         chip._frame_spec = "lab"
         try:
-            hamiltonian = chip.hamiltonian()
+            from quchip.declarative.expr import materialize_expr
+
+            hamiltonian = materialize_expr(chip.hamiltonian(), chip.backend)
         finally:
             chip._frame_spec = saved_frame
 

@@ -273,34 +273,34 @@ class TestBatchMetadataAggregation:
 
     def test_max_step_ns_aggregates_by_minimum(self):
         """max_step_ns takes the minimum across batch elements."""
-        from quchip.engine.ir import HamiltonianDescription
+        from quchip.engine.ir import EngineResult
         from quchip.engine.stage4_problem import _aggregate_batch_metadata
 
-        wide = HamiltonianDescription(static_terms=(), dynamic_terms=(), metadata={"max_step_ns": 10.0})
-        narrow = HamiltonianDescription(static_terms=(), dynamic_terms=(), metadata={"max_step_ns": 2.5})
+        wide = EngineResult(static_terms=(), dynamic_terms=(), metadata={"max_step_ns": 10.0})
+        narrow = EngineResult(static_terms=(), dynamic_terms=(), metadata={"max_step_ns": 2.5})
         metadata = _aggregate_batch_metadata([wide, narrow])
         assert metadata["max_step_ns"] == pytest.approx(2.5)
 
     def test_max_step_ns_omitted_when_any_element_lacks_it(self):
         """A single element missing max_step_ns (e.g. from tracing) omits it for the whole batch."""
-        from quchip.engine.ir import HamiltonianDescription
+        from quchip.engine.ir import EngineResult
         from quchip.engine.stage4_problem import _aggregate_batch_metadata
 
-        has_hint = HamiltonianDescription(static_terms=(), dynamic_terms=(), metadata={"max_step_ns": 10.0})
-        missing_hint = HamiltonianDescription(static_terms=(), dynamic_terms=(), metadata={})
+        has_hint = EngineResult(static_terms=(), dynamic_terms=(), metadata={"max_step_ns": 10.0})
+        missing_hint = EngineResult(static_terms=(), dynamic_terms=(), metadata={})
         metadata = _aggregate_batch_metadata([has_hint, missing_hint])
         assert "max_step_ns" not in metadata
 
     def test_carrier_and_spectral_bounds_aggregate_by_maximum(self):
         """max_carrier_freq_ghz and spectral_bound_ghz take the maximum across batch elements."""
-        from quchip.engine.ir import HamiltonianDescription
+        from quchip.engine.ir import EngineResult
         from quchip.engine.stage4_problem import _aggregate_batch_metadata
 
-        a = HamiltonianDescription(
+        a = EngineResult(
             static_terms=(), dynamic_terms=(),
             metadata={"max_carrier_freq_ghz": 5.0, "spectral_bound_ghz": 1.0},
         )
-        b = HamiltonianDescription(
+        b = EngineResult(
             static_terms=(), dynamic_terms=(),
             metadata={"max_carrier_freq_ghz": 7.5, "spectral_bound_ghz": 0.5},
         )
@@ -310,14 +310,14 @@ class TestBatchMetadataAggregation:
 
 
 class TestBatchedDroppedTermsRetention:
-    """BatchedHamiltonianDescription.element() restores each element's own dropped_terms."""
+    """BatchedEngineResult.element() restores each element's own dropped_terms."""
 
     def test_element_restores_dropped_terms(self):
         """dropped_terms set on a single-element batch reappear on the reconstructed element."""
-        from quchip.engine.ir import BatchedHamiltonianDescription, DroppedTerm
+        from quchip.engine.ir import BatchedEngineResult, DroppedTerm
 
         record = DroppedTerm(source="d0", operator="drive band w=+0 on q0", reason="test", band_weights=(0,))
-        batched = BatchedHamiltonianDescription(
+        batched = BatchedEngineResult(
             batch_size=1,
             static_terms=(),
             dynamic_operators=(),
@@ -331,7 +331,7 @@ class TestBatchedDroppedTermsRetention:
 
     def test_element_restores_its_own_frequency_not_another_elements(self):
         """Two elements with different dropped-term frequencies each restore their own, not the reference's."""
-        from quchip.engine.ir import BatchedHamiltonianDescription, DroppedTerm
+        from quchip.engine.ir import BatchedEngineResult, DroppedTerm
 
         record_a = DroppedTerm(
             source="d0", operator="drive band w=+0 on q0", reason="test", band_weights=(0,), frequency=5.0
@@ -339,7 +339,7 @@ class TestBatchedDroppedTermsRetention:
         record_b = DroppedTerm(
             source="d0", operator="drive band w=+0 on q0", reason="test", band_weights=(0,), frequency=6.0
         )
-        batched = BatchedHamiltonianDescription(
+        batched = BatchedEngineResult(
             batch_size=2,
             static_terms=(),
             dynamic_operators=(),
@@ -353,11 +353,11 @@ class TestBatchedDroppedTermsRetention:
 
     def test_length_mismatch_raises(self):
         """dropped_terms_by_element whose length disagrees with batch_size raises ValueError."""
-        from quchip.engine.ir import BatchedHamiltonianDescription, DroppedTerm
+        from quchip.engine.ir import BatchedEngineResult, DroppedTerm
 
         record = DroppedTerm(source="d0", operator="drive band w=+0 on q0", reason="test", band_weights=(0,))
         with pytest.raises(ValueError, match="dropped_terms_by_element"):
-            BatchedHamiltonianDescription(
+            BatchedEngineResult(
                 batch_size=2,
                 static_terms=(),
                 dynamic_operators=(),

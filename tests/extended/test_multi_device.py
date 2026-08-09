@@ -20,7 +20,7 @@ from quchip.control.signal import Crosstalk
 from quchip.control.drive import ChargeDrive
 from quchip.control.envelopes import Square
 from quchip.devices.transmon.duffing import DuffingTransmon
-from quchip.engine import build_hamiltonian_description, simulate
+from quchip.engine import build_engine_result, simulate
 from quchip.engine.ir import DriveOp
 
 
@@ -201,7 +201,7 @@ class TestCrosstalkIntegration:
         from quchip.engine.stage1_frames import resolve_frame
 
         resolved = resolve_frame(chip, chip.frame)
-        desc_no_xt = build_hamiltonian_description(chip, [drive_op], resolved_frame=resolved)
+        desc_no_xt = build_engine_result(chip, [drive_op], resolved_frame=resolved)
 
         src_key = drive_a.label
         vic_key = drive_b.label
@@ -210,7 +210,7 @@ class TestCrosstalkIntegration:
             signal_chain=[Crosstalk(source=src_key, victim=vic_key, beta=self.BETA)],
         ))
         resolved = resolve_frame(chip, chip.frame)
-        desc_with_xt = build_hamiltonian_description(chip, [drive_op], resolved_frame=resolved)
+        desc_with_xt = build_engine_result(chip, [drive_op], resolved_frame=resolved)
 
         assert len(desc_with_xt.dynamic_terms) > len(desc_no_xt.dynamic_terms), (
             f"Crosstalk should add terms: got {len(desc_with_xt.dynamic_terms)} with vs "

@@ -22,7 +22,7 @@ def test_grad_of_dressed_gap_through_rwa_mask():
         q1 = DuffingTransmon(freq=5.3, anharmonicity=-0.3, levels=3, label="q1")
         cap = Capacitive(q0, q1, g=g)
         chip = Chip([q0, q1], [cap], rwa=True, backend=DynamiqsBackend())
-        h = jnp.asarray(chip.backend.to_array(chip.hamiltonian()))
+        h = jnp.asarray(chip.hamiltonian().matrix(backend=chip.backend))
         evals = jnp.linalg.eigvalsh(h)
         return evals[2] - evals[1]
 

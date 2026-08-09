@@ -26,7 +26,7 @@ Declare the chip once. The same declaration drives dressed-state analysis, model
   <img src="https://raw.githubusercontent.com/quchip/quchip/main/docs/images/quchip_pipeline_light.png" alt="quchip pipeline from declared devices and control parameters through frame resolution, Hamiltonian assembly, observable preparation, backend solving, and one reverse-mode gradient" width="1084">
 </picture>
 
-`Chip + QuantumSequence` → `ResolvedFrame` → `HamiltonianDescription` → `SolveProblem` → QuTiP or dynamiqs → `SimulationResult`
+`Chip + QuantumSequence` → `ResolvedFrame` → `EngineResult` → `SolveProblem` → QuTiP or dynamiqs → `SimulationResult`
 
 QuTiP is the default backend. The dynamiqs backend is JAX-native and keeps declared device and control parameters differentiable through the solve.
 

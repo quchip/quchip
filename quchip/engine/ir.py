@@ -17,8 +17,8 @@ defines four families of immutable, JAX-pytree-friendly types:
    to and from this format.
 
 3. Hamiltonian terms — :class:`StaticTerm`, :class:`DynamicTerm`, and
-   the per-stage container :class:`HamiltonianDescription` plus the
-   batched :class:`BatchedHamiltonianDescription`.
+   the per-stage container :class:`EngineResult` plus the
+   batched :class:`BatchedEngineResult`.
 
 4. Solve requests — :class:`SolveProblem` and :class:`SolveBatch`, the
    frozen hand-offs to backends. ``backend`` selection is chip-owned
@@ -908,7 +908,7 @@ class DroppedTerm:
     Emitted by physics components (couplings, drives, …) whose local
     Hamiltonian routines discard terms under an approximation such as
     the rotating-wave approximation. Stage 2 aggregates these records
-    into :attr:`HamiltonianDescription.dropped_terms` so callers can
+    into :attr:`EngineResult.dropped_terms` so callers can
     audit what was silently removed — in particular, compare each dropped band's amplitude
     against its oscillation frequency, the smallness ratio that governs
     RWA validity (leading correction ∼ amplitude²/frequency, the
@@ -954,7 +954,7 @@ class DroppedTerm:
 
 
 @dataclass(frozen=True)
-class HamiltonianDescription:
+class EngineResult:
     """Backend-agnostic time-dependent Hamiltonian — the stage-2 / backend contract.
 
     Represents
@@ -1014,7 +1014,7 @@ class HamiltonianDescription:
 # CanonicalOperator invariant and changes only the signal-program leaves
 # that describe f(t). Produced by
 # stage2_assembly.compile_hamiltonian_template and instantiated per sweep
-# point by stage2_assembly.instantiate_hamiltonian_description, so a
+# point by stage2_assembly.instantiate_engine_result, so a
 # single JAX ``jit`` trace covers every variant in a homogeneous sweep.
 
 
@@ -1033,7 +1033,7 @@ class HamiltonianTemplate:
       (:class:`~quchip.engine.stage2_assembly.CompiledDriveTerm`) ready
       for per-variant reinstantiation.
     * ``reference_drive_ops`` — the structural yardstick used by
-      :func:`~quchip.engine.stage2_assembly.instantiate_hamiltonian_description`
+      :func:`~quchip.engine.stage2_assembly.instantiate_engine_result`
       to reject drive-ops that change the template's skeleton (device,
       drive, envelope type, or drive type).
 
@@ -1128,7 +1128,7 @@ def _reject_backend_option(options: dict[str, Any], *, cls_name: str) -> dict[st
 class SolveProblem:
     """Immutable simulation request handed from the chip pipeline to a backend.
 
-    Bundles the stage-2 :class:`HamiltonianDescription`, an
+    Bundles the stage-2 :class:`EngineResult`, an
     ``initial_state``, solver time grid, collapse operators, decomposed
     ``e_ops`` + their :class:`BandMeta`, the :class:`ResolvedFrame`, and
     solver options. ``chip`` owns backend selection, so ``options`` must
@@ -1138,7 +1138,7 @@ class SolveProblem:
     """
 
     chip: Any  # Chip (typed as Any to avoid runtime import cycles)
-    hamiltonian: Any  # HamiltonianDescription
+    engine_result: Any  # EngineResult
     initial_state: Any
     tlist: Any
     c_ops: tuple[Any, ...] = ()
@@ -1156,7 +1156,7 @@ class SolveProblem:
 
 
 @dataclass(frozen=True)
-class BatchedHamiltonianDescription:
+class BatchedEngineResult:
     """Batched Hamiltonian IR that splits shared vs per-element structure.
 
     Describes ``N`` Hamiltonians with identical operator skeletons
@@ -1204,7 +1204,7 @@ class BatchedHamiltonianDescription:
         # after construction (mirrors SolveProblem).
         object.__setattr__(self, "metadata", dict(self.metadata))
 
-    def element(self, index: int) -> HamiltonianDescription:
+    def element(self, index: int) -> EngineResult:
         """Reconstruct the single-element description at *index*."""
         if index < 0 or index >= self.batch_size:
             raise IndexError(f"batch index {index} out of range [0, {self.batch_size})")
@@ -1218,7 +1218,7 @@ class BatchedHamiltonianDescription:
             for slot in range(len(self.dynamic_operators))
         )
         element_dropped = self.dropped_terms_by_element[index] if self.dropped_terms_by_element else ()
-        return HamiltonianDescription(
+        return EngineResult(
             static_terms=self.static_terms,
             dynamic_terms=dynamic_terms,
             dims=self.dims,
@@ -1231,14 +1231,14 @@ class BatchedHamiltonianDescription:
 class SolveBatch:
     """Batched counterpart to :class:`SolveProblem`.
 
-    Bundles one :class:`BatchedHamiltonianDescription` plus shared solver
+    Bundles one :class:`BatchedEngineResult` plus shared solver
     metadata and per-element initial states. Backends solve the N elements
     in one native batched call (``vmap`` on dynamiqs; shared-operator +
     stitched coefficient arrays on QuTiP).
     """
 
     chip: Any  # Chip
-    hamiltonian: BatchedHamiltonianDescription
+    engine_result: BatchedEngineResult
     initial_states: tuple[Any, ...]
     tlist: Any
     c_ops: tuple[Any, ...] = ()
@@ -1250,23 +1250,23 @@ class SolveBatch:
 
     def __post_init__(self) -> None:
         options_copy = _reject_backend_option(self.options, cls_name="SolveBatch")
-        if len(self.initial_states) != self.hamiltonian.batch_size:
+        if len(self.initial_states) != self.engine_result.batch_size:
             raise ValueError(
                 f"initial_states length {len(self.initial_states)} does not match "
-                f"batch_size {self.hamiltonian.batch_size}"
+                f"batch_size {self.engine_result.batch_size}"
             )
         object.__setattr__(self, "options", options_copy)
 
     @property
     def batch_size(self) -> int:
         """Number of elements ``N`` in the batch."""
-        return self.hamiltonian.batch_size
+        return self.engine_result.batch_size
 
     def element(self, index: int) -> SolveProblem:
         """Reconstruct the single-element :class:`SolveProblem` at *index*."""
         return SolveProblem(
             chip=self.chip,
-            hamiltonian=self.hamiltonian.element(index),
+            engine_result=self.engine_result.element(index),
             initial_state=self.initial_states[index],
             tlist=self.tlist,
             c_ops=self.c_ops,

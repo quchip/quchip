@@ -21,7 +21,7 @@ def _coupling_shift(g: float) -> float:
         qa = DuffingTransmon(freq=F_A, anharmonicity=-0.25, levels=2)
         qb = DuffingTransmon(freq=F_B, anharmonicity=-0.25, levels=2)
         chip = Chip([qa, qb], couplings=[Capacitive(qa, qb, g=g, rwa=rwa)])
-        evals = np.sort(np.linalg.eigvalsh(chip.hamiltonian().full()))
+        evals = np.sort(np.linalg.eigvalsh(chip.hamiltonian().matrix()))
         splitting[rwa] = evals[1] - evals[0]
     return splitting[False] - splitting[True]
 

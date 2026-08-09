@@ -1,8 +1,8 @@
 """Backend protocol and backend-agnostic solver-result containers.
 
 quchip separates *physics description* from *solver conversion*: the engine
-(``quchip.engine``) emits structured IR (``HamiltonianDescription``,
-``SolveProblem``, ``BatchedHamiltonianDescription``, ``SolveBatch``) that
+(``quchip.engine``) emits structured IR (``EngineResult``,
+``SolveProblem``, ``BatchedEngineResult``, ``SolveBatch``) that
 carries ordinary-GHz frequencies and backend-free operator payloads
 (``CanonicalOperator``). Each concrete backend is free to translate that IR
 into whatever native form its solver likes best — this module only fixes the
@@ -53,9 +53,9 @@ from quchip.backend.containers import (
 
 if TYPE_CHECKING:
     from quchip.engine.ir import (
-        BatchedHamiltonianDescription,
+        BatchedEngineResult,
         CanonicalOperator,
-        HamiltonianDescription,
+        EngineResult,
         SolveBatch,
         SolveProblem,
     )
@@ -624,10 +624,10 @@ class Backend(ABC):
 
     def prepare_hamiltonian(
         self,
-        description: "HamiltonianDescription",
+        description: "EngineResult",
         tlist: Any,
     ) -> "PreparedHamiltonian":
-        """Convert a :class:`HamiltonianDescription` into a native solver RHS.
+        """Convert a :class:`EngineResult` into a native solver RHS.
 
         The engine passes frequencies already converted by ``2π`` (angular
         rad/ns); backends must not rescale. Concrete backends override this
@@ -669,7 +669,7 @@ class Backend(ABC):
         Picks ``mesolve`` when collapse operators are present (open system)
         or ``sesolve`` otherwise, unless ``problem.solver`` forces a choice.
         """
-        prepared = self.prepare_hamiltonian(problem.hamiltonian, problem.tlist)
+        prepared = self.prepare_hamiltonian(problem.engine_result, problem.tlist)
         tlist_arr = self.array_module.asarray(problem.tlist, dtype=float)
 
         c_ops = list(problem.c_ops) if problem.c_ops else []
@@ -710,10 +710,10 @@ class Backend(ABC):
 
     def prepare_batch(
         self,
-        description: "BatchedHamiltonianDescription",
+        description: "BatchedEngineResult",
         tlist: Any,
     ) -> "PreparedBatch":
-        """Lower a :class:`BatchedHamiltonianDescription` into a prepared batch.
+        """Lower a :class:`BatchedEngineResult` into a prepared batch.
 
         The return type declares the batching strategy:
         :class:`~quchip.backend.containers.EagerBatch` (one RHS per element),
@@ -749,7 +749,7 @@ class Backend(ABC):
         if batch.batch_size == 0:
             return []
 
-        prepared = self.prepare_batch(batch.hamiltonian, batch.tlist)
+        prepared = self.prepare_batch(batch.engine_result, batch.tlist)
         tlist_arr, c_ops, solver_name, opts, e_ops_arg = self._resolve_batch_config(batch, prepared)
 
         if isinstance(prepared, DeferredBatch):
@@ -811,7 +811,7 @@ class Backend(ABC):
         return rhs
 
     @staticmethod
-    def _scalar_dynamic_terms(description: "HamiltonianDescription") -> Iterator[tuple[Any, Any]]:
+    def _scalar_dynamic_terms(description: "EngineResult") -> Iterator[tuple[Any, Any]]:
         """Yield ``(operator, signal)`` for each ``ScalarModulation`` dynamic term.
 
         Centralizes the time-dependence filter both backends apply when
@@ -860,7 +860,7 @@ class Backend(ABC):
 
         *prepared* is any payload exposing ``.metadata`` — a
         :class:`PreparedBatch` on the batched paths, or the
-        :class:`HamiltonianDescription` when the dynamiqs single-solve reuses
+        :class:`EngineResult` when the dynamiqs single-solve reuses
         this resolver.
         """
         tlist_arr = self.array_module.asarray(batch.tlist, dtype=float)

@@ -61,7 +61,7 @@ class TestBuildSolveProblem:
         with pytest.raises(ValueError, match="must not contain 'backend'"):
             SolveProblem(
                 chip=None,
-                hamiltonian=None,
+                engine_result=None,
                 initial_state=None,
                 tlist=np.linspace(0, 50, 201),
                 options={"backend": "something"},
@@ -72,7 +72,7 @@ class TestBuildSolveProblem:
         original = {"store_states": True}
         problem = SolveProblem(
             chip=None,
-            hamiltonian=None,
+            engine_result=None,
             initial_state=None,
             tlist=np.linspace(0, 50, 201),
             options=original,
@@ -96,8 +96,8 @@ class TestBuildSolveProblem:
         )
 
         problem = build_problem(chip, [drive_op], tlist)
-        assert problem.hamiltonian is not None
-        assert len(problem.hamiltonian.dynamic_terms) > 0
+        assert problem.engine_result is not None
+        assert len(problem.engine_result.dynamic_terms) > 0
 
     def test_problem_collects_drive_level_collapse_operators(self):
         """build_problem() collects a drive's own collapse_operators() into problem.c_ops."""
@@ -408,15 +408,15 @@ class TestQuantumSequenceBuildProblem:
         )
 
         assert len(problems) == 2
-        # Element-level HamiltonianDescriptions are materialised on demand; identity equality
+        # Element-level EngineResults are materialised on demand; identity equality
         # of static_terms holds against the SolveBatch and across elements, not just within one.
         batch = problems.batch
-        assert batch.hamiltonian.static_terms is problems[0].hamiltonian.static_terms
-        assert problems[0].hamiltonian.static_terms is problems[1].hamiltonian.static_terms
-        for slot in range(len(problems[0].hamiltonian.dynamic_terms)):
+        assert batch.engine_result.static_terms is problems[0].engine_result.static_terms
+        assert problems[0].engine_result.static_terms is problems[1].engine_result.static_terms
+        for slot in range(len(problems[0].engine_result.dynamic_terms)):
             assert (
-                problems[0].hamiltonian.dynamic_terms[slot].operator
-                is problems[1].hamiltonian.dynamic_terms[slot].operator
+                problems[0].engine_result.dynamic_terms[slot].operator
+                is problems[1].engine_result.dynamic_terms[slot].operator
             )
         assert problems[0].tlist is problems[1].tlist
         assert problems[0].resolved_frame is problems[1].resolved_frame
@@ -480,7 +480,7 @@ class TestQuantumSequenceBuildProblem:
         instantiate_calls = 0
 
         original_compile = sequence_module.compile_hamiltonian_template
-        original_instantiate = sequence_module.instantiate_hamiltonian_description
+        original_instantiate = sequence_module.instantiate_engine_result
 
         def counted_compile(*args, **kwargs):
             nonlocal compile_calls
@@ -493,7 +493,7 @@ class TestQuantumSequenceBuildProblem:
             return original_instantiate(*args, **kwargs)
 
         monkeypatch.setattr(sequence_module, "compile_hamiltonian_template", counted_compile)
-        monkeypatch.setattr(sequence_module, "instantiate_hamiltonian_description", counted_instantiate)
+        monkeypatch.setattr(sequence_module, "instantiate_engine_result", counted_instantiate)
 
         batch = sequence.build_batch(
             amp,
@@ -520,13 +520,13 @@ class TestQuantumSequenceBuildProblem:
         sequence.schedule(drive, envelope=Square(duration=1.0, amplitude=0.02), freq=5.0)
 
         captured_start_times: list[tuple[float, ...]] = []
-        original_instantiate = sequence_module.instantiate_hamiltonian_description
+        original_instantiate = sequence_module.instantiate_engine_result
 
         def capture_start_times(template, drive_ops, chip):
             captured_start_times.append(tuple(float(op.start_time) for op in drive_ops))
             return original_instantiate(template, drive_ops, chip)
 
-        monkeypatch.setattr(sequence_module, "instantiate_hamiltonian_description", capture_start_times)
+        monkeypatch.setattr(sequence_module, "instantiate_engine_result", capture_start_times)
 
         batch = sequence.build_batch(
             wait.vary("duration", [5.0, 9.0], name="tau"),

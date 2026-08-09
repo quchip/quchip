@@ -208,17 +208,17 @@ class TestHamiltonianStructure:
 
     def test_rotating_frame_h0_excludes_cr_terms(self):
         """For detuned devices, engine H0 in rotating frame is diagonal (all coupling sectors are time-dependent)."""
-        from quchip.engine import build_hamiltonian_description
+        from quchip.engine import build_engine_result
         from quchip.engine.stage1_frames import resolve_frame
 
         chip_full = self._make_chip(rwa=False, frame="rotating")
         resolved_full = resolve_frame(chip_full, chip_full.frame)
-        desc_full = build_hamiltonian_description(chip_full, [], resolved_frame=resolved_full)
+        desc_full = build_engine_result(chip_full, [], resolved_frame=resolved_full)
         H0_full = desc_full.static_terms[0].operator.to_dense()
 
         chip_rwa = self._make_chip(rwa=True, frame="rotating")
         resolved_rwa = resolve_frame(chip_rwa, chip_rwa.frame)
-        desc_rwa = build_hamiltonian_description(chip_rwa, [], resolved_frame=resolved_rwa)
+        desc_rwa = build_engine_result(chip_rwa, [], resolved_frame=resolved_rwa)
         H0_rwa = desc_rwa.static_terms[0].operator.to_dense()
 
         for name, H0 in (("rwa=False", H0_full), ("rwa=True", H0_rwa)):
@@ -227,13 +227,13 @@ class TestHamiltonianStructure:
 
     def test_td_hamiltonian_has_cr_terms(self):
         """A non-RWA rotating-frame description produces extra time-dependent terms for ΔN≠0 sectors."""
-        from quchip.engine import build_hamiltonian_description
+        from quchip.engine import build_engine_result
         from quchip.engine.stage1_frames import resolve_frame
 
         chip = self._make_chip(rwa=False, frame="rotating")
 
         resolved = resolve_frame(chip, chip.frame)
-        desc = build_hamiltonian_description(chip, [], resolved_frame=resolved)
+        desc = build_engine_result(chip, [], resolved_frame=resolved)
 
         # rwa=False coupling produces: swap cos + cross sin (at Δ)
         # + ΔN=+2 + ΔN=-2 counter-rotating terms (at sum freq)
@@ -250,13 +250,13 @@ class TestHamiltonianStructure:
 
     def test_rwa_true_has_swap_cross_terms(self):
         """With rwa=True in per-qubit rotating frame, coupling produces swap/cross td terms at detuning frequency."""
-        from quchip.engine import build_hamiltonian_description
+        from quchip.engine import build_engine_result
         from quchip.engine.stage1_frames import resolve_frame
 
         chip = self._make_chip(rwa=True, frame="rotating")
 
         resolved = resolve_frame(chip, chip.frame)
-        desc = build_hamiltonian_description(chip, [], resolved_frame=resolved)
+        desc = build_engine_result(chip, [], resolved_frame=resolved)
 
         assert len(desc.dynamic_terms) == 2, f"Expected swap + cross = 2 dynamic terms, got {len(desc.dynamic_terms)}"
         assert all(isinstance(term.time_dependence, ScalarModulation) for term in desc.dynamic_terms)
@@ -264,13 +264,13 @@ class TestHamiltonianStructure:
 
     def test_lab_frame_unchanged(self):
         """In lab frame, rwa=False produces no td coupling terms; all sectors stay in H0."""
-        from quchip.engine import build_hamiltonian_description
+        from quchip.engine import build_engine_result
         from quchip.engine.stage1_frames import resolve_frame
 
         chip = self._make_chip(rwa=False, frame="lab")
 
         resolved = resolve_frame(chip, chip.frame)
-        desc = build_hamiltonian_description(chip, [], resolved_frame=resolved)
+        desc = build_engine_result(chip, [], resolved_frame=resolved)
 
         assert len(desc.dynamic_terms) == 0, (
             f"Expected only H0 in lab frame, got {len(desc.dynamic_terms)} dynamic terms"

@@ -56,14 +56,14 @@ from quchip.control.envelopes import BaseEnvelope
 from quchip.devices.base import BaseDevice
 from quchip.engine.ir import DriveOp, HamiltonianTemplate
 from quchip.engine.stage4_problem import (
-    build_solve_batch_from_descriptions,
+    build_solve_batch_from_results,
     build_solve_problem,
     prepare_solve_problem_context,
     validate_drive_ops_window,
 )
 from quchip.engine.stage2_assembly import (
     compile_hamiltonian_template,
-    instantiate_hamiltonian_description,
+    instantiate_engine_result,
 )
 from quchip.utils.jax_utils import maybe_concrete_scalar
 from quchip.utils.jax_utils import array_namespace, is_jax_namespace
@@ -782,7 +782,7 @@ class QuantumSequence:
         Returns
         -------
         SolveProblem
-            Frozen problem — chip, compiled Hamiltonian description,
+            Frozen problem — chip, compiled engine result,
             initial state, ``tlist``, collapse operators, and
             expectation operators — ready for
             :meth:`~quchip.chip.chip.Chip.solve` or
@@ -878,16 +878,16 @@ class QuantumSequence:
                         "create the axis from a fresh handle."
                     )
 
-    def _build_batch_point_description(
+    def _build_batch_point_result(
         self,
         template: HamiltonianTemplate,
-        reference_description: Any,
+        reference_result: Any,
         overrides: dict[tuple[int | None, str], Any],
         *,
         tlist: Any,
         shared_initial_state: Any | None,
     ) -> tuple[Any, Any]:
-        """Return ``(HamiltonianDescription, initial_state)`` for one batch point."""
+        """Return ``(EngineResult, initial_state)`` for one batch point."""
         axis_initial_state = overrides.get((None, "initial_state"))
         entry_overrides: dict[tuple[int, str], Any] = {
             (idx, field): value
@@ -910,15 +910,15 @@ class QuantumSequence:
             # schedule's window was already checked when the batch's shared
             # context was built, but this variant needs its own check.
             validate_drive_ops_window(drive_ops, tlist)
-            description = instantiate_hamiltonian_description(template, drive_ops, self._chip)
+            engine_result = instantiate_engine_result(template, drive_ops, self._chip)
         else:
-            description = reference_description
+            engine_result = reference_result
 
         initial_state = axis_initial_state if axis_initial_state is not None else shared_initial_state
         resolved_initial_state = (
             self._resolve_initial_state_spec(initial_state) if initial_state is not None else None
         )
-        return description, resolved_initial_state
+        return engine_result, resolved_initial_state
 
     def build_batch(
         self,
@@ -948,22 +948,22 @@ class QuantumSequence:
             drive_ops=reference_drive_ops,
         )
         template = compile_hamiltonian_template(self._chip, reference_drive_ops, resolved_frame=context.resolved_frame)
-        reference_description = instantiate_hamiltonian_description(template, reference_drive_ops, self._chip)
+        reference_result = instantiate_engine_result(template, reference_drive_ops, self._chip)
 
         shape, expanded = _expand_axis_overrides(axes)
         params_store = np.empty(shape if shape else (), dtype=object)
 
-        descriptions: list[Any] = []
+        engine_results: list[Any] = []
         initial_states: list[Any] = []
         for coord, overrides in expanded:
-            description, resolved_initial_state = self._build_batch_point_description(
+            engine_result, resolved_initial_state = self._build_batch_point_result(
                 template,
-                reference_description,
+                reference_result,
                 overrides,
                 tlist=context.tlist,
                 shared_initial_state=initial_state,
             )
-            descriptions.append(description)
+            engine_results.append(engine_result)
             initial_states.append(resolved_initial_state)
 
             point_params: dict[str, Any] = {}
@@ -974,7 +974,9 @@ class QuantumSequence:
                     point_params[member.name] = member.values[coord[dim]]
             params_store[coord] = point_params
 
-        batch = build_solve_batch_from_descriptions(context, descriptions, initial_states=initial_states)
+        batch = build_solve_batch_from_results(
+            context, engine_results, initial_states=initial_states
+        )
         return ProblemBatch(
             batch=batch,
             params=params_store,

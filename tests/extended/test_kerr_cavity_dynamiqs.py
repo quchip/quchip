@@ -24,5 +24,5 @@ def test_kerr_cavity_and_two_photon_drive_build_with_dynamiqs_backend() -> None:
     hamiltonian = cav.hamiltonian()
     channel = drive.local_channels(cav)[0]
 
-    assert hamiltonian.to_jax().shape == (5, 5)
+    assert hamiltonian.matrix().shape == (5, 5)
     assert channel.operator.to_jax().shape == (5, 5)

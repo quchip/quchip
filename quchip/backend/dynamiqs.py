@@ -515,7 +515,7 @@ class DynamiqsBackend(Backend):
     # (solver name + options/method objects + e_ops/c_ops presence) to a
     # jitted callable. It stores ONLY pure functions + static metadata, never a
     # tracer (avoids stale-trace-context bugs). The cache lives entirely in the
-    # backend; the engine emits the same HamiltonianDescription regardless.
+    # backend; the engine emits the same EngineResult regardless.
 
     _jit_solve_cache: dict[Any, Any]
 
@@ -530,30 +530,35 @@ class DynamiqsBackend(Backend):
         """Lower and solve a single :class:`SolveProblem` via a cached jitted solve.
 
         Falls back to the protocol default (one-shot ``prepare_hamiltonian`` +
-        ``sesolve``/``mesolve``) whenever the description contains a dynamic
+        ``sesolve``/``mesolve``) whenever the engine result contains a dynamic
         term that is not a :class:`ScalarModulation` (the cached path can only
         rebuild ``ScalarModulation`` signals).
         """
-        description = problem.hamiltonian
-        if not self._description_is_cacheable(description):
+        engine_result = problem.engine_result
+        if not self._engine_result_is_cacheable(engine_result):
             return super().solve_problem(problem)
 
         # The single-problem reuse routes through the shared batch-config
         # resolver: ``problem`` exposes the same ``tlist``/``c_ops``/``solver``/
-        # ``options``/``e_ops`` surface, and ``description`` carries ``.metadata``.
-        tlist_arr, c_ops, solver_name, opts, e_ops_arg = self._resolve_batch_config(problem, description)
+        # ``options``/``e_ops`` surface, and ``engine_result`` carries ``.metadata``.
+        tlist_arr, c_ops, solver_name, opts, e_ops_arg = self._resolve_batch_config(
+            problem, engine_result
+        )
         options_obj = self._options_from_dict(opts)
         method_obj = self._method_from_dict(opts)
         gradient = opts.get("gradient")
 
-        # Decompose the description into clean, traced pytree leaves. Operator
+        # Decompose the engine result into clean, traced pytree leaves. Operator
         # *values* are rebuilt here (cheap, ~1 ms) and flow into the jit as
         # traced args (never closed over) so distinct skeletons with the same
         # structure never collide on a stale artifact.
-        static_ops = [self.from_canonical_operator(t.operator) for t in description.static_terms]
-        static_coeffs = [jnp.asarray(t.coefficient, dtype=jnp.complex128) for t in description.static_terms]
-        dyn_ops = [self.from_canonical_operator(t.operator) for t in description.dynamic_terms]
-        dyn_mods = [t.time_dependence for t in description.dynamic_terms]
+        static_ops = [self.from_canonical_operator(t.operator) for t in engine_result.static_terms]
+        static_coeffs = [
+            jnp.asarray(t.coefficient, dtype=jnp.complex128)
+            for t in engine_result.static_terms
+        ]
+        dyn_ops = [self.from_canonical_operator(t.operator) for t in engine_result.dynamic_terms]
+        dyn_mods = [t.time_dependence for t in engine_result.dynamic_terms]
 
         solve_fn = self._cached_jit_solve(
             solver_name=solver_name,
@@ -579,15 +584,15 @@ class DynamiqsBackend(Backend):
         return self._wrap_result(result, solver=solver_name)
 
     @staticmethod
-    def _description_is_cacheable(description: Any) -> bool:
+    def _engine_result_is_cacheable(engine_result: Any) -> bool:
         """Return whether every dynamic term is a ``ScalarModulation`` that can be rebuilt inside the jit.
 
-        A purely static description (``dynamic_terms == []``) is intentionally
+        A purely static result (``dynamic_terms == []``) is intentionally
         cacheable: ``all(...)`` over an empty sequence is ``True``, and the jit
         builds a static-only RHS from the (still traced) static operators. This
         is correct but an unusual use of a cache aimed at dynamic problems.
         """
-        terms = getattr(description, "dynamic_terms", None)
+        terms = getattr(engine_result, "dynamic_terms", None)
         if terms is None:
             return False
         return all(isinstance(t.time_dependence, ScalarModulation) for t in terms)
@@ -678,10 +683,10 @@ class DynamiqsBackend(Backend):
 
     def prepare_hamiltonian(
         self,
-        description: Any,
+        engine_result: Any,
         tlist: Any | None = None,
     ) -> PreparedHamiltonian:
-        """Convert a :class:`HamiltonianDescription` into a dynamiqs native RHS.
+        """Convert a :class:`EngineResult` into a dynamiqs native RHS.
 
         Static terms are summed as qarrays; dynamic terms with
         ``ScalarModulation`` time-dependence are wrapped via
@@ -689,19 +694,22 @@ class DynamiqsBackend(Backend):
         ``tlist`` is passed through in metadata but not used for sampling —
         dynamiqs evaluates callables on the integrator's adaptive grid.
         """
-        static_ops = [self.from_canonical_operator(t.operator) for t in description.static_terms]
-        static_coeffs = [t.coefficient for t in description.static_terms]
+        static_ops = [
+            self.from_canonical_operator(term.operator)
+            for term in engine_result.static_terms
+        ]
+        static_coeffs = [term.coefficient for term in engine_result.static_terms]
         dyn_ops: list[Any] = []
         dyn_signals: list[Any] = []
-        for operator, signal in self._scalar_dynamic_terms(description):
+        for operator, signal in self._scalar_dynamic_terms(engine_result):
             dyn_ops.append(self.from_canonical_operator(operator))
             dyn_signals.append(signal)
 
         rhs = self._assemble_modulated_rhs(static_ops, static_coeffs, dyn_ops, dyn_signals)
         if rhs is None:
-            raise ValueError("HamiltonianDescription must contain at least one static or dynamic term.")
+            raise ValueError("EngineResult must contain at least one static or dynamic term.")
 
-        return PreparedHamiltonian(rhs=rhs, metadata=dict(description.metadata))
+        return PreparedHamiltonian(rhs=rhs, metadata=dict(engine_result.metadata))
 
     @staticmethod
     def _assemble_modulated_rhs(
@@ -728,8 +736,8 @@ class DynamiqsBackend(Backend):
             rhs = dynamic if rhs is None else rhs + dynamic
         return rhs
 
-    def prepare_batch(self, description: Any, tlist: Any) -> VmappedBatch:
-        """Lower a :class:`BatchedHamiltonianDescription` into a single vmapped RHS.
+    def prepare_batch(self, engine_result: Any, tlist: Any) -> VmappedBatch:
+        """Lower a :class:`BatchedEngineResult` into a single vmapped RHS.
 
         Shared operators (static + per-slot dynamic) are converted exactly
         once via an id-keyed cache. For each dynamic slot, the per-element
@@ -745,11 +753,11 @@ class DynamiqsBackend(Backend):
             stacked) or a non-``ScalarModulation`` time dependence.
         """
         cached_native = self._make_op_cache()
-        rhs = self._sum_terms(description.static_terms, cached_native)
+        rhs = self._sum_terms(engine_result.static_terms, cached_native)
 
-        for slot, op_canonical in enumerate(description.dynamic_operators):
+        for slot, op_canonical in enumerate(engine_result.dynamic_operators):
             op = cached_native(op_canonical)
-            slot_signals = description.dynamic_signals[slot]
+            slot_signals = engine_result.dynamic_signals[slot]
             ref_td = slot_signals[0]
             if not isinstance(ref_td, ScalarModulation):
                 raise ValueError(f"dynamiqs prepare_batch only supports ScalarModulation (slot {slot}).")
@@ -769,12 +777,12 @@ class DynamiqsBackend(Backend):
             rhs = dynamic if rhs is None else rhs + dynamic
 
         if rhs is None:
-            raise ValueError("BatchedHamiltonianDescription must contain at least one term.")
+            raise ValueError("BatchedEngineResult must contain at least one term.")
 
         return VmappedBatch(
             rhs=rhs,
-            batch_size=description.batch_size,
-            metadata=dict(description.metadata),
+            batch_size=engine_result.batch_size,
+            metadata=dict(engine_result.metadata),
             tlist=tlist,
         )
 
@@ -788,7 +796,7 @@ class DynamiqsBackend(Backend):
         if batch.batch_size == 0:
             return []
 
-        prepared = self.prepare_batch(batch.hamiltonian, batch.tlist)
+        prepared = self.prepare_batch(batch.engine_result, batch.tlist)
         tlist_arr, c_ops, solver_name, opts, e_ops = self._resolve_batch_config(batch, prepared)
         options = self._options_from_dict(opts, cartesian_batching=False)
         method = self._method_from_dict(opts)

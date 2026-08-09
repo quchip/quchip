@@ -10,7 +10,7 @@ from quchip.declarative import CouplingModel, Scalar, parameter
 
 
 def _arr(chip, op):
-    return np.asarray(chip.backend.to_array(op))
+    return np.asarray(op.matrix(backend=chip.backend))
 
 
 def _qr(tag: str):
@@ -39,8 +39,8 @@ def test_cross_kerr_is_rwa_invariant():
         tlist=np.linspace(0.0, 10.0, 11), initial_state=chip_rot.bare_state()
     )
     # All bands carry concretely-zero frame carriers: fully folded into H0, nothing dropped.
-    assert [t for t in problem.hamiltonian.dynamic_terms if t.origin == "coupling"] == []
-    assert problem.hamiltonian.dropped_terms == ()
+    assert [t for t in problem.engine_result.dynamic_terms if t.origin == "coupling"] == []
+    assert problem.engine_result.dropped_terms == ()
 
 
 def test_longitudinal_coupling_masks_to_zero_with_advisories():
@@ -56,7 +56,7 @@ def test_longitudinal_coupling_masks_to_zero_with_advisories():
     np.testing.assert_allclose(h_masked, _arr(bare, bare.hamiltonian()), atol=1e-14)
 
     problem = QuantumSequence(chip).build_problem(tlist=np.linspace(0.0, 10.0, 11), initial_state=chip.bare_state())
-    records = problem.hamiltonian.dropped_terms
+    records = problem.engine_result.dropped_terms
     assert {rec.band_weights for rec in records} == {(0, -1), (0, 1)}
     assert all(float(rec.frequency) == 7.0 for rec in records)
 
@@ -71,8 +71,8 @@ def test_longitudinal_coupling_masks_to_zero_with_advisories():
     problem_full = QuantumSequence(chip_full).build_problem(
         tlist=np.linspace(0.0, 10.0, 11), initial_state=chip_full.bare_state()
     )
-    assert len([t for t in problem_full.hamiltonian.dynamic_terms if t.origin == "coupling"]) == 2
-    assert problem_full.hamiltonian.dropped_terms == ()
+    assert len([t for t in problem_full.engine_result.dynamic_terms if t.origin == "coupling"]) == 2
+    assert problem_full.engine_result.dropped_terms == ()
 
 
 def test_two_photon_exchange_survives_rwa():
@@ -148,6 +148,6 @@ def test_fluxonium_dense_charge_coupling_assembles_hermitian():
     assert float(np.max(np.abs(h - h.conj().T))) < 1e-12
 
     problem = QuantumSequence(chip).build_problem(tlist=np.linspace(0.0, 5.0, 6), initial_state=chip.bare_state())
-    kept = [t for t in problem.hamiltonian.dynamic_terms if t.origin == "coupling"]
+    kept = [t for t in problem.engine_result.dynamic_terms if t.origin == "coupling"]
     assert len(kept) == 2  # (Δ_fl, Δ_r) = (±1, ∓1): the only populated number-conserving off-diagonal bands
-    assert len(problem.hamiltonian.dropped_terms) > 0
+    assert len(problem.engine_result.dropped_terms) > 0

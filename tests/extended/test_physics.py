@@ -168,7 +168,7 @@ class TestDispersiveShift:
         chip = Chip(devices=[q, r], couplings=[coupling])
 
         H = chip.hamiltonian()
-        evals = np.sort(np.real(backend.eigenenergies(H)))
+        evals = np.sort(np.linalg.eigvalsh(H.matrix(backend=backend)).real)
 
         # Bare eigenvalues: E_{n_q, n_r} = ω_q·n_q + (α/2)·n_q·(n_q-1) + ω_r·n_r.
         # Identify each dressed state by proximity to its uncoupled value:
@@ -232,7 +232,7 @@ class TestResonantEigenvalueSplitting:
         chip = Chip(devices=[r1, r2], couplings=[coupling])
 
         H = chip.hamiltonian()
-        evals = np.sort(np.real(backend.eigenenergies(H)))
+        evals = np.sort(np.linalg.eigvalsh(H.matrix(backend=backend)).real)
 
         # Single-excitation manifold E_- = ω - g, E_+ = ω + g lies near ω = 6.0.
         single_exc = evals[(evals > 5.0) & (evals < 7.0)]
@@ -258,7 +258,7 @@ class TestResonantEigenvalueSplitting:
         chip = Chip(devices=[r1, r2], couplings=[coupling])
 
         H = chip.hamiltonian()
-        evals = np.sort(np.real(backend.eigenenergies(H)))
+        evals = np.sort(np.linalg.eigvalsh(H.matrix(backend=backend)).real)
 
         # Ground state should be near 0 (within g²/ω ≈ 4e-4)
         assert abs(evals[0]) < 0.01, f"Ground state energy {evals[0]:.6f} too far from 0"
@@ -561,7 +561,7 @@ class TestDuffingEigenvalues:
         q = DuffingTransmon(freq=omega, anharmonicity=alpha, levels=levels, label="q")
         chip = Chip([q])
         H = chip.hamiltonian()
-        evals = np.sort(np.real(backend.eigenenergies(H)))
+        evals = np.sort(np.linalg.eigvalsh(H.matrix(backend=backend)).real)
 
         for n in range(levels):
             expected = omega * n + (alpha / 2.0) * n * (n - 1)
@@ -582,7 +582,7 @@ class TestResonatorEigenvalues:
         r = Resonator(freq=omega, levels=levels, label="r")
         chip = Chip([r])
         H = chip.hamiltonian()
-        evals = np.sort(np.real(backend.eigenenergies(H)))
+        evals = np.sort(np.linalg.eigvalsh(H.matrix(backend=backend)).real)
 
         for n in range(levels):
             expected = omega * n
