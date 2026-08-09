@@ -832,7 +832,7 @@ class QuTiPBackend(Backend):
         rhs = _assemble_qobjevo(static_rhs, op_signal_pairs, sample_tlist)
         return PreparedHamiltonian(rhs=rhs, metadata=metadata)
 
-    def prepare_batch(self, description: Any, tlist: Any) -> DeferredBatch:
+    def prepare_batch(self, batch: Any) -> DeferredBatch:
         """Build a deferred-construction batch; per-element ``QobjEvo`` is built in workers.
 
         Each unique :class:`CanonicalOperator` is converted exactly once
@@ -843,24 +843,30 @@ class QuTiPBackend(Backend):
         inside loky workers, keeping the main process overhead O(1) in
         batch size.
         """
+        engine_result = batch.problem.engine_result
         cached_qobj = self._make_op_cache()
-        static_rhs = self._sum_terms(description.static_terms, cached_qobj)
-        dynamic_qobjs = tuple(cached_qobj(op) for op in description.dynamic_operators)
+        static_rhs = self._sum_terms(engine_result.static_terms, cached_qobj)
+        dynamic_qobjs = tuple(
+            cached_qobj(term.operator) for term in engine_result.dynamic_terms
+        )
         sample_tlist: Any = None
         if dynamic_qobjs:
-            sample_tlist = self._resolve_envelope_sample_tlist(tlist)
+            sample_tlist = self._resolve_envelope_sample_tlist(batch.tlist)
 
         shared = _QuTiPBatchShared(
             static_rhs=static_rhs,
             dynamic_qobjs=dynamic_qobjs,
             sample_tlist=sample_tlist,
-            dynamic_signals=tuple(description.dynamic_signals),
+            dynamic_signals=tuple(
+                batch.signals_for(slot)
+                for slot in range(len(engine_result.dynamic_terms))
+            ),
         )
         return DeferredBatch(
             shared=shared,
-            batch_size=description.batch_size,
-            metadata=dict(description.metadata),
-            tlist=tlist,
+            batch_size=batch.batch_size,
+            metadata=dict(engine_result.metadata),
+            tlist=batch.tlist,
         )
 
     def solve_batch(self, batch: Any, *, progress: bool = True) -> list[SolverResult]:
@@ -868,7 +874,7 @@ class QuTiPBackend(Backend):
         if batch.batch_size == 0:
             return []
 
-        prepared = self.prepare_batch(batch.engine_result, batch.tlist)
+        prepared = self.prepare_batch(batch)
         tlist_arr, c_ops, solver_name, opts, e_ops_arg = self._resolve_batch_config(batch, prepared)
 
         shared = prepared.shared

@@ -89,7 +89,6 @@ from quchip.control import (
     SquareWithGaussianEdges,
     TwoPhotonDrive,
 )
-from quchip.control.batch import ProblemBatch
 from quchip.control.sequence import QuantumSequence
 from quchip.declarative import (
     CouplingModel,
@@ -191,7 +190,6 @@ __all__ = [
     "PartitionedSimulationResult",
     # Sequence
     "QuantumSequence",
-    "ProblemBatch",
     # Backend management
     "get_default_backend",
     "set_default_backend",

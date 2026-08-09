@@ -46,7 +46,6 @@ from quchip.chip.coupling_base import BaseCoupling
 from quchip.control.batch import (
     BatchAxis,
     DelayHandle,
-    ProblemBatch,
     PulseHandle,
     ZippedBatchAxis,
     _axis_metadata,
@@ -74,7 +73,7 @@ from quchip.utils.labeling import resolve_label
 
 if TYPE_CHECKING:
     from quchip.chip.transformations.active_patch import ActivePatchResult
-    from quchip.engine.ir import SolveProblem
+    from quchip.engine.ir import SolveBatch, SolveProblem
     from quchip.results.results import SimulationBatchResult, SimulationResult
 
 
@@ -815,8 +814,8 @@ class QuantumSequence:
         values : array-like
             Sequence of values for ``field``, one per batch point.
         name : str, optional
-            Axis name recorded in :attr:`ProblemBatch.axes` and
-            :meth:`ProblemBatch.params_at`. Defaults to *field*.
+            Axis name recorded in :attr:`SolveBatch.axes` and
+            :meth:`SolveBatch.params_at`. Defaults to *field*.
 
         Returns
         -------
@@ -929,13 +928,11 @@ class QuantumSequence:
         options: dict | None = None,
         e_ops: dict | None = None,
         initial_state: Any | None = None,
-    ) -> ProblemBatch:
+    ) -> "SolveBatch":
         """Build a batched solve request from sweep axes without solving.
 
-        The returned :class:`ProblemBatch` wraps a
-        :class:`~quchip.engine.ir.SolveBatch`: shared static/dynamic operators
-        are collected exactly once and only per-element scalar modulations
-        (and per-element initial states, when varied) change across the batch.
+        The returned :class:`~quchip.engine.ir.SolveBatch` stores one problem;
+        only per-element signal and initial-state bindings vary.
         """
         self._validate_axes(axes)
         actual_tlist = self._resolve_tlist(tlist)
@@ -978,8 +975,8 @@ class QuantumSequence:
         batch = build_solve_batch_from_results(
             context, engine_results, initial_states=initial_states
         )
-        return ProblemBatch(
-            batch=batch,
+        return replace(
+            batch,
             params=params_store,
             shape=shape,
             axes=tuple(_axis_metadata(axis) for axis in axes),

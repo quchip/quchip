@@ -360,19 +360,19 @@ def test_simulation_result_overlap_array_supports_jax_grad() -> None:
     assert jnp.isfinite(grad)
 
 
-def test_problem_batch_manual_indexing_preserves_array_type() -> None:
-    """ProblemBatch params bookkeeping should not coerce JAX payloads."""
-    from quchip.control.batch import ProblemBatch
+def test_solve_batch_manual_indexing_preserves_array_type() -> None:
+    """SolveBatch parameter bookkeeping should not coerce JAX payloads."""
+    from quchip.engine.ir import SolveBatch, SolveBinding
 
     params = np.empty((1,), dtype=object)
     params[(0,)] = {"x": jnp.asarray(1.0, dtype=jnp.float32)}
-    class _Batch:
-        batch_size = 1
-
-        def element(self, idx):
-            return object()
-
-    batch = ProblemBatch(batch=_Batch(), params=params, shape=(1,), axes=(("x", [params[(0,)]["x"]]),))
+    batch = SolveBatch(
+        problem=None,
+        bindings=(SolveBinding(None, ()),),
+        params=params,
+        shape=(1,),
+        axes=(("x", [params[(0,)]["x"]]),),
+    )
     assert isinstance(batch.params_at(0)["x"], jax.Array)
 
 

@@ -17,8 +17,7 @@ defines four families of immutable, JAX-pytree-friendly types:
    to and from this format.
 
 3. Hamiltonian terms — :class:`StaticTerm`, :class:`DynamicTerm`, and
-   the per-stage container :class:`EngineResult` plus the
-   batched :class:`BatchedEngineResult`.
+   the per-stage container :class:`EngineResult`.
 
 4. Solve requests — :class:`SolveProblem` and :class:`SolveBatch`, the
    frozen hand-offs to backends. ``backend`` selection is chip-owned
@@ -31,6 +30,7 @@ stage-2 boundary. Carrier frequencies are stored in angular units
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, cast
 
@@ -1111,10 +1111,9 @@ class ResolvedFrame:
 def _reject_backend_option(options: dict[str, Any], *, cls_name: str) -> dict[str, Any]:
     """Reject a chip-owned ``"backend"`` key and return a defensive copy of ``options``.
 
-    Shared by :class:`SolveProblem` and :class:`SolveBatch`: backend selection is
-    chip-owned, so a ``"backend"`` key in solver options is a contract violation.
-    The returned dict is a fresh copy so callers cannot mutate the stored options
-    after construction.
+    Backend selection is chip-owned, so a ``"backend"`` key in solver options
+    is a contract violation. The returned dict is a fresh copy so callers cannot
+    mutate the stored options after construction.
     """
     if "backend" in options:
         raise ValueError(
@@ -1152,130 +1151,106 @@ class SolveProblem:
         object.__setattr__(self, "options", _reject_backend_option(self.options, cls_name="SolveProblem"))
 
 
-# ── Batched IR ──────────────────────────────────────────────────────
-
-
 @dataclass(frozen=True)
-class BatchedEngineResult:
-    """Batched Hamiltonian IR that splits shared vs per-element structure.
+class SolveBinding:
+    """Numerical leaves that vary around one shared :class:`SolveProblem`."""
 
-    Describes ``N`` Hamiltonians with identical operator skeletons
-    (``static_terms`` and per-slot dynamic operators) but independent
-    per-slot :class:`ScalarModulation` signal programs. Backends convert
-    the shared operators once and stitch per-element coefficient data
-    into one prepared batch.
-
-    ``dynamic_signals`` is indexed ``[slot][element]``; on sweep axes that
-    do not touch signals every entry on a slot is identity-equal.
-    ``dropped_terms_by_element`` is indexed ``[element]``: which bands are
-    dropped is template-structural and shared across the batch, but each
-    record's ``frequency`` depends on that element's drive frequency, so
-    the records themselves are stored per element and restored on the
-    matching :meth:`element` call.
-    """
-
-    batch_size: int
-    static_terms: tuple[StaticTerm, ...]
-    dynamic_operators: tuple[CanonicalOperator, ...]
-    dynamic_origins: tuple[TermOrigin, ...]
-    dynamic_tags: tuple[str | None, ...]
-    dynamic_signals: tuple[tuple[ScalarModulation, ...], ...]
-    dims: tuple[int, ...] = ()
+    initial_state: Any
+    dynamic_signals: tuple[ScalarModulation, ...]
     metadata: dict[str, Any] = field(default_factory=dict)
-    dropped_terms_by_element: tuple[tuple[DroppedTerm, ...], ...] = ()
-
-    def __post_init__(self) -> None:
-        n_slots = len(self.dynamic_operators)
-        if not (len(self.dynamic_signals) == len(self.dynamic_origins) == len(self.dynamic_tags) == n_slots):
-            raise ValueError(
-                "dynamic_operators, dynamic_signals, dynamic_origins, and dynamic_tags must have the same length"
-            )
-        for slot_signals in self.dynamic_signals:
-            if len(slot_signals) != self.batch_size:
-                raise ValueError(
-                    f"dynamic_signals slot length {len(slot_signals)} does not match batch_size {self.batch_size}"
-                )
-        if self.dropped_terms_by_element and len(self.dropped_terms_by_element) != self.batch_size:
-            raise ValueError(
-                f"dropped_terms_by_element length {len(self.dropped_terms_by_element)} does not match "
-                f"batch_size {self.batch_size}"
-            )
-        # Defensive copy so callers cannot mutate the shared metadata dict
-        # after construction (mirrors SolveProblem).
-        object.__setattr__(self, "metadata", dict(self.metadata))
-
-    def element(self, index: int) -> EngineResult:
-        """Reconstruct the single-element description at *index*."""
-        if index < 0 or index >= self.batch_size:
-            raise IndexError(f"batch index {index} out of range [0, {self.batch_size})")
-        dynamic_terms = tuple(
-            DynamicTerm(
-                operator=self.dynamic_operators[slot],
-                time_dependence=self.dynamic_signals[slot][index],
-                origin=self.dynamic_origins[slot],
-                tag=self.dynamic_tags[slot],
-            )
-            for slot in range(len(self.dynamic_operators))
-        )
-        element_dropped = self.dropped_terms_by_element[index] if self.dropped_terms_by_element else ()
-        return EngineResult(
-            static_terms=self.static_terms,
-            dynamic_terms=dynamic_terms,
-            dims=self.dims,
-            metadata=dict(self.metadata),
-            dropped_terms=element_dropped,
-        )
+    dropped_terms: tuple[DroppedTerm, ...] = ()
 
 
 @dataclass(frozen=True)
 class SolveBatch:
-    """Batched counterpart to :class:`SolveProblem`.
+    """One solve problem plus explicit numerical bindings for each point."""
 
-    Bundles one :class:`BatchedEngineResult` plus shared solver
-    metadata and per-element initial states. Backends solve the N elements
-    in one native batched call (``vmap`` on dynamiqs; shared-operator +
-    stitched coefficient arrays on QuTiP).
-    """
-
-    chip: Any  # Chip
-    engine_result: BatchedEngineResult
-    initial_states: tuple[Any, ...]
-    tlist: Any
-    c_ops: tuple[Any, ...] = ()
-    e_ops: Any = None
-    e_ops_meta: Any = None
-    resolved_frame: Any = None
-    solver: str | None = None
-    options: dict[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        options_copy = _reject_backend_option(self.options, cls_name="SolveBatch")
-        if len(self.initial_states) != self.engine_result.batch_size:
-            raise ValueError(
-                f"initial_states length {len(self.initial_states)} does not match "
-                f"batch_size {self.engine_result.batch_size}"
-            )
-        object.__setattr__(self, "options", options_copy)
+    problem: SolveProblem
+    bindings: tuple[SolveBinding, ...]
+    params: Any = None
+    shape: tuple[int, ...] = ()
+    axes: tuple[tuple[str, Any], ...] = ()
 
     @property
     def batch_size(self) -> int:
-        """Number of elements ``N`` in the batch."""
-        return self.engine_result.batch_size
+        return len(self.bindings)
+
+    @property
+    def initial_states(self) -> tuple[Any, ...]:
+        return tuple(binding.initial_state for binding in self.bindings)
+
+    @property
+    def chip(self) -> Any:
+        return self.problem.chip
+
+    @property
+    def tlist(self) -> Any:
+        return self.problem.tlist
+
+    @property
+    def c_ops(self) -> tuple[Any, ...]:
+        return self.problem.c_ops
+
+    @property
+    def e_ops(self) -> Any:
+        return self.problem.e_ops
+
+    @property
+    def e_ops_meta(self) -> Any:
+        return self.problem.e_ops_meta
+
+    @property
+    def resolved_frame(self) -> Any:
+        return self.problem.resolved_frame
+
+    @property
+    def solver(self) -> str | None:
+        return self.problem.solver
+
+    @property
+    def options(self) -> dict[str, Any]:
+        return self.problem.options
+
+    def signals_for(self, slot: int) -> tuple[ScalarModulation, ...]:
+        """Return one dynamic slot across all binding points."""
+        return tuple(binding.dynamic_signals[slot] for binding in self.bindings)
+
+    def __len__(self) -> int:
+        return self.batch_size
+
+    def __iter__(self) -> Iterator[SolveProblem]:
+        for index in range(self.batch_size):
+            yield self.element(index)
+
+    def __getitem__(self, item: Any) -> Any:
+        if isinstance(item, slice):
+            return [self.element(index) for index in range(*item.indices(self.batch_size))]
+        return self.element(int(item))
+
+    def params_at(self, point: int | tuple[int, ...]) -> dict[str, Any]:
+        """Return sweep values at one grid coordinate."""
+        if self.params is None:
+            return {}
+        if self.shape == ():
+            if point not in (0, ()):
+                raise IndexError(f"Scalar batch only accepts 0 or (), got {point!r}")
+            return dict(self.params.item().items())
+        coordinate = point if isinstance(point, tuple) else (point,)
+        return dict(self.params[coordinate].items())
 
     def element(self, index: int) -> SolveProblem:
-        """Reconstruct the single-element :class:`SolveProblem` at *index*."""
-        return SolveProblem(
-            chip=self.chip,
-            engine_result=self.engine_result.element(index),
-            initial_state=self.initial_states[index],
-            tlist=self.tlist,
-            c_ops=self.c_ops,
-            e_ops=self.e_ops,
-            e_ops_meta=self.e_ops_meta,
-            resolved_frame=self.resolved_frame,
-            solver=self.solver,
-            options=dict(self.options),
+        binding = self.bindings[index]
+        reference = self.problem.engine_result
+        engine_result = replace(
+            reference,
+            dynamic_terms=tuple(
+                replace(term, time_dependence=signal)
+                for term, signal in zip(reference.dynamic_terms, binding.dynamic_signals)
+            ),
+            metadata=dict(binding.metadata),
+            dropped_terms=binding.dropped_terms,
         )
+        return replace(self.problem, engine_result=engine_result, initial_state=binding.initial_state)
 
 
 # ── Drive Operation ─────────────────────────────────────────────────

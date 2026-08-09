@@ -2,7 +2,7 @@
 
 quchip separates *physics description* from *solver conversion*: the engine
 (``quchip.engine``) emits structured IR (``EngineResult``,
-``SolveProblem``, ``BatchedEngineResult``, ``SolveBatch``) that
+``SolveProblem``, ``SolveBinding``, ``SolveBatch``) that
 carries ordinary-GHz frequencies and backend-free operator payloads
 (``CanonicalOperator``). Each concrete backend is free to translate that IR
 into whatever native form its solver likes best — this module only fixes the
@@ -53,7 +53,6 @@ from quchip.backend.containers import (
 
 if TYPE_CHECKING:
     from quchip.engine.ir import (
-        BatchedEngineResult,
         CanonicalOperator,
         EngineResult,
         SolveBatch,
@@ -708,12 +707,8 @@ class Backend(ABC):
         _ = problems, progress
         return None
 
-    def prepare_batch(
-        self,
-        description: "BatchedEngineResult",
-        tlist: Any,
-    ) -> "PreparedBatch":
-        """Lower a :class:`BatchedEngineResult` into a prepared batch.
+    def prepare_batch(self, batch: "SolveBatch") -> "PreparedBatch":
+        """Lower one problem plus its bindings into a prepared batch.
 
         The return type declares the batching strategy:
         :class:`~quchip.backend.containers.EagerBatch` (one RHS per element),
@@ -726,17 +721,17 @@ class Backend(ABC):
         """
         rhs_list: list[Any] = []
         shared_metadata: dict[str, Any] = {}
-        for idx in range(description.batch_size):
-            prepared = self.prepare_hamiltonian(description.element(idx), tlist)
+        for idx in range(batch.batch_size):
+            prepared = self.prepare_hamiltonian(batch.element(idx).engine_result, batch.tlist)
             rhs_list.append(prepared.rhs)
             if not shared_metadata:
                 shared_metadata = dict(prepared.metadata)
 
         return EagerBatch(
             rhs_list=rhs_list,
-            batch_size=description.batch_size,
+            batch_size=batch.batch_size,
             metadata=shared_metadata,
-            tlist=tlist,
+            tlist=batch.tlist,
         )
 
     def solve_batch(self, batch: "SolveBatch", *, progress: bool = True) -> list[SolverResult]:
@@ -749,7 +744,7 @@ class Backend(ABC):
         if batch.batch_size == 0:
             return []
 
-        prepared = self.prepare_batch(batch.engine_result, batch.tlist)
+        prepared = self.prepare_batch(batch)
         tlist_arr, c_ops, solver_name, opts, e_ops_arg = self._resolve_batch_config(batch, prepared)
 
         if isinstance(prepared, DeferredBatch):

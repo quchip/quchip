@@ -736,8 +736,8 @@ class DynamiqsBackend(Backend):
             rhs = dynamic if rhs is None else rhs + dynamic
         return rhs
 
-    def prepare_batch(self, engine_result: Any, tlist: Any) -> VmappedBatch:
-        """Lower a :class:`BatchedEngineResult` into a single vmapped RHS.
+    def prepare_batch(self, batch: Any) -> VmappedBatch:
+        """Lower one solve problem plus its bindings into a single vmapped RHS.
 
         Shared operators (static + per-slot dynamic) are converted exactly
         once via an id-keyed cache. For each dynamic slot, the per-element
@@ -752,12 +752,13 @@ class DynamiqsBackend(Backend):
             If a slot contains heterogeneous pytree structures (cannot be
             stacked) or a non-``ScalarModulation`` time dependence.
         """
+        engine_result = batch.problem.engine_result
         cached_native = self._make_op_cache()
         rhs = self._sum_terms(engine_result.static_terms, cached_native)
 
-        for slot, op_canonical in enumerate(engine_result.dynamic_operators):
-            op = cached_native(op_canonical)
-            slot_signals = engine_result.dynamic_signals[slot]
+        for slot, term in enumerate(engine_result.dynamic_terms):
+            op = cached_native(term.operator)
+            slot_signals = batch.signals_for(slot)
             ref_td = slot_signals[0]
             if not isinstance(ref_td, ScalarModulation):
                 raise ValueError(f"dynamiqs prepare_batch only supports ScalarModulation (slot {slot}).")
@@ -777,13 +778,13 @@ class DynamiqsBackend(Backend):
             rhs = dynamic if rhs is None else rhs + dynamic
 
         if rhs is None:
-            raise ValueError("BatchedEngineResult must contain at least one term.")
+            raise ValueError("SolveBatch must contain at least one static or dynamic term.")
 
         return VmappedBatch(
             rhs=rhs,
-            batch_size=engine_result.batch_size,
+            batch_size=batch.batch_size,
             metadata=dict(engine_result.metadata),
-            tlist=tlist,
+            tlist=batch.tlist,
         )
 
     def solve_batch(self, batch: Any, *, progress: bool = True) -> list[SolverResult]:
@@ -796,7 +797,7 @@ class DynamiqsBackend(Backend):
         if batch.batch_size == 0:
             return []
 
-        prepared = self.prepare_batch(batch.engine_result, batch.tlist)
+        prepared = self.prepare_batch(batch)
         tlist_arr, c_ops, solver_name, opts, e_ops = self._resolve_batch_config(batch, prepared)
         options = self._options_from_dict(opts, cartesian_batching=False)
         method = self._method_from_dict(opts)
