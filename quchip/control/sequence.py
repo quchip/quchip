@@ -34,8 +34,9 @@ from __future__ import annotations
 
 import copy
 import functools
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from collections.abc import Collection, Mapping, Sequence
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -1112,6 +1113,86 @@ class QuantumSequence:
         """
         cloned = copy.copy(self)
         cloned._entries = copy.deepcopy(self._entries)
+        return cloned
+
+    @property
+    def parameters(self) -> Mapping[str, Any]:
+        """Chip and scheduled-pulse values available to :meth:`with_params`."""
+        values = dict(self._chip.parameters)
+        for index, entry in enumerate(self._entries):
+            if not isinstance(entry, _PulseEntry):
+                continue
+            prefix = f"pulse.{index}"
+            pulse_values = {
+                f"{prefix}.freq": entry.freq,
+                f"{prefix}.phase": entry.phase,
+                f"{prefix}.start_time": entry.requested_start_time,
+            }
+            collision = values.keys() & pulse_values.keys()
+            if collision:
+                raise ValueError(f"Sequence parameter paths are ambiguous: {sorted(collision)}")
+            values.update(pulse_values)
+            fields = getattr(type(entry.envelope), "__quchip_param_fields__", {})
+            names = fields or tuple(
+                name for name in vars(entry.envelope) if not name.startswith("_")
+            )
+            for name in names:
+                # Carrier phase and an envelope's own phase are distinct.
+                field = (
+                    f"envelope.{name}"
+                    if name in {"freq", "phase", "start_time"}
+                    else name
+                )
+                path = f"{prefix}.{field}"
+                if path in values:
+                    raise ValueError(f"Sequence parameter path {path!r} is ambiguous")
+                values[path] = getattr(entry.envelope, name)
+        return MappingProxyType(values)
+
+    @property
+    def settings(self) -> Mapping[str, Any]:
+        """Read-only sequence structure, separate from numerical parameters."""
+        return MappingProxyType(
+            {
+                "chip": self._chip.settings,
+                "entries": tuple(type(entry).__name__.removeprefix("_") for entry in self._entries),
+            }
+        )
+
+    def with_params(self, bindings: Mapping[str, Any]) -> "QuantumSequence":
+        """Return a cloned sequence with Chip or ``pulse.<index>`` values rebound."""
+        available = self.parameters
+        unknown = set(bindings) - set(available)
+        if unknown:
+            raise KeyError(
+                f"Unknown sequence parameter paths: {sorted(unknown)}. "
+                f"Available: {list(available)}"
+            )
+
+        cloned = self.clone()
+        pulse_bindings: list[tuple[int, str, Any]] = []
+        chip_bindings: dict[str, Any] = {}
+        for path, value in bindings.items():
+            parts = path.split(".", 2)
+            if len(parts) == 3 and parts[0] == "pulse" and parts[1].isdigit():
+                pulse_bindings.append((int(parts[1]), parts[2], value))
+            else:
+                chip_bindings[path] = value
+        if chip_bindings:
+            cloned._chip = self._chip.with_params(chip_bindings)
+
+        for index, field, value in pulse_bindings:
+            entry = cloned._entries[index]
+            if not isinstance(entry, _PulseEntry):  # pragma: no cover - inventory excludes it
+                raise KeyError(f"pulse.{index}.{field}")
+            if field in {"freq", "phase", "start_time"}:
+                attr = "requested_start_time" if field == "start_time" else field
+                cloned._entries[index] = replace(entry, **{attr: value})
+            else:
+                field = field.removeprefix("envelope.")
+                envelope = copy.copy(entry.envelope)
+                setattr(envelope, field, value)
+                cloned._entries[index] = replace(entry, envelope=envelope)
         return cloned
 
     def _validate_target(self, target: str) -> None:

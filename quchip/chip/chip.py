@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import warnings
 from collections import Counter
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence, overload
 
 import numpy as np
@@ -967,6 +968,83 @@ class Chip:
         from quchip.chip.serialization import clone_chip
 
         return clone_chip(self)
+
+    @property
+    def parameters(self) -> Mapping[str, Any]:
+        """Bindable numerical values keyed by stable component paths."""
+        values: dict[str, Any] = {}
+        for device in self._devices:
+            values.update(
+                (f"{device.label}.{name}", value)
+                for name, value in device.tunable_params().items()
+            )
+        for coupling in self._couplings:
+            fields = getattr(type(coupling), "__quchip_param_fields__", {})
+            if fields:
+                coupling_values = {
+                    f"{coupling.label}.{name}": getattr(coupling, name)
+                    for name in fields
+                }
+            else:
+                name = coupling.coupling_strength_name
+                coupling_values = {
+                    f"{coupling.label}.{name}": coupling.coupling_strength
+                }
+            collision = values.keys() & coupling_values.keys()
+            if collision:
+                raise ValueError(f"Chip parameter paths are ambiguous: {sorted(collision)}")
+            values.update(coupling_values)
+        return MappingProxyType(values)
+
+    @property
+    def settings(self) -> Mapping[str, Any]:
+        """Read-only structural choices that are not numerical fit parameters."""
+        return MappingProxyType(
+            {
+                "devices": tuple(
+                    (device.label, type(device).__name__, device.levels)
+                    for device in self._devices
+                ),
+                "couplings": tuple(
+                    (
+                        coupling.label,
+                        type(coupling).__name__,
+                        coupling.device_a_label,
+                        coupling.device_b_label,
+                    )
+                    for coupling in self._couplings
+                ),
+                "frame": self._frame_spec,
+                "rwa": self._rwa,
+                "backend": type(self.backend).__name__,
+            }
+        )
+
+    def with_params(self, bindings: Mapping[str, Any]) -> "Chip":
+        """Return an isolated Chip with the supplied dotted parameter paths rebound."""
+        available = self.parameters
+        unknown = set(bindings) - set(available)
+        if unknown:
+            raise KeyError(
+                f"Unknown Chip parameter paths: {sorted(unknown)}. "
+                f"Available: {list(available)}"
+            )
+
+        cloned = self.clone()
+        for path, value in bindings.items():
+            label, name = path.rsplit(".", 1)
+            if label in cloned._device_map:
+                cloned._device_map[label].set_tunable_param(name, value)
+                continue
+            coupling = cloned._coupling_map[label]
+            fields = getattr(type(coupling), "__quchip_param_fields__", {})
+            if name in fields:
+                setattr(coupling, name, value)
+            elif name == coupling.coupling_strength_name:
+                coupling.set_coupling_strength(value)
+            else:  # pragma: no cover - guarded by the inventory above
+                raise KeyError(path)
+        return cloned
 
     def partition(self) -> "PartitionResult":
         """Split into independent sub-chips along the independence graph.
