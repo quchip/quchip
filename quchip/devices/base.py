@@ -991,12 +991,21 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         2002), Ch. 3. For circuit-QED conventions see Krantz et al.,
         *Applied Physics Reviews* **6**, 021318 (2019), §V.
         """
+        from quchip.engine.basis import resolve_device_basis
+
         backend = get_default_backend()
-        result = self.engine_result()
-        return [
-            jnp.sqrt(term.rate) * backend.from_canonical_operator(term.operator)
-            for term in result.collapse_terms
-        ]
+        policy = self.resolved_basis()
+        levels = self.resolved_dimension() if policy == "eigen" else None
+        basis = resolve_device_basis(self, basis=policy, levels=levels)
+        dims = [[basis.resolved_dim], [basis.resolved_dim]]
+        lower = getattr(backend, "from_array", None)
+        operators: list[Operator] = []
+        for channel in type(self)._noise_channels:
+            for operator, rate in channel.build(self, basis):
+                projected = basis.transform_operator(operator)
+                native = projected if lower is None else lower(projected, dims=dims)
+                operators.append(jnp.sqrt(rate) * native)
+        return operators
 
     def collapse_contributions(
         self,

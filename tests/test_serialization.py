@@ -248,6 +248,7 @@ def test_chip_round_trip_can_dress_and_simulate() -> None:
     """A deserialized chip can still be dressed and simulated end-to-end."""
     chip = _build_chip()
     restored = Chip.from_dict(chip.to_dict())
+    restored.dress()
 
     seq = QuantumSequence(restored)
     seq.schedule(

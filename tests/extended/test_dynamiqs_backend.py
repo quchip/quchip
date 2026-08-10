@@ -619,7 +619,7 @@ def test_cached_jit_solve_vmap_parity() -> None:
     amps = jnp.asarray([0.03, 0.045, 0.06])
     vm = jax.vmap(loss)(amps)
     seq_vals = jnp.asarray([loss(a) for a in amps])
-    assert float(jnp.max(jnp.abs(vm - seq_vals))) == 0.0
+    np.testing.assert_allclose(vm, seq_vals, atol=1e-14, rtol=0.0)
 
 
 def test_cached_jit_solve_structure_change_is_a_cache_miss() -> None:

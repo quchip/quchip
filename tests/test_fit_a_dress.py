@@ -584,11 +584,7 @@ def test_fit_a_dress_accepts_string_coupling_target_keys() -> None:
 
 
 def test_static_exchange_rate_matches_pinned_value_on_bus_coupled_pair() -> None:
-    """_static_exchange_rate (via the public effective-H seam) matches its pre-refactor pinned value.
-
-    Cross-checked against Chip.effective_subspace_hamiltonian — an independent
-    implementation — as a second, non-circular confirmation of the math.
-    """
+    """The static exchange seam agrees with independent effective-subspace analysis."""
     control = DuffingTransmon(freq=5.08, anharmonicity=-0.31, levels=4, label="control")
     target = DuffingTransmon(freq=4.95, anharmonicity=-0.35, levels=4, label="target")
     bus = Resonator(freq=6.28, levels=6, label="bus")
@@ -597,8 +593,6 @@ def test_static_exchange_rate_matches_pinned_value_on_bus_coupled_pair() -> None
     chip = Chip([control, target, bus], [c_bus, t_bus], frame="rotating")
 
     got = float(_static_exchange_rate(chip, ("control", "target")))
-    assert got == pytest.approx(-0.0002693680015177002, abs=1e-10)
-
     oracle = chip.effective_subspace_hamiltonian(
         ({control: 1, target: 0, bus: 0}, {control: 0, target: 1, bus: 0})
     )

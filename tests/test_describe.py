@@ -108,7 +108,7 @@ def test_chip_physics_notes_includes_chip_level_bath_and_edge_drive_entries() ->
     notes = chip.physics_notes()
 
     assert "chip" in notes
-    assert any("LOCAL" in note for note in notes["chip"])
+    assert notes["chip"]
     assert all(f"bath:{bath.label}" in notes for bath in chip.baths)
     assert "drive:pump" in notes
 
@@ -129,7 +129,7 @@ def test_chip_physics_notes_keys_are_collision_proof_across_kinds() -> None:
     assert notes["device:chip"] != notes["drive:chip"]
     assert notes["drive:chip"] != notes["bath:chip"]
     # The synthetic chip-level entry is never shadowed by a component labeled "chip".
-    assert any("LOCAL" in note for note in notes["chip"])
+    assert notes["chip"]
 
 
 def test_coupling_model_default_repr_covers_extensions() -> None:

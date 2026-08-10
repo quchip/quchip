@@ -55,9 +55,8 @@ class TestChipHamiltonian:
         latex = hamiltonian.latex()
         assert r"\omega_{q}\,\hat n_{q}" in latex
         assert r"\alpha_{q}" in latex
-        assert r"\hat a_{q}\,\hat a^\dagger_{r}" in latex
-        assert r"\hat a^\dagger_{q}\,\hat a_{r}" in latex
-        assert r"\hat a_{q}\,\hat a_{r}" not in latex
+        assert r"(\hat a_{q} + \hat a^\dagger_{q})" in latex
+        assert r"(\hat a_{r} + \hat a^\dagger_{r})" in latex
 
     def test_unbound_chip_only_requires_values_at_materialization(self) -> None:
         """A fully symbolic Chip remains inspectable and names every missing value on numerical use."""
@@ -155,7 +154,7 @@ class TestChipHamiltonian:
         chip = Chip(devices=[q, r], couplings=[squeezing])
 
         with pytest.warns(UserWarning, match="vanishes entirely under the resolved RWA"):
-            chip.hamiltonian()
+            chip.engine_result()
 
 
 # ---------------------------------------------------------------------------

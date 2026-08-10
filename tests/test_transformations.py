@@ -470,7 +470,9 @@ def test_eliminate_with_circuit_level_survivor_warns_instead_of_raising():
     assert [d.label for d in res.chip.devices] == ["q"]
     assert res.chip["q"].freq == pytest.approx(bare_freq)  # spectrum not folded
     delta = bare_freq - 7.1
-    lamb = 0.08**2 / delta
+    energy_vectors = np.asarray(q.eigenvectors())
+    charge = energy_vectors.conj().T @ np.asarray(q.charge_coupling_operator()) @ energy_vectors
+    lamb = (0.08 * abs(charge[0, 1])) ** 2 / delta
     assert float(res.effective_params["q"]["lamb_shift"]) == pytest.approx(lamb, rel=0.05)
     assert float(res.effective_params["q"]["freq_after"]) == pytest.approx(bare_freq + lamb, rel=1e-3)
 

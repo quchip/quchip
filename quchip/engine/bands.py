@@ -342,6 +342,8 @@ def _canonical_band_from_single_weight(
 def decompose_canonical_bands(
     canonical: CanonicalOperator,
     dim: int,
+    *,
+    semantic_to_solver: Any | None = None,
 ) -> dict[int, CanonicalOperator]:
     """Decompose a canonical single-mode operator by weight ``w = col − row``.
 
@@ -361,6 +363,30 @@ def decompose_canonical_bands(
         raise ValueError(f"dim must be positive, got {dim}")
     if canonical.shape != (dim, dim):
         raise ValueError(f"canonical shape {canonical.shape} does not match ({dim}, {dim})")
+
+    if semantic_to_solver is not None:
+        transform = semantic_to_solver
+        semantic = transform.conj().T @ canonical_to_dense_array(canonical) @ transform
+        semantic_canonical = CanonicalOperator.from_dense(
+            semantic,
+            dims=canonical.dims,
+            basis=canonical.basis,
+            subsystem_labels=canonical.subsystem_labels,
+            tag=canonical.tag,
+        )
+        return {
+            weight: CanonicalOperator.from_dense(
+                transform @ band.to_dense() @ transform.conj().T,
+                dims=canonical.dims,
+                basis=canonical.basis,
+                subsystem_labels=canonical.subsystem_labels,
+                tag=canonical.tag,
+            )
+            for weight, band in decompose_canonical_bands(
+                semantic_canonical,
+                dim,
+            ).items()
+        }
 
     if canonical.layout == "dense" or _canonical_has_nonconcrete_payload(canonical):
         dense_bands = decompose_bands(canonical_to_dense_array(canonical), dim)
@@ -401,6 +427,8 @@ def decompose_canonical_bands(
 def decompose_two_body_canonical_bands(
     canonical: CanonicalOperator,
     dims: list[int],
+    *,
+    semantic_to_solver: Any | None = None,
 ) -> dict[tuple[int, int], CanonicalOperator]:
     """Decompose a canonical two-body operator by ``(Δa, Δb)`` per-subsystem change.
 
@@ -417,6 +445,30 @@ def decompose_two_body_canonical_bands(
     d_total = d_a * d_b
     if canonical.shape != (d_total, d_total):
         raise ValueError(f"canonical shape {canonical.shape} does not match dims product ({d_total}, {d_total})")
+
+    if semantic_to_solver is not None:
+        transform = semantic_to_solver
+        semantic = transform.conj().T @ canonical_to_dense_array(canonical) @ transform
+        semantic_canonical = CanonicalOperator.from_dense(
+            semantic,
+            dims=canonical.dims,
+            basis=canonical.basis,
+            subsystem_labels=canonical.subsystem_labels,
+            tag=canonical.tag,
+        )
+        return {
+            weights: CanonicalOperator.from_dense(
+                transform @ band.to_dense() @ transform.conj().T,
+                dims=canonical.dims,
+                basis=canonical.basis,
+                subsystem_labels=canonical.subsystem_labels,
+                tag=canonical.tag,
+            )
+            for weights, band in decompose_two_body_canonical_bands(
+                semantic_canonical,
+                dims,
+            ).items()
+        }
 
     if canonical.layout == "dense" or _canonical_has_nonconcrete_payload(canonical):
         dense_bands = _decompose_coupling_dense(canonical_to_dense_array(canonical), dims)
@@ -504,7 +556,14 @@ def _decompose_coupling_dense(
 # (Stage 2 owns that) — they return lab-frame, ordinary-GHz band operators.
 
 
-def local_mode_bands(backend: Any, local_op: Any, *, dim: int, label: str) -> list[tuple[int, Any]]:
+def local_mode_bands(
+    backend: Any,
+    local_op: Any,
+    *,
+    dim: int,
+    label: str,
+    semantic_to_solver: Any | None = None,
+) -> list[tuple[int, Any]]:
     """Decompose *local_op* into ascending excitation-change bands.
 
     Returns ``[(weight, band_op), ...]`` ordered by ascending weight,
@@ -516,7 +575,11 @@ def local_mode_bands(backend: Any, local_op: Any, *, dim: int, label: str) -> li
         dims=(dim,),
         subsystem_labels=(label,),
     )
-    bands = decompose_canonical_bands(canonical, dim)
+    bands = decompose_canonical_bands(
+        canonical,
+        dim,
+        semantic_to_solver=semantic_to_solver,
+    )
     return [
         (weight, backend.from_canonical_operator(band))
         for weight, band in sorted(bands.items(), key=lambda kv: kv[0])
@@ -531,6 +594,7 @@ def embed_single_mode_bands(
     dim: int,
     label: str,
     dims: tuple[int, ...],
+    semantic_to_solver: Any | None = None,
 ) -> list[tuple[int, Any]]:
     """Like :func:`local_mode_bands`, but each band is embedded into *dims*.
 
@@ -540,7 +604,13 @@ def embed_single_mode_bands(
     """
     return [
         (weight, backend.embed(band_op, device_index, dims))
-        for weight, band_op in local_mode_bands(backend, local_op, dim=dim, label=label)
+        for weight, band_op in local_mode_bands(
+            backend,
+            local_op,
+            dim=dim,
+            label=label,
+            semantic_to_solver=semantic_to_solver,
+        )
     ]
 
 
