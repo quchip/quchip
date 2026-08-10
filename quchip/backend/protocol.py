@@ -440,14 +440,15 @@ class Backend(ABC):
         if self._is_ket_stack(rho):
             psi = rho[..., 0]
             rho = np.einsum("ti,tj->tij", psi, np.conj(psi))
-        rho = rho.reshape([rho.shape[0]] + list(dims) + list(dims))
+        t_count = rho.shape[0]
+        rho = rho.reshape([t_count] + list(dims) + list(dims))
         offset = 1  # leading time axis
         live = n
         for idx in reversed(sorted(set(range(n)) - set(keep))):
             rho = np.trace(rho, axis1=offset + idx, axis2=offset + idx + live)
             live -= 1
         kept_dim = int(np.prod([dims[k] for k in keep]))
-        return self.array_module.asarray(rho.reshape(rho.shape[0], kept_dim, kept_dim))
+        return self.array_module.asarray(rho.reshape(t_count, kept_dim, kept_dim))
 
     def embed(self, op: Operator, device_index: int, dims: Sequence[int]) -> Operator:
         """Embed a single-device operator at *device_index* into the full tensor space.
