@@ -109,6 +109,7 @@ from quchip.devices.fluxonium import Fluxonium
 from quchip.devices.kerr_cavity import KerrCavity
 from quchip.devices.protocols import ChargeCoupled, FluxCoupled, PhaseCoupled
 from quchip.devices.resonator import Resonator
+from quchip.devices.spaces import ChargeSpace, CustomSpace, FockSpace, LocalSpace, PhaseGridSpace
 from quchip.devices.transmon.charge_basis import ChargeBasisTransmon
 from quchip.devices.transmon.duffing import DuffingTransmon
 from quchip.devices.transmon.flux_tunable import FluxTunableTransmon
@@ -152,16 +153,21 @@ __all__ = [
     "qnp",
     # Devices
     "ChargeBasisTransmon",
+    "ChargeSpace",
+    "CustomSpace",
     "CircuitDevice",
     "DuffingTransmon",
+    "FockSpace",
     "FluxTunableTransmon",
     "Fluxonium",
     "KerrCavity",
+    "LocalSpace",
     "NoiseChannel",
     "Resonator",
     # Coupling Protocols
     "ChargeCoupled",
     "PhaseCoupled",
+    "PhaseGridSpace",
     "FluxCoupled",
     # Chip topology
     "Chip",

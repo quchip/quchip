@@ -54,6 +54,7 @@ from quchip.engine.ir import (
     SolveProblem,
     StaticTerm,
 )
+from quchip.engine.basis import BasisRecord
 
 __all__ = [
     "simulate",
@@ -73,6 +74,7 @@ __all__ = [
     "SolveBatch",
     "SolveProblem",
     "StaticTerm",
+    "BasisRecord",
 ]
 
 

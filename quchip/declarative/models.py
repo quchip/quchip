@@ -352,7 +352,7 @@ class DeviceModel(BaseDevice):
         """Return the authored symbolic local Hamiltonian."""
         from quchip.declarative.ops import LocalOps
 
-        op = LocalOps(label=self.label, levels=self.levels)
+        op = LocalOps(label=self.label, space=self.local_space())
         return self.local_hamiltonian(op, _symbolic_parameters(self)).with_bindings(
             _parameter_bindings(self)
         )
@@ -576,7 +576,6 @@ class CouplingModel(BaseCoupling):
             expr,
             chip.backend,
             bindings=_parameter_bindings(self),
-            op_lookup=self._endpoint_lookup(),
         )
 
     # --- Compilation ---
@@ -597,17 +596,13 @@ class CouplingModel(BaseCoupling):
         """``device_b`` narrowed to a concrete device (see :attr:`_resolved_a`)."""
         return cast(BaseDevice, self.device_b)
 
-    def _endpoint_lookup(self) -> dict[tuple[str, str], Any]:
-        """Return the merged ``(label, op-name) -> operator`` lookup for both resolved endpoints."""
-        return {**self._resolved_a.declarative_ops(), **self._resolved_b.declarative_ops()}
-
     def _endpoint_ops(self) -> tuple[Any, Any]:
         """Return the ``(a, b)`` operator namespaces for this coupling's resolved endpoints."""
         from quchip.declarative.ops import EndpointOps
 
         return (
-            EndpointOps(label=self.device_a_label, levels=self._resolved_a.levels),
-            EndpointOps(label=self.device_b_label, levels=self._resolved_b.levels),
+            EndpointOps(label=self.device_a_label, space=self._resolved_a.local_space()),
+            EndpointOps(label=self.device_b_label, space=self._resolved_b.local_space()),
         )
 
     def _check_endpoint_order(self, expr: Any, method_name: str) -> None:
@@ -717,7 +712,6 @@ class CouplingModel(BaseCoupling):
                 static_expr,
                 chip.backend,
                 bindings=_parameter_bindings(self),
-                op_lookup=self._endpoint_lookup(),
             ),
             mod_signal,
         )]

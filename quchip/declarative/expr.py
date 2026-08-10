@@ -133,7 +133,8 @@ class PhysicsExpr:
         if not self.labels:
             raise AttributeError("Scalar expressions do not have a matrix shape.")
         if self.kind == "op":
-            return (self.args[1],) * 2
+            dimension = self.args[1].dimension
+            return (dimension, dimension)
         if self.kind in ("matrix", "function"):
             dimension = prod(self.args[1])
             return (dimension, dimension)
@@ -260,7 +261,6 @@ class PhysicsExpr:
         *,
         t: Any | None = None,
         backend: Any = None,
-        op_lookup: Mapping[tuple[str, str], Any] | None = None,
     ) -> Any:
         """Materialize this expression and return its dense numerical array."""
         if backend is None:
@@ -271,7 +271,6 @@ class PhysicsExpr:
             self,
             backend,
             bindings=bindings,
-            op_lookup=op_lookup,
             t=t,
         )
         return backend.to_array(native)
@@ -326,7 +325,6 @@ def materialize_expr(
     backend: Any,
     *,
     bindings: Mapping[str, Any] | None = None,
-    op_lookup: Mapping[tuple[str, str], Any] | None = None,
     t: Any | None = None,
 ) -> Any:
     """Lower symbolic physics, passing an already-native contribution through."""
@@ -360,11 +358,8 @@ def materialize_expr(
             value = function(*(lower(argument) for argument in arguments))
             return backend.from_array(value, dims=[list(dims), list(dims)])
         if node.kind == "op":
-            name, levels = node.args
-            label = node.labels[0]
-            if op_lookup is not None and (label, name) in op_lookup:
-                return op_lookup[(label, name)]
-            return _standard_operator(backend, name, levels)
+            name, space = node.args
+            return space.operator(name, backend)
         if node.kind == "embed":
             local = lower(node.args[0])
             labels, dims = node.args[1:]
@@ -433,7 +428,7 @@ def _band_weights(expr: PhysicsExpr) -> dict[str, int]:
     if expr.kind in ("literal", "parameter", "signal"):
         return {}
     if expr.kind == "op":
-        name, _levels = expr.args
+        name, _space = expr.args
         try:
             weight = _OPERATOR_BAND_WEIGHTS[name]
         except KeyError as exc:
@@ -463,34 +458,6 @@ _OPERATOR_BAND_WEIGHTS = {
 }
 
 
-def _standard_operator(backend: Any, name: str, levels: int) -> Any:
-    """Build a standard local operator without consulting a live component."""
-    if name == "a":
-        return backend.destroy(levels)
-    if name == "adag":
-        return backend.create(levels)
-    if name == "n":
-        return backend.number(levels)
-    if name == "I":
-        return backend.identity(levels)
-
-    zero = backend.basis(levels, 0)
-    one = backend.basis(levels, 1)
-    p01 = backend.matmul(zero, backend.dag(one))
-    p10 = backend.matmul(one, backend.dag(zero))
-    if name == "sigma_x":
-        return p01 + p10
-    if name == "sigma_y":
-        return -1j * p01 + 1j * p10
-    if name == "sigma_z":
-        return backend.matmul(zero, backend.dag(zero)) - backend.matmul(one, backend.dag(one))
-    if name == "sigma_plus":
-        return p10
-    if name == "sigma_minus":
-        return p01
-    raise ValueError(f"Unknown standard operator {name!r}.")
-
-
 def _latex(expr: PhysicsExpr, parent_precedence: int = 0) -> str:
     if expr.kind == "literal":
         value = expr.args[0]
@@ -512,7 +479,7 @@ def _latex(expr: PhysicsExpr, parent_precedence: int = 0) -> str:
         rendered = ", ".join(_latex(argument) for argument in arguments)
         return rf"{name}\!\left({rendered}\right)"
     if expr.kind == "op":
-        name, _levels = expr.args
+        name, _space = expr.args
         scope = expr.labels[0]
         symbols = {
             "a": r"\hat a",
@@ -525,7 +492,8 @@ def _latex(expr: PhysicsExpr, parent_precedence: int = 0) -> str:
             "sigma_plus": r"\hat\sigma_+",
             "sigma_minus": r"\hat\sigma_-",
         }
-        return _scoped_symbol(symbols[name], scope)
+        symbol = symbols.get(name, rf"\hat{{\mathrm{{{name}}}}}")
+        return _scoped_symbol(symbol, scope)
     if expr.kind == "embed":
         return _latex(expr.args[0], parent_precedence)
     precedence = 1 if expr.kind in ("add", "sub") else 2 if expr.kind in ("scale", "mul", "tensor") else 3
