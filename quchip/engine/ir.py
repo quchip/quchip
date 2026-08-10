@@ -911,9 +911,10 @@ class DynamicTerm:
 
 @dataclass(frozen=True)
 class CollapseTerm:
-    """Backend-neutral Lindblad operator with its physical owner."""
+    """Backend-neutral Lindblad operator and its separate rate."""
 
     operator: CanonicalOperator
+    rate: Any
     source: str
     channel: str
     parameter_paths: tuple[str, ...] = ()

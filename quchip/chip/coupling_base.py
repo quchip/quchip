@@ -221,8 +221,8 @@ class BaseCoupling(StateVersioned, Registrable, ABC, registry_root=True):
 
         The structural RWA policy for this coupling: when the chip
         resolves RWA (:meth:`Chip.resolve_rwa`), only bands accepted
-        here survive — in :meth:`Chip.hamiltonian`'s mask and in stage
-        2's band filter alike. Offsets follow the engine convention
+        here survive the engine's stage-2 band filter. The authored
+        :meth:`Chip.hamiltonian` remains the complete interaction. Offsets follow the engine convention
         ``Δ = col − row`` (``+1`` = lowering). Overrides must stay
         symmetric under joint sign flip so the retained operator is
         Hermitian, and must depend only on the integer offsets — never
@@ -251,13 +251,12 @@ class BaseCoupling(StateVersioned, Registrable, ABC, registry_root=True):
             f"RWA policy: {self.rwa if self.rwa is not None else 'inherits chip default'}",
         ]
 
-    def parametric_operator(self, chip: Any) -> Any | None:
-        """Backend operator a scheduled edge pump multiplies, or ``None`` when this coupling is not modulable.
+    def parametric_operator(self) -> Any | None:
+        """Authored operator a scheduled edge pump multiplies, or ``None`` when not modulable.
 
         The base coupling is static-only; declarative couplings opt in by
         implementing :meth:`CouplingModel.parametric_interaction`.
         """
-        _ = chip
         return None
 
     def dropped_terms(self) -> list["DroppedTerm"]:
@@ -269,12 +268,12 @@ class BaseCoupling(StateVersioned, Registrable, ABC, registry_root=True):
         """
         return []
 
-    def dynamic_interaction_terms(self, chip: "Chip") -> list[tuple[Operator, "ScalarModulation"]]:
+    def dynamic_interaction_terms(self) -> list[tuple[Operator, "ScalarModulation"]]:
         """Time-dependent interaction terms (default: none)."""
         return []
 
-    def collapse_operators(self, chip: "Chip") -> list[Operator]:
-        """Lindblad collapse operators on the local subspace (default: none)."""
+    def collapse_contributions(self, chip: "Chip") -> list[tuple[Operator, Any]]:
+        """Unscaled local Lindblad operators and rates (default: none)."""
         _ = chip
         return []
 

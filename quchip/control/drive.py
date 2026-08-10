@@ -196,8 +196,8 @@ class BaseDrive(Registrable, registry_root=True):
         """
         return self.device_label
 
-    def collapse_operators(self, device: BaseDevice) -> list[Operator]:
-        """Lindblad collapse operators contributed by this drive.
+    def collapse_contributions(self, device: BaseDevice) -> list[tuple[Operator, Any]]:
+        """Unscaled Lindblad operators and rates contributed by this drive.
 
         Default: none. Override to model drive-induced dissipation
         (e.g. photon loss on a drive line).
@@ -568,6 +568,6 @@ def _probe_modulable(coupling: Any) -> None:
     if expr is None:
         raise TypeError(
             f"{type(coupling).__name__} is not modulable: its parametric_interaction() hook "
-            "returns None. Implement parametric_interaction()/rwa_parametric_interaction() on "
+            "returns None. Implement parametric_interaction() on "
             "the coupling (see CouplingModel), or use a modulable coupling such as TunableCapacitive."
         )

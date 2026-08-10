@@ -121,8 +121,8 @@ def test_chip_parameter_inventory_includes_drive_control_and_bath_owners() -> No
             super().__init__(target, label=label)
             self.loss_rate = loss_rate
 
-        def collapse_operators(self, device):
-            return [np.sqrt(self.loss_rate) * device.lowering_operator()]
+        def collapse_contributions(self, device):
+            return [(device.lowering_operator(), self.loss_rate)]
 
     q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=2, label="q0")
     q1 = DuffingTransmon(freq=5.2, anharmonicity=-0.2, levels=2, label="q1")
@@ -182,7 +182,7 @@ def test_active_noise_is_rebindable_and_retained_in_engine_result() -> None:
         problem = build_problem(rebound, [], jnp.asarray([0.0, 1.0]))
         term = problem.engine_result.collapse_terms[0]
         matrix = term.operator.to_dense()
-        return jnp.real(matrix[0, 1] * jnp.conj(matrix[0, 1]))
+        return term.rate * jnp.real(matrix[0, 1] * jnp.conj(matrix[0, 1]))
 
     assert jax.grad(decay_rate)(100.0) == pytest.approx(-1e-4)
     term = build_problem(chip, [], jnp.asarray([0.0, 1.0])).engine_result.collapse_terms[0]

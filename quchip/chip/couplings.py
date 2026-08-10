@@ -44,8 +44,8 @@ def _get_backend() -> "Backend":
 
 
 def _full(s: Any, a: EndpointOps, b: EndpointOps) -> PhysicsExpr:
-    """Full dipole-dipole capacitive form ``s · (a + a†)(b + b†)``."""
-    return s * a.x * b.x
+    """Full charge-charge capacitive interaction."""
+    return s * a.charge * b.charge
 
 
 class Capacitive(CouplingModel):
@@ -160,13 +160,12 @@ class TunableCapacitive(CouplingModel):
     coupling strength:
 
     .. math::
-        H_{\text{int}} \;=\; g_0 \cdot
-            \left\{\begin{array}{ll}
-                (a + a^\dagger)(b + b^\dagger) & \text{if } \texttt{rwa} = \texttt{False} \\
-                (a^\dagger b + a b^\dagger)     & \text{if } \texttt{rwa} = \texttt{True}
-            \end{array}\right.
+        H_{\text{int}} \;=\; g_0\,\hat Q_a\hat Q_b
 
-    where :math:`g_0` is the static coupling strength in GHz; it may be
+    where :math:`\hat Q` is each endpoint's physical charge-like coupling
+    operator (the position quadrature for a Fock model). The engine applies
+    any requested RWA after local-basis materialization. :math:`g_0` is the
+    static coupling strength in GHz; it may be
     a JAX tracer and flows through :func:`jax.grad` without
     concretization.
 
@@ -175,7 +174,7 @@ class TunableCapacitive(CouplingModel):
     coupling schedules a pump δ(t) via
     :meth:`~quchip.control.sequence.QuantumSequence.pump`, multiplying
     the same operator structure the static term uses
-    (:meth:`parametric_interaction` / :meth:`rwa_parametric_interaction`).
+    (:meth:`parametric_interaction`).
 
     Parameters
     ----------
@@ -190,9 +189,8 @@ class TunableCapacitive(CouplingModel):
 
     Notes
     -----
-    The pump multiplies :meth:`parametric_interaction` /
-    :meth:`rwa_parametric_interaction` in the chip's frame natively —
-    no separate frame or carrier logic lives on the coupling; a pump
+    The pump multiplies :meth:`parametric_interaction`; frame and RWA logic
+    stay in the engine. A pump
     tone at the qubits' difference frequency ``|ω_a − ω_b|`` activates the
     parametric beam-splitter / iSWAP exchange, while a tone at the sum
     frequency ``ω_a + ω_b`` instead activates two-mode-squeezing
@@ -251,14 +249,9 @@ class TunableCapacitive(CouplingModel):
         return _full(p.g_0, a, b)
 
     def parametric_interaction(self, a: EndpointOps, b: EndpointOps, p: Any) -> PhysicsExpr:
-        """Modulable structure ``(a + a†)(b + b†)`` a scheduled pump multiplies."""
+        """Modulable charge-charge structure a scheduled pump multiplies."""
         _ = p
-        return a.x * b.x
-
-    def rwa_parametric_interaction(self, a: EndpointOps, b: EndpointOps, p: Any) -> PhysicsExpr:
-        """Beam-splitter structure ``a†b + a b†`` retained under RWA."""
-        _ = p
-        return a.adag * b.a + a.a * b.adag
+        return a.charge * b.charge
 
     def physics_notes(self) -> list[str]:
         """Return the tunable-coupling, RWA, and effective-model assumptions."""

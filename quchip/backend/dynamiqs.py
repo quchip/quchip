@@ -373,6 +373,10 @@ class DynamiqsBackend(Backend):
         """Return whether *state* is a column-vector ket rather than a density matrix."""
         return len(state.shape) == 2 and state.shape[1] == 1
 
+    def is_native_state(self, state: Any) -> bool:
+        """Return whether *state* is a Dynamiqs quantum array."""
+        return isinstance(state, dq.QArray)
+
     # ------------------------------------------------------------------
     # Solver options / heuristics
     # ------------------------------------------------------------------

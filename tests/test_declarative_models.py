@@ -210,42 +210,17 @@ def test_time_dependent_without_dynamic_source_errors():
     b = HarmonicMode(freq=6.0, levels=4, label="b")
     coupling = BadDynamic(a, b, g=0.01)
     with pytest.raises(ValueError, match="exactly one dynamic source"):
-        coupling.dynamic_interaction_terms(None)
-
-
-def _arr(op):
-    """Dense numpy view of a backend operator (Qobj or array)."""
-    return op.full() if hasattr(op, "full") else np.asarray(op)
-
-
-def test_tunable_capacitive_parametric_operator_follows_chip_rwa():
-    """The pump-multiplied operator structure re-selects under chip RWA."""
-    from quchip import Chip, DuffingTransmon, TunableCapacitive
-
-    def _coupler():
-        q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
-        q1 = DuffingTransmon(freq=5.05, anharmonicity=-0.25, levels=3, label="q1")
-        return q0, q1, TunableCapacitive(q0, q1, g_0=0.0)
-
-    q0r, q1r, c_rwa = _coupler()
-    chip_rwa = Chip([q0r, q1r], [c_rwa], frame="rotating", rwa=True)
-    op_rwa = c_rwa.parametric_operator(chip_rwa)
-    q0f, q1f, c_full = _coupler()
-    chip_full = Chip([q0f, q1f], [c_full], frame="rotating", rwa=False)
-    op_full = c_full.parametric_operator(chip_full)
-
-    # RWA keeps a†b + a b†; full keeps (a + a†)(b + b†).
-    assert not np.allclose(_arr(op_rwa), _arr(op_full))
+        coupling.dynamic_interaction_terms()
 
 
 def test_tunable_capacitive_without_modulation_has_no_dynamic_term():
     """A purely static TunableCapacitive emits no dynamic interaction term."""
-    from quchip import Chip, DuffingTransmon, TunableCapacitive
+    from quchip import DuffingTransmon, TunableCapacitive
 
     q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
     q1 = DuffingTransmon(freq=5.05, anharmonicity=-0.25, levels=3, label="q1")
     c = TunableCapacitive(q0, q1, g_0=0.02)
-    assert c.dynamic_interaction_terms(Chip([q0, q1], [c], frame="rotating", rwa=True)) == []
+    assert c.dynamic_interaction_terms() == []
 
 
 def test_declarative_device_to_dict_contains_declared_parameters():

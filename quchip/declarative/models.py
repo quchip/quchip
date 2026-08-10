@@ -17,7 +17,11 @@ from typing import Any, ClassVar, cast, dataclass_transform
 import jax.tree_util as jtu
 
 from quchip.chip.coupling_base import BaseCoupling
-from quchip.declarative.expr import ParameterNamespace, PhysicsExpr, materialize_expr
+from quchip.declarative.expr import (
+    ParameterNamespace,
+    PhysicsExpr,
+    as_operator_expr,
+)
 from quchip.declarative.parameters import (
     Parameter,
     UNBOUND,
@@ -357,10 +361,20 @@ class DeviceModel(BaseDevice):
         """Return the authored symbolic local Hamiltonian."""
         from quchip.declarative.ops import LocalOps
 
-        op = LocalOps(label=self.label, space=self.local_space())
-        return self.local_hamiltonian(op, _symbolic_parameters(self)).with_bindings(
-            _parameter_bindings(self)
+        space = self.local_space()
+        op = LocalOps(label=self.label, space=space)
+        parameters = _symbolic_parameters(self)
+        authored = self.local_hamiltonian(op, parameters)
+        expression = as_operator_expr(
+            authored,
+            labels=(self.label,),
+            dims=(space.dimension,),
+            name=rf"\hat H_{{{self.label}}}",
+            owner=self,
+            scope=self.label,
+            allowed=type(self).__quchip_param_fields__,
         )
+        return expression.with_bindings(_parameter_bindings(self))
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize common device state plus declared parameter values."""
@@ -530,20 +544,6 @@ class CouplingModel(BaseCoupling):
         """
         return None
 
-    def rwa_time_dependent(self, a: Any, b: Any, p: Any) -> Any:
-        """Return the RWA time-dependent expression, defaulting to full form.
-
-        Mirrors the parametric RWA split for the dynamic term: subclasses
-        whose parametric drive keeps only the co-rotating operators under
-        RWA override this.
-
-        Parameters
-        ----------
-        a, b : EndpointOps
-            Operator namespaces for the two coupled endpoints.
-        """
-        return self.time_dependent(a, b, p)
-
     def parametric_interaction(self, a: Any, b: Any, p: Any) -> Any:
         """Return the parametric interaction structure, or ``None`` when this coupling is not modulable.
 
@@ -554,34 +554,30 @@ class CouplingModel(BaseCoupling):
         _ = (a, b, p)
         return None
 
-    def rwa_parametric_interaction(self, a: Any, b: Any, p: Any) -> Any:
-        """RWA-retained parametric structure; defaults to the full form."""
-        return self.parametric_interaction(a, b, p)
+    def parametric_operator(self) -> Any | None:
+        """Return the one physical parametric structure authored by this coupling.
 
-    def parametric_operator(self, chip: Any) -> Any | None:
-        """Compile the parametric structure for *chip*'s resolved RWA policy.
-
-        Returns the backend-native operator on the local two-body space, or
+        Returns a backend-neutral expression on the local two-body space, or
         ``None`` when :meth:`parametric_interaction` declines. Valid only once
         the coupling is chip-resolved (same contract as
         :meth:`interaction_hamiltonian`).
         """
         a_ops, b_ops = self._endpoint_ops()
         p = _symbolic_parameters(self)
-        rwa = chip.resolve_rwa(self)
-        expr = (
-            self.rwa_parametric_interaction(a_ops, b_ops, p)
-            if rwa
-            else self.parametric_interaction(a_ops, b_ops, p)
-        )
-        if expr is None:
+        authored = self.parametric_interaction(a_ops, b_ops, p)
+        if authored is None:
             return None
-        self._check_endpoint_order(expr, "rwa_parametric_interaction" if rwa else "parametric_interaction")
-        return materialize_expr(
-            expr,
-            chip.backend,
-            bindings=_parameter_bindings(self),
+        expr = as_operator_expr(
+            authored,
+            labels=(self.device_a_label, self.device_b_label),
+            dims=(a_ops.space.dimension, b_ops.space.dimension),
+            name=rf"\hat P_{{{self.label}}}",
+            owner=self,
+            scope=self.label,
+            allowed=type(self).__quchip_param_fields__,
         )
+        self._check_endpoint_order(expr, "parametric_interaction")
+        return expr.with_bindings(_parameter_bindings(self))
 
     # --- Compilation ---
 
@@ -637,7 +633,17 @@ class CouplingModel(BaseCoupling):
         """Return the authored symbolic interaction Hamiltonian."""
 
         a_ops, b_ops = self._endpoint_ops()
-        expr = self.interaction(a_ops, b_ops, _symbolic_parameters(self))
+        parameters = _symbolic_parameters(self)
+        authored = self.interaction(a_ops, b_ops, parameters)
+        expr = as_operator_expr(
+            authored,
+            labels=(self.device_a_label, self.device_b_label),
+            dims=(a_ops.space.dimension, b_ops.space.dimension),
+            name=rf"\hat H_{{{self.label}}}",
+            owner=self,
+            scope=self.label,
+            allowed=type(self).__quchip_param_fields__,
+        )
         self._check_endpoint_order(expr, "interaction")
         return expr.with_bindings(_parameter_bindings(self))
 
@@ -668,11 +674,8 @@ class CouplingModel(BaseCoupling):
     def _validate_dynamic_expr(self, expr: Any, method_name: str) -> None:
         """Require exactly one dynamic source on a compiled time-dependent expression.
 
-        Applied to whichever expression :meth:`dynamic_interaction_terms`
-        actually compiles: the full :meth:`time_dependent` form, and again
-        to :meth:`rwa_time_dependent`'s replacement when the chip resolves
-        RWA, so a malformed RWA override cannot skip the check the full
-        form passed.
+        Applied to the one physical expression :meth:`dynamic_interaction_terms`
+        compiles before the engine projects and band-resolves it.
         """
         if not isinstance(expr, PhysicsExpr) or len(expr.dynamic_sources) != 1:
             raise ValueError(
@@ -680,19 +683,13 @@ class CouplingModel(BaseCoupling):
                 "exactly one dynamic source."
             )
 
-    def dynamic_interaction_terms(self, chip: Any) -> list[tuple[Any, Any]]:
-        """Compile the optional single-source dynamic interaction term.
-
-        Parameters
-        ----------
-        chip : Chip
-            Owning chip, consulted via :meth:`Chip.resolve_rwa` to select the
-            static or RWA operator structure of the dynamic term.
+    def dynamic_interaction_terms(self) -> list[tuple[Any, Any]]:
+        """Return the optional single-source dynamic interaction term.
 
         Returns
         -------
-        list of (operator, modulation)
-            One ``(static_operator, scalar_modulation)`` pair when
+        list of (expression, modulation)
+            One backend-neutral ``(static_expression, scalar_modulation)`` pair when
             :meth:`time_dependent` returns an expression, else an empty list.
         """
         a_ops, b_ops = self._endpoint_ops()
@@ -701,22 +698,13 @@ class CouplingModel(BaseCoupling):
         if expr is None:
             return []
         self._validate_dynamic_expr(expr, "time_dependent")
-        method_name = "time_dependent"
-        if chip.resolve_rwa(self):
-            expr = self.rwa_time_dependent(a_ops, b_ops, p)
-            self._validate_dynamic_expr(expr, "rwa_time_dependent")
-            method_name = "rwa_time_dependent"
-        self._check_endpoint_order(expr, method_name)
+        self._check_endpoint_order(expr, "time_dependent")
         from quchip.engine.ir import as_scalar_modulation
 
         source = expr.dynamic_sources[0].source
         mod_signal = as_scalar_modulation(source, owner=type(self).__name__)
         static_expr = expr.without_dynamic_sources()
         return [(
-            materialize_expr(
-                static_expr,
-                chip.backend,
-                bindings=_parameter_bindings(self),
-            ),
+            static_expr.with_bindings(_parameter_bindings(self)),
             mod_signal,
         )]

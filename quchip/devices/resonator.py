@@ -62,7 +62,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar
 
-import jax.numpy as jnp
 import numpy as np
 
 from quchip.backend.protocol import Operator
@@ -73,7 +72,7 @@ from quchip.declarative.parameters import Scalar, parameter
 from quchip.devices.base import BaseDevice, NoiseChannel
 
 
-def _photon_loss_channel(device: Any) -> list[Operator]:
+def _photon_loss_channel(device: Any, basis: Any = None) -> list[tuple[Operator, Any]]:
     """Cavity photon-loss channel ``sqrt(κ)·a`` with ``κ = 2π·freq/Q``.
 
     The ``2π`` is intrinsic to the physical definition of Q (cycles of the
@@ -82,8 +81,9 @@ def _photon_loss_channel(device: Any) -> list[Operator]:
     """
     if device.quality_factor is None:
         return []
-    sqrt_kappa = jnp.sqrt(2 * np.pi * device.freq / device.quality_factor)
-    return [sqrt_kappa * device.lowering_operator()]
+    del basis
+    kappa = 2 * np.pi * device.freq / device.quality_factor
+    return [(device.local_space().matrix("a"), kappa)]
 
 
 class Resonator(DeviceModel):

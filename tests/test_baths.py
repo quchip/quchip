@@ -25,9 +25,9 @@ def test_bath_targets_accept_label_or_object():
     assert bath.resolve_targets(chip) == ["q", "r"]
 
 
-def _ops(bath, chip):
+def _terms(bath, chip):
     with _backend_context(chip.backend):
-        return bath.collapse_operators(chip)
+        return bath.collapse_contributions(chip)
 
 
 def test_thermal_independent_emits_relaxation_and_absorption_per_device():
@@ -35,11 +35,11 @@ def test_thermal_independent_emits_relaxation_and_absorption_per_device():
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
     r = Resonator(freq=7.0, levels=4, label="r")
     chip = Chip([q, r], baths=[Bath("thermal", temperature=200.0, rate=1e-3)])
-    ops = _ops(chip.baths[0], chip)
+    terms = _terms(chip.baths[0], chip)
     # 2 devices x (relaxation + absorption) at finite T.
-    assert len(ops) == 4
-    full_dim = 3 * 4
-    assert ops[0].shape == (full_dim, full_dim)
+    assert len(terms) == 4
+    assert terms[0][0].shape == (3, 3)
+    assert terms[0][2] == (0,)
 
 
 def test_collective_decay_is_a_single_summed_operator():
@@ -47,8 +47,9 @@ def test_collective_decay_is_a_single_summed_operator():
     q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=2, label="q0")
     q1 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=2, label="q1")
     chip = Chip([q0, q1], baths=[Bath("collective_decay", rate=0.01)])
-    ops = _ops(chip.baths[0], chip)
-    assert len(ops) == 1  # ONE summed jump operator, not two independent ones.
+    terms = _terms(chip.baths[0], chip)
+    assert len(terms) == 1  # ONE summed jump operator, not two independent ones.
+    assert terms[0][1] == 0.01
 
 
 def test_correlated_thermal_bath_raises_not_implemented():
@@ -103,24 +104,44 @@ def test_bath_zero_temperature_thermal_occupation_is_zero():
     assert float(n_bar) == 0.0
 
 
-def test_bath_zero_temperature_collapse_operators_relaxation_only():
-    """A concrete T=0 thermal bath's relaxation operator is nonzero and its absorption operator is exactly zero."""
+def test_bath_zero_temperature_has_relaxation_rate_only():
+    """A concrete T=0 thermal bath has a nonzero emission rate and zero absorption rate."""
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
     chip = Chip([q], baths=[Bath("thermal", temperature=0.0, rate=1e-3)])
-    relax, absorb = _ops(chip.baths[0], chip)
-    relax_array = chip.backend.to_array(relax)
-    absorb_array = chip.backend.to_array(absorb)
+    relax, absorb = _terms(chip.baths[0], chip)
+    relax_array = chip.backend.to_array(relax[0])
     assert np.linalg.norm(relax_array) > 0.0
-    assert np.allclose(absorb_array, 0.0)
+    assert float(relax[1]) == pytest.approx(1e-3)
+    assert float(absorb[1]) == 0.0
 
 
 def test_baths_flow_into_collected_c_ops():
     """Canonical engine results include each bath's collapse terms."""
     from quchip.engine import build_problem
 
+    class CallableBath(Bath):
+        def collapse_contributions(self, chip, bases=None):
+            del bases
+
+            def lowering(rate):
+                xp = chip.backend.array_module
+                return xp.asarray([[0.0, rate * 0.0 + 1.0], [0.0, 0.0]])
+
+            def decay_rate(rate):
+                return rate
+
+            return [(lowering, decay_rate, (0,), "callable_decay")]
+
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=2, label="q")
     no_bath = Chip([q])
     with_bath = Chip([q.copy()], baths=[Bath("thermal", temperature=200.0, rate=1e-3)])
+    callable_bath = Chip(
+        [q.copy()],
+        baths=[CallableBath("collective_decay", rate=2e-3)],
+    )
     tlist = np.asarray([0.0, 1.0])
     assert len(build_problem(no_bath, [], tlist).engine_result.collapse_terms) == 0
     assert len(build_problem(with_bath, [], tlist).engine_result.collapse_terms) == 2
+    term = build_problem(callable_bath, [], tlist).engine_result.collapse_terms[0]
+    assert term.channel == "callable_decay"
+    assert float(term.rate) == pytest.approx(2e-3)

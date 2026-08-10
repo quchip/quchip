@@ -9,6 +9,7 @@ from quchip.declarative.expr import PhysicsExpr
 from quchip.declarative.models import DeviceModel
 from quchip.declarative.ops import LocalOps
 from quchip.declarative.parameters import Scalar, parameter
+from quchip.devices.base import NoiseChannel, _energy_dephasing_channel, _matrix_element_emission_channel
 from quchip.devices.spaces import PhaseGridSpace
 
 
@@ -31,6 +32,14 @@ class Fluxonium(DeviceModel):
         "collapse_model",
         "coupling_channel",
         "collapse_rate_threshold",
+    )
+    _noise_channels = (
+        NoiseChannel(
+            "matrix_element_emission",
+            ("T1", "thermal_population"),
+            _matrix_element_emission_channel,
+        ),
+        NoiseChannel("pure_dephasing", ("T2",), _energy_dephasing_channel),
     )
 
     E_C: Scalar = parameter(positive=True, unit="GHz", symbol="E_C")
@@ -70,6 +79,8 @@ class Fluxonium(DeviceModel):
             )
         if coupling_channel not in (None, "charge", "flux"):
             raise ValueError("coupling_channel must be 'charge', 'flux', or None.")
+        if collapse_model == "fermi_golden" and noise.get("T1") is not None and coupling_channel is None:
+            raise ValueError("coupling_channel is required when T1 uses matrix-element relaxation.")
         if collapse_rate_threshold < 0:
             raise ValueError("collapse_rate_threshold must be non-negative.")
 

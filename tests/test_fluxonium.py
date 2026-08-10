@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from quchip.utils.labeling import reset_label_counters
+from quchip import Chip
 from quchip.devices.fluxonium import Fluxonium
 from quchip.devices.protocols import ChargeCoupled, FluxCoupled, PhaseCoupled
 
@@ -111,8 +112,15 @@ def test_charge_and_flux_channels_give_different_rates_at_sweet_spot():
     q_charge = Fluxonium(**kwargs, coupling_channel="charge")
     q_flux = Fluxonium(**kwargs, coupling_channel="flux")
 
-    ops_charge = [np.asarray(op) for op in q_charge.collapse_operators()]
-    ops_flux = [np.asarray(op) for op in q_flux.collapse_operators()]
+    def _resolved_operators(device: Fluxonium) -> list[np.ndarray]:
+        result = Chip([device], basis="eigen").engine_result()
+        return [
+            np.sqrt(np.asarray(term.rate)) * np.asarray(term.operator.to_dense())
+            for term in result.collapse_terms
+        ]
+
+    ops_charge = _resolved_operators(q_charge)
+    ops_flux = _resolved_operators(q_flux)
 
     def _total_rate_matrix(ops: list[np.ndarray]) -> np.ndarray:
         rate = np.zeros((4, 4))

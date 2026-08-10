@@ -13,7 +13,6 @@ single loss function can span any of them.
 
 from __future__ import annotations
 
-import warnings
 from collections import Counter
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping, Sequence, overload
@@ -25,12 +24,15 @@ from quchip.backend.protocol import Backend, Operator, State
 from quchip.chip.analysis import ChipAnalysis, DressedResult
 from quchip.chip.baths import Bath
 from quchip.chip.coupling_base import BaseCoupling
-from quchip.chip.rwa import apply_rwa_mask
 from quchip.chip.states import _DEFAULT_LEVEL_SYMBOLS
 from quchip.control.drive import BaseDrive
 from quchip.control.equipment import ControlEquipment
 from quchip.control.signal import Crosstalk, SignalTransform
-from quchip.declarative.expr import PhysicsExpr, filter_expr_bands, materialize_expr
+from quchip.declarative.expr import (
+    PhysicsExpr,
+    as_operator_expr,
+    as_scalar_expr,
+)
 from quchip.declarative.parameters import validate_sign
 from quchip.devices.base import BaseDevice, _validate_noise_params
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
@@ -234,15 +236,9 @@ class Chip:
         adds each coupling's embedded interaction. Does **not** apply
         the rotating-frame transform or any drive envelopes.
 
-        Under resolved RWA (:meth:`resolve_rwa`) each coupling
-        contributes only the bands its
-        :meth:`~quchip.chip.coupling_base.BaseCoupling.rwa_keeps_band`
-        retains — the :func:`~quchip.chip.rwa.apply_rwa_mask` of its full
-        interaction. The same bands drop from stage 2's decomposition, so
-        the two views agree.
-
-        This is the **lab-frame** Hamiltonian. At solve time, the engine
-        applies a rotating-frame transformation and subtracts
+        This is the exact authored lab-frame Hamiltonian. RWA and frame
+        transformations are applied only inside the engine. At solve time,
+        the engine subtracts
         ``2π Σ_i ω_ref,i n̂_i`` for each device, where ``ω_ref,i`` is the
         frame reference resolved by
         :func:`quchip.engine.stage1_frames.resolve_frame`. The 2π boundary
@@ -260,9 +256,8 @@ class Chip:
         backend = self.backend
         signature = (
             type(backend).__qualname__,
-            self._rwa,
             tuple((d.label, d.state_version) for d in self._devices),
-            tuple((c.label, c.state_version, self.resolve_rwa(c)) for c in self._couplings),
+            tuple((c.label, c.state_version) for c in self._couplings),
         )
         cache = self._hamiltonian_cache
         if cache is not None and cache[0] == signature and not contains_tracer(cache[1]):
@@ -297,51 +292,6 @@ class Chip:
                     dims=local_dims,
                     name=rf"\hat H_{{{coupling.label}}}",
                 )
-                if self.resolve_rwa(coupling):
-                    try:
-                        masked = filter_expr_bands(h_int, coupling.rwa_keeps_band)
-                    except TypeError:
-                        numeric = materialize_expr(h_int, backend)
-                        masked_numeric = apply_rwa_mask(
-                            numeric,
-                            dims=local_dims,
-                            labels=local_labels,
-                            keeps_band=coupling.rwa_keeps_band,
-                            backend=backend,
-                        )
-                        if masked_numeric is None:
-                            masked = None
-                        else:
-                            masked = PhysicsExpr.from_matrix(
-                                backend.to_array(masked_numeric),
-                                labels=local_labels,
-                                dims=local_dims,
-                                name=rf"\hat H^{{\mathrm{{RWA}}}}_{{{coupling.label}}}",
-                            )
-                    if masked is None:
-                        # No band survived rwa_keeps_band. An interaction that was
-                        # already exactly zero has no band to reject in the first
-                        # place; rerun the same decomposition with an always-true
-                        # predicate to tell that case (skip silently) apart from a
-                        # nonzero interaction every one of whose populated bands the
-                        # predicate rejected (a policy surprise worth a warning).
-                        has_any_band = apply_rwa_mask(
-                            materialize_expr(h_int, backend),
-                            dims=local_dims,
-                            labels=local_labels,
-                            keeps_band=lambda *_: True,
-                            backend=backend,
-                        ) is not None
-                        if has_any_band:
-                            warnings.warn(
-                                f"Coupling '{coupling.label}' vanishes entirely under the resolved RWA: "
-                                f"none of its bands pass rwa_keeps_band. Set rwa=False on the coupling "
-                                f"(or override rwa_keeps_band) to retain it.",
-                                UserWarning,
-                                stacklevel=2,
-                            )
-                        continue
-                    h_int = masked
                 H = H + h_int.embed(labels, self.authored_dims)
 
         assert H is not None
@@ -373,10 +323,10 @@ class Chip:
     # physics-bearing component family is therefore a chip-side change; it
     # never requires modifying the engine.
 
-    def dynamic_contributions(self) -> list[tuple[Operator, Any, tuple[int, ...], str, str]]:
+    def dynamic_contributions(self) -> list[tuple[Operator, Any, tuple[int, ...], Any, str, str]]:
         """Chip-owned time-dependent Hamiltonian contributions with their support.
 
-        Returns ``(local_op, time_dependence, support, origin, tag)``
+        Returns ``(local_op, time_dependence, support, owner, origin, tag)``
         tuples: one support index for a device-local operator, two for a
         coupling's two-body operator. Operators are lab-frame, ordinary
         GHz — the engine applies the 2π boundary. Drive terms are *not*
@@ -384,31 +334,32 @@ class Chip:
         drive compilation.
         """
         backend = self.backend
-        out: list[tuple[Operator, Any, tuple[int, ...], str, str]] = []
+        out: list[tuple[Operator, Any, tuple[int, ...], Any, str, str]] = []
         with _backend_context(backend):
             for coupling in self._couplings:
-                term_pairs = coupling.dynamic_interaction_terms(self)
+                term_pairs = coupling.dynamic_interaction_terms()
                 if not term_pairs:
                     continue
                 idx_a = self._label_to_index[coupling.device_a_label]
                 idx_b = self._label_to_index[coupling.device_b_label]
                 out.extend(
-                    (op, td, (idx_a, idx_b), "coupling", "coupling_dynamic")
+                    (op, td, (idx_a, idx_b), coupling, "coupling", "coupling_dynamic")
                     for op, td in term_pairs
                 )
             for i, dev in enumerate(self._devices):
                 out.extend(
-                    (op, td, (i,), "device", "device_dynamic")
+                    (op, td, (i,), dev, "device", "device_dynamic")
                     for op, td in dev.dynamic_terms()
                 )
         return out
 
     def collapse_contributions(
         self,
-    ) -> list[tuple[Operator, tuple[int, ...], str, str, tuple[str, ...]]]:
+        bases: Mapping[str, Any] | None = None,
+    ) -> list[tuple[Operator, Any, tuple[int, ...], str, str, tuple[str, ...]]]:
         """Every Lindblad collapse operator on the chip, with its support.
 
-        Returns ``(operator, support, source, channel, parameter_paths)``
+        Returns ``(operator, rate, support, source, channel, parameter_paths)``
         tuples: one device index for a
         device- or drive-line-local operator, two for a coupling's
         two-body operator, and an empty tuple for an operator already
@@ -416,9 +367,9 @@ class Chip:
         Lindblad-ready — each component owns its rate physics, including
         any intrinsic 2π (e.g. a resonator's κ = 2π·f/Q).
 
-        Every returned operator is a component's LOCAL (bare-basis)
-        operator; the engine combines them with the dressed interacting
-        Hamiltonian at solve time. This is the standard local-Lindblad
+        Every returned operator is authored locally and transformed by the
+        engine into the same fixed local solver bases as the Hamiltonian.
+        This is the standard local-Lindblad
         approximation (Breuer & Petruccione, *The Theory of Open Quantum
         Systems*, Oxford, 2002, Ch. 3) rather than a dressed-basis
         (polaron-frame) master equation, and applies chip-wide regardless of
@@ -426,18 +377,21 @@ class Chip:
         :meth:`physics_notes`.
         """
         backend = self.backend
-        out: list[tuple[Operator, tuple[int, ...], str, str, tuple[str, ...]]] = []
+        out: list[tuple[Operator, Any, tuple[int, ...], str, str, tuple[str, ...]]] = []
         with _backend_context(backend):
             for i, dev in enumerate(self._devices):
                 out.extend(
                     (
                         op,
+                        rate,
                         (i,),
                         dev.label,
                         channel,
                         tuple(f"{dev.label}.{name}" for name in params if getattr(dev, name) is not None),
                     )
-                    for op, channel, params in dev.collapse_contributions()
+                    for op, rate, channel, params in dev.collapse_contributions(
+                        None if bases is None else bases[dev.label]
+                    )
                 )
             if self.control_equipment is not None:
                 for line in self.control_equipment.lines:
@@ -448,10 +402,23 @@ class Chip:
                         f"drive.{line.label}.{name}"
                         for name in line.collapse_parameter_names()
                     )
-                    out.extend(
-                        (op, (idx,), line.label, f"drive_{position}", parameter_paths)
-                        for position, op in enumerate(line.collapse_operators(self._devices[idx]))
-                    )
+                    device = self._devices[idx]
+                    for position, (op, rate) in enumerate(line.collapse_contributions(device)):
+                        op = as_operator_expr(
+                            op,
+                            labels=(device.label,),
+                            dims=(device.local_space().dimension,),
+                            name=rf"\hat L_{{{line.label},{position}}}",
+                            owner=line,
+                            scope=f"drive.{line.label}",
+                        )
+                        rate = as_scalar_expr(
+                            rate,
+                            name=rf"\gamma_{{{line.label},{position}}}",
+                            owner=line,
+                            scope=f"drive.{line.label}",
+                        )
+                        out.append((op, rate, (idx,), line.label, f"drive_{position}", parameter_paths))
             for coupling in self._couplings:
                 idx_a = self._label_to_index[coupling.device_a_label]
                 idx_b = self._label_to_index[coupling.device_b_label]
@@ -459,19 +426,64 @@ class Chip:
                     f"{coupling.label}.{name}"
                     for name in coupling.collapse_parameter_names()
                 )
-                out.extend(
-                    (op, (idx_a, idx_b), coupling.label, f"coupling_{position}", parameter_paths)
-                    for position, op in enumerate(coupling.collapse_operators(self))
-                )
+                device_a = self._devices[idx_a]
+                device_b = self._devices[idx_b]
+                for position, (op, rate) in enumerate(coupling.collapse_contributions(self)):
+                    op = as_operator_expr(
+                        op,
+                        labels=(device_a.label, device_b.label),
+                        dims=(
+                            device_a.local_space().dimension,
+                            device_b.local_space().dimension,
+                        ),
+                        name=rf"\hat L_{{{coupling.label},{position}}}",
+                        owner=coupling,
+                        scope=coupling.label,
+                    )
+                    rate = as_scalar_expr(
+                        rate,
+                        name=rf"\gamma_{{{coupling.label},{position}}}",
+                        owner=coupling,
+                        scope=coupling.label,
+                    )
+                    out.append(
+                        (
+                            op,
+                            rate,
+                            (idx_a, idx_b),
+                            coupling.label,
+                            f"coupling_{position}",
+                            parameter_paths,
+                        )
+                    )
             for bath in self.baths:
                 parameter_paths = tuple(
                     f"bath.{bath.label}.{name}"
                     for name in bath.collapse_parameter_names()
                 )
-                out.extend(
-                    (op, (), bath.label, f"bath_{position}", parameter_paths)
-                    for position, op in enumerate(bath.collapse_operators(self))
-                )
+                for position, (op, rate, support, channel) in enumerate(
+                    bath.collapse_contributions(self, bases)
+                ):
+                    labels = tuple(self._devices[index].label for index in support)
+                    dims = tuple(self._devices[index].local_space().dimension for index in support)
+                    if not support:
+                        labels = tuple(device.label for device in self._devices)
+                        dims = self.authored_dims
+                    op = as_operator_expr(
+                        op,
+                        labels=labels,
+                        dims=dims,
+                        name=rf"\hat L_{{{bath.label},{position}}}",
+                        owner=bath,
+                        scope=f"bath.{bath.label}",
+                    )
+                    rate = as_scalar_expr(
+                        rate,
+                        name=rf"\gamma_{{{bath.label},{position}}}",
+                        owner=bath,
+                        scope=f"bath.{bath.label}",
+                    )
+                    out.append((op, rate, support, bath.label, channel, parameter_paths))
         return out
 
     # ------------------------------------------------------------------
@@ -997,9 +1009,9 @@ class Chip:
         """
         notes: dict[str, list[str]] = {
             "chip": [
-                "Collapse operators are each component's LOCAL (bare-basis) operator combined "
-                "with the dressed interacting Hamiltonian — the standard local-Lindblad "
-                "approximation, not a dressed-basis (polaron-frame) master equation."
+                "Collapse operators are authored per component, transformed into the fixed "
+                "local solver bases, and combined with the interacting Hamiltonian — the "
+                "local-Lindblad approximation, not a global dressed-basis master equation."
             ]
         }
         for device in self._devices:
@@ -1290,7 +1302,7 @@ class Chip:
         :meth:`superposition` accept single-string specifications where
         each character is one level per device in *devices* order.
         Level symbols default to ``g=0, e=1, f=2, h=3``; digits ``0..9``
-        are always accepted as raw Fock indices.
+        are always accepted as energy-level indices.
 
         Every chip device must be named exactly once.
 
@@ -1345,7 +1357,7 @@ class Chip:
         /,
         **device_state_kwargs: int,
     ) -> State:
-        """Dressed eigenstate for the given Fock-indexed bare-state labels.
+        """Dressed eigenstate assigned from the given product-state level labels.
 
         Accepts a string shorthand (e.g. ``"eg1"``) when
         :meth:`set_state_order` has been called.
@@ -1367,11 +1379,11 @@ class Chip:
         /,
         **device_state_kwargs: int | State,
     ) -> State:
-        """Bare tensor-product state from per-device Fock indices or kets.
+        """Product state from per-device energy levels or authored local kets.
 
-        Each device may be specified as either a Fock index (``int``) or
-        a ket vector in that device's local space. Devices not mentioned
-        default to the ground state (Fock index 0). Unlike :meth:`state`
+        Each device may be specified as either an energy-level index
+        (``int``) or a ket vector in that device's authored local space.
+        Devices not mentioned default to the ground state (level 0). Unlike :meth:`state`
         this does **not** diagonalize the coupled system.
 
         Accepts a string shorthand (e.g. ``"eg1"``) when
@@ -1506,10 +1518,10 @@ class Chip:
             if drive.target_kind == "edge":
                 assert drive.target_label is not None
                 coupling = self._coupling_map[drive.target_label]
-                if coupling.parametric_operator(self) is None:
+                if coupling.parametric_operator() is None:
                     raise TypeError(
                         f"{type(coupling).__name__} is not modulable: its parametric_interaction() hook "
-                        "returns None. Implement parametric_interaction()/rwa_parametric_interaction() on "
+                        "returns None. Implement parametric_interaction() on "
                         "the coupling (see CouplingModel), or use a modulable coupling such as TunableCapacitive."
                     )
                 drive.connect(coupling)  # type: ignore[arg-type]  # ParametricDrive.connect accepts a coupling

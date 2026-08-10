@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from quchip.declarative.expr import PhysicsExpr
-from quchip.devices.spaces import LocalSpace
+from quchip.devices.spaces import ChargeSpace, FockSpace, LocalSpace, PhaseGridSpace
 
 
 @dataclass(frozen=True)
@@ -86,6 +86,15 @@ class LocalOps:
     def x(self) -> PhysicsExpr:
         """Unnormalized quadrature ``x = a + a†`` (no 1/sqrt(2) factor)."""
         return self.a + self.adag
+
+    @property
+    def charge(self) -> PhysicsExpr:
+        """Physical charge-like drive operator for this local representation."""
+        if isinstance(self.space, FockSpace):
+            return self.x
+        if isinstance(self.space, (ChargeSpace, PhaseGridSpace)):
+            return self.n
+        return self._op("charge")
 
     @property
     def sigma_x(self) -> PhysicsExpr:

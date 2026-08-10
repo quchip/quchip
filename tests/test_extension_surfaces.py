@@ -40,8 +40,8 @@ class DampedTransmon(DuffingTransmon):
     two_photon_rate: Scalar = parameter(default=None, positive=True)
 
     _noise_channels = BaseDevice._noise_channels + (
-        NoiseChannel("two_photon_loss", ("two_photon_rate",), lambda dev: (
-            [np.sqrt(dev.two_photon_rate) * (dev.lowering_operator() @ dev.lowering_operator())]
+        NoiseChannel("two_photon_loss", ("two_photon_rate",), lambda dev, basis: (
+            [(dev.local_space().matrix("a") @ dev.local_space().matrix("a"), dev.two_photon_rate)]
             if dev.two_photon_rate is not None
             else []
         )),

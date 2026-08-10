@@ -23,21 +23,21 @@ def _arr(op):
 def test_capacitive_is_not_modulable():
     """A static Capacitive coupling declares no parametric structure, so parametric_operator returns None."""
     chip, c = _chip(Capacitive, g=0.005)
-    assert c.parametric_operator(chip) is None
+    assert c.parametric_operator() is None
 
 
-def test_tunable_capacitive_rwa_vs_full_structures_differ():
-    """TunableCapacitive's parametric operator differs between the RWA beam-splitter and full dipole-dipole forms."""
+def test_tunable_capacitive_authors_one_physical_parametric_operator():
+    """RWA policy does not alter the interaction authored by the coupling."""
     chip_rwa, c_rwa = _chip(TunableCapacitive, g_0=0.0)
     chip_full = Chip(
         [d.copy() for d in chip_rwa.devices],
         couplings=[TunableCapacitive("q0", "q1", g_0=0.0, label="c")],
         rwa=False,
     )
-    op_rwa = c_rwa.parametric_operator(chip_rwa)
-    op_full = chip_full.coupling("c").parametric_operator(chip_full)
+    op_rwa = c_rwa.parametric_operator()
+    op_full = chip_full.coupling("c").parametric_operator()
     assert op_rwa is not None and op_full is not None
-    assert not np.allclose(_arr(op_rwa), _arr(op_full))
+    np.testing.assert_allclose(_arr(op_rwa), _arr(op_full))
 
 
 def test_crosskerr_interaction_is_diagonal_and_hooks_coincide():
@@ -46,13 +46,13 @@ def test_crosskerr_interaction_is_diagonal_and_hooks_coincide():
     h = _arr(c.interaction_hamiltonian())
     assert np.allclose(h, np.diag(np.diag(h)))  # n̂n̂ is diagonal
     # RWA and full parametric structures coincide (band weight 0).
-    full = _arr(c.parametric_operator(chip))
+    full = _arr(c.parametric_operator())
     chip_full = Chip(
         [d.copy() for d in chip.devices],
         couplings=[CrossKerr("q0", "q1", chi=-0.0005, label="c")],
         rwa=False,
     )
-    assert np.allclose(full, _arr(chip_full.coupling("c").parametric_operator(chip_full)))
+    assert np.allclose(full, _arr(chip_full.coupling("c").parametric_operator()))
 
 
 def test_crosskerr_declares_itself():
@@ -81,7 +81,7 @@ def test_tunable_capacitive_has_no_modulation_surface():
 
     assert "modulation" not in inspect.signature(TunableCapacitive.__init__).parameters
     chip, c = _chip(TunableCapacitive, g_0=0.02)
-    assert c.dynamic_interaction_terms(chip) == []
+    assert c.dynamic_interaction_terms() == []
     assert c.is_effective is True
     notes = " ".join(c.physics_notes()).lower()
     assert "eliminated" in notes

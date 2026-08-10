@@ -100,6 +100,9 @@ from quchip.declarative import (
     Parameter,
     PhysicsExpr,
     Scalar,
+    as_operator_expr,
+    as_scalar_expr,
+    as_state_expr,
     parameter,
     qnp,
 )
@@ -149,6 +152,9 @@ __all__ = [
     "PhysicsExpr",
     "Scalar",
     "Modulation",
+    "as_operator_expr",
+    "as_scalar_expr",
+    "as_state_expr",
     "parameter",
     "qnp",
     # Devices
