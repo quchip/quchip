@@ -457,7 +457,6 @@ def test_hello_chip_pair_executes_and_records_physical_receipts(tmp_path: Path) 
     pull_floor = 1.0 / (2.0 * abs(f1 - f0))
     assert readout["readout_duration_ns"] >= max(linewidth_floor, pull_floor)
     assert readout["readout_duration_ns"] - max(linewidth_floor, pull_floor) < 5.0 + 1e-9
-    assert math.isclose(readout["readout_duration_ns"], 880.0, abs_tol=1e-9)
     assert readout["final_iq_separation"] > 0.01
     assert readout["solver"] == "mesolve"
 

@@ -16,7 +16,7 @@ def _pair(rwa_flag):
 def test_rwa_chip_hamiltonian_matches_authored_jc():
     """Structural band filter reproduces the hand-authored beam-splitter form exactly."""
     q0, q1, cap = _pair(rwa_flag=True)
-    chip = Chip([q0, q1], [cap], frame="rotating", rwa=True)
+    chip = Chip([q0, q1], [cap], frame={q0: 5.0, q1: 5.3}, rwa=True)
 
     j0 = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=3, label="j0")
     j1 = DuffingTransmon(freq=5.3, anharmonicity=-0.3, levels=3, label="j1")
@@ -27,10 +27,10 @@ def test_rwa_chip_hamiltonian_matches_authored_jc():
             + bk.tensor(a.lowering_operator(), bk.dag(b.lowering_operator()))
         ),
     )
-    chip_jc = Chip([j0, j1], [jc], frame="rotating", rwa=False)
+    chip_jc = Chip([j0, j1], [jc], frame={j0: 5.0, j1: 5.3}, rwa=False)
 
-    h = np.asarray(chip.hamiltonian().matrix(backend=chip.backend))
-    h_jc = np.asarray(chip_jc.hamiltonian().matrix(backend=chip_jc.backend))
+    h = np.asarray(chip.engine_result().matrix(t=0.0))
+    h_jc = np.asarray(chip_jc.engine_result().matrix(t=0.0))
     np.testing.assert_allclose(h, h_jc, atol=1e-12)
 
 
@@ -42,7 +42,7 @@ def test_mixed_policy_respects_per_coupling_override():
     cap_rwa = Capacitive(q0, q1, g=0.05)              # inherits chip rwa=True
     cap_full = Capacitive(q1, q2, g=0.05, rwa=False)  # per-coupling override
     chip = Chip([q0, q1, q2], [cap_rwa, cap_full], rwa=True)
-    h = np.asarray(chip.hamiltonian().matrix(backend=chip.backend))
+    h = np.asarray(chip.engine_result().matrix(t=0.0))
     # Basis |q0 q1 q2> with q2 fastest: |110> = index 6, |000> = 0, |011> = 3.
     assert abs(h[0, 6]) < 1e-12   # q0-q1 counter-rotating masked
     assert abs(h[0, 3]) > 1e-3    # q1-q2 counter-rotating survives the override

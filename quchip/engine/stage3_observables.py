@@ -39,6 +39,7 @@ from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import array_namespace as _array_namespace
 from quchip.utils.labeling import resolve_label
 from quchip.engine.bands import embed_single_mode_bands, local_mode_bands
+from quchip.engine.basis import semantic_to_solver_transform
 
 EOpKey = str | tuple[str, str]
 BandWeight = int | tuple[int, int]
@@ -122,7 +123,13 @@ def decompose_eops(
 
                 op = prepare_local_op(dev, op, basis, backend)
                 for weight, embedded in embed_single_mode_bands(
-                    backend, op, device_index=dev_idx, dim=dev_dim, label=device_label, dims=dims
+                    backend,
+                    op,
+                    device_index=dev_idx,
+                    dim=dev_dim,
+                    label=device_label,
+                    dims=dims,
+                    semantic_to_solver=semantic_to_solver_transform(dev, basis),
                 ):
                     flat_ops.append(embedded)
                     meta.append(
@@ -155,8 +162,20 @@ def decompose_eops(
             op_a = prepare_local_op(dev_a, op_a, basis_a, backend)
             op_b = prepare_local_op(dev_b, op_b, basis_b, backend)
 
-            for w_a, band_a in local_mode_bands(backend, op_a, dim=dim_a, label=label_a):
-                for w_b, band_b in local_mode_bands(backend, op_b, dim=dim_b, label=label_b):
+            for w_a, band_a in local_mode_bands(
+                backend,
+                op_a,
+                dim=dim_a,
+                label=label_a,
+                semantic_to_solver=semantic_to_solver_transform(dev_a, basis_a),
+            ):
+                for w_b, band_b in local_mode_bands(
+                    backend,
+                    op_b,
+                    dim=dim_b,
+                    label=label_b,
+                    semantic_to_solver=semantic_to_solver_transform(dev_b, basis_b),
+                ):
                     product = backend.tensor(band_a, band_b)
                     embedded = backend.embed_two_body(product, idx_a, idx_b, dims)
                     flat_ops.append(embedded)

@@ -132,3 +132,25 @@ def resolve_device_basis(
 
     matrix = materialize_array(device.hamiltonian())
     return resolve_local_basis(matrix, basis=basis, levels=levels)
+
+
+def semantic_to_solver_transform(device: Any, record: BasisRecord) -> Any | None:
+    """Map semantic local levels into the resolved solver basis when needed.
+
+    Fock devices label authored occupation states. Other local spaces label
+    energy-ordered states. ``None`` means those labels already coincide with
+    solver indices, allowing sparse band decomposition to stay sparse.
+    """
+    from quchip.devices.spaces import FockSpace
+
+    if isinstance(device.local_space(), FockSpace):
+        if record.kind == "native":
+            return None
+        local_vectors = jnp.eye(record.native_dim, dtype=jnp.complex128)[
+            :, : record.resolved_dim
+        ]
+    else:
+        if record.kind == "eigen":
+            return None
+        local_vectors = record.energy_vectors[:, : record.resolved_dim]
+    return record.vectors.conj().T @ local_vectors

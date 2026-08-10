@@ -39,16 +39,33 @@ _WORKING_PRECISION = 1e-12
 def bare_hamiltonian(chip: "Chip", backend: Any) -> tuple[Any, list[str], tuple[int, ...]]:
     """Full bare Hamiltonian as a dense ``jnp`` array in GHz, with labels and dims.
 
-    Delegates assembly to :meth:`Chip.hamiltonian` — devices plus couplings at
-    the chip's RWA policy, pre-2π — and converts dense once via
-    ``backend.to_array``. This is an analysis kernel, not a solver path; the
-    dense conversion is the point, not a cost to avoid.
+    Assembles the engine-consumed lab-frame Hamiltonian so the chip's resolved
+    RWA policy is included without changing the authored Hamiltonian view.
+    This is an analysis kernel, not a solver path; dense conversion is the
+    point, not a cost to avoid.
     """
-    from quchip.declarative.expr import materialize_expr
+    from quchip.engine.stage1_frames import resolve_frame
+    from quchip.engine.stage2_assembly import build_engine_result
+    from quchip.engine.basis import semantic_to_solver_transform
+    from quchip.utils.constants import TWO_PI
 
-    h = jnp.asarray(backend.to_array(materialize_expr(chip.hamiltonian(), backend)), dtype=complex)
+    result = build_engine_result(chip, [], resolved_frame=resolve_frame(chip, "lab"))
+    h = jnp.asarray(result.matrix(t=0.0) / TWO_PI, dtype=complex)
+    semantic_to_solver: Any | None = None
+    for device in chip.devices:
+        record = result.bases[device.label]
+        local_transform = semantic_to_solver_transform(device, record)
+        if local_transform is None:
+            local_transform = jnp.eye(record.resolved_dim, dtype=jnp.complex128)
+        semantic_to_solver = (
+            local_transform
+            if semantic_to_solver is None
+            else jnp.kron(semantic_to_solver, local_transform)
+        )
+    if semantic_to_solver is not None:
+        h = semantic_to_solver.conj().T @ h @ semantic_to_solver
     labels = [dev.label for dev in chip.devices]
-    return h, labels, tuple(chip.dims)
+    return h, labels, result.dims
 
 
 def mode_blocks(dims: tuple[int, ...], labels: list[str], mode_label: str) -> tuple[Any, Any]:

@@ -53,9 +53,12 @@ scaling:
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, replace
 from math import prod
 from typing import TYPE_CHECKING, Any, Mapping, cast
+
+import jax.numpy as jnp
 
 from quchip.backend import _backend_context
 from quchip.backend.protocol import Backend, Operator
@@ -87,7 +90,11 @@ from quchip.engine.ir import (
     Window,
 )
 from quchip.engine.ir import simplify_signal as _simplify_signal
-from quchip.engine.basis import BasisRecord, resolve_local_basis
+from quchip.engine.basis import (
+    BasisRecord,
+    resolve_local_basis,
+    semantic_to_solver_transform,
+)
 from quchip.engine.solver_hints import _solver_hint_metadata, _static_diagonal_span
 from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import array_namespace, maybe_concrete_scalar
@@ -313,23 +320,46 @@ class _LocalResolution:
     dims: tuple[int, ...]
 
 
+def _two_body_semantic_transform(
+    chip: "Chip",
+    first: int,
+    second: int,
+    bases: Mapping[str, BasisRecord],
+) -> Any | None:
+    device_a = chip.devices[first]
+    device_b = chip.devices[second]
+    transform_a = semantic_to_solver_transform(device_a, bases[device_a.label])
+    transform_b = semantic_to_solver_transform(device_b, bases[device_b.label])
+    if transform_a is None and transform_b is None:
+        return None
+    if transform_a is None:
+        transform_a = jnp.eye(bases[device_a.label].resolved_dim, dtype=jnp.complex128)
+    if transform_b is None:
+        transform_b = jnp.eye(bases[device_b.label].resolved_dim, dtype=jnp.complex128)
+    return jnp.kron(transform_a, transform_b)
+
+
 def _resolve_local_system(chip: "Chip", backend: Backend) -> _LocalResolution:
     bases: dict[str, BasisRecord] = {}
     hamiltonians: list[Operator] = []
     dims: list[int] = []
     for device in chip.devices:
-        matrix = materialize_array(device.hamiltonian())
+        authored = device.hamiltonian()
+        matrix = materialize_array(authored)
         policy = chip.resolve_basis(device)
         levels = device.resolved_dimension(chip.basis) if policy == "eigen" else None
         record = resolve_local_basis(matrix, basis=policy, levels=levels)
         bases[device.label] = record
         dims.append(record.resolved_dim)
-        hamiltonians.append(
-            backend.from_array(
-                record.transform_operator(matrix),
-                dims=[[record.resolved_dim], [record.resolved_dim]],
+        if record.kind == "native":
+            hamiltonians.append(materialize_expr(authored, backend))
+        else:
+            hamiltonians.append(
+                backend.from_array(
+                    record.transform_operator(matrix),
+                    dims=[[record.resolved_dim], [record.resolved_dim]],
+                )
             )
-        )
     return _LocalResolution(
         bases=bases,
         hamiltonians=tuple(hamiltonians),
@@ -348,6 +378,8 @@ def _project_on_support(
     local = materialize_expr(operator, backend)
     if len(support) == 1:
         record = bases[chip.devices[support[0]].label]
+        if record.kind == "native":
+            return local
         return backend.from_array(
             record.transform_operator(backend.to_array(local)),
             dims=[[record.resolved_dim], [record.resolved_dim]],
@@ -355,6 +387,8 @@ def _project_on_support(
     if len(support) == 2:
         record_a = bases[chip.devices[support[0]].label]
         record_b = bases[chip.devices[support[1]].label]
+        if record_a.kind == record_b.kind == "native":
+            return local
         xp = array_namespace(record_a.vectors)
         transform = xp.kron(record_a.vectors, record_b.vectors)
         matrix = transform.conj().T @ backend.to_array(local) @ transform
@@ -368,6 +402,8 @@ def _project_on_support(
     if support:
         raise ValueError(f"Operators may act on zero, one, or two supports; got {support!r}.")
 
+    if all(record.kind == "native" for record in bases.values()):
+        return local
     matrix = backend.to_array(local)
     authored_dimension = prod(chip.authored_dims)
     if matrix.shape != (authored_dimension, authored_dimension):
@@ -375,8 +411,6 @@ def _project_on_support(
             "A support-free operator must span the full authored chip space; "
             f"expected {(authored_dimension, authored_dimension)}, got {matrix.shape}."
         )
-    if all(record.kind == "native" for record in bases.values()):
-        return backend.from_array(matrix, dims=[list(chip.authored_dims), list(chip.authored_dims)])
     ordered = [bases[device.label] for device in chip.devices]
     xp = array_namespace(ordered[0].vectors)
     transform = ordered[0].vectors
@@ -417,6 +451,9 @@ def _build_static_h0(
     h0 = TWO_PI * h0
     for idx, dev in enumerate(chip.devices):
         omega_ref = resolved_frame.frequencies.get(dev.label, 0.0)
+        concrete_omega = maybe_concrete_scalar(omega_ref)
+        if concrete_omega is not None and concrete_omega == 0.0:
+            continue
         with _backend_context(backend):
             record = resolution.bases[dev.label]
             from quchip.devices.spaces import FockSpace
@@ -427,9 +464,13 @@ def _build_static_h0(
                 if isinstance(space, FockSpace)
                 else record.level_operator()
             )
-            level_operator = backend.from_array(
-                frame_matrix,
-                dims=[[record.resolved_dim], [record.resolved_dim]],
+            level_operator = (
+                space.operator("n", backend)
+                if isinstance(space, FockSpace) and record.kind == "native"
+                else backend.from_array(
+                    frame_matrix,
+                    dims=[[record.resolved_dim], [record.resolved_dim]],
+                )
             )
             n_emb = backend.embed(level_operator, idx, dims)
         h0 = h0 - TWO_PI * omega_ref * n_emb
@@ -608,7 +649,16 @@ def _resolve_coupling_terms(
             subsystem_labels=pair,
             tag="coupling_local",
         )
-        sub_bands = decompose_two_body_canonical_bands(canonical, [d_a, d_b])
+        sub_bands = decompose_two_body_canonical_bands(
+            canonical,
+            [d_a, d_b],
+            semantic_to_solver=_two_body_semantic_transform(
+                chip,
+                idx_a,
+                idx_b,
+                resolution.bases,
+            ),
+        )
         retained: list[Operator] = []
         for (delta_a, delta_b), band_canonical in sub_bands.items():
             osc_freq = delta_a * omega_a + delta_b * omega_b
@@ -641,6 +691,12 @@ def _resolve_coupling_terms(
             frame_corrections.append(-scaled)
             td_terms.append((scaled, ScalarModulation(signal=Carrier(freq=TWO_PI * osc_freq, sign=-1))))
 
+        if rwa and sub_bands and not retained:
+            warnings.warn(
+                f"Coupling {coupling.label!r} vanishes entirely under the resolved RWA.",
+                UserWarning,
+                stacklevel=3,
+            )
         if rwa:
             if retained:
                 local_static = sum(retained[1:], start=retained[0])
@@ -687,7 +743,14 @@ def _intrinsic_terms(
             )
             bands = {
                 (weight,): band
-                for weight, band in decompose_canonical_bands(canonical, dimension).items()
+                for weight, band in decompose_canonical_bands(
+                    canonical,
+                    dimension,
+                    semantic_to_solver=semantic_to_solver_transform(
+                        device,
+                        resolution.bases[device.label],
+                    ),
+                ).items()
             }
             frequencies = (resolved_frame.frequencies.get(device.label, 0.0),)
         elif len(support) == 2:
@@ -706,6 +769,12 @@ def _intrinsic_terms(
                 for weights, band in decompose_two_body_canonical_bands(
                     canonical,
                     [dim_a, dim_b],
+                    semantic_to_solver=_two_body_semantic_transform(
+                        chip,
+                        idx_a,
+                        idx_b,
+                        resolution.bases,
+                    ),
                 ).items()
             }
             frequencies = (
@@ -905,6 +974,10 @@ def _resolved_drive_bands(
             dim=bases[device.label].resolved_dim,
             label=device.label,
             dims=dims,
+            semantic_to_solver=semantic_to_solver_transform(
+                device,
+                bases[device.label],
+            ),
         )
     )
 
@@ -964,7 +1037,11 @@ def _compile_edge_pump_terms(
     omega_a = resolved_frame.frequencies.get(coupling.device_a_label, 0.0)
     omega_b = resolved_frame.frequencies.get(coupling.device_b_label, 0.0)
     compiled: list[CompiledDriveTerm] = []
-    for (delta_a, delta_b), band_canonical in decompose_two_body_canonical_bands(canonical, [d_a, d_b]).items():
+    for (delta_a, delta_b), band_canonical in decompose_two_body_canonical_bands(
+        canonical,
+        [d_a, d_b],
+        semantic_to_solver=_two_body_semantic_transform(chip, idx_a, idx_b, bases),
+    ).items():
         if chip.resolve_rwa(coupling) and not coupling.rwa_keeps_band(delta_a, delta_b):
             continue
         osc_freq = delta_a * omega_a + delta_b * omega_b
