@@ -111,7 +111,7 @@ class EigenbasisDevice(BaseDevice):
         self.collapse_rate_threshold = collapse_rate_threshold
         super().__init__(levels=dimension, label=label, **noise)
 
-    def hamiltonian(self) -> PhysicsExpr:
+    def unresolved_hamiltonian(self) -> PhysicsExpr:
         """Return the frozen source spectrum as the authored Hamiltonian."""
         return PhysicsExpr.from_matrix(
             jnp.diag(self._energies.astype(jnp.complex128)),

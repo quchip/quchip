@@ -1,7 +1,4 @@
-"""Chip assembly and frame-spec tests checked against closed-form eigenvalue formulas.
-
-chip.hamiltonian() is always lab-frame; frame behavior resolves at simulation time via resolve_frame.
-"""
+"""Chip assembly and frame-spec tests checked against closed-form eigenvalue formulas."""
 
 from __future__ import annotations
 
@@ -37,13 +34,31 @@ class TestChipHamiltonian:
         expected = np.array([0.0, 5.0, 9.75])
         np.testing.assert_allclose(evals, expected, atol=1e-10)
 
+    def test_hamiltonian_resolves_rwa_while_unresolved_preserves_authored_terms(self) -> None:
+        """Resolved inspection applies chip RWA while unresolved inspection preserves the authored interaction."""
+        q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+        r = Resonator(freq=7.0, levels=3, label="r")
+        chip = Chip([q, r], [Capacitive(q, r, g=0.2)], rwa=True)
+
+        unresolved = chip.unresolved_hamiltonian().matrix()
+        resolved = chip.hamiltonian().matrix()
+
+        assert unresolved.shape == resolved.shape == (9, 9)
+        assert not np.allclose(unresolved, resolved)
+        first_result = chip.engine_result()
+        assert chip.engine_result() is first_result
+        np.testing.assert_allclose(resolved, first_result.hamiltonian().matrix(), atol=1e-12)
+
+        q.freq = 5.1
+        assert chip.engine_result() is not first_result
+
     def test_symbolic_chip_hamiltonian_exposes_real_terms_and_parameter_paths(self) -> None:
         """Chip inspection preserves authored device terms and structurally retained RWA exchange terms."""
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
         r = Resonator(freq=7.0, levels=4, label="r")
         chip = Chip([q, r], [Capacitive(q, r, g=0.02)], rwa=True)
 
-        hamiltonian = chip.hamiltonian()
+        hamiltonian = chip.unresolved_hamiltonian()
 
         assert hamiltonian.shape == (12, 12)
         assert hamiltonian.parameter_paths() == (
@@ -62,7 +77,7 @@ class TestChipHamiltonian:
         """A fully symbolic Chip remains inspectable and names every missing value on numerical use."""
         q = DuffingTransmon(levels=3, label="q")
         r = Resonator(levels=4, label="r")
-        hamiltonian = Chip([q, r], [Capacitive(q, r)], rwa=True).hamiltonian()
+        hamiltonian = Chip([q, r], [Capacitive(q, r)], rwa=True).unresolved_hamiltonian()
 
         assert r"\omega_{q}" in hamiltonian.latex()
         with pytest.raises(
@@ -171,14 +186,14 @@ class TestFrameSpec:
         chip = Chip(devices=[q])
         assert chip.frame == "lab"
 
-    def test_hamiltonian_frame_independent(self, backend: Backend) -> None:
-        """hamiltonian() is always lab-frame regardless of frame spec."""
+    def test_hamiltonian_resolves_the_selected_frame(self, backend: Backend) -> None:
+        """Resolved Hamiltonian inspection applies the chip's selected frame."""
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
         chip = Chip(devices=[q])
         H_lab = chip.hamiltonian()
         chip.set_frame("rotating")
         H_rot = chip.hamiltonian()
-        np.testing.assert_allclose(H_lab.matrix(), H_rot.matrix(), atol=1e-12)
+        assert not np.allclose(H_lab.matrix(), H_rot.matrix())
 
     def test_invalid_frame_raises(self) -> None:
         """Invalid frame string raises ValueError."""

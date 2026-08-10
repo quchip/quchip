@@ -46,10 +46,13 @@ def bare_hamiltonian(chip: "Chip") -> tuple[Any, list[str], tuple[int, ...]]:
     point, not a cost to avoid.
     """
     from quchip.engine.basis import semantic_to_solver_transform
-    from quchip.engine.stage1_frames import resolve_frame
-    from quchip.engine.stage2_assembly import _analysis_matrix_ghz, build_engine_result
+    from quchip.engine.stage2_assembly import (
+        _analysis_matrix_ghz,
+        _build_static_analysis_result,
+    )
 
-    result = build_engine_result(chip, [], resolved_frame=resolve_frame(chip, "lab"))
+    labels = [dev.label for dev in chip.devices]
+    result = _build_static_analysis_result(chip)
     h = jnp.asarray(_analysis_matrix_ghz(result), dtype=complex)
     semantic_to_solver: Any | None = None
     for device in chip.devices:
@@ -64,7 +67,6 @@ def bare_hamiltonian(chip: "Chip") -> tuple[Any, list[str], tuple[int, ...]]:
         )
     if semantic_to_solver is not None:
         h = semantic_to_solver.conj().T @ h @ semantic_to_solver
-    labels = [dev.label for dev in chip.devices]
     return h, labels, result.dims
 
 

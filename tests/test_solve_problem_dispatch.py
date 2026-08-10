@@ -576,8 +576,8 @@ class TestQuantumSequenceBuildProblem:
         for problem in batch:
             state = chip.backend.to_array(problem.initial_state).reshape(-1)
             np.testing.assert_allclose(state, expected)
-        h_low = batch[0].engine_result.matrix(t=0.0)
-        h_high = batch[1].engine_result.matrix(t=0.0)
+        h_low = batch[0].engine_result.hamiltonian().matrix(t=0.0)
+        h_high = batch[1].engine_result.hamiltonian().matrix(t=0.0)
         assert not np.allclose(chip.backend.to_array(h_low), chip.backend.to_array(h_high))
         results = chip.solve_many(batch, progress=False)
         assert results.shape == (2, 2)

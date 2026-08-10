@@ -193,7 +193,7 @@ def test_symbolic_drive_channel_reaches_engine_without_custom_dispatch():
     expression = result.hamiltonian()
     np.testing.assert_allclose(
         expression.matrix(t=2.0, backend=chip.backend),
-        result.matrix(t=2.0),
+        result.hamiltonian().matrix(t=2.0, backend=chip.backend),
     )
     assert r"f_{drive,0}\!\left(t\right)" in result.latex()
 

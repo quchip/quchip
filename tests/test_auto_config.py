@@ -152,7 +152,7 @@ class TestAutoConfig:
         chip, qubit, resonator = dispersive_chip
         chip.set_frame("rotating")
 
-        # Chip.hamiltonian() is lab-frame; the rotating-frame subtraction happens at solve
+        # The authored Hamiltonian is lab-frame; rotating-frame subtraction happens in the engine.
         # time via stage2's _build_static_h0, using the same resolver invoked here.
         resolved = resolve_frame(chip, chip.frame)
 

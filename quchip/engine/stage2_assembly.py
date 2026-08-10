@@ -81,6 +81,7 @@ from quchip.engine.ir import (
     EngineResult,
     Multiply,
     RealPart,
+    ResolvedFrame,
     Scale,
     ScalarModulation,
     Shift,
@@ -109,7 +110,7 @@ from quchip.engine.bands import (
 if TYPE_CHECKING:
     from quchip.chip.chip import Chip
     from quchip.devices.base import BaseDevice
-    from quchip.engine.ir import ResolvedFrame, DriveOp
+    from quchip.engine.ir import DriveOp
 
 
 # -- Drive signal IR construction ---------------------------------------
@@ -344,7 +345,7 @@ def _resolve_local_system(chip: "Chip", backend: Backend) -> _LocalResolution:
     hamiltonians: list[Operator] = []
     dims: list[int] = []
     for device in chip.devices:
-        authored = device.hamiltonian()
+        authored = device.unresolved_hamiltonian()
         matrix = materialize_array(authored)
         policy = chip.resolve_basis(device)
         levels = device.resolved_dimension(chip.basis) if policy == "eigen" else None
@@ -1505,7 +1506,7 @@ def compile_hamiltonian_template(
         static_spectral_bound_ghz=static_spectral_bound_ghz,
         collapse_terms=_collect_collapse_terms(chip, backend, resolution),
         bases=resolution.bases,
-        authored=chip.hamiltonian(),
+        authored=chip.unresolved_hamiltonian(),
     )
 
 
@@ -1638,6 +1639,31 @@ def build_engine_result(
     return instantiate_engine_result(template, drive_ops, chip)
 
 
-def _analysis_matrix_ghz(result: EngineResult, *, t: Any = 0.0) -> Any:
-    """Return an assembled solver Hamiltonian in ordinary GHz for internal analysis."""
-    return result.matrix(t=t) / TWO_PI
+def _build_static_analysis_result(chip: "Chip") -> EngineResult:
+    """Resolve the chip in the lab frame and retain only its static model."""
+    labels = [device.label for device in chip.devices]
+    frame = ResolvedFrame(
+        frequencies={label: 0.0 for label in labels},
+        demod_freqs={label: 0.0 for label in labels},
+        mode="lab",
+    )
+    return replace(
+        build_engine_result(chip, [], resolved_frame=frame),
+        dynamic_terms=(),
+    )
+
+
+def _analysis_matrix_ghz(result: EngineResult) -> Any:
+    """Return the resolved static solver Hamiltonian in ordinary GHz.
+
+    This internal path reads canonical arrays directly so JAX tracers never
+    cross through a non-JAX inspection backend. Time-dependent terms are not
+    part of a static dressed-state calculation.
+    """
+    terms = [
+        term.coefficient * term.operator.to_dense() / TWO_PI
+        for term in result.static_terms
+    ]
+    if not terms:
+        raise ValueError("EngineResult contains no static Hamiltonian terms.")
+    return sum(terms[1:], start=terms[0])

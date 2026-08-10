@@ -357,7 +357,7 @@ class DeviceModel(BaseDevice):
         """
         raise NotImplementedError
 
-    def hamiltonian(self) -> Any:
+    def unresolved_hamiltonian(self) -> Any:
         """Return the authored symbolic local Hamiltonian."""
         from quchip.declarative.ops import LocalOps
 

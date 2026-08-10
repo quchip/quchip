@@ -12,7 +12,7 @@ mask is a concrete constant and multiplying a traced operator by it
 preserves gradients.
 
 Stage 2 applies the policy to the band decomposition. The authored
-``Chip.hamiltonian()`` remains complete so inspection shows the physics
+``Chip.unresolved_hamiltonian()`` remains complete so inspection shows the physics
 before engine transformations.
 
 Band-offset convention (shared with :mod:`quchip.engine.bands`):

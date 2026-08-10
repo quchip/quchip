@@ -44,7 +44,6 @@ from quchip.chip.dressing import (
 )
 from quchip.chip.states import normalize_device_state_mapping
 from quchip.devices.base import BaseDevice
-from quchip.engine.stage1_frames import resolve_frame
 from quchip.utils.jax_utils import contains_tracer
 from quchip.utils.labeling import LabelKeyedDict, bare_label_from_mapping, resolve_label, top_components
 
@@ -172,6 +171,8 @@ class ChipAnalysis:
         chip = self._chip
         return (
             f"{type(chip.backend).__module__}.{type(chip.backend).__qualname__}",
+            chip.rwa,
+            chip.basis,
             tuple((device.label, device.state_version) for device in chip.devices),
             tuple(
                 (
@@ -291,42 +292,34 @@ class ChipAnalysis:
         ):
             return self._array_cache
 
-        saved_frame = chip._frame_spec
-        chip._frame_spec = "lab"
-        try:
-            from quchip.declarative.expr import materialize_expr
+        from quchip.engine.basis import semantic_to_solver_transform
+        from quchip.engine.stage2_assembly import (
+            _analysis_matrix_ghz,
+            _build_static_analysis_result,
+        )
 
-            hamiltonian = materialize_expr(chip.hamiltonian(), chip.backend)
-        finally:
-            chip._frame_spec = saved_frame
+        engine_result = _build_static_analysis_result(chip)
+        hamiltonian = _analysis_matrix_ghz(engine_result)
+        dims = engine_result.dims
 
-        eigensystem = chip.backend.eigensystem_data(hamiltonian)
+        native_hamiltonian = chip.backend.from_array(
+            hamiltonian,
+            dims=[list(dims), list(dims)],
+        )
+        eigensystem = chip.backend.eigensystem_data(native_hamiltonian)
         eigenvalues = eigensystem.eigenvalues
         eigenvector_matrix = eigensystem.eigenvector_matrix
 
         evals_jax = jnp.asarray(eigenvalues)
         evecs_jax = jnp.asarray(eigenvector_matrix)
 
-        from quchip.engine.basis import resolve_device_basis
-
-        dims = self._semantic_dims()
         local_vectors: list[Any] = []
-        for device, dimension in zip(chip.devices, dims):
-            from quchip.devices.spaces import FockSpace
-
-            space = device.local_space()
-            if isinstance(space, FockSpace):
-                local_vectors.append(
-                    jnp.eye(space.dimension, dtype=jnp.complex128)[:, :dimension]
-                )
-                continue
-            policy = chip.resolve_basis(device)
-            record = resolve_device_basis(
-                device,
-                basis=policy,
-                levels=dimension if policy == "eigen" else None,
-            )
-            local_vectors.append(record.energy_vectors[:, :dimension])
+        for device in chip.devices:
+            record = engine_result.bases[device.label]
+            transform = semantic_to_solver_transform(device, record)
+            if transform is None:
+                transform = jnp.eye(record.resolved_dim, dtype=jnp.complex128)
+            local_vectors.append(transform)
         product_vectors = local_vectors[0]
         for vectors in local_vectors[1:]:
             product_vectors = jnp.kron(product_vectors, vectors)
@@ -981,6 +974,8 @@ class ChipAnalysis:
         traced reference frequency through. Traced values are passed
         through unchanged to preserve differentiability.
         """
+        from quchip.engine.stage1_frames import resolve_frame
+
         resolved = resolve_frame(self._chip, self._chip.frame)
         return dict(resolved.frequencies)
 

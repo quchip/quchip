@@ -16,10 +16,9 @@ from quchip import (
 )
 from quchip.engine import build_problem
 from quchip.engine.ir import DriveOp
-from quchip.utils.constants import TWO_PI
 
 
-def test_charge_basis_device_stays_authored_while_engine_projects_locally() -> None:
+def test_charge_basis_device_exposes_unresolved_and_projected_hamiltonians() -> None:
     device = ChargeBasisTransmon(
         E_C=0.25,
         E_J=12.0,
@@ -30,19 +29,22 @@ def test_charge_basis_device_stays_authored_while_engine_projects_locally() -> N
         label="q",
     )
 
-    authored = device.hamiltonian().matrix()
+    authored = device.unresolved_hamiltonian().matrix()
+    resolved = device.hamiltonian().matrix()
     result = device.engine_result()
     basis = result.bases["q"]
 
     assert authored.shape == (9, 9)
+    assert resolved.shape == (3, 3)
     assert result.dims == (3,)
     assert basis.native_dim == 9
     assert basis.resolved_dim == 3
     np.testing.assert_allclose(
-        result.matrix() / TWO_PI,
+        result.hamiltonian().matrix(),
         basis.vectors.conj().T @ authored @ basis.vectors,
         atol=1e-10,
     )
+    np.testing.assert_allclose(resolved, result.hamiltonian().matrix(), atol=1e-10)
 
     full_basis = ChargeBasisTransmon(
         E_C=0.25,
@@ -67,8 +69,7 @@ def test_charge_basis_device_stays_authored_while_engine_projects_locally() -> N
         atol=1e-10,
     )
     dressed_ground = full_chip.backend.to_array(full_chip.state({full_basis: 0})).reshape(-1)
-    local_ground = full_record.energy_vectors[:, 0]
-    assert abs(np.vdot(local_ground, dressed_ground)) == pytest.approx(1.0, abs=1e-10)
+    assert abs(dressed_ground[0]) == pytest.approx(1.0, abs=1e-10)
 
     solver_state = full_chip.bare_state({full_basis: 0})
     solver_problem = build_problem(
@@ -108,8 +109,15 @@ def test_native_is_default_and_device_policy_overrides_the_chip() -> None:
     assert native_result.dims == (9,)
     assert native_result.bases["native"].kind == "native"
     np.testing.assert_allclose(
-        native_result.matrix() / TWO_PI,
-        native.hamiltonian().matrix(),
+        native_result.hamiltonian().matrix(),
+        native.unresolved_hamiltonian().matrix(),
+        atol=1e-10,
+    )
+    native_chip = Chip([native])
+    native_ground = native_chip.backend.to_array(native_chip.state({native: 0})).reshape(-1)
+    np.testing.assert_allclose(
+        abs(np.vdot(native_result.bases["native"].energy_vectors[:, 0], native_ground)),
+        1.0,
         atol=1e-10,
     )
 
@@ -129,7 +137,8 @@ def test_fluxonium_uses_the_same_phase_grid_to_local_eigen_path() -> None:
 
     result = Chip([device]).engine_result()
 
-    assert device.hamiltonian().shape == (31, 31)
+    assert device.unresolved_hamiltonian().shape == (31, 31)
+    assert device.hamiltonian().shape == (4, 4)
     assert result.dims == (4,)
     assert result.bases["flux"].vectors.shape == (31, 4)
 
@@ -176,5 +185,5 @@ def test_attached_physics_uses_one_resolved_local_basis() -> None:
     assert any(term.channel == "collective_decay" for term in problem.engine_result.collapse_terms)
     assert all(np.asarray(chip.backend.to_array(op)).shape == (6, 6) for op in problem.e_ops)
     assert np.asarray(chip.backend.to_array(problem.initial_state)).shape == (6, 1)
-    matrix = np.asarray(problem.engine_result.matrix(t=0.0))
+    matrix = np.asarray(problem.engine_result.hamiltonian().matrix(t=0.0))
     np.testing.assert_allclose(matrix, matrix.conj().T, atol=1e-10)
