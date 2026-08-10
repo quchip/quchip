@@ -284,8 +284,8 @@ def test_jit_through_mesolve_with_collapse_op():
     set_default_backend("dynamiqs")
 
     class _LossyChargeDrive(ChargeDrive):
-        def collapse_operators(self, device):
-            return [0.05 * device.lowering_operator()]
+        def collapse_contributions(self, device):
+            return [(device.lowering_operator(), 0.05**2)]
 
     @jax.jit
     def loss(amp):

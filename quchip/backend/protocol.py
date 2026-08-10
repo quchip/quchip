@@ -124,6 +124,10 @@ class Backend(ABC):
         arr = np.asarray(self.to_array(state_or_op), dtype=complex)
         return float(np.linalg.norm(arr))
 
+    def is_native_state(self, state: Any) -> bool:
+        """Return whether *state* is already represented by this backend."""
+        return False
+
     def trace(self, op: Operator) -> complex:
         """Return the scalar trace ``Tr(op)``."""
         arr = np.asarray(self.to_array(op), dtype=complex)
@@ -870,7 +874,7 @@ class Backend(ABC):
     def _collapse_operators(self, engine_result: "EngineResult") -> list[Operator]:
         """Materialize canonical collapse terms for this backend."""
         return [
-            self.from_canonical_operator(term.operator)
+            self.array_module.sqrt(term.rate) * self.from_canonical_operator(term.operator)
             for term in engine_result.collapse_terms
         ]
 

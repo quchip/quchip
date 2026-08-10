@@ -1,8 +1,8 @@
 """Base device model for quchip.
 
-A device is a truncated-Hilbert-space quantum system owned by a chip.
-Subclasses declare their local Hamiltonian on a Fock basis of size
-``levels``.
+A device is a finite local quantum system owned by a chip. Subclasses declare
+their Hamiltonian on an explicit authored :class:`LocalSpace`; the engine may
+retain that basis or project it into local energy order.
 
 Contract
 --------
@@ -103,6 +103,7 @@ if TYPE_CHECKING:
     from quchip.control.drive import BaseDrive
     from quchip.chip.chip import Chip
     from quchip.devices.spaces import LocalSpace
+    from quchip.engine.basis import BasisRecord
 
 
 # The noise kwargs accepted by ``BaseDevice.__init__`` and forwarded between
@@ -140,21 +141,25 @@ class NoiseChannel:
         Device attribute names this channel consumes — declarative
         metadata; the build reads the attributes directly.
     build : callable
-        ``build(device) -> list[Operator]``: the channel's collapse
-        operators, empty when its parameters are unset.
+        ``build(device, basis) -> list[(operator, rate)]``. Operators are
+        unscaled; rates are in inverse nanoseconds.
     """
 
     name: str
     params: tuple[str, ...]
-    build: Callable[[Any], list["Operator"]]
+    build: Callable[[Any, "BasisRecord | None"], list[tuple["Operator", Any]]]
 
 
-def _thermal_emission_channel(device: Any) -> list["Operator"]:
+def _thermal_emission_channel(
+    device: Any,
+    basis: "BasisRecord | None" = None,
+) -> list[tuple["Operator", Any]]:
     """Relaxation / thermal-absorption channels from ``T1`` and ``thermal_population``.
 
-    Emits ``sqrt(gamma*(n_bar+1))·a`` (relaxation / stimulated emission)
-    and, for non-zero bath occupation, ``sqrt(gamma*n_bar)·a†`` (thermal
-    absorption). Rate selection: when ``T1`` is set, ``gamma = 1/T1``; when
+    Emits ``a`` with rate ``gamma*(n_bar+1)`` (relaxation / stimulated emission)
+    and, for non-zero bath occupation, ``a†`` with rate ``gamma*n_bar`` (thermal
+    absorption). The backend applies the square-root rate when constructing
+    solver collapse operators. When ``T1`` is set, ``gamma = 1/T1``; when
     only ``thermal_population`` is set (unitless bath occupation),
     ``gamma = 1`` so the user controls the absolute rate via the thermal
     amplitude — this avoids double-counting when both are specified.
@@ -166,12 +171,19 @@ def _thermal_emission_channel(device: Any) -> list["Operator"]:
         rate = 1.0
     else:
         return []
-    return BaseDevice._emission_pair(
-        rate, n_bar, device.lowering_operator(), device.raising_operator()
+    del basis
+    return BaseDevice._emission_terms(
+        rate,
+        n_bar,
+        device.local_space().matrix("a"),
+        device.local_space().matrix("adag"),
     )
 
 
-def _pure_dephasing_channel(device: Any) -> list["Operator"]:
+def _pure_dephasing_channel(
+    device: Any,
+    basis: "BasisRecord | None" = None,
+) -> list[tuple["Operator", Any]]:
     """Pure-dephasing channel ``sqrt(2*gamma_phi)·n̂`` from ``T2`` (and ``T1``).
 
     ``gamma_phi = 1/T2 - 1/(2*T1)`` when ``T1`` is set (``1/T2`` when
@@ -185,7 +197,85 @@ def _pure_dephasing_channel(device: Any) -> list["Operator"]:
     gamma_phi = BaseDevice._dephasing_rate(device.T1, device.T2)
     if gamma_phi is None:
         return []
-    return [BaseDevice._dephasing_op(gamma_phi, device.number_operator())]
+    del basis
+    return [(device.local_space().matrix("n"), 2.0 * gamma_phi)]
+
+
+def _energy_basis_for_noise(device: Any, basis: "BasisRecord | None") -> "BasisRecord":
+    if basis is not None:
+        return basis
+    from quchip.engine.basis import resolve_device_basis
+
+    levels = device.projection_levels or device.local_space().dimension
+    return resolve_device_basis(device, basis="eigen", levels=levels)
+
+
+def _semantic_level_operator(basis: "BasisRecord", operator: Any) -> Any:
+    """Express an energy-level operator in the authored local basis."""
+    vectors = basis.energy_vectors[:, : basis.resolved_dim]
+    return vectors @ operator @ vectors.conj().T
+
+
+def _matrix_element_emission_channel(
+    device: Any,
+    basis: "BasisRecord | None" = None,
+) -> list[tuple["Operator", Any]]:
+    """Matrix-element-weighted relaxation in the local energy ordering."""
+    record = _energy_basis_for_noise(device, basis)
+    if device.collapse_model == "ladder":
+        dimension = record.resolved_dim
+        lower = jnp.diag(jnp.sqrt(jnp.arange(1, dimension)), 1).astype(jnp.complex128)
+        authored_lower = _semantic_level_operator(record, lower)
+        return BaseDevice._emission_terms(
+            1.0 / device.T1 if device.T1 is not None else 1.0,
+            device.thermal_population,
+            authored_lower,
+            authored_lower.conj().T,
+        ) if device.T1 is not None or device.thermal_population is not None else []
+    if device.T1 is None:
+        return []
+
+    physical = (
+        device.phase_coupling_operator()
+        if device.coupling_channel == "flux"
+        else device.charge_coupling_operator()
+    )
+    matrix_elements = record.energy_vectors.conj().T @ physical @ record.energy_vectors
+    normalization = jnp.abs(matrix_elements[0, 1]) ** 2
+    norm_concrete = maybe_concrete_scalar(normalization)
+    if norm_concrete is not None and norm_concrete < 1e-24:
+        raise ValueError("The selected coupling_channel has a dark 0-to-1 transition.")
+
+    terms: list[tuple[Operator, Any]] = []
+    vectors = record.energy_vectors
+    for upper in range(1, record.resolved_dim):
+        for lower_index in range(upper):
+            rate_ratio = jnp.abs(matrix_elements[lower_index, upper]) ** 2 / normalization
+            ratio_concrete = maybe_concrete_scalar(rate_ratio)
+            if ratio_concrete is not None and ratio_concrete < device.collapse_rate_threshold:
+                continue
+            down = jnp.outer(vectors[:, lower_index], vectors[:, upper].conj())
+            terms.extend(
+                BaseDevice._emission_terms(
+                    rate_ratio / device.T1,
+                    device.thermal_population,
+                    down,
+                    down.conj().T,
+                )
+            )
+    return terms
+
+
+def _energy_dephasing_channel(
+    device: Any,
+    basis: "BasisRecord | None" = None,
+) -> list[tuple["Operator", Any]]:
+    gamma_phi = BaseDevice._dephasing_rate(device.T1, device.T2)
+    if gamma_phi is None:
+        return []
+    record = _energy_basis_for_noise(device, basis)
+    level_index = jnp.diag(jnp.arange(record.resolved_dim, dtype=jnp.complex128))
+    return [(_semantic_level_operator(record, level_index), 2.0 * gamma_phi)]
 
 #: Self-type for fluent helpers (e.g. ``_restore_reference_freq``) so a
 #: ``from_dict`` returning ``cls(...)._restore_reference_freq(d)`` keeps the
@@ -361,6 +451,22 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
             candidate = {field: getattr(self, field, None) for field in _NOISE_FIELDS}
             candidate[name] = value
             _validate_noise_params(**candidate)
+        if name == "collapse_model" and value not in ("fermi_golden", "ladder"):
+            raise ValueError(
+                f"collapse_model must be 'fermi_golden' or 'ladder', got {value!r}"
+            )
+        if name in ("T1", "collapse_model", "coupling_channel") and hasattr(
+            self, "collapse_model"
+        ):
+            model = value if name == "collapse_model" else self.collapse_model
+            t1 = value if name == "T1" else self.T1
+            channel = value if name == "coupling_channel" else getattr(
+                self, "coupling_channel", None
+            )
+            if model == "fermi_golden" and t1 is not None and channel is None:
+                raise ValueError(
+                    "coupling_channel is required when T1 uses matrix-element relaxation."
+                )
 
     # -- Bare-parameter introspection (inverse design / autodiff) ------------
 
@@ -617,7 +723,7 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         """Materialize this device through the same engine path used by solves."""
         from quchip.chip.chip import Chip
 
-        return Chip([self]).engine_result()
+        return Chip([self.copy()]).engine_result()
 
     # -- Declared approximations --------------------------------------------
 
@@ -665,7 +771,7 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         (tunable transmons, flux-biased fluxonium, parametrically
         driven modes, …) override this to emit
         ``(local_operator, modulation)`` pairs. Each ``local_operator``
-        acts on the *device's own* truncated Fock space and is in
+        acts on the device's authored local space and is in
         ordinary GHz; the engine embeds it, applies the single 2π
         factor, and attaches the modulation as a
         :class:`~quchip.engine.ir.DynamicTerm`. ``modulation`` must be
@@ -877,15 +983,43 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         2002), Ch. 3. For circuit-QED conventions see Krantz et al.,
         *Applied Physics Reviews* **6**, 021318 (2019), §V.
         """
-        return [op for op, _channel, _params in self.collapse_contributions()]
-
-    def collapse_contributions(self) -> list[tuple[Operator, str, tuple[str, ...]]]:
-        """Return local collapse operators with channel and parameter ownership."""
+        backend = get_default_backend()
+        result = self.engine_result()
         return [
-            (operator, channel.name, channel.params)
-            for channel in type(self)._noise_channels
-            for operator in channel.build(self)
+            jnp.sqrt(term.rate) * backend.from_canonical_operator(term.operator)
+            for term in result.collapse_terms
         ]
+
+    def collapse_contributions(
+        self,
+        basis: "BasisRecord | None" = None,
+    ) -> list[tuple[Operator, Any, str, tuple[str, ...]]]:
+        """Return local collapse operators, rates, and parameter ownership."""
+        from quchip.declarative.expr import (
+            as_operator_expr,
+            as_scalar_expr,
+        )
+
+        dimension = self.local_space().dimension
+        contributions: list[tuple[Operator, Any, str, tuple[str, ...]]] = []
+        for channel in type(self)._noise_channels:
+            for operator, rate in channel.build(self, basis):
+                operator_expr = as_operator_expr(
+                    operator,
+                    labels=(self.label,),
+                    dims=(dimension,),
+                    name=rf"\hat L_{{{self.label},{channel.name}}}",
+                    owner=self,
+                    scope=self.label,
+                )
+                rate_expr = as_scalar_expr(
+                    rate,
+                    name=rf"\gamma_{{{self.label},{channel.name}}}",
+                    owner=self,
+                    scope=self.label,
+                )
+                contributions.append((operator_expr, rate_expr, channel.name, channel.params))
+        return contributions
 
     @classmethod
     def noise_parameter_names(cls) -> tuple[str, ...]:
@@ -945,17 +1079,17 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
     # -- Shared Lindblad rate algebra (reused by CircuitDevice) -------------
 
     @staticmethod
-    def _emission_pair(
+    def _emission_terms(
         rate: Any,
         n_bar: Any | None,
         lower_op: Operator,
         raise_op: Operator,
-    ) -> list[Operator]:
-        """Emission / absorption collapse-operator pair for one transition.
+    ) -> list[tuple[Operator, Any]]:
+        """Emission / absorption operator-rate pairs for one transition.
 
-        Returns ``[sqrt(rate * (n_bar + 1)) * lower_op]`` (relaxation /
-        stimulated emission) and, when the bath occupation is non-zero,
-        additionally ``sqrt(rate * n_bar) * raise_op`` (thermal absorption).
+        Returns ``(lower_op, rate * (n_bar + 1))`` (relaxation / stimulated
+        emission) and, when the bath occupation is non-zero, additionally
+        ``(raise_op, rate * n_bar)`` (thermal absorption).
         ``n_bar is None`` is treated as zero occupation, yielding the down
         channel only. The positivity gate reads a *concrete* scalar only, so
         a traced ``n_bar`` keeps both channels. The math is
@@ -964,11 +1098,11 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         projectors for :class:`~quchip.devices.circuit.CircuitDevice`).
         """
         n_bar_eff = 0.0 if n_bar is None else n_bar
-        ops: list[Operator] = [jnp.sqrt(rate * (n_bar_eff + 1.0)) * lower_op]
+        terms: list[tuple[Operator, Any]] = [(lower_op, rate * (n_bar_eff + 1.0))]
         n_bar_value = maybe_concrete_scalar(n_bar_eff)
         if n_bar_value is None or n_bar_value > 0:
-            ops.append(jnp.sqrt(rate * n_bar_eff) * raise_op)
-        return ops
+            terms.append((raise_op, rate * n_bar_eff))
+        return terms
 
     @staticmethod
     def _dephasing_rate(T1: Any | None, T2: Any | None) -> Any | None:

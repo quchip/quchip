@@ -5,7 +5,13 @@ from __future__ import annotations
 from typing import Any
 
 from quchip.declarative import qnp
-from quchip.declarative.expr import DynamicScalar, PhysicsExpr
+from quchip.declarative.expr import (
+    DynamicScalar,
+    PhysicsExpr,
+    as_operator_expr,
+    as_scalar_expr,
+    as_state_expr,
+)
 from quchip.declarative.models import CouplingModel, DeviceModel
 from quchip.declarative.ops import EndpointOps, LocalOps
 from quchip.declarative.parameters import (
@@ -33,6 +39,9 @@ __all__ = [
     "Parameter",
     "PhysicsExpr",
     "Scalar",
+    "as_operator_expr",
+    "as_scalar_expr",
+    "as_state_expr",
     "parameter",
     "qnp",
 ]

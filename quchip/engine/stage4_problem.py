@@ -61,9 +61,9 @@ class SolveProblemContext:
 
         Mirrors :meth:`SolveBatch.element`: it lifts a single concrete problem
         back into the context shape so a homogeneous group of problems can be
-        re-batched. The reference problem's already-built ``initial_state`` is
-        wrapped in a :class:`PrematerializedState` (no chip ground state is
-        recomputed), and ``options`` is defensively copied.
+        re-batched. The reference problem's already-built ``initial_state``
+        becomes the default state specification, and ``options`` is
+        defensively copied.
         """
         return cls(
             chip=ref.chip,
@@ -73,7 +73,7 @@ class SolveProblemContext:
             resolved_frame=ref.resolved_frame,
             solver=ref.solver,
             options=dict(ref.options),
-            default_initial_state=PrematerializedState(ref.initial_state),
+            default_initial_state=ref.initial_state,
         )
 
 
@@ -139,14 +139,11 @@ def prepare_solve_problem_context(
     e_ops: dict | None = None,
     drive_ops: list[DriveOp] | None = None,
 ) -> SolveProblemContext:
-    """Resolve the frame, normalize observables, and prepare a default state.
+    """Resolve the frame and retain authored observables and state specifications.
 
-    The dressed dict-keyed analysis is deliberately *not* triggered here: anything
-    downstream that needs dressed quantities must use the array-only kernel
-    (``chip.freq``, ``chip.energy``, etc.) so this stage stays JAX-traceable. The
-    default initial state is computed lazily via a thunk so callers that always
-    pass ``initial_state`` never pay for it (and so the thunk's eager dict-based
-    state construction never runs under ``jax.jit``).
+    Observables and states are materialized only after stage 2 resolves every
+    local solver basis. The default ground state remains lazy, so callers that
+    provide an explicit state do not pay for unused state construction.
 
     ``tlist`` is validated by :func:`_validate_tlist`. When *drive_ops* is
     given, each entry's pulse window is checked against ``tlist`` via
@@ -164,63 +161,45 @@ def prepare_solve_problem_context(
     if options is not None:
         merged_options.update(options)
 
-    if e_ops is None:
-        e_ops_solver, dict_meta = None, None
-    elif isinstance(e_ops, dict):
-        e_ops_solver, dict_meta = decompose_eops(e_ops, chip, backend)
-    else:
+    if e_ops is not None and not isinstance(e_ops, dict):
         raise TypeError("e_ops must be dict or None")
     return SolveProblemContext(
         chip=chip,
         tlist=tlist_arr,
-        e_ops=e_ops_solver,
-        e_ops_meta=dict_meta,
+        e_ops=e_ops,
+        e_ops_meta=None,
         resolved_frame=resolve_frame(chip, chip.frame),
         solver=solver,
         options=merged_options,
-        default_initial_state=_LazyDefaultState(chip),
+        default_initial_state=None,
     )
 
 
-class _LazyDefaultState:
-    """Wraps ``chip.state()`` so ground-state computation is deferred until ``materialize()`` is called.
+def _materialize_context_state(
+    context: SolveProblemContext,
+    state_spec: Any,
+    engine_result: EngineResult,
+) -> Any:
+    """Materialize one explicit or default state against its own result bases."""
+    from quchip.chip.states import materialize_state_spec
 
-    Keeps :func:`prepare_solve_problem_context` cheap: callers that always
-    pass ``initial_state`` never pay for the dressed ground state. Under
-    tracing ``chip.state()`` routes through the array kernel; the result is
-    never memoized — caching a tracer would leak it into a later trace.
-    """
-
-    __slots__ = ("_chip", "_cached")
-
-    def __init__(self, chip: Chip) -> None:
-        self._chip = chip
-        self._cached: Any = None
-
-    def materialize(self) -> Any:
-        if self._cached is not None:
-            return self._cached
-        state = self._chip.state()
-        if not contains_tracer(state):
-            self._cached = state
-        return state
+    selected = context.default_initial_state if state_spec is None else state_spec
+    return materialize_state_spec(context.chip, selected, engine_result.bases)
 
 
-class PrematerializedState:
-    """Adapter giving an already-built state the ``materialize()`` surface.
-
-    Used where a :class:`SolveProblemContext` is assembled from an existing
-    :class:`SolveProblem` (whose ``initial_state`` is already a concrete
-    ket/DM) rather than from a chip.
-    """
-
-    __slots__ = ("_state",)
-
-    def __init__(self, state: Any) -> None:
-        self._state = state
-
-    def materialize(self) -> Any:
-        return self._state
+def _prepare_context_eops(
+    context: SolveProblemContext,
+    engine_result: EngineResult,
+) -> tuple[Any, Any]:
+    """Project raw observable specs once the engine basis maps are available."""
+    if not isinstance(context.e_ops, dict):
+        return context.e_ops, context.e_ops_meta
+    return decompose_eops(
+        context.e_ops,
+        context.chip,
+        context.chip.backend,
+        engine_result.bases,
+    )
 
 
 def _aggregate_batch_metadata(engine_results: list[EngineResult]) -> dict[str, Any]:
@@ -340,26 +319,29 @@ def build_solve_batch_from_results(
                 )
 
     if initial_states is None:
-        default = context.default_initial_state.materialize()
-        states: tuple[Any, ...] = tuple(default for _ in range(batch_size))
+        states: tuple[Any, ...] = tuple(
+            _materialize_context_state(context, None, result)
+            for result in engine_results
+        )
     elif len(initial_states) != batch_size:
         raise ValueError(
             f"initial_states length {len(initial_states)} does not match batch_size {batch_size}"
         )
     else:
-        default = context.default_initial_state
         states = tuple(
-            (default.materialize() if s is None else s) for s in initial_states
+            _materialize_context_state(context, state_spec, result)
+            for state_spec, result in zip(initial_states, engine_results)
         )
 
     shared_metadata = _aggregate_batch_metadata(engine_results)
+    e_ops, e_ops_meta = _prepare_context_eops(context, ref)
     problem = SolveProblem(
         chip=context.chip,
         engine_result=replace(ref, metadata=shared_metadata),
         initial_state=states[0],
         tlist=context.tlist,
-        e_ops=context.e_ops,
-        e_ops_meta=context.e_ops_meta,
+        e_ops=e_ops,
+        e_ops_meta=e_ops_meta,
         resolved_frame=context.resolved_frame,
         solver=context.solver,
         options=context.options,
@@ -401,13 +383,14 @@ def build_solve_problem(
     engine_result = build_engine_result(
         chip, drive_ops, resolved_frame=context.resolved_frame
     )
+    e_ops_solver, e_ops_meta = _prepare_context_eops(context, engine_result)
     return SolveProblem(
         chip=context.chip,
         engine_result=engine_result,
-        initial_state=context.default_initial_state.materialize() if initial_state is None else initial_state,
+        initial_state=_materialize_context_state(context, initial_state, engine_result),
         tlist=context.tlist,
-        e_ops=context.e_ops,
-        e_ops_meta=context.e_ops_meta,
+        e_ops=e_ops_solver,
+        e_ops_meta=e_ops_meta,
         resolved_frame=context.resolved_frame,
         solver=context.solver,
         options=context.options,

@@ -11,11 +11,9 @@ never frequency values, so the policy is JAX-safe by construction: the
 mask is a concrete constant and multiplying a traced operator by it
 preserves gradients.
 
-Two consumers share the policy: :meth:`Chip.hamiltonian` masks each
-coupling's full interaction when the chip resolves RWA for it, and
-stage 2 filters the band decomposition with the same predicate. The two
-views agree because the mask's equivalence classes are exactly the
-bands of :func:`~quchip.engine.bands.decompose_two_body_canonical_bands`.
+Stage 2 applies the policy to the band decomposition. The authored
+``Chip.hamiltonian()`` remains complete so inspection shows the physics
+before engine transformations.
 
 Band-offset convention (shared with :mod:`quchip.engine.bands`):
 ``Δ = col − row``, so ``Δ = +1`` is a *lowering* operator. Custom

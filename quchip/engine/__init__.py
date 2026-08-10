@@ -228,12 +228,10 @@ def simulate(
         two-body observable).
     initial_state : optional
         Initial state. ``None`` defaults to the chip ground state. A
-        ``Mapping`` (device label/object -> Fock index, e.g.
-        ``{"q0": 1}``) resolves through :meth:`Chip.state` — the same
-        dressed-state semantics
-        :meth:`~quchip.control.sequence.QuantumSequence._resolve_initial_state_spec`
-        uses — on both the joint and the partitioned path. Any other
-        value (a raw backend state) is passed through unchanged.
+        ``Mapping`` (device label/object -> energy level, e.g.
+        ``{"q0": 1}``) becomes a product state in the engine's resolved
+        local bases on both the joint and partitioned paths. An authored
+        full-space ket is projected into that same solver space.
     check_truncation : bool, default True
         Screen the result for over-populated top Fock levels.
     truncation_threshold : float, default 1e-3
@@ -286,8 +284,6 @@ def simulate(
     if solver is not None and solver not in valid_solvers:
         raise ValueError(f"Unknown solver '{solver}'. Must be one of {valid_solvers}.")
 
-    from collections.abc import Mapping as _Mapping
-
     if partition:
         from quchip.engine.partitioned import maybe_simulate_partitioned
 
@@ -298,9 +294,6 @@ def simulate(
         )
         if partitioned is not None:
             return partitioned
-
-    if isinstance(initial_state, _Mapping):
-        initial_state = chip.state(initial_state)
 
     problem = build_problem(
         chip, drive_ops, tlist,

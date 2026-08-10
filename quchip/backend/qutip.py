@@ -626,6 +626,10 @@ class QuTiPBackend(Backend):
         """Return whether *state* is a ket rather than a density matrix (``Qobj.isket``)."""
         return state.isket
 
+    def is_native_state(self, state: Any) -> bool:
+        """Return whether *state* is a QuTiP quantum object."""
+        return isinstance(state, Qobj)
+
     # ------------------------------------------------------------------
     # Solver options / heuristics
     # ------------------------------------------------------------------

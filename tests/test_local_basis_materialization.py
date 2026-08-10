@@ -1,8 +1,21 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
-from quchip import ChargeBasisTransmon, Chip, Fluxonium
+from quchip import (
+    Bath,
+    ChargeBasisTransmon,
+    ChargeDrive,
+    Chip,
+    Capacitive,
+    ControlEquipment,
+    Fluxonium,
+    Resonator,
+    Square,
+)
+from quchip.engine import build_problem
+from quchip.engine.ir import DriveOp
 from quchip.utils.constants import TWO_PI
 
 
@@ -28,6 +41,45 @@ def test_charge_basis_device_stays_authored_while_engine_projects_locally() -> N
     np.testing.assert_allclose(
         result.matrix() / TWO_PI,
         basis.vectors.conj().T @ authored @ basis.vectors,
+        atol=1e-10,
+    )
+
+    full_basis = ChargeBasisTransmon(
+        E_C=0.25,
+        E_J=12.0,
+        num_basis=3,
+        basis="eigen",
+        levels=3,
+        label="full",
+    )
+    full_chip = Chip([full_basis])
+    authored_state = np.asarray([1.0, 0.0, 0.0])
+    problem = build_problem(
+        full_chip,
+        [],
+        np.asarray([0.0, 1.0]),
+        initial_state=authored_state,
+    )
+    full_record = problem.engine_result.bases["full"]
+    np.testing.assert_allclose(
+        full_chip.backend.to_array(problem.initial_state).reshape(-1),
+        full_record.vectors.conj().T @ authored_state,
+        atol=1e-10,
+    )
+    dressed_ground = full_chip.backend.to_array(full_chip.state({full_basis: 0})).reshape(-1)
+    local_ground = full_record.energy_vectors[:, 0]
+    assert abs(np.vdot(local_ground, dressed_ground)) == pytest.approx(1.0, abs=1e-10)
+
+    solver_state = full_chip.bare_state({full_basis: 0})
+    solver_problem = build_problem(
+        full_chip,
+        [],
+        np.asarray([0.0, 1.0]),
+        initial_state=solver_state,
+    )
+    np.testing.assert_allclose(
+        full_chip.backend.to_array(solver_problem.initial_state),
+        full_chip.backend.to_array(solver_state),
         atol=1e-10,
     )
 
@@ -80,3 +132,49 @@ def test_fluxonium_uses_the_same_phase_grid_to_local_eigen_path() -> None:
     assert device.hamiltonian().shape == (31, 31)
     assert result.dims == (4,)
     assert result.bases["flux"].vectors.shape == (31, 4)
+
+
+def test_attached_physics_uses_one_resolved_local_basis() -> None:
+    device = ChargeBasisTransmon(
+        E_C=0.25,
+        E_J=12.0,
+        num_basis=9,
+        basis="eigen",
+        levels=3,
+        label="q",
+        T1=30_000.0,
+        coupling_channel="charge",
+    )
+    drive = ChargeDrive(device, label="xy")
+    resonator = Resonator(freq=7.0, levels=2, label="r")
+    coupling = Capacitive(device, resonator, g=0.02, rwa=False)
+    chip = Chip(
+        [device, resonator],
+        couplings=[coupling],
+        control_equipment=ControlEquipment([drive]),
+        baths=[Bath("collective_decay", targets=[device, resonator], rate=1e-4)],
+    )
+    pulse = DriveOp(
+        target_label="q",
+        drive_label="xy",
+        envelope=Square(duration=10.0, amplitude=0.01),
+        freq=5.0,
+        start_time=0.0,
+    )
+
+    problem = build_problem(
+        chip,
+        [pulse],
+        np.linspace(0.0, 10.0, 11),
+        initial_state={device: 1, resonator: 0},
+        e_ops=chip.e_ops(q=["n", "charge"]),
+    )
+
+    assert problem.engine_result.dims == (3, 2)
+    assert all(term.operator.shape == (6, 6) for term in problem.engine_result.dynamic_terms)
+    assert all(term.operator.shape == (6, 6) for term in problem.engine_result.collapse_terms)
+    assert any(term.channel == "collective_decay" for term in problem.engine_result.collapse_terms)
+    assert all(np.asarray(chip.backend.to_array(op)).shape == (6, 6) for op in problem.e_ops)
+    assert np.asarray(chip.backend.to_array(problem.initial_state)).shape == (6, 1)
+    matrix = np.asarray(problem.engine_result.matrix(t=0.0))
+    np.testing.assert_allclose(matrix, matrix.conj().T, atol=1e-10)

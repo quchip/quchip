@@ -27,10 +27,12 @@ array kernel.
 
 from __future__ import annotations
 
+import warnings
+from math import prod
 from typing import TYPE_CHECKING, Any, Mapping
 
 from quchip.backend.protocol import State
-from quchip.utils.jax_utils import maybe_concrete_scalar
+from quchip.utils.jax_utils import array_namespace, maybe_concrete_scalar
 from quchip.utils.labeling import merge_labeled_values, resolve_label
 
 if TYPE_CHECKING:
@@ -38,7 +40,7 @@ if TYPE_CHECKING:
     from quchip.devices.base import BaseDevice
 
 
-# Default letter → Fock-index map for ``chip.bare_state("eg1")`` shorthand.
+# Default letter → energy-level map for ``chip.bare_state("eg1")`` shorthand.
 # Covers the ``g``/``e``/``f``/``h`` bra-ket convention common in
 # superconducting-qubit papers. Users may pass their own via
 # :func:`set_state_order` (``levels=...``).
@@ -56,7 +58,7 @@ def set_state_order(
     :meth:`Chip.superposition` accept single-string specifications where
     each character is one level per device in *devices* order.
     Level symbols default to ``g=0, e=1, f=2, h=3``; digits ``0..9``
-    are always accepted as raw Fock indices.
+    are always accepted as energy-level indices.
 
     Every chip device must be named exactly once.
 
@@ -174,6 +176,7 @@ def superposition(
 
     amps: list[Any] = []
     kets: list[State] = []
+    bases = chip.engine_result().bases
     for component in components:
         if (
             isinstance(component, tuple)
@@ -183,8 +186,8 @@ def superposition(
             amp, spec = component
         else:
             amp, spec = 1.0, component
-        # ``spec`` may still be a str shorthand — bare_state normalizes it.
-        kets.append(bare_state(chip, spec))
+        resolved = normalize_device_state_mapping(chip, spec, {})
+        kets.append(_bare_state_from_bases(chip, resolved, bases))
         amps.append(amp)
 
     psi = amps[0] * kets[0]
@@ -214,7 +217,7 @@ def state(
     /,
     **device_state_kwargs: int,
 ) -> State:
-    """Dressed eigenstate for the given Fock-indexed bare-state labels.
+    """Dressed eigenstate assigned from the given product-state level labels.
 
     Accepts a string shorthand (e.g. ``"eg1"``) when
     :func:`set_state_order` has been called.
@@ -235,19 +238,29 @@ def bare_state(
     /,
     **device_state_kwargs: int | State,
 ) -> State:
-    """Bare tensor-product state from per-device Fock indices or kets.
+    """Product state from per-device energy levels or authored local kets.
 
-    Each device may be specified as either a Fock index (``int``) or a
-    ket vector in that device's local space. Devices not mentioned
-    default to the ground state (Fock index 0). Unlike :func:`state`
+    Each device may be specified as either an energy-level index (``int``)
+    or a ket vector in that device's authored local space. Devices not
+    mentioned default to the ground state (level 0). Unlike :func:`state`
     this does **not** diagonalize the coupled system.
 
     Accepts a string shorthand (e.g. ``"eg1"``) when
     :func:`set_state_order` has been called.
     """
     resolved = normalize_device_state_mapping(chip, device_states, device_state_kwargs)
+    return _bare_state_from_bases(chip, resolved, chip.engine_result().bases)
+
+
+def _bare_state_from_bases(
+    chip: "Chip",
+    resolved: Mapping[str, Any],
+    bases: Mapping[str, Any],
+) -> State:
+    """Build a solver ket from semantic levels or authored local arrays."""
     backend = chip.backend
     available = list(chip._device_map.keys())
+    prepared = dict(resolved)
 
     for label in resolved:
         if label not in chip._device_map:
@@ -255,37 +268,141 @@ def bare_state(
 
     for label, val in resolved.items():
         if isinstance(val, bool):
-            raise ValueError(f"Fock index for '{label}' must be an integer, got {type(val).__name__}: {val!r}")
-        dev = chip._device_map[label]
+            raise ValueError(f"Level index for '{label}' must be an integer, got {type(val).__name__}: {val!r}")
+        basis = bases[label]
         if isinstance(val, int):
             if val < 0:
-                raise ValueError(f"Fock index for '{label}' must be >= 0, got {val}")
-            if val >= dev.levels:
+                raise ValueError(f"Level index for '{label}' must be >= 0, got {val}")
+            if val >= basis.resolved_dim:
                 raise ValueError(
-                    f"Fock index {val} for '{label}' exceeds device "
-                    f"dimension ({dev.levels} levels, max index "
-                    f"{dev.levels - 1}). "
-                    f"Hint: Increase device levels, e.g. "
-                    f"{type(dev).__name__}(..., levels={val + 1})"
+                    f"Level index {val} for '{label}' exceeds the resolved "
+                    f"dimension {basis.resolved_dim}."
                 )
         else:
-            if not backend.is_ket(val):
+            from quchip.declarative.expr import (
+                as_state_expr,
+                materialize_expr,
+            )
+
+            device = chip[label]
+            expression = as_state_expr(
+                val,
+                labels=(device.label,),
+                dims=(basis.native_dim,),
+                name=rf"\lvert\psi_{{{device.label}}}\rangle",
+                owner=device,
+                scope=device.label,
+            )
+            val = materialize_expr(expression, backend)
+            prepared[label] = val
+            shape = getattr(val, "shape", None)
+            is_array_ket = shape is not None and (
+                len(shape) == 1 or (len(shape) == 2 and shape[1] == 1)
+            )
+            if not is_array_ket and not backend.is_ket(val):
                 raise ValueError(f"State for '{label}' must be a ket vector, got a non-ket state")
-            if hasattr(val, "shape") and val.shape[0] != dev.levels:
+            if shape is not None and shape[0] != basis.native_dim:
                 raise ValueError(
-                    f"State dimension for '{label}' is {val.shape[0]}, expected {dev.levels} (device levels)"
+                    f"Authored state dimension for '{label}' is {val.shape[0]}, "
+                    f"expected {basis.native_dim}."
                 )
 
     kets: list[State] = []
     for dev in chip.devices:
-        val = resolved.get(dev.label)
+        val = prepared.get(dev.label)
+        basis = bases[dev.label]
         if val is None:
-            kets.append(backend.basis(dev.levels, 0))
+            level = 0
         elif isinstance(val, int):
-            kets.append(backend.basis(dev.levels, val))
+            level = val
         else:
-            kets.append(val)
+            authored = backend.to_array(val).reshape(basis.native_dim, -1)
+            projected = basis.vectors.conj().T @ authored
+            authored_norm = backend.array_module.linalg.norm(authored)
+            projected_norm = backend.array_module.linalg.norm(projected)
+            lost = maybe_concrete_scalar(authored_norm**2 - projected_norm**2)
+            if lost is not None and lost > 1e-10:
+                warnings.warn(
+                    f"Projection discarded {lost:.3g} of the state norm on {dev.label!r}.",
+                    stacklevel=2,
+                )
+            kets.append(
+                backend.from_array(
+                    projected,
+                    dims=[[basis.resolved_dim], [1]],
+                )
+            )
+            continue
+
+        if basis.kind == "eigen":
+            kets.append(backend.basis(basis.resolved_dim, level))
+        else:
+            vector = basis.energy_vectors[:, level].reshape(basis.native_dim, 1)
+            kets.append(backend.from_array(vector, dims=[[basis.native_dim], [1]]))
 
     if len(kets) == 1:
         return kets[0]
     return backend.tensor_states(*kets)
+
+
+def materialize_state_spec(
+    chip: "Chip",
+    state_spec: Any,
+    bases: Mapping[str, Any],
+) -> State:
+    """Materialize one authored state specification in the engine's solver basis."""
+    if state_spec is None or isinstance(state_spec, (Mapping, str)):
+        resolved = normalize_device_state_mapping(chip, state_spec, {})
+        return _bare_state_from_bases(chip, resolved, bases)
+
+    from quchip.declarative.expr import as_state_expr, materialize_expr
+
+    backend = chip.backend
+    ordered = [bases[device.label] for device in chip.devices]
+    authored_dims = tuple(record.native_dim for record in ordered)
+    resolved_dims = tuple(record.resolved_dim for record in ordered)
+    authored_dim = prod(authored_dims)
+    resolved_dim = prod(resolved_dims)
+    resolved_native = backend.is_native_state(state_spec)
+
+    shape = getattr(state_spec, "shape", None)
+    if shape is None:
+        state_spec = as_state_expr(
+            state_spec,
+            labels=tuple(device.label for device in chip.devices),
+            dims=authored_dims,
+            name=r"\lvert\psi\rangle",
+            owner=chip,
+            scope="chip",
+        )
+    state = materialize_expr(state_spec, backend)
+    shape = getattr(state, "shape", None)
+    if shape is None:
+        raise TypeError("Initial state must be a semantic specification, callable, or ket.")
+    if resolved_native:
+        if shape[0] != resolved_dim:
+            raise ValueError(
+                f"A solver-native initial state must have dimension {resolved_dim}, got {shape}."
+            )
+        return state
+    if shape[0] != authored_dim or len(shape) not in (1, 2) or (len(shape) == 2 and shape[1] != 1):
+        raise ValueError(
+            "Initial-state dimension must match the authored or resolved chip space; "
+            f"got {shape}, authored {authored_dim}, resolved {resolved_dim}."
+        )
+
+    authored = backend.to_array(state).reshape(authored_dim, 1)
+    xp = array_namespace(ordered[0].vectors)
+    transform = ordered[0].vectors
+    for record in ordered[1:]:
+        transform = xp.kron(transform, record.vectors)
+    projected = transform.conj().T @ authored
+    authored_norm = xp.linalg.norm(authored)
+    projected_norm = xp.linalg.norm(projected)
+    lost = maybe_concrete_scalar(authored_norm**2 - projected_norm**2)
+    if lost is not None and lost > 1e-10:
+        warnings.warn(
+            f"Projection discarded {lost:.3g} of the initial-state norm.",
+            stacklevel=2,
+        )
+    return backend.from_array(projected, dims=[list(resolved_dims), [1]])

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from quchip import Chip, Coupling, CrossKerr, DuffingTransmon, Fluxonium, QuantumSequence, Resonator, simulate
 from quchip.declarative import CouplingModel, Scalar, parameter
@@ -51,11 +50,12 @@ def test_longitudinal_coupling_masks_to_zero_with_advisories():
     )
     qa2, rb2 = _qr("lg_b")
     bare = Chip([qa2, rb2], [], frame="rotating")
-    with pytest.warns(UserWarning, match="vanishes entirely under the resolved RWA"):
-        h_masked = _arr(chip, chip.hamiltonian())
-    np.testing.assert_allclose(h_masked, _arr(bare, bare.hamiltonian()), atol=1e-14)
+    authored = _arr(chip, chip.hamiltonian())
+    assert not np.allclose(authored, _arr(bare, bare.hamiltonian()))
 
     problem = QuantumSequence(chip).build_problem(tlist=np.linspace(0.0, 10.0, 11), initial_state=chip.bare_state())
+    final = np.asarray(problem.engine_result.matrix())
+    np.testing.assert_allclose(final - np.diag(np.diag(final)), 0.0, atol=1e-14)
     records = problem.engine_result.dropped_terms
     assert {rec.band_weights for rec in records} == {(0, -1), (0, 1)}
     assert all(float(rec.frequency) == 7.0 for rec in records)
@@ -123,19 +123,27 @@ class _BlueCoupling(CouplingModel):
 
 
 def test_custom_rwa_keeps_band_override():
-    """A coupling declaring a non-default retained band set gets it, with no engine involvement."""
+    """A coupling declaring a non-default retained band set gets it in the engine result."""
     ba = Resonator(freq=5.0, levels=3, label="ba_blue")
     bb = Resonator(freq=5.2, levels=3, label="bb_blue")
     chip = Chip([ba, bb], [_BlueCoupling(ba, bb, g=0.03)], rwa=True)
-    h = _arr(chip, chip.hamiltonian())
+    h = np.asarray(chip.engine_result().matrix(t=0.0))
     idx_01, idx_10, idx_00, idx_11 = 1, 3, 0, 4
     assert abs(h[idx_01, idx_10]) < 1e-14  # exchange band dropped by the override
-    np.testing.assert_allclose(abs(h[idx_00, idx_11]), 0.03, atol=1e-12)  # squeezing band kept
+    np.testing.assert_allclose(abs(h[idx_00, idx_11]), 2.0 * np.pi * 0.03, atol=1e-12)
 
 
 def test_fluxonium_dense_charge_coupling_assembles_hermitian():
     """A circuit-level eigenbasis charge operator populates many bands; the mask must stay Hermitian."""
-    fl = Fluxonium(E_C=1.0, E_J=4.0, E_L=1.0, phi_ext=0.5, levels=5, label="fl_rwa")
+    fl = Fluxonium(
+        E_C=1.0,
+        E_J=4.0,
+        E_L=1.0,
+        phi_ext=0.5,
+        levels=5,
+        basis="eigen",
+        label="fl_rwa",
+    )
     rr = Resonator(freq=5.0, levels=4, label="rr_rwa")
 
     def charge_coupling(a, b, bk):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
 from math import prod
@@ -12,6 +13,11 @@ import jax.numpy as jnp
 
 class UnboundParameterError(ValueError):
     """Numerical materialization was requested without every required value."""
+
+
+def is_opaque_callable(value: Any) -> bool:
+    """Return whether *value* is a callable authoring function, not a matrix-like object."""
+    return callable(value) and getattr(value, "shape", None) is None
 
 
 @dataclass(frozen=True)
@@ -97,6 +103,36 @@ class PhysicsExpr:
         )
 
     @classmethod
+    def from_state(
+        cls,
+        value: Any,
+        *,
+        labels: tuple[str, ...],
+        dims: tuple[int, ...],
+        name: str,
+    ) -> "PhysicsExpr":
+        """Create a named authored ket contribution."""
+        return cls("state", (value, tuple(dims), name), tuple(labels))
+
+    @classmethod
+    def from_state_function(
+        cls,
+        function: Any,
+        *arguments: Any,
+        labels: tuple[str, ...],
+        dims: tuple[int, ...],
+        name: str,
+    ) -> "PhysicsExpr":
+        """Create an opaque callable ket contribution."""
+        if not callable(function):
+            raise TypeError("function must be callable.")
+        return cls(
+            "state_function",
+            (function, tuple(dims), name, *(ensure_expr(arg) for arg in arguments)),
+            tuple(labels),
+        )
+
+    @classmethod
     def from_signal(cls, signal: Any, *, name: str = "f") -> "PhysicsExpr":
         """Create a scalar time-function leaf backed by an engine signal."""
         return cls("signal", (signal, name))
@@ -125,7 +161,7 @@ class PhysicsExpr:
         values: list[Any] = []
         for node in _walk_expr(self):
             values.extend(node._bindings.values())
-            if node.kind in ("literal", "matrix", "signal"):
+            if node.kind in ("literal", "matrix", "state", "signal"):
                 values.append(node.args[0])
         return tuple(values)
 
@@ -140,6 +176,8 @@ class PhysicsExpr:
         if self.kind in ("matrix", "function"):
             dimension = prod(self.args[1])
             return (dimension, dimension)
+        if self.kind in ("state", "state_function"):
+            return (prod(self.args[1]), 1)
         if self.kind == "embed":
             dimension = prod(self.args[2])
             return (dimension, dimension)
@@ -314,6 +352,167 @@ def ensure_expr(value: Any) -> PhysicsExpr:
     raise TypeError(f"Expected a scalar or PhysicsExpr, got {type(value).__name__}.")
 
 
+def as_operator_expr(
+    value: Any,
+    *,
+    labels: tuple[str, ...],
+    dims: tuple[int, ...],
+    name: str,
+    arguments: tuple[Any, ...] = (),
+    owner: Any | None = None,
+    scope: str | None = None,
+    allowed: Mapping[str, Any] | None = None,
+) -> PhysicsExpr:
+    """Normalize symbolic, matrix, or opaque callable operator authorship."""
+    expected = (prod(dims), prod(dims))
+    if isinstance(value, PhysicsExpr):
+        if not value.labels:
+            raise TypeError("An operator expression must carry at least one subsystem label.")
+        if value.labels != labels:
+            raise TypeError(
+                f"Operator expression support {value.labels!r} does not match {labels!r}."
+            )
+        if value.shape != expected:
+            raise ValueError(
+                f"Operator expression has shape {value.shape}, expected {expected}."
+            )
+        return value
+    if is_opaque_callable(value):
+        arguments, bindings = _resolve_callable_arguments(
+            value, arguments=arguments, owner=owner, scope=scope, allowed=allowed
+        )
+        return PhysicsExpr.from_function(
+            value,
+            *arguments,
+            labels=labels,
+            dims=dims,
+            name=name,
+        ).with_bindings(bindings)
+    if getattr(value, "shape", None) != expected:
+        raise TypeError(
+            f"Operator must be a PhysicsExpr, callable, or matrix with shape {expected}; "
+            f"got {type(value).__name__} with shape {getattr(value, 'shape', None)}."
+        )
+    return PhysicsExpr.from_matrix(value, labels=labels, dims=dims, name=name)
+
+
+def as_scalar_expr(
+    value: Any,
+    *,
+    name: str,
+    arguments: tuple[Any, ...] = (),
+    owner: Any | None = None,
+    scope: str | None = None,
+    allowed: Mapping[str, Any] | None = None,
+) -> PhysicsExpr:
+    """Normalize symbolic, numeric, or opaque callable scalar authorship."""
+    if isinstance(value, PhysicsExpr):
+        if value.labels:
+            raise TypeError("A scalar expression cannot carry subsystem labels.")
+        return value
+    if is_opaque_callable(value):
+        arguments, bindings = _resolve_callable_arguments(
+            value, arguments=arguments, owner=owner, scope=scope, allowed=allowed
+        )
+        return PhysicsExpr.from_function(
+            value,
+            *arguments,
+            labels=(),
+            dims=(),
+            name=name,
+        ).with_bindings(bindings)
+    return ensure_expr(value)
+
+
+def as_state_expr(
+    value: Any,
+    *,
+    labels: tuple[str, ...],
+    dims: tuple[int, ...],
+    name: str,
+    arguments: tuple[Any, ...] = (),
+    owner: Any | None = None,
+    scope: str | None = None,
+    allowed: Mapping[str, Any] | None = None,
+) -> PhysicsExpr:
+    """Normalize an authored ket array or opaque callable without evaluating it."""
+    expected = (prod(dims), 1)
+    if isinstance(value, PhysicsExpr):
+        if value.labels != labels:
+            raise ValueError(
+                f"State expression support {value.labels!r} does not match {labels!r}."
+            )
+        if value.shape != expected:
+            raise ValueError(
+                f"State expression has shape {value.shape}, expected {expected}."
+            )
+        return value
+    if is_opaque_callable(value):
+        arguments, bindings = _resolve_callable_arguments(
+            value, arguments=arguments, owner=owner, scope=scope, allowed=allowed
+        )
+        return PhysicsExpr.from_state_function(
+            value,
+            *arguments,
+            labels=labels,
+            dims=dims,
+            name=name,
+        ).with_bindings(bindings)
+    shape = getattr(value, "shape", None)
+    if shape not in (expected, (expected[0],)):
+        raise TypeError(
+            f"State must be a PhysicsExpr, callable, or ket with shape {expected} or {(expected[0],)}; "
+            f"got {type(value).__name__} with shape {shape}."
+        )
+    return PhysicsExpr.from_state(value, labels=labels, dims=dims, name=name)
+
+
+def _resolve_callable_arguments(
+    function: Any,
+    *,
+    arguments: tuple[Any, ...],
+    owner: Any | None,
+    scope: str | None,
+    allowed: Mapping[str, Any] | None = None,
+) -> tuple[tuple[PhysicsExpr, ...], dict[str, Any]]:
+    """Resolve explicit callable arguments or bind their names to an owner."""
+    if not is_opaque_callable(function):
+        return (), {}
+    if arguments:
+        if owner is not None:
+            raise TypeError("Pass explicit callable arguments or an owner, not both.")
+        return tuple(ensure_expr(argument) for argument in arguments), {}
+    if owner is None or scope is None:
+        if inspect.signature(function).parameters:
+            raise TypeError("Opaque functions with parameters require an owner and scope.")
+        return (), {}
+    fields = getattr(type(owner), "__quchip_param_fields__", {})
+    resolved_arguments: list[PhysicsExpr] = []
+    bindings: dict[str, Any] = {}
+    for item in inspect.signature(function).parameters.values():
+        if item.kind not in (item.POSITIONAL_ONLY, item.POSITIONAL_OR_KEYWORD):
+            raise TypeError("Opaque functions may only declare positional parameters.")
+        if allowed is not None and item.name not in allowed:
+            raise ValueError(
+                f"Opaque function argument {item.name!r} is not declared; "
+                f"available fields are {sorted(allowed)}."
+            )
+        if not hasattr(owner, item.name):
+            raise ValueError(f"Opaque function argument {item.name!r} is not a field on {scope!r}.")
+        spec = fields.get(item.name)
+        path = f"{scope}.{item.name}"
+        resolved_arguments.append(
+            PhysicsExpr.parameter(
+                scope=scope,
+                name=item.name,
+                symbol=getattr(spec, "symbol", None) or item.name,
+                unit=getattr(spec, "unit", None),
+            )
+        )
+        bindings[path] = getattr(owner, item.name)
+    return tuple(resolved_arguments), bindings
+
+
 def _walk_expr(expr: PhysicsExpr) -> Iterator[PhysicsExpr]:
     """Yield an expression tree in authored preorder."""
     yield expr
@@ -354,11 +553,26 @@ def materialize_expr(
             return evaluate_signal_program(node.args[0], t, xp=backend.array_module)
         if node.kind == "matrix":
             value, dims, _name = node.args
-            return backend.from_array(value, dims=[list(dims), list(dims)])
+            return backend.from_array(
+                backend.to_array(value),
+                dims=[list(dims), list(dims)],
+            )
+        if node.kind == "state":
+            value, dims, _name = node.args
+            return backend.from_array(
+                backend.to_array(value),
+                dims=[list(dims), [1]],
+            )
         if node.kind == "function":
             function, dims, _name, *arguments = node.args
             value = function(*(lower(argument) for argument in arguments))
+            if not dims:
+                return value
             return backend.from_array(value, dims=[list(dims), list(dims)])
+        if node.kind == "state_function":
+            function, dims, _name, *arguments = node.args
+            value = function(*(lower(argument) for argument in arguments))
+            return backend.from_array(value, dims=[list(dims), [1]])
         if node.kind == "op":
             name, space = node.args
             return space.operator(name, backend)
@@ -404,6 +618,10 @@ class _ArrayLowerer:
 
     @staticmethod
     def to_array(value: Any) -> Any:
+        if hasattr(value, "to_jax"):
+            value = value.to_jax()
+        elif hasattr(value, "full"):
+            value = value.full()
         return jnp.asarray(value)
 
     @staticmethod
@@ -570,7 +788,14 @@ def _latex(expr: PhysicsExpr, parent_precedence: int = 0) -> str:
         if name is not None:
             return name
         return rf"\hat H_{{{','.join(expr.labels)}}}"
+    if expr.kind == "state":
+        _value, _dims, name = expr.args
+        return name
     if expr.kind == "function":
+        _function, _dims, name, *arguments = expr.args
+        rendered = ", ".join(_latex(argument) for argument in arguments)
+        return rf"{name}\!\left({rendered}\right)"
+    if expr.kind == "state_function":
         _function, _dims, name, *arguments = expr.args
         rendered = ", ".join(_latex(argument) for argument in arguments)
         return rf"{name}\!\left({rendered}\right)"

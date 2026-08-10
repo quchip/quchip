@@ -37,7 +37,7 @@ import numpy as np
 
 from quchip.backend import EigensystemData, Operator, State, _backend_context
 from quchip.chip.dressing import (
-    BareProductReference,
+    EigenstateReference,
     Labeling,
     assign_rowwise_greedy,
     label_eigensystem,
@@ -103,8 +103,8 @@ class DressedResult:
         Bare labels whose assignment quality is below ``overlap_threshold``.
         A non-empty tuple triggers a user warning at dress time.
     bare_labels : tuple[tuple[int, ...], ...]
-        Full canonical product-basis label set (all combinations of
-        ``range(device.levels)`` for every device, in chip order).
+        Product energy-level labels exposed by the chip's resolved local
+        dimensions, in chip order.
     bare_labels_by_dressed_index : dict[int, tuple[int, ...]]
         Inverse of :attr:`state_map` — dressed index → assigned bare label.
     eigenvector_matrix : array-like or None
@@ -151,8 +151,8 @@ class ChipAnalysis:
     directly.
 
     Caching: :meth:`dress` keys its cache on a structural signature
-    covering backend identity, RWA policy, and the ``state_version`` of
-    every device and coupling. Any mutation that bumps a version
+    covering backend identity and the ``state_version`` of every device
+    and coupling. Any mutation that bumps a version
     invalidates the cache on next access.
     """
 
@@ -172,7 +172,6 @@ class ChipAnalysis:
         chip = self._chip
         return (
             f"{type(chip.backend).__module__}.{type(chip.backend).__qualname__}",
-            chip.rwa,
             tuple((device.label, device.state_version) for device in chip.devices),
             tuple(
                 (
@@ -186,14 +185,21 @@ class ChipAnalysis:
         )
 
     def _canonical_bare_labels(self) -> tuple[tuple[int, ...], ...]:
-        """Full product-basis label set ``⨂_d range(d.levels)`` in chip order."""
+        """Product energy-level labels in chip order."""
         return self._bare_labels_with_index()[0]
+
+    def _semantic_dims(self) -> tuple[int, ...]:
+        """Per-device energy-level dimensions exposed by this chip."""
+        return tuple(
+            device.resolved_dimension(self._chip.basis)
+            for device in self._chip.devices
+        )
 
     def _bare_labels_with_index(
         self,
     ) -> tuple[tuple[tuple[int, ...], ...], dict[tuple[int, ...], int]]:
-        """Cached ``(bare_labels, label → index)`` pair, keyed on per-device dimensions."""
-        sig = tuple(device.levels for device in self._chip.devices)
+        """Cached ``(level_labels, label → index)`` pair, keyed on semantic dimensions."""
+        sig = self._semantic_dims()
         if self._bare_labels_cache is None or self._bare_labels_signature != sig:
             labels = tuple(itertools.product(*(range(d) for d in sig)))
             index_map = {label: idx for idx, label in enumerate(labels)}
@@ -207,9 +213,9 @@ class ChipAnalysis:
         /,
         **device_state_kwargs: int,
     ) -> tuple[int, ...]:
-        """Merge a ``{device: Fock}`` mapping into a full chip-ordered label tuple.
+        """Merge a ``{device: level}`` mapping into a full chip-ordered label tuple.
 
-        Unspecified devices default to Fock index 0. A ``str`` shorthand is
+        Unspecified devices default to energy level 0. A ``str`` shorthand is
         parsed through :func:`~quchip.chip.states.normalize_device_state_mapping`.
         Validates each value as a non-negative ``int`` (rejecting ``bool``)
         within device bounds.
@@ -218,30 +224,32 @@ class ChipAnalysis:
         return self._label_from_resolved(resolved)
 
     def _label_from_resolved(self, resolved: Mapping[str, int]) -> tuple[int, ...]:
-        """Validate an already-normalized ``{label: Fock}`` mapping into a full label tuple.
+        """Validate an already-normalized ``{label: level}`` mapping into a full label tuple.
 
         Splits the validation pass out of :meth:`_state_label_from_mapping` so
         callers that already hold the normalized mapping (e.g. :meth:`state`)
         validate it without normalizing a second time. Unspecified devices
-        default to Fock index 0; each value must be a non-negative ``int``
+        default to energy level 0; each value must be a non-negative ``int``
         (rejecting ``bool``) within device bounds.
 
-        The Fock-bound and type checks are layered chip-side on top of the
+        The level-bound and type checks are layered chip-side on top of the
         canonical :func:`~quchip.utils.labeling.bare_label_from_mapping`
         spec-to-tuple builder; :meth:`Chip._resolve_device_index` rejects
         unknown labels first with the device-specific message.
         """
+        semantic_dims = dict(zip(self._device_labels(), self._semantic_dims()))
         for device_label, value in resolved.items():
             _, device = self._chip._resolve_device_index(device_label)
             if isinstance(value, bool):
-                raise ValueError(f"Fock index for '{device.label}' must be an integer, got bool: {value!r}")
+                raise ValueError(f"Level index for '{device.label}' must be an integer, got bool: {value!r}")
             if not isinstance(value, int):
-                raise TypeError(f"Expected integer Fock index for '{device.label}', got {type(value).__name__}")
+                raise TypeError(f"Expected integer level index for '{device.label}', got {type(value).__name__}")
             if value < 0:
-                raise ValueError(f"Fock index for '{device.label}' must be >= 0, got {value}")
-            if value >= device.levels:
+                raise ValueError(f"Level index for '{device.label}' must be >= 0, got {value}")
+            if value >= semantic_dims[device.label]:
                 raise ValueError(
-                    f"Fock index {value} for '{device.label}' exceeds device dimension ({device.levels} levels)"
+                    f"Level index {value} for '{device.label}' exceeds device dimension "
+                    f"({semantic_dims[device.label]} semantic levels)"
                 )
         return bare_label_from_mapping(self._device_labels(), resolved, {})
 
@@ -299,8 +307,25 @@ class ChipAnalysis:
         evals_jax = jnp.asarray(eigenvalues)
         evecs_jax = jnp.asarray(eigenvector_matrix)
 
-        dims = tuple(device.levels for device in chip.devices)
-        reference = BareProductReference(dims=dims)
+        from quchip.engine.basis import resolve_device_basis
+
+        dims = self._semantic_dims()
+        local_vectors: list[Any] = []
+        for device, dimension in zip(chip.devices, dims):
+            policy = chip.resolve_basis(device)
+            record = resolve_device_basis(
+                device,
+                basis=policy,
+                levels=dimension if policy == "eigen" else None,
+            )
+            local_vectors.append(record.energy_vectors[:, :dimension])
+        product_vectors = local_vectors[0]
+        for vectors in local_vectors[1:]:
+            product_vectors = jnp.kron(product_vectors, vectors)
+        reference = EigenstateReference(
+            vectors=product_vectors.T,
+            keys=tuple(itertools.product(*(range(dimension) for dimension in dims))),
+        )
         labeling = label_eigensystem(evecs_jax, reference, policy=assign_rowwise_greedy)
 
         # The 3rd slot carries the EigensystemData (lazy eigenstates) rather than
@@ -418,9 +443,8 @@ class ChipAnalysis:
         if not self._array_labeled_concrete(kernel_labeling):
             raise RuntimeError(_DRESS_TRACING_ERROR)
 
-        # The kernel already materialized the canonical product-basis keys in
-        # Kronecker order (``BareProductReference``); reuse them instead of a
-        # second ``itertools.product`` over the device dims.
+        # The kernel already carries the local-energy product keys in
+        # Kronecker order; reuse them instead of rebuilding the product.
         bare_labels = kernel_labeling.keys
         indices_np = np.asarray(kernel_labeling.indices)
         overlaps_np = np.asarray(kernel_labeling.overlaps)
@@ -501,7 +525,7 @@ class ChipAnalysis:
     ) -> Any:
         """Dressed eigenvalue (GHz) for the given bare-state label.
 
-        Unspecified devices default to Fock index 0. Routes through the
+        Unspecified devices default to energy level 0. Routes through the
         :func:`quchip.chip.dressing.label_eigensystem` array kernel, so
         this is safe inside ``jax.jit``/``grad``/``vmap`` — gradients
         flow through ``eigenvalues[labeling.indices[bare_idx]]`` to any
@@ -846,7 +870,7 @@ class ChipAnalysis:
         ----------
         states : sequence of mapping or tuple[int, ...]
             The bare-state labels spanning the subspace, each a
-            ``{device: Fock}`` mapping or a full chip-ordered index tuple.
+            ``{device: energy_level}`` mapping or a full chip-ordered level tuple.
         """
         dressed = self._ensure_dressed()
         label_to_bare_index = {label: idx for idx, label in enumerate(dressed.bare_labels)}
@@ -899,7 +923,7 @@ class ChipAnalysis:
         if when is not None:
             for device_key, value in when.items():
                 if isinstance(value, bool):
-                    raise ValueError(f"Fock index must be an integer, got bool: {value!r}")
+                    raise ValueError(f"Level index must be an integer, got bool: {value!r}")
                 idx, _ = self._chip._resolve_device_index(device_key)
                 ground_label[idx] = value
 
@@ -958,7 +982,7 @@ class ChipAnalysis:
         /,
         **device_state_kwargs: int,
     ) -> State:
-        """Dressed eigenstate for Fock-indexed bare-state labels.
+        """Dressed eigenstate for local-energy product-state labels.
 
         Validates the mapping (rejects ``bool``, non-int, and
         out-of-range indices) and returns the assigned dressed

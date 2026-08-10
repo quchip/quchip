@@ -19,19 +19,20 @@ from quchip.control.drive import ChargeDrive
 from quchip.control.envelopes import Square
 from quchip.control.equipment import ControlEquipment
 from quchip.devices.transmon.duffing import DuffingTransmon
+from quchip.devices.transmon.charge_basis import ChargeBasisTransmon
 from quchip.engine import build_problem, simulate, solve_problem
 from quchip.engine.ir import DriveOp, SolveProblem
 
 
 class _NoisyChargeDrive(ChargeDrive):
-    def collapse_operators(self, device):
-        return [0.1 * device.number_operator()]
+    def collapse_contributions(self, device):
+        return [(device.number_operator(), 0.01)]
 
 
 class _NoisyCapacitive(Capacitive):
-    def collapse_operators(self, chip):
+    def collapse_contributions(self, chip):
         _ = chip
-        return [0.05 * self.interaction_hamiltonian()]
+        return [(self.interaction_hamiltonian(), 0.0025)]
 
 
 class TestBuildSolveProblem:
@@ -372,7 +373,14 @@ class TestQuantumSequenceBuildProblem:
 
     def test_build_batch_accepts_mapping_initial_states(self):
         """build_batch() accepts a mix of dict and device-object initial-state specs per axis."""
-        q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+        q = ChargeBasisTransmon(
+            E_C=0.25,
+            E_J=12.0,
+            num_basis=7,
+            basis="eigen",
+            levels=3,
+            label="q",
+        )
         drive = ChargeDrive(target=q)
         chip = Chip([q], frame="rotating")
         chip.connect(ControlEquipment(lines=[drive]))
@@ -388,6 +396,7 @@ class TestQuantumSequenceBuildProblem:
         assert len(problems) == 2
         assert all(problem.chip is chip for problem in problems)
         assert problems[0].initial_state is not problems[1].initial_state
+        assert all(problem.initial_state.shape == (3, 1) for problem in problems)
 
     def test_build_batch_reuses_problem_scaffold(self):
         """build_batch() shares the Hamiltonian operator skeleton, tlist, and frame across elements."""
@@ -538,9 +547,16 @@ class TestQuantumSequenceBuildProblem:
         assert (0.0, 7.0) in captured_start_times
         assert (0.0, 11.0) in captured_start_times
 
-    def test_build_batch_computes_default_initial_state_once(self, monkeypatch: pytest.MonkeyPatch):
-        """build_batch() computes the shared default initial state once, not once per element."""
-        q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+    def test_build_batch_uses_the_semantic_ground_state_by_default(self):
+        """Every batch element defaults to the resolved local ground state."""
+        q = ChargeBasisTransmon(
+            E_C=0.25,
+            E_J=12.0,
+            num_basis=7,
+            basis="eigen",
+            levels=3,
+            label="q",
+        )
         drive = ChargeDrive(target=q)
         chip = Chip([q], frame="rotating")
         chip.connect(ControlEquipment(lines=[drive]))
@@ -549,16 +565,6 @@ class TestQuantumSequenceBuildProblem:
         amp = pulse.vary("amplitude", [0.01, 0.02], name="amp")
         freq = pulse.vary("freq", [4.9, 5.1], name="freq")
 
-        original_state = chip.state
-        state_calls = 0
-
-        def counted_state(*args, **kwargs):
-            nonlocal state_calls
-            state_calls += 1
-            return original_state(*args, **kwargs)
-
-        monkeypatch.setattr(chip, "state", counted_state)
-
         batch = sequence.build_batch(
             amp,
             freq,
@@ -566,7 +572,10 @@ class TestQuantumSequenceBuildProblem:
         )
 
         assert len(batch) == 4
-        assert state_calls == 1
+        expected = np.asarray([1.0, 0.0, 0.0])
+        for binding in batch.bindings:
+            state = chip.backend.to_array(binding.initial_state).reshape(-1)
+            np.testing.assert_allclose(state, expected)
 
 
 class TestChipSolveMany:

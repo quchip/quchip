@@ -235,7 +235,12 @@ def test_collapse_operators_accept_traced_thermal_population():
     @jax.jit
     def thermal_metric(n_bar):
         q = _ToyCircuit(levels=3, T1=30_000.0, thermal_population=n_bar)
-        return sum(jnp.real(jnp.sum(jnp.abs(op))) for op in q.collapse_operators())
+        from quchip.declarative.expr import materialize_array
+
+        return sum(
+            jnp.real(jnp.sum(jnp.abs(materialize_array(op)))) * jnp.sqrt(materialize_array(rate))
+            for op, rate, _channel, _params in q.collapse_contributions()
+        )
 
     value = thermal_metric(jnp.asarray(0.05))
     assert np.isfinite(float(value))
@@ -245,7 +250,10 @@ def test_collapse_operators_dephasing_uses_diagonal_form():
     """When T2 is set, at least one emitted op is purely diagonal (dephasing)."""
     q = _ToyCircuit(levels=3, T1=30_000.0, T2=15_000.0)
     ops = q.collapse_operators()
-    diag_ops = [op for op in ops if np.allclose(np.asarray(op) - np.diag(np.diag(np.asarray(op))), 0.0)]
+    from quchip.backend import get_default_backend
+
+    arrays = [np.asarray(get_default_backend().to_array(op)) for op in ops]
+    diag_ops = [op for op in arrays if np.allclose(op - np.diag(np.diag(op)), 0.0)]
     assert len(diag_ops) >= 1
 
 
@@ -275,11 +283,20 @@ def test_gradients_finite_and_fd_exact_at_charge_symmetric_points():
     # discarded levels are numerically degenerate at the charge-symmetric points and would
     # NaN the whole gradient without the truncation-aware custom VJP (_truncated_eigh).
     from quchip.devices import ChargeBasisTransmon
+    from quchip.declarative.expr import materialize_array
+    from quchip.engine.basis import resolve_local_basis
 
     def observable(p, n_g):
-        qb = ChargeBasisTransmon(E_C=p[1], E_J=p[0], n_g=n_g, levels=3, label="grad_probe")
+        qb = ChargeBasisTransmon(
+            E_C=p[1], E_J=p[0], n_g=n_g, levels=3, basis="eigen", label="grad_probe"
+        )
         e = qb.eigenenergies()
-        n01 = qb.project_operator(qb._native_charge_operator())[0, 1]
+        basis = resolve_local_basis(
+            materialize_array(qb.hamiltonian()),
+            basis="eigen",
+            levels=qb.projection_levels,
+        )
+        n01 = basis.transform_operator(qb.charge_coupling_operator())[0, 1]
         return (e[1] - e[0]) + jnp.abs(n01)
 
     p = jnp.array([10.35, 0.345])

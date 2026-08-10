@@ -173,3 +173,22 @@ def test_opaque_function_displays_arguments_and_stays_differentiable():
         return jnp.real(expr.matrix({"q.freq": value}, backend=ArrayBackend())[1, 1])
 
     assert jax.grad(loss)(jnp.asarray(5.0)) == pytest.approx(1.0)
+
+    from quchip.declarative import DeviceModel, Scalar, parameter
+
+    class OpaqueDevice(DeviceModel):
+        freq: Scalar = parameter(symbol=r"\omega")
+
+        def local_hamiltonian(self, op, p):
+            _ = (op, p)
+            return lambda freq: jnp.diag(jnp.asarray([0.0, freq], dtype=complex))
+
+    device = OpaqueDevice(freq=5.0, levels=2, label="opaque")
+    authored = device.hamiltonian()
+    assert authored.latex() == r"\hat H_{opaque}\!\left(\omega_{opaque}\right)"
+
+    def device_loss(value):
+        rebound = OpaqueDevice(freq=value, levels=2, label="opaque")
+        return jnp.real(rebound.hamiltonian().matrix(backend=ArrayBackend())[1, 1])
+
+    assert jax.grad(device_loss)(jnp.asarray(5.0)) == pytest.approx(1.0)

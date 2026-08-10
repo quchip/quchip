@@ -601,11 +601,6 @@ class QuantumSequence:
         n_points = max(int(dur_value * 10), 100)
         return np.linspace(0, dur, n_points)
 
-    def _resolve_initial_state_spec(self, state_spec: Any) -> Any:
-        if isinstance(state_spec, Mapping):
-            return self._chip.state(state_spec)
-        return state_spec
-
     def _drive_lookup(self) -> dict[str, BaseDrive]:
         """Return a ``{drive_label: drive}`` map across the chip.
 
@@ -805,7 +800,6 @@ class QuantumSequence:
         """
         actual_tlist = self._resolve_tlist(tlist)
         drive_ops = self._materialize_drive_ops()
-        resolved_state = self._resolve_initial_state_spec(initial_state) if initial_state is not None else None
         return build_solve_problem(
             self._chip,
             drive_ops,
@@ -813,7 +807,7 @@ class QuantumSequence:
             solver=solver,
             options=options,
             e_ops=e_ops,
-            initial_state=resolved_state,
+            initial_state=initial_state,
         )
 
     def engine_result(self) -> EngineResult:
@@ -943,10 +937,7 @@ class QuantumSequence:
             engine_result = reference_result
 
         initial_state = axis_initial_state if axis_initial_state is not None else shared_initial_state
-        resolved_initial_state = (
-            self._resolve_initial_state_spec(initial_state) if initial_state is not None else None
-        )
-        return engine_result, resolved_initial_state
+        return engine_result, initial_state
 
     def build_batch(
         self,
@@ -1046,26 +1037,19 @@ class QuantumSequence:
         dispatched separately and combined into a
         :class:`~quchip.results.partitioned.PartitionedSimulationResult`.
         This only engages when ``initial_state`` is ``None`` or a
-        ``Mapping`` — a string shorthand or a concrete state is resolved
-        via :meth:`_resolve_initial_state_spec` first and always takes the
+        ``Mapping``. String shorthand and concrete states always take the
         joint path. Pass ``partition=False`` to force the joint solve
         unconditionally.
         """
-        from collections.abc import Mapping as _Mapping
-
         from quchip.engine import simulate as _engine_simulate
 
         with self._scoped_backend(backend):
             actual_tlist = self._resolve_tlist(tlist)
             drive_ops = self._materialize_drive_ops()
-            if initial_state is None or isinstance(initial_state, _Mapping):
-                resolved_state: Any = initial_state
-            else:
-                resolved_state = self._resolve_initial_state_spec(initial_state)
             return _engine_simulate(
                 self._chip, drive_ops, actual_tlist,
                 solver=solver, options=options, e_ops=e_ops,
-                initial_state=resolved_state,
+                initial_state=initial_state,
                 check_truncation=check_truncation,
                 truncation_threshold=truncation_threshold,
                 partition=partition,

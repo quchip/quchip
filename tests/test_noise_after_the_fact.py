@@ -10,7 +10,6 @@ import numpy as np
 import pytest
 
 from quchip import Bath, Capacitive, Chip, DuffingTransmon, Resonator, Scalar, eliminate, parameter, simulate
-from quchip.backend import get_default_backend
 from quchip.devices.base import NoiseChannel
 from quchip.utils.constants import k_B
 
@@ -221,12 +220,12 @@ def test_add_bath_round_trips_serialization():
 # ---------------------------------------------------------------------------
 
 
-def _leakage_channel(device) -> list:
-    """Extra loss channel ``sqrt(rate)·a`` — the documented one-declaration recipe."""
+def _leakage_channel(device, basis=None) -> list:
+    """Extra loss channel declared as an operator and separate rate."""
+    _ = basis
     if device.leakage_rate is None:
         return []
-    xp = get_default_backend().array_module
-    return [xp.sqrt(device.leakage_rate) * device.lowering_operator()]
+    return [(device.local_space().matrix("a"), device.leakage_rate)]
 
 
 class LeakyTransmon(DuffingTransmon):
@@ -266,11 +265,11 @@ def test_custom_channel_rate_set_posthoc_reflected_in_next_simulate():
     assert np.real(after.expect("q"))[-1] == pytest.approx(np.exp(-0.01 * TLIST[-1]), rel=1e-3)
 
 
-def _extra_loss_channel(device) -> list:
+def _extra_loss_channel(device, basis=None) -> list:
+    _ = basis
     if device.extra_loss_rate is None:
         return []
-    xp = get_default_backend().array_module
-    return [xp.sqrt(device.extra_loss_rate) * device.lowering_operator()]
+    return [(device.local_space().matrix("a"), device.extra_loss_rate)]
 
 
 def test_channel_attached_to_subclass_posthoc_reflected_in_next_simulate():
@@ -316,7 +315,7 @@ def test_instance_level_channel_attachment_raises_instead_of_silent_noop():
 
     with pytest.raises(TypeError, match="class"):
         q._noise_channels = q._noise_channels + (
-            NoiseChannel("extra", ("T1",), lambda device: []),
+            NoiseChannel("extra", ("T1",), lambda device, basis: []),
         )
 
 

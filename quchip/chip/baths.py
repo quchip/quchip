@@ -15,7 +15,10 @@ Hamiltonian-only). The thermal Bose factor uses ``k_B`` in GHz/mK, so
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
+
+import jax.numpy as jnp
 
 from quchip.backend.protocol import Operator
 from quchip.utils.constants import k_B
@@ -106,7 +109,7 @@ class Bath:
         :class:`~quchip.declarative.models.CouplingModel` run on their own
         fields (checks apply to concrete scalars only; a traced value passes
         unchecked). Without this, a negative Bose occupation or a
-        ``sqrt(negative)`` NaN in :meth:`collapse_operators` is reachable
+        invalid Lindblad rate in :meth:`collapse_contributions` is reachable
         from a raw ``bath.temperature = -5`` or ``bath.rate = -1``.
         """
         if name in ("temperature", "rate"):
@@ -181,12 +184,12 @@ class Bath:
             )
         elif self.recipe == "collective_decay":
             notes.append(
-                "Single shared rank-one collective channel L = sqrt(rate) * sum_i a_i "
+                "Single shared rank-one collective channel L = sum_i a_i with a separate rate "
                 "(equal-phase, equal-weight; not general super/subradiant decay)."
             )
         else:
             notes.append(
-                "Single shared common-mode dephasing channel L = sqrt(rate) * sum_i n_i "
+                "Single shared common-mode dephasing channel L = sum_i n_i with a separate rate "
                 "(maximally correlated; not a general target-dependent correlation structure)."
             )
         return notes
@@ -248,35 +251,68 @@ class Bath:
         n_bar_finite = 1.0 / xp.expm1(freq / safe_denominator)
         return xp.where(is_zero, 0.0, n_bar_finite)
 
-    def collapse_operators(self, chip: "Chip") -> list[Operator]:
-        """Fully-embedded collapse operators for this bath.
+    def _resolved_bases(self, chip: "Chip", bases: Mapping[str, Any] | None) -> Mapping[str, Any]:
+        """Return supplied engine bases or resolve them for direct inspection."""
+        if bases is not None:
+            return bases
+        from quchip.engine.basis import resolve_device_basis
+
+        return {
+            device.label: resolve_device_basis(
+                device,
+                basis=chip.resolve_basis(device),
+                levels=(
+                    device.resolved_dimension(chip.basis)
+                    if chip.resolve_basis(device) == "eigen"
+                    else None
+                ),
+            )
+            for device in chip.devices
+        }
+
+    @staticmethod
+    def _semantic_operator(record: Any, kind: str, xp: Any) -> Any:
+        """Express an energy-ordered lowering or number operator in authored coordinates."""
+        dimension = record.resolved_dim
+        if kind == "lowering":
+            semantic = xp.diag(xp.sqrt(xp.arange(1, dimension)), 1).astype(complex)
+        else:
+            semantic = xp.diag(xp.arange(dimension)).astype(complex)
+        vectors = xp.asarray(record.energy_vectors)
+        return vectors @ semantic @ vectors.conj().T
+
+    def collapse_contributions(
+        self,
+        chip: "Chip",
+        bases: Mapping[str, Any] | None = None,
+    ) -> list[tuple[Operator, Any, tuple[int, ...], str]]:
+        """Return authored collapse operators, separate rates, support, and channel.
 
         ``"thermal"`` emits independent per-target relaxation/absorption
         pairs sharing one bath temperature (:meth:`_bose`). The two
         collective recipes instead each emit a single jump operator summed
         over the resolved targets:
 
-        - ``"collective_decay"``: ``L = sqrt(gamma) * sum_i a_i`` — an
+        - ``"collective_decay"``: ``L = sum_i a_i`` at rate ``gamma`` — an
           equal-phase, equal-weight rank-one collective channel, *not*
           general collective (super/subradiant) decay, which requires
           per-pair phase and weight factors set by the target geometry
           (Lehmberg, *Phys. Rev. A* **2**, 883 (1970), for the general
           collective-radiative-decay construction).
-        - ``"correlated_dephasing"``: ``L = sqrt(gamma) * sum_i n_i`` —
+        - ``"correlated_dephasing"``: ``L = sum_i n_i`` at rate ``gamma`` —
           maximally correlated common-mode dephasing (every target shares
           the identical dephasing fluctuation), *not* general correlated
           dephasing with a target-dependent correlation structure (Breuer &
           Petruccione, *The Theory of Open Quantum Systems*, Oxford, 2002,
           Ch. 3, for the general Lindblad construction).
 
-        Always called from inside ``with _backend_context(chip.backend):`` (see
-        :func:`quchip.engine.stage4_problem._collect_c_ops`), so this method must
-        not open its own backend context.
+        Contributions remain backend-neutral; the engine projects and lowers
+        them with the same basis records used for Hamiltonian terms.
         """
-        backend = chip.backend
-        xp = backend.array_module
+        xp = jnp
         labels = self.resolve_targets(chip)
-        ops: list[Operator] = []
+        records = self._resolved_bases(chip, bases)
+        terms: list[tuple[Operator, Any, tuple[int, ...], str]] = []
         gamma = 1.0 if self.rate is None else self.rate
 
         if self.recipe == "thermal":
@@ -284,20 +320,27 @@ class Bath:
                 idx = chip.device_index(lbl)
                 dev = chip[lbl]
                 n_bar = self._bose(dev.freq, xp)  # type: ignore[attr-defined]  # BaseDevice contract: all concrete devices expose freq
-                relax = xp.sqrt(gamma * (n_bar + 1.0)) * dev.lowering_operator()
-                absorb = xp.sqrt(gamma * n_bar) * dev.raising_operator()
-                ops.append(backend.embed(relax, idx, chip.dims))
-                ops.append(backend.embed(absorb, idx, chip.dims))
-            return ops
+                lowering = self._semantic_operator(records[lbl], "lowering", xp)
+                terms.append((lowering, gamma * (n_bar + 1.0), (idx,), f"thermal_emission:{lbl}"))
+                terms.append((lowering.conj().T, gamma * n_bar, (idx,), f"thermal_absorption:{lbl}"))
+            return terms
 
         # Collective recipes: a single summed jump operator over the targets.
-        summed: Operator | None = None
+        from quchip.declarative.expr import PhysicsExpr
+
+        chip_labels = tuple(device.label for device in chip.devices)
+        summed: PhysicsExpr | None = None
         for lbl in labels:
-            idx = chip.device_index(lbl)
-            dev = chip[lbl]
-            local = dev.lowering_operator() if self.recipe == "collective_decay" else dev.number_operator()
-            embedded = backend.embed(local, idx, chip.dims)
+            record = records[lbl]
+            kind = "lowering" if self.recipe == "collective_decay" else "number"
+            local = PhysicsExpr.from_matrix(
+                self._semantic_operator(record, kind, xp),
+                labels=(lbl,),
+                dims=(record.native_dim,),
+                name=rf"\hat L_{{{self.label},{lbl}}}",
+            )
+            embedded = local.embed(chip_labels, chip.authored_dims)
             summed = embedded if summed is None else summed + embedded
         if summed is not None:
-            ops.append(xp.sqrt(gamma) * summed)
-        return ops
+            terms.append((summed, gamma, (), self.recipe))
+        return terms

@@ -116,7 +116,10 @@ def _truncated_eigh_bwd(keep: int, residuals: tuple[Any, Any], cotangents: tuple
 _truncated_eigh.defvjp(_truncated_eigh_fwd, _truncated_eigh_bwd)
 
 
-def _golden_rule_emission_channel(device: "CircuitDevice") -> list[Operator]:
+def _golden_rule_emission_channel(
+    device: "CircuitDevice",
+    basis: Any = None,
+) -> list[tuple[Operator, Any]]:
     r"""Fermi-golden-rule relaxation / absorption channels for a circuit device.
 
     The T1 normalization
@@ -142,7 +145,7 @@ def _golden_rule_emission_channel(device: "CircuitDevice") -> list[Operator]:
     default backend.
     """
     if device.collapse_model == "ladder":
-        return _thermal_emission_channel(device)
+        return _thermal_emission_channel(device, basis)
     if device.T1 is None:
         return []
 
@@ -166,7 +169,7 @@ def _golden_rule_emission_channel(device: "CircuitDevice") -> list[Operator]:
             "to use structural Fock channels."
         )
 
-    ops: list[Operator] = []
+    terms: list[tuple[Operator, Any]] = []
     for i in range(1, device.levels):
         for j in range(i):
             matrix_element_sq = jnp.abs(N[i, j]) ** 2
@@ -175,18 +178,21 @@ def _golden_rule_emission_channel(device: "CircuitDevice") -> list[Operator]:
             if ratio_concrete is not None and ratio_concrete < device.collapse_rate_threshold:
                 continue
             rate = gamma_0 * rate_ratio
-            ops.extend(
-                BaseDevice._emission_pair(
+            terms.extend(
+                BaseDevice._emission_terms(
                     rate,
                     device.thermal_population,
                     _level_projector(device.levels, j, i),
                     _level_projector(device.levels, i, j),
                 )
             )
-    return ops
+    return terms
 
 
-def _eigenbasis_dephasing_channel(device: "CircuitDevice") -> list[Operator]:
+def _eigenbasis_dephasing_channel(
+    device: "CircuitDevice",
+    basis: Any = None,
+) -> list[tuple[Operator, Any]]:
     """Pure dephasing on the level-index operator ``diag(0, 1, 2, …)``.
 
     Same ``gamma_phi`` algebra and ``sqrt(2*gamma_phi)`` normalization as
@@ -196,12 +202,12 @@ def _eigenbasis_dephasing_channel(device: "CircuitDevice") -> list[Operator]:
     not captured). ``collapse_model='ladder'`` defers to the base channel.
     """
     if device.collapse_model == "ladder":
-        return _pure_dephasing_channel(device)
+        return _pure_dephasing_channel(device, basis)
     gamma_phi = BaseDevice._dephasing_rate(device.T1, device.T2)
     if gamma_phi is None:
         return []
     level_index_op = jnp.diag(jnp.arange(device.levels, dtype=jnp.complex128))
-    return [BaseDevice._dephasing_op(gamma_phi, level_index_op)]
+    return [(level_index_op, 2.0 * gamma_phi)]
 
 
 def _check_positive_energy(name: str, value: Any) -> None:

@@ -103,7 +103,12 @@ def test_collapse_op_duffing_limit_reproduces_ladder_decay():
     """ChargeBasisTransmon's Fermi-golden-rule |1>→|0> rate matches sqrt(1/T1) to 1% in the transmon regime."""
     T1 = 30_000.0
     q = ChargeBasisTransmon.from_frequency(
-        freq=5.0, anharmonicity=-0.25, levels=3, T1=T1, coupling_channel="charge",
+        freq=5.0,
+        anharmonicity=-0.25,
+        levels=3,
+        basis="eigen",
+        T1=T1,
+        coupling_channel="charge",
     )
     ops = q.collapse_operators()
 
@@ -122,7 +127,12 @@ def test_collapse_op_ladder_mode_matches_duffing_structurally():
     """collapse_model='ladder' returns the inherited BaseDevice channel (destroy(levels))."""
     T1 = 30_000.0
     q_ladder = ChargeBasisTransmon(
-        E_C=0.25, E_J=25.0, levels=3, T1=T1, collapse_model="ladder",
+        E_C=0.25,
+        E_J=25.0,
+        levels=3,
+        basis="eigen",
+        T1=T1,
+        collapse_model="ladder",
     )
     q_duff = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, T1=T1)
 
@@ -143,17 +153,23 @@ def test_t1_decay_mesolve_matches_between_charge_basis_and_duffing():
 
     T1 = 30_000.0
     q_cb = ChargeBasisTransmon.from_frequency(
-        freq=5.0, anharmonicity=-0.25, levels=3, T1=T1, num_basis=61, coupling_channel="charge",
+        freq=5.0,
+        anharmonicity=-0.25,
+        levels=3,
+        basis="eigen",
+        T1=T1,
+        num_basis=61,
+        coupling_channel="charge",
     )
     q_duff = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, T1=T1)
 
     tlist = np.linspace(0.0, T1 / 3, 21)
     psi0 = qutip.basis(3, 1)
 
-    H_cb = qutip.Qobj(_to_ndarray(q_cb.hamiltonian()))
+    H_cb = qutip.Qobj(np.zeros((3, 3)))
     c_ops_cb = [qutip.Qobj(_to_ndarray(op)) for op in q_cb.collapse_operators()]
 
-    H_duff = qutip.Qobj(_to_ndarray(q_duff.hamiltonian().matrix()))
+    H_duff = qutip.Qobj(np.zeros((3, 3)))
     c_ops_duff = q_duff.collapse_operators()
 
     e_op = qutip.basis(3, 1) * qutip.basis(3, 1).dag()
