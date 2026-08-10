@@ -28,7 +28,7 @@ jobs:
       - run: uv pip install -e '.[dev,test,dynamiqs]'
       - name: Report resolved versions
         run: uv pip freeze
-      - run: uv run pytest
+      - run: uv run --no-sync pytest
 
   file-issue:
     needs: fresh-resolve
