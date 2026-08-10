@@ -191,10 +191,10 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
 
     effective_params: dict[str, Any] = LabelKeyedDict()
     validity: dict[str, Any] = LabelKeyedDict()
-    # bare_hamiltonian() assembles chip.hamiltonian() at the chip's resolved
-    # RWA policy, so counter-rotating terms are actually dropped only when at
-    # least one touching coupling resolves RWA True — never claim the drop
-    # unconditionally.
+    # bare_hamiltonian() assembles the engine-consumed Hamiltonian at the
+    # chip's resolved RWA policy, so counter-rotating terms are actually
+    # dropped only when at least one touching coupling resolves RWA True —
+    # never claim the drop unconditionally.
     dropped_items = ["ring-up transients"]
     if any(chip.resolve_rwa(c) for _, c in survivors):
         dropped_items.insert(0, "counter-rotating terms")
@@ -213,7 +213,7 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
     mode_is_frequency_controlled = isinstance(mode, FrequencyControlled) or any(
         isinstance(line, FluxDrive) for line, _ in retarget_plan
     )
-    h, labels, dims = bare_hamiltonian(chip, chip.backend)
+    h, labels, dims = bare_hamiltonian(chip)
     # Survivor pairs are keyed in the chip's device order everywhere — the
     # pair extraction, the exact route, and the fold loop below — so the two
     # sides of every ("J", a, b) lookup agree no matter what order the legs

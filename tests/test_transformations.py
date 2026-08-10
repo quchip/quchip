@@ -139,7 +139,7 @@ def test_eliminate_bridge_preserves_non_foldable_direct_edge_without_double_coun
     # The reduced chip's own total exchange (read the same way the fold
     # itself measures it) must equal direct_j + j_mediated exactly once —
     # a double count would read 2*direct_j + j_mediated instead.
-    h, labels, dims = bare_hamiltonian(reduced, reduced.backend)
+    h, labels, dims = bare_hamiltonian(reduced)
     row = bare_index(labels, dims, "q0")
     col = bare_index(labels, dims, "q1")
     assert complex(h[row, col]).real == pytest.approx(direct_j + j_mediated_expected, rel=1e-6)
@@ -188,7 +188,7 @@ def test_eliminate_bridge_direct_edge_whose_rwa_rejects_exchange_contributes_not
         parallel_edge = reduced.coupling_map["elim_bus"]
         assert float(parallel_edge.g) == pytest.approx(j_mediated_expected, rel=1e-6)
 
-        h, labels, dims = bare_hamiltonian(reduced, reduced.backend)
+        h, labels, dims = bare_hamiltonian(reduced)
         row = bare_index(labels, dims, "q0")
         col = bare_index(labels, dims, "q1")
         assert complex(h[row, col]).real == pytest.approx(j_mediated_expected, rel=1e-6)
@@ -233,7 +233,7 @@ def test_eliminate_bridge_fold_target_and_preserved_edge_are_each_counted_exactl
     j_mediated_expected = 0.05 * 0.05 / 2.0 * (1.0 / (5.0 - 7.0) + 1.0 / (5.1 - 7.0))
     total_expected = foldable_g + direct_j + j_mediated_expected
 
-    h, labels, dims = bare_hamiltonian(reduced, reduced.backend)
+    h, labels, dims = bare_hamiltonian(reduced)
     row = bare_index(labels, dims, "q0")
     col = bare_index(labels, dims, "q1")
     assert complex(h[row, col]).real == pytest.approx(total_expected, rel=1e-6)

@@ -51,7 +51,7 @@ def test_dispersive_lamb_shift_on_a_real_chip():
     r = Resonator(freq=7.0, levels=4, label="r")
     chip = Chip([q, r], couplings=[Capacitive(q, r, g=0.05, label="c")], rwa=True)
 
-    h, labels, dims = bare_hamiltonian(chip, chip.backend)
+    h, labels, dims = bare_hamiltonian(chip)
     p_mask, _ = mode_blocks(dims, labels, "r")
     s, min_gap = sylvester_generator(h, p_mask)
     h_eff = h_effective_second_order(h, s, p_mask)
@@ -73,7 +73,7 @@ def _bridge_h():
         couplings=[Capacitive(q0, bus, g=0.08, label="leg0"), Capacitive(q1, bus, g=0.08, label="leg1")],
         rwa=True,
     )
-    return bare_hamiltonian(chip, chip.backend)
+    return bare_hamiltonian(chip)
 
 
 def test_bridge_exchange_matches_yan_formula():
@@ -141,7 +141,7 @@ def test_collapse_transform_yields_purcell_rate():
     chip = Chip([q, r], couplings=[Capacitive(q, r, g=0.05, label="c")], rwa=True)
     backend = chip.backend
 
-    h, labels, dims = bare_hamiltonian(chip, backend)
+    h, labels, dims = bare_hamiltonian(chip)
     p_mask, _ = mode_blocks(dims, labels, "r")
     s, _ = sylvester_generator(h, p_mask)
 

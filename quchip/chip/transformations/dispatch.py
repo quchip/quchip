@@ -126,12 +126,11 @@ def eliminate(chip: "Chip", target: Any, *, method: str = "sw") -> EliminationRe
         Schrieffer-Wolff reduction (Bravyi, DiVincenzo & Loss, Ann. Phys. 326,
         2793 (2011)) — cheap, differentiable, and what every effective
         parameter above is derived from perturbatively. ``"exact"`` instead
-        reads the reduced parameters off the chip's exact dressed spectrum
-        (exact-from-dressing, :func:`quchip.chip.sw.exact_reduction`) —
-        exact kept-block energies (what residual ZZ needs) at the cost of a
-        full diagonalization, and it raises when near-degenerate dressed
-        states make the bare labeling ambiguous. Any other value raises
-        ``ValueError``.
+        exactly diagonalizes the same resolved static model as the SW route
+        (exact-from-dressing, :func:`quchip.chip.sw.exact_reduction`) — exact
+        kept-block energies (what residual ZZ needs) at the cost of a full
+        diagonalization, and it raises when near-degenerate dressed states
+        make the bare labeling ambiguous. Any other value raises ``ValueError``.
 
     Returns
     -------

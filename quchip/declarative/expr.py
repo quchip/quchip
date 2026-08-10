@@ -674,19 +674,14 @@ class _ArrayLowerer:
             ).transpose(1, 0, 3, 2).reshape(
                 dims[first] * dims[second], dims[first] * dims[second]
             )
-        pair_shape = (dims[first], dims[second], dims[first], dims[second])
-        pair = jnp.asarray(local).reshape(pair_shape)
-        identities = [jnp.eye(dim, dtype=jnp.complex128) for dim in dims]
-        result = pair
-        active = [first, second]
-        for index, identity in enumerate(identities):
-            if index in active:
-                continue
-            result = jnp.tensordot(result, identity, axes=0)
-            active.append(index)
-        row_axes = [active.index(index) for index in range(len(dims))]
-        col_axes = [axis + len(dims) for axis in row_axes]
-        return result.transpose(*(row_axes + col_axes)).reshape(prod(dims), prod(dims))
+        order = [first, second] + [index for index in range(len(dims)) if index not in (first, second)]
+        ordered_dims = [dims[index] for index in order]
+        result = jnp.asarray(local)
+        for dimension in ordered_dims[2:]:
+            result = jnp.kron(result, jnp.eye(dimension, dtype=jnp.complex128))
+        inverse = [order.index(index) for index in range(len(dims))]
+        axes = inverse + [len(dims) + index for index in inverse]
+        return result.reshape(*(ordered_dims + ordered_dims)).transpose(*axes).reshape(prod(dims), prod(dims))
 
 
 _ARRAY_LOWERER = _ArrayLowerer()
