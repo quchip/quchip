@@ -176,7 +176,7 @@ def analyze_static_zz(chip: "Chip", device_a: str | BaseDevice, device_b: str | 
     idx_b, dev_b = chip._resolve_device_index(device_b)
     device_labels = tuple(dev.label for dev in chip.devices)
 
-    h, _, dims = bare_hamiltonian(chip, chip.backend)
+    h, _, dims = bare_hamiltonian(chip)
     p_mask = _computational_p_mask(dims, idx_a, idx_b)
     s, _ = sylvester_generator(h, p_mask)
     i_idx = _bare_index_pair(dims, idx_a, idx_b, 1, 1)

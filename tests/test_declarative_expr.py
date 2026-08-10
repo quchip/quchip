@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from quchip.declarative.expr import DynamicScalar, PhysicsExpr
+from quchip.declarative.expr import DynamicScalar, PhysicsExpr, materialize_array
 from quchip.declarative.ops import EndpointOps, LocalOps
 from quchip.devices.spaces import FockSpace
 
@@ -145,6 +145,15 @@ def test_tensor_labels_preserve_authored_order_for_unequal_dimensions():
     b = EndpointOps(label="b", space=FockSpace(5))
     assert (a.n * b.n).labels == ("a", "b")
     assert (b.n * a.n).labels == ("b", "a")
+
+
+def test_nonadjacent_two_body_embedding_preserves_subsystem_axes():
+    """Embedding across a spectator matches the explicit tensor product on unequal spaces."""
+    a = EndpointOps(label="a", space=FockSpace(2))
+    c = EndpointOps(label="c", space=FockSpace(3))
+    embedded = (a.a * c.adag).embed(("a", "b", "c"), (2, 4, 3))
+    expected = jnp.kron(jnp.kron(materialize_array(a.a), jnp.eye(4)), materialize_array(c.adag))
+    assert jnp.allclose(materialize_array(embedded), expected)
 
 
 def test_opaque_function_displays_arguments_and_stays_differentiable():
