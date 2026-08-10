@@ -1636,3 +1636,8 @@ def build_engine_result(
     """
     template = compile_hamiltonian_template(chip, drive_ops, resolved_frame=resolved_frame)
     return instantiate_engine_result(template, drive_ops, chip)
+
+
+def _analysis_matrix_ghz(result: EngineResult, *, t: Any = 0.0) -> Any:
+    """Return an assembled solver Hamiltonian in ordinary GHz for internal analysis."""
+    return result.matrix(t=t) / TWO_PI
