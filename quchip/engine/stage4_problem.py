@@ -25,9 +25,9 @@ from quchip.engine.ir import (
     DriveOp,
     EngineResult,
     ScalarModulation,
-    SolveBinding,
     SolveBatch,
     SolveProblem,
+    _aggregate_batch_metadata,
 )
 from quchip.engine.stage1_frames import resolve_frame
 from quchip.engine.stage2_assembly import build_engine_result
@@ -202,56 +202,13 @@ def _prepare_context_eops(
     )
 
 
-def _aggregate_batch_metadata(engine_results: list[EngineResult]) -> dict[str, Any]:
-    """Aggregate advisory solver-hint metadata across every engine result in a batch.
-
-    Copying the reference element's metadata verbatim is unsafe once
-    durations or frequencies are swept per element: each variant's own
-    ``max_carrier_freq_ghz`` / ``spectral_bound_ghz`` / ``max_step_ns`` can
-    differ. Carrier and spectral bounds take the maximum across elements
-    (the batch as a whole is bounded by its fastest/most-spread element);
-    ``max_step_ns`` takes the minimum (bounded by its narrowest pulse) and
-    is present only when every element reports one -- a single traced
-    window anywhere in the batch means the ceiling is incomplete for the
-    whole batch. Non-advisory keys (e.g. ``"frame"``) are carried through
-    from the reference element, since batching already requires a shared
-    template.
-    """
-    metadata = dict(engine_results[0].metadata)
-    for key in ("max_carrier_freq_ghz", "spectral_bound_ghz", "max_step_ns"):
-        metadata.pop(key, None)
-
-    carrier_values = [
-        result.metadata["max_carrier_freq_ghz"]
-        for result in engine_results
-        if "max_carrier_freq_ghz" in result.metadata
-    ]
-    if carrier_values:
-        metadata["max_carrier_freq_ghz"] = max(carrier_values)
-
-    spectral_values = [
-        result.metadata["spectral_bound_ghz"]
-        for result in engine_results
-        if "spectral_bound_ghz" in result.metadata
-    ]
-    if spectral_values:
-        metadata["spectral_bound_ghz"] = max(spectral_values)
-
-    step_values = [result.metadata.get("max_step_ns") for result in engine_results]
-    non_none = [v for v in step_values if v is not None]
-    if len(non_none) == len(step_values) and non_none:
-        metadata["max_step_ns"] = min(non_none)
-
-    return metadata
-
-
 def build_solve_batch_from_results(
     context: SolveProblemContext,
     engine_results: list[EngineResult],
     *,
     initial_states: list[Any] | None = None,
 ) -> SolveBatch:
-    """Merge N homogeneous :class:`EngineResult`s into one :class:`SolveBatch`.
+    """Package homogeneous :class:`EngineResult`s as one :class:`SolveBatch`.
 
     All results must share ``static_terms`` identity, the same number
     of dynamic terms, and matching operator payloads per slot (by identity
@@ -335,29 +292,22 @@ def build_solve_batch_from_results(
 
     shared_metadata = _aggregate_batch_metadata(engine_results)
     e_ops, e_ops_meta = _prepare_context_eops(context, ref)
-    problem = SolveProblem(
-        chip=context.chip,
-        engine_result=replace(ref, metadata=shared_metadata),
-        initial_state=states[0],
-        tlist=context.tlist,
-        e_ops=e_ops,
-        e_ops_meta=e_ops_meta,
-        resolved_frame=context.resolved_frame,
-        solver=context.solver,
-        options=context.options,
-    )
-    bindings = tuple(
-        SolveBinding(
-            initial_state=state,
-            dynamic_signals=tuple(
-                term.time_dependence for term in result.dynamic_terms
-            ),
-            metadata=dict(result.metadata),
-            dropped_terms=result.dropped_terms,
+    problems: list[SolveProblem] = []
+    for state, result in zip(states, engine_results):
+        problems.append(
+            SolveProblem(
+                chip=context.chip,
+                engine_result=replace(result, metadata=shared_metadata),
+                initial_state=state,
+                tlist=context.tlist,
+                e_ops=e_ops,
+                e_ops_meta=e_ops_meta,
+                resolved_frame=context.resolved_frame,
+                solver=context.solver,
+                options=context.options,
+            )
         )
-        for state, result in zip(states, engine_results)
-    )
-    return SolveBatch(problem=problem, bindings=bindings)
+    return SolveBatch(chip=context.chip, problems=tuple(problems))
 
 
 def build_solve_problem(

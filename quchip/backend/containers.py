@@ -106,8 +106,7 @@ class DeferredBatch:
 
     ``shared`` carries backend-private state; the producing backend must
     override :meth:`Backend.solve_batch` to consume it (the QuTiP path —
-    final ``QobjEvo`` assembly happens inside loky workers so main-process
-    overhead stays O(1) in batch size).
+    final ``QobjEvo`` assembly happens inside sequential or loky workers).
     """
 
     shared: Any

@@ -698,9 +698,10 @@ class QuantumSequence:
                 continue
 
             envelope_updates = {
-                field: value
+                field.removeprefix("envelope."): value
                 for (idx, field), value in overrides.items()
-                if idx == entry_index and field not in {"freq", "phase", "start_time"}
+                if idx == entry_index
+                and (field.startswith("envelope.") or field not in {"freq", "phase", "start_time"})
             }
             envelope = (
                 self._clone_envelope_with_overrides(entry.envelope, envelope_updates)
@@ -824,15 +825,14 @@ class QuantumSequence:
         return self.engine_result().hamiltonian()
 
     def vary(self, field: str, values: Any, *, name: str | None = None) -> BatchAxis:
-        """Create a :class:`BatchAxis` over a sequence-level field.
+        """Create a :class:`BatchAxis` over a public parameter path or state.
 
         Parameters
         ----------
         field : str
-            Sequence-level field to sweep. Only ``"initial_state"`` is
-            supported; per-pulse fields (``freq``, ``phase``,
-            ``amplitude``, ...) are swept via :meth:`PulseHandle.vary`
-            on the handle returned by :meth:`schedule` instead.
+            ``"initial_state"`` or any dotted path exposed by
+            :attr:`parameters`. Pulse handles remain the concise way to vary
+            a pulse field immediately after scheduling it.
         values : array-like
             Sequence of values for ``field``, one per batch point.
         name : str, optional
@@ -845,9 +845,29 @@ class QuantumSequence:
             Sequence-level axis, consumable by :meth:`build_batch` or
             :meth:`zip`.
         """
-        if field != "initial_state":
-            raise ValueError("QuantumSequence only supports varying the sequence-level field 'initial_state'")
-        return BatchAxis(owner=self, target_kind="sequence", field=field, values=values, name=name or field)
+        if field == "initial_state":
+            return BatchAxis(owner=self, target_kind="sequence", field=field, values=values, name=name or field)
+        if field not in self.parameters:
+            raise ValueError(
+                f"Parameter path {field!r} is not batchable. Available: {list(self.parameters)}"
+            )
+
+        parts = field.split(".", 2)
+        if len(parts) == 3 and parts[0] == "pulse" and parts[1].isdigit():
+            index = int(parts[1])
+            entry = self._entries[index]
+            entry_field = parts[2]
+            return BatchAxis(
+                owner=self,
+                target_kind="entry",
+                field=field,
+                values=values,
+                name=name or field,
+                entry_index=index,
+                entry_field=entry_field,
+                entry=entry,
+            )
+        return BatchAxis(owner=self, target_kind="parameter", field=field, values=values, name=name or field)
 
     def zip(self, *axes: BatchAxis) -> ZippedBatchAxis:
         """Zip axes into one pairwise dimension.
@@ -948,13 +968,62 @@ class QuantumSequence:
         e_ops: dict | None = None,
         initial_state: Any | None = None,
     ) -> "SolveBatch":
-        """Build a batched solve request from sweep axes without solving.
-
-        The returned :class:`~quchip.engine.ir.SolveBatch` stores one problem;
-        only per-element signal and initial-state bindings vary.
-        """
+        """Build a batched solve request from explicit sweep axes."""
         self._validate_axes(axes)
         actual_tlist = self._resolve_tlist(tlist)
+        shape, expanded = _expand_axis_overrides(axes)
+        params_store = np.empty(shape if shape else (), dtype=object)
+
+        parameter_axes = any(
+            member.target_kind == "parameter"
+            for axis in axes
+            for member in (axis.axes if isinstance(axis, ZippedBatchAxis) else (axis,))
+        )
+        if parameter_axes:
+            problems: list[Any] = []
+            for coord, overrides in expanded:
+                parameter_bindings = {
+                    field: value
+                    for (index, field), value in overrides.items()
+                    if index is None and field != "initial_state"
+                }
+                entry_overrides = {
+                    (index, field): value
+                    for (index, field), value in overrides.items()
+                    if index is not None
+                }
+                axis_initial_state = overrides.get((None, "initial_state"))
+                if axis_initial_state is not None and initial_state is not None:
+                    raise ValueError(
+                        "initial_state may be provided either as a shared scalar or as a batch axis, not both"
+                    )
+
+                variant = self.with_params(parameter_bindings)
+                drive_ops = variant._materialize_drive_ops(entry_overrides)
+                validate_drive_ops_window(drive_ops, actual_tlist)
+                problems.append(
+                    build_solve_problem(
+                        variant._chip,
+                        drive_ops,
+                        actual_tlist,
+                        solver=solver,
+                        options=options,
+                        e_ops=e_ops,
+                        initial_state=(axis_initial_state if axis_initial_state is not None else initial_state),
+                    )
+                )
+                params_store[coord] = self._point_params(axes, coord)
+
+            from quchip.engine.ir import SolveBatch
+
+            return SolveBatch(
+                chip=self._chip,
+                problems=tuple(problems),
+                params=params_store,
+                shape=shape,
+                axes=tuple(_axis_metadata(axis) for axis in axes),
+            )
+
         reference_drive_ops = self._materialize_drive_ops()
         context = prepare_solve_problem_context(
             self._chip,
@@ -966,9 +1035,6 @@ class QuantumSequence:
         )
         template = compile_hamiltonian_template(self._chip, reference_drive_ops, resolved_frame=context.resolved_frame)
         reference_result = instantiate_engine_result(template, reference_drive_ops, self._chip)
-
-        shape, expanded = _expand_axis_overrides(axes)
-        params_store = np.empty(shape if shape else (), dtype=object)
 
         engine_results: list[Any] = []
         initial_states: list[Any] = []
@@ -983,13 +1049,7 @@ class QuantumSequence:
             engine_results.append(engine_result)
             initial_states.append(resolved_initial_state)
 
-            point_params: dict[str, Any] = {}
-            for dim, axis in enumerate(axes):
-                members = axis.axes if isinstance(axis, ZippedBatchAxis) else (axis,)
-                for member in members:
-                    # Name uniqueness is validated upfront in _validate_axes.
-                    point_params[member.name] = member.values[coord[dim]]
-            params_store[coord] = point_params
+            params_store[coord] = self._point_params(axes, coord)
 
         batch = build_solve_batch_from_results(
             context, engine_results, initial_states=initial_states
@@ -1000,6 +1060,18 @@ class QuantumSequence:
             shape=shape,
             axes=tuple(_axis_metadata(axis) for axis in axes),
         )
+
+    @staticmethod
+    def _point_params(
+        axes: Sequence[BatchAxis | ZippedBatchAxis], coord: tuple[int, ...]
+    ) -> dict[str, Any]:
+        """Return public axis values at one Cartesian coordinate."""
+        point: dict[str, Any] = {}
+        for dim, axis in enumerate(axes):
+            members = axis.axes if isinstance(axis, ZippedBatchAxis) else (axis,)
+            for member in members:
+                point[member.name] = member.values[coord[dim]]
+        return point
 
     def simulate(
         self,

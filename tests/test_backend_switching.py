@@ -73,6 +73,19 @@ def test_qutip_coerce_state_wraps_arrays_with_dims(backend: QuTiPBackend) -> Non
     # Native states pass through untouched.
     assert backend.coerce_state(coerced, dims=(3, 4)) is coerced
 
+    import importlib.util
+
+    if importlib.util.find_spec("dynamiqs") is not None:
+        from quchip.backend.dynamiqs import DynamiqsBackend
+
+        dynamiqs = DynamiqsBackend()
+        qarray = dynamiqs.from_array(np.diag([1.0, 2.0]))
+        np.testing.assert_allclose(backend.to_array(backend.from_array(qarray)), np.diag([1.0, 2.0]))
+        np.testing.assert_allclose(
+            np.asarray(dynamiqs.to_array(dynamiqs.from_array(Qobj(np.diag([3.0, 4.0]))))),
+            np.diag([3.0, 4.0]),
+        )
+
 
 def test_per_call_backend_scopes_exactly_one_call() -> None:
     """simulate's backend= argument scopes only that call; the chip reverts to the process default afterward."""

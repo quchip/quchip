@@ -42,6 +42,7 @@ class BatchAxis:
     values: Any
     name: str
     entry_index: int | None = None
+    entry_field: str | None = None
     #: The scheduled entry object this axis references (``None`` for
     #: sequence-level axes). ``build_batch`` validates it against the
     #: sequence by identity, so an axis silently pointing at the wrong
@@ -165,12 +166,16 @@ def _expand_axis_overrides(
             for i in range(axis.size):
                 point: dict[tuple[int | None, str], Any] = {}
                 for subaxis in axis.axes:
-                    point[(subaxis.entry_index, subaxis.field)] = subaxis.values[i]
+                    field = subaxis.entry_field or subaxis.field
+                    point[(subaxis.entry_index, field)] = subaxis.values[i]
                 slice_.append(point)
             axis_slices.append(slice_)
         else:
             axis_slices.append(
-                [{(axis.entry_index, axis.field): axis.values[i]} for i in range(axis.size)]
+                [
+                    {(axis.entry_index, axis.entry_field or axis.field): axis.values[i]}
+                    for i in range(axis.size)
+                ]
             )
 
     shape = tuple(len(s) for s in axis_slices)

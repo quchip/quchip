@@ -14,6 +14,7 @@ from quchip import (
     Gaussian,
     QuantumSequence,
     Resonator,
+    Square,
 )
 
 
@@ -50,14 +51,14 @@ def test_chip_with_params_is_immutable_and_rebinds_multiple_component_kinds() ->
         chip.with_params({"q.missing": 1.0})
 
 
-def test_sequence_parameters_rebind_chip_and_pulse_values_directly() -> None:
+def test_sequence_parameters_rebind_chip_and_pulse_values_directly(monkeypatch) -> None:
     chip = _chip()
     drive = ChargeDrive(chip["q"], label="xy")
     chip.wire(drive)
     sequence = QuantumSequence(chip)
     sequence.schedule(
         drive,
-        envelope=Gaussian(duration=20.0, amplitude=0.02, sigmas=3.0),
+        envelope=Square(duration=20.0, amplitude=0.02, phase=0.1),
         freq=5.0,
     )
 
@@ -68,6 +69,26 @@ def test_sequence_parameters_rebind_chip_and_pulse_values_directly() -> None:
     assert rebound.parameters["q.freq"] == 5.1
     assert rebound.parameters["pulse.0.amplitude"] == 0.04
     assert rebound.settings["entries"] == ("PulseEntry",)
+    assert sequence.vary("q.freq", [4.9, 5.1]).field == "q.freq"
+    pulse_axis = sequence.vary("pulse.0.amplitude", [0.01, 0.02])
+    assert pulse_axis.field == "pulse.0.amplitude"
+    batch = sequence.build_batch(pulse_axis, tlist=np.linspace(0.0, 20.0, 21))
+    assert batch.params_at(1)["pulse.0.amplitude"] == 0.02
+
+    captured: list[tuple[float, float]] = []
+    materialize = sequence._materialize_drive_ops
+
+    def capture(overrides=None):
+        ops = materialize(overrides)
+        captured.extend((float(op.envelope.phase), float(op.phase_offset)) for op in ops)
+        return ops
+
+    monkeypatch.setattr(sequence, "_materialize_drive_ops", capture)
+    envelope_phase = sequence.vary("pulse.0.envelope.phase", [0.2, 0.3])
+    sequence.build_batch(envelope_phase, tlist=np.linspace(0.0, 20.0, 21))
+    assert (0.3, 0.0) in captured
+    with pytest.raises(ValueError, match="Available"):
+        sequence.vary("basis", ["native", "eigen"])
 
 
 def test_sequence_reserves_scheduled_pulse_parameter_namespace() -> None:
@@ -111,6 +132,41 @@ def test_chip_with_params_is_differentiable_on_dynamiqs() -> None:
         return energies[1] - energies[0]
 
     assert jax.grad(first_transition)(5.0) == pytest.approx(1.0)
+
+    from quchip import ChargeBasisTransmon
+
+    circuit = ChargeBasisTransmon(
+        E_C=0.25,
+        E_J=12.0,
+        num_basis=7,
+        basis="eigen",
+        levels=3,
+        label="circuit",
+    )
+    line = ChargeDrive(circuit, label="xy")
+    circuit_chip = Chip([circuit], frame="rotating", backend=DynamiqsBackend())
+    circuit_chip.wire(line)
+    sequence = QuantumSequence(circuit_chip)
+    sequence.schedule(line, envelope=Square(duration=4.0, amplitude=0.02), freq=4.65)
+    tlist = jnp.linspace(0.0, 4.0, 12)
+    observable = circuit.number_operator()
+
+    def driven_batch_loss(E_J):
+        axis = sequence.vary("circuit.E_J", jnp.asarray([E_J - 0.1, E_J + 0.1]))
+        results = sequence.simulate_batch(
+            axis,
+            tlist=tlist,
+            e_ops={circuit: observable},
+            progress=False,
+            check_truncation=False,
+        )
+        population = results.population(circuit, level=1, reduce="last")
+        number = results.expect(circuit, reduce="last")
+        return jnp.sum(population + 0.01 * jnp.real(number))
+
+    gradient = jax.jit(jax.grad(driven_batch_loss))(12.0)
+    assert jnp.isfinite(gradient)
+    assert abs(float(gradient)) > 1e-8
 
 
 def test_chip_parameter_inventory_includes_drive_control_and_bath_owners() -> None:
@@ -188,3 +244,15 @@ def test_active_noise_is_rebindable_and_retained_in_engine_result() -> None:
     term = build_problem(chip, [], jnp.asarray([0.0, 1.0])).engine_result.collapse_terms[0]
     assert term.parameter_paths == ("q.T1",)
     assert term.latex() == r"\hat L_{q,thermal_emission}\!\left(T_{1,q}\right)"
+
+    sequence = QuantumSequence(chip)
+    decay = sequence.vary("q.T1", jnp.asarray([80.0, 120.0]), name="T1")
+    results = sequence.simulate_batch(
+        decay,
+        tlist=jnp.linspace(0.0, 2.0, 8),
+        initial_state={"q": 1},
+        progress=False,
+        check_truncation=False,
+    )
+    excited = results.population("q", level=1, reduce="last")
+    assert excited[0] < excited[1]

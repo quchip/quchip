@@ -2,7 +2,7 @@
 
 quchip separates *physics description* from *solver conversion*: the engine
 (``quchip.engine``) emits structured IR (``EngineResult``,
-``SolveProblem``, ``SolveBinding``, ``SolveBatch``) that
+``SolveProblem`` and ``SolveBatch``) that
 carries ordinary-GHz frequencies and backend-free operator payloads
 (``CanonicalOperator``). Each concrete backend is free to translate that IR
 into whatever native form its solver likes best — this module only fixes the
@@ -673,12 +673,9 @@ class Backend(ABC):
         or ``sesolve`` otherwise, unless ``problem.solver`` forces a choice.
         """
         prepared = self.prepare_hamiltonian(problem.engine_result, problem.tlist)
-        tlist_arr = self.array_module.asarray(problem.tlist, dtype=float)
-
-        c_ops = self._collapse_operators(problem.engine_result)
-        solver = problem.solver or ("mesolve" if c_ops else "sesolve")
-        opts = self._merge_options(problem.options, metadata=prepared.metadata, tlist=tlist_arr)
-        e_ops_arg = problem.e_ops if isinstance(problem.e_ops, list) else None
+        tlist_arr, c_ops, solver, opts, e_ops_arg = self._resolve_solve_config(
+            problem, prepared
+        )
         psi0 = self.coerce_state(problem.initial_state, dims=problem.chip.dims)
 
         if solver == "sesolve":
@@ -712,7 +709,7 @@ class Backend(ABC):
         return None
 
     def prepare_batch(self, batch: "SolveBatch") -> "PreparedBatch":
-        """Lower one problem plus its bindings into a prepared batch.
+        """Lower each explicit batch problem into a prepared batch.
 
         The return type declares the batching strategy:
         :class:`~quchip.backend.containers.EagerBatch` (one RHS per element),
@@ -749,8 +746,6 @@ class Backend(ABC):
             return []
 
         prepared = self.prepare_batch(batch)
-        tlist_arr, c_ops, solver_name, opts, e_ops_arg = self._resolve_batch_config(batch, prepared)
-
         if isinstance(prepared, DeferredBatch):
             raise RuntimeError(
                 f"{type(self).__name__}.prepare_batch produced a DeferredBatch; "
@@ -760,20 +755,34 @@ class Backend(ABC):
             )
 
         dict_problems: list[dict[str, Any]] = []
+        solver_names: list[str] = []
         for idx in range(batch.batch_size):
+            problem = batch.element(idx)
             rhs = prepared.rhs if isinstance(prepared, VmappedBatch) else prepared.rhs_list[idx]
+            tlist_arr = self.array_module.asarray(problem.tlist, dtype=float)
+            c_ops = self._collapse_operators(problem.engine_result)
+            solver_name = problem.solver or ("mesolve" if c_ops else "sesolve")
+            solver_names.append(solver_name)
+            opts = self._merge_options(
+                problem.options,
+                metadata=problem.engine_result.metadata,
+                tlist=tlist_arr,
+            )
             dict_problems.append(
                 self._element_solver_kwargs(
                     solver_name,
                     rhs,
-                    batch.initial_states[idx],
+                    problem.initial_state,
                     tlist_arr,
-                    e_ops=e_ops_arg,
+                    e_ops=problem.e_ops if isinstance(problem.e_ops, list) else None,
                     c_ops=c_ops,
                     options=dict(opts),
                 )
             )
 
+        if len(set(solver_names)) != 1:
+            raise ValueError("Every SolveBatch point must resolve to the same solver.")
+        solver_name = solver_names[0]
         runner = self.batched_mesolve if solver_name == "mesolve" else self.batched_sesolve
         return runner(dict_problems, progress=progress)
 
@@ -843,32 +852,29 @@ class Backend(ABC):
         merged.update(user_options)
         return self.resolve_solver_options(merged, metadata=metadata, tlist=tlist)
 
-    def _resolve_batch_config(
+    def _resolve_solve_config(
         self,
-        batch: Any,
+        problem: Any,
         prepared: Any,
-        *,
-        engine_result: "EngineResult | None" = None,
     ) -> tuple[Any, list[Any], str, dict[str, Any], list[Any] | None]:
-        """Resolve the per-batch solve configuration shared by every backend.
+        """Resolve one problem's backend-independent solve configuration.
 
         Coerces the save grid (via :attr:`array_module`), assembles collapse
         operators, selects the solver (``mesolve`` when collapse operators are
-        present, unless ``batch.solver`` forces a choice), and merges options
+        present, unless ``problem.solver`` forces a choice), and merges options
         through the single boundary. Returns
         ``(tlist_arr, c_ops, solver_name, opts, e_ops_arg)``; each backend
         contributes only its RHS-sourcing + native-solve dispatch tail.
 
-        *prepared* supplies advisory metadata. Single-problem callers pass
-        *engine_result* explicitly; batches use their shared problem.
+        ``prepared`` supplies advisory metadata; physics and user options come
+        from the frozen problem.
         """
-        if engine_result is None:
-            engine_result = batch.problem.engine_result
-        tlist_arr = self.array_module.asarray(batch.tlist, dtype=float)
+        engine_result = problem.engine_result
+        tlist_arr = self.array_module.asarray(problem.tlist, dtype=float)
         c_ops = self._collapse_operators(engine_result)
-        solver_name = batch.solver or ("mesolve" if c_ops else "sesolve")
-        opts = self._merge_options(batch.options, metadata=prepared.metadata, tlist=tlist_arr)
-        e_ops_arg = batch.e_ops if isinstance(batch.e_ops, list) else None
+        solver_name = problem.solver or ("mesolve" if c_ops else "sesolve")
+        opts = self._merge_options(problem.options, metadata=prepared.metadata, tlist=tlist_arr)
+        e_ops_arg = problem.e_ops if isinstance(problem.e_ops, list) else None
         return tlist_arr, c_ops, solver_name, opts, e_ops_arg
 
     def _collapse_operators(self, engine_result: "EngineResult") -> list[Operator]:

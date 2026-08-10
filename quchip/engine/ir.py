@@ -1129,6 +1129,35 @@ class EngineResult:
         return "\n".join(lines)
 
 
+def _aggregate_batch_metadata(engine_results: list[EngineResult]) -> dict[str, Any]:
+    """Conservatively combine advisory solver hints across batch points."""
+    metadata = dict(engine_results[0].metadata)
+    for key in ("max_carrier_freq_ghz", "spectral_bound_ghz", "max_step_ns"):
+        metadata.pop(key, None)
+
+    carrier_values = [
+        result.metadata["max_carrier_freq_ghz"]
+        for result in engine_results
+        if "max_carrier_freq_ghz" in result.metadata
+    ]
+    if carrier_values:
+        metadata["max_carrier_freq_ghz"] = max(carrier_values)
+
+    spectral_values = [
+        result.metadata["spectral_bound_ghz"]
+        for result in engine_results
+        if "spectral_bound_ghz" in result.metadata
+    ]
+    if spectral_values:
+        metadata["spectral_bound_ghz"] = max(spectral_values)
+
+    step_values = [result.metadata.get("max_step_ns") for result in engine_results]
+    non_none = [value for value in step_values if value is not None]
+    if len(non_none) == len(step_values) and non_none:
+        metadata["max_step_ns"] = min(non_none)
+    return metadata
+
+
 # ── Compiled Sweep Templates ────────────────────────────────────────
 #
 # Pure caches reused across homogeneous drive sweeps: the underlying
@@ -1278,75 +1307,61 @@ class SolveProblem:
 
 
 @dataclass(frozen=True)
-class SolveBinding:
-    """Numerical leaves that vary around one shared :class:`SolveProblem`."""
-
-    initial_state: Any
-    dynamic_signals: tuple[ScalarModulation, ...]
-    metadata: dict[str, Any] = field(default_factory=dict)
-    dropped_terms: tuple[DroppedTerm, ...] = ()
-
-
-@dataclass(frozen=True)
 class SolveBatch:
-    """One solve problem plus explicit numerical bindings for each point."""
+    """Explicit solve problems sharing one dispatch owner and sweep shape."""
 
-    problem: SolveProblem
-    bindings: tuple[SolveBinding, ...]
+    chip: Any
+    problems: tuple[SolveProblem, ...]
     params: Any = None
     shape: tuple[int, ...] = ()
     axes: tuple[tuple[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
-        if self.problem is None:
+        if not self.problems:
             return
-        expected = len(self.problem.engine_result.dynamic_terms)
-        for index, binding in enumerate(self.bindings):
-            actual = len(binding.dynamic_signals)
-            if actual != expected:
+        reference = self.problems[0]
+        expected_dynamic = len(reference.engine_result.dynamic_terms)
+        expected_dims = tuple(reference.engine_result.dims)
+        for index, problem in enumerate(self.problems):
+            actual_dynamic = len(problem.engine_result.dynamic_terms)
+            if actual_dynamic != expected_dynamic:
                 raise ValueError(
-                    f"SolveBinding {index} has {actual} dynamic signals; expected {expected}."
+                    f"SolveProblem {index} has {actual_dynamic} dynamic terms; expected {expected_dynamic}."
                 )
+            if tuple(problem.engine_result.dims) != expected_dims:
+                raise ValueError(
+                    f"SolveProblem {index} has dims {tuple(problem.engine_result.dims)}; "
+                    f"expected {expected_dims}. Structural settings cannot vary in a SolveBatch."
+                )
+            if problem.solver != reference.solver or problem.options != reference.options:
+                raise ValueError("Every SolveProblem in a SolveBatch must share solver options.")
+            if problem.tlist is not reference.tlist:
+                if contains_tracer((problem.tlist, reference.tlist)):
+                    raise ValueError("Every SolveProblem in a SolveBatch must share one traced time grid.")
+                if not np.array_equal(np.asarray(problem.tlist), np.asarray(reference.tlist)):
+                    raise ValueError(
+                        "Every SolveProblem in a SolveBatch must share one time grid; "
+                        "use solve_many() for heterogeneous grids."
+                    )
 
     @property
     def batch_size(self) -> int:
-        return len(self.bindings)
+        return len(self.problems)
 
     @property
     def initial_states(self) -> tuple[Any, ...]:
-        return tuple(binding.initial_state for binding in self.bindings)
-
-    @property
-    def chip(self) -> Any:
-        return self.problem.chip
+        return tuple(problem.initial_state for problem in self.problems)
 
     @property
     def tlist(self) -> Any:
-        return self.problem.tlist
-
-    @property
-    def e_ops(self) -> Any:
-        return self.problem.e_ops
-
-    @property
-    def e_ops_meta(self) -> Any:
-        return self.problem.e_ops_meta
-
-    @property
-    def resolved_frame(self) -> Any:
-        return self.problem.resolved_frame
-
-    @property
-    def solver(self) -> str | None:
-        return self.problem.solver
-
-    @property
-    def options(self) -> dict[str, Any]:
-        return self.problem.options
+        return self.problems[0].tlist
 
     def signals_for(self, slot: int) -> tuple[ScalarModulation, ...]:
-        """Return one dynamic slot across all binding points."""
-        return tuple(binding.dynamic_signals[slot] for binding in self.bindings)
+        """Return one dynamic slot across all batch points."""
+        return tuple(
+            problem.engine_result.dynamic_terms[slot].time_dependence
+            for problem in self.problems
+        )
 
     def __len__(self) -> int:
         return self.batch_size
@@ -1372,18 +1387,7 @@ class SolveBatch:
         return dict(self.params[coordinate].items())
 
     def element(self, index: int) -> SolveProblem:
-        binding = self.bindings[index]
-        reference = self.problem.engine_result
-        engine_result = replace(
-            reference,
-            dynamic_terms=tuple(
-                replace(term, time_dependence=signal)
-                for term, signal in zip(reference.dynamic_terms, binding.dynamic_signals)
-            ),
-            metadata=dict(binding.metadata),
-            dropped_terms=binding.dropped_terms,
-        )
-        return replace(self.problem, engine_result=engine_result, initial_state=binding.initial_state)
+        return self.problems[index]
 
 
 # ── Drive Operation ─────────────────────────────────────────────────
