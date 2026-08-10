@@ -339,6 +339,17 @@ def _canonical_band_from_single_weight(
     )
 
 
+def _sandwich_canonical(canonical: CanonicalOperator, left: Any, right: Any) -> CanonicalOperator:
+    """Densely sandwich an operator while preserving its canonical metadata."""
+    return CanonicalOperator.from_dense(
+        left @ canonical_to_dense_array(canonical) @ right,
+        dims=canonical.dims,
+        basis=canonical.basis,
+        subsystem_labels=canonical.subsystem_labels,
+        tag=canonical.tag,
+    )
+
+
 def decompose_canonical_bands(
     canonical: CanonicalOperator,
     dim: int,
@@ -366,22 +377,9 @@ def decompose_canonical_bands(
 
     if semantic_to_solver is not None:
         transform = semantic_to_solver
-        semantic = transform.conj().T @ canonical_to_dense_array(canonical) @ transform
-        semantic_canonical = CanonicalOperator.from_dense(
-            semantic,
-            dims=canonical.dims,
-            basis=canonical.basis,
-            subsystem_labels=canonical.subsystem_labels,
-            tag=canonical.tag,
-        )
+        semantic_canonical = _sandwich_canonical(canonical, transform.conj().T, transform)
         return {
-            weight: CanonicalOperator.from_dense(
-                transform @ band.to_dense() @ transform.conj().T,
-                dims=canonical.dims,
-                basis=canonical.basis,
-                subsystem_labels=canonical.subsystem_labels,
-                tag=canonical.tag,
-            )
+            weight: _sandwich_canonical(band, transform, transform.conj().T)
             for weight, band in decompose_canonical_bands(
                 semantic_canonical,
                 dim,
@@ -448,22 +446,9 @@ def decompose_two_body_canonical_bands(
 
     if semantic_to_solver is not None:
         transform = semantic_to_solver
-        semantic = transform.conj().T @ canonical_to_dense_array(canonical) @ transform
-        semantic_canonical = CanonicalOperator.from_dense(
-            semantic,
-            dims=canonical.dims,
-            basis=canonical.basis,
-            subsystem_labels=canonical.subsystem_labels,
-            tag=canonical.tag,
-        )
+        semantic_canonical = _sandwich_canonical(canonical, transform.conj().T, transform)
         return {
-            weights: CanonicalOperator.from_dense(
-                transform @ band.to_dense() @ transform.conj().T,
-                dims=canonical.dims,
-                basis=canonical.basis,
-                subsystem_labels=canonical.subsystem_labels,
-                tag=canonical.tag,
-            )
+            weights: _sandwich_canonical(band, transform, transform.conj().T)
             for weights, band in decompose_two_body_canonical_bands(
                 semantic_canonical,
                 dims,
