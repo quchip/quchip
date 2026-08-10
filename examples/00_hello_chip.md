@@ -46,18 +46,18 @@ qubit = DuffingTransmon(
     freq=5.0,
     anharmonicity=-0.30,
     levels=6,
-    label="qubit",
+    label="q",
 )
 readout = Resonator(
     freq=6.8,
     levels=10,
     quality_factor=6.8 / resonator_linewidth,
-    label="readout",
+    label="r",
 )
 chip = Chip(
     [qubit, readout],
     couplings=[
-        Capacitive(qubit, readout, g=0.060, rwa=True, label="qubit-readout")
+        Capacitive(qubit, readout, g=0.060, rwa=True, label="qr")
     ],
     frame="rotating",
     rwa=True,
@@ -65,6 +65,16 @@ chip = Chip(
 qubit_line = ChargeDrive(qubit, label="qubit-charge")
 readout_line = ChargeDrive(readout, label="readout-charge")
 _ = chip.wire(qubit_line, readout_line)
+```
+
+## Inspect the symbolic Hamiltonian
+
+Before scheduling a pulse, inspect the chip's symbolic static Hamiltonian. The
+labels `q`, `r`, and `qr` become compact operator subscripts; call `.matrix()`
+only when a numerical array is needed.
+
+```python
+chip.hamiltonian()
 ```
 
 ## Part 1: Qubit drive and leakage
@@ -272,7 +282,7 @@ readout_batch = readout_sequence.simulate_batch(
         name="prepared_qubit",
     ),
     tlist=readout_times,
-    e_ops=chip.e_ops(readout="a"),
+    e_ops=chip.e_ops(r="a"),
     progress=False,
     truncation_threshold=truncation_threshold,
 )
@@ -281,7 +291,7 @@ readout_batch = readout_sequence.simulate_batch(
 The solver returns $\alpha(t)=\langle a\rangle$; its real and imaginary parts trace the IQ response for each prepared state.
 
 ```python
-alpha = np.asarray(readout_batch.expect("readout"), dtype=complex)
+alpha = np.asarray(readout_batch.expect("r"), dtype=complex)
 readout_receipt = {
     "conditional_resonator_frequencies_ghz": readout_frequencies,
     "final_iq_separation": float(abs(alpha[0, -1] - alpha[1, -1])),
