@@ -60,7 +60,7 @@ from quchip.backend import _backend_context
 from quchip.backend.protocol import Backend, Operator
 from quchip.control.drive import BaseDrive
 from quchip.control.signal_spec import DriveSignalSpec, DriveModulation
-from quchip.declarative.expr import materialize_expr
+from quchip.declarative.expr import materialize_array, materialize_expr
 from quchip.engine.ir import HamiltonianTemplate
 from quchip.engine.ir import (
     CanonicalOperator,
@@ -82,6 +82,7 @@ from quchip.engine.ir import (
     Window,
 )
 from quchip.engine.ir import simplify_signal as _simplify_signal
+from quchip.engine.basis import BasisRecord, resolve_local_basis
 from quchip.engine.solver_hints import _solver_hint_metadata, _static_diagonal_span
 from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import array_namespace, maybe_concrete_scalar
@@ -298,7 +299,65 @@ def _coefficient_from_modulation(
 
 # -- Static Hamiltonian --------------------------------------------------
 
-def _build_static_h0(chip: "Chip", resolved_frame: "ResolvedFrame", backend: Backend) -> Operator:
+
+@dataclass(frozen=True)
+class _LocalResolution:
+    bases: dict[str, BasisRecord]
+    hamiltonians: tuple[Operator, ...]
+    dims: tuple[int, ...]
+
+
+def _resolve_local_system(chip: "Chip", backend: Backend) -> _LocalResolution:
+    bases: dict[str, BasisRecord] = {}
+    hamiltonians: list[Operator] = []
+    dims: list[int] = []
+    for device in chip.devices:
+        matrix = materialize_array(device.hamiltonian())
+        policy = chip.resolve_basis(device)
+        levels = device.resolved_dimension(chip.basis) if policy == "eigen" else None
+        record = resolve_local_basis(matrix, basis=policy, levels=levels)
+        bases[device.label] = record
+        dims.append(record.resolved_dim)
+        hamiltonians.append(
+            backend.from_array(
+                record.transform_operator(matrix),
+                dims=[[record.resolved_dim], [record.resolved_dim]],
+            )
+        )
+    return _LocalResolution(
+        bases=bases,
+        hamiltonians=tuple(hamiltonians),
+        dims=tuple(dims),
+    )
+
+
+def _resolved_coupling_operator(
+    coupling: Any,
+    resolution: _LocalResolution,
+    backend: Backend,
+) -> Operator:
+    matrix = materialize_array(coupling.interaction_hamiltonian())
+    basis_a = resolution.bases[coupling.device_a_label]
+    basis_b = resolution.bases[coupling.device_b_label]
+    xp = array_namespace(basis_a.vectors)
+    transform = xp.kron(basis_a.vectors, basis_b.vectors)
+    projected = transform.conj().T @ matrix @ transform
+    return backend.from_array(
+        projected,
+        dims=[
+            [basis_a.resolved_dim, basis_b.resolved_dim],
+            [basis_a.resolved_dim, basis_b.resolved_dim],
+        ],
+    )
+
+
+def _build_static_h0(
+    chip: "Chip",
+    resolved_frame: "ResolvedFrame",
+    backend: Backend,
+    resolution: _LocalResolution,
+    static_couplings: list[Operator],
+) -> Operator:
     """Build the frame-subtracted static Hamiltonian in angular units.
 
     .. math::
@@ -310,12 +369,25 @@ def _build_static_h0(chip: "Chip", resolved_frame: "ResolvedFrame", backend: Bac
     per-device frame reference from stage 1. This function is one of the
     four places in the engine where the 2π boundary is crossed.
     """
-    h0 = TWO_PI * materialize_expr(chip.hamiltonian(), backend)
-    dims = chip.dims
+    dims = resolution.dims
+    h0: Operator | None = None
+    for idx, local in enumerate(resolution.hamiltonians):
+        embedded = backend.embed(local, idx, dims)
+        h0 = embedded if h0 is None else h0 + embedded
+    for embedded in static_couplings:
+        h0 = embedded if h0 is None else h0 + embedded
+    if h0 is None:
+        raise ValueError("A chip must contain at least one device.")
+    h0 = TWO_PI * h0
     for idx, dev in enumerate(chip.devices):
         omega_ref = resolved_frame.frequencies.get(dev.label, 0.0)
         with _backend_context(backend):
-            n_emb = backend.embed(dev.number_operator(), idx, dims)
+            record = resolution.bases[dev.label]
+            level_operator = backend.from_array(
+                record.level_operator(),
+                dims=[[record.resolved_dim], [record.resolved_dim]],
+            )
+            n_emb = backend.embed(level_operator, idx, dims)
         h0 = h0 - TWO_PI * omega_ref * n_emb
     return h0
 
@@ -416,24 +488,26 @@ def _modulated_dynamic_term(
 
 # -- Coupling terms ------------------------------------------------------
 
-def _collect_coupling_terms(
+def _resolve_coupling_terms(
     chip: "Chip",
     resolved_frame: "ResolvedFrame",
     backend: Backend,
-) -> tuple[list[Operator], list[tuple[Operator, ScalarModulation]], list[DroppedTerm]]:
-    """Band-resolve couplings into ``(static_folds, (td_operator, modulation), dropped)``.
+    resolution: _LocalResolution,
+) -> tuple[
+    list[Operator],
+    list[Operator],
+    list[tuple[Operator, ScalarModulation]],
+    list[DroppedTerm],
+]:
+    """Project and band-resolve every coupling once.
 
-    Each coupling's *full* interaction is decomposed into ``(Δa, Δb)``
-    excitation-change bands. Under resolved RWA, bands the coupling's
-    ``rwa_keeps_band`` rejects are elided and reported as advisory
-    :class:`DroppedTerm` records — the same bands
-    :meth:`Chip.hamiltonian`'s mask removed from ``H₀``, so nothing is
-    double-counted. Retained bands whose frame carrier
+    Returns the static interaction included in ``H₀``, frame corrections,
+    dynamic carrier terms, and dropped-band records. Under resolved RWA,
+    rejected bands are omitted from the static interaction. Retained bands
+    whose frame carrier
     ``Δa·ω_a + Δb·ω_b`` is *concretely* zero are already static inside
-    ``H₀`` and stay there; a non-RWA coupling whose two frame references
-    are both concretely zero skips the decomposition entirely (every
-    band folds, nothing is dropped). Every other retained band is
-    subtracted from ``H₀`` and re-attached with its carrier
+    ``H₀`` and stay there. Every other retained band is subtracted from
+    ``H₀`` and re-attached with its carrier
 
     .. math::
         \\exp\\!\\left(-i\\,(\\Delta_a \\omega_a + \\Delta_b \\omega_b)\\,t\\right),
@@ -444,10 +518,11 @@ def _collect_coupling_terms(
     with :func:`maybe_concrete_scalar`, never by branching on a tracer.
     All emitted operators already carry the 2π factor.
     """
-    coupling_static: list[Operator] = []
+    interactions: list[Operator] = []
+    frame_corrections: list[Operator] = []
     td_terms: list[tuple[Operator, ScalarModulation]] = []
     dropped: list[DroppedTerm] = []
-    dims = chip.dims
+    dims = resolution.dims
     label_to_index = {dev.label: i for i, dev in enumerate(chip.devices)}
 
     for coupling in chip.couplings:
@@ -458,28 +533,26 @@ def _collect_coupling_terms(
         omega_a = resolved_frame.frequencies.get(pair[0], 0.0)
         omega_b = resolved_frame.frequencies.get(pair[1], 0.0)
 
-        # Without RWA and with both frame references concretely zero (lab
-        # mode, or a shared-zero dict frame), every band's carrier is
-        # concretely zero and nothing is dropped: the full interaction is
-        # already static inside H₀, so the decomposition would be discarded
-        # band by band. Skip it outright.
+        h_full = _resolved_coupling_operator(coupling, resolution, backend)
+
+        # In a zero frame, a non-RWA interaction remains wholly static and
+        # needs no band decomposition.
         if not rwa:
             conc_a = maybe_concrete_scalar(omega_a)
             conc_b = maybe_concrete_scalar(omega_b)
             if conc_a is not None and conc_a == 0.0 and conc_b is not None and conc_b == 0.0:
+                interactions.append(backend.embed_two_body(h_full, idx_a, idx_b, dims))
                 continue
 
-        with _backend_context(backend):
-            h_full = materialize_expr(coupling.interaction_hamiltonian(), backend)
-
-        d_a = chip.devices[idx_a].levels
-        d_b = chip.devices[idx_b].levels
+        d_a = resolution.bases[pair[0]].resolved_dim
+        d_b = resolution.bases[pair[1]].resolved_dim
         canonical = backend.to_canonical_operator(h_full).with_metadata(
             dims=(d_a, d_b),
             subsystem_labels=pair,
             tag="coupling_local",
         )
         sub_bands = decompose_two_body_canonical_bands(canonical, [d_a, d_b])
+        retained: list[Operator] = []
         for (delta_a, delta_b), band_canonical in sub_bands.items():
             osc_freq = delta_a * omega_a + delta_b * omega_b
             if rwa and not coupling.rwa_keeps_band(delta_a, delta_b):
@@ -501,15 +574,24 @@ def _collect_coupling_terms(
                     )
                 )
                 continue
+            band_op = backend.from_canonical_operator(band_canonical)
+            retained.append(band_op)
             concrete_osc = maybe_concrete_scalar(osc_freq)
             if concrete_osc is not None and concrete_osc == 0.0:
                 continue
-            band_op = backend.from_canonical_operator(band_canonical)
             embedded = backend.embed_two_body(band_op, idx_a, idx_b, dims)
             scaled = TWO_PI * embedded
-            coupling_static.append(-scaled)
+            frame_corrections.append(-scaled)
             td_terms.append((scaled, ScalarModulation(signal=Carrier(freq=TWO_PI * osc_freq, sign=-1))))
-    return coupling_static, td_terms, dropped
+
+        if rwa:
+            if retained:
+                local_static = sum(retained[1:], start=retained[0])
+                interactions.append(backend.embed_two_body(local_static, idx_a, idx_b, dims))
+        else:
+            interactions.append(backend.embed_two_body(h_full, idx_a, idx_b, dims))
+
+    return interactions, frame_corrections, td_terms, dropped
 
 # -- Drive resolution ----------------------------------------------------
 
@@ -1055,12 +1137,24 @@ def compile_hamiltonian_template(
     through JAX without retracing operator tensors.
     """
     backend = chip.backend
-    dims = tuple(chip.dims)
+    resolution = _resolve_local_system(chip, backend)
+    dims = resolution.dims
     subsystem_labels = tuple(d.label for d in chip.devices)
 
-    h0 = _build_static_h0(chip, resolved_frame, backend)
-    coupling_static, coupling_td, coupling_dropped = _collect_coupling_terms(chip, resolved_frame, backend)
-    for op in coupling_static:
+    coupling_h0, coupling_frame_static, coupling_td, coupling_dropped = _resolve_coupling_terms(
+        chip,
+        resolved_frame,
+        backend,
+        resolution,
+    )
+    h0 = _build_static_h0(
+        chip,
+        resolved_frame,
+        backend,
+        resolution,
+        coupling_h0,
+    )
+    for op in coupling_frame_static:
         h0 = h0 + op
 
     # The coupling fold above cancels the lab-frame interaction out of H₀
@@ -1149,6 +1243,8 @@ def compile_hamiltonian_template(
         weight_zero_drops=weight_zero_drops,
         static_spectral_bound_ghz=static_spectral_bound_ghz,
         collapse_terms=_collect_collapse_terms(chip, backend),
+        bases=resolution.bases,
+        authored=chip.hamiltonian(),
     )
 
 
@@ -1240,6 +1336,8 @@ def instantiate_engine_result(
         metadata=metadata,
         dropped_terms=template.dropped_terms + tuple(fresh_dropped),
         collapse_terms=template.collapse_terms,
+        bases=template.bases,
+        authored=template.authored,
     )
 
 

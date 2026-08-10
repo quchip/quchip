@@ -71,16 +71,17 @@ def test_custom_space_accepts_named_matrices_and_pure_jax_callables() -> None:
 
 def test_eigen_basis_record_exposes_and_applies_the_local_transform() -> None:
     hamiltonian = jnp.asarray([[1.0, 0.2, 0.0], [0.2, 2.0, 0.0], [0.0, 0.0, 5.0]])
-    operator = jnp.asarray([[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 3.0]])
 
     basis = resolve_local_basis(hamiltonian, basis="eigen", levels=2)
 
     assert basis.native_dim == 3
     assert basis.resolved_dim == 2
-    np.testing.assert_allclose(basis.projector, basis.vectors @ basis.vectors.conj().T)
+    np.testing.assert_allclose(basis.projector, basis.projector.conj().T)
+    np.testing.assert_allclose(basis.projector @ basis.projector, basis.projector, atol=1e-12)
     np.testing.assert_allclose(
-        basis.transform_operator(operator),
-        basis.vectors.conj().T @ operator @ basis.vectors,
+        basis.transform_operator(hamiltonian),
+        np.diag(basis.energies),
+        atol=1e-12,
     )
 
 

@@ -25,9 +25,10 @@ def _reset():
 
 
 def test_constructor_accepts_energies():
-    """Positive E_C and E_J construct a device with the requested level count."""
+    """Native and projected dimensions remain distinct."""
     q = ChargeBasisTransmon(E_C=0.25, E_J=20.0, levels=3)
-    assert q.levels == 3
+    assert q.local_space().dimension == 61
+    assert q.projection_levels == 3
 
 
 def test_invalid_energies_raise_on_concrete():
@@ -65,14 +66,14 @@ def test_computational_property():
 
 def test_flux_coupling_channel_rejected_at_construction():
     """ChargeBasisTransmon has no flux bath model; coupling_channel='flux' raises at construction."""
-    with pytest.raises(ValueError, match="flux bath model"):
+    with pytest.raises(ValueError, match="coupling_channel"):
         ChargeBasisTransmon(E_C=0.25, E_J=20.0, coupling_channel="flux")
 
 
 def test_flux_coupling_channel_rejected_on_write():
     """coupling_channel='flux' also raises on a post-construction write."""
     q = ChargeBasisTransmon(E_C=0.25, E_J=20.0, coupling_channel="charge")
-    with pytest.raises(ValueError, match="flux bath model"):
+    with pytest.raises(ValueError, match="coupling_channel"):
         q.coupling_channel = "flux"
 
 
@@ -115,7 +116,7 @@ def test_serialization_roundtrip():
     assert q2.E_C == q.E_C
     assert q2.E_J == q.E_J
     assert q2.n_g == q.n_g
-    assert q2.levels == q.levels
+    assert q2.projection_levels == q.projection_levels
     assert q2.label == q.label
     assert q2.T1 == q.T1
 

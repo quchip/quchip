@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import inspect
 import weakref
-from typing import Any, cast, dataclass_transform
+from typing import Any, ClassVar, cast, dataclass_transform
 
 import jax.tree_util as jtu
 
@@ -209,6 +209,7 @@ class DeviceModel(BaseDevice):
     _default_levels: int = 2
 
     __quchip_param_fields__: dict[str, Parameter] = {}
+    structural_setting_names: ClassVar[tuple[str, ...]] = ()
 
     # Whether *this class's own body* declared ``tunable_param_names``
     # explicitly, as opposed to getting the derived default. The ancestor
@@ -232,6 +233,7 @@ class DeviceModel(BaseDevice):
         # MUST be children, not aux data, for gradients to flow.
         param_names: tuple[str, ...] = tuple(param_fields.keys())
         children_names: tuple[str, ...] = param_names + _NOISE_FIELDS + ("_reference_freq_override",)
+        setting_names = cls.structural_setting_names
 
         def _flatten(obj: Any) -> tuple[tuple[Any, ...], tuple[Any, ...]]:
             # ``getattr`` defaults to ``None`` so an instance that never set
@@ -241,11 +243,12 @@ class DeviceModel(BaseDevice):
             # Aux data must be hashable (jit cache key). ``levels`` and
             # ``label`` are structural; ``children_names`` makes unflatten
             # unambiguous.
-            aux = (int(obj.levels), obj.label, children_names)
+            settings = tuple(getattr(obj, name) for name in setting_names)
+            aux = (int(obj.levels), obj.label, children_names, setting_names, settings)
             return children, aux
 
         def _unflatten(aux: tuple[Any, ...], children: tuple[Any, ...]) -> Any:
-            levels, label, names = aux
+            levels, label, names, names_of_settings, settings = aux
             obj = cls.__new__(cls)
             # Install structural state via object.__setattr__ to bypass
             # the tracked-mutation hook in BaseDevice.__setattr__. Do not
@@ -257,6 +260,8 @@ class DeviceModel(BaseDevice):
             object.__setattr__(obj, "label", label)
             object.__setattr__(obj, "_owner_chips", weakref.WeakSet())
             object.__setattr__(obj, "_connected_drives", [])
+            for name, value in zip(names_of_settings, settings):
+                object.__setattr__(obj, name, value)
             for name, value in zip(names, children):
                 object.__setattr__(obj, name, value)
             object.__setattr__(obj, "_tracking_enabled", True)

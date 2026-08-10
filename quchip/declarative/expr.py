@@ -7,6 +7,8 @@ from dataclasses import dataclass, field, replace
 from math import prod
 from typing import Any, Mapping
 
+import jax.numpy as jnp
+
 
 class UnboundParameterError(ValueError):
     """Numerical materialization was requested without every required value."""
@@ -388,6 +390,100 @@ def materialize_expr(
         raise TypeError(f"Unknown PhysicsExpr kind {node.kind!r}.")
 
     return lower(expr)
+
+
+class _ArrayLowerer:
+    """Minimal operator algebra for backend-independent JAX materialization."""
+
+    array_module = jnp
+
+    @staticmethod
+    def from_array(value: Any, dims: Any = None) -> Any:
+        del dims
+        return jnp.asarray(value, dtype=jnp.complex128)
+
+    @staticmethod
+    def to_array(value: Any) -> Any:
+        return jnp.asarray(value)
+
+    @staticmethod
+    def destroy(dimension: int) -> Any:
+        return jnp.diag(jnp.sqrt(jnp.arange(1, dimension)), 1).astype(jnp.complex128)
+
+    @staticmethod
+    def create(dimension: int) -> Any:
+        return _ARRAY_LOWERER.destroy(dimension).conj().T
+
+    @staticmethod
+    def number(dimension: int) -> Any:
+        return jnp.diag(jnp.arange(dimension, dtype=jnp.complex128))
+
+    @staticmethod
+    def identity(dimension: int) -> Any:
+        return jnp.eye(dimension, dtype=jnp.complex128)
+
+    @staticmethod
+    def basis(dimension: int, index: int) -> Any:
+        return jnp.zeros(dimension, dtype=jnp.complex128).at[index].set(1)
+
+    @staticmethod
+    def dag(value: Any) -> Any:
+        return jnp.asarray(value).conj().T
+
+    @staticmethod
+    def matmul(left: Any, right: Any) -> Any:
+        return left @ right
+
+    @staticmethod
+    def tensor(left: Any, right: Any) -> Any:
+        return jnp.kron(left, right)
+
+    @staticmethod
+    def embed(local: Any, target: int, dims: tuple[int, ...]) -> Any:
+        factors = [jnp.eye(dim, dtype=jnp.complex128) for dim in dims]
+        factors[target] = local
+        result = factors[0]
+        for factor in factors[1:]:
+            result = jnp.kron(result, factor)
+        return result
+
+    @staticmethod
+    def embed_two_body(local: Any, first: int, second: int, dims: tuple[int, ...]) -> Any:
+        if first > second:
+            first, second = second, first
+            local = jnp.asarray(local).reshape(
+                dims[second], dims[first], dims[second], dims[first]
+            ).transpose(1, 0, 3, 2).reshape(
+                dims[first] * dims[second], dims[first] * dims[second]
+            )
+        pair_shape = (dims[first], dims[second], dims[first], dims[second])
+        pair = jnp.asarray(local).reshape(pair_shape)
+        identities = [jnp.eye(dim, dtype=jnp.complex128) for dim in dims]
+        result = pair
+        active = [first, second]
+        for index, identity in enumerate(identities):
+            if index in active:
+                continue
+            result = jnp.tensordot(result, identity, axes=0)
+            active.append(index)
+        row_axes = [active.index(index) for index in range(len(dims))]
+        col_axes = [axis + len(dims) for axis in row_axes]
+        return result.transpose(*(row_axes + col_axes)).reshape(prod(dims), prod(dims))
+
+
+_ARRAY_LOWERER = _ArrayLowerer()
+
+
+def materialize_array(
+    expr: Any,
+    *,
+    bindings: Mapping[str, Any] | None = None,
+    t: Any | None = None,
+) -> Any:
+    """Materialize authored physics as a backend-independent JAX array."""
+    return _ARRAY_LOWERER.to_array(
+        materialize_expr(expr, _ARRAY_LOWERER, bindings=bindings, t=t)
+    )
 
 
 def filter_expr_bands(expr: PhysicsExpr, keeps_band: Any) -> PhysicsExpr | None:

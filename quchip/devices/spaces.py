@@ -20,8 +20,15 @@ class LocalSpace(ABC):
         """Return the authored local-space dimension."""
 
     @abstractmethod
+    def matrix(self, name: str) -> Any:
+        """Return one named operator as a JAX-compatible dense array."""
+
     def operator(self, name: str, backend: Any) -> Any:
         """Lower one named local operator through ``backend``."""
+        return backend.from_array(
+            self.matrix(name),
+            dims=[[self.dimension], [self.dimension]],
+        )
 
 
 @dataclass(frozen=True)
@@ -37,6 +44,29 @@ class FockSpace(LocalSpace):
     @property
     def dimension(self) -> int:
         return self.levels
+
+    def matrix(self, name: str) -> Any:
+        annihilation = jnp.diag(jnp.sqrt(jnp.arange(1, self.levels)), 1).astype(jnp.complex128)
+        if name == "a":
+            return annihilation
+        if name == "adag":
+            return annihilation.conj().T
+        if name == "n":
+            return jnp.diag(jnp.arange(self.levels, dtype=jnp.complex128))
+        if name == "I":
+            return jnp.eye(self.levels, dtype=jnp.complex128)
+        zero = jnp.zeros((self.levels, self.levels), dtype=jnp.complex128)
+        if name == "sigma_x":
+            return zero.at[0, 1].set(1).at[1, 0].set(1)
+        if name == "sigma_y":
+            return zero.at[0, 1].set(-1j).at[1, 0].set(1j)
+        if name == "sigma_z":
+            return zero.at[0, 0].set(1).at[1, 1].set(-1)
+        if name == "sigma_plus":
+            return zero.at[1, 0].set(1)
+        if name == "sigma_minus":
+            return zero.at[0, 1].set(1)
+        raise ValueError(f"Unknown Fock-space operator {name!r}.")
 
     def operator(self, name: str, backend: Any) -> Any:
         if name == "a":
@@ -79,7 +109,7 @@ class ChargeSpace(LocalSpace):
     def dimension(self) -> int:
         return self.num_basis
 
-    def operator(self, name: str, backend: Any) -> Any:
+    def matrix(self, name: str) -> Any:
         plus = jnp.eye(self.num_basis, k=1, dtype=jnp.complex128)
         minus = jnp.eye(self.num_basis, k=-1, dtype=jnp.complex128)
         if name == "n":
@@ -93,12 +123,16 @@ class ChargeSpace(LocalSpace):
             value = jnp.eye(self.num_basis, dtype=jnp.complex128)
         else:
             raise ValueError(f"Unknown charge-space operator {name!r}.")
-        return backend.from_array(value, dims=[[self.num_basis], [self.num_basis]])
+        return value
 
 
 @dataclass(frozen=True)
 class PhaseGridSpace(LocalSpace):
-    """Uniform finite phase grid with centered finite-difference charge."""
+    """Uniform endpoint-excluded phase grid with nonperiodic finite differences.
+
+    The centered-difference stencil does not wrap across the grid boundary;
+    values beyond either endpoint are treated as zero.
+    """
 
     points: int
     extent: float
@@ -113,7 +147,7 @@ class PhaseGridSpace(LocalSpace):
     def dimension(self) -> int:
         return self.points
 
-    def operator(self, name: str, backend: Any) -> Any:
+    def matrix(self, name: str) -> Any:
         phase = jnp.linspace(-self.extent, self.extent, self.points, endpoint=False)
         spacing = 2.0 * self.extent / self.points
         plus = jnp.eye(self.points, k=1, dtype=jnp.complex128)
@@ -133,7 +167,7 @@ class PhaseGridSpace(LocalSpace):
             value = jnp.eye(self.points, dtype=jnp.complex128)
         else:
             raise ValueError(f"Unknown phase-grid operator {name!r}.")
-        return backend.from_array(value, dims=[[self.points], [self.points]])
+        return value
 
 
 class CustomSpace(LocalSpace):
@@ -149,7 +183,7 @@ class CustomSpace(LocalSpace):
     def dimension(self) -> int:
         return self._dimension
 
-    def operator(self, name: str, backend: Any) -> Any:
+    def matrix(self, name: str) -> Any:
         try:
             provider = self.operators[name]
         except KeyError as exc:
@@ -160,7 +194,4 @@ class CustomSpace(LocalSpace):
                 f"Custom operator {name!r} must have shape "
                 f"{(self.dimension, self.dimension)}, got {getattr(value, 'shape', None)}."
             )
-        return backend.from_array(
-            value,
-            dims=[[self.dimension], [self.dimension]],
-        )
+        return value

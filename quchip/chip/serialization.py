@@ -13,7 +13,7 @@ the original.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from quchip.chip.coupling_base import BaseCoupling
 from quchip.control.equipment import ControlEquipment
@@ -45,6 +45,7 @@ def serialize_chip(chip: "Chip") -> dict[str, Any]:
         "label": chip.label,
         "frame": _serialize_frame(chip.frame),
         "rwa": chip.rwa,
+        "basis": chip.basis,
         "devices": [device.to_dict() for device in chip.devices],
         "couplings": [coupling.to_dict() for coupling in chip.couplings],
     }
@@ -93,6 +94,7 @@ def deserialize_chip(data: dict[str, Any]) -> "Chip":
         label=data.get("label"),
         frame=data.get("frame", "lab"),
         rwa=bool(data.get("rwa", True)),
+        basis=cast(Literal["native", "eigen"], data.get("basis", "native")),
         baths=baths or None,
     )
     if control_equipment is not None:
@@ -121,6 +123,7 @@ def clone_chip(chip: "Chip") -> "Chip":
         label=chip.label,
         frame=frame,
         rwa=chip.rwa,
+        basis=chip.basis,
         backend=chip._backend,
         baths=[bath.copy() for bath in chip.baths] or None,
     )
