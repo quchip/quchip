@@ -1,11 +1,13 @@
 name: ci
 
+# Installs are locked with ci-constraints-<python>.txt so runs are
+# reproducible; regenerate with tools/compile_ci_constraints.sh. The weekly
+# fresh-resolution check lives in deps-canary.yml.
+
 on:
   push:
     branches: [main]
   pull_request:
-  schedule:
-    - cron: "17 5 * * 1"
   workflow_dispatch:
 
 concurrency:
@@ -20,9 +22,11 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-          cache-dependency-glob: "pyproject.toml"
+          cache-dependency-glob: |
+            pyproject.toml
+            ci-constraints-*.txt
       - run: uv venv --python 3.11
-      - run: uv pip install -e '.[dev,test,dynamiqs]'
+      - run: uv pip install -e '.[dev,test,dynamiqs]' -c ci-constraints-3.11.txt
       - run: uv run ruff check .
       - run: uv run mypy quchip
 
@@ -37,9 +41,11 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-          cache-dependency-glob: "pyproject.toml"
+          cache-dependency-glob: |
+            pyproject.toml
+            ci-constraints-*.txt
       - run: uv venv --python ${{ matrix.python }}
-      - run: uv pip install -e '.[test]'
+      - run: uv pip install -e '.[test]' -c ci-constraints-${{ matrix.python }}.txt
       - run: uv run pytest -m "core or physics_sentinel"
 
   test-full:
@@ -50,7 +56,9 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-          cache-dependency-glob: "pyproject.toml"
+          cache-dependency-glob: |
+            pyproject.toml
+            ci-constraints-*.txt
       - run: uv venv --python 3.11
-      - run: uv pip install -e '.[test,dynamiqs]'
+      - run: uv pip install -e '.[test,dynamiqs]' -c ci-constraints-3.11.txt
       - run: uv run pytest
