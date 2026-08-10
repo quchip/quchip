@@ -1,0 +1,12 @@
+# Known-bad dependency versions excluded from CI resolution.
+#
+# These pins apply ONLY to CI (via ci-constraints.txt); package metadata in
+# pyproject.toml stays open so users are never restricted by them.
+#
+# Each entry must carry a reason and a removal condition.
+
+# qutip 5.3.1 switched Data.as_scipy() to SciPy's sparse-array API
+# (csr_array/csc_array). scqubits <= 4.3.1 only dispatches on the legacy
+# spmatrix types and raises TypeError in convert_operator_to_qobj.
+# Remove once a scqubits release supports sparse arrays.
+qutip<5.3.1

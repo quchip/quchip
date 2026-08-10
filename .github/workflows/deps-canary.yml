@@ -1,0 +1,56 @@
+name: deps-canary
+
+# Weekly early-warning check: install with a fresh, unconstrained dependency
+# resolution (ignoring the ci-constraints-*.txt lockfiles) and run the full
+# suite. A failure here means upstream drift, not a quchip regression, so it
+# files/updates a tracking issue instead of failing the ci workflow.
+
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  fresh-resolve:
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      - run: uv venv --python ${{ matrix.python }}
+      - run: uv pip install -e '.[dev,test,dynamiqs]'
+      - name: Report resolved versions
+        run: uv pip freeze
+      - run: uv run pytest
+
+  file-issue:
+    needs: fresh-resolve
+    if: failure()
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Open or update the tracking issue
+        run: |
+          gh label create deps-canary --force \
+            --description "Fresh dependency resolution broke the test suite" \
+            --color D93F0B
+          body="The [weekly deps-canary run]($RUN_URL) failed: a fresh (unconstrained) dependency resolution no longer passes the test suite.
+
+          This points at an upstream release, not a quchip regression — the \`ci\` workflow still installs from \`ci-constraints-*.txt\` and stays green. Compare the job's \`uv pip freeze\` output against the constraint files to find the changed package, then either add an exclusion to \`ci-constraints.in\` or fix the incompatibility, and regenerate with \`tools/compile_ci_constraints.sh\`."
+          existing=$(gh issue list --label deps-canary --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "deps-canary: fresh dependency resolution is failing" \
+              --label deps-canary --body "$body"
+          fi
