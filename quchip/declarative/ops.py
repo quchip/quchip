@@ -8,6 +8,7 @@ exposes one Hilbert-space endpoint's operators as composable
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from quchip.declarative.expr import PhysicsExpr
 from quchip.devices.spaces import ChargeSpace, FockSpace, LocalSpace, PhaseGridSpace
@@ -34,6 +35,7 @@ class LocalOps:
 
     label: str
     space: LocalSpace
+    device: Any = None
 
     def _op(self, name: str) -> PhysicsExpr:
         return PhysicsExpr(kind="op", args=(name, self.space), labels=(self.label,))
@@ -56,6 +58,20 @@ class LocalOps:
     def n(self) -> PhysicsExpr:
         """Number operator for this endpoint."""
         return self._op("n")
+
+    @property
+    def level(self) -> PhysicsExpr:
+        """Energy-level index operator in the authored local basis."""
+        if isinstance(self.space, FockSpace):
+            return self.n
+        if self.device is None:
+            raise ValueError("The energy-level operator requires a resolved device endpoint.")
+        return PhysicsExpr.from_matrix(
+            self.device.energy_level_operator(),
+            labels=(self.label,),
+            dims=(self.space.dimension,),
+            name=rf"\hat \ell_{{{self.label}}}",
+        )
 
     @property
     def n2(self) -> PhysicsExpr:

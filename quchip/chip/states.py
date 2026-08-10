@@ -257,7 +257,7 @@ def _bare_state_from_bases(
     resolved: Mapping[str, Any],
     bases: Mapping[str, Any],
 ) -> State:
-    """Build a solver ket from semantic levels or authored local arrays."""
+    """Build a solver ket from local level indices or authored local arrays."""
     backend = chip.backend
     available = list(chip._device_map.keys())
     prepared = dict(resolved)
@@ -334,7 +334,21 @@ def _bare_state_from_bases(
             )
             continue
 
-        if basis.kind == "eigen":
+        from quchip.devices.spaces import FockSpace
+
+        if isinstance(dev.local_space(), FockSpace):
+            authored = backend.array_module.zeros(
+                (basis.native_dim, 1), dtype=complex
+            )
+            if hasattr(authored, "at"):
+                authored = authored.at[level, 0].set(1.0)
+            else:
+                authored[level, 0] = 1.0
+            projected = basis.vectors.conj().T @ authored
+            kets.append(
+                backend.from_array(projected, dims=[[basis.resolved_dim], [1]])
+            )
+        elif basis.kind == "eigen":
             kets.append(backend.basis(basis.resolved_dim, level))
         else:
             vector = basis.energy_vectors[:, level].reshape(basis.native_dim, 1)

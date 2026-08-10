@@ -14,8 +14,6 @@ Public models
   parameters at the stored ``flux_bias``.
 * :class:`KerrCavity` — Kerr-nonlinear resonator,
   ``H = omega * n_hat - K * n_hat * (n_hat - I)``.
-* :class:`CircuitDevice` — abstract base for circuit-level devices
-  built by diagonalizing a native-basis Hamiltonian.
 * :class:`Fluxonium` — circuit-level fluxonium in the phase basis.
 * :class:`ChargeBasisTransmon` — circuit-level transmon in the
   integer charge basis.
@@ -26,7 +24,6 @@ Coupling Protocols (for drive dispatch)
   :class:`FrequencyControlled`
 """
 
-from quchip.devices.circuit import CircuitDevice
 from quchip.devices.fluxonium import Fluxonium
 from quchip.devices.kerr_cavity import KerrCavity
 from quchip.devices.protocols import ChargeCoupled, FluxCoupled, FrequencyControlled, PhaseCoupled
@@ -41,7 +38,6 @@ __all__ = [
     "ChargeSpace",
     "CustomSpace",
     "ChargeCoupled",
-    "CircuitDevice",
     "DuffingTransmon",
     "FockSpace",
     "FluxCoupled",

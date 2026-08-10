@@ -419,8 +419,16 @@ def _build_static_h0(
         omega_ref = resolved_frame.frequencies.get(dev.label, 0.0)
         with _backend_context(backend):
             record = resolution.bases[dev.label]
+            from quchip.devices.spaces import FockSpace
+
+            space = dev.local_space()
+            frame_matrix = (
+                record.transform_operator(space.matrix("n"))
+                if isinstance(space, FockSpace)
+                else record.level_operator()
+            )
             level_operator = backend.from_array(
-                record.level_operator(),
+                frame_matrix,
                 dims=[[record.resolved_dim], [record.resolved_dim]],
             )
             n_emb = backend.embed(level_operator, idx, dims)
