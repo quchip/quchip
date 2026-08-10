@@ -1278,9 +1278,8 @@ def _dropped_drive_partner(
 def _validate_variant_drive_ops(
     template: HamiltonianTemplate,
     drive_ops: list["DriveOp"],
-    chip: "Chip",
 ) -> None:
-    """Check that *drive_ops* match the template's drive/device/envelope/drive-type shape."""
+    """Check that *drive_ops* match the template's drive, target, and envelope shape."""
     reference_ops = template.reference_drive_ops
     if len(drive_ops) != len(reference_ops):
         raise ValueError(
@@ -1288,7 +1287,6 @@ def _validate_variant_drive_ops(
             f"Expected {len(reference_ops)}, got {len(drive_ops)}."
         )
 
-    equipment = chip.control_equipment
     for index, (reference_op, variant_op) in enumerate(zip(reference_ops, drive_ops)):
         if variant_op.target_label != reference_op.target_label:
             raise ValueError(
@@ -1305,14 +1303,6 @@ def _validate_variant_drive_ops(
                 f"Variant drive op {index} uses envelope '{type(variant_op.envelope).__name__}', "
                 f"expected '{type(reference_op.envelope).__name__}'."
             )
-        if equipment is not None:
-            drive = next((d for d in equipment.lines if d.label == variant_op.drive_label), None)
-            reference_drive = next((d for d in equipment.lines if d.label == reference_op.drive_label), None)
-            if drive is not None and reference_drive is not None and type(drive) is not type(reference_drive):
-                raise ValueError(
-                    f"Variant drive op {index} resolved to drive '{type(drive).__name__}', "
-                    f"expected '{type(reference_drive).__name__}'."
-                )
 
 # -- Public API ----------------------------------------------------------
 
@@ -1440,7 +1430,7 @@ def instantiate_engine_result(
     chip: "Chip",
 ) -> EngineResult:
     """Rebuild signal-program leaves from *drive_ops* and attach them to the template's operators."""
-    _validate_variant_drive_ops(template, drive_ops, chip)
+    _validate_variant_drive_ops(template, drive_ops)
     backend = chip.backend
     dims = template.dims
     subsystem_labels = tuple(d.label for d in chip.devices)

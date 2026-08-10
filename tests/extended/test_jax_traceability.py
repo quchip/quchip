@@ -362,13 +362,20 @@ def test_simulation_result_overlap_array_supports_jax_grad() -> None:
 
 def test_solve_batch_manual_indexing_preserves_array_type() -> None:
     """SolveBatch parameter bookkeeping should not coerce JAX payloads."""
-    from quchip.engine.ir import SolveBatch, SolveBinding
+    from quchip.engine.ir import EngineResult, SolveBatch, SolveProblem
 
     params = np.empty((1,), dtype=object)
     params[(0,)] = {"x": jnp.asarray(1.0, dtype=jnp.float32)}
     batch = SolveBatch(
-        problem=None,
-        bindings=(SolveBinding(None, ()),),
+        chip=None,
+        problems=(
+            SolveProblem(
+                chip=None,
+                engine_result=EngineResult(static_terms=(), dynamic_terms=()),
+                initial_state=None,
+                tlist=(0.0, 1.0),
+            ),
+        ),
         params=params,
         shape=(1,),
         axes=(("x", [params[(0,)]["x"]]),),

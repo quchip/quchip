@@ -705,17 +705,15 @@ def wrap_solver_results_from_batch(
     batch: SolveBatch,
     backend: Backend,
 ) -> list[SimulationResult]:
-    """Wrap backend results from a batched solve that shares one :class:`SolveBatch` context.
-
-    Avoids rematerializing a per-element :class:`~quchip.engine.ir.SolveProblem`
-    (and its per-element :class:`~quchip.engine.ir.EngineResult`)
-    just to read the shared fields.
-    """
-    chip = batch.chip
-    tlist = batch.tlist
-    e_ops_meta = batch.e_ops_meta
-    resolved_frame = batch.resolved_frame
+    """Wrap backend results using each batch point's resolved solve context."""
     return [
-        _wrap(sr, backend, chip=chip, tlist=tlist, e_ops_meta=e_ops_meta, resolved_frame=resolved_frame)
-        for sr in solver_results
+        _wrap(
+            solver_result,
+            backend,
+            chip=problem.chip,
+            tlist=problem.tlist,
+            e_ops_meta=problem.e_ops_meta,
+            resolved_frame=problem.resolved_frame,
+        )
+        for solver_result, problem in zip(solver_results, batch.problems)
     ]

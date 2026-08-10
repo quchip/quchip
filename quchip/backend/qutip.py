@@ -60,10 +60,24 @@ class _QuTiPBatchShared:
     build one ``QobjEvo`` per element inside a loky worker.
     """
 
-    static_rhs: Qobj | None
-    dynamic_qobjs: tuple[Qobj, ...]
+    static_rhs: tuple[Qobj | None, ...]
+    dynamic_qobjs: tuple[tuple[Qobj, ...], ...]
     sample_tlist: Any
     dynamic_signals: tuple[tuple[Any, ...], ...]
+
+
+@dataclass(frozen=True)
+class _QuTiPBatchTask:
+    """One compact point handed to a sequential or loky batch worker."""
+
+    static_rhs: Qobj | None
+    dynamic_qobjs: tuple[Qobj, ...]
+    dynamic_signals: tuple[Any, ...]
+    initial_state: Any
+    c_ops: tuple[Qobj, ...]
+    solver_name: str
+    options: dict[str, Any]
+    e_ops: tuple[Qobj, ...] | None
 
 
 def _coeff_callable(signal: Any) -> Callable[[float, Any], complex]:
@@ -370,6 +384,8 @@ class QuTiPBackend(Backend):
         """Return a dense ``numpy`` array for *op*."""
         if isinstance(op, Qobj):
             return np.asarray(op.full(), dtype=complex)
+        if hasattr(op, "to_jax"):
+            return np.asarray(op.to_jax(), dtype=complex)
         return np.asarray(op, dtype=complex)
 
     def overlap(self, a: State, b: State) -> complex:
@@ -417,6 +433,10 @@ class QuTiPBackend(Backend):
 
     def from_array(self, data: Any, dims: list[list[int]] | None = None) -> Operator:
         """Construct a ``Qobj`` from a dense matrix with optional row/col *dims*."""
+        if isinstance(data, Qobj):
+            return data if dims is None or data.dims == dims else Qobj(data.full(), dims=dims)
+        if hasattr(data, "to_jax"):
+            data = np.asarray(data.to_jax(), dtype=complex)
         return Qobj(data, dims=dims)
 
     def to_canonical_operator(self, op: Operator) -> Any:
@@ -843,33 +863,39 @@ class QuTiPBackend(Backend):
         (shared across elements) and only the slow, carrier-free envelope
         is sampled on the user grid, locally densified around any window
         edge (carriers stay analytic — see :func:`_band_coefficient`).
-        Final ``QobjEvo`` assembly lives in :meth:`solve_batch` so it runs
-        inside loky workers, keeping the main process overhead O(1) in
-        batch size.
+        Final ``QobjEvo`` assembly lives in :meth:`solve_batch` so larger
+        concrete sweeps can build and solve each point inside loky workers.
         """
-        engine_result = batch.problem.engine_result
         cached_qobj = self._make_op_cache()
-        static_rhs = self._sum_terms(engine_result.static_terms, cached_qobj)
+        engine_results = tuple(problem.engine_result for problem in batch.problems)
+        static_cache: dict[int, Qobj | None] = {}
+        static_rhs: list[Qobj | None] = []
+        for result in engine_results:
+            key = id(result.static_terms)
+            if key not in static_cache:
+                static_cache[key] = self._sum_terms(result.static_terms, cached_qobj)
+            static_rhs.append(static_cache[key])
         dynamic_qobjs = tuple(
-            cached_qobj(term.operator) for term in engine_result.dynamic_terms
+            tuple(cached_qobj(term.operator) for term in result.dynamic_terms)
+            for result in engine_results
         )
         sample_tlist: Any = None
-        if dynamic_qobjs:
+        if any(dynamic_qobjs):
             sample_tlist = self._resolve_envelope_sample_tlist(batch.tlist)
 
         shared = _QuTiPBatchShared(
-            static_rhs=static_rhs,
+            static_rhs=tuple(static_rhs),
             dynamic_qobjs=dynamic_qobjs,
             sample_tlist=sample_tlist,
             dynamic_signals=tuple(
-                batch.signals_for(slot)
-                for slot in range(len(engine_result.dynamic_terms))
+                tuple(term.time_dependence for term in result.dynamic_terms)
+                for result in engine_results
             ),
         )
         return DeferredBatch(
             shared=shared,
             batch_size=batch.batch_size,
-            metadata=dict(engine_result.metadata),
+            metadata=dict(engine_results[0].metadata),
             tlist=batch.tlist,
         )
 
@@ -879,7 +905,7 @@ class QuTiPBackend(Backend):
             return []
 
         prepared = self.prepare_batch(batch)
-        tlist_arr, c_ops, solver_name, opts, e_ops_arg = self._resolve_batch_config(batch, prepared)
+        tlist_arr = self.array_module.asarray(batch.tlist, dtype=float)
 
         shared = prepared.shared
         if not isinstance(shared, _QuTiPBatchShared):
@@ -887,47 +913,63 @@ class QuTiPBackend(Backend):
                 "QuTiPBackend.solve_batch requires DeferredBatch.shared to be a "
                 f"_QuTiPBatchShared instance, got {type(shared).__name__}."
             )
+        sample_tlist = shared.sample_tlist
 
-        solve = getattr(self, solver_name)
-        chip_dims = getattr(batch.chip, "dims", None)
-        initial_states = [self.coerce_state(s, dims=chip_dims) for s in batch.initial_states]
-
-        def build_and_solve(idx: int) -> SolverResult:
-            rhs = self._build_element_rhs(shared, idx)
-            kwargs = self._element_solver_kwargs(
-                solver_name,
-                rhs,
-                initial_states[idx],
-                tlist_arr,
-                e_ops=e_ops_arg,
-                c_ops=c_ops,
-                options=dict(opts),
+        tasks: list[_QuTiPBatchTask] = []
+        for index, problem in enumerate(batch.problems):
+            engine_result = problem.engine_result
+            c_ops = self._collapse_operators(engine_result)
+            solver_name = problem.solver or ("mesolve" if c_ops else "sesolve")
+            opts = self._merge_options(
+                problem.options,
+                metadata=engine_result.metadata,
+                tlist=tlist_arr,
             )
-            return solve(**kwargs)
+            tasks.append(
+                _QuTiPBatchTask(
+                    static_rhs=shared.static_rhs[index],
+                    dynamic_qobjs=shared.dynamic_qobjs[index],
+                    dynamic_signals=shared.dynamic_signals[index],
+                    initial_state=self.coerce_state(
+                        problem.initial_state,
+                        dims=getattr(problem.chip, "dims", None),
+                    ),
+                    c_ops=tuple(c_ops),
+                    solver_name=solver_name,
+                    options=dict(opts),
+                    e_ops=(tuple(problem.e_ops) if isinstance(problem.e_ops, list) else None),
+                )
+            )
+
+        def build_and_solve(task: _QuTiPBatchTask) -> SolverResult:
+            op_signal_pairs = (
+                (operator, signal.signal)
+                for operator, signal in zip(task.dynamic_qobjs, task.dynamic_signals)
+            )
+            rhs = _assemble_qobjevo(task.static_rhs, op_signal_pairs, sample_tlist)
+            kwargs = self._element_solver_kwargs(
+                task.solver_name,
+                rhs,
+                task.initial_state,
+                tlist_arr,
+                e_ops=list(task.e_ops) if task.e_ops is not None else None,
+                c_ops=list(task.c_ops),
+                options=task.options,
+            )
+            return getattr(self, task.solver_name)(**kwargs)
+
+        reference_solver = tasks[0].solver_name
 
         return self._parallel_map(
             task=build_and_solve,
-            items=list(range(batch.batch_size)),
+            items=tasks,
             n_jobs=-1,
             progress=progress,
-            desc=f"Sweep ({solver_name})",
+            desc=f"Sweep ({reference_solver})",
         )
 
     # ------------------------------------------------------------------
     # Internal: per-element RHS construction
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _build_element_rhs(shared: _QuTiPBatchShared, idx: int) -> Any:
-        """Build the ``QobjEvo`` for batch element *idx* from shared state."""
-        op_signal_pairs = (
-            (op, shared.dynamic_signals[slot][idx].signal)
-            for slot, op in enumerate(shared.dynamic_qobjs)
-        )
-        return _assemble_qobjevo(shared.static_rhs, op_signal_pairs, shared.sample_tlist)
-
-    # ------------------------------------------------------------------
-    # Internal: sample-tlist sizing
     # ------------------------------------------------------------------
 
     @staticmethod

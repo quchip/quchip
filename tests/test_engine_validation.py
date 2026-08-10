@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -320,7 +322,7 @@ class TestBatchMetadataAggregation:
     def test_max_step_ns_aggregates_by_minimum(self):
         """max_step_ns takes the minimum across batch elements."""
         from quchip.engine.ir import EngineResult
-        from quchip.engine.stage4_problem import _aggregate_batch_metadata
+        from quchip.engine.ir import _aggregate_batch_metadata
 
         wide = EngineResult(static_terms=(), dynamic_terms=(), metadata={"max_step_ns": 10.0})
         narrow = EngineResult(static_terms=(), dynamic_terms=(), metadata={"max_step_ns": 2.5})
@@ -330,7 +332,7 @@ class TestBatchMetadataAggregation:
     def test_max_step_ns_omitted_when_any_element_lacks_it(self):
         """A single element missing max_step_ns (e.g. from tracing) omits it for the whole batch."""
         from quchip.engine.ir import EngineResult
-        from quchip.engine.stage4_problem import _aggregate_batch_metadata
+        from quchip.engine.ir import _aggregate_batch_metadata
 
         has_hint = EngineResult(static_terms=(), dynamic_terms=(), metadata={"max_step_ns": 10.0})
         missing_hint = EngineResult(static_terms=(), dynamic_terms=(), metadata={})
@@ -340,7 +342,7 @@ class TestBatchMetadataAggregation:
     def test_carrier_and_spectral_bounds_aggregate_by_maximum(self):
         """max_carrier_freq_ghz and spectral_bound_ghz take the maximum across batch elements."""
         from quchip.engine.ir import EngineResult
-        from quchip.engine.stage4_problem import _aggregate_batch_metadata
+        from quchip.engine.ir import _aggregate_batch_metadata
 
         a = EngineResult(
             static_terms=(), dynamic_terms=(),
@@ -355,42 +357,43 @@ class TestBatchMetadataAggregation:
         assert metadata["spectral_bound_ghz"] == pytest.approx(1.0)
 
 
-class TestSolveBindingsDroppedTermsRetention:
-    """SolveBatch.element() restores each binding's dropped terms."""
+class TestSolveBatchPointRetention:
+    """SolveBatch keeps each point's complete problem snapshot."""
 
-    def test_batch_rejects_incomplete_dynamic_bindings(self):
-        from quchip.engine.ir import EngineResult, SolveBatch, SolveBinding, SolveProblem
+    def test_batch_rejects_structural_dimension_changes(self):
+        from quchip.engine.ir import EngineResult, SolveBatch, SolveProblem
 
-        problem = SolveProblem(
+        first = SolveProblem(
             chip=None,
-            engine_result=EngineResult(static_terms=(), dynamic_terms=(object(),)),  # type: ignore[arg-type]
+            engine_result=EngineResult(static_terms=(), dynamic_terms=(), dims=(2,)),
             initial_state=None,
             tlist=(0.0, 1.0),
         )
-        with pytest.raises(ValueError, match="expected 1"):
-            SolveBatch(problem=problem, bindings=(SolveBinding(None, ()),))
+        second = replace(first, engine_result=replace(first.engine_result, dims=(3,)))
+        with pytest.raises(ValueError, match="Structural settings"):
+            SolveBatch(chip=None, problems=(first, second))
+        different_grid = replace(first, tlist=(0.0, 0.5, 1.0))
+        with pytest.raises(ValueError, match="one time grid"):
+            SolveBatch(chip=None, problems=(first, different_grid))
 
     def test_element_restores_dropped_terms(self):
         """dropped_terms set on a single-element batch reappear on the reconstructed element."""
-        from quchip.engine.ir import DroppedTerm, EngineResult, SolveBatch, SolveBinding, SolveProblem
+        from quchip.engine.ir import DroppedTerm, EngineResult, SolveBatch, SolveProblem
 
         record = DroppedTerm(source="d0", operator="drive band w=+0 on q0", reason="test", band_weights=(0,))
         problem = SolveProblem(
             chip=None,
-            engine_result=EngineResult(static_terms=(), dynamic_terms=()),
+            engine_result=EngineResult(static_terms=(), dynamic_terms=(), dropped_terms=(record,)),
             initial_state=None,
             tlist=(0.0, 1.0),
         )
-        batch = SolveBatch(
-            problem=problem,
-            bindings=(SolveBinding(None, (), dropped_terms=(record,)),),
-        )
+        batch = SolveBatch(chip=None, problems=(problem,))
         element = batch.element(0)
         assert element.engine_result.dropped_terms == (record,)
 
     def test_element_restores_its_own_frequency_not_another_elements(self):
         """Two elements with different dropped-term frequencies each restore their own, not the reference's."""
-        from quchip.engine.ir import DroppedTerm, EngineResult, SolveBatch, SolveBinding, SolveProblem
+        from quchip.engine.ir import DroppedTerm, EngineResult, SolveBatch, SolveProblem
 
         record_a = DroppedTerm(
             source="d0", operator="drive band w=+0 on q0", reason="test", band_weights=(0,), frequency=5.0
@@ -398,18 +401,16 @@ class TestSolveBindingsDroppedTermsRetention:
         record_b = DroppedTerm(
             source="d0", operator="drive band w=+0 on q0", reason="test", band_weights=(0,), frequency=6.0
         )
-        problem = SolveProblem(
+        problem_a = SolveProblem(
             chip=None,
-            engine_result=EngineResult(static_terms=(), dynamic_terms=()),
+            engine_result=EngineResult(static_terms=(), dynamic_terms=(), dropped_terms=(record_a,)),
             initial_state=None,
             tlist=(0.0, 1.0),
         )
-        batch = SolveBatch(
-            problem=problem,
-            bindings=(
-                SolveBinding(None, (), dropped_terms=(record_a,)),
-                SolveBinding(None, (), dropped_terms=(record_b,)),
-            ),
+        problem_b = replace(
+            problem_a,
+            engine_result=replace(problem_a.engine_result, dropped_terms=(record_b,)),
         )
+        batch = SolveBatch(chip=None, problems=(problem_a, problem_b))
         assert batch.element(0).engine_result.dropped_terms[0].frequency == pytest.approx(5.0)
         assert batch.element(1).engine_result.dropped_terms[0].frequency == pytest.approx(6.0)

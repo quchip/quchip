@@ -420,7 +420,7 @@ class TestQuantumSequenceBuildProblem:
         # Element-level EngineResults are materialised on demand; identity equality
         # of static_terms holds against the SolveBatch and across elements, not just within one.
         batch = problems
-        assert batch.problem.engine_result.static_terms is problems[0].engine_result.static_terms
+        assert batch.problems[0].engine_result.static_terms is problems[0].engine_result.static_terms
         assert problems[0].engine_result.static_terms is problems[1].engine_result.static_terms
         for slot in range(len(problems[0].engine_result.dynamic_terms)):
             assert (
@@ -548,7 +548,7 @@ class TestQuantumSequenceBuildProblem:
         assert (0.0, 11.0) in captured_start_times
 
     def test_build_batch_uses_the_semantic_ground_state_by_default(self):
-        """Every batch element defaults to the resolved local ground state."""
+        """A construction sweep rebuilds each Hamiltonian and its semantic ground state."""
         q = ChargeBasisTransmon(
             E_C=0.25,
             E_J=12.0,
@@ -563,19 +563,24 @@ class TestQuantumSequenceBuildProblem:
         sequence = QuantumSequence(chip)
         pulse = sequence.schedule(drive, envelope=Square(duration=20.0, amplitude=0.02), freq=5.0)
         amp = pulse.vary("amplitude", [0.01, 0.02], name="amp")
-        freq = pulse.vary("freq", [4.9, 5.1], name="freq")
+        ej = sequence.vary("q.E_J", [10.0, 12.0], name="EJ")
 
         batch = sequence.build_batch(
             amp,
-            freq,
+            ej,
             tlist=np.linspace(0.0, 20.0, 81),
         )
 
         assert len(batch) == 4
         expected = np.asarray([1.0, 0.0, 0.0])
-        for binding in batch.bindings:
-            state = chip.backend.to_array(binding.initial_state).reshape(-1)
+        for problem in batch:
+            state = chip.backend.to_array(problem.initial_state).reshape(-1)
             np.testing.assert_allclose(state, expected)
+        h_low = batch[0].engine_result.matrix(t=0.0)
+        h_high = batch[1].engine_result.matrix(t=0.0)
+        assert not np.allclose(chip.backend.to_array(h_low), chip.backend.to_array(h_high))
+        results = chip.solve_many(batch, progress=False)
+        assert results.shape == (2, 2)
 
 
 class TestChipSolveMany:

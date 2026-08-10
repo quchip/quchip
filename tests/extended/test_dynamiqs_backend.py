@@ -410,8 +410,8 @@ def test_frequency_sweep_lowers_to_single_native_batched_solve(
 ) -> None:
     """A carrier-frequency sweep sharing operator structure fans out as a single native-batched call."""
     # build_batch over pulse.vary("freq", ...) produces one SolveBatch whose
-    # SolveBatch carries one problem skeleton plus per-element signal bindings;
-    # the dynamiqs backend lowers it to one vmapped RHS via
+    # SolveBatch carries explicit frozen problems; the dynamiqs backend lowers
+    # their compatible Hamiltonians to one vmapped RHS via
     # prepare_batch and solves it in one call to solve_batch.
     from quchip.control.envelopes import Square as SquareEnv
 
