@@ -48,7 +48,7 @@ def test_projected_fluxonium_two_backends_agree() -> None:
         num_basis=100,
         basis="eigen",
     )
-    hamiltonian = device.engine_result().matrix()
+    hamiltonian = device.engine_result().hamiltonian().matrix()
     initial = np.zeros((4, 1), dtype=complex)
     initial[0, 0] = initial[1, 0] = 1.0 / np.sqrt(2.0)
     times = np.linspace(0.0, 1.0, 3)

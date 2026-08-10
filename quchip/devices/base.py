@@ -7,9 +7,9 @@ retain that basis or project it into local energy order.
 Contract
 --------
 * **Hamiltonian ownership.** A device owns its *local* Hamiltonian only;
-  couplings and drives own theirs. :meth:`hamiltonian`
-  must return an operator acting on this device's truncated Hilbert
-  space.
+  couplings and drives own theirs. :meth:`unresolved_hamiltonian` returns
+  that authored operator; :meth:`hamiltonian` returns the engine-resolved
+  local view after basis and frame policies.
 * **JAX traceability.** Every parameter passed to a subclass's
   ``__init__`` (frequency, anharmonicity, T1/T2, thermal population,
   …) may be a JAX tracer. Validation routines must never force
@@ -291,7 +291,7 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
     1. Set ``_type_prefix`` (used for auto-labeling).
     2. Expose a ``freq`` attribute — the bare ``0 -> 1`` transition
        frequency in GHz. Any JAX-traceable scalar is fine.
-    3. Implement :meth:`hamiltonian` returning an operator on the
+    3. Implement :meth:`unresolved_hamiltonian` returning an operator on the
        truncated Fock basis.
 
     Noise parameters (all optional; ``None`` means the channel is absent):
@@ -712,18 +712,41 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
             self.reference_freq = d["reference_freq"]
         return self
 
-    # -- Hamiltonian (abstract) --------------------------------------------
+    # -- Hamiltonian -------------------------------------------------------
 
     @abstractmethod
-    def hamiltonian(self) -> Operator:
-        """Return the device Hamiltonian on the truncated Hilbert space."""
+    def unresolved_hamiltonian(self) -> Operator:
+        """Return the authored local Hamiltonian before engine policies."""
         ...
 
+    def hamiltonian(self) -> Any:
+        """Return the local Hamiltonian after basis and frame policies."""
+        return self.engine_result().hamiltonian()
+
     def engine_result(self) -> Any:
-        """Materialize this device through the same engine path used by solves."""
+        """Materialize this device through the same engine path used by solves.
+
+        An owned device inherits its chip's basis and frame policy. The local
+        result remains a one-device snapshot; couplings to the rest of the chip
+        are intentionally outside a device Hamiltonian's boundary.
+        """
         from quchip.chip.chip import Chip
 
-        return Chip([self.copy()]).engine_result()
+        owner = self._single_owner_chip()
+        if owner is None:
+            return Chip([self.copy()]).engine_result()
+
+        from quchip.engine.stage1_frames import resolve_frame
+
+        resolved_frame = resolve_frame(owner, owner.frame)
+        frame: Any = {self.label: resolved_frame.frequencies[self.label]}
+        return Chip(
+            [self.copy()],
+            frame=frame,
+            rwa=owner.rwa,
+            basis=owner.basis,
+            backend=owner.backend,
+        ).engine_result()
 
     # -- Declared approximations --------------------------------------------
 

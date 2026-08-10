@@ -274,7 +274,7 @@ def test_bare_g_seed_uses_isolated_subchip_devices(monkeypatch: pytest.MonkeyPat
             self._computational = computational
             self._finish_init()
 
-        def hamiltonian(self):
+        def unresolved_hamiltonian(self):
             # A genuinely anharmonic (Duffing-like) diagonal spectrum: two purely
             # harmonic coupled devices have an exactly-zero dispersive shift for
             # any coupling strength, which would make the "chi" target below
@@ -319,7 +319,7 @@ def test_base_device_repr_is_safe_with_multiple_chip_contexts() -> None:
             self.freq = freq
             self._finish_init()
 
-        def hamiltonian(self):
+        def unresolved_hamiltonian(self):
             return self.freq * self.number_operator()
 
     q = ReprDevice(freq=5.0, label="q")

@@ -77,21 +77,11 @@ class FockSpace(LocalSpace):
             return backend.number(self.levels)
         if name == "I":
             return backend.identity(self.levels)
-
-        zero = backend.basis(self.levels, 0)
-        one = backend.basis(self.levels, 1)
-        p01 = backend.matmul(zero, backend.dag(one))
-        p10 = backend.matmul(one, backend.dag(zero))
-        if name == "sigma_x":
-            return p01 + p10
-        if name == "sigma_y":
-            return -1j * p01 + 1j * p10
-        if name == "sigma_z":
-            return backend.matmul(zero, backend.dag(zero)) - backend.matmul(one, backend.dag(one))
-        if name == "sigma_plus":
-            return p10
-        if name == "sigma_minus":
-            return p01
+        if name in {"sigma_x", "sigma_y", "sigma_z", "sigma_plus", "sigma_minus"}:
+            return backend.from_array(
+                self.matrix(name),
+                dims=[[self.levels], [self.levels]],
+            )
         raise ValueError(f"Unknown Fock-space operator {name!r}.")
 
 

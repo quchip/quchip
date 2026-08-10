@@ -85,6 +85,16 @@ def _as_physics_expr(
     return PhysicsExpr.from_matrix(backend.to_array(authored), labels=labels, dims=dims, name=name)
 
 
+def _concrete_cache_value(value: Any) -> Any:
+    """Return one stable scalar cache value or raise for traced/non-scalars."""
+    if value is None:
+        return None
+    concrete = maybe_concrete_scalar(value)
+    if concrete is None:
+        raise ValueError
+    return concrete
+
+
 class Chip:
     """Composite quantum system: devices + couplings + (optional) control.
 
@@ -220,7 +230,8 @@ class Chip:
         # the backend kind + per-device/per-coupling ``state_version`` so any
         # parameter or level change invalidates it. Never cached under a JAX
         # trace (the ``contains_tracer`` guard), so differentiability is intact.
-        self._hamiltonian_cache: tuple[Any, PhysicsExpr] | None = None
+        self._unresolved_hamiltonian_cache: tuple[Any, PhysicsExpr] | None = None
+        self._engine_result_cache: tuple[Any, Any] | None = None
 
         if frame != "lab":
             self.set_frame(frame)
@@ -229,8 +240,8 @@ class Chip:
     # Hamiltonian
     # ------------------------------------------------------------------
 
-    def hamiltonian(self) -> PhysicsExpr:
-        """Lab-frame static Hamiltonian.
+    def unresolved_hamiltonian(self) -> PhysicsExpr:
+        """Return the authored lab-frame static Hamiltonian.
 
         Embeds every device Hamiltonian into the full tensor space and
         adds each coupling's embedded interaction. Does **not** apply
@@ -259,7 +270,7 @@ class Chip:
             tuple((d.label, d.state_version) for d in self._devices),
             tuple((c.label, c.state_version) for c in self._couplings),
         )
-        cache = self._hamiltonian_cache
+        cache = self._unresolved_hamiltonian_cache
         if cache is not None and cache[0] == signature and not contains_tracer(cache[1]):
             return cache[1]
 
@@ -268,7 +279,7 @@ class Chip:
             H: PhysicsExpr | None = None
             for i, dev in enumerate(self._devices):
                 h_local = _as_physics_expr(
-                    dev.hamiltonian(),
+                    dev.unresolved_hamiltonian(),
                     backend,
                     labels=(dev.label,),
                     dims=(dev.local_space().dimension,),
@@ -297,19 +308,61 @@ class Chip:
         assert H is not None
         # Do not cache expressions whose values belong to a JAX trace.
         if not contains_tracer(H.numeric_values()):
-            self._hamiltonian_cache = (signature, H)
+            self._unresolved_hamiltonian_cache = (signature, H)
         return H
+
+    def hamiltonian(self) -> PhysicsExpr:
+        """Return the Hamiltonian after the chip's engine policies."""
+        return self.engine_result().hamiltonian()
 
     def engine_result(self) -> Any:
         """Materialize the chip through the same engine path used by solves."""
         from quchip.engine.stage1_frames import resolve_frame
         from quchip.engine.stage2_assembly import build_engine_result
 
-        return build_engine_result(
+        resolved_frame = resolve_frame(self, self.frame)
+        try:
+            signature = (
+                id(self.backend),
+                self.rwa,
+                self.basis,
+                resolved_frame.mode,
+                tuple(
+                    (label, _concrete_cache_value(value))
+                    for label, value in resolved_frame.frequencies.items()
+                ),
+                tuple(
+                    (label, _concrete_cache_value(value))
+                    for label, value in resolved_frame.demod_freqs.items()
+                ),
+                tuple((device.label, device.state_version) for device in self.devices),
+                tuple((coupling.label, coupling.state_version) for coupling in self.couplings),
+                tuple(
+                    (
+                        bath.label,
+                        bath.recipe,
+                        tuple(bath.resolve_targets(self)),
+                        _concrete_cache_value(bath.temperature),
+                        _concrete_cache_value(bath.rate),
+                    )
+                    for bath in self.baths
+                ),
+            )
+        except ValueError:
+            signature = None
+
+        cache = self._engine_result_cache
+        if signature is not None and cache is not None and cache[0] == signature:
+            return cache[1]
+
+        result = build_engine_result(
             self,
             [],
-            resolved_frame=resolve_frame(self, self.frame),
+            resolved_frame=resolved_frame,
         )
+        if signature is not None and not contains_tracer(result):
+            self._engine_result_cache = (signature, result)
+        return result
 
     # ------------------------------------------------------------------
     # Component physics enumeration (consumed by the engine)

@@ -32,7 +32,6 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field, replace
-from math import prod
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, cast
 
 import jax.tree_util as jtu
@@ -43,8 +42,8 @@ from quchip.utils.jax_utils import (
     contains_tracer,
     is_jax_namespace,
     maybe_concrete_scalar,
-    select_array_module,
 )
+from quchip.utils.constants import TWO_PI
 
 if TYPE_CHECKING:
     from quchip.control.envelopes import BaseEnvelope
@@ -1037,7 +1036,7 @@ class EngineResult:
         for index, static_term in enumerate(self.static_terms):
             tag = static_term.operator.tag or static_term.origin
             operator = PhysicsExpr.from_matrix(
-                static_term.operator.to_dense(),
+                static_term.operator.to_dense() / TWO_PI,
                 labels=static_term.operator.subsystem_labels,
                 dims=static_term.operator.dims,
                 name=r"\hat H_0" if tag == "H0" else rf"\hat H_{{{tag},{index}}}",
@@ -1046,7 +1045,7 @@ class EngineResult:
         for index, dynamic_term in enumerate(self.dynamic_terms):
             tag = dynamic_term.tag or dynamic_term.operator.tag or dynamic_term.origin
             operator = PhysicsExpr.from_matrix(
-                dynamic_term.operator.to_dense(),
+                dynamic_term.operator.to_dense() / TWO_PI,
                 labels=dynamic_term.operator.subsystem_labels,
                 dims=dynamic_term.operator.dims,
                 name=rf"\hat H_{{{tag},{index}}}",
@@ -1066,43 +1065,6 @@ class EngineResult:
 
     def _repr_latex_(self) -> str:
         return f"${self.latex()}$"
-
-    def matrix(self, t: Any | None = None) -> Any:
-        """Return the dense Hamiltonian matrix the backend receives.
-
-        The result is in angular units (rad/ns): every operator already
-        crossed the engine's single ``2π`` boundary. A time value is required
-        when dynamic terms are present. Array types are preserved, including
-        JAX values and tracers.
-        """
-        if self.dynamic_terms and t is None:
-            raise ValueError("t is required for a time-dependent Hamiltonian.")
-
-        signal_leaves = jtu.tree_leaves(
-            (t, tuple(term.time_dependence for term in self.dynamic_terms))
-        )
-        operator_values = [term.operator.values for term in self.static_terms]
-        operator_values.extend(term.operator.values for term in self.dynamic_terms)
-        prefer_jax = any(
-            is_jax_namespace(array_namespace(value))
-            for value in (*operator_values, *signal_leaves)
-        )
-        xp = select_array_module(prefer_jax)
-
-        terms: list[Any] = [
-            term.coefficient * term.operator.to_dense()
-            for term in self.static_terms
-        ]
-        if t is not None:
-            terms.extend(
-                term.operator.to_dense()
-                * evaluate_signal_program(term.time_dependence.signal, t, xp=xp)
-                for term in self.dynamic_terms
-            )
-        if not terms:
-            dimension = prod(self.dims)
-            return xp.zeros((dimension, dimension), dtype=complex)
-        return sum(terms[1:], start=terms[0])
 
     def dropped_terms_summary(self) -> str:
         """Format :attr:`dropped_terms` as a multi-line human-readable string.

@@ -474,16 +474,21 @@ class TestCacheInvalidation:
         assert refreshed is not original
         assert refreshed.eigenvalues[1] != pytest.approx(original.eigenvalues[1])
 
-    def test_hamiltonian_is_frame_independent(self, dispersive_system) -> None:
-        """chip.hamiltonian() always returns lab-frame Hamiltonian."""
+    def test_hamiltonian_resolves_frame_without_changing_dressed_data(self, dispersive_system) -> None:
+        """Frame policy changes resolved inspection but not dressed frequencies."""
         chip, qubit, resonator = dispersive_system
 
-        chip.dress()
-        H_lab = chip.hamiltonian()
+        frequencies = (chip.freq(qubit), chip.freq(resonator))
+        H_lab = chip.hamiltonian().matrix(t=0.0)
         chip.set_frame("rotating")
-        H_rotating = chip.hamiltonian()
+        H_rotating = chip.hamiltonian().matrix(t=0.0)
 
-        np.testing.assert_allclose(H_lab.matrix(), H_rotating.matrix(), atol=1e-12)
+        assert not np.allclose(H_lab, H_rotating)
+        np.testing.assert_allclose(
+            (chip.freq(qubit), chip.freq(resonator)),
+            frequencies,
+            atol=1e-12,
+        )
 
     def test_chi_removed(self, dispersive_system) -> None:
         """chip.chi() is not part of the public API."""
@@ -516,10 +521,8 @@ def test_effective_subspace_hamiltonian_lowdin_on_bus_coupled_pair() -> None:
     effective = chip.effective_subspace_hamiltonian(({q0: 1, q1: 0}, {q0: 0, q1: 1}))
 
     g, w0, w1, wr = 0.075, 5.00, 5.10, 6.35
-    j_full = g**2 / 2 * (
-        1 / (w0 - wr) + 1 / (w1 - wr) - 1 / (w0 + wr) - 1 / (w1 + wr)
-    )
-    assert np.real(effective[0, 1]) == pytest.approx(j_full, abs=1e-4)
+    j_rwa = g**2 / 2 * (1 / (w0 - wr) + 1 / (w1 - wr))
+    assert np.real(effective[0, 1]) == pytest.approx(j_rwa, abs=1e-4)
 
     expected = sorted([chip.energy({q0: 1}), chip.energy({q1: 1})])
     assert np.linalg.eigvalsh(effective) == pytest.approx(expected, abs=1e-12)

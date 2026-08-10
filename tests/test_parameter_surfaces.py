@@ -112,7 +112,7 @@ def test_sequence_hamiltonian_is_the_engine_result_view() -> None:
     result = sequence.engine_result()
     np.testing.assert_allclose(
         sequence.hamiltonian().matrix(t=10.0, backend=chip.backend),
-        result.matrix(t=10.0),
+        result.hamiltonian().matrix(t=10.0, backend=chip.backend),
     )
 
 

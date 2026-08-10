@@ -246,8 +246,8 @@ class TestTermTypes:
         assert desc.dims == (3,)
         assert desc.metadata["frame_mode"] == "rotating"
 
-    def test_engine_result_matrix_is_the_exact_time_slice(self):
-        """Dense inspection sums the same scaled static and dynamic terms sent to a backend."""
+    def test_engine_result_hamiltonian_matrix_is_public_ghz_time_slice(self):
+        """Hamiltonian inspection converts canonical angular terms back to public GHz."""
         op = CanonicalOperator.from_dense(
             np.eye(2, dtype=complex),
             dims=(2,),
@@ -265,8 +265,8 @@ class TestTermTypes:
             dims=(2,),
         )
         with pytest.raises(ValueError, match="t is required"):
-            result.matrix()
-        np.testing.assert_allclose(result.matrix(t=0.0), 3.0 * np.eye(2))
+            result.hamiltonian().matrix()
+        np.testing.assert_allclose(result.hamiltonian().matrix(t=0.0), 3.0 / (2.0 * np.pi) * np.eye(2))
 
 
 class TestPolarScale:

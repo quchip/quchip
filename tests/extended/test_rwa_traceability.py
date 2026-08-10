@@ -1,4 +1,4 @@
-"""Gradients flow through the structural RWA mask inside chip.hamiltonian()."""
+"""Gradients flow through the structural RWA mask inside resolved inspection."""
 
 from __future__ import annotations
 

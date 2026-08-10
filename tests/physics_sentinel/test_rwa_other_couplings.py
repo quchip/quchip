@@ -8,8 +8,8 @@ from quchip import Chip, Coupling, CrossKerr, DuffingTransmon, Fluxonium, Quantu
 from quchip.declarative import CouplingModel, Scalar, parameter
 
 
-def _arr(chip, op):
-    return np.asarray(op.matrix(backend=chip.backend))
+def _arr(chip, op, *, t=None):
+    return np.asarray(op.matrix(backend=chip.backend, t=t))
 
 
 def _qr(tag: str):
@@ -50,11 +50,11 @@ def test_longitudinal_coupling_masks_to_zero_with_advisories():
     )
     qa2, rb2 = _qr("lg_b")
     bare = Chip([qa2, rb2], [], frame="rotating")
-    authored = _arr(chip, chip.hamiltonian())
-    assert not np.allclose(authored, _arr(bare, bare.hamiltonian()))
+    authored = _arr(chip, chip.unresolved_hamiltonian())
+    assert not np.allclose(authored, _arr(bare, bare.unresolved_hamiltonian()))
 
     problem = QuantumSequence(chip).build_problem(tlist=np.linspace(0.0, 10.0, 11), initial_state=chip.bare_state())
-    final = np.asarray(problem.engine_result.matrix())
+    final = np.asarray(problem.engine_result.hamiltonian().matrix())
     np.testing.assert_allclose(final - np.diag(np.diag(final)), 0.0, atol=1e-14)
     records = problem.engine_result.dropped_terms
     assert {rec.band_weights for rec in records} == {(0, -1), (0, 1)}
@@ -127,10 +127,10 @@ def test_custom_rwa_keeps_band_override():
     ba = Resonator(freq=5.0, levels=3, label="ba_blue")
     bb = Resonator(freq=5.2, levels=3, label="bb_blue")
     chip = Chip([ba, bb], [_BlueCoupling(ba, bb, g=0.03)], rwa=True)
-    h = np.asarray(chip.engine_result().matrix(t=0.0))
+    h = np.asarray(chip.engine_result().hamiltonian().matrix(t=0.0))
     idx_01, idx_10, idx_00, idx_11 = 1, 3, 0, 4
     assert abs(h[idx_01, idx_10]) < 1e-14  # exchange band dropped by the override
-    np.testing.assert_allclose(abs(h[idx_00, idx_11]), 2.0 * np.pi * 0.03, atol=1e-12)
+    np.testing.assert_allclose(abs(h[idx_00, idx_11]), 0.03, atol=1e-12)
 
 
 def test_fluxonium_dense_charge_coupling_assembles_hermitian():
@@ -152,7 +152,7 @@ def test_fluxonium_dense_charge_coupling_assembles_hermitian():
 
     chip = Chip([fl, rr], [Coupling(fl, rr, g=0.05, interaction=charge_coupling, label="flc")],
                 frame="rotating", rwa=True)
-    h = _arr(chip, chip.hamiltonian())
+    h = _arr(chip, chip.hamiltonian(), t=0.0)
     assert float(np.max(np.abs(h - h.conj().T))) < 1e-12
 
     problem = QuantumSequence(chip).build_problem(tlist=np.linspace(0.0, 5.0, 6), initial_state=chip.bare_state())

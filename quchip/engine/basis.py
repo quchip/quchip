@@ -130,7 +130,7 @@ def resolve_device_basis(
     """Resolve a device from its exact authored static Hamiltonian."""
     from quchip.declarative.expr import materialize_array
 
-    matrix = materialize_array(device.hamiltonian())
+    matrix = materialize_array(device.unresolved_hamiltonian())
     return resolve_local_basis(matrix, basis=basis, levels=levels)
 
 

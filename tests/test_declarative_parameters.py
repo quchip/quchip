@@ -30,7 +30,7 @@ def test_parameter_fields_generate_constructor_and_attributes():
 def test_unbound_construction_keeps_symbolic_hamiltonian_and_accepts_values_at_materialization():
     dev = ToyDevice(levels=3, label="q")
     assert dev.freq is UNBOUND
-    hamiltonian = dev.hamiltonian()
+    hamiltonian = dev.unresolved_hamiltonian()
     assert hamiltonian.parameter_paths() == ("q.freq", "q.detuning")
     matrix = hamiltonian.matrix({"q.freq": 5.0})
     assert matrix.shape == (3, 3)
