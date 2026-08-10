@@ -321,12 +321,12 @@ class CrossKerr(CouplingModel):
 
     def interaction(self, a: EndpointOps, b: EndpointOps, p: Any) -> PhysicsExpr:
         """Full form ``χ · n̂_a n̂_b`` (diagonal; identical under RWA)."""
-        return p.chi * (a.n * b.n)
+        return p.chi * (a.level * b.level)
 
     def parametric_interaction(self, a: EndpointOps, b: EndpointOps, p: Any) -> PhysicsExpr:
         """Modulable structure ``n̂_a n̂_b`` — δχ(t) pumps ride this."""
         _ = p
-        return a.n * b.n
+        return a.level * b.level
 
     def physics_notes(self) -> list[str]:
         """Return the declared dispersive-approximation provenance."""

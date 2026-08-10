@@ -602,8 +602,16 @@ class CouplingModel(BaseCoupling):
         from quchip.declarative.ops import EndpointOps
 
         return (
-            EndpointOps(label=self.device_a_label, space=self._resolved_a.local_space()),
-            EndpointOps(label=self.device_b_label, space=self._resolved_b.local_space()),
+            EndpointOps(
+                label=self.device_a_label,
+                space=self._resolved_a.local_space(),
+                device=self._resolved_a,
+            ),
+            EndpointOps(
+                label=self.device_b_label,
+                space=self._resolved_b.local_space(),
+                device=self._resolved_b,
+            ),
         )
 
     def _check_endpoint_order(self, expr: Any, method_name: str) -> None:

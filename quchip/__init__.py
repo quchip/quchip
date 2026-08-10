@@ -107,7 +107,6 @@ from quchip.declarative import (
     qnp,
 )
 from quchip.devices.base import NoiseChannel
-from quchip.devices.circuit import CircuitDevice
 from quchip.devices.fluxonium import Fluxonium
 from quchip.devices.kerr_cavity import KerrCavity
 from quchip.devices.protocols import ChargeCoupled, FluxCoupled, PhaseCoupled
@@ -161,7 +160,6 @@ __all__ = [
     "ChargeBasisTransmon",
     "ChargeSpace",
     "CustomSpace",
-    "CircuitDevice",
     "DuffingTransmon",
     "FockSpace",
     "FluxTunableTransmon",

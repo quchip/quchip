@@ -30,11 +30,6 @@ def test_missing_phase_operator_raises_with_guidance():
         _dev().phase_coupling_operator()
 
 
-def test_physics_notes_declare_frozen_import():
-    """physics_notes() declares the frozen-at-import snapshot for a device with a source_type."""
-    assert any("frozen at import" in n for n in _dev(source_type="scqubits.ZeroPi").physics_notes())
-
-
 def test_roundtrip_serialization():
     """to_dict()/from_dict() round-trips the spectrum and charge operator unchanged."""
     d = _dev(label="zp", T1=50_000.0, coupling_channel="charge")

@@ -9,29 +9,13 @@ a callable-form :class:`~quchip.chip.couplings.Coupling` whose operator matrices
 are the term's subsystem operators expressed in the *gauge of the imported
 device* they act on.
 
-Gauge consistency (Principle 3). Each imported circuit device
-(:class:`~quchip.devices.circuit.CircuitDevice`, e.g. ``ChargeBasisTransmon``)
-re-diagonalizes its own native Hamiltonian, fixing an eigenvector gauge — an
-arbitrary per-eigenvector phase/sign — that need not agree with scqubits' own
-diagonalization of the same Hamiltonian. The undriven spectrum is
-gauge-invariant, but a drive on such a device that also participates in a
-coupling mixes the two gauges, corrupting the driven dynamics. So a coupling
-factor is projected through the *device's* eigenvectors
-(:meth:`~quchip.devices.circuit.CircuitDevice.project_operator`) whenever the
-device re-diagonalizes the same native basis scqubits stores the operator in.
-
-Limitation (declared, Principle 12). When the imported device's native basis
-differs in dimension from scqubits' native basis for that subsystem — e.g. a
-:class:`~quchip.devices.fluxonium.Fluxonium` (quchip phase grid vs scqubits'
-harmonic-oscillator basis) — the factor cannot be re-projected into the device
-gauge and is frozen in the *source's* eigenbasis gauge instead; a
-:class:`UserWarning` names the device, and driven dynamics through it may carry
-gauge-inconsistent matrix elements. Declarative devices without a native basis
-of their own (``Resonator``, ``KerrCavity``, whose Fock eigenbasis matches
-scqubits ``Oscillator``'s by construction) and
-:class:`~quchip.interop.eigenbasis.EigenbasisDevice` (whose native basis *is*
-scqubits' eigenbasis) are already in the device gauge and take the source
-eigenbasis path without warning.
+An imported ``HilbertSpace`` is a frozen snapshot of the source's truncated
+subsystem model. Each subsystem becomes an
+:class:`~quchip.interop.eigenbasis.EigenbasisDevice`, and interaction factors
+remain in that same source eigenbasis. This reproduces scqubits' truncation and
+gauge exactly without introducing a second projection path. Importing an
+individual supported device still reconstructs the live differentiable quchip
+model from its circuit parameters.
 
 Scope of v1 (declared, Principle 12): only pairwise ``InteractionTerm``
 products of two operators are translated. Each term's operator matrices are a
@@ -52,24 +36,13 @@ import numpy as np
 from quchip.chip.chip import Chip
 from quchip.chip.coupling_base import BaseCoupling
 from quchip.chip.couplings import Capacitive, Coupling, CrossKerr, TunableCapacitive
-from quchip.interop.base import export_object, import_object
+from quchip.devices.base import BaseDevice
+from quchip.devices.protocols import ChargeCoupled
+from quchip.interop.base import export_object
 from quchip.interop.eigenbasis import EigenbasisDevice
 from quchip.utils.jax_utils import maybe_concrete_scalar
 
 _SUPPORTED_EXPORT_COUPLINGS = "Capacitive, TunableCapacitive, CrossKerr, or product-form Coupling"
-
-
-def _native_matrix(operator: Any) -> np.ndarray:
-    """Return *operator* as a dense matrix in scqubits' native (undiagonalized) basis.
-
-    A bound method is called bare (no ``energy_esys=``) so scqubits returns the
-    operator in the subsystem's native basis rather than its eigenbasis; raw
-    ndarray / sparse entries are already native and are densified.
-    """
-    if callable(operator):
-        matrix = operator()
-        return np.asarray(matrix.todense() if hasattr(matrix, "todense") else matrix, dtype=complex)
-    return np.asarray(operator.todense() if hasattr(operator, "todense") else operator, dtype=complex)
 
 
 def _eigenbasis_matrix(subsys: Any, operator: Any) -> np.ndarray:
@@ -102,59 +75,51 @@ def _eigenbasis_matrix(subsys: Any, operator: Any) -> np.ndarray:
 
 
 def _device_gauge_matrix(subsys: Any, operator: Any, device: Any) -> np.ndarray:
-    r"""Return *operator* on *subsys* in the eigenvector gauge of *device*.
+    """Return a source operator in the frozen subsystem eigenbasis."""
+    matrix = _eigenbasis_matrix(subsys, operator)
+    dimension = device.local_space().dimension
+    if matrix.shape != (dimension, dimension):
+        raise ValueError(
+            f"Interaction factor for {device.label!r} has shape {matrix.shape}, "
+            f"expected {(dimension, dimension)}."
+        )
+    return matrix
 
-    When *device* re-diagonalizes its native Hamiltonian
-    (:class:`~quchip.devices.circuit.CircuitDevice` subclasses, which expose
-    :meth:`~quchip.devices.circuit.CircuitDevice.project_operator`) and its
-    native dimension matches scqubits' native dimension for *subsys*, the
-    native-basis operator is projected through the *device's* own eigenvectors,
-    ``V_dev^\dagger O V_dev`` — so the coupling factor and the device's drive
-    operators live in one consistent gauge.
 
-    Otherwise the source's eigenbasis gauge is used (see
-    :func:`_eigenbasis_matrix`). Two of those cases are already in the device
-    gauge and pass silently: a device with no ``project_operator`` (declarative
-    ``Resonator`` / ``KerrCavity``, matching scqubits ``Oscillator``'s Fock
-    basis) and :class:`~quchip.interop.eigenbasis.EigenbasisDevice` (whose
-    native basis *is* scqubits' eigenbasis, so its native dimension equals the
-    truncated eigenbasis dimension). The remaining case — a device that
-    diagonalizes a *different* native basis (e.g. fluxonium) — cannot be
-    re-projected and warns, since driven dynamics through it may carry
-    gauge-inconsistent matrix elements.
+def _projected_source_operator(subsys: Any, names: tuple[str, ...], esys: Any) -> Any | None:
+    """Return the first available source operator projected with ``esys``."""
+    for name in names:
+        operator = getattr(subsys, name, None)
+        if operator is None:
+            continue
+        try:
+            return np.asarray(operator(energy_esys=esys), dtype=complex)
+        except TypeError:
+            try:
+                return np.asarray(operator(), dtype=complex)
+            except ValueError:
+                continue
+        except ValueError:
+            continue
+    return None
 
-    The native-basis operator (:func:`_native_matrix`) is only ever
-    materialized when there is a real chance of using it: an
-    :class:`~quchip.interop.eigenbasis.EigenbasisDevice` never re-diagonalizes
-    a native basis of its own (its "native basis" *is* the truncated
-    eigenbasis scqubits already handed over), so it short-circuits to the
-    eigenbasis path immediately; for every other project-capable device, the
-    native dimension is compared against ``subsys.hilbertdim()`` — a cheap
-    lookup, not a matrix build — before ever calling :func:`_native_matrix`.
-    A ZeroPi subsystem's native basis is a dense joint phi-grid / charge-basis
-    product space (thousands of dimensions); densifying its operator just to
-    discover the dimensions do not match wastes gigabytes for nothing.
-    """
-    project = getattr(device, "project_operator", None)
-    if project is None or isinstance(device, EigenbasisDevice):
-        return _eigenbasis_matrix(subsys, operator)
 
-    native_dim = int(np.asarray(device.eigenvectors()).shape[0])
-    if native_dim != subsys.hilbertdim():
-        eigenbasis = _eigenbasis_matrix(subsys, operator)
-        if native_dim != eigenbasis.shape[0]:
-            warnings.warn(
-                f"Imported device {device.label!r} diagonalizes a native basis of a "
-                f"different dimension than scqubits' for this subsystem, so its coupling "
-                f"matrix is frozen in the source's eigenbasis gauge rather than the device "
-                f"gauge; driven dynamics through this device may carry gauge-inconsistent "
-                f"matrix elements.",
-                UserWarning,
-                stacklevel=2,
-            )
-        return eigenbasis
-
-    return np.asarray(project(_native_matrix(operator)), dtype=complex)
+def _snapshot_subsystem(subsys: Any) -> EigenbasisDevice:
+    """Freeze one scqubits subsystem exactly at its HilbertSpace truncation."""
+    levels = int(subsys.truncated_dim)
+    esys = subsys.eigensys(evals_count=levels)
+    return EigenbasisDevice(
+        esys[0],
+        charge_operator=_projected_source_operator(
+            subsys,
+            ("n_operator", "n_theta_operator"),
+            esys,
+        ),
+        phase_operator=_projected_source_operator(subsys, ("phi_operator",), esys),
+        levels=levels,
+        label=getattr(subsys, "id_str", None),
+        source_type=f"scqubits.{type(subsys).__name__}",
+    )
 
 
 def _product_interaction(
@@ -232,9 +197,9 @@ def _coupling_from_term(
 def import_hilbertspace(hs: Any, **opts: Any) -> Chip:
     """Import an scqubits ``HilbertSpace`` into a quchip :class:`Chip`.
 
-    Each subsystem imports through the shipped device mappings (order and
-    ``id_str`` label preserved); each ``InteractionTerm`` becomes a
-    callable-form :class:`~quchip.chip.couplings.Coupling`.
+    Each subsystem is frozen at its source truncation (order and ``id_str``
+    preserved); each ``InteractionTerm`` becomes a callable-form
+    :class:`~quchip.chip.couplings.Coupling` in the same eigenbasis gauge.
 
     Parameters
     ----------
@@ -250,11 +215,9 @@ def import_hilbertspace(hs: Any, **opts: Any) -> Chip:
     NotImplementedError
         A string-expression (``InteractionTermStr``) or non-pairwise
         interaction term is present.
-    LookupError
-        A subsystem has no registered device mapping.
     """
     subsystems = list(hs.subsystem_list)
-    devices = [import_object(subsys) for subsys in subsystems]
+    devices: list[BaseDevice] = [_snapshot_subsystem(subsys) for subsys in subsystems]
     couplings: list[BaseCoupling] = [
         _coupling_from_term(term, subsystems, devices, index)
         for index, term in enumerate(hs.interaction_list)
@@ -284,7 +247,11 @@ def _concrete_strength(value: Any, coupling: Any) -> Any:
     return scalar
 
 
-def _coupling_product_factors(coupling: Any, backend: Any) -> tuple[Any, np.ndarray, np.ndarray]:
+def _coupling_product_factors(
+    coupling: Any,
+    backend: Any,
+    bases: Any,
+) -> tuple[Any, np.ndarray, np.ndarray]:
     r"""Return ``(g, A, B)`` reproducing the coupling's non-RWA ``H_int = g·A⊗B``.
 
     Each supported coupling factorizes into a scalar strength and two device
@@ -295,10 +262,12 @@ def _coupling_product_factors(coupling: Any, backend: Any) -> tuple[Any, np.ndar
     ``rwa=False``):
 
     * :class:`~quchip.chip.couplings.Capacitive` /
-      :class:`~quchip.chip.couplings.TunableCapacitive` — the full dipole form
-      ``g·(a + a†)(b + b†)``, so ``A = a + a†`` and ``B = b + b†``. The full
-      (non-RWA) form is always exported: scqubits interaction terms are the
-      bare operator product, with no rotating-wave truncation of their own.
+      :class:`~quchip.chip.couplings.TunableCapacitive` — the full product of
+      each endpoint's physical charge-like factor. Devices implementing
+      :class:`~quchip.devices.protocols.ChargeCoupled` supply their authored
+      charge operator; other devices use ``a + a†``. The full (non-RWA) form is
+      always exported because scqubits interaction terms apply no rotating-wave
+      truncation of their own.
     * :class:`~quchip.chip.couplings.CrossKerr` — ``χ·n̂_a n̂_b``, so
       ``A = n̂_a`` and ``B = n̂_b``.
     * product-form :class:`~quchip.chip.couplings.Coupling` — the user's
@@ -309,8 +278,9 @@ def _coupling_product_factors(coupling: Any, backend: Any) -> tuple[Any, np.ndar
     coupling type raise :class:`NotImplementedError` naming the supported set.
     """
 
-    def matrix(op: Any) -> np.ndarray:
-        return np.asarray(backend.to_array(op), dtype=complex)
+    def matrix(device: Any, op: Any) -> np.ndarray:
+        authored = np.asarray(backend.to_array(op), dtype=complex)
+        return np.asarray(bases[device.label].transform_operator(authored), dtype=complex)
 
     device_a, device_b = coupling.device_a, coupling.device_b
     # coupling_strength is the one scalar-strength property every coupling
@@ -322,9 +292,13 @@ def _coupling_product_factors(coupling: Any, backend: Any) -> tuple[Any, np.ndar
     g = _concrete_strength(coupling.coupling_strength, coupling)
 
     if isinstance(coupling, (TunableCapacitive, Capacitive)):
-        return g, _quadrature(device_a, matrix), _quadrature(device_b, matrix)
+        return g, _charge_factor(device_a, matrix), _charge_factor(device_b, matrix)
     if isinstance(coupling, CrossKerr):
-        return g, matrix(device_a.number_operator()), matrix(device_b.number_operator())
+        return (
+            g,
+            matrix(device_a, device_a.energy_level_operator()),
+            matrix(device_b, device_b.energy_level_operator()),
+        )
     if isinstance(coupling, Coupling):
         if coupling._interaction is not None:
             raise NotImplementedError(
@@ -335,7 +309,11 @@ def _coupling_product_factors(coupling: Any, backend: Any) -> tuple[Any, np.ndar
         # op_a/op_b are both non-None in product form (guaranteed by Coupling.__init__,
         # given _interaction is None here).
         assert coupling._op_a is not None and coupling._op_b is not None
-        return g, matrix(coupling._op_a(device_a)), matrix(coupling._op_b(device_b))
+        return (
+            g,
+            matrix(device_a, coupling._op_a(device_a)),
+            matrix(device_b, coupling._op_b(device_b)),
+        )
 
     raise NotImplementedError(
         f"{type(coupling).__name__} {coupling.label!r} is not exportable to scqubits; "
@@ -343,9 +321,11 @@ def _coupling_product_factors(coupling: Any, backend: Any) -> tuple[Any, np.ndar
     )
 
 
-def _quadrature(device: Any, matrix: Any) -> np.ndarray:
-    """Return the unnormalized quadrature ``a + a†`` on *device* as a matrix."""
-    return matrix(device.lowering_operator()) + matrix(device.raising_operator())
+def _charge_factor(device: Any, matrix: Any) -> np.ndarray:
+    """Return one endpoint's physical charge-like operator in solver space."""
+    if isinstance(device, ChargeCoupled):
+        return matrix(device, device.charge_coupling_operator())
+    return matrix(device, device.lowering_operator() + device.raising_operator())
 
 
 def _lift_to_native(subsys: Any, matrix: np.ndarray) -> np.ndarray:
@@ -372,16 +352,12 @@ def _lift_to_native(subsys: Any, matrix: np.ndarray) -> np.ndarray:
 def _warn_if_cross_basis(device: Any, subsys: Any) -> None:
     """Warn when *device* and its exported *subsys* diagonalize different-sized bases.
 
-    Mirrors the import-side gauge caveat (:func:`_device_gauge_matrix`). A device
-    that re-diagonalizes its own native Hamiltonian (exposes ``eigenvectors()``)
-    at a native dimension that differs from the exported subsystem's
-    ``hilbertdim()`` — e.g. a :class:`~quchip.devices.fluxonium.Fluxonium`, whose
-    phase grid does not match scqubits' harmonic-oscillator ``cutoff`` — cannot
-    hand scqubits its own native basis; scqubits rebuilds the spectrum in its
-    basis instead, so the two composites agree only to the cross-discretization
-    level (the same ``atol=1e-6`` the per-device import already carries). A
-    :class:`~quchip.devices.transmon.ChargeBasisTransmon` (whose charge basis
-    exports one-to-one) does not trigger it.
+    A device whose authored basis dimension differs from the exported
+    subsystem's native dimension — for example a fluxonium phase grid versus
+    scqubits' oscillator cutoff — is reconstructed in a different numerical
+    discretization. Its exported spectrum therefore agrees only to the
+    cross-discretization accuracy. A charge-basis transmon exports one-to-one
+    and does not trigger this warning.
     """
     eigenvectors = getattr(device, "eigenvectors", None)
     if eigenvectors is None:
@@ -505,9 +481,10 @@ def export_chip(chip: Chip, **opts: Any) -> Any:
 
     hs = scqubits.HilbertSpace(subsystems)  # type: ignore[abstract]  # scqubits stub marks HilbertSpace abstract
     backend = chip.backend
+    bases = chip.engine_result().bases
     for coupling in chip.couplings:
         _check_rwa_exportable(chip, coupling)
-        g, matrix_a, matrix_b = _coupling_product_factors(coupling, backend)
+        g, matrix_a, matrix_b = _coupling_product_factors(coupling, backend, bases)
         subsys_a = label_to_subsys[coupling.device_a_label]
         subsys_b = label_to_subsys[coupling.device_b_label]
         hs.add_interaction(

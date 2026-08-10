@@ -312,6 +312,14 @@ class ChipAnalysis:
         dims = self._semantic_dims()
         local_vectors: list[Any] = []
         for device, dimension in zip(chip.devices, dims):
+            from quchip.devices.spaces import FockSpace
+
+            space = device.local_space()
+            if isinstance(space, FockSpace):
+                local_vectors.append(
+                    jnp.eye(space.dimension, dtype=jnp.complex128)[:, :dimension]
+                )
+                continue
             policy = chip.resolve_basis(device)
             record = resolve_device_basis(
                 device,

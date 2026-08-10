@@ -286,12 +286,6 @@ def test_zero_pi_import_matches_scqubits_spectrum_exactly():
     assert np.allclose(got, want, atol=1e-8)
 
 
-def test_zero_pi_import_notes_frozen_snapshot():
-    """A ZeroPi import declares its frozen-at-import snapshot in physics_notes()."""
-    dev = from_scqubits(_small_zero_pi())
-    assert any("frozen at import" in note for note in dev.physics_notes())
-
-
 def test_zero_pi_import_charge_operator_matches_scqubits_elements():
     """A ZeroPi's imported charge operator matches scqubits' n_theta matrix elements exactly."""
     zp = _small_zero_pi()

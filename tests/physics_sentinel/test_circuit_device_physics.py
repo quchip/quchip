@@ -1,4 +1,4 @@
-"""Physics sentinels for CircuitDevice subclasses.
+"""Physics sentinels for native-basis device models.
 
 Two-tier validation: hardcoded eigenvalues in ``refs/`` (always run) plus a live
 scqubits cross-check (runs when scqubits is installed).

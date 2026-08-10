@@ -1,9 +1,10 @@
 """Runtime-checkable Protocols for physical-operator drive dispatch.
 
-Circuit-level devices (fluxonium, charge-basis transmon) expose their
-*physical* charge / phase / flux operators in the truncated eigenbasis.
-Drives prefer these over the structural Fock-ladder fallback so that
-drive matrix elements are physically correct.
+Devices expose their *physical* charge / phase / flux operators in their
+authored local basis. Drives prefer these over the structural Fock-ladder
+fallback so their matrix elements remain physically correct; the engine then
+applies the device's resolved local-basis transformation with every other
+attached operator.
 
 These Protocols are :func:`typing.runtime_checkable` so that
 ``isinstance(device, ChargeCoupled)`` works at runtime. A device
@@ -13,7 +14,7 @@ and any future third-party device).
 
 The accessors return the operator as a dense, trace-safe array-like —
 not a backend-native operator — so a traced device parameter flows
-through the eigenbasis projection without concretization. Backend
+through engine materialization without concretization. Backend
 composition entry points (``Backend.tensor``, ``Backend.dag``) coerce
 array-likes via :meth:`~quchip.backend.protocol.Backend.coerce_operator`,
 so the accessors' output composes directly with native operators.
@@ -28,7 +29,7 @@ from quchip.backend.protocol import Operator
 
 @runtime_checkable
 class ChargeCoupled(Protocol):
-    """Device exposes the physical charge operator in its truncated eigenbasis.
+    """Device exposes the physical charge operator in its authored local basis.
 
     :class:`~quchip.control.drive.ChargeDrive` dispatches against this
     Protocol and emits drives using :meth:`charge_coupling_operator`
@@ -37,7 +38,7 @@ class ChargeCoupled(Protocol):
     """
 
     def charge_coupling_operator(self) -> Operator:
-        """Return the physical charge operator in the truncated eigenbasis."""
+        """Return the physical charge operator in the authored local basis."""
         ...
 
 
@@ -45,15 +46,14 @@ class ChargeCoupled(Protocol):
 class PhaseCoupled(Protocol):
     """Device exposes the physical phase-space coupling operator.
 
-    Returns :math:`V^\\dagger \\sin\\hat\\varphi V` on a charge-basis transmon
-    (where :math:`\\hat\\varphi` is not single-valued in the integer charge
-    basis) or :math:`V^\\dagger \\hat\\varphi V` on a fluxonium (where
-    :math:`\\hat\\varphi` is well-defined). Used by
+    Returns :math:`\\sin\\hat\\varphi` on a charge-basis transmon (where
+    :math:`\\hat\\varphi` is not single-valued in the integer charge basis) or
+    :math:`\\hat\\varphi` on a fluxonium (where it is well-defined). Used by
     :class:`~quchip.control.drive.PhaseDrive`.
     """
 
     def phase_coupling_operator(self) -> Operator:
-        """Return the physical phase-space coupling operator in the eigenbasis."""
+        """Return the physical phase-space coupling operator in the authored basis."""
         ...
 
 
@@ -61,13 +61,13 @@ class PhaseCoupled(Protocol):
 class FluxCoupled(Protocol):
     """Device exposes the physical flux-line coupling operator.
 
-    For a fluxonium this is :math:`V^\\dagger \\hat\\varphi V`; for a
+    For a fluxonium this is :math:`\\hat\\varphi`; for a
     flux-tunable transmon (future follow-up) it will be a flux-modulated
     term. Used by :class:`~quchip.control.drive.FluxDrive`.
     """
 
     def flux_coupling_operator(self) -> Operator:
-        """Return the physical flux-line coupling operator in the eigenbasis."""
+        """Return the physical flux-line coupling operator in the authored basis."""
         ...
 
 

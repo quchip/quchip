@@ -730,12 +730,9 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
     def _truncation_note(self) -> str:
         """Return the Hilbert-truncation physics note.
 
-        Default states the Fock-basis truncation. Subclasses whose
-        truncated basis is not a Fock ladder (e.g. the diagonalized
-        native-basis eigenstates of :class:`~quchip.devices.circuit.CircuitDevice`)
-        override this single hook rather than :meth:`physics_notes` itself,
-        so the rest of the base notes (T2 dephasing caveat, subclass
-        additions) are not duplicated.
+        Default states the Fock-basis truncation. Models with another authored
+        local space override this hook so the remaining physics notes stay
+        shared.
         """
         return f"Hilbert truncation: {self.levels} Fock levels"
 
@@ -850,6 +847,17 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
     def number_operator(self) -> Operator:
         """Number operator ``n̂ = a†a`` on the truncated Fock basis."""
         return self.local_space().operator("n", get_default_backend())
+
+    def energy_level_operator(self) -> Operator:
+        """Return the energy-level index expressed in the authored local basis."""
+        from quchip.devices.spaces import FockSpace
+
+        space = self.local_space()
+        if isinstance(space, FockSpace):
+            return space.matrix("n")
+        from quchip.engine.basis import resolve_device_basis
+
+        return resolve_device_basis(self, basis="native").level_operator()
 
     def identity(self) -> Operator:
         """Identity operator on the truncated Fock basis."""
@@ -1076,7 +1084,7 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
             return n_bar + 1.0
         return None
 
-    # -- Shared Lindblad rate algebra (reused by CircuitDevice) -------------
+    # -- Shared Lindblad rate algebra ----------------------------------------
 
     @staticmethod
     def _emission_terms(
@@ -1093,9 +1101,8 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         ``n_bar is None`` is treated as zero occupation, yielding the down
         channel only. The positivity gate reads a *concrete* scalar only, so
         a traced ``n_bar`` keeps both channels. The math is
-        pure :mod:`jax.numpy`, so the result type follows the operators
-        passed in (Fock operators for :class:`BaseDevice`, eigenbasis
-        projectors for :class:`~quchip.devices.circuit.CircuitDevice`).
+        pure :mod:`jax.numpy`, so the result type follows the supplied
+        operators.
         """
         n_bar_eff = 0.0 if n_bar is None else n_bar
         terms: list[tuple[Operator, Any]] = [(lower_op, rate * (n_bar_eff + 1.0))]
@@ -1109,9 +1116,8 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         """Clamped pure-dephasing rate ``gamma_phi``, or ``None`` when absent.
 
         ``gamma_phi = 1/T2 - 1/(2*T1)`` when ``T1`` is set, or ``1/T2`` when
-        ``T1`` is ``None`` (no T1 subtraction — the
-        :class:`~quchip.devices.circuit.CircuitDevice` T1-absent branch relies
-        on this). Returns ``None`` when there is no dephasing channel: either
+        ``T1`` is ``None`` (with no T1 subtraction). Returns ``None`` when
+        there is no dephasing channel: either
         ``T2`` is unset, or ``gamma_phi`` is a *concrete* non-positive scalar.
         A traced ``gamma_phi`` is kept and clamped via :func:`jax.numpy.maximum`.
         The construction constraint ``T2 <= 2*T1`` already
@@ -1133,8 +1139,8 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         """Pure-dephasing collapse operator ``sqrt(2*gamma_phi) * diag_op``.
 
         ``diag_op`` is a Hermitian diagonal generator: the number operator
-        ``n_hat`` on a Fock :class:`BaseDevice`, or the level-index operator
-        on a :class:`~quchip.devices.circuit.CircuitDevice`. For a Lindblad
+        ``n_hat`` on a Fock device, or an equivalent energy-level operator.
+        For a Lindblad
         dissipator ``D[c]`` with ``c = sqrt(k) * diag_op`` the coherence
         ``rho_mn`` decays at ``(k/2) * (m - n)**2``; the computational 0-1
         coherence (``|m - n| = 1``) therefore decays at ``k/2``. Choosing
@@ -1145,8 +1151,7 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         ``(m - n)**2`` (e.g. 0-2 decays at ``4*gamma_phi``), the standard
         number-operator dephasing law.
 
-        The factor lives here, in one shared helper, so the Fock and
-        circuit call sites cannot drift apart. The math is pure
+        The factor lives here so device models cannot drift apart. The math is pure
         :mod:`jax.numpy`, so the result type follows ``diag_op`` and a
         traced ``gamma_phi`` stays differentiable.
         """
