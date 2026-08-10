@@ -8,5 +8,6 @@
 # qutip 5.3.1 switched Data.as_scipy() to SciPy's sparse-array API
 # (csr_array/csc_array). scqubits <= 4.3.1 only dispatches on the legacy
 # spmatrix types and raises TypeError in convert_operator_to_qobj.
-# Remove once a scqubits release supports sparse arrays.
+# Remove once a scqubits release ships the fix for
+# https://github.com/scqubits/scqubits/issues/320
 qutip<5.3.1
