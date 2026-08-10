@@ -73,6 +73,13 @@ class BasisRecord:
             )
         return self.vectors.conj().T @ operator @ self.vectors
 
+    def level_operator(self) -> Any:
+        """Return the energy-level index operator in the resolved solver basis."""
+        indices = jnp.diag(jnp.arange(self.energy_vectors.shape[1], dtype=jnp.complex128))
+        if self.kind == "eigen":
+            return indices
+        return self.energy_vectors @ indices @ self.energy_vectors.conj().T
+
 
 def resolve_local_basis(
     hamiltonian: Any,
@@ -112,3 +119,16 @@ def resolve_local_basis(
         native_dim=native_dim,
         resolved_dim=levels,
     )
+
+
+def resolve_device_basis(
+    device: Any,
+    *,
+    basis: Literal["native", "eigen"],
+    levels: int | None = None,
+) -> BasisRecord:
+    """Resolve a device from its exact authored static Hamiltonian."""
+    from quchip.declarative.expr import materialize_array
+
+    matrix = materialize_array(device.hamiltonian())
+    return resolve_local_basis(matrix, basis=basis, levels=levels)

@@ -30,7 +30,7 @@ stage-2 boundary. Carrier frequencies are stored in angular units
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from math import prod
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, cast
@@ -1020,6 +1020,8 @@ class EngineResult:
     metadata: dict[str, Any] = field(default_factory=dict)
     dropped_terms: tuple[DroppedTerm, ...] = ()
     collapse_terms: tuple[CollapseTerm, ...] = ()
+    bases: Mapping[str, Any] = field(default_factory=dict)
+    authored: Any = None
 
     def hamiltonian(self) -> PhysicsExpr:
         """Return the exact canonical Hamiltonian as an inspectable expression.
@@ -1184,6 +1186,8 @@ class HamiltonianTemplate:
     #: variant-specific carrier-frequency hint is recomputed per instantiation.
     static_spectral_bound_ghz: float | None = None
     collapse_terms: tuple[Any, ...] = ()            # tuple[CollapseTerm, ...]
+    bases: Mapping[str, Any] = field(default_factory=dict)
+    authored: Any = None
 
 
 # ── Frame Types ─────────────────────────────────────────────────────

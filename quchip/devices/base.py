@@ -88,7 +88,7 @@ import weakref
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Callable, ClassVar, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Literal, TypeVar
 
 import jax.numpy as jnp
 
@@ -102,6 +102,7 @@ from quchip.utils.state_versioning import StateVersioned
 if TYPE_CHECKING:
     from quchip.control.drive import BaseDrive
     from quchip.chip.chip import Chip
+    from quchip.devices.spaces import LocalSpace
 
 
 # The noise kwargs accepted by ``BaseDevice.__init__`` and forwarded between
@@ -267,6 +268,9 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
     # :attr:`drive_freq`. Class-level default so the getter is safe even on the
     # JAX-pytree ``_unflatten`` path (which bypasses ``__init__``).
     _reference_freq_override: Any = None
+    basis: Literal["native", "eigen"] | None = None
+    projection_levels: int | None = None
+    requires_projection_levels: ClassVar[bool] = False
 
     # Declared Lindblad channel families, composed in order by
     # :meth:`collapse_operators`. Subclasses extend (or replace) this tuple
@@ -347,6 +351,12 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         """
         if name == "levels" and value < 2:
             raise ValueError(f"levels must be >= 2, got {value}")
+        if name in ("basis", "projection_levels"):
+            self._validate_basis_request(
+                basis=value if name == "basis" else self.basis,
+                levels=value if name == "projection_levels" else self.projection_levels,
+                native_dimension=self.local_space().dimension,
+            )
         if name in _NOISE_FIELDS:
             candidate = {field: getattr(self, field, None) for field in _NOISE_FIELDS}
             candidate[name] = value
@@ -603,6 +613,12 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         """Return the device Hamiltonian on the truncated Hilbert space."""
         ...
 
+    def engine_result(self) -> Any:
+        """Materialize this device through the same engine path used by solves."""
+        from quchip.chip.chip import Chip
+
+        return Chip([self]).engine_result()
+
     # -- Declared approximations --------------------------------------------
 
     def _truncation_note(self) -> str:
@@ -660,11 +676,62 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
 
     # -- Fock-space operator defaults --------------------------------------
 
-    def local_space(self) -> Any:
+    def local_space(self) -> "LocalSpace":
         """Return this device's authored local operator space."""
         from quchip.devices.spaces import FockSpace
 
         return FockSpace(self.levels)
+
+    def resolved_basis(
+        self,
+        chip_basis: Literal["native", "eigen"] = "native",
+    ) -> Literal["native", "eigen"]:
+        """Return the device override or inherited chip basis policy."""
+        policy = self.basis if self.basis is not None else chip_basis
+        if policy not in ("native", "eigen"):
+            raise ValueError(f"basis must be 'native', 'eigen', or None, got {policy!r}.")
+        return policy
+
+    @classmethod
+    def _validate_basis_request(
+        cls,
+        *,
+        basis: Literal["native", "eigen"] | None,
+        levels: int | None,
+        native_dimension: int,
+    ) -> None:
+        """Validate one local-basis policy against its authored dimension."""
+        if basis not in (None, "native", "eigen"):
+            raise ValueError(f"basis must be 'native', 'eigen', or None, got {basis!r}")
+        if basis == "native" and levels is not None:
+            raise ValueError("levels is not valid when basis='native'.")
+        if basis == "eigen" and cls.requires_projection_levels and levels is None:
+            raise ValueError("levels is required when basis='eigen'.")
+        if levels is not None and not 1 <= levels <= native_dimension:
+            raise ValueError(
+                f"levels must be between 1 and {native_dimension}, got {levels}"
+            )
+
+    def resolved_dimension(
+        self,
+        chip_basis: Literal["native", "eigen"] = "native",
+    ) -> int:
+        """Return the local dimension delivered to the solver."""
+        policy = self.resolved_basis(chip_basis)
+        if policy == "native":
+            return self.local_space().dimension
+        levels = self.projection_levels
+        if levels is None:
+            if self.requires_projection_levels:
+                raise ValueError(
+                    f"{type(self).__name__} {self.label!r} requires levels when basis='eigen'."
+                )
+            levels = self.local_space().dimension
+        if levels < 1 or levels > self.local_space().dimension:
+            raise ValueError(
+                f"levels must be between 1 and {self.local_space().dimension}, got {levels}."
+            )
+        return levels
 
     def lowering_operator(self) -> Operator:
         """Bosonic lowering operator ``a`` on the truncated Fock basis."""

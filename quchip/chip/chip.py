@@ -16,7 +16,7 @@ from __future__ import annotations
 import warnings
 from collections import Counter
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence, overload
+from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping, Sequence, overload
 
 import numpy as np
 
@@ -147,6 +147,7 @@ class Chip:
         label: str | None = None,
         frame: FrameSpec = "lab",
         rwa: bool = True,
+        basis: Literal["native", "eigen"] = "native",
         backend: str | Backend | None = None,
         baths: list[Bath] | None = None,
     ) -> None:
@@ -176,7 +177,10 @@ class Chip:
         for bath in baths or ():
             self._validate_bath(bath)
         self._baths = tuple(baths) if baths else ()
-        self._dims = tuple(d.levels for d in devices)
+        if basis not in ("native", "eigen"):
+            raise ValueError(f"basis must be 'native' or 'eigen', got {basis!r}")
+        self._basis = basis
+        tuple(d.resolved_dimension(basis) for d in devices)
         self._frame_spec: FrameSpec = "lab"
         self._rwa = bool(rwa)
         if control_equipment is not None:
@@ -272,17 +276,20 @@ class Chip:
                     dev.hamiltonian(),
                     backend,
                     labels=(dev.label,),
-                    dims=(dev.levels,),
+                    dims=(dev.local_space().dimension,),
                     name=rf"\hat H_{{{dev.label}}}",
                 )
-                h_emb = h_local.embed(labels, self._dims)
+                h_emb = h_local.embed(labels, self.authored_dims)
                 H = h_emb if H is None else H + h_emb
 
             for coupling in self._couplings:
                 idx_a = self._label_to_index[coupling.device_a_label]
                 idx_b = self._label_to_index[coupling.device_b_label]
                 local_labels = (coupling.device_a_label, coupling.device_b_label)
-                local_dims = (self._devices[idx_a].levels, self._devices[idx_b].levels)
+                local_dims = (
+                    self._devices[idx_a].local_space().dimension,
+                    self._devices[idx_b].local_space().dimension,
+                )
                 h_int = _as_physics_expr(
                     coupling.interaction_hamiltonian(),
                     backend,
@@ -335,13 +342,24 @@ class Chip:
                             )
                         continue
                     h_int = masked
-                H = H + h_int.embed(labels, self._dims)
+                H = H + h_int.embed(labels, self.authored_dims)
 
         assert H is not None
         # Do not cache expressions whose values belong to a JAX trace.
         if not contains_tracer(H.numeric_values()):
             self._hamiltonian_cache = (signature, H)
         return H
+
+    def engine_result(self) -> Any:
+        """Materialize the chip through the same engine path used by solves."""
+        from quchip.engine.stage1_frames import resolve_frame
+        from quchip.engine.stage2_assembly import build_engine_result
+
+        return build_engine_result(
+            self,
+            [],
+            resolved_frame=resolve_frame(self, self.frame),
+        )
 
     # ------------------------------------------------------------------
     # Component physics enumeration (consumed by the engine)
@@ -527,12 +545,27 @@ class Chip:
     @property
     def dims(self) -> tuple[int, ...]:
         """Per-device Hilbert-space dimensions (same order as :attr:`devices`)."""
-        return self._dims
+        return tuple(device.resolved_dimension(self._basis) for device in self._devices)
+
+    @property
+    def authored_dims(self) -> tuple[int, ...]:
+        """Per-device dimensions of the exact authored local spaces."""
+        return tuple(device.local_space().dimension for device in self._devices)
+
+    @property
+    def basis(self) -> Literal["native", "eigen"]:
+        """Chip-wide local solver-basis policy inherited by devices."""
+        return self._basis
+
+    def resolve_basis(self, device: str | BaseDevice) -> Literal["native", "eigen"]:
+        """Resolve a device override against the chip basis policy."""
+        resolved = self[device]
+        return resolved.resolved_basis(self._basis)
 
     @property
     def total_dim(self) -> int:
         """Total Hilbert-space dimension (product of per-device :attr:`dims`)."""
-        return int(np.prod(self._dims, dtype=int))
+        return int(np.prod(self.dims, dtype=int))
 
     @property
     def baths(self) -> tuple[Bath, ...]:
@@ -1046,8 +1079,13 @@ class Chip:
         return MappingProxyType(
             {
                 "devices": tuple(
-                    (device.label, type(device).__name__, device.levels)
+                    (device.label, type(device).__name__, device.resolved_dimension(self._basis))
                     for device in self._devices
+                ),
+                "basis": self._basis,
+                "authored_dims": self.authored_dims,
+                "device_bases": tuple(
+                    (device.label, self.resolve_basis(device)) for device in self._devices
                 ),
                 "couplings": tuple(
                     (

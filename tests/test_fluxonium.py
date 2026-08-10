@@ -18,9 +18,10 @@ def _reset():
 
 
 def test_constructor_accepts_three_energies():
-    """Fluxonium accepts E_C, E_J, E_L and stores the requested level count."""
+    """Fluxonium keeps its phase grid separate from retained eigenlevels."""
     q = Fluxonium(E_C=1.0, E_J=4.0, E_L=1.0, phi_ext=0.5, levels=5)
-    assert q.levels == 5
+    assert q.local_space().dimension == 400
+    assert q.projection_levels == 5
 
 
 def test_invalid_energies_raise():
