@@ -27,8 +27,8 @@ jobs:
             ci-constraints-*.txt
       - run: uv venv --python 3.11
       - run: uv pip install -e '.[dev,test,dynamiqs]' -c ci-constraints-3.11.txt
-      - run: uv run ruff check .
-      - run: uv run mypy quchip
+      - run: uv run --no-sync ruff check .
+      - run: uv run --no-sync mypy quchip
 
   test-fast:
     strategy:
@@ -46,7 +46,7 @@ jobs:
             ci-constraints-*.txt
       - run: uv venv --python ${{ matrix.python }}
       - run: uv pip install -e '.[test]' -c ci-constraints-${{ matrix.python }}.txt
-      - run: uv run pytest -m "core or physics_sentinel"
+      - run: uv run --no-sync pytest -m "core or physics_sentinel"
 
   test-full:
     if: github.event_name != 'pull_request'
@@ -61,4 +61,4 @@ jobs:
             ci-constraints-*.txt
       - run: uv venv --python 3.11
       - run: uv pip install -e '.[test,dynamiqs]' -c ci-constraints-3.11.txt
-      - run: uv run pytest
+      - run: uv run --no-sync pytest
