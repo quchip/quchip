@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from quchip.declarative.expr import PhysicsExpr
+from quchip.devices.spaces import LocalSpace
 
 
 @dataclass(frozen=True)
@@ -24,17 +25,22 @@ class LocalOps:
     Examples
     --------
     >>> from quchip.declarative import LocalOps
-    >>> op = LocalOps(label="q", levels=3)
+    >>> from quchip.devices.spaces import FockSpace
+    >>> op = LocalOps(label="q", space=FockSpace(3))
     >>> H = 5.0 * op.n + 0.5 * (op.adag @ op.adag @ op.a @ op.a)
     >>> H.kind
     'add'
     """
 
     label: str
-    levels: int
+    space: LocalSpace
 
     def _op(self, name: str) -> PhysicsExpr:
-        return PhysicsExpr(kind="op", args=(name, self.levels), labels=(self.label,))
+        return PhysicsExpr(kind="op", args=(name, self.space), labels=(self.label,))
+
+    def __getitem__(self, name: str) -> PhysicsExpr:
+        """Return a named operator supplied by this local space."""
+        return self._op(name)
 
     @property
     def a(self) -> PhysicsExpr:
@@ -50,6 +56,26 @@ class LocalOps:
     def n(self) -> PhysicsExpr:
         """Number operator for this endpoint."""
         return self._op("n")
+
+    @property
+    def n2(self) -> PhysicsExpr:
+        """Squared charge operator in a compatible authored local space."""
+        return self._op("n2")
+
+    @property
+    def phi(self) -> PhysicsExpr:
+        """Phase operator in a compatible authored local space."""
+        return self._op("phi")
+
+    @property
+    def cos_phi(self) -> PhysicsExpr:
+        """Cosine of phase in a compatible authored local space."""
+        return self._op("cos_phi")
+
+    @property
+    def sin_phi(self) -> PhysicsExpr:
+        """Sine of phase in a compatible authored local space."""
+        return self._op("sin_phi")
 
     @property
     def I(self) -> PhysicsExpr:  # noqa: E743 - physics API uses I for identity.

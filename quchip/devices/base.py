@@ -660,22 +660,27 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
 
     # -- Fock-space operator defaults --------------------------------------
 
+    def local_space(self) -> Any:
+        """Return this device's authored local operator space."""
+        from quchip.devices.spaces import FockSpace
+
+        return FockSpace(self.levels)
+
     def lowering_operator(self) -> Operator:
         """Bosonic lowering operator ``a`` on the truncated Fock basis."""
-        return get_default_backend().destroy(self.levels)
+        return self.local_space().operator("a", get_default_backend())
 
     def raising_operator(self) -> Operator:
         """Bosonic raising operator ``a†`` on the truncated Fock basis."""
-        backend = get_default_backend()
-        return backend.dag(backend.destroy(self.levels))
+        return self.local_space().operator("adag", get_default_backend())
 
     def number_operator(self) -> Operator:
         """Number operator ``n̂ = a†a`` on the truncated Fock basis."""
-        return get_default_backend().number(self.levels)
+        return self.local_space().operator("n", get_default_backend())
 
     def identity(self) -> Operator:
         """Identity operator on the truncated Fock basis."""
-        return get_default_backend().identity(self.levels)
+        return self.local_space().operator("I", get_default_backend())
 
     # Operator-name vocabulary recognized by :meth:`local_operator`. Subclasses
     # that expose extra named operators extend this tuple (so the "unknown
@@ -713,30 +718,6 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
             f"Unknown operator '{name}' for device '{self.label}'. "
             f"Available: {sorted(self._LOCAL_OPERATOR_NAMES)}"
         )
-
-    def declarative_ops(self) -> dict[tuple[str, str], Operator]:
-        """Map declarative ``(label, op-name)`` keys to backend operators.
-
-        This is the single lookup the declarative layer consumes when
-        compiling a :class:`~quchip.declarative.expr.PhysicsExpr`: a
-        :class:`DeviceModel` uses it for its local Hamiltonian, and a
-        coupling merges the maps of both endpoints. Keys mirror the
-        operator handles exposed by :class:`~quchip.declarative.ops.LocalOps`
-        (``a``, ``adag``, ``n``, ``I``, and the computational-subspace
-        ``sigma_*`` family, so spin-like models are first-class citizens of
-        the declarative surface).
-        """
-        return {
-            (self.label, "a"): self.lowering_operator(),
-            (self.label, "adag"): self.raising_operator(),
-            (self.label, "n"): self.number_operator(),
-            (self.label, "I"): self.identity(),
-            (self.label, "sigma_x"): self.sigma_x,
-            (self.label, "sigma_y"): self.sigma_y,
-            (self.label, "sigma_z"): self.sigma_z,
-            (self.label, "sigma_plus"): self.sigma_plus,
-            (self.label, "sigma_minus"): self.sigma_minus,
-        }
 
     def basis_state(self, n: int) -> State:
         """Fock basis state ``|n>`` on the truncated Hilbert space."""

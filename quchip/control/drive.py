@@ -555,13 +555,14 @@ def _probe_modulable(coupling: Any) -> None:
     """Raise the teaching TypeError when *coupling* declines the parametric hook."""
     from quchip.declarative.models import _symbolic_parameters
     from quchip.declarative.ops import EndpointOps
+    from quchip.devices.spaces import FockSpace
 
     probe = getattr(coupling, "parametric_interaction", None)
     expr = None
     if probe is not None:
         expr = probe(
-            EndpointOps(label=coupling.device_a_label, levels=2),
-            EndpointOps(label=coupling.device_b_label, levels=2),
+            EndpointOps(label=coupling.device_a_label, space=FockSpace(2)),
+            EndpointOps(label=coupling.device_b_label, space=FockSpace(2)),
             _symbolic_parameters(coupling),
         )
     if expr is None:

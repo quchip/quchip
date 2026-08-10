@@ -167,7 +167,7 @@ def test_symbolic_drive_channel_reaches_engine_without_custom_dispatch():
         def local_channels(self, device):
             return [
                 DriveChannel(
-                    operator=LocalOps(device.label, device.levels).n,
+                    operator=LocalOps(device.label, device.local_space()).n,
                     modulation=DriveModulation.DIRECT_REAL,
                 )
             ]
