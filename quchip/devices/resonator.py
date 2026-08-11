@@ -64,7 +64,6 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 
-from quchip.backend.protocol import Operator
 from quchip.declarative.expr import PhysicsExpr
 from quchip.declarative.ops import LocalOps
 from quchip.declarative.parameters import Scalar, parameter
@@ -72,7 +71,7 @@ from quchip.devices.base import BaseDevice, NoiseChannel
 from quchip.devices.fock import FockDevice
 
 
-def _photon_loss_channel(device: Any, basis: Any = None) -> list[tuple[Operator, Any]]:
+def _photon_loss_channel(device: Any, basis: Any = None) -> list[tuple[Any, Any]]:
     """Cavity photon-loss channel ``sqrt(κ)·a`` with ``κ = 2π·freq/Q``.
 
     The ``2π`` is intrinsic to the physical definition of Q (cycles of the
@@ -83,7 +82,8 @@ def _photon_loss_channel(device: Any, basis: Any = None) -> list[tuple[Operator,
         return []
     del basis
     kappa = 2 * np.pi * device.freq / device.quality_factor
-    return [(device.local_space().matrix("a"), kappa)]
+    op = LocalOps(label=device.label, space=device.local_space(), device=device)
+    return [(op.a, kappa)]
 
 
 class Resonator(FockDevice):

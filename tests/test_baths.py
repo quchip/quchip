@@ -106,10 +106,12 @@ def test_bath_zero_temperature_thermal_occupation_is_zero():
 
 def test_bath_zero_temperature_has_relaxation_rate_only():
     """A concrete T=0 thermal bath has a nonzero emission rate and zero absorption rate."""
+    from quchip.declarative.expr import materialize_expr
+
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
     chip = Chip([q], baths=[Bath("thermal", temperature=0.0, rate=1e-3)])
     relax, absorb = _terms(chip.baths[0], chip)
-    relax_array = chip.backend.to_array(relax[0])
+    relax_array = chip.backend.to_array(materialize_expr(relax[0], chip.backend))
     assert np.linalg.norm(relax_array) > 0.0
     assert float(relax[1]) == pytest.approx(1e-3)
     assert float(absorb[1]) == 0.0
