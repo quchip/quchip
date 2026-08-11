@@ -97,7 +97,7 @@ def from_array(chip: "Chip", data: Any, device: str | BaseDevice | None = None) 
         return chip.backend.from_array(array, dims=[list(chip.dims), list(chip.dims)])
 
     idx, dev = chip._resolve_device_index(device)
-    basis = chip.engine_result().bases[dev.label]
+    basis = chip.resolve().bases[dev.label]
     local = prepare_local_op(dev, array, basis, chip.backend)
     return chip.backend.embed(local, idx, chip.dims)
 
@@ -120,7 +120,7 @@ def observable(chip: "Chip", device: str | BaseDevice, op: str | Any) -> Any:
     local device operator.
     """
     idx, dev = chip._resolve_device_index(device)
-    basis = chip.engine_result().bases[dev.label]
+    basis = chip.resolve().bases[dev.label]
     with _backend_context(chip.backend):
         local_op = prepare_local_op(dev, op, basis, chip.backend)
     return chip.backend.embed(local_op, idx, chip.dims)

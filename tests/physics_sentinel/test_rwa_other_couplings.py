@@ -127,7 +127,7 @@ def test_custom_rwa_keeps_band_override():
     ba = Resonator(freq=5.0, levels=3, label="ba_blue")
     bb = Resonator(freq=5.2, levels=3, label="bb_blue")
     chip = Chip([ba, bb], [_BlueCoupling(ba, bb, g=0.03)], rwa=True)
-    h = np.asarray(chip.engine_result().hamiltonian().matrix(t=0.0))
+    h = np.asarray(chip.resolve().hamiltonian().matrix(t=0.0))
     idx_01, idx_10, idx_00, idx_11 = 1, 3, 0, 4
     assert abs(h[idx_01, idx_10]) < 1e-14  # exchange band dropped by the override
     np.testing.assert_allclose(abs(h[idx_00, idx_11]), 0.03, atol=1e-12)

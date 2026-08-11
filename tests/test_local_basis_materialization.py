@@ -31,7 +31,7 @@ def test_charge_basis_device_exposes_unresolved_and_projected_hamiltonians() -> 
 
     authored = device.unresolved_hamiltonian().matrix()
     resolved = device.hamiltonian().matrix()
-    result = device.engine_result()
+    result = device.resolve()
     basis = result.bases["q"]
 
     assert authored.shape == (9, 9)
@@ -101,8 +101,8 @@ def test_native_is_default_and_device_policy_overrides_the_chip() -> None:
         label="native",
     )
 
-    inherited_result = Chip([inherited], basis="eigen").engine_result()
-    native_result = Chip([native], basis="eigen").engine_result()
+    inherited_result = Chip([inherited], basis="eigen").resolve()
+    native_result = Chip([native], basis="eigen").resolve()
 
     assert inherited_result.dims == (3,)
     assert inherited_result.bases["inherited"].kind == "eigen"
@@ -135,7 +135,7 @@ def test_fluxonium_uses_the_same_phase_grid_to_local_eigen_path() -> None:
         label="flux",
     )
 
-    result = Chip([device]).engine_result()
+    result = Chip([device]).resolve()
 
     assert device.unresolved_hamiltonian().shape == (31, 31)
     assert device.hamiltonian().shape == (4, 4)

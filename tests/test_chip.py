@@ -45,12 +45,12 @@ class TestChipHamiltonian:
 
         assert unresolved.shape == resolved.shape == (9, 9)
         assert not np.allclose(unresolved, resolved)
-        first_result = chip.engine_result()
-        assert chip.engine_result() is first_result
+        first_result = chip.resolve()
+        assert chip.resolve() is first_result
         np.testing.assert_allclose(resolved, first_result.hamiltonian().matrix(), atol=1e-12)
 
         q.freq = 5.1
-        assert chip.engine_result() is not first_result
+        assert chip.resolve() is not first_result
 
     def test_symbolic_chip_hamiltonian_exposes_real_terms_and_parameter_paths(self) -> None:
         """Chip inspection preserves authored device terms and structurally retained RWA exchange terms."""
@@ -169,7 +169,7 @@ class TestChipHamiltonian:
         chip = Chip(devices=[q, r], couplings=[squeezing])
 
         with pytest.warns(UserWarning, match="vanishes entirely under the resolved RWA"):
-            chip.engine_result()
+            chip.resolve()
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +194,44 @@ class TestFrameSpec:
         chip.set_frame("rotating")
         H_rot = chip.hamiltonian()
         assert not np.allclose(H_lab.matrix(), H_rot.matrix())
+
+    def test_resolve_accepts_a_frame_override_without_mutating_the_chip(self) -> None:
+        """One resolution may use the lab frame without changing configured intent."""
+        q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+        chip = Chip([q], frame="rotating")
+
+        rotating = chip.resolve().hamiltonian().matrix()
+        lab = chip.resolve(frame="lab").hamiltonian().matrix()
+
+        assert chip.frame == "rotating"
+        assert not np.allclose(rotating, lab)
+        np.testing.assert_allclose(lab, chip.unresolved_hamiltonian().matrix(), atol=1e-12)
+        np.testing.assert_allclose(
+            q.resolve(frame="lab").hamiltonian().matrix(),
+            q.unresolved_hamiltonian().matrix(),
+            atol=1e-12,
+        )
+
+    def test_analysis_engine_result_is_the_static_spectral_contract(self) -> None:
+        """Dressed analysis consumes an inspectable, cached lab-frame static result."""
+        q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+        r = Resonator(freq=7.0, levels=3, label="r")
+        chip = Chip(
+            [q, r],
+            [Capacitive(q, r, g=0.05)],
+            frame="rotating",
+            rwa=True,
+        )
+
+        result = chip.analysis.engine_result()
+
+        assert chip.analysis.engine_result() is result
+        assert result.dynamic_terms == ()
+        assert result.collapse_terms == ()
+        assert "max_carrier_freq_ghz" not in result.metadata
+        assert "max_step_ns" not in result.metadata
+        expected = np.sort(np.linalg.eigvalsh(result.hamiltonian().matrix()).real)
+        np.testing.assert_allclose(chip.dressed_spectrum(), expected, atol=1e-12)
 
     def test_invalid_frame_raises(self) -> None:
         """Invalid frame string raises ValueError."""

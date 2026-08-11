@@ -104,6 +104,7 @@ if TYPE_CHECKING:
     from quchip.chip.chip import Chip
     from quchip.devices.spaces import LocalSpace
     from quchip.engine.basis import BasisRecord
+    from quchip.engine.ir import EngineResult, FrameSpec
 
 
 # The noise kwargs accepted by ``BaseDevice.__init__`` and forwarded between
@@ -721,32 +722,33 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
 
     def hamiltonian(self) -> Any:
         """Return the local Hamiltonian after basis and frame policies."""
-        return self.engine_result().hamiltonian()
+        return self.resolve().hamiltonian()
 
-    def engine_result(self) -> Any:
-        """Materialize this device through the same engine path used by solves.
+    def resolve(self, *, frame: FrameSpec | None = None) -> EngineResult:
+        """Resolve this device through the same engine path used by solves.
 
-        An owned device inherits its chip's basis and frame policy. The local
-        result remains a one-device snapshot; couplings to the rest of the chip
-        are intentionally outside a device Hamiltonian's boundary.
+        An owned device inherits its chip's basis and frame policy unless
+        ``frame`` overrides this snapshot. The local result remains a
+        one-device snapshot; couplings to the rest of the chip are
+        intentionally outside a device Hamiltonian's boundary.
         """
         from quchip.chip.chip import Chip
 
         owner = self._single_owner_chip()
         if owner is None:
-            return Chip([self.copy()]).engine_result()
+            return Chip([self.copy()]).resolve(frame=frame)
 
         from quchip.engine.stage1_frames import resolve_frame
 
-        resolved_frame = resolve_frame(owner, owner.frame)
-        frame: Any = {self.label: resolved_frame.frequencies[self.label]}
+        resolved_frame = resolve_frame(owner, owner.frame if frame is None else frame)
+        local_frame: Any = {self.label: resolved_frame.frequencies[self.label]}
         return Chip(
             [self.copy()],
-            frame=frame,
+            frame=local_frame,
             rwa=owner.rwa,
             basis=owner.basis,
             backend=owner.backend,
-        ).engine_result()
+        ).resolve()
 
     # -- Declared approximations --------------------------------------------
 

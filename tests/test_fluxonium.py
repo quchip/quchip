@@ -113,7 +113,7 @@ def test_charge_and_flux_channels_give_different_rates_at_sweet_spot():
     q_flux = Fluxonium(**kwargs, coupling_channel="flux")
 
     def _resolved_operators(device: Fluxonium) -> list[np.ndarray]:
-        result = Chip([device], basis="eigen").engine_result()
+        result = Chip([device], basis="eigen").resolve()
         return [
             np.sqrt(np.asarray(term.rate)) * np.asarray(term.operator.to_dense())
             for term in result.collapse_terms

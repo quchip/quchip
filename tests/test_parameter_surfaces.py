@@ -98,8 +98,9 @@ def test_sequence_reserves_scheduled_pulse_parameter_namespace() -> None:
         QuantumSequence(Chip([device]))
 
 
-def test_sequence_hamiltonian_is_the_engine_result_view() -> None:
+def test_sequence_hamiltonian_is_the_resolved_result_view() -> None:
     chip = _chip()
+    chip.set_frame("rotating")
     drive = ChargeDrive(chip["q"], label="xy")
     chip.wire(drive)
     sequence = QuantumSequence(chip)
@@ -109,7 +110,13 @@ def test_sequence_hamiltonian_is_the_engine_result_view() -> None:
         freq=5.0,
     )
 
-    result = sequence.engine_result()
+    result = sequence.resolve()
+    lab_result = sequence.resolve(frame="lab")
+    assert chip.frame == "rotating"
+    assert not np.allclose(
+        result.hamiltonian().matrix(t=10.0, backend=chip.backend),
+        lab_result.hamiltonian().matrix(t=10.0, backend=chip.backend),
+    )
     np.testing.assert_allclose(
         sequence.hamiltonian().matrix(t=10.0, backend=chip.backend),
         result.hamiltonian().matrix(t=10.0, backend=chip.backend),

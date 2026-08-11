@@ -1023,6 +1023,51 @@ class EngineResult:
     bases: Mapping[str, Any] = field(default_factory=dict)
     authored: Any = None
 
+    def _contains_tracer(self) -> bool:
+        """Return whether any value-bearing field belongs to a JAX trace.
+
+        Engine IR containers are frozen contracts rather than JAX pytrees, so
+        cache guards must inspect their array-bearing fields explicitly.
+        """
+        operators = (
+            tuple(term.operator for term in self.static_terms)
+            + tuple(term.operator for term in self.dynamic_terms)
+            + tuple(term.operator for term in self.collapse_terms)
+        )
+        operator_payloads = tuple(
+            (
+                operator.values,
+                operator.indices,
+                operator.indptr,
+                operator.offsets,
+            )
+            for operator in operators
+        )
+        basis_payloads = tuple(
+            (record.vectors, record.energies, record.energy_vectors)
+            for record in self.bases.values()
+        )
+        authored_values = (
+            self.authored.numeric_values()
+            if hasattr(self.authored, "numeric_values")
+            else self.authored
+        )
+        return contains_tracer(
+            (
+                operator_payloads,
+                tuple(term.coefficient for term in self.static_terms),
+                tuple(term.time_dependence for term in self.dynamic_terms),
+                tuple(term.rate for term in self.collapse_terms),
+                tuple(
+                    (term.amplitude, term.frequency)
+                    for term in self.dropped_terms
+                ),
+                basis_payloads,
+                authored_values,
+                self.metadata,
+            )
+        )
+
     def hamiltonian(self) -> PhysicsExpr:
         """Return the exact canonical Hamiltonian as an inspectable expression.
 
