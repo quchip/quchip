@@ -18,7 +18,7 @@ place where the spec is composed with the resolved rotating frame into a
 Conventions:
 
 - Frequencies are GHz; times are ns.
-- Operators are returned in the device's computational basis — embedding
+- Operators are returned in the device's authored local basis — embedding
   into the full chip Hilbert space is the engine's job.
 
 References
@@ -32,7 +32,6 @@ References
 from __future__ import annotations
 
 import copy
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -117,7 +116,7 @@ class BaseDrive(Registrable, registry_root=True):
     # ------------------------------------------------------------------
     # Declarative local-channel dispatch.
     #
-    # A simple single-channel drive declares the five attributes below and
+    # A simple single-channel drive declares the attributes below and
     # inherits :meth:`local_channels` / :meth:`physics_notes` from the base
     # — no copy-pasted protocol-dispatch body. Drives with a non-standard
     # decomposition (e.g. two-photon parametric drives) leave the protocol
@@ -125,15 +124,11 @@ class BaseDrive(Registrable, registry_root=True):
     # ------------------------------------------------------------------
 
     #: Device Protocol (ChargeCoupled / PhaseCoupled / FluxCoupled) whose
-    #: physical coupling operator this drive prefers. ``None`` means the drive
+    #: physical coupling operator this drive requires. ``None`` means the drive
     #: implements :meth:`local_channels` itself.
     _coupling_protocol: type | None = None
-    #: Name of the device method returning the physical coupling operator when
-    #: the target conforms to :attr:`_coupling_protocol`.
+    #: Name of the device method returning the physical coupling operator.
     _coupling_accessor: str | None = None
-    #: Structural fallback building the coupling operator from the device's
-    #: ``a`` / ``a†`` / ``n̂`` when it does not conform to the Protocol.
-    _fallback: Callable[[BaseDevice], Operator]
     #: :class:`~quchip.control.signal_spec.DriveModulation` tag for the single
     #: channel exposed by :meth:`local_channels`.
     _modulation: DriveModulation | None = None
@@ -209,19 +204,19 @@ class BaseDrive(Registrable, registry_root=True):
         """Return the Hamiltonian channels this drive exposes on *device*.
 
         A simple single-channel drive declares :attr:`_coupling_protocol`,
-        :attr:`_coupling_accessor`, :attr:`_fallback`, and :attr:`_modulation`;
-        this method then dispatches generically — the device's physical
-        coupling operator when it conforms to the Protocol, the structural
-        fallback otherwise. Returned operators are in the device's local
-        basis (no chip-wide embedding). Drives with a non-standard
-        decomposition override this method instead.
+        :attr:`_coupling_accessor`, and :attr:`_modulation`; this method reads
+        the device's declared physical coupling operator. Returned operators
+        are in the device's local basis (no chip-wide embedding). Drives with
+        a non-standard decomposition override this method instead.
         """
         if self._coupling_accessor is None or self._modulation is None:
             raise NotImplementedError(f"{type(self).__name__} must implement local_channels()")
-        if self._coupling_protocol is not None and isinstance(device, self._coupling_protocol):
-            op = getattr(device, self._coupling_accessor)()
-        else:
-            op = self._fallback(device)
+        if self._coupling_protocol is not None and not isinstance(device, self._coupling_protocol):
+            raise TypeError(
+                f"{type(self).__name__} requires {type(device).__name__} "
+                f"to define {self._coupling_accessor}()."
+            )
+        op = getattr(device, self._coupling_accessor)()
         return [DriveChannel(operator=op, modulation=self._modulation)]
 
     def physics_notes(self) -> list[str]:
@@ -329,25 +324,6 @@ class BaseDrive(Registrable, registry_root=True):
         return f"{type(self).__name__}({', '.join(attrs)})"
 
 
-def _charge_fallback(device: BaseDevice) -> Operator:
-    """Structural charge coupling ``i(a − a†)`` when the device is not ChargeCoupled."""
-    a = device.lowering_operator()
-    a_dag = device.raising_operator()
-    return 1j * (a - a_dag)
-
-
-def _phase_fallback(device: BaseDevice) -> Operator:
-    """Structural phase coupling ``a + a†`` when the device is not PhaseCoupled."""
-    a = device.lowering_operator()
-    a_dag = device.raising_operator()
-    return a + a_dag
-
-
-def _flux_fallback(device: BaseDevice) -> Operator:
-    """Structural flux coupling ``n̂`` when the device is not FluxCoupled."""
-    return device.number_operator()
-
-
 class ChargeDrive(BaseDrive):
     r"""Microwave charge drive on a transmon-like device.
 
@@ -379,9 +355,8 @@ class ChargeDrive(BaseDrive):
 
     _coupling_protocol = ChargeCoupled
     _coupling_accessor = "charge_coupling_operator"
-    _fallback = staticmethod(_charge_fallback)
     _modulation = DriveModulation.SINGLE_TONE
-    _coupling_note = "Drive coupling: charge operator n̂ (or i(a − a†) fallback); single-tone modulation"
+    _coupling_note = "Drive coupling: device charge operator; single-tone modulation"
 
 
 class PhaseDrive(BaseDrive):
@@ -400,9 +375,8 @@ class PhaseDrive(BaseDrive):
 
     _coupling_protocol = PhaseCoupled
     _coupling_accessor = "phase_coupling_operator"
-    _fallback = staticmethod(_phase_fallback)
     _modulation = DriveModulation.SINGLE_TONE
-    _coupling_note = "Drive coupling: phase operator φ̂ (or a + a† fallback); single-tone modulation"
+    _coupling_note = "Drive coupling: device phase operator; single-tone modulation"
 
 
 class FluxDrive(BaseDrive):
@@ -441,10 +415,9 @@ class FluxDrive(BaseDrive):
 
     _coupling_protocol = FluxCoupled
     _coupling_accessor = "flux_coupling_operator"
-    _fallback = staticmethod(_flux_fallback)
     _modulation = DriveModulation.DIRECT_REAL
     _coupling_note = (
-        "Drive coupling: flux/φ̂ operator (or n̂ fallback); "
+        "Drive coupling: device flux operator; "
         "baseband direct-real modulation (no carrier, no RWA)"
     )
 

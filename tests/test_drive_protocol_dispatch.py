@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import numpy as np
+import quchip
 
-from quchip.backend.qutip import QuTiPBackend
+from quchip import Chip, Gaussian, QuantumSequence
 from quchip.control.drive import ChargeDrive, FluxDrive, PhaseDrive
-from quchip.devices import DuffingTransmon
+from quchip.declarative import DeviceModel, LocalOps, Scalar, parameter
+from quchip.devices import ChargeCoupled, DuffingTransmon, FluxCoupled, PhaseCoupled
 
 
 class _FakePhysicalDevice:
@@ -40,20 +42,35 @@ class _FakePhysicalDevice:
         self._connected_drives.append(drive)
 
 
-def test_charge_drive_falls_through_for_duffing():
-    """DuffingTransmon does not implement the Protocol — structural path wins."""
+def test_duffing_declares_fock_drive_capabilities():
+    """A Fock device owns the conventional operators its drives consume."""
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25)
-    drive = ChargeDrive(target=q)
-    (channel,) = drive.local_channels(q)
+    assert isinstance(q, quchip.FockDevice)
+    assert isinstance(q, ChargeCoupled)
+    assert isinstance(q, PhaseCoupled)
+    assert isinstance(q, FluxCoupled)
+    assert ChargeDrive(target=q).local_channels(q)[0].operator == q.charge_coupling_operator()
+    assert PhaseDrive(target=q).local_channels(q)[0].operator == q.phase_coupling_operator()
+    assert FluxDrive(target=q).local_channels(q)[0].operator == q.flux_coupling_operator()
 
-    backend = QuTiPBackend()
-    a = backend.destroy(q.levels)
-    expected = 1j * (a - backend.dag(a))
-    assert np.allclose(np.array(channel.operator.full()), np.array(expected.full()))
+
+class _CapabilityFreeDevice(DeviceModel):
+    freq: Scalar = parameter(positive=True, unit="GHz")
+
+    def local_hamiltonian(self, op: LocalOps, p: object):
+        return self.freq * op.n
+
+
+def test_drive_rejects_device_without_requested_capability():
+    """A drive never invents a physical operator absent from its target device."""
+    device = _CapabilityFreeDevice(freq=5.0, levels=3, label="plain")
+
+    with np.testing.assert_raises_regex(TypeError, "charge_coupling_operator"):
+        ChargeDrive(target=device).local_channels(device)
 
 
 def test_charge_drive_prefers_physical_operator_for_protocol_device():
-    """A ChargeCoupled-conformant device's physical operator is used over the structural fallback."""
+    """A ChargeCoupled device supplies the charge-drive operator."""
     fake = _FakePhysicalDevice()
     drive = ChargeDrive()
     (channel,) = drive.local_channels(fake)
@@ -61,7 +78,7 @@ def test_charge_drive_prefers_physical_operator_for_protocol_device():
 
 
 def test_phase_drive_prefers_physical_operator():
-    """A PhaseCoupled-conformant device's physical operator is used over the structural fallback."""
+    """A PhaseCoupled device supplies the phase-drive operator."""
     fake = _FakePhysicalDevice()
     drive = PhaseDrive()
     (channel,) = drive.local_channels(fake)
@@ -69,19 +86,28 @@ def test_phase_drive_prefers_physical_operator():
 
 
 def test_flux_drive_prefers_physical_operator():
-    """A FluxCoupled-conformant device's physical operator is used over the structural fallback."""
+    """A FluxCoupled device supplies the flux-drive operator."""
     fake = _FakePhysicalDevice()
     drive = FluxDrive()
     (channel,) = drive.local_channels(fake)
     assert np.allclose(channel.operator, fake._flux)
 
 
-def test_flux_drive_falls_back_to_number_operator_for_duffing():
-    """DuffingTransmon does not conform to FluxCoupled — structural path."""
-    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25)
-    drive = FluxDrive(target=q)
-    (channel,) = drive.local_channels(q)
+def test_dynamiqs_keeps_symbolic_fock_drive_bands_sparse():
+    """Device-authored Fock operators lower to sparse solver bands."""
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+    q.reference_freq = q.freq
+    chip = Chip([q], frame={q: q.freq}, rwa=True, backend="dynamiqs")
+    drive = ChargeDrive(q, label="xy")
+    chip.wire(drive)
+    sequence = QuantumSequence(chip)
+    sequence.schedule(
+        drive,
+        envelope=Gaussian(duration=10.0, amplitude=0.02),
+        freq=q.freq,
+    )
 
-    backend = QuTiPBackend()
-    expected = backend.number(q.levels)
-    assert np.allclose(np.array(channel.operator.full()), np.array(expected.full()))
+    result = sequence.resolve()
+    drive_terms = [term for term in result.dynamic_terms if term.origin == "drive"]
+    assert drive_terms
+    assert {term.operator.layout for term in drive_terms} == {"dia"}

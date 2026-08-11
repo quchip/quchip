@@ -895,10 +895,8 @@ class TestRabiFrequency:
         chip = Chip([q])
 
         backend = chip.backend
-        H_c = ChargeDrive(target=q).local_channels(q)[0].operator
-        ket0 = backend.basis(4, 0)
-        ket1 = backend.basis(4, 1)
-        mel = abs(complex(backend.expect(backend.matmul(ket0, backend.dag(ket1)), H_c)))
+        H_c = ChargeDrive(target=q).local_channels(q)[0].operator.matrix(backend=backend)
+        mel = abs(complex(H_c[0, 1]))
         npt.assert_allclose(mel, 1.0, atol=1e-10, err_msg=f"|⟨0|i(a-a†)|1⟩| = {mel}, expected 1.0")
 
         d = ChargeDrive(target=q)

@@ -66,10 +66,10 @@ import numpy as np
 
 from quchip.backend.protocol import Operator
 from quchip.declarative.expr import PhysicsExpr
-from quchip.declarative.models import DeviceModel
 from quchip.declarative.ops import LocalOps
 from quchip.declarative.parameters import Scalar, parameter
 from quchip.devices.base import BaseDevice, NoiseChannel
+from quchip.devices.fock import FockDevice
 
 
 def _photon_loss_channel(device: Any, basis: Any = None) -> list[tuple[Operator, Any]]:
@@ -86,7 +86,7 @@ def _photon_loss_channel(device: Any, basis: Any = None) -> list[tuple[Operator,
     return [(device.local_space().matrix("a"), kappa)]
 
 
-class Resonator(DeviceModel):
+class Resonator(FockDevice):
     """Linear microwave / photonic resonator — pure harmonic oscillator.
 
     Parameters

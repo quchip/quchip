@@ -72,9 +72,9 @@ from typing import TYPE_CHECKING, Any
 import jax.numpy as jnp
 
 from quchip.declarative.expr import PhysicsExpr
-from quchip.declarative.models import DeviceModel
 from quchip.declarative.ops import LocalOps
 from quchip.declarative.parameters import Scalar, parameter
+from quchip.devices.fock import FockDevice
 from quchip.devices.transmon.duffing import duffing_expr
 from quchip.utils.jax_utils import maybe_concrete_scalar
 
@@ -126,7 +126,7 @@ def _check_flux_bias_dispersion(flux_bias: Any, asymmetry: Any) -> None:
         )
 
 
-class FluxTunableTransmon(DeviceModel):
+class FluxTunableTransmon(FockDevice):
     """SQUID-dispersion flux-tunable transmon.
 
     The constructor takes the calibrated local physical parameters; SQUID

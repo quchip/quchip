@@ -25,6 +25,7 @@ Coupling Protocols (for drive dispatch)
 """
 
 from quchip.devices.fluxonium import Fluxonium
+from quchip.devices.fock import FockDevice
 from quchip.devices.kerr_cavity import KerrCavity
 from quchip.devices.protocols import ChargeCoupled, FluxCoupled, FrequencyControlled, PhaseCoupled
 from quchip.devices.resonator import Resonator
@@ -39,6 +40,7 @@ __all__ = [
     "CustomSpace",
     "ChargeCoupled",
     "DuffingTransmon",
+    "FockDevice",
     "FockSpace",
     "FluxCoupled",
     "FluxTunableTransmon",
