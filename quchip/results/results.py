@@ -443,8 +443,12 @@ class SimulationResult:
             return {}
 
         backend = self._backend
-        dm = backend.as_density_matrix(final)
-        diag = np.real(np.diag(np.asarray(backend.to_array(dm), dtype=complex)))
+        state = np.asarray(backend.to_array(final), dtype=complex)
+        diag = (
+            np.abs(state[:, 0]) ** 2
+            if backend.is_ket(final)
+            else np.real(np.diag(state))
+        )
 
         basis_labels = self._basis_labels
         observed: dict[str, float] = {}

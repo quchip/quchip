@@ -141,7 +141,7 @@ def _static_diagonal_span(static_terms: tuple[StaticTerm, ...]) -> float | None:
         )
         if contains_tracer(operator_payload):
             return None
-        combined += np.diag(np.real(np.asarray(term.operator.to_dense(), dtype=complex))) * coeff
+        combined += np.real(np.asarray(term.operator.diagonal(), dtype=complex)) * coeff
     span = maybe_concrete_scalar(np.max(combined) - np.min(combined))
     if span is None or span <= 0:
         return None

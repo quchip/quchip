@@ -154,6 +154,44 @@ class TestCanonicalOperator:
         assert op.basis == "fock"
         assert op.layout == "dense"
 
+    @pytest.mark.parametrize("layout", ["dense", "csr", "dia"])
+    def test_diagonal_reads_each_layout_without_dense_materialization(self, layout, monkeypatch):
+        """Canonical diagonal access is layout-native for dense, CSR, and DIA payloads."""
+        matrix = np.array(
+            [[1.0, 2.0, 0.0], [3.0, 4.0, 5.0], [0.0, 6.0, 7.0]],
+            dtype=complex,
+        )
+        if layout == "dense":
+            op = CanonicalOperator.from_dense(
+                matrix, dims=(3,), basis="fock", subsystem_labels=("q",)
+            )
+        elif layout == "csr":
+            op = CanonicalOperator.from_csr(
+                values=np.array([1, 2, 3, 4, 5, 6, 7], dtype=complex),
+                indices=np.array([0, 1, 0, 1, 2, 1, 2]),
+                indptr=np.array([0, 2, 5, 7]),
+                shape=(3, 3),
+                dims=(3,),
+                basis="fock",
+                subsystem_labels=("q",),
+            )
+        else:
+            op = CanonicalOperator.from_dia(
+                values=np.array(
+                    [[0, 2, 5], [1, 4, 7], [3, 6, 0]],
+                    dtype=complex,
+                ),
+                offsets=np.array([1, 0, -1]),
+                shape=(3, 3),
+                dims=(3,),
+                basis="fock",
+                subsystem_labels=("q",),
+            )
+
+        monkeypatch.setattr(CanonicalOperator, "to_dense", lambda self: pytest.fail("densified"))
+
+        np.testing.assert_allclose(op.diagonal(), np.diag(matrix))
+
     def test_rejects_non_square(self):
         """A non-square operator raises ValueError."""
         with pytest.raises(ValueError, match="square"):

@@ -774,6 +774,37 @@ class CanonicalOperator:
             tag=self.tag if tag is None else tag,
         )
 
+    def diagonal(self) -> Any:
+        """Return the main diagonal without materializing a sparse matrix."""
+        xp = array_namespace(self.values)
+        values = xp.asarray(self.values, dtype=complex)
+
+        if self.layout == "dense":
+            return xp.diagonal(values)
+
+        if self.layout == "dia":
+            offsets = xp.asarray(self.offsets, dtype=int)
+            return xp.sum(
+                xp.where(offsets[:, None] == 0, values, 0),
+                axis=0,
+            )
+
+        indices = xp.asarray(self.indices, dtype=int)
+        indptr = xp.asarray(self.indptr, dtype=int)
+        counts = indptr[1:] - indptr[:-1]
+        repeat_kwargs = (
+            {"total_repeat_length": self.values.shape[0]}
+            if is_jax_namespace(xp)
+            else {}
+        )
+        rows = xp.repeat(xp.arange(self.shape[0], dtype=int), counts, **repeat_kwargs)
+        selected = xp.where(indices == rows, values, 0)
+        diagonal = xp.zeros(self.shape[0], dtype=values.dtype)
+        if is_jax_namespace(xp):
+            return diagonal.at[rows].add(selected)
+        xp.add.at(diagonal, rows, selected)
+        return diagonal
+
     def to_dense(self) -> Any:
         """Materialize the payload as a dense ``shape``-sized matrix.
 
