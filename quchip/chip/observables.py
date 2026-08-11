@@ -64,12 +64,15 @@ def prepare_local_op(
         owner=dev,
         scope=dev.label,
     )
-    matrix = backend.to_array(materialize_expr(authored, backend))
-    if matrix.shape != (basis.native_dim, basis.native_dim):
+    local = materialize_expr(authored, backend)
+    if local.shape != (basis.native_dim, basis.native_dim):
         raise ValueError(
             f"Authored operator for {dev.label!r} must have shape "
-            f"{(basis.native_dim, basis.native_dim)}, got {matrix.shape}."
+            f"{(basis.native_dim, basis.native_dim)}, got {local.shape}."
         )
+    if basis.kind == "native":
+        return local
+    matrix = backend.to_array(local)
     return backend.from_array(
         basis.transform_operator(matrix),
         dims=[[basis.resolved_dim], [basis.resolved_dim]],

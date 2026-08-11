@@ -21,6 +21,9 @@ from typing import TYPE_CHECKING, Any
 import jax.numpy as jnp
 
 from quchip.backend.protocol import Operator
+from quchip.declarative.expr import PhysicsExpr
+from quchip.declarative.ops import LocalOps
+from quchip.devices.spaces import FockSpace
 from quchip.utils.constants import k_B
 from quchip.utils.jax_utils import maybe_concrete_scalar
 from quchip.utils.labeling import auto_label, resolve_label
@@ -281,6 +284,34 @@ class Bath:
         vectors = xp.asarray(record.energy_vectors)
         return vectors @ semantic @ vectors.conj().T
 
+    def _operator_expr(
+        self,
+        device: Any,
+        record: Any,
+        kind: str,
+        xp: Any,
+    ) -> PhysicsExpr:
+        """Author a bath operator in the device's declared local coordinates."""
+        space = device.local_space()
+        if isinstance(space, FockSpace):
+            op = LocalOps(label=device.label, space=space, device=device)
+            if kind == "lowering":
+                return op.a
+            if kind == "raising":
+                return op.adag
+            return op.n
+
+        semantic_kind = "lowering" if kind == "raising" else kind
+        matrix = self._semantic_operator(record, semantic_kind, xp)
+        if kind == "raising":
+            matrix = matrix.conj().T
+        return PhysicsExpr.from_matrix(
+            matrix,
+            labels=(device.label,),
+            dims=(record.native_dim,),
+            name=rf"\hat L_{{{self.label},{device.label}}}",
+        )
+
     def collapse_contributions(
         self,
         chip: "Chip",
@@ -320,25 +351,20 @@ class Bath:
                 idx = chip.device_index(lbl)
                 dev = chip[lbl]
                 n_bar = self._bose(dev.freq, xp)  # type: ignore[attr-defined]  # BaseDevice contract: all concrete devices expose freq
-                lowering = self._semantic_operator(records[lbl], "lowering", xp)
+                lowering = self._operator_expr(dev, records[lbl], "lowering", xp)
+                raising = self._operator_expr(dev, records[lbl], "raising", xp)
                 terms.append((lowering, gamma * (n_bar + 1.0), (idx,), f"thermal_emission:{lbl}"))
-                terms.append((lowering.conj().T, gamma * n_bar, (idx,), f"thermal_absorption:{lbl}"))
+                terms.append((raising, gamma * n_bar, (idx,), f"thermal_absorption:{lbl}"))
             return terms
 
         # Collective recipes: a single summed jump operator over the targets.
-        from quchip.declarative.expr import PhysicsExpr
-
         chip_labels = tuple(device.label for device in chip.devices)
         summed: PhysicsExpr | None = None
         for lbl in labels:
+            device = chip[lbl]
             record = records[lbl]
             kind = "lowering" if self.recipe == "collective_decay" else "number"
-            local = PhysicsExpr.from_matrix(
-                self._semantic_operator(record, kind, xp),
-                labels=(lbl,),
-                dims=(record.native_dim,),
-                name=rf"\hat L_{{{self.label},{lbl}}}",
-            )
+            local = self._operator_expr(device, record, kind, xp)
             embedded = local.embed(chip_labels, chip.authored_dims)
             summed = embedded if summed is None else summed + embedded
         if summed is not None:

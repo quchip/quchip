@@ -154,7 +154,7 @@ class NoiseChannel:
 def _thermal_emission_channel(
     device: Any,
     basis: "BasisRecord | None" = None,
-) -> list[tuple["Operator", Any]]:
+) -> list[tuple[Any, Any]]:
     """Relaxation / thermal-absorption channels from ``T1`` and ``thermal_population``.
 
     Emits ``a`` with rate ``gamma*(n_bar+1)`` (relaxation / stimulated emission)
@@ -172,19 +172,22 @@ def _thermal_emission_channel(
         rate = 1.0
     else:
         return []
+    from quchip.declarative.ops import LocalOps
+
     del basis
+    op = LocalOps(label=device.label, space=device.local_space(), device=device)
     return BaseDevice._emission_terms(
         rate,
         n_bar,
-        device.local_space().matrix("a"),
-        device.local_space().matrix("adag"),
+        op.a,
+        op.adag,
     )
 
 
 def _pure_dephasing_channel(
     device: Any,
     basis: "BasisRecord | None" = None,
-) -> list[tuple["Operator", Any]]:
+) -> list[tuple[Any, Any]]:
     """Pure-dephasing channel ``sqrt(2*gamma_phi)·n̂`` from ``T2`` (and ``T1``).
 
     ``gamma_phi = 1/T2 - 1/(2*T1)`` when ``T1`` is set (``1/T2`` when
@@ -198,8 +201,11 @@ def _pure_dephasing_channel(
     gamma_phi = BaseDevice._dephasing_rate(device.T1, device.T2)
     if gamma_phi is None:
         return []
+    from quchip.declarative.ops import LocalOps
+
     del basis
-    return [(device.local_space().matrix("n"), 2.0 * gamma_phi)]
+    op = LocalOps(label=device.label, space=device.local_space(), device=device)
+    return [(op.n, 2.0 * gamma_phi)]
 
 
 def _energy_basis_for_noise(device: Any, basis: "BasisRecord | None") -> "BasisRecord":
@@ -1016,6 +1022,7 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         2002), Ch. 3. For circuit-QED conventions see Krantz et al.,
         *Applied Physics Reviews* **6**, 021318 (2019), §V.
         """
+        from quchip.declarative.expr import materialize_expr
         from quchip.engine.basis import resolve_device_basis
 
         backend = get_default_backend()
@@ -1023,12 +1030,15 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         levels = self.resolved_dimension() if policy == "eigen" else None
         basis = resolve_device_basis(self, basis=policy, levels=levels)
         dims = [[basis.resolved_dim], [basis.resolved_dim]]
-        lower = getattr(backend, "from_array", None)
         operators: list[Operator] = []
         for channel in type(self)._noise_channels:
             for operator, rate in channel.build(self, basis):
-                projected = basis.transform_operator(operator)
-                native = projected if lower is None else lower(projected, dims=dims)
+                authored = materialize_expr(operator, backend)
+                if basis.kind == "native":
+                    native = authored
+                else:
+                    projected = basis.transform_operator(backend.to_array(authored))
+                    native = backend.from_array(projected, dims=dims)
                 operators.append(jnp.sqrt(rate) * native)
         return operators
 
@@ -1124,9 +1134,9 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
     def _emission_terms(
         rate: Any,
         n_bar: Any | None,
-        lower_op: Operator,
-        raise_op: Operator,
-    ) -> list[tuple[Operator, Any]]:
+        lower_op: Any,
+        raise_op: Any,
+    ) -> list[tuple[Any, Any]]:
         """Emission / absorption operator-rate pairs for one transition.
 
         Returns ``(lower_op, rate * (n_bar + 1))`` (relaxation / stimulated
@@ -1139,7 +1149,7 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         operators.
         """
         n_bar_eff = 0.0 if n_bar is None else n_bar
-        terms: list[tuple[Operator, Any]] = [(lower_op, rate * (n_bar_eff + 1.0))]
+        terms: list[tuple[Any, Any]] = [(lower_op, rate * (n_bar_eff + 1.0))]
         n_bar_value = maybe_concrete_scalar(n_bar_eff)
         if n_bar_value is None or n_bar_value > 0:
             terms.append((raise_op, rate * n_bar_eff))

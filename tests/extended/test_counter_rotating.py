@@ -9,7 +9,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quchip.engine.bands import canonical_to_dense_array, decompose_two_body_canonical_bands
+from quchip.engine.bands import (
+    canonical_to_dense_array,
+    decompose_canonical_bands,
+    decompose_two_body_canonical_bands,
+)
 from quchip.engine.ir import CanonicalOperator, Carrier, ScalarModulation
 
 
@@ -611,6 +615,58 @@ class TestConcreteZeroBandDrop:
         reconstructed = reconstruct(jnp.asarray(matrix))
         assert seen["n_bands"] == 3, f"Traced payload must keep all 2·dim−1 bands, got {seen['n_bands']}"
         np.testing.assert_allclose(np.asarray(reconstructed), matrix, atol=1e-15)
+
+    def test_traced_sparse_payload_keeps_only_structural_bands(self) -> None:
+        """Traced sparse values retain declared one- and two-mode structure."""
+        import jax
+        import jax.numpy as jnp
+
+        seen: dict[str, object] = {}
+
+        @jax.jit
+        def reconstruct(scale):
+            canonical = CanonicalOperator.from_dia(
+                scale * jnp.asarray([[0.0, 1.0, 2.0]], dtype=jnp.complex128),
+                np.asarray([1], dtype=int),
+                shape=(3, 3),
+                dims=(3,),
+                basis="fock",
+                subsystem_labels=("q",),
+            )
+            bands = decompose_canonical_bands(canonical, 3)
+            seen["weights"] = tuple(bands)
+            seen["layouts"] = {band.layout for band in bands.values()}
+            return sum(canonical_to_dense_array(band) for band in bands.values())
+
+        rebuilt = reconstruct(jnp.asarray(2.0))
+        assert seen == {"weights": (1,), "layouts": {"dia"}}
+        np.testing.assert_allclose(
+            np.asarray(rebuilt),
+            np.asarray([[0.0, 2.0, 0.0], [0.0, 0.0, 4.0], [0.0, 0.0, 0.0]]),
+        )
+
+        seen_two: dict[str, object] = {}
+
+        @jax.jit
+        def reconstruct_two(scale):
+            canonical = CanonicalOperator.from_dia(
+                scale * jnp.asarray([[0.0, 0.0, 0.0, 1.0]], dtype=jnp.complex128),
+                np.asarray([3], dtype=int),
+                shape=(4, 4),
+                dims=(2, 2),
+                basis="fock",
+                subsystem_labels=("a", "b"),
+            )
+            bands = decompose_two_body_canonical_bands(canonical, [2, 2])
+            seen_two["weights"] = tuple(bands)
+            seen_two["layouts"] = {band.layout for band in bands.values()}
+            return sum(canonical_to_dense_array(band) for band in bands.values())
+
+        rebuilt_two = reconstruct_two(jnp.asarray(3.0))
+        assert seen_two == {"weights": ((1, 1),), "layouts": {"csr"}}
+        expected_two = np.zeros((4, 4), dtype=complex)
+        expected_two[0, 3] = 3.0
+        np.testing.assert_allclose(np.asarray(rebuilt_two), expected_two)
 
 
 class TestPruneZeroDiagonals:

@@ -796,7 +796,12 @@ class CanonicalOperator:
             indices = xp.asarray(self.indices, dtype=int)
             indptr = xp.asarray(self.indptr, dtype=int)
             counts = indptr[1:] - indptr[:-1]
-            rows = xp.repeat(xp.arange(self.shape[0], dtype=int), counts)
+            repeat_kwargs = (
+                {"total_repeat_length": self.values.shape[0]}
+                if is_jax_namespace(xp)
+                else {}
+            )
+            rows = xp.repeat(xp.arange(self.shape[0], dtype=int), counts, **repeat_kwargs)
             dense = xp.zeros(self.shape, dtype=values.dtype)
             if is_jax_namespace(xp):
                 return dense.at[rows, indices].set(values)

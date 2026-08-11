@@ -207,7 +207,7 @@ class DynamiqsBackend(Backend):
         if isinstance(op, SparseDIAQArray):
             return CanonicalOperator.from_dia(
                 jnp.asarray(op.diags, dtype=jnp.complex128),
-                jnp.asarray(op.offsets, dtype=int),
+                np.asarray(op.offsets, dtype=int),
                 shape=op.shape, dims=dims, basis="fock", subsystem_labels=labels,
             )
         if isinstance(op, DenseQArray):
@@ -227,11 +227,12 @@ class DynamiqsBackend(Backend):
         if canonical.layout == "dense":
             return dq.asqarray(jnp.asarray(canonical.values, dtype=jnp.complex128), dims=dims)
         if canonical.layout == "dia":
-            from quchip.engine.bands import _canonical_has_nonconcrete_payload, canonical_to_dense_array
+            from quchip.engine.bands import canonical_to_dense_array
+            from quchip.utils.jax_utils import contains_tracer
 
-            if _canonical_has_nonconcrete_payload(canonical):
-                # Non-concrete (traced) offsets/values cannot be inspected by
-                # SparseDIAQArray's constructor; densify to keep traceability.
+            if contains_tracer(canonical.offsets):
+                # Sparse structure must be static. Value payloads may remain
+                # traced because SparseDIAQArray treats them as JAX leaves.
                 dense = canonical_to_dense_array(canonical)
                 return dq.asqarray(jnp.asarray(dense, dtype=jnp.complex128), dims=dims)
             return SparseDIAQArray(

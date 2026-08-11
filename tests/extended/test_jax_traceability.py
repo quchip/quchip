@@ -98,6 +98,10 @@ class _JaxCollapseBackend:
         return jnp.diag(jnp.sqrt(jnp.arange(1, n, dtype=jnp.float32)), k=1).astype(jnp.complex64)
 
     @staticmethod
+    def create(n: int) -> jax.Array:
+        return _JaxCollapseBackend.dag(_JaxCollapseBackend.destroy(n))
+
+    @staticmethod
     def dag(op: jax.Array) -> jax.Array:
         return jnp.conjugate(jnp.swapaxes(op, -1, -2))
 
@@ -624,3 +628,31 @@ def test_dynamiqs_from_canonical_operator_accepts_traced_dia_offsets() -> None:
     rebuilt = build_with_offset(jnp.asarray(0))
     assert isinstance(rebuilt, jax.Array)
     np.testing.assert_allclose(np.asarray(rebuilt), np.array([[1.0 + 0.0j, 0.0], [0.0, 2.0 + 0.0j]]))
+
+
+@pytest.mark.optional_backend
+def test_dynamiqs_preserves_static_dia_structure_with_traced_values() -> None:
+    """Differentiable DIA values lower sparsely when their offsets are static."""
+    pytest.importorskip("dynamiqs")
+    from quchip.backend.dynamiqs import DynamiqsBackend
+
+    backend = DynamiqsBackend()
+    seen: dict[str, str] = {}
+
+    @jax.jit
+    def lower(scale):
+        canonical = CanonicalOperator.from_dia(
+            scale * jnp.asarray([[0.0, 1.0]], dtype=jnp.complex128),
+            np.asarray([1], dtype=int),
+            shape=(2, 2),
+            dims=(2,),
+            basis="fock",
+            subsystem_labels=("q",),
+        )
+        native = backend.from_canonical_operator(canonical)
+        seen["type"] = type(native).__name__
+        return backend.to_array(native)
+
+    rebuilt = lower(jnp.asarray(3.0))
+    assert seen["type"] == "SparseDIAQArray"
+    np.testing.assert_allclose(np.asarray(rebuilt), [[0.0, 3.0], [0.0, 0.0]])

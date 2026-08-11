@@ -46,6 +46,24 @@ def backend() -> DynamiqsBackend:
     return DynamiqsBackend()
 
 
+def test_fock_noise_and_physical_observables_preserve_sparse_layout() -> None:
+    """Fock-owned noise, baths, and observables remain sparse through resolution."""
+    from quchip import Bath
+
+    q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0", T1=20_000.0)
+    q1 = DuffingTransmon(freq=5.2, anharmonicity=-0.24, levels=3, label="q1")
+    chip = Chip(
+        [q0, q1],
+        baths=[Bath("collective_decay", rate=1e-4)],
+        backend="dynamiqs",
+    )
+
+    result = chip.resolve(frame="lab")
+    assert result.collapse_terms
+    assert {term.operator.layout for term in result.collapse_terms} == {"dia"}
+    assert type(chip.observable(q0, "charge")).__name__ == "SparseDIAQArray"
+
+
 def test_dynamiqs_backend_enables_float64(backend: DynamiqsBackend) -> None:
     """Dynamiqs backend forces JAX float64 mode for physics accuracy."""
     assert jax.config.read("jax_enable_x64") is True
