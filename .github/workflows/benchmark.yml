@@ -46,16 +46,16 @@ jobs:
           uv venv --python 3.11
           uv pip install -e '.[dynamiqs]' -c ci-constraints-3.11.txt
 
-      - name: Resolve exact base
+      - name: Resolve exact main
         id: comparison
         env:
-          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          EVENT_MAIN_SHA: ${{ github.event_name == 'push' && github.event.before || '' }}
         run: |
-          if [[ -z "$EVENT_BASE_SHA" || "$EVENT_BASE_SHA" == "0000000000000000000000000000000000000000" ]]; then
-            EVENT_BASE_SHA=$(git rev-parse HEAD^)
+          if [[ -z "$EVENT_MAIN_SHA" || "$EVENT_MAIN_SHA" == "0000000000000000000000000000000000000000" ]]; then
+            EVENT_MAIN_SHA=$(git rev-parse origin/main)
           fi
-          git cat-file -e "${EVENT_BASE_SHA}^{commit}"
-          echo "base_sha=$EVENT_BASE_SHA" >> "$GITHUB_OUTPUT"
+          git cat-file -e "${EVENT_MAIN_SHA}^{commit}"
+          echo "main_sha=$EVENT_MAIN_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Record environment
         run: |
@@ -69,7 +69,7 @@ jobs:
         id: benchmark
         run: |
           uv run --no-sync python benchmarks/closed_system.py run \
-            --base-ref "${{ steps.comparison.outputs.base_sha }}" \
+            --main-ref "${{ steps.comparison.outputs.main_sha }}" \
             --rungs "$BENCHMARK_RUNGS" \
             --build-repeat "$BUILD_REPEAT" \
             --warmup 1 \

@@ -302,7 +302,7 @@ def _package_version(name: str) -> str | None:
         return None
 
 
-def _provenance(repo: Path, base_ref: str, args: argparse.Namespace) -> dict[str, Any]:
+def _provenance(repo: Path, main_ref: str, args: argparse.Namespace) -> dict[str, Any]:
     return {
         "platform": platform.platform(),
         "machine": platform.machine(),
@@ -310,8 +310,8 @@ def _provenance(repo: Path, base_ref: str, args: argparse.Namespace) -> dict[str
         "head_branch": _git(repo, "branch", "--show-current") or "detached",
         "head_commit": _git(repo, "rev-parse", "HEAD"),
         "head_dirty": bool(_git(repo, "status", "--porcelain", "--untracked-files=no")),
-        "base_ref": base_ref,
-        "base_commit": _git(repo, "rev-parse", base_ref),
+        "main_ref": main_ref,
+        "main_commit": _git(repo, "rev-parse", main_ref),
         "qutip": _package_version("qutip"),
         "dynamiqs": _package_version("dynamiqs"),
         "jax": _package_version("jax"),
@@ -395,7 +395,7 @@ def _parse_rungs(value: str) -> list[int]:
 
 def _run(args: argparse.Namespace) -> None:
     repo = Path(_git(Path.cwd(), "rev-parse", "--show-toplevel"))
-    provenance = _provenance(repo, args.base_ref, args)
+    provenance = _provenance(repo, args.main_ref, args)
     if provenance["head_dirty"] and not args.allow_dirty:
         raise SystemExit("current checkout is dirty; commit it first or pass --allow-dirty")
     output = Path(args.out).resolve()
@@ -405,18 +405,18 @@ def _run(args: argparse.Namespace) -> None:
     def persist(complete: bool) -> None:
         output.write_text(
             json.dumps(
-                {"schema_version": 1, "provenance": provenance, "complete": complete, "rows": rows},
+                {"schema_version": 2, "provenance": provenance, "complete": complete, "rows": rows},
                 indent=2,
             )
             + "\n"
         )
 
-    with tempfile.TemporaryDirectory(prefix="quchip-base-") as base_temp, tempfile.TemporaryDirectory(
+    with tempfile.TemporaryDirectory(prefix="quchip-main-") as main_temp, tempfile.TemporaryDirectory(
         prefix="quchip-benchmark-"
     ) as cell_temp:
-        base_root = Path(base_temp)
+        main_root = Path(main_temp)
         cell_root = Path(cell_temp)
-        _extract_ref(repo, args.base_ref, base_root)
+        _extract_ref(repo, args.main_ref, main_root)
         for rung_index, n in enumerate(_parse_rungs(args.rungs)):
             qutip_native, reference_trace = _invoke_worker(
                 path_name="native",
@@ -431,7 +431,7 @@ def _run(args: argparse.Namespace) -> None:
             persist(False)
             print(f"[dim={args.levels**n} qutip/native] {qutip_native['status']}", flush=True)
             reference = reference_trace if reference_trace.exists() else None
-            revisions: tuple[tuple[str, Path], ...] = (("head", repo), ("base", base_root))
+            revisions: tuple[tuple[str, Path], ...] = (("head", repo), ("main", main_root))
             if rung_index % 2:
                 revisions = tuple(reversed(revisions))
             for path_name, source_root in revisions:
@@ -498,7 +498,7 @@ def _parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     run = subparsers.add_parser("run", help="record closed-system benchmark rows")
-    run.add_argument("--base-ref", default="main")
+    run.add_argument("--main-ref", default="main")
     run.add_argument("--levels", type=int, default=LEVELS)
     run.add_argument("--rungs", default="1,3,5,7")
     run.add_argument("--build-repeat", type=int, default=3)
@@ -515,7 +515,7 @@ def _parser() -> argparse.ArgumentParser:
     report.set_defaults(handler=_report)
 
     worker = subparsers.add_parser("_worker", help=argparse.SUPPRESS)
-    worker.add_argument("--path", choices=("head", "base", "native"), required=True)
+    worker.add_argument("--path", choices=("head", "main", "native"), required=True)
     worker.add_argument("--family", choices=("qutip", "dynamiqs"), required=True)
     worker.add_argument("--n", type=int, required=True)
     worker.add_argument("--levels", type=int, required=True)
