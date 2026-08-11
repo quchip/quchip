@@ -105,8 +105,9 @@ class DeferredBatch:
     """Batched-solve payload whose RHS construction is deferred.
 
     ``shared`` carries backend-private state; the producing backend must
-    override :meth:`Backend.solve_batch` to consume it (the QuTiP path —
-    final ``QobjEvo`` assembly happens inside sequential or loky workers).
+    override :meth:`Backend.solve_batch` to consume it. QuTiP assembles final
+    ``QobjEvo`` objects inside its workers; Dynamiqs assembles a vmapped RHS
+    inside its cached JIT.
     """
 
     shared: Any

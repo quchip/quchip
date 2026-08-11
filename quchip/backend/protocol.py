@@ -713,10 +713,10 @@ class Backend(ABC):
 
         The return type declares the batching strategy:
         :class:`~quchip.backend.containers.EagerBatch` (one RHS per element),
-        :class:`~quchip.backend.containers.VmappedBatch` (one natively
-        batched RHS — dynamiqs), or
+        :class:`~quchip.backend.containers.VmappedBatch` (one already-built
+        native RHS), or
         :class:`~quchip.backend.containers.DeferredBatch` (backend-private
-        payload consumed by an overridden :meth:`solve_batch` — QuTiP).
+        payload consumed by an overridden :meth:`solve_batch`).
         Default: lowers each element independently via
         :meth:`prepare_hamiltonian` into an :class:`EagerBatch`.
         """
