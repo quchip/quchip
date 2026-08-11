@@ -641,10 +641,6 @@ class _ArrayLowerer:
         return jnp.eye(dimension, dtype=jnp.complex128)
 
     @staticmethod
-    def basis(dimension: int, index: int) -> Any:
-        return jnp.zeros(dimension, dtype=jnp.complex128).at[index].set(1)
-
-    @staticmethod
     def dag(value: Any) -> Any:
         return jnp.asarray(value).conj().T
 
