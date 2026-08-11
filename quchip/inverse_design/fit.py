@@ -161,7 +161,8 @@ def _estimate_bare_g(
         [sub_coupling],
         frame=chip.frame,
         rwa=chip.rwa,
-        backend=chip._backend,
+        basis=chip.basis,
+        backend=chip.backend,
     )
 
     def obs_at_strength(strength: float) -> float:
@@ -372,44 +373,8 @@ def _pack_initial_params(
 
 
 def _rebuild_candidate(chip: Chip, names: list[str], values: Any) -> Chip:
-    """Clone the seed and overwrite bare parameters from the packed vector.
-
-    ``names`` may be a strict subset of the chip's full parameter set (see
-    :func:`_pack_initial_params` and ``fit_parameters`` selection) — a
-    device parameter or coupling strength absent from ``names`` is simply
-    left at its cloned (seed) value, i.e. frozen. Each device parameter
-    present is dispatched through
-    :meth:`~quchip.devices.base.BaseDevice.set_tunable_param`, which is the
-    single seam every concrete device customizes — no
-    ``freq``/``anharmonicity`` hardcoding here. Each coupling parameter
-    present is dispatched through
-    :meth:`~quchip.chip.coupling_base.BaseCoupling.set_coupling_strength`,
-    the matching seam for a coupling's own scalar strength — no ``.g``
-    hardcoding here either.
-    """
-    candidate = chip.clone()
-    value_map = dict(zip(names, values, strict=True))
-    for device in candidate.devices:
-        for param_name in device.tunable_params():
-            key = f"{device.label}.{param_name}"
-            if key in value_map:
-                device.set_tunable_param(param_name, value_map[key])
-    for coupling in candidate.couplings:
-        key = f"{coupling.label}.{coupling.coupling_strength_name}"
-        if key in value_map:
-            coupling.set_coupling_strength(value_map[key])
-    # Sanity: any leftover keys would silently no-op above. Catch wiring drift.
-    expected = {
-        f"{device.label}.{name}"
-        for device in candidate.devices
-        for name in device.tunable_params()
-    } | {f"{coupling.label}.{coupling.coupling_strength_name}" for coupling in candidate.couplings}
-    unexpected = set(value_map) - expected
-    if unexpected:
-        raise RuntimeError(
-            f"_rebuild_candidate received parameters with no destination: {sorted(unexpected)}"
-        )
-    return candidate
+    """Rebind the selected fit parameters on an isolated chip copy."""
+    return chip.with_params(dict(zip(names, values, strict=True)))
 
 
 def _working_chip(candidate: Chip, label: Any, evaluator: str) -> Chip:
