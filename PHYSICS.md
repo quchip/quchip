@@ -61,6 +61,8 @@ full: g * (a + a†)(b + b†)
 
 The returned expression is an inspectable, ordinary-GHz view of those same canonical terms; the solver-facing `EngineResult` retains the internal `2π` scaling. `QuantumSequence.hamiltonian()` follows the same path and adds the sequence's scheduled drive and crosstalk terms.
 
+These inspection methods return `PhysicsExpr`, the backend-neutral scalar and operator algebra used for authored and resolved physics. It retains declared parameters, matrices, time-dependent scalars, labels, and opaque JAX callables without forcing numerical values. Numerical materialization is explicit through `.matrix()` or backend lowering.
+
 The resulting contracts are:
 
 - device `.unresolved_hamiltonian()` means authored local static lab-frame physics
