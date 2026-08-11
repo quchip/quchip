@@ -56,7 +56,6 @@ from quchip.control.envelopes import BaseEnvelope
 from quchip.devices.base import BaseDevice
 from quchip.engine.ir import DriveOp, EngineResult, HamiltonianTemplate
 from quchip.engine.stage2_assembly import (
-    _prepare_engine_assembly,
     build_engine_result,
     compile_hamiltonian_template,
     instantiate_engine_result,
@@ -817,15 +816,12 @@ class QuantumSequence:
     def resolve(self, *, frame: FrameSpec | None = None) -> EngineResult:
         """Resolve the backend-neutral Hamiltonian and noise description."""
         drive_ops = self._materialize_drive_ops()
-        local_resolution, resolved_frame = _prepare_engine_assembly(
-            self._chip,
-            self._chip.frame if frame is None else frame,
-        )
+        base_result = self._chip.resolve(frame=frame)
         return build_engine_result(
             self._chip,
             drive_ops,
-            resolved_frame=resolved_frame,
-            _local_resolution=local_resolution,
+            resolved_frame=base_result.resolved_frame,
+            _base_result=base_result,
         )
 
     def hamiltonian(self) -> PhysicsExpr:
@@ -1045,7 +1041,7 @@ class QuantumSequence:
             self._chip,
             reference_drive_ops,
             resolved_frame=context.resolved_frame,
-            _local_resolution=context._local_resolution,
+            _base_result=context._base_result,
         )
         reference_result = instantiate_engine_result(template, reference_drive_ops, self._chip)
 

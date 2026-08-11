@@ -95,6 +95,20 @@ def _concrete_cache_value(value: Any) -> Any:
     return concrete
 
 
+def _frame_cache_value(frame: Any) -> Any:
+    """Return a stable cache key for one concrete frame specification."""
+    if isinstance(frame, str):
+        return frame
+    if isinstance(frame, Mapping):
+        return tuple(
+            sorted(
+                (resolve_label(label), _concrete_cache_value(value))
+                for label, value in frame.items()
+            )
+        )
+    return _concrete_cache_value(frame)
+
+
 class Chip:
     """Composite quantum system: devices + couplings + (optional) control.
 
@@ -323,26 +337,45 @@ class Chip:
             build_engine_result,
         )
 
-        local_resolution, resolved_frame = _prepare_engine_assembly(
-            self,
-            self.frame if frame is None else frame,
-        )
+        frame_spec = self.frame if frame is None else frame
+        equipment = self.control_equipment
+        control_lines = () if equipment is None else equipment.lines
         try:
             signature = (
                 id(self.backend),
                 self.rwa,
                 self.basis,
-                resolved_frame.mode,
-                tuple(
-                    (label, _concrete_cache_value(value))
-                    for label, value in resolved_frame.frequencies.items()
-                ),
-                tuple(
-                    (label, _concrete_cache_value(value))
-                    for label, value in resolved_frame.demod_freqs.items()
-                ),
+                _frame_cache_value(frame_spec),
                 tuple((device.label, device.state_version) for device in self.devices),
+                tuple(
+                    (device.label, _concrete_cache_value(device._reference_freq_override))
+                    for device in self.devices
+                ),
+                tuple(
+                    (
+                        device.label,
+                        tuple(
+                            (channel.name, channel.params, id(channel.build))
+                            for channel in type(device)._noise_channels
+                        ),
+                    )
+                    for device in self.devices
+                ),
                 tuple((coupling.label, coupling.state_version) for coupling in self.couplings),
+                tuple(
+                    (
+                        line.label,
+                        type(line),
+                        line.target_label,
+                        line.rwa,
+                        tuple(
+                            (name, _concrete_cache_value(getattr(line, name)))
+                            for name in line.collapse_parameter_names()
+                        ),
+                        id(type(line).collapse_contributions),
+                    )
+                    for line in control_lines
+                ),
                 tuple(
                     (
                         bath.label,
@@ -361,6 +394,7 @@ class Chip:
         if signature is not None and cache is not None and cache[0] == signature:
             return cache[1]
 
+        local_resolution, resolved_frame = _prepare_engine_assembly(self, frame_spec)
         result = build_engine_result(
             self,
             [],
