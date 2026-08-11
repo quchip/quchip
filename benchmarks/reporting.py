@@ -120,6 +120,14 @@ def render_markdown(document: Mapping[str, Any]) -> str:
         f"Head `{provenance['head_commit'][:12]}` compared with main `{provenance['main_commit'][:12]}` in one job.",
         "Timing changes are informational; execution and physics-parity failures are not.",
         "",
+        "- **Cold build:** first model construction in a fresh worker; includes one-time construction setup.",
+        "- **Repeated build:** median of later model constructions; represents steady model assembly.",
+        (
+            "- **First solve:** first evolution of that model; includes backend setup and JAX compilation where "
+            "applicable."
+        ),
+        "- **Warm solve:** median repeated execution after solver warm-up; represents steady solving.",
+        "",
         "| Backend | Regime | Largest space | Worst observed |",
         "| --- | --- | ---: | ---: |",
     ]
