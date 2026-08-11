@@ -648,6 +648,9 @@ class ChipAnalysis:
         # vocabulary) rather than round-tripping through chip.observable.
         with _backend_context(backend):
             local_op = dev.local_operator(op) if isinstance(op, str) else op
+            from quchip.declarative.expr import materialize_expr
+
+            local_op = materialize_expr(local_op, backend)
         embedded = backend.embed(local_op, idx, chip.dims)
         op_array = backend.array_module.asarray(backend.to_array(embedded), dtype=complex)
         transformed = xp.conj(U).T @ op_array @ U
@@ -791,7 +794,10 @@ class ChipAnalysis:
                     f"Drive '{drive.label}' exposes {len(channels)} local Hamiltonian channels; "
                     "drive_matrix_elements requires exactly one unambiguous operator"
                 )
-            operator = xp.asarray(backend.to_array(channels[0].operator), dtype=complex)
+            from quchip.declarative.expr import materialize_expr
+
+            local_operator = materialize_expr(channels[0].operator, backend)
+            operator = xp.asarray(backend.to_array(local_operator), dtype=complex)
             initial_tensor = initial.reshape(self._chip.dims)
             acted = xp.tensordot(operator, initial_tensor, axes=((1,), (device_index,)))
             acted = xp.moveaxis(acted, 0, device_index).reshape(-1)

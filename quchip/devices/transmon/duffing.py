@@ -71,9 +71,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from quchip.declarative.expr import PhysicsExpr
-from quchip.declarative.models import DeviceModel
 from quchip.declarative.ops import LocalOps
 from quchip.declarative.parameters import Scalar, parameter
+from quchip.devices.fock import FockDevice
 
 
 def duffing_expr(op: LocalOps, freq: Scalar, anharmonicity: Scalar) -> PhysicsExpr:
@@ -88,7 +88,7 @@ def duffing_expr(op: LocalOps, freq: Scalar, anharmonicity: Scalar) -> PhysicsEx
     return freq * n + (0.5 * anharmonicity) * (n @ (n - op.I))
 
 
-class DuffingTransmon(DeviceModel):
+class DuffingTransmon(FockDevice):
     """Transmon modelled as a weakly anharmonic Duffing oscillator.
 
     Parameters

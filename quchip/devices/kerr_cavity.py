@@ -39,12 +39,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from quchip.declarative.expr import PhysicsExpr
-from quchip.declarative.models import DeviceModel
 from quchip.declarative.ops import LocalOps
 from quchip.declarative.parameters import Scalar, parameter
+from quchip.devices.fock import FockDevice
 
 
-class KerrCavity(DeviceModel):
+class KerrCavity(FockDevice):
     """Kerr-nonlinear resonator supporting cat-qubit stabilisation.
 
     Hamiltonian:

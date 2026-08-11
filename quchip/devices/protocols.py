@@ -1,8 +1,8 @@
 """Runtime-checkable Protocols for physical-operator drive dispatch.
 
 Devices expose their *physical* charge / phase / flux operators in their
-authored local basis. Drives prefer these over the structural Fock-ladder
-fallback so their matrix elements remain physically correct; the engine then
+authored local basis. Drives require these declarations so their matrix
+elements remain physically explicit; the engine then
 applies the device's resolved local-basis transformation with every other
 attached operator.
 
@@ -12,12 +12,9 @@ conforms by defining the named method — no explicit subclassing
 required (matches :class:`~quchip.interop.eigenbasis.EigenbasisDevice`
 and any future third-party device).
 
-The accessors return the operator as a dense, trace-safe array-like —
-not a backend-native operator — so a traced device parameter flows
-through engine materialization without concretization. Backend
-composition entry points (``Backend.tensor``, ``Backend.dag``) coerce
-array-likes via :meth:`~quchip.backend.protocol.Backend.coerce_operator`,
-so the accessors' output composes directly with native operators.
+The accessors follow the common operator extension contract: symbolic
+expressions are preferred, while matrices and pure JAX callables remain
+valid. The engine resolves every form through the same local-basis boundary.
 """
 
 from __future__ import annotations
@@ -32,9 +29,7 @@ class ChargeCoupled(Protocol):
     """Device exposes the physical charge operator in its authored local basis.
 
     :class:`~quchip.control.drive.ChargeDrive` dispatches against this
-    Protocol and emits drives using :meth:`charge_coupling_operator`
-    rather than the structural ``1j*(a - a†)`` from
-    :meth:`BaseDevice.lowering_operator`.
+    Protocol and emits drives using :meth:`charge_coupling_operator`.
     """
 
     def charge_coupling_operator(self) -> Operator:
