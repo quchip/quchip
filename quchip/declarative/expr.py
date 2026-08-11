@@ -812,7 +812,12 @@ def _latex(expr: PhysicsExpr, parent_precedence: int = 0) -> str:
         return _scoped_symbol(symbol, scope)
     if expr.kind == "embed":
         return _latex(expr.args[0], parent_precedence)
-    precedence = 1 if expr.kind in ("add", "sub") else 2 if expr.kind in ("scale", "mul", "tensor") else 3
+    if expr.kind in ("add", "sub"):
+        precedence = 1
+    elif expr.kind in ("scale", "mul", "tensor"):
+        precedence = 2
+    else:
+        precedence = 3
     left = _latex(expr.args[0], precedence)
     right = _latex(expr.args[1], precedence + (1 if expr.kind == "sub" else 0))
     if expr.kind == "add":
