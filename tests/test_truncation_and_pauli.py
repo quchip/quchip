@@ -36,6 +36,21 @@ def _fake_result_with_top_pop(dev_dim: int, top_pop: float) -> SimulationResult:
 
 
 class TestTruncationWarnings:
+    def test_ket_check_does_not_promote_to_density_matrix(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Pure-state truncation reads amplitudes without allocating a density matrix."""
+        result = _fake_result_with_top_pop(dev_dim=4, top_pop=0.01)
+
+        def fail(_state):
+            raise AssertionError("ket truncation check promoted the state")
+
+        monkeypatch.setattr(result._backend, "as_density_matrix", fail)
+        observed = result.check_truncation(threshold=1.0)
+
+        assert observed["q0"] == pytest.approx(0.01, abs=1e-10)
+
     def test_warns_when_top_level_pop_exceeds_threshold(self) -> None:
         """check_truncation warns when the top-level population exceeds the threshold."""
         result = _fake_result_with_top_pop(dev_dim=4, top_pop=0.01)  # 1 %
