@@ -1,8 +1,7 @@
 """Unit tests for pulse envelope waveform generation.
 
-Pure-numpy tests — no backend or chip needed.  Every expected value
-is derived from the analytical envelope definitions, not from running
-the code.
+Analytical envelope definitions determine the reference waveforms; no backend
+or chip is required.
 """
 
 from __future__ import annotations

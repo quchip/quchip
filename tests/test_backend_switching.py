@@ -1,9 +1,9 @@
 """Per-call backend switching, state coercion, and solver-option defaults.
 
-The ``backend=`` argument of ``simulate``/``simulate_batch`` scopes one call:
-it outranks the chip-constructed backend and the process default, and foreign
--native initial states are coerced at the solve boundary. The nsteps default
-is a generous abort ceiling so user code never carries ``{"nsteps": ...}``.
+The ``backend=`` argument of ``simulate``/``simulate_batch`` scopes one call
+and takes precedence over the chip backend and process default. Initial states
+native to another backend are coerced at the solve boundary. When the caller
+omits ``nsteps``, QuTiP can infer an abort ceiling from spectral metadata.
 """
 
 from __future__ import annotations
@@ -46,8 +46,8 @@ def test_named_backend_coercion_returns_shared_instance() -> None:
     assert _coerce_backend("qutip") is _coerce_backend("qutip")
 
 
-def test_nsteps_default_is_a_generous_ceiling(backend: QuTiPBackend) -> None:
-    """The default nsteps ceiling never aborts a solve, and an explicit user value always overrides it."""
+def test_nsteps_default_is_at_least_200k(backend: QuTiPBackend) -> None:
+    """The inferred nsteps ceiling is at least 200,000; an explicit value takes precedence."""
     tlist = np.linspace(0.0, 100.0, 11)
     resolved = backend.resolve_solver_options({}, metadata={"spectral_bound_ghz": 5.0}, tlist=tlist)
     assert resolved["nsteps"] >= 200_000

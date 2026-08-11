@@ -1,20 +1,7 @@
 """Backend-agnostic wrapper around solver output.
 
-This module is the contract between backends and users. The engine emits
-backend-agnostic physics descriptions, and each backend converts them into
-its own optimal solver-ready form; the *result* of solving is then
-re-wrapped here so that user code never has to know whether QuTiP or
-dynamiqs/JAX produced the numbers.
-
-Key classes:
-
-- :class:`SimulationResult` — one solve's states, times, expectations,
-  and partial-trace / population accessors.
-- :class:`SimulationBatchResult` — ordered, immutable batch of results
-  with helpers that stack across the batch for e.g. sweeps.
-- :class:`ObservableTrace` — one named expectation-value trace, keeping
-  the pre-processing and post-processing values side by side (band
-  reconstruction, demodulation, etc.).
+The engine wraps each backend's solver output here so callers use the same
+state, expectation, partial-trace, population, and batch interfaces.
 
 All helpers that return arrays stay inside the backend's array module
 (JAX / NumPy) to preserve differentiability. The convenience wrappers

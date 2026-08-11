@@ -1,19 +1,7 @@
 """Public package surface for quchip.
 
-This module re-exports the primary user-facing objects that make up a
-quchip study: device models (:class:`DuffingTransmon`,
-:class:`Resonator`, ...), chip topology and analysis
-(:class:`Chip`, :class:`Capacitive`, :class:`DressedResult`, ...),
-classical control (drives, envelopes, sequences, crosstalk), the
-engine entry points (:func:`simulate`, :func:`build_problem`,
-:func:`solve_problem`, :func:`solve_many`), backend selection helpers,
-backend-agnostic result containers, sweep helpers
-(:class:`Sweep`, :class:`SpectrumSweep`), post-hoc analysis
-(:func:`effective_hamiltonian`, :func:`analyze_cross_resonance`, ...),
-the immutable physical constants, and :func:`enable_compilation_cache`.
-
-Visualization helpers and optional third-party interop (pyvis, scqubits,
-matplotlib-based plots, ...) are loaded lazily through the module-level
+Visualization helpers and optional third-party interop are loaded lazily
+through the module-level
 :func:`__getattr__` so that ``import quchip`` stays fast and does not
 force any optional dependency on the core install.
 """

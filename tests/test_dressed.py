@@ -1,7 +1,6 @@
 """Physics-verifying dressed-state tests for Chip.dress/energy/transition_freq.
 
-All expected values are derived analytically from the dispersive model,
-not from running implementation code first.
+The dispersive model below supplies the reference values.
 
 System under test (matches TestDispersiveShift in tests/test_physics.py):
     - Transmon:  w_q = 5.0 GHz, alpha = -0.25 GHz, levels = 4

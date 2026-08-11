@@ -1,18 +1,8 @@
 """Declarative parameter sweeps for chip studies.
 
-This module provides the user-facing sweep abstractions and a
-dressed-spectrum sweep driver:
-
-- :class:`Sweep` declares a 1-D axis of values for a single named
-  parameter. Multiple :class:`Sweep` axes compose as a Cartesian
-  product.
-- :class:`ZippedSweep` (built with :meth:`Sweep.zip`) pairs axes
-  element-wise rather than expanding the product, which is the right
-  shape for correlated scans (e.g. frequency and drive amplitude moved
-  together along a calibration trace).
-- :class:`SpectrumSweep` walks a sweep grid, dresses the chip at each
-  point via :meth:`Chip.dress`, and records eigenvalues and bare→dressed
-  label assignments into a :class:`SpectrumSweepResult`.
+Sweep axes compose as Cartesian products or zipped correlated scans.
+Spectrum sweeps dress the chip at each point and retain eigenvalues and
+bare→dressed label assignments.
 
 Sweep values are stored in their native physical units (GHz for
 frequencies, ns for times, mK for temperatures). :class:`Sweep`

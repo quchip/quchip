@@ -1,7 +1,6 @@
 """Unit tests for (Δa, Δb) band decomposition of two-body operators.
 
-Every expected value is derived from analytical formulas — no reference
-to the function-under-test is used to *generate* ground truth.
+Band-decomposition formulas provide the reference values.
 """
 
 from __future__ import annotations

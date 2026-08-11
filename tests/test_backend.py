@@ -1,8 +1,4 @@
-"""Tests for Backend protocol and QuTiPBackend implementation.
-
-Every assertion checks against a known analytical value, never against the implementation's
-own output, so tests catch real bugs rather than encoding implementation tautologies.
-"""
+"""Tests for Backend protocol and QuTiPBackend implementation."""
 
 from __future__ import annotations
 

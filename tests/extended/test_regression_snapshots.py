@@ -10,9 +10,6 @@ The three paths tested:
   3. Crosstalk dynamics -- verifies victim device excitation from leaked
      signal through the crosstalk pipeline
 
-Purpose: safety net for the callable-IR and crosstalk paths. These tests detect any
-behavioral change.
-
 Unit convention: frequencies in GHz (ordinary), times in ns, h-bar = 1.
 """
 
