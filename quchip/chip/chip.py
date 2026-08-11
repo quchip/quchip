@@ -224,14 +224,10 @@ class Chip:
         self._state_order: tuple[str, ...] | None = None
         self._level_symbols: dict[str, int] = dict(_DEFAULT_LEVEL_SYMBOLS)
 
-        # Memo of the lab-frame Hamiltonian. It is built twice per engine pass
-        # (once lab-frame for dressing, once for the engine's static-H0) and is
-        # bit-identical both times, so the second build is pure waste. Keyed on
-        # the backend kind + per-device/per-coupling ``state_version`` so any
-        # parameter or level change invalidates it. Never cached under a JAX
-        # trace (the ``contains_tracer`` guard), so differentiability is intact.
+        # Both snapshots are keyed by their complete structural inputs below;
+        # values produced under a JAX trace are never retained.
         self._unresolved_hamiltonian_cache: tuple[Any, PhysicsExpr] | None = None
-        self._resolved_result_cache: tuple[Any, Any] | None = None
+        self._resolved_result_cache: tuple[tuple[Any, ...], EngineResult] | None = None
 
         if frame != "lab":
             self.set_frame(frame)
