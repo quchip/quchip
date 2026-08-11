@@ -19,6 +19,11 @@ METRICS = {
 }
 FAMILIES = ("qutip", "dynamiqs")
 PATHS = ("head", "main", "native")
+PLOT_METRICS = (
+    ("cold_build_s", "cold build"),
+    ("build_s", "repeated build"),
+    ("warm_solve_s", "warm solve"),
+)
 
 NAVY = "#1D3557"
 INK = "#3D405B"
@@ -159,7 +164,7 @@ def render_plots(document: Mapping[str, Any], output_dir: Path) -> list[Path]:
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
-    from matplotlib.ticker import FuncFormatter
+    from matplotlib.ticker import FuncFormatter, NullFormatter
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "closed-system-comparison.png"
@@ -186,11 +191,11 @@ def render_plots(document: Mapping[str, Any], output_dir: Path) -> list[Path]:
     }
 
     with plt.rc_context(rc):  # type: ignore[arg-type]
-        figure, axes = plt.subplots(2, 2, figsize=(9.4, 6.4), sharex="col", squeeze=False)
+        figure, axes = plt.subplots(2, 3, figsize=(13.2, 6.2), sharex="col", squeeze=False)
         for row_index, family in enumerate(FAMILIES):
             dims = [row["dim"] for row in _rows(document, family, "head")]
             backend = "QuTiP" if family == "qutip" else "dynamiqs"
-            for column, (metric, label) in enumerate((("build_s", "repeated build"), ("warm_solve_s", "warm solve"))):
+            for column, (metric, label) in enumerate(PLOT_METRICS):
                 axis = axes[row_index, column]
                 for path_name in PATHS:
                     rows = _rows(document, family, path_name)
@@ -202,6 +207,7 @@ def render_plots(document: Mapping[str, Any], output_dir: Path) -> list[Path]:
                     )
                 axis.set_yscale("log")
                 axis.yaxis.set_major_formatter(FuncFormatter(_time_label))
+                axis.yaxis.set_minor_formatter(NullFormatter())
                 axis.set_title(f"{backend} · {label}")
                 _style_axis(axis, dims, n_by_dim, xlabel=row_index == 1)
         axes[0, 0].set_ylabel("time")
