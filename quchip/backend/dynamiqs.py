@@ -1062,7 +1062,7 @@ class DynamiqsBackend(Backend):
         values: Any,
         dims: tuple[int, ...],
     ) -> Operator:
-        """Build a :class:`SparseDIAQArray` from COO-format indices + values."""
+        """Build the smaller Dynamiqs layout from COO-format indices and values."""
         total_dim = int(np.prod(dims, dtype=int))
         if values.size == 0:
             return dq.zeros(*dims)
@@ -1070,14 +1070,22 @@ class DynamiqsBackend(Backend):
         rows_np = np.asarray(rows, dtype=int)
         cols_np = np.asarray(cols, dtype=int)
         offsets = np.unique(cols_np - rows_np)
+        n_diagonals = len(offsets)
+        values_jax = jnp.asarray(values, dtype=jnp.complex128)
+        if n_diagonals >= total_dim:
+            dense = jnp.zeros((total_dim, total_dim), dtype=jnp.complex128)
+            return dq.asqarray(
+                dense.at[rows_np, cols_np].add(values_jax),
+                dims=dims,
+            )
         offset_to_idx = {int(offset): idx for idx, offset in enumerate(offsets.tolist())}
 
         # Integer index structure lives on NumPy; values stay in JAX for traceability.
         diag_indices = np.array(
             [offset_to_idx[int(c - r)] for r, c in zip(rows_np, cols_np)], dtype=int,
         )
-        diag_data = jnp.zeros((len(offsets), total_dim), dtype=jnp.complex128)
-        diag_data = diag_data.at[diag_indices, cols_np].add(jnp.asarray(values, dtype=jnp.complex128))
+        diag_data = jnp.zeros((n_diagonals, total_dim), dtype=jnp.complex128)
+        diag_data = diag_data.at[diag_indices, cols_np].add(values_jax)
 
         return SparseDIAQArray(
             dims,

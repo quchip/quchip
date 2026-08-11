@@ -137,6 +137,32 @@ def test_dense_canonical_roundtrip_stays_dense(backend: DynamiqsBackend) -> None
     npt.assert_allclose(np.asarray(backend.to_array(rebuilt)), np.asarray(backend.to_array(op)), atol=1e-12)
 
 
+def test_irregular_csr_uses_dense_when_dia_storage_would_be_larger(
+    backend: DynamiqsBackend,
+) -> None:
+    """CSR lowering chooses dense storage when its distinct diagonals outgrow the matrix."""
+    canonical = CanonicalOperator.from_csr(
+        values=np.arange(1, 8, dtype=complex),
+        indices=np.array([0, 1, 2, 3, 0, 0, 0]),
+        indptr=np.array([0, 4, 5, 6, 7]),
+        shape=(4, 4),
+        dims=(4,),
+        basis="fock",
+        subsystem_labels=("q",),
+    )
+
+    rebuilt = backend.from_canonical_operator(canonical)
+
+    assert getattr(rebuilt, "layout", None) == dynamiqs.dense
+    npt.assert_allclose(
+        np.asarray(backend.to_array(rebuilt)),
+        np.array(
+            [[1, 2, 3, 4], [5, 0, 0, 0], [6, 0, 0, 0], [7, 0, 0, 0]],
+            dtype=complex,
+        ),
+    )
+
+
 def test_tensor_partial_trace_and_coherent_state_helpers(backend: DynamiqsBackend) -> None:
     """Tensor-state helpers and partial trace work on analytically trivial product states."""
     psi = backend.tensor_states(backend.basis(2, 1), backend.basis(3, 2))
