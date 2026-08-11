@@ -22,7 +22,7 @@ def _document() -> dict[str, object]:
     rows = []
     for family in ("qutip", "dynamiqs"):
         for n in (1, 2):
-            for path, scale in (("head", 1.1), ("base", 1.0), ("native", 0.8)):
+            for path, scale in (("head", 1.1), ("main", 1.0), ("native", 0.8)):
                 row = {
                     "N": n,
                     "levels": 3,
@@ -35,11 +35,11 @@ def _document() -> dict[str, object]:
                 row.update({name: value * scale * n for name, value in METRICS.items()})
                 rows.append(row)
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "complete": True,
         "provenance": {
             "head_commit": "a" * 40,
-            "base_commit": "b" * 40,
+            "main_commit": "b" * 40,
             "parity_tol": 1e-5,
         },
         "rows": rows,
@@ -73,15 +73,12 @@ def test_render_markdown_reports_exact_revisions_and_all_regimes(tmp_path: Path)
     assert "+10.0%" in markdown
 
 
-def test_render_plots_writes_dashboard_and_regression(tmp_path: Path) -> None:
-    """Render both identity-colored plots from one validated result."""
+def test_render_plots_writes_one_simple_comparison(tmp_path: Path) -> None:
+    """Render one PR-versus-main-versus-hand-built comparison."""
     path = tmp_path / "result.json"
     path.write_text(json.dumps(_document()))
 
     outputs = render_plots(load_result(path), tmp_path)
 
-    assert {output.name for output in outputs} == {
-        "closed-system-dashboard.png",
-        "closed-system-regression.png",
-    }
+    assert [output.name for output in outputs] == ["closed-system-comparison.png"]
     assert all(output.stat().st_size > 1_000 for output in outputs)
