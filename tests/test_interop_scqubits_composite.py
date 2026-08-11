@@ -40,7 +40,7 @@ def _ground_shifted(evals: np.ndarray) -> np.ndarray:
 
 def _solver_spectrum(chip: Chip, count: int) -> np.ndarray:
     """Return the engine-materialized lab-frame spectrum in ordinary GHz."""
-    matrix = np.asarray(chip.engine_result().hamiltonian().matrix())
+    matrix = np.asarray(chip.resolve().hamiltonian().matrix())
     return _ground_shifted(np.linalg.eigvalsh(matrix)[:count])
 
 

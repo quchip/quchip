@@ -76,7 +76,7 @@ from quchip.utils.labeling import resolve_label
 if TYPE_CHECKING:
     from quchip.chip.transformations.active_patch import ActivePatchResult
     from quchip.declarative.expr import PhysicsExpr
-    from quchip.engine.ir import SolveBatch, SolveProblem
+    from quchip.engine.ir import FrameSpec, SolveBatch, SolveProblem
     from quchip.results.results import SimulationBatchResult, SimulationResult
 
 
@@ -811,18 +811,21 @@ class QuantumSequence:
             initial_state=initial_state,
         )
 
-    def engine_result(self) -> EngineResult:
-        """Build the backend-neutral Hamiltonian and noise description."""
+    def resolve(self, *, frame: FrameSpec | None = None) -> EngineResult:
+        """Resolve the backend-neutral Hamiltonian and noise description."""
         drive_ops = self._materialize_drive_ops()
         return build_engine_result(
             self._chip,
             drive_ops,
-            resolved_frame=resolve_frame(self._chip, self._chip.frame),
+            resolved_frame=resolve_frame(
+                self._chip,
+                self._chip.frame if frame is None else frame,
+            ),
         )
 
     def hamiltonian(self) -> PhysicsExpr:
         """Return this sequence's canonical time-dependent Hamiltonian."""
-        return self.engine_result().hamiltonian()
+        return self.resolve().hamiltonian()
 
     def vary(self, field: str, values: Any, *, name: str | None = None) -> BatchAxis:
         """Create a :class:`BatchAxis` over a public parameter path or state.

@@ -62,7 +62,7 @@ def test_intrinsic_coupling_is_projected_then_rwa_resolved_by_engine():
     q0 = _Oscillator(freq=5.0, levels=3, label="q0")
     q1 = _Oscillator(freq=5.2, levels=3, label="q1")
     coupling = _DynamicCoupling(q0, q1, g=0.01, label="dynamic")
-    result = Chip([q0, q1], [coupling], frame="lab", rwa=True).engine_result()
+    result = Chip([q0, q1], [coupling], frame="lab", rwa=True).resolve()
 
     assert len([term for term in result.dynamic_terms if term.operator.tag == "coupling_dynamic"]) == 2
     intrinsic_drops = [term for term in result.dropped_terms if term.operator.startswith("intrinsic")]

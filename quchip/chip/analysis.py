@@ -50,6 +50,7 @@ from quchip.utils.labeling import LabelKeyedDict, bare_label_from_mapping, resol
 if TYPE_CHECKING:
     from quchip.chip.chip import Chip
     from quchip.control.drive import BaseDrive
+    from quchip.engine.ir import EngineResult
 
 
 _DRESS_TRACING_ERROR = (
@@ -145,9 +146,9 @@ class ChipAnalysis:
     """Dressed-state analysis, caching, and dressed-basis helpers.
 
     Every :class:`~quchip.chip.chip.Chip` owns one ``ChipAnalysis`` as
-    ``chip._analysis``. The chip class forwards its public dressed-state
-    API here; users normally call methods on the chip, not this class
-    directly.
+    ``chip._analysis``. The chip forwards common dressed quantities; the
+    namespace itself exposes the frozen static contract through
+    :meth:`engine_result` and keeps less-common analysis methods grouped.
 
     Caching: :meth:`dress` keys its cache on a structural signature
     covering backend identity and the ``state_version`` of every device
@@ -161,6 +162,7 @@ class ChipAnalysis:
         self._dressed_signature: tuple[Any, ...] | None = None
         self._array_cache: tuple[Any, Any, Any, Labeling] | None = None
         self._array_signature: tuple[Any, ...] | None = None
+        self._engine_result_cache: tuple[tuple[Any, ...], EngineResult] | None = None
         self._bare_labels_cache: tuple[
             tuple[tuple[int, ...], ...], dict[tuple[int, ...], int]
         ] | None = None
@@ -184,6 +186,20 @@ class ChipAnalysis:
                 for coupling in chip.couplings
             ),
         )
+
+    def engine_result(self) -> EngineResult:
+        """Return the resolved static lab-frame contract used by analysis."""
+        from quchip.engine.stage2_assembly import _build_static_analysis_result
+
+        signature = self._analysis_signature()
+        cache = self._engine_result_cache
+        if cache is not None and cache[0] == signature:
+            return cache[1]
+
+        result = _build_static_analysis_result(self._chip)
+        if not result._contains_tracer():
+            self._engine_result_cache = (signature, result)
+        return result
 
     def _canonical_bare_labels(self) -> tuple[tuple[int, ...], ...]:
         """Product energy-level labels in chip order."""
@@ -293,12 +309,9 @@ class ChipAnalysis:
             return self._array_cache
 
         from quchip.engine.basis import semantic_to_solver_transform
-        from quchip.engine.stage2_assembly import (
-            _analysis_matrix_ghz,
-            _build_static_analysis_result,
-        )
+        from quchip.engine.stage2_assembly import _analysis_matrix_ghz
 
-        engine_result = _build_static_analysis_result(chip)
+        engine_result = self.engine_result()
         hamiltonian = _analysis_matrix_ghz(engine_result)
         dims = engine_result.dims
 

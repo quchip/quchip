@@ -1647,9 +1647,17 @@ def _build_static_analysis_result(chip: "Chip") -> EngineResult:
         demod_freqs={label: 0.0 for label in labels},
         mode="lab",
     )
+    result = build_engine_result(chip, [], resolved_frame=frame)
+    metadata = {
+        key: value
+        for key, value in result.metadata.items()
+        if key in {"frame", "spectral_bound_ghz"}
+    }
     return replace(
-        build_engine_result(chip, [], resolved_frame=frame),
+        result,
         dynamic_terms=(),
+        collapse_terms=(),
+        metadata=metadata,
     )
 
 

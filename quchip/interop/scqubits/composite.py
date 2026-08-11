@@ -481,7 +481,7 @@ def export_chip(chip: Chip, **opts: Any) -> Any:
 
     hs = scqubits.HilbertSpace(subsystems)  # type: ignore[abstract]  # scqubits stub marks HilbertSpace abstract
     backend = chip.backend
-    bases = chip.engine_result().bases
+    bases = chip.resolve().bases
     for coupling in chip.couplings:
         _check_rwa_exportable(chip, coupling)
         g, matrix_a, matrix_b = _coupling_product_factors(coupling, backend, bases)

@@ -93,7 +93,7 @@ def decompose_eops(
     ``ops`` list is ready for direct consumption by the backend solver.
     """
     if bases is None:
-        bases = chip.engine_result().bases
+        bases = chip.resolve().bases
 
     flat_ops: list[Any] = []
     meta: list[BandMeta] = []

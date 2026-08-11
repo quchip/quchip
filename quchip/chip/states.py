@@ -176,7 +176,7 @@ def superposition(
 
     amps: list[Any] = []
     kets: list[State] = []
-    bases = chip.engine_result().bases
+    bases = chip.resolve().bases
     for component in components:
         if (
             isinstance(component, tuple)
@@ -249,7 +249,7 @@ def bare_state(
     :func:`set_state_order` has been called.
     """
     resolved = normalize_device_state_mapping(chip, device_states, device_state_kwargs)
-    return _bare_state_from_bases(chip, resolved, chip.engine_result().bases)
+    return _bare_state_from_bases(chip, resolved, chip.resolve().bases)
 
 
 def _bare_state_from_bases(

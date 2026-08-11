@@ -40,7 +40,7 @@ from quchip.utils.labeling import LabelKeyedDict, resolve_label
 
 if TYPE_CHECKING:
     from quchip.chip.partition import PartitionResult
-    from quchip.engine.ir import FrameSpec, SolveProblem
+    from quchip.engine.ir import EngineResult, FrameSpec, SolveProblem
     from quchip.results.results import SimulationBatchResult, SimulationResult
 
 
@@ -231,7 +231,7 @@ class Chip:
         # parameter or level change invalidates it. Never cached under a JAX
         # trace (the ``contains_tracer`` guard), so differentiability is intact.
         self._unresolved_hamiltonian_cache: tuple[Any, PhysicsExpr] | None = None
-        self._engine_result_cache: tuple[Any, Any] | None = None
+        self._resolved_result_cache: tuple[Any, Any] | None = None
 
         if frame != "lab":
             self.set_frame(frame)
@@ -313,14 +313,19 @@ class Chip:
 
     def hamiltonian(self) -> PhysicsExpr:
         """Return the Hamiltonian after the chip's engine policies."""
-        return self.engine_result().hamiltonian()
+        return self.resolve().hamiltonian()
 
-    def engine_result(self) -> Any:
-        """Materialize the chip through the same engine path used by solves."""
+    def resolve(self, *, frame: FrameSpec | None = None) -> EngineResult:
+        """Return a frozen engine contract without mutating chip intent.
+
+        ``frame=None`` uses :attr:`frame`; an explicit frame resolves this
+        snapshot only. Basis, retained levels, RWA, noise, and every other
+        declared chip policy remain unchanged.
+        """
         from quchip.engine.stage1_frames import resolve_frame
         from quchip.engine.stage2_assembly import build_engine_result
 
-        resolved_frame = resolve_frame(self, self.frame)
+        resolved_frame = resolve_frame(self, self.frame if frame is None else frame)
         try:
             signature = (
                 id(self.backend),
@@ -351,7 +356,7 @@ class Chip:
         except ValueError:
             signature = None
 
-        cache = self._engine_result_cache
+        cache = self._resolved_result_cache
         if signature is not None and cache is not None and cache[0] == signature:
             return cache[1]
 
@@ -360,8 +365,8 @@ class Chip:
             [],
             resolved_frame=resolved_frame,
         )
-        if signature is not None and not contains_tracer(result):
-            self._engine_result_cache = (signature, result)
+        if signature is not None and not result._contains_tracer():
+            self._resolved_result_cache = (signature, result)
         return result
 
     # ------------------------------------------------------------------
