@@ -64,6 +64,20 @@ def test_fock_noise_and_physical_observables_preserve_sparse_layout() -> None:
     assert type(chip.observable(q0, "charge")).__name__ == "SparseDIAQArray"
 
 
+def test_native_batch_stack_preserves_compatible_dia_layout(backend: DynamiqsBackend) -> None:
+    """Compatible Dynamiqs DIA operators retain their sparse batch layout."""
+    operators = [scale * backend.destroy(4) for scale in (1.0, 2.0, 3.0)]
+
+    stacked = backend._stack_qarray_batch(operators)
+
+    assert type(stacked).__name__ == "SparseDIAQArray"
+    assert stacked.shape == (3, 4, 4)
+    npt.assert_allclose(
+        np.asarray(backend.to_array(stacked)),
+        np.stack([np.asarray(backend.to_array(operator)) for operator in operators]),
+    )
+
+
 def test_dynamiqs_backend_enables_float64(backend: DynamiqsBackend) -> None:
     """Dynamiqs backend forces JAX float64 mode for physics accuracy."""
     assert jax.config.read("jax_enable_x64") is True
@@ -555,6 +569,42 @@ def test_solve_batch_respects_quchip_option_aliases(monkeypatch: pytest.MonkeyPa
 # Cached jitted ``solve_problem`` (the dynamiqs single-solve artifact cache):
 # parity vs the un-jitted protocol-default path, grad/vmap traceability, and
 # adversarial cache-correctness (no structural collision, no stale-value reuse).
+
+
+def test_repeated_native_batch_reuses_one_compiled_solve() -> None:
+    """Structurally identical batches reuse one value-independent compiled solve."""
+    qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.30, levels=3, label="q")
+    drive = ChargeDrive(target=qubit, label="d")
+    backend = DynamiqsBackend()
+    chip = Chip([qubit], frame="rotating", backend=backend)
+    chip.wire(drive)
+    sequence = QuantumSequence(chip)
+    pulse = sequence.charge(
+        qubit,
+        envelope=Square(duration=4.0, amplitude=0.03),
+        freq=5.0,
+    )
+    axis = pulse.vary("amplitude", [0.02, 0.04], name="amp")
+    batch = sequence.build_batch(
+        axis,
+        tlist=np.linspace(0.0, 4.0, 9),
+        initial_state=chip.state(q=0),
+    )
+    cache = backend._get_jit_solve_cache()
+    cache.clear()
+
+    first = backend.solve_batch(batch, progress=False)
+    second = backend.solve_batch(batch, progress=False)
+
+    assert len(first) == len(second) == 2
+    assert len(cache) == 1
+    compiled = next(iter(cache.values()))
+    assert compiled._cache_size() == 1
+    for left, right in zip(first, second):
+        npt.assert_allclose(
+            np.asarray(backend.to_array(left.final_state)),
+            np.asarray(backend.to_array(right.final_state)),
+        )
 # ``benchmarks/repeated_solve_parity.py`` validated this manually; these are the
 # make-test-lane regression guards for the optimization-loop hot path.
 # ---------------------------------------------------------------------------

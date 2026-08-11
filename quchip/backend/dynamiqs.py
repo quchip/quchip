@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import itertools
 import math
+from dataclasses import dataclass
 from typing import Any, Sequence
 
 import dynamiqs as dq
@@ -47,10 +48,10 @@ from quchip.backend._dims import (  # noqa: E402
     validate_two_body_indices,
 )
 from quchip.backend.containers import (  # noqa: E402
+    DeferredBatch,
     EigensystemData,
     PreparedHamiltonian,
     SolverResult,
-    VmappedBatch,
 )
 from quchip.backend.protocol import Backend, Operator, State  # noqa: E402
 from quchip.engine.ir import (  # noqa: E402
@@ -89,6 +90,16 @@ class _BatchedSignalQArrayCallable(eqx.Module):
         if prefactor.ndim == 0:
             return prefactor * self.operator
         return prefactor[..., None, None] * self.operator
+
+
+@dataclass(frozen=True)
+class _DynamiqsBatchHamiltonian:
+    """Stable native leaves used to assemble one vmapped RHS inside JIT."""
+
+    static_operators: tuple[Any, ...]
+    static_coefficients: tuple[Any, ...]
+    dynamic_operators: tuple[Any, ...]
+    dynamic_signals: tuple[Any, ...]
 
 
 class DynamiqsBackend(Backend):
@@ -300,7 +311,7 @@ class DynamiqsBackend(Backend):
         """Pass the native stacked ``QArray`` through; restack a list if needed."""
         if hasattr(states, "shape") and not isinstance(states, (list, tuple)):
             return states
-        return self._stack_qarray_batch(list(states), dims=getattr(states[0], "dims", None))
+        return self._stack_qarray_batch(list(states))
 
     def expect_over_time(self, op: Operator, stacked_states: Any) -> Any:
         """Return ⟨op⟩(t) at every save point via a single batched ``dynamiqs.expect`` call."""
@@ -613,6 +624,7 @@ class DynamiqsBackend(Backend):
     def _cached_jit_solve(
         self,
         *,
+        batched: bool = False,
         solver_name: str,
         options_obj: Any,
         method_obj: Any,
@@ -622,7 +634,7 @@ class DynamiqsBackend(Backend):
         n_dynamic: int,
         n_c_ops: int,
     ) -> Any:
-        """Return a jitted solve closure for this STATIC config signature.
+        """Return a cached single or vmapped solve for this static config.
 
         The key is built ONLY from static/structural metadata: solver name,
         the (hashable, value-equal) dynamiqs ``Options``/``method``/``gradient``
@@ -634,6 +646,7 @@ class DynamiqsBackend(Backend):
         config, or via jax's argument-treedef cache for operator structure).
         """
         key = (
+            "batch" if batched else "single",
             solver_name,
             options_obj,
             method_obj,
@@ -648,18 +661,36 @@ class DynamiqsBackend(Backend):
         if fn is not None:
             return fn
 
-        import jax
-
         kwargs: dict[str, Any] = {"options": options_obj}
         if method_obj is not None:
             kwargs["method"] = method_obj
         if gradient is not None:
             kwargs["gradient"] = gradient
 
-        def _solve(static_ops, static_coeffs, dyn_ops, dyn_mods, c_ops, e_ops, state0, tarr):
-            rhs = self._assemble_modulated_rhs(
-                static_ops, static_coeffs, dyn_ops, [mod.signal for mod in dyn_mods]
-            )
+        def _solve(
+            static_ops,
+            static_coeffs,
+            dynamic_ops,
+            dynamic_payloads,
+            c_ops,
+            e_ops,
+            state0,
+            tarr,
+        ):
+            if batched:
+                rhs = self._assemble_batched_rhs(
+                    static_ops,
+                    static_coeffs,
+                    dynamic_ops,
+                    dynamic_payloads,
+                )
+            else:
+                rhs = self._assemble_modulated_rhs(
+                    static_ops,
+                    static_coeffs,
+                    dynamic_ops,
+                    [modulation.signal for modulation in dynamic_payloads],
+                )
             exp_ops = list(e_ops) if has_e_ops else None
             if solver_name == "mesolve":
                 return dq.mesolve(rhs, list(c_ops), state0, tarr, exp_ops=exp_ops, **kwargs)
@@ -726,10 +757,10 @@ class DynamiqsBackend(Backend):
 
     @staticmethod
     def _assemble_modulated_rhs(
-        static_ops: list[Any],
-        static_coeffs: list[Any],
-        dyn_ops: list[Any],
-        dyn_signals: list[Any],
+        static_ops: Sequence[Any],
+        static_coeffs: Sequence[Any],
+        dyn_ops: Sequence[Any],
+        dyn_signals: Sequence[Any],
     ) -> Any:
         """Sum static ``coeff·op`` terms and modulated dynamic terms into one RHS.
 
@@ -749,15 +780,34 @@ class DynamiqsBackend(Backend):
             rhs = dynamic if rhs is None else rhs + dynamic
         return rhs
 
-    def prepare_batch(self, batch: Any) -> VmappedBatch:
-        """Lower compatible explicit batch problems into one vmapped RHS.
+    @staticmethod
+    def _assemble_batched_rhs(
+        static_ops: Sequence[Any],
+        static_coeffs: Sequence[Any],
+        dynamic_ops: Sequence[Any],
+        dynamic_signals: Sequence[Any],
+    ) -> Any:
+        """Assemble one native-batched RHS from stable operator and signal leaves."""
+        rhs = DynamiqsBackend._assemble_modulated_rhs(
+            static_ops, static_coeffs, (), ()
+        )
+        for operator, signal in zip(dynamic_ops, dynamic_signals):
+            dynamic = dq.timecallable(
+                _BatchedSignalQArrayCallable(signal=signal, operator=operator)
+            )
+            rhs = dynamic if rhs is None else rhs + dynamic
+        return rhs
+
+    def prepare_batch(self, batch: Any) -> DeferredBatch:
+        """Lower compatible problems into stable leaves for one vmapped solve.
 
         Shared operators (static + per-slot dynamic) are converted exactly
         once via an id-keyed cache. For each dynamic slot, the per-element
         :class:`ScalarModulation` signals are stacked leaf-by-leaf along a
         leading batch axis (``jnp.stack`` on matching pytree leaves) and
-        wrapped in a single :class:`_BatchedSignalQArrayCallable` so
-        ``dq.timecallable`` can vmap the solve.
+        retained as engine pytrees. RHS callables are built later inside the
+        cached JIT, so repeated objectives reuse compilation without caching
+        value-bearing Hamiltonians.
 
         Raises
         ------
@@ -768,7 +818,14 @@ class DynamiqsBackend(Backend):
         engine_results = tuple(problem.engine_result for problem in batch.problems)
         cached_native = self._make_op_cache()
         if all(result.static_terms is engine_results[0].static_terms for result in engine_results[1:]):
-            rhs = self._sum_terms(engine_results[0].static_terms, cached_native)
+            static_operators = [
+                cached_native(term.operator)
+                for term in engine_results[0].static_terms
+            ]
+            static_coefficients = [
+                jnp.asarray(term.coefficient, dtype=jnp.complex128)
+                for term in engine_results[0].static_terms
+            ]
         else:
             static_rhs = [
                 self._sum_terms(result.static_terms, cached_native)
@@ -776,18 +833,20 @@ class DynamiqsBackend(Backend):
             ]
             if any(value is None for value in static_rhs):
                 raise ValueError("Every SolveBatch point must contain a static Hamiltonian.")
-            rhs = self._stack_qarray_batch(static_rhs, dims=engine_results[0].dims)
-        if rhs is None:
+            static_operators = [self._stack_qarray_batch(static_rhs)]
+            static_coefficients = [jnp.asarray(1.0, dtype=jnp.complex128)]
+        if not static_operators:
             raise ValueError("Every SolveBatch point must contain a static Hamiltonian.")
 
+        dynamic_operators: list[Any] = []
+        dynamic_signals: list[Any] = []
         for slot in range(len(engine_results[0].dynamic_terms)):
             terms = tuple(result.dynamic_terms[slot] for result in engine_results)
             if all(term.operator is terms[0].operator for term in terms[1:]):
                 op = cached_native(terms[0].operator)
             else:
                 op = self._stack_qarray_batch(
-                    [cached_native(term.operator) for term in terms],
-                    dims=engine_results[0].dims,
+                    [cached_native(term.operator) for term in terms]
                 )
             slot_signals = batch.signals_for(slot)
             ref_td = slot_signals[0]
@@ -803,13 +862,16 @@ class DynamiqsBackend(Backend):
                 ref_td if len(slot_signals) == 1
                 else jtu.tree_map(lambda *xs: jnp.stack(xs), *slot_signals)
             )
-            dynamic = dq.timecallable(
-                _BatchedSignalQArrayCallable(signal=stacked_td.signal, operator=op)
-            )
-            rhs = rhs + dynamic
+            dynamic_operators.append(op)
+            dynamic_signals.append(stacked_td.signal)
 
-        return VmappedBatch(
-            rhs=rhs,
+        return DeferredBatch(
+            shared=_DynamiqsBatchHamiltonian(
+                static_operators=tuple(static_operators),
+                static_coefficients=tuple(static_coefficients),
+                dynamic_operators=tuple(dynamic_operators),
+                dynamic_signals=tuple(dynamic_signals),
+            ),
             batch_size=batch.batch_size,
             metadata=_aggregate_batch_metadata(list(engine_results)),
             tlist=batch.tlist,
@@ -838,27 +900,37 @@ class DynamiqsBackend(Backend):
             opts["store_states"] = True
         options = self._options_from_dict(opts, cartesian_batching=False)
         method = self._method_from_dict(opts)
-        method_kw: dict[str, Any] = {"method": method} if method is not None else {}
+        gradient = opts.get("gradient")
 
-        H = prepared.rhs
+        hamiltonian = prepared.shared
+        if not isinstance(hamiltonian, _DynamiqsBatchHamiltonian):
+            raise TypeError("Dynamiqs prepare_batch returned an invalid native batch payload.")
         chip_dims = getattr(batch.chip, "dims", None)
         native_states = [self.coerce_state(s, dims=chip_dims) for s in batch.initial_states]
-        stacked_state = self._stack_qarray_batch(
-            native_states,
-            dims=chip_dims,
+        stacked_state = self._stack_qarray_batch(native_states)
+        solve_fn = self._cached_jit_solve(
+            batched=True,
+            solver_name=solver_name,
+            options_obj=options,
+            method_obj=method,
+            gradient=gradient,
+            has_e_ops=e_ops is not None,
+            n_static=len(hamiltonian.static_operators),
+            n_dynamic=len(hamiltonian.dynamic_operators),
+            n_c_ops=len(c_ops),
         )
 
         try:
-            if solver_name == "mesolve":
-                batched_result = dq.mesolve(
-                    H, c_ops, stacked_state, tlist_arr,
-                    exp_ops=e_ops, options=options, **method_kw,
-                )
-            else:
-                batched_result = dq.sesolve(
-                    H, stacked_state, tlist_arr,
-                    exp_ops=e_ops, options=options, **method_kw,
-                )
+            batched_result = solve_fn(
+                hamiltonian.static_operators,
+                hamiltonian.static_coefficients,
+                hamiltonian.dynamic_operators,
+                hamiltonian.dynamic_signals,
+                c_ops,
+                e_ops if e_ops is not None else [],
+                stacked_state,
+                tlist_arr,
+            )
         except (ValueError, TypeError, AttributeError) as exc:
             raise RuntimeError(
                 "Dynamiqs native batched solve_batch failed; refusing to silently fall back."
@@ -1053,9 +1125,14 @@ class DynamiqsBackend(Backend):
     # Internal: pytree / operator stacking
     # ------------------------------------------------------------------
 
-    def _stack_qarray_batch(self, values: list[Any], *, dims: Any) -> Operator:
-        """Stack compatible states or operators along the leading batch axis."""
-        return dq.asqarray(jnp.stack([self.to_array(value) for value in values]), dims=dims)
+    def _stack_qarray_batch(self, values: list[Any]) -> Operator:
+        """Stack one homogeneous native batch without changing its layout."""
+        try:
+            return dq.stack(values)
+        except (ValueError, NotImplementedError) as exc:
+            raise ValueError(
+                "Dynamiqs batches require one native layout, shape, dims, and DIA offset structure."
+            ) from exc
 
     def _stack_batch_collapse_operators(self, batch: Any) -> list[Operator]:
         """Lower and align each collapse slot across batch points."""
@@ -1070,8 +1147,7 @@ class DynamiqsBackend(Backend):
                     self.array_module.sqrt(result.collapse_terms[slot].rate)
                     * self.from_canonical_operator(result.collapse_terms[slot].operator)
                     for result in results
-                ],
-                dims=results[0].dims,
+                ]
             )
             for slot in range(count)
         ]
@@ -1090,10 +1166,7 @@ class DynamiqsBackend(Backend):
             raise ValueError("Every SolveBatch point must have the same number of expectation operators.")
         count = len(per_point[0])
         point_e_ops = [
-            self._stack_qarray_batch(
-                [ops[slot] for ops in per_point],
-                dims=batch.problems[0].engine_result.dims,
-            )
+            self._stack_qarray_batch([ops[slot] for ops in per_point])
             for slot in range(count)
         ]
         return None, point_e_ops
