@@ -279,7 +279,12 @@ def _coupling_product_factors(
     """
 
     def matrix(device: Any, op: Any) -> np.ndarray:
-        authored = np.asarray(backend.to_array(op), dtype=complex)
+        from quchip.declarative.expr import materialize_expr
+
+        authored = np.asarray(
+            backend.to_array(materialize_expr(op, backend)),
+            dtype=complex,
+        )
         return np.asarray(bases[device.label].transform_operator(authored), dtype=complex)
 
     device_a, device_b = coupling.device_a, coupling.device_b

@@ -7,20 +7,20 @@ from quchip.devices import DuffingTransmon, Resonator
 from quchip.devices.protocols import ChargeCoupled, FluxCoupled, PhaseCoupled
 
 
-def test_duffing_transmon_is_not_charge_coupled():
-    """DuffingTransmon is Fock-eigenbasis — no physical charge operator."""
+def test_duffing_transmon_exposes_standard_fock_channels():
+    """DuffingTransmon exposes conventional oscillator control quadratures."""
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25)
-    assert not isinstance(q, ChargeCoupled)
-    assert not isinstance(q, PhaseCoupled)
-    assert not isinstance(q, FluxCoupled)
+    assert isinstance(q, ChargeCoupled)
+    assert isinstance(q, PhaseCoupled)
+    assert isinstance(q, FluxCoupled)
 
 
-def test_resonator_is_not_protocol_conformant():
-    """Resonator exposes none of the physical coupling-operator protocols."""
+def test_resonator_exposes_standard_fock_channels():
+    """Resonator exposes conventional oscillator control quadratures."""
     r = Resonator(freq=7.0, levels=6)
-    assert not isinstance(r, ChargeCoupled)
-    assert not isinstance(r, PhaseCoupled)
-    assert not isinstance(r, FluxCoupled)
+    assert isinstance(r, ChargeCoupled)
+    assert isinstance(r, PhaseCoupled)
+    assert isinstance(r, FluxCoupled)
 
 
 def test_mock_conformant_class_is_recognized():
