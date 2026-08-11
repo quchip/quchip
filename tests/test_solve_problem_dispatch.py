@@ -57,6 +57,25 @@ class TestBuildSolveProblem:
         problem = build_problem(chip, [], tlist)
         assert problem.chip is chip
 
+    def test_rotating_problem_resolves_local_system_once(self, monkeypatch: pytest.MonkeyPatch):
+        """Dressed frame references and solve assembly share one local resolution."""
+        import quchip.engine.stage2_assembly as assembly
+
+        q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=3, label="q")
+        chip = Chip([q], frame="rotating")
+        calls = 0
+        original = assembly._resolve_local_system
+
+        def counted(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(assembly, "_resolve_local_system", counted)
+        build_problem(chip, [], np.linspace(0.0, 1.0, 3))
+
+        assert calls == 1
+
     def test_backend_rejected_in_options(self):
         """SolveProblem rejects 'backend' key in options."""
         with pytest.raises(ValueError, match="must not contain 'backend'"):

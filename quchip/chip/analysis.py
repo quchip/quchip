@@ -187,7 +187,7 @@ class ChipAnalysis:
             ),
         )
 
-    def engine_result(self) -> EngineResult:
+    def engine_result(self, *, _local_resolution: Any | None = None) -> EngineResult:
         """Return the resolved static lab-frame contract used by analysis."""
         from quchip.engine.stage2_assembly import _build_static_analysis_result
 
@@ -196,7 +196,10 @@ class ChipAnalysis:
         if cache is not None and cache[0] == signature:
             return cache[1]
 
-        result = _build_static_analysis_result(self._chip)
+        result = _build_static_analysis_result(
+            self._chip,
+            _local_resolution=_local_resolution,
+        )
         if not result._contains_tracer():
             self._engine_result_cache = (signature, result)
         return result
@@ -286,7 +289,10 @@ class ChipAnalysis:
         """Chip device labels in tensor-product order."""
         return tuple(device.label for device in self._chip.devices)
 
-    def _compute_array_labeled(self) -> tuple[Any, Any, Any, Labeling]:
+    def _compute_array_labeled(
+        self,
+        engine_result: EngineResult | None = None,
+    ) -> tuple[Any, Any, Any, Labeling]:
         """Pure-array path: ``(eigenvalues, eigenvector_matrix, eigenstates, labeling)``.
 
         Always returns the ``label_eigensystem`` kernel output directly.
@@ -311,7 +317,10 @@ class ChipAnalysis:
         from quchip.engine.basis import semantic_to_solver_transform
         from quchip.engine.stage2_assembly import _analysis_matrix_ghz
 
-        engine_result = self.engine_result()
+        if engine_result is None:
+            engine_result = self.engine_result()
+        elif not engine_result._contains_tracer():
+            self._engine_result_cache = (signature, engine_result)
         hamiltonian = _analysis_matrix_ghz(engine_result)
         dims = engine_result.dims
 
@@ -582,9 +591,24 @@ class ChipAnalysis:
             ) from None
         return dressed.eigenstates[eigen_idx]
 
-    def _dressed_frequencies(self) -> dict[str, float]:
+    def _dressed_frequencies(
+        self,
+        engine_result: EngineResult | None = None,
+    ) -> dict[str, Any]:
         """Per-device dressed 0 → 1 transition frequencies (GHz)."""
-        return {device.label: self._transition_freq(device) for device in self._chip.devices}
+        eigenvalues, _, _, labeling = self._compute_array_labeled(engine_result)
+        precomputed = (eigenvalues, labeling)
+        ground = (0,) * len(self._chip.devices)
+        ground_energy = self._eigenvalue_of_label(ground, precomputed=precomputed)
+        frequencies: dict[str, Any] = {}
+        for index, device in enumerate(self._chip.devices):
+            excited = list(ground)
+            excited[index] = 1
+            frequencies[device.label] = (
+                self._eigenvalue_of_label(tuple(excited), precomputed=precomputed)
+                - ground_energy
+            )
+        return frequencies
 
     def dressed_index(
         self,

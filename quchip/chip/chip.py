@@ -318,10 +318,15 @@ class Chip:
         snapshot only. Basis, retained levels, RWA, noise, and every other
         declared chip policy remain unchanged.
         """
-        from quchip.engine.stage1_frames import resolve_frame
-        from quchip.engine.stage2_assembly import build_engine_result
+        from quchip.engine.stage2_assembly import (
+            _prepare_engine_assembly,
+            build_engine_result,
+        )
 
-        resolved_frame = resolve_frame(self, self.frame if frame is None else frame)
+        local_resolution, resolved_frame = _prepare_engine_assembly(
+            self,
+            self.frame if frame is None else frame,
+        )
         try:
             signature = (
                 id(self.backend),
@@ -360,6 +365,7 @@ class Chip:
             self,
             [],
             resolved_frame=resolved_frame,
+            _local_resolution=local_resolution,
         )
         if signature is not None and not result._contains_tracer():
             self._resolved_result_cache = (signature, result)
