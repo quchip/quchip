@@ -368,6 +368,39 @@ def _resolve_local_system(chip: "Chip", backend: Backend) -> _LocalResolution:
     )
 
 
+def _prepare_engine_assembly(
+    chip: "Chip",
+    frame_spec: Any,
+) -> tuple[_LocalResolution, ResolvedFrame]:
+    """Resolve local bases once, then use that static contract to resolve the frame."""
+    from quchip.engine.stage1_frames import resolve_frame
+
+    resolution = _resolve_local_system(chip, chip.backend)
+    needs_dressed_references = any(
+        device._reference_freq_override is None for device in chip.devices
+    )
+    dressed = (
+        chip.analysis._dressed_frequencies(
+            chip.analysis.engine_result(_local_resolution=resolution)
+        )
+        if needs_dressed_references
+        else {}
+    )
+    references = {
+        device.label: (
+            dressed[device.label]
+            if device._reference_freq_override is None
+            else device._reference_freq_override
+        )
+        for device in chip.devices
+    }
+    return resolution, resolve_frame(
+        chip,
+        frame_spec,
+        reference_frequencies=references,
+    )
+
+
 def _project_on_support(
     chip: "Chip",
     operator: Any,
@@ -1397,6 +1430,7 @@ def compile_hamiltonian_template(
     drive_ops: list["DriveOp"],
     *,
     resolved_frame: "ResolvedFrame",
+    _local_resolution: _LocalResolution | None = None,
 ) -> HamiltonianTemplate:
     """Compile the invariant Hamiltonian skeleton (H₀, couplings, pre-embedded drive bands).
 
@@ -1410,7 +1444,11 @@ def compile_hamiltonian_template(
     through JAX without retracing operator tensors.
     """
     backend = chip.backend
-    resolution = _resolve_local_system(chip, backend)
+    resolution = (
+        _resolve_local_system(chip, backend)
+        if _local_resolution is None
+        else _local_resolution
+    )
     dims = resolution.dims
     subsystem_labels = tuple(d.label for d in chip.devices)
 
@@ -1609,6 +1647,7 @@ def build_engine_result(
     drive_ops: list["DriveOp"],
     *,
     resolved_frame: "ResolvedFrame",
+    _local_resolution: _LocalResolution | None = None,
 ) -> EngineResult:
     """One-shot stage 2: compile the template then instantiate a single variant.
 
@@ -1635,11 +1674,20 @@ def build_engine_result(
         Static terms, dynamic terms, and dropped-term records for the
         single variant.
     """
-    template = compile_hamiltonian_template(chip, drive_ops, resolved_frame=resolved_frame)
+    template = compile_hamiltonian_template(
+        chip,
+        drive_ops,
+        resolved_frame=resolved_frame,
+        _local_resolution=_local_resolution,
+    )
     return instantiate_engine_result(template, drive_ops, chip)
 
 
-def _build_static_analysis_result(chip: "Chip") -> EngineResult:
+def _build_static_analysis_result(
+    chip: "Chip",
+    *,
+    _local_resolution: _LocalResolution | None = None,
+) -> EngineResult:
     """Resolve the chip in the lab frame and retain only its static model."""
     labels = [device.label for device in chip.devices]
     frame = ResolvedFrame(
@@ -1647,7 +1695,12 @@ def _build_static_analysis_result(chip: "Chip") -> EngineResult:
         demod_freqs={label: 0.0 for label in labels},
         mode="lab",
     )
-    result = build_engine_result(chip, [], resolved_frame=frame)
+    result = build_engine_result(
+        chip,
+        [],
+        resolved_frame=frame,
+        _local_resolution=_local_resolution,
+    )
     metadata = {
         key: value
         for key, value in result.metadata.items()

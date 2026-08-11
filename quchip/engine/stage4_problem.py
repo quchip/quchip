@@ -29,8 +29,7 @@ from quchip.engine.ir import (
     SolveProblem,
     _aggregate_batch_metadata,
 )
-from quchip.engine.stage1_frames import resolve_frame
-from quchip.engine.stage2_assembly import build_engine_result
+from quchip.engine.stage2_assembly import _prepare_engine_assembly, build_engine_result
 from quchip.engine.stage3_observables import decompose_eops
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
 
@@ -51,6 +50,7 @@ class SolveProblemContext:
     e_ops: Any
     e_ops_meta: Any
     resolved_frame: Any
+    _local_resolution: Any
     solver: str | None
     options: dict[str, Any]
     default_initial_state: Any
@@ -71,6 +71,7 @@ class SolveProblemContext:
             e_ops=ref.e_ops,
             e_ops_meta=ref.e_ops_meta,
             resolved_frame=ref.resolved_frame,
+            _local_resolution=None,
             solver=ref.solver,
             options=dict(ref.options),
             default_initial_state=ref.initial_state,
@@ -163,12 +164,14 @@ def prepare_solve_problem_context(
 
     if e_ops is not None and not isinstance(e_ops, dict):
         raise TypeError("e_ops must be dict or None")
+    local_resolution, resolved_frame = _prepare_engine_assembly(chip, chip.frame)
     return SolveProblemContext(
         chip=chip,
         tlist=tlist_arr,
         e_ops=e_ops,
         e_ops_meta=None,
-        resolved_frame=resolve_frame(chip, chip.frame),
+        resolved_frame=resolved_frame,
+        _local_resolution=local_resolution,
         solver=solver,
         options=merged_options,
         default_initial_state=None,
@@ -331,7 +334,10 @@ def build_solve_problem(
         chip, tlist, solver=solver, options=options, e_ops=e_ops, drive_ops=drive_ops,
     )
     engine_result = build_engine_result(
-        chip, drive_ops, resolved_frame=context.resolved_frame
+        chip,
+        drive_ops,
+        resolved_frame=context.resolved_frame,
+        _local_resolution=context._local_resolution,
     )
     e_ops_solver, e_ops_meta = _prepare_context_eops(context, engine_result)
     return SolveProblem(
