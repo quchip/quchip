@@ -67,10 +67,13 @@ from quchip.engine.stage4_problem import (
     prepare_solve_problem_context,
     validate_drive_ops_window,
 )
-from quchip.utils.jax_utils import maybe_concrete_scalar
-from quchip.utils.jax_utils import array_namespace, is_jax_namespace
-from quchip.utils.jax_utils import is_jax_array as _is_traced
-from quchip.utils.jax_utils import select_array_module as _select_array_module
+from quchip.utils.jax_utils import (
+    array_namespace,
+    is_jax_array as _is_traced,
+    is_jax_namespace,
+    maybe_concrete_scalar,
+    select_array_module as _select_array_module,
+)
 from quchip.utils.labeling import resolve_label
 
 if TYPE_CHECKING:
