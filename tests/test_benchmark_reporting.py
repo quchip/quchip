@@ -70,6 +70,10 @@ def test_render_markdown_reports_exact_revisions_and_all_regimes(tmp_path: Path)
     assert "Repeated build" in markdown
     assert "First solve" in markdown
     assert "Warm solve" in markdown
+    assert "first model construction in a fresh worker" in markdown
+    assert "median of later model constructions" in markdown
+    assert "includes backend setup and JAX compilation where applicable" in markdown
+    assert "repeated execution after solver warm-up" in markdown
     assert "+10.0%" in markdown
 
 
