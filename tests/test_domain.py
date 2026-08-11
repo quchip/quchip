@@ -1,8 +1,6 @@
 """Domain model tests with analytical verification.
 
-Every expected value is derived from physics formulas rather than running the
-implementation first. Coverage includes device, coupling, and import-cleanliness
-behavior.
+The formulas below define the reference energies and coupling matrix element.
 
 Eigenvalue formulas:
     DuffingTransmon: E_n = ω·n + (α/2)·n·(n−1)

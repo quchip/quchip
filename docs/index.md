@@ -46,8 +46,6 @@ Start with {doc}`Hello, drive and readout <examples/hello-chip>` to declare an e
 
 The accompanying paper is [quchip: A Differentiable Toolkit for Modeling Quantum Devices](https://arxiv.org/abs/2607.17081) (arXiv:2607.17081); citation metadata is in the repository's [CITATION.cff](https://github.com/quchip/quchip/blob/main/CITATION.cff).
 
-Worked examples and guides are being added incrementally.
-
 ```{toctree}
 :maxdepth: 1
 :hidden:

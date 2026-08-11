@@ -60,9 +60,8 @@ def correlator_result() -> SimulationResult:
 
     The initial state is an uncorrelated product state with q0 fixed in
     |0> (``<Z_q0> = +1``) and q1 in an equal superposition
-    (``<Z_q1> = 0``), so ``<Z_q0> != <Z_q0 Z_q1>`` already at ``t=0`` —
-    independent of any subsequent dynamics — giving a robust
-    ground-truth pair for distinguishing the two traces.
+    (``<Z_q1> = 0``), so ``<Z_q0> != <Z_q0 Z_q1>`` already at ``t=0``,
+    independent of subsequent dynamics.
     """
     q0 = qc.DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=2, label="q0")
     q1 = qc.DuffingTransmon(freq=5.3, anharmonicity=-0.25, levels=2, label="q1")

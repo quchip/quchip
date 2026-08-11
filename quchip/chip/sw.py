@@ -40,10 +40,9 @@ _WORKING_PRECISION = 1e-12
 def bare_hamiltonian(chip: "Chip") -> tuple[Any, list[str], tuple[int, ...]]:
     """Full bare Hamiltonian as a dense ``jnp`` array in GHz, with labels and dims.
 
-    Assembles the engine-consumed lab-frame Hamiltonian so the chip's resolved
-    RWA policy is included without changing the authored Hamiltonian view.
-    This is an analysis kernel, not a solver path; dense conversion is the
-    point, not a cost to avoid.
+    This analysis-only path applies the chip's resolved RWA policy while
+    leaving the authored Hamiltonian unchanged. It intentionally materializes
+    a dense matrix.
     """
     from quchip.engine.basis import semantic_to_solver_transform
     from quchip.engine.stage2_assembly import _analysis_matrix_ghz

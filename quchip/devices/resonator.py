@@ -74,9 +74,8 @@ from quchip.devices.fock import FockDevice
 def _photon_loss_channel(device: Any, basis: Any = None) -> list[tuple[Any, Any]]:
     """Cavity photon-loss channel ``sqrt(κ)·a`` with ``κ = 2π·freq/Q``.
 
-    The ``2π`` is intrinsic to the physical definition of Q (cycles of the
-    ordinary oscillation per e-folding of energy), not a units conversion —
-    see the module docstring. Empty when ``quality_factor`` is unset.
+    Empty when ``quality_factor`` is unset. See the module docstring for the
+    quality-factor convention.
     """
     if device.quality_factor is None:
         return []
@@ -95,15 +94,12 @@ class Resonator(FockDevice):
         Bare cavity frequency ω in GHz. Must be positive. May be a JAX
         tracer for sweeps / gradients.
     quality_factor : float | None, optional
-        Loaded Q, defined against the *ordinary* frequency ``freq``
-        (GHz). When set, adds a photon-loss Lindblad channel
-        ``sqrt(2*pi*freq/Q) a`` — i.e. decay rate
-        ``kappa = 2*pi*freq/Q`` (angular, rad/ns). The ``2*pi`` here is
-        part of the physical definition of Q (energy e-folds per
-        ordinary cycle divided by Q), not a units-boundary conversion.
-        Must be positive. Like every noise parameter it may be set — or
-        cleared with ``None`` — after construction; the next simulate
-        reflects the current value.
+        Loaded Q referenced to the ordinary frequency ``freq`` in GHz.
+        When set, adds a photon-loss Lindblad channel
+        ``sqrt(2*pi*freq/Q) a`` with angular decay rate
+        ``kappa = 2*pi*freq/Q`` in rad/ns. Must be positive. Like every
+        noise parameter, it may be set after construction or cleared with
+        ``None``; the next simulation reflects the current value.
     levels : int, default 10
         Fock-space truncation. Choose comfortably above the maximum
         expected photon occupation.

@@ -1,11 +1,7 @@
 """Batch / sweep-axis machinery for :class:`~quchip.control.sequence.QuantumSequence`.
 
-This module owns everything about turning a scheduled sequence into a
-*batched* solve request: the sweepable :class:`BatchAxis` /
-:class:`ZippedBatchAxis` descriptors, the per-entry handles
-(:class:`PulseHandle`, :class:`DelayHandle`) that create them, the axis
-expansion into per-point overrides consumed by
-:class:`~quchip.engine.ir.SolveBatch`.
+Batch axes and per-entry handles expand a scheduled sequence into
+per-point overrides consumed by :class:`~quchip.engine.ir.SolveBatch`.
 
 :class:`QuantumSequence` (in ``sequence.py``) is the scheduler; it delegates
 its ``vary`` / ``zip`` / ``build_batch`` surface here. The split keeps the

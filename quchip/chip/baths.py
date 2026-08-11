@@ -227,22 +227,14 @@ class Bath:
         return tuple(self.parameter_values())
 
     def _bose(self, freq: Any, xp: Any) -> Any:
-        """Thermal occupation n̄(freq, T); JAX-safe (no branch on traced T), T=0-safe.
+        """Thermal occupation n̄(freq, T), including the ``T=0`` limit.
 
         ``k_B`` is ``k_B/h`` in GHz/mK, so ``freq/(k_B*T)`` is dimensionless.
-        The physical ``T -> 0`` limit is ``n̄ -> 0`` (a zero-temperature bath
-        carries no thermal photons), but ``T`` exactly ``0`` cannot reach that
-        limit through a live division: ``k_B*T`` would be the divisor, and
-        for a concrete zero-valued (plain Python or NumPy) temperature that
-        raises ``ZeroDivisionError``/emits ``inf`` before ``expm1`` ever
-        combines it back down to a finite value. The denominator is
-        therefore replaced with a nonzero placeholder *before* the division
-        runs — guarding the division's input, not just selecting between two
-        already-computed branch outputs, since ``xp.where`` evaluates both
-        branches and a zero divisor in the unselected branch would still
-        raise or poison gradients with ``NaN`` — and the exact ``T=0``
-        result (``0.0``) is selected explicitly afterward. No Python branch
-        on the traced temperature either way.
+        At ``T=0``, a nonzero placeholder is substituted before division and
+        the physical result ``n̄=0`` is selected afterward. Substitution must
+        happen first because ``xp.where`` evaluates both branches; a zero
+        divisor in the unselected branch could still raise or produce ``NaN``
+        gradients. Both selections avoid a Python branch on traced ``T``.
 
         Returns
         -------
