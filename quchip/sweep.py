@@ -30,7 +30,7 @@ Girvin & Wallraff, *Circuit quantum electrodynamics*, Rev. Mod. Phys.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 import numpy as np
 
@@ -422,9 +422,9 @@ class SpectrumSweepResult:
 class SpectrumSweep:
     """Sequential dressed-spectrum sweep driver.
 
-    At each grid point the chip is cloned via :meth:`Chip.updated`,
-    ``update_fn`` mutates the clone with the swept values, and
-    :meth:`Chip.dress` computes the lab-frame dressed spectrum. The
+    Each sweep name is a path from :attr:`Chip.parameters`. At every grid
+    point :meth:`Chip.with_params` creates an isolated chip and
+    :meth:`Chip.dress` computes its dressed spectrum. The
     per-point eigenvalues and overlap-based bare→dressed assignments
     are collected into a :class:`SpectrumSweepResult`.
 
@@ -441,8 +441,7 @@ class SpectrumSweep:
     >>> # Sweep a qubit frequency and record dressed levels
     >>> # sweep = SpectrumSweep(
     >>> #     chip,
-    >>> #     [Sweep(np.linspace(4.8, 5.2, 41), name="freq")],
-    >>> #     update_fn=lambda c, p: setattr(c.device(qubit), "frequency", p["freq"]),
+    >>> #     [Sweep(np.linspace(4.8, 5.2, 41), name="q.freq")],
     >>> # )
     >>> # result = sweep.run()  # doctest: +SKIP
     """
@@ -452,14 +451,12 @@ class SpectrumSweep:
         chip: "Chip",
         axes: Sequence[Sweep | ZippedSweep],
         *,
-        update_fn: Callable[["Chip", dict[str, Any]], None],
         evals_count: int | None = None,
         store_eigenstates: bool = False,
         overlap_threshold: float = 0.5,
     ) -> None:
         self.chip = chip
         self.axes = list(axes)
-        self.update_fn = update_fn
         self.evals_count = evals_count
         self.store_eigenstates = bool(store_eigenstates)
         self.overlap_threshold = float(overlap_threshold)
@@ -508,22 +505,9 @@ class SpectrumSweep:
         states_store = np.empty(shape, dtype=object) if self.store_eigenstates else None
         eigenvalues_store: list[np.ndarray] = []
 
-        # Snapshotted once, pre-sweep: the label/shape scaffold above
-        # (bare_labels, n_evals, device_labels on the result) is fixed from
-        # this signature, so update_fn changing device count, order, labels,
-        # or levels at any grid point would silently misalign every array
-        # collected here against a scaffold that no longer matches.
-        topology_signature = tuple((device.label, device.levels) for device in self.chip.devices)
-
         iterator = tqdm(expanded, desc="SpectrumSweep") if progress else expanded
         for coord, params in iterator:
-            chip_point = self.chip.updated(lambda cloned: self.update_fn(cloned, params))
-            point_signature = tuple((device.label, device.levels) for device in chip_point.devices)
-            if point_signature != topology_signature:
-                raise ValueError(
-                    f"update_fn {self.update_fn!r} changed chip topology at grid point {coord}: "
-                    f"expected devices (label, levels) = {topology_signature}, got {point_signature}."
-                )
+            chip_point = self.chip.with_params(params)
             dressed = chip_point.dress(overlap_threshold=self.overlap_threshold)
             evals = np.asarray(dressed.eigenvalues, dtype=float)[:n_evals]
             eigenvalues_store.append(evals)

@@ -44,7 +44,7 @@ def build_local_subsystem(chip: Chip, labels: tuple[str, ...]) -> Chip:
     """Build a reduced ``Chip`` holding only the given device labels.
 
     Couplings are retained iff both endpoint labels are in ``labels``;
-    frame, RWA, and backend settings are inherited from the parent.
+    basis, frame, RWA, and backend settings are inherited from the parent.
 
     Parameters
     ----------
@@ -59,13 +59,21 @@ def build_local_subsystem(chip: Chip, labels: tuple[str, ...]) -> Chip:
         couplings.
     """
     keep = set(labels)
-    devices = [device for device in chip.devices if device.label in keep]
+    devices = [device.copy() for device in chip.devices if device.label in keep]
+    device_map = {device.label: device for device in devices}
     couplings = [
-        coupling
+        coupling.copy(device_map)
         for coupling in chip.couplings
         if coupling.device_a_label in keep and coupling.device_b_label in keep
     ]
-    return Chip(devices=devices, couplings=couplings, frame=chip.frame, rwa=chip.rwa, backend=chip.backend)
+    return Chip(
+        devices=devices,
+        couplings=couplings,
+        frame=chip.frame,
+        rwa=chip.rwa,
+        basis=chip.basis,
+        backend=chip.backend,
+    )
 
 
 def device_labels_for_local_eval(chip: Chip, label: Any) -> tuple[str, ...]:

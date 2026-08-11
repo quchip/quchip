@@ -5,13 +5,22 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quchip import Capacitive, Chip, CrossKerr, DuffingTransmon, Resonator, TunableCapacitive, fit_a_dress
+from quchip import (
+    Capacitive,
+    ChargeBasisTransmon,
+    Chip,
+    CrossKerr,
+    DuffingTransmon,
+    Resonator,
+    TunableCapacitive,
+    fit_a_dress,
+)
 from quchip.chip.coupling_base import BaseCoupling
 from quchip.devices.base import BaseDevice
 from quchip.inverse_design.fit import _estimate_bare_g, _pack_initial_params, _static_exchange_rate
 from quchip.inverse_design import fit as fit_module
 from quchip.inverse_design.observables import TargetSpec, build_target_specs
-from quchip.inverse_design.subsystems import device_labels_for_local_eval
+from quchip.inverse_design.subsystems import build_local_subsystem, device_labels_for_local_eval
 from quchip.inverse_design import FitADressResult, ObservableReport
 
 
@@ -110,19 +119,20 @@ def test_fit_a_dress_moves_crosskerr_chi_with_no_stray_g_attribute() -> None:
     assert "ck.g" not in result.final_params
 
 
-def test_estimate_bare_g_seed_subchip_preserves_rwa_override_and_backend(monkeypatch: pytest.MonkeyPatch) -> None:
-    """_estimate_bare_g's seed sub-chip preserves the coupling's rwa override and the chip's backend."""
+def test_estimate_bare_g_seed_subchip_preserves_chip_intent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The coupling seed sub-chip preserves basis, RWA, and backend intent."""
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=4, label="q")
     r = Resonator(freq=7.0, levels=10, label="r")
     coupling = Capacitive(q, r, g=0.01, label="c")
     coupling.rwa = False
-    chip = Chip([q, r], [coupling], frame="rotating", backend="qutip")
+    chip = Chip([q, r], [coupling], frame="rotating", basis="eigen", backend="qutip")
 
     real_chip = fit_module.Chip
     captured: dict = {}
 
     def spy_chip(devices, couplings=None, **kwargs):
         captured["backend"] = kwargs.get("backend")
+        captured["basis"] = kwargs.get("basis")
         captured["coupling_rwa"] = couplings[0].rwa if couplings else None
         return real_chip(devices, couplings, **kwargs)
 
@@ -130,8 +140,23 @@ def test_estimate_bare_g_seed_subchip_preserves_rwa_override_and_backend(monkeyp
 
     _estimate_bare_g(chip, coupling, TargetSpec("chi", coupling.label, 1e-4))
 
-    assert captured["backend"] is chip._backend
+    assert captured["backend"] is chip.backend
+    assert captured["basis"] == "eigen"
     assert captured["coupling_rwa"] is False
+
+
+def test_local_fit_subsystem_inherits_chip_basis_policy() -> None:
+    """Local fit evaluation retains an inherited energy-basis projection."""
+    q = ChargeBasisTransmon(E_C=0.25, E_J=12.0, num_basis=9, levels=3, label="q")
+    r = Resonator(freq=7.0, levels=4, label="r")
+    chip = Chip([q, r], [Capacitive(q, r, g=0.02)], basis="eigen")
+
+    local = build_local_subsystem(chip, ("q", "r"))
+    resolved = local.resolve(frame="lab")
+
+    assert local.basis == "eigen"
+    assert resolved.dims == (3, 4)
+    assert resolved.bases["q"].kind == "eigen"
 
 
 def test_estimate_bare_g_raises_when_target_is_not_bracketed() -> None:

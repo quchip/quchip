@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections import Counter
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping, Sequence, overload
+from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence, overload
 
 import numpy as np
 
@@ -1220,17 +1220,6 @@ class Chip:
         from quchip.chip.partition import partition_chip
 
         return partition_chip(self)
-
-    def updated(self, update_fn: Callable[["Chip"], None]) -> "Chip":
-        """Return a cloned chip after applying one structural update callback.
-
-        Convenience for sweeps::
-
-            modified = chip.updated(lambda c: setattr(c["q"], "freq", 5.1))
-        """
-        cloned = self.clone()
-        update_fn(cloned)
-        return cloned
 
     def status(self) -> None:
         """Print a lightweight diagnostic dashboard for the chip."""
