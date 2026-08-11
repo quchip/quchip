@@ -1058,6 +1058,7 @@ class EngineResult:
     collapse_terms: tuple[CollapseTerm, ...] = ()
     bases: Mapping[str, Any] = field(default_factory=dict)
     authored: Any = None
+    resolved_frame: Any = None
 
     def _contains_tracer(self) -> bool:
         """Return whether any value-bearing field belongs to a JAX trace.
@@ -1100,6 +1101,7 @@ class EngineResult:
                 ),
                 basis_payloads,
                 authored_values,
+                self.resolved_frame,
                 self.metadata,
             )
         )

@@ -29,7 +29,7 @@ from quchip.engine.ir import (
     SolveProblem,
     _aggregate_batch_metadata,
 )
-from quchip.engine.stage2_assembly import _prepare_engine_assembly, build_engine_result
+from quchip.engine.stage2_assembly import build_engine_result
 from quchip.engine.stage3_observables import decompose_eops
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
 
@@ -50,7 +50,7 @@ class SolveProblemContext:
     e_ops: Any
     e_ops_meta: Any
     resolved_frame: Any
-    _local_resolution: Any
+    _base_result: EngineResult | None
     solver: str | None
     options: dict[str, Any]
     default_initial_state: Any
@@ -71,7 +71,7 @@ class SolveProblemContext:
             e_ops=ref.e_ops,
             e_ops_meta=ref.e_ops_meta,
             resolved_frame=ref.resolved_frame,
-            _local_resolution=None,
+            _base_result=None,
             solver=ref.solver,
             options=dict(ref.options),
             default_initial_state=ref.initial_state,
@@ -164,14 +164,14 @@ def prepare_solve_problem_context(
 
     if e_ops is not None and not isinstance(e_ops, dict):
         raise TypeError("e_ops must be dict or None")
-    local_resolution, resolved_frame = _prepare_engine_assembly(chip, chip.frame)
+    base_result = chip.resolve()
     return SolveProblemContext(
         chip=chip,
         tlist=tlist_arr,
         e_ops=e_ops,
         e_ops_meta=None,
-        resolved_frame=resolved_frame,
-        _local_resolution=local_resolution,
+        resolved_frame=base_result.resolved_frame,
+        _base_result=base_result,
         solver=solver,
         options=merged_options,
         default_initial_state=None,
@@ -337,7 +337,7 @@ def build_solve_problem(
         chip,
         drive_ops,
         resolved_frame=context.resolved_frame,
-        _local_resolution=context._local_resolution,
+        _base_result=context._base_result,
     )
     e_ops_solver, e_ops_meta = _prepare_context_eops(context, engine_result)
     return SolveProblem(

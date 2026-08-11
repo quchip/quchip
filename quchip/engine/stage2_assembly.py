@@ -1425,12 +1425,50 @@ def _validate_variant_drive_ops(
 
 # -- Public API ----------------------------------------------------------
 
+
+def _template_from_engine_result(
+    chip: "Chip",
+    drive_ops: list["DriveOp"],
+    base_result: EngineResult,
+    resolved_frame: "ResolvedFrame",
+) -> HamiltonianTemplate:
+    """Attach scheduled-drive structure to an already resolved chip contract."""
+    if base_result.resolved_frame is not resolved_frame:
+        raise ValueError("The base EngineResult and scheduled drives must use the same resolved frame.")
+
+    dims = base_result.dims
+    subsystem_labels = tuple(device.label for device in chip.devices)
+    drive_terms, weight_zero_drops = _compile_drive_terms(
+        chip,
+        _resolve_drives(chip, drive_ops),
+        resolved_frame,
+        chip.backend,
+        bases=base_result.bases,
+        dims=dims,
+        subsystem_labels=subsystem_labels,
+    )
+    return HamiltonianTemplate(
+        resolved_frame=resolved_frame,
+        dims=dims,
+        static_terms=base_result.static_terms,
+        invariant_dynamic_terms=base_result.dynamic_terms,
+        drive_terms=drive_terms,
+        reference_drive_ops=tuple(drive_ops),
+        dropped_terms=base_result.dropped_terms,
+        weight_zero_drops=weight_zero_drops,
+        static_spectral_bound_ghz=base_result.metadata.get("static_spectral_bound_ghz"),
+        collapse_terms=base_result.collapse_terms,
+        bases=base_result.bases,
+        authored=base_result.authored,
+    )
+
 def compile_hamiltonian_template(
     chip: "Chip",
     drive_ops: list["DriveOp"],
     *,
     resolved_frame: "ResolvedFrame",
     _local_resolution: _LocalResolution | None = None,
+    _base_result: EngineResult | None = None,
 ) -> HamiltonianTemplate:
     """Compile the invariant Hamiltonian skeleton (H₀, couplings, pre-embedded drive bands).
 
@@ -1443,6 +1481,14 @@ def compile_hamiltonian_template(
     parameters, drive frequencies, phases, and frame scalars can sweep
     through JAX without retracing operator tensors.
     """
+    if _base_result is not None:
+        return _template_from_engine_result(
+            chip,
+            drive_ops,
+            _base_result,
+            resolved_frame,
+        )
+
     backend = chip.backend
     resolution = (
         _resolve_local_system(chip, backend)
@@ -1628,6 +1674,8 @@ def instantiate_engine_result(
     )
 
     metadata: dict[str, Any] = {"frame": str(template.resolved_frame)}
+    if template.static_spectral_bound_ghz is not None:
+        metadata["static_spectral_bound_ghz"] = template.static_spectral_bound_ghz
     metadata.update(_solver_hint_metadata(template.static_spectral_bound_ghz, dynamic_terms))
 
     return EngineResult(
@@ -1639,6 +1687,7 @@ def instantiate_engine_result(
         collapse_terms=template.collapse_terms,
         bases=template.bases,
         authored=template.authored,
+        resolved_frame=template.resolved_frame,
     )
 
 
@@ -1648,6 +1697,7 @@ def build_engine_result(
     *,
     resolved_frame: "ResolvedFrame",
     _local_resolution: _LocalResolution | None = None,
+    _base_result: EngineResult | None = None,
 ) -> EngineResult:
     """One-shot stage 2: compile the template then instantiate a single variant.
 
@@ -1679,6 +1729,7 @@ def build_engine_result(
         drive_ops,
         resolved_frame=resolved_frame,
         _local_resolution=_local_resolution,
+        _base_result=_base_result,
     )
     return instantiate_engine_result(template, drive_ops, chip)
 

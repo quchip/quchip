@@ -219,6 +219,14 @@ def test_chip_parameter_inventory_includes_drive_control_and_bath_owners() -> No
     paths = {path for term in engine_result.collapse_terms for path in term.parameter_paths}
     assert {"drive.source.loss_rate", "bath.cold.temperature", "bath.cold.rate"} <= paths
 
+    first = build_problem(chip, [], np.asarray([0.0, 1.0])).engine_result
+    source.loss_rate = 0.03
+    second = build_problem(chip, [], np.asarray([0.0, 1.0])).engine_result
+    first_rate = next(term.rate for term in first.collapse_terms if term.source == "source")
+    second_rate = next(term.rate for term in second.collapse_terms if term.source == "source")
+    assert float(first_rate) == pytest.approx(0.01)
+    assert float(second_rate) == pytest.approx(0.03)
+
 
 def test_active_noise_is_rebindable_and_retained_in_engine_result() -> None:
     pytest.importorskip("dynamiqs")
