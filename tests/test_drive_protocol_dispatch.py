@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import quchip
 
 from quchip import Chip, Gaussian, QuantumSequence
@@ -93,8 +94,10 @@ def test_flux_drive_prefers_physical_operator():
     assert np.allclose(channel.operator, fake._flux)
 
 
+@pytest.mark.optional_backend
 def test_dynamiqs_keeps_symbolic_fock_drive_bands_sparse():
     """Device-authored Fock operators lower to sparse solver bands."""
+    pytest.importorskip("dynamiqs")
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
     q.reference_freq = q.freq
     chip = Chip([q], frame={q: q.freq}, rwa=True, backend="dynamiqs")
