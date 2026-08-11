@@ -61,19 +61,28 @@ python -m pip install .
 ```python
 from quchip import Capacitive, ChargeDrive, Chip, DuffingTransmon, Resonator
 
-qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.30, levels=6, label="qubit")
-readout = Resonator(freq=6.8, levels=10, quality_factor=6800, label="readout")
-coupling = Capacitive(qubit, readout, g=0.060, rwa=True, label="qubit-readout")
+qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.30, levels=6, label="q")
+readout = Resonator(freq=6.8, levels=10, quality_factor=6800, label="r")
+coupling = Capacitive(qubit, readout, g=0.060, rwa=True, label="qr")
 chip = Chip([qubit, readout], couplings=[coupling], frame="rotating", rwa=True)
 qubit_line = ChargeDrive(qubit, label="qubit-charge")
 readout_line = ChargeDrive(readout, label="readout-charge")
 chip.wire(qubit_line, readout_line)
+
+authored_hamiltonian = chip.unresolved_hamiltonian()
+resolved_hamiltonian = chip.hamiltonian()
 
 f01 = chip.freq(qubit)
 f12 = chip.freq(qubit, when={qubit: 1})
 fr0 = chip.freq(readout, when={qubit: 0})
 fr1 = chip.freq(readout, when={qubit: 1})
 ```
+
+The authored Hamiltonian preserves the device and coupling expressions in their
+declared local spaces. The resolved view applies the chip's basis, frame, and
+RWA policies through the same engine path used by simulation. Both remain
+inspectable symbolic expressions; call `.matrix()` when a numerical array is
+needed.
 
 The complete example derives short and selective nominal-pi Gaussian drives from $|f_{12}-f_{01}|$, then derives a Gaussian-edge readout duration from the conditional pull and resonator linewidth. Both parts run the real multilevel, lossy chip with compact reproducibility receipts.
 
