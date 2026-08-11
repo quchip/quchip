@@ -1,6 +1,6 @@
 # quchip Physics Reference
 
-This document states the physics contracts implemented by quchip. It answers what the public `.hamiltonian()` methods mean, where frames are applied, where RWA is applied, and which assumptions the engine makes.
+This document states the physics contracts implemented by quchip. It distinguishes authored and resolved Hamiltonians, records where local bases, frames, and RWA are applied, and states the engine's assumptions.
 
 ## 1. Units and the 2π Convention
 
@@ -17,21 +17,23 @@ The domain layer stays in ordinary GHz. The only Hamiltonian-assembly `2π` conv
 
 ## 2. What `.hamiltonian()` Means
 
-### 2.1 Device `.hamiltonian()`
+### 2.1 Device Hamiltonians
 
-`BaseDevice.hamiltonian()` returns that device's static local Hamiltonian in its own Hilbert space, in the lab frame, in ordinary GHz.
+`BaseDevice.unresolved_hamiltonian()` returns that device's authored static Hamiltonian in its declared local space, in the lab frame, in ordinary GHz.
 
 Examples:
 
-- `DuffingTransmon.hamiltonian()` returns `omega * n + (alpha / 2) * n * (n - I)`.
-- `Resonator.hamiltonian()` returns `omega * n`.
+- `DuffingTransmon.unresolved_hamiltonian()` returns `omega * n + (alpha / 2) * n * (n - I)`.
+- `Resonator.unresolved_hamiltonian()` returns `omega * n`.
 
-It does not:
+The authored view does not:
 
 - include `2π`
 - include any rotating-frame subtraction
 - include any drive term
 - include any explicit time dependence
+
+`BaseDevice.hamiltonian()` resolves the same device through the engine path. For an owned device it inherits the chip's local-basis and frame policy; an explicit `frame=` passed to `resolve()` affects only that snapshot. The result is a one-device expression, so couplings to the rest of the chip remain outside its boundary.
 
 ### 2.2 Coupling `.interaction_hamiltonian()`
 
@@ -45,24 +47,28 @@ full: g * (a + a†)(b + b†)
 
 `interaction_hamiltonian()` always returns this full form. The RWA form `g * (a†b + ab†)` is never authored directly — it is what remains once the bands that change total excitation are masked out by the chip or filtered by the engine.
 
-### 2.3 `Chip.hamiltonian()`
+### 2.3 Chip and sequence Hamiltonians
 
-`Chip.hamiltonian()` returns the full static lab-frame Hamiltonian after embedding device and coupling operators into the total Hilbert space. For each coupling where `Chip.resolve_rwa(coupling)` is `True`, the full interaction is masked to the excitation-change bands its `rwa_keeps_band` predicate accepts (§6.1) before embedding. RWA is therefore already included in this Hamiltonian rather than deferred to the engine.
+`Chip.unresolved_hamiltonian()` embeds every authored device Hamiltonian and full coupling interaction into the total declared Hilbert space. It is the exact static lab-frame expression before local-basis materialization, retained-level truncation, frame transformation, or RWA.
 
-It is still not the solver-ready Hamiltonian. The engine later:
+`Chip.hamiltonian()` is reconstructed from `Chip.resolve()`, the frozen `EngineResult` used by backends. Resolution:
 
-1. multiplies by `2π`
-2. subtracts the chosen frame generator
-3. decomposes non-static pieces into excitation-change bands, filtering coupling bands with the same `rwa_keeps_band` predicate so the two views agree
-4. attaches explicit time-dependent phases where needed
-5. adds drive and crosstalk terms
+1. materializes each authored local space into the selected solver basis and retained dimension
+2. multiplies solver-facing operators by `2π`
+3. subtracts the chosen frame generator
+4. decomposes non-static pieces into excitation-change bands and filters coupling bands with each coupling's `rwa_keeps_band` predicate
+5. attaches explicit time-dependent phases where needed
+
+The returned expression is an inspectable, ordinary-GHz view of those same canonical terms; the solver-facing `EngineResult` retains the internal `2π` scaling. `QuantumSequence.hamiltonian()` follows the same path and adds the sequence's scheduled drive and crosstalk terms.
 
 The resulting contracts are:
 
-- device `.hamiltonian()` means local static lab-frame physics
+- device `.unresolved_hamiltonian()` means authored local static lab-frame physics
+- device `.hamiltonian()` means the resolved one-device engine view
 - coupling `.interaction_hamiltonian()` means local static lab-frame interaction physics
-- `Chip.hamiltonian()` means the embedded static lab-frame chip Hamiltonian
-- the engine builds the actual solver Hamiltonian from those pieces
+- `Chip.unresolved_hamiltonian()` means the embedded authored static lab-frame chip Hamiltonian
+- `Chip.hamiltonian()` means the resolved canonical chip Hamiltonian without scheduled drives
+- `QuantumSequence.hamiltonian()` means the resolved canonical Hamiltonian with scheduled drives
 
 ## 3. Device Models
 
@@ -99,6 +105,16 @@ The standard dissipators are:
 Those are assembled in the device layer. Backends only receive already-built operators.
 
 Noise parameters are ordinary tracked attributes: set (or clear with `None`) at construction **or any time after** — collapse operators are rebuilt from current values on every solve, and post-construction writes get the same validation as the constructor. Chip-level shared/collective dissipation lives in `Bath` ([`quchip/chip/baths.py`](quchip/chip/baths.py)), attached at construction or later via `chip.add_bath(...)`; bath rates are Lindblad-ready 1/ns with no assembly `2π` (that boundary is Hamiltonian-only — a component's *intrinsic* `2π`, e.g. a resonator's `κ = 2π·f/Q`, is its own physics).
+
+### 3.4 Authored local spaces and solver bases
+
+Source: [`quchip/devices/spaces.py`](quchip/devices/spaces.py), [`quchip/engine/basis.py`](quchip/engine/basis.py)
+
+Each device authors its Hamiltonian and named operators in a `LocalSpace`. The built-in realizations are `FockSpace`, `ChargeSpace`, `PhaseGridSpace`, and `CustomSpace`. This declared coordinate space is independent of the solver-basis policy.
+
+`Chip(..., basis="native")` preserves each authored local coordinate basis and dimension. `basis="eigen"` diagonalizes each device's exact authored local Hamiltonian and projects all Hamiltonians, coupling and drive operators, states, observables, and collapse operators into the retained local energy subspace. A device can override the chip-wide policy with its own `basis` and selects the retained energy dimension with `projection_levels` where required.
+
+Resolution records every fixed authored-to-solver transformation in `EngineResult.bases`. Local energy ordering is distinct from whole-chip dressing: `Chip.dress()` diagonalizes the coupled static chip for analysis, while local-basis resolution defines the tensor factors sent through the engine and backends.
 
 ## 4. Frames
 
@@ -187,9 +203,7 @@ This band decomposition is the frame-tracking mechanism.
 
 ## 6. RWA
 
-RWA in quchip means "drop fast, non-resonant pieces instead of carrying them explicitly."
-
-There are two places where that can happen.
+RWA in quchip means "drop fast, non-resonant pieces instead of carrying them explicitly." The authored and resolved views meet that policy as follows.
 
 ### 6.1 Coupling RWA
 
@@ -197,8 +211,8 @@ Source: [`quchip/chip/rwa.py`](quchip/chip/rwa.py)
 
 Coupling RWA is a chip-resolved policy, not a second operator defined by each coupling class. A coupling implements exactly one interaction, `interaction_hamiltonian()` (§2.2) — always the full, non-RWA form — and, optionally, `rwa_keeps_band(delta_a, delta_b)`, a predicate over the two-body excitation-change bands `(delta_a, delta_b)` the interaction decomposes into (default: total-excitation-conserving, `delta_a + delta_b == 0`, the beam-splitter selection). `Chip.resolve_rwa(coupling)` chooses the per-coupling override when present and otherwise uses the chip default. The resolved value is used in both paths:
 
-- `Chip.hamiltonian()` masks the full local operator down to the bands `rwa_keeps_band` accepts (`apply_rwa_mask`), before embedding it into the static lab-frame Hamiltonian (§2.3).
-- Stage 2 (`_collect_coupling_terms` in [`quchip/engine/stage2_assembly.py`](quchip/engine/stage2_assembly.py)) band-decomposes the same full operator and filters with the same predicate. Rejected bands become advisory `DroppedTerm` records with `reason="counter-rotating under RWA"`. Each record carries the band's `(delta_a, delta_b)` weights, its largest matrix-element magnitude, and its frame frequency. The amplitude equals `|g|` for a two-level `Capacitive` interaction, but ladder-operator factors can make it larger when either mode has more levels. Retained bands follow the general per-band static/dynamic fold of §5.2: a band whose carrier `delta_a*omega_a + delta_b*omega_b` is concretely zero stays folded into `H0`; every other retained band is subtracted back out and carried as an explicit time-dependent term.
+- `Chip.unresolved_hamiltonian()` preserves the full authored interaction without applying RWA (§2.3).
+- Stage 2 (`_collect_coupling_terms` in [`quchip/engine/stage2_assembly.py`](quchip/engine/stage2_assembly.py)) band-decomposes that interaction and filters with the resolved predicate. `Chip.hamiltonian()` is reconstructed from the retained canonical terms, so it reflects the same RWA decision as a solve. Rejected bands become advisory `DroppedTerm` records with `reason="counter-rotating under RWA"`. Each record carries the band's `(delta_a, delta_b)` weights, its largest matrix-element magnitude, and its frame frequency. The amplitude equals `|g|` for a two-level `Capacitive` interaction, but ladder-operator factors can make it larger when either mode has more levels. Retained bands follow the general per-band static/dynamic fold of §5.2: a band whose carrier `delta_a*omega_a + delta_b*omega_b` is concretely zero stays folded into `H0`; every other retained band is subtracted back out and carried as an explicit time-dependent term.
 
 For `Capacitive`:
 

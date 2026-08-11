@@ -67,14 +67,16 @@ readout_line = ChargeDrive(readout, label="readout-charge")
 _ = chip.wire(qubit_line, readout_line)
 ```
 
-## Inspect the symbolic Hamiltonian
+## Inspect the authored Hamiltonian
 
-Before scheduling a pulse, inspect the chip's symbolic static Hamiltonian. The
-labels `q`, `r`, and `qr` become compact operator subscripts; call `.matrix()`
-only when a numerical array is needed.
+Before scheduling a pulse, inspect the static Hamiltonian exactly as the
+devices and coupling define it. The labels `q`, `r`, and `qr` become compact
+operator subscripts; call `.matrix()` only when a numerical array is needed.
+`chip.hamiltonian()` is the complementary resolved view after the chip's basis,
+frame, and RWA policies.
 
 ```python
-chip.hamiltonian()
+chip.unresolved_hamiltonian()
 ```
 
 ## Part 1: Qubit drive and leakage

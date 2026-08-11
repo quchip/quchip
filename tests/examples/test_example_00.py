@@ -156,8 +156,8 @@ def test_hello_chip_source_encodes_the_locked_two_part_experiment() -> None:
     assert 'label="qubit"' not in declaration
     assert 'label="readout"' not in declaration
     assert 'label="qubit-readout"' not in declaration
-    assert "## Inspect the symbolic Hamiltonian" in markdown
-    assert cells[declaration_index + 1] == "chip.hamiltonian()"
+    assert "## Inspect the authored Hamiltonian" in markdown
+    assert cells[declaration_index + 1] == "chip.unresolved_hamiltonian()"
 
     assert "# Hello, drive and readout" in markdown
     assert len(markdown.splitlines()) < 350
@@ -386,7 +386,7 @@ def test_hello_chip_pair_executes_and_records_physical_receipts(tmp_path: Path) 
                 assert set(image_outputs[0]["data"]) <= {"image/png", "text/plain"}
                 continue
 
-            assert "".join(cell["source"]).strip() == "chip.hamiltonian()"
+            assert "".join(cell["source"]).strip() == "chip.unresolved_hamiltonian()"
             assert len(cell["outputs"]) == 1
             symbolic_output = cell["outputs"][0]
             assert symbolic_output["output_type"] == "execute_result"

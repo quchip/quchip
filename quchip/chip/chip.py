@@ -153,6 +153,11 @@ class Chip:
     rwa : bool
         Default RWA policy for couplings and drives. Per-component
         ``rwa`` overrides inherit this (``None`` means inherit).
+    basis : {"native", "eigen"}
+        Chip-wide local solver-basis policy. ``"native"`` preserves each
+        device's authored coordinate basis; ``"eigen"`` transforms into its
+        retained local energy subspace. A device-level ``basis`` overrides
+        this policy.
     backend : str or Backend, optional
         Chip-specific backend. ``None`` uses the process default.
 

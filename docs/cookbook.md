@@ -10,6 +10,10 @@ Put parameters at the top, then construct devices, couplings, the chip, control 
 
 quchip uses GHz for ordinary frequencies, ns for time, and mK for temperature. Set the frame and chip RWA policy explicitly, and state the model approximation and Hilbert-space truncation that matter for the result. A drive constructed with its default `rwa=None` inherits the chip policy when the Hamiltonian template is resolved.
 
+### Inspect authored and resolved physics
+
+Use `chip.unresolved_hamiltonian()` to inspect the exact static expressions supplied by devices and couplings. Use `chip.hamiltonian()` for the canonical result after local-basis materialization, retained-level truncation, frame resolution, and RWA. Use `sequence.hamiltonian()` when scheduled drives must be included. These methods return inspectable expressions; call `.matrix()` only at a numerical boundary.
+
 ### Prepare the intended state
 
 Use `chip.state()` by default. It returns the dressed eigenstate assigned to the requested bare labels and is safe inside `jax.jit`, `grad`, and `vmap`. Use `chip.bare_state()` only when the question intentionally concerns a bare product state, such as a swap or transfer experiment; explain that choice where it appears.
