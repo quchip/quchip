@@ -208,7 +208,7 @@ def test_hello_chip_source_encodes_the_locked_two_part_experiment() -> None:
     assert "chip.state({qubit: 0, readout: 0})" in code
     assert "for level in range(3)" in code
     assert "drive_batch.population(qubit, level)" in code
-    assert "## Inspect the batch with Quchip" in markdown
+    assert "## Inspect the batch with quchip" in markdown
     assert "## Customize the comparison" in markdown
     population_plot_cells = [
         cell.strip() for cell in _markdown_code_cells(markdown) if ".plot_populations(" in cell

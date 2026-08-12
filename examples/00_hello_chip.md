@@ -133,7 +133,7 @@ drive_batch = drive_sequence.simulate_batch(
 )
 ```
 
-## Inspect the batch with Quchip
+## Inspect the batch with quchip
 
 Each batch element is a `SimulationResult`. With `trace_out=readout`, `plot_populations` shows the qubit populations directly. The first result contains the short pulse followed by idle evolution.
 
