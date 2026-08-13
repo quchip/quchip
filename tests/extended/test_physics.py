@@ -35,7 +35,7 @@ from quchip.devices.resonator import Resonator
 from quchip.devices.transmon.duffing import DuffingTransmon
 from quchip.engine import simulate
 from quchip.engine.ir import DriveOp
-from quchip.engine.stage1_frames import resolve_frame
+from quchip.engine.frames import resolve_frame
 
 
 # ---------------------------------------------------------------------------
@@ -895,7 +895,13 @@ class TestRabiFrequency:
         chip = Chip([q])
 
         backend = chip.backend
-        H_c = ChargeDrive(target=q).local_channels(q)[0].operator.matrix(backend=backend)
+        from quchip.control.signal import AnalyticSignal
+        from quchip.engine.ir import Constant
+
+        H_c = ChargeDrive(target=q).hamiltonian(
+            q,
+            AnalyticSignal(Constant(1.0)),
+        ).matrix(t=0.0, backend=backend)
         mel = abs(complex(H_c[0, 1]))
         npt.assert_allclose(mel, 1.0, atol=1e-10, err_msg=f"|⟨0|i(a-a†)|1⟩| = {mel}, expected 1.0")
 
@@ -1031,7 +1037,7 @@ class TestGaussianEnvelopeArea:
         # Fine time grid for accurate numerical integration
         n_points = 10001
         t = np.linspace(0, duration, n_points)
-        waveform = env.waveform(t)
+        waveform = env.value(t)
 
         dt = duration / (n_points - 1)
         numerical_area = np.trapezoid(np.abs(waveform), dx=dt)

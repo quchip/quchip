@@ -207,15 +207,27 @@ def test_repository_report_reconciles_tracked_and_rendered_targets(tmp_path) -> 
     (tmp_path / "sample.py").write_text('"""Here\'s the thing: module prose."""\n', encoding="utf-8")
     (tmp_path / "untracked.py").write_text('"""Untracked working-tree prose."""\n', encoding="utf-8")
     (tmp_path / "guide.md").write_text("# Guide\n\nDirect authored prose.\n", encoding="utf-8")
+    (tmp_path / "deleted.md").write_text("Tracked prose pending deletion.\n", encoding="utf-8")
     (tmp_path / "local.md").write_text("Local ignored prose.\n", encoding="utf-8")
     (tmp_path / "notes.txt").write_text("Not in the requested formats.\n", encoding="utf-8")
     rendered = tmp_path / "generated"
     rendered.mkdir()
     (rendered / "page.html").write_text("<main><p>Rendered prose.</p></main>\n", encoding="utf-8")
     subprocess.run(
-        ["git", "-C", str(tmp_path), "add", ".gitignore", "sample.py", "guide.md", "notes.txt"],
+        [
+            "git",
+            "-C",
+            str(tmp_path),
+            "add",
+            ".gitignore",
+            "sample.py",
+            "guide.md",
+            "deleted.md",
+            "notes.txt",
+        ],
         check=True,
     )
+    (tmp_path / "deleted.md").unlink()
 
     report = build_report(tmp_path, rendered, [tmp_path / "local.md"])
 

@@ -16,6 +16,7 @@ This file records notable user-visible changes to quchip.
 - Added `LocalSpace`, `FockSpace`, `ChargeSpace`, `PhaseGridSpace`, and `CustomSpace`. A chip or individual device can use its authored native basis or project into a retained local energy basis with `projection_levels`. [#6]
 - Basis resolution now transforms Hamiltonians, couplings, drives, pumps, states, observables, collapse operators, frames, and RWA bands through one engine-owned boundary. Native solving remains the default. [#6]
 - Added distinct inspection paths: `unresolved_hamiltonian()` preserves authored static physics, while `hamiltonian()` reports the canonical result after basis, frame, and RWA resolution. Sequence Hamiltonians also include scheduled drives. [#6]
+- Added concise declarative surfaces for custom devices, couplings, component-owned time dependence, drive operators, envelopes, scalar time coefficients, local dissipation, custom spaces, and interop mappings. Installed references exercise each supported path. [#10]
 
 ### Engine and performance
 
@@ -29,6 +30,7 @@ This file records notable user-visible changes to quchip.
 - Added per-Python CI constraint files and a weekly unconstrained dependency canary. Published package metadata remains unpinned. [#3]
 - Added a format-aware prose audit for Python docstrings, Markdown, and rendered HTML. It reports recognizable patterns and coverage without guessing authorship. [#9]
 - Added a pull-request template covering verification, documentation, paired notebooks, `PHYSICS.md`, and AI-assistance disclosure. [#9]
+- Generated constructor stubs now cover declarative devices, couplings, and parameterized drives. [#10]
 
 ### Documentation
 
@@ -40,8 +42,9 @@ This file records notable user-visible changes to quchip.
 - Replace `HamiltonianDescription` with `EngineResult`, `build_hamiltonian_description()` with `build_engine_result()`, and `SolveProblem.hamiltonian` with `SolveProblem.engine_result`.
 - Replace `ProblemBatch` and `BatchedHamiltonianDescription` with `SolveBatch` and the `QuantumSequence` batch APIs.
 - `CircuitDevice` is no longer public. Custom devices should declare an explicit `LocalSpace` through `BaseDevice` or `FockDevice`, as appropriate; built-in charge-basis and phase-grid devices use the same boundary.
-- Declarative device and coupling methods now receive the symbolic parameter namespace `p`: use `local_hamiltonian(op, p)`, `interaction(a, b, p)`, and `time_dependent(a, b, p)` in custom models.
-- `NoiseChannel.build` now accepts `(device, basis)` and returns `(operator, rate)` pairs. Operators are unscaled and rates use inverse nanoseconds.
+- Declarative methods receive the symbolic parameter namespace `p`. Custom models use `local_hamiltonian(op, p)`, `interaction(a, b, p)`, and `time_terms(...)` returning `TimeDependentTerm` values.
+- Devices, drives, couplings, and baths declare loss through `dissipation(...)`, returning `CollapseChannel` values with unscaled operators and rates in inverse nanoseconds.
+- Advanced control contracts such as `BaseDrive`, `DriveModulation`, `DriveSignalSpec`, and `SignalTransform` remain available from `quchip.control` but are no longer re-exported from the top-level package.
 - Use `chip.unresolved_hamiltonian()` when authored lab-frame physics is required. `chip.hamiltonian()` now returns the resolved basis/frame/RWA view used by the engine.
 - Required CI currently constrains `qutip<5.3.1` because scqubits 4.3.1 and earlier cannot consume the SciPy sparse arrays returned by qutip 5.3.1. This is a CI compatibility constraint, not a package dependency pin. [#3]
 
@@ -80,5 +83,6 @@ This file records notable user-visible changes to quchip.
 [#7]: https://github.com/quchip/quchip/pull/7
 [#8]: https://github.com/quchip/quchip/pull/8
 [#9]: https://github.com/quchip/quchip/pull/9
+[#10]: https://github.com/quchip/quchip/pull/10
 [Hello, drive and readout]: https://docs.quchip.org/examples/hello-chip.html
 [docs.quchip.org]: https://docs.quchip.org

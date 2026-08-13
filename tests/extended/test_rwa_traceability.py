@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from quchip.approximations import RWA
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -17,11 +19,12 @@ from quchip.backend.dynamiqs import DynamiqsBackend  # noqa: E402
 
 def test_grad_of_dressed_gap_through_rwa_mask():
     """The gradient of the RWA-masked dressed-state gap w.r.t. coupling g is finite and nonzero."""
+
     def gap(g):
         q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=3, label="q0")
         q1 = DuffingTransmon(freq=5.3, anharmonicity=-0.3, levels=3, label="q1")
         cap = Capacitive(q0, q1, g=g)
-        chip = Chip([q0, q1], [cap], rwa=True, backend=DynamiqsBackend())
+        chip = Chip([q0, q1], [cap], approximation=RWA(), backend=DynamiqsBackend())
         h = jnp.asarray(chip.hamiltonian().matrix(backend=chip.backend))
         evals = jnp.linalg.eigvalsh(h)
         return evals[2] - evals[1]

@@ -109,7 +109,12 @@ def reduce_coupling(chip: "Chip", target: Any, method: str) -> EliminationResult
     equipment = chip.control_equipment
 
     def classify(line: Any) -> StrandedLine | None:
-        if not (line.target_kind == "edge" and line._target.label == coupling_label):
+        from quchip.control.drive import CouplingDrive
+
+        if not (
+            isinstance(line, CouplingDrive)
+            and line.target_label == coupling_label
+        ):
             return None
         return StrandedLine(
             rule_target=coupling,

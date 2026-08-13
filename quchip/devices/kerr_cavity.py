@@ -36,11 +36,11 @@ References
 from __future__ import annotations
 
 
-from typing import TYPE_CHECKING, Any
+from typing import Any, ClassVar
 
 from quchip.declarative.expr import PhysicsExpr
 from quchip.declarative.ops import LocalOps
-from quchip.declarative.parameters import Scalar, parameter
+from quchip.declarative.parameters import UNBOUND, Scalar, parameter
 from quchip.devices.fock import FockDevice
 
 
@@ -103,8 +103,8 @@ class KerrCavity(FockDevice):
     (5.0, 1.0, 10)
     """
 
-    _type_prefix: str = "kerr_cavity"
-    _default_levels: int = 30
+    _type_prefix: ClassVar[str] = "kerr_cavity"
+    _default_levels: ClassVar[int] = 30
     tunable_param_names = ("freq", "kerr")
     approximation = (
         "Kerr-nonlinear cavity effective single-mode model; "
@@ -115,24 +115,9 @@ class KerrCavity(FockDevice):
     # This class does not implement cat-basis Paulis.
     computational = False
 
-    freq: Scalar = parameter(positive=True, unit="GHz", symbol=r"\omega")
+    freq: Scalar = parameter(default=UNBOUND, positive=True, unit="GHz", symbol=r"\omega")
     # Non-negative: a positive Kerr shifts even-photon levels downward.
-    kerr: Scalar = parameter(nonnegative=True, unit="GHz", symbol="K")
-
-    # --- generated __init__ stub (tools/gen_device_stubs.py); do not edit ---
-    if TYPE_CHECKING:
-        def __init__(
-            self,
-            freq: Scalar = ...,
-            kerr: Scalar = ...,
-            *,
-            levels: int = 30,
-            label: str | None = None,
-            T1: float | None = None,
-            T2: float | None = None,
-            thermal_population: float | None = None,
-        ) -> None: ...
-    # --- end generated stub ---
+    kerr: Scalar = parameter(default=UNBOUND, nonnegative=True, unit="GHz", symbol="K")
 
     def local_hamiltonian(self, op: LocalOps, p: Any) -> PhysicsExpr:
         """Return :math:`H = \\omega \\hat{n} - K \\hat{n}(\\hat{n} - I)`.

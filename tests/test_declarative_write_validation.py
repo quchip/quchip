@@ -3,7 +3,7 @@ from __future__ import annotations
 import jax
 import pytest
 
-from quchip.declarative import CouplingModel, DeviceModel, EnvelopeShape, Scalar, parameter
+from quchip.declarative import CouplingModel, DeviceModel, Envelope, Scalar, parameter
 
 
 class _Oscillator(DeviceModel):
@@ -20,7 +20,7 @@ class _ExchangeCoupling(CouplingModel):
         return p.g * (a.a * b.adag + a.adag * b.a)
 
 
-class _LinearEnvelope(EnvelopeShape):
+class _LinearEnvelope(Envelope):
     duration: Scalar = parameter(positive=True, unit="ns")
 
     def value(self, t):
@@ -50,14 +50,14 @@ def test_coupling_model_accepts_traced_write_of_positive_field():
 
 
 def test_envelope_shape_rejects_negative_write_of_positive_field():
-    """An EnvelopeShape subclass rejects a negative post-construction write to a positive=True field."""
+    """An Envelope subclass rejects a negative post-construction write to a positive=True field."""
     env = _LinearEnvelope(duration=20.0)
     with pytest.raises(ValueError):
         env.duration = -5.0
 
 
 def test_envelope_shape_accepts_traced_write_of_positive_field():
-    """A traced value written to a positive=True EnvelopeShape field passes unchecked."""
+    """A traced value written to a positive=True Envelope field passes unchecked."""
     env = _LinearEnvelope(duration=20.0)
 
     def write_and_read(value):

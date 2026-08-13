@@ -71,7 +71,8 @@ def describe_chip(chip: "Chip") -> str:
     title = "Chip" if chip.label is None else f"Chip {chip.label!r}"
     lines += _section(title, "═")
     frame = chip.frame if isinstance(chip.frame, str) else format_value(chip.frame)
-    lines.append(f"Frame    : {frame} (rwa={chip.rwa})")
+    lines.append(f"Frame    : {frame}")
+    lines.append(f"Approx.  : {type(chip.approximation).__name__}")
     lines.append(f"Dressed  : {'cached' if chip.is_dressed else 'not computed'}")
     dims = [d.levels for d in chip.devices]
     if dims:
@@ -104,9 +105,6 @@ def describe_chip(chip: "Chip") -> str:
             pair = f"{coupling.device_a_label} ↔ {coupling.device_b_label}"
             lines.append(f"{coupling.label} : {pair}")
             detail = _declared_param_line(coupling)
-            if coupling.rwa is not None:
-                override = f"rwa = {coupling.rwa}"
-                detail = f"{detail}   {override}" if detail else override
             if detail:
                 lines.append(f"    {detail}")
 

@@ -12,6 +12,8 @@ didn't already need.
 
 from __future__ import annotations
 
+from quchip.approximations import Exact
+
 import numpy as np
 
 from quchip import (
@@ -46,7 +48,7 @@ def _readout_chip(*, quality_factor: float | None) -> Chip:
         couplings=[Capacitive(q, r, g=_G, label="qr")],
         control_equipment=ControlEquipment([readout]),
         frame="rotating",
-        rwa=False,
+        approximation=Exact(),
     )
 
 
@@ -108,9 +110,7 @@ def test_reduced_readout_does_not_force_density_matrix_solve():
 
     assert problem_full.engine_result.collapse_terms == ()
     assert problem_reduced.engine_result.collapse_terms == ()
-    chosen_full = problem_full.solver or (
-        "mesolve" if problem_full.engine_result.collapse_terms else "sesolve"
-    )
+    chosen_full = problem_full.solver or ("mesolve" if problem_full.engine_result.collapse_terms else "sesolve")
     chosen_reduced = problem_reduced.solver or (
         "mesolve" if problem_reduced.engine_result.collapse_terms else "sesolve"
     )
@@ -135,8 +135,4 @@ def test_reduced_readout_collapse_profile_matches_full_chip():
         reduced, list(seq_reduced.scheduled_ops), tlist, initial_state=reduced.state(q=0, r=0)
     )
 
-    assert (
-        len(problem_full.engine_result.collapse_terms)
-        == len(problem_reduced.engine_result.collapse_terms)
-        == 1
-    )
+    assert len(problem_full.engine_result.collapse_terms) == len(problem_reduced.engine_result.collapse_terms) == 1

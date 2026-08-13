@@ -9,6 +9,8 @@ operator products) must raise a guiding ``NotImplementedError``.
 
 from __future__ import annotations
 
+from quchip.approximations import Exact
+
 from typing import Any
 
 import numpy as np
@@ -94,9 +96,7 @@ def test_coupling_factor_shares_imported_device_gauge():
     device = chip.devices[0]
 
     factor = _device_gauge_matrix(tmon, tmon.n_operator, device)
-    np.testing.assert_allclose(
-        factor, np.asarray(device.charge_coupling_operator()), atol=1e-8
-    )
+    np.testing.assert_allclose(factor, np.asarray(device.charge_coupling_operator()), atol=1e-8)
 
 
 def test_driven_proxy_spectrum_gauge_consistent():
@@ -105,9 +105,7 @@ def test_driven_proxy_spectrum_gauge_consistent():
     osc_o = scq.Oscillator(E_osc=6.0, truncated_dim=3, id_str="osc")
     hs_oracle = scq.HilbertSpace([tmon_o, osc_o])
     hs_oracle.add_interaction(g=0.035, op1=tmon_o.n_operator, op2=osc_o.creation_operator, add_hc=True)
-    hs_oracle.add_interaction(
-        g=0.5, op1=tmon_o.n_operator, op2=(np.eye(osc_o.truncated_dim), osc_o), add_hc=False
-    )
+    hs_oracle.add_interaction(g=0.5, op1=tmon_o.n_operator, op2=(np.eye(osc_o.truncated_dim), osc_o), add_hc=False)
     want = _ground_shifted(hs_oracle.eigenvals(evals_count=6))
 
     chip_exchange = from_scqubits(_transmon_oscillator_hilbertspace())
@@ -119,12 +117,12 @@ def test_driven_proxy_spectrum_gauge_consistent():
         interaction=_product_interaction(
             0.5, np.asarray(device_t.charge_coupling_operator()), np.eye(device_osc.levels), False
         ),
-        rwa=False,
         label="charge_proxy",
     )
     chip = Chip(
         devices=list(chip_exchange.devices),
         couplings=list(chip_exchange.couplings) + [charge_term],
+        approximation=Exact(),
     )
 
     got = _ground_shifted(np.asarray(chip.dress().eigenvalues)[:6])
@@ -149,8 +147,16 @@ def _small_zero_pi_hilbertspace(id_str: str = "zp") -> Any:
     """Build a deliberately small ZeroPi + Oscillator ``HilbertSpace`` so the test stays a few seconds."""
     grid = scq.Grid1d(-19.0, 19.0, 200)
     zp = scq.ZeroPi(
-        grid=grid, EJ=10.0, EL=0.04, ECJ=20.0, EC=0.04, ng=0.1, flux=0.23,
-        ncut=30, truncated_dim=4, id_str=id_str,
+        grid=grid,
+        EJ=10.0,
+        EL=0.04,
+        ECJ=20.0,
+        EC=0.04,
+        ng=0.1,
+        flux=0.23,
+        ncut=30,
+        truncated_dim=4,
+        id_str=id_str,
     )
     osc = scq.Oscillator(E_osc=0.5, truncated_dim=3, id_str="osc")
     hs = scq.HilbertSpace([zp, osc])
@@ -174,9 +180,7 @@ def test_zeropi_in_hilbertspace():
 
     device = chip.devices[0]
     factor = _device_gauge_matrix(zp, zp.n_theta_operator, device)
-    np.testing.assert_allclose(
-        factor, np.asarray(device.charge_coupling_operator()), atol=1e-8
-    )
+    np.testing.assert_allclose(factor, np.asarray(device.charge_coupling_operator()), atol=1e-8)
 
 
 # ---------------------------------------------------------------------------
@@ -224,11 +228,11 @@ def test_non_pairwise_interaction_raises():
 # ---------------------------------------------------------------------------
 
 
-def test_frame_and_rwa_forwarded_to_chip():
-    """``frame=`` / ``rwa=`` options reach the constructed ``Chip``."""
+def test_frame_and_approximation_forwarded_to_chip():
+    """Imported chips use Exact unless an explicit strategy is supplied."""
     hs = _transmon_oscillator_hilbertspace()
-    chip = from_scqubits(hs, rwa=False)
-    assert chip.rwa is False
+    chip = from_scqubits(hs)
+    assert chip.approximation == Exact()
 
 
 # ---------------------------------------------------------------------------
@@ -239,15 +243,13 @@ def test_frame_and_rwa_forwarded_to_chip():
 def _transmon_oscillator_chip() -> Chip:
     """A quchip transmon capacitively coupled to a resonator (non-RWA form).
 
-    The coupling carries ``rwa=False`` so the chip's own dressed spectrum uses
+    The coupling carries ``approximation=Exact()`` so the chip's own dressed spectrum uses
     the full ``(a + a†)(b + b†)`` form — the same form export emits — making
     the export oracle a clean, approximation-free comparison.
     """
-    tmon = ChargeBasisTransmon(
-        E_C=0.2, E_J=30.0, n_g=0.25, levels=4, num_basis=63, basis="eigen", label="tmon"
-    )
+    tmon = ChargeBasisTransmon(E_C=0.2, E_J=30.0, n_g=0.25, levels=4, num_basis=63, basis="eigen", label="tmon")
     res = Resonator(freq=6.0, levels=3, label="osc")
-    return Chip([tmon, res], couplings=[Capacitive(tmon, res, g=0.035, rwa=False)], rwa=False)
+    return Chip([tmon, res], couplings=[Capacitive(tmon, res, g=0.035)], approximation=Exact())
 
 
 def test_chip_exports_to_hilbertspace_structure():
@@ -288,9 +290,7 @@ def test_export_import_round_trip_spectrum_stable():
 
 def test_export_crosskerr_coupling_matches_oracle():
     """A ``CrossKerr`` chip exports its ``χ·n̂_a n̂_b`` interaction faithfully."""
-    tmon = ChargeBasisTransmon(
-        E_C=0.2, E_J=30.0, n_g=0.25, levels=4, num_basis=63, basis="eigen", label="tmon"
-    )
+    tmon = ChargeBasisTransmon(E_C=0.2, E_J=30.0, n_g=0.25, levels=4, num_basis=63, basis="eigen", label="tmon")
     res = Resonator(freq=6.0, levels=3, label="osc")
     chip = Chip([tmon, res], couplings=[CrossKerr(tmon, res, chi=0.01)])
 
@@ -302,9 +302,7 @@ def test_export_crosskerr_coupling_matches_oracle():
 
 def test_export_product_coupling_matches_oracle():
     """A product-form ``Coupling`` exports its two operator factors faithfully."""
-    tmon = ChargeBasisTransmon(
-        E_C=0.2, E_J=30.0, n_g=0.25, levels=4, num_basis=63, basis="eigen", label="tmon"
-    )
+    tmon = ChargeBasisTransmon(E_C=0.2, E_J=30.0, n_g=0.25, levels=4, num_basis=63, basis="eigen", label="tmon")
     res = Resonator(freq=6.0, levels=3, label="osc")
     coupling = Coupling(
         tmon,
@@ -314,8 +312,8 @@ def test_export_product_coupling_matches_oracle():
         op_b=lambda d: d.lowering_operator() + d.raising_operator(),
     )
     # Export writes the full (non-RWA) product operator, so the chip's own
-    # dressed spectrum must use the full form too — rwa=False.
-    chip = Chip([tmon, res], couplings=[coupling], rwa=False)
+    # dressed spectrum must use the full form too — approximation=Exact().
+    chip = Chip([tmon, res], couplings=[coupling], approximation=Exact())
 
     hs = to_scqubits(chip)
     got = _ground_shifted(hs.eigenvals(evals_count=6))
@@ -324,44 +322,43 @@ def test_export_product_coupling_matches_oracle():
 
 
 def test_export_raises_when_rwa_resolves_true_on_rwa_sensitive_coupling():
-    """Capacitive/TunableCapacitive/product-form couplings raise on export when the chip resolves rwa=True.
+    """Band-RWA-sensitive couplings cannot be exported as complete products.
 
     scqubits export always emits the full (non-RWA) operator product; a chip
-    that actually resolves rwa=True for one of these couplings would silently
+    that actually resolves approximation=RWA() for one of these couplings would silently
     export different physics than its own RWA-resolved dressed dynamics.
     Explicitly non-RWA export (exercised by ``test_export_*_matches_oracle``
     above) is the other half of this regression: it must keep succeeding.
     """
+
     def _pair():
-        tmon = ChargeBasisTransmon(
-            E_C=0.2, E_J=30.0, n_g=0.25, levels=4, num_basis=63, basis="eigen", label="tmon"
-        )
+        tmon = ChargeBasisTransmon(E_C=0.2, E_J=30.0, n_g=0.25, levels=4, num_basis=63, basis="eigen", label="tmon")
         res = Resonator(freq=6.0, levels=3, label="osc")
         return tmon, res
 
     tmon, res = _pair()
-    with pytest.raises(ValueError, match="rwa"):
+    with pytest.raises(ValueError, match="RWA"):
         to_scqubits(Chip([tmon, res], couplings=[Capacitive(tmon, res, g=0.035)]))
 
     tmon, res = _pair()
-    with pytest.raises(ValueError, match="rwa"):
+    with pytest.raises(ValueError, match="RWA"):
         to_scqubits(Chip([tmon, res], couplings=[TunableCapacitive(tmon, res, g_0=0.035)]))
 
     tmon, res = _pair()
     product_coupling = Coupling(
-        tmon, res, g=0.03,
+        tmon,
+        res,
+        g=0.03,
         op_a=lambda d: d.number_operator(),
         op_b=lambda d: d.lowering_operator() + d.raising_operator(),
     )
-    with pytest.raises(ValueError, match="rwa"):
+    with pytest.raises(ValueError, match="RWA"):
         to_scqubits(Chip([tmon, res], couplings=[product_coupling]))
 
 
 def test_export_callable_coupling_raises():
     """A callable-form ``Coupling`` is not exportable — it raises with guidance."""
-    tmon = ChargeBasisTransmon(
-        E_C=0.2, E_J=30.0, n_g=0.25, levels=4, num_basis=63, basis="eigen", label="tmon"
-    )
+    tmon = ChargeBasisTransmon(E_C=0.2, E_J=30.0, n_g=0.25, levels=4, num_basis=63, basis="eigen", label="tmon")
     res = Resonator(freq=6.0, levels=3, label="osc")
     coupling = Coupling(
         tmon,
@@ -377,16 +374,14 @@ def test_export_callable_coupling_raises():
 
 def test_export_drops_control_equipment_with_warning():
     """Chip-level control equipment is dropped with a single warning."""
-    tmon = ChargeBasisTransmon(
-        E_C=0.2, E_J=30.0, n_g=0.25, levels=4, num_basis=63, basis="eigen", label="tmon"
-    )
+    tmon = ChargeBasisTransmon(E_C=0.2, E_J=30.0, n_g=0.25, levels=4, num_basis=63, basis="eigen", label="tmon")
     res = Resonator(freq=6.0, levels=3, label="osc")
     drive = ChargeDrive(tmon, label="d0")
     chip = Chip(
         [tmon, res],
-        couplings=[Capacitive(tmon, res, g=0.035, rwa=False)],
+        couplings=[Capacitive(tmon, res, g=0.035)],
         control_equipment=ControlEquipment([drive]),
-        rwa=False,
+        approximation=Exact(),
     )
 
     with pytest.warns(UserWarning, match="control equipment"):
@@ -398,17 +393,15 @@ def test_export_tunable_capacitive_matches_oracle():
     """A ``TunableCapacitive`` chip exports its effective dipole coupling faithfully.
 
     Exported in its full ``g_0·(a + a†)(b + b†)`` form (same as ``Capacitive``);
-    the chip carries ``rwa=False`` so its own dressed spectrum uses that form too,
+    the chip carries ``approximation=Exact()`` so its own dressed spectrum uses that form too,
     making the export oracle approximation-free.
     """
-    tmon = ChargeBasisTransmon(
-        E_C=0.2, E_J=30.0, n_g=0.25, levels=4, num_basis=63, basis="eigen", label="tmon"
-    )
+    tmon = ChargeBasisTransmon(E_C=0.2, E_J=30.0, n_g=0.25, levels=4, num_basis=63, basis="eigen", label="tmon")
     res = Resonator(freq=6.0, levels=3, label="osc")
     chip = Chip(
         [tmon, res],
-        couplings=[TunableCapacitive(tmon, res, g_0=0.035, rwa=False)],
-        rwa=False,
+        couplings=[TunableCapacitive(tmon, res, g_0=0.035)],
+        approximation=Exact(),
     )
 
     hs = to_scqubits(chip)
@@ -419,15 +412,13 @@ def test_export_tunable_capacitive_matches_oracle():
 
 def test_export_drops_baths_with_warning():
     """A chip-level ``Bath`` is dropped with a single warning naming baths."""
-    tmon = ChargeBasisTransmon(
-        E_C=0.2, E_J=30.0, n_g=0.25, levels=4, num_basis=63, basis="eigen", label="tmon"
-    )
+    tmon = ChargeBasisTransmon(E_C=0.2, E_J=30.0, n_g=0.25, levels=4, num_basis=63, basis="eigen", label="tmon")
     res = Resonator(freq=6.0, levels=3, label="osc")
     chip = Chip(
         [tmon, res],
-        couplings=[Capacitive(tmon, res, g=0.035, rwa=False)],
+        couplings=[Capacitive(tmon, res, g=0.035)],
         baths=[Bath("thermal", temperature=20.0)],
-        rwa=False,
+        approximation=Exact(),
     )
 
     with pytest.warns(UserWarning, match="baths"):
@@ -444,11 +435,9 @@ def test_export_fluxonium_warns_cross_basis():
     """
     import warnings
 
-    flx = Fluxonium(
-        E_C=2.5, E_J=8.9, E_L=0.5, phi_ext=0.5, levels=4, basis="eigen", label="flx"
-    )
+    flx = Fluxonium(E_C=2.5, E_J=8.9, E_L=0.5, phi_ext=0.5, levels=4, basis="eigen", label="flx")
     res = Resonator(freq=6.0, levels=4, label="osc")
-    chip = Chip([flx, res], couplings=[Capacitive(flx, res, g=0.02, rwa=False)], rwa=False)
+    chip = Chip([flx, res], couplings=[Capacitive(flx, res, g=0.02)], approximation=Exact())
 
     with pytest.warns(UserWarning, match="cross-discretization"):
         assert isinstance(to_scqubits(chip), scq.HilbertSpace)

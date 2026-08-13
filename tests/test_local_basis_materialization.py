@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 import numpy as np
 import pytest
 
@@ -89,7 +90,7 @@ def test_eager_bare_state_and_problem_share_one_resolved_chip(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Reuse the resolved chip contract when an eager state precedes a solve."""
-    import quchip.engine.stage2_assembly as assembly
+    import quchip.engine.assembly as assembly
 
     device = ChargeBasisTransmon(
         E_C=0.25,
@@ -194,7 +195,7 @@ def test_attached_physics_uses_one_resolved_local_basis() -> None:
     )
     drive = ChargeDrive(device, label="xy")
     resonator = Resonator(freq=7.0, levels=2, label="r")
-    coupling = Capacitive(device, resonator, g=0.02, rwa=False)
+    coupling = Capacitive(device, resonator, g=0.02)
     chip = Chip(
         [device, resonator],
         couplings=[coupling],

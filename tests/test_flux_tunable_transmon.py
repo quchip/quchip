@@ -191,7 +191,7 @@ class TestGaussianEdge:
         edge = 10.0
         env = GaussianEdge(duration=dur, edge_duration=edge, sigmas=3, amplitude=amp)
         t_mid = np.array([dur / 2.0])
-        w = env.waveform(t_mid)
+        w = env.value(t_mid)
         npt.assert_allclose(np.abs(w), amp, atol=1e-6)
 
     def test_edges_below_amplitude(self):
@@ -201,7 +201,7 @@ class TestGaussianEdge:
         amp = 1.0
         env = GaussianEdge(duration=80.0, edge_duration=20.0, sigmas=3, amplitude=amp)
         t_edges = np.array([0.0, 80.0])
-        w = env.waveform(t_edges)
+        w = env.value(t_edges)
         assert np.all(np.abs(w) < 0.01 * amp)
 
     def test_negative_amplitude(self):
@@ -210,18 +210,18 @@ class TestGaussianEdge:
 
         env = GaussianEdge(duration=80.0, edge_duration=20.0, sigmas=3, amplitude=-0.3)
         t = np.linspace(0, 80.0, 200)
-        w = env.waveform(t)
+        w = env.value(t)
         npt.assert_allclose(w[100].real, -0.3, atol=1e-4)
 
     def test_jax_traceable(self):
-        """Waveform should work with jax.numpy namespace."""
+        """Envelope values should preserve JAX arrays."""
         import jax.numpy as jnp
 
         from quchip import GaussianEdge
 
         env = GaussianEdge(duration=80.0, edge_duration=20.0, sigmas=3, amplitude=0.1)
         t = jnp.linspace(0.0, 80.0, 100)
-        w = env.waveform(t, xp=jnp)
+        w = env.value(t)
         assert w.shape == (100,)
 
     def test_serialization_roundtrip(self):

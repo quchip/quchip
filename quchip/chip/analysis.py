@@ -43,8 +43,8 @@ from quchip.chip.dressing import (
     label_eigensystem,
 )
 from quchip.chip.states import normalize_device_state_mapping
-from quchip.devices.base import BaseDevice
-from quchip.utils.jax_utils import contains_tracer
+from quchip.devices.base import BaseDevice, _validate_level_pair
+from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
 from quchip.utils.labeling import LabelKeyedDict, bare_label_from_mapping, resolve_label, top_components
 
 if TYPE_CHECKING:
@@ -173,7 +173,6 @@ class ChipAnalysis:
         chip = self._chip
         return (
             f"{type(chip.backend).__module__}.{type(chip.backend).__qualname__}",
-            chip.rwa,
             chip.basis,
             tuple((device.label, device.state_version) for device in chip.devices),
             tuple(
@@ -189,7 +188,7 @@ class ChipAnalysis:
 
     def engine_result(self, *, _local_resolution: Any | None = None) -> EngineResult:
         """Return the resolved static lab-frame contract used by analysis."""
-        from quchip.engine.stage2_assembly import _build_static_analysis_result
+        from quchip.engine.assembly import _build_static_analysis_result
 
         signature = self._analysis_signature()
         cache = self._engine_result_cache
@@ -315,7 +314,7 @@ class ChipAnalysis:
             return self._array_cache
 
         from quchip.engine.basis import semantic_to_solver_transform
-        from quchip.engine.stage2_assembly import _analysis_matrix_ghz
+        from quchip.engine.assembly import _analysis_matrix_ghz
 
         if engine_result is None:
             engine_result = self.engine_result()
@@ -805,22 +804,32 @@ class ChipAnalysis:
         elements = LabelKeyedDict()
         backend = self._chip.backend
         for drive in selected:
-            if drive.target_kind != "device" or drive.device_label is None:
+            from quchip.control.drive import CouplingDrive
+
+            if isinstance(drive, CouplingDrive) or drive.device_label is None:
                 raise ValueError(
-                    f"Drive '{drive.label}' targets {drive.target_kind!r}; dressed drive matrix elements "
+                    f"Drive '{drive.label}' targets a coupling; dressed drive matrix elements "
                     "currently require a device-target line"
                 )
             device_index, device = self._chip._resolve_device_index(drive.device_label)
+            from quchip.control.signal import AnalyticSignal
+            from quchip.engine.ir import Constant
+
             with _backend_context(backend):
-                channels = drive.local_channels(device)
+                authored = drive.hamiltonian(
+                    device,
+                    AnalyticSignal(program=Constant(1.0 + 0.0j)),
+                )
+            from quchip.declarative.expr import materialize_expr, split_dynamic_hamiltonian
+
+            channels = split_dynamic_hamiltonian(authored)
             if len(channels) != 1:
                 raise ValueError(
-                    f"Drive '{drive.label}' exposes {len(channels)} local Hamiltonian channels; "
-                    "drive_matrix_elements requires exactly one unambiguous operator"
+                    f"Drive '{drive.label}' must expose exactly one local Hamiltonian channel; "
+                    f"got {len(channels)}."
                 )
-            from quchip.declarative.expr import materialize_expr
 
-            local_operator = materialize_expr(channels[0].operator, backend)
+            local_operator = materialize_expr(channels[0][1], backend)
             operator = xp.asarray(backend.to_array(local_operator), dtype=complex)
             initial_tensor = initial.reshape(self._chip.dims)
             acted = xp.tensordot(operator, initial_tensor, axes=((1,), (device_index,)))
@@ -952,33 +961,56 @@ class ChipAnalysis:
 
         return e(2) - 2.0 * e(1) + e(0)
 
-    def _transition_freq(
+    def transition_frequency(
         self,
         target: str | BaseDevice,
+        lower: int,
+        upper: int,
         when: dict[str | BaseDevice, int] | None = None,
     ) -> Any:
-        """Conditional 0 → 1 dressed transition frequency of *target*.
+        """Return one optionally conditioned dressed transition in GHz.
 
-        Other devices are grounded by default; *when* specifies any
-        non-ground spectators. Traceable under ``jit``/``grad``/``vmap``.
+        Unspecified spectators are grounded. The target cannot appear in
+        ``when``. Traceable under ``jit``/``grad``/``vmap``.
         """
-        idx_target, _ = self._chip._resolve_device_index(target)
-        ground_label = [0] * len(self._chip.devices)
-        if when is not None:
-            for device_key, value in when.items():
-                if isinstance(value, bool):
-                    raise ValueError(f"Level index must be an integer, got bool: {value!r}")
-                idx, _ = self._chip._resolve_device_index(device_key)
-                ground_label[idx] = value
+        idx_target, target_device = self._chip._resolve_device_index(target)
+        _validate_level_pair(lower, upper, self._semantic_dims()[idx_target])
 
-        excited_label = list(ground_label)
-        excited_label[idx_target] += 1
+        conditioned = normalize_device_state_mapping(self._chip, when, {})
+        if target_device.label in conditioned:
+            raise ValueError(
+                f"when may contain only spectators; target {target_device.label!r} was included."
+            )
+
+        lower_label = list(self._label_from_resolved(conditioned))
+        upper_label = list(lower_label)
+        lower_label[idx_target] = lower
+        upper_label[idx_target] = upper
+
+        lower_tuple = self._label_from_resolved(
+            dict(zip(self._device_labels(), lower_label))
+        )
+        upper_tuple = self._label_from_resolved(
+            dict(zip(self._device_labels(), upper_label))
+        )
 
         eigenvalues, _, _, kernel_labeling = self._compute_array_labeled()
         precomputed = (eigenvalues, kernel_labeling)
+        for label in (lower_tuple, upper_tuple):
+            bare_index = self._bare_label_index(label)
+            overlap = maybe_concrete_scalar(kernel_labeling.overlaps[bare_index])
+            margin = maybe_concrete_scalar(kernel_labeling.margins[bare_index])
+            if overlap is not None and margin is not None and (
+                overlap < 0.5 or margin <= 1e-8
+            ):
+                raise ValueError(
+                    "Dressed transition assignment is unreliable for bare label "
+                    f"{label}: overlap={overlap:.6g}, margin={margin:.6g}. "
+                    "Inspect chip.dress().assignment_overlaps or choose a better-resolved model."
+                )
         return (
-            self._eigenvalue_of_label(tuple(excited_label), precomputed=precomputed)
-            - self._eigenvalue_of_label(tuple(ground_label), precomputed=precomputed)
+            self._eigenvalue_of_label(upper_tuple, precomputed=precomputed)
+            - self._eigenvalue_of_label(lower_tuple, precomputed=precomputed)
         )
 
     def freq(
@@ -999,16 +1031,16 @@ class ChipAnalysis:
         """
         if target is None:
             return self._dressed_frequencies()
-        return self._transition_freq(target, when=when)
+        return self.transition_frequency(target, 0, 1, when=when)
 
     def frame_info(self) -> dict[str, Any]:
         """Per-device frame reference frequency ``ω_ref,i`` (GHz).
 
         Resolves the chip's current frame spec through the same path the
-        engine uses (:func:`quchip.engine.stage1_frames.resolve_frame`) and
+        engine uses (:func:`quchip.engine.frames.resolve_frame`) and
         returns a flat ``{device_label: ω_ref,i}`` dict. These are the
         concrete frequencies the assembler will subtract as
-        ``-Σ_i ω_ref,i n̂_i`` in :func:`stage2_assembly._build_static_h0`,
+        ``-Σ_i ω_ref,i n̂_i`` in :func:`assembly._build_static_h0`,
         so it exposes what will be solved without running the solver.
 
         Values are returned as produced by the frame resolver: concrete
@@ -1017,7 +1049,7 @@ class ChipAnalysis:
         traced reference frequency through. Traced values are passed
         through unchanged to preserve differentiability.
         """
-        from quchip.engine.stage1_frames import resolve_frame
+        from quchip.engine.frames import resolve_frame
 
         resolved = resolve_frame(self._chip, self._chip.frame)
         return dict(resolved.frequencies)

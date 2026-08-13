@@ -12,7 +12,7 @@ Unit convention
 ---------------
 All frequencies crossing the backend boundary are **ordinary** (not angular)
 GHz, with time in ns. The single ``2π`` conversion lives at the engine
-boundary (``stage2_assembly.py``) — backends never rescale.
+boundary (``assembly.py``) — backends never rescale.
 
 Aliases
 -------

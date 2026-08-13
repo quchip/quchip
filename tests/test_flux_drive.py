@@ -2,29 +2,16 @@
 
 from __future__ import annotations
 
+
 import numpy as np
 import pytest
 
-from quchip import Chip, ControlEquipment, DuffingTransmon, DriveModulation, Square
+from quchip import Chip, ControlEquipment, DuffingTransmon, Square
 from quchip.control.drive import FluxDrive
-from quchip.control.signal import Crosstalk, Delay, Gain
+from quchip.control.signal import AnalyticSignal, Crosstalk, Delay, Gain
 from quchip.engine import simulate
 from quchip.control.drive import ChargeDrive
-from quchip.engine.ir import Constant, DriveOp, Shift, SignalProgram, evaluate_signal_program
-from quchip.engine.stage2_assembly import (
-    BandContext,
-    _coefficient_from_modulation,
-    _spec_to_raw_signal,
-)
-
-
-def test_single_tone_modulation_coefficient_accepts_band_context() -> None:
-    """Single-tone modulation with a band context yields a SignalProgram coefficient."""
-    signal = Constant(1.0 + 0.0j)
-    band = BandContext(weight=-1, device_frame_freq=5.0, drive_freq=5.1, rwa=True)
-
-    coeff = _coefficient_from_modulation(signal, DriveModulation.SINGLE_TONE, band)
-    assert isinstance(coeff, SignalProgram)
+from quchip.engine.ir import Constant, DriveOp, Shift
 
 
 def test_control_equipment_applies_signal_chain_in_order() -> None:
@@ -38,17 +25,15 @@ def test_control_equipment_applies_signal_chain_in_order() -> None:
         ],
     )
 
-    built = equipment.apply_signal_chain({("charge_0", 0): Constant(1.0 + 0.0j)})
+    built = equipment.apply_signal_chain({("charge_0", 0): AnalyticSignal(Constant(1.0 + 0.0j))})
     assert any(k[0] == "charge_1" for k in built)
 
 
-def test_flux_drive_local_channels():
-    """FluxDrive.local_channels returns number operator with direct-real modulation."""
+def test_flux_drive_authors_the_delivered_signal_hamiltonian():
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=3, label="q")
     d = FluxDrive(target=q)
-    channels = d.local_channels(q)
-    assert len(channels) == 1
-    assert channels[0].modulation is DriveModulation.DIRECT_REAL
+    authored = d.hamiltonian(q, AnalyticSignal(Constant(1.0 + 0.0j)))
+    assert authored.labels == ("q",)
 
 
 def test_equipment_signal_chain_composes_transforms():
@@ -71,11 +56,10 @@ def test_equipment_signal_chain_composes_transforms():
         drive_label=drive.label,
     )
 
-    spec = drive.signal_spec(drive_op, q)
-    raw_signal = _spec_to_raw_signal(spec)
+    raw_signal = drive.signal(drive_op, q)
     transformed = equipment.apply_signal_chain({(drive_label, 0): raw_signal})
     times = np.asarray([0.0, 4.0, 12.0, 15.0])
-    values = evaluate_signal_program(transformed[(drive_label, 0)], times)
+    values = transformed[(drive_label, 0)].evaluate(times)
 
     np.testing.assert_allclose(
         values,
@@ -83,12 +67,12 @@ def test_equipment_signal_chain_composes_transforms():
     )
 
 
-def test_drive_signal_spec_is_frame_agnostic_and_has_no_signal_transforms():
-    """Drive.signal_spec() produces a frame-agnostic spec; no signal_transforms property."""
+def test_drive_has_no_per_line_transform_collection():
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=3, label="q")
     drive = FluxDrive(target=q)
     assert not hasattr(drive, "signal_transforms")
     assert not hasattr(drive, "build_signal")
+    assert not hasattr(drive, "signal_spec")
 
 
 def test_signal_transforms_accept_drive_objects():
@@ -112,20 +96,19 @@ def test_signal_chain_handles_multiple_drive_ops_on_same_line():
     d0 = ChargeDrive(target=q0)
     drive_label = d0.label
     delay = Delay(line=drive_label, delta_t=2.0)
-    sig_a = Constant(1.0 + 0j)
-    sig_b = Constant(2.0 + 0j)
+    sig_a = AnalyticSignal(Constant(1.0 + 0j))
+    sig_b = AnalyticSignal(Constant(2.0 + 0j))
     signals = {(drive_label, 0): sig_a, (drive_label, 1): sig_b}
     result = delay.apply(signals)
     assert (drive_label, 0) in result
     assert (drive_label, 1) in result
-    assert isinstance(result[(drive_label, 0)], Shift)
-    assert isinstance(result[(drive_label, 1)], Shift)
+    assert isinstance(result[(drive_label, 0)].program, Shift)
+    assert isinstance(result[(drive_label, 1)].program, Shift)
 
 
-def test_flux_drive_rejects_explicit_rwa_override():
-    """FluxDrive rejects an explicit microwave-RWA setting."""
+def test_drives_have_no_rwa_constructor_field():
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=3, label="q")
-    with pytest.raises(ValueError, match="does not support an explicit rwa override"):
+    with pytest.raises(TypeError, match="rwa"):
         FluxDrive(target=q, rwa=True)
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 import warnings
 from typing import Any
 
@@ -35,9 +36,9 @@ from quchip.engine.ir import (  # noqa: E402
     ScalarModulation,
     Window,
 )
-from quchip.engine.stage1_frames import resolve_frame  # noqa: E402
-from quchip.engine.stage2_assembly import build_engine_result  # noqa: E402
-from quchip.engine.stage3_observables import decompose_eops  # noqa: E402
+from quchip.engine.frames import resolve_frame  # noqa: E402
+from quchip.engine.assembly import build_engine_result  # noqa: E402
+from quchip.engine.observables import decompose_eops  # noqa: E402
 
 
 @pytest.fixture
@@ -249,6 +250,7 @@ def test_prepare_driven_hamiltonian_remains_callable() -> None:
     drive = ChargeDrive(target=qubit)
     chip = Chip([qubit], backend=backend)
     from quchip.control.equipment import ControlEquipment
+
     chip.connect(ControlEquipment(lines=[drive]))
     chip.dress()
     tlist = np.linspace(0.0, 10.0, 11)
@@ -344,7 +346,7 @@ def test_dict_eops_preserve_sparse_layout() -> None:
     backend = DynamiqsBackend()
     qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=3, label="q")
     resonator = Resonator(freq=6.8, levels=5, label="r", quality_factor=1e6)
-    chip = Chip([qubit, resonator], [Capacitive(qubit, resonator, g=0.04, rwa=True)], backend=backend)
+    chip = Chip([qubit, resonator], [Capacitive(qubit, resonator, g=0.04)], backend=backend)
 
     e_ops_solver, _ = decompose_eops(chip.e_ops(r="a"), chip, backend)
 
@@ -357,7 +359,7 @@ def test_chip_hamiltonian_emits_no_sparse_dense_warning() -> None:
     backend = DynamiqsBackend()
     qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=3, label="q")
     resonator = Resonator(freq=6.8, levels=5, label="r", quality_factor=1e6)
-    chip = Chip([qubit, resonator], [Capacitive(qubit, resonator, g=0.04, rwa=True)], backend=backend)
+    chip = Chip([qubit, resonator], [Capacitive(qubit, resonator, g=0.04)], backend=backend)
 
     with warnings.catch_warnings(record=True) as captured:
         warnings.simplefilter("always")
@@ -373,7 +375,7 @@ def test_rotating_frame_assembly_emits_no_sparse_dense_warning() -> None:
     resonator = Resonator(freq=6.8, levels=5, label="r", quality_factor=1e6)
     chip = Chip(
         [qubit, resonator],
-        [Capacitive(qubit, resonator, g=0.04, rwa=True)],
+        [Capacitive(qubit, resonator, g=0.04)],
         frame="rotating",
         backend=backend,
     )
@@ -394,10 +396,8 @@ def test_batched_sesolve_handles_heterogeneous_problems_sequentially(backend: Dy
     H0 = backend.from_array(np.zeros((2, 2), dtype=complex))
     H1 = backend.from_array(np.array([[0.0, 1.0], [1.0, 0.0]], dtype=complex))
     problems = [
-        {"H": H0, "psi0": backend.basis(2, 0), "tlist": jnp.linspace(0.0, 1.0, 5),
-         "e_ops": [backend.number(2)]},
-        {"H": H1, "psi0": backend.basis(2, 1), "tlist": jnp.linspace(0.0, 2.0, 5),
-         "e_ops": [backend.identity(2)]},
+        {"H": H0, "psi0": backend.basis(2, 0), "tlist": jnp.linspace(0.0, 1.0, 5), "e_ops": [backend.number(2)]},
+        {"H": H1, "psi0": backend.basis(2, 1), "tlist": jnp.linspace(0.0, 2.0, 5), "e_ops": [backend.identity(2)]},
     ]
 
     batched = backend.batched_sesolve(problems, progress=False)
@@ -582,12 +582,10 @@ def test_solve_batch_respects_quchip_option_aliases(monkeypatch: pytest.MonkeyPa
     # actually arrive at the dynamiqs option constructors on the batched
     # lane, not just the per-problem lane.
     assert any(raw.get("progress_meter") is False for raw in seen_options), (
-        f"progress_bar alias did not reach _options_from_dict as progress_meter=False; "
-        f"saw {seen_options!r}"
+        f"progress_bar alias did not reach _options_from_dict as progress_meter=False; saw {seen_options!r}"
     )
     assert any(raw.get("max_steps") == 2048 for raw in seen_method), (
-        f"nsteps alias did not reach _method_from_dict as max_steps=2048; "
-        f"saw {seen_method!r}"
+        f"nsteps alias did not reach _method_from_dict as max_steps=2048; saw {seen_method!r}"
     )
 
 
@@ -631,12 +629,17 @@ def test_repeated_native_batch_reuses_one_compiled_solve() -> None:
             np.asarray(backend.to_array(left.final_state)),
             np.asarray(backend.to_array(right.final_state)),
         )
+
+
 # ``benchmarks/repeated_solve_parity.py`` validated this manually; these are the
 # make-test-lane regression guards for the optimization-loop hot path.
 # ---------------------------------------------------------------------------
 def _r5_build(open_system: bool):
     qubit = DuffingTransmon(
-        freq=5.0, anharmonicity=-0.30, levels=3, label="q",
+        freq=5.0,
+        anharmonicity=-0.30,
+        levels=3,
+        label="q",
         T1=200.0 if open_system else None,
     )
     drive = ChargeDrive(target=qubit, label="d")
@@ -669,9 +672,7 @@ def test_cached_jit_solve_matches_uncached(open_system: bool) -> None:
     prob = _r5_problem(chip, qubit, 0.045, tlist)
     rc, ru = _r5_cached(prob), _r5_uncached(prob)
     exp_diff = float(np.max(np.abs(np.asarray(rc.expect[0]) - np.asarray(ru.expect[0]))))
-    state_diff = float(
-        np.max(np.abs(np.asarray(rc.final_state.to_jax()) - np.asarray(ru.final_state.to_jax())))
-    )
+    state_diff = float(np.max(np.abs(np.asarray(rc.final_state.to_jax()) - np.asarray(ru.final_state.to_jax()))))
     assert exp_diff < 1e-9
     assert state_diff < 1e-9
 
@@ -679,6 +680,7 @@ def test_cached_jit_solve_matches_uncached(open_system: bool) -> None:
 @pytest.mark.parametrize("open_system", [False, True], ids=["sesolve", "mesolve"])
 def test_cached_jit_solve_grad_parity(open_system: bool) -> None:
     """Gradients through the cached-jit solve match the uncached path and a finite-difference reference."""
+
     def loss_factory(runner):
         chip, qubit = _r5_build(open_system)
         tlist = np.linspace(0.0, 40.0, 80)
@@ -726,7 +728,10 @@ def test_cached_jit_solve_structure_change_is_a_cache_miss() -> None:
     probs = []
     for open_system in (False, True):
         qubit = DuffingTransmon(
-            freq=5.0, anharmonicity=-0.30, levels=3, label="q",
+            freq=5.0,
+            anharmonicity=-0.30,
+            levels=3,
+            label="q",
             T1=200.0 if open_system else None,
         )
         drive = ChargeDrive(target=qubit, label="d")

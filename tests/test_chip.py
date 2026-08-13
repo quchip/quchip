@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from quchip.approximations import RWA
+
 import warnings
 
 import numpy as np
@@ -38,7 +40,7 @@ class TestChipHamiltonian:
         """Resolved inspection applies chip RWA while unresolved inspection preserves the authored interaction."""
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
         r = Resonator(freq=7.0, levels=3, label="r")
-        chip = Chip([q, r], [Capacitive(q, r, g=0.2)], rwa=True)
+        chip = Chip([q, r], [Capacitive(q, r, g=0.2)])
 
         unresolved = chip.unresolved_hamiltonian().matrix()
         resolved = chip.hamiltonian().matrix()
@@ -56,7 +58,7 @@ class TestChipHamiltonian:
         """Chip inspection preserves authored device terms and structurally retained RWA exchange terms."""
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
         r = Resonator(freq=7.0, levels=4, label="r")
-        chip = Chip([q, r], [Capacitive(q, r, g=0.02)], rwa=True)
+        chip = Chip([q, r], [Capacitive(q, r, g=0.02)])
 
         hamiltonian = chip.unresolved_hamiltonian()
 
@@ -77,7 +79,7 @@ class TestChipHamiltonian:
         """A fully symbolic Chip remains inspectable and names every missing value on numerical use."""
         q = DuffingTransmon(levels=3, label="q")
         r = Resonator(levels=4, label="r")
-        hamiltonian = Chip([q, r], [Capacitive(q, r)], rwa=True).unresolved_hamiltonian()
+        hamiltonian = Chip([q, r], [Capacitive(q, r)]).unresolved_hamiltonian()
 
         assert r"\omega_{q}" in hamiltonian.latex()
         with pytest.raises(
@@ -160,7 +162,9 @@ class TestChipHamiltonian:
         # a⊗b + a†⊗b† is the two-mode-squeezing term: both populated bands
         # violate the default number-conserving predicate (Δa + Δb == 0).
         squeezing = Coupling(
-            q, r, g=0.05,
+            q,
+            r,
+            g=0.05,
             interaction=lambda a, b, bk: (
                 bk.tensor(a.lowering_operator(), b.lowering_operator())
                 + bk.tensor(bk.dag(a.lowering_operator()), bk.dag(b.lowering_operator()))
@@ -168,7 +172,7 @@ class TestChipHamiltonian:
         )
         chip = Chip(devices=[q, r], couplings=[squeezing])
 
-        with pytest.warns(UserWarning, match="vanishes entirely under the resolved RWA"):
+        with pytest.warns(UserWarning, match=r"vanishes entirely under RWA\(\)"):
             chip.resolve()
 
 
@@ -220,7 +224,7 @@ class TestFrameSpec:
             [q, r],
             [Capacitive(q, r, g=0.05)],
             frame="rotating",
-            rwa=True,
+            approximation=RWA(),
         )
 
         result = chip.analysis.engine_result()
@@ -380,6 +384,7 @@ class TestStateOrderShorthand:
         expected = chip.bare_state({q: 1, r: 2})
         actual = chip.bare_state("e2")
         import numpy as np
+
         diff = np.linalg.norm(np.asarray(chip.backend.to_array(expected - actual)))
         assert diff < 1e-12
 
@@ -416,6 +421,7 @@ class TestStateOrderShorthand:
         chip = self._chip()
         chip.set_state_order("q", "r", levels={"a": 0, "b": 1, "c": 2})
         import numpy as np
+
         expected = chip.bare_state({"q": 1, "r": 2})
         actual = chip.bare_state("bc")
         diff = np.linalg.norm(np.asarray(chip.backend.to_array(expected - actual)))
@@ -445,6 +451,7 @@ class TestSuperposition:
         manual = manual / chip.backend.norm(manual)
         psi = chip.superposition({"q": 0, "r": 0}, {"q": 1, "r": 0})
         import numpy as np
+
         diff = np.linalg.norm(np.asarray(chip.backend.to_array(psi - manual)))
         assert diff < 1e-12
 
@@ -452,6 +459,7 @@ class TestSuperposition:
         """Weighted superposition with amplitude coefficients summing to unit probability normalizes to unit norm."""
         chip = self._chip()
         import numpy as np
+
         psi = chip.superposition(
             (np.sqrt(0.3), {"q": 0, "r": 0}),
             (np.sqrt(0.7), {"q": 1, "r": 0}),
@@ -466,6 +474,7 @@ class TestSuperposition:
         psi_str = chip.superposition("g0", "e0")
         psi_dict = chip.superposition({"q": 0, "r": 0}, {"q": 1, "r": 0})
         import numpy as np
+
         diff = np.linalg.norm(np.asarray(chip.backend.to_array(psi_str - psi_dict)))
         assert diff < 1e-12
 
@@ -473,6 +482,7 @@ class TestSuperposition:
         """A single-component superposition reduces to the corresponding bare state."""
         chip = self._chip()
         import numpy as np
+
         psi = chip.superposition({"q": 1, "r": 0})
         expected = chip.bare_state({"q": 1, "r": 0})
         diff = np.linalg.norm(np.asarray(chip.backend.to_array(psi - expected)))
@@ -553,6 +563,7 @@ class TestSubspaceAccessors:
         backend = q.sigma_plus
         # |1><0| has a single 1 at (row=1, col=0) in the Fock basis
         import numpy as np
+
         arr = np.asarray(backend.full() if hasattr(backend, "full") else backend)
         expected = np.zeros((3, 3), dtype=complex)
         expected[1, 0] = 1.0
@@ -562,6 +573,7 @@ class TestSubspaceAccessors:
         """sigma_minus equals the Fock-basis lowering projector |0><1|."""
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
         import numpy as np
+
         arr = np.asarray(q.sigma_minus.full() if hasattr(q.sigma_minus, "full") else q.sigma_minus)
         expected = np.zeros((3, 3), dtype=complex)
         expected[0, 1] = 1.0
@@ -570,6 +582,7 @@ class TestSubspaceAccessors:
     def test_sigma_plus_minus_rebuild_sigma_x(self) -> None:
         """σ_x = σ_+ + σ_- on the computational subspace."""
         import numpy as np
+
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
         recon = q.sigma_plus + q.sigma_minus
         recon_arr = np.asarray(recon.full() if hasattr(recon, "full") else recon)
@@ -579,6 +592,7 @@ class TestSubspaceAccessors:
     def test_projector_diagonal_is_level_projector(self) -> None:
         """projector(i, i) is the population operator for level |i>."""
         import numpy as np
+
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=4, label="q")
         for i in range(4):
             p = q.projector(i, i)
@@ -590,6 +604,7 @@ class TestSubspaceAccessors:
     def test_transition_is_symmetric(self) -> None:
         """transition(i, j) == |i><j| + |j><i|."""
         import numpy as np
+
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
         t12 = q.transition(1, 2)
         pij = q.projector(1, 2) + q.projector(2, 1)

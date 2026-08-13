@@ -20,9 +20,10 @@ from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 
-from quchip.backend.protocol import Operator
-from quchip.declarative.expr import PhysicsExpr
+from quchip.declarative.dissipation import CollapseChannel, normalize_dissipation
+from quchip.declarative.expr import ParameterNamespace, PhysicsExpr
 from quchip.declarative.ops import LocalOps
+from quchip.declarative.parameters import Parameter
 from quchip.devices.spaces import FockSpace
 from quchip.utils.constants import k_B
 from quchip.utils.jax_utils import maybe_concrete_scalar
@@ -32,6 +33,14 @@ if TYPE_CHECKING:
     from quchip.chip.chip import Chip
 
 _RECIPES = ("thermal", "collective_decay", "correlated_dephasing")
+
+
+def _bose_occupation(temperature: Any, frequency: Any) -> Any:
+    """Traceable Bose occupation with the physical zero-temperature limit."""
+    is_zero = temperature == 0
+    safe_denominator = jnp.where(is_zero, 1.0, k_B * temperature)
+    finite = 1.0 / jnp.expm1(frequency / safe_denominator)
+    return jnp.where(is_zero, 0.0, finite)
 
 
 class Bath:
@@ -112,7 +121,7 @@ class Bath:
         :class:`~quchip.declarative.models.CouplingModel` run on their own
         fields (checks apply to concrete scalars only; a traced value passes
         unchecked). Without this, a negative Bose occupation or a
-        invalid Lindblad rate in :meth:`collapse_contributions` is reachable
+        invalid Lindblad rate in :meth:`collapse_channels` is reachable
         from a raw ``bath.temperature = -5`` or ``bath.rate = -1``.
         """
         if name in ("temperature", "rate"):
@@ -222,30 +231,6 @@ class Bath:
             raise KeyError(name)
         setattr(self, name, value)
 
-    def collapse_parameter_names(self) -> tuple[str, ...]:
-        """Return active bath values that affect its collapse operators."""
-        return tuple(self.parameter_values())
-
-    def _bose(self, freq: Any, xp: Any) -> Any:
-        """Thermal occupation n̄(freq, T), including the ``T=0`` limit.
-
-        ``k_B`` is ``k_B/h`` in GHz/mK, so ``freq/(k_B*T)`` is dimensionless.
-        At ``T=0``, a nonzero placeholder is substituted before division and
-        the physical result ``n̄=0`` is selected afterward. Substitution must
-        happen first because ``xp.where`` evaluates both branches; a zero
-        divisor in the unselected branch could still raise or produce ``NaN``
-        gradients. Both selections avoid a Python branch on traced ``T``.
-
-        Returns
-        -------
-        Any
-            The thermal occupation n̄, a possibly-traced scalar.
-        """
-        is_zero = self.temperature == 0
-        safe_denominator = xp.where(is_zero, 1.0, k_B * self.temperature)
-        n_bar_finite = 1.0 / xp.expm1(freq / safe_denominator)
-        return xp.where(is_zero, 0.0, n_bar_finite)
-
     def _resolved_bases(self, chip: "Chip", bases: Mapping[str, Any] | None) -> Mapping[str, Any]:
         """Return supplied engine bases or resolve them for direct inspection."""
         if bases is not None:
@@ -304,12 +289,12 @@ class Bath:
             name=rf"\hat L_{{{self.label},{device.label}}}",
         )
 
-    def collapse_contributions(
+    def dissipation(
         self,
         chip: "Chip",
         bases: Mapping[str, Any] | None = None,
-    ) -> list[tuple[Operator, Any, tuple[int, ...], str]]:
-        """Return authored collapse operators, separate rates, support, and channel.
+    ) -> tuple[CollapseChannel, ...]:
+        """Return authored full-chip collapse channels.
 
         ``"thermal"`` emits independent per-target relaxation/absorption
         pairs sharing one bath temperature (:meth:`_bose`). The two
@@ -335,22 +320,42 @@ class Bath:
         xp = jnp
         labels = self.resolve_targets(chip)
         records = self._resolved_bases(chip, bases)
-        terms: list[tuple[Operator, Any, tuple[int, ...], str]] = []
-        gamma = 1.0 if self.rate is None else self.rate
+        terms: list[CollapseChannel] = []
+        fields = {name: Parameter() for name in self._parameter_names}
+        p = ParameterNamespace(f"bath.{self.label}", fields)
+        gamma = 1.0 if self.rate is None else p.rate
+        chip_labels = tuple(device.label for device in chip.devices)
 
         if self.recipe == "thermal":
             for lbl in labels:
-                idx = chip.device_index(lbl)
                 dev = chip[lbl]
-                n_bar = self._bose(dev.freq, xp)  # type: ignore[attr-defined]  # BaseDevice contract: all concrete devices expose freq
+                n_bar = PhysicsExpr.from_function(
+                    _bose_occupation,
+                    p.temperature,
+                    PhysicsExpr.literal(dev.freq),  # type: ignore[attr-defined]  # BaseDevice contract
+                    labels=(),
+                    dims=(),
+                    name="n_bar",
+                )
                 lowering = self._operator_expr(dev, records[lbl], "lowering", xp)
                 raising = self._operator_expr(dev, records[lbl], "raising", xp)
-                terms.append((lowering, gamma * (n_bar + 1.0), (idx,), f"thermal_emission:{lbl}"))
-                terms.append((raising, gamma * n_bar, (idx,), f"thermal_absorption:{lbl}"))
-            return terms
+                terms.append(
+                    CollapseChannel(
+                        lowering.embed(chip_labels, chip.authored_dims),
+                        gamma * (n_bar + 1.0),
+                        f"thermal_emission:{lbl}",
+                    )
+                )
+                terms.append(
+                    CollapseChannel(
+                        raising.embed(chip_labels, chip.authored_dims),
+                        gamma * n_bar,
+                        f"thermal_absorption:{lbl}",
+                    )
+                )
+            return tuple(terms)
 
         # Collective recipes: a single summed jump operator over the targets.
-        chip_labels = tuple(device.label for device in chip.devices)
         summed: PhysicsExpr | None = None
         for lbl in labels:
             device = chip[lbl]
@@ -360,5 +365,36 @@ class Bath:
             embedded = local.embed(chip_labels, chip.authored_dims)
             summed = embedded if summed is None else summed + embedded
         if summed is not None:
-            terms.append((summed, gamma, (), self.recipe))
-        return terms
+            terms.append(CollapseChannel(summed, gamma, self.recipe))
+        return tuple(terms)
+
+    def _collapse_channels_with_paths(
+        self,
+        chip: "Chip",
+        bases: Mapping[str, Any] | None = None,
+    ) -> tuple[tuple[CollapseChannel, tuple[str, ...]], ...]:
+        fields = {name: Parameter() for name in self._parameter_names}
+        return normalize_dissipation(
+            self.dissipation(chip, bases),
+            labels=tuple(device.label for device in chip.devices),
+            dims=chip.authored_dims,
+            owner=self,
+            scope=f"bath.{self.label}",
+            allowed=fields,
+            bindings={
+                f"bath.{self.label}.{name}": value
+                for name in fields
+                if (value := getattr(self, name)) is not None
+            },
+        )
+
+    def collapse_channels(
+        self,
+        chip: "Chip",
+        bases: Mapping[str, Any] | None = None,
+    ) -> tuple[CollapseChannel, ...]:
+        """Return normalized full-chip bath channels."""
+        return tuple(
+            channel
+            for channel, _paths in self._collapse_channels_with_paths(chip, bases)
+        )

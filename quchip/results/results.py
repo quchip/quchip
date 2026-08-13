@@ -659,7 +659,7 @@ def _wrap(
 ) -> SimulationResult:
     observable_traces = None
     if e_ops_meta is not None:
-        from quchip.engine.stage3_observables import build_observable_traces
+        from quchip.engine.observables import build_observable_traces
 
         observable_traces = build_observable_traces(
             solver_result, tlist, chip, dict_meta=e_ops_meta, resolved_frame=resolved_frame
@@ -678,7 +678,7 @@ def wrap_solver_result(solver_result: SolverResult, problem: SolveProblem, backe
 
     The engine-side :class:`~quchip.engine.ir.SolveProblem` carries the
     metadata needed to rebuild dict-form observables
-    (:func:`~quchip.engine.stage3_observables.build_observable_traces`)
+    (:func:`~quchip.engine.observables.build_observable_traces`)
     and to label devices for partial-trace helpers.
     """
     return _wrap(

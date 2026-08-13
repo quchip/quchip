@@ -21,26 +21,12 @@ def is_opaque_callable(value: Any) -> bool:
 
 
 @dataclass(frozen=True)
-class DynamicScalar:
-    """A time-dependent scalar payload attached to an operator expression."""
-
-    source: Any
-
-    def __mul__(self, other: Any) -> "PhysicsExpr":
-        return ensure_expr(other)._with_dynamic(self)
-
-    def __rmul__(self, other: Any) -> "PhysicsExpr":
-        return ensure_expr(other)._with_dynamic(self)
-
-
-@dataclass(frozen=True)
 class PhysicsExpr:
     """Authored scalar and operator algebra, independent of numerical values."""
 
     kind: str
     args: tuple[Any, ...] = ()
     labels: tuple[str, ...] = ()
-    dynamic_sources: tuple[DynamicScalar, ...] = ()
     _bindings: Mapping[str, Any] = field(default_factory=dict, compare=False, repr=False)
 
     @classmethod
@@ -205,21 +191,6 @@ class PhysicsExpr:
             kind,
             (self, rhs),
             tuple(dict.fromkeys(self.labels + rhs.labels)),
-            self.dynamic_sources + rhs.dynamic_sources,
-        )
-
-    def _with_dynamic(self, dynamic: DynamicScalar) -> "PhysicsExpr":
-        return replace(self, dynamic_sources=self.dynamic_sources + (dynamic,))
-
-    def without_dynamic_sources(self) -> "PhysicsExpr":
-        """Return the same expression with time-dependent sources removed."""
-        return replace(
-            self,
-            args=tuple(
-                arg.without_dynamic_sources() if isinstance(arg, PhysicsExpr) else arg
-                for arg in self.args
-            ),
-            dynamic_sources=(),
         )
 
     def __add__(self, other: Any) -> "PhysicsExpr":
@@ -241,10 +212,7 @@ class PhysicsExpr:
         return self._binary(rhs, "matmul")
 
     def __mul__(self, other: Any) -> "PhysicsExpr":
-        if isinstance(other, DynamicScalar):
-            return self._with_dynamic(other)
         rhs = ensure_expr(other)
-        dynamic = self.dynamic_sources + rhs.dynamic_sources
         if self.labels and rhs.labels:
             if set(self.labels) & set(rhs.labels):
                 raise TypeError(
@@ -255,16 +223,13 @@ class PhysicsExpr:
                 "tensor",
                 (self, rhs),
                 tuple(dict.fromkeys(self.labels + rhs.labels)),
-                dynamic,
             )
         if self.labels or rhs.labels:
             scalar, operator = (rhs, self) if self.labels else (self, rhs)
-            return PhysicsExpr("scale", (scalar, operator), operator.labels, dynamic)
-        return PhysicsExpr("mul", (self, rhs), (), dynamic)
+            return PhysicsExpr("scale", (scalar, operator), operator.labels)
+        return PhysicsExpr("mul", (self, rhs))
 
     def __rmul__(self, other: Any) -> "PhysicsExpr":
-        if isinstance(other, DynamicScalar):
-            return self._with_dynamic(other)
         return ensure_expr(other).__mul__(self)
 
     def __truediv__(self, other: Any) -> "PhysicsExpr":
@@ -272,6 +237,13 @@ class PhysicsExpr:
         if rhs.labels:
             raise TypeError("Division by an operator is not defined.")
         return self * PhysicsExpr("pow", (rhs, PhysicsExpr.literal(-1)))
+
+    def __rtruediv__(self, other: Any) -> "PhysicsExpr":
+        if self.labels:
+            raise TypeError("Division by an operator is not defined.")
+        return ensure_expr(other) * PhysicsExpr(
+            "pow", (self, PhysicsExpr.literal(-1))
+        )
 
     def __pow__(self, other: Any) -> "PhysicsExpr":
         rhs = ensure_expr(other)
@@ -281,9 +253,6 @@ class PhysicsExpr:
 
     def __neg__(self) -> "PhysicsExpr":
         return -1 * self
-
-    def has_dynamic_source(self) -> bool:
-        return bool(self.dynamic_sources)
 
     def latex(self) -> str:
         """Render the authored expression with familiar mathematical notation."""
@@ -345,8 +314,6 @@ def ensure_expr(value: Any) -> PhysicsExpr:
     """Coerce a scalar value into the shared expression tree."""
     if isinstance(value, PhysicsExpr):
         return value
-    if isinstance(value, DynamicScalar):
-        return PhysicsExpr.literal(1)._with_dynamic(value)
     if isinstance(value, (int, float, complex)) or getattr(value, "ndim", None) == 0:
         return PhysicsExpr.literal(value)
     raise TypeError(f"Expected a scalar or PhysicsExpr, got {type(value).__name__}.")
@@ -519,6 +486,78 @@ def _walk_expr(expr: PhysicsExpr) -> Iterator[PhysicsExpr]:
     for arg in expr.args:
         if isinstance(arg, PhysicsExpr):
             yield from _walk_expr(arg)
+
+
+def split_dynamic_hamiltonian(expr: PhysicsExpr) -> tuple[tuple[PhysicsExpr, PhysicsExpr], ...]:
+    """Split a linear Hamiltonian sum into scalar-signal and operator factors.
+
+    Signal algebra may be nonlinear and may contain multiple signal leaves.
+    Linearity is required only in the quantum operator: each additive term
+    must contain one operator-valued factor multiplied by a scalar expression
+    that depends on at least one delivered signal.
+    """
+    if not isinstance(expr, PhysicsExpr) or not expr.labels:
+        raise TypeError("A drive Hamiltonian must return an operator-valued PhysicsExpr.")
+    def additive_terms(node: PhysicsExpr) -> list[tuple[int, PhysicsExpr]]:
+        if node.kind == "add":
+            return additive_terms(node.args[0]) + additive_terms(node.args[1])
+        if node.kind == "sub":
+            return additive_terms(node.args[0]) + [
+                (-sign, term) for sign, term in additive_terms(node.args[1])
+            ]
+        return [(1, node)]
+
+    terms: list[tuple[PhysicsExpr, PhysicsExpr]] = []
+    for sign, term in additive_terms(expr):
+        if term.kind != "scale":
+            raise TypeError(
+                "Each drive Hamiltonian term must multiply a delivered signal by a quantum operator."
+            )
+        scalar, operator = term.args
+        if scalar.labels or not operator.labels:
+            raise TypeError("Drive Hamiltonian terms must be scalar-signal times operator.")
+        if not any(node.kind == "signal" for node in _walk_expr(scalar)):
+            raise TypeError("Drive Hamiltonian scalar factors must depend on the delivered signal.")
+        terms.append((scalar if sign > 0 else -scalar, operator))
+    return tuple(terms)
+
+
+def scalar_signal_program(expr: PhysicsExpr) -> Any:
+    """Lower scalar signal algebra into the backend-neutral signal program."""
+    from quchip.engine.ir import Add, Constant, Multiply, Scale, SignalPower
+
+    values: dict[str, Any] = {}
+    for node in _walk_expr(expr):
+        values.update(node._bindings)
+
+    def lower(node: PhysicsExpr) -> Any:
+        if node.labels:
+            raise TypeError("Signal-program lowering accepts scalar expressions only.")
+        if node.kind == "signal":
+            return node.args[0]
+        if node.kind == "literal":
+            return Constant(node.args[0])
+        if node.kind == "parameter":
+            try:
+                return Constant(values[node.args[0]])
+            except KeyError as exc:
+                raise UnboundParameterError(
+                    f"Missing numerical binding: {node.args[0]}"
+                ) from exc
+        if node.kind == "add":
+            return Add((lower(node.args[0]), lower(node.args[1])))
+        if node.kind == "sub":
+            return Add((lower(node.args[0]), Scale(lower(node.args[1]), -1.0)))
+        if node.kind == "mul":
+            return Multiply((lower(node.args[0]), lower(node.args[1])))
+        if node.kind == "pow":
+            exponent = node.args[1]
+            if exponent.kind != "literal":
+                raise TypeError("Signal powers require a literal exponent.")
+            return SignalPower(lower(node.args[0]), exponent.args[0])
+        raise TypeError(f"Unsupported scalar signal expression kind {node.kind!r}.")
+
+    return lower(expr)
 
 
 def materialize_expr(
@@ -695,72 +734,13 @@ def materialize_array(
     )
 
 
-def filter_expr_bands(expr: PhysicsExpr, keeps_band: Any) -> PhysicsExpr | None:
-    """Keep additive operator terms whose excitation-change band is accepted."""
-    kept: list[tuple[int, PhysicsExpr]] = []
-    for sign, term in _expanded_terms(expr):
-        weights = _band_weights(term)
-        if keeps_band(*(weights.get(label, 0) for label in expr.labels)):
-            kept.append((sign, term))
-    if not kept:
-        return None
-    result = kept[0][1] if kept[0][0] > 0 else -kept[0][1]
-    for sign, term in kept[1:]:
-        result = result + term if sign > 0 else result - term
-    return result.with_bindings(expr._bindings)
-
-
-def _expanded_terms(expr: PhysicsExpr) -> list[tuple[int, PhysicsExpr]]:
-    """Expand additive children just enough to expose independently filterable bands."""
-    if expr.kind == "add":
-        return _expanded_terms(expr.args[0]) + _expanded_terms(expr.args[1])
-    if expr.kind == "sub":
-        return _expanded_terms(expr.args[0]) + [(-sign, term) for sign, term in _expanded_terms(expr.args[1])]
-    if expr.kind in ("scale", "mul", "matmul", "tensor"):
-        left_terms = _expanded_terms(expr.args[0])
-        right_terms = _expanded_terms(expr.args[1])
-        terms: list[tuple[int, PhysicsExpr]] = []
-        for left_sign, left in left_terms:
-            for right_sign, right in right_terms:
-                combined = left @ right if expr.kind == "matmul" else left * right
-                terms.append((left_sign * right_sign, combined))
-        return terms
-    return [(1, expr)]
-
-
-def _band_weights(expr: PhysicsExpr) -> dict[str, int]:
-    """Return one excitation-change weight per endpoint for a monomial."""
-    if expr.kind in ("literal", "parameter", "signal"):
-        return {}
-    if expr.kind == "op":
-        name, _space = expr.args
-        try:
-            weight = _OPERATOR_BAND_WEIGHTS[name]
-        except KeyError as exc:
-            raise TypeError(f"Operator {name!r} does not have one excitation-change band.") from exc
-        return {expr.labels[0]: weight}
-    if expr.kind in ("matrix", "function", "embed"):
-        raise TypeError(f"{expr.kind.capitalize()} contributions do not expose symbolic excitation bands.")
-    if expr.kind == "pow":
-        raise TypeError("Scalar powers do not define operator excitation bands.")
-    if expr.kind in ("add", "sub"):
-        raise TypeError("Additive expressions must be expanded before band inspection.")
-    weights: dict[str, int] = {}
-    for child in expr.args[:2]:
-        for label, weight in _band_weights(child).items():
-            weights[label] = weights.get(label, 0) + weight
-    return weights
-
-
-_OPERATOR_BAND_WEIGHTS = {
-    "a": -1,
-    "adag": 1,
-    "n": 0,
-    "I": 0,
-    "sigma_plus": 1,
-    "sigma_minus": -1,
-    "sigma_z": 0,
-}
+def materialize_scalar(
+    expr: Any,
+    *,
+    bindings: Mapping[str, Any] | None = None,
+) -> Any:
+    """Materialize a scalar expression without coercing traced values."""
+    return materialize_expr(expr, _ARRAY_LOWERER, bindings=bindings)
 
 
 def _latex(expr: PhysicsExpr, parent_precedence: int = 0) -> str:

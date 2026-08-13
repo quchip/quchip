@@ -19,14 +19,14 @@ Blais, A., Grimsmo, A. L., Girvin, S. M., & Wallraff, A. Circuit quantum
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable, cast
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, cast
 
 from quchip.backend.protocol import Operator
 from quchip.chip.coupling_base import BaseCoupling as _BaseCoupling
 from quchip.declarative.expr import PhysicsExpr
 from quchip.declarative.models import CouplingModel
 from quchip.declarative.ops import EndpointOps
-from quchip.declarative.parameters import Scalar, UNBOUND, parameter
+from quchip.declarative.parameters import UNBOUND, Scalar, parameter
 from quchip.devices.base import BaseDevice
 
 if TYPE_CHECKING:
@@ -55,9 +55,9 @@ class Capacitive(CouplingModel):
     canonical dipole-dipole form in the raising/lowering basis:
 
     - Full form:   ``H_int = g · (a + a†)(b + b†)``
-    - RWA form:    ``H_int = g · (a†b + a b†)`` — *derived*, not authored
+    - Band-RWA form: ``H_int = g · (a†b + a b†)`` (derived, not authored)
 
-    The coupling authors only the full form; the RWA form is the engine
+    The coupling authors only the full form; :class:`~quchip.RWA`
     retaining the ``Δa + Δb == 0`` bands of it, which is exactly
     ``g · (a†b + a b†)``. The RWA drops the counter-rotating terms ``a b``
     and ``a† b†``, valid when ``ω_a + ω_b ≫ g`` — the sum-frequency
@@ -66,9 +66,8 @@ class Capacitive(CouplingModel):
     which instead governs whether the *retained* exchange term
     ``g · (a†b + a b†)`` can be treated perturbatively (see
     :class:`TunableCapacitive` / :func:`~quchip.chip.transformations.eliminate`
-    for the dispersive reduction). Whether to take the RWA is a per-coupling
-    policy; resolution against the chip default happens in
-    :meth:`Chip.resolve_rwa`.
+    for the dispersive reduction). Approximation is selected on the chip or
+    for one solve, never on the coupling.
 
     Parameters
     ----------
@@ -78,8 +77,6 @@ class Capacitive(CouplingModel):
     g : float
         Coupling strength in GHz. May be a traced JAX scalar for
         sweeps / autodiff.
-    rwa : bool or None
-        Per-coupling RWA override. ``None`` inherits the chip default.
     label : str, optional
         Human-readable label; defaults to ``"cap_{n}"``.
 
@@ -94,47 +91,28 @@ class Capacitive(CouplingModel):
     >>> from quchip import DuffingTransmon, Resonator, Capacitive
     >>> q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
     >>> r = Resonator(freq=7.0, levels=5, label="r")
-    >>> coupling = Capacitive(q, r, g=0.05)           # RWA inherited from chip
-    >>> _strong = Capacitive(q, r, g=0.05, rwa=False) # force full quantum-Rabi form
+    >>> coupling = Capacitive(q, r, g=0.05)
     """
 
-    _type_prefix: str = "cap"
-    folds_exchange: bool = True
-    reduces_to_crosskerr: bool = True
+    _type_prefix: ClassVar[str] = "cap"
+    folds_exchange: ClassVar[bool] = True
+    reduces_to_crosskerr: ClassVar[bool] = True
 
-    g: Scalar = parameter(unit="GHz", symbol="g")
-
-    def __init__(
-        self,
-        device_a: BaseDevice | str,
-        device_b: BaseDevice | str,
-        *,
-        g: Scalar = UNBOUND,
-        rwa: bool | None = None,
-        label: str | None = None,
-    ) -> None:
-        """Initialize a capacitive coupling between two devices or labels.
-
-        Explicit signature so mypy checks call sites against the real
-        ``CouplingModel.__init__`` contract instead of a ``dataclass_transform``
-        synthesis derived from this class's own field order (which omits
-        ``device_a``/``device_b``/``rwa``/``label`` entirely).
-        """
-        super().__init__(device_a, device_b, label=label, rwa=rwa, g=g)
+    g: Scalar = parameter(default=UNBOUND, unit="GHz", symbol="g")
 
     def interaction(self, a: EndpointOps, b: EndpointOps, p: Any) -> PhysicsExpr:
         """Return the full capacitive interaction ``g * (a + a†)(b + b†)``."""
         return _full(p.g, a, b)
 
     def physics_notes(self) -> list[str]:
-        """Return declared capacitive-coupling and RWA assumptions."""
+        """Return the declared capacitive interaction."""
         notes = super().physics_notes()
-        notes.append("Interaction form: g · (a + a†)(b + b†); RWA drops counter-rotating a b, a† b†")
+        notes.append("Interaction form: g · (a + a†)(b + b†)")
         return notes
 
     def __repr__(self) -> str:
         """Return a compact endpoint/coupling summary."""
-        return f"Capacitive('{self.device_a_label}' <-> '{self.device_b_label}', g={self.g}, rwa={self._rwa})"
+        return f"Capacitive('{self.device_a_label}' <-> '{self.device_b_label}', g={self.g})"
 
     @classmethod
     def from_dict(
@@ -148,8 +126,7 @@ class Capacitive(CouplingModel):
             device_a=device_a,
             device_b=device_b,
             g=d["g"],
-            rwa=d.get("rwa"),
-            label=d.get("label"),
+            label=cast(str, d.get("label")),
         )
 
 
@@ -182,8 +159,6 @@ class TunableCapacitive(CouplingModel):
         The two coupled devices.
     g_0 : float
         Static (mean) coupling strength in GHz. May be a JAX tracer.
-    rwa : bool or None
-        Per-coupling RWA override; ``None`` inherits the chip default.
     label : str, optional
         Human-readable label; defaults to ``"tunable_cap_{n}"``.
 
@@ -219,30 +194,12 @@ class TunableCapacitive(CouplingModel):
     >>> # seq.pump(tc, envelope=..., freq=...) schedules δg(t); see QuantumSequence.pump.
     """
 
-    _type_prefix: str = "tunable_cap"
-    is_effective: bool = True
-    folds_exchange: bool = True
-    reduces_to_crosskerr: bool = True
+    _type_prefix: ClassVar[str] = "tunable_cap"
+    is_effective: ClassVar[bool] = True
+    folds_exchange: ClassVar[bool] = True
+    reduces_to_crosskerr: ClassVar[bool] = True
 
-    g_0: Scalar = parameter(unit="GHz", symbol="g_0")
-
-    def __init__(
-        self,
-        device_a: BaseDevice | str,
-        device_b: BaseDevice | str,
-        *,
-        g_0: Scalar = UNBOUND,
-        rwa: bool | None = None,
-        label: str | None = None,
-    ) -> None:
-        """Initialize a tunable capacitive coupling between two devices or labels.
-
-        Explicit signature so mypy checks call sites against the real
-        ``CouplingModel.__init__`` contract instead of a ``dataclass_transform``
-        synthesis derived from this class's own field order (which omits
-        ``device_a``/``device_b``/``rwa``/``label`` entirely).
-        """
-        super().__init__(device_a, device_b, label=label, rwa=rwa, g_0=g_0)
+    g_0: Scalar = parameter(default=UNBOUND, unit="GHz", symbol="g_0")
 
     def interaction(self, a: EndpointOps, b: EndpointOps, p: Any) -> PhysicsExpr:
         """Static contribution ``g_0 · (a + a†)(b + b†)``."""
@@ -254,9 +211,9 @@ class TunableCapacitive(CouplingModel):
         return a.charge * b.charge
 
     def physics_notes(self) -> list[str]:
-        """Return the tunable-coupling, RWA, and effective-model assumptions."""
+        """Return the tunable-coupling and effective-model assumptions."""
         notes = super().physics_notes()
-        notes.append("Interaction form: g_0 · (a + a†)(b + b†); RWA keeps a†b + a b†")
+        notes.append("Interaction form: g_0 · (a + a†)(b + b†)")
         notes.append(
             "Effective parametric model: the physical coupler mode is eliminated; coupler "
             "leakage and mediated shifts beyond exchange are not represented — use a physical "
@@ -268,7 +225,7 @@ class TunableCapacitive(CouplingModel):
         """Return a compact endpoint/coupling summary."""
         return (
             f"TunableCapacitive('{self.device_a_label}' <-> '{self.device_b_label}', "
-            f"g_0={self.g_0}, rwa={self._rwa})"
+            f"g_0={self.g_0})"
         )
 
 
@@ -295,29 +252,14 @@ class CrossKerr(CouplingModel):
         Cross-Kerr shift in GHz per excitation pair, sign included
         (convention: full pull ``E₁₁ − E₁₀ − E₀₁ + E₀₀``). May be a JAX
         tracer.
-    rwa : bool or None
-        Per-coupling RWA override; irrelevant to the produced operator
-        (both forms coincide) but stored for policy uniformity.
     label : str, optional
         Defaults to ``"crosskerr_{n}"``.
     """
 
-    _type_prefix: str = "crosskerr"
-    is_effective: bool = True
+    _type_prefix: ClassVar[str] = "crosskerr"
+    is_effective: ClassVar[bool] = True
 
-    chi: Scalar = parameter(unit="GHz", symbol=r"\chi")
-
-    def __init__(
-        self,
-        device_a: BaseDevice | str,
-        device_b: BaseDevice | str,
-        *,
-        chi: Scalar = UNBOUND,
-        rwa: bool | None = None,
-        label: str | None = None,
-    ) -> None:
-        """Initialize a cross-Kerr coupling between two devices or labels."""
-        super().__init__(device_a, device_b, label=label, rwa=rwa, chi=chi)
+    chi: Scalar = parameter(default=UNBOUND, unit="GHz", symbol=r"\chi")
 
     def interaction(self, a: EndpointOps, b: EndpointOps, p: Any) -> PhysicsExpr:
         """Full form ``χ · n̂_a n̂_b`` (diagonal; identical under RWA)."""
@@ -367,14 +309,11 @@ class Coupling(_BaseCoupling):
                 + bk.tensor(a.lowering_operator(), bk.dag(b.lowering_operator()))
             ))
 
-    The resolved RWA applies the structural band filter to the
-    user-supplied operator too, keeping only the bands
-    :meth:`~quchip.chip.coupling_base.BaseCoupling.rwa_keeps_band`
-    accepts. Supply ``rwa=False`` (or override ``rwa_keeps_band``) to
-    keep a hand-built form untouched.
+    The selected chip approximation is applied to the complete user-supplied
+    operator after authored physics is assembled.
     """
 
-    _type_prefix: str = "coupling"
+    _type_prefix: ClassVar[str] = "coupling"
 
     def __init__(
         self,
@@ -385,7 +324,6 @@ class Coupling(_BaseCoupling):
         op_a: Callable[[BaseDevice], Operator] | None = None,
         op_b: Callable[[BaseDevice], Operator] | None = None,
         interaction: Callable[[BaseDevice, BaseDevice, "Backend"], Operator] | None = None,
-        rwa: bool | None = None,
         label: str | None = None,
     ) -> None:
         """Initialize a user-defined product-form or callable interaction."""
@@ -404,7 +342,6 @@ class Coupling(_BaseCoupling):
         self._op_a = op_a
         self._op_b = op_b
         self._interaction = interaction
-        self._rwa = rwa
 
     @property
     def coupling_strength(self) -> float:
@@ -434,7 +371,7 @@ class Coupling(_BaseCoupling):
         """Return notes describing the user-supplied interaction mode."""
         notes = super().physics_notes()
         mode = "user-supplied interaction" if self._interaction is not None else "product form op_a ⊗ op_b"
-        notes.append(f"Interaction form: {mode} (resolved RWA applies the structural band filter)")
+        notes.append(f"Interaction form: {mode}")
         return notes
 
     def to_dict(self) -> dict[str, Any]:

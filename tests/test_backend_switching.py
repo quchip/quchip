@@ -8,6 +8,8 @@ omits ``nsteps``, QuTiP can infer an abort ceiling from spectral metadata.
 
 from __future__ import annotations
 
+from quchip.approximations import RWA
+
 import numpy as np
 from qutip import Qobj
 
@@ -31,7 +33,7 @@ def _demo_chip(chip_backend=None):
         [q, r],
         couplings=[Capacitive(q, r, g=0.02)],
         frame="rotating",
-        rwa=True,
+        approximation=RWA(),
         backend=chip_backend,
     )
     drv = ChargeDrive(target=q, label="d")
@@ -117,9 +119,7 @@ def test_per_call_backend_outranks_chip_backend(monkeypatch) -> None:
 
     used: list[str] = []
     original = per_call.solve_problem
-    monkeypatch.setattr(
-        per_call, "solve_problem", lambda problem: (used.append("per_call"), original(problem))[1]
-    )
+    monkeypatch.setattr(per_call, "solve_problem", lambda problem: (used.append("per_call"), original(problem))[1])
 
     seq.simulate(
         tlist=np.linspace(0.0, 20.0, 21),

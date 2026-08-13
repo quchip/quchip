@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 from pathlib import Path
 
 import matplotlib
@@ -42,7 +43,7 @@ def _build_sequence() -> QuantumSequence:
     chip, q, r, q_charge, r_charge, q_flux = _build_control_chip()
     seq = QuantumSequence(chip)
     seq.charge(q, envelope=Square(duration=10.0, amplitude=0.02))
-    seq.charge(q, envelope=Square(duration=6.0, amplitude=0.01, phase=0.2))
+    seq.charge(q, envelope=Square(duration=6.0, amplitude=0.01), phase=0.2)
     seq.charge(r, envelope=Square(duration=8.0, amplitude=0.03))
     seq.flux(q, envelope=Square(duration=4.0, amplitude=0.015))
     return seq
@@ -51,7 +52,7 @@ def _build_sequence() -> QuantumSequence:
 def _build_chip_with_control() -> Chip:
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
     r = Resonator(freq=6.8, levels=4, label="r")
-    coupling = Capacitive(q, r, g=0.02, rwa=False)
+    coupling = Capacitive(q, r, g=0.02)
     readout = ChargeDrive(target=r, label="readout")
     flux = FluxDrive(target=q, label="flux")
     equipment = ControlEquipment(

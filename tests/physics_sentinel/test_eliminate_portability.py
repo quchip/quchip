@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from quchip.approximations import RWA
+
 import warnings
 
 import numpy as np
@@ -17,14 +19,14 @@ from quchip import (
     Square,
 )
 from quchip.chip.transformations import eliminate
-from quchip.declarative import EnvelopeShape, Scalar, parameter, qnp
+from quchip.declarative import Envelope, Scalar, parameter, qnp
 
 _LEG_G = 0.08
 _BRIDGE_FREQ = 6.3
 _PUMP_AMPLITUDE = 0.05  # GHz; baseband delta-omega_c excursion
 
 
-class CosineTone(EnvelopeShape):
+class CosineTone(Envelope):
     """Baseband cosine tone: the envelope itself carries the oscillation.
 
     Both the full chip's ``FluxDrive`` and the reduced chip's retargeted
@@ -57,7 +59,7 @@ def _bridge_chip(q0_freq: float, q1_freq: float) -> Chip:
         couplings=couplings,
         control_equipment=ControlEquipment([flux]),
         frame="rotating",
-        rwa=True,
+        approximation=RWA(),
     )
 
 
@@ -145,7 +147,7 @@ def test_three_survivor_replay_full_vs_reduced():
         couplings=couplings,
         control_equipment=ControlEquipment([FluxDrive(fc, label="cflux")]),
         frame="rotating",
-        rwa=True,
+        approximation=RWA(),
     )
     res = eliminate(full, "fc")
     reduced = res.chip
@@ -193,9 +195,7 @@ def test_tone_form_parametric_resonance_full_vs_reduced():
     reduced = res.chip
     exchange = res.effective_params["exchange"]
     j_eff = float(exchange["j_eff"])
-    delta_bare = abs(
-        float(res.effective_params["q1"]["freq_after"]) - float(res.effective_params["q0"]["freq_after"])
-    )
+    delta_bare = abs(float(res.effective_params["q1"]["freq_after"]) - float(res.effective_params["q0"]["freq_after"]))
     # Dressed |10>,|01> splitting including the static residual exchange's level repulsion.
     dressed_splitting = float(np.sqrt(delta_bare**2 + (2.0 * j_eff) ** 2))
     delta_j = float(exchange["dJ_domega_c"]) * _PUMP_AMPLITUDE  # A_J: peak delta_J(t) excursion, GHz

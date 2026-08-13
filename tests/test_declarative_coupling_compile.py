@@ -1,11 +1,20 @@
-"""Tests for CouplingModel compile-path guards: endpoint order and dynamic-source validation."""
+"""Tests for CouplingModel compile-path guards and intrinsic terms."""
 
 from __future__ import annotations
 
+from quchip.approximations import RWA
+
 import pytest
 
-from quchip import Chip, Square
-from quchip.declarative import CouplingModel, DeviceModel, DynamicScalar, Scalar, parameter
+from quchip import Chip
+from quchip.declarative import (
+    CosineCoefficient,
+    CouplingModel,
+    DeviceModel,
+    TimeDependentTerm,
+    Scalar,
+    parameter,
+)
 
 
 class _Oscillator(DeviceModel):
@@ -35,9 +44,14 @@ class _DynamicCoupling(CouplingModel):
     def interaction(self, a, b, p):
         return p.g * (a.a * b.adag + a.adag * b.a)
 
-    def time_dependent(self, a, b, p):
+    def time_terms(self, a, b, p):
         _ = p
-        return DynamicScalar(Square(duration=10.0, amplitude=0.02)) * (a.x * b.x)
+        return (
+            TimeDependentTerm(
+                operator=a.x * b.x,
+                coefficient=CosineCoefficient(0.02, 0.1),
+            ),
+        )
 
 
 def test_forward_endpoint_order_compiles():
@@ -57,13 +71,16 @@ def test_reversed_endpoint_order_raises():
         coupling.interaction_hamiltonian()
 
 
-def test_intrinsic_coupling_is_projected_then_rwa_resolved_by_engine():
-    """An intrinsic coupling authors one form and the engine removes counter-rotating bands."""
+def test_time_dependent_coupling_is_projected_then_rwa_resolved_by_engine():
+    """A time-dependent coupling authors one form and the engine removes counter-rotating bands."""
     q0 = _Oscillator(freq=5.0, levels=3, label="q0")
     q1 = _Oscillator(freq=5.2, levels=3, label="q1")
     coupling = _DynamicCoupling(q0, q1, g=0.01, label="dynamic")
-    result = Chip([q0, q1], [coupling], frame="lab", rwa=True).resolve()
+    result = Chip([q0, q1], [coupling], frame="lab", approximation=RWA()).resolve()
 
     assert len([term for term in result.dynamic_terms if term.operator.tag == "coupling_dynamic"]) == 2
-    intrinsic_drops = [term for term in result.dropped_terms if term.operator.startswith("intrinsic")]
-    assert {term.band_weights for term in intrinsic_drops} == {(-1, -1), (1, 1)}
+    dynamic_drops = [
+        term for term in result.dropped_terms
+        if term.operator.startswith("time-dependent coupling")
+    ]
+    assert {term.band_weights for term in dynamic_drops} == {(-1, -1), (1, 1)}

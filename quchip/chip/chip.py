@@ -21,18 +21,15 @@ import numpy as np
 
 from quchip.backend import _backend_context
 from quchip.backend.protocol import Backend, Operator, State
+from quchip.approximations import Approximation, RWA, require_approximation
 from quchip.chip.analysis import ChipAnalysis, DressedResult
 from quchip.chip.baths import Bath
 from quchip.chip.coupling_base import BaseCoupling
 from quchip.chip.states import _DEFAULT_LEVEL_SYMBOLS
-from quchip.control.drive import BaseDrive
+from quchip.control.drive import BaseDrive, CouplingDrive
 from quchip.control.equipment import ControlEquipment
 from quchip.control.signal import Crosstalk, SignalTransform
-from quchip.declarative.expr import (
-    PhysicsExpr,
-    as_operator_expr,
-    as_scalar_expr,
-)
+from quchip.declarative.expr import PhysicsExpr
 from quchip.declarative.parameters import validate_sign
 from quchip.devices.base import BaseDevice, _validate_noise_params
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
@@ -150,9 +147,9 @@ class Chip:
           frequencies.
         - scalar-like — one shared reference frequency for all devices.
         - ``dict`` — per-device references keyed by label or device.
-    rwa : bool
-        Default RWA policy for couplings and drives. Per-component
-        ``rwa`` overrides inherit this (``None`` means inherit).
+    approximation : Approximation
+        Engine strategy applied after the complete authored Hamiltonian is
+        assembled. Defaults to :class:`~quchip.approximations.RWA`.
     basis : {"native", "eigen"}
         Chip-wide local solver-basis policy. ``"native"`` preserves each
         device's authored coordinate basis; ``"eigen"`` transforms into its
@@ -177,7 +174,7 @@ class Chip:
         control_equipment: ControlEquipment | None = None,
         label: str | None = None,
         frame: FrameSpec = "lab",
-        rwa: bool = True,
+        approximation: Approximation = RWA(),
         basis: Literal["native", "eigen"] = "native",
         backend: str | Backend | None = None,
         baths: list[Bath] | None = None,
@@ -213,7 +210,7 @@ class Chip:
         self._basis = basis
         tuple(d.resolved_dimension(basis) for d in devices)
         self._frame_spec: FrameSpec = "lab"
-        self._rwa = bool(rwa)
+        self._approximation = require_approximation(approximation)
         if control_equipment is not None:
             drive_duplicates = [
                 lbl for lbl, n in Counter(d.label for d in control_equipment.lines).items() if n > 1
@@ -267,9 +264,9 @@ class Chip:
         the engine subtracts
         ``2π Σ_i ω_ref,i n̂_i`` for each device, where ``ω_ref,i`` is the
         frame reference resolved by
-        :func:`quchip.engine.stage1_frames.resolve_frame`. The 2π boundary
+        :func:`quchip.engine.frames.resolve_frame`. The 2π boundary
         crossing and the subtraction both live in
-        :func:`quchip.engine.stage2_assembly._build_static_h0`. Use
+        :func:`quchip.engine.assembly._build_static_h0`. Use
         :meth:`frame_info` to inspect which reference frequency each
         device will use.
 
@@ -330,25 +327,31 @@ class Chip:
         """Return the Hamiltonian after the chip's engine policies."""
         return self.resolve().hamiltonian()
 
-    def resolve(self, *, frame: FrameSpec | None = None) -> EngineResult:
+    def resolve(
+        self,
+        *,
+        frame: FrameSpec | None = None,
+        approximation: Approximation | None = None,
+    ) -> EngineResult:
         """Return a frozen engine contract without mutating chip intent.
 
         ``frame=None`` uses :attr:`frame`; an explicit frame resolves this
-        snapshot only. Basis, retained levels, RWA, noise, and every other
-        declared chip policy remain unchanged.
+        snapshot only. ``approximation=None`` likewise uses the chip default.
+        Neither override mutates chip intent.
         """
-        from quchip.engine.stage2_assembly import (
+        from quchip.engine.assembly import (
             _prepare_engine_assembly,
             build_engine_result,
         )
 
         frame_spec = self.frame if frame is None else frame
+        strategy = self.approximation if approximation is None else require_approximation(approximation)
         equipment = self.control_equipment
         control_lines = () if equipment is None else equipment.lines
         try:
             signature = (
                 id(self.backend),
-                self.rwa,
+                strategy,
                 self.basis,
                 _frame_cache_value(frame_spec),
                 tuple((device.label, device.state_version) for device in self.devices),
@@ -357,13 +360,7 @@ class Chip:
                     for device in self.devices
                 ),
                 tuple(
-                    (
-                        device.label,
-                        tuple(
-                            (channel.name, channel.params, id(channel.build))
-                            for channel in type(device)._noise_channels
-                        ),
-                    )
+                    (device.label, id(type(device).dissipation))
                     for device in self.devices
                 ),
                 tuple((coupling.label, coupling.state_version) for coupling in self.couplings),
@@ -372,12 +369,11 @@ class Chip:
                         line.label,
                         type(line),
                         line.target_label,
-                        line.rwa,
                         tuple(
                             (name, _concrete_cache_value(getattr(line, name)))
-                            for name in line.collapse_parameter_names()
+                            for name in line.parameter_values()
                         ),
-                        id(type(line).collapse_contributions),
+                        id(type(line).dissipation),
                     )
                     for line in control_lines
                 ),
@@ -404,6 +400,7 @@ class Chip:
             self,
             [],
             resolved_frame=resolved_frame,
+            approximation=strategy,
             _local_resolution=local_resolution,
         )
         if signature is not None and not result._contains_tracer():
@@ -429,26 +426,33 @@ class Chip:
         tuples: one support index for a device-local operator, two for a
         coupling's two-body operator. Operators are lab-frame, ordinary
         GHz — the engine applies the 2π boundary. Drive terms are *not*
-        included; they are schedule-owned and enter through stage 2's
+        included; they are schedule-owned and enter through engine assembly's
         drive compilation.
         """
         backend = self.backend
         out: list[tuple[Operator, Any, tuple[int, ...], Any, str, str]] = []
         with _backend_context(backend):
             for coupling in self._couplings:
-                term_pairs = coupling.dynamic_interaction_terms()
-                if not term_pairs:
+                terms = coupling._time_terms()
+                if not terms:
                     continue
                 idx_a = self._label_to_index[coupling.device_a_label]
                 idx_b = self._label_to_index[coupling.device_b_label]
                 out.extend(
-                    (op, td, (idx_a, idx_b), coupling, "coupling", "coupling_dynamic")
-                    for op, td in term_pairs
+                    (
+                        term.operator,
+                        term.coefficient,
+                        (idx_a, idx_b),
+                        coupling,
+                        "coupling",
+                        "coupling_dynamic",
+                    )
+                    for term in terms
                 )
             for i, dev in enumerate(self._devices):
                 out.extend(
-                    (op, td, (i,), dev, "device", "device_dynamic")
-                    for op, td in dev.dynamic_terms()
+                    (term.operator, term.coefficient, (i,), dev, "device", "device_dynamic")
+                    for term in dev._time_terms()
                 )
         return out
 
@@ -481,14 +485,14 @@ class Chip:
             for i, dev in enumerate(self._devices):
                 out.extend(
                     (
-                        op,
-                        rate,
+                        channel.operator,
+                        channel.rate,
                         (i,),
                         dev.label,
-                        channel,
-                        tuple(f"{dev.label}.{name}" for name in params if getattr(dev, name) is not None),
+                        channel.name,
+                        parameter_paths,
                     )
-                    for op, rate, channel, params in dev.collapse_contributions(
+                    for channel, parameter_paths in dev._collapse_channels_with_paths(
                         None if bases is None else bases[dev.label]
                     )
                 )
@@ -497,92 +501,44 @@ class Chip:
                     if line.device_label is None:
                         continue
                     idx = self._label_to_index[line.device_label]
-                    parameter_paths = tuple(
-                        f"drive.{line.label}.{name}"
-                        for name in line.collapse_parameter_names()
-                    )
                     device = self._devices[idx]
-                    for position, (op, rate) in enumerate(line.collapse_contributions(device)):
-                        op = as_operator_expr(
-                            op,
-                            labels=(device.label,),
-                            dims=(device.local_space().dimension,),
-                            name=rf"\hat L_{{{line.label},{position}}}",
-                            owner=line,
-                            scope=f"drive.{line.label}",
+                    for channel, parameter_paths in line._collapse_channels_with_paths(device):
+                        out.append(
+                            (
+                                channel.operator,
+                                channel.rate,
+                                (idx,),
+                                line.label,
+                                channel.name,
+                                parameter_paths,
+                            )
                         )
-                        rate = as_scalar_expr(
-                            rate,
-                            name=rf"\gamma_{{{line.label},{position}}}",
-                            owner=line,
-                            scope=f"drive.{line.label}",
-                        )
-                        out.append((op, rate, (idx,), line.label, f"drive_{position}", parameter_paths))
             for coupling in self._couplings:
                 idx_a = self._label_to_index[coupling.device_a_label]
                 idx_b = self._label_to_index[coupling.device_b_label]
-                parameter_paths = tuple(
-                    f"{coupling.label}.{name}"
-                    for name in coupling.collapse_parameter_names()
-                )
-                device_a = self._devices[idx_a]
-                device_b = self._devices[idx_b]
-                for position, (op, rate) in enumerate(coupling.collapse_contributions(self)):
-                    op = as_operator_expr(
-                        op,
-                        labels=(device_a.label, device_b.label),
-                        dims=(
-                            device_a.local_space().dimension,
-                            device_b.local_space().dimension,
-                        ),
-                        name=rf"\hat L_{{{coupling.label},{position}}}",
-                        owner=coupling,
-                        scope=coupling.label,
-                    )
-                    rate = as_scalar_expr(
-                        rate,
-                        name=rf"\gamma_{{{coupling.label},{position}}}",
-                        owner=coupling,
-                        scope=coupling.label,
-                    )
+                for channel, parameter_paths in coupling._collapse_channels_with_paths():
                     out.append(
                         (
-                            op,
-                            rate,
+                            channel.operator,
+                            channel.rate,
                             (idx_a, idx_b),
                             coupling.label,
-                            f"coupling_{position}",
+                            channel.name,
                             parameter_paths,
                         )
                     )
             for bath in self.baths:
-                parameter_paths = tuple(
-                    f"bath.{bath.label}.{name}"
-                    for name in bath.collapse_parameter_names()
-                )
-                for position, (op, rate, support, channel) in enumerate(
-                    bath.collapse_contributions(self, bases)
-                ):
-                    labels = tuple(self._devices[index].label for index in support)
-                    dims = tuple(self._devices[index].local_space().dimension for index in support)
-                    if not support:
-                        labels = tuple(device.label for device in self._devices)
-                        dims = self.authored_dims
-                    op = as_operator_expr(
-                        op,
-                        labels=labels,
-                        dims=dims,
-                        name=rf"\hat L_{{{bath.label},{position}}}",
-                        owner=bath,
-                        scope=f"bath.{bath.label}",
+                for channel, parameter_paths in bath._collapse_channels_with_paths(self, bases):
+                    out.append(
+                        (
+                            channel.operator,
+                            channel.rate,
+                            (),
+                            bath.label,
+                            channel.name,
+                            parameter_paths,
+                        )
                     )
-                    rate = as_scalar_expr(
-                        rate,
-                        name=rf"\gamma_{{{bath.label},{position}}}",
-                        owner=bath,
-                        scope=f"bath.{bath.label}",
-                    )
-                    out.append((op, rate, support, bath.label, channel, parameter_paths))
         return out
 
     # ------------------------------------------------------------------
@@ -634,9 +590,9 @@ class Chip:
         return self._frame_spec
 
     @property
-    def rwa(self) -> bool:
-        """Default rotating-wave approximation policy for couplings and drives."""
-        return self._rwa
+    def approximation(self) -> Approximation:
+        """Default engine approximation strategy."""
+        return self._approximation
 
     @property
     def control_equipment(self) -> ControlEquipment | None:
@@ -744,9 +700,9 @@ class Chip:
         Applied changes are printed one per line; a no-op prints nothing.
 
         Custom dissipation is supported by declaring it on the device class
-        beforehand — a ``parameter(...)`` rate field plus a
-        :class:`~quchip.devices.base.NoiseChannel` entry (see the extension
-        guide). The declared rate is then an ordinary noise parameter here:
+        beforehand with a ``parameter(noise=True)`` rate field and a
+        :meth:`~quchip.devices.base.BaseDevice.dissipation` override. The
+        declared rate is then an ordinary noise parameter here:
         sweepable, differentiable, serializable. Runtime closure-style
         channels are deliberately not supported — their rates could be
         neither swept, nor differentiated, nor serialized.
@@ -1038,6 +994,25 @@ class Chip:
         """
         return self._analysis.dressed_anharmonicity(device)
 
+    def transition_frequency(
+        self,
+        target: str | BaseDevice,
+        lower: int,
+        upper: int,
+        when: dict[str | BaseDevice, int] | None = None,
+    ) -> Any:
+        """Return a dressed transition in GHz with optional spectator levels.
+
+        Unspecified spectators are in their ground state. ``target`` and
+        entries in ``when`` accept either device objects or labels.
+        """
+        return self._analysis.transition_frequency(
+            target,
+            lower,
+            upper,
+            when=when,
+        )
+
     def effective_subspace_hamiltonian(
         self,
         states: (
@@ -1220,7 +1195,7 @@ class Chip:
                     for bath in self._baths
                 ),
                 "frame": self._frame_spec,
-                "rwa": self._rwa,
+                "approximation": type(self._approximation).__name__,
                 "backend": type(self.backend).__name__,
             }
         )
@@ -1273,7 +1248,7 @@ class Chip:
         print(f"- devices: {len(self._devices)}")
         print(f"- couplings: {len(self._couplings)}")
         print(f"- frame: {self._frame_spec!r}")
-        print(f"- rwa: {self._rwa}")
+        print(f"- approximation: {type(self._approximation).__name__}")
         print(f"- dressed: {'yes' if self.is_dressed else 'no'}")
         print("- device list:")
         for dev in self._devices:
@@ -1568,8 +1543,8 @@ class Chip:
         """Attach control equipment to this chip (low-level API).
 
         Validates every drive target and rejects duplicate drive labels,
-        then reconnects each drive to this chip's canonical device
-        instances. User-facing code should prefer :meth:`wire`.
+        then reconnects each drive to this chip's canonical device or
+        coupling instance. User-facing code should prefer :meth:`wire`.
         """
         drive_duplicates = [
             lbl for lbl, n in Counter(d.label for d in control_equipment.lines).items() if n > 1
@@ -1580,7 +1555,7 @@ class Chip:
                 "Each drive must have a unique label."
             )
         for drive in control_equipment.lines:
-            if drive.target_kind == "edge":
+            if isinstance(drive, CouplingDrive):
                 target_label = drive.target_label
                 if target_label not in self._coupling_map:
                     raise ValueError(
@@ -1594,7 +1569,8 @@ class Chip:
                     f"({drive!r}). Connect drives to chip devices before "
                     "calling chip.connect(control_equipment)."
                 )
-            target_label = drive._target.label
+            target_label = drive.target_label
+            assert target_label is not None
             if target_label not in self._device_map:
                 raise ValueError(
                     f"Drive target '{target_label}' is not on this chip. Available: {list(self._device_map.keys())}"
@@ -1603,19 +1579,13 @@ class Chip:
         self._control_equipment = control_equipment
 
         for drive in control_equipment.lines:
-            if drive.target_kind == "edge":
+            if isinstance(drive, CouplingDrive):
                 assert drive.target_label is not None
                 coupling = self._coupling_map[drive.target_label]
-                if coupling.parametric_operator() is None:
-                    raise TypeError(
-                        f"{type(coupling).__name__} is not modulable: its parametric_interaction() hook "
-                        "returns None. Implement parametric_interaction() on "
-                        "the coupling (see CouplingModel), or use a modulable coupling such as TunableCapacitive."
-                    )
-                drive.connect(coupling)  # type: ignore[arg-type]  # ParametricDrive.connect accepts a coupling
+                drive.connect(coupling)
                 continue
-            assert drive._target is not None
-            drive.connect(self._device_map[drive._target.label])
+            assert drive.target_label is not None
+            drive.connect(self._device_map[drive.target_label])
 
     def disconnect(self) -> ControlEquipment:
         """Detach control equipment entirely (low-level API).
@@ -1726,17 +1696,7 @@ class Chip:
     def __repr__(self) -> str:
         return (
             f"Chip(label={self.label!r}, devices={len(self._devices)}, "
-            f"couplings={len(self._couplings)}, frame={self._frame_spec!r}, rwa={self._rwa}, "
+            f"couplings={len(self._couplings)}, frame={self._frame_spec!r}, "
+            f"approximation={type(self._approximation).__name__}, "
             f"dressed={'yes' if self.is_dressed else 'no'})"
         )
-
-    def resolve_rwa(self, term_owner: Any) -> bool:
-        """Resolve a coupling's or drive's RWA flag against the chip default.
-
-        Returns the chip's default when the owner's ``rwa`` is ``None``;
-        otherwise returns the owner's explicit flag.
-        """
-        rwa = getattr(term_owner, "rwa", None)
-        if rwa is None:
-            return self._rwa
-        return bool(rwa)

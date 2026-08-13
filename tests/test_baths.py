@@ -1,8 +1,9 @@
 import numpy as np
 import pytest
 
-from quchip import Bath, Chip, DuffingTransmon, Resonator
+from quchip import Bath, Chip, CollapseChannel, DuffingTransmon, Resonator
 from quchip.backend import _backend_context
+from quchip.declarative.expr import materialize_expr
 
 
 def test_bath_autolabels_and_defaults_to_all_devices():
@@ -27,7 +28,7 @@ def test_bath_targets_accept_label_or_object():
 
 def _terms(bath, chip):
     with _backend_context(chip.backend):
-        return bath.collapse_contributions(chip)
+        return bath.collapse_channels(chip)
 
 
 def test_thermal_independent_emits_relaxation_and_absorption_per_device():
@@ -38,8 +39,7 @@ def test_thermal_independent_emits_relaxation_and_absorption_per_device():
     terms = _terms(chip.baths[0], chip)
     # 2 devices x (relaxation + absorption) at finite T.
     assert len(terms) == 4
-    assert terms[0][0].shape == (3, 3)
-    assert terms[0][2] == (0,)
+    assert terms[0].operator.matrix().shape == (12, 12)
 
 
 def test_collective_decay_is_a_single_summed_operator():
@@ -49,7 +49,7 @@ def test_collective_decay_is_a_single_summed_operator():
     chip = Chip([q0, q1], baths=[Bath("collective_decay", rate=0.01)])
     terms = _terms(chip.baths[0], chip)
     assert len(terms) == 1  # ONE summed jump operator, not two independent ones.
-    assert terms[0][1] == 0.01
+    assert float(materialize_expr(terms[0].rate, chip.backend)) == 0.01
 
 
 def test_correlated_thermal_bath_raises_not_implemented():
@@ -97,13 +97,6 @@ def test_bath_allows_a_traced_negative_looking_temperature_or_rate():
     jax.jit(build)(-5.0)  # would raise ValueError under jit if the check forced concretization
 
 
-def test_bath_zero_temperature_thermal_occupation_is_zero():
-    """A concrete T=0 bath's thermal occupation is exactly 0, with no division-by-zero crash."""
-    bath = Bath("thermal", temperature=0.0, rate=1e-3)
-    n_bar = bath._bose(5.0, np)
-    assert float(n_bar) == 0.0
-
-
 def test_bath_zero_temperature_has_relaxation_rate_only():
     """A concrete T=0 thermal bath has a nonzero emission rate and zero absorption rate."""
     from quchip.declarative.expr import materialize_expr
@@ -111,10 +104,10 @@ def test_bath_zero_temperature_has_relaxation_rate_only():
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
     chip = Chip([q], baths=[Bath("thermal", temperature=0.0, rate=1e-3)])
     relax, absorb = _terms(chip.baths[0], chip)
-    relax_array = chip.backend.to_array(materialize_expr(relax[0], chip.backend))
+    relax_array = chip.backend.to_array(materialize_expr(relax.operator, chip.backend))
     assert np.linalg.norm(relax_array) > 0.0
-    assert float(relax[1]) == pytest.approx(1e-3)
-    assert float(absorb[1]) == 0.0
+    assert float(materialize_expr(relax.rate, chip.backend)) == pytest.approx(1e-3)
+    assert float(materialize_expr(absorb.rate, chip.backend)) == 0.0
 
 
 def test_baths_flow_into_collected_c_ops():
@@ -122,7 +115,7 @@ def test_baths_flow_into_collected_c_ops():
     from quchip.engine import build_problem
 
     class CallableBath(Bath):
-        def collapse_contributions(self, chip, bases=None):
+        def dissipation(self, chip, bases=None):
             del bases
 
             def lowering(rate):
@@ -132,7 +125,13 @@ def test_baths_flow_into_collected_c_ops():
             def decay_rate(rate):
                 return rate
 
-            return [(lowering, decay_rate, (0,), "callable_decay")]
+            return (
+                CollapseChannel(
+                    lowering,
+                    decay_rate,
+                    "callable_decay",
+                ),
+            )
 
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=2, label="q")
     no_bath = Chip([q])

@@ -2,15 +2,15 @@ r"""A frozen energy-basis device for third-party models without a quchip recipe.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Literal
+from typing import Any, Literal
 
 import jax.numpy as jnp
 import numpy as np
 
 from quchip.declarative.expr import PhysicsExpr
+from quchip.declarative.dissipation import CollapseChannel
 from quchip.devices.base import (
     BaseDevice,
-    NoiseChannel,
     _energy_dephasing_channel,
     _matrix_element_emission_channel,
 )
@@ -50,15 +50,6 @@ class EigenbasisDevice(BaseDevice):
 
     _type_prefix = "eigenbasis"
     tunable_param_names = ()
-    _noise_channels: ClassVar[tuple[NoiseChannel, ...]] = (
-        NoiseChannel(
-            "matrix_element_emission",
-            ("T1", "thermal_population"),
-            _matrix_element_emission_channel,
-        ),
-        NoiseChannel("pure_dephasing", ("T2",), _energy_dephasing_channel),
-    )
-
     def __init__(
         self,
         energies: Any,
@@ -110,6 +101,13 @@ class EigenbasisDevice(BaseDevice):
         self.coupling_channel = coupling_channel
         self.collapse_rate_threshold = collapse_rate_threshold
         super().__init__(levels=dimension, label=label, **noise)
+
+    def dissipation(self, op: Any, p: Any) -> tuple[CollapseChannel, ...]:
+        del op
+        return tuple(
+            _matrix_element_emission_channel(self, p)
+            + _energy_dephasing_channel(self, p)
+        )
 
     def unresolved_hamiltonian(self) -> PhysicsExpr:
         """Return the frozen source spectrum as the authored Hamiltonian."""

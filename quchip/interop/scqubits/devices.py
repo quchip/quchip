@@ -79,7 +79,7 @@ class TransmonMapping(ModelMapping):
             levels=levels or obj.truncated_dim,
             num_basis=2 * obj.ncut + 1,
             basis="eigen",
-            label=label or getattr(obj, "id_str", None),
+            label=cast(str, label or getattr(obj, "id_str", None)),
             coupling_channel=coupling_channel,
             **noise_kwargs,
         )
@@ -134,7 +134,7 @@ class TunableTransmonMapping(ModelMapping):
             levels=levels or obj.truncated_dim,
             num_basis=2 * obj.ncut + 1,
             basis="eigen",
-            label=label or getattr(obj, "id_str", None),
+            label=cast(str, label or getattr(obj, "id_str", None)),
             coupling_channel=coupling_channel,
             **noise_kwargs,
         )
@@ -175,7 +175,7 @@ class FluxoniumMapping(ModelMapping):
             phi_ext=obj.flux,
             levels=levels or obj.truncated_dim,
             basis="eigen",
-            label=label or getattr(obj, "id_str", None),
+            label=cast(str, label or getattr(obj, "id_str", None)),
             **noise_kwargs,
         )
 
@@ -211,7 +211,7 @@ class OscillatorMapping(ModelMapping):
         return Resonator(
             freq=obj.E_osc,
             levels=levels or obj.truncated_dim,
-            label=label or getattr(obj, "id_str", None),
+            label=cast(str, label or getattr(obj, "id_str", None)),
             **noise_kwargs,
         )
 
@@ -249,7 +249,7 @@ class KerrOscillatorMapping(ModelMapping):
             freq=obj.E_osc,
             kerr=obj.K,
             levels=levels or obj.truncated_dim,
-            label=label or getattr(obj, "id_str", None),
+            label=cast(str, label or getattr(obj, "id_str", None)),
             **noise_kwargs,
         )
 
@@ -272,7 +272,7 @@ class GenericQubitMapping(ModelMapping):
             freq=obj.E,
             anharmonicity=0.0,
             levels=levels or 2,
-            label=label or getattr(obj, "id_str", None),
+            label=cast(str, label or getattr(obj, "id_str", None)),
             **noise_kwargs,
         )
 

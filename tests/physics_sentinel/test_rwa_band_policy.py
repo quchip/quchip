@@ -2,59 +2,59 @@
 
 from __future__ import annotations
 
+from quchip.approximations import RWA, Exact
+
 import numpy as np
+import pytest
 
 from quchip import Capacitive, Chip, Coupling, DuffingTransmon, simulate
 
 
-def _pair(rwa_flag):
+def _pair():
     q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=3, label="q0")
     q1 = DuffingTransmon(freq=5.3, anharmonicity=-0.3, levels=3, label="q1")
-    return q0, q1, Capacitive(q0, q1, g=0.05, rwa=rwa_flag)
+    return q0, q1, Capacitive(q0, q1, g=0.05)
 
 
 def test_rwa_chip_hamiltonian_matches_authored_jc():
     """Structural band filter reproduces the hand-authored beam-splitter form exactly."""
-    q0, q1, cap = _pair(rwa_flag=True)
-    chip = Chip([q0, q1], [cap], frame={q0: 5.0, q1: 5.3}, rwa=True)
+    q0, q1, cap = _pair()
+    chip = Chip([q0, q1], [cap], frame={q0: 5.0, q1: 5.3}, approximation=RWA())
 
     j0 = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=3, label="j0")
     j1 = DuffingTransmon(freq=5.3, anharmonicity=-0.3, levels=3, label="j1")
     jc = Coupling(
-        j0, j1, g=0.05, rwa=False,
+        j0,
+        j1,
+        g=0.05,
         interaction=lambda a, b, bk: (
             bk.tensor(bk.dag(a.lowering_operator()), b.lowering_operator())
             + bk.tensor(a.lowering_operator(), bk.dag(b.lowering_operator()))
         ),
     )
-    chip_jc = Chip([j0, j1], [jc], frame={j0: 5.0, j1: 5.3}, rwa=False)
+    chip_jc = Chip([j0, j1], [jc], frame={j0: 5.0, j1: 5.3}, approximation=Exact())
 
     h = np.asarray(chip.resolve().hamiltonian().matrix(t=0.0))
     h_jc = np.asarray(chip_jc.resolve().hamiltonian().matrix(t=0.0))
     np.testing.assert_allclose(h, h_jc, atol=1e-12)
 
 
-def test_mixed_policy_respects_per_coupling_override():
-    """chip rwa=True + one rwa=False coupling: only the override keeps counter-rotating elements."""
+def test_coupling_cannot_override_chip_approximation():
+    """Approximation belongs to the engine, not to one coupling."""
     q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=2, label="q0")
     q1 = DuffingTransmon(freq=5.3, anharmonicity=-0.3, levels=2, label="q1")
-    q2 = DuffingTransmon(freq=5.6, anharmonicity=-0.3, levels=2, label="q2")
-    cap_rwa = Capacitive(q0, q1, g=0.05)              # inherits chip rwa=True
-    cap_full = Capacitive(q1, q2, g=0.05, rwa=False)  # per-coupling override
-    chip = Chip([q0, q1, q2], [cap_rwa, cap_full], rwa=True)
-    h = np.asarray(chip.resolve().hamiltonian().matrix(t=0.0))
-    # Basis |q0 q1 q2> with q2 fastest: |110> = index 6, |000> = 0, |011> = 3.
-    assert abs(h[0, 6]) < 1e-12   # q0-q1 counter-rotating masked
-    assert abs(h[0, 3]) > 1e-3    # q1-q2 counter-rotating survives the override
+    with pytest.raises(TypeError, match="approximation"):
+        Capacitive(q0, q1, g=0.05, approximation=Exact())
 
 
 def test_shared_scalar_frame_matches_lab_without_rwa():
-    """rwa=False in a shared nonzero frame keeps counter-rotating bands oscillating, matching the lab frame."""
+    """Exact keeps counter-rotating bands consistent across lab and shared frames."""
+
     def run(frame):
         q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=2, label="q0")
         q1 = DuffingTransmon(freq=5.3, anharmonicity=-0.3, levels=2, label="q1")
-        cap = Capacitive(q0, q1, g=0.05, rwa=False)
-        chip = Chip([q0, q1], [cap], frame=frame, rwa=False)
+        cap = Capacitive(q0, q1, g=0.05)
+        chip = Chip([q0, q1], [cap], frame=frame, approximation=Exact())
         tlist = np.linspace(0.0, 25.0, 51)
         result = simulate(
             chip,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from quchip.approximations import Exact
+
 import json
 from typing import Any
 
@@ -25,8 +27,10 @@ from quchip import (
     Square,
 )
 from quchip.chip.coupling_base import BaseCoupling
-from quchip.control.envelopes import BaseEnvelope
+from quchip.control.envelopes import Envelope
 from quchip.devices.base import BaseDevice
+from quchip.extensions import FrequencyModulatedMode, ModulatedCapacitive
+from quchip.engine.ir import DriveOp
 from quchip.utils.labeling import reset_label_counters
 
 
@@ -62,7 +66,7 @@ def _build_chip(frame: str | float | dict[str, float] = "rotating") -> Chip:
         T2=30.0,
     )
     r = Resonator(freq=7.0, levels=5, label="r", quality_factor=1e4)
-    coupling = Capacitive(q, r, g=0.02, rwa=False)
+    coupling = Capacitive(q, r, g=0.02)
 
     readout = ChargeDrive(
         target=r,
@@ -75,7 +79,9 @@ def _build_chip(frame: str | float | dict[str, float] = "rotating") -> Chip:
             Crosstalk(
                 source=readout.label,
                 victim=flux.label,
-                beta=0.15, theta=0.3, delay=2.0,
+                beta=0.15,
+                theta=0.3,
+                delay=2.0,
             ),
         ],
     )
@@ -193,7 +199,7 @@ def test_envelope_round_trip_is_json_safe() -> None:
     """A Gaussian envelope's to_dict/from_dict round trip preserves its parameters."""
     envelope = Gaussian(duration=20.0, sigmas=4.0, amplitude=0.25)
     payload = envelope.to_dict()
-    restored = BaseEnvelope.from_dict(payload)
+    restored = Envelope.from_dict(payload)
 
     json.dumps(payload)
     _assert_json_primitives(payload)
@@ -236,12 +242,31 @@ def test_chip_round_trip_preserves_control_equipment() -> None:
 
     assert restored.control_equipment is not None
     assert len(restored.control_equipment.lines) == 2
-    assert len(restored["r"]["readout"].local_channels(restored["r"])) == 1
+    readout = restored["r"]["readout"]
+    signal = readout.signal(
+        DriveOp(
+            target_label="r",
+            drive_label="readout",
+            envelope=Square(duration=1.0, amplitude=1.0),
+            freq=None,
+        ),
+        restored["r"],
+    )
+    assert readout.hamiltonian(restored["r"], signal).labels == ("r",)
     assert restored.control_equipment.signal_chain
     xt = restored.control_equipment.signal_chain[0]
     assert isinstance(xt, Crosstalk)
     assert xt.source == "readout"
     assert xt.victim == "flux"
+
+
+def test_drive_deserialization_rejects_removed_rwa_field() -> None:
+    q = DuffingTransmon(5.0, -0.2, levels=3, label="q")
+    payload = ChargeDrive(q, label="xy").to_dict()
+    payload["rwa"] = True
+
+    with pytest.raises(TypeError, match="Unsupported serialized fields.*rwa"):
+        ChargeDrive.from_dict(payload, q)
 
 
 def test_chip_round_trip_can_dress_and_simulate() -> None:
@@ -263,3 +288,29 @@ def test_chip_round_trip_can_dress_and_simulate() -> None:
     assert not hasattr(restored, "result")
     assert not hasattr(restored, "sequence")
     assert len(result.times) == 101
+
+
+def test_time_dependent_extension_round_trip_preserves_sampled_hamiltonian() -> None:
+    first = FrequencyModulatedMode(5.0, 0.03, 0.2, levels=2, label="a")
+    second = FrequencyModulatedMode(5.2, 0.02, 0.3, levels=2, label="b")
+    coupling = ModulatedCapacitive(
+        first,
+        second,
+        static_strength=0.01,
+        modulation_amplitude=0.005,
+        modulation_frequency=0.1,
+        label="mc",
+    )
+    chip = Chip([first, second], [coupling], frame="lab", approximation=Exact())
+
+    restored = Chip.from_dict(chip.to_dict())
+
+    assert isinstance(restored.devices[0], FrequencyModulatedMode)
+    assert isinstance(restored.couplings[0], ModulatedCapacitive)
+    assert restored.couplings[0].device_a_label == "a"
+    assert restored.couplings[0].device_b_label == "b"
+    np.testing.assert_allclose(
+        restored.hamiltonian().matrix(t=0.37),
+        chip.hamiltonian().matrix(t=0.37),
+        atol=1e-12,
+    )

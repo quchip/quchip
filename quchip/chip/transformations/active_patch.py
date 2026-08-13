@@ -71,10 +71,12 @@ def graph_distances(adjacency: dict[str, set[str]], sources: set[str]) -> dict[s
 
 def _line_targets(chip: "Chip", line: Any) -> tuple[str, ...]:
     """The device label(s) a control line's fate is tied to (one for a device line, two for an edge/pump line)."""
+    from quchip.control.drive import CouplingDrive
+
     target = line.target_label
     if target is None:
         return ()
-    if getattr(line, "target_kind", "device") == "edge":
+    if isinstance(line, CouplingDrive):
         coupling = chip.coupling_map[target]
         return (coupling.device_a_label, coupling.device_b_label)
     return (target,)

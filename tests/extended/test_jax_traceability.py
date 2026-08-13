@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from quchip.approximations import RWA
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,35 +12,35 @@ import pytest
 from quchip import Capacitive, analyze_cr_susceptibility
 from quchip.backend import _backend_context, SolverResult
 from quchip.chip.chip import Chip, DressedResult
-from quchip.control import ChargeDrive, ControlEquipment, DriveModulation
-from quchip.control.signal import Crosstalk
+from quchip.control import ChargeDrive, ControlEquipment
+from quchip.control.signal import AnalyticSignal, Crosstalk
 from quchip.control.envelopes import Gaussian, Square
 from quchip.control.sequence import QuantumSequence
 from quchip.devices.resonator import Resonator
 from quchip.devices.transmon.duffing import DuffingTransmon
 from quchip.engine.bands import canonical_to_dense_array, decompose_bands, decompose_two_body_canonical_bands
 from quchip.engine.ir import CanonicalOperator
-from quchip.engine.stage1_frames import resolve_frame
+from quchip.engine.frames import resolve_frame
 from quchip.results.results import SimulationResult
 
 
-def test_gaussian_waveform_accepts_jax_array_module() -> None:
-    """Gaussian.waveform should accept ``jax.numpy`` explicitly."""
+def test_gaussian_value_preserves_jax_arrays() -> None:
+    """Gaussian.value keeps JAX inputs on the JAX path."""
     envelope = Gaussian(duration=20.0, amplitude=0.8)
     t = jnp.linspace(0.0, 20.0, 64)
-    waveform = envelope.waveform(t, xp=jnp)
+    waveform = envelope.value(t)
     assert isinstance(waveform, jax.Array)
 
 
-def test_drive_local_channels_with_jax_backend() -> None:
-    """ChargeDrive.local_channels should return channels even when JAX is available."""
+def test_drive_channel_with_jax_backend() -> None:
+    """A drive normalizes its channel when JAX is available."""
     from quchip.devices.transmon.duffing import DuffingTransmon
 
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=3, label="q")
     drive = ChargeDrive(target=q)
-    channels = drive.local_channels(q)
-    assert len(channels) == 1
-    assert channels[0].modulation is DriveModulation.SINGLE_TONE
+    from quchip.engine.ir import Constant
+
+    assert drive.hamiltonian(q, AnalyticSignal(Constant(1.0))).labels == ("q",)
 
 
 def test_crosstalk_construction_and_apply() -> None:
@@ -56,7 +58,8 @@ def test_crosstalk_construction_and_apply() -> None:
 
     # apply should inject a leaked signal for the victim key
     from quchip.engine.ir import Constant
-    signals = {(source_drive.label, 0): Constant(1.0 + 0j)}
+
+    signals = {(source_drive.label, 0): AnalyticSignal(Constant(1.0 + 0j))}
     result = edge.apply(signals)
     assert any(k[0] == victim_drive.label for k in result)
 
@@ -64,13 +67,14 @@ def test_crosstalk_construction_and_apply() -> None:
 def test_crosstalk_apply_produces_polar_scale_node() -> None:
     """Crosstalk.apply() wraps leaked signals in PolarScale for JAX traceability."""
     from quchip.engine.ir import Constant, PolarScale
+
     edge = Crosstalk(source="src_drive", victim="vic_drive", beta=0.1, theta=0.2, delay=0.5)
-    signals = {("src_drive", 0): Constant(1.0 + 0j)}
+    signals = {("src_drive", 0): AnalyticSignal(Constant(1.0 + 0j))}
     result = edge.apply(signals)
     victim_signal = result[("vic_drive", 0)]
-    assert isinstance(victim_signal, PolarScale)
-    assert victim_signal.amplitude == 0.1
-    assert victim_signal.theta == 0.2
+    assert isinstance(victim_signal.program, PolarScale)
+    assert victim_signal.program.amplitude == 0.1
+    assert victim_signal.program.theta == 0.2
 
 
 def test_decomposition_helpers_preserve_jax_arrays() -> None:
@@ -115,9 +119,7 @@ def test_canonical_operator_preserves_jax_arrays() -> None:
     from quchip.engine.ir import CanonicalOperator
 
     dense = jnp.asarray(np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.complex128))
-    canonical = CanonicalOperator.from_dense(
-        dense, dims=(2,), basis="fock", subsystem_labels=("q",)
-    )
+    canonical = CanonicalOperator.from_dense(dense, dims=(2,), basis="fock", subsystem_labels=("q",))
 
     assert canonical.layout == "dense"
     assert isinstance(canonical.values, jax.Array)
@@ -317,12 +319,12 @@ def test_cr_susceptibility_supports_jax_grad() -> None:
         chip = Chip(
             [control, target, bus],
             [
-                Capacitive(control, bus, g=0.08, rwa=True),
-                Capacitive(target, bus, g=0.08, rwa=True),
+                Capacitive(control, bus, g=0.08),
+                Capacitive(target, bus, g=0.08),
             ],
             backend="dynamiqs",
             control_equipment=ControlEquipment([drive]),
-            rwa=True,
+            approximation=RWA(),
         )
         result = analyze_cr_susceptibility(chip, control, target)
         return jnp.abs(result.ZX_per_amplitude) ** 2
@@ -393,8 +395,7 @@ def test_quantum_sequence_build_problem_accepts_traced_tlist() -> None:
     pytest.importorskip("dynamiqs")
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=2, label="q")
     drive = ChargeDrive(target=q)
-    chip = Chip([q], frame="rotating", backend="dynamiqs",
-                control_equipment=ControlEquipment(lines=[drive]))
+    chip = Chip([q], frame="rotating", backend="dynamiqs", control_equipment=ControlEquipment(lines=[drive]))
     seq = QuantumSequence(chip)
     seq.schedule(drive, envelope=Square(duration=10.0, amplitude=0.01), freq=5.0)
     initial_state = chip.state(q=0)
@@ -423,10 +424,17 @@ def test_simulate_jits_through_coupled_chip_dense_two_body_embed() -> None:
     def loss(freq):
         q = DuffingTransmon(freq=freq, anharmonicity=-0.3, levels=3, label="q")
         r = Resonator(freq=7.1, levels=3, label="r")
-        chip = Chip([q, r], [Capacitive(q, r, g=0.06, rwa=True)],
-                    frame="rotating", rwa=True, backend="dynamiqs")
+        chip = Chip(
+            [q, r],
+            [Capacitive(q, r, g=0.06)],
+            frame="rotating",
+            approximation=RWA(),
+            backend="dynamiqs",
+        )
         result = simulate(
-            chip, [], jnp.linspace(0.0, 10.0, 8),
+            chip,
+            [],
+            jnp.linspace(0.0, 10.0, 8),
             initial_state=chip.bare_state({q: 1, r: 0}),
             check_truncation=False,
         )
@@ -476,10 +484,17 @@ def test_chip_state_dressed_initial_state_traces_through_simulate() -> None:
     def trace(freq):
         q = DuffingTransmon(freq=freq, anharmonicity=-0.3, levels=3, label="q")
         r = Resonator(freq=7.1, levels=3, label="r")
-        chip = Chip([q, r], [Capacitive(q, r, g=0.06, rwa=True)],
-                    frame="rotating", rwa=True, backend="dynamiqs")
+        chip = Chip(
+            [q, r],
+            [Capacitive(q, r, g=0.06)],
+            frame="rotating",
+            approximation=RWA(),
+            backend="dynamiqs",
+        )
         result = simulate(
-            chip, [], jnp.linspace(0.0, 10.0, 8),
+            chip,
+            [],
+            jnp.linspace(0.0, 10.0, 8),
             initial_state=chip.state({q: 1, r: 0}),
             check_truncation=False,
         )
@@ -512,8 +527,13 @@ def test_default_initial_state_omitted_traces_through_simulate() -> None:
     def loss(freq):
         q = DuffingTransmon(freq=freq, anharmonicity=-0.3, levels=3, label="q")
         r = Resonator(freq=7.1, levels=3, label="r")
-        chip = Chip([q, r], [Capacitive(q, r, g=0.06, rwa=True)],
-                    frame="rotating", rwa=True, backend="dynamiqs")
+        chip = Chip(
+            [q, r],
+            [Capacitive(q, r, g=0.06)],
+            frame="rotating",
+            approximation=RWA(),
+            backend="dynamiqs",
+        )
         result = simulate(chip, [], jnp.linspace(0.0, 10.0, 8), check_truncation=False)
         return result.population_array(q, level=0)[-1]
 
@@ -535,12 +555,10 @@ def test_chip_state_traced_matches_eager_on_dynamiqs() -> None:
     def make(freq):
         q = DuffingTransmon(freq=freq, anharmonicity=-0.3, levels=3, label="q")
         r = Resonator(freq=7.1, levels=3, label="r")
-        return Chip([q, r], [Capacitive(q, r, g=0.06, rwa=True)], backend="dynamiqs")
+        return Chip([q, r], [Capacitive(q, r, g=0.06)], backend="dynamiqs")
 
     eager = np.asarray(make(5.02).state(q=1).to_jax()).ravel()
-    traced = np.asarray(
-        jax.jit(lambda f: jnp.asarray(make(f).state(q=1).to_jax()))(jnp.asarray(5.02))
-    ).ravel()
+    traced = np.asarray(jax.jit(lambda f: jnp.asarray(make(f).state(q=1).to_jax()))(jnp.asarray(5.02))).ravel()
     np.testing.assert_allclose(traced, eager, atol=1e-10)
 
 
@@ -564,7 +582,7 @@ def test_resolve_frame_accepts_traced_frame_dict() -> None:
 def test_crosstalk_matrix_grad_flows_end_to_end() -> None:
     """``jax.grad`` flows from a traced beta matrix through ``set_crosstalk_matrix`` to a leaked-signal loss."""
     from quchip.control import ControlEquipment, Crosstalk
-    from quchip.engine.ir import Constant, evaluate_signal_program
+    from quchip.engine.ir import Constant
 
     q1 = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=2, label="q1")
     q2 = DuffingTransmon(freq=5.5, anharmonicity=-0.2, levels=2, label="q2")
@@ -575,7 +593,7 @@ def test_crosstalk_matrix_grad_flows_end_to_end() -> None:
         signal_chain=[Crosstalk(source=d1.label, victim=d2.label, beta=0.1)],
     )
 
-    base_signals = {(d1.label, 0): Constant(1.0 + 0.0j)}
+    base_signals = {(d1.label, 0): AnalyticSignal(Constant(1.0 + 0.0j))}
 
     def loss(beta_flat: jax.Array) -> jax.Array:
         # Rebuild a 2x2 beta from a flat traced vector (diagonals fixed
@@ -590,7 +608,7 @@ def test_crosstalk_matrix_grad_flows_end_to_end() -> None:
 
         built = equip.apply_signal_chain(base_signals)
         leaked = built[(d2.label, 0)]
-        value = evaluate_signal_program(leaked, 0.0, xp=jnp)
+        value = leaked.evaluate(0.0, xp=jnp)
         # Population-like scalar: |amplitude|^2.
         return jnp.real(value * jnp.conj(value))
 

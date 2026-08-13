@@ -66,12 +66,17 @@ python -m pip install .
 ## Declare and inspect a chip
 
 ```python
-from quchip import Capacitive, ChargeDrive, Chip, DuffingTransmon, Resonator
+from quchip import RWA, Capacitive, ChargeDrive, Chip, DuffingTransmon, Resonator
 
 qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.30, levels=6, label="q")
 readout = Resonator(freq=6.8, levels=10, quality_factor=6800, label="r")
-coupling = Capacitive(qubit, readout, g=0.060, rwa=True, label="qr")
-chip = Chip([qubit, readout], couplings=[coupling], frame="rotating", rwa=True)
+coupling = Capacitive(qubit, readout, g=0.060, label="qr")
+chip = Chip(
+    [qubit, readout],
+    couplings=[coupling],
+    frame="rotating",
+    approximation=RWA(),
+)
 qubit_line = ChargeDrive(qubit, label="qubit-charge")
 readout_line = ChargeDrive(readout, label="readout-charge")
 chip.wire(qubit_line, readout_line)
@@ -80,14 +85,14 @@ authored_hamiltonian = chip.unresolved_hamiltonian()
 resolved_hamiltonian = chip.hamiltonian()
 
 f01 = chip.freq(qubit)
-f12 = chip.freq(qubit, when={qubit: 1})
+f12 = chip.transition_frequency(qubit, 1, 2)
 fr0 = chip.freq(readout, when={qubit: 0})
 fr1 = chip.freq(readout, when={qubit: 1})
 ```
 
 The authored Hamiltonian preserves the device and coupling expressions in their
 declared local spaces. The resolved view applies the chip's basis, frame, and
-RWA policies through the same engine path used by simulation. Both remain
+approximation strategy through the same engine path used by simulation. Both remain
 inspectable symbolic expressions; call `.matrix()` when a numerical array is
 needed.
 
@@ -103,6 +108,7 @@ The complete walkthrough is available in the [documentation](https://docs.quchip
 
 - [Hello, drive and readout](https://docs.quchip.org/examples/hello-chip): compare qubit-drive leakage, then resolve pulse-level dispersive readout on the same chip.
 - [Cookbook](https://docs.quchip.org/cookbook): practical conventions and task recipes.
+- [Extension guide](https://docs.quchip.org/extensions): author devices, couplings, time-dependent terms, drives, envelopes, dissipation, local spaces, and interop mappings.
 
 ## Project status and contributing
 

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from quchip.approximations import RWA
+
 import pytest
 
 
 @pytest.fixture(autouse=True)
 def _reset_labels():
     from quchip.utils.labeling import reset_label_counters
+
     reset_label_counters()
     yield
     reset_label_counters()
@@ -33,7 +36,7 @@ def test_jit_and_grad_through_sesolve():
 
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3)
     drive = ChargeDrive(target=q)
-    chip = Chip(devices=[q], frame="rotating", rwa=True)
+    chip = Chip(devices=[q], frame="rotating", approximation=RWA())
     chip.wire(drive)
 
     drive_freq = float(chip.freq(q))
@@ -82,7 +85,7 @@ def test_jit_and_grad_through_driven_mesolve_matches_finite_difference():
 
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=2, T1=200.0, label="q")
     drive = ChargeDrive(target=q, label="drive")
-    chip = Chip([q], frame="rotating", rwa=True)
+    chip = Chip([q], frame="rotating", approximation=RWA())
     chip.wire(drive)
     tlist = jnp.linspace(0.0, 40.0, 61)
     method = dq.method.Tsit5(rtol=1e-9, atol=1e-11)
@@ -112,9 +115,9 @@ def test_jit_and_grad_through_driven_mesolve_matches_finite_difference():
 
     population, autodiff_gradient = jax.jit(jax.value_and_grad(final_excited_population))(amplitude)
     step = 1e-5
-    finite_difference = (
-        final_excited_population(amplitude + step) - final_excited_population(amplitude - step)
-    ) / (2 * step)
+    finite_difference = (final_excited_population(amplitude + step) - final_excited_population(amplitude - step)) / (
+        2 * step
+    )
 
     assert 0.0 <= float(population) <= 1.0
     assert np.isfinite(float(autodiff_gradient))
@@ -147,7 +150,7 @@ def test_jit_and_grad_through_simulate_batch():
 
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3)
     drive = ChargeDrive(target=q)
-    chip = Chip(devices=[q], frame="rotating", rwa=True)
+    chip = Chip(devices=[q], frame="rotating", approximation=RWA())
     chip.wire(drive)
 
     psi0 = jnp.zeros((3, 1), dtype=jnp.complex128).at[0, 0].set(1.0)
@@ -156,8 +159,7 @@ def test_jit_and_grad_through_simulate_batch():
     @jax.jit
     def loss(amp):
         seq = QuantumSequence(chip)
-        h = seq.schedule(drive, envelope=Gaussian(duration=40.0, amplitude=amp, sigmas=4.0),
-                         freq=5.0)
+        h = seq.schedule(drive, envelope=Gaussian(duration=40.0, amplitude=amp, sigmas=4.0), freq=5.0)
         h.vary("amplitude", jnp.array([amp * 0.9, amp, amp * 1.1]))
         batch = seq.simulate_batch(initial_state=psi0, tlist=tlist)
         return jnp.sum(batch.population(q, level=1, reduce="last"))
@@ -188,7 +190,7 @@ def test_jit_and_grad_through_overlap_population_wrappers():
 
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3)
     drive = ChargeDrive(target=q)
-    chip = Chip(devices=[q], frame="rotating", rwa=True)
+    chip = Chip(devices=[q], frame="rotating", approximation=RWA())
     chip.wire(drive)
 
     psi0 = jnp.zeros((3, 1), dtype=jnp.complex128).at[0, 0].set(1.0)
@@ -198,16 +200,14 @@ def test_jit_and_grad_through_overlap_population_wrappers():
     @jax.jit
     def loss_population(amp):
         seq = QuantumSequence(chip)
-        seq.schedule(drive, envelope=Gaussian(duration=40.0, amplitude=amp, sigmas=4.0),
-                     freq=5.0)
+        seq.schedule(drive, envelope=Gaussian(duration=40.0, amplitude=amp, sigmas=4.0), freq=5.0)
         result = seq.simulate(initial_state=psi0, tlist=tlist)
         return result.population(q, level=1)[-1]
 
     @jax.jit
     def loss_overlap(amp):
         seq = QuantumSequence(chip)
-        seq.schedule(drive, envelope=Gaussian(duration=40.0, amplitude=amp, sigmas=4.0),
-                     freq=5.0)
+        seq.schedule(drive, envelope=Gaussian(duration=40.0, amplitude=amp, sigmas=4.0), freq=5.0)
         result = seq.simulate(initial_state=psi0, tlist=tlist)
         return result.overlap(target_ket)[-1]
 
@@ -238,9 +238,8 @@ def test_jit_through_chip_analysis_methods():
         freq_q2, g = params
         q1 = DuffingTransmon(freq=5.0, anharmonicity=-0.30, label="q1")
         q2 = DuffingTransmon(freq=freq_q2, anharmonicity=-0.30, label="q2")
-        chip = Chip([q1, q2], [Capacitive("q1", "q2", g=g)], rwa=True)
-        return chip.freq("q2") ** 2 + chip.static_zz("q1", "q2") ** 2 \
-            + chip.dressed_anharmonicity("q1") ** 2
+        chip = Chip([q1, q2], [Capacitive("q1", "q2", g=g)])
+        return chip.freq("q2") ** 2 + chip.static_zz("q1", "q2") ** 2 + chip.dressed_anharmonicity("q1") ** 2
 
     val = loss(jnp.array([5.1, 0.005]))
     grad = jax.grad(loss)(jnp.array([5.1, 0.005]))
@@ -275,6 +274,7 @@ def test_jit_through_mesolve_with_collapse_op():
     from quchip import (
         ChargeDrive,
         Chip,
+        CollapseChannel,
         DuffingTransmon,
         Gaussian,
         QuantumSequence,
@@ -284,14 +284,14 @@ def test_jit_through_mesolve_with_collapse_op():
     set_default_backend("dynamiqs")
 
     class _LossyChargeDrive(ChargeDrive):
-        def collapse_contributions(self, device):
-            return [(device.lowering_operator(), 0.05**2)]
+        def dissipation(self, device, op, p):
+            return (CollapseChannel(op.a, 0.05**2, "loss"),)
 
     @jax.jit
     def loss(amp):
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
         drv = _LossyChargeDrive(target=q, label="d")
-        chip = Chip(devices=[q], frame="rotating", rwa=True)
+        chip = Chip(devices=[q], frame="rotating", approximation=RWA())
         chip.wire(drv)
         seq = QuantumSequence(chip)
         seq.schedule(drv, envelope=Gaussian(duration=40.0, amplitude=amp, sigmas=4.0), freq=5.0)
@@ -320,7 +320,7 @@ def test_vmap_through_chip_freq_and_static_zz():
     def freq_zz(freq_q2, g):
         q1 = DuffingTransmon(freq=5.0, anharmonicity=-0.30, label="q1")
         q2 = DuffingTransmon(freq=freq_q2, anharmonicity=-0.30, label="q2")
-        chip = Chip([q1, q2], [Capacitive(q1, q2, g=g)], rwa=True)
+        chip = Chip([q1, q2], [Capacitive(q1, q2, g=g)])
         return jnp.stack([chip.freq(q2), chip.static_zz(q1, q2)])
 
     batched = jax.jit(jax.vmap(freq_zz, in_axes=(0, 0)))(
@@ -353,7 +353,7 @@ def test_jit_with_traced_carrier_freq_from_chip():
     def loss(qb_freq):
         q = DuffingTransmon(freq=qb_freq, anharmonicity=-0.30, levels=3, label="q")
         drv = ChargeDrive(target=q, label="d")
-        chip = Chip(devices=[q], frame="rotating", rwa=True)
+        chip = Chip(devices=[q], frame="rotating", approximation=RWA())
         chip.wire(drv)
         seq = QuantumSequence(chip)
         seq.schedule(

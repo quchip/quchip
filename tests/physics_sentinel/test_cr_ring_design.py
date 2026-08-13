@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from quchip.approximations import RWA
+
 import numpy as np
 
 from quchip import (
@@ -31,17 +33,17 @@ def _five_mode_patch():
     spectator_drive = ChargeDrive(spectator, label="d_s")
     target_drive = ChargeDrive(target, label="d_t")
     legs = [
-        Capacitive(spectator, left_bus, g=0.08, rwa=True, label="s_left"),
-        Capacitive(control, left_bus, g=0.08, rwa=True, label="c_left"),
-        Capacitive(control, right_bus, g=0.08, rwa=True, label="c_right"),
-        Capacitive(target, right_bus, g=0.08, rwa=True, label="t_right"),
+        Capacitive(spectator, left_bus, g=0.08, label="s_left"),
+        Capacitive(control, left_bus, g=0.08, label="c_left"),
+        Capacitive(control, right_bus, g=0.08, label="c_right"),
+        Capacitive(target, right_bus, g=0.08, label="t_right"),
     ]
     chip = Chip(
         [spectator, control, target, left_bus, right_bus],
         legs,
         control_equipment=ControlEquipment([control_drive, spectator_drive, target_drive]),
         frame="rotating",
-        rwa=True,
+        approximation=RWA(),
     )
     return chip, spectator, control, target, left_bus, right_bus, control_drive, legs
 
@@ -51,10 +53,7 @@ def test_cr_patch_is_three_qubits_joined_by_two_independent_buses() -> None:
     chip, spectator, control, target, left_bus, right_bus, _, _ = _five_mode_patch()
 
     assert chip.dims == (3, 3, 3, 3, 3)
-    assert {
-        frozenset((coupling.device_a_label, coupling.device_b_label))
-        for coupling in chip.couplings
-    } == {
+    assert {frozenset((coupling.device_a_label, coupling.device_b_label)) for coupling in chip.couplings} == {
         frozenset((spectator.label, left_bus.label)),
         frozenset((control.label, left_bus.label)),
         frozenset((control.label, right_bus.label)),

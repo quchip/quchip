@@ -132,8 +132,8 @@ def _collect_window_bounds(signal: Any, shift: float = 0.0) -> list[tuple[float,
     A ``Window``'s own ``start``/``stop`` are local to its child's time
     frame; an enclosing ``Shift`` translates that frame by ``delta_t``
     before the window's mask applies (``Shift`` wraps ``Window`` in the
-    scheduled-drive AST — see
-    :func:`~quchip.engine.stage2_assembly._spec_to_raw_signal`), so *shift*
+    scheduled signal built by
+    :meth:`~quchip.control.signal.AnalyticSignal.from_pulse`), so *shift*
     accumulates while descending through any ``Shift`` ancestor. A subtree
     whose window bounds or enclosing shift are JAX tracers is skipped —
     concrete placement is required to add refinement samples, and a QuTiP

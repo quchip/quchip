@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import quchip
 
 from quchip.chip.chip import Chip
 from quchip.control import ChargeDrive, ControlEquipment, Crosstalk, CrosstalkMatrix
 from quchip.control.envelopes import Square
 from quchip.devices.transmon.duffing import DuffingTransmon
 from quchip.engine import simulate
-from quchip.engine.ir import Constant, DriveOp
+from quchip.engine.ir import Carrier, Constant, DriveOp, Multiply
+from quchip.utils.constants import TWO_PI
 
 
 def _build_two_drive_chip(beta_xt: float = 0.1):
@@ -56,14 +58,34 @@ def test_reciprocal_matrix_edges_do_not_recursively_leak() -> None:
     equipment.set_crosstalk_matrix(np.array([[1.0, 0.16], [0.14, 1.0]]))
 
     transformed = equipment.apply_signal_chain({
-        ("d1", 0): Constant(1.0),
-        ("d2", 1): Constant(2.0),
+        ("d1", 0): quchip.control.AnalyticSignal(Constant(1.0)),
+        ("d2", 1): quchip.control.AnalyticSignal(Constant(2.0)),
     })
 
     assert transformed[("d1", 0)].evaluate(0.0, xp=np) == pytest.approx(1.0)
     assert transformed[("d2", 1)].evaluate(0.0, xp=np) == pytest.approx(2.0)
     assert transformed[("d2", 0)].evaluate(0.0, xp=np) == pytest.approx(0.14)
     assert transformed[("d1", 1)].evaluate(0.0, xp=np) == pytest.approx(0.32)
+
+
+def test_crosstalk_delay_transforms_the_complete_carrier_signal() -> None:
+    source = quchip.control.AnalyticSignal(
+        program=Multiply((Constant(0.3 + 0.2j), Carrier(TWO_PI * 4.7, sign=-1))),
+        carrier=4.7,
+    )
+    transform = Crosstalk(
+        source="source",
+        victim="victim",
+        beta=0.12,
+        theta=0.31,
+        delay=0.08,
+    )
+
+    delivered = transform.apply({("source", 0): source})[("victim", 0)]
+    time = 0.43
+
+    expected = 0.12 * np.exp(1j * 0.31) * source.evaluate(time - 0.08, xp=np)
+    assert delivered.evaluate(time, xp=np) == pytest.approx(expected)
 
 
 def test_set_crosstalk_matrix_installs_one_signal_transform() -> None:

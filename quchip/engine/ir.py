@@ -1,4 +1,4 @@
-"""IR types flowing between engine stages.
+"""IR types shared by engine responsibilities and backends.
 
 This module is the *contract* between the engine and its backends. It
 defines four families of immutable, JAX-pytree-friendly types:
@@ -17,14 +17,14 @@ defines four families of immutable, JAX-pytree-friendly types:
    to and from this format.
 
 3. Hamiltonian terms — :class:`StaticTerm`, :class:`DynamicTerm`, and
-   the per-stage container :class:`EngineResult`.
+   their :class:`EngineResult` container.
 
 4. Solve requests — :class:`SolveProblem` and :class:`SolveBatch`, the
    frozen hand-offs to backends. ``backend`` selection is chip-owned
    and is explicitly forbidden from ``options``.
 
-A note on 2π: every operator here has already been scaled by 2π at the
-stage-2 boundary. Carrier frequencies are stored in angular units
+A note on 2π: every operator here has already been scaled by 2π during
+engine assembly. Carrier frequencies are stored in angular units
 (rad/ns). IR consumers (backends, analyses) must not re-apply 2π.
 """
 
@@ -46,7 +46,8 @@ from quchip.utils.jax_utils import (
 from quchip.utils.constants import TWO_PI
 
 if TYPE_CHECKING:
-    from quchip.control.envelopes import BaseEnvelope
+    from quchip.control.envelopes import Envelope
+    from quchip.declarative.dynamics import TimeCoefficient
     from quchip.declarative.expr import PhysicsExpr
     from quchip.devices.base import BaseDevice
 
@@ -177,17 +178,27 @@ class Constant(SignalNode):
 
 @dataclass(frozen=True)
 class EnvelopeRef(SignalNode):
-    """Reference to a pulse envelope; its ``waveform(t)`` is called at evaluation time."""
+    """Reference to a pulse envelope evaluated at local time."""
 
-    envelope: "BaseEnvelope"
+    envelope: "Envelope"
 
     def evaluate(self, t: Any, *, xp: Any) -> Any:
-        """Return the referenced envelope's ``waveform(t)`` (ns) as complex."""
-        return xp.asarray(self.envelope.waveform(xp.asarray(t, dtype=float), xp=xp), dtype=complex)
+        """Return the referenced envelope's complex ``value(t)``."""
+        return xp.asarray(self.envelope.value(xp.asarray(t, dtype=float)), dtype=complex)
 
     def bands(self) -> tuple[CarrierBand, ...]:
         """Return the single zero-frequency band carrying this envelope."""
         return (CarrierBand(envelope=self, freq=0.0),)
+
+
+@dataclass(frozen=True)
+class CoefficientRef(SignalNode):
+    """Internal signal leaf backed by a public component-owned coefficient."""
+
+    coefficient: "TimeCoefficient"
+
+    def evaluate(self, t: Any, *, xp: Any) -> Any:
+        return xp.asarray(self.coefficient.value(t))
 
 
 @dataclass(frozen=True)
@@ -368,6 +379,51 @@ class RealPart(SignalNode):
 
 
 @dataclass(frozen=True)
+class ImagPart(SignalNode):
+    """Imaginary quadrature of a complex analytic signal."""
+
+    child: SignalNode
+
+    _signal_child_fields: ClassVar[tuple[str, ...]] = ("child",)
+
+    def evaluate(self, t: Any, *, xp: Any) -> Any:
+        """Return the imaginary part of the child evaluated at *t* (ns)."""
+        return xp.imag(self.child.evaluate(t, xp=xp))
+
+    def bands(self) -> tuple[CarrierBand, ...]:
+        """Split bands using ``Im z = (z - z_bar) / (2i)``."""
+        bands: list[CarrierBand] = []
+        for band in self.child.bands():
+            bands.append(CarrierBand(Scale(band.envelope, -0.5j), band.freq))
+            bands.append(
+                CarrierBand(Scale(Conjugate(band.envelope), 0.5j), -band.freq)
+            )
+        return tuple(bands)
+
+
+@dataclass(frozen=True)
+class SignalPower(SignalNode):
+    """Pointwise power of a scalar signal program."""
+
+    child: SignalNode
+    exponent: Any
+
+    _signal_child_fields: ClassVar[tuple[str, ...]] = ("child",)
+
+    def evaluate(self, t: Any, *, xp: Any) -> Any:
+        return self.child.evaluate(t, xp=xp) ** self.exponent
+
+    def bands(self) -> tuple[CarrierBand, ...]:
+        exponent = maybe_concrete_scalar(self.exponent)
+        if exponent is None or int(exponent) != exponent or exponent < 0:
+            raise TypeError("Carrier-band expansion requires a non-negative integer signal power.")
+        result: SignalProgram = Constant(1.0 + 0.0j)
+        for _ in range(int(exponent)):
+            result = Multiply((result, self.child))
+        return result.bands()
+
+
+@dataclass(frozen=True)
 class Carrier(SignalNode):
     """Oscillating carrier ``exp(sign · i · freq · t)``.
 
@@ -416,24 +472,15 @@ jtu.register_pytree_node(
 )
 
 
-def as_scalar_modulation(modulation: Any, *, owner: str) -> ScalarModulation:
-    """Normalize a user-supplied modulation input to a :class:`ScalarModulation`.
+def _as_time_coefficient(value: Any, *, owner: str) -> ScalarModulation:
+    """Lower a public component-owned coefficient to the private engine wrapper."""
+    from quchip.declarative.dynamics import TimeCoefficient
 
-    Accepts a :class:`~quchip.control.envelopes.BaseEnvelope` (wrapped as
-    ``ScalarModulation(EnvelopeRef(env))``) or an existing
-    :class:`ScalarModulation`. Shared by tunable devices and couplings
-    so the coercion rules live in one place.
-    """
-    from quchip.control.envelopes import BaseEnvelope
-
-    if isinstance(modulation, ScalarModulation):
-        return modulation
-    if isinstance(modulation, BaseEnvelope):
-        return ScalarModulation(signal=EnvelopeRef(envelope=modulation))
-    raise TypeError(
-        f"{owner}.modulation must be a BaseEnvelope or ScalarModulation; "
-        f"got {type(modulation).__name__}."
-    )
+    if not isinstance(value, TimeCoefficient):
+        raise TypeError(
+            f"{owner} coefficient must be a TimeCoefficient; got {type(value).__name__}."
+        )
+    return ScalarModulation(signal=value._signal_program())
 
 
 def signal_children(node: Any) -> tuple:
@@ -441,7 +488,7 @@ def signal_children(node: Any) -> tuple:
 
     Dispatches to :meth:`SignalNode.signal_children`; a
     :class:`ScalarModulation` wrapper contributes its ``signal``.
-    :attr:`EnvelopeRef.envelope` is a ``BaseEnvelope``, not a
+    :attr:`EnvelopeRef.envelope` is an ``Envelope``, not a
     ``SignalProgram`` child, and so is *not* returned here.
     """
     if isinstance(node, ScalarModulation):
@@ -857,7 +904,7 @@ class CanonicalOperator:
         """Batching key: value-sensitive, with an automatic tracer-safe fallback.
 
         Two crosstalk-rebuilt operators carrying the same coefficients
-        collapse to the same key so they batch into one slot (stage 4).
+        collapse to the same key so they batch into one solve slot.
         Under ``jax.jit`` the payload is a tracer (possibly hidden inside
         a backend qarray wrapper, e.g. dynamiqs ``SparseDIAQArray``);
         :func:`contains_tracer` detects that and the key falls back to
@@ -914,8 +961,8 @@ TermOrigin: TypeAlias = Literal["device", "coupling", "drive", "crosstalk", "flu
 class StaticTerm:
     """Time-independent Hamiltonian contribution.
 
-    The ``operator`` payload has already been scaled by 2π at the
-    stage-2 boundary; backends must not re-apply it. ``coefficient``
+    The ``operator`` payload has already been scaled by 2π during
+    engine assembly; backends must not re-apply it. ``coefficient``
     multiplies ``operator`` and may be a concrete scalar or a JAX
     tracer (sweeps over static couplings, detunings, etc.). ``origin``
     is purely advisory metadata.
@@ -982,7 +1029,7 @@ class DroppedTerm:
 
     Emitted by physics components (couplings, drives, …) whose local
     Hamiltonian routines discard terms under an approximation such as
-    the rotating-wave approximation. Stage 2 aggregates these records
+    the rotating-wave approximation. Assembly aggregates these records
     into :attr:`EngineResult.dropped_terms` so callers can
     audit what was silently removed — in particular, compare each dropped band's amplitude
     against its oscillation frequency, the smallness ratio that governs
@@ -994,7 +1041,7 @@ class DroppedTerm:
     possibly JAX-traced; they are never formatted or branched on during
     assembly. ``band_weights`` is static
     structure (excitation-change weights, one per mode the operator
-    acts on) that stage 2 uses to resolve ``frequency`` from the frame
+    acts on) that assembly uses to resolve ``frequency`` from the frame
     without the owner knowing frame references.
 
     Parameters
@@ -1017,7 +1064,7 @@ class DroppedTerm:
     frequency : Any | None
         Oscillation frequency of the dropped band in the assembly
         frame, GHz, positive; possibly traced. ``None`` until resolved
-        (stage 2 fills it from the frame and ``band_weights``).
+        (assembly fills it from the frame and ``band_weights``).
     """
 
     source: str
@@ -1030,7 +1077,7 @@ class DroppedTerm:
 
 @dataclass(frozen=True)
 class EngineResult:
-    """Backend-agnostic time-dependent Hamiltonian — the stage-2 / backend contract.
+    """Backend-agnostic time-dependent Hamiltonian passed to backends.
 
     Represents
 
@@ -1059,6 +1106,7 @@ class EngineResult:
     bases: Mapping[str, Any] = field(default_factory=dict)
     authored: Any = None
     resolved_frame: Any = None
+    approximation: Any = None
 
     def _contains_tracer(self) -> bool:
         """Return whether any value-bearing field belongs to a JAX trace.
@@ -1206,12 +1254,12 @@ def _aggregate_batch_metadata(engine_results: list[EngineResult]) -> dict[str, A
 # ── Compiled Sweep Templates ────────────────────────────────────────
 #
 # Pure caches reused across homogeneous drive sweeps: the underlying
-# physics is fully defined by stage 2. A sweep over envelope parameters,
+# physics is fully defined by assembly. A sweep over envelope parameters,
 # drive frequencies, phases, or frame scalars leaves every
 # CanonicalOperator invariant and changes only the signal-program leaves
 # that describe f(t). Produced by
-# stage2_assembly.compile_hamiltonian_template and instantiated per sweep
-# point by stage2_assembly.instantiate_engine_result, so a
+# assembly.compile_hamiltonian_template and instantiated per sweep
+# point by assembly.instantiate_engine_result, so a
 # single JAX ``jit`` trace covers every variant in a homogeneous sweep.
 
 
@@ -1227,11 +1275,11 @@ class HamiltonianTemplate:
       do not depend on drive variants (e.g. band-decomposed couplings),
       already simplified at template-compile time.
     * ``drive_terms`` — pre-embedded, 2π-scaled drive bands
-      (:class:`~quchip.engine.stage2_assembly.CompiledDriveTerm`) ready
+      (:class:`~quchip.engine.assembly.CompiledDriveTerm`) ready
       for per-variant reinstantiation.
     * ``collapse_terms`` — canonical component-owned Lindblad operators.
     * ``reference_drive_ops`` — the structural yardstick used by
-      :func:`~quchip.engine.stage2_assembly.instantiate_engine_result`
+      :func:`~quchip.engine.assembly.instantiate_engine_result`
       to reject drive-ops that change the template's skeleton (device,
       drive, envelope type, or drive type).
 
@@ -1241,17 +1289,18 @@ class HamiltonianTemplate:
     """
 
     resolved_frame: Any  # ResolvedFrame
+    approximation: Any
     dims: tuple[int, ...]
     static_terms: tuple[Any, ...] = ()              # tuple[StaticTerm, ...]
     invariant_dynamic_terms: tuple[Any, ...] = ()   # tuple[DynamicTerm, ...]
-    drive_terms: tuple[Any, ...] = ()               # tuple[stage2.CompiledDriveTerm, ...]
+    drive_terms: tuple[Any, ...] = ()               # tuple[assembly.CompiledDriveTerm, ...]
     reference_drive_ops: tuple[Any, ...] = ()       # tuple[DriveOp, ...]
     dropped_terms: tuple[Any, ...] = ()             # tuple[DroppedTerm, ...]
-    #: SINGLE_TONE weight-0 bands dropped structurally under RWA at compile
-    #: time (:func:`~quchip.engine.stage2_assembly._compile_drive_terms`).
+    #: Single-tone weight-zero bands dropped structurally under RWA during engine assembly.
+    #: time (:func:`~quchip.engine.assembly._compile_drive_terms`).
     #: The drop decision needs no drive frequency; resolving each entry into
     #: a :class:`DroppedTerm` does, so this stays a pointer
-    #: (``tuple[stage2._StructuralDrop, ...]``) until instantiation.
+    #: (``tuple[assembly._StructuralDrop, ...]``) until instantiation.
     weight_zero_drops: tuple[Any, ...] = ()
     #: Advisory spectral-bound hint (ordinary GHz) for the *static* terms.
     #: Computed once at template compile — the static terms are invariant
@@ -1282,7 +1331,7 @@ def _is_scalar_like(value: Any) -> bool:
 
 @dataclass(frozen=True)
 class ResolvedFrame:
-    """Per-device frame information produced by stage 1.
+    """Resolved per-device frame information.
 
     Describes the rotating-frame transformation applied uniformly to
     the chip:
@@ -1291,7 +1340,7 @@ class ResolvedFrame:
       frequency ``ω_frame`` in GHz. The static Hamiltonian gets the
       counter-term ``−Σᵢ ω_frame,ᵢ nᵢ``.
     * ``demod_freqs[label] = reference_freq − ω_frame`` — the
-      demodulation frequency used post-solve by stage 3 to rotate
+      demodulation frequency used post-solve to rotate
       expectations back into the user's control frame.
       ``reference_freq`` is the device attribute (see
       :attr:`~quchip.devices.base.BaseDevice.reference_freq`); it
@@ -1333,7 +1382,7 @@ class SolveProblem:
     ``e_ops`` + their :class:`BandMeta`, the :class:`ResolvedFrame`, and
     solver options. ``chip`` owns backend selection, so ``options`` must
     not contain a ``"backend"`` key (enforced in ``__post_init__``).
-    ``e_ops_meta`` is the metadata stage 3 uses to recombine flattened
+    ``e_ops_meta`` is the metadata observable reconstruction uses to recombine flattened
     band expectations back into dict-keyed observables.
     """
 
@@ -1451,11 +1500,11 @@ class DriveOp:
     The pulse window ``[start_time, start_time + envelope.duration]``
     must overlap the solve ``tlist`` with positive measure — a window
     that only touches a ``tlist`` endpoint contributes no evolution and
-    is rejected (:func:`~quchip.engine.stage4_problem.prepare_solve_problem_context`).
+    is rejected (:func:`~quchip.engine.problem.prepare_solve_problem_context`).
     """
 
     target_label: str
-    envelope: BaseEnvelope
+    envelope: Envelope
     freq: float | None = None
     start_time: float = 0.0
     phase_offset: float = 0.0

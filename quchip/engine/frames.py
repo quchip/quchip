@@ -1,16 +1,16 @@
-"""Stage 1: resolve a :data:`FrameSpec` into a :class:`ResolvedFrame`.
+"""Resolve a :data:`FrameSpec` into a :class:`ResolvedFrame`.
 
-This stage is purely combinatorial: it decides which rotating frame to
-work in.
+This module is purely combinatorial: it decides which rotating frame to work
+in.
 
 Supported specs
 ---------------
-* ``"lab"`` — every reference frequency is zero; stage 2 emits the
+* ``"lab"`` — every reference frequency is zero; assembly emits the
   bare chip Hamiltonian unchanged.
 * ``"rotating"`` — each device's reference is its
   :attr:`~quchip.devices.base.BaseDevice.reference_freq` (the device's
   readout/LO reference, defaulting to the dressed drive frequency
-  ``ω_d``), so stage 2 builds
+  ``ω_d``), so assembly builds
 
   .. math::
       H(t) \\;=\\; H_0 - \\sum_i \\omega_{\\text{ref},i} n_i
@@ -35,9 +35,9 @@ frame (``result.states`` and ``result.expect`` agree). Transverse observables
 envelope; only an explicitly overridden non-reference integration frame
 leaves ``result.states`` in that other frame.
 
-Whether a coupling band folds into ``H₀`` is decided per band in stage
-2, from the concreteness of its frame carrier ``Δa·ω_a + Δb·ω_b`` — not
-here (see :func:`~quchip.engine.stage2_assembly._collect_coupling_terms`).
+Whether a coupling band folds into ``H₀`` is decided per band during
+assembly, from the concreteness of its frame carrier ``Δa·ω_a + Δb·ω_b`` — not
+here (see :func:`~quchip.engine.assembly._collect_coupling_terms`).
 """
 
 from __future__ import annotations

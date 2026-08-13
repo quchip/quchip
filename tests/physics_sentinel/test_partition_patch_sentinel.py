@@ -11,6 +11,8 @@ automatic partitioning splits the patch into two independent components.
 
 from __future__ import annotations
 
+from quchip.approximations import RWA
+
 import numpy as np
 
 from quchip import Capacitive, ChargeDrive, Chip, DuffingTransmon, Gaussian, QuantumSequence, Resonator
@@ -36,7 +38,8 @@ def test_patch_plus_partition_reproduces_full_readout_bank():
             Capacitive(r0, bus, g=0.004, label="rb"),
             Capacitive(bus, spec, g=0.004, label="bs"),
         ],
-        frame="rotating", rwa=True,
+        frame="rotating",
+        approximation=RWA(),
     )
     d0 = ChargeDrive(target=q0, label="d0")
     d1 = ChargeDrive(target=q1, label="d1")
@@ -54,7 +57,7 @@ def test_patch_plus_partition_reproduces_full_readout_bank():
     assert patch.eliminated_labels[0] == "spec"  # farthest first
 
     # e_ops takes built operators (chip.e_ops(...)), not raw name strings —
-    # decompose_eops (engine/stage3_observables.py) expects the former, and
+    # decompose_eops (engine/observables.py) expects the former, and
     # the patch chip has its own local Hilbert space so the operators must
     # be built against patch.chip, not chip.
     reduced = patch.simulate(tlist=tlist, e_ops=patch.chip.e_ops(q0="Z", q1="Z"))

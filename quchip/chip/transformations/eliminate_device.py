@@ -30,7 +30,7 @@ import jax.numpy as jnp
 
 from quchip.backend import _backend_context
 from quchip.chip.couplings import Capacitive, TunableCapacitive
-from quchip.chip.rwa import apply_rwa_mask
+from quchip.engine.approximations import apply_operator_band_filter
 from quchip.chip.sw import (
     bare_hamiltonian,
     mode_blocks,
@@ -76,16 +76,12 @@ def mode_decay_rate(mode: Any) -> tuple[Any, bool]:
 def _exchange_matrix_element(coupling: Any, row_label: str, chip: "Chip") -> Any:
     """One-excitation exchange matrix element of *coupling* as :meth:`Chip.hamiltonian` assembles it.
 
-    Reads ``<1_row,0_other|H_int|0_row,1_other>`` off the *same* interaction form
-    :meth:`~quchip.chip.chip.Chip.hamiltonian` embeds for this coupling: the full
-    :meth:`~quchip.chip.coupling_base.BaseCoupling.interaction_hamiltonian` when the chip does not
-    resolve RWA for it, or the :func:`~quchip.chip.rwa.apply_rwa_mask`-filtered interaction
-    (respecting the coupling's own
-    :meth:`~quchip.chip.coupling_base.BaseCoupling.rwa_keeps_band`) when it does. A coupling whose
-    resolved RWA rejects the exchange band therefore correctly reports zero here, matching what
-    ``total_coupling`` — read off the assembled, already-RWA-resolved bare Hamiltonian — actually
-    contains for it; reading the unconditional full interaction would silently subtract exchange
-    that was never in ``total_coupling`` to begin with. Row/column convention matches
+    Reads ``<1_row,0_other|H_int|0_row,1_other>`` from the interaction form
+    :meth:`~quchip.chip.chip.Chip.hamiltonian` embeds. Under
+    :class:`~quchip.approximations.RWA`, the engine applies the same
+    operator-band filter used for chip assembly. A rejected exchange band
+    therefore contributes zero here and is not subtracted from
+    ``total_coupling``. Row/column convention matches
     :func:`~quchip.chip.sw.extract_pair_parameters`'s ``("J", a, b)`` P-block entry. This is the
     physically correct measure of a coupling's exchange contribution — not its declared
     :attr:`~quchip.chip.coupling_base.BaseCoupling.coupling_strength`, which need not equal this
@@ -95,12 +91,14 @@ def _exchange_matrix_element(coupling: Any, row_label: str, chip: "Chip") -> Any
     backend = chip.backend
     with _backend_context(backend):
         h_int = materialize_expr(coupling.interaction_hamiltonian(), backend)
-        if chip.resolve_rwa(coupling):
-            h_int = apply_rwa_mask(
+        if chip.approximation.filters_terms:
+            h_int = apply_operator_band_filter(
                 h_int,
                 dims=(coupling.device_a.levels, coupling.device_b.levels),
                 labels=(coupling.device_a_label, coupling.device_b_label),
-                keeps_band=coupling.rwa_keeps_band,
+                keeps_band=lambda delta_a, delta_b: chip.approximation.keeps_operator_band(
+                    (delta_a, delta_b)
+                ),
                 backend=backend,
             )
             if h_int is None:
@@ -161,8 +159,10 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
     mode_device: Any = chip[mode_label]
 
     def classify(line: Any) -> StrandedLine | None:
+        from quchip.control.drive import CouplingDrive
+
         rule_target: Any
-        if line.target_kind == "edge":
+        if isinstance(line, CouplingDrive):
             edge_coupling: Any = line._target
             doomed = mode_label in (edge_coupling.device_a_label, edge_coupling.device_b_label)
             rule_target = edge_coupling
@@ -192,11 +192,11 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
     effective_params: dict[str, Any] = LabelKeyedDict()
     validity: dict[str, Any] = LabelKeyedDict()
     # bare_hamiltonian() assembles the engine-consumed Hamiltonian at the
-    # chip's resolved RWA policy, so counter-rotating terms are actually
+    # chip's approximation strategy, so filtered terms are actually
     # dropped only when at least one touching coupling resolves RWA True —
     # never claim the drop unconditionally.
     dropped_items = ["ring-up transients"]
-    if any(chip.resolve_rwa(c) for _, c in survivors):
+    if chip.approximation.filters_terms and survivors:
         dropped_items.insert(0, "counter-rotating terms")
     notes = [
         f"Adiabatic elimination (method='{method}'): steady-state (vacuum) reduction.",
@@ -283,7 +283,7 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
         t1 = dev.T1
         has_intrinsic_t1 = t1 is not None
         if has_purcell and dev.thermal_population is not None:
-            # The thermal-emission NoiseChannel scales both the downward
+            # The thermal-emission channel scales both the downward
             # ((n̄+1)/T1) and upward (n̄/T1) rates off the same T1
             # coefficient, but the inherited Purcell channel is pure
             # lowering (the eliminated mode's own decay, folded through a
@@ -291,10 +291,8 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
             # 1/T1 by purcell_rate would therefore inflate the downward rate
             # by (n̄+1)·purcell_rate *and* invent an upward absorption
             # channel of n̄·purcell_rate with no physical basis. No device
-            # API declares an independent pure-lowering collapse channel
-            # (BaseDevice._noise_channels is class-level; per-instance
-            # extension is rejected — see BaseDevice.__setattr__) to carry
-            # this rate separately, so fail fast rather than mis-model it.
+            # This reduction does not synthesize an independent device field
+            # for the pure-lowering rate, so fail fast rather than mis-model it.
             raise NotImplementedError(
                 f"Purcell fold onto survivor '{survivor_label}' would scale the shared T1 "
                 f"coefficient, but '{survivor_label}' also carries thermal_population: the pure "
@@ -380,7 +378,7 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
             # extraction reads), at whatever RWA the chip actually resolves
             # for it — so every edge's contribution here is read the same
             # way, through the resolved-RWA interaction, not the raw full
-            # one (a coupling whose resolved RWA rejects the exchange band
+            # one (a coupling whose approximation rejects the exchange band
             # contributes zero to total_coupling and must contribute zero
             # here too). "others_total" is what every edge *other than* the
             # fold target already carries; the fold target (or, with no
@@ -404,12 +402,12 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
                 if keep_tunable:
                     replacement = TunableCapacitive(
                         reduced[label_a], reduced[label_b],
-                        g_0=edge_strength, rwa=direct.rwa, label=direct.label,
+                        g_0=edge_strength, label=direct.label,
                     )
                 else:
                     replacement = Capacitive(
                         reduced[label_a], reduced[label_b],
-                        g=edge_strength, rwa=direct.rwa, label=direct.label,
+                        g=edge_strength, label=direct.label,
                     )
                 kept_couplings[kept_couplings.index(direct)] = replacement
                 folded_into = replacement.label

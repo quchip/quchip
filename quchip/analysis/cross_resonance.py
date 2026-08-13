@@ -431,7 +431,7 @@ def analyze_cr_susceptibility(
     candidates = [
         line
         for line in equipment.lines
-        if line.target_kind == "device" and line.device_label == control_device.label
+        if line.device_label == control_device.label
     ]
     if drive is None:
         if len(candidates) != 1:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from quchip.approximations import RWA
+
 import numpy as np
 
 from quchip import (
@@ -15,12 +17,12 @@ from quchip import (
 )
 
 
-def _wire(freq0: float, freq1: float, *, rwa: bool, frame: str):
+def _wire(freq0: float, freq1: float, *, approximation, frame: str):
     q0 = DuffingTransmon(freq=freq0, anharmonicity=-0.25, levels=3, label="q0")
     q1 = DuffingTransmon(freq=freq1, anharmonicity=-0.24, levels=3, label="q1")
     tc = TunableCapacitive(q0, q1, g_0=0.0, label="tc")
     pump = ParametricDrive(tc, label="pump")
-    chip = Chip([q0, q1], couplings=[tc], frame=frame, rwa=rwa)
+    chip = Chip([q0, q1], couplings=[tc], frame=frame, approximation=approximation)
     chip.connect(ControlEquipment([pump]))
     return chip, q0, q1, tc
 
@@ -31,7 +33,7 @@ def test_baseband_pump_drives_full_exchange_swap():
     # |10> <-> |01> swaps fully with period 1/(2A); at t = 1/(4A) the transfer is complete.
     A = 0.005
     t_swap = 1.0 / (4.0 * A)  # 50 ns
-    chip, q0, q1, tc = _wire(5.0, 5.0, rwa=True, frame="rotating")
+    chip, q0, q1, tc = _wire(5.0, 5.0, approximation=RWA(), frame="rotating")
     seq = QuantumSequence(chip)
     seq.pump(tc, envelope=Square(duration=t_swap, amplitude=A))
     result = seq.simulate(
@@ -50,7 +52,7 @@ def test_parametric_resonance_activates_detuned_exchange():
     A = 0.01
     j_eff = A / 2.0
     t_swap = 1.0 / (4.0 * j_eff)  # 50 ns
-    chip, q0, q1, tc = _wire(5.0, 5.2, rwa=True, frame="rotating")
+    chip, q0, q1, tc = _wire(5.0, 5.2, approximation=RWA(), frame="rotating")
     seq = QuantumSequence(chip)
     seq.pump(tc, envelope=Square(duration=t_swap, amplitude=A), freq=0.2)
     result = seq.simulate(
@@ -66,7 +68,7 @@ def test_parametric_resonance_activates_detuned_exchange():
 def test_pump_amplitude_batch_axis_sweeps():
     """Batched pump-amplitude sweeps reach full transfer at A and partial transfer at half A."""
     A = 0.005
-    chip, q0, q1, tc = _wire(5.0, 5.0, rwa=True, frame="rotating")
+    chip, q0, q1, tc = _wire(5.0, 5.0, approximation=RWA(), frame="rotating")
     seq = QuantumSequence(chip)
     handle = seq.pump(tc, envelope=Square(duration=50.0, amplitude=A))
     batch = seq.simulate_batch(

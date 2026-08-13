@@ -145,8 +145,8 @@ def test_eliminate_bridge_preserves_non_foldable_direct_edge_without_double_coun
     assert complex(h[row, col]).real == pytest.approx(direct_j + j_mediated_expected, rel=1e-6)
 
 
-def test_eliminate_bridge_direct_edge_whose_rwa_rejects_exchange_contributes_nothing():
-    """A direct edge whose resolved RWA rejects the exchange band is excluded from the fold's accounting."""
+def test_eliminate_bridge_direct_exchange_is_counted_once():
+    """An authored direct exchange edge contributes once to the reduced fold."""
     import warnings
 
     from quchip.chip.sw import bare_hamiltonian, bare_index
@@ -154,16 +154,13 @@ def test_eliminate_bridge_direct_edge_whose_rwa_rejects_exchange_contributes_not
     from quchip.declarative.models import CouplingModel
     from quchip.declarative.parameters import Scalar, parameter
 
-    class RwaRejectsExchange(CouplingModel):
-        """Exchange-only interaction whose RWA policy rejects its own (only) band."""
+    class DirectExchange(CouplingModel):
+        """Exchange-only authored interaction."""
 
         j: Scalar = parameter(unit="GHz")
 
         def interaction(self, a, b, p):
             return p.j * (a.adag * b.a + a.a * b.adag)
-
-        def rwa_keeps_band(self, delta_a, delta_b):
-            return False
 
     q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=2, label="q0")
     q1 = DuffingTransmon(freq=5.1, anharmonicity=-0.25, levels=2, label="q1")
@@ -173,13 +170,11 @@ def test_eliminate_bridge_direct_edge_whose_rwa_rejects_exchange_contributes_not
         couplings=[
             Capacitive(q0, bus, g=0.05, label="leg0"),
             Capacitive(q1, bus, g=0.05, label="leg1"),
-            RwaRejectsExchange(q0, q1, j=0.01, label="direct"),
+            DirectExchange(q0, q1, j=0.01, label="direct"),
         ],
     )
 
     with warnings.catch_warnings():
-        # "direct" vanishes entirely under the chip's resolved RWA — expected
-        # and irrelevant to what this test checks.
         warnings.simplefilter("ignore", UserWarning)
         res = eliminate(chip, "bus")
         reduced = res.chip
@@ -191,7 +186,7 @@ def test_eliminate_bridge_direct_edge_whose_rwa_rejects_exchange_contributes_not
         h, labels, dims = bare_hamiltonian(reduced)
         row = bare_index(labels, dims, "q0")
         col = bare_index(labels, dims, "q1")
-        assert complex(h[row, col]).real == pytest.approx(j_mediated_expected, rel=1e-6)
+        assert complex(h[row, col]).real == pytest.approx(0.01 + j_mediated_expected, rel=1e-6)
 
 
 def test_eliminate_bridge_fold_target_and_preserved_edge_are_each_counted_exactly_once():

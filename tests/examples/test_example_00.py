@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 import ast
 import json
 import math
@@ -146,9 +147,7 @@ def test_hello_chip_source_encodes_the_locked_two_part_experiment() -> None:
     code = "\n\n".join(cells)
     tree = ast.parse(code)
 
-    declaration_index = next(
-        index for index, cell in enumerate(cells) if "qubit = DuffingTransmon(" in cell
-    )
+    declaration_index = next(index for index, cell in enumerate(cells) if "qubit = DuffingTransmon(" in cell)
     declaration = cells[declaration_index]
     assert 'label="q"' in declaration
     assert 'label="r"' in declaration
@@ -183,12 +182,12 @@ def test_hello_chip_source_encodes_the_locked_two_part_experiment() -> None:
     ]
     assert len(charge_calls) == 2
     assert all(all(keyword.arg != "rwa" for keyword in call.keywords) for call in charge_calls)
-    assert "frame=\"rotating\"" in code
-    assert "rwa=True" in code
-    assert "rwa=False" not in code
+    assert 'frame="rotating"' in code
+    assert "approximation=RWA()" in code
+    assert "approximation=Exact()" not in code
 
     assert "chip.freq(qubit)" in code
-    assert "chip.freq(qubit, when={qubit: 1})" in code
+    assert "chip.transition_frequency(qubit, 1, 2)" in code
     assert code.count("Gaussian(") == 2
     assert "def pi_gaussian(duration" in code
     assert "drive_pulses = tuple(pi_gaussian(duration) for duration in drive_durations)" in code
@@ -210,9 +209,7 @@ def test_hello_chip_source_encodes_the_locked_two_part_experiment() -> None:
     assert "drive_batch.population(qubit, level)" in code
     assert "## Inspect the batch with quchip" in markdown
     assert "## Customize the comparison" in markdown
-    population_plot_cells = [
-        cell.strip() for cell in _markdown_code_cells(markdown) if ".plot_populations(" in cell
-    ]
+    population_plot_cells = [cell.strip() for cell in _markdown_code_cells(markdown) if ".plot_populations(" in cell]
     assert population_plot_cells == [
         "drive_batch[0].plot_populations(trace_out=readout)\nplt.show()",
         "drive_batch[1].plot_populations(trace_out=readout)\nplt.show()",
@@ -368,18 +365,16 @@ def test_hello_chip_pair_executes_and_records_physical_receipts(tmp_path: Path) 
     ]
     assert len(embedded_figures) == 4
     assert sum(bool(cell.get("outputs")) for cell in notebook_code_cells) == 5
-    assert sum(
-        output["output_type"] == "stream"
-        for cell in notebook_code_cells
-        for output in cell.get("outputs", [])
-    ) == 2
+    assert (
+        sum(output["output_type"] == "stream" for cell in notebook_code_cells for output in cell.get("outputs", []))
+        == 2
+    )
     for cell in notebook_code_cells:
         if cell.get("outputs"):
             image_outputs = [
                 output
                 for output in cell["outputs"]
-                if output["output_type"] in {"display_data", "execute_result"}
-                and "image/png" in output.get("data", {})
+                if output["output_type"] in {"display_data", "execute_result"} and "image/png" in output.get("data", {})
             ]
             if image_outputs:
                 assert len(image_outputs) == 1
@@ -507,7 +502,7 @@ def test_hello_chip_is_discoverable_with_durable_cookbook_guidance() -> None:
     cookbook = (ROOT / "docs" / "cookbook.md").read_text(encoding="utf-8")
     contributing = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
 
-    assert "examples/00_hello_chip.md" in readme
+    assert "https://docs.quchip.org/examples/hello-chip" in readme
     assert "docs/images/hello_qubit_drive_leakage.png" in readme
     assert "docs/images/hello_dispersive_readout_iq.png" in readme
     assert "cookbook" in docs_index

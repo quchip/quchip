@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from quchip.approximations import RWA, Exact
+
 import numpy as np
 import numpy.testing as npt
 import pytest
@@ -18,16 +20,16 @@ from quchip import (
 )
 
 
-def _run_readout(*, frame: str, rwa: bool, qubit_level: int) -> tuple[np.ndarray, np.ndarray]:
+def _run_readout(*, frame: str, approximation, qubit_level: int) -> tuple[np.ndarray, np.ndarray]:
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=3, label="q")
     r = Resonator(freq=6.8, levels=6, label="r", quality_factor=1e6)
     readout = ChargeDrive(target=r, label="readout")
     chip = Chip(
         devices=[q, r],
-        couplings=[Capacitive(q, r, g=0.04, rwa=rwa)],
+        couplings=[Capacitive(q, r, g=0.04)],
         control_equipment=ControlEquipment(lines=[readout]),
         frame=frame,
-        rwa=rwa,
+        approximation=approximation,
     )
     chip.dress()
 
@@ -51,12 +53,12 @@ def _run_readout(*, frame: str, rwa: bool, qubit_level: int) -> tuple[np.ndarray
     return tlist, expect
 
 
-@pytest.mark.parametrize("rwa", [True, False], ids=["rwa", "nonrwa"])
+@pytest.mark.parametrize("approximation", [RWA(), Exact()], ids=["rwa", "exact"])
 @pytest.mark.parametrize("frame", ["lab", "rotating"], ids=["lab", "rotating"])
-def test_dispersive_readout_matrix_has_state_dependent_response(frame: str, rwa: bool) -> None:
+def test_dispersive_readout_matrix_has_state_dependent_response(frame: str, approximation) -> None:
     """Dispersive readout response is strong and qubit-state dependent across all frame/RWA configs."""
-    _, response_g = _run_readout(frame=frame, rwa=rwa, qubit_level=0)
-    _, response_e = _run_readout(frame=frame, rwa=rwa, qubit_level=1)
+    _, response_g = _run_readout(frame=frame, approximation=approximation, qubit_level=0)
+    _, response_e = _run_readout(frame=frame, approximation=approximation, qubit_level=1)
 
     final_separation = abs(response_g[-1] - response_e[-1])
     # Measured across all four frame/RWA configs: max|response| ~= 0.785-0.787 (>0.2 keeps a
@@ -68,22 +70,22 @@ def test_dispersive_readout_matrix_has_state_dependent_response(frame: str, rwa:
 
 def test_dispersive_readout_matrix_configs_agree() -> None:
     """Readout state separation agrees across all frame/RWA configs against the rotating+RWA reference."""
-    _, reference_g = _run_readout(frame="rotating", rwa=True, qubit_level=0)
-    _, reference_e = _run_readout(frame="rotating", rwa=True, qubit_level=1)
+    _, reference_g = _run_readout(frame="rotating", approximation=RWA(), qubit_level=0)
+    _, reference_e = _run_readout(frame="rotating", approximation=RWA(), qubit_level=1)
     reference_sep = abs(reference_g[-1] - reference_e[-1])
 
-    for rwa in (True, False):
+    for approximation in (RWA(), Exact()):
         for frame in ("lab", "rotating"):
-            _, response_g = _run_readout(frame=frame, rwa=rwa, qubit_level=0)
-            _, response_e = _run_readout(frame=frame, rwa=rwa, qubit_level=1)
+            _, response_g = _run_readout(frame=frame, approximation=approximation, qubit_level=0)
+            _, response_e = _run_readout(frame=frame, approximation=approximation, qubit_level=1)
             separation = abs(response_g[-1] - response_e[-1])
-            # Measured: the largest cross-config drift is rwa=False vs the rotating/rwa=True
+            # Measured: the largest cross-config drift is approximation=Exact() vs the rotating/approximation=RWA()
             # reference (~3.0% relative, ~1.45e-3 absolute, dominated by the counter-rotating
-            # coupling terms rwa=False retains); rtol=0.15/atol=5e-3 keep >=5x margin over that.
+            # coupling terms approximation=Exact() retains); rtol=0.15/atol=5e-3 keep >=5x margin over that.
             npt.assert_allclose(
                 separation,
                 reference_sep,
                 rtol=0.15,
                 atol=5e-3,
-                err_msg=f"Dispersive readout separation drifted for frame={frame}, rwa={rwa}",
+                err_msg=f"Dispersive readout separation drifted for frame={frame}, {type(approximation).__name__}",
             )

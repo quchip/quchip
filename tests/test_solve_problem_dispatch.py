@@ -22,17 +22,17 @@ from quchip.devices.transmon.duffing import DuffingTransmon
 from quchip.devices.transmon.charge_basis import ChargeBasisTransmon
 from quchip.engine import build_problem, simulate, solve_problem
 from quchip.engine.ir import DriveOp, SolveProblem
+from quchip.declarative import CollapseChannel
 
 
 class _NoisyChargeDrive(ChargeDrive):
-    def collapse_contributions(self, device):
-        return [(device.number_operator(), 0.01)]
+    def dissipation(self, device, op, p):
+        return (CollapseChannel(op.n, 0.01, "dephasing"),)
 
 
 class _NoisyCapacitive(Capacitive):
-    def collapse_contributions(self, chip):
-        _ = chip
-        return [(self.interaction_hamiltonian(), 0.0025)]
+    def dissipation(self, a, b, p):
+        return (CollapseChannel(a.charge * b.charge, 0.0025, "edge_loss"),)
 
 
 class TestBuildSolveProblem:
@@ -59,7 +59,7 @@ class TestBuildSolveProblem:
 
     def test_rotating_problem_resolves_local_system_once(self, monkeypatch: pytest.MonkeyPatch):
         """Dressed frame references and solve assembly share one local resolution."""
-        import quchip.engine.stage2_assembly as assembly
+        import quchip.engine.assembly as assembly
 
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=3, label="q")
         chip = Chip([q], frame="rotating")

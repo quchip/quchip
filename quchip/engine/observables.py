@@ -1,9 +1,9 @@
-"""Stage 3: band-decompose dict-form ``e_ops`` and demodulate expectations post-solve.
+"""Band-decompose dict-form ``e_ops`` and demodulate expectations post-solve.
 
-The simulation is performed in the rotating frame chosen by stage 1;
+The simulation is performed in the resolved rotating frame;
 user-facing observables, however, live in the control frame (where
 matrix elements are labeled by detunings ``Δ = ω_drive − ω_frame``).
-This stage performs the two operations that tie those frames together:
+This module performs the two operations that tie those frames together:
 
 * **Pre-solve (:func:`decompose_eops`):** each user operator is split
   into excitation-change bands ``w = col − row`` (single-mode) or
@@ -18,10 +18,10 @@ This stage performs the two operations that tie those frames together:
   transformation applied to each band — equivalent to moving the
   observable from the simulation frame to the control frame.
 
-Stage 3 reads per-device demodulation frequencies from
+Observable reconstruction reads per-device demodulation frequencies from
 :class:`~quchip.engine.ir.ResolvedFrame` and forms the demodulation
 phase ``exp(i · 2π · ω · w · t)``. This is the inverse of the
-rotating-frame shift that stage 2 applied to the Hamiltonian.
+rotating-frame shift applied to the Hamiltonian during assembly.
 """
 
 from __future__ import annotations

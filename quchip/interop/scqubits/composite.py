@@ -180,16 +180,13 @@ def _coupling_from_term(
     matrix_a = _device_gauge_matrix(subsystems[index_a], op_a, devices[index_a])
     matrix_b = _device_gauge_matrix(subsystems[index_b], op_b, devices[index_b])
 
-    # An scqubits InteractionTerm is a full bilinear operator with no
-    # rotating-wave truncation of its own, so the imported coupling is
-    # marked rwa=False — the imported chip reproduces the scqubits
-    # composite spectrum exactly, independent of the chip's RWA default.
+    # An scqubits InteractionTerm is a complete bilinear operator. The
+    # imported chip therefore defaults to Exact so its spectrum matches.
     return Coupling(
         devices[index_a],
         devices[index_b],
         g=1.0,
         interaction=_product_interaction(term.g_strength, matrix_a, matrix_b, bool(term.add_hc)),
-        rwa=False,
         label=f"scq_interaction_{index}",
     )
 
@@ -206,7 +203,7 @@ def import_hilbertspace(hs: Any, **opts: Any) -> Chip:
     hs : scqubits.HilbertSpace
         The composite system to import.
     **opts
-        ``frame`` and ``rwa`` are forwarded to the :class:`Chip` constructor.
+        ``frame`` and ``approximation`` are forwarded to :class:`Chip`.
         Device-level options are not forwarded in v1: every subsystem imports
         at its own ``truncated_dim`` and native noise defaults.
 
@@ -223,8 +220,10 @@ def import_hilbertspace(hs: Any, **opts: Any) -> Chip:
         for index, term in enumerate(hs.interaction_list)
     ]
 
-    chip_kwargs: dict[str, Any] = {}
-    for key in ("frame", "rwa"):
+    from quchip.approximations import Exact
+
+    chip_kwargs: dict[str, Any] = {"approximation": Exact()}
+    for key in ("frame", "approximation"):
         if key in opts:
             chip_kwargs[key] = opts[key]
 
@@ -252,20 +251,19 @@ def _coupling_product_factors(
     backend: Any,
     bases: Any,
 ) -> tuple[Any, np.ndarray, np.ndarray]:
-    r"""Return ``(g, A, B)`` reproducing the coupling's non-RWA ``H_int = g·A⊗B``.
+    r"""Return ``(g, A, B)`` reproducing the complete ``H_int = g·A⊗B``.
 
     Each supported coupling factorizes into a scalar strength and two device
     operators; the factors are the coupling's own operator definitions,
     evaluated on the endpoint devices and densified through *backend*, so the
     exported interaction is term-for-term identical to the one quchip assembles
-    (:meth:`~quchip.chip.couplings.CouplingModel.interaction_hamiltonian` at
-    ``rwa=False``):
+    (:meth:`~quchip.chip.coupling_base.BaseCoupling.interaction_hamiltonian`):
 
     * :class:`~quchip.chip.couplings.Capacitive` /
       :class:`~quchip.chip.couplings.TunableCapacitive` — the full product of
       each endpoint's physical charge-like factor. Devices implementing
       :class:`~quchip.devices.protocols.ChargeCoupled` supply their authored
-      charge operator; other devices use ``a + a†``. The full (non-RWA) form is
+      charge operator; other devices use ``a + a†``. The complete form is
       always exported because scqubits interaction terms apply no rotating-wave
       truncation of their own.
     * :class:`~quchip.chip.couplings.CrossKerr` — ``χ·n̂_a n̂_b``, so
@@ -378,30 +376,29 @@ def _warn_if_cross_basis(device: Any, subsys: Any) -> None:
         )
 
 
-def _check_rwa_exportable(chip: Chip, coupling: Any) -> None:
-    """Raise when *coupling* factorizes RWA-sensitively and the chip resolves ``rwa=True`` for it.
+def _check_approximation_exportable(chip: Chip, coupling: Any) -> None:
+    """Reject a filtered interaction that scqubits would export in full.
 
-    scqubits export always emits the full (non-RWA) operator product
+    scqubits export always emits the complete operator product
     (:func:`_coupling_product_factors`). For :class:`~quchip.chip.couplings.Capacitive`,
     :class:`~quchip.chip.couplings.TunableCapacitive`, and product-form
-    :class:`~quchip.chip.couplings.Coupling`, the RWA form is a genuinely
-    different operator than the full form, so exporting one of these under a
-    resolved ``rwa=True`` would silently reproduce different physics than the
+    :class:`~quchip.chip.couplings.Coupling`, the filtered form is a genuinely
+    different operator than the complete form, so exporting one of these under a
+    `RWA` would silently reproduce different physics than the
     chip's own dressed dynamics. :class:`~quchip.chip.couplings.CrossKerr` is
     exempt: its interaction is diagonal in the excitation-number basis, so RWA
     masking is a no-op on it.
     """
     if isinstance(coupling, CrossKerr):
         return
-    rwa_sensitive = isinstance(coupling, (Capacitive, TunableCapacitive)) or (
+    approximation_sensitive = isinstance(coupling, (Capacitive, TunableCapacitive)) or (
         isinstance(coupling, Coupling) and coupling._interaction is None
     )
-    if rwa_sensitive and chip.resolve_rwa(coupling):
+    if approximation_sensitive and chip.approximation.filters_terms:
         raise ValueError(
-            f"Coupling {coupling.label!r} resolves rwa=True on this chip, but scqubits export always "
-            "emits the full (non-RWA) operator product — exporting it would silently reproduce "
-            "different physics than the chip's RWA-resolved dynamics. Export an explicitly non-RWA "
-            "chip (Chip(..., rwa=False)), or set rwa=False on this coupling, to proceed."
+            f"Coupling {coupling.label!r} is filtered by {type(chip.approximation).__name__}, "
+            "but scqubits export emits the complete operator product. Resolve or clone the chip "
+            "with Exact() before export."
         )
 
 
@@ -417,18 +414,18 @@ def export_chip(chip: Chip, **opts: Any) -> Any:
     matrices, so the whole composite lives in one consistent gauge — quchip's —
     and its dressed spectrum reproduces the chip's.
 
-    Couplings are exported in their **full (non-RWA) operator form**: scqubits
-    interaction terms are bare operator products and apply no rotating-wave
-    truncation of their own. Exporting a chip whose *resolved* RWA actually
-    masks a :class:`~quchip.chip.couplings.Capacitive`,
+    Couplings are exported in their complete operator form: scqubits
+    interaction terms are bare operator products and apply no approximation
+    strategy of their own. Exporting a chip whose ``RWA()`` strategy
+    filters a :class:`~quchip.chip.couplings.Capacitive`,
     :class:`~quchip.chip.couplings.TunableCapacitive`, or product-form
     :class:`~quchip.chip.couplings.Coupling` therefore fails closed with
     :class:`ValueError`: silently exporting the full form anyway would
-    reproduce different physics than the chip's own RWA-resolved dynamics.
-    :class:`~quchip.chip.couplings.CrossKerr` is exempt — its RWA and full
-    forms coincide, since ``n̂_a n̂_b`` conserves excitation number and is
-    never touched by the RWA mask. Export an explicitly non-RWA chip
-    (``Chip(..., rwa=False)``, or ``rwa=False`` on the coupling) to proceed.
+    reproduce different physics than the chip's own resolved dynamics.
+    :class:`~quchip.chip.couplings.CrossKerr` is exempt because
+    ``n̂_a n̂_b`` conserves excitation number and survives ``RWA()``
+    unchanged. Resolve or clone the chip with
+    :class:`~quchip.approximations.Exact` before export.
 
     Chip-level control equipment and baths have no scqubits counterpart (it
     models neither drives nor dissipation) and are dropped with a single
@@ -449,8 +446,8 @@ def export_chip(chip: Chip, **opts: Any) -> Any:
         :class:`~quchip.chip.couplings.Coupling`.
     ValueError
         A coupling strength is a JAX tracer rather than a concrete value, or
-        a Capacitive/TunableCapacitive/product-form Coupling resolves
-        ``rwa=True`` on the chip (see above).
+        a Capacitive/TunableCapacitive/product-form Coupling is filtered by
+        :class:`~quchip.approximations.RWA` (see above).
     LookupError
         A device has no registered scqubits export mapping.
     TypeError
@@ -488,7 +485,7 @@ def export_chip(chip: Chip, **opts: Any) -> Any:
     backend = chip.backend
     bases = chip.resolve().bases
     for coupling in chip.couplings:
-        _check_rwa_exportable(chip, coupling)
+        _check_approximation_exportable(chip, coupling)
         g, matrix_a, matrix_b = _coupling_product_factors(coupling, backend, bases)
         subsys_a = label_to_subsys[coupling.device_a_label]
         subsys_b = label_to_subsys[coupling.device_b_label]

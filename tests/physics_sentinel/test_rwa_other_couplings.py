@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from quchip.approximations import RWA, Exact
+
 import numpy as np
 
 from quchip import Chip, Coupling, CrossKerr, DuffingTransmon, Fluxonium, QuantumSequence, Resonator, simulate
@@ -25,15 +27,15 @@ def _longitudinal(a, b, bk):
 def test_cross_kerr_is_rwa_invariant():
     """Diagonal coupling: every band is (0, 0), so RWA changes nothing and drops nothing."""
     q, r = _qr("ck_t")
-    chip_rwa = Chip([q, r], [CrossKerr(q, r, chi=-0.002)], rwa=True)
+    chip_rwa = Chip([q, r], [CrossKerr(q, r, chi=-0.002)], approximation=RWA())
     q2, r2 = _qr("ck_f")
-    chip_full = Chip([q2, r2], [CrossKerr(q2, r2, chi=-0.002, rwa=False)], rwa=False)
+    chip_full = Chip([q2, r2], [CrossKerr(q2, r2, chi=-0.002)], approximation=Exact())
     np.testing.assert_allclose(
         _arr(chip_rwa, chip_rwa.hamiltonian()), _arr(chip_full, chip_full.hamiltonian()), atol=1e-14
     )
 
     q3, r3 = _qr("ck_rot")
-    chip_rot = Chip([q3, r3], [CrossKerr(q3, r3, chi=-0.002)], frame="rotating", rwa=True)
+    chip_rot = Chip([q3, r3], [CrossKerr(q3, r3, chi=-0.002)], frame="rotating", approximation=RWA())
     problem = QuantumSequence(chip_rot).build_problem(
         tlist=np.linspace(0.0, 10.0, 11), initial_state=chip_rot.bare_state()
     )
@@ -46,7 +48,10 @@ def test_longitudinal_coupling_masks_to_zero_with_advisories():
     """n̂_a (b + b†) has no excitation-conserving band: RWA removes it entirely and says so."""
     qa, rb = _qr("lg_m")
     chip = Chip(
-        [qa, rb], [Coupling(qa, rb, g=0.05, interaction=_longitudinal, label="long")], frame="rotating", rwa=True
+        [qa, rb],
+        [Coupling(qa, rb, g=0.05, interaction=_longitudinal, label="long")],
+        frame="rotating",
+        approximation=RWA(),
     )
     qa2, rb2 = _qr("lg_b")
     bare = Chip([qa2, rb2], [], frame="rotating")
@@ -60,13 +65,13 @@ def test_longitudinal_coupling_masks_to_zero_with_advisories():
     assert {rec.band_weights for rec in records} == {(0, -1), (0, 1)}
     assert all(float(rec.frequency) == 7.0 for rec in records)
 
-    # Escape hatch: rwa=False keeps both bands as explicit carriers at ±ω_r.
+    # Escape hatch: approximation=Exact() keeps both bands as explicit carriers at ±ω_r.
     qa3, rb3 = _qr("lg_f")
     chip_full = Chip(
         [qa3, rb3],
-        [Coupling(qa3, rb3, g=0.05, interaction=_longitudinal, rwa=False, label="longf")],
+        [Coupling(qa3, rb3, g=0.05, interaction=_longitudinal, label="longf")],
         frame="rotating",
-        rwa=True,
+        approximation=Exact(),
     )
     problem_full = QuantumSequence(chip_full).build_problem(
         tlist=np.linspace(0.0, 10.0, 11), initial_state=chip_full.bare_state()
@@ -87,7 +92,12 @@ def test_two_photon_exchange_survives_rwa():
             bk.dag(low_a) @ bk.dag(low_a), low_b @ low_b
         )
 
-    chip = Chip([ka, kb], [Coupling(ka, kb, g=g, interaction=two_photon, label="twoph")], frame="rotating", rwa=True)
+    chip = Chip(
+        [ka, kb],
+        [Coupling(ka, kb, g=g, interaction=two_photon, label="twoph")],
+        frame="rotating",
+        approximation=RWA(),
+    )
     tlist = np.linspace(0.0, 30.0, 121)
     # The |2⟩ ↔ |0⟩ exchange deliberately occupies the top Fock level of the
     # 3-level ladders, so the truncation safety net is switched off.
@@ -108,8 +118,8 @@ def test_two_photon_exchange_survives_rwa():
     assert abs(half_period - 12.5) < 0.5
 
 
-class _BlueCoupling(CouplingModel):
-    """Two-mode-squeezing-retaining coupling: its RWA keeps the |Δa + Δb| = 2 bands instead."""
+class _ProductCoupling(CouplingModel):
+    """Reference product coupling whose band selection remains engine-owned."""
 
     _type_prefix = "blue"
 
@@ -118,19 +128,18 @@ class _BlueCoupling(CouplingModel):
     def interaction(self, a, b, p):
         return p.g * (a.x * b.x)
 
-    def rwa_keeps_band(self, delta_a: int, delta_b: int) -> bool:
-        return abs(delta_a + delta_b) == 2 or (delta_a, delta_b) == (0, 0)
 
-
-def test_custom_rwa_keeps_band_override():
-    """A coupling declaring a non-default retained band set gets it in the engine result."""
+def test_band_selection_is_engine_owned():
+    """A coupling authors its complete interaction; RWA selects its bands."""
     ba = Resonator(freq=5.0, levels=3, label="ba_blue")
     bb = Resonator(freq=5.2, levels=3, label="bb_blue")
-    chip = Chip([ba, bb], [_BlueCoupling(ba, bb, g=0.03)], rwa=True)
+    coupling = _ProductCoupling(ba, bb, g=0.03)
+    chip = Chip([ba, bb], [coupling], approximation=RWA())
+    assert not hasattr(coupling, "rwa_keeps_band")
     h = np.asarray(chip.resolve().hamiltonian().matrix(t=0.0))
     idx_01, idx_10, idx_00, idx_11 = 1, 3, 0, 4
-    assert abs(h[idx_01, idx_10]) < 1e-14  # exchange band dropped by the override
-    np.testing.assert_allclose(abs(h[idx_00, idx_11]), 0.03, atol=1e-12)
+    np.testing.assert_allclose(abs(h[idx_01, idx_10]), 0.03, atol=1e-12)
+    assert abs(h[idx_00, idx_11]) < 1e-14
 
 
 def test_fluxonium_dense_charge_coupling_assembles_hermitian():
@@ -150,8 +159,12 @@ def test_fluxonium_dense_charge_coupling_assembles_hermitian():
         # charge_coupling_operator() is a dense array-like; bk.tensor coerces it.
         return bk.tensor(a.charge_coupling_operator(), b.lowering_operator() + bk.dag(b.lowering_operator()))
 
-    chip = Chip([fl, rr], [Coupling(fl, rr, g=0.05, interaction=charge_coupling, label="flc")],
-                frame="rotating", rwa=True)
+    chip = Chip(
+        [fl, rr],
+        [Coupling(fl, rr, g=0.05, interaction=charge_coupling, label="flc")],
+        frame="rotating",
+        approximation=RWA(),
+    )
     h = _arr(chip, chip.hamiltonian(), t=0.0)
     assert float(np.max(np.abs(h - h.conj().T))) < 1e-12
 

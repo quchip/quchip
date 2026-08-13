@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from quchip.approximations import RWA
+
 import numpy as np
 import numpy.testing as npt
 import pytest
@@ -62,7 +64,7 @@ def _run_dispersive_expectation(backend_name: str) -> np.ndarray:
     _set_backend(backend_name)
     qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=3, label="q")
     resonator = Resonator(freq=6.8, levels=5, label="r", quality_factor=1e6)
-    coupling = Capacitive(qubit, resonator, g=0.04, rwa=True)
+    coupling = Capacitive(qubit, resonator, g=0.04)
     readout_drive = ChargeDrive(target=resonator, label="readout")
     chip = Chip(
         devices=[qubit, resonator],
@@ -234,7 +236,7 @@ def test_rotating_frame_coupled_sequence_supports_jax_grad_on_traced_chip_param(
         drive = ChargeDrive(target=control, label="cr")
         chip = Chip(
             devices=[control, target],
-            couplings=[Capacitive(control, target, g=0.0032, rwa=True)],
+            couplings=[Capacitive(control, target, g=0.0032)],
             control_equipment=ControlEquipment(lines=[drive]),
             frame="rotating",
             label="dynamiqs-rotating-grad-coupled",
@@ -266,10 +268,10 @@ def test_multi_experiment_cr_batch_loss_supports_jax_grad() -> None:
     drive = ChargeDrive(target=control, label="cr")
     chip = Chip(
         devices=[control, target],
-        couplings=[Capacitive(control, target, g=0.01, rwa=True)],
+        couplings=[Capacitive(control, target, g=0.01)],
         control_equipment=ControlEquipment(lines=[drive]),
         frame="rotating",
-        rwa=True,
+        approximation=RWA(),
     )
     sequence = QuantumSequence(chip)
     pulse = sequence.schedule(
@@ -478,7 +480,7 @@ def test_concrete_build_ships_no_dead_zero_structure_to_dynamiqs() -> None:
         couplings=[Capacitive(q0, q1, g=0.01)],
         control_equipment=ControlEquipment(lines=[drive]),
         frame={q0: 5.0, q1: 5.1},
-        rwa=True,
+        approximation=RWA(),
     )
     sequence = QuantumSequence(chip)
     sequence.schedule(drive, envelope=Gaussian(duration=20.0, amplitude=0.02, sigmas=3), freq=5.0)
@@ -505,8 +507,8 @@ def test_dropped_term_audit_survives_traced_coupling() -> None:
     """A jit-traced coupling g flows into the audit raw; the summary never concretizes it."""
     # DroppedTerm amplitude/frequency fields hold raw (possibly traced) GHz values by
     # contract, since chip parameters legitimately arrive as tracers on this backend.
-    from quchip.engine.stage1_frames import resolve_frame
-    from quchip.engine.stage2_assembly import build_engine_result
+    from quchip.engine.frames import resolve_frame
+    from quchip.engine.assembly import build_engine_result
 
     seen: dict[str, str] = {}
 
@@ -517,12 +519,10 @@ def test_dropped_term_audit_survives_traced_coupling() -> None:
             [q0, q1],
             couplings=[Capacitive(q0, q1, g=g, label="cap01")],
             frame={q0: 5.0, q1: 5.1},
-            rwa=True,
+            approximation=RWA(),
             backend="dynamiqs",
         )
-        description = build_engine_result(
-            chip, [], resolved_frame=resolve_frame(chip, chip.frame)
-        )
+        description = build_engine_result(chip, [], resolved_frame=resolve_frame(chip, chip.frame))
         seen["summary"] = description.dropped_terms_summary()
         # band_weights is static structure, so selecting the populated a†b†
         # band is trace-safe; its amplitude (largest band element, g·√2·√2)
