@@ -4,7 +4,7 @@ These helpers summarize an already-assembled
 :class:`~quchip.engine.ir.EngineResult` into advisory hints
 (``max_carrier_freq_ghz``, ``spectral_bound_ghz``) that backends may
 consult to pick a conservative solver step. They live outside
-``stage2_assembly`` because they assemble no terms and never cross the
+``assembly`` because they assemble no terms and never cross the
 2π boundary: the only :data:`~quchip.utils.constants.TWO_PI` here divides
 an already-angular carrier back to ordinary GHz for the advisory dict.
 None of these values participate in physics — they are pure metadata.
@@ -156,7 +156,7 @@ def _solver_hint_metadata(
 
     ``max_carrier_freq_ghz`` / ``spectral_bound_ghz`` are ordinary GHz. The
     static spectral bound is template-invariant, so it is precomputed once
-    at template compile (:func:`~quchip.engine.stage2_assembly.compile_hamiltonian_template`)
+    at template compile (:func:`~quchip.engine.assembly.compile_hamiltonian_template`)
     and passed in here already in ordinary GHz — only the variant-specific
     carrier frequency is recomputed per instantiation. Step-budget
     heuristics take the larger of the two: in a rotating frame the static

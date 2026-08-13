@@ -7,9 +7,8 @@ import pytest
 
 from quchip.chip.chip import Chip
 from quchip.chip.couplings import Capacitive
-from quchip.control.signal import Crosstalk, Delay, Gain
+from quchip.control.signal import AnalyticSignal, Crosstalk, Delay, Gain
 from quchip.control.drive import ChargeDrive
-from quchip.control.signal_spec import DriveModulation
 from quchip.control.equipment import ControlEquipment
 from quchip.control.sequence import QuantumSequence
 from quchip.devices.resonator import Resonator
@@ -121,11 +120,9 @@ def test_control_equipment_docstring_mentions_signal_chain() -> None:
     assert "signal_chain" in ControlEquipment.__doc__
 
 
-def test_modulation_enum_is_publicly_documented() -> None:
-    """The DriveModulation enum is the user-visible tag on DriveChannel."""
-    assert DriveModulation.__doc__ is not None
-    assert "SINGLE_TONE" in DriveModulation.__doc__
-    assert "DIRECT_REAL" in DriveModulation.__doc__
+def test_delivered_signal_documents_physical_quadratures() -> None:
+    assert AnalyticSignal.i.__doc__ is not None
+    assert AnalyticSignal.q.__doc__ is not None
 
 
 def test_wire_validates_signal_chain_delay_line() -> None:

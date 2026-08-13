@@ -19,7 +19,7 @@ jupyter:
 
 This example couples a Duffing transmon to a lossy resonator. First we compare leakage from two qubit pulses; then we drive the resonator and follow its response for qubit $|0\rangle$ and $|1\rangle$.
 
-quchip uses GHz for frequencies and ns for time. The chip and coupling use the RWA in a per-device rotating frame; both drives inherit `chip.rwa=True`.
+quchip uses GHz for frequencies and ns for time. The chip applies `RWA()` in a per-device rotating frame to both static interactions and scheduled drives.
 
 ```python
 import json
@@ -29,6 +29,7 @@ import numpy as np
 from scipy import integrate
 
 from quchip import (
+    RWA,
     Capacitive,
     ChargeDrive,
     Chip,
@@ -57,10 +58,10 @@ readout = Resonator(
 chip = Chip(
     [qubit, readout],
     couplings=[
-        Capacitive(qubit, readout, g=0.060, rwa=True, label="qr")
+        Capacitive(qubit, readout, g=0.060, label="qr")
     ],
     frame="rotating",
-    rwa=True,
+    approximation=RWA(),
 )
 qubit_line = ChargeDrive(qubit, label="qubit-charge")
 readout_line = ChargeDrive(readout, label="readout-charge")
@@ -73,7 +74,7 @@ Before scheduling a pulse, inspect the static Hamiltonian exactly as the
 devices and coupling define it. The labels `q`, `r`, and `qr` become compact
 operator subscripts; call `.matrix()` only when a numerical array is needed.
 `chip.hamiltonian()` is the complementary resolved view after the chip's basis,
-frame, and RWA policies.
+frame, and approximation strategy.
 
 ```python
 chip.unresolved_hamiltonian()
@@ -85,7 +86,7 @@ The coupled chip's dressed transitions set the carrier and the neighboring line 
 
 ```python
 f01 = float(chip.freq(qubit))
-f12 = float(chip.freq(qubit, when={qubit: 1}))
+f12 = float(chip.transition_frequency(qubit, 1, 2))
 ```
 
 Both pulses are three-sigma Gaussians with the same nominal-$\pi$ area. The short pulse has bandwidth $|f_{12}-f_{01}|$; the four-times-longer pulse is more selective. `pi_gaussian` rescales each waveform so $2\pi\int E(t)\,dt=\pi$.
@@ -98,7 +99,7 @@ def pi_gaussian(duration: float) -> Gaussian:
     unit_pulse = Gaussian(duration=duration, sigmas=3.0, amplitude=1.0)
     integration_times = np.linspace(0.0, duration, 20001)
     unit_area = integrate.trapezoid(
-        np.asarray(unit_pulse.waveform(integration_times)).real,
+        np.asarray(unit_pulse.value(integration_times)).real,
         integration_times,
     )
     return Gaussian(

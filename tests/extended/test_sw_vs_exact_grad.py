@@ -10,6 +10,7 @@ traced coupling.
 
 from __future__ import annotations
 
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -34,10 +35,10 @@ def _bridge_chip_dynamiqs(leg0_g: jnp.ndarray | float) -> Chip:
     q1 = DuffingTransmon(freq=_Q1_FREQ, anharmonicity=-0.24, levels=3, label="q1")
     bus = Resonator(freq=_BUS_FREQ, levels=4, label="bus")
     couplings = [
-        Capacitive(q0, bus, g=leg0_g, rwa=True, label="leg0"),
-        Capacitive(q1, bus, g=_LEG1_G, rwa=True, label="leg1"),
+        Capacitive(q0, bus, g=leg0_g, label="leg0"),
+        Capacitive(q1, bus, g=_LEG1_G, label="leg1"),
     ]
-    return Chip([q0, q1, bus], couplings=couplings, frame="rotating", rwa=True, backend=DynamiqsBackend())
+    return Chip([q0, q1, bus], couplings=couplings, frame="rotating", backend=DynamiqsBackend())
 
 
 def test_grad_through_exact_zz_matches_finite_difference():

@@ -30,6 +30,8 @@ def _targets(
 ) -> list[tuple[Path, str, bool]]:
     targets: dict[Path, tuple[str, bool]] = {}
     for path in _tracked_paths(root):
+        if not (root / path).is_file():
+            continue
         suffix = path.suffix.casefold()
         if suffix in {".py", ".pyi"}:
             targets[path] = ("python", False)

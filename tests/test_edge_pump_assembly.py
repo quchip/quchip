@@ -1,6 +1,8 @@
-"""Stage 2 compiles scheduled edge pumps into per-band DynamicTerms (spec §5)."""
+"""Engine assembly compiles scheduled edge pumps into per-band DynamicTerms."""
 
 from __future__ import annotations
+
+from quchip.approximations import Exact, RWA
 
 import numpy as np
 
@@ -15,12 +17,12 @@ from quchip import (
 )
 
 
-def _problem(freq=None, frame="lab", rwa=False):
+def _problem(freq=None, frame="lab", approximation=Exact()):
     q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
     q1 = DuffingTransmon(freq=5.2, anharmonicity=-0.24, levels=3, label="q1")
     tc = TunableCapacitive(q0, q1, g_0=0.0, label="tc")
     pump = ParametricDrive(tc, label="pump")
-    chip = Chip([q0, q1], couplings=[tc], frame=frame, rwa=rwa)
+    chip = Chip([q0, q1], couplings=[tc], frame=frame, approximation=approximation)
     chip.connect(ControlEquipment([pump]))
     seq = QuantumSequence(chip)
     seq.pump(tc, envelope=Square(duration=100.0, amplitude=0.005), freq=freq)
@@ -48,8 +50,8 @@ def test_baseband_and_tone_forms_differ():
 
 def test_rwa_selects_beam_splitter_structure():
     """RWA selects the beam-splitter operator structure with fewer pump bands than the full interaction."""
-    full = _problem(frame="rotating", rwa=False)
-    rwa = _problem(frame="rotating", rwa=True)
+    full = _problem(frame="rotating", approximation=Exact())
+    rwa = _problem(frame="rotating", approximation=RWA())
 
     def pump_terms(problem):
         return [t for t in problem.engine_result.dynamic_terms if t.tag == "edge_pump"]

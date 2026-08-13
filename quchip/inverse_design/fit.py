@@ -130,8 +130,7 @@ def _estimate_bare_g(
 
     The sub-chip is built via the coupling's own structural copy/rebind
     path (:meth:`~quchip.chip.coupling_base.BaseCoupling.copy`), which
-    preserves the coupling's RWA override and any constructor-only
-    subclass state — no coupling-type reconstruction, so this works for
+    preserves constructor-only subclass state without coupling-type reconstruction, so this works for
     any coupling, not only ``g``-attribute ones — and
     :meth:`~quchip.chip.coupling_base.BaseCoupling.set_coupling_strength`
     writes each trial magnitude. It also carries over the parent chip's
@@ -160,7 +159,7 @@ def _estimate_bare_g(
         [dev_a, dev_b],
         [sub_coupling],
         frame=chip.frame,
-        rwa=chip.rwa,
+        approximation=chip.approximation,
         basis=chip.basis,
         backend=chip.backend,
     )

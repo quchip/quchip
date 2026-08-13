@@ -9,7 +9,7 @@ from quchip.backend import get_default_backend
 from quchip.chip.chip import Chip
 from quchip.devices.resonator import Resonator
 from quchip.devices.transmon.duffing import DuffingTransmon
-from quchip.engine.stage3_observables import decompose_eops
+from quchip.engine.observables import decompose_eops
 
 
 @pytest.fixture()

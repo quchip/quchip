@@ -67,13 +67,13 @@ Examples
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Any
+from typing import Any, ClassVar
 
 import jax.numpy as jnp
 
 from quchip.declarative.expr import PhysicsExpr
 from quchip.declarative.ops import LocalOps
-from quchip.declarative.parameters import Scalar, parameter
+from quchip.declarative.parameters import UNBOUND, Scalar, parameter
 from quchip.devices.fock import FockDevice
 from quchip.devices.transmon.duffing import duffing_expr
 from quchip.utils.jax_utils import maybe_concrete_scalar
@@ -160,8 +160,8 @@ class FluxTunableTransmon(FockDevice):
         ``T2``, ``thermal_population``.
     """
 
-    _type_prefix: str = "fluxtunable"
-    _default_levels: int = 3
+    _type_prefix: ClassVar[str] = "fluxtunable"
+    _default_levels: ClassVar[int] = 3
     tunable_param_names = ("freq", "anharmonicity")
     computational = True
     approximation = (
@@ -169,27 +169,10 @@ class FluxTunableTransmon(FockDevice):
         "no Landau-Zener)."
     )
 
-    freq: Scalar = parameter(positive=True, unit="GHz", symbol=r"\omega")
-    anharmonicity: Scalar = parameter(unit="GHz", symbol=r"\alpha")
+    freq: Scalar = parameter(default=UNBOUND, positive=True, unit="GHz", symbol=r"\omega")
+    anharmonicity: Scalar = parameter(default=UNBOUND, unit="GHz", symbol=r"\alpha")
     flux_bias: Scalar = parameter(default=0.0, unit="Phi_0", symbol=r"\Phi")
     asymmetry: Scalar = parameter(default=0.0, symbol="d")
-
-    # --- generated __init__ stub (tools/gen_device_stubs.py); do not edit ---
-    if TYPE_CHECKING:
-        def __init__(
-            self,
-            freq: Scalar = ...,
-            anharmonicity: Scalar = ...,
-            flux_bias: Scalar = 0.0,
-            asymmetry: Scalar = 0.0,
-            *,
-            levels: int = 3,
-            label: str | None = None,
-            T1: float | None = None,
-            T2: float | None = None,
-            thermal_population: float | None = None,
-        ) -> None: ...
-    # --- end generated stub ---
 
     def validate(self) -> None:
         """Range checks on concrete scalars only; traced values pass unchecked."""

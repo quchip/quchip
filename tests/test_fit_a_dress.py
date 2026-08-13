@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from quchip import (
+    Exact,
     Capacitive,
     ChargeBasisTransmon,
     Chip,
@@ -120,12 +121,18 @@ def test_fit_a_dress_moves_crosskerr_chi_with_no_stray_g_attribute() -> None:
 
 
 def test_estimate_bare_g_seed_subchip_preserves_chip_intent(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The coupling seed sub-chip preserves basis, RWA, and backend intent."""
+    """The coupling seed sub-chip preserves basis, approximation, and backend intent."""
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=4, label="q")
     r = Resonator(freq=7.0, levels=10, label="r")
     coupling = Capacitive(q, r, g=0.01, label="c")
-    coupling.rwa = False
-    chip = Chip([q, r], [coupling], frame="rotating", basis="eigen", backend="qutip")
+    chip = Chip(
+        [q, r],
+        [coupling],
+        frame="rotating",
+        basis="eigen",
+        backend="qutip",
+        approximation=Exact(),
+    )
 
     real_chip = fit_module.Chip
     captured: dict = {}
@@ -133,7 +140,7 @@ def test_estimate_bare_g_seed_subchip_preserves_chip_intent(monkeypatch: pytest.
     def spy_chip(devices, couplings=None, **kwargs):
         captured["backend"] = kwargs.get("backend")
         captured["basis"] = kwargs.get("basis")
-        captured["coupling_rwa"] = couplings[0].rwa if couplings else None
+        captured["approximation"] = kwargs.get("approximation")
         return real_chip(devices, couplings, **kwargs)
 
     monkeypatch.setattr(fit_module, "Chip", spy_chip)
@@ -142,7 +149,7 @@ def test_estimate_bare_g_seed_subchip_preserves_chip_intent(monkeypatch: pytest.
 
     assert captured["backend"] is chip.backend
     assert captured["basis"] == "eigen"
-    assert captured["coupling_rwa"] is False
+    assert captured["approximation"] == Exact()
 
 
 def test_local_fit_subsystem_inherits_chip_basis_policy() -> None:

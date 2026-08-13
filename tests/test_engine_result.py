@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from quchip.approximations import RWA, Exact
+
 import numpy as np
 import pytest
 
@@ -28,8 +30,8 @@ def test_compiled_template_tracks_drive_terms_only() -> None:
     from quchip.control.equipment import ControlEquipment
     from quchip.devices.transmon.duffing import DuffingTransmon
     from quchip.engine.ir import DriveOp
-    from quchip.engine.stage1_frames import resolve_frame
-    from quchip.engine.stage2_assembly import compile_hamiltonian_template
+    from quchip.engine.frames import resolve_frame
+    from quchip.engine.assembly import compile_hamiltonian_template
 
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q_tmpl")
     d = ChargeDrive(target=q)
@@ -100,7 +102,7 @@ class TestCarrierBandDecomposition:
 
         wd = 2 * np.pi * 5.0
         env = ir.EnvelopeRef(Square(duration=30.0, amplitude=0.02))
-        # The real lab-frame charge-drive coefficient shape emitted by stage 2:
+        # The real lab-frame charge-drive coefficient shape emitted by assembly:
         # Multiply(( RealPart(Multiply((line, Carrier(-w_d)))), phase=Carrier(0) )).
         line = ir.Scale(ir.Shift(ir.Window(env, 0.0, 30.0), 0.0), factor=np.exp(1j * 0.3))
         return {
@@ -112,13 +114,15 @@ class TestCarrierBandDecomposition:
             ),
             "polar": ir.PolarScale(ir.Multiply((line, ir.Carrier(freq=wd, sign=-1))), 2.0, 0.7),
             "shifted_carrier": ir.Shift(
-                ir.Multiply((ir.EnvelopeRef(Gaussian(duration=50.0, amplitude=0.005, sigmas=4)),
-                             ir.Carrier(freq=1.3, sign=-1))),
+                ir.Multiply(
+                    (ir.EnvelopeRef(Gaussian(duration=50.0, amplitude=0.005, sigmas=4)), ir.Carrier(freq=1.3, sign=-1))
+                ),
                 4.0,
             ),
             "nested": ir.RealPart(
-                ir.Multiply((ir.Add((line, ir.Conjugate(line))),
-                             ir.Carrier(freq=wd, sign=-1), ir.Carrier(freq=0.2, sign=1)))
+                ir.Multiply(
+                    (ir.Add((line, ir.Conjugate(line))), ir.Carrier(freq=wd, sign=-1), ir.Carrier(freq=0.2, sign=1))
+                )
             ),
         }
 
@@ -128,7 +132,10 @@ class TestCarrierBandDecomposition:
         for name, signal in self._signals().items():
             reference = np.asarray(ir.evaluate_signal_program(signal, t, xp=np), dtype=complex)
             np.testing.assert_allclose(
-                _reconstruct_bands(signal, t), reference, rtol=0, atol=1e-12,
+                _reconstruct_bands(signal, t),
+                reference,
+                rtol=0,
+                atol=1e-12,
                 err_msg=f"band reconstruction differs for {name!r}",
             )
 
@@ -162,9 +169,7 @@ class TestCanonicalOperator:
             dtype=complex,
         )
         if layout == "dense":
-            op = CanonicalOperator.from_dense(
-                matrix, dims=(3,), basis="fock", subsystem_labels=("q",)
-            )
+            op = CanonicalOperator.from_dense(matrix, dims=(3,), basis="fock", subsystem_labels=("q",))
         elif layout == "csr":
             op = CanonicalOperator.from_csr(
                 values=np.array([1, 2, 3, 4, 5, 6, 7], dtype=complex),
@@ -327,13 +332,13 @@ class TestPolarScale:
     def test_crosstalk_apply_uses_polar_scale_not_numpy(self):
         """Crosstalk.apply builds a PolarScale node instead of an eagerly-computed numpy factor."""
         from quchip.engine.ir import PolarScale, Constant
-        from quchip.control.signal import Crosstalk
+        from quchip.control.signal import AnalyticSignal, Crosstalk
 
         edge = Crosstalk(source="charge_0", victim="charge_1", beta=0.1, theta=0.3)
-        signals = {("charge_0", 0): Constant(1.0 + 0j)}
+        signals = {("charge_0", 0): AnalyticSignal(Constant(1.0 + 0j))}
         result = edge.apply(signals)
         victim_signal = result[("charge_1", 0)]
-        assert isinstance(victim_signal, PolarScale)
+        assert isinstance(victim_signal.program, PolarScale)
 
 
 class TestSolveProblem:
@@ -369,17 +374,15 @@ class TestDroppedTerms:
         from quchip.chip.couplings import Capacitive
         from quchip.devices.transmon.duffing import DuffingTransmon
         from quchip.engine.ir import DroppedTerm
-        from quchip.engine.stage1_frames import resolve_frame
-        from quchip.engine.stage2_assembly import build_engine_result
+        from quchip.engine.frames import resolve_frame
+        from quchip.engine.assembly import build_engine_result
 
         q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
         q1 = DuffingTransmon(freq=5.2, anharmonicity=-0.25, levels=3, label="q1")
-        cap = Capacitive(q0, q1, g=0.01, rwa=True, label="cap_q0_q1")
+        cap = Capacitive(q0, q1, g=0.01, label="cap_q0_q1")
         chip = Chip([q0, q1], couplings=[cap], frame="rotating")
 
-        description = build_engine_result(
-            chip, [], resolved_frame=resolve_frame(chip, chip.frame)
-        )
+        description = build_engine_result(chip, [], resolved_frame=resolve_frame(chip, chip.frame))
 
         assert all(isinstance(dt, DroppedTerm) for dt in description.dropped_terms)
         operators = {dt.operator for dt in description.dropped_terms}
@@ -411,20 +414,18 @@ class TestDroppedTerms:
         from quchip.chip.chip import Chip
         from quchip.chip.couplings import Capacitive
         from quchip.devices.transmon.duffing import DuffingTransmon
-        from quchip.engine.stage1_frames import resolve_frame
-        from quchip.engine.stage2_assembly import build_engine_result
+        from quchip.engine.frames import resolve_frame
+        from quchip.engine.assembly import build_engine_result
 
         q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="qa")
         q1 = DuffingTransmon(freq=5.2, anharmonicity=-0.25, levels=3, label="qb")
         chip = Chip(
             [q0, q1],
-            couplings=[Capacitive(q0, q1, g=0.01, rwa=False)],
+            couplings=[Capacitive(q0, q1, g=0.01)],
             frame="rotating",
-            rwa=False,
+            approximation=Exact(),
         )
-        description = build_engine_result(
-            chip, [], resolved_frame=resolve_frame(chip, chip.frame)
-        )
+        description = build_engine_result(chip, [], resolved_frame=resolve_frame(chip, chip.frame))
         assert description.dropped_terms == ()
         assert description.dropped_terms_summary() == "No dropped terms."
 
@@ -445,13 +446,11 @@ class TestDroppedTerms:
             [q0],
             control_equipment=ControlEquipment(lines=[drive]),
             frame={q0: 5.0},
-            rwa=True,
+            approximation=RWA(),
         )
         sequence = QuantumSequence(chip)
         sequence.schedule(drive, envelope=Gaussian(duration=20.0, amplitude=0.02, sigmas=3), freq=5.0)
-        problem = sequence.build_problem(
-            tlist=np.linspace(0.0, 20.0, 21), initial_state=chip.bare_state(q0=0)
-        )
+        problem = sequence.build_problem(tlist=np.linspace(0.0, 20.0, 21), initial_state=chip.bare_state(q0=0))
 
         records = problem.engine_result.dropped_terms
         assert {dt.band_weights for dt in records} == {(-1,), (1,)}
@@ -461,7 +460,7 @@ class TestDroppedTerms:
             assert dt.frequency == pytest.approx(10.0)  # f_d + |w|·f_ref = 5 + 5
 
     def test_drive_without_rwa_reports_nothing(self):
-        """rwa=False keeps both drive components — nothing to audit."""
+        """approximation=Exact() keeps both drive components — nothing to audit."""
         import numpy as np
 
         from quchip.chip.chip import Chip
@@ -477,13 +476,11 @@ class TestDroppedTerms:
             [q0],
             control_equipment=ControlEquipment(lines=[drive]),
             frame={q0: 5.0},
-            rwa=False,
+            approximation=Exact(),
         )
         sequence = QuantumSequence(chip)
         sequence.schedule(drive, envelope=Gaussian(duration=20.0, amplitude=0.02, sigmas=3), freq=5.0)
-        problem = sequence.build_problem(
-            tlist=np.linspace(0.0, 20.0, 21), initial_state=chip.bare_state(q0=0)
-        )
+        problem = sequence.build_problem(tlist=np.linspace(0.0, 20.0, 21), initial_state=chip.bare_state(q0=0))
         assert problem.engine_result.dropped_terms == ()
 
     def test_summary_prints_traced_values_as_placeholder(self):
@@ -498,12 +495,14 @@ class TestDroppedTerms:
         @jax.jit
         def build(g):
             record = DroppedTerm(
-                source="c", operator="a·b", reason="counter-rotating under RWA",
-                band_weights=(-1, -1), amplitude=g, frequency=10.2,
+                source="c",
+                operator="a·b",
+                reason="counter-rotating under RWA",
+                band_weights=(-1, -1),
+                amplitude=g,
+                frequency=10.2,
             )
-            description = EngineResult(
-                static_terms=(), dynamic_terms=(), dropped_terms=(record,)
-            )
+            description = EngineResult(static_terms=(), dynamic_terms=(), dropped_terms=(record,))
             seen["summary"] = description.dropped_terms_summary()
             return record.amplitude * 2.0  # raw value stays live for autodiff
 

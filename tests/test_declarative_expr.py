@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from quchip.declarative.expr import DynamicScalar, PhysicsExpr, materialize_array
+from quchip.declarative.expr import PhysicsExpr, materialize_array
 from quchip.declarative.ops import EndpointOps, LocalOps
 from quchip.devices.spaces import FockSpace
 
@@ -39,14 +39,6 @@ def test_cross_endpoint_matmul_errors_with_clear_message():
     b = EndpointOps(label="b", space=FockSpace(4))
     with pytest.raises(TypeError, match="different endpoints.*use \\*"):
         _ = a.x @ b.x
-
-
-def test_dynamic_source_detection():
-    """A ``DynamicScalar``-scaled expression reports a dynamic source."""
-    op = LocalOps(label="q", space=FockSpace(3))
-    dynamic = DynamicScalar("env")
-    expr = dynamic * op.n
-    assert expr.has_dynamic_source()
 
 
 def test_traced_scalar_left_multiply_does_not_raise():
@@ -96,15 +88,6 @@ def test_array_operand_rejected():
         _ = arr * op.n
 
 
-def test_dynamic_sources_accumulate_across_binary_ops():
-    """Dynamic sources from both operands accumulate, in order, across ``+``."""
-    op = LocalOps(label="q", space=FockSpace(3))
-    d1 = DynamicScalar("env1")
-    d2 = DynamicScalar("env2")
-    expr = d1 * op.n + d2 * op.n
-    assert expr.dynamic_sources == (d1, d2)
-
-
 def test_scalar_addition_raises():
     """Adding a bare scalar to an operator raises, pointing at the explicit-identity fix."""
     op = LocalOps(label="q", space=FockSpace(3))
@@ -126,17 +109,6 @@ def test_overlapping_tensor_support_raises():
     b = EndpointOps(label="b", space=FockSpace(3))
     with pytest.raises(TypeError, match="overlapping"):
         _ = a.n * (a.n * b.n)
-
-
-def test_dynamic_scalar_times_scalar_times_operator_scales_not_tensors():
-    """A dynamic-scalar-times-scalar chain multiplying an operator scales it rather than tensoring it."""
-    op = LocalOps(label="q", space=FockSpace(3))
-    dynamic = DynamicScalar("env")
-    expr = (dynamic * 2.0) * op.n
-    assert expr.kind == "scale"
-    assert expr.labels == ("q",)
-    assert expr.args[0].args[0] == 2.0
-    assert expr.dynamic_sources == (dynamic,)
 
 
 def test_tensor_labels_preserve_authored_order_for_unequal_dimensions():

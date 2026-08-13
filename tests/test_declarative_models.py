@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import inspect
+
+import jax
 import numpy as np
 import numpy.testing as npt
 import pytest
 
-from quchip import CouplingModel, DeviceModel, EnvelopeShape, Scalar, qnp, parameter
-from quchip.control.envelopes import BaseEnvelope
+from quchip import CouplingModel, DeviceModel, Envelope, Scalar, qnp, parameter
+from quchip.declarative import setting
 from quchip.devices.base import BaseDevice
 
 
-class CosineEnvelope(EnvelopeShape):
+class CosineEnvelope(Envelope):
     duration: Scalar = parameter(positive=True)
     amplitude: Scalar = parameter(default=1.0)
 
@@ -18,7 +21,7 @@ class CosineEnvelope(EnvelopeShape):
 
 
 def test_custom_envelope_samples_without_xp_argument():
-    """A custom EnvelopeShape subclass samples correctly through the base pipeline without an explicit xp argument."""
+    """A custom Envelope subclass samples correctly through the base pipeline without an explicit xp argument."""
     env = CosineEnvelope(duration=10.0, amplitude=2.0)
     samples = env.sample(np.asarray([0.0, 5.0, 10.0]))
     npt.assert_allclose(np.asarray(samples), np.asarray([0.0, 2.0, 4.0]), atol=1e-7)
@@ -30,6 +33,34 @@ class HarmonicMode(DeviceModel):
 
     def local_hamiltonian(self, op, p):
         return p.freq * op.n
+
+
+class ConfiguredMode(DeviceModel):
+    freq: Scalar = parameter(unit="GHz")
+    basis_name: str = setting(default="native")
+
+    def local_hamiltonian(self, op, p):
+        return p.freq * op.n
+
+
+def test_device_setting_is_keyword_only_and_round_trips():
+    signature = inspect.signature(ConfiguredMode)
+    assert signature.parameters["basis_name"].kind is inspect.Parameter.KEYWORD_ONLY
+
+    mode = ConfiguredMode(5.0, basis_name="eigen", levels=3, label="m")
+    restored = BaseDevice.from_dict(mode.to_dict())
+
+    assert isinstance(restored, ConfiguredMode)
+    assert restored.basis_name == "eigen"
+
+
+def test_device_setting_is_jax_structural_data():
+    mode = ConfiguredMode(5.0, basis_name="eigen", levels=3, label="m")
+
+    leaves = jax.tree_util.tree_leaves(mode)
+
+    assert 5.0 in leaves
+    assert "eigen" not in leaves
 
 
 def test_custom_device_hamiltonian_compiles_without_backend_calls():
@@ -186,6 +217,21 @@ class NumberNumber(CouplingModel):
         return p.chi * a.n * b.n
 
 
+def test_coupling_constructor_is_synthesized_from_endpoints_and_fields():
+    signature = inspect.signature(NumberNumber)
+
+    assert tuple(signature.parameters) == (
+        "device_a",
+        "device_b",
+        "chi",
+        "label",
+    )
+    coupling = NumberNumber("a", "b", chi=0.02, label="ab")
+    assert coupling.device_a_label == "a"
+    assert coupling.device_b_label == "b"
+    assert coupling.chi == 0.02
+
+
 def test_custom_coupling_compiles_without_backend_tensor_calls():
     """A custom CouplingModel subclass compiles its interaction to an operator on the joint two-device Hilbert space."""
     a = HarmonicMode(freq=5.0, levels=3, label="a")
@@ -195,22 +241,22 @@ def test_custom_coupling_compiles_without_backend_tensor_calls():
     assert h.shape == (12, 12)
 
 
-def test_time_dependent_without_dynamic_source_errors():
-    """dynamic_interaction_terms() rejects a time_dependent override whose expression carries no dynamic source."""
+def test_time_terms_reject_values_outside_the_public_contract():
+    """The private bridge rejects values outside the public time-term contract."""
     class BadDynamic(CouplingModel):
         g: Scalar = parameter()
 
         def interaction(self, a, b, p):
             return p.g * a.x * b.x
 
-        def time_dependent(self, a, b, p):
+        def time_terms(self, a, b, p):
             return p.g * a.x * b.x
 
     a = HarmonicMode(freq=5.0, levels=3, label="a")
     b = HarmonicMode(freq=6.0, levels=4, label="b")
     coupling = BadDynamic(a, b, g=0.01)
-    with pytest.raises(ValueError, match="exactly one dynamic source"):
-        coupling.dynamic_interaction_terms()
+    with pytest.raises(TypeError, match="must return TimeDependentTerm"):
+        coupling._time_terms()
 
 
 def test_tunable_capacitive_without_modulation_has_no_dynamic_term():
@@ -220,7 +266,7 @@ def test_tunable_capacitive_without_modulation_has_no_dynamic_term():
     q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
     q1 = DuffingTransmon(freq=5.05, anharmonicity=-0.25, levels=3, label="q1")
     c = TunableCapacitive(q0, q1, g_0=0.02)
-    assert c.dynamic_interaction_terms() == []
+    assert c._time_terms() == ()
 
 
 def test_declarative_device_to_dict_contains_declared_parameters():
@@ -263,9 +309,9 @@ def test_declarative_physics_notes_include_approximation():
 
 
 def test_declarative_envelope_round_trip_uses_declared_parameters():
-    """An EnvelopeShape round-trips through to_dict()/from_dict() with type and declared parameters preserved."""
+    """An Envelope round-trips through to_dict()/from_dict() with type and declared parameters preserved."""
     env = CosineEnvelope(duration=10.0, amplitude=2.0)
-    restored = BaseEnvelope.from_dict(env.to_dict())
+    restored = Envelope.from_dict(env.to_dict())
     assert isinstance(restored, CosineEnvelope)
     assert restored.duration == 10.0
     assert restored.amplitude == 2.0
@@ -298,6 +344,6 @@ def test_gaussian_shape_is_declarative_without_xp():
     from quchip import Gaussian
 
     g = Gaussian(duration=20.0, amplitude=0.5, sigmas=3.0)
-    assert isinstance(g, EnvelopeShape)
+    assert isinstance(g, Envelope)
     value = g.value(qnp.asarray(10.0))
     assert value.shape == ()

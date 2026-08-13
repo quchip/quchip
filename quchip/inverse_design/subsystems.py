@@ -70,7 +70,7 @@ def build_local_subsystem(chip: Chip, labels: tuple[str, ...]) -> Chip:
         devices=devices,
         couplings=couplings,
         frame=chip.frame,
-        rwa=chip.rwa,
+        approximation=chip.approximation,
         basis=chip.basis,
         backend=chip.backend,
     )

@@ -198,7 +198,7 @@ class TestCrosstalkIntegration:
             drive_label=drive_a.label,
         )
 
-        from quchip.engine.stage1_frames import resolve_frame
+        from quchip.engine.frames import resolve_frame
 
         resolved = resolve_frame(chip, chip.frame)
         desc_no_xt = build_engine_result(chip, [drive_op], resolved_frame=resolved)
@@ -237,20 +237,16 @@ class TestCrosstalkIntegration:
             drive_label=drive_a.label,
         )
         tlist = np.linspace(0.0, self.DURATION, 101)
-        from quchip.engine.stage1_frames import resolve_frame
-        from quchip.engine.ir import evaluate_signal_program
+        from quchip.engine.frames import resolve_frame
 
         resolved = resolve_frame(chip, chip.frame)
         _ = resolved  # signal building is frame-agnostic now; frame applied during modulation
-        from quchip.engine.stage2_assembly import _spec_to_raw_signal
-
-        spec = drive_a.signal_spec(drive_op, q0)
-        source_signal = _spec_to_raw_signal(spec)
+        source_signal = drive_a.signal(drive_op, q0)
         built = edge.apply({(source_key, 0): source_signal})
         victim_signal = built[(victim_key, 0)]
 
-        default = evaluate_signal_program(victim_signal, tlist)
-        explicit = evaluate_signal_program(victim_signal, tlist, xp=np)
+        default = victim_signal.evaluate(tlist)
+        explicit = victim_signal.evaluate(tlist, xp=np)
         npt.assert_allclose(explicit, default)
 
     def test_dynamics_victim_excitation(self) -> None:

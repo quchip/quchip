@@ -36,7 +36,7 @@ Serialization contract
   via :meth:`_from_dict_payload`, whose default is the parameter-less
   ``cls()``. Subclasses needing real reconstruction either override
   ``from_dict`` (devices, couplings, envelopes — payload-carrying) or
-  override ``_from_dict_payload`` (drives — shared target/label/rwa
+  override ``_from_dict_payload`` (drives — shared target and label
   reconstruction). The parameter-less default covers the signal transforms
   that take no constructor arguments.
 """

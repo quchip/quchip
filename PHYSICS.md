@@ -13,7 +13,7 @@ quchip uses `hbar = 1` with these user-facing units:
 | Temperature | mK |
 | Energy | GHz |
 
-The domain layer stays in ordinary GHz. The only Hamiltonian-assembly `2π` conversion is in [`quchip/engine/stage2_assembly.py`](quchip/engine/stage2_assembly.py), right before the solver-facing Hamiltonian is built.
+The domain layer stays in ordinary GHz. The only Hamiltonian-assembly `2π` conversion is in [`quchip/engine/assembly.py`](quchip/engine/assembly.py), right before the solver-facing Hamiltonian is built.
 
 ## 2. What `.hamiltonian()` Means
 
@@ -49,14 +49,14 @@ full: g * (a + a†)(b + b†)
 
 ### 2.3 Chip and sequence Hamiltonians
 
-`Chip.unresolved_hamiltonian()` embeds every authored device Hamiltonian and full coupling interaction into the total declared Hilbert space. It is the exact static lab-frame expression before local-basis materialization, retained-level truncation, frame transformation, or RWA.
+`Chip.unresolved_hamiltonian()` embeds every authored device Hamiltonian and full coupling interaction into the total declared Hilbert space. It is the exact static lab-frame expression before local-basis resolution, retained-level truncation, frame transformation, or RWA.
 
 `Chip.hamiltonian()` is reconstructed from `Chip.resolve()`, the frozen `EngineResult` used by backends. Resolution:
 
-1. materializes each authored local space into the selected solver basis and retained dimension
+1. resolves each authored local space into the selected solver basis and retained dimension
 2. multiplies solver-facing operators by `2π`
 3. subtracts the chosen frame generator
-4. decomposes non-static pieces into excitation-change bands and filters coupling bands with each coupling's `rwa_keeps_band` predicate
+4. decomposes non-static pieces into excitation-change bands and applies the chip's approximation strategy
 5. attaches explicit time-dependent phases where needed
 
 The returned expression is an inspectable, ordinary-GHz view of those same canonical terms; the solver-facing `EngineResult` retains the internal `2π` scaling. `QuantumSequence.hamiltonian()` follows the same path and adds the sequence's scheduled drive and crosstalk terms.
@@ -92,7 +92,9 @@ Source: [`quchip/devices/resonator.py`](quchip/devices/resonator.py)
 H = omega * n
 ```
 
-If `quality_factor` is set, the resonator also contributes photon loss with collapse operator `sqrt(2π * omega / Q) * a`.
+If `quality_factor` is set, the resonator contributes photon loss with authored
+operator `a` and rate `2π * omega / Q` in `1/ns`. Backend lowering forms the
+Lindblad operator `sqrt(2π * omega / Q) * a`.
 
 ### 3.3 Collapse operators
 
@@ -104,7 +106,10 @@ The standard dissipators are:
 - `T2`: pure dephasing through `sqrt(2*gamma_phi) * n` with `gamma_phi = 1/T2 - 1/(2*T1)`. The factor `2` makes the 0–1 coherence decay at `1/(2*T1) + gamma_phi = 1/T2`, so the input `T2` is the resulting coherence time (when `thermal_population == 0`). The number operator `n` gives the standard `(m-n)^2` dephasing scaling across higher levels.
 - thermal up/down channels when `thermal_population` is set
 
-Those are assembled in the device layer. Backends only receive already-built operators.
+Devices, drives, couplings, and baths author `CollapseChannel` records that
+keep the local operator separate from its non-negative rate in `1/ns`. The
+engine projects and embeds the operator while preserving the rate; backend
+lowering applies `sqrt(rate)` exactly once.
 
 Noise parameters are ordinary tracked attributes: set (or clear with `None`) at construction **or any time after** — collapse operators are rebuilt from current values on every solve, and post-construction writes get the same validation as the constructor. Chip-level shared/collective dissipation lives in `Bath` ([`quchip/chip/baths.py`](quchip/chip/baths.py)), attached at construction or later via `chip.add_bath(...)`; bath rates are Lindblad-ready 1/ns with no assembly `2π` (that boundary is Hamiltonian-only — a component's *intrinsic* `2π`, e.g. a resonator's `κ = 2π·f/Q`, is its own physics).
 
@@ -118,11 +123,38 @@ Each device authors its Hamiltonian and named operators in a `LocalSpace`. The b
 
 Resolution records every fixed authored-to-solver transformation in `EngineResult.bases`. Local energy ordering is distinct from whole-chip dressing: `Chip.dress()` diagonalizes the coupled static chip for analysis, while local-basis resolution defines the tensor factors sent through the engine and backends.
 
+### 3.5 Transitions
+
+`device.transition(lower, upper)` returns the Hermitian transition operator
+`|lower><upper| + |upper><lower|` in the device's authored coordinates.
+`device.transition_frequency(lower, upper)` returns the isolated energy gap in
+GHz. The level indices refer to the energy ordering of the device's static
+local Hamiltonian.
+
+`chip.transition_frequency(target, lower, upper, when=...)` uses the complete
+undriven static chip Hamiltonian. It assigns dressed eigenstates to the two bare
+product labels and returns their energy difference before frame subtraction or
+drive approximation. Unspecified spectators are in level zero; `when` sets
+spectator occupations and cannot include `target`.
+
+`chip.freq(target, when=...)` is the concise 0-to-1 form. For a higher target
+transition, use explicit levels:
+
+```python
+f01 = chip.freq(qubit)
+f12 = chip.transition_frequency(qubit, 1, 2)
+fr_when_excited = chip.freq(readout, when={qubit: 1})
+```
+
+Local basis projection and dressed transition assignment are separate. Basis
+projection selects the tensor factors used by the solver; dressed assignment
+labels eigenstates of the coupled static chip.
+
 ## 4. Frames
 
 ### 4.1 What frame selection means
 
-Source: [`quchip/engine/stage1_frames.py`](quchip/engine/stage1_frames.py)
+Source: [`quchip/engine/frames.py`](quchip/engine/frames.py)
 
 The public frame spec is one of:
 
@@ -169,7 +201,7 @@ It is a *frame / readout* reference only: it does **not** detune drives (the dri
 
 ## 5. Frame Tracking in the Engine
 
-Source: [`quchip/engine/stage2_assembly.py`](quchip/engine/stage2_assembly.py)
+Source: [`quchip/engine/assembly.py`](quchip/engine/assembly.py)
 
 The engine does not rotate whole expressions symbolically. It tracks phases band-by-band.
 
@@ -203,18 +235,31 @@ If that effective frequency is zero, the band stays static in `H0`. If not, it b
 
 This band decomposition is the frame-tracking mechanism.
 
-## 6. RWA
+### 5.3 Model time dependence and scheduled control
 
-RWA in quchip means "drop fast, non-resonant pieces instead of carrying them explicitly." The authored and resolved views meet that policy as follows.
+`DeviceModel.time_terms()` and `CouplingModel.time_terms()` return
+`TimeDependentTerm` values for physics that exists without a scheduled pulse. Each
+term pairs a local operator with a `TimeCoefficient`; the engine projects,
+band-decomposes, and frames it through the same path as other Hamiltonian
+terms. Scheduled control remains drive-owned: its finite-duration envelope and
+carrier produce a drive modulation only after `QuantumSequence.schedule()`.
+`Envelope.value(local_time)` defines local complex I/Q shape. Scheduling owns
+the pulse start, carrier, and global phase, so the same shape can be placed and
+phase-rotated without changing its physics definition.
 
-### 6.1 Coupling RWA
+Local eigenbasis projection uses the static authored Hamiltonian at the solve's
+operating point. Component-owned time-dependent terms are projected into that
+fixed basis; quchip does not construct an instantaneous moving basis.
 
-Source: [`quchip/chip/rwa.py`](quchip/chip/rwa.py)
+## 6. Approximation strategies
 
-Coupling RWA is a chip-resolved policy, not a second operator defined by each coupling class. A coupling implements exactly one interaction, `interaction_hamiltonian()` (§2.2) — always the full, non-RWA form — and, optionally, `rwa_keeps_band(delta_a, delta_b)`, a predicate over the two-body excitation-change bands `(delta_a, delta_b)` the interaction decomposes into (default: total-excitation-conserving, `delta_a + delta_b == 0`, the beam-splitter selection). `Chip.resolve_rwa(coupling)` chooses the per-coupling override when present and otherwise uses the chip default. The resolved value is used in both paths:
+Source: [`quchip/approximations.py`](quchip/approximations.py), [`quchip/engine/approximations.py`](quchip/engine/approximations.py)
 
-- `Chip.unresolved_hamiltonian()` preserves the full authored interaction without applying RWA (§2.3).
-- Stage 2 (`_collect_coupling_terms` in [`quchip/engine/stage2_assembly.py`](quchip/engine/stage2_assembly.py)) band-decomposes that interaction and filters with the resolved predicate. `Chip.hamiltonian()` is reconstructed from the retained canonical terms, so it reflects the same RWA decision as a solve. Rejected bands become advisory `DroppedTerm` records with `reason="counter-rotating under RWA"`. Each record carries the band's `(delta_a, delta_b)` weights, its largest matrix-element magnitude, and its frame frequency. The amplitude equals `|g|` for a two-level `Capacitive` interaction, but ladder-operator factors can make it larger when either mode has more levels. Retained bands follow the general per-band static/dynamic fold of §5.2: a band whose carrier `delta_a*omega_a + delta_b*omega_b` is concretely zero stays folded into `H0`; every other retained band is subtracted back out and carried as an explicit time-dependent term.
+The chip owns one explicit approximation strategy. `Exact()` retains every term in the authored finite-dimensional Hamiltonian. `RWA()` applies the engine's first-order structural rotating-wave reduction to static interactions and scheduled drives. Devices, couplings, and drives do not carry their own RWA policy.
+
+`Chip.unresolved_hamiltonian()` preserves the authored static interaction. Engine assembly band-decomposes each interaction and applies the selected strategy. `Chip.hamiltonian()` is reconstructed from those same canonical terms, so inspection and simulation use one decision path. Under `RWA()`, rejected bands become advisory `DroppedTerm` records with their excitation weights, largest matrix-element magnitude, and frame frequency. A retained band with zero frame frequency stays in `H0`; every other retained band is carried as an explicit time-dependent term.
+
+### 6.1 Static operator bands
 
 For `Capacitive`:
 
@@ -223,16 +268,16 @@ full: g * (a + a†)(b + b†)
      = g * (a†b + ab†) + g * (ab + a†b†)
 ```
 
-- `a†b + ab†` is the `delta_a + delta_b == 0` band — the exchange term the default predicate keeps
-- `ab + a†b†` is the `|delta_a + delta_b| == 2` band — counter-rotating, dropped under RWA
+- `a†b + ab†` has total excitation weight zero and survives `RWA()`
+- `ab + a†b†` has total excitation weight two and is removed by `RWA()`
 
-`interaction_hamiltonian()` always returns the full form; the RWA form `g * (a†b + ab†)` is never defined separately — it is exactly the retained band of the full form, reconstructed by the mask. A coupling that needs a different retained band set (e.g. a two-photon coupling keeping `|delta_a + delta_b| == 2` instead) overrides `rwa_keeps_band`; the override must stay symmetric under joint sign flip (`keeps_band(-delta_a, -delta_b) == keeps_band(delta_a, delta_b)`) so the retained operator stays Hermitian. Because the predicate depends only on integer band offsets — never on frequency values, which may be traced — the mask is a concrete constant regardless of tracing in the operator it multiplies.
+`interaction_hamiltonian()` always returns the complete authored form. `RWA()` reconstructs its retained bands in the engine; a coupling does not supply an alternative RWA operator or retention hook. The mask depends only on integer band offsets, so it remains concrete when operator parameters are JAX tracers.
 
 The static/dynamic decision is made per band, not per coupling: in a *shared* frame (multiple devices detuned to a common reference), the coupling's counter-rotating band can carry a nonzero carrier even when its co-rotating band is frame-static. The per-band fold evaluates each band's own carrier independently, so a shared frame never suppresses the counter-rotating band's true rotation.
 
-If `rwa=False`, no band is dropped; every non-static band — exchange and counter-rotating alike — is carried as an explicit time-dependent term at its own frame frequency.
+With `Exact()`, no band is dropped; every non-static band is carried at its own frame frequency.
 
-### 6.2 Drive RWA
+### 6.2 Driven operator bands
 
 For a single-tone drive channel, the engine forms the real lab-frame field
 
@@ -242,9 +287,9 @@ Re[s(t) * exp(-i 2π f_drive t)]
 
 and combines it with the operator bands.
 
-Without RWA, both co-rotating and counter-rotating pieces remain.
+`Exact()` retains both co-rotating and counter-rotating pieces.
 
-With RWA, the engine keeps only the slow piece for each excitation band. So if a band corresponds to a transition near `f_drive`, the near-resonant envelope remains and the fast partner at approximately `f_drive + f_transition` is dropped.
+`RWA()` keeps the conventional partner for each excitation band and drops its counter-rotating partner.
 
 Flux drives are different: they couple through `n`, which is diagonal, so there is no raising/lowering split to RWA away. They are treated as direct real-valued modulation channels.
 
@@ -264,19 +309,11 @@ In the rotating frame of two detuned modes with frequencies `omega_a` and `omega
 
 That is why they are usually dropped by RWA: they are much faster and usually average out.
 
-How quchip removes them:
-
-- coupling CR terms are removed by choosing `rwa=True` on the coupling or chip default
-- drive CR terms are removed by choosing `rwa=True` on the drive or chip default
-
-How quchip keeps them:
-
-- choose `rwa=False`
-- then the engine keeps them as explicit time-dependent terms
+Choose `RWA()` to remove structural first-order counter-rotating bands, or `Exact()` to carry every term explicitly.
 
 ## 8. Observables and Demodulation
 
-Source: [`quchip/engine/stage3_observables.py`](quchip/engine/stage3_observables.py)
+Source: [`quchip/engine/observables.py`](quchip/engine/observables.py)
 
 Dict-form `e_ops` are decomposed into the same excitation bands used by the frame logic. After the solver returns, the engine recombines them with the demodulation frequencies in `ResolvedFrame.demod_freqs = omega_ref - omega_frame` (per device).
 
@@ -399,7 +436,7 @@ The internal `2π`s here are local physics conversions at the module's public bo
 
 ### 10.3 The Schrieffer-Wolff route (`method="sw"`)
 
-The chip's full bare Hamiltonian `H = H0 + V` (GHz, pre-`2π`, at the chip's RWA policy) is partitioned by the eliminated mode's occupation: `P` = the mode in `|0>`, `Q` = everything else. The generator solves the Sylvester condition on the cross blocks,
+The chip's bare Hamiltonian `H = H0 + V` (GHz, before `2π`, under the selected approximation) is partitioned by the eliminated mode's occupation: `P` = the mode in `|0>`, `Q` = everything else. The generator solves the Sylvester condition on the cross blocks,
 
 ```text
 S_ij = V_ij / (E_i − E_j)        (i, j straddling P/Q; E = diag H)
@@ -437,7 +474,7 @@ and the survivor-lowering amplitude gives the inherited (Purcell) rate `|amplitu
 
 ## 11. Parametric Edge Control
 
-Sources: [`quchip/control/drive.py`](quchip/control/drive.py) (`ParametricDrive`), [`quchip/engine/stage2_assembly.py`](quchip/engine/stage2_assembly.py) (`EDGE_PUMP`), [`quchip/chip/retarget.py`](quchip/chip/retarget.py)
+Sources: [`quchip/control/drive.py`](quchip/control/drive.py) (`ParametricDrive`), [`quchip/engine/assembly.py`](quchip/engine/assembly.py) (`EDGE_PUMP`), [`quchip/chip/retarget.py`](quchip/chip/retarget.py)
 
 ### 11.1 The pump contract
 
@@ -465,7 +502,10 @@ The engine relies on four physics assumptions:
 1. Frame generators are built from per-device number operators `n_i`.
 2. Single-device and two-device operators can be decomposed by excitation-change bands.
 3. The default `"rotating"` frame uses each device's best available drive frequency.
-4. Each drive channel declares one `DriveModulation`: `single_tone` for an IQ-style carrier, `direct_real` for real baseband modulation, or `edge_pump` for modulation of a coupling strength.
+4. Each drive builds a complete analytic signal with an optional carrier, then
+   implements `hamiltonian(target, signal)`. Control equipment transforms that
+   signal before the destination drive maps its physical I/Q quadratures to
+   target-local operators. The engine owns frame and band selection.
 
 What the engine does not hardcode:
 
@@ -491,10 +531,9 @@ Other engine paths avoid implicit conversion to host arrays.
 
 When you need to audit a physics path, start here:
 
-- units and assembly boundary: [`quchip/engine/stage2_assembly.py`](quchip/engine/stage2_assembly.py)
-- frame resolution: [`quchip/engine/stage1_frames.py`](quchip/engine/stage1_frames.py)
-- observable preparation: [`quchip/engine/stage3_observables.py`](quchip/engine/stage3_observables.py)
-- observables and demodulation: [`quchip/engine/stage3_observables.py`](quchip/engine/stage3_observables.py)
+- units and assembly boundary: [`quchip/engine/assembly.py`](quchip/engine/assembly.py)
+- frame resolution: [`quchip/engine/frames.py`](quchip/engine/frames.py)
+- observable preparation and demodulation: [`quchip/engine/observables.py`](quchip/engine/observables.py)
 - dressing and public Hamiltonian APIs: [`quchip/chip/chip.py`](quchip/chip/chip.py)
 - adiabatic elimination and χ/κ reporting: [`quchip/chip/transformations/`](quchip/chip/transformations/)
 - Schrieffer-Wolff kernels and the exact reduction route: [`quchip/chip/sw.py`](quchip/chip/sw.py)

@@ -1,14 +1,15 @@
-"""Tests for the declarative device, noise-channel, and batch-handle extension surfaces."""
+"""Tests for declarative device, dissipation, and batch-handle extensions."""
 
 from __future__ import annotations
+
+from quchip.approximations import RWA
 
 import numpy as np
 import pytest
 
-from quchip import Chip, ChargeDrive, DuffingTransmon, Gaussian, QuantumSequence
+from quchip import Chip, ChargeDrive, CollapseChannel, DuffingTransmon, Gaussian, QuantumSequence
 from quchip.declarative.models import DeviceModel
 from quchip.declarative.parameters import Scalar, parameter
-from quchip.devices.base import BaseDevice, NoiseChannel
 
 
 class SpinHalf(DeviceModel):
@@ -37,19 +38,21 @@ class DampedTransmon(DuffingTransmon):
 
     _type_prefix = "damped"
 
-    two_photon_rate: Scalar = parameter(default=None, positive=True)
-
-    _noise_channels = BaseDevice._noise_channels + (
-        NoiseChannel("two_photon_loss", ("two_photon_rate",), lambda dev, basis: (
-            [(dev.local_space().matrix("a") @ dev.local_space().matrix("a"), dev.two_photon_rate)]
-            if dev.two_photon_rate is not None
-            else []
-        )),
+    two_photon_rate: Scalar = parameter(
+        default=None,
+        positive=True,
+        noise=True,
     )
 
+    def dissipation(self, op, p):
+        channels = super().dissipation(op, p)
+        if self.two_photon_rate is None:
+            return channels
+        return channels + (CollapseChannel(op.a @ op.a, p.two_photon_rate, "two_photon_loss"),)
 
-def test_noise_channel_declaration_composes_without_override():
-    """A device-declared noise channel composes with the built-in T1 channel unmodified."""
+
+def test_dissipation_hook_composes_with_common_device_channels():
+    """A device dissipation hook composes with the built-in T1 channel."""
     quiet = DampedTransmon(freq=5.0, anharmonicity=-0.3, levels=3)
     assert quiet.collapse_operators() == []
 
@@ -67,7 +70,7 @@ def test_noise_channel_declaration_composes_without_override():
 
 def _sequence_with_pulse():
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=3)
-    chip = Chip([q], frame="rotating", rwa=True)
+    chip = Chip([q], frame="rotating", approximation=RWA())
     drive = ChargeDrive(target=q)
     chip.wire(drive)
     seq = QuantumSequence(chip)

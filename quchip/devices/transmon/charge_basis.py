@@ -8,8 +8,9 @@ from typing import Any, ClassVar, Literal
 from quchip.declarative.expr import PhysicsExpr
 from quchip.declarative.models import DeviceModel
 from quchip.declarative.ops import LocalOps
-from quchip.declarative.parameters import Scalar, parameter
-from quchip.devices.base import NoiseChannel, _energy_dephasing_channel, _matrix_element_emission_channel
+from quchip.declarative.parameters import UNBOUND, Scalar, parameter
+from quchip.declarative.dissipation import CollapseChannel
+from quchip.devices.base import _energy_dephasing_channel, _matrix_element_emission_channel
 from quchip.devices.spaces import ChargeSpace
 from quchip.utils.jax_utils import maybe_concrete_scalar
 
@@ -33,18 +34,16 @@ class ChargeBasisTransmon(DeviceModel):
         "coupling_channel",
         "collapse_rate_threshold",
     )
-    _noise_channels = (
-        NoiseChannel(
-            "matrix_element_emission",
-            ("T1", "thermal_population"),
-            _matrix_element_emission_channel,
-        ),
-        NoiseChannel("pure_dephasing", ("T2",), _energy_dephasing_channel),
-    )
-
-    E_C: Scalar = parameter(positive=True, unit="GHz", symbol="E_C")
-    E_J: Scalar = parameter(positive=True, unit="GHz", symbol="E_J")
+    E_C: Scalar = parameter(default=UNBOUND, positive=True, unit="GHz", symbol="E_C")
+    E_J: Scalar = parameter(default=UNBOUND, positive=True, unit="GHz", symbol="E_J")
     n_g: Scalar = parameter(default=0.0, symbol="n_g")
+
+    def dissipation(self, op: Any, p: Any) -> tuple[CollapseChannel, ...]:
+        del op
+        return tuple(
+            _matrix_element_emission_channel(self, p)
+            + _energy_dephasing_channel(self, p)
+        )
 
     def __init__(
         self,

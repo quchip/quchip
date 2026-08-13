@@ -38,10 +38,12 @@ if TYPE_CHECKING:
 
 def _line_device_labels(chip: "Chip", line: Any) -> tuple[str, ...]:
     """Device labels a control line acts on (edge lines resolve to both endpoints)."""
+    from quchip.control.drive import CouplingDrive
+
     target = line.target_label
     if target is None:
         return ()
-    if getattr(line, "target_kind", "device") == "edge":
+    if isinstance(line, CouplingDrive):
         coupling = chip.coupling_map[target]
         return (coupling.device_a_label, coupling.device_b_label)
     return (target,)
@@ -204,7 +206,7 @@ def _build_component_chip(chip: "Chip", clone: "Chip", index: int, group: list[s
         couplings=couplings or None,
         label=f"{chip.label}[{index}]" if chip.label else None,
         frame=frame,
-        rwa=clone.rwa,
+        approximation=clone.approximation,
         backend=clone._backend,
         baths=_component_baths(clone, member_set) or None,
     )

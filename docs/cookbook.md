@@ -8,11 +8,11 @@ This cookbook collects the conventions that make quchip recipes physically legib
 
 Put parameters at the top, then construct devices, couplings, the chip, control lines, and a sequence in that order. Use quchip device and control abstractions instead of raw QuTiP operators, and do not hand-write an effective Hamiltonian in place of the physical model. Prefer object references over string labels.
 
-quchip uses GHz for ordinary frequencies, ns for time, and mK for temperature. Set the frame and chip RWA policy explicitly, and state the model approximation and Hilbert-space truncation that matter for the result. A drive constructed with its default `rwa=None` inherits the chip policy when the Hamiltonian template is resolved.
+quchip uses GHz for ordinary frequencies, ns for time, and mK for temperature. Set the frame and chip approximation strategy explicitly, and state the model approximation and Hilbert-space truncation that matter for the result. `Exact()` retains every authored term; `RWA()` applies the engine's first-order operator-band reduction to the whole chip.
 
 ### Inspect authored and resolved physics
 
-Use `chip.unresolved_hamiltonian()` to inspect the exact static expressions supplied by devices and couplings. Use `chip.hamiltonian()` for the canonical result after local-basis materialization, retained-level truncation, frame resolution, and RWA. Use `sequence.hamiltonian()` when scheduled drives must be included. These methods return inspectable expressions; call `.matrix()` only at a numerical boundary.
+Use `chip.unresolved_hamiltonian()` to inspect the static expressions supplied by devices and couplings. Use `chip.hamiltonian()` for the canonical result after local-basis resolution, retained-level truncation, frame resolution, and the selected approximation. Use `sequence.hamiltonian()` when scheduled drives must be included. These methods return inspectable expressions; call `.matrix()` only at a numerical boundary.
 
 ### Prepare the intended state
 
@@ -50,11 +50,11 @@ Drive a multilevel transmon at its dressed $0\rightarrow1$ transition and show h
 
 ### Assumptions
 
-The transmon uses the Duffing approximation and remains capacitively coupled to the declared lossy resonator. The chip sets the rotating frame and RWA; a `ChargeDrive` with no explicit `rwa` argument inherits that policy. Retain enough transmon levels for the broader pulse's leakage to be physical.
+The transmon uses the Duffing approximation and remains capacitively coupled to the declared lossy resonator. The chip uses a rotating frame and `RWA()` for the complete Hamiltonian. Retain enough transmon levels for the broader pulse's leakage to be physical.
 
 ### Minimal usage
 
-Read `f01 = chip.freq(qubit)` and `f12 = chip.freq(qubit, when={qubit: 1})`. For a Gaussian with temporal standard deviation $\sigma_t$, compare a short pulse whose spectral width $1/(2\pi\sigma_t)$ approaches $|f_{12}-f_{01}|$ with a longer selective pulse of the same shape. Integrate each unit-amplitude waveform and set its amplitude so $2\pi\int E(t)\,dt=\pi$; this is a nominal-pi area prescription, not a simulated calibration.
+Read `f01 = chip.freq(qubit)` and `f12 = chip.transition_frequency(qubit, 1, 2)`. For a Gaussian with temporal standard deviation $\sigma_t$, compare a short pulse whose spectral width $1/(2\pi\sigma_t)$ approaches $|f_{12}-f_{01}|$ with a longer selective pulse of the same shape. Integrate each unit-amplitude waveform and set its amplitude so $2\pi\int E(t)\,dt=\pi$; this is a nominal-pi area prescription, not a simulated calibration.
 
 ### Expected receipt
 

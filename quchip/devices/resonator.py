@@ -34,7 +34,7 @@ e-folding of energy, so energy decays as
 :math:`e^{-t/\\tau} = e^{-\\kappa t}` with
 :math:`\\kappa = \\omega/Q = 2\\pi f/Q`. For this reason the
 :math:`2\\pi` lives in the resonator's photon-loss noise channel and
-must not be moved to the units boundary in ``stage2_assembly.py``.
+must not be moved to the units boundary in ``assembly.py``.
 
 Noise hooks inherited from :class:`~quchip.devices.base.BaseDevice`
 (``T1``, ``T2``, ``thermal_population``) produce the Lindblad
@@ -60,29 +60,15 @@ Example
 from __future__ import annotations
 
 
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import Any, ClassVar
 
 import numpy as np
 
 from quchip.declarative.expr import PhysicsExpr
+from quchip.declarative.dissipation import CollapseChannel
 from quchip.declarative.ops import LocalOps
-from quchip.declarative.parameters import Scalar, parameter
-from quchip.devices.base import BaseDevice, NoiseChannel
+from quchip.declarative.parameters import UNBOUND, Scalar, parameter
 from quchip.devices.fock import FockDevice
-
-
-def _photon_loss_channel(device: Any, basis: Any = None) -> list[tuple[Any, Any]]:
-    """Cavity photon-loss channel ``sqrt(κ)·a`` with ``κ = 2π·freq/Q``.
-
-    Empty when ``quality_factor`` is unset. See the module docstring for the
-    quality-factor convention.
-    """
-    if device.quality_factor is None:
-        return []
-    del basis
-    kappa = 2 * np.pi * device.freq / device.quality_factor
-    op = LocalOps(label=device.label, space=device.local_space(), device=device)
-    return [(op.a, kappa)]
 
 
 class Resonator(FockDevice):
@@ -118,33 +104,26 @@ class Resonator(FockDevice):
     True
     """
 
-    _type_prefix: str = "resonator"
-    _default_levels: int = 10
+    _type_prefix: ClassVar[str] = "resonator"
+    _default_levels: ClassVar[int] = 10
     tunable_param_names = ("freq",)
 
-    freq: Scalar = parameter(positive=True, unit="GHz", symbol=r"\omega")
-    quality_factor: Scalar = parameter(default=None, positive=True)
-
-    # --- generated __init__ stub (tools/gen_device_stubs.py); do not edit ---
-    if TYPE_CHECKING:
-        def __init__(
-            self,
-            freq: Scalar = ...,
-            quality_factor: Scalar = None,
-            *,
-            levels: int = 10,
-            label: str | None = None,
-            T1: float | None = None,
-            T2: float | None = None,
-            thermal_population: float | None = None,
-        ) -> None: ...
-    # --- end generated stub ---
+    freq: Scalar = parameter(default=UNBOUND, positive=True, unit="GHz", symbol=r"\omega")
+    quality_factor: Scalar = parameter(default=None, positive=True, noise=True, kw_only=True)
 
     approximation = "Linear harmonic oscillator with no Kerr or cross-Kerr self-interaction."
 
     def local_hamiltonian(self, op: LocalOps, p: Any) -> PhysicsExpr:
         """Return the harmonic oscillator Hamiltonian ``H = freq * n``."""
         return p.freq * op.n
+
+    def dissipation(self, op: LocalOps, p: Any) -> tuple[CollapseChannel, ...]:
+        channels = super().dissipation(op, p)
+        if self.quality_factor is None:
+            return channels
+        return channels + (
+            CollapseChannel(op.a, 2 * np.pi * p.freq / p.quality_factor, "photon_loss"),
+        )
 
     def physics_notes(self) -> list[str]:
         """Return declared harmonic-oscillator and dissipation assumptions."""
@@ -154,19 +133,13 @@ class Resonator(FockDevice):
             notes.append("Dissipation: photon loss at rate κ = 2π·ω/Q")
         return notes
 
-    # Base T1/T2/thermal channels plus cavity photon loss when ``Q`` is set —
-    # one declaration, no collapse_operators override.
-    _noise_channels: ClassVar[tuple[NoiseChannel, ...]] = BaseDevice._noise_channels + (
-        NoiseChannel("photon_loss", ("quality_factor",), _photon_loss_channel),
-    )
-
     def intrinsic_decay_rate(self) -> Any | None:
         """Combined lowering-channel rate: ``κ = 2π·freq/Q`` photon loss plus the thermal-emission rate.
 
         Both :attr:`quality_factor` and ``T1``/``thermal_population`` build
         independent lowering-operator collapse channels on this device (the
-        ``photon_loss`` :class:`~quchip.devices.base.NoiseChannel`, a pure
-        loss channel unaffected by ``thermal_population``, and the inherited
+        ``photon_loss`` channel, a pure loss channel unaffected by
+        ``thermal_population``, and the inherited
         thermal-emission channel — see
         :meth:`~quchip.devices.base.BaseDevice.intrinsic_decay_rate` for its
         ``(n̄+1)/T1`` / ``n̄+1`` formulas); this hook reports their summed

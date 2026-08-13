@@ -3,7 +3,7 @@
 :func:`parameter` is the field-declaration surface concrete
 :class:`~quchip.declarative.models.DeviceModel`,
 :class:`~quchip.declarative.models.CouplingModel`, and
-:class:`~quchip.declarative.envelope_shape.EnvelopeShape` subclasses use;
+:class:`~quchip.control.envelopes.Envelope` subclasses use;
 this module resolves those declarations into synthesized constructors and
 runs their sign constraints, both at construction and on post-construction
 writes.
@@ -12,13 +12,13 @@ writes.
 from __future__ import annotations
 
 import inspect
+from abc import ABCMeta
 from dataclasses import dataclass
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, TypeVar, dataclass_transform
 
 from quchip.utils.jax_utils import maybe_concrete_scalar
 
 Scalar: TypeAlias = Any
-Modulation: TypeAlias = Any
 
 
 class _Unbound:
@@ -29,6 +29,7 @@ class _Unbound:
 
 
 UNBOUND = _Unbound()
+_DEFAULT_OMITTED = object()
 
 
 @dataclass(frozen=True)
@@ -47,17 +48,48 @@ class Parameter:
     serialize: bool = True
     unit: str | None = None
     symbol: str | None = None
+    noise: bool = False
+    kw_only: bool = False
+    required: bool = False
+
+
+@dataclass(frozen=True)
+class Setting:
+    """Metadata for a serialized, non-traceable structural model choice."""
+
+    default: Any = UNBOUND
+    serialize: bool = True
+    kw_only: bool = True
+
+
+@dataclass(frozen=True)
+class _ConstructorField:
+    """Runtime marker removed after static constructor inference."""
+
+
+def constructor_field(
+    *,
+    default: Any = UNBOUND,
+    kw_only: bool = False,
+    runtime: Any = UNBOUND,
+) -> Any:
+    """Describe a synthesized constructor argument to static type checkers."""
+    _ = (default, kw_only)
+    return _ConstructorField() if runtime is UNBOUND else runtime
+
 
 def parameter(
     *,
-    default: Any = UNBOUND,
+    default: Any = _DEFAULT_OMITTED,
     positive: bool = False,
     nonnegative: bool = False,
     serialize: bool = True,
     unit: str | None = None,
     symbol: str | None = None,
+    noise: bool = False,
+    kw_only: bool = False,
 ) -> Any:
-    """Declare a traceable scalar or modulation parameter on a model class.
+    """Declare a traceable numerical parameter on a model class.
 
     ``unit`` is display metadata for human-readable surfaces such as
     :meth:`Chip.describe` — the package-wide units contract (GHz, ns, mK)
@@ -81,6 +113,9 @@ def parameter(
     symbol : str or None, optional
         Mathematical symbol used when displaying authored physics. The field
         name is used when omitted.
+    noise : bool, optional
+        Whether :meth:`Chip.set_noise` may configure this field while its
+        current value is unset.
 
     Examples
     --------
@@ -92,10 +127,53 @@ def parameter(
     >>> Oscillator(freq=5.0, levels=3).freq
     5.0
     """
+    required = default is _DEFAULT_OMITTED
     return Parameter(
-        default=default, positive=positive, nonnegative=nonnegative,
-        serialize=serialize, unit=unit, symbol=symbol,
+        default=UNBOUND if required else default,
+        positive=positive,
+        nonnegative=nonnegative,
+        serialize=serialize,
+        unit=unit,
+        symbol=symbol,
+        noise=noise,
+        kw_only=kw_only,
+        required=required,
     )
+
+
+def setting(*, default: Any = UNBOUND, serialize: bool = True, kw_only: bool = True) -> Any:
+    """Declare serialized structural configuration on a model class."""
+    if not kw_only:
+        raise ValueError("Declarative settings are keyword-only.")
+    return Setting(default=default, serialize=serialize, kw_only=kw_only)
+
+
+@dataclass_transform(
+    field_specifiers=(Parameter, parameter, Setting, setting, constructor_field),
+)
+class DeclarativeMeta(ABCMeta):
+    """Expose synthesized declarative constructors without runtime fields."""
+
+    def __new__(
+        mcls,
+        name: str,
+        bases: tuple[type, ...],
+        namespace: dict[str, Any],
+        **kwargs: Any,
+    ) -> type:
+        namespace = dict(namespace)
+        for field_name, value in tuple(namespace.items()):
+            if isinstance(value, _ConstructorField):
+                namespace.pop(field_name)
+        return super().__new__(mcls, name, bases, namespace, **kwargs)
+
+
+@dataclass_transform(
+    field_specifiers=(Parameter, parameter, Setting, setting, constructor_field),
+    kw_only_default=True,
+)
+class DriveDeclarativeMeta(DeclarativeMeta):
+    """Expose drive parameters as keyword-only synthesized arguments."""
 
 
 def serializable_value(value: Any) -> Any:
@@ -135,12 +213,25 @@ def build_declared_signature(
     """
     params = [inspect.Parameter("self", inspect.Parameter.POSITIONAL_OR_KEYWORD)]
     for name, spec in param_fields.items():
-        params.append(inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD, default=spec.default))
+        if spec.kw_only:
+            continue
+        default = inspect.Parameter.empty if spec.required else spec.default
+        params.append(inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD, default=default))
+    for name, spec in param_fields.items():
+        if not spec.kw_only:
+            continue
+        default = inspect.Parameter.empty if spec.required else spec.default
+        params.append(inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY, default=default))
     params.extend(trailing)
     return inspect.Signature(params)
 
 
-def resolve_declared_params(cls: type, params: dict[str, Any]) -> dict[str, Any]:
+def resolve_declared_params(
+    cls: type,
+    params: dict[str, Any],
+    *,
+    fields: dict[str, Parameter] | None = None,
+) -> dict[str, Any]:
     """Resolve declared parameters into a {name: value} dict.
 
     Walks ``parameter_fields(cls)``: for each declared field, pops the
@@ -150,9 +241,11 @@ def resolve_declared_params(cls: type, params: dict[str, Any]) -> dict[str, Any]
     ``TypeError`` if a required field is missing or if *params* still
     contains unrecognized keys after the loop.
     """
-    fields = parameter_fields(cls)
+    resolved_fields = parameter_fields(cls) if fields is None else fields
     values: dict[str, Any] = {}
-    for name, spec in fields.items():
+    for name, spec in resolved_fields.items():
+        if name not in params and spec.required:
+            raise TypeError(f"Missing required parameter: {name}")
         value = params.pop(name, spec.default)
         validate_sign(name, spec, value)
         values[name] = value
@@ -160,6 +253,28 @@ def resolve_declared_params(cls: type, params: dict[str, Any]) -> dict[str, Any]
         unknown = ", ".join(sorted(params))
         raise TypeError(f"Unexpected parameter(s): {unknown}")
     return values
+
+
+def resolve_declared_settings(cls: type, values: dict[str, Any]) -> dict[str, Any]:
+    """Pop declared structural settings from *values* and apply defaults."""
+    return {
+        name: values.pop(name, spec.default)
+        for name, spec in setting_fields(cls).items()
+    }
+
+
+_Field = TypeVar("_Field", Parameter, Setting)
+
+
+def _declared_fields(cls: type, field_type: type[_Field]) -> dict[str, _Field]:
+    """Collect one declarative field type in base-first definition order."""
+    fields: dict[str, _Field] = {}
+    for base in reversed(cls.__mro__):
+        for name in getattr(base, "__annotations__", {}):
+            value = getattr(cls, name, None)
+            if isinstance(value, field_type):
+                fields[name] = value
+    return fields
 
 
 def parameter_fields(cls: type) -> dict[str, Parameter]:
@@ -172,11 +287,16 @@ def parameter_fields(cls: type) -> dict[str, Parameter]:
     silently drops the field — by design, so subclasses can elide a
     parent's parameter when they want a concrete override.
     """
-    fields: dict[str, Parameter] = {}
-    for base in reversed(cls.__mro__):
-        annotations = getattr(base, "__annotations__", {})
-        for name in annotations:
-            value = getattr(cls, name, None)
-            if isinstance(value, Parameter):
-                fields[name] = value
-    return fields
+    return _declared_fields(cls, Parameter)
+
+
+def setting_fields(cls: type) -> dict[str, Setting]:
+    """Resolve structural setting fields for *cls*, walking the MRO."""
+    return _declared_fields(cls, Setting)
+
+
+def validate_declared_fields(cls: type) -> None:
+    """Validate cross-cutting constraints on a class's declared fields."""
+    for name, spec in parameter_fields(cls).items():
+        if spec.noise and not spec.serialize:
+            raise TypeError(f"Noise parameter {name!r} must be serializable.")

@@ -5,7 +5,26 @@ from __future__ import annotations
 import numpy as np
 
 from quchip.backend import get_default_backend
-from quchip.chip.rwa import apply_rwa_mask, excitation_band_mask
+from quchip.engine.approximations import apply_operator_band_filter
+
+
+def operator_band_mask(
+    first_dimension: int,
+    second_dimension: int,
+    keeps_band,
+) -> np.ndarray:
+    """Build a dense reference mask for the engine's band decomposition."""
+    flat = np.arange(first_dimension * second_dimension)
+    first_index = flat // second_dimension
+    second_index = flat % second_dimension
+    first_delta = first_index[None, :] - first_index[:, None]
+    second_delta = second_index[None, :] - second_index[:, None]
+    mask = np.zeros((first_dimension * second_dimension, first_dimension * second_dimension))
+    for first_weight in range(-(first_dimension - 1), first_dimension):
+        for second_weight in range(-(second_dimension - 1), second_dimension):
+            if keeps_band(first_weight, second_weight):
+                mask[(first_delta == first_weight) & (second_delta == second_weight)] = 1.0
+    return mask
 
 
 def _number_conserving(da: int, db: int) -> bool:
@@ -19,7 +38,7 @@ def _lowering(d: int) -> np.ndarray:
 class TestExcitationBandMask:
     def test_two_level_pair_keeps_exchange_kills_counter_rotating(self):
         """The number-conserving mask keeps the a†b/ab† exchange and diagonal elements, zeroing the ab/a†b† pair."""
-        mask = excitation_band_mask(2, 2, _number_conserving)
+        mask = operator_band_mask(2, 2, _number_conserving)
         # Basis |a b> with b fast: 0=|00>, 1=|01>, 2=|10>, 3=|11>.
         assert mask[1, 2] == 1.0 and mask[2, 1] == 1.0  # a†b / a b† exchange
         assert mask[0, 3] == 0.0 and mask[3, 0] == 0.0  # a b / a†b† counter-rotating
@@ -29,8 +48,8 @@ class TestExcitationBandMask:
         """The mask's Δ = col − row band convention matches the engine's, keeping |00⟩⟨11| and rejecting its mirror."""
         # Engine convention (engine/bands.py): delta = col - row, so the pure
         # lowering operator a (row n, col n+1) sits in the delta = +1 band.
-        mask = excitation_band_mask(2, 2, lambda da, db: (da, db) == (1, 1))
-        assert mask[0, 3] == 1.0   # |00><11| : both lowered, (Δa, Δb) = (+1, +1)
+        mask = operator_band_mask(2, 2, lambda da, db: (da, db) == (1, 1))
+        assert mask[0, 3] == 1.0  # |00><11| : both lowered, (Δa, Δb) = (+1, +1)
         assert mask[3, 0] == 0.0
 
     def test_capacitive_full_masks_to_beam_splitter(self):
@@ -40,26 +59,26 @@ class TestExcitationBandMask:
         x = a + a.T
         full = np.kron(x, x)
         expected = np.kron(a.T, a) + np.kron(a, a.T)
-        masked = full * excitation_band_mask(d, d, _number_conserving)
+        masked = full * operator_band_mask(d, d, _number_conserving)
         np.testing.assert_allclose(masked, expected, atol=1e-12)
 
     def test_diagonal_operator_invariant(self):
         """A diagonal number-operator term lies entirely in the Δ=0 band and passes the mask unchanged."""
         n = np.diag(np.arange(3.0))
         nn = np.kron(n, n)
-        masked = nn * excitation_band_mask(3, 3, _number_conserving)
+        masked = nn * operator_band_mask(3, 3, _number_conserving)
         np.testing.assert_allclose(masked, nn, atol=1e-12)
 
 
 class TestApplyRwaMask:
     def test_backend_roundtrip_masks_capacitive(self):
-        """The backend round trip through apply_rwa_mask matches the beam-splitter term from a dense mask multiply."""
+        """The backend band filter matches a dense beam-splitter mask."""
         backend = get_default_backend()
         d = 3
         a = _lowering(d)
         full = np.kron(a + a.T, a + a.T)
         h = backend.from_array(full, dims=[[d, d], [d, d]])
-        masked = apply_rwa_mask(
+        masked = apply_operator_band_filter(
             h, dims=(d, d), labels=("qa", "qb"), keeps_band=_number_conserving, backend=backend
         )
         expected = np.kron(a.T, a) + np.kron(a, a.T)
@@ -73,10 +92,10 @@ class TestApplyRwaMask:
         n = np.diag(np.arange(float(d)))
         mixed = np.kron(a + a.T, a + a.T) + np.kron(n, n) + np.kron(a @ a + (a @ a).T, a + a.T)
         h = backend.from_array(mixed, dims=[[d, d], [d, d]])
-        masked = apply_rwa_mask(
+        masked = apply_operator_band_filter(
             h, dims=(d, d), labels=("qa", "qb"), keeps_band=_number_conserving, backend=backend
         )
-        oracle = mixed * excitation_band_mask(d, d, _number_conserving)
+        oracle = mixed * operator_band_mask(d, d, _number_conserving)
         np.testing.assert_allclose(np.asarray(backend.to_array(masked)), oracle, atol=1e-12)
 
     def test_fully_rejected_operator_returns_none(self):
@@ -87,7 +106,9 @@ class TestApplyRwaMask:
         longitudinal = np.kron(np.diag(np.arange(float(d))), a + a.T)
         h = backend.from_array(longitudinal, dims=[[d, d], [d, d]])
         assert (
-            apply_rwa_mask(h, dims=(d, d), labels=("qa", "qb"), keeps_band=_number_conserving, backend=backend)
+            apply_operator_band_filter(
+                h, dims=(d, d), labels=("qa", "qb"), keeps_band=_number_conserving, backend=backend
+            )
             is None
         )
 
@@ -98,7 +119,7 @@ class TestTraceability:
         import jax
         import jax.numpy as jnp
 
-        mask = excitation_band_mask(2, 2, _number_conserving)
+        mask = operator_band_mask(2, 2, _number_conserving)
         a = _lowering(2)
         full = jnp.asarray(np.kron(a + a.T, a + a.T))
 
@@ -113,13 +134,13 @@ class TestTraceability:
 
 
 class TestPredicateHook:
-    def test_base_coupling_default_is_number_conserving(self):
-        """A coupling's default rwa_keeps_band accepts exchange/diagonal bands, rejecting counter-rotating ones."""
-        from quchip.chip.couplings import Capacitive
+    def test_band_rwa_is_number_conserving(self):
+        """RWA keeps exchange and diagonal bands, not counter-rotating bands."""
+        from quchip import RWA
 
-        c = Capacitive("q0", "q1", g=0.01)
-        assert c.rwa_keeps_band(1, -1) is True
-        assert c.rwa_keeps_band(-1, 1) is True
-        assert c.rwa_keeps_band(0, 0) is True
-        assert c.rwa_keeps_band(1, 1) is False
-        assert c.rwa_keeps_band(-1, -1) is False
+        strategy = RWA()
+        assert strategy.keeps_operator_band((1, -1)) is True
+        assert strategy.keeps_operator_band((-1, 1)) is True
+        assert strategy.keeps_operator_band((0, 0)) is True
+        assert strategy.keeps_operator_band((1, 1)) is False
+        assert strategy.keeps_operator_band((-1, -1)) is False

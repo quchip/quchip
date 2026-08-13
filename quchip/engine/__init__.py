@@ -3,25 +3,25 @@
 The engine is the physics-to-solver layer. It owns no solvers and no
 backend-specific types; it produces structured, backend-agnostic
 descriptions that each backend converts to its own optimal form.
-The single 2π boundary lives in :mod:`quchip.engine.stage2_assembly`
+The single 2π boundary lives in :mod:`quchip.engine.assembly`
 and nowhere else.
 
-Pipeline
---------
-* **Stage 1** (:mod:`quchip.engine.stage1_frames`) — resolve a
+Responsibilities
+----------------
+* :mod:`quchip.engine.frames` resolves a
   ``FrameSpec`` into :class:`~quchip.engine.ir.ResolvedFrame`
   (per-device frame frequencies, demodulation frequencies, and the
   frame mode).
-* **Stage 2** (:mod:`quchip.engine.stage2_assembly`) — assemble a
+* :mod:`quchip.engine.assembly` assembles an
   :class:`~quchip.engine.ir.EngineResult` with static terms,
   dynamic terms, and their :class:`~quchip.engine.ir.ScalarModulation`
   signal programs. Applies 2π, rotating-frame subtraction, RWA band
   decomposition (Jaynes & Cummings 1963; Gambetta et al., *PRA* **74**,
   042318 (2006)).
-* **Stage 3** (:mod:`quchip.engine.stage3_observables`) — decompose
+* :mod:`quchip.engine.observables` decomposes
   dict-form ``e_ops`` into solver-ready bands; post-solve, demodulate
   expectations back into the lab/control frame.
-* **Stage 4** (:mod:`quchip.engine.stage4_problem`) — pack everything
+* :mod:`quchip.engine.problem` packages solve inputs
   (including collapse operators) into a frozen
   :class:`~quchip.engine.ir.SolveProblem` or
   :class:`~quchip.engine.ir.SolveBatch`.
@@ -29,7 +29,7 @@ Pipeline
 Public API
 ----------
 * :func:`simulate` — full pipeline + solve + wrap result.
-* :func:`build_problem` — stages 1-4, returns a ``SolveProblem``.
+* :func:`build_problem` — assemble and package a ``SolveProblem``.
 * :func:`solve_problem` — dispatch a ``SolveProblem`` through the chip's backend.
 * :func:`solve_batch` / :func:`solve_many` — batched dispatch.
 """
@@ -78,9 +78,9 @@ __all__ = [
 
 # Wrapper bodies defer the heavy imports so package import stays cheap and
 # order-tolerant. ``chip.analysis`` (pulled by ``quchip.chip.__init__``)
-# imports :func:`resolve_frame` from ``engine.stage1_frames``, which triggers
+# imports :func:`resolve_frame` from ``engine.frames``, which triggers
 # this ``engine/__init__`` while ``quchip.chip`` is still partially
-# initialized. ``stage2_assembly`` / ``stage4_problem`` import ``Chip`` only
+# initialized. ``assembly`` / ``problem`` import ``Chip`` only
 # under TYPE_CHECKING, but they pull the backend and control stacks;
 # deferring those into the wrapper bodies keeps their cost off the
 # package-import path.
@@ -95,8 +95,9 @@ def build_problem(
     options: dict | None = None,
     e_ops: dict | None = None,
     initial_state: Any | None = None,
+    approximation: Any | None = None,
 ) -> SolveProblem:
-    """Run stages 1-4 and return a frozen :class:`SolveProblem`.
+    """Resolve, assemble, and package a frozen :class:`SolveProblem`.
 
     Returns an immutable request that can be passed to
     :func:`solve_problem`, batched with :func:`solve_many`, or
@@ -140,10 +141,10 @@ def build_problem(
     Examples
     --------
     >>> import numpy as np
-    >>> from quchip import Chip, DuffingTransmon, ChargeDrive, Gaussian, QuantumSequence
+    >>> from quchip import RWA, Chip, DuffingTransmon, ChargeDrive, Gaussian, QuantumSequence
     >>> from quchip.engine import build_problem, solve_problem
     >>> q = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=3)
-    >>> chip = Chip([q], frame="rotating", rwa=True)
+    >>> chip = Chip([q], frame="rotating", approximation=RWA())
     >>> ctrl = ChargeDrive(target=q)
     >>> chip.wire(ctrl)
     >>> seq = QuantumSequence(chip)
@@ -151,16 +152,20 @@ def build_problem(
     >>> problem = build_problem(chip, list(seq.scheduled_ops), np.linspace(0.0, 20.0, 41))
     >>> result = solve_problem(problem)
     """
-    from quchip.engine.stage4_problem import build_solve_problem as _build
+    from quchip.engine.problem import build_solve_problem as _build
 
     return _build(
         chip, drive_ops, tlist,
-        solver=solver, options=options, e_ops=e_ops, initial_state=initial_state,
+        solver=solver,
+        options=options,
+        e_ops=e_ops,
+        initial_state=initial_state,
+        approximation=approximation,
     )
 
 
 def build_engine_result(chip: Any, drive_ops: list, **kwargs: Any) -> EngineResult:
-    """Build a :class:`EngineResult` (stages 1-2 only).
+    """Assemble a :class:`EngineResult` for a resolved frame.
 
     Parameters
     ----------
@@ -170,7 +175,7 @@ def build_engine_result(chip: Any, drive_ops: list, **kwargs: Any) -> EngineResu
         Scheduled drive operations to embed as dynamic terms.
     **kwargs
         Forwarded to
-        :func:`quchip.engine.stage2_assembly.build_engine_result`
+        :func:`quchip.engine.assembly.build_engine_result`
         (notably ``resolved_frame``).
 
     Returns
@@ -178,7 +183,7 @@ def build_engine_result(chip: Any, drive_ops: list, **kwargs: Any) -> EngineResu
     EngineResult
         Static and dynamic terms plus dropped-term records.
     """
-    from quchip.engine.stage2_assembly import build_engine_result as _build
+    from quchip.engine.assembly import build_engine_result as _build
 
     return _build(chip, drive_ops, **kwargs)
 
@@ -195,6 +200,7 @@ def simulate(
     check_truncation: bool = True,
     truncation_threshold: float = 1e-3,
     partition: bool = True,
+    approximation: Any | None = None,
 ) -> "SimulationResult":
     """Build a :class:`SolveProblem`, dispatch it, and wrap the solver output.
 
@@ -266,10 +272,10 @@ def simulate(
     Examples
     --------
     >>> import numpy as np
-    >>> from quchip import Chip, DuffingTransmon, ChargeDrive, Gaussian, QuantumSequence
+    >>> from quchip import RWA, Chip, DuffingTransmon, ChargeDrive, Gaussian, QuantumSequence
     >>> from quchip.engine import simulate
     >>> q = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=3)
-    >>> chip = Chip([q], frame="rotating", rwa=True)
+    >>> chip = Chip([q], frame="rotating", approximation=RWA())
     >>> ctrl = ChargeDrive(target=q)
     >>> chip.wire(ctrl)
     >>> seq = QuantumSequence(chip)
@@ -289,13 +295,18 @@ def simulate(
             chip, drive_ops, tlist,
             solver=solver, options=options, e_ops=e_ops, initial_state=initial_state,
             check_truncation=check_truncation, truncation_threshold=truncation_threshold,
+            approximation=approximation,
         )
         if partitioned is not None:
             return partitioned
 
     problem = build_problem(
         chip, drive_ops, tlist,
-        solver=solver, options=options, e_ops=e_ops, initial_state=initial_state,
+        solver=solver,
+        options=options,
+        e_ops=e_ops,
+        initial_state=initial_state,
+        approximation=approximation,
     )
     collapse_terms = problem.engine_result.collapse_terms
     chosen_solver = problem.solver or ("mesolve" if collapse_terms else "sesolve")
@@ -389,6 +400,6 @@ def solve_many(
                 "All problems in solve_many() must share the same chip instance."
             )
 
-    from quchip.engine.stage4_problem import solve_problem_list
+    from quchip.engine.problem import solve_problem_list
 
     return solve_problem_list(problems, chip.backend, progress=progress)

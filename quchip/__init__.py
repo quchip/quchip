@@ -37,6 +37,7 @@ from quchip.analysis import (  # noqa: E402
     analyze_static_zz,
     effective_hamiltonian,
 )
+from quchip.approximations import Approximation, Exact, RWA  # noqa: E402
 from quchip.backend import get_default_backend, set_default_backend  # noqa: E402
 from quchip.chip import (
     ActivePatchResult,
@@ -56,45 +57,47 @@ from quchip.chip import (
     register_retarget_rule,
 )
 from quchip.control import (
-    BaseDrive,
     ChargeDrive,
     ControlEquipment,
+    CouplingDrive,
     Crosstalk,
     CrosstalkMatrix,
     Delay,
-    DriveChannel,
-    DriveModulation,
-    DriveSignalSpec,
+    DeviceDrive,
+    Envelope,
     FluxDrive,
     Gain,
     Gaussian,
+    GaussianDRAG,
     GaussianEdge,
     LinearRamp,
     ParametricDrive,
     PhaseDrive,
-    SignalTransform,
     Square,
     SquareWithGaussianEdges,
     TwoPhotonDrive,
 )
 from quchip.control.sequence import QuantumSequence
 from quchip.declarative import (
+    CollapseChannel,
+    CosineCoefficient,
     CouplingModel,
     DeviceModel,
     EndpointOps,
-    EnvelopeShape,
     LocalOps,
-    Modulation,
+    TimeDependentTerm,
     Parameter,
     PhysicsExpr,
     Scalar,
+    Setting,
+    TimeCoefficient,
     as_operator_expr,
     as_scalar_expr,
     as_state_expr,
     parameter,
+    setting,
     qnp,
 )
-from quchip.devices.base import NoiseChannel
 from quchip.devices.fluxonium import Fluxonium
 from quchip.devices.fock import FockDevice
 from quchip.devices.kerr_cavity import KerrCavity
@@ -130,20 +133,29 @@ _LAZY_VIZ_EXPORTS = {
 __all__ = [
     # Version
     "__version__",
+    # Engine approximation strategies
+    "Approximation",
+    "Exact",
+    "RWA",
     # Declarative extension API
+    "CollapseChannel",
     "CouplingModel",
+    "CosineCoefficient",
     "DeviceModel",
     "EndpointOps",
-    "EnvelopeShape",
+    "Envelope",
     "LocalOps",
+    "TimeDependentTerm",
     "Parameter",
     "PhysicsExpr",
     "Scalar",
-    "Modulation",
+    "Setting",
+    "TimeCoefficient",
     "as_operator_expr",
     "as_scalar_expr",
     "as_state_expr",
     "parameter",
+    "setting",
     "qnp",
     # Devices
     "ChargeBasisTransmon",
@@ -156,7 +168,6 @@ __all__ = [
     "Fluxonium",
     "KerrCavity",
     "LocalSpace",
-    "NoiseChannel",
     "Resonator",
     # Coupling Protocols
     "ChargeCoupled",
@@ -181,6 +192,7 @@ __all__ = [
     "register_reduction_method",
     # Pulse envelopes
     "Gaussian",
+    "GaussianDRAG",
     "LinearRamp",
     "GaussianEdge",
     "Square",
@@ -205,14 +217,11 @@ __all__ = [
     "hbar",
     "Phi_0",
     # Control
-    "BaseDrive",
-    "SignalTransform",
+    "CouplingDrive",
+    "DeviceDrive",
     "Delay",
     "Gain",
-    "DriveSignalSpec",
-    "DriveModulation",
     "ChargeDrive",
-    "DriveChannel",
     "FluxDrive",
     "ParametricDrive",
     "PhaseDrive",

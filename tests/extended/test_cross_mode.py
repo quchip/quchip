@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from quchip.approximations import RWA
+
 import numpy as np
 import numpy.testing as npt
 import pytest
@@ -36,12 +38,12 @@ def _reset_labels():
 def _build_dispersive_system(
     frame_mode: str | float | dict[str, float],
     *,
-    rwa: bool,
+    approximation,
 ) -> tuple[Chip, DuffingTransmon, Resonator, ChargeDrive, ChargeDrive]:
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=3, label="q")
     r = Resonator(freq=7.0, levels=10, label="r")
-    coupling = Capacitive(q, r, g=0.1, rwa=rwa)
-    chip = Chip([q, r], [coupling])
+    coupling = Capacitive(q, r, g=0.1)
+    chip = Chip([q, r], [coupling], approximation=approximation)
 
     drive_q = ChargeDrive(target=q)
     drive_r = ChargeDrive(target=r)
@@ -57,7 +59,7 @@ def test_cross_mode_populations_match():
 
     for mode_name, mode_spec in FRAME_MODES:
         reset_label_counters()
-        chip, q, _, drive_q, _ = _build_dispersive_system(mode_spec, rwa=True)
+        chip, q, _, drive_q, _ = _build_dispersive_system(mode_spec, approximation=RWA())
         tlist = np.linspace(0.0, 30.0, 301)
         dop = DriveOp(
             target_label="q",
@@ -94,7 +96,7 @@ def test_cross_mode_demodulated_amplitude_match():
 
     for mode_name, mode_spec in FRAME_MODES:
         reset_label_counters()
-        chip, q, r, _, drive_r = _build_dispersive_system(mode_spec, rwa=True)
+        chip, q, r, _, drive_r = _build_dispersive_system(mode_spec, approximation=RWA())
 
         readout_freq = 0.5 * (chip.freq(r, {q: 0}) + chip.freq(r, {q: 1}))
         tlist = np.linspace(0.0, 50.0, 401)

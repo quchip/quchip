@@ -9,6 +9,8 @@ full diagonalization).
 
 from __future__ import annotations
 
+from quchip.approximations import RWA
+
 import pytest
 
 from quchip import Capacitive, Chip, DuffingTransmon, Resonator
@@ -25,10 +27,10 @@ def _bridge_chip() -> Chip:
     q1 = DuffingTransmon(freq=_Q1_FREQ, anharmonicity=-0.24, levels=3, label="q1")
     bus = Resonator(freq=_BUS_FREQ, levels=4, label="bus")
     couplings = [
-        Capacitive(q0, bus, g=_LEG_G, rwa=True, label="leg0"),
-        Capacitive(q1, bus, g=_LEG_G, rwa=True, label="leg1"),
+        Capacitive(q0, bus, g=_LEG_G, label="leg0"),
+        Capacitive(q1, bus, g=_LEG_G, label="leg1"),
     ]
-    return Chip([q0, q1, bus], couplings=couplings, frame="rotating", rwa=True)
+    return Chip([q0, q1, bus], couplings=couplings, frame="rotating", approximation=RWA())
 
 
 def test_sw_and_exact_freq_after_agree_within_dispersive_tolerance():

@@ -13,14 +13,14 @@ the pair ``(Δa, Δb)``.
 
 Physics use
 -----------
-* Stage 2 attaches a carrier ``exp(−i w ω t)`` to each band when it
+* Assembly attaches a carrier ``exp(−i w ω t)`` to each band when it
   assembles a drive or coupling operator in a rotating frame, and drops
   counter-rotating bands under the RWA (Jaynes & Cummings 1963; for the
   structured cQED treatment see Gambetta et al., *PRA* **74**, 042318
   (2006); for cross-resonance specifically, Rigetti & Devoret, *PRB*
   **81**, 134507 (2010), and Magesan & Gambetta, *PRA* **101**, 052308
   (2020)).
-* Stage 3 uses the same weights to demodulate observable expectations
+* Observable reconstruction uses the same weights to demodulate expectations
   back into the control frame.
 
 Implementation
@@ -100,7 +100,7 @@ def canonical_to_dense_array(canonical: CanonicalOperator) -> Any:
 
 
 # Diagonals whose max absolute value falls at or below this floor are
-# treated as exact algebraic cancellation (roundoff dust from stage 2
+# treated as exact algebraic cancellation (roundoff dust from assembly
 # subtracting and re-adding the same coupling band), not physical
 # structure. This is the module's only remaining absolute-threshold site;
 # every band-drop decision elsewhere uses the relative _BAND_NORM_RTOL.
@@ -110,7 +110,7 @@ _DIAGONAL_PRUNE_THRESHOLD = 1e-15
 def prune_zero_diagonals(canonical: CanonicalOperator) -> CanonicalOperator:
     """Drop concretely all-zero stored diagonals from a DIA canonical operator.
 
-    Operator algebra that cancels terms exactly (e.g. stage 2 subtracting the
+    Operator algebra that cancels terms exactly (e.g. assembly subtracting the
     lab-frame coupling from ``H₀`` before re-adding it band-by-band as dynamic
     terms) leaves the union of the operands' diagonal offsets in the sum, with
     the cancelled diagonals stored as explicit zeros — dead payload the solver
@@ -384,7 +384,7 @@ def decompose_canonical_bands(
       :func:`decompose_bands` and emit dense bands.
 
     Subsystem metadata (``dims``, ``basis``, ``subsystem_labels``,
-    ``tag``) is copied onto every band so downstream stages can continue
+    ``tag``) is copied onto every band so downstream engine operations can continue
     to reason about which subsystem each band lives on.
     """
     if dim < 1:
@@ -451,7 +451,7 @@ def decompose_two_body_canonical_bands(
     *canonical* is in the product basis ``|i_a⟩ ⊗ |i_b⟩`` with mode
     ``b`` as the fast index; ``dims`` is ``[d_a, d_b]``. Each band has
     a definite excitation change on each mode, so the carrier attached
-    in stage 2 is ``exp(−i (Δa · ω_a + Δb · ω_b) t)`` — the standard
+    during assembly is ``exp(−i (Δa · ω_a + Δb · ω_b) t)`` — the standard
     rotating-frame form for a bilinear coupling (see e.g. Magesan &
     Gambetta, *PRA* **101**, 052308 (2020), Eq. (2)).
     """
@@ -550,13 +550,13 @@ def _decompose_coupling_dense(
 
 # ── Local-operator → excitation-band helpers ───────────────
 #
-# Stages 2 and 3 repeatedly turn a *local* operator (on one device's
+# Assembly and observable reconstruction repeatedly turn a *local* operator (on one device's
 # truncated space) into its excitation-change bands. These two helpers
 # capture that shared "canonicalize → decompose → sorted-by-weight"
 # skeleton. ``backend`` is any object satisfying the Backend protocol
 # (``to_canonical_operator`` / ``from_canonical_operator`` / ``embed``);
 # the helpers stay backend-agnostic. Neither applies the ``2π`` boundary
-# (Stage 2 owns that) — they return lab-frame, ordinary-GHz band operators.
+# (assembly owns that) — they return lab-frame, ordinary-GHz band operators.
 
 
 def local_mode_bands(

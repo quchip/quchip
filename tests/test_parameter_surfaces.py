@@ -58,8 +58,9 @@ def test_sequence_parameters_rebind_chip_and_pulse_values_directly(monkeypatch) 
     sequence = QuantumSequence(chip)
     sequence.schedule(
         drive,
-        envelope=Square(duration=20.0, amplitude=0.02, phase=0.1),
+        envelope=Square(duration=20.0, amplitude=0.02),
         freq=5.0,
+        phase=0.1,
     )
 
     rebound = sequence.with_params({"q.freq": 5.1, "pulse.0.amplitude": 0.04})
@@ -75,18 +76,18 @@ def test_sequence_parameters_rebind_chip_and_pulse_values_directly(monkeypatch) 
     batch = sequence.build_batch(pulse_axis, tlist=np.linspace(0.0, 20.0, 21))
     assert batch.params_at(1)["pulse.0.amplitude"] == 0.02
 
-    captured: list[tuple[float, float]] = []
+    captured: list[float] = []
     materialize = sequence._materialize_drive_ops
 
     def capture(overrides=None):
         ops = materialize(overrides)
-        captured.extend((float(op.envelope.phase), float(op.phase_offset)) for op in ops)
+        captured.extend(float(op.phase_offset) for op in ops)
         return ops
 
     monkeypatch.setattr(sequence, "_materialize_drive_ops", capture)
-    envelope_phase = sequence.vary("pulse.0.envelope.phase", [0.2, 0.3])
-    sequence.build_batch(envelope_phase, tlist=np.linspace(0.0, 20.0, 21))
-    assert (0.3, 0.0) in captured
+    pulse_phase = sequence.vary("pulse.0.phase", [0.2, 0.3])
+    sequence.build_batch(pulse_phase, tlist=np.linspace(0.0, 20.0, 21))
+    assert 0.3 in captured
     with pytest.raises(ValueError, match="Available"):
         sequence.vary("basis", ["native", "eigen"])
 
@@ -177,15 +178,15 @@ def test_chip_with_params_is_differentiable_on_dynamiqs() -> None:
 
 
 def test_chip_parameter_inventory_includes_drive_control_and_bath_owners() -> None:
+    from quchip.declarative import CollapseChannel, Scalar, parameter
+
     class LossyDrive(ChargeDrive):
-        _parameter_names = ("loss_rate",)
+        loss_rate: Scalar = parameter(nonnegative=True, unit="1/ns", noise=True)
 
-        def __init__(self, target, *, loss_rate, label):
-            super().__init__(target, label=label)
-            self.loss_rate = loss_rate
-
-        def collapse_contributions(self, device):
-            return [(device.lowering_operator(), self.loss_rate)]
+        def dissipation(self, device, op, p):
+            return (
+                CollapseChannel(op.a, p.loss_rate, "loss"),
+            )
 
     q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=2, label="q0")
     q1 = DuffingTransmon(freq=5.2, anharmonicity=-0.2, levels=2, label="q1")

@@ -1,11 +1,10 @@
-"""Stage 4: pack engine physics and solve inputs into a frozen :class:`SolveProblem`.
+"""Package engine physics and solve inputs into frozen solve requests.
 
 Responsibilities
 ----------------
-* Ensure the chip is dressed and run stage 1 (:func:`resolve_frame`).
-* Run stage 3 (:func:`decompose_eops`) to flatten ``e_ops`` into
-  solver-ready bands.
-* Run stage 2 (:func:`build_engine_result`) for each variant
+* Resolve the chip frame.
+* Flatten ``e_ops`` into solver-ready bands with :func:`decompose_eops`.
+* Build an :class:`EngineResult` for each variant
   and pack into a single :class:`SolveProblem`, or merge homogeneous
   variants into a :class:`SolveBatch` (``N`` identical skeletons with
   per-element :class:`ScalarModulation` signals).
@@ -21,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from quchip.approximations import Approximation
 from quchip.engine.ir import (
     DriveOp,
     EngineResult,
@@ -29,8 +29,8 @@ from quchip.engine.ir import (
     SolveProblem,
     _aggregate_batch_metadata,
 )
-from quchip.engine.stage2_assembly import build_engine_result
-from quchip.engine.stage3_observables import decompose_eops
+from quchip.engine.assembly import build_engine_result
+from quchip.engine.observables import decompose_eops
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
 
 if TYPE_CHECKING:
@@ -50,6 +50,7 @@ class SolveProblemContext:
     e_ops: Any
     e_ops_meta: Any
     resolved_frame: Any
+    approximation: Approximation
     _base_result: EngineResult | None
     solver: str | None
     options: dict[str, Any]
@@ -71,6 +72,7 @@ class SolveProblemContext:
             e_ops=ref.e_ops,
             e_ops_meta=ref.e_ops_meta,
             resolved_frame=ref.resolved_frame,
+            approximation=ref.engine_result.approximation,
             _base_result=None,
             solver=ref.solver,
             options=dict(ref.options),
@@ -139,10 +141,11 @@ def prepare_solve_problem_context(
     options: dict | None = None,
     e_ops: dict | None = None,
     drive_ops: list[DriveOp] | None = None,
+    approximation: Approximation | None = None,
 ) -> SolveProblemContext:
     """Resolve the frame and retain authored observables and state specifications.
 
-    Observables and states are materialized only after stage 2 resolves every
+    Observables and states are materialized only after assembly resolves every
     local solver basis. The default ground state remains lazy, so callers that
     provide an explicit state do not pay for unused state construction.
 
@@ -164,13 +167,14 @@ def prepare_solve_problem_context(
 
     if e_ops is not None and not isinstance(e_ops, dict):
         raise TypeError("e_ops must be dict or None")
-    base_result = chip.resolve()
+    base_result = chip.resolve(approximation=approximation)
     return SolveProblemContext(
         chip=chip,
         tlist=tlist_arr,
         e_ops=e_ops,
         e_ops_meta=None,
         resolved_frame=base_result.resolved_frame,
+        approximation=base_result.approximation,
         _base_result=base_result,
         solver=solver,
         options=merged_options,
@@ -229,6 +233,12 @@ def build_solve_batch_from_results(
 
     # --- Skeleton checks: static terms, dim shape, dynamic term count ---
     for idx, result in enumerate(engine_results):
+        if result.approximation != ref.approximation:
+            raise ValueError(
+                _prefix + "all engine results must use the same approximation; "
+                f"element {idx} uses {type(result.approximation).__name__}, "
+                f"expected {type(ref.approximation).__name__}."
+            )
         if result.static_terms is not ref.static_terms:
             raise ValueError(
                 _prefix + "all engine results must share identical static_terms (by identity); "
@@ -322,8 +332,9 @@ def build_solve_problem(
     options: dict | None = None,
     e_ops: dict | None = None,
     initial_state: Any | None = None,
+    approximation: Approximation | None = None,
 ) -> SolveProblem:
-    """Run stages 1-4 end-to-end and return a frozen :class:`SolveProblem`.
+    """Resolve, assemble, and package a frozen :class:`SolveProblem`.
 
     Equivalent to :func:`prepare_solve_problem_context` followed by
     :func:`build_engine_result`. For many variants sharing one
@@ -331,12 +342,19 @@ def build_solve_problem(
     :func:`build_solve_batch_from_results`.
     """
     context = prepare_solve_problem_context(
-        chip, tlist, solver=solver, options=options, e_ops=e_ops, drive_ops=drive_ops,
+        chip,
+        tlist,
+        solver=solver,
+        options=options,
+        e_ops=e_ops,
+        drive_ops=drive_ops,
+        approximation=approximation,
     )
     engine_result = build_engine_result(
         chip,
         drive_ops,
         resolved_frame=context.resolved_frame,
+        approximation=context.approximation,
         _base_result=context._base_result,
     )
     e_ops_solver, e_ops_meta = _prepare_context_eops(context, engine_result)
@@ -366,7 +384,7 @@ def solve_problem_list(
     each structural group follows the normal batch path, with incompatible
     results falling back to per-problem ``backend.solve_problem`` calls.
 
-    Grouping is a two-stage filter. The cheap identity-based prefilter here
+    Grouping uses two filters. The cheap identity-based prefilter here
     (:func:`_skeleton_prefilter_key`) buckets problems by ``id()`` of their
     shared operators/metadata so that obviously-incompatible problems are never
     compared by value. The canonical by-value compatibility check is intentionally

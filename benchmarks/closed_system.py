@@ -164,7 +164,7 @@ def _build_quchip(n: int, levels: int, family: str) -> tuple[Any, list[str]]:
     from quchip import Capacitive, ChargeDrive, Chip, DuffingTransmon, Gaussian, QuantumSequence
     from quchip.engine import solve_problem
 
-    del quchip, solve_problem
+    del solve_problem
     freqs = frequencies(n)
     devices: list[Any] = [
         DuffingTransmon(
@@ -180,12 +180,17 @@ def _build_quchip(n: int, levels: int, family: str) -> tuple[Any, list[str]]:
     couplings: list[Any] = [
         Capacitive(devices[index], devices[index + 1], g=COUPLING_G) for index in range(n - 1)
     ]
+    approximation = (
+        {"approximation": quchip.RWA()}
+        if hasattr(quchip, "RWA")
+        else {"rwa": True}
+    )
     chip = Chip(
         devices,
         couplings or None,
         frame={device: freq for device, freq in zip(devices, freqs)},
-        rwa=True,
         backend=family,
+        **approximation,
     )
     drive = ChargeDrive(devices[0], label="d0")
     chip.wire(drive)

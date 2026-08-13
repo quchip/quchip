@@ -30,6 +30,7 @@ from quchip.chip.dressing import BareProductReference, Labeling, assign_rowwise_
 from quchip.utils.jax_utils import contains_tracer
 
 if TYPE_CHECKING:
+    from quchip.approximations import Approximation
     from quchip.chip.chip import Chip
 
 #: Matrix elements at or below this magnitude are treated as structural zeros
@@ -37,18 +38,24 @@ if TYPE_CHECKING:
 _WORKING_PRECISION = 1e-12
 
 
-def bare_hamiltonian(chip: "Chip") -> tuple[Any, list[str], tuple[int, ...]]:
+def bare_hamiltonian(
+    chip: "Chip",
+    *,
+    approximation: "Approximation | None" = None,
+) -> tuple[Any, list[str], tuple[int, ...]]:
     """Full bare Hamiltonian as a dense ``jnp`` array in GHz, with labels and dims.
 
-    This analysis-only path applies the chip's resolved RWA policy while
+    This analysis-only path applies the chip's approximation strategy while
     leaving the authored Hamiltonian unchanged. It intentionally materializes
     a dense matrix.
     """
     from quchip.engine.basis import semantic_to_solver_transform
-    from quchip.engine.stage2_assembly import _analysis_matrix_ghz
+    from quchip.engine.assembly import _analysis_matrix_ghz
 
     labels = [dev.label for dev in chip.devices]
-    result = chip.analysis.engine_result()
+    # Dressed-state analysis retains the complete authored Hamiltonian.
+    # Reduction acts on the model selected for engine use.
+    result = chip.resolve(frame="lab", approximation=approximation)
     h = jnp.asarray(_analysis_matrix_ghz(result), dtype=complex)
     semantic_to_solver: Any | None = None
     for device in chip.devices:
@@ -206,11 +213,11 @@ def _exact_eigensystem(h: Any, dims: tuple[int, ...]) -> tuple[Any, Any, Labelin
 
 
 def exact_reduction(chip: "Chip", mode_label: str, survivor_labels: list[str]) -> dict:
-    """Exact-from-dressing reduction of the engine-consumed static model.
+    """Exact-from-dressing reduction of the complete authored static model.
 
-    Diagonalizes the same lab-frame, locally materialized Hamiltonian used by
-    the perturbative route, including resolved RWA. Kept-block energies are
-    exact to all orders — which is what ZZ needs. This is the des-Cloizeaux
+    Diagonalizes the lab-frame Hamiltonian without term removal, independent
+    of the chip's solve approximation. Kept-block energies are exact to all
+    orders — which is what ZZ needs. This is the des-Cloizeaux
     caveat in reverse: energies are exact, but the effective basis is the
     overlap-projected one, not the canonical SW rotation, so off-diagonal
     reads (``J``) agree with the perturbative route only through 2nd order.
@@ -228,7 +235,9 @@ def exact_reduction(chip: "Chip", mode_label: str, survivor_labels: list[str]) -
         labeling indices are best-effort diagnostics there, never a traced
         branch).
     """
-    h, labels, dims = bare_hamiltonian(chip)
+    from quchip.approximations import Exact
+
+    h, labels, dims = bare_hamiltonian(chip, approximation=Exact())
     eigenvalues, evecs, labeling = _exact_eigensystem(h, dims)
 
     def occupation(excited: dict[str, int]) -> tuple[int, ...]:

@@ -1,21 +1,96 @@
 from __future__ import annotations
 
+import inspect
+
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import pytest
 
+import quchip
 from quchip import DeviceModel, Scalar, parameter
-from quchip.declarative.parameters import UNBOUND
+from quchip.declarative import Parameter, Setting, setting
+from quchip.declarative.parameters import (
+    UNBOUND,
+    parameter_fields,
+    setting_fields,
+    validate_declared_fields,
+)
+
+
+class DeclaredFields:
+    rate: float = parameter(
+        default=None,
+        nonnegative=True,
+        unit="1/ns",
+        noise=True,
+    )
+    basis: str | None = setting(default=None)
 
 
 class ToyDevice(DeviceModel):
-    freq: Scalar = parameter(positive=True)
+    freq: Scalar = parameter(default=UNBOUND, positive=True)
     detuning: Scalar = parameter(default=0.0)
     approximation = None
 
     def local_hamiltonian(self, op, p):
         return (p.freq + p.detuning) * op.n
+
+
+def test_parameter_records_noise_ownership():
+    field = parameter_fields(DeclaredFields)["rate"]
+
+    assert isinstance(field, Parameter)
+    assert field.noise is True
+
+
+def test_setting_is_structural_not_a_parameter():
+    assert setting_fields(DeclaredFields) == {
+        "basis": Setting(default=None, serialize=True),
+    }
+    assert "basis" not in parameter_fields(DeclaredFields)
+
+
+def test_setting_authoring_names_are_public():
+    assert quchip.Setting is Setting
+    assert quchip.setting is setting
+
+
+def test_noise_parameter_must_be_serializable():
+    class InvalidNoiseField:
+        rate: float = parameter(default=None, noise=True, serialize=False)
+
+    with pytest.raises(TypeError, match="Noise parameter 'rate' must be serializable"):
+        validate_declared_fields(InvalidNoiseField)
+
+
+def test_bare_parameter_is_required_at_runtime() -> None:
+    class RequiredDevice(DeviceModel):
+        value: Scalar = parameter()
+
+        def local_hamiltonian(self, op, p):
+            return p.value * op.n
+
+    assert inspect.signature(RequiredDevice).parameters["value"].default is inspect.Parameter.empty
+    with pytest.raises(TypeError, match="value"):
+        RequiredDevice()
+
+
+def test_keyword_only_parameter_matches_runtime_signature() -> None:
+    class KeywordDevice(DeviceModel):
+        value: Scalar = parameter(default=1.0, kw_only=True)
+
+        def local_hamiltonian(self, op, p):
+            return p.value * op.n
+
+    assert inspect.signature(KeywordDevice).parameters["value"].kind is inspect.Parameter.KEYWORD_ONLY
+    with pytest.raises(TypeError, match="positional"):
+        KeywordDevice(2.0)
+
+
+def test_settings_cannot_opt_out_of_keyword_only_construction() -> None:
+    with pytest.raises(ValueError, match="keyword-only"):
+        setting(default=None, kw_only=False)
 
 
 def test_parameter_fields_generate_constructor_and_attributes():

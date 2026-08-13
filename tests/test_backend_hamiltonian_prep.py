@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from quchip.approximations import RWA, Exact
+
 import numpy as np
 import qutip
 
@@ -13,8 +15,8 @@ from quchip.control.equipment import ControlEquipment
 from quchip.devices.transmon.duffing import DuffingTransmon
 from quchip.declarative.expr import materialize_expr
 from quchip.engine.ir import CanonicalOperator, Carrier, DynamicTerm, EngineResult, ScalarModulation
-from quchip.engine.stage1_frames import resolve_frame
-from quchip.engine.stage2_assembly import build_engine_result
+from quchip.engine.frames import resolve_frame
+from quchip.engine.assembly import build_engine_result
 
 
 class TestPrepareHamiltonian:
@@ -191,7 +193,7 @@ class TestPrepareHamiltonian:
             drive_label=drive.label,
         )
 
-        chip_rwa = Chip([q], frame="rotating", rwa=True)
+        chip_rwa = Chip([q], frame="rotating", approximation=RWA())
         chip_rwa.connect(ControlEquipment(lines=[drive]))
         chip_rwa.dress()
         resolved_rwa = resolve_frame(chip_rwa, chip_rwa.frame)
@@ -203,7 +205,7 @@ class TestPrepareHamiltonian:
 
         q_full = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=3, label="q")
         drive_full = ChargeDrive(target=q_full)
-        chip_full = Chip([q_full], frame="rotating", rwa=False)
+        chip_full = Chip([q_full], frame="rotating", approximation=Exact())
         chip_full.connect(ControlEquipment(lines=[drive_full]))
         chip_full.dress()
         resolved_full = resolve_frame(chip_full, chip_full.frame)

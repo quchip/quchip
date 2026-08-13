@@ -102,22 +102,25 @@ class TestKerrCavityHamiltonian:
 # ======================================================================
 
 class TestTwoPhotonDrive:
-    """Verify TwoPhotonDrive local_channels returns correct operator and modulation."""
+    """Verify the TwoPhotonDrive operator and modulation."""
 
-    def test_local_channels_length(self):
-        """local_channels should return exactly one channel."""
+    def test_definition_returns_channel(self):
+        """The definition resolves one channel."""
         cav = KerrCavity(freq=5.0, kerr=1.0, levels=10, label="cav")
         d2 = TwoPhotonDrive(target=cav)
-        channels = d2.local_channels(cav)
-        assert len(channels) == 1
+        from quchip.control.signal import AnalyticSignal
+        from quchip.engine.ir import Constant
+
+        assert d2.hamiltonian(cav, AnalyticSignal(Constant(1.0))).labels == ("cav",)
 
     def test_coupling_operator_is_hermitian(self):
         """a^2 + a_dag^2 must be Hermitian."""
         cav = KerrCavity(freq=5.0, kerr=1.0, levels=10, label="cav")
         d2 = TwoPhotonDrive(target=cav)
-        channels = d2.local_channels(cav)
-        op = channels[0].operator
-        op_arr = np.array(op.full()) if hasattr(op, "full") else np.asarray(op)
+        from quchip.control.signal import AnalyticSignal
+        from quchip.engine.ir import Constant
+
+        op_arr = np.asarray(d2.hamiltonian(cav, AnalyticSignal(Constant(1.0))).matrix(t=0.0))
         npt.assert_allclose(op_arr, op_arr.conj().T, atol=1e-12)
 
     def test_coupling_operator_shape(self):
@@ -125,18 +128,16 @@ class TestTwoPhotonDrive:
         levels = 8
         cav = KerrCavity(freq=5.0, kerr=1.0, levels=levels, label="cav")
         d2 = TwoPhotonDrive(target=cav)
-        channels = d2.local_channels(cav)
-        op = channels[0].operator
-        op_arr = np.array(op.full()) if hasattr(op, "full") else np.asarray(op)
+        from quchip.control.signal import AnalyticSignal
+        from quchip.engine.ir import Constant
+
+        op_arr = np.asarray(d2.hamiltonian(cav, AnalyticSignal(Constant(1.0))).matrix(t=0.0))
         assert op_arr.shape == (levels, levels)
 
-    def test_modulation_is_single_tone(self):
-        """Channel modulation should be SINGLE_TONE."""
-        from quchip.control.signal_spec import DriveModulation
+    def test_drive_has_no_modulation_policy(self):
         cav = KerrCavity(freq=5.0, kerr=1.0, levels=10, label="cav")
         d2 = TwoPhotonDrive(target=cav)
-        channels = d2.local_channels(cav)
-        assert channels[0].modulation == DriveModulation.SINGLE_TONE
+        assert not hasattr(d2, "modulation")
 
     def test_type_prefix(self):
         """_type_prefix should be 'two_photon'."""
@@ -153,14 +154,13 @@ class TestTwoPhotonDrive:
         """a^2 + a_dag^2 must have zeros on diagonal (no weight-0 band)."""
         cav = KerrCavity(freq=5.0, kerr=1.0, levels=8, label="cav")
         d2 = TwoPhotonDrive(target=cav)
-        channels = d2.local_channels(cav)
-        op = channels[0].operator
-        op_arr = np.array(op.full()) if hasattr(op, "full") else np.asarray(op)
+        from quchip.control.signal import AnalyticSignal
+        from quchip.engine.ir import Constant
+
+        op_arr = np.asarray(d2.hamiltonian(cav, AnalyticSignal(Constant(1.0))).matrix(t=0.0))
         npt.assert_allclose(np.diag(op_arr), 0.0, atol=1e-12)
 
-    def test_schedule_without_freq_rejected_at_sequence_layer(self):
-        """``seq.schedule`` on a TwoPhotonDrive requires an explicit freq (no natural default)."""
-        import pytest
+    def test_schedule_without_freq_builds_a_carrier_free_signal(self):
         from quchip import Chip, QuantumSequence
         from quchip.control.envelopes import Square
 
@@ -169,8 +169,8 @@ class TestTwoPhotonDrive:
         chip = Chip([cav])
         chip.wire(d2)
         seq = QuantumSequence(chip)
-        with pytest.raises(ValueError, match="explicit freq"):
-            seq.schedule(d2, envelope=Square(duration=20.0, amplitude=0.1))
+        seq.schedule(d2, envelope=Square(duration=20.0, amplitude=0.1))
+        assert seq.scheduled_ops[0].freq is None
 
 
 # ======================================================================

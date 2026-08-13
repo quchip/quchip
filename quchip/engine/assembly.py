@@ -1,4 +1,4 @@
-"""Stage 2: assemble a :class:`EngineResult` from chip, drive ops, and frame.
+"""Assemble an :class:`EngineResult` from chip, drive operations, and frame.
 
 Responsibilities
 ----------------
@@ -10,7 +10,7 @@ entirely here, in:
 
 * :func:`_build_static_h0` — frame-subtracted bare Hamiltonian,
 * :func:`_resolve_coupling_terms` — full interaction band-decomposed,
-  each band filtered by the coupling's RWA policy and folded into ``H₀``
+  each band handled by the chip's approximation strategy and folded into ``H₀``
   or carried, per band,
 * :func:`_apply_2pi_canonical` — the single point that scales every
   embedded *dynamic* operator (drive, crosstalk, coupling-dynamic,
@@ -19,14 +19,14 @@ entirely here, in:
 The same ``2π`` convention also expresses signal-AST carrier and
 rotating-frame-phase *frequencies* in rad/ns
 (:func:`_single_tone_coefficient`, :func:`_direct_real_coefficient`) and
-the stage-3 demodulation phase; those are frequencies inside the
+the observable-demodulation phase; those are frequencies inside the
 time-dependence / observable bookkeeping, not a second Hamiltonian
 boundary. :mod:`quchip.engine.solver_hints` divides by ``2π`` only to
 report advisory hints back in ordinary GHz.
 
 Physics
 -------
-Stage 2 performs three physically distinct operations on top of the 2π
+Assembly performs three physically distinct operations on top of the 2π
 scaling:
 
 1. **Rotating-frame transformation.** Each device's number operator is
@@ -36,10 +36,10 @@ scaling:
 
 2. **Band decomposition / rotating-wave approximation (RWA).** Coupling
    and drive operators are split into excitation-change bands of weight
-   ``w = col − row`` and attached to carriers ``exp(−i w·ω t)``. When
-   ``rwa=True``, counter-rotating coupling bands are dropped structurally
-   by the coupling's ``rwa_keeps_band`` predicate and counter-rotating
-   drive bands by the modulation policies (Jaynes & Cummings,
+   ``w = col − row`` and attached to carriers ``exp(−i w·ω t)``.
+   :class:`~quchip.approximations.Exact` retains them all.
+   :class:`~quchip.approximations.RWA` retains total-excitation-conserving
+   static bands and matches delivered-signal bands to operator bands (Jaynes & Cummings,
    *Proc. IEEE* **51**, 89 (1963); Walls & Milburn, *Quantum Optics*,
    Springer 2008, §10.3; for dispersive/structured cases see
    Gambetta et al., *PRA* **74**, 042318 (2006), and the
@@ -60,37 +60,37 @@ from typing import TYPE_CHECKING, Any, Mapping, cast
 
 import jax.numpy as jnp
 
+from quchip.approximations import Approximation, Exact, RWA, require_approximation
 from quchip.backend import _backend_context
 from quchip.backend.protocol import Backend, Operator
-from quchip.control.drive import BaseDrive
-from quchip.control.signal_spec import DriveSignalSpec, DriveModulation
+from quchip.control.drive import BaseDrive, CouplingDrive
+from quchip.control.signal import AnalyticSignal
 from quchip.declarative.expr import (
     as_operator_expr,
     materialize_array,
     materialize_expr,
+    scalar_signal_program,
+    split_dynamic_hamiltonian,
 )
 from quchip.engine.ir import HamiltonianTemplate
 from quchip.engine.ir import (
     CanonicalOperator,
     Carrier,
     CollapseTerm,
-    Conjugate,
+    Constant,
     DroppedTerm,
     DynamicTerm,
-    EnvelopeRef,
     EngineResult,
     Multiply,
-    RealPart,
     ResolvedFrame,
-    Scale,
     ScalarModulation,
-    Shift,
     SignalProgram,
     StaticTerm,
     TermOrigin,
-    Window,
+    _as_time_coefficient,
 )
 from quchip.engine.ir import simplify_signal as _simplify_signal
+from quchip.engine.approximations import resolve_drive_program
 from quchip.engine.basis import (
     BasisRecord,
     resolve_local_basis,
@@ -109,207 +109,23 @@ from quchip.engine.bands import (
 
 if TYPE_CHECKING:
     from quchip.chip.chip import Chip
-    from quchip.devices.base import BaseDevice
     from quchip.engine.ir import DriveOp
 
 
-# -- Drive signal IR construction ---------------------------------------
-#
-# Drives produce frame-agnostic `DriveSignalSpec` objects (ordinary GHz,
-# no IR nodes). Stage 2 is the single place where the spec is composed
-# with the resolved frame and the modulation dispatch into the IR-level
-# `SignalProgram` AST. The engine owns the IR and dispatches generically,
-# with no per-drive-class branches.
-
-
-def _phase_factor(angle: Any) -> Any:
-    """Return ``exp(i * angle)`` in the array namespace of *angle*.
-
-    Kept traceable via :func:`~quchip.utils.jax_utils.array_namespace`,
-    which returns ``jax.numpy`` for a traced angle (so the gradient
-    survives) and NumPy for a concrete one.
-    """
-    xp = array_namespace(angle)
-    return xp.exp(1j * angle)
-
-
-@dataclass(frozen=True)
-class BandContext:
-    """Per-Fourier-band context for the stage-2 modulation dispatch.
-
-    Parameters
-    ----------
-    weight : int
-        Fourier band index (e.g. ``-1``, ``0``, ``+1`` for a single-mode
-        device; arbitrary integer for higher bands).
-    device_frame_freq : float
-        Device-frame oscillation frequency for this band, GHz.
-    drive_freq : float | None
-        Carrier frequency for microwave drives, GHz; ``None`` for
-        baseband (flux-like) drives.
-    rwa : bool
-        Whether the engine is assembling in the rotating-wave
-        approximation.
-    """
-
-    weight: int
-    device_frame_freq: Any
-    drive_freq: Any | None
-    rwa: bool
-
-
-def _spec_to_raw_signal(spec: DriveSignalSpec) -> SignalProgram:
-    """Build the raw line signal ``Scale(Shift(Window(env, 0, duration), start), exp(i·phi))``.
-
-    This is the frame-agnostic line signal before any signal-chain
-    transforms (delays, gains, crosstalk) and before carrier/RWA
-    modulation. It contains no frame information — stage 1's frame is
-    applied later via :func:`_coefficient_from_modulation`.
-    """
-    windowed: SignalProgram = Window(
-        child=EnvelopeRef(spec.envelope), start=0.0, stop=spec.duration
-    )
-    shifted: SignalProgram = Shift(child=windowed, delta_t=spec.start_time)
-    return Scale(shifted, factor=_phase_factor(spec.phase_offset))
-
-
-def _single_tone_coefficient(signal: SignalProgram, band: BandContext) -> SignalProgram:
-    """Microwave IQ-style modulation coefficient for one Fourier band.
-
-    Lab frame
-        Mix ``signal`` with the carrier at the drive frequency, project
-        to the real field, then attach the band's rotating-frame phase
-        ``exp(−i w ω_ref t)`` (Krantz et al. 2019, Eq. 89).
-
-    RWA
-        Decompose into co- and counter-rotating components per band
-        weight. This is the standard drive-frame decomposition used for
-        charge and phase drives on transmons (Jaynes & Cummings 1963;
-        Scully & Zubairy, *Quantum Optics*, §5). The weight-0 band has no
-        frame rotation (``weight · device_frame_freq = 0``) to cancel
-        either single-tone sideband, so both remain fast and it is
-        dropped structurally before compilation reaches this function
-        (:func:`_compile_drive_terms`); genuine baseband diagonal
-        modulation belongs on a ``DIRECT_REAL`` channel instead.
-    """
-    if band.drive_freq is None:
-        raise ValueError("drive_freq is required for SINGLE_TONE drive channels")
-    phase: SignalProgram = Carrier(freq=TWO_PI * band.weight * band.device_frame_freq, sign=-1)
-
-    if band.rwa:
-        if band.weight > 0:
-            return Scale(
-                Multiply(
-                    (Conjugate(signal), Carrier(freq=TWO_PI * band.drive_freq, sign=1), phase)
-                ),
-                factor=0.5,
-            )
-        if band.weight < 0:
-            return Scale(
-                Multiply(
-                    (signal, Carrier(freq=TWO_PI * band.drive_freq, sign=-1), phase)
-                ),
-                factor=0.5,
-            )
-        raise ValueError(
-            "SINGLE_TONE weight-0 bands under RWA are dropped structurally at compile time "
-            "(_compile_drive_terms); reaching this branch means that drop was bypassed."
-        )
-
-    field = RealPart(Multiply((signal, Carrier(freq=TWO_PI * band.drive_freq, sign=-1))))
-    return Multiply((field, phase))
-
-
-def _is_dropped_weight_zero_single_tone(modulation: DriveModulation, weight: int, rwa: bool) -> bool:
-    """True when a SINGLE_TONE band at weight 0 is structurally dropped under RWA.
-
-    Applies uniformly regardless of the numeric drive frequency: the rule
-    keys only on modulation kind, RWA policy, and band weight, so it never
-    forces concretization of a possibly-traced ``drive_freq``.
-    """
-    return rwa and modulation is DriveModulation.SINGLE_TONE and weight == 0
-
-
 def _weight_zero_dropped_term(*, source: str, device_label: str, drive_freq: Any) -> DroppedTerm:
-    """Advisory record for a SINGLE_TONE weight-0 band dropped structurally under RWA.
-
-    Raises
-    ------
-    ValueError
-        *drive_freq* is ``None``. SINGLE_TONE channels require a carrier
-        frequency (:func:`_single_tone_coefficient` enforces this for
-        every other band); a weight-0 band reaching here with no
-        ``drive_freq`` would mean that guard was bypassed for a future
-        diagonal-only SINGLE_TONE extension, so it must not silently
-        disappear into an audit record with no frequency.
-    """
+    """Describe a carrier-driven weight-zero band dropped by band RWA."""
     if drive_freq is None:
         raise ValueError(
-            f"Weight-0 SINGLE_TONE band on '{device_label}' (drive '{source}') has no drive_freq; "
-            "SINGLE_TONE channels require a carrier frequency."
+            f"Carrier-driven weight-zero band on '{device_label}' (drive '{source}') has no carrier frequency."
         )
     return DroppedTerm(
         source=source,
         operator=f"drive band w=+0 on {device_label}",
-        reason="no frame rotation to cancel either single-tone sideband under RWA",
+        reason="no frame rotation cancels either carrier sideband under band RWA",
         band_weights=(0,),
         frequency=abs(drive_freq),
     )
 
-
-def _direct_real_coefficient(signal: SignalProgram, band: BandContext) -> SignalProgram:
-    """Real-valued baseband modulation (no carrier, no RWA), e.g. flux drive.
-
-    ``BandContext.drive_freq`` and ``BandContext.rwa`` are ignored — a
-    flux line couples via the real part of its signal times the usual
-    device-frame band phase (Krantz et al. 2019, Sec. V on flux
-    tunability).
-    """
-    phase: SignalProgram = Carrier(freq=TWO_PI * band.weight * band.device_frame_freq, sign=-1)
-    return Multiply((RealPart(signal), phase))
-
-
-def _edge_pump_coefficient(signal: SignalProgram, band: BandContext) -> SignalProgram:
-    """Edge-pump modulation: real pump δ(t) times the band's frame carrier.
-
-    ``band.drive_freq is None`` selects the *structural* baseband form
-    ``δ(t) = Re s(t)``; with a carrier the pump is
-    ``δ(t) = Re[s(t)·e^{-i·2π·ν_d·t}]`` with both sidebands kept —
-    ``band.rwa`` is ignored because the coupling's parametric hook already
-    chose the RWA-retained operator structure, and the tone itself is never
-    split. For an edge band ``(Δa, Δb)`` the frame carrier frequency
-    ``Δa·ω_a + Δb·ω_b`` is stored in ``band.device_frame_freq`` (weight 1);
-    it may be zero or traced — no special case.
-    """
-    frame_phase: SignalProgram = Carrier(freq=TWO_PI * band.weight * band.device_frame_freq, sign=-1)
-    if band.drive_freq is not None:
-        field: SignalProgram = RealPart(Multiply((signal, Carrier(freq=TWO_PI * band.drive_freq, sign=-1))))
-    else:
-        field = RealPart(signal)
-    return Multiply((field, frame_phase))
-
-
-# Generic dispatch: one table, no `isinstance(drive, …)` branches.
-# To add a new modulation kind, add the tag to :class:`DriveModulation` and
-# register its IR builder here.
-_MODULATION_DISPATCH: dict[DriveModulation, Any] = {
-    DriveModulation.SINGLE_TONE: _single_tone_coefficient,
-    DriveModulation.DIRECT_REAL: _direct_real_coefficient,
-    DriveModulation.EDGE_PUMP: _edge_pump_coefficient,
-}
-
-
-def _coefficient_from_modulation(
-    signal: SignalProgram,
-    modulation: DriveModulation,
-    band: BandContext,
-) -> SignalProgram:
-    """Compose a raw line signal with the band/frame via the modulation dispatch."""
-    try:
-        builder = _MODULATION_DISPATCH[modulation]
-    except KeyError as exc:  # pragma: no cover - guarded by enum membership
-        raise ValueError(f"Unknown drive modulation: {modulation!r}") from exc
-    return builder(signal, band)
 
 # -- Static Hamiltonian --------------------------------------------------
 
@@ -373,24 +189,18 @@ def _prepare_engine_assembly(
     frame_spec: Any,
 ) -> tuple[_LocalResolution, ResolvedFrame]:
     """Resolve local bases once, then use that static contract to resolve the frame."""
-    from quchip.engine.stage1_frames import resolve_frame
+    from quchip.engine.frames import resolve_frame
 
     resolution = _resolve_local_system(chip, chip.backend)
-    needs_dressed_references = any(
-        device._reference_freq_override is None for device in chip.devices
-    )
+    needs_dressed_references = any(device._reference_freq_override is None for device in chip.devices)
     dressed = (
-        chip.analysis._dressed_frequencies(
-            chip.analysis.engine_result(_local_resolution=resolution)
-        )
+        chip.analysis._dressed_frequencies(chip.analysis.engine_result(_local_resolution=resolution))
         if needs_dressed_references
         else {}
     )
     references = {
         device.label: (
-            dressed[device.label]
-            if device._reference_freq_override is None
-            else device._reference_freq_override
+            dressed[device.label] if device._reference_freq_override is None else device._reference_freq_override
         )
         for device in chip.devices
     }
@@ -470,7 +280,7 @@ def _build_static_h0(
 
     where ``H_bare`` is the chip-level tensored sum of device and static
     coupling contributions (ordinary GHz), and ``ω^ref_i`` is the
-    per-device frame reference from stage 1. This function is one of the
+    per-device frame reference. This function is one of the
     four places in the engine where the 2π boundary is crossed.
     """
     dims = resolution.dims
@@ -539,9 +349,7 @@ def _collect_collapse_terms(
     labels = tuple(device.label for device in chip.devices)
     terms: list[CollapseTerm] = []
     with _backend_context(backend):
-        for operator, rate, support, source, channel, parameter_paths in chip.collapse_contributions(
-            resolution.bases
-        ):
+        for operator, rate, support, source, channel, parameter_paths in chip.collapse_contributions(resolution.bases):
             local = _project_on_support(chip, operator, support, resolution.bases, backend)
             resolved_rate = materialize_expr(rate, backend)
             embedded = embed_on_support(backend, local, support, resolution.dims)
@@ -580,45 +388,15 @@ def _dynamic_term(
     )
 
 
-def _modulated_dynamic_term(
-    operator: CanonicalOperator,
-    signal: SignalProgram,
-    modulation: "DriveModulation",
-    *,
-    weight: int,
-    device_frame_freq: float,
-    drive_freq: float | None,
-    rwa: bool,
-    origin: TermOrigin,
-    tag: str | None = None,
-) -> DynamicTerm:
-    """Build the per-band :class:`BandContext`, attach the rotating-frame carrier, and wrap.
-
-    *operator* is already ``2π``-scaled and canonicalized; this only adds
-    the band-specific modulation coefficient (shared by the drive and
-    crosstalk instantiation paths).
-    """
-    band = BandContext(
-        weight=weight,
-        device_frame_freq=device_frame_freq,
-        drive_freq=drive_freq,
-        rwa=rwa,
-    )
-    return DynamicTerm(
-        operator=operator,
-        time_dependence=ScalarModulation(signal=_coefficient_from_modulation(signal, modulation, band)),
-        origin=origin,
-        tag=tag,
-    )
-
-
 # -- Coupling terms ------------------------------------------------------
+
 
 def _resolve_coupling_terms(
     chip: "Chip",
     resolved_frame: "ResolvedFrame",
     backend: Backend,
     resolution: _LocalResolution,
+    approximation: Approximation,
 ) -> tuple[
     list[Operator],
     list[Operator],
@@ -628,7 +406,7 @@ def _resolve_coupling_terms(
     """Project and band-resolve every coupling once.
 
     Returns the static interaction included in ``H₀``, frame corrections,
-    dynamic carrier terms, and dropped-band records. Under resolved RWA,
+    dynamic carrier terms, and dropped-band records. Under ``RWA()``,
     rejected bands are omitted from the static interaction. Retained bands
     whose frame carrier
     ``Δa·ω_a + Δb·ω_b`` is *concretely* zero are already static inside
@@ -655,7 +433,7 @@ def _resolve_coupling_terms(
         pair = (coupling.device_a_label, coupling.device_b_label)
         idx_a = label_to_index[pair[0]]
         idx_b = label_to_index[pair[1]]
-        rwa = chip.resolve_rwa(coupling)
+        filters_terms = approximation.filters_terms
         omega_a = resolved_frame.frequencies.get(pair[0], 0.0)
         omega_b = resolved_frame.frequencies.get(pair[1], 0.0)
 
@@ -667,9 +445,9 @@ def _resolve_coupling_terms(
             backend,
         )
 
-        # In a zero frame, a non-RWA interaction remains wholly static and
+        # In a zero frame, an Exact interaction remains wholly static and
         # needs no band decomposition.
-        if not rwa:
+        if not filters_terms:
             conc_a = maybe_concrete_scalar(omega_a)
             conc_b = maybe_concrete_scalar(omega_b)
             if conc_a is not None and conc_a == 0.0 and conc_b is not None and conc_b == 0.0:
@@ -696,7 +474,7 @@ def _resolve_coupling_terms(
         retained: list[Operator] = []
         for (delta_a, delta_b), band_canonical in sub_bands.items():
             osc_freq = delta_a * omega_a + delta_b * omega_b
-            if rwa and not coupling.rwa_keeps_band(delta_a, delta_b):
+            if not approximation.keeps_operator_band((delta_a, delta_b)):
                 # The advisory amplitude is the dropped band's own largest
                 # matrix element — the worst-case numerator of the
                 # Bloch-Siegert smallness ratio — not the coupling's scalar
@@ -725,13 +503,13 @@ def _resolve_coupling_terms(
             frame_corrections.append(-scaled)
             td_terms.append((scaled, ScalarModulation(signal=Carrier(freq=TWO_PI * osc_freq, sign=-1))))
 
-        if rwa and sub_bands and not retained:
+        if filters_terms and sub_bands and not retained:
             warnings.warn(
-                f"Coupling {coupling.label!r} vanishes entirely under the resolved RWA.",
+                f"Coupling {coupling.label!r} vanishes entirely under RWA().",
                 UserWarning,
                 stacklevel=3,
             )
-        if rwa:
+        if filters_terms:
             if retained:
                 local_static = sum(retained[1:], start=retained[0])
                 interactions.append(backend.embed_two_body(local_static, idx_a, idx_b, dims))
@@ -741,18 +519,20 @@ def _resolve_coupling_terms(
     return interactions, frame_corrections, td_terms, dropped
 
 
-def _intrinsic_terms(
+def _component_time_terms(
     chip: "Chip",
     resolved_frame: "ResolvedFrame",
     backend: Backend,
     resolution: _LocalResolution,
+    approximation: Approximation,
 ) -> tuple[list[DynamicTerm], list[DroppedTerm]]:
-    """Project intrinsic dynamics, then apply frame carriers and coupling RWA."""
+    """Project component time terms, then apply frame carriers and coupling RWA."""
     labels = tuple(device.label for device in chip.devices)
     dynamic: list[DynamicTerm] = []
     dropped: list[DroppedTerm] = []
 
-    for local_op, modulation, support, owner, origin, tag in chip.dynamic_contributions():
+    for local_op, coefficient, support, owner, origin, tag in chip.dynamic_contributions():
+        modulation = _as_time_coefficient(coefficient, owner=type(owner).__name__)
         owner_labels = tuple(chip.devices[index].label for index in support)
         owner_dims = tuple(chip.devices[index].local_space().dimension for index in support)
         local_op = as_operator_expr(
@@ -816,17 +596,17 @@ def _intrinsic_terms(
                 resolved_frame.frequencies.get(device_b.label, 0.0),
             )
         else:
-            raise ValueError(f"Intrinsic Hamiltonian terms require one or two supports, got {support!r}.")
+            raise ValueError(f"Time-dependent Hamiltonian terms require one or two supports, got {support!r}.")
 
         for weights, band in bands.items():
             oscillation = sum(weight * frequency for weight, frequency in zip(weights, frequencies))
-            if len(support) == 2 and chip.resolve_rwa(owner) and not owner.rwa_keeps_band(*weights):
+            if len(support) == 2 and not approximation.keeps_operator_band(weights):
                 values = band.values
                 xp = array_namespace(values)
                 dropped.append(
                     DroppedTerm(
                         source=owner.label,
-                        operator=f"intrinsic coupling band {weights}",
+                        operator=f"time-dependent coupling band {weights}",
                         reason="counter-rotating under RWA",
                         band_weights=weights,
                         amplitude=xp.max(xp.abs(values)),
@@ -854,7 +634,9 @@ def _intrinsic_terms(
             )
     return dynamic, dropped
 
+
 # -- Drive resolution ----------------------------------------------------
+
 
 def _resolve_drives(
     chip: "Chip",
@@ -867,8 +649,8 @@ def _resolve_drives(
     construction, so a plain two-map lookup is unambiguous.
 
     Cross-checks the resolved drive's own wiring against the ``DriveOp``:
-    an unconnected drive, a target mismatch, or a ``target_kind`` that
-    disagrees with which map the label resolved from all raise
+    an unconnected drive, a target mismatch, or a definition target that
+    disagrees with the map the label resolved from all raise
     ``ValueError``. Sequence scheduling enforces the same invariant at
     schedule time (:meth:`~quchip.control.sequence.QuantumSequence._schedule_on_drive`);
     this is the matching guard for ``DriveOp`` lists built directly,
@@ -883,7 +665,7 @@ def _resolve_drives(
             resolved_kind = "device"
         elif label in chip.coupling_map:
             device = chip.coupling_map[label]
-            resolved_kind = "edge"
+            resolved_kind = "coupling"
         else:
             raise ValueError(
                 f"Target label '{label}' not found on chip (neither device nor coupling). "
@@ -909,435 +691,325 @@ def _resolve_drives(
                 f"Drive '{drive.label}' is wired to target '{drive.target_label}', but its DriveOp "
                 f"targets '{drive_op.target_label}'."
             )
-        if drive.target_kind != resolved_kind:
+        declared_target = "coupling" if isinstance(drive, CouplingDrive) else "device"
+        if declared_target != resolved_kind:
             raise ValueError(
-                f"Drive '{drive.label}' declares target_kind '{drive.target_kind}', but target "
+                f"Drive '{drive.label}' declares target '{declared_target}', but target "
                 f"'{drive_op.target_label}' resolved as '{resolved_kind}' on the chip."
             )
         resolved.append((drive, drive_op, device))
     return resolved
 
 
-class _ScheduledSignal:
-    """Internal record pairing a resolved drive with its (possibly transformed) signal program."""
+class _DeliveredSignal:
+    """One transformed signal paired with its destination drive and target."""
 
-    __slots__ = ("drive", "drive_op", "device", "signal")
+    __slots__ = ("drive", "target", "signal", "origin")
 
     def __init__(
         self,
         drive: BaseDrive,
-        drive_op: "DriveOp",
-        device: "BaseDevice",
-        signal: SignalProgram,
+        target: Any,
+        signal: AnalyticSignal,
+        origin: TermOrigin,
     ) -> None:
         self.drive = drive
-        self.drive_op = drive_op
-        self.device = device
+        self.target = target
         self.signal = signal
+        self.origin = origin
+
 
 # -- Drive term compilation ----------------------------------------------
 
 
 @dataclass(frozen=True)
 class CompiledDriveTerm:
-    """One pre-embedded, 2π-scaled drive band plus its reinstantiation metadata.
-
-    Template-internal (stored on
-    :attr:`~quchip.engine.ir.HamiltonianTemplate.drive_terms`, never
-    handed to backends). During sweep instantiation, stage 2 combines
-    ``weight``, ``device_frame_freq``, the variant's drive frequency, and
-    ``rwa`` into a :class:`BandContext`, then dispatches on the channel's
-    :class:`~quchip.control.signal_spec.DriveModulation` tag to emit the
-    variant-specific :class:`~quchip.engine.ir.ScalarModulation` for
-    ``operator``. ``device_frame_freq`` is in GHz (may be a traced
-    scalar; see :class:`~quchip.engine.ir.ResolvedFrame`).
-    """
+    """One projected operator band from an authored drive Hamiltonian term."""
 
     operator: CanonicalOperator
-    drive_index: int
-    modulation: DriveModulation
+    delivered_index: int
+    hamiltonian_term_index: int
     weight: int
     device_frame_freq: Any
-    rwa: bool
+    filter_signal_bands: bool
     origin: TermOrigin = "drive"
     tag: str | None = None
 
 
 @dataclass(frozen=True)
 class _StructuralDrop:
-    """Template-cached pointer to a SINGLE_TONE weight-0 band dropped under RWA.
+    """Template-cached pointer to a carrier-driven weight-zero band drop.
 
-    The drop decision (:func:`_is_dropped_weight_zero_single_tone`) needs no
-    drive frequency, but resolving it into a
-    :class:`~quchip.engine.ir.DroppedTerm` audit record does; this record
-    stays a pointer into ``drive_ops`` until
-    :func:`instantiate_engine_result` knows the variant's
-    frequency.
+    The structural decision needs no concrete carrier value. This pointer is
+    resolved into a :class:`~quchip.engine.ir.DroppedTerm` after variant signal
+    construction.
     """
 
-    drive_index: int
+    delivered_index: int
     device_label: str
+
+
+@dataclass(frozen=True)
+class _ResolvedDriveBand:
+    operator: Operator
+    hamiltonian_term_index: int
+    weight: int
+    frame_frequency: Any
+    filter_signal_bands: bool
+    origin: TermOrigin
+    tag: str
+    target_label: str
 
 
 def _resolved_drive_bands(
     chip: "Chip",
     drive: BaseDrive,
-    device: "BaseDevice",
-    operator: Any,
-    *,
-    bases: Mapping[str, BasisRecord],
-    dims: tuple[int, ...],
-    backend: Backend,
-) -> list[tuple[int, Operator]]:
-    """Normalize, project, and embed one authored drive channel by Fourier band."""
-    index = chip.device_index(device.label)
-    authored = as_operator_expr(
-        operator,
-        labels=(device.label,),
-        dims=(device.local_space().dimension,),
-        name=rf"\hat H_{{{drive.label}}}",
-        owner=drive,
-        scope=f"drive.{drive.label}",
-    )
-    local = _project_on_support(chip, authored, (index,), bases, backend)
-    return list(
-        embed_single_mode_bands(
-            backend,
-            local,
-            device_index=index,
-            dim=bases[device.label].resolved_dim,
-            label=device.label,
-            dims=dims,
-            semantic_to_solver=semantic_to_solver_transform(
-                device,
-                bases[device.label],
-            ),
-        )
-    )
-
-
-def _compile_edge_pump_terms(
-    chip: "Chip",
-    drive: BaseDrive,
-    coupling: Any,
-    drive_index: int,
+    target: Any,
     resolved_frame: "ResolvedFrame",
-    backend: Backend,
     *,
     bases: Mapping[str, BasisRecord],
     dims: tuple[int, ...],
-    subsystem_labels: tuple[str, ...],
-) -> list[CompiledDriveTerm]:
-    """Band-decompose a pump target's parametric operator into pre-embedded terms.
-
-    Mirrors the static-coupling band residue (:func:`_resolve_coupling_terms`):
-    each ``(Δa, Δb)`` excitation-change band oscillates at
-    ``Δa·ω_a + Δb·ω_b`` in the rotating frame, stored as the term's frame
-    frequency with weight 1. The coupling authors one physical operator;
-    this engine pass applies its resolved RWA band policy. The scheduled
-    pump tone itself is never split (:func:`_edge_pump_coefficient`).
-    """
+    backend: Backend,
+    approximation: Approximation,
+) -> list[_ResolvedDriveBand]:
+    """Normalize authored drive Hamiltonian operators by target support."""
+    probe = AnalyticSignal(program=Constant(1.0 + 0.0j))
     with _backend_context(backend):
-        local_op = coupling.parametric_operator()
-    if local_op is None:
-        raise TypeError(
-            f"{type(coupling).__name__} is not modulable: its parametric_interaction() hook "
-            "returns None. Implement parametric_interaction() on "
-            "the coupling (see CouplingModel), or use a modulable coupling such as TunableCapacitive."
-        )
-    modulation = drive._modulation
-    assert modulation is not None, "edge drives declare a DriveModulation for the pump coefficient"
+        authored_terms = split_dynamic_hamiltonian(drive.hamiltonian(target, probe))
+
+    if not isinstance(drive, CouplingDrive):
+        device = target
+        index = chip.device_index(device.label)
+        frame_frequency = resolved_frame.frequencies.get(device.label, 0.0)
+        resolved: list[_ResolvedDriveBand] = []
+        for term_index, (_scalar, operator) in enumerate(authored_terms):
+            authored = as_operator_expr(
+                operator,
+                labels=(device.label,),
+                dims=(device.local_space().dimension,),
+                name=rf"\hat H_{{{drive.label},{term_index}}}",
+                owner=drive,
+                scope=f"drive.{drive.label}",
+            )
+            local = _project_on_support(chip, authored, (index,), bases, backend)
+            for weight, embedded in embed_single_mode_bands(
+                backend,
+                local,
+                device_index=index,
+                dim=bases[device.label].resolved_dim,
+                label=device.label,
+                dims=dims,
+                semantic_to_solver=semantic_to_solver_transform(
+                    device,
+                    bases[device.label],
+                ),
+            ):
+                if isinstance(approximation, RWA) and approximation.keep_bands is not None:
+                    if not approximation.keeps_operator_band((weight,)):
+                        continue
+                resolved.append(
+                    _ResolvedDriveBand(
+                        operator=embedded,
+                        hamiltonian_term_index=term_index,
+                        weight=weight,
+                        frame_frequency=frame_frequency,
+                        filter_signal_bands=approximation.filters_terms,
+                        origin="drive",
+                        tag="drive",
+                        target_label=device.label,
+                    )
+                )
+        return resolved
+
+    coupling = target
     idx_a = chip.device_index(coupling.device_a_label)
     idx_b = chip.device_index(coupling.device_b_label)
-    local_op = as_operator_expr(
-        local_op,
-        labels=(coupling.device_a_label, coupling.device_b_label),
-        dims=(
-            chip.devices[idx_a].local_space().dimension,
-            chip.devices[idx_b].local_space().dimension,
-        ),
-        name=rf"\hat P_{{{coupling.label}}}",
-        owner=coupling,
-        scope=coupling.label,
-    )
-    local_op = _project_on_support(chip, local_op, (idx_a, idx_b), bases, backend)
     d_a = bases[coupling.device_a_label].resolved_dim
     d_b = bases[coupling.device_b_label].resolved_dim
-    canonical = backend.to_canonical_operator(local_op).with_metadata(
-        dims=(d_a, d_b),
-        subsystem_labels=(coupling.device_a_label, coupling.device_b_label),
-        tag="edge_pump_local",
-    )
     omega_a = resolved_frame.frequencies.get(coupling.device_a_label, 0.0)
     omega_b = resolved_frame.frequencies.get(coupling.device_b_label, 0.0)
-    compiled: list[CompiledDriveTerm] = []
-    for (delta_a, delta_b), band_canonical in decompose_two_body_canonical_bands(
-        canonical,
-        [d_a, d_b],
-        semantic_to_solver=_two_body_semantic_transform(chip, idx_a, idx_b, bases),
-    ).items():
-        if chip.resolve_rwa(coupling) and not coupling.rwa_keeps_band(delta_a, delta_b):
-            continue
-        osc_freq = delta_a * omega_a + delta_b * omega_b
-        band_op = backend.from_canonical_operator(band_canonical)
-        embedded = backend.embed_two_body(band_op, idx_a, idx_b, dims)
-        compiled.append(
-            CompiledDriveTerm(
-                operator=_apply_2pi_canonical(backend, embedded, dims=dims, labels=subsystem_labels, tag="edge_pump"),
-                drive_index=drive_index,
-                modulation=modulation,
-                weight=1,
-                device_frame_freq=osc_freq,
-                rwa=False,
-                origin="coupling",
-                tag="edge_pump",
-            )
+    resolved = []
+    for term_index, (_scalar, operator) in enumerate(authored_terms):
+        authored = as_operator_expr(
+            operator,
+            labels=(coupling.device_a_label, coupling.device_b_label),
+            dims=(
+                chip.devices[idx_a].local_space().dimension,
+                chip.devices[idx_b].local_space().dimension,
+            ),
+            name=rf"\hat P_{{{coupling.label},{term_index}}}",
+            owner=coupling,
+            scope=coupling.label,
         )
-    return compiled
+        local_op = _project_on_support(chip, authored, (idx_a, idx_b), bases, backend)
+        canonical = backend.to_canonical_operator(local_op).with_metadata(
+            dims=(d_a, d_b),
+            subsystem_labels=(coupling.device_a_label, coupling.device_b_label),
+            tag="edge_pump_local",
+        )
+        for (delta_a, delta_b), band_canonical in decompose_two_body_canonical_bands(
+            canonical,
+            [d_a, d_b],
+            semantic_to_solver=_two_body_semantic_transform(chip, idx_a, idx_b, bases),
+        ).items():
+            if not approximation.keeps_operator_band((delta_a, delta_b)):
+                continue
+            osc_freq = delta_a * omega_a + delta_b * omega_b
+            band_op = backend.from_canonical_operator(band_canonical)
+            embedded = backend.embed_two_body(band_op, idx_a, idx_b, dims)
+            resolved.append(
+                _ResolvedDriveBand(
+                    operator=embedded,
+                    hamiltonian_term_index=term_index,
+                    weight=1,
+                    frame_frequency=osc_freq,
+                    filter_signal_bands=False,
+                    origin="coupling",
+                    tag="edge_pump",
+                    target_label=coupling.label,
+                )
+            )
+    return resolved
 
 
 def _compile_drive_terms(
     chip: "Chip",
-    resolved_drives: list[tuple[BaseDrive, "DriveOp", Any]],
+    delivered_signals: list[_DeliveredSignal],
     resolved_frame: "ResolvedFrame",
     backend: Backend,
     *,
     bases: Mapping[str, BasisRecord],
     dims: tuple[int, ...],
     subsystem_labels: tuple[str, ...],
+    approximation: Approximation,
 ) -> tuple[tuple[CompiledDriveTerm, ...], tuple[_StructuralDrop, ...]]:
     """Band-decompose each drive channel into pre-embedded, 2π-scaled drive terms.
 
-    For each local drive channel the operator is split into
+    For each authored Hamiltonian term the operator is split into
     single-subsystem excitation-change bands of weight ``w``
-    (cf. :mod:`quchip.engine.bands`). Each band gets the RWA policy from
-    its owning drive, which owns its local Hamiltonian; the modulation
-    later assigns a carrier of the form
-    ``exp(−i w (ω_d − ω_ref) t)`` evaluated against the envelope, which
+    (cf. :mod:`quchip.engine.bands`). The engine combines it with the complete
+    delivered signal and a frame factor of the form
+    ``exp(−i w ω_ref t)``, which
     is the standard rotating-wave form for a driven multi-level system
     (Jaynes & Cummings 1963; Scully & Zubairy, *Quantum Optics*, §5). A
-    SINGLE_TONE band at weight 0 under RWA is dropped here instead of
-    compiled (:func:`_is_dropped_weight_zero_single_tone`) — the decision
-    needs no drive frequency, so it is made once, structurally, at
-    template-compile time; a :class:`_StructuralDrop` pointer is returned
-    alongside so the variant-specific audit record can be built later.
+    carrier-driven band at weight zero under ``RWA()`` is dropped because no
+    operator-frame phase can cancel either sideband. A
+    :class:`_StructuralDrop` pointer carries that decision to instantiation.
 
-    Operates on the resolved ``(drive, drive_op, device)`` triples —
-    signal programs are variant-specific and play no role here. The
-    resulting :class:`CompiledDriveTerm` is template-cached so
+    The resulting :class:`CompiledDriveTerm` is template-cached so
     homogeneous sweeps only rebuild signal-program leaves, not operators.
     """
     compiled: list[CompiledDriveTerm] = []
     structural_drops: list[_StructuralDrop] = []
-    for drive_index, (drive, _drive_op, target) in enumerate(resolved_drives):
-        if drive.target_kind == "edge":
-            compiled.extend(
-                _compile_edge_pump_terms(
-                    chip, drive, target, drive_index, resolved_frame, backend,
-                    bases=bases, dims=dims, subsystem_labels=subsystem_labels,
+    for delivered_index, delivered in enumerate(delivered_signals):
+        drive = delivered.drive
+        target = delivered.target
+        for band in _resolved_drive_bands(
+            chip,
+            drive,
+            target,
+            resolved_frame,
+            bases=bases,
+            dims=dims,
+            backend=backend,
+            approximation=approximation,
+        ):
+            if (
+                band.filter_signal_bands
+                and delivered.signal.carrier is not None
+                and band.weight == 0
+            ):
+                structural_drops.append(
+                    _StructuralDrop(
+                        delivered_index=delivered_index,
+                        device_label=band.target_label,
+                    )
+                )
+                continue
+            compiled.append(
+                CompiledDriveTerm(
+                    operator=_apply_2pi_canonical(
+                        backend,
+                        band.operator,
+                        dims=dims,
+                        labels=subsystem_labels,
+                        tag=band.tag,
+                    ),
+                    delivered_index=delivered_index,
+                    hamiltonian_term_index=band.hamiltonian_term_index,
+                    weight=band.weight,
+                    device_frame_freq=band.frame_frequency,
+                    filter_signal_bands=band.filter_signal_bands,
+                    origin=("crosstalk" if delivered.origin == "crosstalk" else band.origin),
+                    tag="crosstalk" if delivered.origin == "crosstalk" else band.tag,
                 )
             )
-            continue
-        device = target
-        device_frame_freq = resolved_frame.frequencies.get(device.label, 0.0)
-        drive_rwa = chip.resolve_rwa(drive)
-        with _backend_context(backend):
-            channels = drive.local_channels(device)
-        for ch in channels:
-            for weight, embedded in _resolved_drive_bands(
-                chip,
-                drive,
-                device,
-                ch.operator,
-                bases=bases,
-                dims=dims,
-                backend=backend,
-            ):
-                if _is_dropped_weight_zero_single_tone(ch.modulation, weight, drive_rwa):
-                    structural_drops.append(
-                        _StructuralDrop(drive_index=drive_index, device_label=device.label)
-                    )
-                    continue
-                compiled.append(
-                    CompiledDriveTerm(
-                        operator=_apply_2pi_canonical(
-                            backend, embedded, dims=dims, labels=subsystem_labels, tag="drive"
-                        ),
-                        drive_index=drive_index,
-                        modulation=ch.modulation,
-                        weight=weight,
-                        device_frame_freq=device_frame_freq,
-                        rwa=drive_rwa,
-                    )
-                )
     return tuple(compiled), tuple(structural_drops)
 
 
-# -- Signal-chain-injected dynamic terms (built per instantiation) -------
-
-def _compile_extra_signal_terms(
+def _build_delivered_signals(
     chip: "Chip",
-    extra_signals: dict[tuple[str, int], SignalProgram],
     drive_ops: list["DriveOp"],
-    resolved_frame: "ResolvedFrame",
-    backend: Backend,
-    *,
-    bases: Mapping[str, BasisRecord],
-    dims: tuple[int, ...],
-    subsystem_labels: tuple[str, ...],
-) -> tuple[list[DynamicTerm], list[DroppedTerm]]:
-    """Build dynamic terms for signal-chain-injected signals (e.g. crosstalk victims).
+) -> list[_DeliveredSignal]:
+    """Build, transform, and route complete signals to destination drives."""
+    resolved = _resolve_drives(chip, drive_ops)
+    raw_signals: dict[tuple[str, int], AnalyticSignal] = {}
+    for source_index, (drive, drive_op, target) in enumerate(resolved):
+        signal = drive.signal(drive_op, target)
+        if not isinstance(signal, AnalyticSignal):
+            raise TypeError(f"{type(drive).__name__}.signal() must return AnalyticSignal, got {type(signal).__name__}.")
+        raw_signals[(drive.label, source_index)] = signal
 
-    Each key is ``(victim_drive_label, source_drive_index)`` so the
-    source carrier frequency is always available when the victim drive
-    line reuses a foreign source (classical microwave crosstalk: the
-    nominal drive on device A leaks onto device B's drive line with a
-    possibly different envelope but the same RF carrier). The emitted
-    operators already carry 2π. Also returns advisory
-    :class:`DroppedTerm` records for the victim bands' RWA-elided fast
-    partners, mirroring the primary drive path.
-    """
     equipment = chip.control_equipment
+    transformed = (
+        raw_signals if equipment is None or not equipment.signal_chain else equipment.apply_signal_chain(raw_signals)
+    )
     if equipment is None:
-        return [], []
+        return []
 
-    dynamic_terms: list[DynamicTerm] = []
-    dropped: list[DroppedTerm] = []
-    line_to_drive = {line.label: line for line in equipment.lines}
-
-    for (victim_key, source_idx), victim_signal in extra_signals.items():
-        victim_drive = line_to_drive.get(victim_key)
-        if victim_drive is None or victim_drive._target is None:
+    line_map = {line.label: line for line in equipment.lines}
+    delivered: list[_DeliveredSignal] = []
+    for (destination_label, source_index), signal in transformed.items():
+        destination = line_map.get(destination_label)
+        if destination is None or destination._target is None:
             continue
-        if victim_drive.target_kind == "edge":
-            # A leak onto a pump line pumps the coupling with the leaked
-            # signal at the source's carrier (the Crosstalk contract: the
-            # leak is the RF copy of the source line — signal.py). Baseband
-            # sources leak as baseband pumps (freq None).
-            victim_target = victim_drive.target_label
-            coupling = chip.coupling_map.get(victim_target) if victim_target is not None else None
-            if coupling is None:
-                continue
-            source_freq = drive_ops[source_idx].freq
-            for centry in _compile_edge_pump_terms(
-                chip, victim_drive, coupling, source_idx, resolved_frame, backend,
-                bases=bases, dims=dims, subsystem_labels=subsystem_labels,
-            ):
-                dynamic_terms.append(
-                    _modulated_dynamic_term(
-                        centry.operator,
-                        victim_signal,
-                        centry.modulation,
-                        weight=centry.weight,
-                        device_frame_freq=centry.device_frame_freq,
-                        drive_freq=source_freq,
-                        rwa=centry.rwa,
-                        origin="crosstalk",
-                        tag="crosstalk",
-                    )
-                )
-            continue
-        victim_device = victim_drive._target
-        victim_label = victim_drive.device_label
-        if victim_label is None:
-            continue
-        victim_frame_freq = resolved_frame.frequencies.get(victim_label, 0.0)
-        drive_rwa = chip.resolve_rwa(victim_drive)
-        source_freq = drive_ops[source_idx].freq
-
-        with _backend_context(backend):
-            victim_channels = victim_drive.local_channels(victim_device)
-        for ch in victim_channels:
-            for weight, embedded in _resolved_drive_bands(
-                chip,
-                victim_drive,
-                victim_device,
-                ch.operator,
-                bases=bases,
-                dims=dims,
-                backend=backend,
-            ):
-                if _is_dropped_weight_zero_single_tone(ch.modulation, weight, drive_rwa):
-                    dropped.append(
-                        _weight_zero_dropped_term(
-                            source=victim_key, device_label=victim_label, drive_freq=source_freq,
-                        )
-                    )
-                    continue
-                dynamic_terms.append(
-                    _modulated_dynamic_term(
-                        _apply_2pi_canonical(
-                            backend, embedded, dims=dims, labels=subsystem_labels, tag="crosstalk"
-                        ),
-                        victim_signal,
-                        ch.modulation,
-                        weight=weight,
-                        device_frame_freq=victim_frame_freq,
-                        drive_freq=source_freq,
-                        rwa=drive_rwa,
-                        origin="crosstalk",
-                    )
-                )
-                partner = _dropped_drive_partner(
-                    source=victim_key,
-                    device_label=victim_label,
-                    modulation=ch.modulation,
-                    weight=weight,
-                    drive_freq=source_freq,
-                    device_frame_freq=victim_frame_freq,
-                    rwa=drive_rwa,
-                    origin="crosstalk",
-                )
-                if partner is not None:
-                    dropped.append(partner)
-    return dynamic_terms, dropped
+        source_drive = resolved[source_index][0]
+        delivered.append(
+            _DeliveredSignal(
+                drive=destination,
+                target=destination._target,
+                signal=signal,
+                origin=("drive" if destination.label == source_drive.label else "crosstalk"),
+            )
+        )
+    return delivered
 
 
-# -- Build raw signals and apply signal chain ----------------------------
-
-def _build_scheduled_signals_and_extras(
-    chip: "Chip",
-    drive_ops: list["DriveOp"],
-) -> tuple[list[_ScheduledSignal], dict[tuple[str, int], SignalProgram]]:
-    """Build raw drive signals and apply the equipment signal chain.
-
-    Signals are keyed by ``(drive_label, drive_index)`` so multiple ops on
-    the same drive stay distinct through the chain. Drives are
-    frame-agnostic — the resolved frame is applied later via the
-    modulation dispatch — so this step needs no frame input. Returns
-    ``(scheduled, extra_signals)`` where *extra_signals* collects new keys
-    introduced by the chain (e.g. crosstalk victim drives).
-    """
-    scheduled: list[_ScheduledSignal] = []
-    for drive, drive_op, device in _resolve_drives(chip, drive_ops):
-        spec = drive.signal_spec(drive_op, device)
-        signal = _spec_to_raw_signal(spec)
-        scheduled.append(_ScheduledSignal(drive=drive, drive_op=drive_op, device=device, signal=signal))
-
-    extra_signals: dict[tuple[str, int], SignalProgram] = {}
-    equipment = chip.control_equipment
-    if equipment is None or not equipment.signal_chain:
-        return scheduled, extra_signals
-
-    raw_signals = {(item.drive.label, i): item.signal for i, item in enumerate(scheduled)}
-    transformed = equipment.apply_signal_chain(raw_signals)
-    scheduled_keys = set(raw_signals.keys())
-    for i, item in enumerate(scheduled):
-        key = (item.drive.label, i)
-        if key in transformed:
-            item.signal = transformed[key]
-    for key, signal in transformed.items():
-        if key not in scheduled_keys:
-            extra_signals[key] = signal
-    return scheduled, extra_signals
+def _drive_scalar_program(
+    drive: BaseDrive,
+    target: Any,
+    signal: AnalyticSignal,
+    term_index: int,
+) -> SignalProgram:
+    """Return one scalar signal factor from a drive-authored Hamiltonian."""
+    terms = split_dynamic_hamiltonian(drive.hamiltonian(target, signal))
+    try:
+        scalar, _operator = terms[term_index]
+    except IndexError as exc:
+        raise ValueError(
+            f"{type(drive).__name__}.hamiltonian() changed term topology between "
+            "template compilation and instantiation."
+        ) from exc
+    return scalar_signal_program(scalar)
 
 
 # -- Dropped-term aggregation --------------------------------------------
 
-def _collect_dropped_terms(chip: "Chip", resolved_frame: "ResolvedFrame") -> tuple[DroppedTerm, ...]:
-    """Gather coupling-declared advisory records (non-RWA approximations).
 
-    RWA band drops are generated inside :func:`_resolve_coupling_terms`;
+def _collect_dropped_terms(chip: "Chip", resolved_frame: "ResolvedFrame") -> tuple[DroppedTerm, ...]:
+    """Gather coupling-declared advisory records outside engine band filtering.
+
+    ``RWA()`` drops are generated inside :func:`_resolve_coupling_terms`;
     this pass collects whatever a coupling's own model elides. Records
     that declare ``band_weights`` without a frequency get the band's
     frame oscillation resolved here as ``|Σ wᵢ·f_ref,i|`` — raw
@@ -1349,50 +1021,14 @@ def _collect_dropped_terms(chip: "Chip", resolved_frame: "ResolvedFrame") -> tup
         for record in coupling.dropped_terms():
             weights = record.band_weights
             if record.frequency is None and weights is not None and len(weights) == len(endpoint_labels):
-                freq = sum(
-                    w * resolved_frame.frequencies.get(lbl, 0.0)
-                    for w, lbl in zip(weights, endpoint_labels)
-                )
+                freq = sum(w * resolved_frame.frequencies.get(lbl, 0.0) for w, lbl in zip(weights, endpoint_labels))
                 record = replace(record, frequency=abs(freq))
             gathered.append(record)
     return tuple(gathered)
 
 
-def _dropped_drive_partner(
-    *,
-    source: str,
-    device_label: str,
-    modulation: "DriveModulation",
-    weight: int,
-    drive_freq: Any,
-    device_frame_freq: Any,
-    rwa: bool,
-    origin: str,
-) -> DroppedTerm | None:
-    """Advisory record for the fast partner :func:`_single_tone_coefficient` elides under RWA.
-
-    For a single-tone band of weight ``w ≠ 0`` the RWA keeps the slow
-    component near ``|f_d − |w|·f_ref|`` and drops its counter-rotating
-    partner oscillating at ``f_d + |w|·f_ref`` (≈ ``2·f_d`` on
-    resonance) — the term whose amplitude-to-frequency ratio sets the
-    Bloch–Siegert scale. Returns ``None`` when nothing is dropped
-    (``rwa=False``, baseband modulations, or the weight-0 band, which
-    keeps the full real field). The record's amplitude is ``None``:
-    drive prefactors are time-dependent envelopes, described by the
-    schedule rather than a single number.
-    """
-    if not rwa or modulation is not DriveModulation.SINGLE_TONE or weight == 0 or drive_freq is None:
-        return None
-    return DroppedTerm(
-        source=source,
-        operator=f"{origin} band w={weight:+d} on {device_label} (fast partner)",
-        reason="counter-rotating drive component under RWA",
-        band_weights=(weight,),
-        frequency=drive_freq + abs(weight) * device_frame_freq,
-    )
-
-
 # -- Template validation -------------------------------------------------
+
 
 def _validate_variant_drive_ops(
     template: HamiltonianTemplate,
@@ -1409,8 +1045,7 @@ def _validate_variant_drive_ops(
     for index, (reference_op, variant_op) in enumerate(zip(reference_ops, drive_ops)):
         if variant_op.target_label != reference_op.target_label:
             raise ValueError(
-                f"Variant drive op {index} targets '{variant_op.target_label}', "
-                f"expected '{reference_op.target_label}'."
+                f"Variant drive op {index} targets '{variant_op.target_label}', expected '{reference_op.target_label}'."
             )
         if variant_op.drive_label != reference_op.drive_label:
             raise ValueError(
@@ -1422,6 +1057,7 @@ def _validate_variant_drive_ops(
                 f"Variant drive op {index} uses envelope '{type(variant_op.envelope).__name__}', "
                 f"expected '{type(reference_op.envelope).__name__}'."
             )
+
 
 # -- Public API ----------------------------------------------------------
 
@@ -1440,15 +1076,17 @@ def _template_from_engine_result(
     subsystem_labels = tuple(device.label for device in chip.devices)
     drive_terms, weight_zero_drops = _compile_drive_terms(
         chip,
-        _resolve_drives(chip, drive_ops),
+        _build_delivered_signals(chip, drive_ops),
         resolved_frame,
         chip.backend,
         bases=base_result.bases,
         dims=dims,
         subsystem_labels=subsystem_labels,
+        approximation=base_result.approximation,
     )
     return HamiltonianTemplate(
         resolved_frame=resolved_frame,
+        approximation=base_result.approximation,
         dims=dims,
         static_terms=base_result.static_terms,
         invariant_dynamic_terms=base_result.dynamic_terms,
@@ -1462,11 +1100,13 @@ def _template_from_engine_result(
         authored=base_result.authored,
     )
 
+
 def compile_hamiltonian_template(
     chip: "Chip",
     drive_ops: list["DriveOp"],
     *,
     resolved_frame: "ResolvedFrame",
+    approximation: Approximation | None = None,
     _local_resolution: _LocalResolution | None = None,
     _base_result: EngineResult | None = None,
 ) -> HamiltonianTemplate:
@@ -1481,7 +1121,10 @@ def compile_hamiltonian_template(
     parameters, drive frequencies, phases, and frame scalars can sweep
     through JAX without retracing operator tensors.
     """
+    strategy = chip.approximation if approximation is None else require_approximation(approximation)
     if _base_result is not None:
+        if _base_result.approximation != strategy:
+            raise ValueError("The base EngineResult and scheduled drives must use the same approximation.")
         return _template_from_engine_result(
             chip,
             drive_ops,
@@ -1490,11 +1133,7 @@ def compile_hamiltonian_template(
         )
 
     backend = chip.backend
-    resolution = (
-        _resolve_local_system(chip, backend)
-        if _local_resolution is None
-        else _local_resolution
-    )
+    resolution = _resolve_local_system(chip, backend) if _local_resolution is None else _local_resolution
     dims = resolution.dims
     subsystem_labels = tuple(d.label for d in chip.devices)
 
@@ -1503,6 +1142,7 @@ def compile_hamiltonian_template(
         resolved_frame,
         backend,
         resolution,
+        strategy,
     )
     h0 = _build_static_h0(
         chip,
@@ -1546,14 +1186,15 @@ def compile_hamiltonian_template(
             )
         )
 
-    intrinsic_dynamic, intrinsic_dropped = _intrinsic_terms(
+    component_dynamic, component_dropped = _component_time_terms(
         chip,
         resolved_frame,
         backend,
         resolution,
+        strategy,
     )
-    invariant_dynamic_terms.extend(intrinsic_dynamic)
-    coupling_dropped.extend(intrinsic_dropped)
+    invariant_dynamic_terms.extend(component_dynamic)
+    coupling_dropped.extend(component_dropped)
 
     # Invariant signals never change across variants, so simplification
     # happens once here instead of on every instantiation.
@@ -1570,16 +1211,18 @@ def compile_hamiltonian_template(
 
     drive_terms, weight_zero_drops = _compile_drive_terms(
         chip,
-        _resolve_drives(chip, drive_ops),
+        _build_delivered_signals(chip, drive_ops),
         resolved_frame,
         backend,
         bases=resolution.bases,
         dims=dims,
         subsystem_labels=subsystem_labels,
+        approximation=strategy,
     )
 
     return HamiltonianTemplate(
         resolved_frame=resolved_frame,
+        approximation=strategy,
         dims=dims,
         static_terms=static_terms,
         invariant_dynamic_terms=simplified_invariant,
@@ -1601,11 +1244,9 @@ def instantiate_engine_result(
 ) -> EngineResult:
     """Rebuild signal-program leaves from *drive_ops* and attach them to the template's operators."""
     _validate_variant_drive_ops(template, drive_ops)
-    backend = chip.backend
     dims = template.dims
-    subsystem_labels = tuple(d.label for d in chip.devices)
 
-    scheduled, extra_signals = _build_scheduled_signals_and_extras(chip, drive_ops)
+    delivered = _build_delivered_signals(chip, drive_ops)
 
     # Only the variant-specific terms built below need simplification;
     # the template's invariant terms were simplified at compile time.
@@ -1614,54 +1255,54 @@ def instantiate_engine_result(
     fresh_terms: list[DynamicTerm] = []
     fresh_dropped: list[DroppedTerm] = []
     for compiled in template.drive_terms:
-        drive_op = drive_ops[compiled.drive_index]
-        signal = scheduled[compiled.drive_index].signal
+        item = delivered[compiled.delivered_index]
+        program = _drive_scalar_program(
+            item.drive,
+            item.target,
+            item.signal,
+            compiled.hamiltonian_term_index,
+        )
         fresh_terms.append(
-            _modulated_dynamic_term(
-                compiled.operator,
-                signal,
-                compiled.modulation,
-                weight=compiled.weight,
-                device_frame_freq=compiled.device_frame_freq,
-                drive_freq=drive_op.freq,
-                rwa=compiled.rwa,
+            DynamicTerm(
+                operator=compiled.operator,
+                time_dependence=ScalarModulation(
+                    signal=resolve_drive_program(
+                        template.approximation,
+                        program,
+                        weight=compiled.weight,
+                        frame_frequency=compiled.device_frame_freq,
+                        has_carrier=item.signal.carrier is not None,
+                        filter_signal_bands=compiled.filter_signal_bands,
+                    )
+                ),
                 origin=compiled.origin,
                 tag=compiled.tag,
             )
         )
-        partner = _dropped_drive_partner(
-            source=drive_op.drive_label,
-            device_label=drive_op.target_label,
-            modulation=compiled.modulation,
-            weight=compiled.weight,
-            drive_freq=drive_op.freq,
-            device_frame_freq=compiled.device_frame_freq,
-            rwa=compiled.rwa,
-            origin="drive",
-        )
-        if partner is not None:
-            fresh_dropped.append(partner)
+        if (
+            compiled.filter_signal_bands
+            and item.signal.carrier is not None
+            and compiled.weight != 0
+        ):
+            fresh_dropped.append(
+                DroppedTerm(
+                    source=item.drive.label,
+                    operator=(f"{compiled.origin} band w={compiled.weight:+d} on {item.target.label} (fast partner)"),
+                    reason="counter-rotating drive component under RWA",
+                    band_weights=(compiled.weight,),
+                    frequency=(item.signal.carrier + abs(compiled.weight) * compiled.device_frame_freq),
+                )
+            )
 
-    extra_terms, extra_dropped = _compile_extra_signal_terms(
-        chip,
-        extra_signals,
-        drive_ops,
-        template.resolved_frame,
-        backend,
-        bases=template.bases,
-        dims=dims,
-        subsystem_labels=subsystem_labels,
-    )
-    fresh_terms.extend(extra_terms)
-    fresh_dropped.extend(extra_dropped)
-
-    # Structural weight-0 SINGLE_TONE drops carry no frequency at compile
-    # time; resolve each pointer against its variant's drive_op now.
+    # Structural weight-zero drops carry no concrete frequency at compile
+    # time; resolve each pointer against its delivered variant signal now.
     for drop in template.weight_zero_drops:
-        drive_op = drive_ops[drop.drive_index]
+        item = delivered[drop.delivered_index]
         fresh_dropped.append(
             _weight_zero_dropped_term(
-                source=drive_op.drive_label, device_label=drop.device_label, drive_freq=drive_op.freq,
+                source=item.drive.label,
+                device_label=drop.device_label,
+                drive_freq=item.signal.carrier,
             )
         )
 
@@ -1688,6 +1329,7 @@ def instantiate_engine_result(
         bases=template.bases,
         authored=template.authored,
         resolved_frame=template.resolved_frame,
+        approximation=template.approximation,
     )
 
 
@@ -1696,10 +1338,11 @@ def build_engine_result(
     drive_ops: list["DriveOp"],
     *,
     resolved_frame: "ResolvedFrame",
+    approximation: Approximation | None = None,
     _local_resolution: _LocalResolution | None = None,
     _base_result: EngineResult | None = None,
 ) -> EngineResult:
-    """One-shot stage 2: compile the template then instantiate a single variant.
+    """Compile the template and instantiate one engine-result variant.
 
     Equivalent to
     :func:`compile_hamiltonian_template` followed by
@@ -1715,7 +1358,7 @@ def build_engine_result(
     drive_ops : list of DriveOp
         Scheduled drive operations to embed as dynamic terms.
     resolved_frame : ResolvedFrame
-        Stage-1 frame result carrying the per-device frame frequencies,
+        Resolved frame carrying the per-device frame frequencies,
         demodulation frequencies, and frame mode.
 
     Returns
@@ -1728,6 +1371,7 @@ def build_engine_result(
         chip,
         drive_ops,
         resolved_frame=resolved_frame,
+        approximation=approximation,
         _local_resolution=_local_resolution,
         _base_result=_base_result,
     )
@@ -1750,13 +1394,10 @@ def _build_static_analysis_result(
         chip,
         [],
         resolved_frame=frame,
+        approximation=Exact(),
         _local_resolution=_local_resolution,
     )
-    metadata = {
-        key: value
-        for key, value in result.metadata.items()
-        if key in {"frame", "spectral_bound_ghz"}
-    }
+    metadata = {key: value for key, value in result.metadata.items() if key in {"frame", "spectral_bound_ghz"}}
     return replace(
         result,
         dynamic_terms=(),
@@ -1772,10 +1413,7 @@ def _analysis_matrix_ghz(result: EngineResult) -> Any:
     cross through a non-JAX inspection backend. Time-dependent terms are not
     part of a static dressed-state calculation.
     """
-    terms = [
-        term.coefficient * term.operator.to_dense() / TWO_PI
-        for term in result.static_terms
-    ]
+    terms = [term.coefficient * term.operator.to_dense() / TWO_PI for term in result.static_terms]
     if not terms:
         raise ValueError("EngineResult contains no static Hamiltonian terms.")
     return sum(terms[1:], start=terms[0])

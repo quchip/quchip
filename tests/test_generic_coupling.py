@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+
 import numpy as np
 import pytest
 
-from quchip import Capacitive, Chip, Coupling, DuffingTransmon, Resonator
+from quchip import RWA, Capacitive, Chip, Coupling, DuffingTransmon, Resonator
 from quchip.backend import get_default_backend
-from quchip.chip.rwa import apply_rwa_mask
+from quchip.engine.approximations import apply_operator_band_filter
 from quchip.declarative.expr import materialize_expr
 
 
@@ -35,7 +36,9 @@ class TestCouplingValidation:
     def test_product_form(self, q0, q1):
         """Product-form Coupling stores the coupling_strength g."""
         c = Coupling(
-            q0, q1, g=0.01,
+            q0,
+            q1,
+            g=0.01,
             op_a=lambda d: d.number_operator(),
             op_b=lambda d: d.number_operator(),
         )
@@ -44,7 +47,9 @@ class TestCouplingValidation:
     def test_callable_form(self, q0, q1):
         """Callable-form Coupling stores the coupling_strength g."""
         c = Coupling(
-            q0, q1, g=0.02,
+            q0,
+            q1,
+            g=0.02,
             interaction=lambda a, b, bk: bk.tensor(a.number_operator(), b.number_operator()),
         )
         assert c.coupling_strength == 0.02
@@ -58,7 +63,9 @@ class TestCouplingValidation:
         """Coupling given both op_a/op_b and interaction raises ValueError."""
         with pytest.raises(ValueError, match="not both"):
             Coupling(
-                q0, q1, g=0.01,
+                q0,
+                q1,
+                g=0.01,
                 op_a=lambda d: d.number_operator(),
                 op_b=lambda d: d.number_operator(),
                 interaction=lambda a, b, bk: bk.tensor(a.identity(), b.identity()),
@@ -84,7 +91,9 @@ class TestCouplingHamiltonian:
     def test_product_form_cross_kerr(self, q0, q1):
         """g · n_a ⊗ n_b should produce the correct two-body operator."""
         c = Coupling(
-            q0, q1, g=0.001,
+            q0,
+            q1,
+            g=0.001,
             op_a=lambda d: d.number_operator(),
             op_b=lambda d: d.number_operator(),
         )
@@ -98,30 +107,30 @@ class TestCouplingHamiltonian:
 
     def test_callable_form_jc(self, q0, res):
         """Callable-form full form masked to RWA matches the masked Capacitive form."""
+
         def jc(dev_a, dev_b, bk):
             a = dev_a.lowering_operator()
             b = dev_b.lowering_operator()
-            return (
-                bk.tensor(bk.dag(a), b) + bk.tensor(a, bk.dag(b))
-                + bk.tensor(a, b) + bk.tensor(bk.dag(a), bk.dag(b))
-            )
+            return bk.tensor(bk.dag(a), b) + bk.tensor(a, bk.dag(b)) + bk.tensor(a, b) + bk.tensor(bk.dag(a), bk.dag(b))
 
         c = Coupling(q0, res, g=0.02, interaction=jc)
         cap = Capacitive(q0, res, g=0.02)
 
         backend = get_default_backend()
-        H = apply_rwa_mask(
+        def keeps_band(first, second):
+            return RWA().keeps_operator_band((first, second))
+        H = apply_operator_band_filter(
             c.interaction_hamiltonian(),
             dims=(q0.levels, res.levels),
             labels=(q0.label, res.label),
-            keeps_band=c.rwa_keeps_band,
+            keeps_band=keeps_band,
             backend=backend,
         )
-        H_cap = apply_rwa_mask(
+        H_cap = apply_operator_band_filter(
             materialize_expr(cap.interaction_hamiltonian(), backend),
             dims=(q0.levels, res.levels),
             labels=(q0.label, res.label),
-            keeps_band=cap.rwa_keeps_band,
+            keeps_band=keeps_band,
             backend=backend,
         )
         np.testing.assert_allclose(
@@ -131,21 +140,18 @@ class TestCouplingHamiltonian:
         )
 
     def test_interaction_hamiltonian_is_policy_free(self, q0, q1):
-        """interaction_hamiltonian() returns the full form regardless of the rwa attribute."""
+        """A coupling always returns its complete authored interaction."""
         backend = get_default_backend()
         c_default = Coupling(
-            q0, q1, g=0.01,
-            op_a=lambda d: d.number_operator(),
-            op_b=lambda d: d.number_operator(),
-        )
-        c_full = Coupling(
-            q0, q1, g=0.01, rwa=False,
+            q0,
+            q1,
+            g=0.01,
             op_a=lambda d: d.number_operator(),
             op_b=lambda d: d.number_operator(),
         )
         H_default = np.array(backend.to_array(c_default.interaction_hamiltonian()))
-        H_full = np.array(backend.to_array(c_full.interaction_hamiltonian()))
-        np.testing.assert_allclose(H_default, H_full, atol=1e-12)
+        expected = 0.01 * np.kron(np.diag([0.0, 1.0, 2.0]), np.diag([0.0, 1.0, 2.0]))
+        np.testing.assert_allclose(H_default, expected, atol=1e-12)
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +163,9 @@ class TestCouplingChipIntegration:
     def test_chip_hamiltonian_with_generic_coupling(self, q0, q1):
         """A generic Coupling contributes to chip.hamiltonian() at full composite dimension."""
         coupling = Coupling(
-            q0, q1, g=0.001,
+            q0,
+            q1,
+            g=0.001,
             op_a=lambda d: d.number_operator(),
             op_b=lambda d: d.number_operator(),
         )
@@ -168,7 +176,9 @@ class TestCouplingChipIntegration:
     def test_chip_dress_with_generic_coupling(self, q0, q1):
         """chip.dress() succeeds with a generic Coupling present."""
         coupling = Coupling(
-            q0, q1, g=0.001,
+            q0,
+            q1,
+            g=0.001,
             op_a=lambda d: d.number_operator(),
             op_b=lambda d: d.number_operator(),
         )
@@ -182,9 +192,7 @@ class TestCouplingChipIntegration:
             devices=[q0, q1, res],
             couplings=[
                 Capacitive(q0, res, g=0.02),
-                Coupling(q0, q1, g=0.001,
-                    op_a=lambda d: d.number_operator(),
-                    op_b=lambda d: d.number_operator()),
+                Coupling(q0, q1, g=0.001, op_a=lambda d: d.number_operator(), op_b=lambda d: d.number_operator()),
             ],
         )
         H = chip.hamiltonian()
@@ -221,15 +229,11 @@ class TestCouplingProperties:
         assert c.device_a_label == "q0"
         assert c.device_b_label == "q1"
 
-    def test_rwa_property_passthrough(self, q0, q1):
-        """Coupling.rwa passes through the constructor value."""
-        c = Coupling(q0, q1, g=0.01, rwa=True, op_a=lambda d: d.identity(), op_b=lambda d: d.identity())
-        assert c.rwa is True
-
-    def test_rwa_default_none(self, q0, q1):
-        """Coupling.rwa defaults to None."""
+    def test_approximation_policy_is_absent(self, q0, q1):
+        """Couplings do not own an approximation policy."""
         c = Coupling(q0, q1, g=0.01, op_a=lambda d: d.identity(), op_b=lambda d: d.identity())
-        assert c.rwa is None
+        assert not hasattr(c, "rwa")
+        assert not hasattr(c, "rwa_keeps_band")
 
     def test_repr_product_mode(self, q0, q1):
         """repr() of a product-form Coupling names the mode and a device label."""

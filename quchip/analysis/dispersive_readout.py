@@ -36,7 +36,7 @@ frequency), ``kappa`` is a rate in 1/ns, ``tau`` is in ns, ``eps`` is in
 rad/ns. The GHz→rad/ns conversions (2π) happen exactly once, at the public
 boundary of :func:`analyze_dispersive_readout` — local physics conversions of
 an analysis module, distinct from the engine's own Hamiltonian-assembly 2π
-boundary in stage 2.
+boundary in engine assembly.
 
 Everything is closed-form algebra in the array namespace of its inputs, so the
 result is JAX-traceable and differentiable end-to-end:
