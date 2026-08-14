@@ -6,10 +6,10 @@ import re
 import jax
 import jax.numpy as jnp
 
-from quchip import EnvelopeShape, Scalar, qnp, parameter
+from quchip import Envelope, Scalar, qnp, parameter
 
 
-class TraceableEnvelope(EnvelopeShape):
+class TraceableEnvelope(Envelope):
     duration: Scalar = parameter(positive=True)
     amplitude: Scalar = parameter(default=1.0)
 
@@ -18,7 +18,7 @@ class TraceableEnvelope(EnvelopeShape):
 
 
 def test_envelope_value_is_jax_differentiable():
-    """A gradient flows through EnvelopeShape's amplitude parameter when built inside a jax.grad-traced function."""
+    """A gradient flows through Envelope's amplitude parameter when built inside a jax.grad-traced function."""
 
     def objective(amplitude):
         env = TraceableEnvelope(duration=10.0, amplitude=amplitude)

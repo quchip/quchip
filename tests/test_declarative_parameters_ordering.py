@@ -1,47 +1,55 @@
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
-from quchip.declarative import DeviceModel, EnvelopeShape, Scalar, parameter
+from quchip.declarative import DeviceModel, Envelope, Scalar, TimeCoefficient, parameter
+from quchip.declarative.parameters import UNBOUND
 
 
-def test_device_model_required_after_optional_raises_naming_class_and_fields():
-    """A DeviceModel subclass with a required field after an optional one raises, naming the class and both fields."""
-    with pytest.raises(TypeError, match=r"Bad.*'b'.*'a'"):
-
-        class Bad(DeviceModel):
-            a: Scalar = parameter(default=1.0)
-            b: Scalar = parameter()
-
-
-def test_device_model_inherited_required_after_optional_raises():
-    """An optional field inherited from a DeviceModel base, followed by a required field in the subclass, raises."""
-
-    class Base(DeviceModel):
+def test_device_model_parameter_can_explicitly_remain_unbound_after_defaulted_field():
+    """Declaration order does not prevent a later parameter from remaining symbolic."""
+    class SymbolicDevice(DeviceModel):
         a: Scalar = parameter(default=1.0)
+        b: Scalar = parameter(default=UNBOUND)
 
-    with pytest.raises(TypeError, match=r"Child.*'b'.*'a'"):
+    device = SymbolicDevice()
+    assert device.a == 1.0
+    assert device.b is UNBOUND
 
-        class Child(Base):
-            b: Scalar = parameter()
+def test_inherited_envelope_parameter_can_explicitly_remain_unbound():
+    """Inherited defaults and symbolic child parameters compose without constructor ordering rules."""
 
-
-def test_envelope_shape_required_after_optional_raises_naming_class_and_fields():
-    """An EnvelopeShape subclass with a required field after an optional one raises, naming the class and fields."""
-    with pytest.raises(TypeError, match=r"BadEnvelope.*'edge'.*'duration'"):
-
-        class BadEnvelope(EnvelopeShape):
-            duration: Scalar = parameter(default=10.0)
-            edge: Scalar = parameter()
-
-
-def test_envelope_shape_inherited_required_after_optional_raises():
-    """An optional field inherited from an EnvelopeShape base, followed by a required field in the subclass, raises."""
-
-    class BaseEnv(EnvelopeShape):
+    class BaseEnv(Envelope):
         duration: Scalar = parameter(default=10.0)
 
-    with pytest.raises(TypeError, match=r"ChildEnv.*'edge'.*'duration'"):
+        def value(self, t):
+            return t
 
-        class ChildEnv(BaseEnv):
-            edge: Scalar = parameter()
+    class SymbolicEnvelope(BaseEnv):
+        edge: Scalar = parameter(default=UNBOUND)
+
+    envelope = SymbolicEnvelope()
+    assert envelope.duration == 10.0
+    assert envelope.edge is UNBOUND
+
+
+@pytest.mark.parametrize("base", [DeviceModel, Envelope, TimeCoefficient])
+def test_keyword_only_fields_do_not_constrain_positional_declaration_order(base):
+    """Constructor synthesis partitions keyword-only fields after positional fields."""
+
+    class MixedOrder(base):
+        option: Scalar = parameter(default=1.0, kw_only=True)
+        amplitude: Scalar = parameter()
+
+        def local_hamiltonian(self, op, p):
+            return p.amplitude * op.n
+
+        def value(self, time):
+            return self.amplitude * time
+
+    signature = inspect.signature(MixedOrder)
+    assert tuple(signature.parameters)[:2] == ("amplitude", "option")
+    assert signature.parameters["amplitude"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+    assert signature.parameters["option"].kind is inspect.Parameter.KEYWORD_ONLY

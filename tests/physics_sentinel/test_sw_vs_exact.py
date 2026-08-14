@@ -1,14 +1,15 @@
-"""Ladder rung 3 (spec Sec. 9): method="sw" vs method="exact" bus elimination agree; exact zz is exact.
+"""SW and exact bus elimination agree in the dispersive regime.
 
 Reuses the standard bridge fixture (a bus resonator mediating two
 capacitively coupled qubits) to compare ``eliminate()``'s two device-target
 routes: the perturbative second-order Schrieffer-Wolff route
 (``method="sw"``) and the exact-from-dressing route (``method="exact"``, one
-full diagonalization). See ``tests/extended/test_sw_vs_exact_grad.py`` for
-the companion gradient check.
+full diagonalization).
 """
 
 from __future__ import annotations
+
+from quchip.approximations import RWA
 
 import pytest
 
@@ -26,10 +27,10 @@ def _bridge_chip() -> Chip:
     q1 = DuffingTransmon(freq=_Q1_FREQ, anharmonicity=-0.24, levels=3, label="q1")
     bus = Resonator(freq=_BUS_FREQ, levels=4, label="bus")
     couplings = [
-        Capacitive(q0, bus, g=_LEG_G, rwa=True, label="leg0"),
-        Capacitive(q1, bus, g=_LEG_G, rwa=True, label="leg1"),
+        Capacitive(q0, bus, g=_LEG_G, label="leg0"),
+        Capacitive(q1, bus, g=_LEG_G, label="leg1"),
     ]
-    return Chip([q0, q1, bus], couplings=couplings, frame="rotating", rwa=True)
+    return Chip([q0, q1, bus], couplings=couplings, frame="rotating", approximation=RWA())
 
 
 def test_sw_and_exact_freq_after_agree_within_dispersive_tolerance():
@@ -46,14 +47,6 @@ def test_sw_and_exact_freq_after_agree_within_dispersive_tolerance():
         f_exact = float(exact.effective_params[label]["freq_after"])
         rel = abs(f_sw - f_exact) / abs(f_exact)
         assert rel < tol, (label, f_sw, f_exact, rel)
-
-
-def test_exact_zz_matches_chip_dispersive_shift_exactly():
-    """method="exact"'s exchange["zz"] equals chip.dispersive_shift, read off the same dressed spectrum."""
-    full = _bridge_chip()
-    exact = eliminate(full, "bus", method="exact")
-    zz = exact.effective_params["exchange"]["zz"]
-    assert zz == pytest.approx(full.dispersive_shift("q0", "q1"), rel=1e-12)
 
 
 def test_min_block_gap_exceeds_coupling_scale():

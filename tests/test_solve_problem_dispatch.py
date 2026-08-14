@@ -19,19 +19,20 @@ from quchip.control.drive import ChargeDrive
 from quchip.control.envelopes import Square
 from quchip.control.equipment import ControlEquipment
 from quchip.devices.transmon.duffing import DuffingTransmon
+from quchip.devices.transmon.charge_basis import ChargeBasisTransmon
 from quchip.engine import build_problem, simulate, solve_problem
 from quchip.engine.ir import DriveOp, SolveProblem
+from quchip.declarative import CollapseChannel
 
 
 class _NoisyChargeDrive(ChargeDrive):
-    def collapse_operators(self, device):
-        return [0.1 * device.number_operator()]
+    def dissipation(self, device, op, p):
+        return (CollapseChannel(op.n, 0.01, "dephasing"),)
 
 
 class _NoisyCapacitive(Capacitive):
-    def collapse_operators(self, chip):
-        _ = chip
-        return [0.05 * self.interaction_hamiltonian()]
+    def dissipation(self, a, b, p):
+        return (CollapseChannel(a.charge * b.charge, 0.0025, "edge_loss"),)
 
 
 class TestBuildSolveProblem:
@@ -56,12 +57,31 @@ class TestBuildSolveProblem:
         problem = build_problem(chip, [], tlist)
         assert problem.chip is chip
 
+    def test_rotating_problem_resolves_local_system_once(self, monkeypatch: pytest.MonkeyPatch):
+        """Dressed frame references and solve assembly share one local resolution."""
+        import quchip.engine.assembly as assembly
+
+        q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=3, label="q")
+        chip = Chip([q], frame="rotating")
+        calls = 0
+        original = assembly._resolve_local_system
+
+        def counted(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(assembly, "_resolve_local_system", counted)
+        build_problem(chip, [], np.linspace(0.0, 1.0, 3))
+
+        assert calls == 1
+
     def test_backend_rejected_in_options(self):
         """SolveProblem rejects 'backend' key in options."""
         with pytest.raises(ValueError, match="must not contain 'backend'"):
             SolveProblem(
                 chip=None,
-                hamiltonian=None,
+                engine_result=None,
                 initial_state=None,
                 tlist=np.linspace(0, 50, 201),
                 options={"backend": "something"},
@@ -72,7 +92,7 @@ class TestBuildSolveProblem:
         original = {"store_states": True}
         problem = SolveProblem(
             chip=None,
-            hamiltonian=None,
+            engine_result=None,
             initial_state=None,
             tlist=np.linspace(0, 50, 201),
             options=original,
@@ -96,11 +116,11 @@ class TestBuildSolveProblem:
         )
 
         problem = build_problem(chip, [drive_op], tlist)
-        assert problem.hamiltonian is not None
-        assert len(problem.hamiltonian.dynamic_terms) > 0
+        assert problem.engine_result is not None
+        assert len(problem.engine_result.dynamic_terms) > 0
 
     def test_problem_collects_drive_level_collapse_operators(self):
-        """build_problem() collects a drive's own collapse_operators() into problem.c_ops."""
+        """build_problem() retains a drive's collapse operator in the engine result."""
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=3, label="q")
         drive = _NoisyChargeDrive(target=q)
         chip = Chip([q])
@@ -108,10 +128,10 @@ class TestBuildSolveProblem:
 
         problem = build_problem(chip, [], np.linspace(0.0, 10.0, 11))
 
-        assert len(problem.c_ops) == 1
+        assert len(problem.engine_result.collapse_terms) == 1
 
     def test_problem_collects_coupling_level_collapse_operators(self):
-        """build_problem() collects a coupling's own collapse_operators() into problem.c_ops."""
+        """build_problem() retains a coupling's collapse operator in the engine result."""
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=3, label="q")
         r = DuffingTransmon(freq=5.4, anharmonicity=-0.2, levels=3, label="r")
         coupling = _NoisyCapacitive(q, r, g=0.01)
@@ -119,7 +139,7 @@ class TestBuildSolveProblem:
 
         problem = build_problem(chip, [], np.linspace(0.0, 10.0, 11))
 
-        assert len(problem.c_ops) == 1
+        assert len(problem.engine_result.collapse_terms) == 1
 
 
 class TestSolveProblemDispatch:
@@ -372,7 +392,14 @@ class TestQuantumSequenceBuildProblem:
 
     def test_build_batch_accepts_mapping_initial_states(self):
         """build_batch() accepts a mix of dict and device-object initial-state specs per axis."""
-        q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+        q = ChargeBasisTransmon(
+            E_C=0.25,
+            E_J=12.0,
+            num_basis=7,
+            basis="eigen",
+            levels=3,
+            label="q",
+        )
         drive = ChargeDrive(target=q)
         chip = Chip([q], frame="rotating")
         chip.connect(ControlEquipment(lines=[drive]))
@@ -388,6 +415,7 @@ class TestQuantumSequenceBuildProblem:
         assert len(problems) == 2
         assert all(problem.chip is chip for problem in problems)
         assert problems[0].initial_state is not problems[1].initial_state
+        assert all(problem.initial_state.shape == (3, 1) for problem in problems)
 
     def test_build_batch_reuses_problem_scaffold(self):
         """build_batch() shares the Hamiltonian operator skeleton, tlist, and frame across elements."""
@@ -408,15 +436,15 @@ class TestQuantumSequenceBuildProblem:
         )
 
         assert len(problems) == 2
-        # Element-level HamiltonianDescriptions are materialised on demand; identity equality
+        # Element-level EngineResults are materialised on demand; identity equality
         # of static_terms holds against the SolveBatch and across elements, not just within one.
-        batch = problems.batch
-        assert batch.hamiltonian.static_terms is problems[0].hamiltonian.static_terms
-        assert problems[0].hamiltonian.static_terms is problems[1].hamiltonian.static_terms
-        for slot in range(len(problems[0].hamiltonian.dynamic_terms)):
+        batch = problems
+        assert batch.problems[0].engine_result.static_terms is problems[0].engine_result.static_terms
+        assert problems[0].engine_result.static_terms is problems[1].engine_result.static_terms
+        for slot in range(len(problems[0].engine_result.dynamic_terms)):
             assert (
-                problems[0].hamiltonian.dynamic_terms[slot].operator
-                is problems[1].hamiltonian.dynamic_terms[slot].operator
+                problems[0].engine_result.dynamic_terms[slot].operator
+                is problems[1].engine_result.dynamic_terms[slot].operator
             )
         assert problems[0].tlist is problems[1].tlist
         assert problems[0].resolved_frame is problems[1].resolved_frame
@@ -480,7 +508,7 @@ class TestQuantumSequenceBuildProblem:
         instantiate_calls = 0
 
         original_compile = sequence_module.compile_hamiltonian_template
-        original_instantiate = sequence_module.instantiate_hamiltonian_description
+        original_instantiate = sequence_module.instantiate_engine_result
 
         def counted_compile(*args, **kwargs):
             nonlocal compile_calls
@@ -493,7 +521,7 @@ class TestQuantumSequenceBuildProblem:
             return original_instantiate(*args, **kwargs)
 
         monkeypatch.setattr(sequence_module, "compile_hamiltonian_template", counted_compile)
-        monkeypatch.setattr(sequence_module, "instantiate_hamiltonian_description", counted_instantiate)
+        monkeypatch.setattr(sequence_module, "instantiate_engine_result", counted_instantiate)
 
         batch = sequence.build_batch(
             amp,
@@ -520,13 +548,13 @@ class TestQuantumSequenceBuildProblem:
         sequence.schedule(drive, envelope=Square(duration=1.0, amplitude=0.02), freq=5.0)
 
         captured_start_times: list[tuple[float, ...]] = []
-        original_instantiate = sequence_module.instantiate_hamiltonian_description
+        original_instantiate = sequence_module.instantiate_engine_result
 
         def capture_start_times(template, drive_ops, chip):
             captured_start_times.append(tuple(float(op.start_time) for op in drive_ops))
             return original_instantiate(template, drive_ops, chip)
 
-        monkeypatch.setattr(sequence_module, "instantiate_hamiltonian_description", capture_start_times)
+        monkeypatch.setattr(sequence_module, "instantiate_engine_result", capture_start_times)
 
         batch = sequence.build_batch(
             wait.vary("duration", [5.0, 9.0], name="tau"),
@@ -538,35 +566,40 @@ class TestQuantumSequenceBuildProblem:
         assert (0.0, 7.0) in captured_start_times
         assert (0.0, 11.0) in captured_start_times
 
-    def test_build_batch_computes_default_initial_state_once(self, monkeypatch: pytest.MonkeyPatch):
-        """build_batch() computes the shared default initial state once, not once per element."""
-        q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+    def test_build_batch_uses_the_semantic_ground_state_by_default(self):
+        """A construction sweep rebuilds each Hamiltonian and its semantic ground state."""
+        q = ChargeBasisTransmon(
+            E_C=0.25,
+            E_J=12.0,
+            num_basis=7,
+            basis="eigen",
+            levels=3,
+            label="q",
+        )
         drive = ChargeDrive(target=q)
         chip = Chip([q], frame="rotating")
         chip.connect(ControlEquipment(lines=[drive]))
         sequence = QuantumSequence(chip)
         pulse = sequence.schedule(drive, envelope=Square(duration=20.0, amplitude=0.02), freq=5.0)
         amp = pulse.vary("amplitude", [0.01, 0.02], name="amp")
-        freq = pulse.vary("freq", [4.9, 5.1], name="freq")
-
-        original_state = chip.state
-        state_calls = 0
-
-        def counted_state(*args, **kwargs):
-            nonlocal state_calls
-            state_calls += 1
-            return original_state(*args, **kwargs)
-
-        monkeypatch.setattr(chip, "state", counted_state)
+        ej = sequence.vary("q.E_J", [10.0, 12.0], name="EJ")
 
         batch = sequence.build_batch(
             amp,
-            freq,
+            ej,
             tlist=np.linspace(0.0, 20.0, 81),
         )
 
         assert len(batch) == 4
-        assert state_calls == 1
+        expected = np.asarray([1.0, 0.0, 0.0])
+        for problem in batch:
+            state = chip.backend.to_array(problem.initial_state).reshape(-1)
+            np.testing.assert_allclose(state, expected)
+        h_low = batch[0].engine_result.hamiltonian().matrix(t=0.0)
+        h_high = batch[1].engine_result.hamiltonian().matrix(t=0.0)
+        assert not np.allclose(chip.backend.to_array(h_low), chip.backend.to_array(h_high))
+        results = chip.solve_many(batch, progress=False)
+        assert results.shape == (2, 2)
 
 
 class TestChipSolveMany:

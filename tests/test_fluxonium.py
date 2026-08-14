@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from quchip.utils.labeling import reset_label_counters
+from quchip import Chip
 from quchip.devices.fluxonium import Fluxonium
 from quchip.devices.protocols import ChargeCoupled, FluxCoupled, PhaseCoupled
 
@@ -18,9 +19,10 @@ def _reset():
 
 
 def test_constructor_accepts_three_energies():
-    """Fluxonium accepts E_C, E_J, E_L and stores the requested level count."""
+    """Fluxonium keeps its phase grid separate from retained eigenlevels."""
     q = Fluxonium(E_C=1.0, E_J=4.0, E_L=1.0, phi_ext=0.5, levels=5)
-    assert q.levels == 5
+    assert q.local_space().dimension == 400
+    assert q.projection_levels == 5
 
 
 def test_invalid_energies_raise():
@@ -110,8 +112,15 @@ def test_charge_and_flux_channels_give_different_rates_at_sweet_spot():
     q_charge = Fluxonium(**kwargs, coupling_channel="charge")
     q_flux = Fluxonium(**kwargs, coupling_channel="flux")
 
-    ops_charge = [np.asarray(op) for op in q_charge.collapse_operators()]
-    ops_flux = [np.asarray(op) for op in q_flux.collapse_operators()]
+    def _resolved_operators(device: Fluxonium) -> list[np.ndarray]:
+        result = Chip([device], basis="eigen").resolve()
+        return [
+            np.sqrt(np.asarray(term.rate)) * np.asarray(term.operator.to_dense())
+            for term in result.collapse_terms
+        ]
+
+    ops_charge = _resolved_operators(q_charge)
+    ops_flux = _resolved_operators(q_flux)
 
     def _total_rate_matrix(ops: list[np.ndarray]) -> np.ndarray:
         rate = np.zeros((4, 4))

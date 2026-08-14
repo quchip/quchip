@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from quchip.approximations import RWA
+
 import numpy as np
 import pytest
 
@@ -12,8 +14,8 @@ from quchip.chip.transformations.active_patch import active_labels, coupling_adj
 
 def _chain(n=4, g=0.004):
     qs = [DuffingTransmon(freq=5.0 + 0.35 * i, anharmonicity=-0.25, levels=3, label=f"q{i}") for i in range(n)]
-    couplings = [Capacitive(qs[i], qs[i + 1], g=g, label=f"c{i}{i+1}") for i in range(n - 1)]
-    chip = Chip(qs, couplings=couplings, frame="rotating", rwa=True)
+    couplings = [Capacitive(qs[i], qs[i + 1], g=g, label=f"c{i}{i + 1}") for i in range(n - 1)]
+    chip = Chip(qs, couplings=couplings, frame="rotating", approximation=RWA())
     drives = [ChargeDrive(target=q, label=f"d{i}") for i, q in enumerate(qs)]
     chip.wire(*drives)
     return chip, qs, drives
@@ -85,7 +87,7 @@ def test_active_patch_sequence_rebinds_and_simulates():
     chip, seq = _driven_pair_chain()
     patch = seq.active_patch(hops=1)
     # e_ops takes built operators (chip.e_ops(...)), not raw name strings —
-    # decompose_eops (engine/stage3_observables.py) expects the former.
+    # decompose_eops (engine/observables.py) expects the former.
     e_ops = patch.chip.e_ops(q0="Z")
     result = patch.simulate(tlist=np.linspace(0.0, 20.0, 21), e_ops=e_ops)
     assert np.asarray(result.expect("q0")).shape == (21,)
@@ -112,7 +114,7 @@ def _spectator_diamond_with_pendant():
         Capacitive(b, c, g=0.004, label="c_BC"),
         Capacitive(c, d, g=0.004, label="c_CD"),
     ]
-    chip = Chip([active, a, b, c, d], couplings=couplings, frame="rotating", rwa=True)
+    chip = Chip([active, a, b, c, d], couplings=couplings, frame="rotating", approximation=RWA())
     drive = ChargeDrive(target=active, label="d_active")
     chip.wire(drive)
     seq = QuantumSequence(chip)
@@ -141,7 +143,7 @@ def test_active_patch_stops_gracefully_on_an_unsupported_device_elimination():
     # note rather than raising.
     q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0", thermal_population=0.02)
     spec = DuffingTransmon(freq=5.4, anharmonicity=-0.25, levels=3, label="spec", T1=20_000.0)
-    chip = Chip([q0, spec], couplings=[Capacitive(q0, spec, g=0.004, label="c0s")], frame="rotating", rwa=True)
+    chip = Chip([q0, spec], couplings=[Capacitive(q0, spec, g=0.004, label="c0s")], frame="rotating")
     drive = ChargeDrive(target=q0, label="d0")
     chip.wire(drive)
     seq = QuantumSequence(chip)
@@ -157,7 +159,7 @@ def test_active_patch_eliminates_a_crosskerr_coupled_spectator():
     """A CrossKerr-coupled spectator folds like any other; active_patch eliminates it with no stopped note."""
     q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
     spec = DuffingTransmon(freq=6.0, anharmonicity=-0.25, levels=3, label="spec")
-    chip = Chip([q0, spec], couplings=[CrossKerr(q0, spec, chi=-0.001, label="ck0s")], frame="rotating", rwa=True)
+    chip = Chip([q0, spec], couplings=[CrossKerr(q0, spec, chi=-0.001, label="ck0s")], frame="rotating")
     drive = ChargeDrive(target=q0, label="d0")
     chip.wire(drive)
     seq = QuantumSequence(chip)
@@ -177,7 +179,7 @@ def test_active_patch_matches_full_solve_in_dispersive_regime():
     full = seq.simulate(tlist=tlist, e_ops=chip.e_ops(q0="Z"), partition=False)
     patch = seq.active_patch(hops=1)
     # e_ops takes built operators (chip.e_ops(...)), not raw name strings —
-    # decompose_eops (engine/stage3_observables.py) expects the former, and
+    # decompose_eops (engine/observables.py) expects the former, and
     # the patch chip has its own local Hilbert space so the operators must
     # be built against patch.chip, not chip.
     reduced = patch.simulate(tlist=tlist, e_ops=patch.chip.e_ops(q0="Z"))
@@ -198,7 +200,7 @@ def test_active_patch_warns_on_poor_sw_validity():
     # g=0.05 at a 0.02 GHz detuning is near-resonant (g/Delta >> 0.1), so the fold triggers is_valid=False.
     q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
     spec = DuffingTransmon(freq=5.02, anharmonicity=-0.25, levels=3, label="spec")
-    chip = Chip([q0, spec], couplings=[Capacitive(q0, spec, g=0.05, label="c01")], frame="rotating", rwa=True)
+    chip = Chip([q0, spec], couplings=[Capacitive(q0, spec, g=0.05, label="c01")], frame="rotating")
     drive = ChargeDrive(target=q0, label="d0")
     chip.wire(drive)
     seq = QuantumSequence(chip)

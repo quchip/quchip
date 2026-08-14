@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+
 import pytest
 
-from quchip import Capacitive, Chip, ControlEquipment, DuffingTransmon, ParametricDrive, TunableCapacitive
+from quchip import (
+    Capacitive,
+    Chip,
+    ControlEquipment,
+    CouplingDrive,
+    DuffingTransmon,
+    ParametricDrive,
+    TunableCapacitive,
+)
 
 
 def _parts():
@@ -50,10 +59,9 @@ def test_unknown_coupling_label_raises_at_connect():
         chip.connect(ControlEquipment([pump]))
 
 
-def test_rwa_kwarg_rejected():
-    """ParametricDrive rejects an explicit rwa keyword with ValueError; the coupling's own hook fixes the RWA policy."""
+def test_rwa_is_not_a_drive_constructor_field():
     _, _, tc = _parts()
-    with pytest.raises(ValueError, match="RWA"):
+    with pytest.raises(TypeError, match="rwa"):
         ParametricDrive(tc, rwa=True)  # type: ignore[call-arg]
 
 
@@ -83,7 +91,7 @@ def test_serialization_round_trip_resolves_edge_line_through_coupling_map():
     restored = Chip.from_dict(chip.to_dict())
 
     restored_pump = restored.control_equipment.lines[0]
-    assert restored_pump.target_kind == "edge"
+    assert isinstance(restored_pump, CouplingDrive)
     assert restored_pump._target is restored.coupling("tc")
 
     seq = QuantumSequence(restored)

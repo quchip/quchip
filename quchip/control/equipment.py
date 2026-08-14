@@ -10,9 +10,8 @@ from typing import Any
 
 import numpy as np
 
-from quchip.control.drive import BaseDrive
+from quchip.control.drive import BaseDrive, CouplingDrive
 from quchip.control.signal import Crosstalk, SignalMap, SignalTransform
-from quchip.engine.ir import Add, PolarScale, Shift, SignalProgram
 from quchip.utils.jax_utils import (
     is_jax_array as _is_traced,
     select_array_module as _select_array_module,
@@ -60,6 +59,7 @@ class CrosstalkMatrix(SignalTransform):
     beta: Any
     theta: Any
     delay: Any
+    _parameter_names = ("beta", "theta", "delay")
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "labels", tuple(self.labels))
@@ -80,14 +80,15 @@ class CrosstalkMatrix(SignalTransform):
             for victim_index, victim in enumerate(self.labels):
                 if victim_index == source_index:
                     continue
-                leaked: SignalProgram = PolarScale(
-                    child=Shift(signal, delta_t=self.delay[victim_index, source_index]),
-                    amplitude=self.beta[victim_index, source_index],
-                    theta=self.theta[victim_index, source_index],
+                leaked = signal.shifted(
+                    self.delay[victim_index, source_index]
+                ).polar_scaled(
+                    self.beta[victim_index, source_index],
+                    self.theta[victim_index, source_index],
                 )
                 victim_key = (victim, key[1])
                 existing = output.get(victim_key)
-                output[victim_key] = leaked if existing is None else Add((existing, leaked))
+                output[victim_key] = leaked if existing is None else existing + leaked
         return output
 
     def referenced_lines(self) -> tuple[str, ...]:
@@ -147,8 +148,8 @@ class CrosstalkMatrix(SignalTransform):
 class ControlEquipment:
     """Ordered drive lines plus a sequence of signal-chain transforms.
 
-    Drives produce raw line signals; the equipment pipes them through
-    ``signal_chain`` in order before the engine assembles Hamiltonian terms.
+    The equipment pipes complete analytic signals through ``signal_chain``
+    before destination drives author Hamiltonian terms.
     """
 
     def __init__(
@@ -181,10 +182,8 @@ class ControlEquipment:
         Parameters
         ----------
         signals : SignalMap
-            ``{(drive_label, drive_index): SignalProgram}`` map of raw
-            line signals. ``drive_index`` distinguishes multiple ops on
-            the same drive line and is assigned by the engine when it
-            enumerates the chip's scheduled drive ops.
+            ``{(line_label, source_index): AnalyticSignal}`` map.
+            ``source_index`` distinguishes scheduled pulses through mixing.
 
         Returns
         -------
@@ -328,13 +327,12 @@ class ControlEquipment:
     def copy(self, device_map: dict[str, Any], coupling_map: dict[str, Any] | None = None) -> "ControlEquipment":
         """Return a structural copy with drive lines rebound to *device_map* / *coupling_map*.
 
-        Edge lines (``target_kind == "edge"``) rebind via *coupling_map*,
-        keyed by coupling label; device lines rebind via *device_map* as
-        before.
+        Coupling-target lines rebind via *coupling_map*, keyed by coupling
+        label; device-target lines rebind via *device_map*.
         """
         copied_lines = []
         for line in self._lines:
-            if line.target_kind == "edge":
+            if isinstance(line, CouplingDrive):
                 if coupling_map is None or line.target_label not in coupling_map:
                     raise KeyError(
                         f"No coupling '{line.target_label}' in the target map for edge line '{line.label}'."

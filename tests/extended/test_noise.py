@@ -581,7 +581,7 @@ class TestCollapseOperatorAssembly:
 
     def test_negative_thermal_raises(self) -> None:
         """Negative thermal_population is rejected at construction."""
-        with pytest.raises(ValueError, match="thermal_population must be ≥ 0"):
+        with pytest.raises(ValueError, match="thermal_population must be non-negative"):
             DuffingTransmon(
                 freq=5.0,
                 anharmonicity=-0.25,

@@ -13,22 +13,23 @@ single loss function can span any of them.
 
 from __future__ import annotations
 
-import warnings
 from collections import Counter
-from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence, overload
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence, overload
 
 import numpy as np
 
 from quchip.backend import _backend_context
 from quchip.backend.protocol import Backend, Operator, State
+from quchip.approximations import Approximation, RWA, require_approximation
 from quchip.chip.analysis import ChipAnalysis, DressedResult
 from quchip.chip.baths import Bath
 from quchip.chip.coupling_base import BaseCoupling
-from quchip.chip.rwa import apply_rwa_mask
 from quchip.chip.states import _DEFAULT_LEVEL_SYMBOLS
-from quchip.control.drive import BaseDrive
+from quchip.control.drive import BaseDrive, CouplingDrive
 from quchip.control.equipment import ControlEquipment
 from quchip.control.signal import Crosstalk, SignalTransform
+from quchip.declarative.expr import PhysicsExpr
 from quchip.declarative.parameters import validate_sign
 from quchip.devices.base import BaseDevice, _validate_noise_params
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
@@ -36,7 +37,7 @@ from quchip.utils.labeling import LabelKeyedDict, resolve_label
 
 if TYPE_CHECKING:
     from quchip.chip.partition import PartitionResult
-    from quchip.engine.ir import FrameSpec, SolveProblem
+    from quchip.engine.ir import EngineResult, FrameSpec, SolveProblem
     from quchip.results.results import SimulationBatchResult, SimulationResult
 
 
@@ -65,6 +66,44 @@ def _same_concrete_value(a: Any, b: Any) -> bool:
     concrete_a = maybe_concrete_scalar(a)
     concrete_b = maybe_concrete_scalar(b)
     return concrete_a is not None and concrete_b is not None and concrete_a == concrete_b
+
+
+def _as_physics_expr(
+    authored: Any,
+    backend: Backend,
+    *,
+    labels: tuple[str, ...],
+    dims: tuple[int, ...],
+    name: str,
+) -> PhysicsExpr:
+    """Return an authored expression or wrap a native matrix contribution."""
+    if isinstance(authored, PhysicsExpr):
+        return authored
+    return PhysicsExpr.from_matrix(backend.to_array(authored), labels=labels, dims=dims, name=name)
+
+
+def _concrete_cache_value(value: Any) -> Any:
+    """Return one stable scalar cache value or raise for traced/non-scalars."""
+    if value is None:
+        return None
+    concrete = maybe_concrete_scalar(value)
+    if concrete is None:
+        raise ValueError
+    return concrete
+
+
+def _frame_cache_value(frame: Any) -> Any:
+    """Return a stable cache key for one concrete frame specification."""
+    if isinstance(frame, str):
+        return frame
+    if isinstance(frame, Mapping):
+        return tuple(
+            sorted(
+                (resolve_label(label), _concrete_cache_value(value))
+                for label, value in frame.items()
+            )
+        )
+    return _concrete_cache_value(frame)
 
 
 class Chip:
@@ -108,9 +147,14 @@ class Chip:
           frequencies.
         - scalar-like — one shared reference frequency for all devices.
         - ``dict`` — per-device references keyed by label or device.
-    rwa : bool
-        Default RWA policy for couplings and drives. Per-component
-        ``rwa`` overrides inherit this (``None`` means inherit).
+    approximation : Approximation
+        Engine strategy applied after the complete authored Hamiltonian is
+        assembled. Defaults to :class:`~quchip.approximations.RWA`.
+    basis : {"native", "eigen"}
+        Chip-wide local solver-basis policy. ``"native"`` preserves each
+        device's authored coordinate basis; ``"eigen"`` transforms into its
+        retained local energy subspace. A device-level ``basis`` overrides
+        this policy.
     backend : str or Backend, optional
         Chip-specific backend. ``None`` uses the process default.
 
@@ -130,7 +174,8 @@ class Chip:
         control_equipment: ControlEquipment | None = None,
         label: str | None = None,
         frame: FrameSpec = "lab",
-        rwa: bool = True,
+        approximation: Approximation = RWA(),
+        basis: Literal["native", "eigen"] = "native",
         backend: str | Backend | None = None,
         baths: list[Bath] | None = None,
     ) -> None:
@@ -160,9 +205,12 @@ class Chip:
         for bath in baths or ():
             self._validate_bath(bath)
         self._baths = tuple(baths) if baths else ()
-        self._dims = tuple(d.levels for d in devices)
+        if basis not in ("native", "eigen"):
+            raise ValueError(f"basis must be 'native' or 'eigen', got {basis!r}")
+        self._basis = basis
+        tuple(d.resolved_dimension(basis) for d in devices)
         self._frame_spec: FrameSpec = "lab"
-        self._rwa = bool(rwa)
+        self._approximation = require_approximation(approximation)
         if control_equipment is not None:
             drive_duplicates = [
                 lbl for lbl, n in Counter(d.label for d in control_equipment.lines).items() if n > 1
@@ -192,13 +240,10 @@ class Chip:
         self._state_order: tuple[str, ...] | None = None
         self._level_symbols: dict[str, int] = dict(_DEFAULT_LEVEL_SYMBOLS)
 
-        # Memo of the lab-frame Hamiltonian. It is built twice per engine pass
-        # (once lab-frame for dressing, once for the engine's static-H0) and is
-        # bit-identical both times, so the second build is pure waste. Keyed on
-        # the backend kind + per-device/per-coupling ``state_version`` so any
-        # parameter or level change invalidates it. Never cached under a JAX
-        # trace (the ``contains_tracer`` guard), so differentiability is intact.
-        self._hamiltonian_cache: tuple[Any, Operator] | None = None
+        # Both snapshots are keyed by their complete structural inputs below;
+        # values produced under a JAX trace are never retained.
+        self._unresolved_hamiltonian_cache: tuple[Any, PhysicsExpr] | None = None
+        self._resolved_result_cache: tuple[tuple[Any, ...], EngineResult] | None = None
 
         if frame != "lab":
             self.set_frame(frame)
@@ -207,97 +252,160 @@ class Chip:
     # Hamiltonian
     # ------------------------------------------------------------------
 
-    def hamiltonian(self) -> Operator:
-        """Lab-frame static Hamiltonian.
+    def unresolved_hamiltonian(self) -> PhysicsExpr:
+        """Return the authored lab-frame static Hamiltonian.
 
         Embeds every device Hamiltonian into the full tensor space and
         adds each coupling's embedded interaction. Does **not** apply
         the rotating-frame transform or any drive envelopes.
 
-        Under resolved RWA (:meth:`resolve_rwa`) each coupling
-        contributes only the bands its
-        :meth:`~quchip.chip.coupling_base.BaseCoupling.rwa_keeps_band`
-        retains — the :func:`~quchip.chip.rwa.apply_rwa_mask` of its full
-        interaction. The same bands drop from stage 2's decomposition, so
-        the two views agree.
-
-        This is the **lab-frame** Hamiltonian. At solve time, the engine
-        applies a rotating-frame transformation and subtracts
+        This is the exact authored lab-frame Hamiltonian. RWA and frame
+        transformations are applied only inside the engine. At solve time,
+        the engine subtracts
         ``2π Σ_i ω_ref,i n̂_i`` for each device, where ``ω_ref,i`` is the
         frame reference resolved by
-        :func:`quchip.engine.stage1_frames.resolve_frame`. The 2π boundary
+        :func:`quchip.engine.frames.resolve_frame`. The 2π boundary
         crossing and the subtraction both live in
-        :func:`quchip.engine.stage2_assembly._build_static_h0`. Use
+        :func:`quchip.engine.assembly._build_static_h0`. Use
         :meth:`frame_info` to inspect which reference frequency each
         device will use.
 
         Returns
         -------
-        Operator
-            Backend-native operator on ``⨂_d H_d``.
+        PhysicsExpr
+            Symbolic Hamiltonian on ``⨂_d H_d``. Call ``.matrix()`` for a
+            dense numerical view using current bindings.
         """
         backend = self.backend
         signature = (
             type(backend).__qualname__,
-            self._rwa,
             tuple((d.label, d.state_version) for d in self._devices),
-            tuple((c.label, c.state_version, self.resolve_rwa(c)) for c in self._couplings),
+            tuple((c.label, c.state_version) for c in self._couplings),
         )
-        cache = self._hamiltonian_cache
+        cache = self._unresolved_hamiltonian_cache
         if cache is not None and cache[0] == signature and not contains_tracer(cache[1]):
             return cache[1]
 
         with _backend_context(backend):
-            H: Operator | None = None
+            labels = tuple(device.label for device in self._devices)
+            H: PhysicsExpr | None = None
             for i, dev in enumerate(self._devices):
-                h_emb = backend.embed(dev.hamiltonian(), i, self._dims)
+                h_local = _as_physics_expr(
+                    dev.unresolved_hamiltonian(),
+                    backend,
+                    labels=(dev.label,),
+                    dims=(dev.local_space().dimension,),
+                    name=rf"\hat H_{{{dev.label}}}",
+                )
+                h_emb = h_local.embed(labels, self.authored_dims)
                 H = h_emb if H is None else H + h_emb
 
             for coupling in self._couplings:
                 idx_a = self._label_to_index[coupling.device_a_label]
                 idx_b = self._label_to_index[coupling.device_b_label]
-                h_int = coupling.interaction_hamiltonian()
-                if self.resolve_rwa(coupling):
-                    rwa_dims = (self._devices[idx_a].levels, self._devices[idx_b].levels)
-                    rwa_labels = (coupling.device_a_label, coupling.device_b_label)
-                    masked = apply_rwa_mask(
-                        h_int,
-                        dims=rwa_dims,
-                        labels=rwa_labels,
-                        keeps_band=coupling.rwa_keeps_band,
-                        backend=backend,
-                    )
-                    if masked is None:
-                        # No band survived rwa_keeps_band. An interaction that was
-                        # already exactly zero has no band to reject in the first
-                        # place; rerun the same decomposition with an always-true
-                        # predicate to tell that case (skip silently) apart from a
-                        # nonzero interaction every one of whose populated bands the
-                        # predicate rejected (a policy surprise worth a warning).
-                        has_any_band = apply_rwa_mask(
-                            h_int,
-                            dims=rwa_dims,
-                            labels=rwa_labels,
-                            keeps_band=lambda *_: True,
-                            backend=backend,
-                        ) is not None
-                        if has_any_band:
-                            warnings.warn(
-                                f"Coupling '{coupling.label}' vanishes entirely under the resolved RWA: "
-                                f"none of its bands pass rwa_keeps_band. Set rwa=False on the coupling "
-                                f"(or override rwa_keeps_band) to retain it.",
-                                UserWarning,
-                                stacklevel=2,
-                            )
-                        continue
-                    h_int = masked
-                H = H + backend.embed_two_body(h_int, idx_a, idx_b, self._dims)
+                local_labels = (coupling.device_a_label, coupling.device_b_label)
+                local_dims = (
+                    self._devices[idx_a].local_space().dimension,
+                    self._devices[idx_b].local_space().dimension,
+                )
+                h_int = _as_physics_expr(
+                    coupling.interaction_hamiltonian(),
+                    backend,
+                    labels=local_labels,
+                    dims=local_dims,
+                    name=rf"\hat H_{{{coupling.label}}}",
+                )
+                H = H + h_int.embed(labels, self.authored_dims)
 
-        # Only memoize concrete operators: under jax.jit/grad/vmap the device
-        # params are tracers, so H carries tracers and must not be cached.
-        if not contains_tracer(H):
-            self._hamiltonian_cache = (signature, H)
+        assert H is not None
+        # Do not cache expressions whose values belong to a JAX trace.
+        if not contains_tracer(H.numeric_values()):
+            self._unresolved_hamiltonian_cache = (signature, H)
         return H
+
+    def hamiltonian(self) -> PhysicsExpr:
+        """Return the Hamiltonian after the chip's engine policies."""
+        return self.resolve().hamiltonian()
+
+    def resolve(
+        self,
+        *,
+        frame: FrameSpec | None = None,
+        approximation: Approximation | None = None,
+    ) -> EngineResult:
+        """Return a frozen engine contract without mutating chip intent.
+
+        ``frame=None`` uses :attr:`frame`; an explicit frame resolves this
+        snapshot only. ``approximation=None`` likewise uses the chip default.
+        Neither override mutates chip intent.
+        """
+        from quchip.engine.assembly import (
+            _prepare_engine_assembly,
+            build_engine_result,
+        )
+
+        frame_spec = self.frame if frame is None else frame
+        strategy = self.approximation if approximation is None else require_approximation(approximation)
+        equipment = self.control_equipment
+        control_lines = () if equipment is None else equipment.lines
+        try:
+            signature = (
+                id(self.backend),
+                strategy,
+                self.basis,
+                _frame_cache_value(frame_spec),
+                tuple((device.label, device.state_version) for device in self.devices),
+                tuple(
+                    (device.label, _concrete_cache_value(device._reference_freq_override))
+                    for device in self.devices
+                ),
+                tuple(
+                    (device.label, id(type(device).dissipation))
+                    for device in self.devices
+                ),
+                tuple((coupling.label, coupling.state_version) for coupling in self.couplings),
+                tuple(
+                    (
+                        line.label,
+                        type(line),
+                        line.target_label,
+                        tuple(
+                            (name, _concrete_cache_value(getattr(line, name)))
+                            for name in line.parameter_values()
+                        ),
+                        id(type(line).dissipation),
+                    )
+                    for line in control_lines
+                ),
+                tuple(
+                    (
+                        bath.label,
+                        bath.recipe,
+                        tuple(bath.resolve_targets(self)),
+                        _concrete_cache_value(bath.temperature),
+                        _concrete_cache_value(bath.rate),
+                    )
+                    for bath in self.baths
+                ),
+            )
+        except ValueError:
+            signature = None
+
+        cache = self._resolved_result_cache
+        if signature is not None and cache is not None and cache[0] == signature:
+            return cache[1]
+
+        local_resolution, resolved_frame = _prepare_engine_assembly(self, frame_spec)
+        result = build_engine_result(
+            self,
+            [],
+            resolved_frame=resolved_frame,
+            approximation=strategy,
+            _local_resolution=local_resolution,
+        )
+        if signature is not None and not result._contains_tracer():
+            self._resolved_result_cache = (signature, result)
+        return result
 
     # ------------------------------------------------------------------
     # Component physics enumeration (consumed by the engine)
@@ -311,49 +419,60 @@ class Chip:
     # physics-bearing component family is therefore a chip-side change; it
     # never requires modifying the engine.
 
-    def dynamic_contributions(self) -> list[tuple[Operator, Any, tuple[int, ...], str, str]]:
+    def dynamic_contributions(self) -> list[tuple[Operator, Any, tuple[int, ...], Any, str, str]]:
         """Chip-owned time-dependent Hamiltonian contributions with their support.
 
-        Returns ``(local_op, time_dependence, support, origin, tag)``
+        Returns ``(local_op, time_dependence, support, owner, origin, tag)``
         tuples: one support index for a device-local operator, two for a
         coupling's two-body operator. Operators are lab-frame, ordinary
         GHz — the engine applies the 2π boundary. Drive terms are *not*
-        included; they are schedule-owned and enter through stage 2's
+        included; they are schedule-owned and enter through engine assembly's
         drive compilation.
         """
         backend = self.backend
-        out: list[tuple[Operator, Any, tuple[int, ...], str, str]] = []
+        out: list[tuple[Operator, Any, tuple[int, ...], Any, str, str]] = []
         with _backend_context(backend):
             for coupling in self._couplings:
-                term_pairs = coupling.dynamic_interaction_terms(self)
-                if not term_pairs:
+                terms = coupling._time_terms()
+                if not terms:
                     continue
                 idx_a = self._label_to_index[coupling.device_a_label]
                 idx_b = self._label_to_index[coupling.device_b_label]
                 out.extend(
-                    (op, td, (idx_a, idx_b), "coupling", "coupling_dynamic")
-                    for op, td in term_pairs
+                    (
+                        term.operator,
+                        term.coefficient,
+                        (idx_a, idx_b),
+                        coupling,
+                        "coupling",
+                        "coupling_dynamic",
+                    )
+                    for term in terms
                 )
             for i, dev in enumerate(self._devices):
                 out.extend(
-                    (op, td, (i,), "device", "device_dynamic")
-                    for op, td in dev.dynamic_terms()
+                    (term.operator, term.coefficient, (i,), dev, "device", "device_dynamic")
+                    for term in dev._time_terms()
                 )
         return out
 
-    def collapse_contributions(self) -> list[tuple[Operator, tuple[int, ...]]]:
+    def collapse_contributions(
+        self,
+        bases: Mapping[str, Any] | None = None,
+    ) -> list[tuple[Operator, Any, tuple[int, ...], str, str, tuple[str, ...]]]:
         """Every Lindblad collapse operator on the chip, with its support.
 
-        Returns ``(operator, support)`` pairs: one device index for a
+        Returns ``(operator, rate, support, source, channel, parameter_paths)``
+        tuples: one device index for a
         device- or drive-line-local operator, two for a coupling's
         two-body operator, and an empty tuple for an operator already
         embedded in the full space (baths). Rates are in 1/ns,
         Lindblad-ready — each component owns its rate physics, including
         any intrinsic 2π (e.g. a resonator's κ = 2π·f/Q).
 
-        Every returned operator is a component's LOCAL (bare-basis)
-        operator; the engine combines them with the dressed interacting
-        Hamiltonian at solve time. This is the standard local-Lindblad
+        Every returned operator is authored locally and transformed by the
+        engine into the same fixed local solver bases as the Hamiltonian.
+        This is the standard local-Lindblad
         approximation (Breuer & Petruccione, *The Theory of Open Quantum
         Systems*, Oxford, 2002, Ch. 3) rather than a dressed-basis
         (polaron-frame) master equation, and applies chip-wide regardless of
@@ -361,22 +480,65 @@ class Chip:
         :meth:`physics_notes`.
         """
         backend = self.backend
-        out: list[tuple[Operator, tuple[int, ...]]] = []
+        out: list[tuple[Operator, Any, tuple[int, ...], str, str, tuple[str, ...]]] = []
         with _backend_context(backend):
             for i, dev in enumerate(self._devices):
-                out.extend((op, (i,)) for op in dev.collapse_operators())
+                out.extend(
+                    (
+                        channel.operator,
+                        channel.rate,
+                        (i,),
+                        dev.label,
+                        channel.name,
+                        parameter_paths,
+                    )
+                    for channel, parameter_paths in dev._collapse_channels_with_paths(
+                        None if bases is None else bases[dev.label]
+                    )
+                )
             if self.control_equipment is not None:
                 for line in self.control_equipment.lines:
                     if line.device_label is None:
                         continue
                     idx = self._label_to_index[line.device_label]
-                    out.extend((op, (idx,)) for op in line.collapse_operators(self._devices[idx]))
+                    device = self._devices[idx]
+                    for channel, parameter_paths in line._collapse_channels_with_paths(device):
+                        out.append(
+                            (
+                                channel.operator,
+                                channel.rate,
+                                (idx,),
+                                line.label,
+                                channel.name,
+                                parameter_paths,
+                            )
+                        )
             for coupling in self._couplings:
                 idx_a = self._label_to_index[coupling.device_a_label]
                 idx_b = self._label_to_index[coupling.device_b_label]
-                out.extend((op, (idx_a, idx_b)) for op in coupling.collapse_operators(self))
+                for channel, parameter_paths in coupling._collapse_channels_with_paths():
+                    out.append(
+                        (
+                            channel.operator,
+                            channel.rate,
+                            (idx_a, idx_b),
+                            coupling.label,
+                            channel.name,
+                            parameter_paths,
+                        )
+                    )
             for bath in self.baths:
-                out.extend((op, ()) for op in bath.collapse_operators(self))
+                for channel, parameter_paths in bath._collapse_channels_with_paths(self, bases):
+                    out.append(
+                        (
+                            channel.operator,
+                            channel.rate,
+                            (),
+                            bath.label,
+                            channel.name,
+                            parameter_paths,
+                        )
+                    )
         return out
 
     # ------------------------------------------------------------------
@@ -428,9 +590,9 @@ class Chip:
         return self._frame_spec
 
     @property
-    def rwa(self) -> bool:
-        """Default rotating-wave approximation policy for couplings and drives."""
-        return self._rwa
+    def approximation(self) -> Approximation:
+        """Default engine approximation strategy."""
+        return self._approximation
 
     @property
     def control_equipment(self) -> ControlEquipment | None:
@@ -450,12 +612,27 @@ class Chip:
     @property
     def dims(self) -> tuple[int, ...]:
         """Per-device Hilbert-space dimensions (same order as :attr:`devices`)."""
-        return self._dims
+        return tuple(device.resolved_dimension(self._basis) for device in self._devices)
+
+    @property
+    def authored_dims(self) -> tuple[int, ...]:
+        """Per-device dimensions of the exact authored local spaces."""
+        return tuple(device.local_space().dimension for device in self._devices)
+
+    @property
+    def basis(self) -> Literal["native", "eigen"]:
+        """Chip-wide local solver-basis policy inherited by devices."""
+        return self._basis
+
+    def resolve_basis(self, device: str | BaseDevice) -> Literal["native", "eigen"]:
+        """Resolve a device override against the chip basis policy."""
+        resolved = self[device]
+        return resolved.resolved_basis(self._basis)
 
     @property
     def total_dim(self) -> int:
         """Total Hilbert-space dimension (product of per-device :attr:`dims`)."""
-        return int(np.prod(self._dims, dtype=int))
+        return int(np.prod(self.dims, dtype=int))
 
     @property
     def baths(self) -> tuple[Bath, ...]:
@@ -523,9 +700,9 @@ class Chip:
         Applied changes are printed one per line; a no-op prints nothing.
 
         Custom dissipation is supported by declaring it on the device class
-        beforehand — a ``parameter(...)`` rate field plus a
-        :class:`~quchip.devices.base.NoiseChannel` entry (see the extension
-        guide). The declared rate is then an ordinary noise parameter here:
+        beforehand with a ``parameter(noise=True)`` rate field and a
+        :meth:`~quchip.devices.base.BaseDevice.dissipation` override. The
+        declared rate is then an ordinary noise parameter here:
         sweepable, differentiable, serializable. Runtime closure-style
         channels are deliberately not supported — their rates could be
         neither swept, nor differentiated, nor serialized.
@@ -808,6 +985,7 @@ class Chip:
     # ``static_zz`` is the same physics under a different name: the static ZZ
     # interaction strength equals the dressed dispersive (cross-Kerr) shift.
     static_zz = dispersive_shift
+    zz = dispersive_shift
 
     def dressed_anharmonicity(self, device: str | BaseDevice) -> float:
         """Dressed anharmonicity of one device with others grounded (GHz).
@@ -815,6 +993,25 @@ class Chip:
         See :meth:`ChipAnalysis.dressed_anharmonicity`.
         """
         return self._analysis.dressed_anharmonicity(device)
+
+    def transition_frequency(
+        self,
+        target: str | BaseDevice,
+        lower: int,
+        upper: int,
+        when: dict[str | BaseDevice, int] | None = None,
+    ) -> Any:
+        """Return a dressed transition in GHz with optional spectator levels.
+
+        Unspecified spectators are in their ground state. ``target`` and
+        entries in ``when`` accept either device objects or labels.
+        """
+        return self._analysis.transition_frequency(
+            target,
+            lower,
+            upper,
+            when=when,
+        )
 
     def effective_subspace_hamiltonian(
         self,
@@ -886,9 +1083,9 @@ class Chip:
         """
         notes: dict[str, list[str]] = {
             "chip": [
-                "Collapse operators are each component's LOCAL (bare-basis) operator combined "
-                "with the dressed interacting Hamiltonian — the standard local-Lindblad "
-                "approximation, not a dressed-basis (polaron-frame) master equation."
+                "Collapse operators are authored per component, transformed into the fixed "
+                "local solver bases, and combined with the interacting Hamiltonian — the "
+                "local-Lindblad approximation, not a global dressed-basis master equation."
             ]
         }
         for device in self._devices:
@@ -925,6 +1122,112 @@ class Chip:
 
         return clone_chip(self)
 
+    def _parameter_targets(self) -> dict[str, tuple[str, int, str, Any]]:
+        """Map public parameter paths to component-owned local values."""
+        targets: dict[str, tuple[str, int, str, Any]] = {}
+
+        def add(path: str, target: tuple[str, int, str, Any]) -> None:
+            if path in targets:
+                raise ValueError(
+                    f"Parameter path {path!r} is ambiguous; give the colliding components distinct labels."
+                )
+            targets[path] = target
+
+        for index, device in enumerate(self._devices):
+            for name, value in device.parameter_values().items():
+                add(f"{device.label}.{name}", ("device", index, name, value))
+        for index, coupling in enumerate(self._couplings):
+            for name, value in coupling.parameter_values().items():
+                add(f"{coupling.label}.{name}", ("coupling", index, name, value))
+        if self._control_equipment is not None:
+            for index, line in enumerate(self._control_equipment.lines):
+                for name, value in line.parameter_values().items():
+                    add(f"drive.{line.label}.{name}", ("drive", index, name, value))
+            for index, transform in enumerate(self._control_equipment.signal_chain):
+                for name, value in transform.parameter_values().items():
+                    add(f"control.{index}.{name}", ("control", index, name, value))
+        for index, bath in enumerate(self._baths):
+            for name, value in bath.parameter_values().items():
+                add(f"bath.{bath.label}.{name}", ("bath", index, name, value))
+        return targets
+
+    @property
+    def parameters(self) -> Mapping[str, Any]:
+        """Bindable numerical values keyed by stable component paths."""
+        return MappingProxyType({path: target[3] for path, target in self._parameter_targets().items()})
+
+    @property
+    def settings(self) -> Mapping[str, Any]:
+        """Read-only structural choices that are not numerical fit parameters."""
+        equipment = self._control_equipment
+        lines = () if equipment is None else equipment.lines
+        signal_chain = () if equipment is None else equipment.signal_chain
+        return MappingProxyType(
+            {
+                "devices": tuple(
+                    (device.label, type(device).__name__, device.resolved_dimension(self._basis))
+                    for device in self._devices
+                ),
+                "basis": self._basis,
+                "authored_dims": self.authored_dims,
+                "device_bases": tuple(
+                    (device.label, self.resolve_basis(device)) for device in self._devices
+                ),
+                "couplings": tuple(
+                    (
+                        coupling.label,
+                        type(coupling).__name__,
+                        coupling.device_a_label,
+                        coupling.device_b_label,
+                    )
+                    for coupling in self._couplings
+                ),
+                "drives": tuple(
+                    (line.label, type(line).__name__, line.target_label)
+                    for line in lines
+                ),
+                "signal_chain": tuple(
+                    type(transform).__name__
+                    for transform in signal_chain
+                ),
+                "baths": tuple(
+                    (bath.label, bath.recipe, tuple(bath.resolve_targets(self)))
+                    for bath in self._baths
+                ),
+                "frame": self._frame_spec,
+                "approximation": type(self._approximation).__name__,
+                "backend": type(self.backend).__name__,
+            }
+        )
+
+    def with_params(self, bindings: Mapping[str, Any]) -> "Chip":
+        """Return an isolated structural copy with component-owned values rebound."""
+        targets = self._parameter_targets()
+        unknown = set(bindings) - set(targets)
+        if unknown:
+            raise KeyError(
+                f"Unknown Chip parameter paths: {sorted(unknown)}. "
+                f"Available: {list(targets)}"
+            )
+
+        cloned = self.clone()
+        for path, value in bindings.items():
+            kind, index, name, _ = targets[path]
+            if kind == "device":
+                cloned._devices[index].set_parameter_value(name, value)
+            elif kind == "coupling":
+                cloned._couplings[index].set_parameter_value(name, value)
+            elif kind == "drive":
+                assert cloned._control_equipment is not None
+                cloned._control_equipment._lines[index].set_parameter_value(name, value)
+            elif kind == "control":
+                assert cloned._control_equipment is not None
+                transform = cloned._control_equipment._signal_chain[index]
+                cloned._control_equipment._signal_chain[index] = transform.with_parameter_value(name, value)
+            else:
+                cloned._baths[index].set_parameter_value(name, value)
+        return cloned
+
     def partition(self) -> "PartitionResult":
         """Split into independent sub-chips along the independence graph.
 
@@ -938,17 +1241,6 @@ class Chip:
 
         return partition_chip(self)
 
-    def updated(self, update_fn: Callable[["Chip"], None]) -> "Chip":
-        """Return a cloned chip after applying one structural update callback.
-
-        Convenience for sweeps::
-
-            modified = chip.updated(lambda c: setattr(c["q"], "freq", 5.1))
-        """
-        cloned = self.clone()
-        update_fn(cloned)
-        return cloned
-
     def status(self) -> None:
         """Print a lightweight diagnostic dashboard for the chip."""
         label = self.label if self.label is not None else "(unlabeled)"
@@ -956,7 +1248,7 @@ class Chip:
         print(f"- devices: {len(self._devices)}")
         print(f"- couplings: {len(self._couplings)}")
         print(f"- frame: {self._frame_spec!r}")
-        print(f"- rwa: {self._rwa}")
+        print(f"- approximation: {type(self._approximation).__name__}")
         print(f"- dressed: {'yes' if self.is_dressed else 'no'}")
         print("- device list:")
         for dev in self._devices:
@@ -1073,7 +1365,7 @@ class Chip:
         :meth:`superposition` accept single-string specifications where
         each character is one level per device in *devices* order.
         Level symbols default to ``g=0, e=1, f=2, h=3``; digits ``0..9``
-        are always accepted as raw Fock indices.
+        are always accepted as energy-level indices.
 
         Every chip device must be named exactly once.
 
@@ -1128,7 +1420,7 @@ class Chip:
         /,
         **device_state_kwargs: int,
     ) -> State:
-        """Dressed eigenstate for the given Fock-indexed bare-state labels.
+        """Dressed eigenstate assigned from the given product-state level labels.
 
         Accepts a string shorthand (e.g. ``"eg1"``) when
         :meth:`set_state_order` has been called.
@@ -1150,11 +1442,11 @@ class Chip:
         /,
         **device_state_kwargs: int | State,
     ) -> State:
-        """Bare tensor-product state from per-device Fock indices or kets.
+        """Product state from per-device energy levels or authored local kets.
 
-        Each device may be specified as either a Fock index (``int``) or
-        a ket vector in that device's local space. Devices not mentioned
-        default to the ground state (Fock index 0). Unlike :meth:`state`
+        Each device may be specified as either an energy-level index
+        (``int``) or a ket vector in that device's authored local space.
+        Devices not mentioned default to the ground state (level 0). Unlike :meth:`state`
         this does **not** diagonalize the coupled system.
 
         Accepts a string shorthand (e.g. ``"eg1"``) when
@@ -1251,8 +1543,8 @@ class Chip:
         """Attach control equipment to this chip (low-level API).
 
         Validates every drive target and rejects duplicate drive labels,
-        then reconnects each drive to this chip's canonical device
-        instances. User-facing code should prefer :meth:`wire`.
+        then reconnects each drive to this chip's canonical device or
+        coupling instance. User-facing code should prefer :meth:`wire`.
         """
         drive_duplicates = [
             lbl for lbl, n in Counter(d.label for d in control_equipment.lines).items() if n > 1
@@ -1263,7 +1555,7 @@ class Chip:
                 "Each drive must have a unique label."
             )
         for drive in control_equipment.lines:
-            if drive.target_kind == "edge":
+            if isinstance(drive, CouplingDrive):
                 target_label = drive.target_label
                 if target_label not in self._coupling_map:
                     raise ValueError(
@@ -1277,7 +1569,8 @@ class Chip:
                     f"({drive!r}). Connect drives to chip devices before "
                     "calling chip.connect(control_equipment)."
                 )
-            target_label = drive._target.label
+            target_label = drive.target_label
+            assert target_label is not None
             if target_label not in self._device_map:
                 raise ValueError(
                     f"Drive target '{target_label}' is not on this chip. Available: {list(self._device_map.keys())}"
@@ -1286,19 +1579,13 @@ class Chip:
         self._control_equipment = control_equipment
 
         for drive in control_equipment.lines:
-            if drive.target_kind == "edge":
+            if isinstance(drive, CouplingDrive):
                 assert drive.target_label is not None
                 coupling = self._coupling_map[drive.target_label]
-                if coupling.parametric_operator(self) is None:
-                    raise TypeError(
-                        f"{type(coupling).__name__} is not modulable: its parametric_interaction() hook "
-                        "returns None. Implement parametric_interaction()/rwa_parametric_interaction() on "
-                        "the coupling (see CouplingModel), or use a modulable coupling such as TunableCapacitive."
-                    )
-                drive.connect(coupling)  # type: ignore[arg-type]  # ParametricDrive.connect accepts a coupling
+                drive.connect(coupling)
                 continue
-            assert drive._target is not None
-            drive.connect(self._device_map[drive._target.label])
+            assert drive.target_label is not None
+            drive.connect(self._device_map[drive.target_label])
 
     def disconnect(self) -> ControlEquipment:
         """Detach control equipment entirely (low-level API).
@@ -1331,7 +1618,7 @@ class Chip:
         ``problems[index]`` list position (used by :meth:`solve_many`);
         otherwise it is phrased for a single problem (used by :meth:`solve`).
         """
-        if not hasattr(problem, "hamiltonian") or not hasattr(problem, "chip"):
+        if not hasattr(problem, "engine_result") or not hasattr(problem, "chip"):
             type_name = type(problem).__name__
             if index is None:
                 raise TypeError(f"Expected SolveProblem, got {type_name}")
@@ -1369,21 +1656,17 @@ class Chip:
         )
 
     def solve_many(self, batch_or_problems: Any, *, progress: bool = True) -> "SimulationBatchResult":
-        """Solve a :class:`SolveBatch`, :class:`ProblemBatch`, or list of problems.
+        """Solve a :class:`SolveBatch` or list of problems.
 
         Chip-level validation only enforces what needs ``self`` (every input
         was built for *this* chip); the input-shape dispatch and batching are
         delegated to :func:`quchip.engine.solve_many`, which owns the single
-        ProblemBatch / SolveBatch / list ladder.
+        SolveBatch / list dispatch.
         """
-        from quchip.control.batch import ProblemBatch
         from quchip.engine import solve_many
         from quchip.engine.ir import SolveBatch
 
-        if isinstance(batch_or_problems, ProblemBatch):
-            if batch_or_problems.batch.chip is not self:
-                raise ValueError("ProblemBatch was built for a different chip.")
-        elif isinstance(batch_or_problems, SolveBatch):
+        if isinstance(batch_or_problems, SolveBatch):
             if batch_or_problems.chip is not self:
                 raise ValueError("SolveBatch was built for a different chip.")
         else:
@@ -1413,17 +1696,7 @@ class Chip:
     def __repr__(self) -> str:
         return (
             f"Chip(label={self.label!r}, devices={len(self._devices)}, "
-            f"couplings={len(self._couplings)}, frame={self._frame_spec!r}, rwa={self._rwa}, "
+            f"couplings={len(self._couplings)}, frame={self._frame_spec!r}, "
+            f"approximation={type(self._approximation).__name__}, "
             f"dressed={'yes' if self.is_dressed else 'no'})"
         )
-
-    def resolve_rwa(self, term_owner: Any) -> bool:
-        """Resolve a coupling's or drive's RWA flag against the chip default.
-
-        Returns the chip's default when the owner's ``rwa`` is ``None``;
-        otherwise returns the owner's explicit flag.
-        """
-        rwa = getattr(term_owner, "rwa", None)
-        if rwa is None:
-            return self._rwa
-        return bool(rwa)

@@ -1,16 +1,16 @@
-"""Stage 1: resolve a :data:`FrameSpec` into a :class:`ResolvedFrame`.
+"""Resolve a :data:`FrameSpec` into a :class:`ResolvedFrame`.
 
-This stage is purely combinatorial: it decides which rotating frame to
-work in.
+This module is purely combinatorial: it decides which rotating frame to work
+in.
 
 Supported specs
 ---------------
-* ``"lab"`` — every reference frequency is zero; stage 2 emits the
+* ``"lab"`` — every reference frequency is zero; assembly emits the
   bare chip Hamiltonian unchanged.
 * ``"rotating"`` — each device's reference is its
   :attr:`~quchip.devices.base.BaseDevice.reference_freq` (the device's
   readout/LO reference, defaulting to the dressed drive frequency
-  ``ω_d``), so stage 2 builds
+  ``ω_d``), so assembly builds
 
   .. math::
       H(t) \\;=\\; H_0 - \\sum_i \\omega_{\\text{ref},i} n_i
@@ -35,14 +35,14 @@ frame (``result.states`` and ``result.expect`` agree). Transverse observables
 envelope; only an explicitly overridden non-reference integration frame
 leaves ``result.states`` in that other frame.
 
-Whether a coupling band folds into ``H₀`` is decided per band in stage
-2, from the concreteness of its frame carrier ``Δa·ω_a + Δb·ω_b`` — not
-here (see :func:`~quchip.engine.stage2_assembly._collect_coupling_terms`).
+Whether a coupling band folds into ``H₀`` is decided per band during
+assembly, from the concreteness of its frame carrier ``Δa·ω_a + Δb·ω_b`` — not
+here (see :func:`~quchip.engine.assembly._collect_coupling_terms`).
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Mapping
 
 from quchip.engine.ir import ResolvedFrame, _is_scalar_like
 from quchip.utils.labeling import resolve_label
@@ -52,7 +52,12 @@ if TYPE_CHECKING:
     from quchip.engine.ir import FrameSpec
 
 
-def resolve_frame(chip: Chip, frame_spec: FrameSpec) -> ResolvedFrame:
+def resolve_frame(
+    chip: Chip,
+    frame_spec: FrameSpec,
+    *,
+    reference_frequencies: Mapping[str, Any] | None = None,
+) -> ResolvedFrame:
     """Resolve *frame_spec* into a :class:`ResolvedFrame`.
 
     Dispatches on ``frame_spec`` shape (``str`` / scalar-like / dict),
@@ -69,6 +74,11 @@ def resolve_frame(chip: Chip, frame_spec: FrameSpec) -> ResolvedFrame:
     """
     devices = chip.devices
     labels = [dev.label for dev in devices]
+    references = (
+        {dev.label: dev.reference_freq for dev in devices}
+        if reference_frequencies is None
+        else {dev.label: reference_frequencies[dev.label] for dev in devices}
+    )
 
     mode: str
     frequencies: dict[str, Any]
@@ -82,7 +92,7 @@ def resolve_frame(chip: Chip, frame_spec: FrameSpec) -> ResolvedFrame:
             frequencies = {label: 0.0 for label in labels}
         elif frame_spec == "rotating":
             mode = "rotating"
-            frequencies = {dev.label: dev.reference_freq for dev in devices}
+            frequencies = dict(references)
         else:
             raise ValueError(f"Unknown frame string. Expected 'lab' or 'rotating', got {frame_spec!r}")
     elif _is_scalar_like(frame_spec):
@@ -98,7 +108,7 @@ def resolve_frame(chip: Chip, frame_spec: FrameSpec) -> ResolvedFrame:
             f"dict[str|BaseDevice, scalar-like], got {type(frame_spec).__name__}"
         )
 
-    demod_freqs = {dev.label: dev.reference_freq - frequencies[dev.label] for dev in devices}
+    demod_freqs = {label: references[label] - frequencies[label] for label in labels}
 
     return ResolvedFrame(
         frequencies=frequencies,

@@ -1,4 +1,4 @@
-"""IR types flowing between engine stages.
+"""IR types shared by engine responsibilities and backends.
 
 This module is the *contract* between the engine and its backends. It
 defines four families of immutable, JAX-pytree-friendly types:
@@ -17,30 +17,38 @@ defines four families of immutable, JAX-pytree-friendly types:
    to and from this format.
 
 3. Hamiltonian terms — :class:`StaticTerm`, :class:`DynamicTerm`, and
-   the per-stage container :class:`HamiltonianDescription` plus the
-   batched :class:`BatchedHamiltonianDescription`.
+   their :class:`EngineResult` container.
 
 4. Solve requests — :class:`SolveProblem` and :class:`SolveBatch`, the
    frozen hand-offs to backends. ``backend`` selection is chip-owned
    and is explicitly forbidden from ``options``.
 
-A note on 2π: every operator here has already been scaled by 2π at the
-stage-2 boundary. Carrier frequencies are stored in angular units
+A note on 2π: every operator here has already been scaled by 2π during
+engine assembly. Carrier frequencies are stored in angular units
 (rad/ns). IR consumers (backends, analyses) must not re-apply 2π.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, cast
 
 import jax.tree_util as jtu
 import numpy as np
 
-from quchip.utils.jax_utils import array_namespace, contains_tracer, is_jax_namespace, maybe_concrete_scalar
+from quchip.utils.jax_utils import (
+    array_namespace,
+    contains_tracer,
+    is_jax_namespace,
+    maybe_concrete_scalar,
+)
+from quchip.utils.constants import TWO_PI
 
 if TYPE_CHECKING:
-    from quchip.control.envelopes import BaseEnvelope
+    from quchip.control.envelopes import Envelope
+    from quchip.declarative.dynamics import TimeCoefficient
+    from quchip.declarative.expr import PhysicsExpr
     from quchip.devices.base import BaseDevice
 
 # ── Signal Program AST ──────────────────────────────────────────────
@@ -170,17 +178,27 @@ class Constant(SignalNode):
 
 @dataclass(frozen=True)
 class EnvelopeRef(SignalNode):
-    """Reference to a pulse envelope; its ``waveform(t)`` is called at evaluation time."""
+    """Reference to a pulse envelope evaluated at local time."""
 
-    envelope: "BaseEnvelope"
+    envelope: "Envelope"
 
     def evaluate(self, t: Any, *, xp: Any) -> Any:
-        """Return the referenced envelope's ``waveform(t)`` (ns) as complex."""
-        return xp.asarray(self.envelope.waveform(xp.asarray(t, dtype=float), xp=xp), dtype=complex)
+        """Return the referenced envelope's complex ``value(t)``."""
+        return xp.asarray(self.envelope.value(xp.asarray(t, dtype=float)), dtype=complex)
 
     def bands(self) -> tuple[CarrierBand, ...]:
         """Return the single zero-frequency band carrying this envelope."""
         return (CarrierBand(envelope=self, freq=0.0),)
+
+
+@dataclass(frozen=True)
+class CoefficientRef(SignalNode):
+    """Internal signal leaf backed by a public component-owned coefficient."""
+
+    coefficient: "TimeCoefficient"
+
+    def evaluate(self, t: Any, *, xp: Any) -> Any:
+        return xp.asarray(self.coefficient.value(t))
 
 
 @dataclass(frozen=True)
@@ -361,6 +379,51 @@ class RealPart(SignalNode):
 
 
 @dataclass(frozen=True)
+class ImagPart(SignalNode):
+    """Imaginary quadrature of a complex analytic signal."""
+
+    child: SignalNode
+
+    _signal_child_fields: ClassVar[tuple[str, ...]] = ("child",)
+
+    def evaluate(self, t: Any, *, xp: Any) -> Any:
+        """Return the imaginary part of the child evaluated at *t* (ns)."""
+        return xp.imag(self.child.evaluate(t, xp=xp))
+
+    def bands(self) -> tuple[CarrierBand, ...]:
+        """Split bands using ``Im z = (z - z_bar) / (2i)``."""
+        bands: list[CarrierBand] = []
+        for band in self.child.bands():
+            bands.append(CarrierBand(Scale(band.envelope, -0.5j), band.freq))
+            bands.append(
+                CarrierBand(Scale(Conjugate(band.envelope), 0.5j), -band.freq)
+            )
+        return tuple(bands)
+
+
+@dataclass(frozen=True)
+class SignalPower(SignalNode):
+    """Pointwise power of a scalar signal program."""
+
+    child: SignalNode
+    exponent: Any
+
+    _signal_child_fields: ClassVar[tuple[str, ...]] = ("child",)
+
+    def evaluate(self, t: Any, *, xp: Any) -> Any:
+        return self.child.evaluate(t, xp=xp) ** self.exponent
+
+    def bands(self) -> tuple[CarrierBand, ...]:
+        exponent = maybe_concrete_scalar(self.exponent)
+        if exponent is None or int(exponent) != exponent or exponent < 0:
+            raise TypeError("Carrier-band expansion requires a non-negative integer signal power.")
+        result: SignalProgram = Constant(1.0 + 0.0j)
+        for _ in range(int(exponent)):
+            result = Multiply((result, self.child))
+        return result.bands()
+
+
+@dataclass(frozen=True)
 class Carrier(SignalNode):
     """Oscillating carrier ``exp(sign · i · freq · t)``.
 
@@ -409,24 +472,15 @@ jtu.register_pytree_node(
 )
 
 
-def as_scalar_modulation(modulation: Any, *, owner: str) -> ScalarModulation:
-    """Normalize a user-supplied modulation input to a :class:`ScalarModulation`.
+def _as_time_coefficient(value: Any, *, owner: str) -> ScalarModulation:
+    """Lower a public component-owned coefficient to the private engine wrapper."""
+    from quchip.declarative.dynamics import TimeCoefficient
 
-    Accepts a :class:`~quchip.control.envelopes.BaseEnvelope` (wrapped as
-    ``ScalarModulation(EnvelopeRef(env))``) or an existing
-    :class:`ScalarModulation`. Shared by tunable devices and couplings
-    so the coercion rules live in one place.
-    """
-    from quchip.control.envelopes import BaseEnvelope
-
-    if isinstance(modulation, ScalarModulation):
-        return modulation
-    if isinstance(modulation, BaseEnvelope):
-        return ScalarModulation(signal=EnvelopeRef(envelope=modulation))
-    raise TypeError(
-        f"{owner}.modulation must be a BaseEnvelope or ScalarModulation; "
-        f"got {type(modulation).__name__}."
-    )
+    if not isinstance(value, TimeCoefficient):
+        raise TypeError(
+            f"{owner} coefficient must be a TimeCoefficient; got {type(value).__name__}."
+        )
+    return ScalarModulation(signal=value._signal_program())
 
 
 def signal_children(node: Any) -> tuple:
@@ -434,7 +488,7 @@ def signal_children(node: Any) -> tuple:
 
     Dispatches to :meth:`SignalNode.signal_children`; a
     :class:`ScalarModulation` wrapper contributes its ``signal``.
-    :attr:`EnvelopeRef.envelope` is a ``BaseEnvelope``, not a
+    :attr:`EnvelopeRef.envelope` is an ``Envelope``, not a
     ``SignalProgram`` child, and so is *not* returned here.
     """
     if isinstance(node, ScalarModulation):
@@ -767,6 +821,37 @@ class CanonicalOperator:
             tag=self.tag if tag is None else tag,
         )
 
+    def diagonal(self) -> Any:
+        """Return the main diagonal without materializing a sparse matrix."""
+        xp = array_namespace(self.values)
+        values = xp.asarray(self.values, dtype=complex)
+
+        if self.layout == "dense":
+            return xp.diagonal(values)
+
+        if self.layout == "dia":
+            offsets = xp.asarray(self.offsets, dtype=int)
+            return xp.sum(
+                xp.where(offsets[:, None] == 0, values, 0),
+                axis=0,
+            )
+
+        indices = xp.asarray(self.indices, dtype=int)
+        indptr = xp.asarray(self.indptr, dtype=int)
+        counts = indptr[1:] - indptr[:-1]
+        repeat_kwargs = (
+            {"total_repeat_length": self.values.shape[0]}
+            if is_jax_namespace(xp)
+            else {}
+        )
+        rows = xp.repeat(xp.arange(self.shape[0], dtype=int), counts, **repeat_kwargs)
+        selected = xp.where(indices == rows, values, 0)
+        diagonal = xp.zeros(self.shape[0], dtype=values.dtype)
+        if is_jax_namespace(xp):
+            return diagonal.at[rows].add(selected)
+        xp.add.at(diagonal, rows, selected)
+        return diagonal
+
     def to_dense(self) -> Any:
         """Materialize the payload as a dense ``shape``-sized matrix.
 
@@ -789,7 +874,12 @@ class CanonicalOperator:
             indices = xp.asarray(self.indices, dtype=int)
             indptr = xp.asarray(self.indptr, dtype=int)
             counts = indptr[1:] - indptr[:-1]
-            rows = xp.repeat(xp.arange(self.shape[0], dtype=int), counts)
+            repeat_kwargs = (
+                {"total_repeat_length": self.values.shape[0]}
+                if is_jax_namespace(xp)
+                else {}
+            )
+            rows = xp.repeat(xp.arange(self.shape[0], dtype=int), counts, **repeat_kwargs)
             dense = xp.zeros(self.shape, dtype=values.dtype)
             if is_jax_namespace(xp):
                 return dense.at[rows, indices].set(values)
@@ -814,7 +904,7 @@ class CanonicalOperator:
         """Batching key: value-sensitive, with an automatic tracer-safe fallback.
 
         Two crosstalk-rebuilt operators carrying the same coefficients
-        collapse to the same key so they batch into one slot (stage 4).
+        collapse to the same key so they batch into one solve slot.
         Under ``jax.jit`` the payload is a tracer (possibly hidden inside
         a backend qarray wrapper, e.g. dynamiqs ``SparseDIAQArray``);
         :func:`contains_tracer` detects that and the key falls back to
@@ -871,8 +961,8 @@ TermOrigin: TypeAlias = Literal["device", "coupling", "drive", "crosstalk", "flu
 class StaticTerm:
     """Time-independent Hamiltonian contribution.
 
-    The ``operator`` payload has already been scaled by 2π at the
-    stage-2 boundary; backends must not re-apply it. ``coefficient``
+    The ``operator`` payload has already been scaled by 2π during
+    engine assembly; backends must not re-apply it. ``coefficient``
     multiplies ``operator`` and may be a concrete scalar or a JAX
     tracer (sweeps over static couplings, detunings, etc.). ``origin``
     is purely advisory metadata.
@@ -902,13 +992,45 @@ class DynamicTerm:
 
 
 @dataclass(frozen=True)
+class CollapseTerm:
+    """Backend-neutral Lindblad operator and its separate rate."""
+
+    operator: CanonicalOperator
+    rate: Any
+    source: str
+    channel: str
+    parameter_paths: tuple[str, ...] = ()
+
+    def latex(self) -> str:
+        """Render this collapse channel as an opaque named operator."""
+        symbols = {
+            "T1": "T_1",
+            "T2": "T_2",
+            "thermal_population": r"\bar n",
+            "quality_factor": "Q",
+        }
+        rendered: list[str] = []
+        for path in self.parameter_paths:
+            scope, name = path.rsplit(".", 1)
+            symbol = symbols.get(name, name)
+            if "_" in symbol and not symbol.startswith("\\"):
+                base, subscript = symbol.split("_", 1)
+                rendered.append(rf"{base}_{{{subscript},{scope}}}")
+            else:
+                rendered.append(rf"{symbol}_{{{scope}}}")
+        arguments = ", ".join(rendered)
+        suffix = rf"\!\left({arguments}\right)" if arguments else ""
+        return rf"\hat L_{{{self.source},{self.channel}}}{suffix}"
+
+
+@dataclass(frozen=True)
 class DroppedTerm:
     """Advisory record for a Hamiltonian term elided by an approximation.
 
     Emitted by physics components (couplings, drives, …) whose local
     Hamiltonian routines discard terms under an approximation such as
-    the rotating-wave approximation. Stage 2 aggregates these records
-    into :attr:`HamiltonianDescription.dropped_terms` so callers can
+    the rotating-wave approximation. Assembly aggregates these records
+    into :attr:`EngineResult.dropped_terms` so callers can
     audit what was silently removed — in particular, compare each dropped band's amplitude
     against its oscillation frequency, the smallness ratio that governs
     RWA validity (leading correction ∼ amplitude²/frequency, the
@@ -919,7 +1041,7 @@ class DroppedTerm:
     possibly JAX-traced; they are never formatted or branched on during
     assembly. ``band_weights`` is static
     structure (excitation-change weights, one per mode the operator
-    acts on) that stage 2 uses to resolve ``frequency`` from the frame
+    acts on) that assembly uses to resolve ``frequency`` from the frame
     without the owner knowing frame references.
 
     Parameters
@@ -942,7 +1064,7 @@ class DroppedTerm:
     frequency : Any | None
         Oscillation frequency of the dropped band in the assembly
         frame, GHz, positive; possibly traced. ``None`` until resolved
-        (stage 2 fills it from the frame and ``band_weights``).
+        (assembly fills it from the frame and ``band_weights``).
     """
 
     source: str
@@ -954,8 +1076,8 @@ class DroppedTerm:
 
 
 @dataclass(frozen=True)
-class HamiltonianDescription:
-    """Backend-agnostic time-dependent Hamiltonian — the stage-2 / backend contract.
+class EngineResult:
+    """Backend-agnostic time-dependent Hamiltonian passed to backends.
 
     Represents
 
@@ -980,6 +1102,100 @@ class HamiltonianDescription:
     dims: tuple[int, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
     dropped_terms: tuple[DroppedTerm, ...] = ()
+    collapse_terms: tuple[CollapseTerm, ...] = ()
+    bases: Mapping[str, Any] = field(default_factory=dict)
+    authored: Any = None
+    resolved_frame: Any = None
+    approximation: Any = None
+
+    def _contains_tracer(self) -> bool:
+        """Return whether any value-bearing field belongs to a JAX trace.
+
+        Engine IR containers are frozen contracts rather than JAX pytrees, so
+        cache guards must inspect their array-bearing fields explicitly.
+        """
+        operators = (
+            tuple(term.operator for term in self.static_terms)
+            + tuple(term.operator for term in self.dynamic_terms)
+            + tuple(term.operator for term in self.collapse_terms)
+        )
+        operator_payloads = tuple(
+            (
+                operator.values,
+                operator.indices,
+                operator.indptr,
+                operator.offsets,
+            )
+            for operator in operators
+        )
+        basis_payloads = tuple(
+            (record.vectors, record.energies, record.energy_vectors)
+            for record in self.bases.values()
+        )
+        authored_values = (
+            self.authored.numeric_values()
+            if hasattr(self.authored, "numeric_values")
+            else self.authored
+        )
+        return contains_tracer(
+            (
+                operator_payloads,
+                tuple(term.coefficient for term in self.static_terms),
+                tuple(term.time_dependence for term in self.dynamic_terms),
+                tuple(term.rate for term in self.collapse_terms),
+                tuple(
+                    (term.amplitude, term.frequency)
+                    for term in self.dropped_terms
+                ),
+                basis_payloads,
+                authored_values,
+                self.resolved_frame,
+                self.metadata,
+            )
+        )
+
+    def hamiltonian(self) -> PhysicsExpr:
+        """Return the exact canonical Hamiltonian as an inspectable expression.
+
+        This view is derived from the same terms backends receive. Matrix
+        leaves remain opaque, while each dynamic coefficient renders as a
+        named function of time.
+        """
+        from quchip.declarative.expr import PhysicsExpr
+
+        expressions: list[PhysicsExpr] = []
+        for index, static_term in enumerate(self.static_terms):
+            tag = static_term.operator.tag or static_term.origin
+            operator = PhysicsExpr.from_matrix(
+                static_term.operator.to_dense() / TWO_PI,
+                labels=static_term.operator.subsystem_labels,
+                dims=static_term.operator.dims,
+                name=r"\hat H_0" if tag == "H0" else rf"\hat H_{{{tag},{index}}}",
+            )
+            expressions.append(static_term.coefficient * operator)
+        for index, dynamic_term in enumerate(self.dynamic_terms):
+            tag = dynamic_term.tag or dynamic_term.operator.tag or dynamic_term.origin
+            operator = PhysicsExpr.from_matrix(
+                dynamic_term.operator.to_dense() / TWO_PI,
+                labels=dynamic_term.operator.subsystem_labels,
+                dims=dynamic_term.operator.dims,
+                name=rf"\hat H_{{{tag},{index}}}",
+            )
+            signal = PhysicsExpr.from_signal(
+                dynamic_term.time_dependence.signal,
+                name=rf"f_{{{tag},{index}}}",
+            )
+            expressions.append(signal * operator)
+        if not expressions:
+            raise ValueError("EngineResult contains no Hamiltonian terms.")
+        return sum(expressions[1:], start=expressions[0])
+
+    def latex(self) -> str:
+        """Render the canonical Hamiltonian with named time functions."""
+        return self.hamiltonian().latex()
+
+    def _repr_latex_(self) -> str:
+        return f"${self.latex()}$"
 
     def dropped_terms_summary(self) -> str:
         """Format :attr:`dropped_terms` as a multi-line human-readable string.
@@ -1006,15 +1222,44 @@ class HamiltonianDescription:
         return "\n".join(lines)
 
 
+def _aggregate_batch_metadata(engine_results: list[EngineResult]) -> dict[str, Any]:
+    """Conservatively combine advisory solver hints across batch points."""
+    metadata = dict(engine_results[0].metadata)
+    for key in ("max_carrier_freq_ghz", "spectral_bound_ghz", "max_step_ns"):
+        metadata.pop(key, None)
+
+    carrier_values = [
+        result.metadata["max_carrier_freq_ghz"]
+        for result in engine_results
+        if "max_carrier_freq_ghz" in result.metadata
+    ]
+    if carrier_values:
+        metadata["max_carrier_freq_ghz"] = max(carrier_values)
+
+    spectral_values = [
+        result.metadata["spectral_bound_ghz"]
+        for result in engine_results
+        if "spectral_bound_ghz" in result.metadata
+    ]
+    if spectral_values:
+        metadata["spectral_bound_ghz"] = max(spectral_values)
+
+    step_values = [result.metadata.get("max_step_ns") for result in engine_results]
+    non_none = [value for value in step_values if value is not None]
+    if len(non_none) == len(step_values) and non_none:
+        metadata["max_step_ns"] = min(non_none)
+    return metadata
+
+
 # ── Compiled Sweep Templates ────────────────────────────────────────
 #
 # Pure caches reused across homogeneous drive sweeps: the underlying
-# physics is fully defined by stage 2. A sweep over envelope parameters,
+# physics is fully defined by assembly. A sweep over envelope parameters,
 # drive frequencies, phases, or frame scalars leaves every
 # CanonicalOperator invariant and changes only the signal-program leaves
 # that describe f(t). Produced by
-# stage2_assembly.compile_hamiltonian_template and instantiated per sweep
-# point by stage2_assembly.instantiate_hamiltonian_description, so a
+# assembly.compile_hamiltonian_template and instantiated per sweep
+# point by assembly.instantiate_engine_result, so a
 # single JAX ``jit`` trace covers every variant in a homogeneous sweep.
 
 
@@ -1030,10 +1275,11 @@ class HamiltonianTemplate:
       do not depend on drive variants (e.g. band-decomposed couplings),
       already simplified at template-compile time.
     * ``drive_terms`` — pre-embedded, 2π-scaled drive bands
-      (:class:`~quchip.engine.stage2_assembly.CompiledDriveTerm`) ready
+      (:class:`~quchip.engine.assembly.CompiledDriveTerm`) ready
       for per-variant reinstantiation.
+    * ``collapse_terms`` — canonical component-owned Lindblad operators.
     * ``reference_drive_ops`` — the structural yardstick used by
-      :func:`~quchip.engine.stage2_assembly.instantiate_hamiltonian_description`
+      :func:`~quchip.engine.assembly.instantiate_engine_result`
       to reject drive-ops that change the template's skeleton (device,
       drive, envelope type, or drive type).
 
@@ -1043,17 +1289,18 @@ class HamiltonianTemplate:
     """
 
     resolved_frame: Any  # ResolvedFrame
+    approximation: Any
     dims: tuple[int, ...]
     static_terms: tuple[Any, ...] = ()              # tuple[StaticTerm, ...]
     invariant_dynamic_terms: tuple[Any, ...] = ()   # tuple[DynamicTerm, ...]
-    drive_terms: tuple[Any, ...] = ()               # tuple[stage2.CompiledDriveTerm, ...]
+    drive_terms: tuple[Any, ...] = ()               # tuple[assembly.CompiledDriveTerm, ...]
     reference_drive_ops: tuple[Any, ...] = ()       # tuple[DriveOp, ...]
     dropped_terms: tuple[Any, ...] = ()             # tuple[DroppedTerm, ...]
-    #: SINGLE_TONE weight-0 bands dropped structurally under RWA at compile
-    #: time (:func:`~quchip.engine.stage2_assembly._compile_drive_terms`).
+    #: Single-tone weight-zero bands dropped structurally under RWA during engine assembly.
+    #: time (:func:`~quchip.engine.assembly._compile_drive_terms`).
     #: The drop decision needs no drive frequency; resolving each entry into
     #: a :class:`DroppedTerm` does, so this stays a pointer
-    #: (``tuple[stage2._StructuralDrop, ...]``) until instantiation.
+    #: (``tuple[assembly._StructuralDrop, ...]``) until instantiation.
     weight_zero_drops: tuple[Any, ...] = ()
     #: Advisory spectral-bound hint (ordinary GHz) for the *static* terms.
     #: Computed once at template compile — the static terms are invariant
@@ -1062,6 +1309,9 @@ class HamiltonianTemplate:
     #: fully concrete (a traced coefficient stays dynamic). Only the
     #: variant-specific carrier-frequency hint is recomputed per instantiation.
     static_spectral_bound_ghz: float | None = None
+    collapse_terms: tuple[Any, ...] = ()            # tuple[CollapseTerm, ...]
+    bases: Mapping[str, Any] = field(default_factory=dict)
+    authored: Any = None
 
 
 # ── Frame Types ─────────────────────────────────────────────────────
@@ -1081,7 +1331,7 @@ def _is_scalar_like(value: Any) -> bool:
 
 @dataclass(frozen=True)
 class ResolvedFrame:
-    """Per-device frame information produced by stage 1.
+    """Resolved per-device frame information.
 
     Describes the rotating-frame transformation applied uniformly to
     the chip:
@@ -1090,7 +1340,7 @@ class ResolvedFrame:
       frequency ``ω_frame`` in GHz. The static Hamiltonian gets the
       counter-term ``−Σᵢ ω_frame,ᵢ nᵢ``.
     * ``demod_freqs[label] = reference_freq − ω_frame`` — the
-      demodulation frequency used post-solve by stage 3 to rotate
+      demodulation frequency used post-solve to rotate
       expectations back into the user's control frame.
       ``reference_freq`` is the device attribute (see
       :attr:`~quchip.devices.base.BaseDevice.reference_freq`); it
@@ -1111,10 +1361,9 @@ class ResolvedFrame:
 def _reject_backend_option(options: dict[str, Any], *, cls_name: str) -> dict[str, Any]:
     """Reject a chip-owned ``"backend"`` key and return a defensive copy of ``options``.
 
-    Shared by :class:`SolveProblem` and :class:`SolveBatch`: backend selection is
-    chip-owned, so a ``"backend"`` key in solver options is a contract violation.
-    The returned dict is a fresh copy so callers cannot mutate the stored options
-    after construction.
+    Backend selection is chip-owned, so a ``"backend"`` key in solver options
+    is a contract violation. The returned dict is a fresh copy so callers cannot
+    mutate the stored options after construction.
     """
     if "backend" in options:
         raise ValueError(
@@ -1128,20 +1377,19 @@ def _reject_backend_option(options: dict[str, Any], *, cls_name: str) -> dict[st
 class SolveProblem:
     """Immutable simulation request handed from the chip pipeline to a backend.
 
-    Bundles the stage-2 :class:`HamiltonianDescription`, an
-    ``initial_state``, solver time grid, collapse operators, decomposed
+    Bundles the :class:`EngineResult` (Hamiltonian and collapse terms), an
+    ``initial_state``, solver time grid, decomposed
     ``e_ops`` + their :class:`BandMeta`, the :class:`ResolvedFrame`, and
     solver options. ``chip`` owns backend selection, so ``options`` must
     not contain a ``"backend"`` key (enforced in ``__post_init__``).
-    ``e_ops_meta`` is the metadata stage 3 uses to recombine flattened
+    ``e_ops_meta`` is the metadata observable reconstruction uses to recombine flattened
     band expectations back into dict-keyed observables.
     """
 
     chip: Any  # Chip (typed as Any to avoid runtime import cycles)
-    hamiltonian: Any  # HamiltonianDescription
+    engine_result: Any  # EngineResult
     initial_state: Any
     tlist: Any
-    c_ops: tuple[Any, ...] = ()
     e_ops: Any = None
     e_ops_meta: Any = None
     resolved_frame: Any = None
@@ -1152,130 +1400,88 @@ class SolveProblem:
         object.__setattr__(self, "options", _reject_backend_option(self.options, cls_name="SolveProblem"))
 
 
-# ── Batched IR ──────────────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class BatchedHamiltonianDescription:
-    """Batched Hamiltonian IR that splits shared vs per-element structure.
-
-    Describes ``N`` Hamiltonians with identical operator skeletons
-    (``static_terms`` and per-slot dynamic operators) but independent
-    per-slot :class:`ScalarModulation` signal programs. Backends convert
-    the shared operators once and stitch per-element coefficient data
-    into one prepared batch.
-
-    ``dynamic_signals`` is indexed ``[slot][element]``; on sweep axes that
-    do not touch signals every entry on a slot is identity-equal.
-    ``dropped_terms_by_element`` is indexed ``[element]``: which bands are
-    dropped is template-structural and shared across the batch, but each
-    record's ``frequency`` depends on that element's drive frequency, so
-    the records themselves are stored per element and restored on the
-    matching :meth:`element` call.
-    """
-
-    batch_size: int
-    static_terms: tuple[StaticTerm, ...]
-    dynamic_operators: tuple[CanonicalOperator, ...]
-    dynamic_origins: tuple[TermOrigin, ...]
-    dynamic_tags: tuple[str | None, ...]
-    dynamic_signals: tuple[tuple[ScalarModulation, ...], ...]
-    dims: tuple[int, ...] = ()
-    metadata: dict[str, Any] = field(default_factory=dict)
-    dropped_terms_by_element: tuple[tuple[DroppedTerm, ...], ...] = ()
-
-    def __post_init__(self) -> None:
-        n_slots = len(self.dynamic_operators)
-        if not (len(self.dynamic_signals) == len(self.dynamic_origins) == len(self.dynamic_tags) == n_slots):
-            raise ValueError(
-                "dynamic_operators, dynamic_signals, dynamic_origins, and dynamic_tags must have the same length"
-            )
-        for slot_signals in self.dynamic_signals:
-            if len(slot_signals) != self.batch_size:
-                raise ValueError(
-                    f"dynamic_signals slot length {len(slot_signals)} does not match batch_size {self.batch_size}"
-                )
-        if self.dropped_terms_by_element and len(self.dropped_terms_by_element) != self.batch_size:
-            raise ValueError(
-                f"dropped_terms_by_element length {len(self.dropped_terms_by_element)} does not match "
-                f"batch_size {self.batch_size}"
-            )
-        # Defensive copy so callers cannot mutate the shared metadata dict
-        # after construction (mirrors SolveProblem).
-        object.__setattr__(self, "metadata", dict(self.metadata))
-
-    def element(self, index: int) -> HamiltonianDescription:
-        """Reconstruct the single-element description at *index*."""
-        if index < 0 or index >= self.batch_size:
-            raise IndexError(f"batch index {index} out of range [0, {self.batch_size})")
-        dynamic_terms = tuple(
-            DynamicTerm(
-                operator=self.dynamic_operators[slot],
-                time_dependence=self.dynamic_signals[slot][index],
-                origin=self.dynamic_origins[slot],
-                tag=self.dynamic_tags[slot],
-            )
-            for slot in range(len(self.dynamic_operators))
-        )
-        element_dropped = self.dropped_terms_by_element[index] if self.dropped_terms_by_element else ()
-        return HamiltonianDescription(
-            static_terms=self.static_terms,
-            dynamic_terms=dynamic_terms,
-            dims=self.dims,
-            metadata=dict(self.metadata),
-            dropped_terms=element_dropped,
-        )
-
-
 @dataclass(frozen=True)
 class SolveBatch:
-    """Batched counterpart to :class:`SolveProblem`.
+    """Explicit solve problems sharing one dispatch owner and sweep shape."""
 
-    Bundles one :class:`BatchedHamiltonianDescription` plus shared solver
-    metadata and per-element initial states. Backends solve the N elements
-    in one native batched call (``vmap`` on dynamiqs; shared-operator +
-    stitched coefficient arrays on QuTiP).
-    """
-
-    chip: Any  # Chip
-    hamiltonian: BatchedHamiltonianDescription
-    initial_states: tuple[Any, ...]
-    tlist: Any
-    c_ops: tuple[Any, ...] = ()
-    e_ops: Any = None
-    e_ops_meta: Any = None
-    resolved_frame: Any = None
-    solver: str | None = None
-    options: dict[str, Any] = field(default_factory=dict)
+    chip: Any
+    problems: tuple[SolveProblem, ...]
+    params: Any = None
+    shape: tuple[int, ...] = ()
+    axes: tuple[tuple[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
-        options_copy = _reject_backend_option(self.options, cls_name="SolveBatch")
-        if len(self.initial_states) != self.hamiltonian.batch_size:
-            raise ValueError(
-                f"initial_states length {len(self.initial_states)} does not match "
-                f"batch_size {self.hamiltonian.batch_size}"
-            )
-        object.__setattr__(self, "options", options_copy)
+        if not self.problems:
+            return
+        reference = self.problems[0]
+        expected_dynamic = len(reference.engine_result.dynamic_terms)
+        expected_dims = tuple(reference.engine_result.dims)
+        for index, problem in enumerate(self.problems):
+            actual_dynamic = len(problem.engine_result.dynamic_terms)
+            if actual_dynamic != expected_dynamic:
+                raise ValueError(
+                    f"SolveProblem {index} has {actual_dynamic} dynamic terms; expected {expected_dynamic}."
+                )
+            if tuple(problem.engine_result.dims) != expected_dims:
+                raise ValueError(
+                    f"SolveProblem {index} has dims {tuple(problem.engine_result.dims)}; "
+                    f"expected {expected_dims}. Structural settings cannot vary in a SolveBatch."
+                )
+            if problem.solver != reference.solver or problem.options != reference.options:
+                raise ValueError("Every SolveProblem in a SolveBatch must share solver options.")
+            if problem.tlist is not reference.tlist:
+                if contains_tracer((problem.tlist, reference.tlist)):
+                    raise ValueError("Every SolveProblem in a SolveBatch must share one traced time grid.")
+                if not np.array_equal(np.asarray(problem.tlist), np.asarray(reference.tlist)):
+                    raise ValueError(
+                        "Every SolveProblem in a SolveBatch must share one time grid; "
+                        "use solve_many() for heterogeneous grids."
+                    )
 
     @property
     def batch_size(self) -> int:
-        """Number of elements ``N`` in the batch."""
-        return self.hamiltonian.batch_size
+        return len(self.problems)
+
+    @property
+    def initial_states(self) -> tuple[Any, ...]:
+        return tuple(problem.initial_state for problem in self.problems)
+
+    @property
+    def tlist(self) -> Any:
+        return self.problems[0].tlist
+
+    def signals_for(self, slot: int) -> tuple[ScalarModulation, ...]:
+        """Return one dynamic slot across all batch points."""
+        return tuple(
+            problem.engine_result.dynamic_terms[slot].time_dependence
+            for problem in self.problems
+        )
+
+    def __len__(self) -> int:
+        return self.batch_size
+
+    def __iter__(self) -> Iterator[SolveProblem]:
+        for index in range(self.batch_size):
+            yield self.element(index)
+
+    def __getitem__(self, item: Any) -> Any:
+        if isinstance(item, slice):
+            return [self.element(index) for index in range(*item.indices(self.batch_size))]
+        return self.element(int(item))
+
+    def params_at(self, point: int | tuple[int, ...]) -> dict[str, Any]:
+        """Return sweep values at one grid coordinate."""
+        if self.params is None:
+            return {}
+        if self.shape == ():
+            if point not in (0, ()):
+                raise IndexError(f"Scalar batch only accepts 0 or (), got {point!r}")
+            return dict(self.params.item().items())
+        coordinate = point if isinstance(point, tuple) else (point,)
+        return dict(self.params[coordinate].items())
 
     def element(self, index: int) -> SolveProblem:
-        """Reconstruct the single-element :class:`SolveProblem` at *index*."""
-        return SolveProblem(
-            chip=self.chip,
-            hamiltonian=self.hamiltonian.element(index),
-            initial_state=self.initial_states[index],
-            tlist=self.tlist,
-            c_ops=self.c_ops,
-            e_ops=self.e_ops,
-            e_ops_meta=self.e_ops_meta,
-            resolved_frame=self.resolved_frame,
-            solver=self.solver,
-            options=dict(self.options),
-        )
+        return self.problems[index]
 
 
 # ── Drive Operation ─────────────────────────────────────────────────
@@ -1294,11 +1500,11 @@ class DriveOp:
     The pulse window ``[start_time, start_time + envelope.duration]``
     must overlap the solve ``tlist`` with positive measure — a window
     that only touches a ``tlist`` endpoint contributes no evolution and
-    is rejected (:func:`~quchip.engine.stage4_problem.prepare_solve_problem_context`).
+    is rejected (:func:`~quchip.engine.problem.prepare_solve_problem_context`).
     """
 
     target_label: str
-    envelope: BaseEnvelope
+    envelope: Envelope
     freq: float | None = None
     start_time: float = 0.0
     phase_offset: float = 0.0

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from quchip.approximations import RWA
+
 import numpy as np
 import pytest
 
@@ -27,10 +29,7 @@ def test_bath_separable_flag():
 
 
 def _four_qubits():
-    return [
-        DuffingTransmon(freq=5.0 + 0.1 * i, anharmonicity=-0.25, levels=3, label=f"q{i}")
-        for i in range(4)
-    ]
+    return [DuffingTransmon(freq=5.0 + 0.1 * i, anharmonicity=-0.25, levels=3, label=f"q{i}") for i in range(4)]
 
 
 def test_components_from_couplings_only():
@@ -341,8 +340,7 @@ def test_partitioned_result_local_access():
     from quchip.results.partitioned import PartitionedSimulationResult
 
     part, results, tlist = _solved_components()
-    plan = {"q0": LocalEop(component=0, key="q0", index=None),
-            "q2": LocalEop(component=1, key="q2", index=None)}
+    plan = {"q0": LocalEop(component=0, key="q0", index=None), "q2": LocalEop(component=1, key="q2", index=None)}
     combined = PartitionedSimulationResult(results, part, plan)
     assert np.allclose(combined.expect("q0"), results[0].expect("q0"))
     assert np.allclose(combined.population("q3", 0), results[1].population("q3", 0))
@@ -374,7 +372,8 @@ def _driven_disconnected_chip():
     chip = Chip(
         [q0, q1, q2, q3],
         couplings=[Capacitive(q0, q1, g=0.005, label="c01"), Capacitive(q2, q3, g=0.005, label="c23")],
-        frame="rotating", rwa=True,
+        frame="rotating",
+        approximation=RWA(),
     )
     d0 = ChargeDrive(target=q0, label="d0")
     d2 = ChargeDrive(target=q2, label="d2")
@@ -571,7 +570,8 @@ def test_partitioned_final_state_matches_joint_in_interleaved_device_order():
     chip = Chip(
         [q0, q2, q1, q3],
         couplings=[Capacitive(q0, q1, g=0.005, label="c01"), Capacitive(q2, q3, g=0.005, label="c23")],
-        frame="rotating", rwa=True,
+        frame="rotating",
+        approximation=RWA(),
     )
     tlist = np.linspace(0.0, 5.0, 6)
 

@@ -30,8 +30,8 @@ class _ToyDeviceModel(DeviceModel):
     omega: Scalar = parameter(positive=True, unit="GHz")
     anharm: Scalar = parameter(unit="GHz")
 
-    def local_hamiltonian(self, op: LocalOps):
-        return self.omega * op.n + (0.5 * self.anharm) * (op.n @ (op.n - op.I))
+    def local_hamiltonian(self, op: LocalOps, p):
+        return p.omega * op.n + (0.5 * p.anharm) * (op.n @ (op.n - op.I))
 
     def tunable_param_bounds(self, name: str, value: float) -> tuple[float, float]:
         if name == "omega":

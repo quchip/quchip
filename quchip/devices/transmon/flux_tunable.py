@@ -67,14 +67,14 @@ Examples
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Any
+from typing import Any, ClassVar
 
 import jax.numpy as jnp
 
 from quchip.declarative.expr import PhysicsExpr
-from quchip.declarative.models import DeviceModel
 from quchip.declarative.ops import LocalOps
-from quchip.declarative.parameters import Scalar, parameter
+from quchip.declarative.parameters import UNBOUND, Scalar, parameter
+from quchip.devices.fock import FockDevice
 from quchip.devices.transmon.duffing import duffing_expr
 from quchip.utils.jax_utils import maybe_concrete_scalar
 
@@ -126,7 +126,7 @@ def _check_flux_bias_dispersion(flux_bias: Any, asymmetry: Any) -> None:
         )
 
 
-class FluxTunableTransmon(DeviceModel):
+class FluxTunableTransmon(FockDevice):
     """SQUID-dispersion flux-tunable transmon.
 
     The constructor takes the calibrated local physical parameters; SQUID
@@ -160,8 +160,8 @@ class FluxTunableTransmon(DeviceModel):
         ``T2``, ``thermal_population``.
     """
 
-    _type_prefix: str = "fluxtunable"
-    _default_levels: int = 3
+    _type_prefix: ClassVar[str] = "fluxtunable"
+    _default_levels: ClassVar[int] = 3
     tunable_param_names = ("freq", "anharmonicity")
     computational = True
     approximation = (
@@ -169,27 +169,10 @@ class FluxTunableTransmon(DeviceModel):
         "no Landau-Zener)."
     )
 
-    freq: Scalar = parameter(positive=True, unit="GHz")
-    anharmonicity: Scalar = parameter(unit="GHz")
-    flux_bias: Scalar = parameter(default=0.0, unit="Phi_0")
-    asymmetry: Scalar = parameter(default=0.0)
-
-    # --- generated __init__ stub (tools/gen_device_stubs.py); do not edit ---
-    if TYPE_CHECKING:
-        def __init__(
-            self,
-            freq: Scalar,
-            anharmonicity: Scalar,
-            flux_bias: Scalar = 0.0,
-            asymmetry: Scalar = 0.0,
-            *,
-            levels: int = 3,
-            label: str | None = None,
-            T1: float | None = None,
-            T2: float | None = None,
-            thermal_population: float | None = None,
-        ) -> None: ...
-    # --- end generated stub ---
+    freq: Scalar = parameter(default=UNBOUND, positive=True, unit="GHz", symbol=r"\omega")
+    anharmonicity: Scalar = parameter(default=UNBOUND, unit="GHz", symbol=r"\alpha")
+    flux_bias: Scalar = parameter(default=0.0, unit="Phi_0", symbol=r"\Phi")
+    asymmetry: Scalar = parameter(default=0.0, symbol="d")
 
     def validate(self) -> None:
         """Range checks on concrete scalars only; traced values pass unchecked."""
@@ -213,12 +196,12 @@ class FluxTunableTransmon(DeviceModel):
         elif name == "flux_bias":
             _check_flux_bias_dispersion(value, self.asymmetry)
 
-    def local_hamiltonian(self, op: LocalOps) -> PhysicsExpr:
+    def local_hamiltonian(self, op: LocalOps, p: Any) -> PhysicsExpr:
         """Return the Duffing Hamiltonian built from the calibrated freq and anharmonicity.
 
         ``H = ω n + (α/2) n(n − I)``. Does not reference ``flux_bias``.
         """
-        return duffing_expr(op, self.freq, self.anharmonicity)
+        return duffing_expr(op, p.freq, p.anharmonicity)
 
     # -- Derived-on-read SQUID parameters ----------------------------------
 

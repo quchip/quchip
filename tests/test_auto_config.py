@@ -145,15 +145,15 @@ class TestAutoConfig:
         for val in info.values():
             assert val == pytest.approx(0.0)
 
-    def test_frame_info_matches_stage2_subtraction(self, dispersive_chip) -> None:
-        """frame_info() matches the per-device reference (-Σ ω_ref,i n̂_i) stage2 subtracts."""
-        from quchip.engine.stage1_frames import resolve_frame
+    def test_frame_info_matches_assembly_subtraction(self, dispersive_chip) -> None:
+        """frame_info() matches the per-device reference assembly subtracts."""
+        from quchip.engine.frames import resolve_frame
 
         chip, qubit, resonator = dispersive_chip
         chip.set_frame("rotating")
 
-        # Chip.hamiltonian() is lab-frame; the rotating-frame subtraction happens at solve
-        # time via stage2's _build_static_h0, using the same resolver invoked here.
+        # The authored Hamiltonian is lab-frame; rotating-frame subtraction happens in the engine.
+        # time via assembly's _build_static_h0, using the same resolver invoked here.
         resolved = resolve_frame(chip, chip.frame)
 
         info = chip.frame_info()
@@ -163,7 +163,7 @@ class TestAutoConfig:
 
     def test_resolved_frame_rotating_returns_dressed(self, dispersive_chip) -> None:
         """In rotating mode, resolved frame frequencies match dressed freqs."""
-        from quchip.engine.stage1_frames import resolve_frame
+        from quchip.engine.frames import resolve_frame
 
         chip, qubit, resonator = dispersive_chip
         chip.dress()
@@ -177,7 +177,7 @@ class TestAutoConfig:
 
     def test_resolved_frame_lab_returns_zeros(self, dispersive_chip) -> None:
         """In lab mode, resolved frame frequencies are zeros."""
-        from quchip.engine.stage1_frames import resolve_frame
+        from quchip.engine.frames import resolve_frame
 
         chip, _, _ = dispersive_chip
         chip.set_frame("lab")

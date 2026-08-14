@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from quchip.approximations import RWA
+
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -13,7 +17,7 @@ class TestTlistValidation:
         """A non-strictly-increasing tlist raises ValueError."""
         from quchip.chip.chip import Chip
         from quchip.devices.transmon.duffing import DuffingTransmon
-        from quchip.engine.stage4_problem import prepare_solve_problem_context
+        from quchip.engine.problem import prepare_solve_problem_context
 
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
         chip = Chip([q])
@@ -24,7 +28,7 @@ class TestTlistValidation:
         """A tlist with fewer than two points raises ValueError."""
         from quchip.chip.chip import Chip
         from quchip.devices.transmon.duffing import DuffingTransmon
-        from quchip.engine.stage4_problem import prepare_solve_problem_context
+        from quchip.engine.problem import prepare_solve_problem_context
 
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
         chip = Chip([q])
@@ -50,12 +54,15 @@ class TestDriveWindowValidation:
         """A pulse window that only touches tlist's start endpoint raises ValueError."""
         from quchip.control.envelopes import Square
         from quchip.engine.ir import DriveOp
-        from quchip.engine.stage4_problem import prepare_solve_problem_context
+        from quchip.engine.problem import prepare_solve_problem_context
 
         chip, drive = self._chip_and_drive()
         op = DriveOp(
-            target_label="q0", envelope=Square(duration=20.0, amplitude=0.01),
-            freq=5.0, start_time=-20.0, drive_label="d0",
+            target_label="q0",
+            envelope=Square(duration=20.0, amplitude=0.01),
+            freq=5.0,
+            start_time=-20.0,
+            drive_label="d0",
         )
         with pytest.raises(ValueError, match="no positive-measure overlap"):
             prepare_solve_problem_context(chip, np.linspace(0.0, 20.0, 21), drive_ops=[op])
@@ -64,12 +71,15 @@ class TestDriveWindowValidation:
         """A pulse window strictly outside tlist raises ValueError."""
         from quchip.control.envelopes import Square
         from quchip.engine.ir import DriveOp
-        from quchip.engine.stage4_problem import prepare_solve_problem_context
+        from quchip.engine.problem import prepare_solve_problem_context
 
         chip, drive = self._chip_and_drive()
         op = DriveOp(
-            target_label="q0", envelope=Square(duration=5.0, amplitude=0.01),
-            freq=5.0, start_time=100.0, drive_label="d0",
+            target_label="q0",
+            envelope=Square(duration=5.0, amplitude=0.01),
+            freq=5.0,
+            start_time=100.0,
+            drive_label="d0",
         )
         with pytest.raises(ValueError, match="no positive-measure overlap"):
             prepare_solve_problem_context(chip, np.linspace(0.0, 20.0, 21), drive_ops=[op])
@@ -86,14 +96,17 @@ class TestResolveDrivesValidation:
         from quchip.control.equipment import ControlEquipment
         from quchip.devices.transmon.duffing import DuffingTransmon
         from quchip.engine.ir import DriveOp
-        from quchip.engine.stage2_assembly import _resolve_drives
+        from quchip.engine.assembly import _resolve_drives
 
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
         orphan = ChargeDrive(label="orphan")
         chip = Chip([q], control_equipment=ControlEquipment(lines=[orphan]))
         op = DriveOp(
-            target_label="q0", envelope=Square(duration=20.0, amplitude=0.01),
-            freq=5.0, start_time=0.0, drive_label="orphan",
+            target_label="q0",
+            envelope=Square(duration=20.0, amplitude=0.01),
+            freq=5.0,
+            start_time=0.0,
+            drive_label="orphan",
         )
         with pytest.raises(ValueError, match="not connected"):
             _resolve_drives(chip, [op])
@@ -106,36 +119,37 @@ class TestResolveDrivesValidation:
         from quchip.control.equipment import ControlEquipment
         from quchip.devices.transmon.duffing import DuffingTransmon
         from quchip.engine.ir import DriveOp
-        from quchip.engine.stage2_assembly import _resolve_drives
+        from quchip.engine.assembly import _resolve_drives
 
         q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
         q1 = DuffingTransmon(freq=5.2, anharmonicity=-0.25, levels=3, label="q1")
         drive = ChargeDrive(target=q0, label="d0")
         chip = Chip([q0, q1], control_equipment=ControlEquipment(lines=[drive]))
         op = DriveOp(
-            target_label="q1", envelope=Square(duration=20.0, amplitude=0.01),
-            freq=5.0, start_time=0.0, drive_label="d0",
+            target_label="q1",
+            envelope=Square(duration=20.0, amplitude=0.01),
+            freq=5.0,
+            start_time=0.0,
+            drive_label="d0",
         )
         with pytest.raises(ValueError, match="wired to target"):
             _resolve_drives(chip, [op])
 
-    def test_target_kind_mismatch_raises(self):
-        """A drive's target_kind disagreeing with the map its DriveOp's target resolved from raises ValueError."""
+    def test_definition_target_mismatch_raises(self):
+        """A drive definition disagreeing with its resolved target raises ValueError."""
         from quchip.control.envelopes import Square
         from quchip.engine.ir import DriveOp
-        from quchip.engine.stage2_assembly import _resolve_drives
+        from quchip.engine.assembly import _resolve_drives
 
         # Real Chip namespaces cannot produce this mismatch; doubles isolate inconsistent drive bookkeeping.
-        class _MismatchedKindDrive:
-            label = "d0"
-            target_kind = "edge"
+        from quchip.control.drive import CouplingDrive
 
-            @property
-            def target_label(self):
-                return "q0"
+        class _MismatchedKindDrive(CouplingDrive):
+            def hamiltonian(self, target, signal):
+                raise AssertionError("resolution should fail before Hamiltonian authorship")
 
         class _Equipment:
-            lines = [_MismatchedKindDrive()]
+            lines = [_MismatchedKindDrive("q0", label="d0")]
 
         class _FakeChip:
             device_map = {"q0": object()}
@@ -143,50 +157,86 @@ class TestResolveDrivesValidation:
             control_equipment = _Equipment()
 
         op = DriveOp(
-            target_label="q0", envelope=Square(duration=20.0, amplitude=0.01),
-            freq=5.0, start_time=0.0, drive_label="d0",
+            target_label="q0",
+            envelope=Square(duration=20.0, amplitude=0.01),
+            freq=5.0,
+            start_time=0.0,
+            drive_label="d0",
         )
-        with pytest.raises(ValueError, match="target_kind"):
+        with pytest.raises(ValueError, match="declares target"):
             _resolve_drives(_FakeChip(), [op])
 
 
+def test_symbolic_drive_channel_reaches_engine_without_custom_dispatch():
+    """A drive extension may return the shared symbolic expression directly."""
+    from quchip.chip.chip import Chip
+    from quchip.control.drive import FluxDrive
+    from quchip.control.envelopes import Square
+    from quchip.control.equipment import ControlEquipment
+    from quchip.declarative.ops import LocalOps
+    from quchip.devices.transmon.duffing import DuffingTransmon
+    from quchip.engine.ir import DriveOp
+    from quchip.engine.frames import resolve_frame
+    from quchip.engine.assembly import build_engine_result
+
+    class SymbolicFluxDrive(FluxDrive):
+        def operator(self, device):
+            return LocalOps(device.label, device.local_space()).n
+
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+    drive = SymbolicFluxDrive(q, label="flux")
+    chip = Chip([q], control_equipment=ControlEquipment([drive]))
+    drive_op = DriveOp(
+        target_label="q",
+        envelope=Square(duration=10.0, amplitude=0.01),
+        freq=None,
+        start_time=0.0,
+        drive_label="flux",
+    )
+    result = build_engine_result(
+        chip,
+        [drive_op],
+        resolved_frame=resolve_frame(chip, chip.frame),
+    )
+    assert result.dynamic_terms
+    expression = result.hamiltonian()
+    np.testing.assert_allclose(
+        expression.matrix(t=2.0, backend=chip.backend),
+        result.hamiltonian().matrix(t=2.0, backend=chip.backend),
+    )
+    assert r"f_{drive,0}\!\left(t\right)" in result.latex()
+
+
 class TestWeightZeroRwaDrop:
-    """A SINGLE_TONE band at weight 0 is dropped structurally under RWA, with an audit record."""
-
-    def test_predicate_fires_only_for_single_tone_weight_zero_under_rwa(self):
-        """_is_dropped_weight_zero_single_tone keys only on modulation, weight, and RWA."""
-        from quchip.control.signal_spec import DriveModulation
-        from quchip.engine.stage2_assembly import _is_dropped_weight_zero_single_tone
-
-        assert _is_dropped_weight_zero_single_tone(DriveModulation.SINGLE_TONE, 0, True)
-        assert not _is_dropped_weight_zero_single_tone(DriveModulation.SINGLE_TONE, 0, False)
-        assert not _is_dropped_weight_zero_single_tone(DriveModulation.SINGLE_TONE, 1, True)
-        assert not _is_dropped_weight_zero_single_tone(DriveModulation.DIRECT_REAL, 0, True)
+    """A carrier-driven weight-zero band has an explicit audit record."""
 
     def test_dropped_term_records_band_weights_zero(self):
-        """The audit record for a weight-0 SINGLE_TONE drop carries band_weights=(0,) and abs(drive_freq)."""
-        from quchip.engine.stage2_assembly import _weight_zero_dropped_term
+        """The audit record for a carrier-driven weight-zero drop preserves its frequency."""
+        from quchip.engine.assembly import _weight_zero_dropped_term
 
         record = _weight_zero_dropped_term(source="d0", device_label="q0", drive_freq=-5.0)
         assert record.band_weights == (0,)
         assert record.frequency == pytest.approx(5.0)
         assert record.source == "d0"
 
-    def test_dropped_term_raises_when_drive_freq_is_none(self):
-        """A weight-0 SINGLE_TONE band with no drive_freq raises rather than silently omitting frequency."""
-        from quchip.engine.stage2_assembly import _weight_zero_dropped_term
+    def test_dropped_term_raises_when_carrier_is_none(self):
+        from quchip.engine.assembly import _weight_zero_dropped_term
 
-        with pytest.raises(ValueError, match="drive_freq"):
+        with pytest.raises(ValueError, match="carrier frequency"):
             _weight_zero_dropped_term(source="d0", device_label="q0", drive_freq=None)
 
-    def test_single_tone_coefficient_raises_for_bypassed_weight_zero_drop(self):
-        """Reaching _single_tone_coefficient with a weight-0 RWA band signals a bypassed structural drop."""
-        from quchip.engine.ir import Constant
-        from quchip.engine.stage2_assembly import BandContext, _single_tone_coefficient
+    def test_drive_coefficient_rejects_a_bypassed_weight_zero_drop(self):
+        from quchip.engine.ir import Constant, RealPart
+        from quchip.engine.approximations import resolve_drive_program
 
-        band = BandContext(weight=0, device_frame_freq=0.0, drive_freq=5.0, rwa=True)
-        with pytest.raises(ValueError, match="dropped structurally"):
-            _single_tone_coefficient(Constant(1.0 + 0j), band)
+        with pytest.raises(ValueError, match="weight-zero"):
+            resolve_drive_program(
+                RWA(),
+                RealPart(Constant(1.0 + 0j)),
+                weight=0,
+                frame_frequency=0.0,
+                has_carrier=True,
+            )
 
 
 class TestRelativeBandPruning:
@@ -222,8 +272,12 @@ class TestRelativeBandPruning:
         diag_values[0, 1] = 1e-18
         diag_values[0, 2] = 1e-18
         canonical = CanonicalOperator.from_dia(
-            diag_values, np.array([1], dtype=int), shape=(dim, dim),
-            dims=(dim,), basis="fock", subsystem_labels=("q0",),
+            diag_values,
+            np.array([1], dtype=int),
+            shape=(dim, dim),
+            dims=(dim,),
+            basis="fock",
+            subsystem_labels=("q0",),
         )
         bands = decompose_canonical_bands(canonical, dim)
         assert 1 in bands
@@ -235,9 +289,7 @@ class TestSolverHintsMaxStep:
     def _term_with_window(self, start, stop):
         from quchip.engine.ir import CanonicalOperator, Constant, DynamicTerm, ScalarModulation, Window
 
-        op = CanonicalOperator.from_dense(
-            np.eye(2, dtype=complex), dims=(2,), basis="fock", subsystem_labels=("q0",)
-        )
+        op = CanonicalOperator.from_dense(np.eye(2, dtype=complex), dims=(2,), basis="fock", subsystem_labels=("q0",))
         window = Window(child=Constant(1.0 + 0j), start=start, stop=stop)
         return DynamicTerm(operator=op, time_dependence=ScalarModulation(signal=window), origin="drive")
 
@@ -273,35 +325,37 @@ class TestBatchMetadataAggregation:
 
     def test_max_step_ns_aggregates_by_minimum(self):
         """max_step_ns takes the minimum across batch elements."""
-        from quchip.engine.ir import HamiltonianDescription
-        from quchip.engine.stage4_problem import _aggregate_batch_metadata
+        from quchip.engine.ir import EngineResult
+        from quchip.engine.ir import _aggregate_batch_metadata
 
-        wide = HamiltonianDescription(static_terms=(), dynamic_terms=(), metadata={"max_step_ns": 10.0})
-        narrow = HamiltonianDescription(static_terms=(), dynamic_terms=(), metadata={"max_step_ns": 2.5})
+        wide = EngineResult(static_terms=(), dynamic_terms=(), metadata={"max_step_ns": 10.0})
+        narrow = EngineResult(static_terms=(), dynamic_terms=(), metadata={"max_step_ns": 2.5})
         metadata = _aggregate_batch_metadata([wide, narrow])
         assert metadata["max_step_ns"] == pytest.approx(2.5)
 
     def test_max_step_ns_omitted_when_any_element_lacks_it(self):
         """A single element missing max_step_ns (e.g. from tracing) omits it for the whole batch."""
-        from quchip.engine.ir import HamiltonianDescription
-        from quchip.engine.stage4_problem import _aggregate_batch_metadata
+        from quchip.engine.ir import EngineResult
+        from quchip.engine.ir import _aggregate_batch_metadata
 
-        has_hint = HamiltonianDescription(static_terms=(), dynamic_terms=(), metadata={"max_step_ns": 10.0})
-        missing_hint = HamiltonianDescription(static_terms=(), dynamic_terms=(), metadata={})
+        has_hint = EngineResult(static_terms=(), dynamic_terms=(), metadata={"max_step_ns": 10.0})
+        missing_hint = EngineResult(static_terms=(), dynamic_terms=(), metadata={})
         metadata = _aggregate_batch_metadata([has_hint, missing_hint])
         assert "max_step_ns" not in metadata
 
     def test_carrier_and_spectral_bounds_aggregate_by_maximum(self):
         """max_carrier_freq_ghz and spectral_bound_ghz take the maximum across batch elements."""
-        from quchip.engine.ir import HamiltonianDescription
-        from quchip.engine.stage4_problem import _aggregate_batch_metadata
+        from quchip.engine.ir import EngineResult
+        from quchip.engine.ir import _aggregate_batch_metadata
 
-        a = HamiltonianDescription(
-            static_terms=(), dynamic_terms=(),
+        a = EngineResult(
+            static_terms=(),
+            dynamic_terms=(),
             metadata={"max_carrier_freq_ghz": 5.0, "spectral_bound_ghz": 1.0},
         )
-        b = HamiltonianDescription(
-            static_terms=(), dynamic_terms=(),
+        b = EngineResult(
+            static_terms=(),
+            dynamic_terms=(),
             metadata={"max_carrier_freq_ghz": 7.5, "spectral_bound_ghz": 0.5},
         )
         metadata = _aggregate_batch_metadata([a, b])
@@ -309,29 +363,43 @@ class TestBatchMetadataAggregation:
         assert metadata["spectral_bound_ghz"] == pytest.approx(1.0)
 
 
-class TestBatchedDroppedTermsRetention:
-    """BatchedHamiltonianDescription.element() restores each element's own dropped_terms."""
+class TestSolveBatchPointRetention:
+    """SolveBatch keeps each point's complete problem snapshot."""
+
+    def test_batch_rejects_structural_dimension_changes(self):
+        from quchip.engine.ir import EngineResult, SolveBatch, SolveProblem
+
+        first = SolveProblem(
+            chip=None,
+            engine_result=EngineResult(static_terms=(), dynamic_terms=(), dims=(2,)),
+            initial_state=None,
+            tlist=(0.0, 1.0),
+        )
+        second = replace(first, engine_result=replace(first.engine_result, dims=(3,)))
+        with pytest.raises(ValueError, match="Structural settings"):
+            SolveBatch(chip=None, problems=(first, second))
+        different_grid = replace(first, tlist=(0.0, 0.5, 1.0))
+        with pytest.raises(ValueError, match="one time grid"):
+            SolveBatch(chip=None, problems=(first, different_grid))
 
     def test_element_restores_dropped_terms(self):
         """dropped_terms set on a single-element batch reappear on the reconstructed element."""
-        from quchip.engine.ir import BatchedHamiltonianDescription, DroppedTerm
+        from quchip.engine.ir import DroppedTerm, EngineResult, SolveBatch, SolveProblem
 
         record = DroppedTerm(source="d0", operator="drive band w=+0 on q0", reason="test", band_weights=(0,))
-        batched = BatchedHamiltonianDescription(
-            batch_size=1,
-            static_terms=(),
-            dynamic_operators=(),
-            dynamic_origins=(),
-            dynamic_tags=(),
-            dynamic_signals=(),
-            dropped_terms_by_element=((record,),),
+        problem = SolveProblem(
+            chip=None,
+            engine_result=EngineResult(static_terms=(), dynamic_terms=(), dropped_terms=(record,)),
+            initial_state=None,
+            tlist=(0.0, 1.0),
         )
-        element = batched.element(0)
-        assert element.dropped_terms == (record,)
+        batch = SolveBatch(chip=None, problems=(problem,))
+        element = batch.element(0)
+        assert element.engine_result.dropped_terms == (record,)
 
     def test_element_restores_its_own_frequency_not_another_elements(self):
         """Two elements with different dropped-term frequencies each restore their own, not the reference's."""
-        from quchip.engine.ir import BatchedHamiltonianDescription, DroppedTerm
+        from quchip.engine.ir import DroppedTerm, EngineResult, SolveBatch, SolveProblem
 
         record_a = DroppedTerm(
             source="d0", operator="drive band w=+0 on q0", reason="test", band_weights=(0,), frequency=5.0
@@ -339,30 +407,16 @@ class TestBatchedDroppedTermsRetention:
         record_b = DroppedTerm(
             source="d0", operator="drive band w=+0 on q0", reason="test", band_weights=(0,), frequency=6.0
         )
-        batched = BatchedHamiltonianDescription(
-            batch_size=2,
-            static_terms=(),
-            dynamic_operators=(),
-            dynamic_origins=(),
-            dynamic_tags=(),
-            dynamic_signals=(),
-            dropped_terms_by_element=((record_a,), (record_b,)),
+        problem_a = SolveProblem(
+            chip=None,
+            engine_result=EngineResult(static_terms=(), dynamic_terms=(), dropped_terms=(record_a,)),
+            initial_state=None,
+            tlist=(0.0, 1.0),
         )
-        assert batched.element(0).dropped_terms[0].frequency == pytest.approx(5.0)
-        assert batched.element(1).dropped_terms[0].frequency == pytest.approx(6.0)
-
-    def test_length_mismatch_raises(self):
-        """dropped_terms_by_element whose length disagrees with batch_size raises ValueError."""
-        from quchip.engine.ir import BatchedHamiltonianDescription, DroppedTerm
-
-        record = DroppedTerm(source="d0", operator="drive band w=+0 on q0", reason="test", band_weights=(0,))
-        with pytest.raises(ValueError, match="dropped_terms_by_element"):
-            BatchedHamiltonianDescription(
-                batch_size=2,
-                static_terms=(),
-                dynamic_operators=(),
-                dynamic_origins=(),
-                dynamic_tags=(),
-                dynamic_signals=(),
-                dropped_terms_by_element=((record,),),
-            )
+        problem_b = replace(
+            problem_a,
+            engine_result=replace(problem_a.engine_result, dropped_terms=(record_b,)),
+        )
+        batch = SolveBatch(chip=None, problems=(problem_a, problem_b))
+        assert batch.element(0).engine_result.dropped_terms[0].frequency == pytest.approx(5.0)
+        assert batch.element(1).engine_result.dropped_terms[0].frequency == pytest.approx(6.0)

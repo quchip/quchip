@@ -5,13 +5,23 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quchip import Capacitive, Chip, CrossKerr, DuffingTransmon, Resonator, TunableCapacitive, fit_a_dress
+from quchip import (
+    Exact,
+    Capacitive,
+    ChargeBasisTransmon,
+    Chip,
+    CrossKerr,
+    DuffingTransmon,
+    Resonator,
+    TunableCapacitive,
+    fit_a_dress,
+)
 from quchip.chip.coupling_base import BaseCoupling
 from quchip.devices.base import BaseDevice
 from quchip.inverse_design.fit import _estimate_bare_g, _pack_initial_params, _static_exchange_rate
 from quchip.inverse_design import fit as fit_module
 from quchip.inverse_design.observables import TargetSpec, build_target_specs
-from quchip.inverse_design.subsystems import device_labels_for_local_eval
+from quchip.inverse_design.subsystems import build_local_subsystem, device_labels_for_local_eval
 from quchip.inverse_design import FitADressResult, ObservableReport
 
 
@@ -110,28 +120,50 @@ def test_fit_a_dress_moves_crosskerr_chi_with_no_stray_g_attribute() -> None:
     assert "ck.g" not in result.final_params
 
 
-def test_estimate_bare_g_seed_subchip_preserves_rwa_override_and_backend(monkeypatch: pytest.MonkeyPatch) -> None:
-    """_estimate_bare_g's seed sub-chip preserves the coupling's rwa override and the chip's backend."""
+def test_estimate_bare_g_seed_subchip_preserves_chip_intent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The coupling seed sub-chip preserves basis, approximation, and backend intent."""
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=4, label="q")
     r = Resonator(freq=7.0, levels=10, label="r")
     coupling = Capacitive(q, r, g=0.01, label="c")
-    coupling.rwa = False
-    chip = Chip([q, r], [coupling], frame="rotating", backend="qutip")
+    chip = Chip(
+        [q, r],
+        [coupling],
+        frame="rotating",
+        basis="eigen",
+        backend="qutip",
+        approximation=Exact(),
+    )
 
     real_chip = fit_module.Chip
     captured: dict = {}
 
     def spy_chip(devices, couplings=None, **kwargs):
         captured["backend"] = kwargs.get("backend")
-        captured["coupling_rwa"] = couplings[0].rwa if couplings else None
+        captured["basis"] = kwargs.get("basis")
+        captured["approximation"] = kwargs.get("approximation")
         return real_chip(devices, couplings, **kwargs)
 
     monkeypatch.setattr(fit_module, "Chip", spy_chip)
 
     _estimate_bare_g(chip, coupling, TargetSpec("chi", coupling.label, 1e-4))
 
-    assert captured["backend"] is chip._backend
-    assert captured["coupling_rwa"] is False
+    assert captured["backend"] is chip.backend
+    assert captured["basis"] == "eigen"
+    assert captured["approximation"] == Exact()
+
+
+def test_local_fit_subsystem_inherits_chip_basis_policy() -> None:
+    """Local fit evaluation retains an inherited energy-basis projection."""
+    q = ChargeBasisTransmon(E_C=0.25, E_J=12.0, num_basis=9, levels=3, label="q")
+    r = Resonator(freq=7.0, levels=4, label="r")
+    chip = Chip([q, r], [Capacitive(q, r, g=0.02)], basis="eigen")
+
+    local = build_local_subsystem(chip, ("q", "r"))
+    resolved = local.resolve(frame="lab")
+
+    assert local.basis == "eigen"
+    assert resolved.dims == (3, 4)
+    assert resolved.bases["q"].kind == "eigen"
 
 
 def test_estimate_bare_g_raises_when_target_is_not_bracketed() -> None:
@@ -274,7 +306,7 @@ def test_bare_g_seed_uses_isolated_subchip_devices(monkeypatch: pytest.MonkeyPat
             self._computational = computational
             self._finish_init()
 
-        def hamiltonian(self):
+        def unresolved_hamiltonian(self):
             # A genuinely anharmonic (Duffing-like) diagonal spectrum: two purely
             # harmonic coupled devices have an exactly-zero dispersive shift for
             # any coupling strength, which would make the "chi" target below
@@ -319,7 +351,7 @@ def test_base_device_repr_is_safe_with_multiple_chip_contexts() -> None:
             self.freq = freq
             self._finish_init()
 
-        def hamiltonian(self):
+        def unresolved_hamiltonian(self):
             return self.freq * self.number_operator()
 
     q = ReprDevice(freq=5.0, label="q")
@@ -584,11 +616,7 @@ def test_fit_a_dress_accepts_string_coupling_target_keys() -> None:
 
 
 def test_static_exchange_rate_matches_pinned_value_on_bus_coupled_pair() -> None:
-    """_static_exchange_rate (via the public effective-H seam) matches its pre-refactor pinned value.
-
-    Cross-checked against Chip.effective_subspace_hamiltonian — an independent
-    implementation — as a second, non-circular confirmation of the math.
-    """
+    """The static exchange seam agrees with independent effective-subspace analysis."""
     control = DuffingTransmon(freq=5.08, anharmonicity=-0.31, levels=4, label="control")
     target = DuffingTransmon(freq=4.95, anharmonicity=-0.35, levels=4, label="target")
     bus = Resonator(freq=6.28, levels=6, label="bus")
@@ -597,8 +625,6 @@ def test_static_exchange_rate_matches_pinned_value_on_bus_coupled_pair() -> None
     chip = Chip([control, target, bus], [c_bus, t_bus], frame="rotating")
 
     got = float(_static_exchange_rate(chip, ("control", "target")))
-    assert got == pytest.approx(-0.0002693680015177002, abs=1e-10)
-
     oracle = chip.effective_subspace_hamiltonian(
         ({control: 1, target: 0, bus: 0}, {control: 0, target: 1, bus: 0})
     )

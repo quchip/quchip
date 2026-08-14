@@ -22,6 +22,7 @@ Physics:
 
 from __future__ import annotations
 
+
 from dataclasses import dataclass
 
 import numpy as np
@@ -73,8 +74,8 @@ def dispersive_results() -> DispersiveResults:
     chip = Chip(
         devices=[q, r, f],
         couplings=[
-            Capacitive(q, r, g=0.04, rwa=False),
-            Capacitive(r, f, g=0.03, rwa=False),
+            Capacitive(q, r, g=0.04),
+            Capacitive(r, f, g=0.03),
         ],
         control_equipment=ControlEquipment(lines=[drive_f]),
     )

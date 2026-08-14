@@ -43,8 +43,10 @@ def _device_label(device: Any) -> str:
 
 def _control_label(drive: Any) -> str:
     """Return the multi-line node label for *drive* (edge pumps always name their pumped coupling)."""
+    from quchip.control.drive import CouplingDrive
+
     class_name = type(drive).__name__
-    if drive.target_kind == "edge":
+    if isinstance(drive, CouplingDrive):
         return f"{drive.label}\n({class_name})\n→ {drive.target_label}"
     if drive.label:
         return f"{drive.label}\n({class_name})"
@@ -108,8 +110,10 @@ def _collect_topology(
             ))
 
     if "drive" not in _exclude and chip.control_equipment is not None:
+        from quchip.control.drive import CouplingDrive
+
         for drive in chip.control_equipment.lines:
-            is_edge_pump = drive.target_kind == "edge"
+            is_edge_pump = isinstance(drive, CouplingDrive)
             if is_edge_pump and drive.target_label not in coupling_labels:
                 # No junction node to attach to — either couplings were
                 # excluded from this render, or the pump's coupling isn't

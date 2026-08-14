@@ -13,8 +13,9 @@ the original.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, cast
 
+from quchip.approximations import Approximation
 from quchip.chip.coupling_base import BaseCoupling
 from quchip.control.equipment import ControlEquipment
 from quchip.devices.base import BaseDevice
@@ -35,7 +36,7 @@ def _serialize_frame(raw_frame: Any) -> str | float | dict[str, float]:
 def serialize_chip(chip: "Chip") -> dict[str, Any]:
     """Serialize chip topology into a JSON-safe dictionary.
 
-    Captures devices, couplings, baths, frame, RWA policy, and — if
+    Captures devices, couplings, baths, frame, approximation strategy, and, if
     present — the control equipment wiring. The chip label (if any) is
     included verbatim. Backend identity is *not* serialized;
     deserialization uses the process default backend unless changed
@@ -44,7 +45,8 @@ def serialize_chip(chip: "Chip") -> dict[str, Any]:
     data: dict[str, Any] = {
         "label": chip.label,
         "frame": _serialize_frame(chip.frame),
-        "rwa": chip.rwa,
+        "approximation": chip.approximation.to_dict(),
+        "basis": chip.basis,
         "devices": [device.to_dict() for device in chip.devices],
         "couplings": [coupling.to_dict() for coupling in chip.couplings],
     }
@@ -66,11 +68,30 @@ def deserialize_chip(data: dict[str, Any]) -> "Chip":
     """
     from quchip.chip.chip import Chip
 
+    allowed = {
+        "label",
+        "frame",
+        "approximation",
+        "basis",
+        "devices",
+        "couplings",
+        "baths",
+        "control_equipment",
+    }
+    unknown = set(data) - allowed
+    if unknown:
+        raise TypeError(f"Unsupported serialized Chip fields: {sorted(unknown)}")
+    if "approximation" not in data:
+        raise TypeError("Serialized Chip payload is missing required field 'approximation'.")
+    approximation = Approximation.from_dict(data["approximation"])
+
     devices = [BaseDevice.from_dict(d) for d in data.get("devices", [])]
     device_map = {device.label: device for device in devices}
 
     couplings: list[BaseCoupling] = []
     for cd in data.get("couplings", []):
+        if "rwa" in cd:
+            raise TypeError("Unsupported serialized coupling fields: ['rwa']")
         couplings.append(
             BaseCoupling.from_dict(cd, device_map[cd["device_a_label"]], device_map[cd["device_b_label"]])
         )
@@ -92,7 +113,8 @@ def deserialize_chip(data: dict[str, Any]) -> "Chip":
         control_equipment=None,
         label=data.get("label"),
         frame=data.get("frame", "lab"),
-        rwa=bool(data.get("rwa", True)),
+        approximation=approximation,
+        basis=cast(Literal["native", "eigen"], data.get("basis", "native")),
         baths=baths or None,
     )
     if control_equipment is not None:
@@ -120,7 +142,8 @@ def clone_chip(chip: "Chip") -> "Chip":
         control_equipment=None,
         label=chip.label,
         frame=frame,
-        rwa=chip.rwa,
+        approximation=chip.approximation,
+        basis=chip.basis,
         backend=chip._backend,
         baths=[bath.copy() for bath in chip.baths] or None,
     )

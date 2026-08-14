@@ -110,8 +110,8 @@ def test_eliminate_bridge_preserves_non_foldable_direct_edge_without_double_coun
 
         j: Scalar = parameter(unit="GHz")
 
-        def interaction(self, a, b):
-            return self.j * (a.adag * b.a + a.a * b.adag)
+        def interaction(self, a, b, p):
+            return p.j * (a.adag * b.a + a.a * b.adag)
 
     q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=2, label="q0")
     q1 = DuffingTransmon(freq=5.1, anharmonicity=-0.25, levels=2, label="q1")
@@ -139,14 +139,14 @@ def test_eliminate_bridge_preserves_non_foldable_direct_edge_without_double_coun
     # The reduced chip's own total exchange (read the same way the fold
     # itself measures it) must equal direct_j + j_mediated exactly once —
     # a double count would read 2*direct_j + j_mediated instead.
-    h, labels, dims = bare_hamiltonian(reduced, reduced.backend)
+    h, labels, dims = bare_hamiltonian(reduced)
     row = bare_index(labels, dims, "q0")
     col = bare_index(labels, dims, "q1")
     assert complex(h[row, col]).real == pytest.approx(direct_j + j_mediated_expected, rel=1e-6)
 
 
-def test_eliminate_bridge_direct_edge_whose_rwa_rejects_exchange_contributes_nothing():
-    """A direct edge whose resolved RWA rejects the exchange band is excluded from the fold's accounting."""
+def test_eliminate_bridge_direct_exchange_is_counted_once():
+    """An authored direct exchange edge contributes once to the reduced fold."""
     import warnings
 
     from quchip.chip.sw import bare_hamiltonian, bare_index
@@ -154,16 +154,13 @@ def test_eliminate_bridge_direct_edge_whose_rwa_rejects_exchange_contributes_not
     from quchip.declarative.models import CouplingModel
     from quchip.declarative.parameters import Scalar, parameter
 
-    class RwaRejectsExchange(CouplingModel):
-        """Exchange-only interaction whose RWA policy rejects its own (only) band."""
+    class DirectExchange(CouplingModel):
+        """Exchange-only authored interaction."""
 
         j: Scalar = parameter(unit="GHz")
 
-        def interaction(self, a, b):
-            return self.j * (a.adag * b.a + a.a * b.adag)
-
-        def rwa_keeps_band(self, delta_a, delta_b):
-            return False
+        def interaction(self, a, b, p):
+            return p.j * (a.adag * b.a + a.a * b.adag)
 
     q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=2, label="q0")
     q1 = DuffingTransmon(freq=5.1, anharmonicity=-0.25, levels=2, label="q1")
@@ -173,13 +170,11 @@ def test_eliminate_bridge_direct_edge_whose_rwa_rejects_exchange_contributes_not
         couplings=[
             Capacitive(q0, bus, g=0.05, label="leg0"),
             Capacitive(q1, bus, g=0.05, label="leg1"),
-            RwaRejectsExchange(q0, q1, j=0.01, label="direct"),
+            DirectExchange(q0, q1, j=0.01, label="direct"),
         ],
     )
 
     with warnings.catch_warnings():
-        # "direct" vanishes entirely under the chip's resolved RWA — expected
-        # and irrelevant to what this test checks.
         warnings.simplefilter("ignore", UserWarning)
         res = eliminate(chip, "bus")
         reduced = res.chip
@@ -188,10 +183,10 @@ def test_eliminate_bridge_direct_edge_whose_rwa_rejects_exchange_contributes_not
         parallel_edge = reduced.coupling_map["elim_bus"]
         assert float(parallel_edge.g) == pytest.approx(j_mediated_expected, rel=1e-6)
 
-        h, labels, dims = bare_hamiltonian(reduced, reduced.backend)
+        h, labels, dims = bare_hamiltonian(reduced)
         row = bare_index(labels, dims, "q0")
         col = bare_index(labels, dims, "q1")
-        assert complex(h[row, col]).real == pytest.approx(j_mediated_expected, rel=1e-6)
+        assert complex(h[row, col]).real == pytest.approx(0.01 + j_mediated_expected, rel=1e-6)
 
 
 def test_eliminate_bridge_fold_target_and_preserved_edge_are_each_counted_exactly_once():
@@ -206,8 +201,8 @@ def test_eliminate_bridge_fold_target_and_preserved_edge_are_each_counted_exactl
 
         j: Scalar = parameter(unit="GHz")
 
-        def interaction(self, a, b):
-            return self.j * (a.adag * b.a + a.a * b.adag)
+        def interaction(self, a, b, p):
+            return p.j * (a.adag * b.a + a.a * b.adag)
 
     q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=2, label="q0")
     q1 = DuffingTransmon(freq=5.1, anharmonicity=-0.25, levels=2, label="q1")
@@ -233,7 +228,7 @@ def test_eliminate_bridge_fold_target_and_preserved_edge_are_each_counted_exactl
     j_mediated_expected = 0.05 * 0.05 / 2.0 * (1.0 / (5.0 - 7.0) + 1.0 / (5.1 - 7.0))
     total_expected = foldable_g + direct_j + j_mediated_expected
 
-    h, labels, dims = bare_hamiltonian(reduced, reduced.backend)
+    h, labels, dims = bare_hamiltonian(reduced)
     row = bare_index(labels, dims, "q0")
     col = bare_index(labels, dims, "q1")
     assert complex(h[row, col]).real == pytest.approx(total_expected, rel=1e-6)
@@ -470,7 +465,9 @@ def test_eliminate_with_circuit_level_survivor_warns_instead_of_raising():
     assert [d.label for d in res.chip.devices] == ["q"]
     assert res.chip["q"].freq == pytest.approx(bare_freq)  # spectrum not folded
     delta = bare_freq - 7.1
-    lamb = 0.08**2 / delta
+    energy_vectors = np.asarray(q.eigenvectors())
+    charge = energy_vectors.conj().T @ np.asarray(q.charge_coupling_operator()) @ energy_vectors
+    lamb = (0.08 * abs(charge[0, 1])) ** 2 / delta
     assert float(res.effective_params["q"]["lamb_shift"]) == pytest.approx(lamb, rel=0.05)
     assert float(res.effective_params["q"]["freq_after"]) == pytest.approx(bare_freq + lamb, rel=1e-3)
 

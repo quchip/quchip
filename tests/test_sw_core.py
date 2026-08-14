@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from quchip.approximations import Exact, RWA
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -49,9 +51,9 @@ def test_dispersive_lamb_shift_on_a_real_chip():
     """Eliminating the resonator gives the qubit the dispersive Lamb shift g²/Δ; the P/Q gap equals the detuning."""
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
     r = Resonator(freq=7.0, levels=4, label="r")
-    chip = Chip([q, r], couplings=[Capacitive(q, r, g=0.05, label="c")], rwa=True)
+    chip = Chip([q, r], couplings=[Capacitive(q, r, g=0.05, label="c")])
 
-    h, labels, dims = bare_hamiltonian(chip, chip.backend)
+    h, labels, dims = bare_hamiltonian(chip)
     p_mask, _ = mode_blocks(dims, labels, "r")
     s, min_gap = sylvester_generator(h, p_mask)
     h_eff = h_effective_second_order(h, s, p_mask)
@@ -64,6 +66,22 @@ def test_dispersive_lamb_shift_on_a_real_chip():
     assert abs(float(min_gap) - 2.0) < 0.3
 
 
+def test_bare_hamiltonian_uses_the_selected_approximation():
+    """SW input retains exchange under RWA and counter-rotating terms under Exact."""
+    def build(approximation):
+        q = Resonator(freq=5.0, levels=3, label="q")
+        r = Resonator(freq=7.0, levels=3, label="r")
+        return Chip([q, r], [Capacitive(q, r, g=0.05)], approximation=approximation)
+
+    h_rwa, _, _ = bare_hamiltonian(build(RWA()))
+    h_exact, _, _ = bare_hamiltonian(build(Exact()))
+
+    assert h_rwa[3, 1] == 0.05
+    assert h_exact[3, 1] == 0.05
+    assert h_rwa[0, 4] == 0.0
+    assert h_exact[0, 4] == 0.05
+
+
 def _bridge_h():
     q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
     q1 = DuffingTransmon(freq=5.2, anharmonicity=-0.24, levels=3, label="q1")
@@ -71,9 +89,9 @@ def _bridge_h():
     chip = Chip(
         [q0, q1, bus],
         couplings=[Capacitive(q0, bus, g=0.08, label="leg0"), Capacitive(q1, bus, g=0.08, label="leg1")],
-        rwa=True,
+        approximation=RWA(),
     )
-    return bare_hamiltonian(chip, chip.backend)
+    return bare_hamiltonian(chip)
 
 
 def test_bridge_exchange_matches_yan_formula():
@@ -138,10 +156,10 @@ def test_collapse_transform_yields_purcell_rate():
 
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
     r = Resonator(freq=7.0, levels=4, label="r", quality_factor=1e4)
-    chip = Chip([q, r], couplings=[Capacitive(q, r, g=0.05, label="c")], rwa=True)
+    chip = Chip([q, r], couplings=[Capacitive(q, r, g=0.05, label="c")])
     backend = chip.backend
 
-    h, labels, dims = bare_hamiltonian(chip, backend)
+    h, labels, dims = bare_hamiltonian(chip)
     p_mask, _ = mode_blocks(dims, labels, "r")
     s, _ = sylvester_generator(h, p_mask)
 

@@ -26,6 +26,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from quchip.chip.sw import (
+    _exact_eigensystem,
     bare_index,
     basis_row,
     exact_reduction,
@@ -175,10 +176,11 @@ class SchriefferWolffMethod(ReductionMethod):
 class ExactReduction(ReductionMethod):
     """Exact-from-dressing reduction (``method="exact"``).
 
-    Reads the reduced parameters off the chip's exact dressed spectrum: exact
-    kept-block energies (what residual ZZ needs) at the cost of a full
-    diagonalization. It has no perturbative generator, so no pathway
-    attribution is available (:func:`~quchip.chip.sw.exact_reduction`).
+    Reads reduced parameters from an exact diagonalization of the same
+    engine-consumed static model as the SW route: exact kept-block energies
+    (what residual ZZ needs) at the cost of a full diagonalization. It has no
+    perturbative generator, so no pathway attribution is available
+    (:func:`~quchip.chip.sw.exact_reduction`).
     """
 
     name: ClassVar[str] = "exact"
@@ -192,8 +194,7 @@ class ExactReduction(ReductionMethod):
             ctx.chip.backend.to_array(ctx.chip.backend.embed(ctx.mode.lowering_operator(), mode_index, ctx.dims)),
             dtype=complex,
         )
-        analysis = ctx.chip._analysis
-        _, evecs, _, labeling = analysis._compute_array_labeled()
+        _, evecs, labeling = _exact_eigensystem(ctx.h, ctx.dims)
         kept = [int(labeling.indices[bare_index(ctx.labels, ctx.dims)])]
         kept += [int(labeling.indices[bare_index(ctx.labels, ctx.dims, surv)]) for surv in ctx.survivor_labels]
         c_eff = exact_transform_collapse(c_full, evecs, jnp.array(kept))

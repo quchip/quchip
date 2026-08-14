@@ -11,6 +11,8 @@ dynamiqs solve.
 
 from __future__ import annotations
 
+from quchip.approximations import RWA
+
 import warnings
 
 import jax
@@ -53,7 +55,7 @@ def _bridge_chip_dynamiqs() -> Chip:
         couplings=couplings,
         control_equipment=ControlEquipment([flux]),
         frame="rotating",
-        rwa=True,
+        approximation=RWA(),
         backend="dynamiqs",
     )
 

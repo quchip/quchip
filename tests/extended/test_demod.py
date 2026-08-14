@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 import numpy as np
 
 from quchip.chip.chip import Chip
@@ -14,7 +15,7 @@ from quchip.devices.resonator import Resonator
 from quchip.devices.transmon.duffing import DuffingTransmon
 from quchip.results import ObservableTrace
 from quchip.engine.bands import decompose_bands
-from quchip.engine.stage3_observables import BandMeta, decompose_eops, recombine_expect
+from quchip.engine.observables import BandMeta, decompose_eops, recombine_expect
 
 
 def _annihilation(d: int) -> np.ndarray:
@@ -32,7 +33,7 @@ def _build_coupled_sequence(frame: str) -> tuple[QuantumSequence, Chip, np.ndarr
     drive_q = ChargeDrive(target=q, label=f"Dq-{frame}")
     chip = Chip(
         [q, r],
-        couplings=[Capacitive(q, r, g=1e-6, rwa=False)],
+        couplings=[Capacitive(q, r, g=1e-6)],
         control_equipment=ControlEquipment(lines=[drive_q]),
         frame=frame,
     )

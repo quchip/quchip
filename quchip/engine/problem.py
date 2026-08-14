@@ -1,13 +1,10 @@
-"""Stage 4: pack stage outputs + collapse operators into a frozen :class:`SolveProblem`.
+"""Package engine physics and solve inputs into frozen solve requests.
 
 Responsibilities
 ----------------
-* Ensure the chip is dressed and run stage 1 (:func:`resolve_frame`).
-* Run stage 3 (:func:`decompose_eops`) to flatten ``e_ops`` into
-  solver-ready bands.
-* Collect and embed every Lindblad collapse operator contributed by
-  devices, drive lines, and couplings (see :func:`_collect_c_ops`).
-* Run stage 2 (:func:`build_hamiltonian_description`) for each variant
+* Resolve the chip frame.
+* Flatten ``e_ops`` into solver-ready bands with :func:`decompose_eops`.
+* Build an :class:`EngineResult` for each variant
   and pack into a single :class:`SolveProblem`, or merge homogeneous
   variants into a :class:`SolveBatch` (``N`` identical skeletons with
   per-element :class:`ScalarModulation` signals).
@@ -18,24 +15,22 @@ Collapse operators enter the standard Lindblad master equation
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from quchip.backend import _backend_context
-from quchip.engine.bands import embed_on_support
+from quchip.approximations import Approximation
 from quchip.engine.ir import (
-    BatchedHamiltonianDescription,
     DriveOp,
-    HamiltonianDescription,
+    EngineResult,
     ScalarModulation,
     SolveBatch,
     SolveProblem,
+    _aggregate_batch_metadata,
 )
-from quchip.engine.stage1_frames import resolve_frame
-from quchip.engine.stage2_assembly import build_hamiltonian_description
-from quchip.engine.stage3_observables import decompose_eops
+from quchip.engine.assembly import build_engine_result
+from quchip.engine.observables import decompose_eops
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
 
 if TYPE_CHECKING:
@@ -47,15 +42,16 @@ class SolveProblemContext:
     """Shared solve metadata reused across a homogeneous problem batch.
 
     Built once by :func:`prepare_solve_problem_context` so sweep points can
-    skip redundant collapse-operator collection and e_ops normalization.
+    skip redundant observable normalization.
     """
 
     chip: Chip
     tlist: Any
-    c_ops: tuple[Any, ...]
     e_ops: Any
     e_ops_meta: Any
     resolved_frame: Any
+    approximation: Approximation
+    _base_result: EngineResult | None
     solver: str | None
     options: dict[str, Any]
     default_initial_state: Any
@@ -66,42 +62,21 @@ class SolveProblemContext:
 
         Mirrors :meth:`SolveBatch.element`: it lifts a single concrete problem
         back into the context shape so a homogeneous group of problems can be
-        re-batched. The reference problem's already-built ``initial_state`` is
-        wrapped in a :class:`PrematerializedState` (no chip ground state is
-        recomputed), and ``options`` is defensively copied.
+        re-batched. The reference problem's already-built ``initial_state``
+        becomes the default state specification, and ``options`` is
+        defensively copied.
         """
         return cls(
             chip=ref.chip,
             tlist=ref.tlist,
-            c_ops=ref.c_ops,
             e_ops=ref.e_ops,
             e_ops_meta=ref.e_ops_meta,
             resolved_frame=ref.resolved_frame,
+            approximation=ref.engine_result.approximation,
+            _base_result=None,
             solver=ref.solver,
             options=dict(ref.options),
-            default_initial_state=PrematerializedState(ref.initial_state),
-        )
-
-
-def _collect_c_ops(chip: Chip) -> tuple[Any, ...]:
-    """Embed every collapse operator the chip's components contribute.
-
-    The chip enumerates its component families
-    (:meth:`~quchip.chip.chip.Chip.collapse_contributions`); this stage only
-    embeds each operator by its support arity, so a new physics-bearing
-    component family never touches the engine.
-
-    Collapse operators arrive in Lindblad-ready units (rates in 1/ns). No
-    additional scaling happens here: each device owns its physics, including
-    any 2π that belongs to a rate formula (e.g. κ = 2πf/Q). This is
-    deliberately distinct from the Hamiltonian path, where the blanket 2π
-    conversion lives at the stage-2 boundary.
-    """
-    backend = chip.backend
-    with _backend_context(backend):
-        return tuple(
-            embed_on_support(backend, c_op, support, chip.dims)
-            for c_op, support in chip.collapse_contributions()
+            default_initial_state=ref.initial_state,
         )
 
 
@@ -166,15 +141,13 @@ def prepare_solve_problem_context(
     options: dict | None = None,
     e_ops: dict | None = None,
     drive_ops: list[DriveOp] | None = None,
+    approximation: Approximation | None = None,
 ) -> SolveProblemContext:
-    """Resolve the frame, normalize e_ops, collect c_ops, and prepare a default state.
+    """Resolve the frame and retain authored observables and state specifications.
 
-    The dressed dict-keyed analysis is deliberately *not* triggered here: anything
-    downstream that needs dressed quantities must use the array-only kernel
-    (``chip.freq``, ``chip.energy``, etc.) so this stage stays JAX-traceable. The
-    default initial state is computed lazily via a thunk so callers that always
-    pass ``initial_state`` never pay for it (and so the thunk's eager dict-based
-    state construction never runs under ``jax.jit``).
+    Observables and states are materialized only after assembly resolves every
+    local solver basis. The default ground state remains lazy, so callers that
+    provide an explicit state do not pay for unused state construction.
 
     ``tlist`` is validated by :func:`_validate_tlist`. When *drive_ops* is
     given, each entry's pulse window is checked against ``tlist`` via
@@ -192,139 +165,94 @@ def prepare_solve_problem_context(
     if options is not None:
         merged_options.update(options)
 
-    if e_ops is None:
-        e_ops_solver, dict_meta = None, None
-    elif isinstance(e_ops, dict):
-        e_ops_solver, dict_meta = decompose_eops(e_ops, chip, backend)
-    else:
+    if e_ops is not None and not isinstance(e_ops, dict):
         raise TypeError("e_ops must be dict or None")
+    base_result = chip.resolve(approximation=approximation)
     return SolveProblemContext(
         chip=chip,
         tlist=tlist_arr,
-        c_ops=_collect_c_ops(chip),
-        e_ops=e_ops_solver,
-        e_ops_meta=dict_meta,
-        resolved_frame=resolve_frame(chip, chip.frame),
+        e_ops=e_ops,
+        e_ops_meta=None,
+        resolved_frame=base_result.resolved_frame,
+        approximation=base_result.approximation,
+        _base_result=base_result,
         solver=solver,
         options=merged_options,
-        default_initial_state=_LazyDefaultState(chip),
+        default_initial_state=None,
     )
 
 
-class _LazyDefaultState:
-    """Wraps ``chip.state()`` so ground-state computation is deferred until ``materialize()`` is called.
-
-    Keeps :func:`prepare_solve_problem_context` cheap: callers that always
-    pass ``initial_state`` never pay for the dressed ground state. Under
-    tracing ``chip.state()`` routes through the array kernel; the result is
-    never memoized — caching a tracer would leak it into a later trace.
-    """
-
-    __slots__ = ("_chip", "_cached")
-
-    def __init__(self, chip: Chip) -> None:
-        self._chip = chip
-        self._cached: Any = None
-
-    def materialize(self) -> Any:
-        if self._cached is not None:
-            return self._cached
-        state = self._chip.state()
-        if not contains_tracer(state):
-            self._cached = state
-        return state
-
-
-class PrematerializedState:
-    """Adapter giving an already-built state the ``materialize()`` surface.
-
-    Used where a :class:`SolveProblemContext` is assembled from an existing
-    :class:`SolveProblem` (whose ``initial_state`` is already a concrete
-    ket/DM) rather than from a chip.
-    """
-
-    __slots__ = ("_state",)
-
-    def __init__(self, state: Any) -> None:
-        self._state = state
-
-    def materialize(self) -> Any:
-        return self._state
-
-
-def _aggregate_batch_metadata(descriptions: list[HamiltonianDescription]) -> dict[str, Any]:
-    """Aggregate advisory solver-hint metadata across every description in a batch.
-
-    Copying the reference element's metadata verbatim is unsafe once
-    durations or frequencies are swept per element: each variant's own
-    ``max_carrier_freq_ghz`` / ``spectral_bound_ghz`` / ``max_step_ns`` can
-    differ. Carrier and spectral bounds take the maximum across elements
-    (the batch as a whole is bounded by its fastest/most-spread element);
-    ``max_step_ns`` takes the minimum (bounded by its narrowest pulse) and
-    is present only when every element reports one -- a single traced
-    window anywhere in the batch means the ceiling is incomplete for the
-    whole batch. Non-advisory keys (e.g. ``"frame"``) are carried through
-    from the reference element, since batching already requires a shared
-    template.
-    """
-    metadata = dict(descriptions[0].metadata)
-    for key in ("max_carrier_freq_ghz", "spectral_bound_ghz", "max_step_ns"):
-        metadata.pop(key, None)
-
-    carrier_values = [d.metadata["max_carrier_freq_ghz"] for d in descriptions if "max_carrier_freq_ghz" in d.metadata]
-    if carrier_values:
-        metadata["max_carrier_freq_ghz"] = max(carrier_values)
-
-    spectral_values = [d.metadata["spectral_bound_ghz"] for d in descriptions if "spectral_bound_ghz" in d.metadata]
-    if spectral_values:
-        metadata["spectral_bound_ghz"] = max(spectral_values)
-
-    step_values = [d.metadata.get("max_step_ns") for d in descriptions]
-    non_none = [v for v in step_values if v is not None]
-    if len(non_none) == len(step_values) and non_none:
-        metadata["max_step_ns"] = min(non_none)
-
-    return metadata
-
-
-def build_solve_batch_from_descriptions(
+def _materialize_context_state(
     context: SolveProblemContext,
-    descriptions: list[HamiltonianDescription],
+    state_spec: Any,
+    engine_result: EngineResult,
+) -> Any:
+    """Materialize one explicit or default state against its own result bases."""
+    from quchip.chip.states import materialize_state_spec
+
+    selected = context.default_initial_state if state_spec is None else state_spec
+    return materialize_state_spec(context.chip, selected, engine_result.bases)
+
+
+def _prepare_context_eops(
+    context: SolveProblemContext,
+    engine_result: EngineResult,
+) -> tuple[Any, Any]:
+    """Project raw observable specs once the engine basis maps are available."""
+    if not isinstance(context.e_ops, dict):
+        return context.e_ops, context.e_ops_meta
+    return decompose_eops(
+        context.e_ops,
+        context.chip,
+        context.chip.backend,
+        engine_result.bases,
+    )
+
+
+def build_solve_batch_from_results(
+    context: SolveProblemContext,
+    engine_results: list[EngineResult],
     *,
     initial_states: list[Any] | None = None,
 ) -> SolveBatch:
-    """Merge N homogeneous :class:`HamiltonianDescription`s into one :class:`SolveBatch`.
+    """Package homogeneous :class:`EngineResult`s as one :class:`SolveBatch`.
 
-    All descriptions must share ``static_terms`` identity, the same number
+    All results must share ``static_terms`` identity, the same number
     of dynamic terms, and matching operator payloads per slot (by identity
     or by canonical fingerprint — crosstalk rebuilds equal-by-value
     operators on every instantiation). ``initial_states=None`` fills every
     element with ``context.default_initial_state``.
     """
-    if not descriptions:
-        raise ValueError("build_solve_batch_from_descriptions requires at least one description")
+    if not engine_results:
+        raise ValueError("build_solve_batch_from_results requires at least one engine result")
 
-    ref = descriptions[0]
-    batch_size = len(descriptions)
+    ref = engine_results[0]
+    batch_size = len(engine_results)
     n_dyn = len(ref.dynamic_terms)
-    _prefix = "build_solve_batch_from_descriptions: "
+    _prefix = "build_solve_batch_from_results: "
 
     # --- Skeleton checks: static terms, dim shape, dynamic term count ---
-    for idx, desc in enumerate(descriptions):
-        if desc.static_terms is not ref.static_terms:
+    for idx, result in enumerate(engine_results):
+        if result.approximation != ref.approximation:
             raise ValueError(
-                _prefix + "all descriptions must share identical static_terms (by identity); "
+                _prefix + "all engine results must use the same approximation; "
+                f"element {idx} uses {type(result.approximation).__name__}, "
+                f"expected {type(ref.approximation).__name__}."
+            )
+        if result.static_terms is not ref.static_terms:
+            raise ValueError(
+                _prefix + "all engine results must share identical static_terms (by identity); "
                 f"element {idx} differs."
             )
-        if len(desc.dynamic_terms) != n_dyn:
+        if len(result.dynamic_terms) != n_dyn:
             raise ValueError(
-                _prefix + "all descriptions must have the same number of dynamic terms; "
-                f"element {idx} has {len(desc.dynamic_terms)}, expected {n_dyn}."
+                _prefix + "all engine results must have the same number of dynamic terms; "
+                f"element {idx} has {len(result.dynamic_terms)}, expected {n_dyn}."
             )
-        if tuple(desc.dims) != tuple(ref.dims):
+        if tuple(result.dims) != tuple(ref.dims):
             raise ValueError(
-                _prefix + "all descriptions must share identical dims; "
-                f"element {idx} has {tuple(desc.dims)}, expected {tuple(ref.dims)}."
+                _prefix + "all engine results must share identical dims; "
+                f"element {idx} has {tuple(result.dims)}, expected {tuple(ref.dims)}."
             )
 
     # --- Per-slot compatibility + signal collection ---
@@ -332,20 +260,12 @@ def build_solve_batch_from_descriptions(
     # (operator payload, origin, tag) and is a ScalarModulation; collect
     # its signal. Crosstalk rebuilds operators every instantiation, so
     # equality is by canonical fingerprint, not by object identity.
-    dynamic_operators: list[Any] = []
-    dynamic_origins: list[Any] = []
-    dynamic_tags: list[str | None] = []
-    dynamic_signals: list[list[ScalarModulation]] = []
     for slot in range(n_dyn):
         ref_term = ref.dynamic_terms[slot]
         shared_operator = ref_term.operator
         canonical_key = shared_operator.fingerprint()
-        dynamic_origins.append(ref_term.origin)
-        dynamic_tags.append(ref_term.tag)
-
-        slot_signals: list[ScalarModulation] = []
-        for idx, desc in enumerate(descriptions):
-            term = desc.dynamic_terms[slot]
+        for idx, result in enumerate(engine_results):
+            term = result.dynamic_terms[slot]
             where = f"slot {slot}, element {idx}"
 
             if not isinstance(term.time_dependence, ScalarModulation):
@@ -368,48 +288,39 @@ def build_solve_batch_from_descriptions(
                     "batched IR requires equivalent operator payloads across the batch."
                 )
 
-            slot_signals.append(term.time_dependence)
-
-        dynamic_operators.append(shared_operator)
-        dynamic_signals.append(slot_signals)
-
-    batched = BatchedHamiltonianDescription(
-        batch_size=batch_size,
-        static_terms=ref.static_terms,
-        dynamic_operators=tuple(dynamic_operators),
-        dynamic_origins=tuple(dynamic_origins),
-        dynamic_tags=tuple(dynamic_tags),
-        dynamic_signals=tuple(tuple(sigs) for sigs in dynamic_signals),
-        dims=ref.dims,
-        metadata=_aggregate_batch_metadata(descriptions),
-        dropped_terms_by_element=tuple(d.dropped_terms for d in descriptions),
-    )
-
     if initial_states is None:
-        default = context.default_initial_state.materialize()
-        states: tuple[Any, ...] = tuple(default for _ in range(batch_size))
+        states: tuple[Any, ...] = tuple(
+            _materialize_context_state(context, None, result)
+            for result in engine_results
+        )
     elif len(initial_states) != batch_size:
         raise ValueError(
             f"initial_states length {len(initial_states)} does not match batch_size {batch_size}"
         )
     else:
-        default = context.default_initial_state
         states = tuple(
-            (default.materialize() if s is None else s) for s in initial_states
+            _materialize_context_state(context, state_spec, result)
+            for state_spec, result in zip(initial_states, engine_results)
         )
 
-    return SolveBatch(
-        chip=context.chip,
-        hamiltonian=batched,
-        initial_states=states,
-        tlist=context.tlist,
-        c_ops=context.c_ops,
-        e_ops=context.e_ops,
-        e_ops_meta=context.e_ops_meta,
-        resolved_frame=context.resolved_frame,
-        solver=context.solver,
-        options=context.options,
-    )
+    shared_metadata = _aggregate_batch_metadata(engine_results)
+    e_ops, e_ops_meta = _prepare_context_eops(context, ref)
+    problems: list[SolveProblem] = []
+    for state, result in zip(states, engine_results):
+        problems.append(
+            SolveProblem(
+                chip=context.chip,
+                engine_result=replace(result, metadata=shared_metadata),
+                initial_state=state,
+                tlist=context.tlist,
+                e_ops=e_ops,
+                e_ops_meta=e_ops_meta,
+                resolved_frame=context.resolved_frame,
+                solver=context.solver,
+                options=context.options,
+            )
+        )
+    return SolveBatch(chip=context.chip, problems=tuple(problems))
 
 
 def build_solve_problem(
@@ -421,28 +332,39 @@ def build_solve_problem(
     options: dict | None = None,
     e_ops: dict | None = None,
     initial_state: Any | None = None,
+    approximation: Approximation | None = None,
 ) -> SolveProblem:
-    """Run stages 1-4 end-to-end and return a frozen :class:`SolveProblem`.
+    """Resolve, assemble, and package a frozen :class:`SolveProblem`.
 
     Equivalent to :func:`prepare_solve_problem_context` followed by
-    :func:`build_hamiltonian_description`. For many variants sharing one
+    :func:`build_engine_result`. For many variants sharing one
     chip configuration, prefer that two-step form with
-    :func:`build_solve_batch_from_descriptions`.
+    :func:`build_solve_batch_from_results`.
     """
     context = prepare_solve_problem_context(
-        chip, tlist, solver=solver, options=options, e_ops=e_ops, drive_ops=drive_ops,
+        chip,
+        tlist,
+        solver=solver,
+        options=options,
+        e_ops=e_ops,
+        drive_ops=drive_ops,
+        approximation=approximation,
     )
-    description = build_hamiltonian_description(
-        chip, drive_ops, resolved_frame=context.resolved_frame,
+    engine_result = build_engine_result(
+        chip,
+        drive_ops,
+        resolved_frame=context.resolved_frame,
+        approximation=context.approximation,
+        _base_result=context._base_result,
     )
+    e_ops_solver, e_ops_meta = _prepare_context_eops(context, engine_result)
     return SolveProblem(
         chip=context.chip,
-        hamiltonian=description,
-        initial_state=context.default_initial_state.materialize() if initial_state is None else initial_state,
+        engine_result=engine_result,
+        initial_state=_materialize_context_state(context, initial_state, engine_result),
         tlist=context.tlist,
-        c_ops=context.c_ops,
-        e_ops=context.e_ops,
-        e_ops_meta=context.e_ops_meta,
+        e_ops=e_ops_solver,
+        e_ops_meta=e_ops_meta,
         resolved_frame=context.resolved_frame,
         solver=context.solver,
         options=context.options,
@@ -460,14 +382,14 @@ def solve_problem_list(
     Problems that share an operator skeleton are merged into one batched solve.
     A backend may dispatch a large heterogeneous list independently; otherwise
     each structural group follows the normal batch path, with incompatible
-    descriptions falling back to per-problem ``backend.solve_problem`` calls.
+    results falling back to per-problem ``backend.solve_problem`` calls.
 
-    Grouping is a two-stage filter. The cheap identity-based prefilter here
+    Grouping uses two filters. The cheap identity-based prefilter here
     (:func:`_skeleton_prefilter_key`) buckets problems by ``id()`` of their
     shared operators/metadata so that obviously-incompatible problems are never
     compared by value. The canonical by-value compatibility check is intentionally
     a *separate* concern that lives inside
-    :func:`build_solve_batch_from_descriptions` (operator ``fingerprint``):
+    :func:`build_solve_batch_from_results` (operator ``fingerprint``):
     the prefilter is an identity prefilter, the fingerprint is the value check.
     Returns a :class:`~quchip.results.results.SimulationBatchResult`.
     """
@@ -508,8 +430,8 @@ def solve_problem_list(
         return ("ops", tuple(id(o) for o in ops))
 
     def _skeleton_prefilter_key(problem: SolveProblem) -> tuple:
-        desc = problem.hamiltonian
-        solver_name = problem.solver or ("mesolve" if problem.c_ops else "sesolve")
+        desc = problem.engine_result
+        solver_name = problem.solver or ("mesolve" if desc.collapse_terms else "sesolve")
         return (
             solver_name,
             id(desc.static_terms),
@@ -518,7 +440,7 @@ def solve_problem_list(
             tuple(term.tag for term in desc.dynamic_terms),
             _tlist_key(problem.tlist),
             _op_list_key(problem.e_ops),
-            _op_list_key(problem.c_ops),
+            tuple(id(term.operator) for term in desc.collapse_terms),
             _options_key(problem.options),
             id(problem.resolved_frame),
         )
@@ -548,9 +470,9 @@ def solve_problem_list(
         ref = group_problems[0]
         try:
             ctx = SolveProblemContext.from_problem(ref)
-            batch = build_solve_batch_from_descriptions(
+            batch = build_solve_batch_from_results(
                 ctx,
-                [p.hamiltonian for p in group_problems],
+                [p.engine_result for p in group_problems],
                 initial_states=[p.initial_state for p in group_problems],
             )
         except ValueError:

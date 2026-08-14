@@ -21,6 +21,7 @@ def maybe_simulate_partitioned(
     initial_state: Any | None,
     check_truncation: bool,
     truncation_threshold: float,
+    approximation: Any | None,
 ) -> Any | None:
     """Run per-component solves when the chip splits; ``None`` declines to the joint path."""
     if initial_state is not None and not isinstance(initial_state, Mapping):
@@ -50,5 +51,6 @@ def maybe_simulate_partitioned(
             check_truncation=check_truncation,
             truncation_threshold=truncation_threshold,
             partition=False,
+            approximation=approximation,
         ))
     return PartitionedSimulationResult(results, part, key_plan)

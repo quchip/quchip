@@ -1,245 +1,818 @@
-"""Backend-neutral operator algebra for the declarative physics DSL.
-
-:class:`PhysicsExpr` is the expression tree :class:`~quchip.declarative.ops.LocalOps`
-handles compose into; :func:`compile_expr` lowers a tree into a backend-native
-operator once endpoint labels are resolved to concrete Hilbert spaces.
-"""
+"""One backend-neutral expression tree for authored scalar and operator physics."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
+import inspect
+from collections.abc import Iterator
+from dataclasses import dataclass, field, replace
+from math import prod
+from typing import Any, Mapping
 
-from quchip.utils.jax_utils import maybe_concrete_scalar
-
-
-@dataclass(frozen=True)
-class DynamicScalar:
-    """A time-dependent scalar payload attached to a :class:`PhysicsExpr`.
-
-    ``source`` is the time-dependent object (typically an envelope or a
-    :class:`~quchip.engine.ir.ScalarModulation`) that the engine compiles
-    into a :class:`~quchip.engine.ir.DynamicTerm` when assembling the
-    Hamiltonian. Multiplying a ``DynamicScalar`` by a ``PhysicsExpr``
-    records the source on the resulting expression's ``dynamic_sources``
-    tuple — the operator structure itself is unchanged.
-    """
-
-    source: Any
-
-    def __mul__(self, other: Any) -> "PhysicsExpr":
-        """Attach this dynamic source to ``other``."""
-        return ensure_expr(other)._with_dynamic(self)
-
-    def __rmul__(self, other: Any) -> "PhysicsExpr":
-        """Attach this dynamic source when it appears on the right."""
-        return ensure_expr(other)._with_dynamic(self)
+import jax.numpy as jnp
 
 
-def _is_scalar_like(value: Any) -> bool:
-    """Return True if ``value`` should be treated as a scalar coefficient.
+class UnboundParameterError(ValueError):
+    """Numerical materialization was requested without every required value."""
 
-    Accepts Python numeric types, 0-d JAX arrays, JAX tracers (which expose
-    ``ndim``), and 0-d numpy scalars. Rejects :class:`PhysicsExpr` and
-    :class:`DynamicScalar` (they have their own multiplication semantics)
-    and any array-shaped operand (``ndim > 0``) — silently swallowing those
-    would hide a real type error.
-    """
-    if isinstance(value, (int, float, complex)):
-        return True
-    if isinstance(value, (PhysicsExpr, DynamicScalar)):
-        return False
-    ndim = getattr(value, "ndim", 0)
-    return ndim == 0
+
+def is_opaque_callable(value: Any) -> bool:
+    """Return whether *value* is a callable authoring function, not a matrix-like object."""
+    return callable(value) and getattr(value, "shape", None) is None
 
 
 @dataclass(frozen=True)
 class PhysicsExpr:
-    """Backend-neutral expression tree for local physics operators.
-
-    Built by composing :class:`~quchip.declarative.ops.LocalOps` operator
-    handles, not constructed directly. Operators on the *same* endpoint
-    compose with ``@`` (matrix product); operators on *different* endpoints
-    combine with ``*`` (tensor product). Scalars scale via ``*``, and an
-    envelope or modulation multiplied in is recorded as a dynamic source
-    rather than altering the operator structure.
-
-    Examples
-    --------
-    >>> from quchip.declarative import LocalOps
-    >>> a, b = LocalOps("q0", 3), LocalOps("q1", 3)
-    >>> coupling = 0.01 * (a.a * b.adag + a.adag * b.a)
-    >>> coupling.kind
-    'add'
-    >>> coupling.labels
-    ('q0', 'q1')
-    """
+    """Authored scalar and operator algebra, independent of numerical values."""
 
     kind: str
     args: tuple[Any, ...] = ()
     labels: tuple[str, ...] = ()
-    scalar: Any = 1.0
-    dynamic_sources: tuple[DynamicScalar, ...] = ()
+    _bindings: Mapping[str, Any] = field(default_factory=dict, compare=False, repr=False)
+
+    @classmethod
+    def parameter(
+        cls,
+        *,
+        scope: str,
+        name: str,
+        symbol: str | None = None,
+        unit: str | None = None,
+    ) -> "PhysicsExpr":
+        """Create a symbolic declared-parameter leaf."""
+        return cls("parameter", (f"{scope}.{name}", symbol or name, unit))
+
+    @classmethod
+    def literal(cls, value: Any) -> "PhysicsExpr":
+        """Create a literal scalar leaf."""
+        return cls("literal", (value,))
+
+    @classmethod
+    def from_matrix(
+        cls,
+        value: Any,
+        *,
+        labels: tuple[str, ...],
+        dims: tuple[int, ...],
+        name: str | None = None,
+    ) -> "PhysicsExpr":
+        """Create a named backend-neutral matrix contribution."""
+        if len(labels) != len(dims):
+            raise ValueError("Matrix labels and dimensions must have the same length.")
+        return cls("matrix", (value, tuple(dims), name), tuple(labels))
+
+    @classmethod
+    def from_function(
+        cls,
+        function: Any,
+        *arguments: Any,
+        labels: tuple[str, ...],
+        dims: tuple[int, ...],
+        name: str | None = None,
+    ) -> "PhysicsExpr":
+        """Create an opaque matrix-valued contribution from a pure function.
+
+        The function runs only during numerical materialization. Display keeps
+        its declared name and arguments, such as ``X(a, b)``, without exposing
+        the implementation as symbolic algebra.
+        """
+        if len(labels) != len(dims):
+            raise ValueError("Function labels and dimensions must have the same length.")
+        if not callable(function):
+            raise TypeError("function must be callable.")
+        display_name = name or getattr(function, "__name__", None)
+        if not display_name or display_name == "<lambda>":
+            raise ValueError("Anonymous functions require a symbolic name.")
+        return cls(
+            "function",
+            (function, tuple(dims), display_name, *(ensure_expr(arg) for arg in arguments)),
+            tuple(labels),
+        )
+
+    @classmethod
+    def from_state(
+        cls,
+        value: Any,
+        *,
+        labels: tuple[str, ...],
+        dims: tuple[int, ...],
+        name: str,
+    ) -> "PhysicsExpr":
+        """Create a named authored ket contribution."""
+        return cls("state", (value, tuple(dims), name), tuple(labels))
+
+    @classmethod
+    def from_state_function(
+        cls,
+        function: Any,
+        *arguments: Any,
+        labels: tuple[str, ...],
+        dims: tuple[int, ...],
+        name: str,
+    ) -> "PhysicsExpr":
+        """Create an opaque callable ket contribution."""
+        if not callable(function):
+            raise TypeError("function must be callable.")
+        return cls(
+            "state_function",
+            (function, tuple(dims), name, *(ensure_expr(arg) for arg in arguments)),
+            tuple(labels),
+        )
+
+    @classmethod
+    def from_signal(cls, signal: Any, *, name: str = "f") -> "PhysicsExpr":
+        """Create a scalar time-function leaf backed by an engine signal."""
+        return cls("signal", (signal, name))
+
+    def embed(self, labels: tuple[str, ...], dims: tuple[int, ...]) -> "PhysicsExpr":
+        """Embed this local contribution into an ordered composite Hilbert space."""
+        if len(labels) != len(dims):
+            raise ValueError("Composite labels and dimensions must have the same length.")
+        missing = set(self.labels) - set(labels)
+        if missing:
+            raise ValueError(f"Cannot embed labels absent from the composite space: {sorted(missing)}")
+        return PhysicsExpr("embed", (self, tuple(labels), tuple(dims)), tuple(labels))
+
+    def with_bindings(self, bindings: Mapping[str, Any]) -> "PhysicsExpr":
+        """Attach default values used only by direct numerical inspection."""
+        return replace(self, _bindings=dict(bindings))
+
+    def parameter_paths(self) -> tuple[str, ...]:
+        """Return referenced dotted parameter paths in authored order."""
+        return tuple(dict.fromkeys(
+            node.args[0] for node in _walk_expr(self) if node.kind == "parameter"
+        ))
+
+    def numeric_values(self) -> tuple[Any, ...]:
+        """Return bound and matrix payloads for tracer-safe cache decisions."""
+        values: list[Any] = []
+        for node in _walk_expr(self):
+            values.extend(node._bindings.values())
+            if node.kind in ("literal", "matrix", "state", "signal"):
+                values.append(node.args[0])
+        return tuple(values)
+
+    @property
+    def shape(self) -> tuple[int, int]:
+        """Matrix shape implied by this operator expression's static support."""
+        if not self.labels:
+            raise AttributeError("Scalar expressions do not have a matrix shape.")
+        if self.kind == "op":
+            dimension = self.args[1].dimension
+            return (dimension, dimension)
+        if self.kind in ("matrix", "function"):
+            dimension = prod(self.args[1])
+            return (dimension, dimension)
+        if self.kind in ("state", "state_function"):
+            return (prod(self.args[1]), 1)
+        if self.kind == "embed":
+            dimension = prod(self.args[2])
+            return (dimension, dimension)
+        if self.kind == "tensor":
+            dimension = self.args[0].shape[0] * self.args[1].shape[0]
+            return (dimension, dimension)
+        for arg in self.args:
+            if isinstance(arg, PhysicsExpr) and arg.labels:
+                return arg.shape
+        raise AttributeError("Operator shape is not available for this expression.")
 
     def _binary(self, other: Any, kind: str) -> "PhysicsExpr":
-        """Combine with *other* under *kind*, validating same-support algebra for ``add``/``sub``.
-
-        Addition and subtraction require both operands to be
-        :class:`PhysicsExpr` with identical endpoint support: a bare scalar
-        is backend-ambiguous (it could mean scalar-times-identity or an
-        element-wise array add), and combining terms from different
-        endpoints without a tensor product is not an interaction any
-        coupling declares. Cross-endpoint terms combine with ``*`` instead.
-        """
+        rhs = ensure_expr(other)
         if kind in ("add", "sub"):
-            if not isinstance(other, PhysicsExpr):
+            if bool(self.labels) != bool(rhs.labels):
                 raise TypeError(
-                    f"Cannot add or subtract {type(other).__name__!r} and PhysicsExpr directly; "
-                    "write the identity explicitly, e.g. `op.n + 1.0 * op.I`."
+                    "Cannot add a scalar directly to an operator; write the identity explicitly."
                 )
-            rhs = other
             if self.labels != rhs.labels:
                 raise TypeError(
                     "Addition and subtraction require operands with the same endpoint support "
-                    f"(got {self.labels!r} and {rhs.labels!r}); combine cross-endpoint terms with `*`."
+                    f"(got {self.labels!r} and {rhs.labels!r})."
                 )
-        else:
-            rhs = ensure_expr(other)
         return PhysicsExpr(
-            kind=kind,
-            args=(self, rhs),
-            labels=tuple(dict.fromkeys(self.labels + rhs.labels)),
-            dynamic_sources=self.dynamic_sources + rhs.dynamic_sources,
-        )
-
-    def _with_dynamic(self, dynamic: DynamicScalar) -> "PhysicsExpr":
-        """Return a copy of this expression with *dynamic* appended to its dynamic sources."""
-        return PhysicsExpr(
-            kind=self.kind,
-            args=self.args,
-            labels=self.labels,
-            scalar=self.scalar,
-            dynamic_sources=self.dynamic_sources + (dynamic,),
-        )
-
-    def without_dynamic_sources(self) -> "PhysicsExpr":
-        """Return the same operator expression with dynamic sources stripped."""
-        return PhysicsExpr(
-            kind=self.kind,
-            args=tuple(arg.without_dynamic_sources() if isinstance(arg, PhysicsExpr) else arg for arg in self.args),
-            labels=self.labels,
-            scalar=self.scalar,
-            dynamic_sources=(),
+            kind,
+            (self, rhs),
+            tuple(dict.fromkeys(self.labels + rhs.labels)),
         )
 
     def __add__(self, other: Any) -> "PhysicsExpr":
-        """Add, requiring both operands to share the same endpoint support."""
         return self._binary(other, "add")
 
+    def __radd__(self, other: Any) -> "PhysicsExpr":
+        return ensure_expr(other)._binary(self, "add")
+
     def __sub__(self, other: Any) -> "PhysicsExpr":
-        """Subtract, requiring both operands to share the same endpoint support."""
         return self._binary(other, "sub")
 
+    def __rsub__(self, other: Any) -> "PhysicsExpr":
+        return ensure_expr(other)._binary(self, "sub")
+
     def __matmul__(self, other: Any) -> "PhysicsExpr":
-        """Compose via matrix product, requiring both operands to act on the same endpoint."""
         rhs = ensure_expr(other)
-        if self.labels != rhs.labels:
-            raise TypeError("Cannot use @ for operators on different endpoints; use * for tensor product.")
+        if not self.labels or self.labels != rhs.labels:
+            raise TypeError("Cannot use @ for operators on different endpoints; use * across endpoints.")
         return self._binary(rhs, "matmul")
 
-    def _scale(self, other: Any) -> "PhysicsExpr | None":
-        """Scale by a scalar or attach a dynamic source; ``None`` if neither applies."""
-        if isinstance(other, DynamicScalar):
-            return self._with_dynamic(other)
-        if _is_scalar_like(other):
-            return PhysicsExpr(self.kind, self.args, self.labels, self.scalar * other, self.dynamic_sources)
-        return None
-
     def __mul__(self, other: Any) -> "PhysicsExpr":
-        """Scale by a scalar, attach a dynamic source, or tensor disjoint endpoints."""
-        scaled = self._scale(other)
-        if scaled is not None:
-            return scaled
         rhs = ensure_expr(other)
-        dynamic_sources = self.dynamic_sources + rhs.dynamic_sources
-        if not self.labels or not rhs.labels:
-            # One side carries no operator support of its own (e.g. a
-            # DynamicScalar chained through a bare scalar via ensure_expr,
-            # producing a labels=() "scalar" node). Merge as a scale of the
-            # operator-bearing side rather than tensoring, so the dynamic
-            # source rides the real operator instead of landing on a tensor
-            # node with no backend operator on one factor.
-            base, factor = (self, rhs) if self.labels else (rhs, self)
+        if self.labels and rhs.labels:
+            if set(self.labels) & set(rhs.labels):
+                raise TypeError(
+                    "Cannot use * for operators on the same endpoint or with overlapping "
+                    "endpoint support; use @ on one endpoint."
+                )
             return PhysicsExpr(
-                kind=base.kind, args=base.args, labels=base.labels,
-                scalar=base.scalar * factor.scalar, dynamic_sources=dynamic_sources,
+                "tensor",
+                (self, rhs),
+                tuple(dict.fromkeys(self.labels + rhs.labels)),
             )
-        if set(self.labels) & set(rhs.labels):
-            raise TypeError(
-                "Cannot use * for operators with overlapping endpoint support "
-                f"({self.labels!r} and {rhs.labels!r}); operators on the same endpoint use @ for "
-                "matrix composition, and tensor product requires disjoint label support."
-            )
-        return PhysicsExpr(
-            kind="tensor",
-            args=(self, rhs),
-            labels=tuple(dict.fromkeys(self.labels + rhs.labels)),
-            dynamic_sources=dynamic_sources,
-        )
+        if self.labels or rhs.labels:
+            scalar, operator = (rhs, self) if self.labels else (self, rhs)
+            return PhysicsExpr("scale", (scalar, operator), operator.labels)
+        return PhysicsExpr("mul", (self, rhs))
 
     def __rmul__(self, other: Any) -> "PhysicsExpr":
-        """Handle scalar or dynamic-source multiplication from the left."""
-        scaled = self._scale(other)
-        if scaled is not None:
-            return scaled
-        # If both operands are PhysicsExpr, Python dispatches to __mul__ on the left and
-        # never reflects to __rmul__. Anything else here is a type the user shouldn't be
-        # multiplying by an operator — surface it as a clear error.
-        raise TypeError(f"Cannot multiply {type(other).__name__} by PhysicsExpr.")
+        return ensure_expr(other).__mul__(self)
 
-    def has_dynamic_source(self) -> bool:
-        """Return whether this expression carries any time-dependent source."""
-        return bool(self.dynamic_sources)
+    def __truediv__(self, other: Any) -> "PhysicsExpr":
+        rhs = ensure_expr(other)
+        if rhs.labels:
+            raise TypeError("Division by an operator is not defined.")
+        return self * PhysicsExpr("pow", (rhs, PhysicsExpr.literal(-1)))
+
+    def __rtruediv__(self, other: Any) -> "PhysicsExpr":
+        if self.labels:
+            raise TypeError("Division by an operator is not defined.")
+        return ensure_expr(other) * PhysicsExpr(
+            "pow", (self, PhysicsExpr.literal(-1))
+        )
+
+    def __pow__(self, other: Any) -> "PhysicsExpr":
+        rhs = ensure_expr(other)
+        if self.labels or rhs.labels:
+            raise TypeError("Use @ for operator powers; ** is scalar-only.")
+        return PhysicsExpr("pow", (self, rhs))
+
+    def __neg__(self) -> "PhysicsExpr":
+        return -1 * self
+
+    def latex(self) -> str:
+        """Render the authored expression with familiar mathematical notation."""
+        return _latex(self)
+
+    def _repr_latex_(self) -> str:
+        return f"${self.latex()}$"
+
+    def __str__(self) -> str:
+        return self.latex()
+
+    def matrix(
+        self,
+        bindings: Mapping[str, Any] | None = None,
+        *,
+        t: Any | None = None,
+        backend: Any = None,
+    ) -> Any:
+        """Materialize this expression and return its dense numerical array."""
+        if backend is None:
+            from quchip.backend import get_default_backend
+
+            backend = get_default_backend()
+        native = materialize_expr(
+            self,
+            backend,
+            bindings=bindings,
+            t=t,
+        )
+        return backend.to_array(native)
+
+
+class ParameterNamespace:
+    """Attribute view exposing one owner's declared fields as symbolic leaves."""
+
+    __slots__ = ("_scope", "_fields")
+
+    def __init__(self, scope: str, fields: Mapping[str, Any]) -> None:
+        self._scope = scope
+        self._fields = fields
+
+    def __getattr__(self, name: str) -> PhysicsExpr:
+        try:
+            spec = self._fields[name]
+        except KeyError as exc:
+            raise AttributeError(f"No declared parameter {name!r} on {self._scope!r}.") from exc
+        return PhysicsExpr.parameter(
+            scope=self._scope,
+            name=name,
+            symbol=spec.symbol,
+            unit=spec.unit,
+        )
+
+    def __dir__(self) -> list[str]:
+        return sorted(self._fields)
 
 
 def ensure_expr(value: Any) -> PhysicsExpr:
-    """Coerce a scalar-like value into :class:`PhysicsExpr`."""
+    """Coerce a scalar value into the shared expression tree."""
     if isinstance(value, PhysicsExpr):
         return value
-    if _is_scalar_like(value):
-        return PhysicsExpr(kind="scalar", scalar=value)
-    raise TypeError(f"Expected PhysicsExpr-compatible value, got {type(value).__name__}")
+    if isinstance(value, (int, float, complex)) or getattr(value, "ndim", None) == 0:
+        return PhysicsExpr.literal(value)
+    raise TypeError(f"Expected a scalar or PhysicsExpr, got {type(value).__name__}.")
 
 
-def compile_expr(expr: PhysicsExpr, op_lookup: dict[tuple[str, str], Any], backend: Any) -> Any:
-    """Compile a :class:`PhysicsExpr` into a backend-native operator.
-
-    ``op_lookup`` maps ``(label, operator_name)`` to a backend operator
-    (e.g. ``a``, ``adag``, ``n``, ``I`` for each device label). ``backend``
-    is the active default backend; only its ``tensor()`` method is used
-    here. Scalar coefficients carried by every node are preserved
-    consistently — including traced (non-concrete) scalars, which are
-    multiplied unconditionally so gradients still flow.
-    """
-    if expr.kind == "scalar":
-        return expr.scalar
-    if expr.kind == "op":
-        label = expr.labels[0]
-        return expr.scalar * op_lookup[(label, expr.args[0])]
-    if expr.kind == "add":
-        result = compile_expr(expr.args[0], op_lookup, backend) + compile_expr(expr.args[1], op_lookup, backend)
-    elif expr.kind == "sub":
-        result = compile_expr(expr.args[0], op_lookup, backend) - compile_expr(expr.args[1], op_lookup, backend)
-    elif expr.kind == "matmul":
-        result = compile_expr(expr.args[0], op_lookup, backend) @ compile_expr(expr.args[1], op_lookup, backend)
-    elif expr.kind == "tensor":
-        result = backend.tensor(
-            compile_expr(expr.args[0], op_lookup, backend),
-            compile_expr(expr.args[1], op_lookup, backend),
+def as_operator_expr(
+    value: Any,
+    *,
+    labels: tuple[str, ...],
+    dims: tuple[int, ...],
+    name: str,
+    arguments: tuple[Any, ...] = (),
+    owner: Any | None = None,
+    scope: str | None = None,
+    allowed: Mapping[str, Any] | None = None,
+) -> PhysicsExpr:
+    """Normalize symbolic, matrix, or opaque callable operator authorship."""
+    expected = (prod(dims), prod(dims))
+    if isinstance(value, PhysicsExpr):
+        if not value.labels:
+            raise TypeError("An operator expression must carry at least one subsystem label.")
+        if value.labels != labels:
+            raise TypeError(
+                f"Operator expression support {value.labels!r} does not match {labels!r}."
+            )
+        if value.shape != expected:
+            raise ValueError(
+                f"Operator expression has shape {value.shape}, expected {expected}."
+            )
+        return value
+    if is_opaque_callable(value):
+        arguments, bindings = _resolve_callable_arguments(
+            value, arguments=arguments, owner=owner, scope=scope, allowed=allowed
         )
+        return PhysicsExpr.from_function(
+            value,
+            *arguments,
+            labels=labels,
+            dims=dims,
+            name=name,
+        ).with_bindings(bindings)
+    if getattr(value, "shape", None) != expected:
+        raise TypeError(
+            f"Operator must be a PhysicsExpr, callable, or matrix with shape {expected}; "
+            f"got {type(value).__name__} with shape {getattr(value, 'shape', None)}."
+        )
+    return PhysicsExpr.from_matrix(value, labels=labels, dims=dims, name=name)
+
+
+def as_scalar_expr(
+    value: Any,
+    *,
+    name: str,
+    arguments: tuple[Any, ...] = (),
+    owner: Any | None = None,
+    scope: str | None = None,
+    allowed: Mapping[str, Any] | None = None,
+) -> PhysicsExpr:
+    """Normalize symbolic, numeric, or opaque callable scalar authorship."""
+    if isinstance(value, PhysicsExpr):
+        if value.labels:
+            raise TypeError("A scalar expression cannot carry subsystem labels.")
+        return value
+    if is_opaque_callable(value):
+        arguments, bindings = _resolve_callable_arguments(
+            value, arguments=arguments, owner=owner, scope=scope, allowed=allowed
+        )
+        return PhysicsExpr.from_function(
+            value,
+            *arguments,
+            labels=(),
+            dims=(),
+            name=name,
+        ).with_bindings(bindings)
+    return ensure_expr(value)
+
+
+def as_state_expr(
+    value: Any,
+    *,
+    labels: tuple[str, ...],
+    dims: tuple[int, ...],
+    name: str,
+    arguments: tuple[Any, ...] = (),
+    owner: Any | None = None,
+    scope: str | None = None,
+    allowed: Mapping[str, Any] | None = None,
+) -> PhysicsExpr:
+    """Normalize an authored ket array or opaque callable without evaluating it."""
+    expected = (prod(dims), 1)
+    if isinstance(value, PhysicsExpr):
+        if value.labels != labels:
+            raise ValueError(
+                f"State expression support {value.labels!r} does not match {labels!r}."
+            )
+        if value.shape != expected:
+            raise ValueError(
+                f"State expression has shape {value.shape}, expected {expected}."
+            )
+        return value
+    if is_opaque_callable(value):
+        arguments, bindings = _resolve_callable_arguments(
+            value, arguments=arguments, owner=owner, scope=scope, allowed=allowed
+        )
+        return PhysicsExpr.from_state_function(
+            value,
+            *arguments,
+            labels=labels,
+            dims=dims,
+            name=name,
+        ).with_bindings(bindings)
+    shape = getattr(value, "shape", None)
+    if shape not in (expected, (expected[0],)):
+        raise TypeError(
+            f"State must be a PhysicsExpr, callable, or ket with shape {expected} or {(expected[0],)}; "
+            f"got {type(value).__name__} with shape {shape}."
+        )
+    return PhysicsExpr.from_state(value, labels=labels, dims=dims, name=name)
+
+
+def _resolve_callable_arguments(
+    function: Any,
+    *,
+    arguments: tuple[Any, ...],
+    owner: Any | None,
+    scope: str | None,
+    allowed: Mapping[str, Any] | None = None,
+) -> tuple[tuple[PhysicsExpr, ...], dict[str, Any]]:
+    """Resolve explicit callable arguments or bind their names to an owner."""
+    if not is_opaque_callable(function):
+        return (), {}
+    if arguments:
+        if owner is not None:
+            raise TypeError("Pass explicit callable arguments or an owner, not both.")
+        return tuple(ensure_expr(argument) for argument in arguments), {}
+    if owner is None or scope is None:
+        if inspect.signature(function).parameters:
+            raise TypeError("Opaque functions with parameters require an owner and scope.")
+        return (), {}
+    fields = getattr(type(owner), "__quchip_param_fields__", {})
+    resolved_arguments: list[PhysicsExpr] = []
+    bindings: dict[str, Any] = {}
+    for item in inspect.signature(function).parameters.values():
+        if item.kind not in (item.POSITIONAL_ONLY, item.POSITIONAL_OR_KEYWORD):
+            raise TypeError("Opaque functions may only declare positional parameters.")
+        if allowed is not None and item.name not in allowed:
+            raise ValueError(
+                f"Opaque function argument {item.name!r} is not declared; "
+                f"available fields are {sorted(allowed)}."
+            )
+        if not hasattr(owner, item.name):
+            raise ValueError(f"Opaque function argument {item.name!r} is not a field on {scope!r}.")
+        spec = fields.get(item.name)
+        path = f"{scope}.{item.name}"
+        resolved_arguments.append(
+            PhysicsExpr.parameter(
+                scope=scope,
+                name=item.name,
+                symbol=getattr(spec, "symbol", None) or item.name,
+                unit=getattr(spec, "unit", None),
+            )
+        )
+        bindings[path] = getattr(owner, item.name)
+    return tuple(resolved_arguments), bindings
+
+
+def _walk_expr(expr: PhysicsExpr) -> Iterator[PhysicsExpr]:
+    """Yield an expression tree in authored preorder."""
+    yield expr
+    for arg in expr.args:
+        if isinstance(arg, PhysicsExpr):
+            yield from _walk_expr(arg)
+
+
+def split_dynamic_hamiltonian(expr: PhysicsExpr) -> tuple[tuple[PhysicsExpr, PhysicsExpr], ...]:
+    """Split a linear Hamiltonian sum into scalar-signal and operator factors.
+
+    Signal algebra may be nonlinear and may contain multiple signal leaves.
+    Linearity is required only in the quantum operator: each additive term
+    must contain one operator-valued factor multiplied by a scalar expression
+    that depends on at least one delivered signal.
+    """
+    if not isinstance(expr, PhysicsExpr) or not expr.labels:
+        raise TypeError("A drive Hamiltonian must return an operator-valued PhysicsExpr.")
+    def additive_terms(node: PhysicsExpr) -> list[tuple[int, PhysicsExpr]]:
+        if node.kind == "add":
+            return additive_terms(node.args[0]) + additive_terms(node.args[1])
+        if node.kind == "sub":
+            return additive_terms(node.args[0]) + [
+                (-sign, term) for sign, term in additive_terms(node.args[1])
+            ]
+        return [(1, node)]
+
+    terms: list[tuple[PhysicsExpr, PhysicsExpr]] = []
+    for sign, term in additive_terms(expr):
+        if term.kind != "scale":
+            raise TypeError(
+                "Each drive Hamiltonian term must multiply a delivered signal by a quantum operator."
+            )
+        scalar, operator = term.args
+        if scalar.labels or not operator.labels:
+            raise TypeError("Drive Hamiltonian terms must be scalar-signal times operator.")
+        if not any(node.kind == "signal" for node in _walk_expr(scalar)):
+            raise TypeError("Drive Hamiltonian scalar factors must depend on the delivered signal.")
+        terms.append((scalar if sign > 0 else -scalar, operator))
+    return tuple(terms)
+
+
+def scalar_signal_program(expr: PhysicsExpr) -> Any:
+    """Lower scalar signal algebra into the backend-neutral signal program."""
+    from quchip.engine.ir import Add, Constant, Multiply, Scale, SignalPower
+
+    values: dict[str, Any] = {}
+    for node in _walk_expr(expr):
+        values.update(node._bindings)
+
+    def lower(node: PhysicsExpr) -> Any:
+        if node.labels:
+            raise TypeError("Signal-program lowering accepts scalar expressions only.")
+        if node.kind == "signal":
+            return node.args[0]
+        if node.kind == "literal":
+            return Constant(node.args[0])
+        if node.kind == "parameter":
+            try:
+                return Constant(values[node.args[0]])
+            except KeyError as exc:
+                raise UnboundParameterError(
+                    f"Missing numerical binding: {node.args[0]}"
+                ) from exc
+        if node.kind == "add":
+            return Add((lower(node.args[0]), lower(node.args[1])))
+        if node.kind == "sub":
+            return Add((lower(node.args[0]), Scale(lower(node.args[1]), -1.0)))
+        if node.kind == "mul":
+            return Multiply((lower(node.args[0]), lower(node.args[1])))
+        if node.kind == "pow":
+            exponent = node.args[1]
+            if exponent.kind != "literal":
+                raise TypeError("Signal powers require a literal exponent.")
+            return SignalPower(lower(node.args[0]), exponent.args[0])
+        raise TypeError(f"Unsupported scalar signal expression kind {node.kind!r}.")
+
+    return lower(expr)
+
+
+def materialize_expr(
+    expr: Any,
+    backend: Any,
+    *,
+    bindings: Mapping[str, Any] | None = None,
+    t: Any | None = None,
+) -> Any:
+    """Lower symbolic physics, passing an already-native contribution through."""
+    if not isinstance(expr, PhysicsExpr):
+        return expr
+    values: dict[str, Any] = {}
+    for node in _walk_expr(expr):
+        values.update(node._bindings)
+    if bindings is not None:
+        values.update(bindings)
+    missing = [path for path in expr.parameter_paths() if path not in values]
+    if missing:
+        raise UnboundParameterError("Missing numerical bindings: " + ", ".join(missing))
+
+    def lower(node: PhysicsExpr) -> Any:
+        if node.kind == "literal":
+            return node.args[0]
+        if node.kind == "parameter":
+            return values[node.args[0]]
+        if node.kind == "signal":
+            if t is None:
+                raise ValueError("t is required to materialize a time-dependent expression.")
+            from quchip.engine.ir import evaluate_signal_program
+
+            return evaluate_signal_program(node.args[0], t, xp=backend.array_module)
+        if node.kind == "matrix":
+            value, dims, _name = node.args
+            return backend.from_array(
+                backend.to_array(value),
+                dims=[list(dims), list(dims)],
+            )
+        if node.kind == "state":
+            value, dims, _name = node.args
+            return backend.from_array(
+                backend.to_array(value),
+                dims=[list(dims), [1]],
+            )
+        if node.kind == "function":
+            function, dims, _name, *arguments = node.args
+            value = function(*(lower(argument) for argument in arguments))
+            if not dims:
+                return value
+            return backend.from_array(value, dims=[list(dims), list(dims)])
+        if node.kind == "state_function":
+            function, dims, _name, *arguments = node.args
+            value = function(*(lower(argument) for argument in arguments))
+            return backend.from_array(value, dims=[list(dims), [1]])
+        if node.kind == "op":
+            name, space = node.args
+            return space.operator(name, backend)
+        if node.kind == "embed":
+            local = lower(node.args[0])
+            labels, dims = node.args[1:]
+            support = tuple(labels.index(label) for label in node.args[0].labels)
+            if len(support) == 1:
+                return backend.embed(local, support[0], dims)
+            if len(support) == 2:
+                return backend.embed_two_body(local, support[0], support[1], dims)
+            if support == tuple(range(len(dims))):
+                return local
+            raise ValueError(f"Cannot embed a contribution with support {support}.")
+        left = lower(node.args[0])
+        right = lower(node.args[1])
+        if node.kind == "add":
+            return left + right
+        if node.kind == "sub":
+            return left - right
+        if node.kind == "matmul":
+            return backend.matmul(left, right)
+        if node.kind == "tensor":
+            return backend.tensor(left, right)
+        if node.kind in ("scale", "mul"):
+            return left * right
+        if node.kind == "pow":
+            return left ** right
+        raise TypeError(f"Unknown PhysicsExpr kind {node.kind!r}.")
+
+    return lower(expr)
+
+
+class _ArrayLowerer:
+    """Minimal operator algebra for backend-independent JAX materialization."""
+
+    array_module = jnp
+
+    @staticmethod
+    def from_array(value: Any, dims: Any = None) -> Any:
+        del dims
+        return jnp.asarray(value, dtype=jnp.complex128)
+
+    @staticmethod
+    def to_array(value: Any) -> Any:
+        if hasattr(value, "to_jax"):
+            value = value.to_jax()
+        elif hasattr(value, "full"):
+            value = value.full()
+        return jnp.asarray(value)
+
+    @staticmethod
+    def destroy(dimension: int) -> Any:
+        return jnp.diag(jnp.sqrt(jnp.arange(1, dimension)), 1).astype(jnp.complex128)
+
+    @staticmethod
+    def create(dimension: int) -> Any:
+        return _ARRAY_LOWERER.destroy(dimension).conj().T
+
+    @staticmethod
+    def number(dimension: int) -> Any:
+        return jnp.diag(jnp.arange(dimension, dtype=jnp.complex128))
+
+    @staticmethod
+    def identity(dimension: int) -> Any:
+        return jnp.eye(dimension, dtype=jnp.complex128)
+
+    @staticmethod
+    def dag(value: Any) -> Any:
+        return jnp.asarray(value).conj().T
+
+    @staticmethod
+    def matmul(left: Any, right: Any) -> Any:
+        return left @ right
+
+    @staticmethod
+    def tensor(left: Any, right: Any) -> Any:
+        return jnp.kron(left, right)
+
+    @staticmethod
+    def embed(local: Any, target: int, dims: tuple[int, ...]) -> Any:
+        factors = [jnp.eye(dim, dtype=jnp.complex128) for dim in dims]
+        factors[target] = local
+        result = factors[0]
+        for factor in factors[1:]:
+            result = jnp.kron(result, factor)
+        return result
+
+    @staticmethod
+    def embed_two_body(local: Any, first: int, second: int, dims: tuple[int, ...]) -> Any:
+        if first > second:
+            first, second = second, first
+            local = jnp.asarray(local).reshape(
+                dims[second], dims[first], dims[second], dims[first]
+            ).transpose(1, 0, 3, 2).reshape(
+                dims[first] * dims[second], dims[first] * dims[second]
+            )
+        order = [first, second] + [index for index in range(len(dims)) if index not in (first, second)]
+        ordered_dims = [dims[index] for index in order]
+        result = jnp.asarray(local)
+        for dimension in ordered_dims[2:]:
+            result = jnp.kron(result, jnp.eye(dimension, dtype=jnp.complex128))
+        inverse = [order.index(index) for index in range(len(dims))]
+        axes = inverse + [len(dims) + index for index in inverse]
+        return result.reshape(*(ordered_dims + ordered_dims)).transpose(*axes).reshape(prod(dims), prod(dims))
+
+
+_ARRAY_LOWERER = _ArrayLowerer()
+
+
+def materialize_array(
+    expr: Any,
+    *,
+    bindings: Mapping[str, Any] | None = None,
+    t: Any | None = None,
+) -> Any:
+    """Materialize authored physics as a backend-independent JAX array."""
+    return _ARRAY_LOWERER.to_array(
+        materialize_expr(expr, _ARRAY_LOWERER, bindings=bindings, t=t)
+    )
+
+
+def materialize_scalar(
+    expr: Any,
+    *,
+    bindings: Mapping[str, Any] | None = None,
+) -> Any:
+    """Materialize a scalar expression without coercing traced values."""
+    return materialize_expr(expr, _ARRAY_LOWERER, bindings=bindings)
+
+
+def _latex(expr: PhysicsExpr, parent_precedence: int = 0) -> str:
+    if expr.kind == "literal":
+        value = expr.args[0]
+        return f"{value:g}" if isinstance(value, (int, float, complex)) else str(value)
+    if expr.kind == "parameter":
+        path, symbol, _unit = expr.args
+        scope = path.rsplit(".", 1)[0]
+        return _scoped_symbol(symbol, scope)
+    if expr.kind == "signal":
+        _signal, name = expr.args
+        return rf"{name}\!\left(t\right)"
+    if expr.kind == "matrix":
+        _value, _dims, name = expr.args
+        if name is not None:
+            return name
+        return rf"\hat H_{{{','.join(expr.labels)}}}"
+    if expr.kind == "state":
+        _value, _dims, name = expr.args
+        return name
+    if expr.kind == "function":
+        _function, _dims, name, *arguments = expr.args
+        rendered = ", ".join(_latex(argument) for argument in arguments)
+        return rf"{name}\!\left({rendered}\right)"
+    if expr.kind == "state_function":
+        _function, _dims, name, *arguments = expr.args
+        rendered = ", ".join(_latex(argument) for argument in arguments)
+        return rf"{name}\!\left({rendered}\right)"
+    if expr.kind == "op":
+        name, _space = expr.args
+        scope = expr.labels[0]
+        symbols = {
+            "a": r"\hat a",
+            "adag": r"\hat a^\dagger",
+            "n": r"\hat n",
+            "I": r"\hat I",
+            "sigma_x": r"\hat\sigma_x",
+            "sigma_y": r"\hat\sigma_y",
+            "sigma_z": r"\hat\sigma_z",
+            "sigma_plus": r"\hat\sigma_+",
+            "sigma_minus": r"\hat\sigma_-",
+        }
+        symbol = symbols.get(name, rf"\hat{{\mathrm{{{name}}}}}")
+        return _scoped_symbol(symbol, scope)
+    if expr.kind == "embed":
+        return _latex(expr.args[0], parent_precedence)
+    if expr.kind in ("add", "sub"):
+        precedence = 1
+    elif expr.kind in ("scale", "mul", "tensor"):
+        precedence = 2
     else:
-        raise TypeError(f"Unknown PhysicsExpr kind {expr.kind!r}")
-    scalar_concrete = maybe_concrete_scalar(expr.scalar)
-    if scalar_concrete is None or scalar_concrete != 1.0:
-        result = expr.scalar * result
-    return result
+        precedence = 3
+    left = _latex(expr.args[0], precedence)
+    right = _latex(expr.args[1], precedence + (1 if expr.kind == "sub" else 0))
+    if expr.kind == "add":
+        text = f"{left} + {right}"
+    elif expr.kind == "sub":
+        text = f"{left} - {right}"
+    elif expr.kind in ("matmul", "tensor", "mul", "scale"):
+        text = rf"{left}\,{right}"
+    elif expr.kind == "pow":
+        text = f"{left}^{{{right}}}"
+    else:
+        raise TypeError(f"Unknown PhysicsExpr kind {expr.kind!r}.")
+    return f"({text})" if precedence < parent_precedence else text
+
+
+def _scoped_symbol(symbol: str, scope: str) -> str:
+    """Attach an owner scope without producing nested LaTeX subscripts."""
+    if "_" not in symbol:
+        return f"{symbol}_{{{scope}}}"
+    base, subscript = symbol.split("_", 1)
+    subscript = subscript.removeprefix("{").removesuffix("}")
+    return f"{base}_{{{subscript},{scope}}}"

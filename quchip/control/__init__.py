@@ -1,19 +1,21 @@
 """Classical control surface: lines, signal chain, and envelopes."""
 
 from quchip.control.equipment import ControlEquipment, CrosstalkMatrix
-from quchip.control.signal import Crosstalk, Delay, Gain, SignalTransform
-from quchip.control.signal_spec import DriveSignalSpec, DriveModulation
+from quchip.control.signal import AnalyticSignal, Crosstalk, Delay, Gain, SignalTransform
 from quchip.control.drive import (
     BaseDrive,
     ChargeDrive,
-    DriveChannel,
+    CouplingDrive,
+    DeviceDrive,
     FluxDrive,
     ParametricDrive,
     PhaseDrive,
 )
 from quchip.control.drives_two_photon import TwoPhotonDrive
 from quchip.control.envelopes import (
+    Envelope,
     Gaussian,
+    GaussianDRAG,
     GaussianEdge,
     LinearRamp,
     Square,
@@ -23,14 +25,14 @@ from quchip.control.envelopes import (
 __all__ = [
     # Drive classes
     "BaseDrive",
+    "AnalyticSignal",
+    "CouplingDrive",
+    "DeviceDrive",
     "SignalTransform",
     "Crosstalk",
     "Delay",
     "Gain",
-    "DriveSignalSpec",
-    "DriveModulation",
     "ChargeDrive",
-    "DriveChannel",
     "FluxDrive",
     "ParametricDrive",
     "PhaseDrive",
@@ -38,7 +40,9 @@ __all__ = [
     "ControlEquipment",
     "CrosstalkMatrix",
     # Pulse envelopes
+    "Envelope",
     "Gaussian",
+    "GaussianDRAG",
     "GaussianEdge",
     "LinearRamp",
     "Square",

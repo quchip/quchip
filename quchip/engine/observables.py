@@ -1,9 +1,9 @@
-"""Stage 3: band-decompose dict-form ``e_ops`` and demodulate expectations post-solve.
+"""Band-decompose dict-form ``e_ops`` and demodulate expectations post-solve.
 
-The simulation is performed in the rotating frame chosen by stage 1;
+The simulation is performed in the resolved rotating frame;
 user-facing observables, however, live in the control frame (where
 matrix elements are labeled by detunings ``Δ = ω_drive − ω_frame``).
-This stage performs the two operations that tie those frames together:
+This module performs the two operations that tie those frames together:
 
 * **Pre-solve (:func:`decompose_eops`):** each user operator is split
   into excitation-change bands ``w = col − row`` (single-mode) or
@@ -18,10 +18,10 @@ This stage performs the two operations that tie those frames together:
   transformation applied to each band — equivalent to moving the
   observable from the simulation frame to the control frame.
 
-Stage 3 reads per-device demodulation frequencies from
+Observable reconstruction reads per-device demodulation frequencies from
 :class:`~quchip.engine.ir.ResolvedFrame` and forms the demodulation
 phase ``exp(i · 2π · ω · w · t)``. This is the inverse of the
-rotating-frame shift that stage 2 applied to the Hamiltonian.
+rotating-frame shift applied to the Hamiltonian during assembly.
 """
 
 from __future__ import annotations
@@ -39,6 +39,7 @@ from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import array_namespace as _array_namespace
 from quchip.utils.labeling import resolve_label
 from quchip.engine.bands import embed_single_mode_bands, local_mode_bands
+from quchip.engine.basis import semantic_to_solver_transform
 
 EOpKey = str | tuple[str, str]
 BandWeight = int | tuple[int, int]
@@ -73,6 +74,7 @@ def decompose_eops(
     e_ops_dict: Mapping[EOpKey, Any],
     chip: Chip,
     backend: Backend,
+    bases: Mapping[str, Any] | None = None,
 ) -> tuple[list[Any], list[BandMeta]]:
     """Flatten dict-form ``e_ops`` into ``(ops, meta)`` ready for the solver.
 
@@ -90,6 +92,9 @@ def decompose_eops(
     user passed a list of operators for the same key). The matching
     ``ops`` list is ready for direct consumption by the backend solver.
     """
+    if bases is None:
+        bases = chip.resolve().bases
+
     flat_ops: list[Any] = []
     meta: list[BandMeta] = []
 
@@ -104,7 +109,9 @@ def decompose_eops(
                 raise ValueError(f"Single-device key {device_label!r} requires one operator, got tuple value")
 
             dev_idx = chip.device_index(device_label)
-            dev_dim = chip.device_map[device_label].levels
+            dev = chip.device_map[device_label]
+            basis = bases[device_label]
+            dev_dim = basis.resolved_dim
 
             if isinstance(val, list):
                 ops_with_idx: list[tuple[int | None, Any]] = [(i, op) for i, op in enumerate(val)]
@@ -112,8 +119,17 @@ def decompose_eops(
                 ops_with_idx = [(None, val)]
 
             for sub_idx, op in ops_with_idx:
+                from quchip.chip.observables import prepare_local_op
+
+                op = prepare_local_op(dev, op, basis, backend)
                 for weight, embedded in embed_single_mode_bands(
-                    backend, op, device_index=dev_idx, dim=dev_dim, label=device_label, dims=dims
+                    backend,
+                    op,
+                    device_index=dev_idx,
+                    dim=dev_dim,
+                    label=device_label,
+                    dims=dims,
+                    semantic_to_solver=semantic_to_solver_transform(dev, basis),
                 ):
                     flat_ops.append(embedded)
                     meta.append(
@@ -134,11 +150,32 @@ def decompose_eops(
             op_a, op_b = val
             idx_a = chip.device_index(label_a)
             idx_b = chip.device_index(label_b)
-            dim_a = chip.device_map[label_a].levels
-            dim_b = chip.device_map[label_b].levels
+            dev_a = chip.device_map[label_a]
+            dev_b = chip.device_map[label_b]
+            basis_a = bases[label_a]
+            basis_b = bases[label_b]
+            dim_a = basis_a.resolved_dim
+            dim_b = basis_b.resolved_dim
 
-            for w_a, band_a in local_mode_bands(backend, op_a, dim=dim_a, label=label_a):
-                for w_b, band_b in local_mode_bands(backend, op_b, dim=dim_b, label=label_b):
+            from quchip.chip.observables import prepare_local_op
+
+            op_a = prepare_local_op(dev_a, op_a, basis_a, backend)
+            op_b = prepare_local_op(dev_b, op_b, basis_b, backend)
+
+            for w_a, band_a in local_mode_bands(
+                backend,
+                op_a,
+                dim=dim_a,
+                label=label_a,
+                semantic_to_solver=semantic_to_solver_transform(dev_a, basis_a),
+            ):
+                for w_b, band_b in local_mode_bands(
+                    backend,
+                    op_b,
+                    dim=dim_b,
+                    label=label_b,
+                    semantic_to_solver=semantic_to_solver_transform(dev_b, basis_b),
+                ):
                     product = backend.tensor(band_a, band_b)
                     embedded = backend.embed_two_body(product, idx_a, idx_b, dims)
                     flat_ops.append(embedded)

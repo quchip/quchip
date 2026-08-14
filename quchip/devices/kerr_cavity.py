@@ -36,15 +36,15 @@ References
 from __future__ import annotations
 
 
-from typing import TYPE_CHECKING
+from typing import Any, ClassVar
 
 from quchip.declarative.expr import PhysicsExpr
-from quchip.declarative.models import DeviceModel
 from quchip.declarative.ops import LocalOps
-from quchip.declarative.parameters import Scalar, parameter
+from quchip.declarative.parameters import UNBOUND, Scalar, parameter
+from quchip.devices.fock import FockDevice
 
 
-class KerrCavity(DeviceModel):
+class KerrCavity(FockDevice):
     """Kerr-nonlinear resonator supporting cat-qubit stabilisation.
 
     Hamiltonian:
@@ -103,8 +103,8 @@ class KerrCavity(DeviceModel):
     (5.0, 1.0, 10)
     """
 
-    _type_prefix: str = "kerr_cavity"
-    _default_levels: int = 30
+    _type_prefix: ClassVar[str] = "kerr_cavity"
+    _default_levels: ClassVar[int] = 30
     tunable_param_names = ("freq", "kerr")
     approximation = (
         "Kerr-nonlinear cavity effective single-mode model; "
@@ -115,26 +115,11 @@ class KerrCavity(DeviceModel):
     # This class does not implement cat-basis Paulis.
     computational = False
 
-    freq: Scalar = parameter(positive=True, unit="GHz")
+    freq: Scalar = parameter(default=UNBOUND, positive=True, unit="GHz", symbol=r"\omega")
     # Non-negative: a positive Kerr shifts even-photon levels downward.
-    kerr: Scalar = parameter(nonnegative=True, unit="GHz")
+    kerr: Scalar = parameter(default=UNBOUND, nonnegative=True, unit="GHz", symbol="K")
 
-    # --- generated __init__ stub (tools/gen_device_stubs.py); do not edit ---
-    if TYPE_CHECKING:
-        def __init__(
-            self,
-            freq: Scalar,
-            kerr: Scalar,
-            *,
-            levels: int = 30,
-            label: str | None = None,
-            T1: float | None = None,
-            T2: float | None = None,
-            thermal_population: float | None = None,
-        ) -> None: ...
-    # --- end generated stub ---
-
-    def local_hamiltonian(self, op: LocalOps) -> PhysicsExpr:
+    def local_hamiltonian(self, op: LocalOps, p: Any) -> PhysicsExpr:
         """Return :math:`H = \\omega \\hat{n} - K \\hat{n}(\\hat{n} - I)`.
 
         The Kerr term :math:`\\hat{n}(\\hat{n}-I) = \\hat{n}^2 - \\hat{n}`
@@ -148,7 +133,7 @@ class KerrCavity(DeviceModel):
             ``H = omega*n - K*n*(n-1)`` (GHz), diagonal in the Fock basis.
         """
         n = op.n
-        return self.freq * n - self.kerr * (n @ (n - op.I))
+        return p.freq * n - p.kerr * (n @ (n - op.I))
 
     def physics_notes(self) -> list[str]:
         """Return declared Kerr-cavity approximation notes."""

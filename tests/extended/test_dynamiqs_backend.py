@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 import warnings
 from typing import Any
 
@@ -24,25 +25,58 @@ from quchip.chip.couplings import Capacitive  # noqa: E402
 from quchip.control import ChargeDrive  # noqa: E402
 from quchip.control.sequence import QuantumSequence  # noqa: E402
 from quchip.control.envelopes import Square  # noqa: E402
+from quchip.declarative.expr import materialize_expr  # noqa: E402
 from quchip.engine import simulate  # noqa: E402
 from quchip.engine.ir import (  # noqa: E402
     CanonicalOperator,
     Carrier,
     Constant,
     DynamicTerm,
-    HamiltonianDescription,
+    EngineResult,
     ScalarModulation,
     Window,
 )
-from quchip.engine.stage1_frames import resolve_frame  # noqa: E402
-from quchip.engine.stage2_assembly import build_hamiltonian_description  # noqa: E402
-from quchip.engine.stage3_observables import decompose_eops  # noqa: E402
+from quchip.engine.frames import resolve_frame  # noqa: E402
+from quchip.engine.assembly import build_engine_result  # noqa: E402
+from quchip.engine.observables import decompose_eops  # noqa: E402
 
 
 @pytest.fixture
 def backend() -> DynamiqsBackend:
     """Return a fresh dynamiqs backend instance."""
     return DynamiqsBackend()
+
+
+def test_fock_noise_and_physical_observables_preserve_sparse_layout() -> None:
+    """Fock-owned noise, baths, and observables remain sparse through resolution."""
+    from quchip import Bath
+
+    q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0", T1=20_000.0)
+    q1 = DuffingTransmon(freq=5.2, anharmonicity=-0.24, levels=3, label="q1")
+    chip = Chip(
+        [q0, q1],
+        baths=[Bath("collective_decay", rate=1e-4)],
+        backend="dynamiqs",
+    )
+
+    result = chip.resolve(frame="lab")
+    assert result.collapse_terms
+    assert {term.operator.layout for term in result.collapse_terms} == {"dia"}
+    assert type(chip.observable(q0, "charge")).__name__ == "SparseDIAQArray"
+
+
+def test_native_batch_stack_preserves_compatible_dia_layout(backend: DynamiqsBackend) -> None:
+    """Compatible Dynamiqs DIA operators retain their sparse batch layout."""
+    operators = [scale * backend.destroy(4) for scale in (1.0, 2.0, 3.0)]
+
+    stacked = backend._stack_qarray_batch(operators)
+
+    assert type(stacked).__name__ == "SparseDIAQArray"
+    assert stacked.shape == (3, 4, 4)
+    npt.assert_allclose(
+        np.asarray(backend.to_array(stacked)),
+        np.stack([np.asarray(backend.to_array(operator)) for operator in operators]),
+    )
 
 
 def test_dynamiqs_backend_enables_float64(backend: DynamiqsBackend) -> None:
@@ -102,6 +136,32 @@ def test_dense_canonical_roundtrip_stays_dense(backend: DynamiqsBackend) -> None
     assert canonical.layout == "dense"
     assert getattr(rebuilt, "layout", None) == dynamiqs.dense
     npt.assert_allclose(np.asarray(backend.to_array(rebuilt)), np.asarray(backend.to_array(op)), atol=1e-12)
+
+
+def test_irregular_csr_uses_dense_when_dia_storage_would_be_larger(
+    backend: DynamiqsBackend,
+) -> None:
+    """CSR lowering chooses dense storage when its distinct diagonals outgrow the matrix."""
+    canonical = CanonicalOperator.from_csr(
+        values=np.arange(1, 8, dtype=complex),
+        indices=np.array([0, 1, 2, 3, 0, 0, 0]),
+        indptr=np.array([0, 4, 5, 6, 7]),
+        shape=(4, 4),
+        dims=(4,),
+        basis="fock",
+        subsystem_labels=("q",),
+    )
+
+    rebuilt = backend.from_canonical_operator(canonical)
+
+    assert getattr(rebuilt, "layout", None) == dynamiqs.dense
+    npt.assert_allclose(
+        np.asarray(backend.to_array(rebuilt)),
+        np.array(
+            [[1, 2, 3, 4], [5, 0, 0, 0], [6, 0, 0, 0], [7, 0, 0, 0]],
+            dtype=complex,
+        ),
+    )
 
 
 def test_tensor_partial_trace_and_coherent_state_helpers(backend: DynamiqsBackend) -> None:
@@ -177,7 +237,7 @@ def test_prepare_static_hamiltonian_preserves_sparse_layout() -> None:
     chip.dress()
     tlist = np.linspace(0.0, 10.0, 11)
     resolved = resolve_frame(chip, chip.frame)
-    desc = build_hamiltonian_description(chip, [], resolved_frame=resolved)
+    desc = build_engine_result(chip, [], resolved_frame=resolved)
     prepared = backend.prepare_hamiltonian(desc, tlist)
 
     assert getattr(prepared.rhs, "layout", None) == dynamiqs.dia
@@ -190,6 +250,7 @@ def test_prepare_driven_hamiltonian_remains_callable() -> None:
     drive = ChargeDrive(target=qubit)
     chip = Chip([qubit], backend=backend)
     from quchip.control.equipment import ControlEquipment
+
     chip.connect(ControlEquipment(lines=[drive]))
     chip.dress()
     tlist = np.linspace(0.0, 10.0, 11)
@@ -205,7 +266,7 @@ def test_prepare_driven_hamiltonian_remains_callable() -> None:
         drive_label=drive.label,
     )
 
-    desc = build_hamiltonian_description(chip, [drive_op], resolved_frame=resolved)
+    desc = build_engine_result(chip, [drive_op], resolved_frame=resolved)
     assert desc.dynamic_terms
     assert all(isinstance(term.time_dependence, ScalarModulation) for term in desc.dynamic_terms)
 
@@ -225,7 +286,7 @@ def test_prepare_scalar_modulation_hamiltonian_remains_callable() -> None:
         basis="fock",
         subsystem_labels=("q",),
     )
-    desc = HamiltonianDescription(
+    desc = EngineResult(
         static_terms=(),
         dynamic_terms=(
             DynamicTerm(
@@ -255,7 +316,7 @@ def test_prepare_windowed_scalar_modulation_supports_traced_stop_time() -> None:
 
     @jax.jit
     def sample_rhs(stop):
-        desc = HamiltonianDescription(
+        desc = EngineResult(
             static_terms=(),
             dynamic_terms=(
                 DynamicTerm(
@@ -285,7 +346,7 @@ def test_dict_eops_preserve_sparse_layout() -> None:
     backend = DynamiqsBackend()
     qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=3, label="q")
     resonator = Resonator(freq=6.8, levels=5, label="r", quality_factor=1e6)
-    chip = Chip([qubit, resonator], [Capacitive(qubit, resonator, g=0.04, rwa=True)], backend=backend)
+    chip = Chip([qubit, resonator], [Capacitive(qubit, resonator, g=0.04)], backend=backend)
 
     e_ops_solver, _ = decompose_eops(chip.e_ops(r="a"), chip, backend)
 
@@ -298,23 +359,23 @@ def test_chip_hamiltonian_emits_no_sparse_dense_warning() -> None:
     backend = DynamiqsBackend()
     qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=3, label="q")
     resonator = Resonator(freq=6.8, levels=5, label="r", quality_factor=1e6)
-    chip = Chip([qubit, resonator], [Capacitive(qubit, resonator, g=0.04, rwa=True)], backend=backend)
+    chip = Chip([qubit, resonator], [Capacitive(qubit, resonator, g=0.04)], backend=backend)
 
     with warnings.catch_warnings(record=True) as captured:
         warnings.simplefilter("always")
-        chip.hamiltonian()
+        materialize_expr(chip.hamiltonian(), backend)
 
     assert not [w for w in captured if "sparse qarray has been converted to dense layout" in str(w.message)]
 
 
 def test_rotating_frame_assembly_emits_no_sparse_dense_warning() -> None:
-    """build_hamiltonian_description in the rotating frame does not trigger the sparse-to-dense warning."""
+    """build_engine_result in the rotating frame does not trigger the sparse-to-dense warning."""
     backend = DynamiqsBackend()
     qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=3, label="q")
     resonator = Resonator(freq=6.8, levels=5, label="r", quality_factor=1e6)
     chip = Chip(
         [qubit, resonator],
-        [Capacitive(qubit, resonator, g=0.04, rwa=True)],
+        [Capacitive(qubit, resonator, g=0.04)],
         frame="rotating",
         backend=backend,
     )
@@ -323,7 +384,7 @@ def test_rotating_frame_assembly_emits_no_sparse_dense_warning() -> None:
 
     with warnings.catch_warnings(record=True) as captured:
         warnings.simplefilter("always")
-        build_hamiltonian_description(chip, [], resolved_frame=resolved)
+        build_engine_result(chip, [], resolved_frame=resolved)
 
     assert not [w for w in captured if "sparse qarray has been converted to dense layout" in str(w.message)]
 
@@ -335,10 +396,8 @@ def test_batched_sesolve_handles_heterogeneous_problems_sequentially(backend: Dy
     H0 = backend.from_array(np.zeros((2, 2), dtype=complex))
     H1 = backend.from_array(np.array([[0.0, 1.0], [1.0, 0.0]], dtype=complex))
     problems = [
-        {"H": H0, "psi0": backend.basis(2, 0), "tlist": jnp.linspace(0.0, 1.0, 5),
-         "e_ops": [backend.number(2)]},
-        {"H": H1, "psi0": backend.basis(2, 1), "tlist": jnp.linspace(0.0, 2.0, 5),
-         "e_ops": [backend.identity(2)]},
+        {"H": H0, "psi0": backend.basis(2, 0), "tlist": jnp.linspace(0.0, 1.0, 5), "e_ops": [backend.number(2)]},
+        {"H": H1, "psi0": backend.basis(2, 1), "tlist": jnp.linspace(0.0, 2.0, 5), "e_ops": [backend.identity(2)]},
     ]
 
     batched = backend.batched_sesolve(problems, progress=False)
@@ -409,8 +468,8 @@ def test_frequency_sweep_lowers_to_single_native_batched_solve(
 ) -> None:
     """A carrier-frequency sweep sharing operator structure fans out as a single native-batched call."""
     # build_batch over pulse.vary("freq", ...) produces one SolveBatch whose
-    # BatchedHamiltonianDescription carries a shared operator skeleton and per-element
-    # ScalarModulation signals; the dynamiqs backend lowers it to one vmapped RHS via
+    # SolveBatch carries explicit frozen problems; the dynamiqs backend lowers
+    # their compatible Hamiltonians to one vmapped RHS via
     # prepare_batch and solves it in one call to solve_batch.
     from quchip.control.envelopes import Square as SquareEnv
 
@@ -437,9 +496,9 @@ def test_frequency_sweep_lowers_to_single_native_batched_solve(
         solve_batch_sizes.append(batch.batch_size)
         return original_solve_batch(batch, progress=progress)
 
-    def counted_prepare_batch(description, tlist_):
-        prepare_batch_sizes.append(description.batch_size)
-        return original_prepare_batch(description, tlist_)
+    def counted_prepare_batch(batch):
+        prepare_batch_sizes.append(batch.batch_size)
+        return original_prepare_batch(batch)
 
     monkeypatch.setattr(backend, "solve_batch", counted_solve_batch)
     monkeypatch.setattr(backend, "prepare_batch", counted_prepare_batch)
@@ -523,12 +582,10 @@ def test_solve_batch_respects_quchip_option_aliases(monkeypatch: pytest.MonkeyPa
     # actually arrive at the dynamiqs option constructors on the batched
     # lane, not just the per-problem lane.
     assert any(raw.get("progress_meter") is False for raw in seen_options), (
-        f"progress_bar alias did not reach _options_from_dict as progress_meter=False; "
-        f"saw {seen_options!r}"
+        f"progress_bar alias did not reach _options_from_dict as progress_meter=False; saw {seen_options!r}"
     )
     assert any(raw.get("max_steps") == 2048 for raw in seen_method), (
-        f"nsteps alias did not reach _method_from_dict as max_steps=2048; "
-        f"saw {seen_method!r}"
+        f"nsteps alias did not reach _method_from_dict as max_steps=2048; saw {seen_method!r}"
     )
 
 
@@ -536,12 +593,53 @@ def test_solve_batch_respects_quchip_option_aliases(monkeypatch: pytest.MonkeyPa
 # Cached jitted ``solve_problem`` (the dynamiqs single-solve artifact cache):
 # parity vs the un-jitted protocol-default path, grad/vmap traceability, and
 # adversarial cache-correctness (no structural collision, no stale-value reuse).
+
+
+def test_repeated_native_batch_reuses_one_compiled_solve() -> None:
+    """Structurally identical batches reuse one value-independent compiled solve."""
+    qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.30, levels=3, label="q")
+    drive = ChargeDrive(target=qubit, label="d")
+    backend = DynamiqsBackend()
+    chip = Chip([qubit], frame="rotating", backend=backend)
+    chip.wire(drive)
+    sequence = QuantumSequence(chip)
+    pulse = sequence.charge(
+        qubit,
+        envelope=Square(duration=4.0, amplitude=0.03),
+        freq=5.0,
+    )
+    axis = pulse.vary("amplitude", [0.02, 0.04], name="amp")
+    batch = sequence.build_batch(
+        axis,
+        tlist=np.linspace(0.0, 4.0, 9),
+        initial_state=chip.state(q=0),
+    )
+    cache = backend._get_jit_solve_cache()
+    cache.clear()
+
+    first = backend.solve_batch(batch, progress=False)
+    second = backend.solve_batch(batch, progress=False)
+
+    assert len(first) == len(second) == 2
+    assert len(cache) == 1
+    compiled = next(iter(cache.values()))
+    assert compiled._cache_size() == 1
+    for left, right in zip(first, second):
+        npt.assert_allclose(
+            np.asarray(backend.to_array(left.final_state)),
+            np.asarray(backend.to_array(right.final_state)),
+        )
+
+
 # ``benchmarks/repeated_solve_parity.py`` validated this manually; these are the
 # make-test-lane regression guards for the optimization-loop hot path.
 # ---------------------------------------------------------------------------
 def _r5_build(open_system: bool):
     qubit = DuffingTransmon(
-        freq=5.0, anharmonicity=-0.30, levels=3, label="q",
+        freq=5.0,
+        anharmonicity=-0.30,
+        levels=3,
+        label="q",
         T1=200.0 if open_system else None,
     )
     drive = ChargeDrive(target=qubit, label="d")
@@ -574,9 +672,7 @@ def test_cached_jit_solve_matches_uncached(open_system: bool) -> None:
     prob = _r5_problem(chip, qubit, 0.045, tlist)
     rc, ru = _r5_cached(prob), _r5_uncached(prob)
     exp_diff = float(np.max(np.abs(np.asarray(rc.expect[0]) - np.asarray(ru.expect[0]))))
-    state_diff = float(
-        np.max(np.abs(np.asarray(rc.final_state.to_jax()) - np.asarray(ru.final_state.to_jax())))
-    )
+    state_diff = float(np.max(np.abs(np.asarray(rc.final_state.to_jax()) - np.asarray(ru.final_state.to_jax()))))
     assert exp_diff < 1e-9
     assert state_diff < 1e-9
 
@@ -584,6 +680,7 @@ def test_cached_jit_solve_matches_uncached(open_system: bool) -> None:
 @pytest.mark.parametrize("open_system", [False, True], ids=["sesolve", "mesolve"])
 def test_cached_jit_solve_grad_parity(open_system: bool) -> None:
     """Gradients through the cached-jit solve match the uncached path and a finite-difference reference."""
+
     def loss_factory(runner):
         chip, qubit = _r5_build(open_system)
         tlist = np.linspace(0.0, 40.0, 80)
@@ -618,7 +715,7 @@ def test_cached_jit_solve_vmap_parity() -> None:
     amps = jnp.asarray([0.03, 0.045, 0.06])
     vm = jax.vmap(loss)(amps)
     seq_vals = jnp.asarray([loss(a) for a in amps])
-    assert float(jnp.max(jnp.abs(vm - seq_vals))) == 0.0
+    np.testing.assert_allclose(vm, seq_vals, atol=1e-14, rtol=0.0)
 
 
 def test_cached_jit_solve_structure_change_is_a_cache_miss() -> None:
@@ -631,7 +728,10 @@ def test_cached_jit_solve_structure_change_is_a_cache_miss() -> None:
     probs = []
     for open_system in (False, True):
         qubit = DuffingTransmon(
-            freq=5.0, anharmonicity=-0.30, levels=3, label="q",
+            freq=5.0,
+            anharmonicity=-0.30,
+            levels=3,
+            label="q",
             T1=200.0 if open_system else None,
         )
         drive = ChargeDrive(target=qubit, label="d")

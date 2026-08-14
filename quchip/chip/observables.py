@@ -20,19 +20,63 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from quchip.backend import _backend_context
+from quchip.declarative.expr import (
+    as_operator_expr,
+    materialize_expr,
+)
 from quchip.devices.base import BaseDevice
+from quchip.devices.spaces import FockSpace
 
 if TYPE_CHECKING:
     from quchip.chip.chip import Chip
+    from quchip.engine.basis import BasisRecord
 
 
-def prepare_local_op(dev: BaseDevice, spec: str | Any) -> Any:
-    """Resolve a string name to a device operator; pass non-strings through.
-
-    The operator-name vocabulary is owned by the device
-    (:meth:`BaseDevice.local_operator`).
-    """
-    return dev.local_operator(spec) if isinstance(spec, str) else spec
+def prepare_local_op(
+    dev: BaseDevice,
+    spec: str | Any,
+    basis: "BasisRecord",
+    backend: Any,
+) -> Any:
+    """Return one observable in the resolved local solver basis."""
+    names = {
+        "X": "sigma_x",
+        "Y": "sigma_y",
+        "Z": "sigma_z",
+        "n": "n",
+        "a": "a",
+        "a_dag": "adag",
+        "I": "I",
+    }
+    if isinstance(spec, str) and spec in names:
+        return FockSpace(basis.resolved_dim).operator(names[spec], backend)
+    if isinstance(spec, str) and spec == "charge" and hasattr(dev, "charge_coupling_operator"):
+        authored = dev.charge_coupling_operator()
+    elif isinstance(spec, str) and spec in ("phase", "flux") and hasattr(dev, "phase_coupling_operator"):
+        authored = dev.phase_coupling_operator()
+    else:
+        authored = dev.local_operator(spec) if isinstance(spec, str) else spec
+    authored = as_operator_expr(
+        authored,
+        labels=(dev.label,),
+        dims=(basis.native_dim,),
+        name=rf"\hat O_{{{dev.label}}}",
+        owner=dev,
+        scope=dev.label,
+    )
+    local = materialize_expr(authored, backend)
+    if local.shape != (basis.native_dim, basis.native_dim):
+        raise ValueError(
+            f"Authored operator for {dev.label!r} must have shape "
+            f"{(basis.native_dim, basis.native_dim)}, got {local.shape}."
+        )
+    if basis.kind == "native":
+        return local
+    matrix = backend.to_array(local)
+    return backend.from_array(
+        basis.transform_operator(matrix),
+        dims=[[basis.resolved_dim], [basis.resolved_dim]],
+    )
 
 
 def from_array(chip: "Chip", data: Any, device: str | BaseDevice | None = None) -> Any:
@@ -56,12 +100,8 @@ def from_array(chip: "Chip", data: Any, device: str | BaseDevice | None = None) 
         return chip.backend.from_array(array, dims=[list(chip.dims), list(chip.dims)])
 
     idx, dev = chip._resolve_device_index(device)
-    if array.shape != (dev.levels, dev.levels):
-        raise ValueError(
-            f"local operator shape for '{dev.label}' must be {(dev.levels, dev.levels)}, got {array.shape}"
-        )
-
-    local = chip.backend.from_array(array, dims=[[dev.levels], [dev.levels]])
+    basis = chip.resolve().bases[dev.label]
+    local = prepare_local_op(dev, array, basis, chip.backend)
     return chip.backend.embed(local, idx, chip.dims)
 
 
@@ -83,8 +123,9 @@ def observable(chip: "Chip", device: str | BaseDevice, op: str | Any) -> Any:
     local device operator.
     """
     idx, dev = chip._resolve_device_index(device)
+    basis = chip.resolve().bases[dev.label]
     with _backend_context(chip.backend):
-        local_op = prepare_local_op(dev, op)
+        local_op = prepare_local_op(dev, op, basis, chip.backend)
     return chip.backend.embed(local_op, idx, chip.dims)
 
 
@@ -107,21 +148,14 @@ def e_ops(
     demodulation pipeline embeds as needed.
     """
     result: dict[str | tuple[str, str], Any] = {}
-    with _backend_context(chip.backend):
-        for label, spec in specs.items():
-            _, dev = chip._resolve_device_index(label)
-            if isinstance(spec, list):
-                result[label] = [prepare_local_op(dev, s) for s in spec]
-            else:
-                result[label] = prepare_local_op(dev, spec)
+    for label, spec in specs.items():
+        _, dev = chip._resolve_device_index(label)
+        result[dev.label] = spec
 
-        if correlators is not None:
-            for (key_a, key_b), (spec_a, spec_b) in correlators.items():
-                _, dev_a = chip._resolve_device_index(key_a)
-                _, dev_b = chip._resolve_device_index(key_b)
-                op_a = prepare_local_op(dev_a, spec_a)
-                op_b = prepare_local_op(dev_b, spec_b)
-                # Normalize keys to label strings for decompose_eops.
-                result[(dev_a.label, dev_b.label)] = (op_a, op_b)
+    if correlators is not None:
+        for (key_a, key_b), pair in correlators.items():
+            _, dev_a = chip._resolve_device_index(key_a)
+            _, dev_b = chip._resolve_device_index(key_b)
+            result[(dev_a.label, dev_b.label)] = pair
 
     return result

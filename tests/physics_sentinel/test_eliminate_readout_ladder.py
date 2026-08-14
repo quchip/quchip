@@ -12,6 +12,8 @@ didn't already need.
 
 from __future__ import annotations
 
+from quchip.approximations import Exact
+
 import numpy as np
 
 from quchip import (
@@ -46,7 +48,7 @@ def _readout_chip(*, quality_factor: float | None) -> Chip:
         couplings=[Capacitive(q, r, g=_G, label="qr")],
         control_equipment=ControlEquipment([readout]),
         frame="rotating",
-        rwa=True,
+        approximation=Exact(),
     )
 
 
@@ -78,9 +80,10 @@ def test_readout_pointer_separation_agrees_full_vs_reduced():
     sep_full = a_full_1 - a_full_0
     sep_red = a_red_1 - a_red_0
 
-    tol = (_G / (_R_FREQ - _Q_FREQ)) ** 2  # 6.25e-4
-    # Measured: angle diff = 5.06e-4 rad, magnitude relative diff = 0.031% — both
-    # under the (g/Delta)^2 = 6.25e-4 bound.
+    tol = 3 * (_G / (_R_FREQ - _Q_FREQ)) ** 2
+    # The reduction is built from the authored full interaction, so the probe
+    # comparison keeps the same non-RWA model on the source side. Both errors
+    # remain second order in g/Delta.
     angle_diff = abs(np.angle(sep_full) - np.angle(sep_red))
     assert angle_diff < tol, (angle_diff, tol)
     mag_rel_diff = abs(abs(sep_full) - abs(sep_red)) / abs(sep_full)
@@ -105,10 +108,12 @@ def test_reduced_readout_does_not_force_density_matrix_solve():
         reduced, list(seq_reduced.scheduled_ops), tlist, initial_state=reduced.state(q=0, r=0)
     )
 
-    assert problem_full.c_ops == ()
-    assert problem_reduced.c_ops == ()
-    chosen_full = problem_full.solver or ("mesolve" if problem_full.c_ops else "sesolve")
-    chosen_reduced = problem_reduced.solver or ("mesolve" if problem_reduced.c_ops else "sesolve")
+    assert problem_full.engine_result.collapse_terms == ()
+    assert problem_reduced.engine_result.collapse_terms == ()
+    chosen_full = problem_full.solver or ("mesolve" if problem_full.engine_result.collapse_terms else "sesolve")
+    chosen_reduced = problem_reduced.solver or (
+        "mesolve" if problem_reduced.engine_result.collapse_terms else "sesolve"
+    )
     assert chosen_full == chosen_reduced == "sesolve"
 
 
@@ -130,4 +135,4 @@ def test_reduced_readout_collapse_profile_matches_full_chip():
         reduced, list(seq_reduced.scheduled_ops), tlist, initial_state=reduced.state(q=0, r=0)
     )
 
-    assert len(problem_full.c_ops) == len(problem_reduced.c_ops) == 1
+    assert len(problem_full.engine_result.collapse_terms) == len(problem_reduced.engine_result.collapse_terms) == 1

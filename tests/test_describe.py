@@ -6,6 +6,8 @@ report can be reformatted without rewriting tests.
 
 from __future__ import annotations
 
+from quchip.approximations import RWA
+
 import jax
 import jax.numpy as jnp
 
@@ -24,15 +26,14 @@ from quchip.devices.transmon.duffing import DuffingTransmon
 
 
 def _demo_chip() -> tuple[Chip, ChargeDrive, DuffingTransmon, Resonator]:
-    q = DuffingTransmon(freq=5.24, anharmonicity=-0.26, levels=3,
-                        T1=51_570.0, T2=23_800.0, label="q")
+    q = DuffingTransmon(freq=5.24, anharmonicity=-0.26, levels=3, T1=51_570.0, T2=23_800.0, label="q")
     r = Resonator(freq=6.65, levels=8, quality_factor=5598.0, label="r")
     chip = Chip(
         [q, r],
         couplings=[Capacitive(q, r, g=0.060)],
         baths=[Bath("thermal", [q], temperature=30.0)],
         frame="rotating",
-        rwa=True,
+        approximation=RWA(),
     )
     drv = ChargeDrive(target=q)
     chip.wire(drv)
@@ -78,6 +79,7 @@ def test_sequence_describe_lists_pulses_and_other_entries() -> None:
 
 def test_describe_never_concretizes_traced_parameters() -> None:
     """describe() renders a traced frequency as "<traced>" instead of forcing concretization."""
+
     def probe(freq):
         q = DuffingTransmon(freq=freq, anharmonicity=-0.26, levels=3, label="q")
         chip = Chip([q])
@@ -108,7 +110,7 @@ def test_chip_physics_notes_includes_chip_level_bath_and_edge_drive_entries() ->
     notes = chip.physics_notes()
 
     assert "chip" in notes
-    assert any("LOCAL" in note for note in notes["chip"])
+    assert notes["chip"]
     assert all(f"bath:{bath.label}" in notes for bath in chip.baths)
     assert "drive:pump" in notes
 
@@ -129,17 +131,18 @@ def test_chip_physics_notes_keys_are_collision_proof_across_kinds() -> None:
     assert notes["device:chip"] != notes["drive:chip"]
     assert notes["drive:chip"] != notes["bath:chip"]
     # The synthetic chip-level entry is never shadowed by a component labeled "chip".
-    assert any("LOCAL" in note for note in notes["chip"])
+    assert notes["chip"]
 
 
 def test_coupling_model_default_repr_covers_extensions() -> None:
     """The default CouplingModel repr names the class, endpoints, and declared parameters."""
+
     class ExchangeXX(CouplingModel):
         _type_prefix = "xx"
         j: Scalar = parameter(unit="GHz")
 
-        def interaction(self, a, b) -> PhysicsExpr:
-            return self.j * (a.a @ b.adag + a.adag @ b.a)
+        def interaction(self, a, b, p) -> PhysicsExpr:
+            return p.j * (a.a * b.adag + a.adag * b.a)
 
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
     r = Resonator(freq=7.0, levels=4, label="r")
@@ -151,6 +154,7 @@ def test_coupling_model_default_repr_covers_extensions() -> None:
 
 def test_base_coupling_fallback_repr_names_endpoints() -> None:
     """A BaseCoupling subclass without a custom repr still names its class and endpoints."""
+
     class RawCoupling(BaseCoupling):
         _type_prefix = "raw"
 

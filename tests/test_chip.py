@@ -1,9 +1,8 @@
-"""Chip assembly and frame-spec tests checked against closed-form eigenvalue formulas.
-
-chip.hamiltonian() is always lab-frame; frame behavior resolves at simulation time via resolve_frame.
-"""
+"""Chip assembly and frame-spec tests checked against closed-form eigenvalue formulas."""
 
 from __future__ import annotations
+
+from quchip.approximations import RWA
 
 import warnings
 
@@ -14,6 +13,7 @@ from quchip.backend.protocol import Backend
 from quchip.chip.chip import Chip
 from quchip.chip.couplings import Capacitive, Coupling
 from quchip.control.drive import ChargeDrive
+from quchip.declarative.expr import UnboundParameterError
 from quchip.devices.resonator import Resonator
 from quchip.devices.transmon.duffing import DuffingTransmon
 
@@ -31,10 +31,62 @@ class TestChipHamiltonian:
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
         chip = Chip(devices=[q])
         H = chip.hamiltonian()
-        evals = np.sort(np.real(backend.eigenenergies(H)))
+        evals = np.sort(np.linalg.eigvalsh(H.matrix(backend=backend)).real)
 
         expected = np.array([0.0, 5.0, 9.75])
         np.testing.assert_allclose(evals, expected, atol=1e-10)
+
+    def test_hamiltonian_resolves_rwa_while_unresolved_preserves_authored_terms(self) -> None:
+        """Resolved inspection applies chip RWA while unresolved inspection preserves the authored interaction."""
+        q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+        r = Resonator(freq=7.0, levels=3, label="r")
+        chip = Chip([q, r], [Capacitive(q, r, g=0.2)])
+
+        unresolved = chip.unresolved_hamiltonian().matrix()
+        resolved = chip.hamiltonian().matrix()
+
+        assert unresolved.shape == resolved.shape == (9, 9)
+        assert not np.allclose(unresolved, resolved)
+        first_result = chip.resolve()
+        assert chip.resolve() is first_result
+        np.testing.assert_allclose(resolved, first_result.hamiltonian().matrix(), atol=1e-12)
+
+        q.freq = 5.1
+        assert chip.resolve() is not first_result
+
+    def test_symbolic_chip_hamiltonian_exposes_real_terms_and_parameter_paths(self) -> None:
+        """Chip inspection preserves authored device terms and structurally retained RWA exchange terms."""
+        q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+        r = Resonator(freq=7.0, levels=4, label="r")
+        chip = Chip([q, r], [Capacitive(q, r, g=0.02)])
+
+        hamiltonian = chip.unresolved_hamiltonian()
+
+        assert hamiltonian.shape == (12, 12)
+        assert hamiltonian.parameter_paths() == (
+            "q.freq",
+            "q.anharmonicity",
+            "r.freq",
+            "cap_0.g",
+        )
+        latex = hamiltonian.latex()
+        assert r"\omega_{q}\,\hat n_{q}" in latex
+        assert r"\alpha_{q}" in latex
+        assert r"(\hat a_{q} + \hat a^\dagger_{q})" in latex
+        assert r"(\hat a_{r} + \hat a^\dagger_{r})" in latex
+
+    def test_unbound_chip_only_requires_values_at_materialization(self) -> None:
+        """A fully symbolic Chip remains inspectable and names every missing value on numerical use."""
+        q = DuffingTransmon(levels=3, label="q")
+        r = Resonator(levels=4, label="r")
+        hamiltonian = Chip([q, r], [Capacitive(q, r)]).unresolved_hamiltonian()
+
+        assert r"\omega_{q}" in hamiltonian.latex()
+        with pytest.raises(
+            UnboundParameterError,
+            match=r"q\.freq, q\.anharmonicity, r\.freq, cap_0\.g",
+        ):
+            hamiltonian.matrix()
 
     def test_two_device_hamiltonian_no_coupling(self, backend: Backend) -> None:
         """Uncoupled two-device eigenvalues equal the tensor sums of each device's own eigenvalues."""
@@ -42,7 +94,7 @@ class TestChipHamiltonian:
         r = Resonator(freq=6.0, levels=4, label="r")
         chip = Chip(devices=[q, r])
         H = chip.hamiltonian()
-        evals = np.sort(np.real(backend.eigenenergies(H)))
+        evals = np.sort(np.linalg.eigvalsh(H.matrix(backend=backend)).real)
 
         q_evals = [0.0, 5.0, 9.75]
         r_evals = [0.0, 6.0, 12.0, 18.0]
@@ -56,9 +108,8 @@ class TestChipHamiltonian:
         coupling = Capacitive(q, r, g=0.02)
         chip = Chip(devices=[q, r], couplings=[coupling])
         H = chip.hamiltonian()
-
-        H_dag = backend.dag(H)
-        diff = (H - H_dag).norm()
+        matrix = H.matrix(backend=backend)
+        diff = np.linalg.norm(matrix - matrix.conj().T)
         assert diff < 1e-12, f"H is not Hermitian: ||H - H†|| = {diff}"
 
     def test_coupled_system_hamiltonian_dimension(self) -> None:
@@ -78,7 +129,7 @@ class TestChipHamiltonian:
         coupling = Capacitive(q, r, g=0.02)
         chip = Chip(devices=[q, r], couplings=[coupling])
         H = chip.hamiltonian()
-        evals = np.sort(np.real(backend.eigenenergies(H)))
+        evals = np.sort(np.linalg.eigvalsh(H.matrix(backend=backend)).real)
 
         q_evals = [0.0, 5.0, 9.75]
         r_evals = [0.0, 6.0, 12.0, 18.0]
@@ -111,7 +162,9 @@ class TestChipHamiltonian:
         # a⊗b + a†⊗b† is the two-mode-squeezing term: both populated bands
         # violate the default number-conserving predicate (Δa + Δb == 0).
         squeezing = Coupling(
-            q, r, g=0.05,
+            q,
+            r,
+            g=0.05,
             interaction=lambda a, b, bk: (
                 bk.tensor(a.lowering_operator(), b.lowering_operator())
                 + bk.tensor(bk.dag(a.lowering_operator()), bk.dag(b.lowering_operator()))
@@ -119,8 +172,8 @@ class TestChipHamiltonian:
         )
         chip = Chip(devices=[q, r], couplings=[squeezing])
 
-        with pytest.warns(UserWarning, match="vanishes entirely under the resolved RWA"):
-            chip.hamiltonian()
+        with pytest.warns(UserWarning, match=r"vanishes entirely under RWA\(\)"):
+            chip.resolve()
 
 
 # ---------------------------------------------------------------------------
@@ -137,14 +190,52 @@ class TestFrameSpec:
         chip = Chip(devices=[q])
         assert chip.frame == "lab"
 
-    def test_hamiltonian_frame_independent(self, backend: Backend) -> None:
-        """hamiltonian() is always lab-frame regardless of frame spec."""
+    def test_hamiltonian_resolves_the_selected_frame(self, backend: Backend) -> None:
+        """Resolved Hamiltonian inspection applies the chip's selected frame."""
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
         chip = Chip(devices=[q])
         H_lab = chip.hamiltonian()
         chip.set_frame("rotating")
         H_rot = chip.hamiltonian()
-        assert (H_lab - H_rot).norm() < 1e-12
+        assert not np.allclose(H_lab.matrix(), H_rot.matrix())
+
+    def test_resolve_accepts_a_frame_override_without_mutating_the_chip(self) -> None:
+        """One resolution may use the lab frame without changing configured intent."""
+        q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+        chip = Chip([q], frame="rotating")
+
+        rotating = chip.resolve().hamiltonian().matrix()
+        lab = chip.resolve(frame="lab").hamiltonian().matrix()
+
+        assert chip.frame == "rotating"
+        assert not np.allclose(rotating, lab)
+        np.testing.assert_allclose(lab, chip.unresolved_hamiltonian().matrix(), atol=1e-12)
+        np.testing.assert_allclose(
+            q.resolve(frame="lab").hamiltonian().matrix(),
+            q.unresolved_hamiltonian().matrix(),
+            atol=1e-12,
+        )
+
+    def test_analysis_engine_result_is_the_static_spectral_contract(self) -> None:
+        """Dressed analysis consumes an inspectable, cached lab-frame static result."""
+        q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+        r = Resonator(freq=7.0, levels=3, label="r")
+        chip = Chip(
+            [q, r],
+            [Capacitive(q, r, g=0.05)],
+            frame="rotating",
+            approximation=RWA(),
+        )
+
+        result = chip.analysis.engine_result()
+
+        assert chip.analysis.engine_result() is result
+        assert result.dynamic_terms == ()
+        assert result.collapse_terms == ()
+        assert "max_carrier_freq_ghz" not in result.metadata
+        assert "max_step_ns" not in result.metadata
+        expected = np.sort(np.linalg.eigvalsh(result.hamiltonian().matrix()).real)
+        np.testing.assert_allclose(chip.dressed_spectrum(), expected, atol=1e-12)
 
     def test_invalid_frame_raises(self) -> None:
         """Invalid frame string raises ValueError."""
@@ -293,6 +384,7 @@ class TestStateOrderShorthand:
         expected = chip.bare_state({q: 1, r: 2})
         actual = chip.bare_state("e2")
         import numpy as np
+
         diff = np.linalg.norm(np.asarray(chip.backend.to_array(expected - actual)))
         assert diff < 1e-12
 
@@ -329,6 +421,7 @@ class TestStateOrderShorthand:
         chip = self._chip()
         chip.set_state_order("q", "r", levels={"a": 0, "b": 1, "c": 2})
         import numpy as np
+
         expected = chip.bare_state({"q": 1, "r": 2})
         actual = chip.bare_state("bc")
         diff = np.linalg.norm(np.asarray(chip.backend.to_array(expected - actual)))
@@ -358,6 +451,7 @@ class TestSuperposition:
         manual = manual / chip.backend.norm(manual)
         psi = chip.superposition({"q": 0, "r": 0}, {"q": 1, "r": 0})
         import numpy as np
+
         diff = np.linalg.norm(np.asarray(chip.backend.to_array(psi - manual)))
         assert diff < 1e-12
 
@@ -365,6 +459,7 @@ class TestSuperposition:
         """Weighted superposition with amplitude coefficients summing to unit probability normalizes to unit norm."""
         chip = self._chip()
         import numpy as np
+
         psi = chip.superposition(
             (np.sqrt(0.3), {"q": 0, "r": 0}),
             (np.sqrt(0.7), {"q": 1, "r": 0}),
@@ -379,6 +474,7 @@ class TestSuperposition:
         psi_str = chip.superposition("g0", "e0")
         psi_dict = chip.superposition({"q": 0, "r": 0}, {"q": 1, "r": 0})
         import numpy as np
+
         diff = np.linalg.norm(np.asarray(chip.backend.to_array(psi_str - psi_dict)))
         assert diff < 1e-12
 
@@ -386,6 +482,7 @@ class TestSuperposition:
         """A single-component superposition reduces to the corresponding bare state."""
         chip = self._chip()
         import numpy as np
+
         psi = chip.superposition({"q": 1, "r": 0})
         expected = chip.bare_state({"q": 1, "r": 0})
         diff = np.linalg.norm(np.asarray(chip.backend.to_array(psi - expected)))
@@ -466,6 +563,7 @@ class TestSubspaceAccessors:
         backend = q.sigma_plus
         # |1><0| has a single 1 at (row=1, col=0) in the Fock basis
         import numpy as np
+
         arr = np.asarray(backend.full() if hasattr(backend, "full") else backend)
         expected = np.zeros((3, 3), dtype=complex)
         expected[1, 0] = 1.0
@@ -475,6 +573,7 @@ class TestSubspaceAccessors:
         """sigma_minus equals the Fock-basis lowering projector |0><1|."""
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
         import numpy as np
+
         arr = np.asarray(q.sigma_minus.full() if hasattr(q.sigma_minus, "full") else q.sigma_minus)
         expected = np.zeros((3, 3), dtype=complex)
         expected[0, 1] = 1.0
@@ -483,6 +582,7 @@ class TestSubspaceAccessors:
     def test_sigma_plus_minus_rebuild_sigma_x(self) -> None:
         """σ_x = σ_+ + σ_- on the computational subspace."""
         import numpy as np
+
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
         recon = q.sigma_plus + q.sigma_minus
         recon_arr = np.asarray(recon.full() if hasattr(recon, "full") else recon)
@@ -492,6 +592,7 @@ class TestSubspaceAccessors:
     def test_projector_diagonal_is_level_projector(self) -> None:
         """projector(i, i) is the population operator for level |i>."""
         import numpy as np
+
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=4, label="q")
         for i in range(4):
             p = q.projector(i, i)
@@ -503,6 +604,7 @@ class TestSubspaceAccessors:
     def test_transition_is_symmetric(self) -> None:
         """transition(i, j) == |i><j| + |j><i|."""
         import numpy as np
+
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
         t12 = q.transition(1, 2)
         pij = q.projector(1, 2) + q.projector(2, 1)

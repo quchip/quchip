@@ -30,6 +30,11 @@ _EXPORT_GUARD_MESSAGE = (
 )
 
 
+def _export_levels(device: Any) -> int:
+    """Return the device's requested retained dimension, or its authored size."""
+    return int(device.projection_levels or device.levels)
+
+
 def _concrete_params(device: Any, names: tuple[str, ...]) -> dict[str, float]:
     """Read named device attributes as concrete floats, or raise on a tracer.
 
@@ -73,7 +78,8 @@ class TransmonMapping(ModelMapping):
             n_g=obj.ng,
             levels=levels or obj.truncated_dim,
             num_basis=2 * obj.ncut + 1,
-            label=label or getattr(obj, "id_str", None),
+            basis="eigen",
+            label=cast(str, label or getattr(obj, "id_str", None)),
             coupling_channel=coupling_channel,
             **noise_kwargs,
         )
@@ -87,7 +93,7 @@ class TransmonMapping(ModelMapping):
             EC=vals["E_C"],
             ng=vals["n_g"],
             ncut=(device.num_basis - 1) // 2,
-            truncated_dim=device.levels,
+            truncated_dim=_export_levels(device),
             id_str=device.label,
         )
 
@@ -127,7 +133,8 @@ class TunableTransmonMapping(ModelMapping):
             n_g=obj.ng,
             levels=levels or obj.truncated_dim,
             num_basis=2 * obj.ncut + 1,
-            label=label or getattr(obj, "id_str", None),
+            basis="eigen",
+            label=cast(str, label or getattr(obj, "id_str", None)),
             coupling_channel=coupling_channel,
             **noise_kwargs,
         )
@@ -167,7 +174,8 @@ class FluxoniumMapping(ModelMapping):
             E_L=obj.EL,
             phi_ext=obj.flux,
             levels=levels or obj.truncated_dim,
-            label=label or getattr(obj, "id_str", None),
+            basis="eigen",
+            label=cast(str, label or getattr(obj, "id_str", None)),
             **noise_kwargs,
         )
 
@@ -181,7 +189,7 @@ class FluxoniumMapping(ModelMapping):
             EL=vals["E_L"],
             flux=vals["phi_ext"],
             cutoff=110,
-            truncated_dim=device.levels,
+            truncated_dim=_export_levels(device),
             id_str=device.label,
         )
 
@@ -203,7 +211,7 @@ class OscillatorMapping(ModelMapping):
         return Resonator(
             freq=obj.E_osc,
             levels=levels or obj.truncated_dim,
-            label=label or getattr(obj, "id_str", None),
+            label=cast(str, label or getattr(obj, "id_str", None)),
             **noise_kwargs,
         )
 
@@ -241,7 +249,7 @@ class KerrOscillatorMapping(ModelMapping):
             freq=obj.E_osc,
             kerr=obj.K,
             levels=levels or obj.truncated_dim,
-            label=label or getattr(obj, "id_str", None),
+            label=cast(str, label or getattr(obj, "id_str", None)),
             **noise_kwargs,
         )
 
@@ -264,7 +272,7 @@ class GenericQubitMapping(ModelMapping):
             freq=obj.E,
             anharmonicity=0.0,
             levels=levels or 2,
-            label=label or getattr(obj, "id_str", None),
+            label=cast(str, label or getattr(obj, "id_str", None)),
             **noise_kwargs,
         )
 

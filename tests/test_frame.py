@@ -7,6 +7,7 @@ These tests validate the frame abstraction:
 
 from __future__ import annotations
 
+
 import numpy as np
 import numpy.testing as npt
 import pytest
@@ -20,7 +21,7 @@ from quchip.devices.resonator import Resonator
 from quchip.devices.transmon.duffing import DuffingTransmon
 from quchip.engine import simulate
 from quchip.engine.ir import DriveOp
-from quchip.engine.stage1_frames import resolve_frame
+from quchip.engine.frames import resolve_frame
 
 
 @pytest.fixture
@@ -28,7 +29,7 @@ def coupled_chip():
     """Return a coupled transmon-resonator chip plus device handles."""
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
     r = Resonator(freq=7.0, levels=5, label="r")
-    coupling = Capacitive(q, r, g=0.02, rwa=False)
+    coupling = Capacitive(q, r, g=0.02)
     chip = Chip([q, r], [coupling])
     return chip, q, r
 
@@ -122,7 +123,7 @@ def test_build_problem_stores_resolved_frame(frame_spec: str | float, expected_m
         drive_label=drive.label,
     )
 
-    from quchip.engine.stage4_problem import build_solve_problem
+    from quchip.engine.problem import build_solve_problem
 
     problem = build_solve_problem(chip, [op], tlist)
     result = simulate(chip, [op], tlist)

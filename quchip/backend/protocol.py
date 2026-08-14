@@ -1,8 +1,8 @@
 """Backend protocol and backend-agnostic solver-result containers.
 
 quchip separates *physics description* from *solver conversion*: the engine
-(``quchip.engine``) emits structured IR (``HamiltonianDescription``,
-``SolveProblem``, ``BatchedHamiltonianDescription``, ``SolveBatch``) that
+(``quchip.engine``) emits structured IR (``EngineResult``,
+``SolveProblem`` and ``SolveBatch``) that
 carries ordinary-GHz frequencies and backend-free operator payloads
 (``CanonicalOperator``). Each concrete backend is free to translate that IR
 into whatever native form its solver likes best — this module only fixes the
@@ -12,7 +12,7 @@ Unit convention
 ---------------
 All frequencies crossing the backend boundary are **ordinary** (not angular)
 GHz, with time in ns. The single ``2π`` conversion lives at the engine
-boundary (``stage2_assembly.py``) — backends never rescale.
+boundary (``assembly.py``) — backends never rescale.
 
 Aliases
 -------
@@ -53,9 +53,8 @@ from quchip.backend.containers import (
 
 if TYPE_CHECKING:
     from quchip.engine.ir import (
-        BatchedHamiltonianDescription,
         CanonicalOperator,
-        HamiltonianDescription,
+        EngineResult,
         SolveBatch,
         SolveProblem,
     )
@@ -124,6 +123,10 @@ class Backend(ABC):
         """
         arr = np.asarray(self.to_array(state_or_op), dtype=complex)
         return float(np.linalg.norm(arr))
+
+    def is_native_state(self, state: Any) -> bool:
+        """Return whether *state* is already represented by this backend."""
+        return False
 
     def trace(self, op: Operator) -> complex:
         """Return the scalar trace ``Tr(op)``."""
@@ -440,14 +443,15 @@ class Backend(ABC):
         if self._is_ket_stack(rho):
             psi = rho[..., 0]
             rho = np.einsum("ti,tj->tij", psi, np.conj(psi))
-        rho = rho.reshape([rho.shape[0]] + list(dims) + list(dims))
+        t_count = rho.shape[0]
+        rho = rho.reshape([t_count] + list(dims) + list(dims))
         offset = 1  # leading time axis
         live = n
         for idx in reversed(sorted(set(range(n)) - set(keep))):
             rho = np.trace(rho, axis1=offset + idx, axis2=offset + idx + live)
             live -= 1
         kept_dim = int(np.prod([dims[k] for k in keep]))
-        return self.array_module.asarray(rho.reshape(rho.shape[0], kept_dim, kept_dim))
+        return self.array_module.asarray(rho.reshape(t_count, kept_dim, kept_dim))
 
     def embed(self, op: Operator, device_index: int, dims: Sequence[int]) -> Operator:
         """Embed a single-device operator at *device_index* into the full tensor space.
@@ -623,10 +627,10 @@ class Backend(ABC):
 
     def prepare_hamiltonian(
         self,
-        description: "HamiltonianDescription",
+        description: "EngineResult",
         tlist: Any,
     ) -> "PreparedHamiltonian":
-        """Convert a :class:`HamiltonianDescription` into a native solver RHS.
+        """Convert a :class:`EngineResult` into a native solver RHS.
 
         The engine passes frequencies already converted by ``2π`` (angular
         rad/ns); backends must not rescale. Concrete backends override this
@@ -668,13 +672,10 @@ class Backend(ABC):
         Picks ``mesolve`` when collapse operators are present (open system)
         or ``sesolve`` otherwise, unless ``problem.solver`` forces a choice.
         """
-        prepared = self.prepare_hamiltonian(problem.hamiltonian, problem.tlist)
-        tlist_arr = self.array_module.asarray(problem.tlist, dtype=float)
-
-        c_ops = list(problem.c_ops) if problem.c_ops else []
-        solver = problem.solver or ("mesolve" if c_ops else "sesolve")
-        opts = self._merge_options(problem.options, metadata=prepared.metadata, tlist=tlist_arr)
-        e_ops_arg = problem.e_ops if isinstance(problem.e_ops, list) else None
+        prepared = self.prepare_hamiltonian(problem.engine_result, problem.tlist)
+        tlist_arr, c_ops, solver, opts, e_ops_arg = self._resolve_solve_config(
+            problem, prepared
+        )
         psi0 = self.coerce_state(problem.initial_state, dims=problem.chip.dims)
 
         if solver == "sesolve":
@@ -707,35 +708,31 @@ class Backend(ABC):
         _ = problems, progress
         return None
 
-    def prepare_batch(
-        self,
-        description: "BatchedHamiltonianDescription",
-        tlist: Any,
-    ) -> "PreparedBatch":
-        """Lower a :class:`BatchedHamiltonianDescription` into a prepared batch.
+    def prepare_batch(self, batch: "SolveBatch") -> "PreparedBatch":
+        """Lower each explicit batch problem into a prepared batch.
 
         The return type declares the batching strategy:
         :class:`~quchip.backend.containers.EagerBatch` (one RHS per element),
-        :class:`~quchip.backend.containers.VmappedBatch` (one natively
-        batched RHS — dynamiqs), or
+        :class:`~quchip.backend.containers.VmappedBatch` (one already-built
+        native RHS), or
         :class:`~quchip.backend.containers.DeferredBatch` (backend-private
-        payload consumed by an overridden :meth:`solve_batch` — QuTiP).
+        payload consumed by an overridden :meth:`solve_batch`).
         Default: lowers each element independently via
         :meth:`prepare_hamiltonian` into an :class:`EagerBatch`.
         """
         rhs_list: list[Any] = []
         shared_metadata: dict[str, Any] = {}
-        for idx in range(description.batch_size):
-            prepared = self.prepare_hamiltonian(description.element(idx), tlist)
+        for idx in range(batch.batch_size):
+            prepared = self.prepare_hamiltonian(batch.element(idx).engine_result, batch.tlist)
             rhs_list.append(prepared.rhs)
             if not shared_metadata:
                 shared_metadata = dict(prepared.metadata)
 
         return EagerBatch(
             rhs_list=rhs_list,
-            batch_size=description.batch_size,
+            batch_size=batch.batch_size,
             metadata=shared_metadata,
-            tlist=tlist,
+            tlist=batch.tlist,
         )
 
     def solve_batch(self, batch: "SolveBatch", *, progress: bool = True) -> list[SolverResult]:
@@ -748,9 +745,7 @@ class Backend(ABC):
         if batch.batch_size == 0:
             return []
 
-        prepared = self.prepare_batch(batch.hamiltonian, batch.tlist)
-        tlist_arr, c_ops, solver_name, opts, e_ops_arg = self._resolve_batch_config(batch, prepared)
-
+        prepared = self.prepare_batch(batch)
         if isinstance(prepared, DeferredBatch):
             raise RuntimeError(
                 f"{type(self).__name__}.prepare_batch produced a DeferredBatch; "
@@ -760,20 +755,34 @@ class Backend(ABC):
             )
 
         dict_problems: list[dict[str, Any]] = []
+        solver_names: list[str] = []
         for idx in range(batch.batch_size):
+            problem = batch.element(idx)
             rhs = prepared.rhs if isinstance(prepared, VmappedBatch) else prepared.rhs_list[idx]
+            tlist_arr = self.array_module.asarray(problem.tlist, dtype=float)
+            c_ops = self._collapse_operators(problem.engine_result)
+            solver_name = problem.solver or ("mesolve" if c_ops else "sesolve")
+            solver_names.append(solver_name)
+            opts = self._merge_options(
+                problem.options,
+                metadata=problem.engine_result.metadata,
+                tlist=tlist_arr,
+            )
             dict_problems.append(
                 self._element_solver_kwargs(
                     solver_name,
                     rhs,
-                    batch.initial_states[idx],
+                    problem.initial_state,
                     tlist_arr,
-                    e_ops=e_ops_arg,
+                    e_ops=problem.e_ops if isinstance(problem.e_ops, list) else None,
                     c_ops=c_ops,
                     options=dict(opts),
                 )
             )
 
+        if len(set(solver_names)) != 1:
+            raise ValueError("Every SolveBatch point must resolve to the same solver.")
+        solver_name = solver_names[0]
         runner = self.batched_mesolve if solver_name == "mesolve" else self.batched_sesolve
         return runner(dict_problems, progress=progress)
 
@@ -810,7 +819,7 @@ class Backend(ABC):
         return rhs
 
     @staticmethod
-    def _scalar_dynamic_terms(description: "HamiltonianDescription") -> Iterator[tuple[Any, Any]]:
+    def _scalar_dynamic_terms(description: "EngineResult") -> Iterator[tuple[Any, Any]]:
         """Yield ``(operator, signal)`` for each ``ScalarModulation`` dynamic term.
 
         Centralizes the time-dependence filter both backends apply when
@@ -843,31 +852,37 @@ class Backend(ABC):
         merged.update(user_options)
         return self.resolve_solver_options(merged, metadata=metadata, tlist=tlist)
 
-    def _resolve_batch_config(
+    def _resolve_solve_config(
         self,
-        batch: Any,
+        problem: Any,
         prepared: Any,
     ) -> tuple[Any, list[Any], str, dict[str, Any], list[Any] | None]:
-        """Resolve the per-batch solve configuration shared by every backend.
+        """Resolve one problem's backend-independent solve configuration.
 
         Coerces the save grid (via :attr:`array_module`), assembles collapse
         operators, selects the solver (``mesolve`` when collapse operators are
-        present, unless ``batch.solver`` forces a choice), and merges options
+        present, unless ``problem.solver`` forces a choice), and merges options
         through the single boundary. Returns
         ``(tlist_arr, c_ops, solver_name, opts, e_ops_arg)``; each backend
         contributes only its RHS-sourcing + native-solve dispatch tail.
 
-        *prepared* is any payload exposing ``.metadata`` — a
-        :class:`PreparedBatch` on the batched paths, or the
-        :class:`HamiltonianDescription` when the dynamiqs single-solve reuses
-        this resolver.
+        ``prepared`` supplies advisory metadata; physics and user options come
+        from the frozen problem.
         """
-        tlist_arr = self.array_module.asarray(batch.tlist, dtype=float)
-        c_ops = list(batch.c_ops) if batch.c_ops else []
-        solver_name = batch.solver or ("mesolve" if c_ops else "sesolve")
-        opts = self._merge_options(batch.options, metadata=prepared.metadata, tlist=tlist_arr)
-        e_ops_arg = batch.e_ops if isinstance(batch.e_ops, list) else None
+        engine_result = problem.engine_result
+        tlist_arr = self.array_module.asarray(problem.tlist, dtype=float)
+        c_ops = self._collapse_operators(engine_result)
+        solver_name = problem.solver or ("mesolve" if c_ops else "sesolve")
+        opts = self._merge_options(problem.options, metadata=prepared.metadata, tlist=tlist_arr)
+        e_ops_arg = problem.e_ops if isinstance(problem.e_ops, list) else None
         return tlist_arr, c_ops, solver_name, opts, e_ops_arg
+
+    def _collapse_operators(self, engine_result: "EngineResult") -> list[Operator]:
+        """Materialize canonical collapse terms for this backend."""
+        return [
+            self.array_module.sqrt(term.rate) * self.from_canonical_operator(term.operator)
+            for term in engine_result.collapse_terms
+        ]
 
     @staticmethod
     def _element_solver_kwargs(

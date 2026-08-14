@@ -1,11 +1,10 @@
 """Signal-chain transforms for control equipment.
 
-Transforms operate on a :data:`SignalMap` keyed by
-``(drive_label, drive_index)`` and are owned by
+Transforms operate on complete analytic signals keyed by
+``(line_label, source_index)`` and are owned by
 :class:`~quchip.control.equipment.ControlEquipment` (not by individual
-drives). The equipment applies them in order, after
-drives produce their raw line signals and before the engine assembles
-the Hamiltonian.
+drives). The equipment applies them after scheduling and before each
+destination drive maps physical I/Q quadratures into the Hamiltonian.
 
 Available transforms
 --------------------
@@ -27,16 +26,118 @@ Examples
 
 from __future__ import annotations
 
+import copy
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
-from quchip.engine.ir import Add, PolarScale, Scale, Shift, SignalProgram
+from quchip.declarative.expr import PhysicsExpr
+from quchip.engine.ir import (
+    Add,
+    Carrier,
+    EnvelopeRef,
+    ImagPart,
+    Multiply,
+    PolarScale,
+    RealPart,
+    Scale,
+    Shift,
+    SignalProgram,
+    Window,
+    evaluate_signal_program,
+)
+from quchip.utils.constants import TWO_PI
 from quchip.utils.labeling import resolve_label
 from quchip.utils.registry import Registrable
 
-SignalKey = tuple[str, int]  # (drive_label, drive_index)
-SignalMap = dict[SignalKey, SignalProgram]
+SignalKey = tuple[str, int]  # (line_label, source_index)
+
+
+@dataclass(frozen=True)
+class AnalyticSignal:
+    """Complete complex classical signal delivered on one control line.
+
+    ``program`` includes the envelope, schedule timing and phase, and any
+    carrier. Classical equipment transforms this complete value before a
+    drive maps its physical quadratures into the quantum Hamiltonian.
+    """
+
+    program: SignalProgram
+    carrier: Any | None = None
+    phase_reference: Any | None = None
+
+    @classmethod
+    def from_pulse(cls, pulse: Any) -> "AnalyticSignal":
+        """Build the complete scheduled signal for one pulse record."""
+        local = Window(
+            child=EnvelopeRef(pulse.envelope),
+            start=0.0,
+            stop=pulse.envelope.duration,
+        )
+        scheduled: SignalProgram = PolarScale(
+            child=Shift(local, delta_t=pulse.start_time),
+            amplitude=1.0,
+            theta=pulse.phase_offset,
+        )
+        if pulse.freq is not None:
+            scheduled = Multiply(
+                (scheduled, Carrier(freq=TWO_PI * pulse.freq, sign=-1))
+            )
+        return cls(program=scheduled, carrier=pulse.freq)
+
+    @property
+    def i(self) -> PhysicsExpr:
+        """In-phase physical quadrature of the delivered signal."""
+        return PhysicsExpr.from_signal(RealPart(self.program), name="I")
+
+    @property
+    def q(self) -> PhysicsExpr:
+        """Quadrature-phase physical component of the delivered signal."""
+        return PhysicsExpr.from_signal(ImagPart(self.program), name="Q")
+
+    def evaluate(self, t: Any, *, xp: Any | None = None) -> Any:
+        """Evaluate the complete complex signal at time *t*."""
+        return evaluate_signal_program(self.program, t, xp=xp)
+
+    def shifted(self, delta_t: Any) -> "AnalyticSignal":
+        """Return the signal delayed by ``delta_t`` ns."""
+        return type(self)(
+            program=Shift(self.program, delta_t=delta_t),
+            carrier=self.carrier,
+            phase_reference=self.phase_reference,
+        )
+
+    def scaled(self, factor: Any) -> "AnalyticSignal":
+        """Return the signal multiplied by a complex factor."""
+        return type(self)(
+            program=Scale(self.program, factor=factor),
+            carrier=self.carrier,
+            phase_reference=self.phase_reference,
+        )
+
+    def polar_scaled(self, amplitude: Any, theta: Any) -> "AnalyticSignal":
+        """Return the signal multiplied by ``amplitude * exp(i theta)``."""
+        return type(self)(
+            program=PolarScale(self.program, amplitude=amplitude, theta=theta),
+            carrier=self.carrier,
+            phase_reference=self.phase_reference,
+        )
+
+    def __add__(self, other: "AnalyticSignal") -> "AnalyticSignal":
+        carrier = self.carrier if self.carrier is other.carrier else None
+        phase_reference = (
+            self.phase_reference
+            if self.phase_reference is other.phase_reference
+            else None
+        )
+        return type(self)(
+            program=Add((self.program, other.program)),
+            carrier=carrier,
+            phase_reference=phase_reference,
+        )
+
+
+SignalMap = dict[SignalKey, AnalyticSignal]
 
 
 class SignalTransform(Registrable, ABC, registry_root=True):
@@ -49,6 +150,20 @@ class SignalTransform(Registrable, ABC, registry_root=True):
     persisted state, while payload-carrying transforms override
     :meth:`to_dict` / :meth:`from_dict`.
     """
+
+    _parameter_names: tuple[str, ...] = ()
+
+    def parameter_values(self) -> dict[str, Any]:
+        """Return transform-owned bindable values declared by the subclass."""
+        return {name: getattr(self, name) for name in self._parameter_names}
+
+    def with_parameter_value(self, name: str, value: Any) -> "SignalTransform":
+        """Return this transform with one declared numerical value replaced."""
+        if name not in self._parameter_names:
+            raise KeyError(name)
+        rebound = copy.copy(self)
+        object.__setattr__(rebound, name, value)
+        return rebound
 
     @abstractmethod
     def apply(self, signals: SignalMap) -> SignalMap:
@@ -69,6 +184,7 @@ class Delay(SignalTransform):
 
     line: str
     delta_t: float
+    _parameter_names = ("delta_t",)
 
     def __init__(self, line: str | Any, delta_t: float) -> None:
         object.__setattr__(self, "line", resolve_label(line))
@@ -79,7 +195,7 @@ class Delay(SignalTransform):
         s = dict(signals)
         for key in list(s):
             if key[0] == self.line:
-                s[key] = Shift(s[key], delta_t=self.delta_t)
+                s[key] = s[key].shifted(self.delta_t)
         return s
 
     def referenced_lines(self) -> tuple[str, ...]:
@@ -103,6 +219,7 @@ class Gain(SignalTransform):
 
     line: str
     factor: complex
+    _parameter_names = ("factor",)
 
     def __init__(self, line: str | Any, factor: complex) -> None:
         object.__setattr__(self, "line", resolve_label(line))
@@ -113,7 +230,7 @@ class Gain(SignalTransform):
         s = dict(signals)
         for key in list(s):
             if key[0] == self.line:
-                s[key] = Scale(s[key], factor=self.factor)
+                s[key] = s[key].scaled(self.factor)
         return s
 
     def referenced_lines(self) -> tuple[str, ...]:
@@ -145,18 +262,11 @@ class Crosstalk(SignalTransform):
 
        \beta\, e^{i\theta}\, s_\mathrm{src}(t - \Delta t)
 
-    onto the victim line, where :math:`s_\mathrm{src}` is the source's
-    raw line signal — the frame-agnostic, carrier-free envelope signal
-    the signal chain operates on, before stage 2 attaches any carrier
-    or RWA modulation. Fidelity to classical microwave crosstalk is
-    preserved downstream instead: stage 2 builds the victim's
-    Hamiltonian term using the *source* drive's own carrier frequency
-    for the leaked entry, not the victim's, so a leaked pulse still
-    lands at the source's frequency (Balewski et al., arXiv:2502.05362,
-    Eq. (3); Sheldon et al., PRA 93, 060302 (2016); Sarovar et al.,
-    Quantum 4, 321 (2020)). The ``delay`` shifts the *baseband
-    envelope*; the carrier-phase part of a physical path delay
-    (:math:`2\pi f \tau`) belongs in ``theta``.
+    onto the victim line. :math:`s_\mathrm{src}` is the complete source
+    signal, including its carrier, phase, and both quadratures. Delaying it
+    therefore includes the carrier phase :math:`2\pi f\Delta t` without a
+    separate correction (Balewski et al., arXiv:2502.05362; Sheldon et al.,
+    PRA 93, 060302 (2016); Sarovar et al., Quantum 4, 321 (2020)).
 
     Parameters
     ----------
@@ -177,6 +287,7 @@ class Crosstalk(SignalTransform):
     beta: float
     theta: float = 0.0
     delay: float = 0.0
+    _parameter_names = ("beta", "theta", "delay")
 
     def __init__(
         self,
@@ -198,14 +309,10 @@ class Crosstalk(SignalTransform):
         for key, signal in signals.items():
             if key[0] != self.source:
                 continue
-            leaked: SignalProgram = PolarScale(
-                child=Shift(signal, delta_t=self.delay),
-                amplitude=self.beta,
-                theta=self.theta,
-            )
+            leaked = signal.shifted(self.delay).polar_scaled(self.beta, self.theta)
             victim_key = (self.victim, key[1])
             existing = output.get(victim_key)
-            output[victim_key] = leaked if existing is None else Add((existing, leaked))
+            output[victim_key] = leaked if existing is None else existing + leaked
         return output
 
     def referenced_lines(self) -> tuple[str, ...]:
