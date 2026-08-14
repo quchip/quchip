@@ -30,7 +30,7 @@ Declare the chip once. The same declaration drives dressed-state analysis, model
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/quchip/quchip/main/docs/images/quchip_pipeline_dark.png">
   <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/quchip/quchip/main/docs/images/quchip_pipeline_light.png">
-  <img src="https://raw.githubusercontent.com/quchip/quchip/main/docs/images/quchip_pipeline_light.png" alt="quchip pipeline from declared devices and control parameters through frame resolution, Hamiltonian assembly, observable preparation, backend solving, and one reverse-mode gradient" width="1084">
+  <img src="https://raw.githubusercontent.com/quchip/quchip/main/docs/images/quchip_pipeline_light.png" alt="quchip pipeline from declared devices and control parameters through basis and frame resolution, physics assembly, observable preparation, backend solving, and one reverse-mode gradient" width="1084">
 </picture>
 
 `Chip + QuantumSequence` → `ResolvedFrame` → `EngineResult` → `SolveProblem` → QuTiP or dynamiqs → `SimulationResult`

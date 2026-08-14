@@ -2,21 +2,23 @@
 
 This file records notable user-visible changes to quchip.
 
-## [0.2.0] - Unreleased
+## [0.2.0] - 2026-08-14
 
 ### Highlights
 
-- Inspect authored and solver-resolved physics as backend-neutral symbolic expressions without forcing numerical materialization.
+- Inspect authored and solver-resolved physics as backend-neutral symbolic expressions without first evaluating a numerical matrix.
 - Choose explicit Fock, charge, phase-grid, or custom local spaces, with native or energy-eigenstate solver bases.
-- Reuse sparse operators, compiled batches, and resolved chip contracts while tracking construction and solve performance in CI.
+- Extend devices, couplings, drives, envelopes, dissipation, local spaces, and classical signal transforms through tested public contracts.
 
 ### Physics and modelling
 
-- Added `PhysicsExpr` for symbolic parameters, matrices, time-dependent scalars, labels, and opaque JAX callables. Expressions support semantic display, immutable parameter rebinding, and explicit `.matrix()` materialization. [#4]
+- Added `PhysicsExpr` for symbolic parameters, matrices, time-dependent scalars, labels, and opaque JAX callables. Expressions support semantic display, immutable parameter rebinding, and explicit numerical evaluation through `.matrix()`. [#4]
 - Added `LocalSpace`, `FockSpace`, `ChargeSpace`, `PhaseGridSpace`, and `CustomSpace`. A chip or individual device can use its authored native basis or project into a retained local energy basis with `projection_levels`. [#6]
 - Basis resolution now transforms Hamiltonians, couplings, drives, pumps, states, observables, collapse operators, frames, and RWA bands through one engine-owned boundary. Native solving remains the default. [#6]
 - Added distinct inspection paths: `unresolved_hamiltonian()` preserves authored static physics, while `hamiltonian()` reports the canonical result after basis, frame, and RWA resolution. Sequence Hamiltonians also include scheduled drives. [#6]
-- Added concise declarative surfaces for custom devices, couplings, component-owned time dependence, drive operators, envelopes, scalar time coefficients, local dissipation, custom spaces, and interop mappings. Installed references exercise each supported path. [#10]
+- Added declarative surfaces for custom devices, couplings, component-owned time dependence, drives, envelopes, scalar time coefficients, dissipation, local spaces, classical signal transforms, and interop mappings. Installed references exercise each supported path. [#10]
+- Drives now map complete delivered analytic signals to quantum Hamiltonians through `hamiltonian(target, signal)`. Envelopes define local pulse shapes, while scheduling and `ControlEquipment` own carrier, phase, gain, delay, filtering, and crosstalk. [#10]
+- Added isolated and dressed transition queries through `device.transition_frequency(...)` and `chip.transition_frequency(...)`; `chip.freq(target)` remains the concise dressed `0 -> 1` query. [#10]
 
 ### Engine and performance
 
@@ -30,7 +32,7 @@ This file records notable user-visible changes to quchip.
 - Added per-Python CI constraint files and a weekly unconstrained dependency canary. Published package metadata remains unpinned. [#3]
 - Added a format-aware prose audit for Python docstrings, Markdown, and rendered HTML. It reports recognizable patterns and coverage without guessing authorship. [#9]
 - Added a pull-request template covering verification, documentation, paired notebooks, `PHYSICS.md`, and AI-assistance disclosure. [#9]
-- Generated constructor stubs now cover declarative devices, couplings, and parameterized drives. [#10]
+- Declarative constructors now expose required fields, defaults, and positional or keyword-only arguments to third-party type checkers through PEP 681 metadata, without generated stubs. [#10]
 
 ### Documentation
 
@@ -43,8 +45,10 @@ This file records notable user-visible changes to quchip.
 - Replace `ProblemBatch` and `BatchedHamiltonianDescription` with `SolveBatch` and the `QuantumSequence` batch APIs.
 - `CircuitDevice` is no longer public. Custom devices should declare an explicit `LocalSpace` through `BaseDevice` or `FockDevice`, as appropriate; built-in charge-basis and phase-grid devices use the same boundary.
 - Declarative methods receive the symbolic parameter namespace `p`. Custom models use `local_hamiltonian(op, p)`, `interaction(a, b, p)`, and `time_terms(...)` returning `TimeDependentTerm` values.
+- Replace Boolean `rwa=` arguments with the chip-level `approximation=RWA()` or `approximation=Exact()` strategy. `RWA(keep_bands=...)` supports an explicit structural band selection.
+- Custom drives implement `hamiltonian(target, signal)` and may override `signal(pulse, target)`. The delivered signal exposes physical `signal.i` and `signal.q` quadratures after the classical signal chain.
+- Custom envelopes implement `value(local_time)`. Pulse timing, global phase, and carrier frequency belong to scheduling rather than the envelope.
 - Devices, drives, couplings, and baths declare loss through `dissipation(...)`, returning `CollapseChannel` values with unscaled operators and rates in inverse nanoseconds.
-- Advanced control contracts such as `BaseDrive`, `DriveModulation`, `DriveSignalSpec`, and `SignalTransform` remain available from `quchip.control` but are no longer re-exported from the top-level package.
 - Use `chip.unresolved_hamiltonian()` when authored lab-frame physics is required. `chip.hamiltonian()` now returns the resolved basis/frame/RWA view used by the engine.
 - Required CI currently constrains `qutip<5.3.1` because scqubits 4.3.1 and earlier cannot consume the SciPy sparse arrays returned by qutip 5.3.1. This is a CI compatibility constraint, not a package dependency pin. [#3]
 
@@ -72,7 +76,7 @@ This file records notable user-visible changes to quchip.
 - Included device, coupling, control, frame, RWA, dissipation, transformation, sweep, visualization, and inverse-design APIs; QuTiP and dynamiqs backends; and JAX-compatible differentiation paths.
 - Published the README, contribution guide, code of conduct, physics reference, and test suite.
 
-[0.2.0]: https://github.com/quchip/quchip/compare/v0.1.1...HEAD
+[0.2.0]: https://github.com/quchip/quchip/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/quchip/quchip/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/quchip/quchip/tree/v0.1.0
 [#1]: https://github.com/quchip/quchip/pull/1
