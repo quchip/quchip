@@ -29,14 +29,33 @@ chip = Chip(..., approximation=RWA())    # structural first-order RWA
 - Native batches compile once, resolved chip contracts are reused when their physics is unchanged, and result inspection avoids unnecessary densification.
 - Benchmark CI records cold build, repeated build, first solve, and warm solve separately for QuTiP and dynamiqs, with physics-parity checks and environment receipts.
 
-## Upgrade notes
+## Breaking changes and migration
+
+quchip 0.2.0 intentionally breaks compatibility with 0.1.x. The removed APIs below have no compatibility aliases, and the 0.2.0 loader rejects serialized chip payloads produced by 0.1.x. Rebuild those models in code and serialize them again with 0.2.0.
+
+For example, approximation and pulse phase now have explicit owners:
+
+```python
+# 0.1.x
+chip = Chip(..., rwa=False)
+pulse = Square(duration=20.0, phase=phi)
+
+# 0.2.0
+chip = Chip(..., approximation=Exact())
+pulse = Square(duration=20.0)
+sequence.schedule(drive, envelope=pulse, phase=phi)
+```
 
 - Replace `HamiltonianDescription` with `EngineResult`, `build_hamiltonian_description()` with `build_engine_result()`, and `SolveProblem.hamiltonian` with `SolveProblem.engine_result`.
-- Replace Boolean `rwa=` arguments with `approximation=RWA()` or `approximation=Exact()`.
+- Replace `ProblemBatch` and `BatchedHamiltonianDescription` with `SolveBatch` and the `QuantumSequence` batch APIs.
+- Replace Boolean and per-component `rwa=` arguments with the chip-level `approximation=RWA()` or `approximation=Exact()` strategy.
+- Replace `CircuitDevice` with `BaseDevice` or `FockDevice` and an explicit `LocalSpace`.
 - Custom declarative methods receive a symbolic parameter namespace: `local_hamiltonian(op, p)`, `interaction(a, b, p)`, and `time_terms(...)`.
-- Custom drives implement `hamiltonian(target, signal)`; most inherit the default scheduled-signal construction. Custom envelopes implement `value(local_time)`.
-- Dissipation hooks return `CollapseChannel` values containing an unscaled operator and a rate in inverse nanoseconds.
-- `CircuitDevice` is no longer public. Custom devices declare an explicit `LocalSpace` through `BaseDevice` or `FockDevice`.
+- Replace `DriveChannel`, `DriveModulation`, and `DriveSignalSpec` with `signal(...)` and `hamiltonian(target, signal)`. New drive types normally extend `DeviceDrive` or `CouplingDrive`.
+- Replace `EnvelopeShape` with `Envelope`, and `Modulation` with `TimeDependentTerm` plus a `TimeCoefficient`.
+- Replace `NoiseChannel` with `dissipation(...)` returning `CollapseChannel` values.
+- `BaseDrive` and `SignalTransform` remain available from `quchip.control`, but are no longer top-level exports.
+- Use `chip.unresolved_hamiltonian()` for authored lab-frame physics. `chip.hamiltonian()` now returns the resolved expression used by the engine.
 
 See the [changelog](https://github.com/quchip/quchip/blob/v0.2.0/CHANGELOG.md) for the complete list and the [extension guide](https://docs.quchip.org/extensions.html) for working implementations.
 
