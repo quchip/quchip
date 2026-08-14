@@ -14,6 +14,13 @@
   <a href="https://arxiv.org/abs/2607.17081">Paper</a>
 </p>
 
+<p align="center">
+  <a href="https://pypi.org/project/quchip/"><img src="https://img.shields.io/pypi/v/quchip" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/quchip/"><img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11 or newer"></a>
+  <a href="https://github.com/quchip/quchip/actions/workflows/ci.yml"><img src="https://github.com/quchip/quchip/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
+  <a href="https://docs.quchip.org"><img src="https://github.com/quchip/quchip/actions/workflows/docs.yml/badge.svg?branch=main" alt="Documentation build status"></a>
+</p>
+
 `quchip` is an open-source Python toolkit for modeling superconducting quantum chips.
 
 A predictive chip model needs more than a Hamiltonian: device physics, control-line transformations, frames and approximations, dissipation, and measured observables all belong to it. quchip represents each part explicitly. Line properties such as gain, delay, and crosstalk belong to the control chain, not to Hamiltonian terms written by hand.
@@ -23,12 +30,12 @@ Declare the chip once. The same declaration drives dressed-state analysis, model
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/quchip/quchip/main/docs/images/quchip_pipeline_dark.png">
   <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/quchip/quchip/main/docs/images/quchip_pipeline_light.png">
-  <img src="https://raw.githubusercontent.com/quchip/quchip/main/docs/images/quchip_pipeline_light.png" alt="quchip pipeline from declared devices and control parameters through frame resolution, Hamiltonian assembly, observable preparation, backend solving, and one reverse-mode gradient" width="1084">
+  <img src="https://raw.githubusercontent.com/quchip/quchip/main/docs/images/quchip_pipeline_light.png" alt="quchip pipeline from declared devices and control parameters through basis and frame resolution, physics assembly, observable preparation, backend solving, and one reverse-mode gradient" width="1084">
 </picture>
 
-`Chip + QuantumSequence` → `ResolvedFrame` → `HamiltonianDescription` → `SolveProblem` → QuTiP or dynamiqs → `SimulationResult`
+`Chip + QuantumSequence` → `ResolvedFrame` → `EngineResult` → `SolveProblem` → QuTiP or dynamiqs → `SimulationResult`
 
-QuTiP is the default backend. The dynamiqs backend is JAX-native and keeps declared device and control parameters differentiable through the solve.
+QuTiP is the default backend. The dynamiqs backend is JAX-native and keeps declared device and control parameters differentiable through the solve. The optional scqubits integration imports and exports selected device and composite models.
 
 `quchip` uses GHz for ordinary frequencies, ns for time, and mK for temperature. The implemented conventions and approximations are documented in the [physics guide](https://docs.quchip.org/physics).
 
@@ -56,24 +63,38 @@ cd quchip
 python -m pip install .
 ```
 
-## A minimal chip
+## Declare and inspect a chip
 
 ```python
-from quchip import Capacitive, ChargeDrive, Chip, DuffingTransmon, Resonator
+from quchip import RWA, Capacitive, ChargeDrive, Chip, DuffingTransmon, Resonator
 
-qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.30, levels=6, label="qubit")
-readout = Resonator(freq=6.8, levels=10, quality_factor=6800, label="readout")
-coupling = Capacitive(qubit, readout, g=0.060, rwa=True, label="qubit-readout")
-chip = Chip([qubit, readout], couplings=[coupling], frame="rotating", rwa=True)
+qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.30, levels=6, label="q")
+readout = Resonator(freq=6.8, levels=10, quality_factor=6800, label="r")
+coupling = Capacitive(qubit, readout, g=0.060, label="qr")
+chip = Chip(
+    [qubit, readout],
+    couplings=[coupling],
+    frame="rotating",
+    approximation=RWA(),
+)
 qubit_line = ChargeDrive(qubit, label="qubit-charge")
 readout_line = ChargeDrive(readout, label="readout-charge")
 chip.wire(qubit_line, readout_line)
 
+authored_hamiltonian = chip.unresolved_hamiltonian()
+resolved_hamiltonian = chip.hamiltonian()
+
 f01 = chip.freq(qubit)
-f12 = chip.freq(qubit, when={qubit: 1})
+f12 = chip.transition_frequency(qubit, 1, 2)
 fr0 = chip.freq(readout, when={qubit: 0})
 fr1 = chip.freq(readout, when={qubit: 1})
 ```
+
+The authored Hamiltonian preserves the device and coupling expressions in their
+declared local spaces. The resolved view applies the chip's basis, frame, and
+approximation strategy through the same engine path used by simulation. Both remain
+inspectable symbolic expressions; call `.matrix()` when a numerical array is
+needed.
 
 The complete example derives short and selective nominal-pi Gaussian drives from $|f_{12}-f_{01}|$, then derives a Gaussian-edge readout duration from the conditional pull and resonator linewidth. Both parts run the real multilevel, lossy chip with compact reproducibility receipts.
 
@@ -81,34 +102,19 @@ The complete example derives short and selective nominal-pi Gaussian drives from
 
 ![Conditional resonator IQ paths with emphasized final points](https://raw.githubusercontent.com/quchip/quchip/main/docs/images/hello_dispersive_readout_iq.png)
 
-The complete walkthrough is available as [authored Markdown](https://github.com/quchip/quchip/blob/main/examples/00_hello_chip.md) and an [executed notebook](https://github.com/quchip/quchip/blob/main/examples/00_hello_chip.ipynb).
-
-## Tests
-
-Install the dependencies used by all shipped test lanes:
-
-```bash
-python -m pip install -e '.[test,dynamiqs]'
-```
-
-Run the full suite:
-
-```bash
-python -m pytest
-```
-
-Run one lane:
-
-```bash
-python -m pytest -m core
-python -m pytest -m physics_sentinel
-python -m pytest -m extended
-```
+The complete walkthrough is available in the [documentation](https://docs.quchip.org/examples/hello-chip).
 
 ## Examples
 
-- [Hello, drive and readout](https://github.com/quchip/quchip/blob/main/examples/00_hello_chip.md): compare qubit-drive leakage, then resolve pulse-level dispersive readout on the same chip.
+- [Hello, drive and readout](https://docs.quchip.org/examples/hello-chip): compare qubit-drive leakage, then resolve pulse-level dispersive readout on the same chip.
 - [Cookbook](https://docs.quchip.org/cookbook): practical conventions and task recipes.
+- [Extension guide](https://docs.quchip.org/extensions): author devices, couplings, time-dependent terms, drives, envelopes, dissipation, local spaces, and interop mappings.
+
+## Project status and contributing
+
+`quchip` is under active development. While it remains in 0.x, minor releases may refine public APIs; see the [changelog](https://github.com/quchip/quchip/blob/main/CHANGELOG.md).
+
+Report bugs and model requests through [GitHub Issues](https://github.com/quchip/quchip/issues). Use [Discussions](https://github.com/quchip/quchip/discussions) for questions and open-ended proposals. See the [contributing guide](https://github.com/quchip/quchip/blob/main/CONTRIBUTING.md) before making code or physics changes.
 
 ## Paper and citation
 

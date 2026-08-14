@@ -1,14 +1,15 @@
-"""Tests for the declarative device, noise-channel, and batch-handle extension surfaces."""
+"""Tests for declarative device, dissipation, and batch-handle extensions."""
 
 from __future__ import annotations
+
+from quchip.approximations import RWA
 
 import numpy as np
 import pytest
 
-from quchip import Chip, ChargeDrive, DuffingTransmon, Gaussian, QuantumSequence
+from quchip import Chip, ChargeDrive, CollapseChannel, DuffingTransmon, Gaussian, QuantumSequence
 from quchip.declarative.models import DeviceModel
 from quchip.declarative.parameters import Scalar, parameter
-from quchip.devices.base import BaseDevice, NoiseChannel
 
 
 class SpinHalf(DeviceModel):
@@ -19,16 +20,16 @@ class SpinHalf(DeviceModel):
 
     freq: Scalar = parameter(positive=True)
 
-    def local_hamiltonian(self, op):
+    def local_hamiltonian(self, op, p):
         # H = -(freq/2)·sigma_z, so |1> sits `freq` above |0>.
-        return (-0.5 * self.freq) * op.sigma_z
+        return (-0.5 * p.freq) * op.sigma_z
 
 
 def test_sigma_ops_author_a_spin_device():
     """A sigma_z-authored device gives a diagonal Hamiltonian split by ±freq/2."""
     spin = SpinHalf(freq=4.0, levels=2)
     chip = Chip([spin])
-    h = np.asarray(chip.backend.to_array(chip.hamiltonian()))
+    h = np.asarray(chip.hamiltonian().matrix(backend=chip.backend))
     np.testing.assert_allclose(h, np.diag([-2.0, 2.0]), atol=1e-12)
 
 
@@ -37,19 +38,21 @@ class DampedTransmon(DuffingTransmon):
 
     _type_prefix = "damped"
 
-    two_photon_rate: Scalar = parameter(default=None, positive=True)
-
-    _noise_channels = BaseDevice._noise_channels + (
-        NoiseChannel("two_photon_loss", ("two_photon_rate",), lambda dev: (
-            [np.sqrt(dev.two_photon_rate) * (dev.lowering_operator() @ dev.lowering_operator())]
-            if dev.two_photon_rate is not None
-            else []
-        )),
+    two_photon_rate: Scalar = parameter(
+        default=None,
+        positive=True,
+        noise=True,
     )
 
+    def dissipation(self, op, p):
+        channels = super().dissipation(op, p)
+        if self.two_photon_rate is None:
+            return channels
+        return channels + (CollapseChannel(op.a @ op.a, p.two_photon_rate, "two_photon_loss"),)
 
-def test_noise_channel_declaration_composes_without_override():
-    """A device-declared noise channel composes with the built-in T1 channel unmodified."""
+
+def test_dissipation_hook_composes_with_common_device_channels():
+    """A device dissipation hook composes with the built-in T1 channel."""
     quiet = DampedTransmon(freq=5.0, anharmonicity=-0.3, levels=3)
     assert quiet.collapse_operators() == []
 
@@ -67,7 +70,7 @@ def test_noise_channel_declaration_composes_without_override():
 
 def _sequence_with_pulse():
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=3)
-    chip = Chip([q], frame="rotating", rwa=True)
+    chip = Chip([q], frame="rotating", approximation=RWA())
     drive = ChargeDrive(target=q)
     chip.wire(drive)
     seq = QuantumSequence(chip)

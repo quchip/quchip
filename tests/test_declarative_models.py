@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import inspect
+
+import jax
 import numpy as np
 import numpy.testing as npt
 import pytest
 
-from quchip import CouplingModel, DeviceModel, EnvelopeShape, Scalar, qnp, parameter
-from quchip.control.envelopes import BaseEnvelope
+from quchip import CouplingModel, DeviceModel, Envelope, Scalar, qnp, parameter
+from quchip.declarative import setting
 from quchip.devices.base import BaseDevice
 
 
-class CosineEnvelope(EnvelopeShape):
+class CosineEnvelope(Envelope):
     duration: Scalar = parameter(positive=True)
     amplitude: Scalar = parameter(default=1.0)
 
@@ -18,7 +21,7 @@ class CosineEnvelope(EnvelopeShape):
 
 
 def test_custom_envelope_samples_without_xp_argument():
-    """A custom EnvelopeShape subclass samples correctly through the base pipeline without an explicit xp argument."""
+    """A custom Envelope subclass samples correctly through the base pipeline without an explicit xp argument."""
     env = CosineEnvelope(duration=10.0, amplitude=2.0)
     samples = env.sample(np.asarray([0.0, 5.0, 10.0]))
     npt.assert_allclose(np.asarray(samples), np.asarray([0.0, 2.0, 4.0]), atol=1e-7)
@@ -28,14 +31,42 @@ class HarmonicMode(DeviceModel):
     freq: Scalar = parameter(positive=True)
     approximation = None
 
-    def local_hamiltonian(self, op):
-        return self.freq * op.n
+    def local_hamiltonian(self, op, p):
+        return p.freq * op.n
+
+
+class ConfiguredMode(DeviceModel):
+    freq: Scalar = parameter(unit="GHz")
+    basis_name: str = setting(default="native")
+
+    def local_hamiltonian(self, op, p):
+        return p.freq * op.n
+
+
+def test_device_setting_is_keyword_only_and_round_trips():
+    signature = inspect.signature(ConfiguredMode)
+    assert signature.parameters["basis_name"].kind is inspect.Parameter.KEYWORD_ONLY
+
+    mode = ConfiguredMode(5.0, basis_name="eigen", levels=3, label="m")
+    restored = BaseDevice.from_dict(mode.to_dict())
+
+    assert isinstance(restored, ConfiguredMode)
+    assert restored.basis_name == "eigen"
+
+
+def test_device_setting_is_jax_structural_data():
+    mode = ConfiguredMode(5.0, basis_name="eigen", levels=3, label="m")
+
+    leaves = jax.tree_util.tree_leaves(mode)
+
+    assert 5.0 in leaves
+    assert "eigen" not in leaves
 
 
 def test_custom_device_hamiltonian_compiles_without_backend_calls():
     """A custom DeviceModel subclass compiles its local Hamiltonian to an operator sized to its Fock truncation."""
     mode = HarmonicMode(freq=7.0, levels=4, label="m")
-    h = mode.hamiltonian()
+    h = mode.hamiltonian().matrix()
     assert h.shape == (4, 4)
 
 
@@ -52,8 +83,8 @@ def test_tunable_param_names_derived_default_covers_all_declared_fields():
         freq: Scalar = parameter(positive=True)
         anharm: Scalar = parameter()
 
-        def local_hamiltonian(self, op):
-            return self.freq * op.n
+        def local_hamiltonian(self, op, p):
+            return p.freq * op.n
 
     dev = _DerivedTunables(freq=5.0, anharm=-0.2, levels=3)
     assert dev.tunable_param_names == ("freq", "anharm")
@@ -67,8 +98,8 @@ def test_tunable_param_names_explicit_curation_is_exact():
         quality_factor: Scalar = parameter(default=None)
         tunable_param_names = ("freq",)
 
-        def local_hamiltonian(self, op):
-            return self.freq * op.n
+        def local_hamiltonian(self, op, p):
+            return p.freq * op.n
 
     dev = _CuratedTunables(freq=5.0, levels=3)
     assert set(dev.tunable_params()) == {"freq"}
@@ -80,8 +111,8 @@ def test_tunable_param_names_explicit_empty_freezes_device():
         freq: Scalar = parameter(positive=True)
         tunable_param_names = ()
 
-        def local_hamiltonian(self, op):
-            return self.freq * op.n
+        def local_hamiltonian(self, op, p):
+            return p.freq * op.n
 
     dev = _FrozenTunables(freq=5.0, levels=3)
     assert dev.tunable_params() == {}
@@ -94,8 +125,8 @@ def test_tunable_param_names_inherited_explicit_curation_is_not_re_derived():
         quality_factor: Scalar = parameter(default=None)
         tunable_param_names = ()
 
-        def local_hamiltonian(self, op):
-            return self.freq * op.n
+        def local_hamiltonian(self, op, p):
+            return p.freq * op.n
 
     class _CuratedChild(_CuratedParent):
         extra: Scalar = parameter(default=1.0)
@@ -111,8 +142,8 @@ def test_tunable_param_names_derived_lineage_re_derives_with_new_fields():
         a: Scalar = parameter(positive=True)
         b: Scalar = parameter(default=0.0)
 
-        def local_hamiltonian(self, op):
-            return self.a * op.n
+        def local_hamiltonian(self, op, p):
+            return p.a * op.n
 
     class _DerivedChild(_DerivedParent):
         c: Scalar = parameter(default=0.0)
@@ -128,8 +159,8 @@ def test_tunable_param_names_accepts_a_plain_class_attribute():
         derived_freq = 0.0
         tunable_param_names = ("freq", "derived_freq")
 
-        def local_hamiltonian(self, op):
-            return self.freq * op.n
+        def local_hamiltonian(self, op, p):
+            return p.freq * op.n
 
     dev = _WithClassAttr(freq=5.0, levels=3)
     assert set(dev.tunable_param_names) == {"freq", "derived_freq"}
@@ -142,8 +173,8 @@ def test_tunable_param_names_unresolved_name_raises_at_class_definition():
             freq: Scalar = parameter(positive=True)
             tunable_param_names = ("not_a_field",)
 
-            def local_hamiltonian(self, op):
-                return self.freq * op.n
+            def local_hamiltonian(self, op, p):
+                return p.freq * op.n
 
 
 def test_tunable_param_names_duplicate_entry_raises_at_class_definition():
@@ -153,8 +184,8 @@ def test_tunable_param_names_duplicate_entry_raises_at_class_definition():
             freq: Scalar = parameter(positive=True)
             tunable_param_names = ("freq", "freq")
 
-            def local_hamiltonian(self, op):
-                return self.freq * op.n
+            def local_hamiltonian(self, op, p):
+                return p.freq * op.n
 
 
 def test_tunable_param_names_bare_string_raises_at_class_definition():
@@ -164,8 +195,8 @@ def test_tunable_param_names_bare_string_raises_at_class_definition():
             freq: Scalar = parameter(positive=True)
             tunable_param_names = "freq"
 
-            def local_hamiltonian(self, op):
-                return self.freq * op.n
+            def local_hamiltonian(self, op, p):
+                return p.freq * op.n
 
 
 def test_tunable_param_names_non_string_entry_raises_at_class_definition():
@@ -175,15 +206,30 @@ def test_tunable_param_names_non_string_entry_raises_at_class_definition():
             freq: Scalar = parameter(positive=True)
             tunable_param_names = (1,)
 
-            def local_hamiltonian(self, op):
-                return self.freq * op.n
+            def local_hamiltonian(self, op, p):
+                return p.freq * op.n
 
 
 class NumberNumber(CouplingModel):
     chi: Scalar = parameter()
 
-    def interaction(self, a, b):
-        return self.chi * a.n * b.n
+    def interaction(self, a, b, p):
+        return p.chi * a.n * b.n
+
+
+def test_coupling_constructor_is_synthesized_from_endpoints_and_fields():
+    signature = inspect.signature(NumberNumber)
+
+    assert tuple(signature.parameters) == (
+        "device_a",
+        "device_b",
+        "chi",
+        "label",
+    )
+    coupling = NumberNumber("a", "b", chi=0.02, label="ab")
+    assert coupling.device_a_label == "a"
+    assert coupling.device_b_label == "b"
+    assert coupling.chi == 0.02
 
 
 def test_custom_coupling_compiles_without_backend_tensor_calls():
@@ -191,61 +237,36 @@ def test_custom_coupling_compiles_without_backend_tensor_calls():
     a = HarmonicMode(freq=5.0, levels=3, label="a")
     b = HarmonicMode(freq=6.0, levels=4, label="b")
     coupling = NumberNumber(a, b, chi=0.01)
-    h = coupling.interaction_hamiltonian()
+    h = coupling.interaction_hamiltonian().matrix()
     assert h.shape == (12, 12)
 
 
-def test_time_dependent_without_dynamic_source_errors():
-    """dynamic_interaction_terms() rejects a time_dependent override whose expression carries no dynamic source."""
+def test_time_terms_reject_values_outside_the_public_contract():
+    """The private bridge rejects values outside the public time-term contract."""
     class BadDynamic(CouplingModel):
         g: Scalar = parameter()
 
-        def interaction(self, a, b):
-            return self.g * a.x * b.x
+        def interaction(self, a, b, p):
+            return p.g * a.x * b.x
 
-        def time_dependent(self, a, b):
-            return self.g * a.x * b.x
+        def time_terms(self, a, b, p):
+            return p.g * a.x * b.x
 
     a = HarmonicMode(freq=5.0, levels=3, label="a")
     b = HarmonicMode(freq=6.0, levels=4, label="b")
     coupling = BadDynamic(a, b, g=0.01)
-    with pytest.raises(ValueError, match="exactly one dynamic source"):
-        coupling.dynamic_interaction_terms(None)
-
-
-def _arr(op):
-    """Dense numpy view of a backend operator (Qobj or array)."""
-    return op.full() if hasattr(op, "full") else np.asarray(op)
-
-
-def test_tunable_capacitive_parametric_operator_follows_chip_rwa():
-    """The pump-multiplied operator structure re-selects under chip RWA."""
-    from quchip import Chip, DuffingTransmon, TunableCapacitive
-
-    def _coupler():
-        q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
-        q1 = DuffingTransmon(freq=5.05, anharmonicity=-0.25, levels=3, label="q1")
-        return q0, q1, TunableCapacitive(q0, q1, g_0=0.0)
-
-    q0r, q1r, c_rwa = _coupler()
-    chip_rwa = Chip([q0r, q1r], [c_rwa], frame="rotating", rwa=True)
-    op_rwa = c_rwa.parametric_operator(chip_rwa)
-    q0f, q1f, c_full = _coupler()
-    chip_full = Chip([q0f, q1f], [c_full], frame="rotating", rwa=False)
-    op_full = c_full.parametric_operator(chip_full)
-
-    # RWA keeps a†b + a b†; full keeps (a + a†)(b + b†).
-    assert not np.allclose(_arr(op_rwa), _arr(op_full))
+    with pytest.raises(TypeError, match="must return TimeDependentTerm"):
+        coupling._time_terms()
 
 
 def test_tunable_capacitive_without_modulation_has_no_dynamic_term():
     """A purely static TunableCapacitive emits no dynamic interaction term."""
-    from quchip import Chip, DuffingTransmon, TunableCapacitive
+    from quchip import DuffingTransmon, TunableCapacitive
 
     q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
     q1 = DuffingTransmon(freq=5.05, anharmonicity=-0.25, levels=3, label="q1")
     c = TunableCapacitive(q0, q1, g_0=0.02)
-    assert c.dynamic_interaction_terms(Chip([q0, q1], [c], frame="rotating", rwa=True)) == []
+    assert c._time_terms() == ()
 
 
 def test_declarative_device_to_dict_contains_declared_parameters():
@@ -280,17 +301,17 @@ def test_declarative_physics_notes_include_approximation():
         freq: Scalar = parameter(positive=True)
         approximation = "Toy expansion."
 
-        def local_hamiltonian(self, op):
-            return self.freq * op.n
+        def local_hamiltonian(self, op, p):
+            return p.freq * op.n
 
     notes = ApproxDevice(freq=5.0).physics_notes()
     assert "Toy expansion." in notes
 
 
 def test_declarative_envelope_round_trip_uses_declared_parameters():
-    """An EnvelopeShape round-trips through to_dict()/from_dict() with type and declared parameters preserved."""
+    """An Envelope round-trips through to_dict()/from_dict() with type and declared parameters preserved."""
     env = CosineEnvelope(duration=10.0, amplitude=2.0)
-    restored = BaseEnvelope.from_dict(env.to_dict())
+    restored = Envelope.from_dict(env.to_dict())
     assert isinstance(restored, CosineEnvelope)
     assert restored.duration == 10.0
     assert restored.amplitude == 2.0
@@ -314,7 +335,7 @@ def test_duffing_transmon_is_declarative_and_keeps_hamiltonian_shape():
 
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3)
     assert isinstance(q, DeviceModel)
-    assert q.hamiltonian().shape == (3, 3)
+    assert q.hamiltonian().matrix().shape == (3, 3)
     assert any("Duffing" in note or "quartic" in note.lower() for note in q.physics_notes())
 
 
@@ -323,6 +344,6 @@ def test_gaussian_shape_is_declarative_without_xp():
     from quchip import Gaussian
 
     g = Gaussian(duration=20.0, amplitude=0.5, sigmas=3.0)
-    assert isinstance(g, EnvelopeShape)
+    assert isinstance(g, Envelope)
     value = g.value(qnp.asarray(10.0))
     assert value.shape == ()

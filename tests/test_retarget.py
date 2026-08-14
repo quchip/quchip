@@ -199,7 +199,7 @@ def test_three_survivor_replay_compiles_through_stage_two():
     seq = QuantumSequence(res.chip)
     seq.schedule("cflux", envelope=Square(duration=100.0, amplitude=0.02))
     problem = seq.build_problem(tlist=np.linspace(0.0, 100.0, 11))
-    tags = [t.tag for t in problem.hamiltonian.dynamic_terms]
+    tags = [t.tag for t in problem.engine_result.dynamic_terms]
     # All three emitted edges receive drive terms: the scheduled pump compiles
     # its own edge (2 exchange bands), and the two copy-fed pumps compile
     # through the crosstalk path (2 bands each).

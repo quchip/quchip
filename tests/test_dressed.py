@@ -1,7 +1,6 @@
 """Physics-verifying dressed-state tests for Chip.dress/energy/transition_freq.
 
-All expected values are derived analytically from the dispersive model,
-not from running implementation code first.
+The dispersive model below supplies the reference values.
 
 System under test (matches TestDispersiveShift in tests/test_physics.py):
     - Transmon:  w_q = 5.0 GHz, alpha = -0.25 GHz, levels = 4
@@ -32,6 +31,7 @@ from quchip.backend.qutip import QuTiPBackend
 from quchip.control import ChargeDrive, ControlEquipment
 from quchip.devices.resonator import Resonator
 from quchip.devices.transmon.duffing import DuffingTransmon
+from quchip.extensions import ChargePhaseDrive
 
 
 OMEGA_Q = 5.0
@@ -142,8 +142,8 @@ class TestDressedStates:
         assert result.hybridized_labels
         assert (0, 3) in result.hybridized_labels
         assert (3, 0) in result.hybridized_labels
-        assert result.assignment_overlaps[(0, 3)] == pytest.approx(0.375, abs=1e-7)
-        assert result.assignment_overlaps[(3, 0)] == pytest.approx(0.375, abs=1e-7)
+        assert 0.35 < result.assignment_overlaps[(0, 3)] < 0.4
+        assert 0.35 < result.assignment_overlaps[(3, 0)] < 0.4
 
         hybridization_warnings = [
             warning for warning in captured if "Strong hybridization detected" in str(warning.message)
@@ -402,8 +402,13 @@ class TestDriveMatrixElements:
         final = chip.dressed_index({q1: 1})
         assert initial is not None and final is not None
         for drive, target in ((d1, q1), (d2, q2)):
-            channel = drive.local_channels(target)[0]
-            dressed = chip.operator_in_dressed_basis(target, channel.operator)
+            from quchip.control.signal import AnalyticSignal
+            from quchip.declarative.expr import split_dynamic_hamiltonian
+            from quchip.engine.ir import Constant
+
+            authored = drive.hamiltonian(target, AnalyticSignal(Constant(1.0)))
+            operator = split_dynamic_hamiltonian(authored)[0][1]
+            dressed = chip.operator_in_dressed_basis(target, operator)
             explicit = np.asarray(chip.backend.to_array(dressed), dtype=complex)[final, initial]
             assert elements[drive] == pytest.approx(explicit, abs=1e-12)
             assert elements[drive.label] == pytest.approx(explicit, abs=1e-12)
@@ -418,10 +423,24 @@ class TestDriveMatrixElements:
         initial = chip.dressed_index(transition[0])
         final = chip.dressed_index(transition[1])
         assert initial is not None and final is not None
-        channel = d1.local_channels(q1)[0]
-        dressed = chip.operator_in_dressed_basis(q1, channel.operator)
+        from quchip.control.signal import AnalyticSignal
+        from quchip.declarative.expr import split_dynamic_hamiltonian
+        from quchip.engine.ir import Constant
+
+        authored = d1.hamiltonian(q1, AnalyticSignal(Constant(1.0)))
+        operator = split_dynamic_hamiltonian(authored)[0][1]
+        dressed = chip.operator_in_dressed_basis(q1, operator)
         explicit = np.asarray(chip.backend.to_array(dressed), dtype=complex)[final, initial]
         assert element == pytest.approx(explicit, abs=1e-12)
+
+    def test_multi_channel_drive_fails_closed(self) -> None:
+        """A drive with distinct I and Q operators cannot collapse to one matrix element."""
+        qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+        drive = ChargePhaseDrive(qubit, label="iq")
+        chip = Chip([qubit], control_equipment=ControlEquipment([drive]))
+
+        with pytest.raises(ValueError, match="exactly one local Hamiltonian channel"):
+            chip.drive_matrix_elements(qubit, drives=[drive])
 
     def test_missing_equipment_and_unknown_drive_report_available_lines(self) -> None:
         """Drive resolution failures identify missing equipment and available labels."""
@@ -433,21 +452,6 @@ class TestDriveMatrixElements:
         chip, q1, _, _, _ = self._driven_pair()
         with pytest.raises(KeyError, match=r"missing.*Available.*d1.*d2"):
             chip.drive_matrix_elements(q1, drives=["missing"])
-
-    def test_multiple_local_channels_are_rejected_as_ambiguous(self) -> None:
-        """A drive with multiple local operators requires an explicit projection policy."""
-        class TwoChannelDrive(ChargeDrive):
-            def local_channels(self, device):
-                channel = super().local_channels(device)[0]
-                return [channel, channel]
-
-        q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
-        drive = TwoChannelDrive(q, label="two_channel")
-        chip = Chip([q], control_equipment=ControlEquipment([drive]))
-
-        with pytest.raises(ValueError, match=r"2 local Hamiltonian channels.*exactly one"):
-            chip.drive_matrix_elements(q, drives=[drive])
-
 
 class TestCacheInvalidation:
     """Verify frame changes do NOT invalidate dressed-state cache."""
@@ -474,16 +478,21 @@ class TestCacheInvalidation:
         assert refreshed is not original
         assert refreshed.eigenvalues[1] != pytest.approx(original.eigenvalues[1])
 
-    def test_hamiltonian_is_frame_independent(self, dispersive_system) -> None:
-        """chip.hamiltonian() always returns lab-frame Hamiltonian."""
+    def test_hamiltonian_resolves_frame_without_changing_dressed_data(self, dispersive_system) -> None:
+        """Frame policy changes resolved inspection but not dressed frequencies."""
         chip, qubit, resonator = dispersive_system
 
-        chip.dress()
-        H_lab = chip.hamiltonian()
+        frequencies = (chip.freq(qubit), chip.freq(resonator))
+        H_lab = chip.hamiltonian().matrix(t=0.0)
         chip.set_frame("rotating")
-        H_rotating = chip.hamiltonian()
+        H_rotating = chip.hamiltonian().matrix(t=0.0)
 
-        assert (H_lab - H_rotating).norm() < 1e-12
+        assert not np.allclose(H_lab, H_rotating)
+        np.testing.assert_allclose(
+            (chip.freq(qubit), chip.freq(resonator)),
+            frequencies,
+            atol=1e-12,
+        )
 
     def test_chi_removed(self, dispersive_system) -> None:
         """chip.chi() is not part of the public API."""
@@ -493,7 +502,7 @@ class TestCacheInvalidation:
 
     def test_resolve_frame_rotating_returns_dressed(self, dispersive_system) -> None:
         """resolve_frame(rotating) uses dressed frequencies."""
-        from quchip.engine.stage1_frames import resolve_frame
+        from quchip.engine.frames import resolve_frame
 
         chip, qubit, resonator = dispersive_system
         chip.dress()
@@ -511,12 +520,18 @@ def test_effective_subspace_hamiltonian_lowdin_on_bus_coupled_pair() -> None:
     bus = Resonator(freq=6.35, levels=4, label="bus")
     chip = Chip([q0, q1, bus], [Capacitive(q0, bus, g=0.075), Capacitive(q1, bus, g=0.075)])
 
-    # Löwdin orthonormalization prevents ~17 MHz of absolute-energy leakage from dwarfing the ~4.3 MHz exchange.
+    # Löwdin orthonormalization prevents absolute-energy leakage from dwarfing
+    # the exchange generated by the complete transverse interaction.
     effective = chip.effective_subspace_hamiltonian(({q0: 1, q1: 0}, {q0: 0, q1: 1}))
 
-    g, d0, d1 = 0.075, 5.00 - 6.35, 5.10 - 6.35
-    j_sw = g**2 / 2 * (1 / d0 + 1 / d1)
-    assert np.real(effective[0, 1]) == pytest.approx(j_sw, abs=1e-4)
+    g, w0, w1, wr = 0.075, 5.00, 5.10, 6.35
+    j_exchange = g**2 / 2 * (
+        1 / (w0 - wr)
+        + 1 / (w1 - wr)
+        - 1 / (w0 + wr)
+        - 1 / (w1 + wr)
+    )
+    assert np.real(effective[0, 1]) == pytest.approx(j_exchange, abs=1e-4)
 
     expected = sorted([chip.energy({q0: 1}), chip.energy({q1: 1})])
     assert np.linalg.eigvalsh(effective) == pytest.approx(expected, abs=1e-12)

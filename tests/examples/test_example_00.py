@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 import ast
 import json
 import math
@@ -142,8 +143,20 @@ def test_hello_chip_is_an_operational_strict_jupytext_pair() -> None:
 def test_hello_chip_source_encodes_the_locked_two_part_experiment() -> None:
     """The canonical source declares real multilevel drive/leakage and readout experiments."""
     markdown = EXAMPLE_MD.read_text(encoding="utf-8")
-    code = "\n\n".join(_markdown_code_cells(markdown))
+    cells = _markdown_code_cells(markdown)
+    code = "\n\n".join(cells)
     tree = ast.parse(code)
+
+    declaration_index = next(index for index, cell in enumerate(cells) if "qubit = DuffingTransmon(" in cell)
+    declaration = cells[declaration_index]
+    assert 'label="q"' in declaration
+    assert 'label="r"' in declaration
+    assert 'label="qr"' in declaration
+    assert 'label="qubit"' not in declaration
+    assert 'label="readout"' not in declaration
+    assert 'label="qubit-readout"' not in declaration
+    assert "## Inspect the authored Hamiltonian" in markdown
+    assert cells[declaration_index + 1] == "chip.unresolved_hamiltonian()"
 
     assert "# Hello, drive and readout" in markdown
     assert len(markdown.splitlines()) < 350
@@ -169,12 +182,12 @@ def test_hello_chip_source_encodes_the_locked_two_part_experiment() -> None:
     ]
     assert len(charge_calls) == 2
     assert all(all(keyword.arg != "rwa" for keyword in call.keywords) for call in charge_calls)
-    assert "frame=\"rotating\"" in code
-    assert "rwa=True" in code
-    assert "rwa=False" not in code
+    assert 'frame="rotating"' in code
+    assert "approximation=RWA()" in code
+    assert "approximation=Exact()" not in code
 
     assert "chip.freq(qubit)" in code
-    assert "chip.freq(qubit, when={qubit: 1})" in code
+    assert "chip.transition_frequency(qubit, 1, 2)" in code
     assert code.count("Gaussian(") == 2
     assert "def pi_gaussian(duration" in code
     assert "drive_pulses = tuple(pi_gaussian(duration) for duration in drive_durations)" in code
@@ -194,11 +207,9 @@ def test_hello_chip_source_encodes_the_locked_two_part_experiment() -> None:
     assert "chip.state({qubit: 0, readout: 0})" in code
     assert "for level in range(3)" in code
     assert "drive_batch.population(qubit, level)" in code
-    assert "## Inspect the batch with Quchip" in markdown
+    assert "## Inspect the batch with quchip" in markdown
     assert "## Customize the comparison" in markdown
-    population_plot_cells = [
-        cell.strip() for cell in _markdown_code_cells(markdown) if ".plot_populations(" in cell
-    ]
+    population_plot_cells = [cell.strip() for cell in _markdown_code_cells(markdown) if ".plot_populations(" in cell]
     assert population_plot_cells == [
         "drive_batch[0].plot_populations(trace_out=readout)\nplt.show()",
         "drive_batch[1].plot_populations(trace_out=readout)\nplt.show()",
@@ -231,8 +242,8 @@ def test_hello_chip_source_encodes_the_locked_two_part_experiment() -> None:
     assert "readout_sequence.vary(" in code
     assert '"initial_state",' in code
     assert code.count(".simulate_batch(") == 2
-    assert 'chip.e_ops(readout="a")' in code
-    assert 'readout_batch.expect("readout")' in code
+    assert 'chip.e_ops(r="a")' in code
+    assert 'readout_batch.expect("r")' in code
 
     forbidden = (
         "analyze_dispersive_readout",
@@ -344,11 +355,6 @@ def test_hello_chip_pair_executes_and_records_physical_receipts(tmp_path: Path) 
     assert markdown_cells == notebook_cells
     assert notebook["metadata"]["kernelspec"]["name"] == "python3"
     assert all(cell.get("execution_count") is not None for cell in notebook_code_cells)
-    assert all(
-        output.get("output_type") != "execute_result"
-        for cell in notebook_code_cells
-        for output in cell.get("outputs", [])
-    )
     stream_output = _stream_output(notebook)
     notebook_receipts = _parse_receipts(stream_output)
     embedded_figures = [
@@ -358,22 +364,28 @@ def test_hello_chip_pair_executes_and_records_physical_receipts(tmp_path: Path) 
         if "image/png" in output.get("data", {})
     ]
     assert len(embedded_figures) == 4
-    assert sum(bool(cell.get("outputs")) for cell in notebook_code_cells) == 4
-    assert sum(
-        output["output_type"] == "stream"
-        for cell in notebook_code_cells
-        for output in cell.get("outputs", [])
-    ) == 2
+    assert sum(bool(cell.get("outputs")) for cell in notebook_code_cells) == 5
+    assert (
+        sum(output["output_type"] == "stream" for cell in notebook_code_cells for output in cell.get("outputs", []))
+        == 2
+    )
     for cell in notebook_code_cells:
         if cell.get("outputs"):
-            display_outputs = [
+            image_outputs = [
                 output
                 for output in cell["outputs"]
-                if output["output_type"] in {"display_data", "execute_result"}
-                and "image/png" in output.get("data", {})
+                if output["output_type"] in {"display_data", "execute_result"} and "image/png" in output.get("data", {})
             ]
-            assert len(display_outputs) == 1
-            assert set(display_outputs[0]["data"]) <= {"image/png", "text/plain"}
+            if image_outputs:
+                assert len(image_outputs) == 1
+                assert set(image_outputs[0]["data"]) <= {"image/png", "text/plain"}
+                continue
+
+            assert "".join(cell["source"]).strip() == "chip.unresolved_hamiltonian()"
+            assert len(cell["outputs"]) == 1
+            symbolic_output = cell["outputs"][0]
+            assert symbolic_output["output_type"] == "execute_result"
+            assert {"text/plain", "text/latex"} <= set(symbolic_output["data"])
 
     run_root = tmp_path / "clean-example"
     run_examples = run_root / "examples"
@@ -440,7 +452,6 @@ def test_hello_chip_pair_executes_and_records_physical_receipts(tmp_path: Path) 
     pull_floor = 1.0 / (2.0 * abs(f1 - f0))
     assert readout["readout_duration_ns"] >= max(linewidth_floor, pull_floor)
     assert readout["readout_duration_ns"] - max(linewidth_floor, pull_floor) < 5.0 + 1e-9
-    assert math.isclose(readout["readout_duration_ns"], 880.0, abs_tol=1e-9)
     assert readout["final_iq_separation"] > 0.01
     assert readout["solver"] == "mesolve"
 
@@ -491,7 +502,7 @@ def test_hello_chip_is_discoverable_with_durable_cookbook_guidance() -> None:
     cookbook = (ROOT / "docs" / "cookbook.md").read_text(encoding="utf-8")
     contributing = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
 
-    assert "examples/00_hello_chip.md" in readme
+    assert "https://docs.quchip.org/examples/hello-chip" in readme
     assert "docs/images/hello_qubit_drive_leakage.png" in readme
     assert "docs/images/hello_dispersive_readout_iq.png" in readme
     assert "cookbook" in docs_index

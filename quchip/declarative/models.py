@@ -12,23 +12,34 @@ from __future__ import annotations
 
 import inspect
 import weakref
-from typing import Any, cast, dataclass_transform
+from typing import Any, ClassVar, cast
 
 import jax.tree_util as jtu
 
 from quchip.chip.coupling_base import BaseCoupling
+from quchip.declarative.expr import (
+    ParameterNamespace,
+    as_operator_expr,
+)
+from quchip.declarative.dissipation import CollapseChannel, normalize_dissipation
+from quchip.declarative.dynamics import (
+    TimeDependentTerm,
+    bind_time_coefficient,
+)
 from quchip.declarative.parameters import (
     Parameter,
+    UNBOUND,
+    DeclarativeMeta,
     build_declared_signature,
+    constructor_field,
     parameter_fields,
     resolve_declared_params,
+    resolve_declared_settings,
     serializable_value,
+    setting_fields,
     validate_sign,
+    validate_declared_fields,
 )
-# ``_NOISE_FIELDS`` is the single source of truth for the noise-parameter set
-# (BaseDevice owns it). These are JAX-traceable scalars (or ``None``), so they
-# must travel as pytree *children* rather than aux data — otherwise gradients
-# can't flow through them.
 from quchip.devices.base import _NOISE_FIELDS, BaseDevice
 from quchip.utils.state_versioning import _wrap_init_for_finish
 
@@ -36,9 +47,56 @@ from quchip.utils.state_versioning import _wrap_init_for_finish
 def _serialize_declared_params(obj: Any, data: dict[str, Any]) -> dict[str, Any]:
     """Write each serializable declared parameter of *obj* into *data*, in place."""
     for name, spec in type(obj).__quchip_param_fields__.items():
+        value = getattr(obj, name)
+        if spec.serialize and value is not UNBOUND:
+            data[name] = serializable_value(value)
+    for name, spec in setting_fields(type(obj)).items():
         if spec.serialize:
-            data[name] = serializable_value(getattr(obj, name))
+            data[name] = getattr(obj, name)
     return data
+
+
+def _symbolic_parameters(obj: Any) -> ParameterNamespace:
+    """Return symbolic leaves for an object's declared parameters."""
+    return ParameterNamespace(obj.label, type(obj).__quchip_param_fields__)
+
+
+def _parameter_bindings(obj: Any) -> dict[str, Any]:
+    """Return the object's available declared-parameter values."""
+    return {
+        f"{obj.label}.{name}": value
+        for name in type(obj).__quchip_param_fields__
+        if (value := getattr(obj, name)) is not UNBOUND and value is not None
+    }
+
+
+def _normalize_time_term(
+    term: Any,
+    *,
+    owner: Any,
+    labels: tuple[str, ...],
+    dims: tuple[int, ...],
+) -> TimeDependentTerm:
+    """Validate and bind one public time term on its authored support."""
+    if not isinstance(term, TimeDependentTerm):
+        raise TypeError(
+            f"{type(owner).__name__}.time_terms() must return TimeDependentTerm values; "
+            f"got {type(term).__name__}."
+        )
+    bindings = _parameter_bindings(owner)
+    operator = as_operator_expr(
+        term.operator,
+        labels=labels,
+        dims=dims,
+        name=rf"\hat H_{{{owner.label}}}(t)",
+        owner=owner,
+        scope=owner.label,
+        allowed=type(owner).__quchip_param_fields__,
+    ).with_bindings(bindings)
+    return TimeDependentTerm(
+        operator=operator,
+        coefficient=bind_time_coefficient(term.coefficient, bindings),
+    )
 
 
 _MISSING = object()
@@ -115,13 +173,30 @@ def _synthesize_device_init(cls: Any) -> Any:
     which resolves and validates the parameters, so authors get a clean
     signature without hand-writing one.
     """
-    param_fields = cls.__quchip_param_fields__
-    trailing = (
+    fields = cls.__quchip_param_fields__
+    param_fields = {
+        name: spec for name, spec in fields.items() if not spec.noise
+    }
+    noise_fields = {
+        name: spec for name, spec in fields.items() if spec.noise
+    }
+    setting_parameters = tuple(
+        inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY, default=spec.default)
+        for name, spec in setting_fields(cls).items()
+    )
+    trailing = setting_parameters + (
         inspect.Parameter("levels", inspect.Parameter.KEYWORD_ONLY, default=cls._default_levels),
         inspect.Parameter("label", inspect.Parameter.KEYWORD_ONLY, default=None),
-        *(inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY, default=None) for name in _NOISE_FIELDS),
+        *(
+            inspect.Parameter(
+                name,
+                inspect.Parameter.KEYWORD_ONLY,
+                default=inspect.Parameter.empty if spec.required else spec.default,
+            )
+            for name, spec in noise_fields.items()
+        ),
     )
-    signature = build_declared_signature(param_fields, trailing, owner=cls)
+    signature = build_declared_signature(param_fields, trailing)
 
     def __init__(self: Any, *args: Any, **kwargs: Any) -> None:
         bound = signature.bind(self, *args, **kwargs)
@@ -130,8 +205,7 @@ def _synthesize_device_init(cls: Any) -> Any:
         arguments.pop("self")
         levels = arguments.pop("levels")
         label = arguments.pop("label")
-        noise = {name: arguments.pop(name) for name in _NOISE_FIELDS}
-        DeviceModel.__init__(self, levels=levels, label=label, **noise, **arguments)
+        DeviceModel.__init__(self, levels=levels, label=label, **arguments)
 
     __init__.__signature__ = signature  # type: ignore[attr-defined]
     __init__.__qualname__ = f"{cls.__qualname__}.__init__"
@@ -139,19 +213,65 @@ def _synthesize_device_init(cls: Any) -> Any:
     return __init__
 
 
-# ``@dataclass_transform`` is a static-analyzer hint: it tells type checkers
-# to treat ``freq: Scalar = parameter(...)`` field declarations like
-# dataclass fields, so a synthesized ``__init__`` accepting ``freq`` as a
-# ``Scalar`` argument type-checks even though ``parameter()`` returns a
-# ``Parameter`` instance. ``__init_subclass__`` below does the runtime work:
-# it synthesizes a positional ``__init__`` from the declared fields unless
-# the subclass hand-writes its own (see ``_synthesize_device_init``).
-# TODO: dissolve the generated stubs (tools/gen_device_stubs.py) by declaring
-# levels/label/noise as keyword-only specifier fields so PEP 681 describes the
-# full constructor natively; that also fixes user-authored models in their own
-# IDEs, which stubs in this repo never can.
-@dataclass_transform(field_specifiers=(Parameter,))
-class DeviceModel(BaseDevice):
+def _synthesize_coupling_init(cls: Any) -> Any:
+    """Build a constructor from coupling endpoints and declared fields."""
+    parameters = [
+        inspect.Parameter("self", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        inspect.Parameter("device_a", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        inspect.Parameter("device_b", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+    ]
+    parameters.extend(
+        inspect.Parameter(
+            name,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            default=inspect.Parameter.empty if spec.required else spec.default,
+        )
+        for name, spec in parameter_fields(cls).items()
+        if not spec.kw_only
+    )
+    parameters.extend(
+        inspect.Parameter(
+            name,
+            inspect.Parameter.KEYWORD_ONLY,
+            default=spec.default,
+        )
+        for name, spec in setting_fields(cls).items()
+    )
+    parameters.extend(
+        inspect.Parameter(
+            name,
+            inspect.Parameter.KEYWORD_ONLY,
+            default=inspect.Parameter.empty if spec.required else spec.default,
+        )
+        for name, spec in parameter_fields(cls).items()
+        if spec.kw_only
+    )
+    parameters.append(inspect.Parameter("label", inspect.Parameter.KEYWORD_ONLY, default=None))
+    signature = inspect.Signature(parameters)
+
+    def __init__(self: Any, *args: Any, **kwargs: Any) -> None:
+        bound = signature.bind(self, *args, **kwargs)
+        bound.apply_defaults()
+        arguments = dict(bound.arguments)
+        arguments.pop("self")
+        device_a = arguments.pop("device_a")
+        device_b = arguments.pop("device_b")
+        label = arguments.pop("label")
+        CouplingModel.__init__(
+            self,
+            device_a,
+            device_b,
+            label=label,
+            **arguments,
+        )
+
+    __init__.__signature__ = signature  # type: ignore[attr-defined]
+    __init__.__qualname__ = f"{cls.__qualname__}.__init__"
+    __init__.__doc__ = f"Initialize {cls.__name__} from its endpoints and declared fields."
+    return __init__
+
+
+class DeviceModel(BaseDevice, metaclass=DeclarativeMeta):
     """Declarative base for physics device models.
 
     Subclasses declare their parameters as annotated class attributes using
@@ -170,43 +290,58 @@ class DeviceModel(BaseDevice):
     >>> class DuffingOscillator(DeviceModel):
     ...     freq: Scalar = parameter(positive=True, unit="GHz")
     ...     anharmonicity: Scalar = parameter(unit="GHz")
-    ...     def local_hamiltonian(self, op):
-    ...         return self.freq * op.n + 0.5 * self.anharmonicity * op.n @ (op.n - op.I)
+    ...     def local_hamiltonian(self, op, p):
+    ...         return p.freq * op.n + 0.5 * p.anharmonicity * op.n @ (op.n - op.I)
     >>> device = DuffingOscillator(freq=5.0, anharmonicity=-0.3, levels=4)
     >>> device.freq
     5.0
     """
 
+    levels: int = constructor_field(default=2, kw_only=True)
+    label: Any = constructor_field(default=None, kw_only=True)
+    T1: Any = constructor_field(default=None, kw_only=True, runtime=BaseDevice.T1)
+    T2: Any = constructor_field(default=None, kw_only=True, runtime=BaseDevice.T2)
+    thermal_population: Any = constructor_field(
+        default=None,
+        kw_only=True,
+        runtime=BaseDevice.thermal_population,
+    )
+
     #: Declared approximation-regime statement surfaced by
     #: :meth:`physics_notes` — the mechanism that keeps a model's stated
     #: validity range attached to the class rather than buried in a
     #: docstring a caller may not read.
-    approximation: str | None = None
+    approximation: ClassVar[str | None] = None
 
     #: Whether this device represents a computational qubit, as opposed to
     #: e.g. a bus resonator or a coupler element.
-    computational: bool = False
+    computational: ClassVar[bool] = False
 
     # Per-class Fock-truncation default baked into the synthesized ``__init__``.
     # Subclasses override (e.g. ``Resonator`` → 10, ``KerrCavity`` → 30).
-    _default_levels: int = 2
+    _default_levels: ClassVar[int] = 2
 
-    __quchip_param_fields__: dict[str, Parameter] = {}
+    __quchip_param_fields__: ClassVar[dict[str, Parameter]] = {}
+    structural_setting_names: ClassVar[tuple[str, ...]] = ()
 
     # Whether *this class's own body* declared ``tunable_param_names``
     # explicitly, as opposed to getting the derived default. The ancestor
     # check lives in ``_tunable_param_names_explicit_in_lineage``, which walks
     # the MRO reading this marker per class; never read directly by user code.
-    _tunable_param_names_explicit: bool = False
+    _tunable_param_names_explicit: ClassVar[bool] = False
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
+        validate_declared_fields(cls)
         # Cache resolved parameter fields once per class. ``__init__`` and
         # the pytree closures both read this — no per-instance re-walk of
         # the MRO.
         param_fields: dict[str, Parameter] = parameter_fields(cls)
         cls.__quchip_param_fields__ = param_fields
-        _resolve_tunable_param_names(cls, param_fields)
+        tunable_fields = {
+            name: spec for name, spec in param_fields.items() if not spec.noise
+        }
+        _resolve_tunable_param_names(cls, tunable_fields)
 
         # Children carried through pytree round-trip. Order is stable.
         # Declared parameters first (in declaration order), then noise
@@ -214,7 +349,10 @@ class DeviceModel(BaseDevice):
         # are JAX-traceable scalars (or, for the override, ``None``) — they
         # MUST be children, not aux data, for gradients to flow.
         param_names: tuple[str, ...] = tuple(param_fields.keys())
-        children_names: tuple[str, ...] = param_names + _NOISE_FIELDS + ("_reference_freq_override",)
+        children_names: tuple[str, ...] = param_names + ("_reference_freq_override",)
+        setting_names = tuple(
+            dict.fromkeys((*cls.structural_setting_names, *setting_fields(cls)))
+        )
 
         def _flatten(obj: Any) -> tuple[tuple[Any, ...], tuple[Any, ...]]:
             # ``getattr`` defaults to ``None`` so an instance that never set
@@ -224,11 +362,12 @@ class DeviceModel(BaseDevice):
             # Aux data must be hashable (jit cache key). ``levels`` and
             # ``label`` are structural; ``children_names`` makes unflatten
             # unambiguous.
-            aux = (int(obj.levels), obj.label, children_names)
+            settings = tuple(getattr(obj, name) for name in setting_names)
+            aux = (int(obj.levels), obj.label, children_names, setting_names, settings)
             return children, aux
 
         def _unflatten(aux: tuple[Any, ...], children: tuple[Any, ...]) -> Any:
-            levels, label, names = aux
+            levels, label, names, names_of_settings, settings = aux
             obj = cls.__new__(cls)
             # Install structural state via object.__setattr__ to bypass
             # the tracked-mutation hook in BaseDevice.__setattr__. Do not
@@ -240,6 +379,8 @@ class DeviceModel(BaseDevice):
             object.__setattr__(obj, "label", label)
             object.__setattr__(obj, "_owner_chips", weakref.WeakSet())
             object.__setattr__(obj, "_connected_drives", [])
+            for name, value in zip(names_of_settings, settings):
+                object.__setattr__(obj, name, value)
             for name, value in zip(names, children):
                 object.__setattr__(obj, name, value)
             object.__setattr__(obj, "_tracking_enabled", True)
@@ -263,21 +404,23 @@ class DeviceModel(BaseDevice):
         *,
         levels: int = 2,
         label: str | None = None,
-        T1: Any = None,
-        T2: Any = None,
-        thermal_population: Any = None,
         **params: Any,
     ) -> None:
         """Initialize the device from declared parameters and noise kwargs."""
-        values = resolve_declared_params(type(self), params)
+        settings = resolve_declared_settings(type(self), params)
+        values = resolve_declared_params(
+            type(self), params, fields=type(self).__quchip_param_fields__
+        )
         super().__init__(
             levels=levels,
             label=label,
-            T1=T1,
-            T2=T2,
-            thermal_population=thermal_population,
+            **{name: values[name] for name in _NOISE_FIELDS},
         )
+        for name, value in settings.items():
+            setattr(self, name, value)
         for name, value in values.items():
+            if name in _NOISE_FIELDS:
+                continue
             setattr(self, name, value)
         self.validate()
         # Mutation tracking is switched on automatically by the StateVersioned
@@ -312,7 +455,7 @@ class DeviceModel(BaseDevice):
         parts.append(f"levels={self.levels}")
         return f"{type(self).__name__}({', '.join(parts)})"
 
-    def local_hamiltonian(self, op: Any) -> Any:
+    def local_hamiltonian(self, op: Any, p: Any) -> Any:
         """Return this device's local Hamiltonian as a declarative expression.
 
         Parameters
@@ -321,6 +464,8 @@ class DeviceModel(BaseDevice):
             Operator namespace for this device's endpoint, exposing ``a``,
             ``adag``, ``n``, ``I`` and the Pauli handles as composable
             :class:`~quchip.declarative.expr.PhysicsExpr` nodes.
+        p : ParameterNamespace
+            Symbolic leaves for the parameters declared on this model.
 
         Returns
         -------
@@ -329,16 +474,60 @@ class DeviceModel(BaseDevice):
         """
         raise NotImplementedError
 
-    def hamiltonian(self) -> Any:
-        """Compile :meth:`local_hamiltonian` for the active default backend."""
-        from quchip.backend import get_default_backend
-        from quchip.declarative.expr import compile_expr
+    def time_terms(self, op: Any, p: Any) -> tuple[TimeDependentTerm, ...]:
+        """Return local time-dependent Hamiltonian terms beyond the static model."""
+        _ = (op, p)
+        return ()
+
+    def dissipation(self, op: Any, p: Any) -> tuple[CollapseChannel, ...]:
+        """Return device-local Lindblad channels.
+
+        The base channels implement T1, T2, and thermal occupation. Subclasses
+        may append channels with ``super().dissipation(op, p)``.
+        """
+        return super().dissipation(op, p)
+
+    def _time_terms(self) -> tuple[TimeDependentTerm, ...]:
+        """Normalize authored time terms for chip assembly."""
         from quchip.declarative.ops import LocalOps
 
-        backend = get_default_backend()
-        op = LocalOps(label=self.label, levels=self.levels)
-        expr = self.local_hamiltonian(op)
-        return compile_expr(expr, self.declarative_ops(), backend)
+        space = self.local_space()
+        operators = LocalOps(label=self.label, space=space, device=self)
+        parameters = _symbolic_parameters(self)
+        authored = self.time_terms(operators, parameters)
+        if not isinstance(authored, tuple):
+            raise TypeError(
+                f"{type(self).__name__}.time_terms() must return TimeDependentTerm "
+                f"values in a tuple; got {type(authored).__name__}."
+            )
+        return tuple(
+            _normalize_time_term(
+                term,
+                owner=self,
+                labels=(self.label,),
+                dims=(space.dimension,),
+            )
+            for term in authored
+        )
+
+    def unresolved_hamiltonian(self) -> Any:
+        """Return the authored symbolic local Hamiltonian."""
+        from quchip.declarative.ops import LocalOps
+
+        space = self.local_space()
+        op = LocalOps(label=self.label, space=space)
+        parameters = _symbolic_parameters(self)
+        authored = self.local_hamiltonian(op, parameters)
+        expression = as_operator_expr(
+            authored,
+            labels=(self.label,),
+            dims=(space.dimension,),
+            name=rf"\hat H_{{{self.label}}}",
+            owner=self,
+            scope=self.label,
+            allowed=type(self).__quchip_param_fields__,
+        )
+        return expression.with_bindings(_parameter_bindings(self))
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize common device state plus declared parameter values."""
@@ -348,12 +537,21 @@ class DeviceModel(BaseDevice):
     def from_dict(cls, d: dict[str, Any]) -> "DeviceModel":
         """Reconstruct the device from :meth:`to_dict` output."""
         fields = cls.__quchip_param_fields__
-        params = {name: d[name] for name, spec in fields.items() if spec.serialize and name in d}
+        params = {
+            name: d[name]
+            for name, spec in fields.items()
+            if spec.serialize and name in d
+        }
+        settings = {
+            name: d[name]
+            for name, spec in setting_fields(cls).items()
+            if spec.serialize and name in d
+        }
         return cls(
             levels=int(d.get("levels", 2)),
             label=d.get("label"),
-            **cls._noise_kwargs_from_dict(d),
             **params,
+            **settings,
         )._restore_reference_freq(d)
 
     def physics_notes(self) -> list[str]:
@@ -364,25 +562,18 @@ class DeviceModel(BaseDevice):
         return notes
 
 
-@dataclass_transform(field_specifiers=(Parameter,))
-class CouplingModel(BaseCoupling):
+class CouplingModel(BaseCoupling, metaclass=DeclarativeMeta):
     """Declarative two-body coupling base.
 
     Subclasses declare physics parameters via :func:`parameter` and
     implement :meth:`interaction` (returning a
     :class:`~quchip.declarative.expr.PhysicsExpr` over the two endpoint
-    operators). The RWA is applied structurally by the chip and engine
-    via :meth:`~quchip.chip.coupling_base.BaseCoupling.rwa_keeps_band`;
-    only the *parametric* RWA structures remain author-declared, because
-    pump sideband selection depends on frequency intent rather than
-    operator structure: which sideband a pump activates (red: Δa+Δb=0
-    exchange; blue: |Δa+Δb|=2 two-photon) depends on where the pump
-    frequency sits relative to traced device frequencies, and a structural
-    rule cannot infer it without branching on traced values.
+    operators). The chip's approximation strategy is applied structurally
+    by the engine after the authored interaction is assembled.
     Optional overrides:
 
-    - :meth:`time_dependent` — parametric (time-dependent) modulation, as
-      a :class:`PhysicsExpr` carrying a single dynamic source.
+    - :meth:`time_terms` — time-dependent Hamiltonian terms,
+      each pairing a local operator with a public time coefficient.
 
     :attr:`coupling_strength` defaults to the *first declared parameter
     field* (suited for the common case of one ``g``-like scalar). Override
@@ -400,18 +591,26 @@ class CouplingModel(BaseCoupling):
     >>> from quchip.declarative import CouplingModel, parameter, Scalar
     >>> class ExchangeCoupling(CouplingModel):
     ...     g: Scalar = parameter(unit="GHz")
-    ...     def interaction(self, a, b):
-    ...         return self.g * (a.a * b.adag + a.adag * b.a)
+    ...     def interaction(self, a, b, p):
+    ...         return p.g * (a.a * b.adag + a.adag * b.a)
     >>> c = ExchangeCoupling("q0", "q1", g=0.01)
     >>> c.coupling_strength
     0.01
     """
 
-    __quchip_param_fields__: dict[str, Parameter] = {}
+    device_a: BaseDevice | str = constructor_field()
+    device_b: BaseDevice | str = constructor_field()
+    label: Any = constructor_field(default=None, kw_only=True)
+
+    __quchip_param_fields__: ClassVar[dict[str, Parameter]] = {}
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
+        validate_declared_fields(cls)
         cls.__quchip_param_fields__ = parameter_fields(cls)
+        if "__init__" not in cls.__dict__:
+            cls.__init__ = _synthesize_coupling_init(cls)  # type: ignore[method-assign]
+            _wrap_init_for_finish(cls)
 
     def __init__(
         self,
@@ -419,13 +618,14 @@ class CouplingModel(BaseCoupling):
         device_b: Any,
         *,
         label: str | None = None,
-        rwa: bool | None = None,
         **params: Any,
     ) -> None:
         """Initialize a declarative coupling between two devices or labels."""
+        settings = resolve_declared_settings(type(self), params)
         values = resolve_declared_params(type(self), params)
         super().__init__(device_a, device_b, label=label)
-        self._rwa = rwa
+        for name, value in settings.items():
+            setattr(self, name, value)
         for name, value in values.items():
             setattr(self, name, value)
         # Tracking auto-enables via the StateVersioned init wrapper post-construction.
@@ -474,7 +674,7 @@ class CouplingModel(BaseCoupling):
 
     # --- Physics overrides for subclasses ---
 
-    def interaction(self, a: Any, b: Any) -> Any:
+    def interaction(self, a: Any, b: Any, p: Any) -> Any:
         """Return the full two-body interaction expression.
 
         Parameters
@@ -492,8 +692,8 @@ class CouplingModel(BaseCoupling):
         """
         raise NotImplementedError
 
-    def time_dependent(self, a: Any, b: Any) -> Any:
-        """Return an optional time-dependent interaction expression.
+    def time_terms(self, a: Any, b: Any, p: Any) -> tuple[TimeDependentTerm, ...]:
+        """Return time-dependent interaction terms.
 
         Parameters
         ----------
@@ -502,59 +702,46 @@ class CouplingModel(BaseCoupling):
 
         Returns
         -------
-        PhysicsExpr or None
-            An expression carrying exactly one dynamic source (envelope or
-            modulation), or ``None`` when the coupling is purely static.
+        tuple of TimeDependentTerm
+            Local operators and their scalar time coefficients. The empty
+            tuple denotes a purely static coupling.
         """
-        return None
+        _ = (a, b, p)
+        return ()
 
-    def rwa_time_dependent(self, a: Any, b: Any) -> Any:
-        """Return the RWA time-dependent expression, defaulting to full form.
-
-        Mirrors the parametric RWA split for the dynamic term: subclasses
-        whose parametric drive keeps only the co-rotating operators under
-        RWA override this.
-
-        Parameters
-        ----------
-        a, b : EndpointOps
-            Operator namespaces for the two coupled endpoints.
-        """
-        return self.time_dependent(a, b)
-
-    def parametric_interaction(self, a: Any, b: Any) -> Any:
+    def parametric_interaction(self, a: Any, b: Any, p: Any) -> Any:
         """Return the parametric interaction structure, or ``None`` when this coupling is not modulable.
 
         The coupling-side mirror of the device drive-dispatch protocols: a
         :class:`~quchip.control.drive.ParametricDrive` accepts any coupling
         whose hook returns a :class:`~quchip.declarative.expr.PhysicsExpr`.
         """
-        _ = (a, b)
+        _ = (a, b, p)
         return None
 
-    def rwa_parametric_interaction(self, a: Any, b: Any) -> Any:
-        """RWA-retained parametric structure; defaults to the full form."""
-        return self.parametric_interaction(a, b)
+    def dissipation(self, a: Any, b: Any, p: Any) -> tuple[CollapseChannel, ...]:
+        """Return authored two-endpoint Lindblad channels."""
+        _ = (a, b, p)
+        return ()
 
-    def parametric_operator(self, chip: Any) -> Any | None:
-        """Compile the parametric structure for *chip*'s resolved RWA policy.
-
-        Returns the backend-native operator on the local two-body space, or
-        ``None`` when :meth:`parametric_interaction` declines. Valid only once
-        the coupling is chip-resolved (same contract as
-        :meth:`interaction_hamiltonian`).
-        """
-        from quchip.declarative.expr import compile_expr
-
+    def _bind_parametric_interaction(self) -> Any | None:
+        """Validate and bind the coupling's authored parametric interaction."""
         a_ops, b_ops = self._endpoint_ops()
-        rwa = chip.resolve_rwa(self)
-        expr = self.rwa_parametric_interaction(a_ops, b_ops) if rwa else self.parametric_interaction(a_ops, b_ops)
-        if expr is None:
+        p = _symbolic_parameters(self)
+        authored = self.parametric_interaction(a_ops, b_ops, p)
+        if authored is None:
             return None
-        self._check_endpoint_order(expr, "rwa_parametric_interaction" if rwa else "parametric_interaction")
-        from quchip.backend import get_default_backend
-
-        return compile_expr(expr, self._endpoint_lookup(), get_default_backend())
+        expr = as_operator_expr(
+            authored,
+            labels=(self.device_a_label, self.device_b_label),
+            dims=(a_ops.space.dimension, b_ops.space.dimension),
+            name=rf"\hat P_{{{self.label}}}",
+            owner=self,
+            scope=self.label,
+            allowed=type(self).__quchip_param_fields__,
+        )
+        self._check_endpoint_order(expr, "parametric_interaction")
+        return expr.with_bindings(_parameter_bindings(self))
 
     # --- Compilation ---
 
@@ -574,28 +761,32 @@ class CouplingModel(BaseCoupling):
         """``device_b`` narrowed to a concrete device (see :attr:`_resolved_a`)."""
         return cast(BaseDevice, self.device_b)
 
-    def _endpoint_lookup(self) -> dict[tuple[str, str], Any]:
-        """Return the merged ``(label, op-name) -> operator`` lookup for both resolved endpoints."""
-        return {**self._resolved_a.declarative_ops(), **self._resolved_b.declarative_ops()}
-
     def _endpoint_ops(self) -> tuple[Any, Any]:
         """Return the ``(a, b)`` operator namespaces for this coupling's resolved endpoints."""
         from quchip.declarative.ops import EndpointOps
 
         return (
-            EndpointOps(label=self.device_a_label, levels=self._resolved_a.levels),
-            EndpointOps(label=self.device_b_label, levels=self._resolved_b.levels),
+            EndpointOps(
+                label=self.device_a_label,
+                space=self._resolved_a.local_space(),
+                device=self._resolved_a,
+            ),
+            EndpointOps(
+                label=self.device_b_label,
+                space=self._resolved_b.local_space(),
+                device=self._resolved_b,
+            ),
         )
 
     def _check_endpoint_order(self, expr: Any, method_name: str) -> None:
         """Reject a two-endpoint expression whose labels are not in ``(a, b)`` order.
 
-        :func:`~quchip.declarative.expr.compile_expr`'s tensor branch
+        :func:`~quchip.declarative.expr.materialize_expr`'s tensor branch
         preserves the expression tree's argument order into the backend
         ``tensor()`` call, and the chip and engine embed the compiled
         two-body operator positionally against
         ``(device_a_label, device_b_label)`` (``Chip.hamiltonian``,
-        ``embed_two_body``, ``stage2_assembly``'s canonical-operator
+        ``embed_two_body``, ``assembly``'s canonical-operator
         metadata) without reading ``expr.labels`` back out of the compiled
         backend operator. An expression authored as ``b.op * a.op``
         therefore compiles to a Hilbert-space-reversed operator that
@@ -611,15 +802,48 @@ class CouplingModel(BaseCoupling):
             )
 
     def interaction_hamiltonian(self) -> Any:
-        """Compile the full interaction expression for the default backend."""
-        from quchip.backend import get_default_backend
-        from quchip.declarative.expr import compile_expr
+        """Return the authored symbolic interaction Hamiltonian."""
 
-        backend = get_default_backend()
         a_ops, b_ops = self._endpoint_ops()
-        expr = self.interaction(a_ops, b_ops)
+        parameters = _symbolic_parameters(self)
+        authored = self.interaction(a_ops, b_ops, parameters)
+        expr = as_operator_expr(
+            authored,
+            labels=(self.device_a_label, self.device_b_label),
+            dims=(a_ops.space.dimension, b_ops.space.dimension),
+            name=rf"\hat H_{{{self.label}}}",
+            owner=self,
+            scope=self.label,
+            allowed=type(self).__quchip_param_fields__,
+        )
         self._check_endpoint_order(expr, "interaction")
-        return compile_expr(expr, self._endpoint_lookup(), backend)
+        return expr.with_bindings(_parameter_bindings(self))
+
+    def _collapse_channels_with_paths(
+        self,
+    ) -> tuple[tuple[CollapseChannel, tuple[str, ...]], ...]:
+        """Normalize authored coupling dissipation and infer dependencies."""
+        a_ops, b_ops = self._endpoint_ops()
+        parameters = _symbolic_parameters(self)
+        authored = self.dissipation(a_ops, b_ops, parameters)
+        bindings = _parameter_bindings(self)
+        fields = type(self).__quchip_param_fields__
+        normalized = normalize_dissipation(
+            authored,
+            labels=(self.device_a_label, self.device_b_label),
+            dims=(a_ops.space.dimension, b_ops.space.dimension),
+            owner=self,
+            scope=self.label,
+            allowed=fields,
+            bindings=bindings,
+        )
+        for channel, _paths in normalized:
+            self._check_endpoint_order(channel.operator, "dissipation")
+        return normalized
+
+    def collapse_channels(self) -> tuple[CollapseChannel, ...]:
+        """Return normalized coupling collapse channels."""
+        return tuple(channel for channel, _paths in self._collapse_channels_with_paths())
 
     @classmethod
     def from_dict(cls, d: dict[str, Any], device_a: Any, device_b: Any) -> "CouplingModel":
@@ -631,70 +855,42 @@ class CouplingModel(BaseCoupling):
         """
         fields = cls.__quchip_param_fields__
         params = {name: d[name] for name in fields if name in d}
+        settings = {
+            name: d[name]
+            for name, spec in setting_fields(cls).items()
+            if spec.serialize and name in d
+        }
         return cls(
             device_a=device_a,
             device_b=device_b,
             label=d.get("label"),
-            rwa=d.get("rwa"),
             **params,
+            **settings,
         )
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize common coupling state plus declared parameter values."""
-        data = _serialize_declared_params(self, super().to_dict())
-        data["rwa"] = self._rwa
-        return data
+        return _serialize_declared_params(self, super().to_dict())
 
-    def _validate_dynamic_expr(self, expr: Any, method_name: str) -> None:
-        """Require exactly one dynamic source on a compiled time-dependent expression.
-
-        Applied to whichever expression :meth:`dynamic_interaction_terms`
-        actually compiles: the full :meth:`time_dependent` form, and again
-        to :meth:`rwa_time_dependent`'s replacement when the chip resolves
-        RWA, so a malformed RWA override cannot skip the check the full
-        form passed.
-        """
-        from quchip.declarative.expr import PhysicsExpr
-
-        if not isinstance(expr, PhysicsExpr) or len(expr.dynamic_sources) != 1:
-            raise ValueError(
-                f"{type(self).__name__}.{method_name}() must return an expression containing "
-                "exactly one dynamic source."
-            )
-
-    def dynamic_interaction_terms(self, chip: Any) -> list[tuple[Any, Any]]:
-        """Compile the optional single-source dynamic interaction term.
-
-        Parameters
-        ----------
-        chip : Chip
-            Owning chip, consulted via :meth:`Chip.resolve_rwa` to select the
-            static or RWA operator structure of the dynamic term.
-
-        Returns
-        -------
-        list of (operator, modulation)
-            One ``(static_operator, scalar_modulation)`` pair when
-            :meth:`time_dependent` returns an expression, else an empty list.
-        """
-        from quchip.declarative.expr import compile_expr
-
+    def _time_terms(self) -> tuple[TimeDependentTerm, ...]:
+        """Normalize authored time-dependent interactions for chip assembly."""
         a_ops, b_ops = self._endpoint_ops()
-        expr = self.time_dependent(a_ops, b_ops)
-        if expr is None:
-            return []
-        self._validate_dynamic_expr(expr, "time_dependent")
-        method_name = "time_dependent"
-        if chip.resolve_rwa(self):
-            expr = self.rwa_time_dependent(a_ops, b_ops)
-            self._validate_dynamic_expr(expr, "rwa_time_dependent")
-            method_name = "rwa_time_dependent"
-        self._check_endpoint_order(expr, method_name)
-        from quchip.backend import get_default_backend
-        from quchip.engine.ir import as_scalar_modulation
-
-        source = expr.dynamic_sources[0].source
-        mod_signal = as_scalar_modulation(source, owner=type(self).__name__)
-        static_expr = expr.without_dynamic_sources()
-        backend = get_default_backend()
-        return [(compile_expr(static_expr, self._endpoint_lookup(), backend), mod_signal)]
+        parameters = _symbolic_parameters(self)
+        authored = self.time_terms(a_ops, b_ops, parameters)
+        if not isinstance(authored, tuple):
+            raise TypeError(
+                f"{type(self).__name__}.time_terms() must return TimeDependentTerm "
+                f"values in a tuple; got {type(authored).__name__}."
+            )
+        normalized = tuple(
+            _normalize_time_term(
+                term,
+                owner=self,
+                labels=(self.device_a_label, self.device_b_label),
+                dims=(a_ops.space.dimension, b_ops.space.dimension),
+            )
+            for term in authored
+        )
+        for term in normalized:
+            self._check_endpoint_order(term.operator, "time_terms")
+        return normalized

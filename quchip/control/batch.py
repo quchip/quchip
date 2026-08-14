@@ -1,11 +1,7 @@
 """Batch / sweep-axis machinery for :class:`~quchip.control.sequence.QuantumSequence`.
 
-This module owns everything about turning a scheduled sequence into a
-*batched* solve request: the sweepable :class:`BatchAxis` /
-:class:`ZippedBatchAxis` descriptors, the per-entry handles
-(:class:`PulseHandle`, :class:`DelayHandle`) that create them, the axis
-expansion into per-point overrides, and the list-like :class:`ProblemBatch`
-view over the resulting :class:`~quchip.engine.ir.SolveBatch`.
+Batch axes and per-entry handles expand a scheduled sequence into
+per-point overrides consumed by :class:`~quchip.engine.ir.SolveBatch`.
 
 :class:`QuantumSequence` (in ``sequence.py``) is the scheduler; it delegates
 its ``vary`` / ``zip`` / ``build_batch`` surface here. The split keeps the
@@ -25,7 +21,6 @@ import numpy as np
 
 if TYPE_CHECKING:
     from quchip.control.sequence import QuantumSequence
-    from quchip.engine.ir import SolveBatch, SolveProblem
 
 
 @dataclass(frozen=True)
@@ -43,6 +38,7 @@ class BatchAxis:
     values: Any
     name: str
     entry_index: int | None = None
+    entry_field: str | None = None
     #: The scheduled entry object this axis references (``None`` for
     #: sequence-level axes). ``build_batch`` validates it against the
     #: sequence by identity, so an axis silently pointing at the wrong
@@ -63,51 +59,6 @@ class ZippedBatchAxis:
     @property
     def size(self) -> int:
         return self.axes[0].size
-
-
-class ProblemBatch(Sequence["SolveProblem"]):
-    """List-like view of a batched solve request with sweep bookkeeping.
-
-    Wraps a :class:`~quchip.engine.ir.SolveBatch` (the structural source of
-    truth); per-element :class:`~quchip.engine.ir.SolveProblem` views are
-    materialised on demand.
-    """
-
-    __slots__ = ("batch", "params", "shape", "axes")
-
-    def __init__(
-        self,
-        batch: "SolveBatch",
-        params: np.ndarray,
-        shape: tuple[int, ...],
-        axes: tuple[tuple[str, Any], ...],
-    ) -> None:
-        self.batch = batch
-        self.params = params
-        self.shape = shape
-        self.axes = axes
-
-    def __len__(self) -> int:
-        return self.batch.batch_size
-
-    def __iter__(self):
-        for idx in range(self.batch.batch_size):
-            yield self.batch.element(idx)
-
-    def __getitem__(self, item):
-        if isinstance(item, slice):
-            return [self.batch.element(i) for i in range(*item.indices(self.batch.batch_size))]
-        return self.batch.element(int(item))
-
-    def params_at(self, point: int | tuple[int, ...]) -> dict[str, Any]:
-        """Return the sweep parameter dictionary at the given grid coordinate."""
-        if self.shape == ():
-            if point not in (0, ()):
-                raise IndexError(f"Scalar batch only accepts 0 or (), got {point!r}")
-            return dict(self.params.item().items())
-        if not isinstance(point, tuple):
-            point = (point,)
-        return dict(self.params[point].items())
 
 
 def _axis_metadata(axis: BatchAxis | ZippedBatchAxis) -> tuple[str, Any]:
@@ -211,12 +162,16 @@ def _expand_axis_overrides(
             for i in range(axis.size):
                 point: dict[tuple[int | None, str], Any] = {}
                 for subaxis in axis.axes:
-                    point[(subaxis.entry_index, subaxis.field)] = subaxis.values[i]
+                    field = subaxis.entry_field or subaxis.field
+                    point[(subaxis.entry_index, field)] = subaxis.values[i]
                 slice_.append(point)
             axis_slices.append(slice_)
         else:
             axis_slices.append(
-                [{(axis.entry_index, axis.field): axis.values[i]} for i in range(axis.size)]
+                [
+                    {(axis.entry_index, axis.entry_field or axis.field): axis.values[i]}
+                    for i in range(axis.size)
+                ]
             )
 
     shape = tuple(len(s) for s in axis_slices)

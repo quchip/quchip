@@ -1,19 +1,7 @@
 """Public package surface for quchip.
 
-This module re-exports the primary user-facing objects that make up a
-quchip study: device models (:class:`DuffingTransmon`,
-:class:`Resonator`, ...), chip topology and analysis
-(:class:`Chip`, :class:`Capacitive`, :class:`DressedResult`, ...),
-classical control (drives, envelopes, sequences, crosstalk), the
-engine entry points (:func:`simulate`, :func:`build_problem`,
-:func:`solve_problem`, :func:`solve_many`), backend selection helpers,
-backend-agnostic result containers, sweep helpers
-(:class:`Sweep`, :class:`SpectrumSweep`), post-hoc analysis
-(:func:`effective_hamiltonian`, :func:`analyze_cross_resonance`, ...),
-the immutable physical constants, and :func:`enable_compilation_cache`.
-
-Visualization helpers and optional third-party interop (pyvis, scqubits,
-matplotlib-based plots, ...) are loaded lazily through the module-level
+Visualization helpers and optional third-party interop are loaded lazily
+through the module-level
 :func:`__getattr__` so that ``import quchip`` stays fast and does not
 force any optional dependency on the core install.
 """
@@ -35,7 +23,7 @@ del _jax
 import os  # noqa: E402
 from importlib import import_module  # noqa: E402
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 
 from quchip.analysis import (  # noqa: E402
     CRHamiltonianResult,
@@ -49,6 +37,7 @@ from quchip.analysis import (  # noqa: E402
     analyze_static_zz,
     effective_hamiltonian,
 )
+from quchip.approximations import Approximation, Exact, RWA  # noqa: E402
 from quchip.backend import get_default_backend, set_default_backend  # noqa: E402
 from quchip.chip import (
     ActivePatchResult,
@@ -68,45 +57,53 @@ from quchip.chip import (
     register_retarget_rule,
 )
 from quchip.control import (
-    BaseDrive,
     ChargeDrive,
     ControlEquipment,
+    CouplingDrive,
     Crosstalk,
     CrosstalkMatrix,
     Delay,
-    DriveChannel,
-    DriveModulation,
-    DriveSignalSpec,
+    DeviceDrive,
+    Envelope,
     FluxDrive,
     Gain,
     Gaussian,
+    GaussianDRAG,
     GaussianEdge,
     LinearRamp,
     ParametricDrive,
     PhaseDrive,
-    SignalTransform,
     Square,
     SquareWithGaussianEdges,
     TwoPhotonDrive,
 )
-from quchip.control.batch import ProblemBatch
 from quchip.control.sequence import QuantumSequence
 from quchip.declarative import (
+    CollapseChannel,
+    CosineCoefficient,
     CouplingModel,
     DeviceModel,
-    EnvelopeShape,
-    Modulation,
+    EndpointOps,
+    LocalOps,
+    TimeDependentTerm,
     Parameter,
+    PhysicsExpr,
     Scalar,
+    Setting,
+    TimeCoefficient,
+    as_operator_expr,
+    as_scalar_expr,
+    as_state_expr,
     parameter,
+    setting,
     qnp,
 )
-from quchip.devices.base import NoiseChannel
-from quchip.devices.circuit import CircuitDevice
 from quchip.devices.fluxonium import Fluxonium
+from quchip.devices.fock import FockDevice
 from quchip.devices.kerr_cavity import KerrCavity
 from quchip.devices.protocols import ChargeCoupled, FluxCoupled, PhaseCoupled
 from quchip.devices.resonator import Resonator
+from quchip.devices.spaces import ChargeSpace, CustomSpace, FockSpace, LocalSpace, PhaseGridSpace
 from quchip.devices.transmon.charge_basis import ChargeBasisTransmon
 from quchip.devices.transmon.duffing import DuffingTransmon
 from quchip.devices.transmon.flux_tunable import FluxTunableTransmon
@@ -136,27 +133,46 @@ _LAZY_VIZ_EXPORTS = {
 __all__ = [
     # Version
     "__version__",
+    # Engine approximation strategies
+    "Approximation",
+    "Exact",
+    "RWA",
     # Declarative extension API
+    "CollapseChannel",
     "CouplingModel",
+    "CosineCoefficient",
     "DeviceModel",
-    "EnvelopeShape",
+    "EndpointOps",
+    "Envelope",
+    "LocalOps",
+    "TimeDependentTerm",
     "Parameter",
+    "PhysicsExpr",
     "Scalar",
-    "Modulation",
+    "Setting",
+    "TimeCoefficient",
+    "as_operator_expr",
+    "as_scalar_expr",
+    "as_state_expr",
     "parameter",
+    "setting",
     "qnp",
     # Devices
     "ChargeBasisTransmon",
-    "CircuitDevice",
+    "ChargeSpace",
+    "CustomSpace",
     "DuffingTransmon",
+    "FockDevice",
+    "FockSpace",
     "FluxTunableTransmon",
     "Fluxonium",
     "KerrCavity",
-    "NoiseChannel",
+    "LocalSpace",
     "Resonator",
     # Coupling Protocols
     "ChargeCoupled",
     "PhaseCoupled",
+    "PhaseGridSpace",
     "FluxCoupled",
     # Chip topology
     "Chip",
@@ -176,6 +192,7 @@ __all__ = [
     "register_reduction_method",
     # Pulse envelopes
     "Gaussian",
+    "GaussianDRAG",
     "LinearRamp",
     "GaussianEdge",
     "Square",
@@ -191,7 +208,6 @@ __all__ = [
     "PartitionedSimulationResult",
     # Sequence
     "QuantumSequence",
-    "ProblemBatch",
     # Backend management
     "get_default_backend",
     "set_default_backend",
@@ -201,14 +217,11 @@ __all__ = [
     "hbar",
     "Phi_0",
     # Control
-    "BaseDrive",
-    "SignalTransform",
+    "CouplingDrive",
+    "DeviceDrive",
     "Delay",
     "Gain",
-    "DriveSignalSpec",
-    "DriveModulation",
     "ChargeDrive",
-    "DriveChannel",
     "FluxDrive",
     "ParametricDrive",
     "PhaseDrive",

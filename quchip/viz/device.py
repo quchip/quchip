@@ -9,6 +9,7 @@ import numpy as np
 from matplotlib.figure import Figure
 
 from quchip.backend import get_default_backend
+from quchip.declarative.expr import materialize_expr
 from quchip.devices.base import BaseDevice
 from quchip.viz._common import _basis_label, _draw_energy_ladder, _to_dense_array
 from quchip.viz._style import _quchip_style, _resolve_single_axes
@@ -53,7 +54,7 @@ def plot_energy_levels(
     >>> qubit.plot_energy_levels()  # doctest: +SKIP
     """
     backend = get_default_backend()
-    energies = np.asarray(backend.eigenenergies(device.hamiltonian()), dtype=float)
+    energies = np.asarray(backend.eigenenergies(materialize_expr(device.hamiltonian(), backend)), dtype=float)
     level_color = color or plt.get_cmap("tab10")(0)
     entries = [(float(energy), _basis_label((level,))) for level, energy in enumerate(energies)]
 
@@ -116,7 +117,7 @@ def plot_wavefunction(
     >>> transmon.plot_wavefunction(n=1)  # doctest: +SKIP
     """
     backend = get_default_backend()
-    _energies, states = backend.eigenstates(device.hamiltonian())
+    _energies, states = backend.eigenstates(materialize_expr(device.hamiltonian(), backend))
     if n < 0 or n >= len(states):
         raise IndexError(f"Eigenstate index {n} out of range for {len(states)} states")
 

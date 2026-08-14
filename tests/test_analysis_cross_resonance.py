@@ -3,6 +3,8 @@ and CRHamiltonianResult structure and re-exports."""
 
 from __future__ import annotations
 
+from quchip.approximations import RWA
+
 import numpy as np
 import pytest
 
@@ -20,8 +22,12 @@ from quchip.devices.transmon.duffing import DuffingTransmon
 
 def _make_synthetic_data(
     t: np.ndarray,
-    px0: float, py0: float, pz0: float,
-    px1: float, py1: float, pz1: float,
+    px0: float,
+    py0: float,
+    pz0: float,
+    px1: float,
+    py1: float,
+    pz1: float,
     td: float = 1e6,
     noise_level: float = 0.0,
     rng: np.random.Generator | None = None,
@@ -112,14 +118,19 @@ def test_recovery_known_coefficients_noise_free():
     # 10% tolerance on noise-free data; results are GHz, truths are the
     # Hz-valued Bloch-model inputs.
     tol = 0.10
-    for name, true_val_hz in [("IX", IX_true), ("IY", IY_true), ("IZ", IZ_true),
-                              ("ZX", ZX_true), ("ZY", ZY_true), ("ZZ", ZZ_true)]:
+    for name, true_val_hz in [
+        ("IX", IX_true),
+        ("IY", IY_true),
+        ("IZ", IZ_true),
+        ("ZX", ZX_true),
+        ("ZY", ZY_true),
+        ("ZZ", ZZ_true),
+    ]:
         val, _ = result.coeffs()[name]
         true_val = true_val_hz * 1e-9
         rel_err = abs(val - true_val) / (abs(true_val) + 1e-18)
         assert rel_err < tol, (
-            f"{name}: recovered {val*1e3:.4f} MHz, expected {true_val*1e3:.4f} MHz "
-            f"(rel err = {rel_err:.2%})"
+            f"{name}: recovered {val * 1e3:.4f} MHz, expected {true_val * 1e3:.4f} MHz (rel err = {rel_err:.2%})"
         )
 
 
@@ -162,9 +173,7 @@ def test_recovery_with_noise():
 
     t_ns = np.linspace(0, 800, 120)  # ns
     t_s = t_ns * 1e-9  # seconds for the Bloch model (Hz coefficients)
-    c0x, c0y, c0z, c1x, c1y, c1z = _make_synthetic_data(
-        t_s, px0, py0, pz0, px1, py1, pz1, noise_level=0.05, rng=rng
-    )
+    c0x, c0y, c0z, c1x, c1y, c1z = _make_synthetic_data(t_s, px0, py0, pz0, px1, py1, pz1, noise_level=0.05, rng=rng)
 
     result = analyze_cross_resonance(
         t_ns,
@@ -175,7 +184,7 @@ def test_recovery_with_noise():
     # ZX should be recovered within 20% with noisy data (result GHz, truth Hz)
     zx_val, _ = result.coeffs()["ZX"]
     assert abs(zx_val - ZX_true * 1e-9) / (ZX_true * 1e-9) < 0.20, (
-        f"ZX recovery under noise: {zx_val*1e3:.3f} vs {ZX_true*1e-6:.3f} MHz"
+        f"ZX recovery under noise: {zx_val * 1e3:.3f} vs {ZX_true * 1e-6:.3f} MHz"
     )
 
 
@@ -192,15 +201,24 @@ def test_zero_amplitude_returns_near_zero():
         {"x": c1x, "y": c1y, "z": c1z},
     )
     for name, (val, _) in result.coeffs().items():
-        assert abs(val) < 0.1e6 * 1e-9, f"{name} = {val*1e3:.3f} MHz should be ~0 for near-zero drive"
+        assert abs(val) < 0.1e6 * 1e-9, f"{name} = {val * 1e3:.3f} MHz should be ~0 for near-zero drive"
 
 
 def test_result_container_structure():
     """CRHamiltonianResult has the right fields and coeffs() method."""
     r = CRHamiltonianResult(
-        IX=1e6, IY=2e6, IZ=3e6, ZX=4e6, ZY=5e6, ZZ=6e6,
-        IX_err=0.1e6, IY_err=0.1e6, IZ_err=0.1e6,
-        ZX_err=0.1e6, ZY_err=0.1e6, ZZ_err=0.1e6,
+        IX=1e6,
+        IY=2e6,
+        IZ=3e6,
+        ZX=4e6,
+        ZY=5e6,
+        ZZ=6e6,
+        IX_err=0.1e6,
+        IY_err=0.1e6,
+        IZ_err=0.1e6,
+        ZX_err=0.1e6,
+        ZY_err=0.1e6,
+        ZZ_err=0.1e6,
     )
     coeffs = r.coeffs()
     assert set(coeffs.keys()) == {"IX", "IY", "IZ", "ZX", "ZY", "ZZ"}
@@ -213,9 +231,18 @@ def test_result_container_structure():
 def test_coeffs_summary_prints(capsys):
     """summary() prints and returns a string."""
     r = CRHamiltonianResult(
-        IX=1e6, IY=2e6, IZ=3e6, ZX=4e6, ZY=5e6, ZZ=6e6,
-        IX_err=0.1e6, IY_err=0.1e6, IZ_err=0.1e6,
-        ZX_err=0.1e6, ZY_err=0.1e6, ZZ_err=0.1e6,
+        IX=1e6,
+        IY=2e6,
+        IZ=3e6,
+        ZX=4e6,
+        ZY=5e6,
+        ZZ=6e6,
+        IX_err=0.1e6,
+        IY_err=0.1e6,
+        IZ_err=0.1e6,
+        ZX_err=0.1e6,
+        ZY_err=0.1e6,
+        ZZ_err=0.1e6,
     )
     text = r.summary()
     assert isinstance(text, str)
@@ -254,9 +281,9 @@ def _driven_pair(*, two_control_lines: bool = False, backend: str | None = None)
         lines.append(ChargeDrive(control, label="control_xy_2"))
     chip = Chip(
         [control, target],
-        [Capacitive(control, target, g=0.004, rwa=True)],
+        [Capacitive(control, target, g=0.004)],
         control_equipment=ControlEquipment(lines),
-        rwa=True,
+        approximation=RWA(),
         backend=backend,
     )
     return chip, control, target, drive
@@ -268,9 +295,7 @@ def test_cr_susceptibility_is_conditional_dressed_drive_difference() -> None:
 
     result = analyze_cr_susceptibility(chip, control, target)
     m0 = chip.drive_matrix_elements(({}, {target: 1}), drives=[drive])[drive]
-    m1 = chip.drive_matrix_elements(
-        ({control: 1}, {control: 1, target: 1}), drives=[drive]
-    )[drive]
+    m1 = chip.drive_matrix_elements(({control: 1}, {control: 1, target: 1}), drives=[drive])[drive]
 
     assert isinstance(result, CRSusceptibilityResult)
     assert result.m_control_0 == pytest.approx(m0)
@@ -339,7 +364,7 @@ def test_cr_susceptibility_rejects_missing_or_ambiguous_control_line() -> None:
     """Implicit drive resolution requires exactly one line targeting the control."""
     control = DuffingTransmon(freq=5.2, anharmonicity=-0.3, levels=3, label="control")
     target = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=3, label="target")
-    chip = Chip([control, target], [Capacitive(control, target, g=0.004, rwa=True)], rwa=True)
+    chip = Chip([control, target], [Capacitive(control, target, g=0.004)])
     with pytest.raises(ValueError, match="control equipment"):
         analyze_cr_susceptibility(chip, control, target)
 

@@ -478,15 +478,11 @@ class TestSpectrumSweep:
         r = Resonator(freq=7.0, levels=4, label="r")
         chip = Chip([q, r], [Capacitive(q, r, g=0.05)])
 
-        freq_axis = Sweep([6.8, 7.0], name="r_freq")
-
-        def update_fn(chip: Chip, params: dict[str, float]) -> None:
-            chip["r"].freq = params["r_freq"]
+        freq_axis = Sweep([6.8, 7.0], name="r.freq")
 
         result = SpectrumSweep(
             chip,
             [freq_axis],
-            update_fn=update_fn,
             evals_count=5,
             store_eigenstates=True,
         ).run(progress=False)
@@ -505,13 +501,9 @@ class TestSpectrumSweep:
         chip = Chip([q, r], [Capacitive(q, r, g=0.05)])
         original_freq = chip["r"].freq
 
-        def update_fn(chip_point: Chip, params: dict[str, float]) -> None:
-            chip_point["r"].freq = params["r_freq"]
-
         SpectrumSweep(
             chip,
-            [Sweep([6.8, 7.1], name="r_freq")],
-            update_fn=update_fn,
+            [Sweep([6.8, 7.1], name="r.freq")],
         ).run(progress=False)
 
         assert chip["r"].freq == original_freq
@@ -524,8 +516,7 @@ class TestSpectrumSweep:
 
         sweep_result = SpectrumSweep(
             chip,
-            [Sweep([7.0], name="r_freq")],
-            update_fn=lambda chip, params: setattr(chip["r"], "freq", params["r_freq"]),
+            [Sweep([7.0], name="r.freq")],
             evals_count=4,
             store_eigenstates=False,
         ).run(progress=False)
@@ -537,15 +528,12 @@ class TestSpectrumSweep:
         """SpectrumSweep marks a bare-label trajectory NaN once its dressed overlap drops too low."""
         r_a = Resonator(freq=6.0, levels=4, label="r_a")
         r_b = Resonator(freq=6.0, levels=4, label="r_b")
-        coupling = Capacitive(r_a, r_b, g=0.0)
+        coupling = Capacitive(r_a, r_b, g=0.0, label="rr")
         chip = Chip([r_a, r_b], [coupling])
 
-        g_axis = Sweep([0.0, 0.05], name="g")
+        g_axis = Sweep([0.0, 0.05], name="rr.g")
 
-        def update_fn(chip: Chip, params: dict[str, float]) -> None:
-            chip.couplings[0].g = params["g"]
-
-        result = SpectrumSweep(chip, [g_axis], update_fn=update_fn, evals_count=8).run(progress=False)
+        result = SpectrumSweep(chip, [g_axis], evals_count=8).run(progress=False)
 
         trajectory = result.energy_by_bare_label(r_a=0, r_b=3)
         indices = result.dressed_index(r_a=0, r_b=3)
@@ -584,8 +572,7 @@ class TestSpectrumSweep:
 
         result = SpectrumSweep(
             chip,
-            [Sweep([6.8, 7.1], name="r_freq")],
-            update_fn=lambda chip_point, params: setattr(chip_point["r"], "freq", params["r_freq"]),
+            [Sweep([6.8, 7.1], name="r.freq")],
             evals_count=4,
         ).run(progress=False)
 
@@ -604,10 +591,9 @@ class TestSpectrumSweepValidation:
         chip = self._chip()
         sweep = SpectrumSweep(
             chip,
-            [Sweep([], name="r_freq")],
-            update_fn=lambda c, p: setattr(c["r"], "freq", p["r_freq"]),
+            [Sweep([], name="r.freq")],
         )
-        with pytest.raises(ValueError, match="r_freq"):
+        with pytest.raises(ValueError, match=r"r\.freq"):
             sweep.run(progress=False)
 
     @pytest.mark.parametrize("bad_evals_count", [0, -1, 2.5, 100, True])
@@ -616,8 +602,7 @@ class TestSpectrumSweepValidation:
         chip = self._chip()
         sweep = SpectrumSweep(
             chip,
-            [Sweep([7.0], name="r_freq")],
-            update_fn=lambda c, p: setattr(c["r"], "freq", p["r_freq"]),
+            [Sweep([7.0], name="r.freq")],
             evals_count=bad_evals_count,
         )
         with pytest.raises(ValueError, match="evals_count"):
@@ -628,38 +613,22 @@ class TestSpectrumSweepValidation:
         chip = self._chip()
         sweep = SpectrumSweep(
             chip,
-            [Sweep([7.0], name="r_freq")],
-            update_fn=lambda c, p: setattr(c["r"], "freq", p["r_freq"]),
+            [Sweep([7.0], name="r.freq")],
             evals_count=chip.total_dim,
         )
         result = sweep.run(progress=False)
         assert result.eigenvalues.shape == (1, chip.total_dim)
 
-    def test_update_fn_changing_device_levels_raises(self):
-        """update_fn changing a device's levels mid-sweep raises ValueError naming the grid point."""
-        chip = self._chip()
-
-        def update_fn(chip_point, params):
-            chip_point["r"].freq = params["r_freq"]
-            if params["r_freq"] == 7.1:
-                chip_point["r"].levels = 5
-
-        sweep = SpectrumSweep(chip, [Sweep([7.0, 7.1], name="r_freq")], update_fn=update_fn)
-        with pytest.raises(ValueError, match="topology"):
-            sweep.run(progress=False)
-
     def test_int_point_on_multi_dimensional_grid_raises(self):
         """An int point index against a multi-D sweep grid raises ValueError from _normalize_point."""
         chip = self._chip()
 
-        def update_fn(chip_point, params):
-            chip_point["r"].freq = params["r_freq"]
-            chip_point.couplings[0].g = params["g"]
-
         result = SpectrumSweep(
             chip,
-            [Sweep([6.8, 7.0], name="r_freq"), Sweep([0.01, 0.02], name="g")],
-            update_fn=update_fn,
+            [
+                Sweep([6.8, 7.0], name="r.freq"),
+                Sweep([0.01, 0.02], name=f"{chip.couplings[0].label}.g"),
+            ],
             evals_count=5,
             store_eigenstates=True,
         ).run(progress=False)

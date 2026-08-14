@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from quchip.approximations import RWA
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -24,12 +26,13 @@ from quchip import (  # noqa: E402
 
 def test_grad_through_pump_amplitude():
     """The gradient of the final q1 population w.r.t. pump amplitude is finite and non-negligible."""
+
     def loss(amp):
         q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
         q1 = DuffingTransmon(freq=5.0, anharmonicity=-0.24, levels=3, label="q1")
         tc = TunableCapacitive(q0, q1, g_0=0.0, label="tc")
         pump = ParametricDrive(tc, label="pump")
-        chip = Chip([q0, q1], couplings=[tc], frame="rotating", rwa=True, backend="dynamiqs")
+        chip = Chip([q0, q1], couplings=[tc], frame="rotating", approximation=RWA(), backend="dynamiqs")
         chip.connect(ControlEquipment([pump]))
         seq = QuantumSequence(chip)
         seq.pump(tc, envelope=Square(duration=50.0, amplitude=amp))

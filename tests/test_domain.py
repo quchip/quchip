@@ -1,8 +1,6 @@
 """Domain model tests with analytical verification.
 
-Every expected value is derived from physics formulas rather than running the
-implementation first. Coverage includes device, coupling, and import-cleanliness
-behavior.
+The formulas below define the reference energies and coupling matrix element.
 
 Eigenvalue formulas:
     DuffingTransmon: E_n = ω·n + (α/2)·n·(n−1)
@@ -12,6 +10,8 @@ Eigenvalue formulas:
 
 from __future__ import annotations
 
+from quchip.approximations import RWA, Exact
+
 import numpy as np
 import pytest
 
@@ -19,9 +19,10 @@ from quchip.backend.protocol import Backend
 from quchip.chip.chip import Chip
 from quchip.utils.labeling import reset_label_counters
 from quchip.devices.transmon.duffing import DuffingTransmon
+from quchip.declarative.expr import materialize_expr
 from quchip.devices.resonator import Resonator
 from quchip.chip.couplings import Capacitive
-from quchip.chip.rwa import apply_rwa_mask
+from quchip.engine.approximations import apply_operator_band_filter
 from quchip.control.drive import ChargeDrive, FluxDrive
 from quchip.utils.labeling import auto_label, resolve_label
 
@@ -57,7 +58,7 @@ class TestDuffingTransmon:
         """Eigenvalues match E_n = ω·n + (α/2)·n·(n−1)."""
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=4)
         H = q.hamiltonian()
-        evals = backend.eigenenergies(H)
+        evals = np.linalg.eigvalsh(H.matrix(backend=backend))
         # levels=4, freq=5.0, alpha=-0.25: E_0=0.0, E_1=5.0,
         # E_2=10.0+(-0.125)*2=9.75, E_3=15.0+(-0.125)*6=14.25
         expected = [0.0, 5.0, 9.75, 14.25]
@@ -99,7 +100,7 @@ class TestResonator:
         """Eigenvalues match E_n = ω·n for freq=6.0, levels=5."""
         r = Resonator(freq=6.0, levels=5)
         H = r.hamiltonian()
-        evals = backend.eigenenergies(H)
+        evals = np.linalg.eigvalsh(H.matrix(backend=backend))
         expected = [0.0, 6.0, 12.0, 18.0, 24.0]
         np.testing.assert_allclose(evals, expected, atol=1e-10)
 
@@ -147,12 +148,12 @@ class TestCapacitive:
         g = 0.02
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3)
         r = Resonator(freq=6.0, levels=5)
-        c = Capacitive(q, r, g=g, rwa=True)
-        H_int = apply_rwa_mask(
-            c.interaction_hamiltonian(),
+        c = Capacitive(q, r, g=g)
+        H_int = apply_operator_band_filter(
+            materialize_expr(c.interaction_hamiltonian(), backend),
             dims=(q.levels, r.levels),
             labels=(q.label, r.label),
-            keeps_band=c.rwa_keeps_band,
+            keeps_band=lambda first, second: RWA().keeps_operator_band((first, second)),
             backend=backend,
         )
 
@@ -174,8 +175,8 @@ class TestCapacitive:
         g = 0.02
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3)
         r = Resonator(freq=6.0, levels=5)
-        c = Capacitive(q, r, g=g, rwa=False)
-        H_int = c.interaction_hamiltonian()
+        c = Capacitive(q, r, g=g)
+        H_int = materialize_expr(c.interaction_hamiltonian(), backend)
 
         bra_00 = backend.tensor_states(backend.basis(3, 0), backend.basis(5, 0))
         ket_11 = backend.tensor_states(backend.basis(3, 1), backend.basis(5, 1))
@@ -192,27 +193,22 @@ class TestCapacitive:
         c = Capacitive(q, r, g=g)
         assert c.coupling_strength == g
 
-    def test_chip_rwa_is_inherited_by_default(self) -> None:
-        """Couplings and eligible drives inherit the chip-wide RWA policy."""
+    def test_approximation_is_chip_owned(self) -> None:
+        """The chip owns one approximation strategy for all authored terms."""
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
         r = Resonator(freq=6.0, levels=5, label="r")
         coupling = Capacitive(q, r, g=0.02)
-        drive = ChargeDrive(target=q)
-        chip = Chip([q, r], [coupling], rwa=False)
+        chip = Chip([q, r], [coupling], approximation=Exact())
 
-        assert chip.resolve_rwa(coupling) is False
-        assert chip.resolve_rwa(drive) is False
+        assert chip.approximation == Exact()
+        assert not hasattr(coupling, "rwa")
 
-    def test_object_rwa_override_wins_over_chip_default(self) -> None:
-        """Explicit per-object RWA settings take precedence over the chip default."""
+    def test_coupling_cannot_override_chip_approximation(self) -> None:
+        """A coupling rejects engine-owned approximation settings."""
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
         r = Resonator(freq=6.0, levels=5, label="r")
-        coupling = Capacitive(q, r, g=0.02, rwa=False)
-        drive = ChargeDrive(target=q, rwa=False)
-        chip = Chip([q, r], [coupling], rwa=True)
-
-        assert chip.resolve_rwa(coupling) is False
-        assert chip.resolve_rwa(drive) is False
+        with pytest.raises(TypeError, match="approximation"):
+            Capacitive(q, r, g=0.02, approximation=Exact())
 
     def test_accepts_label_strings_via_late_binding(self) -> None:
         """Capacitive(\"q0\", \"q1\", ...) resolves inside Chip and matches object form."""
@@ -238,7 +234,7 @@ class TestCapacitive:
 
         H_str = chip_str.hamiltonian()
         H_obj = chip_obj.hamiltonian()
-        np.testing.assert_allclose(H_str.full(), H_obj.full(), atol=0.0)
+        np.testing.assert_allclose(H_str.matrix(), H_obj.matrix(), atol=0.0)
 
     def test_accepts_mixed_string_and_object(self) -> None:
         """One label string + one device object resolves correctly."""
@@ -311,7 +307,7 @@ class TestNoiseValidation:
 
     def test_thermal_population_negative(self) -> None:
         """thermal_population < 0 raises ValueError."""
-        with pytest.raises(ValueError, match="thermal_population must be ≥ 0"):
+        with pytest.raises(ValueError, match="thermal_population must be non-negative"):
             DuffingTransmon(freq=5.0, anharmonicity=-0.25, thermal_population=-0.1)
 
     def test_valid_noise_params_accepted(self) -> None:
@@ -536,8 +532,10 @@ def test_resolve_label_passes_through_strings():
 
 def test_resolve_label_extracts_dot_label():
     """An object with a ``.label`` attribute resolves to that label."""
+
     class FakeDevice:
         label = "q0"
+
     assert resolve_label(FakeDevice()) == "q0"
 
 

@@ -1,20 +1,7 @@
 """Backend-agnostic wrapper around solver output.
 
-This module is the contract between backends and users. The engine emits
-backend-agnostic physics descriptions, and each backend converts them into
-its own optimal solver-ready form; the *result* of solving is then
-re-wrapped here so that user code never has to know whether QuTiP or
-dynamiqs/JAX produced the numbers.
-
-Key classes:
-
-- :class:`SimulationResult` — one solve's states, times, expectations,
-  and partial-trace / population accessors.
-- :class:`SimulationBatchResult` — ordered, immutable batch of results
-  with helpers that stack across the batch for e.g. sweeps.
-- :class:`ObservableTrace` — one named expectation-value trace, keeping
-  the pre-processing and post-processing values side by side (band
-  reconstruction, demodulation, etc.).
+The engine wraps each backend's solver output here so callers use the same
+state, expectation, partial-trace, population, and batch interfaces.
 
 All helpers that return arrays stay inside the backend's array module
 (JAX / NumPy) to preserve differentiability. The convenience wrappers
@@ -443,8 +430,12 @@ class SimulationResult:
             return {}
 
         backend = self._backend
-        dm = backend.as_density_matrix(final)
-        diag = np.real(np.diag(np.asarray(backend.to_array(dm), dtype=complex)))
+        state = np.asarray(backend.to_array(final), dtype=complex)
+        diag = (
+            np.abs(state[:, 0]) ** 2
+            if backend.is_ket(final)
+            else np.real(np.diag(state))
+        )
 
         basis_labels = self._basis_labels
         observed: dict[str, float] = {}
@@ -668,7 +659,7 @@ def _wrap(
 ) -> SimulationResult:
     observable_traces = None
     if e_ops_meta is not None:
-        from quchip.engine.stage3_observables import build_observable_traces
+        from quchip.engine.observables import build_observable_traces
 
         observable_traces = build_observable_traces(
             solver_result, tlist, chip, dict_meta=e_ops_meta, resolved_frame=resolved_frame
@@ -687,7 +678,7 @@ def wrap_solver_result(solver_result: SolverResult, problem: SolveProblem, backe
 
     The engine-side :class:`~quchip.engine.ir.SolveProblem` carries the
     metadata needed to rebuild dict-form observables
-    (:func:`~quchip.engine.stage3_observables.build_observable_traces`)
+    (:func:`~quchip.engine.observables.build_observable_traces`)
     and to label devices for partial-trace helpers.
     """
     return _wrap(
@@ -705,17 +696,15 @@ def wrap_solver_results_from_batch(
     batch: SolveBatch,
     backend: Backend,
 ) -> list[SimulationResult]:
-    """Wrap backend results from a batched solve that shares one :class:`SolveBatch` context.
-
-    Avoids rematerializing a per-element :class:`~quchip.engine.ir.SolveProblem`
-    (and its per-element :class:`~quchip.engine.ir.HamiltonianDescription`)
-    just to read the shared fields.
-    """
-    chip = batch.chip
-    tlist = batch.tlist
-    e_ops_meta = batch.e_ops_meta
-    resolved_frame = batch.resolved_frame
+    """Wrap backend results using each batch point's resolved solve context."""
     return [
-        _wrap(sr, backend, chip=chip, tlist=tlist, e_ops_meta=e_ops_meta, resolved_frame=resolved_frame)
-        for sr in solver_results
+        _wrap(
+            solver_result,
+            backend,
+            chip=problem.chip,
+            tlist=problem.tlist,
+            e_ops_meta=problem.e_ops_meta,
+            resolved_frame=problem.resolved_frame,
+        )
+        for solver_result, problem in zip(solver_results, batch.problems)
     ]

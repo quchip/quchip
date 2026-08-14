@@ -5,43 +5,54 @@ from __future__ import annotations
 from typing import Any
 
 from quchip.declarative import qnp
-from quchip.declarative.expr import DynamicScalar, PhysicsExpr
+from quchip.declarative.dynamics import CosineCoefficient, TimeCoefficient, TimeDependentTerm
+from quchip.declarative.dissipation import CollapseChannel
+from quchip.declarative.expr import (
+    PhysicsExpr,
+    as_operator_expr,
+    as_scalar_expr,
+    as_state_expr,
+)
 from quchip.declarative.models import CouplingModel, DeviceModel
 from quchip.declarative.ops import EndpointOps, LocalOps
 from quchip.declarative.parameters import (
-    Modulation,
     Parameter,
     Scalar,
+    Setting,
     parameter,
+    setting,
 )
 
-# ``EnvelopeShape`` lives in :mod:`quchip.declarative.envelope_shape`, which
-# imports :class:`quchip.control.envelopes.BaseEnvelope`, which imports
-# ``quchip.control``, which imports ``quchip.engine``, which imports back
-# into this package — a cycle. The lazy import here lets ``DeviceModel``
-# (e.g. via ``Resonator(DeviceModel)`` during ``quchip.devices``
-# initialization) load first without tripping it.
+# ``Envelope`` is loaded lazily because its control module imports the
+# declarative parameter primitives defined by this package.
 
 __all__ = [
     "CouplingModel",
+    "CollapseChannel",
+    "CosineCoefficient",
     "DeviceModel",
-    "DynamicScalar",
     "EndpointOps",
-    "EnvelopeShape",
+    "Envelope",
     "LocalOps",
-    "Modulation",
     "Parameter",
     "PhysicsExpr",
+    "TimeDependentTerm",
     "Scalar",
+    "Setting",
+    "TimeCoefficient",
+    "as_operator_expr",
+    "as_scalar_expr",
+    "as_state_expr",
     "parameter",
+    "setting",
     "qnp",
 ]
 
 
 def __getattr__(name: str) -> Any:
-    """Lazily expose EnvelopeShape without triggering the control import cycle."""
-    if name == "EnvelopeShape":
-        from quchip.declarative.envelope_shape import EnvelopeShape
+    """Lazily expose Envelope without triggering the control import cycle."""
+    if name == "Envelope":
+        from quchip.control.envelopes import Envelope
 
-        return EnvelopeShape
+        return Envelope
     raise AttributeError(f"module 'quchip.declarative' has no attribute {name!r}")

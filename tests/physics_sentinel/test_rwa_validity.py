@@ -1,11 +1,13 @@
 """RWA validity: counter-rotating coupling and drive terms shift transitions by the Bloch-Siegert scale.
 
 Pins the RWA and counter-rotating-term contract in ``PHYSICS.md`` §§6-7, exercised via the
-user-facing ``rwa=False`` switch.
+user-facing ``approximation=Exact()`` switch.
 """
+
 import numpy as np
 import pytest
 
+from quchip.approximations import RWA, Exact
 from quchip import Capacitive, ChargeDrive, Chip, ControlEquipment, DuffingTransmon, Gaussian, QuantumSequence
 from quchip.engine import solve_problem
 
@@ -17,13 +19,13 @@ def _coupling_shift(g: float) -> float:
     # Counter-rotating g(ab + a-dag b-dag) shifts 0->1 by +g^2/(f_a+f_b) at second order
     # (Bloch & Siegert 1940; Zueco et al., PRA 80, 033846 (2009)).
     splitting = {}
-    for rwa in (True, False):
+    for approximation in (RWA(), Exact()):
         qa = DuffingTransmon(freq=F_A, anharmonicity=-0.25, levels=2)
         qb = DuffingTransmon(freq=F_B, anharmonicity=-0.25, levels=2)
-        chip = Chip([qa, qb], couplings=[Capacitive(qa, qb, g=g, rwa=rwa)])
-        evals = np.sort(np.linalg.eigvalsh(chip.hamiltonian().full()))
-        splitting[rwa] = evals[1] - evals[0]
-    return splitting[False] - splitting[True]
+        chip = Chip([qa, qb], couplings=[Capacitive(qa, qb, g=g)], approximation=approximation)
+        evals = np.sort(np.linalg.eigvalsh(chip.resolve().hamiltonian().matrix(t=0.0)))
+        splitting[approximation] = evals[1] - evals[0]
+    return splitting[Exact()] - splitting[RWA()]
 
 
 def test_coupling_counter_rotating_shift_is_g_squared_over_sum_frequency():
@@ -41,10 +43,15 @@ def _drive_cr_phase(amp: float, f_drive: float, duration: float = 30.0) -> tuple
     """Return (Δφ measured full-vs-RWA, predicted −2π·2∫(A/2)²dt/f_Σ)."""
     tlist = np.linspace(0.0, duration, 601)
     phase = {}
-    for rwa in (True, False):
+    for approximation in (RWA(), Exact()):
         q = DuffingTransmon(freq=F_A, anharmonicity=-0.25, levels=2)
         drive = ChargeDrive(target=q)
-        chip = Chip([q], control_equipment=ControlEquipment(lines=[drive]), frame={q: F_A}, rwa=rwa)
+        chip = Chip(
+            [q],
+            control_equipment=ControlEquipment(lines=[drive]),
+            frame={q: F_A},
+            approximation=approximation,
+        )
         sequence = QuantumSequence(chip)
         sequence.schedule(drive, envelope=Gaussian(duration=duration, amplitude=amp, sigmas=4), freq=f_drive)
         problem = sequence.build_problem(
@@ -54,14 +61,14 @@ def _drive_cr_phase(amp: float, f_drive: float, duration: float = 30.0) -> tuple
             options={"atol": 1e-12, "rtol": 1e-10, "nsteps": 10_000_000},
         )
         result = solve_problem(problem, check_truncation=False)
-        phase[rwa] = np.angle(np.asarray(result.expect(q.label))[-1])
+        phase[approximation] = np.angle(np.asarray(result.expect(q.label))[-1])
 
     grid = np.linspace(0.0, duration, 4001)
-    waveform = np.asarray(Gaussian(duration=duration, amplitude=amp, sigmas=4).waveform(grid))
+    waveform = np.asarray(Gaussian(duration=duration, amplitude=amp, sigmas=4).value(grid))
     integral = np.trapezoid(np.abs(waveform / 2.0) ** 2, grid)
     # Generalized Bloch-Siegert phase: Δφ = -2π·2∫(A(t)/2)² dt / (f_q + f_d), first order in the shift.
     predicted = -2.0 * np.pi * 2.0 * integral / (F_A + f_drive)
-    return phase[False] - phase[True], predicted
+    return phase[Exact()] - phase[RWA()], predicted
 
 
 def test_drive_counter_rotating_phase_matches_bloch_siegert_scale():

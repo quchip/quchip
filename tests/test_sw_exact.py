@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from quchip.approximations import RWA, Exact
+
 import warnings
 
 import numpy as np
@@ -18,20 +20,20 @@ from quchip.chip.sw import (
 )
 
 
-def _bridge_chip(bus_freq: float = 6.3) -> Chip:
+def _bridge_chip(bus_freq: float = 6.3, *, approximation=RWA()) -> Chip:
     q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
     q1 = DuffingTransmon(freq=5.2, anharmonicity=-0.24, levels=3, label="q1")
     bus = Resonator(freq=bus_freq, levels=4, label="bus")
     return Chip(
         [q0, q1, bus],
         couplings=[Capacitive(q0, bus, g=0.08, label="leg0"), Capacitive(q1, bus, g=0.08, label="leg1")],
-        rwa=True,
+        approximation=approximation,
     )
 
 
 def test_exact_freq_after_matches_conditional_dressed_freq():
-    """Exact reduction's freq_after equals each qubit's dressed frequency with the bus and other qubit in |0⟩."""
-    chip = _bridge_chip()
+    """Without RWA, exact reduction frequencies equal the authored chip's dressed frequencies."""
+    chip = _bridge_chip(approximation=Exact())
     params = exact_reduction(chip, "bus", ["q0", "q1"])
     for surv, other in (("q0", "q1"), ("q1", "q0")):
         expected = chip.freq(surv, when={"bus": 0, other: 0})
@@ -39,18 +41,32 @@ def test_exact_freq_after_matches_conditional_dressed_freq():
 
 
 def test_exact_zz_matches_dispersive_shift():
-    """Exact reduction's ZZ parameter for a qubit pair equals the chip's dispersive shift between them."""
-    chip = _bridge_chip()
+    """Without RWA, exact reduction ZZ equals the authored chip's dispersive shift."""
+    chip = _bridge_chip(approximation=Exact())
     params = exact_reduction(chip, "bus", ["q0", "q1"])
-    assert float(params[("zz", "q0", "q1")]) == pytest.approx(float(chip.dispersive_shift("q0", "q1")), abs=1e-14)
+    assert float(params[("zz", "q0", "q1")]) == pytest.approx(float(chip.dispersive_shift("q0", "q1")), abs=1e-12)
+
+
+def test_exact_reduction_is_independent_of_solve_approximation():
+    """Exact reduction diagonalizes the complete authored Hamiltonian."""
+    rwa_chip = _bridge_chip(approximation=RWA())
+    exact_chip = _bridge_chip(approximation=Exact())
+
+    rwa_params = exact_reduction(rwa_chip, "bus", ["q0", "q1"])
+    exact_params = exact_reduction(exact_chip, "bus", ["q0", "q1"])
+
+    assert float(rwa_params[("zz", "q0", "q1")]) == pytest.approx(
+        float(exact_params[("zz", "q0", "q1")]),
+        abs=1e-12,
+    )
 
 
 def test_sw_and_exact_exchange_agree_at_second_order():
     """Exact and second-order SW reductions agree on the exchange coupling J within the fourth-order bound."""
-    chip = _bridge_chip()
+    chip = _bridge_chip(approximation=Exact())
     exact = exact_reduction(chip, "bus", ["q0", "q1"])
 
-    h, labels, dims = bare_hamiltonian(chip, chip.backend)
+    h, labels, dims = bare_hamiltonian(chip)
     p_mask, _ = mode_blocks(dims, labels, "bus")
     s, _ = sylvester_generator(h, p_mask)
     h_eff = h_effective_second_order(h, s, p_mask)

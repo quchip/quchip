@@ -1,15 +1,20 @@
 """Unit tests for (Δa, Δb) band decomposition of two-body operators.
 
-Every expected value is derived from analytical formulas — no reference
-to the function-under-test is used to *generate* ground truth.
+Band-decomposition formulas provide the reference values.
 """
 
 from __future__ import annotations
 
+from quchip.approximations import RWA, Exact
+
 import numpy as np
 import pytest
 
-from quchip.engine.bands import canonical_to_dense_array, decompose_two_body_canonical_bands
+from quchip.engine.bands import (
+    canonical_to_dense_array,
+    decompose_canonical_bands,
+    decompose_two_body_canonical_bands,
+)
 from quchip.engine.ir import CanonicalOperator, Carrier, ScalarModulation
 
 
@@ -180,6 +185,7 @@ class TestDecomposition:
         reconstructed = reconstruct(jnp.asarray(full_np))
         np.testing.assert_allclose(np.asarray(reconstructed), full_np, atol=1e-14)
 
+
 # ---------------------------------------------------------------------------
 # Test class — Hamiltonian structure tests
 # ---------------------------------------------------------------------------
@@ -188,7 +194,7 @@ class TestDecomposition:
 class TestHamiltonianStructure:
     """Tests for ΔN decomposition wiring in Chip and engine."""
 
-    def _make_chip(self, rwa=False, frame="rotating"):
+    def _make_chip(self, approximation=Exact(), frame="rotating"):
         """Build a transmon+resonator chip with Capacitive coupling."""
         from quchip.devices.transmon.duffing import DuffingTransmon
         from quchip.devices.resonator import Resonator
@@ -197,8 +203,8 @@ class TestHamiltonianStructure:
 
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
         r = Resonator(freq=7.0, levels=5, label="r")
-        coupling = Capacitive(q, r, g=0.05, rwa=rwa)
-        chip = Chip([q, r], [coupling], frame=frame)
+        coupling = Capacitive(q, r, g=0.05)
+        chip = Chip([q, r], [coupling], frame=frame, approximation=approximation)
         return chip
 
     def _get_backend(self):
@@ -208,34 +214,34 @@ class TestHamiltonianStructure:
 
     def test_rotating_frame_h0_excludes_cr_terms(self):
         """For detuned devices, engine H0 in rotating frame is diagonal (all coupling sectors are time-dependent)."""
-        from quchip.engine import build_hamiltonian_description
-        from quchip.engine.stage1_frames import resolve_frame
+        from quchip.engine import build_engine_result
+        from quchip.engine.frames import resolve_frame
 
-        chip_full = self._make_chip(rwa=False, frame="rotating")
+        chip_full = self._make_chip(approximation=Exact(), frame="rotating")
         resolved_full = resolve_frame(chip_full, chip_full.frame)
-        desc_full = build_hamiltonian_description(chip_full, [], resolved_frame=resolved_full)
+        desc_full = build_engine_result(chip_full, [], resolved_frame=resolved_full)
         H0_full = desc_full.static_terms[0].operator.to_dense()
 
-        chip_rwa = self._make_chip(rwa=True, frame="rotating")
+        chip_rwa = self._make_chip(approximation=RWA(), frame="rotating")
         resolved_rwa = resolve_frame(chip_rwa, chip_rwa.frame)
-        desc_rwa = build_hamiltonian_description(chip_rwa, [], resolved_frame=resolved_rwa)
+        desc_rwa = build_engine_result(chip_rwa, [], resolved_frame=resolved_rwa)
         H0_rwa = desc_rwa.static_terms[0].operator.to_dense()
 
-        for name, H0 in (("rwa=False", H0_full), ("rwa=True", H0_rwa)):
+        for name, H0 in (("approximation=Exact()", H0_full), ("approximation=RWA()", H0_rwa)):
             offdiag = H0 - np.diag(np.diag(H0))
             assert np.linalg.norm(offdiag) < 1e-12, f"{name} rotating-frame H0 contains residual coupling terms"
 
     def test_td_hamiltonian_has_cr_terms(self):
         """A non-RWA rotating-frame description produces extra time-dependent terms for ΔN≠0 sectors."""
-        from quchip.engine import build_hamiltonian_description
-        from quchip.engine.stage1_frames import resolve_frame
+        from quchip.engine import build_engine_result
+        from quchip.engine.frames import resolve_frame
 
-        chip = self._make_chip(rwa=False, frame="rotating")
+        chip = self._make_chip(approximation=Exact(), frame="rotating")
 
         resolved = resolve_frame(chip, chip.frame)
-        desc = build_hamiltonian_description(chip, [], resolved_frame=resolved)
+        desc = build_engine_result(chip, [], resolved_frame=resolved)
 
-        # rwa=False coupling produces: swap cos + cross sin (at Δ)
+        # approximation=Exact() coupling produces: swap cos + cross sin (at Δ)
         # + ΔN=+2 + ΔN=-2 counter-rotating terms (at sum freq)
         assert len(desc.dynamic_terms) >= 4, (
             f"Expected swap + cross + ΔN=+2 + ΔN=-2 = 4 dynamic terms, got {len(desc.dynamic_terms)}"
@@ -249,28 +255,28 @@ class TestHamiltonianStructure:
             )
 
     def test_rwa_true_has_swap_cross_terms(self):
-        """With rwa=True in per-qubit rotating frame, coupling produces swap/cross td terms at detuning frequency."""
-        from quchip.engine import build_hamiltonian_description
-        from quchip.engine.stage1_frames import resolve_frame
+        """RWA produces rotating-frame exchange terms at the detuning."""
+        from quchip.engine import build_engine_result
+        from quchip.engine.frames import resolve_frame
 
-        chip = self._make_chip(rwa=True, frame="rotating")
+        chip = self._make_chip(approximation=RWA(), frame="rotating")
 
         resolved = resolve_frame(chip, chip.frame)
-        desc = build_hamiltonian_description(chip, [], resolved_frame=resolved)
+        desc = build_engine_result(chip, [], resolved_frame=resolved)
 
         assert len(desc.dynamic_terms) == 2, f"Expected swap + cross = 2 dynamic terms, got {len(desc.dynamic_terms)}"
         assert all(isinstance(term.time_dependence, ScalarModulation) for term in desc.dynamic_terms)
         assert all(isinstance(term.time_dependence.signal, Carrier) for term in desc.dynamic_terms)
 
     def test_lab_frame_unchanged(self):
-        """In lab frame, rwa=False produces no td coupling terms; all sectors stay in H0."""
-        from quchip.engine import build_hamiltonian_description
-        from quchip.engine.stage1_frames import resolve_frame
+        """In lab frame produces no td coupling terms; all sectors stay in H0."""
+        from quchip.engine import build_engine_result
+        from quchip.engine.frames import resolve_frame
 
-        chip = self._make_chip(rwa=False, frame="lab")
+        chip = self._make_chip(approximation=Exact(), frame="lab")
 
         resolved = resolve_frame(chip, chip.frame)
-        desc = build_hamiltonian_description(chip, [], resolved_frame=resolved)
+        desc = build_engine_result(chip, [], resolved_frame=resolved)
 
         assert len(desc.dynamic_terms) == 0, (
             f"Expected only H0 in lab frame, got {len(desc.dynamic_terms)} dynamic terms"
@@ -305,7 +311,7 @@ class TestPhysicsMatch:
         r_lab = Resonator(freq=7.0, levels=5, label="r")
         chip_lab = Chip(
             [q_lab, r_lab],
-            [Capacitive(q_lab, r_lab, g=0.05, rwa=False)],
+            [Capacitive(q_lab, r_lab, g=0.05)],
             frame="lab",
         )
 
@@ -325,7 +331,7 @@ class TestPhysicsMatch:
         r_rot = Resonator(freq=7.0, levels=5, label="r")
         chip_rot = Chip(
             [q_rot, r_rot],
-            [Capacitive(q_rot, r_rot, g=0.05, rwa=False)],
+            [Capacitive(q_rot, r_rot, g=0.05)],
             frame="rotating",
         )
 
@@ -368,7 +374,7 @@ class TestPhysicsMatch:
         r_lab = Resonator(freq=7.0, levels=5, label="r")
         chip_lab = Chip(
             [q_lab, r_lab],
-            [Capacitive(q_lab, r_lab, g=0.05, rwa=False)],
+            [Capacitive(q_lab, r_lab, g=0.05)],
             frame="lab",
         )
         psi_lab = chip_lab.bare_state(
@@ -389,7 +395,7 @@ class TestPhysicsMatch:
         r_rot = Resonator(freq=7.0, levels=5, label="r")
         chip_rot = Chip(
             [q_rot, r_rot],
-            [Capacitive(q_rot, r_rot, g=0.05, rwa=False)],
+            [Capacitive(q_rot, r_rot, g=0.05)],
             frame="rotating",
         )
         psi_rot = chip_rot.bare_state(
@@ -411,7 +417,7 @@ class TestPhysicsMatch:
 
         max_diff = np.max(np.abs(rot - lab))
         assert max_diff < 2e-4, (
-            f"Phase parity mismatch for rwa=False lowering trace: max diff {max_diff:.2e} exceeds 2e-4"
+            f"Phase parity mismatch for approximation=Exact() lowering trace: max diff {max_diff:.2e} exceeds 2e-4"
         )
 
 
@@ -426,7 +432,7 @@ class TestThreeDeviceFrameConsistency:
     DURATION = 1000.0
     AMPLITUDE = 0.025
 
-    def _run_in_frame(self, frame: str, initial_q: int, rwa: bool):
+    def _run_in_frame(self, frame: str, initial_q: int, approximation):
         from quchip.devices.transmon.duffing import DuffingTransmon
         from quchip.devices.resonator import Resonator
         from quchip.chip.couplings import Capacitive
@@ -441,8 +447,9 @@ class TestThreeDeviceFrameConsistency:
         f = Resonator(freq=self.FREQ_F, levels=4, label="f")
         chip = Chip(
             [q, r, f],
-            [Capacitive(q, r, g=self.G_QR, rwa=rwa), Capacitive(r, f, g=self.G_RF, rwa=rwa)],
+            [Capacitive(q, r, g=self.G_QR), Capacitive(r, f, g=self.G_RF)],
             frame=frame,
+            approximation=approximation,
         )
         drive_f = ChargeDrive(target=f, label="filter")
         drive_q = ChargeDrive(target=q, label="qubit")
@@ -461,36 +468,38 @@ class TestThreeDeviceFrameConsistency:
         )
         return result, tlist
 
-    @pytest.mark.parametrize("rwa", [True, False], ids=["rwa", "nonrwa"])
-    def test_qubit_ground_populations(self, rwa):
+    @pytest.mark.parametrize("approximation", [RWA(), Exact()], ids=["rwa", "exact"])
+    def test_qubit_ground_populations(self, approximation):
         """Lab vs rotating P(q=0) with qubit in |0⟩."""
-        res_lab, _ = self._run_in_frame("lab", initial_q=0, rwa=rwa)
-        res_rot, _ = self._run_in_frame("rotating", initial_q=0, rwa=rwa)
+        res_lab, _ = self._run_in_frame("lab", initial_q=0, approximation=approximation)
+        res_rot, _ = self._run_in_frame("rotating", initial_q=0, approximation=approximation)
 
         p_lab = res_lab.population("q", 0)
         p_rot = res_rot.population("q", 0)
         max_diff = np.max(np.abs(p_lab - p_rot))
 
         assert max_diff < 2e-3, (
-            f"3-device lab vs rotating P(q=0|init=0) rwa={rwa}: max diff = {max_diff:.2e}, exceeds 2e-3"
+            f"3-device lab vs rotating P(q=0|init=0) {type(approximation).__name__}: "
+            f"max diff = {max_diff:.2e}, exceeds 2e-3"
         )
 
-    @pytest.mark.parametrize("rwa", [True, False], ids=["rwa", "nonrwa"])
-    def test_qubit_excited_populations(self, rwa):
+    @pytest.mark.parametrize("approximation", [RWA(), Exact()], ids=["rwa", "exact"])
+    def test_qubit_excited_populations(self, approximation):
         """Lab vs rotating P(q=1) with qubit in |1⟩."""
-        res_lab, _ = self._run_in_frame("lab", initial_q=1, rwa=rwa)
-        res_rot, _ = self._run_in_frame("rotating", initial_q=1, rwa=rwa)
+        res_lab, _ = self._run_in_frame("lab", initial_q=1, approximation=approximation)
+        res_rot, _ = self._run_in_frame("rotating", initial_q=1, approximation=approximation)
 
         p_lab = res_lab.population("q", 1)
         p_rot = res_rot.population("q", 1)
         max_diff = np.max(np.abs(p_lab - p_rot))
 
         assert max_diff < 2e-3, (
-            f"3-device lab vs rotating P(q=1|init=1) rwa={rwa}: max diff = {max_diff:.2e}, exceeds 2e-3"
+            f"3-device lab vs rotating P(q=1|init=1) {type(approximation).__name__}: "
+            f"max diff = {max_diff:.2e}, exceeds 2e-3"
         )
 
-    @pytest.mark.parametrize("rwa", [True, False], ids=["rwa", "nonrwa"])
-    def test_resonator_lowering_phase_parity(self, rwa):
+    @pytest.mark.parametrize("approximation", [RWA(), Exact()], ids=["rwa", "exact"])
+    def test_resonator_lowering_phase_parity(self, approximation):
         """Dict e_ops ⟨a_r⟩ demodulated result must match between lab and rotating frames."""
         # Dict-form e_ops routes through the band decomposition + demod pipeline for the frame transform.
         from quchip.devices.transmon.duffing import DuffingTransmon
@@ -511,8 +520,9 @@ class TestThreeDeviceFrameConsistency:
             f = Resonator(freq=self.FREQ_F, levels=4, label="f")
             chip = Chip(
                 [q, r, f],
-                [Capacitive(q, r, g=self.G_QR, rwa=rwa), Capacitive(r, f, g=self.G_RF, rwa=rwa)],
+                [Capacitive(q, r, g=self.G_QR), Capacitive(r, f, g=self.G_RF)],
                 frame=frame,
+                approximation=approximation,
             )
             drive_f = ChargeDrive(target=f, label="filter")
             drive_q = ChargeDrive(target=q, label="qubit")
@@ -538,7 +548,8 @@ class TestThreeDeviceFrameConsistency:
 
         max_diff = np.max(np.abs(a_rot - a_lab))
         assert max_diff < 5e-3, (
-            f"3-device dict e_ops ⟨a_r⟩ lab vs rotating rwa={rwa}: max diff = {max_diff:.2e}, exceeds 5e-3"
+            f"3-device dict e_ops ⟨a_r⟩ lab vs rotating {type(approximation).__name__}: "
+            f"max diff = {max_diff:.2e}, exceeds 5e-3"
         )
 
 
@@ -549,9 +560,10 @@ class TestThreeDeviceFrameConsistency:
 
 class TestConcreteZeroBandDrop:
     """Concrete payloads drop structurally-zero bands; traced payloads keep every band."""
+
     # Regression for the dynamiqs overhead-ladder gap (benchmarks/overhead, 2026-07-04): drop
     # guards used is_jax_array instead of contains_tracer, so concrete SparseDIA payloads kept
-    # explicitly-stored zero diagonals and stage 2 emitted band terms the solver then integrated.
+    # explicitly stored zero diagonals and assembly-emitted bands integrated by the solver.
 
     def test_concrete_jax_dia_payload_drops_zero_bands(self) -> None:
         """A DIA payload with jnp values keeps only genuinely populated (Δa, Δb) bands."""
@@ -571,8 +583,12 @@ class TestConcreteZeroBandDrop:
                     diags[k, col] = full[row, col]
 
         canonical = CanonicalOperator.from_dia(
-            jnp.asarray(diags), np.asarray(offsets, dtype=int),
-            shape=(d * d, d * d), dims=(d, d), basis="fock", subsystem_labels=("a", "b"),
+            jnp.asarray(diags),
+            np.asarray(offsets, dtype=int),
+            shape=(d * d, d * d),
+            dims=(d, d),
+            basis="fock",
+            subsystem_labels=("a", "b"),
         )
         bands = decompose_two_body_canonical_bands(canonical, [d, d])
 
@@ -612,10 +628,63 @@ class TestConcreteZeroBandDrop:
         assert seen["n_bands"] == 3, f"Traced payload must keep all 2·dim−1 bands, got {seen['n_bands']}"
         np.testing.assert_allclose(np.asarray(reconstructed), matrix, atol=1e-15)
 
+    def test_traced_sparse_payload_keeps_only_structural_bands(self) -> None:
+        """Traced sparse values retain declared one- and two-mode structure."""
+        import jax
+        import jax.numpy as jnp
+
+        seen: dict[str, object] = {}
+
+        @jax.jit
+        def reconstruct(scale):
+            canonical = CanonicalOperator.from_dia(
+                scale * jnp.asarray([[0.0, 1.0, 2.0]], dtype=jnp.complex128),
+                np.asarray([1], dtype=int),
+                shape=(3, 3),
+                dims=(3,),
+                basis="fock",
+                subsystem_labels=("q",),
+            )
+            bands = decompose_canonical_bands(canonical, 3)
+            seen["weights"] = tuple(bands)
+            seen["layouts"] = {band.layout for band in bands.values()}
+            return sum(canonical_to_dense_array(band) for band in bands.values())
+
+        rebuilt = reconstruct(jnp.asarray(2.0))
+        assert seen == {"weights": (1,), "layouts": {"dia"}}
+        np.testing.assert_allclose(
+            np.asarray(rebuilt),
+            np.asarray([[0.0, 2.0, 0.0], [0.0, 0.0, 4.0], [0.0, 0.0, 0.0]]),
+        )
+
+        seen_two: dict[str, object] = {}
+
+        @jax.jit
+        def reconstruct_two(scale):
+            canonical = CanonicalOperator.from_dia(
+                scale * jnp.asarray([[0.0, 0.0, 0.0, 1.0]], dtype=jnp.complex128),
+                np.asarray([3], dtype=int),
+                shape=(4, 4),
+                dims=(2, 2),
+                basis="fock",
+                subsystem_labels=("a", "b"),
+            )
+            bands = decompose_two_body_canonical_bands(canonical, [2, 2])
+            seen_two["weights"] = tuple(bands)
+            seen_two["layouts"] = {band.layout for band in bands.values()}
+            return sum(canonical_to_dense_array(band) for band in bands.values())
+
+        rebuilt_two = reconstruct_two(jnp.asarray(3.0))
+        assert seen_two == {"weights": ((1, 1),), "layouts": {"csr"}}
+        expected_two = np.zeros((4, 4), dtype=complex)
+        expected_two[0, 3] = 3.0
+        np.testing.assert_allclose(np.asarray(rebuilt_two), expected_two)
+
 
 class TestPruneZeroDiagonals:
     """prune_zero_diagonals drops concretely-zero stored DIA diagonals, tracer-guarded."""
-    # Companion to TestConcreteZeroBandDrop: stage 2's coupling fold cancels the lab-frame
+
+    # Companion to TestConcreteZeroBandDrop: the coupling fold cancels the lab-frame
     # interaction out of H0 exactly, leaving cancelled offsets stored as explicit zeros.
 
     @staticmethod
@@ -623,8 +692,12 @@ class TestPruneZeroDiagonals:
         from quchip.engine.bands import prune_zero_diagonals
 
         canonical = CanonicalOperator.from_dia(
-            values, np.asarray(offsets, dtype=int),
-            shape=(3, 3), dims=(3,), basis="fock", subsystem_labels=("q",),
+            values,
+            np.asarray(offsets, dtype=int),
+            shape=(3, 3),
+            dims=(3,),
+            basis="fock",
+            subsystem_labels=("q",),
         )
         return prune_zero_diagonals(canonical)
 
@@ -655,8 +728,12 @@ class TestPruneZeroDiagonals:
         @jax.jit
         def run(values):
             canonical = CanonicalOperator.from_dia(
-                values, np.asarray([0, 1], dtype=int),
-                shape=(3, 3), dims=(3,), basis="fock", subsystem_labels=("q",),
+                values,
+                np.asarray([0, 1], dtype=int),
+                shape=(3, 3),
+                dims=(3,),
+                basis="fock",
+                subsystem_labels=("q",),
             )
             pruned = prune_zero_diagonals(canonical)
             seen["n_offsets"] = len(np.asarray(pruned.offsets))

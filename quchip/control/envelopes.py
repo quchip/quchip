@@ -1,6 +1,6 @@
 """Pulse envelope models for quantum control.
 
-Envelopes define the time-domain waveform shape ``E(t)`` that a drive
+Envelopes define the local complex pulse shape ``E(t)`` that a drive
 line plays between ``t = 0`` and ``t = duration``. Subclasses are
 auto-registered for serialization *and* as JAX pytrees (via
 ``__init_subclass__``), so envelope parameters — duration, amplitude,
@@ -9,11 +9,11 @@ differentiable end-to-end.
 
 Conventions
 -----------
-- Times are ns, waveforms are complex (the real/imag parts are
-  interpreted by the drive channel's
-  :class:`~quchip.control.signal_spec.DriveModulation`).
-- ``waveform(t, xp=jnp)`` must stay JAX-traceable when ``xp`` is
-  ``jax.numpy``; no concretization of ``t`` or of stored parameters.
+- Times are ns; values are complex, with real and imaginary parts carrying
+  relative I/Q structure.
+- Global phase belongs to scheduling, not to an envelope.
+- ``value(local_time)`` stays JAX-traceable; it must not concretize time or
+  stored parameters.
 
 References
 ----------
@@ -27,7 +27,7 @@ Examples
 --------
 >>> from quchip import Gaussian, LinearRamp, Square, SquareWithGaussianEdges
 >>> g = Gaussian(duration=20.0, sigmas=3.0, amplitude=0.05)
->>> sq = Square(duration=10.0, amplitude=0.1, phase=0.0)
+>>> sq = Square(duration=10.0, amplitude=0.1)
 >>> fg = SquareWithGaussianEdges(duration=40.0, amplitude=0.1)
 >>> lr = LinearRamp(duration=60.0, ramp_duration=50.0, amplitude=4.0)
 """
@@ -35,57 +35,54 @@ Examples
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import jax.tree_util as jtu
-import numpy as np
 
-from quchip.utils.jax_utils import maybe_concrete_scalar
+from quchip.declarative import qnp
+from quchip.declarative.parameters import (
+    DeclarativeMeta,
+    Scalar,
+    build_declared_signature,
+    parameter,
+    parameter_fields,
+    resolve_declared_params,
+    serializable_value,
+    validate_sign,
+)
 from quchip.utils.jax_utils import array_namespace as _pick_namespace
+from quchip.utils.jax_utils import maybe_concrete_scalar
 from quchip.utils.registry import Registrable
 
-# Cache of public field names per envelope class. Populated lazily on the
-# initial flatten to avoid re-sorting ``vars(obj)`` on every JAX pytree
-# traversal (which happens once per traced call, not once per t-sample,
-# but is still pure overhead for a hot path).
-_FIELD_CACHE: dict[type, tuple[str, ...]] = {}
+def _synthesize_envelope_init(cls: type["Envelope"]) -> Any:
+    """Build a constructor from declared envelope parameters."""
+    signature = build_declared_signature(parameter_fields(cls))
+
+    def __init__(self: Envelope, *args: Any, **kwargs: Any) -> None:
+        bound = signature.bind(self, *args, **kwargs)
+        bound.apply_defaults()
+        arguments = dict(bound.arguments)
+        arguments.pop("self")
+        Envelope.__init__(self, **arguments)
+
+    __init__.__signature__ = signature  # type: ignore[attr-defined]
+    __init__.__qualname__ = f"{cls.__qualname__}.__init__"
+    __init__.__doc__ = f"Initialize {cls.__name__} from its declared parameters."
+    return __init__
 
 
-def _public_fields(obj: Any) -> tuple[str, ...]:
-    cls = type(obj)
-    cached = _FIELD_CACHE.get(cls)
-    if cached is not None:
-        return cached
-    names = tuple(sorted(name for name in vars(obj) if not name.startswith("_")))
-    _FIELD_CACHE[cls] = names
-    return names
+class Envelope(Registrable, ABC, registry_root=True, metaclass=DeclarativeMeta):
+    """Local complex pulse shape evaluated relative to its scheduled start."""
 
-
-class BaseEnvelope(Registrable, ABC, registry_root=True):
-    """Base class for pulse envelopes.
-
-    Subclasses store their shape parameters as public attributes and
-    implement :meth:`waveform`. Every public attribute is registered
-    as a pytree leaf, so gradients flow through arbitrary envelope
-    parameters without any extra bookkeeping. Serialization (the type
-    registry and ``from_dict`` dispatch) is owned by the shared
-    :class:`~quchip.utils.registry.Registrable` mixin; the JAX pytree
-    registration below is independent of it.
-
-    Parameters
-    ----------
-    duration : float
-        Total pulse duration in ns. Must be positive at construction
-        time when concrete; tracers are accepted unchanged.
-    amplitude : float
-        Scalar amplitude applied on top of :meth:`waveform`.
-    """
+    duration: Scalar
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
+        if "__init__" not in cls.__dict__:
+            cls.__init__ = _synthesize_envelope_init(cls)  # type: ignore[method-assign]
 
         def _flatten(obj: Any) -> tuple[tuple[Any, ...], tuple[str, ...]]:
-            names = _public_fields(obj)
+            names = tuple(parameter_fields(type(obj)))
             return tuple(getattr(obj, n) for n in names), names
 
         def _unflatten(field_names: tuple[str, ...], children: tuple[Any, ...]) -> Any:
@@ -96,59 +93,67 @@ class BaseEnvelope(Registrable, ABC, registry_root=True):
 
         jtu.register_pytree_node(cls, _flatten, _unflatten)
 
-    def __init__(self, duration: float, *, amplitude: float = 1.0) -> None:
-        """Store common envelope parameters after concrete-only validation."""
-        dur_val = maybe_concrete_scalar(duration)
-        if dur_val is not None and dur_val <= 0:
-            raise ValueError(f"duration must be > 0, got {duration}")
-        self.duration = duration
-        self.amplitude = amplitude
+    def __init__(self, **params: Any) -> None:
+        """Initialize an envelope from its declared parameter values."""
+        values = resolve_declared_params(type(self), params)
+        if "duration" not in values:
+            raise TypeError(
+                f"{type(self).__name__} must declare "
+                "`duration: Scalar = parameter(positive=True)`."
+            )
+        for name, value in values.items():
+            setattr(self, name, value)
+        self.validate()
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Validate declared fields on concrete writes without tracing values."""
+        if not name.startswith("_"):
+            spec = parameter_fields(type(self)).get(name)
+            if spec is not None:
+                validate_sign(name, spec, value)
+        super().__setattr__(name, value)
+
+    def validate(self) -> None:
+        """Validate relations between concrete parameters."""
 
     @abstractmethod
-    def waveform(self, t: np.ndarray, *, xp: Any | None = None) -> np.ndarray:
-        """Evaluate the complex envelope at time points *t* (ns).
-
-        Pass ``xp=jax.numpy`` to keep the computation traceable;
-        otherwise NumPy is used.
-        """
+    def value(self, local_time: Any) -> Any:
+        """Return complex I/Q shape at time relative to the pulse start."""
         ...
 
-    def sample(self, tlist: Any, *, real: bool = False) -> Any:
-        """Vectorized waveform evaluation on a time array.
+    def sample(self, local_time: Any, *, real: bool = False) -> Any:
+        """Evaluate the shape on an array, optionally returning only I."""
+        xp = _pick_namespace(local_time)
+        values = xp.asarray(
+            self.value(xp.asarray(local_time, dtype=float)),
+            dtype=complex,
+        )
+        return values.real if real else values
 
-        Picks the array namespace from *tlist* (JAX if it is a JAX
-        array/tracer, NumPy otherwise), so traced inputs stay traced
-        and concrete inputs yield concrete outputs. Returns a complex
-        array shaped like ``tlist`` (or the real part if ``real=True``).
-        """
-        xp = _pick_namespace(tlist)
-        t_arr = xp.asarray(tlist, dtype=float)
-        w = self.waveform(t_arr, xp=xp)
-        return w.real if real else w
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the concrete type and its declared parameters."""
+        data = super().to_dict()
+        for name, spec in parameter_fields(type(self)).items():
+            if spec.serialize:
+                data[name] = serializable_value(getattr(self, name))
+        return data
+
+    @classmethod
+    def _from_dict_payload(cls, data: dict[str, Any]) -> "Envelope":
+        """Reconstruct one concrete envelope from declared parameters."""
+        params = {
+            name: data[name]
+            for name, spec in parameter_fields(cls).items()
+            if spec.serialize and name in data
+        }
+        return cls(**params)
 
     def __repr__(self) -> str:
-        """Return a constructor-like representation of public parameters."""
-        params = ", ".join(f"{name}={getattr(self, name)}" for name in _public_fields(self))
+        """Return a constructor-like representation of declared parameters."""
+        params = ", ".join(
+            f"{name}={getattr(self, name)}" for name in parameter_fields(type(self))
+        )
         return f"{type(self).__name__}({params})"
-
-
-# ----------------------------------------------------------------------
-# Declarative envelopes
-#
-# The import is intentionally placed here (rather than at the module top) to
-# break the circular dependency: ``EnvelopeShape`` imports ``BaseEnvelope`` from
-# this module, so it can only be imported once ``BaseEnvelope`` is defined.
-# ----------------------------------------------------------------------
-
-if TYPE_CHECKING:
-    # Direct (non-lazy) import so mypy resolves EnvelopeShape as a concrete
-    # class for base-class/annotation positions below.
-    from quchip.declarative.envelope_shape import EnvelopeShape
-    from quchip.declarative import Scalar, parameter, qnp  # noqa: E402
-else:
-    # Runtime path stays on the lazy re-export to preserve the circular-import
-    # avoidance described above.
-    from quchip.declarative import EnvelopeShape, Scalar, parameter, qnp  # noqa: E402
 
 
 def _gaussian_flat_top(t: Any, duration: Any, edge_duration: Any, sigmas: Any, amplitude: Any) -> Any:
@@ -185,7 +190,7 @@ def _gaussian_flat_top(t: Any, duration: Any, edge_duration: Any, sigmas: Any, a
     return qnp.asarray(out, dtype=complex)
 
 
-class Gaussian(EnvelopeShape):
+class Gaussian(Envelope):
     r"""Centered Gaussian pulse.
 
     .. math::
@@ -220,7 +225,32 @@ class Gaussian(EnvelopeShape):
         )
 
 
-class GaussianEdge(EnvelopeShape):
+class GaussianDRAG(Envelope):
+    r"""Gaussian pulse with a derivative quadrature.
+
+    .. math::
+
+       E(t) = I(t) + i\,\beta\,\frac{dI}{dt}, \qquad
+       I(t) = A\exp\!\left[-\frac{(t-\tau/2)^2}{2\sigma^2}\right].
+
+    ``beta`` is signed and measured in ns. Its sign therefore owns the
+    quadrature convention without an additional polarity flag.
+    """
+
+    duration: Scalar = parameter(positive=True, unit="ns")
+    sigmas: Scalar = parameter(default=3, positive=True)
+    amplitude: Scalar = parameter(default=1.0)
+    beta: Scalar = parameter(default=0.0, unit="ns")
+
+    def value(self, t: Any) -> Any:
+        center = self.duration / 2.0
+        sigma = self.duration / (2.0 * self.sigmas)
+        in_phase = self.amplitude * qnp.exp(-((t - center) ** 2) / (2.0 * sigma**2))
+        derivative = -(t - center) * in_phase / sigma**2
+        return qnp.asarray(in_phase + 1j * self.beta * derivative, dtype=complex)
+
+
+class GaussianEdge(Envelope):
     r"""Flat-top pulse with Gaussian ramp-up and ramp-down edges.
 
     Each edge is a Gaussian of width :math:`\sigma = \tau_e / (2 N_\sigma)`
@@ -269,7 +299,7 @@ class GaussianEdge(EnvelopeShape):
         return _gaussian_flat_top(t, self.duration, self.edge_duration, self.sigmas, self.amplitude)
 
 
-class SquareWithGaussianEdges(EnvelopeShape):
+class SquareWithGaussianEdges(Envelope):
     r"""Flat-top pulse with Gaussian ramp-up and ramp-down edges.
 
     Each ramp has duration :math:`\tau_e = f_e \cdot \tau` with
@@ -318,7 +348,7 @@ class SquareWithGaussianEdges(EnvelopeShape):
         return _gaussian_flat_top(t, self.duration, self.edge_duration, self.sigmas, self.amplitude)
 
 
-class LinearRamp(EnvelopeShape):
+class LinearRamp(Envelope):
     r"""Linearly rising ramp that holds at peak amplitude.
 
     The envelope rises linearly from 0 to ``amplitude`` over the first
@@ -358,7 +388,7 @@ class LinearRamp(EnvelopeShape):
     >>> ramp = LinearRamp(duration=60.0, ramp_duration=50.0, amplitude=4.0)
     >>> import numpy as np
     >>> t = np.array([0.0, 25.0, 50.0, 55.0])
-    >>> np.real(ramp.waveform(t)).tolist()
+    >>> np.real(ramp.value(t)).tolist()
     [0.0, 2.0, 4.0, 4.0]
     """
 
@@ -393,12 +423,12 @@ class LinearRamp(EnvelopeShape):
         )
 
 
-class Square(EnvelopeShape):
-    r"""Constant-amplitude pulse with optional global phase.
+class Square(Envelope):
+    r"""Constant-amplitude pulse.
 
     .. math::
 
-       E(t) = A\, e^{i\phi}, \qquad 0 \le t \le \tau.
+       E(t) = A, \qquad 0 \le t \le \tau.
 
     Parameters
     ----------
@@ -406,15 +436,11 @@ class Square(EnvelopeShape):
         Pulse length :math:`\tau` in ns.
     amplitude : float
         Real amplitude :math:`A` applied on top of :meth:`value`.
-    phase : float
-        Global phase :math:`\phi` in radians.
     """
 
     duration: Scalar = parameter(positive=True, unit="ns")
     amplitude: Scalar = parameter(default=1.0)
-    phase: Scalar = parameter(default=0.0, unit="rad")
 
     def value(self, t: Any) -> Any:
-        """Evaluate the constant complex envelope at time points *t*."""
-        phase_factor = qnp.exp(qnp.asarray(1j * self.phase))
-        return qnp.ones_like(t, dtype=complex) * self.amplitude * phase_factor
+        """Evaluate the constant envelope at time points *t*."""
+        return qnp.ones_like(t, dtype=complex) * self.amplitude

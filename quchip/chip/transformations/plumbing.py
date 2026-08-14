@@ -134,7 +134,7 @@ def rebuild_chip(source_chip: Any, *, devices: Any, couplings: Any) -> Any:
         couplings=list(couplings) or None,
         label=source_chip.label,
         frame=dict(source_chip.frame) if isinstance(source_chip.frame, dict) else source_chip.frame,
-        rwa=source_chip.rwa,
+        approximation=source_chip.approximation,
         backend=source_chip._backend,
         baths=[bath.copy() for bath in source_chip.baths] or None,
     )

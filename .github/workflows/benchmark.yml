@@ -1,0 +1,102 @@
+name: benchmark
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmark-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  closed-system:
+    name: closed-system overhead
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      BENCHMARK_RUNGS: ${{ github.event_name == 'push' && '1,2,3,4,5,6,7' || '1,3,5,7' }}
+      BUILD_REPEAT: ${{ github.event_name == 'push' && '5' || '3' }}
+      SOLVE_REPEAT: ${{ github.event_name == 'push' && '7' || '5' }}
+      JAX_ENABLE_X64: "true"
+      XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+      MPLCONFIGDIR: /tmp/quchip-matplotlib
+    steps:
+      - name: Check out exact head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            ci-constraints-3.11.txt
+
+      - name: Install benchmark environment
+        run: |
+          uv venv --python 3.11
+          uv pip install -e '.[dynamiqs]' -c ci-constraints-3.11.txt
+
+      - name: Resolve exact main
+        id: comparison
+        env:
+          EVENT_MAIN_SHA: ${{ github.event_name == 'push' && github.event.before || '' }}
+        run: |
+          if [[ -z "$EVENT_MAIN_SHA" || "$EVENT_MAIN_SHA" == "0000000000000000000000000000000000000000" ]]; then
+            EVENT_MAIN_SHA=$(git rev-parse origin/main)
+          fi
+          git cat-file -e "${EVENT_MAIN_SHA}^{commit}"
+          echo "main_sha=$EVENT_MAIN_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Record environment
+        run: |
+          mkdir -p benchmark-output
+          uv run --no-sync python --version > benchmark-output/environment.txt
+          uv pip freeze >> benchmark-output/environment.txt
+          uname -a >> benchmark-output/environment.txt
+          lscpu >> benchmark-output/environment.txt
+
+      - name: Run benchmark
+        id: benchmark
+        run: |
+          uv run --no-sync python benchmarks/closed_system.py run \
+            --main-ref "${{ steps.comparison.outputs.main_sha }}" \
+            --rungs "$BENCHMARK_RUNGS" \
+            --build-repeat "$BUILD_REPEAT" \
+            --warmup 1 \
+            --solve-repeat "$SOLVE_REPEAT" \
+            --out benchmark-output/closed-system.json
+
+      - name: Render report
+        id: report
+        run: |
+          uv run --no-sync python benchmarks/closed_system.py report \
+            --data benchmark-output/closed-system.json \
+            --out-dir benchmark-output \
+            --summary benchmark-output/summary.md
+
+      - name: Upload benchmark bundle
+        id: upload
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: closed-system-${{ github.event_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: benchmark-output
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Publish job summary
+        if: ${{ !cancelled() && steps.report.outcome == 'success' }}
+        run: |
+          cat benchmark-output/summary.md >> "$GITHUB_STEP_SUMMARY"
+          printf '\n[Download JSON, environment, samples, and plots](%s)\n' \
+            "${{ steps.upload.outputs.artifact-url }}" >> "$GITHUB_STEP_SUMMARY"

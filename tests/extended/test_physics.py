@@ -35,7 +35,7 @@ from quchip.devices.resonator import Resonator
 from quchip.devices.transmon.duffing import DuffingTransmon
 from quchip.engine import simulate
 from quchip.engine.ir import DriveOp
-from quchip.engine.stage1_frames import resolve_frame
+from quchip.engine.frames import resolve_frame
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +168,7 @@ class TestDispersiveShift:
         chip = Chip(devices=[q, r], couplings=[coupling])
 
         H = chip.hamiltonian()
-        evals = np.sort(np.real(backend.eigenenergies(H)))
+        evals = np.sort(np.linalg.eigvalsh(H.matrix(backend=backend)).real)
 
         # Bare eigenvalues: E_{n_q, n_r} = ω_q·n_q + (α/2)·n_q·(n_q-1) + ω_r·n_r.
         # Identify each dressed state by proximity to its uncoupled value:
@@ -232,7 +232,7 @@ class TestResonantEigenvalueSplitting:
         chip = Chip(devices=[r1, r2], couplings=[coupling])
 
         H = chip.hamiltonian()
-        evals = np.sort(np.real(backend.eigenenergies(H)))
+        evals = np.sort(np.linalg.eigvalsh(H.matrix(backend=backend)).real)
 
         # Single-excitation manifold E_- = ω - g, E_+ = ω + g lies near ω = 6.0.
         single_exc = evals[(evals > 5.0) & (evals < 7.0)]
@@ -258,7 +258,7 @@ class TestResonantEigenvalueSplitting:
         chip = Chip(devices=[r1, r2], couplings=[coupling])
 
         H = chip.hamiltonian()
-        evals = np.sort(np.real(backend.eigenenergies(H)))
+        evals = np.sort(np.linalg.eigvalsh(H.matrix(backend=backend)).real)
 
         # Ground state should be near 0 (within g²/ω ≈ 4e-4)
         assert abs(evals[0]) < 0.01, f"Ground state energy {evals[0]:.6f} too far from 0"
@@ -561,7 +561,7 @@ class TestDuffingEigenvalues:
         q = DuffingTransmon(freq=omega, anharmonicity=alpha, levels=levels, label="q")
         chip = Chip([q])
         H = chip.hamiltonian()
-        evals = np.sort(np.real(backend.eigenenergies(H)))
+        evals = np.sort(np.linalg.eigvalsh(H.matrix(backend=backend)).real)
 
         for n in range(levels):
             expected = omega * n + (alpha / 2.0) * n * (n - 1)
@@ -582,7 +582,7 @@ class TestResonatorEigenvalues:
         r = Resonator(freq=omega, levels=levels, label="r")
         chip = Chip([r])
         H = chip.hamiltonian()
-        evals = np.sort(np.real(backend.eigenenergies(H)))
+        evals = np.sort(np.linalg.eigvalsh(H.matrix(backend=backend)).real)
 
         for n in range(levels):
             expected = omega * n
@@ -895,10 +895,14 @@ class TestRabiFrequency:
         chip = Chip([q])
 
         backend = chip.backend
-        H_c = ChargeDrive(target=q).local_channels(q)[0].operator
-        ket0 = backend.basis(4, 0)
-        ket1 = backend.basis(4, 1)
-        mel = abs(complex(backend.expect(backend.matmul(ket0, backend.dag(ket1)), H_c)))
+        from quchip.control.signal import AnalyticSignal
+        from quchip.engine.ir import Constant
+
+        H_c = ChargeDrive(target=q).hamiltonian(
+            q,
+            AnalyticSignal(Constant(1.0)),
+        ).matrix(t=0.0, backend=backend)
+        mel = abs(complex(H_c[0, 1]))
         npt.assert_allclose(mel, 1.0, atol=1e-10, err_msg=f"|⟨0|i(a-a†)|1⟩| = {mel}, expected 1.0")
 
         d = ChargeDrive(target=q)
@@ -1033,7 +1037,7 @@ class TestGaussianEnvelopeArea:
         # Fine time grid for accurate numerical integration
         n_points = 10001
         t = np.linspace(0, duration, n_points)
-        waveform = env.waveform(t)
+        waveform = env.value(t)
 
         dt = duration / (n_points - 1)
         numerical_area = np.trapezoid(np.abs(waveform), dx=dt)

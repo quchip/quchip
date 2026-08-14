@@ -20,7 +20,7 @@ from quchip.control.signal import Crosstalk
 from quchip.control.drive import ChargeDrive
 from quchip.control.envelopes import Square
 from quchip.devices.transmon.duffing import DuffingTransmon
-from quchip.engine import build_hamiltonian_description, simulate
+from quchip.engine import build_engine_result, simulate
 from quchip.engine.ir import DriveOp
 
 
@@ -198,10 +198,10 @@ class TestCrosstalkIntegration:
             drive_label=drive_a.label,
         )
 
-        from quchip.engine.stage1_frames import resolve_frame
+        from quchip.engine.frames import resolve_frame
 
         resolved = resolve_frame(chip, chip.frame)
-        desc_no_xt = build_hamiltonian_description(chip, [drive_op], resolved_frame=resolved)
+        desc_no_xt = build_engine_result(chip, [drive_op], resolved_frame=resolved)
 
         src_key = drive_a.label
         vic_key = drive_b.label
@@ -210,7 +210,7 @@ class TestCrosstalkIntegration:
             signal_chain=[Crosstalk(source=src_key, victim=vic_key, beta=self.BETA)],
         ))
         resolved = resolve_frame(chip, chip.frame)
-        desc_with_xt = build_hamiltonian_description(chip, [drive_op], resolved_frame=resolved)
+        desc_with_xt = build_engine_result(chip, [drive_op], resolved_frame=resolved)
 
         assert len(desc_with_xt.dynamic_terms) > len(desc_no_xt.dynamic_terms), (
             f"Crosstalk should add terms: got {len(desc_with_xt.dynamic_terms)} with vs "
@@ -237,20 +237,16 @@ class TestCrosstalkIntegration:
             drive_label=drive_a.label,
         )
         tlist = np.linspace(0.0, self.DURATION, 101)
-        from quchip.engine.stage1_frames import resolve_frame
-        from quchip.engine.ir import evaluate_signal_program
+        from quchip.engine.frames import resolve_frame
 
         resolved = resolve_frame(chip, chip.frame)
         _ = resolved  # signal building is frame-agnostic now; frame applied during modulation
-        from quchip.engine.stage2_assembly import _spec_to_raw_signal
-
-        spec = drive_a.signal_spec(drive_op, q0)
-        source_signal = _spec_to_raw_signal(spec)
+        source_signal = drive_a.signal(drive_op, q0)
         built = edge.apply({(source_key, 0): source_signal})
         victim_signal = built[(victim_key, 0)]
 
-        default = evaluate_signal_program(victim_signal, tlist)
-        explicit = evaluate_signal_program(victim_signal, tlist, xp=np)
+        default = victim_signal.evaluate(tlist)
+        explicit = victim_signal.evaluate(tlist, xp=np)
         npt.assert_allclose(explicit, default)
 
     def test_dynamics_victim_excitation(self) -> None:

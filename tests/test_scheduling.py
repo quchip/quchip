@@ -15,7 +15,7 @@ from quchip.control.drive import ChargeDrive, FluxDrive
 from quchip.control.envelopes import Square
 from quchip.control.sequence import QuantumSequence
 from quchip.devices.transmon.duffing import DuffingTransmon
-from quchip.engine.ir import DriveOp
+from quchip.engine.ir import DriveOp, evaluate_signal_program
 
 
 # ── Fixtures ────────────────────────────────────────────────────────────
@@ -141,6 +141,34 @@ class TestChargeBasic:
         seq.charge("q0", envelope=Square(duration=10.0), freq=5.0, phase=0.3)
 
         assert seq.scheduled_ops[0].phase_offset == pytest.approx(0.3)
+
+    def test_schedule_phase_rotates_the_resolved_envelope_signal(
+        self,
+        single_qubit_chip: Chip,
+    ) -> None:
+        """Scheduling applies global phase after evaluating the local shape."""
+        first = QuantumSequence(single_qubit_chip)
+        first.charge(
+            "q0",
+            envelope=Square(duration=10.0, amplitude=0.5),
+            freq=5.0,
+            phase=0.0,
+        )
+        second = QuantumSequence(single_qubit_chip)
+        second.charge(
+            "q0",
+            envelope=Square(duration=10.0, amplitude=0.5),
+            freq=5.0,
+            phase=np.pi / 2.0,
+        )
+
+        first_signal = first.resolve().dynamic_terms[0].time_dependence.signal
+        second_signal = second.resolve().dynamic_terms[0].time_dependence.signal
+        first_value = evaluate_signal_program(first_signal, 0.0, xp=np)
+        second_value = evaluate_signal_program(second_signal, 0.0, xp=np)
+
+        assert abs(first_value) == pytest.approx(abs(second_value))
+        assert second_value == pytest.approx(1j * first_value)
 
     def test_vz_accumulates_into_later_microwave_pulses(self, single_qubit_chip: Chip) -> None:
         """vz() phase accumulates into the phase_offset of later charge() pulses on the same device."""
@@ -413,7 +441,7 @@ class TestScheduleWithDriveObject:
         drive = ChargeDrive()
         seq = QuantumSequence(single_qubit_chip)
 
-        with pytest.raises(ValueError, match="not connected"):
+        with pytest.raises(ValueError, match="unconnected"):
             seq.schedule(drive, envelope=Square(duration=10.0), freq=5.0)
 
 
@@ -674,7 +702,7 @@ def test_schedule_disconnected_drive_raises_clean_error(
     # used to dereference `drive._target.label` before the None-guard, crashing with AttributeError.
     seq = QuantumSequence(single_qubit_chip)
     orphan = ChargeDrive(label="orphan")
-    with pytest.raises(ValueError, match="not connected"):
+    with pytest.raises(ValueError, match="unconnected"):
         seq.schedule(orphan, envelope=Square(duration=10.0))
 
 

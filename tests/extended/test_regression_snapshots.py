@@ -10,9 +10,6 @@ The three paths tested:
   3. Crosstalk dynamics -- verifies victim device excitation from leaked
      signal through the crosstalk pipeline
 
-Purpose: safety net for the callable-IR and crosstalk paths. These tests detect any
-behavioral change.
-
 Unit convention: frequencies in GHz (ordinary), times in ns, h-bar = 1.
 """
 
@@ -32,7 +29,7 @@ from quchip.engine.ir import (
     Constant,
     DriveOp,
     DynamicTerm,
-    HamiltonianDescription,
+    EngineResult,
     ScalarModulation,
     evaluate_signal_program,
 )
@@ -93,7 +90,7 @@ def test_callable_ir_snapshot() -> None:
         basis="fock",
         subsystem_labels=("q",),
     )
-    desc_dsp = HamiltonianDescription(
+    desc_dsp = EngineResult(
         static_terms=(),
         dynamic_terms=(
             DynamicTerm(
@@ -105,7 +102,7 @@ def test_callable_ir_snapshot() -> None:
         dims=(2,),
         metadata={},
     )
-    desc_ideal = HamiltonianDescription(
+    desc_ideal = EngineResult(
         static_terms=(),
         dynamic_terms=(
             DynamicTerm(

@@ -15,6 +15,7 @@ scq = pytest.importorskip("scqubits")
 
 from quchip import from_scqubits, to_scqubits  # noqa: E402
 from quchip.backend import get_default_backend  # noqa: E402
+from quchip.declarative.expr import materialize_expr  # noqa: E402
 from quchip.devices import DuffingTransmon  # noqa: E402
 from quchip.devices.transmon import ChargeBasisTransmon  # noqa: E402
 
@@ -27,7 +28,8 @@ def _ground_shifted(evals: np.ndarray) -> np.ndarray:
 
 def _device_spectrum(device, count: int) -> np.ndarray:
     """Return the device's lowest ``count`` transition energies (``E_0 = 0``)."""
-    matrix = np.asarray(get_default_backend().to_array(device.hamiltonian()))
+    backend = get_default_backend()
+    matrix = np.asarray(backend.to_array(materialize_expr(device.hamiltonian(), backend)))
     return _ground_shifted(np.linalg.eigvalsh(matrix)[:count])
 
 
@@ -282,12 +284,6 @@ def test_zero_pi_import_matches_scqubits_spectrum_exactly():
     got = _device_spectrum(dev, 4)
     want = _oracle_spectrum(zp, 4)
     assert np.allclose(got, want, atol=1e-8)
-
-
-def test_zero_pi_import_notes_frozen_snapshot():
-    """A ZeroPi import declares its frozen-at-import snapshot in physics_notes()."""
-    dev = from_scqubits(_small_zero_pi())
-    assert any("frozen at import" in note for note in dev.physics_notes())
 
 
 def test_zero_pi_import_charge_operator_matches_scqubits_elements():

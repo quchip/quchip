@@ -28,7 +28,7 @@ def test_pathway_sum_matches_half_commutator_element():
     chip = _two_qubit_chip()
     result = analyze_static_zz(chip, "q0", "q1")
 
-    h, labels, dims = bare_hamiltonian(chip, chip.backend)
+    h, labels, dims = bare_hamiltonian(chip)
     idx_a, idx_b = labels.index("q0"), labels.index("q1")
     occupations = np.indices(dims).reshape(len(dims), -1)
     p_mask = (occupations[idx_a] <= 1) & (occupations[idx_b] <= 1)

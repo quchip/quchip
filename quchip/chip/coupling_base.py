@@ -13,17 +13,17 @@ from __future__ import annotations
 
 import copy
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from quchip.backend.protocol import Operator
+from quchip.declarative.dissipation import CollapseChannel
 from quchip.devices.base import BaseDevice
 from quchip.utils.labeling import auto_label, resolve_label
 from quchip.utils.registry import Registrable
 from quchip.utils.state_versioning import StateVersioned
 
 if TYPE_CHECKING:
-    from quchip.chip.chip import Chip
-    from quchip.engine.ir import DroppedTerm, ScalarModulation
+    from quchip.engine.ir import DroppedTerm
 
 
 class BaseCoupling(StateVersioned, Registrable, ABC, registry_root=True):
@@ -58,7 +58,7 @@ class BaseCoupling(StateVersioned, Registrable, ABC, registry_root=True):
     forcing concretization.
     """
 
-    _type_prefix: str = "coupling"
+    _type_prefix: ClassVar[str] = "coupling"
 
     # Whether an existing edge of this coupling type is a valid fold target for
     # elimination's mediated-exchange consolidation
@@ -71,7 +71,7 @@ class BaseCoupling(StateVersioned, Registrable, ABC, registry_root=True):
     # :class:`~quchip.chip.couplings.TunableCapacitive`); an edge that does not
     # declare this is left unchanged and the mediated exchange is added as its
     # own parallel edge instead.
-    folds_exchange: bool = False
+    folds_exchange: ClassVar[bool] = False
 
     # Whether this coupling's exchange physics reduces to a dispersive
     # CrossKerr shift under coupling-target elimination
@@ -83,7 +83,7 @@ class BaseCoupling(StateVersioned, Registrable, ABC, registry_root=True):
     # declaring this capability are eligible. True for
     # :class:`~quchip.chip.couplings.Capacitive` and
     # :class:`~quchip.chip.couplings.TunableCapacitive`.
-    reduces_to_crosskerr: bool = False
+    reduces_to_crosskerr: ClassVar[bool] = False
 
     # The endpoint device references are structural — a rebinding during
     # ``copy()`` is not a physics change — so they must not bump state_version.
@@ -107,7 +107,6 @@ class BaseCoupling(StateVersioned, Registrable, ABC, registry_root=True):
                 )
         self.device_a = device_a
         self.device_b = device_b
-        self._rwa: bool | None = None
         self.label = label if label is not None else auto_label(type(self)._type_prefix)
 
     def copy(self, device_map: dict[str, BaseDevice]) -> "BaseCoupling":
@@ -116,6 +115,24 @@ class BaseCoupling(StateVersioned, Registrable, ABC, registry_root=True):
         object.__setattr__(cloned, "device_a", device_map[self.device_a_label])
         object.__setattr__(cloned, "device_b", device_map[self.device_b_label])
         return cloned
+
+    def parameter_values(self) -> dict[str, Any]:
+        """Return this coupling's bindable values by local field name."""
+        fields = getattr(type(self), "__quchip_param_fields__", {})
+        if fields:
+            return {name: getattr(self, name) for name in fields}
+        return {self.coupling_strength_name: self.coupling_strength}
+
+    def set_parameter_value(self, name: str, value: Any) -> None:
+        """Apply one local parameter value on an isolated coupling copy."""
+        fields = getattr(type(self), "__quchip_param_fields__", {})
+        if name in fields:
+            setattr(self, name, value)
+            return
+        if name == self.coupling_strength_name:
+            self.set_coupling_strength(value)
+            return
+        raise KeyError(name)
 
     @property
     def device_a_label(self) -> str:
@@ -184,41 +201,12 @@ class BaseCoupling(StateVersioned, Registrable, ABC, registry_root=True):
         """
         setattr(self, self.coupling_strength_name, value)
 
-    @property
-    def rwa(self) -> bool | None:
-        """Per-coupling RWA override; ``None`` inherits the chip's default."""
-        return self._rwa
-
-    @rwa.setter
-    def rwa(self, value: bool | None) -> None:
-        """Set the per-coupling RWA override (``None`` inherits the chip default)."""
-        self._rwa = value
-
-    def rwa_keeps_band(self, delta_a: int, delta_b: int) -> bool:
-        """Whether the RWA retains the ``(Δa, Δb)`` excitation-change band.
-
-        The structural RWA policy for this coupling: when the chip
-        resolves RWA (:meth:`Chip.resolve_rwa`), only bands accepted
-        here survive — in :meth:`Chip.hamiltonian`'s mask and in stage
-        2's band filter alike. Offsets follow the engine convention
-        ``Δ = col − row`` (``+1`` = lowering). Overrides must stay
-        symmetric under joint sign flip so the retained operator is
-        Hermitian, and must depend only on the integer offsets — never
-        on frequency values, which may be traced.
-
-        Default: total-excitation-conserving (``Δa + Δb == 0``), the
-        beam-splitter selection of the textbook coupling RWA.
-        """
-        return delta_a + delta_b == 0
-
     @abstractmethod
     def interaction_hamiltonian(self) -> Operator:
         """Return the full ``H_int`` on the local ``H_a ⊗ H_b`` subspace.
 
-        Always the complete (non-RWA) interaction: the RWA is a chip
-        policy the engine applies structurally, keeping only the bands
-        :meth:`rwa_keeps_band` accepts when :meth:`Chip.resolve_rwa`
-        resolves ``True`` for this coupling. Couplings author one form.
+        Couplings author one complete interaction. The selected engine
+        approximation decides which resolved bands are retained.
         """
         ...
 
@@ -226,35 +214,30 @@ class BaseCoupling(StateVersioned, Registrable, ABC, registry_root=True):
         """Return human-readable declarations of this coupling's approximations."""
         return [
             f"Coupled devices: '{self.device_a_label}' ↔ '{self.device_b_label}'",
-            f"RWA policy: {self.rwa if self.rwa is not None else 'inherits chip default'}",
         ]
-
-    def parametric_operator(self, chip: Any) -> Any | None:
-        """Backend operator a scheduled edge pump multiplies, or ``None`` when this coupling is not modulable.
-
-        The base coupling is static-only; declarative couplings opt in by
-        implementing :meth:`CouplingModel.parametric_interaction`.
-        """
-        _ = chip
-        return None
 
     def dropped_terms(self) -> list["DroppedTerm"]:
         """Return advisory records for terms this coupling's model itself elides.
 
-        RWA band drops are reported generically by stage 2; this hook is
+        RWA band drops are reported generically during assembly; this hook is
         for *other* approximations a coupling applies inside
         :meth:`interaction_hamiltonian`. Default: nothing is dropped.
         """
         return []
 
-    def dynamic_interaction_terms(self, chip: "Chip") -> list[tuple[Operator, "ScalarModulation"]]:
-        """Time-dependent interaction terms (default: none)."""
-        return []
+    def _time_terms(self) -> tuple[Any, ...]:
+        """Return normalized time-dependent terms (default: none)."""
+        return ()
 
-    def collapse_operators(self, chip: "Chip") -> list[Operator]:
-        """Lindblad collapse operators on the local subspace (default: none)."""
-        _ = chip
-        return []
+    def collapse_channels(self) -> tuple[CollapseChannel, ...]:
+        """Local Lindblad channels contributed by this coupling."""
+        return ()
+
+    def _collapse_channels_with_paths(
+        self,
+    ) -> tuple[tuple[CollapseChannel, tuple[str, ...]], ...]:
+        """Return normalized channels with inferred paths (none for legacy couplings)."""
+        return ()
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize structural fields into a JSON-safe dictionary."""

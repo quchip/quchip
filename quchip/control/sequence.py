@@ -34,46 +34,58 @@ from __future__ import annotations
 
 import copy
 import functools
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from collections.abc import Collection, Mapping, Sequence
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from quchip.approximations import Approximation
 from quchip.chip.chip import Chip
 from quchip.chip.coupling_base import BaseCoupling
 from quchip.control.batch import (
     BatchAxis,
     DelayHandle,
-    ProblemBatch,
     PulseHandle,
     ZippedBatchAxis,
     _axis_metadata,
     _expand_axis_overrides,
 )
-from quchip.control.drive import BaseDrive, ChargeDrive, FluxDrive, PhaseDrive
-from quchip.control.envelopes import BaseEnvelope
+from quchip.control.drive import (
+    BaseDrive,
+    ChargeDrive,
+    CouplingDrive,
+    FluxDrive,
+    PhaseDrive,
+)
+from quchip.control.envelopes import Envelope
 from quchip.devices.base import BaseDevice
-from quchip.engine.ir import DriveOp, HamiltonianTemplate
-from quchip.engine.stage4_problem import (
-    build_solve_batch_from_descriptions,
+from quchip.engine.ir import DriveOp, EngineResult, HamiltonianTemplate
+from quchip.engine.assembly import (
+    build_engine_result,
+    compile_hamiltonian_template,
+    instantiate_engine_result,
+)
+from quchip.engine.problem import (
+    build_solve_batch_from_results,
     build_solve_problem,
     prepare_solve_problem_context,
     validate_drive_ops_window,
 )
-from quchip.engine.stage2_assembly import (
-    compile_hamiltonian_template,
-    instantiate_hamiltonian_description,
+from quchip.utils.jax_utils import (
+    array_namespace,
+    is_jax_array as _is_traced,
+    is_jax_namespace,
+    maybe_concrete_scalar,
+    select_array_module as _select_array_module,
 )
-from quchip.utils.jax_utils import maybe_concrete_scalar
-from quchip.utils.jax_utils import array_namespace, is_jax_namespace
-from quchip.utils.jax_utils import is_jax_array as _is_traced
-from quchip.utils.jax_utils import select_array_module as _select_array_module
 from quchip.utils.labeling import resolve_label
 
 if TYPE_CHECKING:
     from quchip.chip.transformations.active_patch import ActivePatchResult
-    from quchip.engine.ir import SolveProblem
+    from quchip.declarative.expr import PhysicsExpr
+    from quchip.engine.ir import FrameSpec, SolveBatch, SolveProblem
     from quchip.results.results import SimulationBatchResult, SimulationResult
 
 
@@ -81,7 +93,7 @@ if TYPE_CHECKING:
 class _PulseEntry:
     target_label: str
     drive_label: str
-    envelope: BaseEnvelope
+    envelope: Envelope
     freq: float | None
     requested_start_time: float | None
     phase: float
@@ -179,6 +191,18 @@ class QuantumSequence:
     """
 
     def __init__(self, chip: Chip) -> None:
+        ambiguous = [
+            path
+            for path in chip.parameters
+            if len((parts := path.split(".", 2))) == 3
+            and parts[0] == "pulse"
+            and parts[1].isdigit()
+        ]
+        if ambiguous:
+            raise ValueError(
+                "Component labels matching 'pulse.<integer>' are reserved for "
+                f"scheduled-pulse parameters; conflicting paths: {ambiguous}"
+            )
         self._chip = chip
         # ``_entries`` is the single source of truth for all timing. Cursors,
         # floors, and virtual-Z phase frames are reconstructed on demand by
@@ -186,7 +210,7 @@ class QuantumSequence:
         self._entries: list[_PulseEntry | _DelayEntry | _BarrierEntry | _FrameShiftEntry] = []
 
     @staticmethod
-    def _clone_envelope_with_overrides(envelope: BaseEnvelope, overrides: Mapping[str, Any]) -> BaseEnvelope:
+    def _clone_envelope_with_overrides(envelope: Envelope, overrides: Mapping[str, Any]) -> Envelope:
         cloned = copy.copy(envelope)
         for field, value in overrides.items():
             if not hasattr(cloned, field):
@@ -215,21 +239,24 @@ class QuantumSequence:
             )
         return drives[0]
 
-    def _find_pump_line(self, coupling_label: str) -> BaseDrive:
-        """Return the unique ParametricDrive line pumping *coupling_label*."""
+    def _find_coupling_drive(self, coupling_label: str) -> BaseDrive:
+        """Return the unique control line targeting *coupling_label*."""
         equipment = self._chip.control_equipment
         lines = [] if equipment is None else [
-            line for line in equipment.lines if line.target_kind == "edge" and line.target_label == coupling_label
+            line
+            for line in equipment.lines
+            if isinstance(line, CouplingDrive)
+            and line.target_label == coupling_label
         ]
         if len(lines) == 1:
             return lines[0]
         if not lines:
             raise ValueError(
-                f"No ParametricDrive line pumps coupling '{coupling_label}'. Wire one into the chip's "
-                "ControlEquipment (e.g. ParametricDrive(coupling)) before scheduling."
+                f"No coupling drive targets '{coupling_label}'. Wire a CouplingDrive, "
+                "such as ParametricDrive(coupling), before scheduling."
             )
         raise ValueError(
-            f"Multiple pump lines target coupling '{coupling_label}': {[line.label for line in lines]}. "
+            f"Multiple coupling drives target '{coupling_label}': {[line.label for line in lines]}. "
             "Schedule on the drive object or its label instead."
         )
 
@@ -258,25 +285,26 @@ class QuantumSequence:
         self,
         drive: BaseDrive,
         *,
-        envelope: BaseEnvelope,
+        envelope: Envelope,
         freq: float | None,
         start_time: float | None = None,
         phase: float = 0.0,
     ) -> PulseHandle:
         if drive._target is None:
             raise ValueError(
-                "Cannot schedule a drive that is not connected to a device. "
-                "Connect it first with drive.connect(device)."
+                "Cannot schedule an unconnected drive. Connect it to its device "
+                "or coupling first."
             )
-        if drive.target_kind == "edge":
+        if isinstance(drive, CouplingDrive):
             target_label = drive.target_label
             if target_label not in self._chip.coupling_map:
                 raise ValueError(
-                    f"Pump line '{drive.label}' targets coupling '{target_label}', which is not on this chip. "
+                    f"Coupling drive '{drive.label}' targets '{target_label}', which is not on this chip. "
                     f"Available couplings: {list(self._chip.coupling_map.keys())}"
                 )
         else:
-            target_label = drive._target.label
+            target_label = drive.target_label
+            assert target_label is not None
             if target_label not in self._chip.device_map:
                 raise ValueError(
                     f"Drive is connected to device '{target_label}', which is not on this chip. "
@@ -294,44 +322,11 @@ class QuantumSequence:
         )
         return PulseHandle(self, len(self._entries) - 1)
 
-    def _resolve_carrier_freq(self, drive: BaseDrive, freq: float | None) -> float | None:
-        """Resolve a pulse carrier frequency from the drive's carrier policy.
-
-        Single source of the carrier rule shared by :meth:`schedule` and the
-        :meth:`charge` / :meth:`phase` / :meth:`flux` / :meth:`flux_to`
-        conveniences. The drive declares its policy via ``_carrier_required``
-        and ``_defaults_to_device_drive_freq``:
-
-        * carrier-required drives (:class:`PhaseDrive`,
-          :class:`~quchip.control.drives_two_photon.TwoPhotonDrive`) raise
-          when *freq* is missing;
-        * device-default drives (:class:`ChargeDrive`) fall back to the target
-          device's ``drive_freq`` when *freq* is missing;
-        * baseband drives (:class:`FluxDrive`) ignore the carrier — *freq* is
-          ``None`` and stays ``None``.
-
-        The device default (``drive._target.drive_freq``) is only read on the
-        defaulting branch, so a disconnected drive with an explicit *freq*
-        still reaches the clean "not connected" error in
-        :meth:`_schedule_on_drive`. The returned frequency stays
-        JAX-traceable (no concretization).
-        """
-        if freq is None and drive._carrier_required:
-            raise ValueError(f"{type(drive).__name__} drives require an explicit freq argument")
-        if freq is None and drive._defaults_to_device_drive_freq:
-            if drive._target is None:
-                raise ValueError(
-                    "Cannot schedule a drive that is not connected to a device. "
-                    "Connect it first with drive.connect(device)."
-                )
-            return self._chip.device_map[drive._target.label].drive_freq
-        return freq
-
     def schedule(
         self,
         target: str | BaseDrive | BaseDevice | BaseCoupling,
         *,
-        envelope: BaseEnvelope,
+        envelope: Envelope,
         freq: float | None = None,
         start_time: float | None = None,
         phase: float = 0.0,
@@ -343,16 +338,14 @@ class QuantumSequence:
         target : str | BaseDrive | BaseDevice | BaseCoupling
             Accepted forms, resolved in this order:
 
-            * :class:`BaseDrive` — scheduled directly on that drive
-              (a :class:`~quchip.control.drive.ParametricDrive` pumps
-              its bound coupling).
+            * :class:`BaseDrive` — scheduled directly on that drive.
             * :class:`BaseDevice` — uses the device's first connected
               drive; pass the drive object explicitly when a device
               has multiple drives.
             * :class:`~quchip.chip.coupling_base.BaseCoupling` — uses
-              the unique :class:`~quchip.control.drive.ParametricDrive`
-              line pumping that coupling; pass the drive object
-              explicitly when a coupling has multiple pump lines.
+              the unique :class:`~quchip.control.drive.CouplingDrive`
+              targeting that coupling; pass the drive object explicitly
+              when a coupling has multiple control lines.
             * ``str`` — a label, resolved in order: a device label; then,
               only when absent from the device map, a coupling label
               (the two label spaces are disjoint); then, only when
@@ -365,16 +358,12 @@ class QuantumSequence:
               control-line label that collides with a device/coupling
               label is shadowed by the device/coupling resolution.
 
-        envelope : BaseEnvelope
+        envelope : Envelope
             Pulse envelope.
         freq : float, optional
-            Carrier frequency in GHz for microwave drives. Defaults to
-            the target device's ``drive_freq`` for
-            :class:`ChargeDrive`; always required (no device-frequency
-            fallback) for :class:`PhaseDrive` and
-            :class:`~quchip.control.drives_two_photon.TwoPhotonDrive`;
-            ignored for :class:`FluxDrive` and baseband
-            :class:`ParametricDrive` pumps.
+            Optional carrier frequency in GHz. Omitting it leaves the signal
+            carrier-free. Drive-specific conveniences may provide their own
+            explicit default, such as :meth:`charge` using ``device.drive_freq``.
         start_time : float, optional
             Pulse start time in ns. Defaults to the current cursor;
             earlier times are rejected.
@@ -389,18 +378,17 @@ class QuantumSequence:
             if label in self._chip.device_map:
                 drive = self._find_default_drive(label)
             elif label in self._chip.coupling_map:
-                drive = self._find_pump_line(label)
+                drive = self._find_coupling_drive(label)
             else:
                 drive = self._find_drive_line(label)
 
-        freq = self._resolve_carrier_freq(drive, freq)
         return self._schedule_on_drive(drive, envelope=envelope, freq=freq, start_time=start_time, phase=phase)
 
     def charge(
         self,
         target: str | BaseDevice,
         *,
-        envelope: BaseEnvelope,
+        envelope: Envelope,
         freq: float | None = None,
         phase: float = 0.0,
     ) -> PulseHandle:
@@ -408,14 +396,15 @@ class QuantumSequence:
         label = resolve_label(target)
         self._validate_target(label)
         drive = self._find_drive_by_type(label, ChargeDrive)
-        freq = self._resolve_carrier_freq(drive, freq)
+        if freq is None:
+            freq = self._chip.device_map[label].drive_freq
         return self._schedule_on_drive(drive, envelope=envelope, freq=freq, phase=phase)
 
     def phase(
         self,
         target: str | BaseDevice,
         *,
-        envelope: BaseEnvelope,
+        envelope: Envelope,
         freq: float,
         phase: float = 0.0,
     ) -> PulseHandle:
@@ -423,36 +412,32 @@ class QuantumSequence:
         label = resolve_label(target)
         self._validate_target(label)
         drive = self._find_drive_by_type(label, PhaseDrive)
-        # PhaseDrive requires a carrier, so the helper either returns *freq*
-        # unchanged or raises; route through it for one shared carrier rule.
-        resolved_freq = self._resolve_carrier_freq(drive, freq)
-        return self._schedule_on_drive(drive, envelope=envelope, freq=resolved_freq, phase=phase)
+        return self._schedule_on_drive(drive, envelope=envelope, freq=freq, phase=phase)
 
     def flux(
         self,
         target: str | BaseDevice,
         *,
-        envelope: BaseEnvelope,
+        envelope: Envelope,
     ) -> PulseHandle:
         """Schedule a :class:`FluxDrive` pulse (no carrier frequency)."""
         label = resolve_label(target)
         self._validate_target(label)
         drive = self._find_drive_by_type(label, FluxDrive)
-        freq = self._resolve_carrier_freq(drive, None)
-        return self._schedule_on_drive(drive, envelope=envelope, freq=freq)
+        return self._schedule_on_drive(drive, envelope=envelope, freq=None)
 
     def pump(
         self,
         coupling: str | BaseCoupling,
         *,
-        envelope: BaseEnvelope,
+        envelope: Envelope,
         freq: float | None = None,
         start_time: float | None = None,
         phase: float = 0.0,
     ) -> PulseHandle:
         """Schedule an edge pump: baseband δ(t)=A(t) when ``freq`` is None, else A(t)·cos(2πft-φ)."""
         label = resolve_label(coupling)
-        drive = self._find_pump_line(label)
+        drive = self._find_coupling_drive(label)
         return self._schedule_on_drive(drive, envelope=envelope, freq=freq, start_time=start_time, phase=phase)
 
     def flux_to(
@@ -460,7 +445,7 @@ class QuantumSequence:
         target: str | BaseDevice,
         *,
         target_freq: Any,
-        envelope: BaseEnvelope,
+        envelope: Envelope,
     ) -> PulseHandle:
         """Schedule a flux-drive frequency-shift pulse to ``target_freq``.
 
@@ -480,7 +465,7 @@ class QuantumSequence:
             Device to flux-pulse.
         target_freq : float
             Target ``0 → 1`` frequency in GHz.
-        envelope : BaseEnvelope
+        envelope : Envelope
             Envelope template with all timing parameters set. Its
             ``amplitude`` attribute is replaced by the computed δω; any
             value passed as ``amplitude`` is ignored.
@@ -498,8 +483,7 @@ class QuantumSequence:
         pulse = copy.copy(envelope)
         pulse.amplitude = delta_omega
         drive = self._find_drive_by_type(label, FluxDrive)
-        freq = self._resolve_carrier_freq(drive, None)
-        return self._schedule_on_drive(drive, envelope=pulse, freq=freq)
+        return self._schedule_on_drive(drive, envelope=pulse, freq=None)
 
     def vz(self, target: str | BaseDevice, angle: float) -> None:
         """Apply a virtual-Z frame shift of *angle* rad on *target*.
@@ -586,33 +570,6 @@ class QuantumSequence:
         n_points = max(int(dur_value * 10), 100)
         return np.linspace(0, dur, n_points)
 
-    def _resolve_initial_state_spec(self, state_spec: Any) -> Any:
-        if isinstance(state_spec, Mapping):
-            return self._chip.state(state_spec)
-        return state_spec
-
-    def _drive_lookup(self) -> dict[str, BaseDrive]:
-        """Return a ``{drive_label: drive}`` map across the chip.
-
-        Consolidates the two sources of drives — the control
-        equipment's line list and every device's ``connected_drives``
-        — into a single dictionary so callers don't double-walk. The
-        equipment takes priority when a label is present on both.
-        """
-        lookup: dict[str, BaseDrive] = {}
-        for dev in self._chip.devices:
-            for drv in dev.connected_drives:
-                lookup[drv.label] = drv
-        ce = self._chip.control_equipment
-        if ce is not None:
-            for drv in ce.lines:
-                lookup[drv.label] = drv
-        return lookup
-
-    def _is_microwave_drive(self, drive_label: str, lookup: dict[str, BaseDrive]) -> bool:
-        drv = lookup.get(drive_label)
-        return drv is not None and drv._accepts_virtual_z
-
     def _replay(
         self,
         overrides: Mapping[tuple[int, str], Any] | None = None,
@@ -644,12 +601,11 @@ class QuantumSequence:
         equipment = self._chip.control_equipment
         if equipment is not None:
             for line in equipment.lines:
-                if line.target_kind == "edge":
+                if isinstance(line, CouplingDrive):
                     assert line.target_label is not None
                     cursors[(line.target_label, line.label)] = 0.0
         floors: dict[str, Any] = {}
         phases: dict[str, Any] = {dev.label: 0.0 for dev in self._chip.devices}
-        drive_lookup = self._drive_lookup() if collect_ops else {}
         drive_ops: list[DriveOp] = []
 
         for entry_index, entry in enumerate(self._entries):
@@ -688,9 +644,10 @@ class QuantumSequence:
                 continue
 
             envelope_updates = {
-                field: value
+                field.removeprefix("envelope."): value
                 for (idx, field), value in overrides.items()
-                if idx == entry_index and field not in {"freq", "phase", "start_time"}
+                if idx == entry_index
+                and (field.startswith("envelope.") or field not in {"freq", "phase", "start_time"})
             }
             envelope = (
                 self._clone_envelope_with_overrides(entry.envelope, envelope_updates)
@@ -721,7 +678,7 @@ class QuantumSequence:
                 freq = overrides.get((entry_index, "freq"), entry.freq)
                 phase = overrides.get((entry_index, "phase"), entry.phase)
                 phase_offset = phase
-                if self._is_microwave_drive(entry.drive_label, drive_lookup):
+                if freq is not None:
                     phase_offset = phase_offset + phases.get(entry.target_label, 0.0)
                 drive_ops.append(
                     DriveOp(
@@ -754,6 +711,7 @@ class QuantumSequence:
         options: dict | None = None,
         e_ops: dict | None = None,
         initial_state: Any | None = None,
+        approximation: Approximation | None = None,
     ) -> "SolveProblem":
         """Build a single :class:`~quchip.engine.ir.SolveProblem` from this sequence.
 
@@ -782,7 +740,7 @@ class QuantumSequence:
         Returns
         -------
         SolveProblem
-            Frozen problem — chip, compiled Hamiltonian description,
+            Frozen problem — chip, compiled engine result,
             initial state, ``tlist``, collapse operators, and
             expectation operators — ready for
             :meth:`~quchip.chip.chip.Chip.solve` or
@@ -790,7 +748,6 @@ class QuantumSequence:
         """
         actual_tlist = self._resolve_tlist(tlist)
         drive_ops = self._materialize_drive_ops()
-        resolved_state = self._resolve_initial_state_spec(initial_state) if initial_state is not None else None
         return build_solve_problem(
             self._chip,
             drive_ops,
@@ -798,24 +755,45 @@ class QuantumSequence:
             solver=solver,
             options=options,
             e_ops=e_ops,
-            initial_state=resolved_state,
+            initial_state=initial_state,
+            approximation=approximation,
         )
 
+    def resolve(
+        self,
+        *,
+        frame: FrameSpec | None = None,
+        approximation: Approximation | None = None,
+    ) -> EngineResult:
+        """Resolve the backend-neutral Hamiltonian and noise description."""
+        drive_ops = self._materialize_drive_ops()
+        base_result = self._chip.resolve(frame=frame, approximation=approximation)
+        return build_engine_result(
+            self._chip,
+            drive_ops,
+            resolved_frame=base_result.resolved_frame,
+            approximation=base_result.approximation,
+            _base_result=base_result,
+        )
+
+    def hamiltonian(self) -> PhysicsExpr:
+        """Return this sequence's canonical time-dependent Hamiltonian."""
+        return self.resolve().hamiltonian()
+
     def vary(self, field: str, values: Any, *, name: str | None = None) -> BatchAxis:
-        """Create a :class:`BatchAxis` over a sequence-level field.
+        """Create a :class:`BatchAxis` over a public parameter path or state.
 
         Parameters
         ----------
         field : str
-            Sequence-level field to sweep. Only ``"initial_state"`` is
-            supported; per-pulse fields (``freq``, ``phase``,
-            ``amplitude``, ...) are swept via :meth:`PulseHandle.vary`
-            on the handle returned by :meth:`schedule` instead.
+            ``"initial_state"`` or any dotted path exposed by
+            :attr:`parameters`. Pulse handles remain the concise way to vary
+            a pulse field immediately after scheduling it.
         values : array-like
             Sequence of values for ``field``, one per batch point.
         name : str, optional
-            Axis name recorded in :attr:`ProblemBatch.axes` and
-            :meth:`ProblemBatch.params_at`. Defaults to *field*.
+            Axis name recorded in :attr:`SolveBatch.axes` and
+            :meth:`SolveBatch.params_at`. Defaults to *field*.
 
         Returns
         -------
@@ -823,9 +801,29 @@ class QuantumSequence:
             Sequence-level axis, consumable by :meth:`build_batch` or
             :meth:`zip`.
         """
-        if field != "initial_state":
-            raise ValueError("QuantumSequence only supports varying the sequence-level field 'initial_state'")
-        return BatchAxis(owner=self, target_kind="sequence", field=field, values=values, name=name or field)
+        if field == "initial_state":
+            return BatchAxis(owner=self, target_kind="sequence", field=field, values=values, name=name or field)
+        if field not in self.parameters:
+            raise ValueError(
+                f"Parameter path {field!r} is not batchable. Available: {list(self.parameters)}"
+            )
+
+        parts = field.split(".", 2)
+        if len(parts) == 3 and parts[0] == "pulse" and parts[1].isdigit():
+            index = int(parts[1])
+            entry = self._entries[index]
+            entry_field = parts[2]
+            return BatchAxis(
+                owner=self,
+                target_kind="entry",
+                field=field,
+                values=values,
+                name=name or field,
+                entry_index=index,
+                entry_field=entry_field,
+                entry=entry,
+            )
+        return BatchAxis(owner=self, target_kind="parameter", field=field, values=values, name=name or field)
 
     def zip(self, *axes: BatchAxis) -> ZippedBatchAxis:
         """Zip axes into one pairwise dimension.
@@ -878,16 +876,16 @@ class QuantumSequence:
                         "create the axis from a fresh handle."
                     )
 
-    def _build_batch_point_description(
+    def _build_batch_point_result(
         self,
         template: HamiltonianTemplate,
-        reference_description: Any,
+        reference_result: Any,
         overrides: dict[tuple[int | None, str], Any],
         *,
         tlist: Any,
         shared_initial_state: Any | None,
     ) -> tuple[Any, Any]:
-        """Return ``(HamiltonianDescription, initial_state)`` for one batch point."""
+        """Return ``(EngineResult, initial_state)`` for one batch point."""
         axis_initial_state = overrides.get((None, "initial_state"))
         entry_overrides: dict[tuple[int, str], Any] = {
             (idx, field): value
@@ -910,15 +908,12 @@ class QuantumSequence:
             # schedule's window was already checked when the batch's shared
             # context was built, but this variant needs its own check.
             validate_drive_ops_window(drive_ops, tlist)
-            description = instantiate_hamiltonian_description(template, drive_ops, self._chip)
+            engine_result = instantiate_engine_result(template, drive_ops, self._chip)
         else:
-            description = reference_description
+            engine_result = reference_result
 
         initial_state = axis_initial_state if axis_initial_state is not None else shared_initial_state
-        resolved_initial_state = (
-            self._resolve_initial_state_spec(initial_state) if initial_state is not None else None
-        )
-        return description, resolved_initial_state
+        return engine_result, initial_state
 
     def build_batch(
         self,
@@ -928,16 +923,65 @@ class QuantumSequence:
         options: dict | None = None,
         e_ops: dict | None = None,
         initial_state: Any | None = None,
-    ) -> ProblemBatch:
-        """Build a batched solve request from sweep axes without solving.
-
-        The returned :class:`ProblemBatch` wraps a
-        :class:`~quchip.engine.ir.SolveBatch`: shared static/dynamic operators
-        are collected exactly once and only per-element scalar modulations
-        (and per-element initial states, when varied) change across the batch.
-        """
+        approximation: Approximation | None = None,
+    ) -> "SolveBatch":
+        """Build a batched solve request from explicit sweep axes."""
         self._validate_axes(axes)
         actual_tlist = self._resolve_tlist(tlist)
+        shape, expanded = _expand_axis_overrides(axes)
+        params_store = np.empty(shape if shape else (), dtype=object)
+
+        parameter_axes = any(
+            member.target_kind == "parameter"
+            for axis in axes
+            for member in (axis.axes if isinstance(axis, ZippedBatchAxis) else (axis,))
+        )
+        if parameter_axes:
+            problems: list[Any] = []
+            for coord, overrides in expanded:
+                parameter_bindings = {
+                    field: value
+                    for (index, field), value in overrides.items()
+                    if index is None and field != "initial_state"
+                }
+                entry_overrides = {
+                    (index, field): value
+                    for (index, field), value in overrides.items()
+                    if index is not None
+                }
+                axis_initial_state = overrides.get((None, "initial_state"))
+                if axis_initial_state is not None and initial_state is not None:
+                    raise ValueError(
+                        "initial_state may be provided either as a shared scalar or as a batch axis, not both"
+                    )
+
+                variant = self.with_params(parameter_bindings)
+                drive_ops = variant._materialize_drive_ops(entry_overrides)
+                validate_drive_ops_window(drive_ops, actual_tlist)
+                problems.append(
+                    build_solve_problem(
+                        variant._chip,
+                        drive_ops,
+                        actual_tlist,
+                        solver=solver,
+                        options=options,
+                        e_ops=e_ops,
+                        initial_state=(axis_initial_state if axis_initial_state is not None else initial_state),
+                        approximation=approximation,
+                    )
+                )
+                params_store[coord] = self._point_params(axes, coord)
+
+            from quchip.engine.ir import SolveBatch
+
+            return SolveBatch(
+                chip=self._chip,
+                problems=tuple(problems),
+                params=params_store,
+                shape=shape,
+                axes=tuple(_axis_metadata(axis) for axis in axes),
+            )
+
         reference_drive_ops = self._materialize_drive_ops()
         context = prepare_solve_problem_context(
             self._chip,
@@ -946,41 +990,53 @@ class QuantumSequence:
             options=options,
             e_ops=e_ops,
             drive_ops=reference_drive_ops,
+            approximation=approximation,
         )
-        template = compile_hamiltonian_template(self._chip, reference_drive_ops, resolved_frame=context.resolved_frame)
-        reference_description = instantiate_hamiltonian_description(template, reference_drive_ops, self._chip)
+        template = compile_hamiltonian_template(
+            self._chip,
+            reference_drive_ops,
+            resolved_frame=context.resolved_frame,
+            approximation=context.approximation,
+            _base_result=context._base_result,
+        )
+        reference_result = instantiate_engine_result(template, reference_drive_ops, self._chip)
 
-        shape, expanded = _expand_axis_overrides(axes)
-        params_store = np.empty(shape if shape else (), dtype=object)
-
-        descriptions: list[Any] = []
+        engine_results: list[Any] = []
         initial_states: list[Any] = []
         for coord, overrides in expanded:
-            description, resolved_initial_state = self._build_batch_point_description(
+            engine_result, resolved_initial_state = self._build_batch_point_result(
                 template,
-                reference_description,
+                reference_result,
                 overrides,
                 tlist=context.tlist,
                 shared_initial_state=initial_state,
             )
-            descriptions.append(description)
+            engine_results.append(engine_result)
             initial_states.append(resolved_initial_state)
 
-            point_params: dict[str, Any] = {}
-            for dim, axis in enumerate(axes):
-                members = axis.axes if isinstance(axis, ZippedBatchAxis) else (axis,)
-                for member in members:
-                    # Name uniqueness is validated upfront in _validate_axes.
-                    point_params[member.name] = member.values[coord[dim]]
-            params_store[coord] = point_params
+            params_store[coord] = self._point_params(axes, coord)
 
-        batch = build_solve_batch_from_descriptions(context, descriptions, initial_states=initial_states)
-        return ProblemBatch(
-            batch=batch,
+        batch = build_solve_batch_from_results(
+            context, engine_results, initial_states=initial_states
+        )
+        return replace(
+            batch,
             params=params_store,
             shape=shape,
             axes=tuple(_axis_metadata(axis) for axis in axes),
         )
+
+    @staticmethod
+    def _point_params(
+        axes: Sequence[BatchAxis | ZippedBatchAxis], coord: tuple[int, ...]
+    ) -> dict[str, Any]:
+        """Return public axis values at one Cartesian coordinate."""
+        point: dict[str, Any] = {}
+        for dim, axis in enumerate(axes):
+            members = axis.axes if isinstance(axis, ZippedBatchAxis) else (axis,)
+            for member in members:
+                point[member.name] = member.values[coord[dim]]
+        return point
 
     def simulate(
         self,
@@ -994,6 +1050,7 @@ class QuantumSequence:
         check_truncation: bool = True,
         truncation_threshold: float = 1e-3,
         partition: bool = True,
+        approximation: Approximation | None = None,
     ) -> "SimulationResult":
         """Build and solve a single simulation, routed through :func:`~quchip.engine.simulate`.
 
@@ -1018,29 +1075,23 @@ class QuantumSequence:
         dispatched separately and combined into a
         :class:`~quchip.results.partitioned.PartitionedSimulationResult`.
         This only engages when ``initial_state`` is ``None`` or a
-        ``Mapping`` — a string shorthand or a concrete state is resolved
-        via :meth:`_resolve_initial_state_spec` first and always takes the
+        ``Mapping``. String shorthand and concrete states always take the
         joint path. Pass ``partition=False`` to force the joint solve
         unconditionally.
         """
-        from collections.abc import Mapping as _Mapping
-
         from quchip.engine import simulate as _engine_simulate
 
         with self._scoped_backend(backend):
             actual_tlist = self._resolve_tlist(tlist)
             drive_ops = self._materialize_drive_ops()
-            if initial_state is None or isinstance(initial_state, _Mapping):
-                resolved_state: Any = initial_state
-            else:
-                resolved_state = self._resolve_initial_state_spec(initial_state)
             return _engine_simulate(
                 self._chip, drive_ops, actual_tlist,
                 solver=solver, options=options, e_ops=e_ops,
-                initial_state=resolved_state,
+                initial_state=initial_state,
                 check_truncation=check_truncation,
                 truncation_threshold=truncation_threshold,
                 partition=partition,
+                approximation=approximation,
             )
 
     def simulate_batch(
@@ -1055,6 +1106,7 @@ class QuantumSequence:
         progress: bool = True,
         check_truncation: bool = True,
         truncation_threshold: float = 1e-3,
+        approximation: Approximation | None = None,
     ) -> "SimulationBatchResult":
         """Build and solve a batched sweep. Equivalent to ``chip.solve_many(seq.build_batch(...))``.
 
@@ -1073,6 +1125,7 @@ class QuantumSequence:
                 options=options,
                 e_ops=e_ops,
                 initial_state=initial_state,
+                approximation=approximation,
             )
             result = self._chip.solve_many(problem_batch, progress=progress)
         if check_truncation:
@@ -1110,6 +1163,86 @@ class QuantumSequence:
         """
         cloned = copy.copy(self)
         cloned._entries = copy.deepcopy(self._entries)
+        return cloned
+
+    @property
+    def parameters(self) -> Mapping[str, Any]:
+        """Chip and scheduled-pulse values available to :meth:`with_params`."""
+        values = dict(self._chip.parameters)
+        for index, entry in enumerate(self._entries):
+            if not isinstance(entry, _PulseEntry):
+                continue
+            prefix = f"pulse.{index}"
+            pulse_values = {
+                f"{prefix}.freq": entry.freq,
+                f"{prefix}.phase": entry.phase,
+                f"{prefix}.start_time": entry.requested_start_time,
+            }
+            collision = values.keys() & pulse_values.keys()
+            if collision:
+                raise ValueError(f"Sequence parameter paths are ambiguous: {sorted(collision)}")
+            values.update(pulse_values)
+            fields = getattr(type(entry.envelope), "__quchip_param_fields__", {})
+            names = fields or tuple(
+                name for name in vars(entry.envelope) if not name.startswith("_")
+            )
+            for name in names:
+                # Carrier phase and an envelope's own phase are distinct.
+                field = (
+                    f"envelope.{name}"
+                    if name in {"freq", "phase", "start_time"}
+                    else name
+                )
+                path = f"{prefix}.{field}"
+                if path in values:
+                    raise ValueError(f"Sequence parameter path {path!r} is ambiguous")
+                values[path] = getattr(entry.envelope, name)
+        return MappingProxyType(values)
+
+    @property
+    def settings(self) -> Mapping[str, Any]:
+        """Read-only sequence structure, separate from numerical parameters."""
+        return MappingProxyType(
+            {
+                "chip": self._chip.settings,
+                "entries": tuple(type(entry).__name__.removeprefix("_") for entry in self._entries),
+            }
+        )
+
+    def with_params(self, bindings: Mapping[str, Any]) -> "QuantumSequence":
+        """Return a cloned sequence with Chip or ``pulse.<index>`` values rebound."""
+        available = self.parameters
+        unknown = set(bindings) - set(available)
+        if unknown:
+            raise KeyError(
+                f"Unknown sequence parameter paths: {sorted(unknown)}. "
+                f"Available: {list(available)}"
+            )
+
+        cloned = self.clone()
+        pulse_bindings: list[tuple[int, str, Any]] = []
+        chip_bindings: dict[str, Any] = {}
+        for path, value in bindings.items():
+            parts = path.split(".", 2)
+            if len(parts) == 3 and parts[0] == "pulse" and parts[1].isdigit():
+                pulse_bindings.append((int(parts[1]), parts[2], value))
+            else:
+                chip_bindings[path] = value
+        if chip_bindings:
+            cloned._chip = self._chip.with_params(chip_bindings)
+
+        for index, field, value in pulse_bindings:
+            entry = cloned._entries[index]
+            if not isinstance(entry, _PulseEntry):  # pragma: no cover - inventory excludes it
+                raise KeyError(f"pulse.{index}.{field}")
+            if field in {"freq", "phase", "start_time"}:
+                attr = "requested_start_time" if field == "start_time" else field
+                cloned._entries[index] = replace(entry, **{attr: value})
+            else:
+                field = field.removeprefix("envelope.")
+                envelope = copy.copy(entry.envelope)
+                setattr(envelope, field, value)
+                cloned._entries[index] = replace(entry, envelope=envelope)
         return cloned
 
     def _validate_target(self, target: str) -> None:

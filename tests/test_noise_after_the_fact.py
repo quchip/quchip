@@ -1,4 +1,4 @@
-"""Tests for post-construction noise: parameter mutation, chip.add_bath, and custom NoiseChannels.
+"""Tests for post-construction noise, baths, and custom dissipation hooks.
 
 Noise added, changed, or removed after chip construction must be fully reflected in the next
 ``simulate`` call, with no rebuild or cache poking required.
@@ -9,9 +9,18 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quchip import Bath, Capacitive, Chip, DuffingTransmon, Resonator, Scalar, eliminate, parameter, simulate
-from quchip.backend import get_default_backend
-from quchip.devices.base import NoiseChannel
+from quchip import (
+    Bath,
+    Capacitive,
+    Chip,
+    CollapseChannel,
+    DuffingTransmon,
+    Resonator,
+    Scalar,
+    eliminate,
+    parameter,
+    simulate,
+)
 from quchip.utils.constants import k_B
 
 TLIST = np.linspace(0.0, 300.0, 61)
@@ -217,30 +226,25 @@ def test_add_bath_round_trips_serialization():
 
 
 # ---------------------------------------------------------------------------
-# 3. Custom NoiseChannel on a device subclass
+# 3. Custom device dissipation
 # ---------------------------------------------------------------------------
-
-
-def _leakage_channel(device) -> list:
-    """Extra loss channel ``sqrt(rate)·a`` — the documented one-declaration recipe."""
-    if device.leakage_rate is None:
-        return []
-    xp = get_default_backend().array_module
-    return [xp.sqrt(device.leakage_rate) * device.lowering_operator()]
 
 
 class LeakyTransmon(DuffingTransmon):
     """DuffingTransmon plus one declared leakage-loss channel (test fixture)."""
 
     _type_prefix = "leaky"
-    leakage_rate: Scalar = parameter(default=None, positive=True)
-    _noise_channels = DuffingTransmon._noise_channels + (
-        NoiseChannel("leakage", ("leakage_rate",), _leakage_channel),
-    )
+    leakage_rate: Scalar = parameter(default=None, positive=True, noise=True)
+
+    def dissipation(self, op, p):
+        channels = super().dissipation(op, p)
+        if self.leakage_rate is None:
+            return channels
+        return channels + (CollapseChannel(op.a, p.leakage_rate, "leakage"),)
 
 
 def test_custom_channel_composes_with_inherited_ones():
-    """A declared custom NoiseChannel composes with the device's inherited noise channels."""
+    """A custom dissipation hook composes with inherited device channels."""
     quiet = LeakyTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="quiet")
     assert quiet.collapse_operators() == []  # parameter unset -> channel contributes nothing
 
@@ -266,58 +270,41 @@ def test_custom_channel_rate_set_posthoc_reflected_in_next_simulate():
     assert np.real(after.expect("q"))[-1] == pytest.approx(np.exp(-0.01 * TLIST[-1]), rel=1e-3)
 
 
-def _extra_loss_channel(device) -> list:
-    if device.extra_loss_rate is None:
-        return []
-    xp = get_default_backend().array_module
-    return [xp.sqrt(device.extra_loss_rate) * device.lowering_operator()]
-
-
-def test_channel_attached_to_subclass_posthoc_reflected_in_next_simulate():
-    """A NoiseChannel attached to a device class after instances already exist still applies."""
+def test_declared_channel_is_reflected_in_simulation():
+    """A declared dissipation hook is reflected in simulation."""
     class DampedMode(Resonator):
-        extra_loss_rate: Scalar = parameter(default=None, positive=True)
+        extra_loss_rate: Scalar = parameter(default=None, positive=True, noise=True)
+
+        def dissipation(self, op, p):
+            channels = super().dissipation(op, p)
+            if self.extra_loss_rate is None:
+                return channels
+            return channels + (
+                CollapseChannel(op.a, p.extra_loss_rate, "extra_loss"),
+            )
 
     m = DampedMode(freq=5.0, levels=3, label="m", extra_loss_rate=0.01)
     chip = Chip([m])
     excited = chip.bare_state({m: 1})
     e_ops = {m: m.number_operator()}
 
-    before = simulate(chip, [], TLIST, initial_state=excited, e_ops=e_ops)
-    assert np.real(before.expect("m"))[-1] == pytest.approx(1.0, abs=1e-9)
-
-    DampedMode._noise_channels = DampedMode._noise_channels + (
-        NoiseChannel("extra_loss", ("extra_loss_rate",), _extra_loss_channel),
-    )
-
     after = simulate(chip, [], TLIST, initial_state=excited, e_ops=e_ops)
     assert np.real(after.expect("m"))[-1] == pytest.approx(np.exp(-0.01 * TLIST[-1]), rel=1e-3)
 
 
-def test_noise_channel_is_a_top_level_export():
-    """NoiseChannel is exported from the top-level quchip package."""
+def test_noise_channel_metadata_is_not_public():
+    """Dissipation authors use CollapseChannel directly."""
     import quchip
-    from quchip.devices.base import NoiseChannel as base_noise_channel
 
-    assert quchip.NoiseChannel is base_noise_channel
-    assert "NoiseChannel" in quchip.__all__
+    assert not hasattr(quchip, "NoiseChannel")
+    assert "NoiseChannel" not in quchip.__all__
 
 
 def test_noise_parameter_names_reflect_declared_channels():
-    """noise_parameter_names() lists exactly the parameters of a class's declared noise channels."""
-    assert DuffingTransmon.noise_parameter_names() == ("T1", "thermal_population", "T2")
-    assert Resonator.noise_parameter_names() == ("T1", "thermal_population", "T2", "quality_factor")
-    assert LeakyTransmon.noise_parameter_names() == ("T1", "thermal_population", "T2", "leakage_rate")
-
-
-def test_instance_level_channel_attachment_raises_instead_of_silent_noop():
-    """Assigning `_noise_channels` on an instance raises, since only the class tuple is composed."""
-    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
-
-    with pytest.raises(TypeError, match="class"):
-        q._noise_channels = q._noise_channels + (
-            NoiseChannel("extra", ("T1",), lambda device: []),
-        )
+    """noise_parameter_names() follows fields declared with noise=True."""
+    assert DuffingTransmon.noise_parameter_names() == ("T1", "T2", "thermal_population")
+    assert Resonator.noise_parameter_names() == ("T1", "T2", "thermal_population", "quality_factor")
+    assert LeakyTransmon.noise_parameter_names() == ("T1", "T2", "thermal_population", "leakage_rate")
 
 
 # ---------------------------------------------------------------------------
@@ -403,7 +390,7 @@ def test_set_noise_prints_changes_only_when_any(capsys):
 
 
 def test_set_noise_covers_declared_custom_channel_params():
-    """chip.set_noise() covers a custom NoiseChannel's declared rate parameter."""
+    """chip.set_noise() covers a custom noise=True rate parameter."""
     q = LeakyTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="lq")
     chip = Chip([q])
     chip.set_noise({q: dict(leakage_rate=0.01)})

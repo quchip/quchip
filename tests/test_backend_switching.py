@@ -1,12 +1,14 @@
 """Per-call backend switching, state coercion, and solver-option defaults.
 
-The ``backend=`` argument of ``simulate``/``simulate_batch`` scopes one call:
-it outranks the chip-constructed backend and the process default, and foreign
--native initial states are coerced at the solve boundary. The nsteps default
-is a generous abort ceiling so user code never carries ``{"nsteps": ...}``.
+The ``backend=`` argument of ``simulate``/``simulate_batch`` scopes one call
+and takes precedence over the chip backend and process default. Initial states
+native to another backend are coerced at the solve boundary. When the caller
+omits ``nsteps``, QuTiP can infer an abort ceiling from spectral metadata.
 """
 
 from __future__ import annotations
+
+from quchip.approximations import RWA
 
 import numpy as np
 from qutip import Qobj
@@ -31,7 +33,7 @@ def _demo_chip(chip_backend=None):
         [q, r],
         couplings=[Capacitive(q, r, g=0.02)],
         frame="rotating",
-        rwa=True,
+        approximation=RWA(),
         backend=chip_backend,
     )
     drv = ChargeDrive(target=q, label="d")
@@ -46,8 +48,8 @@ def test_named_backend_coercion_returns_shared_instance() -> None:
     assert _coerce_backend("qutip") is _coerce_backend("qutip")
 
 
-def test_nsteps_default_is_a_generous_ceiling(backend: QuTiPBackend) -> None:
-    """The default nsteps ceiling never aborts a solve, and an explicit user value always overrides it."""
+def test_nsteps_default_is_at_least_200k(backend: QuTiPBackend) -> None:
+    """The inferred nsteps ceiling is at least 200,000; an explicit value takes precedence."""
     tlist = np.linspace(0.0, 100.0, 11)
     resolved = backend.resolve_solver_options({}, metadata={"spectral_bound_ghz": 5.0}, tlist=tlist)
     assert resolved["nsteps"] >= 200_000
@@ -72,6 +74,19 @@ def test_qutip_coerce_state_wraps_arrays_with_dims(backend: QuTiPBackend) -> Non
 
     # Native states pass through untouched.
     assert backend.coerce_state(coerced, dims=(3, 4)) is coerced
+
+    import importlib.util
+
+    if importlib.util.find_spec("dynamiqs") is not None:
+        from quchip.backend.dynamiqs import DynamiqsBackend
+
+        dynamiqs = DynamiqsBackend()
+        qarray = dynamiqs.from_array(np.diag([1.0, 2.0]))
+        np.testing.assert_allclose(backend.to_array(backend.from_array(qarray)), np.diag([1.0, 2.0]))
+        np.testing.assert_allclose(
+            np.asarray(dynamiqs.to_array(dynamiqs.from_array(Qobj(np.diag([3.0, 4.0]))))),
+            np.diag([3.0, 4.0]),
+        )
 
 
 def test_per_call_backend_scopes_exactly_one_call() -> None:
@@ -104,9 +119,7 @@ def test_per_call_backend_outranks_chip_backend(monkeypatch) -> None:
 
     used: list[str] = []
     original = per_call.solve_problem
-    monkeypatch.setattr(
-        per_call, "solve_problem", lambda problem: (used.append("per_call"), original(problem))[1]
-    )
+    monkeypatch.setattr(per_call, "solve_problem", lambda problem: (used.append("per_call"), original(problem))[1])
 
     seq.simulate(
         tlist=np.linspace(0.0, 20.0, 21),

@@ -26,9 +26,11 @@ from typing import TYPE_CHECKING, Any
 import jax.numpy as jnp
 import numpy as np
 
+from quchip.chip.dressing import BareProductReference, Labeling, assign_rowwise_greedy, label_eigensystem
 from quchip.utils.jax_utils import contains_tracer
 
 if TYPE_CHECKING:
+    from quchip.approximations import Approximation
     from quchip.chip.chip import Chip
 
 #: Matrix elements at or below this magnitude are treated as structural zeros
@@ -36,17 +38,39 @@ if TYPE_CHECKING:
 _WORKING_PRECISION = 1e-12
 
 
-def bare_hamiltonian(chip: "Chip", backend: Any) -> tuple[Any, list[str], tuple[int, ...]]:
+def bare_hamiltonian(
+    chip: "Chip",
+    *,
+    approximation: "Approximation | None" = None,
+) -> tuple[Any, list[str], tuple[int, ...]]:
     """Full bare Hamiltonian as a dense ``jnp`` array in GHz, with labels and dims.
 
-    Delegates assembly to :meth:`Chip.hamiltonian` — devices plus couplings at
-    the chip's RWA policy, pre-2π — and converts dense once via
-    ``backend.to_array``. This is an analysis kernel, not a solver path; the
-    dense conversion is the point, not a cost to avoid.
+    This analysis-only path applies the chip's approximation strategy while
+    leaving the authored Hamiltonian unchanged. It intentionally materializes
+    a dense matrix.
     """
-    h = jnp.asarray(backend.to_array(chip.hamiltonian()), dtype=complex)
+    from quchip.engine.basis import semantic_to_solver_transform
+    from quchip.engine.assembly import _analysis_matrix_ghz
+
     labels = [dev.label for dev in chip.devices]
-    return h, labels, tuple(chip.dims)
+    # Dressed-state analysis retains the complete authored Hamiltonian.
+    # Reduction acts on the model selected for engine use.
+    result = chip.resolve(frame="lab", approximation=approximation)
+    h = jnp.asarray(_analysis_matrix_ghz(result), dtype=complex)
+    semantic_to_solver: Any | None = None
+    for device in chip.devices:
+        record = result.bases[device.label]
+        local_transform = semantic_to_solver_transform(device, record)
+        if local_transform is None:
+            local_transform = jnp.eye(record.resolved_dim, dtype=jnp.complex128)
+        semantic_to_solver = (
+            local_transform
+            if semantic_to_solver is None
+            else jnp.kron(semantic_to_solver, local_transform)
+        )
+    if semantic_to_solver is not None:
+        h = semantic_to_solver.conj().T @ h @ semantic_to_solver
+    return h, labels, result.dims
 
 
 def mode_blocks(dims: tuple[int, ...], labels: list[str], mode_label: str) -> tuple[Any, Any]:
@@ -177,12 +201,23 @@ def purcell_rate_from(c_eff_survivor_lowering_amplitude: Any, kappa: Any) -> Any
     return jnp.abs(c_eff_survivor_lowering_amplitude) ** 2 * kappa
 
 
-def exact_reduction(chip: "Chip", mode_label: str, survivor_labels: list[str]) -> dict:
-    """Exact-from-dressing reduction: labeled dressed energies instead of perturbation theory.
+def _exact_eigensystem(h: Any, dims: tuple[int, ...]) -> tuple[Any, Any, Labeling]:
+    """Diagonalize and label one semantic-basis Hamiltonian."""
+    eigenvalues, eigenvectors = jnp.linalg.eigh(jnp.asarray(h))
+    labeling = label_eigensystem(
+        eigenvectors,
+        BareProductReference(dims),
+        policy=assign_rowwise_greedy,
+    )
+    return eigenvalues, eigenvectors, labeling
 
-    Diagonalizes once through the chip's traced-safe array path and reads the
-    reduced parameters off the *labeled* spectrum, so kept-block energies are
-    exact to all orders — which is what ZZ needs. This is the des-Cloizeaux
+
+def exact_reduction(chip: "Chip", mode_label: str, survivor_labels: list[str]) -> dict:
+    """Exact-from-dressing reduction of the complete authored static model.
+
+    Diagonalizes the lab-frame Hamiltonian without term removal, independent
+    of the chip's solve approximation. Kept-block energies are exact to all
+    orders — which is what ZZ needs. This is the des-Cloizeaux
     caveat in reverse: energies are exact, but the effective basis is the
     overlap-projected one, not the canonical SW rotation, so off-diagonal
     reads (``J``) agree with the perturbative route only through 2nd order.
@@ -200,16 +235,19 @@ def exact_reduction(chip: "Chip", mode_label: str, survivor_labels: list[str]) -
         labeling indices are best-effort diagnostics there, never a traced
         branch).
     """
-    analysis = chip._analysis
-    eigenvalues, evecs, _, labeling = analysis._compute_array_labeled()
-    precomputed = (eigenvalues, labeling)
-    labels = [dev.label for dev in chip.devices]
+    from quchip.approximations import Exact
+
+    h, labels, dims = bare_hamiltonian(chip, approximation=Exact())
+    eigenvalues, evecs, labeling = _exact_eigensystem(h, dims)
 
     def occupation(excited: dict[str, int]) -> tuple[int, ...]:
         occ = [0] * len(labels)
         for lab, n in excited.items():
             occ[labels.index(lab)] = n
         return tuple(occ)
+
+    def label_index(label: tuple[int, ...]) -> int:
+        return int(np.ravel_multi_index(label, dims))
 
     kept_tuples = [occupation({})]
     kept_tuples += [occupation({s: 1}) for s in survivor_labels]
@@ -225,7 +263,7 @@ def exact_reduction(chip: "Chip", mode_label: str, survivor_labels: list[str]) -
         claimed: dict[int, tuple[int, ...]] = {}
         colliding: list[tuple[int, ...]] = []
         for kept in kept_tuples:
-            weights = np.abs(evecs_np[analysis._bare_label_index(kept), :]) ** 2
+            weights = np.abs(evecs_np[label_index(kept), :]) ** 2
             best = int(np.argmax(weights))
             # No majority: the bare label's plurality dressed state holds at
             # most half the label — a 50/50 hybrid with something outside the
@@ -245,19 +283,16 @@ def exact_reduction(chip: "Chip", mode_label: str, survivor_labels: list[str]) -
             )
 
     def energy(excited: dict[str, int]) -> Any:
-        return analysis._eigenvalue_of_label(occupation(excited), precomputed=precomputed)
+        return eigenvalues[labeling.indices[label_index(occupation(excited))]]
 
     e_0 = energy({})
     params: dict[Any, Any] = {}
     for surv in survivor_labels:
         params[surv] = {"freq_after": energy({surv: 1}) - e_0}
 
-    evecs = jnp.asarray(evecs)
-    eigenvalues = jnp.asarray(eigenvalues)
     for i, a in enumerate(survivor_labels):
         for b in survivor_labels[i + 1:]:
-            bare = jnp.array([analysis._bare_label_index(occupation({a: 1})),
-                              analysis._bare_label_index(occupation({b: 1}))])
+            bare = jnp.array([label_index(occupation({a: 1})), label_index(occupation({b: 1}))])
             dressed = jnp.stack([labeling.indices[int(bare[0])], labeling.indices[int(bare[1])]])
             # des-Cloizeaux read: the projected dressed vectors are not
             # orthonormal in the 2-dim bare subspace, so symmetric (Löwdin)

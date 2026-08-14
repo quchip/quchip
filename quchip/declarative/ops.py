@@ -8,8 +8,10 @@ exposes one Hilbert-space endpoint's operators as composable
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from quchip.declarative.expr import PhysicsExpr
+from quchip.devices.spaces import ChargeSpace, FockSpace, LocalSpace, PhaseGridSpace
 
 
 @dataclass(frozen=True)
@@ -24,17 +26,23 @@ class LocalOps:
     Examples
     --------
     >>> from quchip.declarative import LocalOps
-    >>> op = LocalOps(label="q", levels=3)
+    >>> from quchip.devices.spaces import FockSpace
+    >>> op = LocalOps(label="q", space=FockSpace(3))
     >>> H = 5.0 * op.n + 0.5 * (op.adag @ op.adag @ op.a @ op.a)
     >>> H.kind
     'add'
     """
 
     label: str
-    levels: int
+    space: LocalSpace
+    device: Any = None
 
     def _op(self, name: str) -> PhysicsExpr:
-        return PhysicsExpr(kind="op", args=(name,), labels=(self.label,))
+        return PhysicsExpr(kind="op", args=(name, self.space), labels=(self.label,))
+
+    def __getitem__(self, name: str) -> PhysicsExpr:
+        """Return a named operator supplied by this local space."""
+        return self._op(name)
 
     @property
     def a(self) -> PhysicsExpr:
@@ -52,6 +60,40 @@ class LocalOps:
         return self._op("n")
 
     @property
+    def level(self) -> PhysicsExpr:
+        """Energy-level index operator in the authored local basis."""
+        if isinstance(self.space, FockSpace):
+            return self.n
+        if self.device is None:
+            raise ValueError("The energy-level operator requires a resolved device endpoint.")
+        return PhysicsExpr.from_matrix(
+            self.device.energy_level_operator(),
+            labels=(self.label,),
+            dims=(self.space.dimension,),
+            name=rf"\hat \ell_{{{self.label}}}",
+        )
+
+    @property
+    def n2(self) -> PhysicsExpr:
+        """Squared charge operator in a compatible authored local space."""
+        return self._op("n2")
+
+    @property
+    def phi(self) -> PhysicsExpr:
+        """Phase operator in a compatible authored local space."""
+        return self._op("phi")
+
+    @property
+    def cos_phi(self) -> PhysicsExpr:
+        """Cosine of phase in a compatible authored local space."""
+        return self._op("cos_phi")
+
+    @property
+    def sin_phi(self) -> PhysicsExpr:
+        """Sine of phase in a compatible authored local space."""
+        return self._op("sin_phi")
+
+    @property
     def I(self) -> PhysicsExpr:  # noqa: E743 - physics API uses I for identity.
         """Identity operator for this endpoint."""
         return self._op("I")
@@ -60,6 +102,15 @@ class LocalOps:
     def x(self) -> PhysicsExpr:
         """Unnormalized quadrature ``x = a + a†`` (no 1/sqrt(2) factor)."""
         return self.a + self.adag
+
+    @property
+    def charge(self) -> PhysicsExpr:
+        """Physical charge-like drive operator for this local representation."""
+        if isinstance(self.space, FockSpace):
+            return self.x
+        if isinstance(self.space, (ChargeSpace, PhaseGridSpace)):
+            return self.n
+        return self._op("charge")
 
     @property
     def sigma_x(self) -> PhysicsExpr:
