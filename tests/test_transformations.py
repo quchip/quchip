@@ -264,7 +264,7 @@ def test_eliminate_purcell_survivor_without_thermal_population_folds_normally():
 
 
 def test_eliminate_purcell_survivor_with_thermal_population_raises():
-    """A Purcell fold onto a survivor that also carries thermal_population fails fast rather than mis-modeling."""
+    """A Purcell fold onto a survivor that also carries thermal_population fails fast rather than mis-modelling."""
     from quchip.chip.transformations import eliminate
 
     q = DuffingTransmon(
