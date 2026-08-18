@@ -14,7 +14,7 @@
 
 # Documentation
 
-`quchip` is an open-source Python toolkit for modeling superconducting quantum chips.
+`quchip` is an open-source Python toolkit for modelling superconducting quantum chips.
 
 A predictive chip model needs more than a Hamiltonian: device physics, control-line transformations, frames and approximations, dissipation, and measured observables all belong to it. quchip represents each part explicitly. Declare the chip once; the same declaration drives dressed-state analysis, model reduction, control sequencing, open-system simulation, parameter sweeps, and exact JAX gradients.
 
