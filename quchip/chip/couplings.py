@@ -235,7 +235,7 @@ class CrossKerr(CouplingModel):
     The effective diagonal interaction left when an exchange coupling is
     reduced in the dispersive regime — the natural coupling for effective
     readout chips (qubit + resonator + ``CrossKerr`` probed by an ordinary
-    charge line) and static-ZZ modeling. Diagonal in both endpoints, so the
+    charge line) and static-ZZ modelling. Diagonal in both endpoints, so the
     RWA and full forms coincide and the term is frame-trivial.
 
     Declared approximation: this is a *uniform-pull* model —
