@@ -403,7 +403,7 @@ class PhaseDrive(DeviceDrive):
     r"""Microwave phase drive coupling to :math:`\hat a + \hat a^\dagger`.
 
     Same carrier machinery as :class:`ChargeDrive` but with an
-    in-phase (rather than quadrature) coupling. Useful when modeling
+    in-phase (rather than quadrature) coupling. Useful when modelling
     phase-noise channels or drives whose physical coupling is already
     referenced to the field quadrature. See Krantz et al. 2019, Sec.
     IV.A for the two conventions.

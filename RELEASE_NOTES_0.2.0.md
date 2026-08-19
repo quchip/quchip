@@ -6,7 +6,7 @@ quchip 0.2.0 makes the physics assembled by the engine inspectable and gives cus
 
 - Inspect the model before and after engine resolution. `unresolved_hamiltonian()` preserves authored lab-frame physics, while `hamiltonian()` reports the basis-, frame-, and approximation-resolved expression used for simulation.
 - Author devices in Fock, charge, phase-grid, or custom local spaces. Use the native basis or project each device into a retained local energy basis without changing the attached couplings, drives, states, observables, or dissipation channels by hand.
-- Extend devices, couplings, component-owned time dependence, drives, envelopes, dissipation, local spaces, classical signal transforms, and scqubits mappings through documented contracts backed by installed reference implementations.
+- Extend devices, couplings, component-owned time dependence, drives, envelopes, scalar time coefficients, dissipation, local spaces, classical signal transforms, and scqubits mappings through documented contracts backed by installed reference implementations.
 - Query isolated or dressed transitions with `device.transition_frequency(...)` and `chip.transition_frequency(...)`, including conditional dressed transitions. `chip.freq(target)` remains the short form for the dressed `0 -> 1` transition.
 
 ## Control and approximation model
