@@ -106,7 +106,11 @@ The complete walkthrough is available in the [documentation](https://docs.quchip
 
 ## Examples
 
+- [From the SQA 2026 talk](https://docs.quchip.org/guides/from-sqa-2026): follow the presentation from dressed statics and pulse-level dynamics through model reduction and checked derivatives.
+- [Resolve and sweep a chip](https://docs.quchip.org/examples/resolve-and-sweep): reproduce the talk's bus-mediated avoided crossing and inspect the four dropped RWA bands.
 - [Hello, drive and readout](https://docs.quchip.org/examples/hello-chip): compare qubit-drive leakage, then resolve pulse-level dispersive readout on the same chip.
+- [Reduce and replay a chip](https://docs.quchip.org/examples/reduce-and-replay): run a compact active-patch reduction, inspect its validity, and compare the full and reduced dynamics.
+- [Differentiate a driven chip](https://docs.quchip.org/examples/differentiate-a-driven-chip): reproduce the talk's pulse-amplitude, Gaussian-shape, and detuning derivatives, then check them with finite differences.
 - [Cookbook](https://docs.quchip.org/cookbook): practical conventions and task recipes.
 - [Extension guide](https://docs.quchip.org/extensions): author devices, couplings, time-dependent terms, drives, envelopes, dissipation, local spaces, and interop mappings.
 
