@@ -46,13 +46,21 @@ Start with {doc}`Hello, drive and readout <examples/hello-chip>` to declare an e
 
 `quchip` uses GHz for ordinary frequencies, ns for time, and mK for temperature. The implemented conventions and approximations are recorded in the {doc}`physics reference <physics>`.
 
+## Start from the SQA 2026 talk
+
+The {doc}`post-talk guide <guides/from-sqa-2026>` follows the presentation from dressed statics and pulse-level dynamics through model reduction and checked derivatives. Every step uses public APIs and an executed notebook.
+
 The accompanying paper is [quchip: A Differentiable Toolkit for Modeling Quantum Devices](https://arxiv.org/abs/2607.17081) (arXiv:2607.17081); citation metadata is in the repository's [CITATION.cff](https://github.com/quchip/quchip/blob/main/CITATION.cff).
 
 ```{toctree}
 :maxdepth: 1
 :hidden:
 
+guides/from-sqa-2026
+examples/resolve-and-sweep
 examples/hello-chip
+examples/reduce-and-replay
+examples/differentiate-a-driven-chip
 cookbook
 extensions
 physics

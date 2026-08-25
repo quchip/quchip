@@ -593,15 +593,15 @@ class CarrierBand:
 def _shift_phase(freq: Any, delta_t: float) -> Any:
     """Constant carrier phase ``exp(-i · freq · delta_t)`` from a time shift.
 
-    Stays JAX-traceable: a traced band frequency goes through
-    ``jax.numpy.exp`` so the gradient survives; concrete frequencies use
-    NumPy. ``delta_t`` is always a concrete float (:attr:`Shift.delta_t`).
+    Stays JAX-traceable when either the band frequency or the time shift is
+    traced. NumPy is used only when both operands are concrete.
     """
     from quchip.utils.jax_utils import maybe_concrete_scalar
 
-    concrete = maybe_concrete_scalar(freq)
-    if concrete is not None:
-        return complex(np.exp(-1j * concrete * delta_t))
+    concrete_freq = maybe_concrete_scalar(freq)
+    concrete_time = maybe_concrete_scalar(delta_t)
+    if concrete_freq is not None and concrete_time is not None:
+        return complex(np.exp(-1j * concrete_freq * concrete_time))
     try:
         import jax.numpy as jnp
     except ImportError:  # pragma: no cover - JAX always present on traced paths

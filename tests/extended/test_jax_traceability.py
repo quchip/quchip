@@ -32,6 +32,68 @@ def test_gaussian_value_preserves_jax_arrays() -> None:
     assert isinstance(waveform, jax.Array)
 
 
+def test_shift_phase_differentiates_with_respect_to_delay() -> None:
+    """A concrete carrier frequency must not concretize a traced time shift."""
+    from quchip.engine.ir import _shift_phase
+
+    frequency = 1.7
+    delay = jnp.asarray(0.4)
+    gradient = jax.grad(lambda value: jnp.imag(_shift_phase(frequency, value)))(delay)
+    expected = -frequency * jnp.cos(frequency * delay)
+
+    np.testing.assert_allclose(gradient, expected, rtol=1e-12, atol=1e-12)
+
+
+@pytest.mark.optional_backend
+def test_gaussian_ramsey_delay_gradient_matches_finite_difference() -> None:
+    """A swept Ramsey delay remains differentiable through pulse scheduling."""
+    pytest.importorskip("dynamiqs")
+
+    q = DuffingTransmon(freq=5.005, anharmonicity=-0.30, levels=2, label="q")
+    drive = ChargeDrive(target=q)
+    chip = Chip(
+        [q],
+        frame={q: 5.0},
+        approximation=RWA(),
+        backend="dynamiqs",
+        control_equipment=ControlEquipment(lines=[drive]),
+    )
+    sequence = QuantumSequence(chip)
+    sequence.schedule(
+        drive,
+        envelope=Gaussian(duration=20.0, amplitude=0.02, sigmas=4),
+        freq=5.0,
+    )
+    wait = sequence.delay(q, 80.0)
+    sequence.schedule(
+        drive,
+        envelope=Gaussian(duration=20.0, amplitude=0.02, sigmas=4),
+        freq=5.0,
+    )
+    initial_state = chip.state(q=0)
+    tlist = jnp.linspace(0.0, 160.0, 161)
+
+    def final_population(delay: jax.Array) -> jax.Array:
+        result = sequence.simulate_batch(
+            wait.vary("duration", jnp.asarray([delay]), name="delay"),
+            tlist=tlist,
+            initial_state=initial_state,
+            progress=False,
+            check_truncation=False,
+        )
+        return jnp.reshape(result.population("q", level=1, reduce="last"), (-1,))[0]
+
+    delay = jnp.asarray(80.0)
+    autodiff = jax.grad(final_population)(delay)
+    step = 1e-2
+    finite_difference = (
+        final_population(delay + step) - final_population(delay - step)
+    ) / (2.0 * step)
+
+    assert abs(float(autodiff)) > 1e-5
+    np.testing.assert_allclose(autodiff, finite_difference, rtol=1e-3, atol=1e-6)
+
+
 def test_drive_channel_with_jax_backend() -> None:
     """A drive normalizes its channel when JAX is available."""
     from quchip.devices.transmon.duffing import DuffingTransmon
