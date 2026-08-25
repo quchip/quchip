@@ -509,7 +509,9 @@ def test_hello_chip_is_discoverable_with_durable_cookbook_guidance() -> None:
     assert "examples/hello-chip" in docs_index
     assert "hello_qubit_drive_leakage.png" in docs_index
     assert "hello_dispersive_readout_iq.png" in docs_index
-    assert "include" in docs_example and "00_hello_chip.md" in docs_example
+    assert "00_hello_chip.md" in docs_example
+    assert "00_hello_chip.ipynb" in docs_example
+    assert "sequence.simulate(" in docs_example
     assert "hello_qubit_drive_leakage.png" in docs_example
     assert "hello_dispersive_readout_iq.png" in docs_example
     assert not (ROOT / "docs" / "images" / "hello_chip_populations.png").exists()
