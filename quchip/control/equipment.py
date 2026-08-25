@@ -296,6 +296,11 @@ class ControlEquipment:
         """
         order = tuple(line.label for line in self._lines) if labels is None else tuple(labels)
         n = len(order)
+        # Plain nested lists/tuples are accepted; traced arrays already carry a shape.
+        beta, theta, delay = (
+            np.asarray(matrix, dtype=float) if matrix is not None and not hasattr(matrix, "shape") else matrix
+            for matrix in (beta, theta, delay)
+        )
         # beta is required, so it is always shape-checked; theta and delay are
         # optional and validated only when provided.
         for name, matrix in (("beta", beta), ("theta", theta), ("delay", delay)):
