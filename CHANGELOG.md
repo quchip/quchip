@@ -2,6 +2,18 @@
 
 This file records notable user-visible changes to quchip.
 
+## [0.2.1] - 2026-08-25
+
+### Fixed
+
+- `ControlEquipment.set_crosstalk_matrix()` now accepts nested Python lists and preserves JAX tracers when stacking their rows.
+- Sequence parameter rebinding preserves traced array leaves when rebuilding engine records, keeping `QuantumSequence.with_params()` differentiable through dynamiqs solves.
+
+### Documentation
+
+- Added a post-talk guide that follows the SQA 2026 presentation from dressed statics and pulse-level dynamics through model reduction and differentiation using public APIs.
+- Added three executed notebooks covering a bus-mediated avoided crossing with an RWA audit, active-patch reduction with a forward comparison, and pulse-gradient checks against central finite differences.
+
 ## [0.2.0] - 2026-08-14
 
 ### Highlights
@@ -80,6 +92,7 @@ This file records notable user-visible changes to quchip.
 - Included device, coupling, control, frame, RWA, dissipation, transformation, sweep, visualization, and inverse-design APIs; QuTiP and dynamiqs backends; and JAX-compatible differentiation paths.
 - Published the README, contribution guide, code of conduct, physics reference, and test suite.
 
+[0.2.1]: https://github.com/quchip/quchip/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/quchip/quchip/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/quchip/quchip/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/quchip/quchip/tree/v0.1.0
