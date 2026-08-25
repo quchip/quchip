@@ -219,8 +219,32 @@ def test_set_crosstalk_matrix_accepts_nested_lists():
     xy1, xy2 = ChargeDrive(target=q1), ChargeDrive(target=q2)
     eq = ControlEquipment([xy1, xy2])
     eq.set_crosstalk_matrix([[1, 0.14], [0.16, 1]], [[0, 1.885], [3.31, 0]])
-    chip = Chip([q1, q2], couplings=[Capacitive(q1, q2, g=0.01)], control_equipment=eq, frame="rotating", approximation=RWA())
+    chip = Chip(
+        [q1, q2],
+        couplings=[Capacitive(q1, q2, g=0.01)],
+        control_equipment=eq,
+        frame="rotating",
+        approximation=RWA(),
+    )
     (matrix,) = chip.control_equipment.signal_chain
     assert matrix.beta.shape == (2, 2)
     assert float(matrix.beta[0, 1]) == 0.14
     assert float(matrix.theta[1, 0]) == 3.31
+
+
+def test_set_crosstalk_matrix_list_with_traced_entry_is_differentiable():
+    import jax
+    import jax.numpy as jnp
+    from quchip import ChargeDrive, DuffingTransmon
+    from quchip.control.equipment import ControlEquipment
+
+    q1 = DuffingTransmon(freq=5.3, anharmonicity=-0.26, levels=3)
+    q2 = DuffingTransmon(freq=5.2, anharmonicity=-0.26, levels=3)
+
+    def leak(b):
+        eq = ControlEquipment([ChargeDrive(target=q1), ChargeDrive(target=q2)])
+        eq.set_crosstalk_matrix([[1.0, b], [0.16, 1.0]])
+        (matrix,) = eq.signal_chain
+        return jnp.sum(matrix.beta)
+
+    assert float(jax.grad(leak)(jnp.asarray(0.14))) == 1.0
