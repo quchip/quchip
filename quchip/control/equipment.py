@@ -145,6 +145,22 @@ class CrosstalkMatrix(SignalTransform):
         )
 
 
+
+def _leaves(value: Any):
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _leaves(item)
+    else:
+        yield value
+
+
+def _as_matrix(matrix: Any) -> Any:
+    """Return *matrix* as an array; nested sequences are stacked, tracers preserved."""
+    if matrix is None or hasattr(matrix, "shape"):
+        return matrix
+    traced = any(_is_traced(leaf) for leaf in _leaves(matrix) if hasattr(leaf, "shape"))
+    return _select_array_module(traced).asarray(matrix, dtype=float)
+
 class ControlEquipment:
     """Ordered drive lines plus a sequence of signal-chain transforms.
 
@@ -296,11 +312,10 @@ class ControlEquipment:
         """
         order = tuple(line.label for line in self._lines) if labels is None else tuple(labels)
         n = len(order)
-        # Plain nested lists/tuples are accepted; traced arrays already carry a shape.
-        beta, theta, delay = (
-            np.asarray(matrix, dtype=float) if matrix is not None and not hasattr(matrix, "shape") else matrix
-            for matrix in (beta, theta, delay)
-        )
+        # Plain nested lists/tuples are accepted; arrays and tracers already carry
+        # a shape and pass through untouched. A list holding traced leaves is
+        # stacked with jax.numpy so no tracer is ever concretised.
+        beta, theta, delay = (_as_matrix(matrix) for matrix in (beta, theta, delay))
         # beta is required, so it is always shape-checked; theta and delay are
         # optional and validated only when provided.
         for name, matrix in (("beta", beta), ("theta", theta), ("delay", delay)):
