@@ -142,4 +142,5 @@ def test_documentation_exposes_the_post_talk_path() -> None:
     assert "https://docs.quchip.org/guides/from-sqa-2026" in readme
     assert "01_resolve_and_sweep.md" in page
     assert "01_resolve_and_sweep.ipynb" in page
+    assert "https://github.com/quchip/quchip/blob/main/examples/01_resolve_and_sweep.md" in page
     assert "resolve_and_sweep.png" in page
