@@ -28,6 +28,7 @@ def _run_guide(path: str) -> dict[str, object]:
 
 @pytest.mark.examples
 def test_resolve_and_sweep_starts_with_a_small_runnable_example() -> None:
+    """The short statics guide executes and resolves the talk-scale splitting."""
     example = _run_guide("docs/examples/resolve-and-sweep.md")
 
     minimum_splitting = float(np.min(example["splitting"]))
@@ -36,6 +37,7 @@ def test_resolve_and_sweep_starts_with_a_small_runnable_example() -> None:
 
 @pytest.mark.examples
 def test_drive_guide_starts_with_one_pulse_and_one_solve() -> None:
+    """The short drive guide returns one finite population trajectory."""
     example = _run_guide("docs/examples/hello-chip.md")
 
     result = example["result"]
@@ -46,6 +48,7 @@ def test_drive_guide_starts_with_one_pulse_and_one_solve() -> None:
 
 @pytest.mark.examples
 def test_reduction_guide_replays_the_same_schedule() -> None:
+    """The short reduction guide keeps the neighbourhood and replays its schedule."""
     example = _run_guide("docs/examples/reduce-and-replay.md")
 
     assert example["patch"].active_labels == ("q0", "q1")
@@ -57,6 +60,7 @@ def test_reduction_guide_replays_the_same_schedule() -> None:
 @pytest.mark.examples
 @pytest.mark.optional_backend
 def test_gradient_guide_has_the_promised_gradient_and_jacobian_shapes() -> None:
+    """The short JAX guide returns the documented gradient and Jacobian shapes."""
     pytest.importorskip("dynamiqs")
     example = _run_guide("docs/examples/differentiate-a-driven-chip.md")
 
