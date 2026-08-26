@@ -18,7 +18,10 @@ CODE_BLOCK_RE = re.compile(r"```python\n(.*?)\n```", re.DOTALL)
 
 def _run_guide(path: str) -> dict[str, object]:
     source_path = ROOT / path
-    blocks = CODE_BLOCK_RE.findall(source_path.read_text(encoding="utf-8"))
+    source = source_path.read_text(encoding="utf-8")
+    simple_source, marker, _ = source.partition("<!-- simple-example-end -->")
+    assert marker, f"No simple-example marker found in {path}"
+    blocks = CODE_BLOCK_RE.findall(simple_source)
     assert blocks, f"No Python examples found in {path}"
 
     namespace: dict[str, object] = {"__name__": "__guide_example__"}
@@ -29,7 +32,7 @@ def _run_guide(path: str) -> dict[str, object]:
 @pytest.mark.examples
 def test_resolve_and_sweep_starts_with_a_small_runnable_example() -> None:
     """The short statics guide executes and resolves the talk-scale splitting."""
-    example = _run_guide("docs/examples/resolve-and-sweep.md")
+    example = _run_guide("examples/01_resolve_and_sweep.md")
 
     minimum_splitting = float(np.min(example["splitting"]))
     assert 4.3e-3 < minimum_splitting < 4.5e-3
@@ -38,7 +41,7 @@ def test_resolve_and_sweep_starts_with_a_small_runnable_example() -> None:
 @pytest.mark.examples
 def test_drive_guide_starts_with_one_pulse_and_one_solve() -> None:
     """The short drive guide returns one finite population trajectory."""
-    example = _run_guide("docs/examples/hello-chip.md")
+    example = _run_guide("examples/00_hello_chip.md")
 
     result = example["result"]
     population = np.asarray(result.population("q", level=1))
@@ -49,7 +52,7 @@ def test_drive_guide_starts_with_one_pulse_and_one_solve() -> None:
 @pytest.mark.examples
 def test_reduction_guide_replays_the_same_schedule() -> None:
     """The short reduction guide keeps the neighbourhood and replays its schedule."""
-    example = _run_guide("docs/examples/reduce-and-replay.md")
+    example = _run_guide("examples/02_reduce_and_replay.md")
 
     assert example["patch"].active_labels == ("q0", "q1")
     assert example["patch"].eliminated_labels == ("q2",)
@@ -62,7 +65,7 @@ def test_reduction_guide_replays_the_same_schedule() -> None:
 def test_gradient_guide_has_the_promised_gradient_and_jacobian_shapes() -> None:
     """The short JAX guide returns the documented gradient and Jacobian shapes."""
     pytest.importorskip("dynamiqs")
-    example = _run_guide("docs/examples/differentiate-a-driven-chip.md")
+    example = _run_guide("examples/03_differentiate_a_driven_chip.md")
 
     jax = example["jax"]
     theta = example["theta"]

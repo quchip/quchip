@@ -79,7 +79,7 @@ def test_source_uses_the_schedule_aware_public_surface() -> None:
         "jax.grad",
     ):
         assert excluded not in code
-    assert code.count(".schedule(") == 1
+    assert code.count(".schedule(") == 2
 
 
 def test_executed_receipt_records_validity_and_forward_error() -> None:
@@ -140,4 +140,5 @@ def test_documentation_links_the_reduction_unit() -> None:
     assert "https://docs.quchip.org/examples/reduce-and-replay" in readme
     assert "02_reduce_and_replay.md" in page
     assert "02_reduce_and_replay.ipynb" in page
+    assert "https://github.com/quchip/quchip/blob/main/examples/02_reduce_and_replay.md" in page
     assert "reduce_and_replay.png" in page

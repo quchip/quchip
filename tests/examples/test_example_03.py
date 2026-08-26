@@ -56,9 +56,13 @@ def test_source_uses_only_the_public_differentiable_surface() -> None:
     source = EXAMPLE_MD.read_text(encoding="utf-8")
     code = "\n\n".join(_code_cells(jupytext.read(EXAMPLE_MD)))
 
-    assert "# Differentiate a driven chip" in source
+    assert "# Gradient and Jacobian" in source
+    assert "## Start small" in source
     for required in (
         "from quchip import",
+        "DynamiqsBackend",
+        "jax.grad(loss)",
+        "jax.jacrev(residual)",
         'backend="dynamiqs"',
         "sequence.with_params(",
         '"pulse.0.amplitude"',
@@ -70,7 +74,6 @@ def test_source_uses_only_the_public_differentiable_surface() -> None:
     ):
         assert required in code
     for excluded in (
-        "from quchip.backend",
         "from quchip.engine",
         "from quchip.chip",
         "import dynamiqs",
@@ -139,6 +142,7 @@ def test_documentation_links_the_example_and_notebook() -> None:
 
     assert "../../examples/03_differentiate_a_driven_chip.md" in page
     assert "../../examples/03_differentiate_a_driven_chip.ipynb" in page
+    assert "https://github.com/quchip/quchip/blob/main/examples/03_differentiate_a_driven_chip.md" in page
     assert "differentiate_a_driven_chip.png" in page
     assert "../examples/differentiate-a-driven-chip" in guide
     assert "examples/differentiate-a-driven-chip" in index

@@ -34,6 +34,13 @@ def _markdown_code_cells(source: str) -> list[str]:
     return [cell.rstrip() for cell in re.findall(r"```python\n(.*?)\n```", source, re.DOTALL)]
 
 
+def _expanded_example(source: str) -> str:
+    """Return the full talk example after the small reader-facing opening."""
+    _, marker, expanded = source.partition("<!-- simple-example-end -->")
+    assert marker
+    return expanded
+
+
 def _notebook_code_cells(notebook: dict) -> list[str]:
     return ["".join(cell["source"]).rstrip() for cell in notebook["cells"] if cell["cell_type"] == "code"]
 
@@ -143,7 +150,8 @@ def test_hello_chip_is_an_operational_strict_jupytext_pair() -> None:
 def test_hello_chip_source_encodes_the_locked_two_part_experiment() -> None:
     """The canonical source declares real multilevel drive/leakage and readout experiments."""
     markdown = EXAMPLE_MD.read_text(encoding="utf-8")
-    cells = _markdown_code_cells(markdown)
+    expanded = _expanded_example(markdown)
+    cells = _markdown_code_cells(expanded)
     code = "\n\n".join(cells)
     tree = ast.parse(code)
 
@@ -158,10 +166,12 @@ def test_hello_chip_source_encodes_the_locked_two_part_experiment() -> None:
     assert "## Inspect the authored Hamiltonian" in markdown
     assert cells[declaration_index + 1] == "chip.unresolved_hamiltonian()"
 
-    assert "# Hello, drive and readout" in markdown
-    assert len(markdown.splitlines()) < 350
-    assert "this example couples a duffing transmon to a lossy resonator" in markdown.lower()
-    assert "one chip now shows both effects" in markdown.lower()
+    assert "# Drive and read out one chip" in markdown
+    assert "## Start small" in markdown
+    assert "<!-- simple-example-end -->" in markdown
+    assert len(expanded.splitlines()) < 350
+    assert "this example couples a duffing transmon to a lossy resonator" in expanded.lower()
+    assert "one chip now shows both effects" in expanded.lower()
     for stale_prose in (
         "explicitly labeled",
         "ordinary frequencies",
@@ -171,9 +181,9 @@ def test_hello_chip_source_encodes_the_locked_two_part_experiment() -> None:
         "equal aspect ratio preserves iq geometry",
         "selective control follows from",
     ):
-        assert stale_prose not in markdown.lower()
-    assert "## Part 1: Qubit drive and leakage" in markdown
-    assert "## Part 2: Dispersive readout" in markdown
+        assert stale_prose not in expanded.lower()
+    assert "## Part 1: Qubit drive and leakage" in expanded
+    assert "## Part 2: Dispersive readout" in expanded
 
     charge_calls = [
         node
@@ -207,9 +217,9 @@ def test_hello_chip_source_encodes_the_locked_two_part_experiment() -> None:
     assert "chip.state({qubit: 0, readout: 0})" in code
     assert "for level in range(3)" in code
     assert "drive_batch.population(qubit, level)" in code
-    assert "## Inspect the batch with quchip" in markdown
-    assert "## Customize the comparison" in markdown
-    population_plot_cells = [cell.strip() for cell in _markdown_code_cells(markdown) if ".plot_populations(" in cell]
+    assert "## Inspect the batch with quchip" in expanded
+    assert "## Customize the comparison" in expanded
+    population_plot_cells = [cell.strip() for cell in _markdown_code_cells(expanded) if ".plot_populations(" in cell]
     assert population_plot_cells == [
         "drive_batch[0].plot_populations(trace_out=readout)\nplt.show()",
         "drive_batch[1].plot_populations(trace_out=readout)\nplt.show()",
@@ -230,7 +240,7 @@ def test_hello_chip_source_encodes_the_locked_two_part_experiment() -> None:
     assert code.count(".twinx(") == 1
     assert "sharex=True, sharey=True" in code
     assert "xlim=(0.0, drive_durations[-1])" in code
-    drive_plot_cell = next(cell for cell in _markdown_code_cells(markdown) if "drive_figure" in cell)
+    drive_plot_cell = next(cell for cell in _markdown_code_cells(expanded) if "drive_figure" in cell)
     assert len(drive_plot_cell.splitlines()) < 55
 
     assert "ChargeDrive(readout" in code
@@ -286,7 +296,7 @@ def test_hello_chip_source_encodes_the_locked_two_part_experiment() -> None:
 
 def test_hello_chip_separates_calculations_from_quchip_workflow() -> None:
     """Support calculations do not obscure the core quchip simulation cells."""
-    markdown = EXAMPLE_MD.read_text(encoding="utf-8")
+    markdown = _expanded_example(EXAMPLE_MD.read_text(encoding="utf-8"))
     cells = _markdown_code_cells(markdown)
     code = "\n\n".join(cells)
 
@@ -363,8 +373,8 @@ def test_hello_chip_pair_executes_and_records_physical_receipts(tmp_path: Path) 
         for output in cell.get("outputs", [])
         if "image/png" in output.get("data", {})
     ]
-    assert len(embedded_figures) == 4
-    assert sum(bool(cell.get("outputs")) for cell in notebook_code_cells) == 5
+    assert len(embedded_figures) == 5
+    assert sum(bool(cell.get("outputs")) for cell in notebook_code_cells) == 6
     assert (
         sum(output["output_type"] == "stream" for cell in notebook_code_cells for output in cell.get("outputs", []))
         == 2
@@ -509,9 +519,10 @@ def test_hello_chip_is_discoverable_with_durable_cookbook_guidance() -> None:
     assert "examples/hello-chip" in docs_index
     assert "hello_qubit_drive_leakage.png" in docs_index
     assert "hello_dispersive_readout_iq.png" in docs_index
-    assert "00_hello_chip.md" in docs_example
+    assert "include" in docs_example and "00_hello_chip.md" in docs_example
     assert "00_hello_chip.ipynb" in docs_example
-    assert "sequence.simulate(" in docs_example
+    assert "simple-example-end" in docs_example
+    assert "https://github.com/quchip/quchip/blob/main/examples/00_hello_chip.md" in docs_example
     assert "hello_qubit_drive_leakage.png" in docs_example
     assert "hello_dispersive_readout_iq.png" in docs_example
     assert not (ROOT / "docs" / "images" / "hello_chip_populations.png").exists()

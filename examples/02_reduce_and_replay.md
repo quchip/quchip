@@ -17,6 +17,66 @@ jupyter:
 
 # Reduce and replay a chip
 
+## Start small
+
+Build the schedule first. `active_patch()` keeps the scheduled device and its
+neighbour, folds away the spectator, and rebinds the schedule to the smaller
+chip.
+
+```python
+import numpy as np
+
+from quchip import (
+    RWA,
+    Capacitive,
+    ChargeDrive,
+    Chip,
+    DuffingTransmon,
+    Gaussian,
+    QuantumSequence,
+)
+
+qubits = [
+    DuffingTransmon(freq=freq, anharmonicity=-0.25, levels=3, label=f"q{index}")
+    for index, freq in enumerate([5.0, 5.35, 5.70])
+]
+chip = Chip(
+    qubits,
+    [Capacitive(qubits[index], qubits[index + 1], g=0.004) for index in range(2)],
+    frame="rotating",
+    approximation=RWA(),
+)
+
+line = ChargeDrive(qubits[0], label="xy")
+chip.wire(line)
+sequence = QuantumSequence(chip)
+sequence.schedule(
+    line,
+    envelope=Gaussian(duration=20.0, sigmas=3.0, amplitude=0.04),
+    freq=chip.freq(qubits[0]),
+)
+
+patch = sequence.active_patch(hops=1, method="sw")
+times = np.linspace(0.0, 40.0, 161)
+full = sequence.simulate(tlist=times)
+small = patch.simulate(tlist=times)
+p_full = np.asarray(full.population("q0", level=1)).real
+p_small = np.asarray(small.population("q0", level=1)).real
+
+{
+    "kept": patch.active_labels,
+    "eliminated": patch.eliminated_labels,
+    "validity": patch.validity,
+    "maximum_population_difference": float(
+        np.max(np.abs(p_full - p_small))
+    ),
+}
+```
+
+<!-- simple-example-end -->
+
+## Expand to the talk comparison
+
 A Gaussian pulse drives one end of a four-transmon chain. `active_patch()`
 keeps the driven neighbourhood, folds the two external spectators into the
 surviving chip, and returns the same schedule bound to the reduced model.
