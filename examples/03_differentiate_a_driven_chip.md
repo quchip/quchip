@@ -15,7 +15,58 @@ jupyter:
 
 <!-- reader-content -->
 
-# Differentiate a driven chip
+# Gradient and Jacobian
+
+## Start small
+
+A scalar loss has a gradient. A vector residual has a Jacobian. Both pass
+through the same public `Chip.with_params()` call.
+
+```python
+import jax
+import jax.numpy as jnp
+
+from quchip import Capacitive, Chip, DuffingTransmon, Resonator
+from quchip.backend.dynamiqs import DynamiqsBackend
+
+q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=4, label="q")
+r = Resonator(freq=7.0, levels=4, label="r")
+chip = Chip(
+    [q, r],
+    [Capacitive(q, r, g=0.05, label="qr")],
+    frame="rotating",
+    backend=DynamiqsBackend(),
+)
+
+names = ["q.freq", "q.anharmonicity", "qr.g"]
+theta = jnp.array([5.0, -0.25, 0.05])
+target = jnp.array([5.05, -0.0010])
+
+
+def observables(th):
+    c = chip.with_params(dict(zip(names, th)))
+    chi = c.dispersive_shift("q", "r") / 2
+    return jnp.stack([jnp.asarray(c.freq("q")), jnp.asarray(chi)])
+
+
+def residual(th):
+    return observables(th) - target
+
+
+def loss(th):
+    return jnp.sum(residual(th) ** 2)
+
+
+{
+    "observables_f01_chi": observables(theta),
+    "gradient": jax.grad(loss)(theta),
+    "jacobian": jax.jacrev(residual)(theta),
+}
+```
+
+<!-- simple-example-end -->
+
+## Expand to a driven chip
 
 This notebook reproduces the one-pulse gradient in Fig. 6 of the talk. It
 differentiates the final excited-state population with respect to pulse

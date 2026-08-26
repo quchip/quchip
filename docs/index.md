@@ -32,7 +32,10 @@ Optional extras: `quchip[dynamiqs]` for the JAX-native backend, `quchip[viz]` fo
 
 ## A minimal chip
 
-Start with {doc}`Hello, drive and readout <examples/hello-chip>` to declare an explicitly labeled Duffing transmon and lossy resonator, compare broadband and selective nominal-pi qubit drives, then follow the conditional readout responses for a duration derived from the resonator pull and linewidth. The {doc}`cookbook` collects the conventions behind executable quchip recipes.
+Start with {doc}`Drive and read out one chip <examples/hello-chip>` for one
+qubit, one resonator, one Gaussian pulse, and one solve. The page then points to
+the executed leakage and readout notebook. The {doc}`cookbook` collects the
+conventions behind executable quchip recipes.
 
 ```{figure} images/hello_qubit_drive_leakage.png
 :width: 760px
@@ -48,7 +51,9 @@ Start with {doc}`Hello, drive and readout <examples/hello-chip>` to declare an e
 
 ## Start from the SQA 2026 talk
 
-The {doc}`post-talk guide <guides/from-sqa-2026>` follows the presentation from dressed statics and pulse-level dynamics through model reduction and checked derivatives. Every step uses public APIs and an executed notebook.
+The {doc}`post-talk guide <guides/from-sqa-2026>` starts each topic with a short
+public-API example. The executed notebooks then reproduce the dressed-statics,
+pulse, reduction, and derivative figures from the presentation.
 
 The accompanying paper is [quchip: A Differentiable Toolkit for Modeling Quantum Devices](https://arxiv.org/abs/2607.17081) (arXiv:2607.17081); citation metadata is in the repository's [CITATION.cff](https://github.com/quchip/quchip/blob/main/CITATION.cff).
 
