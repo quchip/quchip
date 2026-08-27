@@ -443,7 +443,7 @@ S_ij = V_ij / (E_i − E_j)        (i, j straddling P/Q; E = diag H)
 H_eff = P (H + (1/2)[S, V]) P
 ```
 
-(Bravyi, DiVincenzo & Loss, Ann. Phys. 326, 2793 (2011), 2nd order). Nested `where` guards handle the division: an exactly degenerate cross pair with no matrix element contributes zero with a *finite gradient*, whereas a single `where` would propagate a `NaN` backward through the unselected branch. Survivor parameters are obtained by indexing `H_eff`: `freq_after(s) = E(1_s) − E(0)`; the pair exchange is the `<1_a|H_eff|1_b>` element. A pre-existing direct edge is already included in `H_eff`, so the emitted edge carries the total coupling and the reported `j_eff` subtracts the direct contribution. Alongside `J`, the bridge fold records its linearization
+(Bravyi, DiVincenzo & Loss, Ann. Phys. 326, 2793 (2011), 2nd order). Nested `where` guards handle the division: an exactly degenerate cross pair with no matrix element contributes zero with a *finite gradient*, whereas a single `where` would propagate a `NaN` backward through the unselected branch. Survivor parameters are obtained by indexing `H_eff`: `freq_after(s) = E(1_s) − E(0)`; the pair exchange is the `<1_a|H_eff|1_b>` element. An authored direct edge is included in `H_eff`, so the emitted edge carries the total coupling and the reported `j_eff` subtracts the direct contribution. Alongside `J`, the bridge fold records its linearization
 
 ```text
 dJ/domega_c = (g_a*g_b/2)(1/Delta_a^2 + 1/Delta_b^2)

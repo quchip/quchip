@@ -17,6 +17,13 @@ def test_bath_autolabels_and_defaults_to_all_devices():
     assert set(bath.resolve_targets(chip)) == {"q", "r"}
 
 
+def test_bath_human_readable_output_names_the_model():
+    bath = Bath("thermal", temperature=15.0, rate=1e-3, label="fridge")
+
+    assert "model='thermal'" in repr(bath)
+    assert bath.physics_notes()[0] == "Bath model: 'thermal'; targets: all devices."
+
+
 def test_bath_targets_accept_label_or_object():
     """Bath targets given as a mix of device objects and labels resolve to the same ordered device labels."""
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
@@ -59,7 +66,7 @@ def test_correlated_thermal_bath_raises_not_implemented():
 
 
 def test_chip_with_baths_survives_serialization_round_trip():
-    """A chip's baths — recipe, parameters, label, and resolved targets — survive a to_dict/from_dict round trip."""
+    """Bath model, parameters, label, and targets survive serialization."""
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
     r = Resonator(freq=7.0, levels=4, label="r")
     chip = Chip(

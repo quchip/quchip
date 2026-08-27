@@ -347,10 +347,9 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
         single_pair = len(pairs) == 1
         for label_a, label_b in pairs:
             # ``pair_params[("J", a, b)]`` is read off H_eff = P(H + correction)P,
-            # so it already reports the *total* post-reduction coupling: any
-            # pre-existing direct edge(s) between this pair are baked into the
-            # bare H term and carry straight through the projection, on top of
-            # the mode-mediated correction. See the edge_strength/base_all
+            # so it already reports the *total* post-reduction coupling. Any
+            # authored direct edges between this pair are included through the
+            # bare H term, alongside the mode-mediated correction. See the edge_strength/base_all
             # accounting below for how that total is split back out across the
             # reduced chip's edges without double-counting.
             total_coupling = jnp.real(pair_params[("J", label_a, label_b)])

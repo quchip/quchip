@@ -1,4 +1,4 @@
-"""Tests for EliminationResult.describe() — the eliminate() fold report (spec §6.6)."""
+"""Tests for the eliminate() fold report from EliminationResult.describe()."""
 
 from __future__ import annotations
 
@@ -59,8 +59,8 @@ def test_describe_reports_correct_purcell_folded_t1():
     assert "Purcell" in report
 
 
-def test_describe_zz_is_placeholder_under_sw_and_a_number_under_exact():
-    """The ZZ line is the method="exact" placeholder under sw, and the real number under exact."""
+def test_describe_zz_availability_depends_on_method():
+    """The report marks ZZ unavailable under SW and gives its exact value."""
     chip = _bridge_chip()
 
     sw_report = eliminate(chip, "bus", method="sw").describe()

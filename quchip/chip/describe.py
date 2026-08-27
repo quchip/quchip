@@ -131,7 +131,7 @@ def describe_chip(chip: "Chip") -> str:
         lines += _section(f"Baths ({len(chip.baths)})")
         for bath in chip.baths:
             targets = ", ".join(bath.resolve_targets(chip))
-            detail = f"{bath.label} — {bath.recipe} on {targets}"
+            detail = f"{bath.label} — model={bath.recipe} on {targets}"
             extras = [
                 _param_text(name, getattr(bath, name), unit)
                 for name, unit in (("temperature", "mK"), ("rate", "1/ns"))
@@ -228,7 +228,7 @@ def _survivor_lines(label: str, entry: Any, reduced_device: Any) -> list[str]:
 
 
 def _exchange_lines(chip: "Chip", entry: Any) -> list[str]:
-    """Emitted-edge + Yan-formula tag, and the ZZ line (placeholder under ``method='sw'``)."""
+    """Emitted-edge and Yan-formula details, including ZZ when available."""
     lines: list[str] = []
     edge_label = entry.get("folded_into")
     if edge_label is not None:
@@ -306,8 +306,8 @@ def describe_elimination(result: "EliminationResult") -> str:
 
     Every fold stated explicitly, before -> after: per-survivor freq (and T1
     when either side carries one), the emitted/upgraded exchange edge with
-    its Yan-formula tag, the ZZ line (a placeholder under ``method="sw"``,
-    the exact residual under ``method="exact"``), any control-line retarget,
+    its Yan-formula tag, ZZ availability under ``method="sw"`` or the exact
+    residual under ``method="exact"``, any control-line retarget,
     the per-coupling validity verdict, and the dropped-physics summary. See
     :meth:`~quchip.chip.transformations.EliminationResult.describe`.
     """

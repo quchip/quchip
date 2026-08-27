@@ -101,8 +101,8 @@ _MIN_ENVELOPE_SAMPLES = 1001
 # Local per-window subgrid density (samples/ns) merged into the base sample
 # grid around each Window node's edges (see :func:`_augmented_sample_grid`).
 # Bounded by the window's own width, not the solve span, so cost does not
-# scale with idle-span length. Value pinned by the accuracy regression in
-# tests/test_backend_hamiltonian_prep.py (TestEnvelopeSampleGrid).
+# scale with idle-span length. This density preserves sampling accuracy for
+# windowed envelopes.
 _WINDOW_SUBGRID_POINTS_PER_NS = 40.0
 
 # Minimum interior samples spanning a window, regardless of width. Caps the
@@ -162,12 +162,12 @@ def _local_window_subgrid(start: float, stop: float) -> np.ndarray:
     """Build a dense grid resolving ``[start, stop]`` plus a small zero-valued margin on each side.
 
     Interior samples span ``[start, stop]`` via ``np.linspace`` (which
-    places *start* and *stop* at exact grid points by construction — no
-    floating-point miss), at ``_WINDOW_SUBGRID_POINTS_PER_NS`` density
+    places *start* and *stop* at exact grid points by construction), at
+    ``_WINDOW_SUBGRID_POINTS_PER_NS`` density
     floored at ``_MIN_WINDOW_INTERIOR_SAMPLES`` so a window narrower than
     ``1 / _WINDOW_SUBGRID_POINTS_PER_NS`` ns is never left under-resolved.
-    *start* and *stop* are unioned in once more explicitly (belt-and-
-    braces against any future construction change). A small zero-valued
+    *start* and *stop* are unioned explicitly to guarantee exact boundary
+    samples. A small zero-valued
     margin (``_WINDOW_EDGE_PADDING_NS``) is sampled on each side outside
     ``[start, stop]`` so the interpolant sees the true zero on both sides
     of the boundary discontinuity, not just a single grid cell straddling it.
@@ -836,9 +836,9 @@ class QuTiPBackend(Backend):
         analytic while only its slow, carrier-free envelope is sampled
         (on *tlist*, locally densified around any window edge — see
         :func:`_band_coefficient` / :func:`_augmented_sample_grid`). This
-        is exact regardless of how resonant a carrier is — the lab frame
-        no longer accumulates the cubic-spline error that pre-sampling the
-        full ``envelope·carrier`` product caused.
+        avoids cubic-spline error from pre-sampling the full
+        ``envelope·carrier`` product, including for resonant carriers in the
+        lab frame.
         """
         static_rhs = self._sum_terms(description.static_terms, self._canonical_to_qobj)
         metadata = dict(description.metadata)

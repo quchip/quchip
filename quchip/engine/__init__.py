@@ -250,8 +250,7 @@ def simulate(
         partition is trivial or ``initial_state`` is a raw backend state
         rather than ``None``/a ``Mapping``. Set ``False`` to force the
         joint solve unconditionally. ``simulate_batch``/``solve_many``
-        never partition in v1 — batched dispatch always solves the full
-        chip.
+        always solve the full chip without partitioning.
 
     Returns
     -------
@@ -335,11 +334,9 @@ def solve_problem(
 ) -> "SimulationResult":
     """Dispatch a :class:`SolveProblem` through its chip backend.
 
-    This is the common single-solve chokepoint, so the Hilbert-truncation
-    safety net lives here: unless ``check_truncation=False``, the wrapped
-    result is screened for over-populated top Fock levels (warning above
-    ``truncation_threshold``). Every example-facing single-solve path
-    (``chip.solve``, ``seq.simulate``) inherits the check by routing through here.
+    All single-solve paths call this function. Unless
+    ``check_truncation=False``, it screens the wrapped result for
+    over-populated top Fock levels and warns above ``truncation_threshold``.
     """
     from quchip.results.results import wrap_solver_result
 

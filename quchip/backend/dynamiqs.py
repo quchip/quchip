@@ -436,11 +436,9 @@ class DynamiqsBackend(Backend):
         Consequence: a finite-support pulse embedded in a long idle span can
         be silently skipped by dynamiqs' adaptive step selection, the same
         failure mode :meth:`quchip.backend.qutip.QuTiPBackend.resolve_solver_options`
-        fixes via ``max_step``. The engine's ``max_step_ns`` hint is present
-        in *metadata* but has no landing site on this backend today. Options
-        for closing the gap — segmented integration around each pulse
-        window, or an upstream request for a ``dtmax`` knob on dynamiqs'
-        deterministic methods — are unimplemented future work.
+        fixes via ``max_step``. Dynamiqs' deterministic methods do not expose
+        a corresponding step-size option, so this backend cannot apply the
+        engine's ``max_step_ns`` hint.
         """
         resolved = self._normalize_dq_options(options)
         if "max_steps" not in resolved:

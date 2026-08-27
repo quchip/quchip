@@ -1,4 +1,4 @@
-"""Scheduling edge pumps through QuantumSequence (spec §5)."""
+"""Scheduling edge pumps through QuantumSequence."""
 
 from __future__ import annotations
 

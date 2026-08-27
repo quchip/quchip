@@ -530,7 +530,7 @@ def fit_a_dress(
     fit_parameters
         ``None`` (default): every declared device tunable
         (:meth:`~quchip.devices.base.BaseDevice.tunable_params`) and every
-        coupling's scalar strength is free — the pre-existing behavior.
+        coupling's scalar strength is free.
         A mapping is instead the *complete* free-parameter allowlist:
         ``{component_or_label: name_collection}``, where a device's
         ``name_collection`` is a subset of its declared tunable names and

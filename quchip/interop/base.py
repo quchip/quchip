@@ -81,7 +81,7 @@ class ModelMapping:
 
         # Validate both registrations before mutating either registry: a
         # class that fails export validation (missing target/library, or a
-        # duplicate export key) must not leave a ghost import-registry entry
+        # duplicate export key) must not leave a stale import-registry entry
         # behind just because the import-side check ran first.
         if cls.source is not None:
             existing_import = _IMPORT_REGISTRY.get(cls.source)
@@ -182,7 +182,6 @@ def export_object(device: Any, library: str, **opts: Any) -> Any:
 def registered_mappings() -> dict[str, type[ModelMapping]]:
     """Return a copy of the import registry, keyed by source key.
 
-    For introspection and tests; mutating the returned dict does not affect
-    registration state.
+    Mutating the returned dict does not affect registration state.
     """
     return dict(_IMPORT_REGISTRY)

@@ -298,7 +298,7 @@ def build_observable_traces(
     e_ops keys. Each value is an :class:`ObservableTrace` (or a list
     when the user supplied multiple operators for the same key).
     """
-    del chip  # reserved for future extensions
+    del chip  # recombination uses the resolved frame metadata
     raw_expect = solver_result.expect
     if isinstance(raw_expect, dict):
         flat_expect: Sequence[Any] = list(raw_expect.values())
