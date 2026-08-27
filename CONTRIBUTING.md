@@ -64,7 +64,7 @@ Examples are executable physics guides. Keep each one focused on a single questi
 
 Readable Jupytext Markdown is the canonical source. Commit its executed `.ipynb` partner with the `python3` kernel, identical code cells, and inspected outputs. Use standard fenced Python cells rather than percent-format scripts.
 
-Notebook outputs remain in the executed `.ipynb`; save only figures selected for the website under `docs/images/` and embed them explicitly from `docs/examples/<name>.md`.
+Notebook outputs remain in the executed `.ipynb`; save only figures selected for the website under `docs/images/` and include the canonical Markdown from its page under `docs/guides/`.
 
 From the repository root, replace `<name>` with the example stem and run:
 

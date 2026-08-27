@@ -30,12 +30,16 @@ pip install quchip
 
 Optional extras: `quchip[dynamiqs]` for the JAX-native backend, `quchip[viz]` for graph visualization, `quchip[scqubits]` for scqubits interoperability.
 
-## A minimal chip
+## Start with a physical question
 
-Start with {doc}`Drive and read out one chip <examples/hello-chip>` for one
-qubit, one resonator, one Gaussian pulse, and one solve. The page then points to
-the executed leakage and readout notebook. The {doc}`cookbook` collects the
-conventions behind executable quchip recipes.
+The guides begin with a small runnable calculation and add one idea at a time:
+
+- {doc}`Statics and parameter studies <guides/statics-and-parameter-studies>`
+- {doc}`Dynamics, pulses, observables, and readout <guides/dynamics-pulses-and-readout>`
+- {doc}`Chip transformations <guides/chip-transformations>`
+- {doc}`Differentiability <guides/differentiability>`
+
+The {doc}`cookbook` collects the conventions behind executable quchip recipes.
 
 ```{figure} images/hello_qubit_drive_leakage.png
 :width: 760px
@@ -51,9 +55,9 @@ conventions behind executable quchip recipes.
 
 ## Start from the SQA 2026 talk
 
-The {doc}`post-talk guide <guides/from-sqa-2026>` starts each topic with a short
-public-API example. The executed notebooks then reproduce the dressed-statics,
-pulse, reduction, and derivative figures from the presentation.
+The {doc}`post-talk page <guides/from-sqa-2026>` contains four runnable snippets
+and one documentation link for each topic. The guides stand on their own; no
+knowledge of the presentation is required.
 
 The accompanying paper is [quchip: A Differentiable Toolkit for Modeling Quantum Devices](https://arxiv.org/abs/2607.17081) (arXiv:2607.17081); citation metadata is in the repository's [CITATION.cff](https://github.com/quchip/quchip/blob/main/CITATION.cff).
 
@@ -62,10 +66,10 @@ The accompanying paper is [quchip: A Differentiable Toolkit for Modeling Quantum
 :hidden:
 
 guides/from-sqa-2026
-examples/resolve-and-sweep
-examples/hello-chip
-examples/reduce-and-replay
-examples/differentiate-a-driven-chip
+guides/statics-and-parameter-studies
+guides/dynamics-pulses-and-readout
+guides/chip-transformations
+guides/differentiability
 cookbook
 extensions
 physics
