@@ -15,9 +15,13 @@ jupyter:
 
 <!-- reader-content -->
 
-# Drive and read out one chip
+# Dynamics, pulses, observables, and readout
 
-## Start small
+Start with one pulse and one population trace. The same declared chip then
+supports pulse batches, leakage checks, expectation values, and a driven
+resonator readout model.
+
+## One pulse, one trace
 
 One qubit, one resonator, one Gaussian, and one solve are enough to start.
 quchip uses GHz for frequencies and ns for time.
@@ -33,6 +37,7 @@ from quchip import (
     Chip,
     DuffingTransmon,
     Gaussian,
+    GaussianDRAG,
     QuantumSequence,
     Resonator,
 )
@@ -63,11 +68,51 @@ result.plot_populations(trace_out=r)
 plt.show()
 ```
 
-<!-- simple-example-end -->
+## Build a longer schedule
 
-## Expand to leakage and readout
+Pulse amplitude and duration set the drive strength and bandwidth. The carrier
+frequency sets detuning, `phase` rotates the drive axis, and `GaussianDRAG`
+adds a derivative quadrature through `beta`. Delays advance a device's control
+cursors, barriers align cursors, and `vz()` changes the phase of later
+microwave pulses without emitting a pulse.
 
-This example couples a Duffing transmon to a lossy resonator. First we compare leakage from two qubit pulses; then we drive the resonator and follow its response for qubit $|0\rangle$ and $|1\rangle$.
+```python
+composed = QuantumSequence(chip)
+composed.schedule(
+    line,
+    envelope=GaussianDRAG(
+        duration=12.0,
+        sigmas=3.0,
+        amplitude=0.02,
+        beta=-0.4,
+    ),
+    freq=chip.freq(q) + 0.001,
+    phase=0.0,
+)
+composed.delay(q, duration=5.0)
+composed.vz(q, angle=np.pi / 2)
+composed.schedule(
+    line,
+    envelope=Gaussian(duration=12.0, sigmas=3.0, amplitude=0.02),
+    freq=chip.freq(q),
+)
+composed.barrier()
+
+{
+    "duration_ns": composed.total_duration,
+    "scheduled_pulses": len(composed.scheduled_ops),
+    "second_pulse_phase_rad": composed.scheduled_ops[1].phase_offset,
+}
+```
+
+Use explicit `start_time` only when pulses must overlap. For serial control,
+the channel cursors, `delay()`, and `barrier()` make the timing easier to read.
+
+## Compare pulse bandwidth and leakage
+
+This example couples a Duffing transmon to a lossy resonator. First we compare
+leakage from two qubit pulses. Then we drive the resonator and follow its
+response for qubit $|0\rangle$ and $|1\rangle$.
 
 quchip uses GHz for frequencies and ns for time. The chip applies `RWA()` in a per-device rotating frame to both static interactions and scheduled drives.
 
@@ -200,6 +245,33 @@ drive_batch[1].plot_populations(trace_out=readout)
 plt.show()
 ```
 
+## Read results at the right level
+
+Population answers a level-occupation question. `overlap()` compares the full
+state with a target, `state()` returns one stored full state, and
+`reduced_state()` traces the rest of the chip away. `check_truncation()` reads
+the final occupation at the top of every declared local basis.
+
+```python
+long_result = drive_batch[1]
+target_state = chip.state({qubit: 1, readout: 0})
+result_summary = {
+    "final_q1_population": float(long_result.population(qubit, 1)[-1]),
+    "final_target_overlap": float(long_result.overlap(target_state)[-1]),
+    "stored_state_type": type(long_result.state()).__name__,
+    "reduced_qubit_state_type": type(
+        long_result.reduced_state(float(drive_times[-1]), qubit)
+    ).__name__,
+    "top_level_populations": long_result.check_truncation(threshold=1.0),
+}
+
+result_summary
+```
+
+Pass `e_ops=chip.e_ops(...)` to `simulate()` when an expectation trace is the
+main output. This avoids reconstructing observables from stored states. The
+readout calculation below uses that path.
+
 ## Customize the comparison
 
 For the shared-grid comparison, read $P_0$, $P_1$, and $P_2$ from the batch. Each call returns an array indexed by `(pulse, time)`.
@@ -280,6 +352,14 @@ drive_figure.subplots_adjust(bottom=0.22, wspace=0.30)
 print(f"RESULT drive={json.dumps(drive_receipt, sort_keys=True, separators=(',', ':'))}")
 drive_figure.savefig(drive_receipt["drive_plot"], dpi=180)
 plt.show()
+```
+
+```{figure} ../images/hello_qubit_drive_leakage.png
+:width: 760px
+:alt: Short and long Gaussian pulses with multilevel qubit populations
+
+The short nominal-pi pulse reaches the neighbouring transition. The longer
+pulse is more selective.
 ```
 
 ## Part 2: Dispersive readout
@@ -391,5 +471,35 @@ print(f"RESULT readout={json.dumps(readout_receipt, sort_keys=True, separators=(
 iq_figure.savefig(readout_receipt["iq_plot"], dpi=180)
 plt.show()
 ```
+
+```{figure} ../images/hello_dispersive_readout_iq.png
+:width: 560px
+:alt: Conditional resonator IQ paths with emphasized final points
+
+The prepared qubit states produce different resonator trajectories under the
+same readout pulse.
+```
+
+## What this readout model contains
+
+`chip.freq(readout, when={qubit: ...})` is a static dressed-spectrum question.
+The IQ paths above are time-domain resonator expectation values under a
+declared pulse, resonator linewidth, and prepared qubit state. They include
+the chip Hamiltonian and its local Lindblad channels.
+
+They do not include an amplifier chain, digitizer, sampled measurement noise,
+or a classifier. Those belong in a measurement model built from the simulated
+output. Likewise, `T1`, `T2`, `thermal_population`, and resonator
+`quality_factor` describe device-level relaxation, dephasing, heating, and
+photon loss; they are not a complete laboratory noise budget.
+
+## Dynamics map
+
+Use `simulate()` for one experiment and `simulate_batch()` for parameter or
+initial-state studies. Batch axes are independent by default; `sequence.zip()`
+pairs values such as pulse duration and its calibrated amplitude. Read
+populations for occupations, expectations for observables, overlaps for target
+states, reduced states for subsystems, and the truncation report before trusting
+a small local basis.
 
 One chip now shows both effects: pulse bandwidth controls leakage, and the qubit state shifts the resonator response.

@@ -15,9 +15,12 @@ jupyter:
 
 <!-- reader-content -->
 
-# Gradient and Jacobian
+# Differentiability
 
-## Start small
+The progression is scalar loss through statics, scalar loss through one driven
+sequence, then a joint loss built from several experiments.
+
+## Losses through statics
 
 A scalar loss has a gradient. A vector residual has a Jacobian. Both pass
 through the same public `Chip.with_params()` call.
@@ -57,20 +60,37 @@ def loss(th):
     return jnp.sum(residual(th) ** 2)
 
 
+static_gradient = jax.grad(loss)(theta)
+static_jacobian = jax.jacrev(residual)(theta)
+static_step = jnp.array([1.0e-4, 1.0e-5, 1.0e-5])
+static_finite_difference = jnp.stack(
+    [
+        (loss(theta + static_step[index] * jnp.eye(3)[index])
+         - loss(theta - static_step[index] * jnp.eye(3)[index]))
+        / (2.0 * static_step[index])
+        for index in range(3)
+    ]
+)
+
 {
     "observables_f01_chi": observables(theta),
-    "gradient": jax.grad(loss)(theta),
-    "jacobian": jax.jacrev(residual)(theta),
+    "gradient_shape": static_gradient.shape,
+    "gradient": static_gradient,
+    "jacobian_shape": static_jacobian.shape,
+    "jacobian": static_jacobian,
+    "central_difference": static_finite_difference,
 }
 ```
 
-<!-- simple-example-end -->
+The parameter vector mixes GHz-scale frequencies and a smaller coupling. For
+optimization, work in dimensionless coordinates such as fractional frequency
+changes or MHz-scale offsets. The gradient then measures comparable design
+moves instead of inheriting the arbitrary numerical size of each unit.
 
-## Expand to a driven chip
+## Losses through simple dynamics
 
-This notebook reproduces the one-pulse gradient in Fig. 6 of the talk. It
-differentiates the final excited-state population with respect to pulse
-amplitude, Gaussian shape, and detuning.
+This section differentiates the final excited-state population with respect to
+pulse amplitude, Gaussian shape, and detuning.
 
 The dynamiqs backend keeps these declared parameters differentiable through
 the time-domain solve. Install it with `pip install 'quchip[dynamiqs]'`.
@@ -158,8 +178,21 @@ while `jax.value_and_grad` evaluates the population and its gradient together.
 ```python
 origin = jnp.zeros(3)
 population0, gradient = jax.jit(jax.value_and_grad(final_population))(origin)
+target_population = jnp.asarray(0.995)
 
-gradient
+
+def dynamic_loss(perturbation):
+    return (final_population(perturbation) - target_population) ** 2
+
+
+loss0, loss_gradient = jax.jit(jax.value_and_grad(dynamic_loss))(origin)
+
+{
+    "population": population0,
+    "population_gradient": gradient,
+    "loss": loss0,
+    "loss_gradient": loss_gradient,
+}
 ```
 
 At this slightly under-rotated operating point, increasing the amplitude or
@@ -257,6 +290,98 @@ figure.savefig(figure_path, dpi=180)
 plt.show()
 ```
 
+```{figure} ../images/differentiate_a_driven_chip.png
+:width: 720px
+:alt: Driven-qubit sensitivities with finite-difference convergence below
+
+The top panel puts each derivative on its named reference scale. The bottom
+panel checks convergence of the central differences.
+```
+
+## Losses through multi-sequence analysis
+
+A calibration objective often combines several experiments that share the
+same device and control parameters. Each sequence below has a different fixed
+pulse duration and carrier offset. All three rebind the same qubit frequency,
+amplitude scale, and carrier correction.
+
+```python
+experiment_settings = (
+    (18.0, 0.020, -0.004),
+    (28.0, 0.026, 0.000),
+    (40.0, 0.029, 0.004),
+)
+experiments = []
+for duration, amplitude, carrier_offset in experiment_settings:
+    experiment = QuantumSequence(chip)
+    experiment.schedule(
+        drive,
+        envelope=Gaussian(duration=duration, sigmas=3.0, amplitude=amplitude),
+        freq=frequency0 + carrier_offset,
+    )
+    experiments.append(experiment)
+
+shared_names = ("q.freq", "amplitude scale", "carrier correction")
+shared_origin = jnp.array([frequency0, 1.0, 0.0])
+multi_times = jnp.linspace(0.0, 60.0, 81)
+
+
+def experiment_outputs(shared):
+    qubit_frequency, amplitude_scale, carrier_correction = shared
+    values = []
+    for experiment, (_, nominal_amplitude, nominal_offset) in zip(
+        experiments, experiment_settings
+    ):
+        rebound = experiment.with_params(
+            {
+                "q.freq": qubit_frequency,
+                "pulse.0.amplitude": nominal_amplitude * amplitude_scale,
+                "pulse.0.freq": frequency0 + nominal_offset + carrier_correction,
+            }
+        )
+        result = rebound.simulate(
+            tlist=multi_times,
+            initial_state={"q": 0},
+            check_truncation=False,
+            partition=False,
+        )
+        values.append(jnp.real(result.population("q", level=1)[-1]))
+    return jnp.stack(values)
+
+
+reference_outputs = experiment_outputs(shared_origin)
+multi_targets = jax.lax.stop_gradient(
+    reference_outputs + jnp.array([0.010, -0.015, 0.005])
+)
+experiment_weights = jnp.array([1.0, 2.0, 0.5])
+
+
+def multi_residual(shared):
+    return experiment_outputs(shared) - multi_targets
+
+
+def multi_loss(shared):
+    return jnp.sum(experiment_weights * multi_residual(shared) ** 2)
+
+
+multi_jacobian = jax.jacrev(multi_residual)(shared_origin)
+multi_loss_gradient = jax.grad(multi_loss)(shared_origin)
+
+{
+    "experiments": len(experiments),
+    "shared_parameters": shared_names,
+    "residual_shape": multi_residual(shared_origin).shape,
+    "jacobian_shape": multi_jacobian.shape,
+    "jacobian_by_experiment": multi_jacobian,
+    "joint_loss_gradient": multi_loss_gradient,
+}
+```
+
+Rows of the Jacobian belong to experiments; columns belong to shared physical
+parameters. The weighted scalar loss contracts those rows into one gradient.
+Keep the Jacobian when diagnosing which experiment constrains which parameter,
+and use the loss gradient for an optimization step.
+
 The receipt puts all three derivatives on their reference-perturbation scales
 and records the worst relative disagreement across the finite-difference
 steps. Only first derivatives are checked here.
@@ -279,6 +404,9 @@ gradient_receipt = {
         path: float(value) for path, value in zip(parameter_paths, gradient)
     },
     "maximum_relative_error_across_steps": float(np.max(relative_errors)),
+    "multi_sequence_count": len(experiments),
+    "multi_sequence_jacobian_shape": list(multi_jacobian.shape),
+    "multi_sequence_loss_gradient": [float(value) for value in multi_loss_gradient],
     "original_sequence_unchanged": dict(sequence.parameters)
     == {
         "q.freq": frequency0,
@@ -303,11 +431,11 @@ The traced calculation keeps the device graph, Hilbert-space dimensions, and
 RWA band selection fixed. dynamiqs supports this automatic-differentiation
 path; QuTiP remains available for ordinary solves and sweeps but does not
 provide gradients. Eigenvector derivatives also require care near degenerate
-subspaces.
+subspaces. Gradients also inherit the solver tolerances, local-basis
+truncation, frame, approximation, and loss scaling chosen for the forward
+calculation.
 
-## What to change
-
-Replace the returned population with any scalar objective to obtain its
-gradient. If the output is a time trace or a batch instead, use `jax.jacrev`
-or `jax.jacfwd` to obtain its Jacobian. Keep an independent finite-difference
-spot check when introducing a new objective or parameter path.
+Replace the population residuals with the observables that define the
+experiment. Use `jax.grad` for a scalar loss and `jax.jacrev` or `jax.jacfwd`
+for a vector of residuals or traces. Keep named parameters, explicit scales,
+and an independent finite-difference spot check when introducing a new path.

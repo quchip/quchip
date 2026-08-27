@@ -102,15 +102,15 @@ The complete example derives short and selective nominal-pi Gaussian drives from
 
 ![Conditional resonator IQ paths with emphasized final points](https://raw.githubusercontent.com/quchip/quchip/main/docs/images/hello_dispersive_readout_iq.png)
 
-The complete walkthrough is available in the [documentation](https://docs.quchip.org/examples/hello-chip).
+The complete walkthrough is available in the [dynamics guide](https://docs.quchip.org/guides/dynamics-pulses-and-readout).
 
 ## Examples
 
-- [From the SQA 2026 talk](https://docs.quchip.org/guides/from-sqa-2026): follow the presentation from dressed statics and pulse-level dynamics through model reduction and checked derivatives.
-- [Resolve and sweep a chip](https://docs.quchip.org/examples/resolve-and-sweep): reproduce the talk's bus-mediated avoided crossing and inspect the four dropped RWA bands.
-- [Hello, drive and readout](https://docs.quchip.org/examples/hello-chip): compare qubit-drive leakage, then resolve pulse-level dispersive readout on the same chip.
-- [Reduce and replay a chip](https://docs.quchip.org/examples/reduce-and-replay): run a compact active-patch reduction, inspect its validity, and compare the full and reduced dynamics.
-- [Differentiate a driven chip](https://docs.quchip.org/examples/differentiate-a-driven-chip): reproduce the talk's pulse-amplitude, Gaussian-shape, and detuning derivatives, then check them with finite differences.
+- [From the SQA 2026 talk](https://docs.quchip.org/guides/from-sqa-2026): four runnable entry points into the topic guides.
+- [Statics and parameter studies](https://docs.quchip.org/guides/statics-and-parameter-studies): read dressed observables, sweep parameters, and track assignments through an avoided crossing.
+- [Dynamics, pulses, observables, and readout](https://docs.quchip.org/guides/dynamics-pulses-and-readout): build pulse schedules, batch experiments, inspect states, and simulate a resonator response.
+- [Chip transformations](https://docs.quchip.org/guides/chip-transformations): rebind, serialize, partition, eliminate, fit, and replay reduced models.
+- [Differentiability](https://docs.quchip.org/guides/differentiability): build losses through statics, one driven sequence, and several shared-parameter experiments.
 - [Cookbook](https://docs.quchip.org/cookbook): practical conventions and task recipes.
 - [Extension guide](https://docs.quchip.org/extensions): author devices, couplings, time-dependent terms, drives, envelopes, dissipation, local spaces, and interop mappings.
 

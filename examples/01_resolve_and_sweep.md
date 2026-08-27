@@ -15,9 +15,15 @@ jupyter:
 
 <!-- reader-content -->
 
-# Resolve and sweep a chip
+# Statics and parameter studies
 
-## Start small
+Start from one declared chip. Read a few dressed quantities, change one design
+parameter, then follow the spectrum through an avoided crossing. This guide
+does not create a `QuantumSequence` or evolve a state in time.
+
+quchip uses GHz for frequencies and couplings.
+
+## Declare and read a chip
 
 Declare the devices, read their dressed transitions, then vary one bare
 frequency.
@@ -58,14 +64,29 @@ splitting = transitions[:, 1] - transitions[:, 0]
 }
 ```
 
-<!-- simple-example-end -->
+## Change one design parameter
 
-## Expand to the talk sweep
+`with_params()` returns a new chip. Parameter paths come from component
+labels, so the change remains readable at the call site and the original chip
+keeps its declaration.
+
+```python
+shifted_chip = chip.with_params({"q2.freq": 5.40})
+
+{
+    "available_parameters": tuple(chip.parameters),
+    "original_q2_freq": chip.parameters["q2.freq"],
+    "shifted_q2_freq": shifted_chip.parameters["q2.freq"],
+    "shifted_dressed_q2_freq": float(shifted_chip.freq("q2")),
+}
+```
+
+## Resolve the avoided crossing
 
 Two multilevel transmons couple through a detuned bus resonator. Sweeping one
-bare transmon frequency through the other reproduces Fig. 1 from the talk: the
-bare declarations cross, while the dressed transitions remain separated by
-twice the bus-mediated exchange rate.
+bare transmon frequency through the other makes the bare declarations cross.
+The dressed transitions remain separated by twice the bus-mediated exchange
+rate.
 
 quchip uses GHz for frequencies. The model below uses the same parameters as
 the slide and applies `RWA()` in a rotating frame.
@@ -76,7 +97,7 @@ import json
 import matplotlib.pyplot as plt
 import numpy as np
 
-from quchip import RWA, Capacitive, Chip, DuffingTransmon, Resonator, SpectrumSweep, Sweep
+from quchip import RWA, Capacitive, ChargeDrive, Chip, DuffingTransmon, Resonator, SpectrumSweep, Sweep
 
 q1_frequency = 5.30
 q2_frequency0 = 5.58
@@ -106,6 +127,8 @@ chip = Chip(
     frame="rotating",
     approximation=RWA(),
 )
+q1_line = ChargeDrive(q1, label="q1-charge")
+chip.wire(q1_line)
 ```
 
 ## Read the chip's statics
@@ -121,6 +144,18 @@ initial_dressed_frequencies = {
     "bus": float(chip.freq(bus)),
 }
 initial_static_zz = float(chip.static_zz(q1, q2))
+
+static_snapshot = {
+    "q1_f01_ghz": float(chip.freq(q1)),
+    "q1_f12_ghz": float(chip.transition_frequency(q1, 1, 2)),
+    "q1_anharmonicity_ghz": float(chip.dressed_anharmonicity(q1)),
+    "q1_bus_cross_kerr_ghz": float(chip.dispersive_shift(q1, bus)),
+    "q1_drive_matrix_element": complex(
+        chip.drive_matrix_elements(q1, drives=[q1_line])[q1_line]
+    ),
+}
+
+static_snapshot
 ```
 
 The resolved Hamiltonian applies the chip's basis, frame, and approximation
@@ -235,6 +270,14 @@ figure.savefig(figure_path, dpi=180)
 plt.show()
 ```
 
+```{figure} ../images/resolve_and_sweep.png
+:width: 720px
+:alt: Two dressed transmon transitions forming an avoided crossing as one bare frequency is swept
+
+The bare declarations cross while the dressed transitions retain a finite
+splitting.
+```
+
 The receipt records the exchange inferred from the avoided crossing, the
 second-order scale, the approximation audit, and whether the original chip
 kept its declared `q2` frequency.
@@ -259,7 +302,89 @@ statics_receipt = {
 print(f"RESULT statics={json.dumps(statics_receipt, sort_keys=True, separators=(',', ':'))}")
 ```
 
-## What to change
+## Independent and linked parameter studies
+
+`Sweep.expand()` shows the parameter dictionaries before any calculation runs.
+Independent axes form a Cartesian grid. `Sweep.zip()` pairs values when the
+parameters must move together.
+
+```python
+frequency_values = Sweep([5.28, 5.30, 5.32], name="q2.freq")
+coupling_values = Sweep([0.045, 0.050], name="q1-bus.g")
+independent_points = Sweep.expand([frequency_values, coupling_values])
+
+linked_points = Sweep.expand(
+    [
+        Sweep.zip(
+            Sweep([5.28, 5.30, 5.32], name="q2.freq"),
+            Sweep([0.045, 0.050, 0.055], name="q1-bus.g"),
+        )
+    ]
+)
+
+{
+    "independent_point_count": len(independent_points),
+    "first_independent_point": independent_points[0],
+    "linked_point_count": len(linked_points),
+    "last_linked_point": linked_points[-1],
+}
+```
+
+Pass either axis list to `SpectrumSweep` when every point needs a dressed
+spectrum. Use `with_params()` directly when only a few points or a custom
+observable are needed.
+
+## Check labels before interpreting branches
+
+Near an avoided crossing, a dressed eigenstate can be shared between several
+bare product states. `dressed_index()` tracks the assigned branch across the
+sweep, while `assignment_overlaps` records how confident that assignment is.
+For one chip, `state_components()` exposes the largest bare-basis weights.
+
+```python
+q1_assignment = sweep_result.dressed_index(q1=1, q2=0, bus=0)
+assignment_quality = np.asarray(sweep_result.assignment_overlaps)
+q1_components = chip.state_components({q1: 1}, n_components=4)
+
+{
+    "tracked_grid_shape": q1_assignment.shape,
+    "lowest_assignment_overlap": float(np.min(assignment_quality)),
+    "q1_like_state_components": q1_components,
+}
+```
+
+Do not force a bare label through a strongly hybridized region without reading
+the overlaps. Setting a lower `overlap_threshold` keeps a branch available; it
+does not make the bare-state description more accurate.
+
+## Check numerical resolution
+
+The sweep grid locates the minimum; device `levels` control Hilbert-space
+truncation. They are separate convergence questions. Here the 181-point grid
+and its every-other-point subset agree because both contain the symmetry point.
+
+```python
+fine_minimum = float(np.min(splitting))
+coarse_minimum = float(np.min(splitting[::2]))
+
+{
+    "fine_grid_points": len(splitting),
+    "coarse_grid_points": len(splitting[::2]),
+    "minimum_difference_hz": 1.0e9 * abs(fine_minimum - coarse_minimum),
+}
+```
+
+For a truncation check, rebuild the devices with one extra level and compare
+the observable you intend to report. A stable transition does not guarantee a
+stable matrix element or dispersive shift, so check the actual output.
+
+## Static analysis map
+
+Use `freq()` and `transition_frequency()` for dressed transitions,
+`dressed_anharmonicity()` for level curvature, `dispersive_shift()` or
+`static_zz()` for conditional shifts, `drive_matrix_elements()` for control
+strengths, and `state_components()` for hybridization. `SpectrumSweep` keeps
+the eigenvalues, assignments, overlaps, and grid shape together.
 
 Change either bus coupling and rerun the sweep to see how the inferred exchange
 changes. Moving the bus closer tests where the second-order dispersive scale

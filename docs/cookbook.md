@@ -66,7 +66,7 @@ Do not choose durations by matching an earlier output or optimize the amplitude 
 
 ### Full notebook
 
-Read the short {doc}`drive and readout guide <examples/hello-chip>` or
+Read the {doc}`dynamics and readout guide <guides/dynamics-pulses-and-readout>` or
 {download}`download the full executed notebook <../examples/00_hello_chip.ipynb>`.
 
 ## Read out one dressed qubit
@@ -93,5 +93,5 @@ Driving at the bare `readout.freq` ignores qubit-state-dependent dressing. Do no
 
 ### Full notebook
 
-Read the short {doc}`drive and readout guide <examples/hello-chip>` or
+Read the {doc}`dynamics and readout guide <guides/dynamics-pulses-and-readout>` or
 {download}`download the full executed notebook <../examples/00_hello_chip.ipynb>`.

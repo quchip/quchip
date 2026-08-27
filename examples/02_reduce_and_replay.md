@@ -15,9 +15,13 @@ jupyter:
 
 <!-- reader-content -->
 
-# Reduce and replay a chip
+# Chip transformations
 
-## Start small
+Transformations return new chips and leave the source declaration unchanged.
+Start with one schedule-aware reduction, inspect what changed, then compare
+the reduced and full dynamics.
+
+## Reduce one scheduled neighbourhood
 
 Build the schedule first. `active_patch()` keeps the scheduled device and its
 neighbour, folds away the spectator, and rebinds the schedule to the smaller
@@ -34,6 +38,9 @@ from quchip import (
     DuffingTransmon,
     Gaussian,
     QuantumSequence,
+    Resonator,
+    eliminate,
+    fit_a_dress,
 )
 
 qubits = [
@@ -73,16 +80,170 @@ p_small = np.asarray(small.population("q0", level=1)).real
 }
 ```
 
-<!-- simple-example-end -->
+## Rebind, clone, and serialize
 
-## Expand to the talk comparison
+`with_params()` is the smallest chip transformation. It changes numerical
+parameters on an isolated copy. `clone()` copies the full structure, while
+`to_dict()` and `Chip.from_dict()` provide a JSON-safe round trip for declared
+devices, couplings, control equipment, baths, frames, and approximations.
+Backends and computed results are runtime choices and are not serialized.
+
+```python
+rebound = chip.with_params({"q1.freq": 5.45})
+cloned = chip.clone()
+restored = Chip.from_dict(chip.to_dict())
+
+{
+    "source_q1_freq_ghz": chip.parameters["q1.freq"],
+    "rebound_q1_freq_ghz": rebound.parameters["q1.freq"],
+    "source_dressed_q1_ghz": float(chip.freq("q1")),
+    "rebound_dressed_q1_ghz": float(rebound.freq("q1")),
+    "clone_is_distinct": cloned is not chip,
+    "restored_devices": tuple(device.label for device in restored.devices),
+    "round_trip_parameters_match": dict(restored.parameters) == dict(chip.parameters),
+}
+```
+
+## Eliminate a device
+
+A far-detuned bus can be folded into its neighbours. The result owns an
+ordinary reduced `Chip`, derived parameters, a validity record, notes, and a
+plain-text report. The source chip is unchanged.
+
+`method="sw"` uses a second-order Schrieffer-Wolff reduction.
+`method="exact"` diagonalizes the same resolved static model and extracts the
+kept block. Comparing them is useful inside the perturbative regime.
+
+```python
+left = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="left")
+right = DuffingTransmon(freq=5.2, anharmonicity=-0.24, levels=3, label="right")
+bus = Resonator(freq=6.3, levels=4, label="bus")
+bridge = Chip(
+    [left, right, bus],
+    [
+        Capacitive(left, bus, g=0.08, label="left-bus"),
+        Capacitive(right, bus, g=0.08, label="right-bus"),
+    ],
+    frame="rotating",
+    approximation=RWA(),
+)
+
+sw_fold = eliminate(bridge, bus, method="sw")
+exact_fold = eliminate(bridge, bus, method="exact")
+
+fold_comparison = {
+    label: {
+        "full_dressed_ghz": float(bridge.freq(label)),
+        "sw_reduced_ghz": float(sw_fold.chip.freq(label)),
+        "exact_reduced_ghz": float(exact_fold.chip.freq(label)),
+    }
+    for label in ("left", "right")
+}
+
+{
+    "before_devices": tuple(device.label for device in bridge.devices),
+    "after_devices": tuple(device.label for device in sw_fold.chip.devices),
+    "after_couplings": tuple(coupling.label for coupling in sw_fold.chip.couplings),
+    "validity": sw_fold.validity,
+    "frequencies": fold_comparison,
+}
+```
+
+Eliminating a device removes that mode. Eliminating a coupling keeps both
+endpoints and replaces an exchange edge with its diagonal dispersive effect.
+When a shipped retargeting rule applies, control lines move to the effective
+device or edge and retain their labels. If a line would be stranded, the
+transformation raises instead of silently dropping the control.
+
+```python
+dq = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=4, label="dq")
+dr = Resonator(freq=7.0, levels=5, label="dr")
+dispersive_edge = eliminate(
+    Chip([dq, dr], [Capacitive(dq, dr, g=0.05, label="dq-dr")]),
+    "dq-dr",
+)
+
+{
+    "surviving_devices": tuple(device.label for device in dispersive_edge.chip.devices),
+    "effective_coupling_type": type(dispersive_edge.chip.couplings[0]).__name__,
+    "notes": tuple(dispersive_edge.notes),
+}
+```
+
+## Partition independent components
+
+`partition()` is exact. It separates connected components that do not share a
+coupling, non-separable bath, or drive crosstalk. Simulation uses this path
+automatically when the initial state permits it; call it directly to inspect
+or orchestrate the component solves.
+
+```python
+island_qubits = [
+    DuffingTransmon(freq=5.0 + 0.2 * index, anharmonicity=-0.25, levels=3, label=f"i{index}")
+    for index in range(3)
+]
+islands = Chip(
+    island_qubits,
+    [Capacitive(island_qubits[0], island_qubits[1], g=0.005, label="i01")],
+)
+partition = islands.partition()
+
+{
+    "is_trivial": partition.is_trivial,
+    "components": tuple(component.labels for component in partition),
+    "owner_of_i2": partition.owner_of("i2"),
+}
+```
+
+## Fit declared parameters to dressed observables
+
+`fit_a_dress()` also returns a result with `.chip`. Select the parameters that
+may move and state the dressed quantity they must reproduce. This example
+moves one bare qubit frequency while every other declaration stays fixed.
+
+```python
+fit_target_ghz = float(bridge.freq("left")) + 0.01
+fit = fit_a_dress(
+    bridge,
+    observable_targets={"left": {"freq": fit_target_ghz}},
+    fit_parameters={"left": ("freq",)},
+)
+
+{
+    "target_dressed_ghz": fit_target_ghz,
+    "fitted_dressed_ghz": float(fit.chip.freq("left")),
+    "moved_parameters": tuple(fit.final_params),
+}
+```
+
+## Frames, bases, and interoperability
+
+Frames and approximations change how a model is resolved for simulation; they
+do not change the lab-frame dressed spectrum. Pass an override to `resolve()`
+for a one-off inspection, or construct a chip with the intended setting when
+it is part of the model. `dress()` exposes the eigenbasis assignment without
+replacing the chip.
+
+For interoperability, `from_scqubits()` imports supported scqubits devices or
+Hilbert spaces, and `to_scqubits()` exports supported quchip declarations. The
+`quchip[scqubits]` extra is required. Inspect the returned model and its units
+after conversion; interoperability maps represented physics, not arbitrary
+third-party callbacks.
+
+```{code-block} python
+from quchip import from_scqubits, to_scqubits
+
+quchip_model = from_scqubits(scqubits_model)
+round_trip = to_scqubits(quchip_model)
+```
+
+## Compare a larger active patch
 
 A Gaussian pulse drives one end of a four-transmon chain. `active_patch()`
 keeps the driven neighbourhood, folds the two external spectators into the
 surviving chip, and returns the same schedule bound to the reduced model.
 
-The deck shows larger reductions. This notebook applies the same public
-workflow to an 81-state model and reduces it to 9, so the full comparison is
+The next model has 81 states and reduces to 9, so the full comparison remains
 quick to rerun.
 
 The reduction is approximate, so the result includes validity metrics. We use
@@ -244,6 +405,13 @@ figure.savefig(figure_path, dpi=180)
 plt.show()
 ```
 
+```{figure} ../images/reduce_and_replay.png
+:width: 720px
+:alt: Full and active-patch driven-qubit populations with their absolute residual below
+
+The same schedule runs on the 81-state chip and its 9-state active patch.
+```
+
 The receipt records both the approximation's own validity and the independent
 forward comparison.
 
@@ -268,8 +436,13 @@ reduction_receipt = {
 print(f"RESULT reduction={json.dumps(reduction_receipt, sort_keys=True, separators=(',', ':'))}")
 ```
 
-## What to change
-
 Change `hops` to choose how much of the coupling neighbourhood remains
 explicit. Change the spectator detunings or couplings and read the returned
 validity record before trusting the smaller model.
+
+Choose a transformation by the question. Use `with_params()` for new numbers
+on the same structure, `partition()` for exact independent components,
+`eliminate()` for a physical effective model, and `active_patch()` when the
+scheduled experiment should choose the retained neighbourhood. Keep the
+result object until you have inspected its notes, validity, and an observable
+that matters for the next calculation.
