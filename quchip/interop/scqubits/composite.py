@@ -17,8 +17,8 @@ gauge exactly without introducing a second projection path. Importing an
 individual supported device still reconstructs the live differentiable quchip
 model from its circuit parameters.
 
-Scope of v1 (declared, Principle 12): only pairwise ``InteractionTerm``
-products of two operators are translated. Each term's operator matrices are a
+Only pairwise ``InteractionTerm`` products of two operators are translated.
+Each term's operator matrices are a
 frozen snapshot at the source parameter point, so the coupling is not
 differentiable with respect to the source circuit parameters (the same
 frozen-snapshot contract :class:`~quchip.interop.eigenbasis.EigenbasisDevice`
@@ -157,7 +157,7 @@ def _coupling_from_term(
 ) -> Coupling:
     """Transcribe one scqubits ``InteractionTerm`` into a quchip ``Coupling``.
 
-    Rejects the two shapes v1 does not model: string-expression interactions
+    Rejects string-expression interactions
     (``InteractionTermStr``) and products of other than two operators. Both
     raise :class:`NotImplementedError` with a re-expression hint rather than
     importing a partial interaction.
@@ -204,7 +204,7 @@ def import_hilbertspace(hs: Any, **opts: Any) -> Chip:
         The composite system to import.
     **opts
         ``frame`` and ``approximation`` are forwarded to :class:`Chip`.
-        Device-level options are not forwarded in v1: every subsystem imports
+        Device-level options are not forwarded: every subsystem imports
         at its own ``truncated_dim`` and native noise defaults.
 
     Raises
@@ -233,7 +233,7 @@ def import_hilbertspace(hs: Any, **opts: Any) -> Chip:
 def _concrete_strength(value: Any, coupling: Any) -> Any:
     """Return *value* as a concrete scalar, or raise on a JAX tracer.
 
-    Export is eager and terminal (Principle 2): a coupling strength carrying a
+    Export is eager: a coupling strength carrying a
     tracer (inside ``jit``/``grad``) cannot be written into a static scqubits
     object, so it fails here rather than silently dropping the swept value.
     """

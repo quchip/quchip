@@ -106,9 +106,8 @@ class FitADressResult:
     def rebind(self, *seeds: BaseDevice | str) -> Any:
         """Look up the fitted clones matching one or more seed devices.
 
-        ``fit.rebind(qb, tc, cr)`` replaces the
-        ``qb_f = chip.device_map[qb.label]`` triple most tutorials opened
-        with.
+        Use ``fit.rebind(qb, tc, cr)`` to retrieve the fitted clones
+        corresponding to the seed devices.
 
         Parameters
         ----------

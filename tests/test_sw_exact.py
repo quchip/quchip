@@ -1,4 +1,4 @@
-"""Exact-from-dressing reduction route: labeled energies, ZZ, and the collision guard (spec §6.2)."""
+"""Exact-from-dressing reduction: labeled energies, ZZ, and collision handling."""
 
 from __future__ import annotations
 

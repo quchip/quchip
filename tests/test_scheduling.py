@@ -64,7 +64,7 @@ class TestChargeBasic:
     """Basic charge() scheduling and cursor advancement."""
 
     def test_drive_alias_removed(self, single_qubit_chip: Chip) -> None:
-        """QuantumSequence no longer exposes a `drive` alias."""
+        """QuantumSequence does not expose a ``drive`` alias."""
         seq = QuantumSequence(single_qubit_chip)
         assert not hasattr(seq, "drive")
 
@@ -697,9 +697,8 @@ def test_flux_rejects_bias_point_argument(
 def test_schedule_disconnected_drive_raises_clean_error(
     single_qubit_chip: Chip,
 ) -> None:
-    """schedule() on a disconnected ChargeDrive raises ValueError, not AttributeError."""
-    # ChargeDrive defaults its carrier to the target device's drive_freq; the carrier resolver
-    # used to dereference `drive._target.label` before the None-guard, crashing with AttributeError.
+    """schedule() reports an unconnected ChargeDrive with ValueError."""
+    # Carrier resolution validates the connection before reading target metadata.
     seq = QuantumSequence(single_qubit_chip)
     orphan = ChargeDrive(label="orphan")
     with pytest.raises(ValueError, match="unconnected"):

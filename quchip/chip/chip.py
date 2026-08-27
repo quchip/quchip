@@ -772,11 +772,11 @@ class Chip:
         new_ids = {id(bath) for bath in new_baths}
         for bath in self._baths:
             if id(bath) not in new_ids:
-                changes.append(f"baths: - {bath.label} ({bath.recipe})")
+                changes.append(f"baths: - {bath.label} (model={bath.recipe})")
         for bath in new_baths:
             if id(bath) not in old_ids:
                 extra = f", {bath.temperature} mK" if bath.temperature is not None else ""
-                changes.append(f"baths: + {bath.label} ({bath.recipe}{extra})")
+                changes.append(f"baths: + {bath.label} (model={bath.recipe}{extra})")
         self._baths = tuple(new_baths)
 
         for line in changes:
@@ -1049,9 +1049,8 @@ class Chip:
 
         Overloaded: no ``target`` returns the full ``{label: freq}`` dict;
         a single ``target`` (label or device) returns one scalar 0→1
-        frequency. The runtime body is unchanged — under ``jax.jit`` the
-        scalar is a traced 0-d array, so the overload is type-only and
-        does not alter traceability.
+        frequency. Under ``jax.jit`` the scalar is a traced 0-d array; the
+        overload is type-only and preserves traceability.
         """
         return self._analysis.freq(target, when=when)
 

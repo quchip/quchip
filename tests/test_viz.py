@@ -256,7 +256,7 @@ def test_collect_topology_crosstalk_never_resurrects_an_omitted_edge_pump() -> N
 
 
 def test_plot_graph_renders_chip_with_edge_pump_control(tmp_path: Path) -> None:
-    """plot_graph no longer crashes on a chip with an edge-pump (ParametricDrive) control."""
+    """plot_graph supports a chip with an edge-pump control."""
     q0 = qc.DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
     q1 = qc.DuffingTransmon(freq=5.3, anharmonicity=-0.25, levels=3, label="q1")
     coupling = qc.TunableCapacitive(q0, q1, g_0=0.01, label="tc")

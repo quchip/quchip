@@ -1,4 +1,4 @@
-r"""A frozen energy-basis device for third-party models without a quchip recipe."""
+r"""A frozen energy-basis device for third-party models without a native quchip model."""
 
 from __future__ import annotations
 

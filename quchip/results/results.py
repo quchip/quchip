@@ -421,9 +421,8 @@ class SimulationResult:
             return {}
 
         # The check reads the final state into NumPy to inspect Fock-level
-        # populations, which concretizes a traced value. As the default-on
-        # safety net now fires on every solve path, no-op when the state is
-        # traced so JIT/grad through a solve stays intact.
+        # populations, which concretizes a traced value. Skip traced states so
+        # JIT/grad through a solve stays intact.
         from quchip.utils.jax_utils import contains_tracer
 
         if contains_tracer(final):

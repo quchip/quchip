@@ -181,8 +181,8 @@ def transform_collapse(c_full: Any, s: Any, p_mask: Any) -> Any:
     The same rotation that block-diagonalizes ``H`` carries the jump
     operators into the reduced frame; truncating at first order in ``S``
     matches the Hamiltonian's 2nd-order accuracy. The projection is exact
-    for the spectrum but approximate for dissipation — the caller records
-    that honesty note (spec §6.2). Pass the *unit* jump operator and fold
+    for the spectrum but approximate for dissipation; the caller records
+    this approximation in the result notes. Pass the *unit* jump operator and fold
     the rate back in via :func:`purcell_rate_from`.
     """
     c_rotated = c_full + s @ c_full - c_full @ s
@@ -316,9 +316,9 @@ def exact_transform_collapse(c_full: Any, evecs: Any, kept_dressed_indices: Any)
     """``c_eff = P U† c U P`` with ``U`` the labeled eigenvector matrix (dense).
 
     Rotates the jump operator into the dressed basis and keeps the rows and
-    columns of the kept block's assigned dressed states. Exact counterpart of
-    :func:`transform_collapse`; the spectrum-vs-dissipation honesty note is
-    the caller's to record either way.
+    columns of the kept block's assigned dressed states. This is the exact
+    counterpart of :func:`transform_collapse`; the caller records the selected
+    dissipation treatment in the result notes.
     """
     u = jnp.asarray(evecs)
     c_dressed = u.conj().T @ jnp.asarray(c_full) @ u

@@ -1,4 +1,4 @@
-"""Tests for the retarget registry: control lines stranded by eliminate() (spec §6.4)."""
+"""Retarget control lines stranded by eliminate()."""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ def test_flux_drive_on_eliminated_bridge_converts_to_parametric_pump():
     ce = reduced.control_equipment
     assert ce is not None
     (line,) = ce.lines
-    assert line.label == flux.label  # label preserved (spec §6.4)
+    assert line.label == flux.label  # retargeting preserves the line label
     assert isinstance(line, ParametricDrive)
     assert line.target_label == "elim_fc"
 
@@ -205,4 +205,3 @@ def test_three_survivor_replay_compiles_through_stage_two():
     # through the crosstalk path (2 bands each).
     assert tags.count("edge_pump") == 2
     assert tags.count("crosstalk") == 4
-

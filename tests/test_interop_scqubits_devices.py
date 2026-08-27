@@ -257,7 +257,7 @@ def test_export_of_traced_device_raises_value_error():
 
 
 # ---------------------------------------------------------------------------
-# ZeroPi (exact-lane recipe, no native quchip model)
+# ZeroPi (frozen snapshot, no native quchip model)
 # ---------------------------------------------------------------------------
 
 

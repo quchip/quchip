@@ -44,9 +44,9 @@ invalidated deterministically. This machinery — the seed, the
 is owned by the shared :class:`~quchip.utils.state_versioning.StateVersioned`
 mixin; :class:`BaseDevice` only contributes its untracked-name set
 (``label``) and the ``levels`` cache-invalidation hook
-(:meth:`_on_attr_set`). Tracking is switched on automatically exactly once
-after the outermost ``__init__`` returns, so subclasses no longer call
-``_finish_init`` by hand.
+(:meth:`_on_attr_set`). Tracking switches on automatically exactly once
+after the outermost ``__init__`` returns; subclasses do not call
+``_finish_init`` directly.
 
 Auto-labeling
 -------------
@@ -603,8 +603,8 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         are frame-invariant and unaffected either way.
 
         Defaults to :attr:`drive_freq` (the dressed 0->1 frequency), so an
-        unset device co-rotates at its own transition — bit-identical to the
-        prior behavior. Set it to model a control/LO reference that differs
+        unset device co-rotates at its own transition. Set it to model a
+        control/LO reference that differs
         from the qubit frequency (a calibration detuning). It is a *frame /
         readout* reference only: it does **not** detune drives — the drive
         carrier is a separate choice, so a real LO error must also set the

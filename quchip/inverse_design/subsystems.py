@@ -5,9 +5,8 @@ least-squares loop, ``fit_a_dress`` evaluates each target on the
 smallest sub-chip that still contains the relevant physics: the target
 device(s) plus every directly coupled neighbor (one-hop closure).
 
-This is a pragmatic truncation, not a controlled approximation — the
-one-hop neighborhood captures all first-order dispersive effects for
-the target but ignores second-order contributions from non-neighbors.
+The one-hop neighborhood captures first-order dispersive effects for the
+target but omits second-order contributions from non-neighbors.
 Use ``max_hilbert_dim`` in :func:`~quchip.inverse_design.fit.fit_a_dress`
 to control when the fit switches from ``"full"`` to ``"local"``.
 """
