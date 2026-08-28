@@ -40,17 +40,30 @@ Supplying `freq` and `flux_bias` together defines a new calibration anchor,
 independent of mapping order. The operation remains immutable through
 `Chip.with_params()` and differentiable with JAX.
 
+## Chip topology values
+
+`chip.plot_graph()` now separates topology from the values used to annotate
+it. The default `values="bare"` view shows declared device frequencies and
+coupling strengths without diagonalizing the chip. `values="dressed"` shows
+dressed 0-to-1 transitions and full-pull cross-Kerr values, while
+`values="both"` places the declared and dressed quantities side by side. The
+connectivity does not change between these views.
+
 ## From the SQA 2026 talk
 
 The new [post-talk guide](https://docs.quchip.org/guides/from-sqa-2026) links five public-API workflows:
 
 - [Define and inspect a chip](https://docs.quchip.org/guides/defining-and-inspecting-a-chip) starts with a small declaration, then covers dressed fitting, symbolic Hamiltonians, frames, projections, and scqubits conversion.
-- [Statics and parameter studies](https://docs.quchip.org/guides/statics-and-parameter-studies) reproduces the bus-mediated 4.4 MHz avoided crossing and records the counter-rotating bands removed by `RWA()`.
+- [Statics and parameter studies](https://docs.quchip.org/guides/statics-and-parameter-studies) starts with one frequency sweep, resolves a bus-mediated 4.4 MHz avoided crossing, and then compares a public fluxonium model with published spectroscopy and state-dependent readout data.
 - [Dynamics, pulses, and readout](https://docs.quchip.org/guides/dynamics-pulses-and-readout) covers pulse scheduling, open-system simulation, batched initial states, observables, and conditional readout.
-- [Chip transformations](https://docs.quchip.org/guides/chip-transformations) reduces an 81-state scheduled model to a 9-state active patch, reports the elimination validity record, and compares the full and reduced dynamics.
-- [Differentiability](https://docs.quchip.org/guides/differentiability) covers losses through statics, one driven sequence, and multi-sequence analysis, with central-finite-difference checks.
+- [Chip transformations](https://docs.quchip.org/guides/chip-transformations) reduces an 81-state scheduled model to a 9-state active patch, exposes the folded bare-parameter corrections beside retained dressed observables, and compares the full and reduced dynamics.
+- [Differentiability](https://docs.quchip.org/guides/differentiability) covers losses through statics, a fit of published fluxonium spectroscopy, one driven sequence, and multi-sequence analysis, with central-finite-difference checks.
 
-The four paired examples include Markdown source, an executed notebook, a rendered figure, and a machine-readable result receipt. The defining guide executes its shown blocks directly. All five use public quchip APIs and state where the compact documentation model differs from the larger model shown in the talk.
+The four paired examples include Markdown source, an executed notebook,
+rendered figures, and machine-readable result receipts. The defining guide
+executes its shown blocks directly. All five use public quchip APIs; the paper
+comparisons cite the source data and report their residuals rather than merely
+reusing published fit parameters without a check.
 
 ## Compatibility
 
