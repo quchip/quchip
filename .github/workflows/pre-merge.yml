@@ -1,0 +1,35 @@
+name: pre-merge
+
+# Ordinary PR pushes run only the fast ci workflow. This required check fails
+# cheaply until a maintainer adds ready-to-merge to the current PR commit.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  workflow_dispatch:
+
+concurrency:
+  group: pre-merge-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-full:
+    name: pre-merge full suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require an explicit merge attempt
+        if: >-
+          github.event_name == 'pull_request' &&
+          (github.event.action != 'labeled' || github.event.label.name != 'ready-to-merge')
+        run: |
+          echo "::error::Add the ready-to-merge label to run the full suite for this commit."
+          exit 1
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            ci-constraints-*.txt
+      - run: uv venv --python 3.11
+      - run: uv pip install -e '.[test,dynamiqs]' -c ci-constraints-3.11.txt
+      - run: uv run --no-sync pytest

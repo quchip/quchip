@@ -292,7 +292,6 @@ figure.savefig(figure_path, dpi=180)
 plt.show()
 
 print(f"\nnormalized loss: {fit.history[0]:.3e} -> {fit.loss:.3e}")
-print("recorded evaluations:", len(fit.history))
 print("desired chip unchanged:", desired_chip.parameters["q0.freq"] == 5.047559899)
 ```
 
@@ -322,7 +321,6 @@ bare parameters (GHz):
   qq-zz.chi: 0.00164131 -> 0.000800001 [target value; target sign]
 
 normalized loss: 2.595e-01 -> 4.616e-17
-recorded evaluations: 392
 desired chip unchanged: True
 ```
 
