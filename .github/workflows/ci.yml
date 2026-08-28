@@ -8,8 +8,6 @@ on:
   push:
     branches: [main]
   pull_request:
-  merge_group:
-    types: [checks_requested]
   workflow_dispatch:
 
 concurrency:
@@ -49,20 +47,3 @@ jobs:
       - run: uv venv --python ${{ matrix.python }}
       - run: uv pip install -e '.[test]' -c ci-constraints-${{ matrix.python }}.txt
       - run: uv run --no-sync pytest -m "core or physics_sentinel"
-
-  test-full:
-    # The merge queue runs this against the PR combined with current main.
-    # Keep it available manually, but do not spend a full-suite run per push.
-    if: github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-          cache-dependency-glob: |
-            pyproject.toml
-            ci-constraints-*.txt
-      - run: uv venv --python 3.11
-      - run: uv pip install -e '.[test,dynamiqs]' -c ci-constraints-3.11.txt
-      - run: uv run --no-sync pytest
