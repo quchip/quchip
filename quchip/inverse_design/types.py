@@ -162,23 +162,24 @@ class FitADressResult:
         ]
         if self.final_targets:
             lines.append("targets (GHz):")
-            for report in self.final_targets:
+            for target_report in self.final_targets:
                 locator = (
-                    " <-> ".join(str(part) for part in report.label)
-                    if isinstance(report.label, tuple)
-                    else str(report.label)
+                    " <-> ".join(str(part) for part in target_report.label)
+                    if isinstance(target_report.label, tuple)
+                    else str(target_report.label)
                 )
                 lines.append(
-                    f"  {locator}.{report.kind} [{report.source}]: "
-                    f"{report.target:.6g} -> {report.final:.6g} "
-                    f"(error {report.residual:+.2g})"
+                    f"  {locator}.{target_report.kind} [{target_report.source}]: "
+                    f"{target_report.target:.6g} -> {target_report.final:.6g} "
+                    f"(error {target_report.residual:+.2g})"
                 )
         if self.parameter_reports:
             lines.append("bare parameters (GHz):")
-            for report in self.parameter_reports:
-                choice = f"; {report.sign_choice}" if report.sign_choice else ""
+            for parameter_report in self.parameter_reports:
+                choice = f"; {parameter_report.sign_choice}" if parameter_report.sign_choice else ""
                 lines.append(
-                    f"  {report.name}: {report.initial:.6g} -> {report.final:.6g} [{report.seed_source}{choice}]"
+                    f"  {parameter_report.name}: {parameter_report.initial:.6g} -> "
+                    f"{parameter_report.final:.6g} [{parameter_report.seed_source}{choice}]"
                 )
         return "\n".join(lines)
 

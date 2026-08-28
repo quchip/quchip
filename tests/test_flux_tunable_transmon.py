@@ -245,6 +245,8 @@ class TestFluxTunableTransmon:
         import jax
         import jax.numpy as jnp
 
+        pytest.importorskip("dynamiqs")
+
         from quchip import Chip, FluxTunableTransmon
         from quchip.backend.dynamiqs import DynamiqsBackend
 
