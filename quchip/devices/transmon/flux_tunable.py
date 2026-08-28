@@ -1,16 +1,12 @@
 """Symmetric/asymmetric-SQUID flux-tunable transmon.
 
-``freq`` and ``anharmonicity`` are the simulated physics: the calibrated
-local ``0 -> 1`` transition frequency and anharmonicity of the device *at
-the stored* ``flux_bias``. :meth:`FluxTunableTransmon.local_hamiltonian`
-builds the Duffing Hamiltonian from ``freq`` and ``anharmonicity`` alone —
-it does not reference ``flux_bias``. :meth:`FluxTunableTransmon.frequency_at`
-and :meth:`FluxTunableTransmon.flux_for_frequency` answer counterfactual
-questions — what frequency the SQUID would reach at a different bias — via
-the SQUID dispersion relative to this calibrated anchor. Mutating
-``flux_bias`` therefore records a new nominal operating point without
-retuning the device: it does not change ``freq``, ``anharmonicity``, or the
-Hamiltonian.
+``freq`` is the calibrated local ``0 -> 1`` transition at ``flux_bias``.
+Together they anchor a SQUID dispersion. Moving ``flux_bias`` preserves that
+calibration and updates ``freq``, so the local Duffing Hamiltonian follows the
+new operating point. Supplying both ``freq`` and ``flux_bias`` defines a new
+anchor instead. :meth:`FluxTunableTransmon.frequency_at` and
+:meth:`FluxTunableTransmon.flux_for_frequency` inspect the same dispersion
+without changing the device.
 
 **Declared approximations**
 
@@ -67,7 +63,7 @@ Examples
 from __future__ import annotations
 
 import math
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Mapping
 
 import jax.numpy as jnp
 
@@ -141,13 +137,14 @@ class FluxTunableTransmon(FockDevice):
         Calibrated local anharmonicity α in GHz, at the stored
         ``flux_bias``. Must be negative (α ≈ −E_C). May be a JAX tracer.
     flux_bias : float, default 0.0
-        Calibration-anchor operating point Φ/Φ₀. Any real value; the SQUID
-        inversion is undefined only at the symmetric-SQUID degenerate point
-        (``asymmetry == 0`` and ``flux_bias`` a half-integer — see
-        :meth:`validate`). The local Hamiltonian does not reference this
-        value directly — ``freq`` and ``anharmonicity`` already carry it. A
-        pytree leaf, so it is differentiable / sweepable like every other
-        device parameter.
+        Current operating point Φ/Φ₀ and calibration-anchor coordinate. Any
+        real value; the SQUID inversion is undefined only at the
+        symmetric-SQUID degenerate point (``asymmetry == 0`` and
+        ``flux_bias`` a half-integer — see :meth:`validate`). Rebinding this
+        value alone preserves the inferred SQUID calibration and updates
+        ``freq``. Rebinding it together with ``freq`` defines a new anchor. It
+        is a JAX pytree leaf and can be differentiated or swept through the
+        public chip API.
     asymmetry : float, default 0.0
         SQUID junction asymmetry d = (E_{J1}−E_{J2})/(E_{J1}+E_{J2}).
         Must be in [0, 1).
@@ -162,7 +159,12 @@ class FluxTunableTransmon(FockDevice):
 
     _type_prefix: ClassVar[str] = "fluxtunable"
     _default_levels: ClassVar[int] = 3
-    tunable_param_names = ("freq", "anharmonicity")
+    tunable_param_names = ("freq", "anharmonicity", "flux_bias")
+    dressed_fit_target_fields = (
+        ("freq", "freq"),
+        ("anharmonicity", "anharmonicity"),
+    )
+    dressed_fit_param_names = ("freq", "anharmonicity")
     computational = True
     approximation = (
         "Duffing-approximated SQUID transmon; adiabatic flux (calibration-anchor, "
@@ -196,10 +198,45 @@ class FluxTunableTransmon(FockDevice):
         elif name == "flux_bias":
             _check_flux_bias_dispersion(value, self.asymmetry)
 
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Retune the local frequency when the live operating bias changes."""
+        if name == "flux_bias" and getattr(self, "_tracking_enabled", False):
+            _check_flux_bias_dispersion(value, self.asymmetry)
+            frequency = self.frequency_at(value)
+            super().__setattr__("freq", frequency)
+            super().__setattr__("flux_bias", value)
+            return
+        super().__setattr__(name, value)
+
+    def set_parameter_values(self, values: Mapping[str, Any]) -> None:
+        """Apply flux and calibration overrides without mapping-order effects."""
+        remaining = dict(values)
+        if "flux_bias" not in remaining:
+            super().set_parameter_values(remaining)
+            return
+
+        flux_bias = remaining.pop("flux_bias")
+        if "freq" in remaining:
+            frequency = remaining.pop("freq")
+            super().set_parameter_values(remaining)
+            super().__setattr__("flux_bias", flux_bias)
+            super().__setattr__("freq", frequency)
+            return
+
+        super().set_parameter_values(remaining)
+        self.flux_bias = flux_bias
+
+    def tunable_param_bounds(self, name: str, value: float) -> tuple[float, float]:
+        """Use one SQUID period as the default bound for explicit flux fitting."""
+        if name == "flux_bias":
+            return (-0.5, 0.5)
+        return super().tunable_param_bounds(name, value)
+
     def local_hamiltonian(self, op: LocalOps, p: Any) -> PhysicsExpr:
         """Return the Duffing Hamiltonian built from the calibrated freq and anharmonicity.
 
-        ``H = ω n + (α/2) n(n − I)``. Does not reference ``flux_bias``.
+        ``H = ω n + (α/2) n(n − I)``. Rebinding ``flux_bias`` first updates
+        the stored ``freq`` through the anchored SQUID dispersion.
         """
         return duffing_expr(op, p.freq, p.anharmonicity)
 

@@ -189,16 +189,19 @@ def test_bare_string_value_raises() -> None:
         _resolve_fit_parameters(chip, {q: "freq"})
 
 
-def test_underdetermined_fit_warns_and_records_solver_info_receipt() -> None:
-    """An underdetermined-by-count fit warns and records the three identifiability receipt fields."""
+def test_desired_chip_defaults_balance_targets_and_parameters() -> None:
+    """Component policies give the common desired chip one target per free parameter."""
     _, _, _, chip = _simple_chip()
 
-    with pytest.warns(UserWarning, match="underdetermined by count"):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
         result = fit_a_dress(chip)
 
+    assert not any("underdetermined" in str(w.message) for w in caught)
     assert result.solver_info["n_free_parameters"] == 4
-    assert result.solver_info["n_target_residuals"] == 3
-    assert result.solver_info["underdetermined_by_count"] is True
+    assert result.solver_info["n_target_residuals"] == 4
+    assert result.solver_info["underdetermined_by_count"] is False
+    assert result.solver_info["input_contract"] == "desired-chip"
 
 
 def test_count_sufficient_fit_does_not_warn() -> None:

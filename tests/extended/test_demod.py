@@ -544,7 +544,7 @@ def test_list_value_mixed_with_scalar(backend) -> None:
     assert isinstance(result._expect_data["r"], list)
     assert len(result._expect_data["r"]) == 2
 
-    # "q" was scalar → array output (backwards compat)
+    # A scalar operator produces one ObservableTrace.
     assert not isinstance(result._expect_data["q"], list)
     assert isinstance(result._expect_data["q"], ObservableTrace)
     assert result._expect_data["q"].values.shape == tlist.shape

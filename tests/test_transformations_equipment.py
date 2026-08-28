@@ -1,4 +1,4 @@
-"""eliminate() carries the control plane into the reduced chip (spec §6.4)."""
+"""eliminate() carries the control plane into the reduced chip."""
 
 from __future__ import annotations
 

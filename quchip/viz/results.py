@@ -273,8 +273,8 @@ def _resolved_candidate_keys(entry: Any) -> list[Any]:
     element-wise for tuples (so a device-object correlator key like
     ``(q0, q1)`` resolves to ``("q0", "q1")``), or directly otherwise.
     ``resolve_label`` raises ``TypeError`` on values it cannot resolve
-    (e.g. the trailing integer of a ``(key, index)`` selector) — that
-    candidate is simply skipped rather than propagating.
+    (e.g. the trailing integer of a ``(key, index)`` selector); that
+    candidate is skipped.
     """
     candidates = [entry]
     try:

@@ -16,12 +16,15 @@
 
 <p align="center">
   <a href="https://pypi.org/project/quchip/"><img src="https://img.shields.io/pypi/v/quchip" alt="PyPI version"></a>
+  <a href="#project-status-and-contributing"><img src="https://img.shields.io/badge/status-alpha-orange" alt="Project status: alpha"></a>
   <a href="https://pypi.org/project/quchip/"><img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11 or newer"></a>
   <a href="https://github.com/quchip/quchip/actions/workflows/ci.yml"><img src="https://github.com/quchip/quchip/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
   <a href="https://docs.quchip.org"><img src="https://github.com/quchip/quchip/actions/workflows/docs.yml/badge.svg?branch=main" alt="Documentation build status"></a>
 </p>
 
 `quchip` is an open-source Python toolkit for modelling superconducting quantum chips.
+
+**Development status:** quchip is currently an alpha-stage 0.x release. Minor releases may refine public APIs; pin an exact version for reproducible work.
 
 A predictive chip model needs more than a Hamiltonian: device physics, control-line transformations, frames and approximations, dissipation, and measured observables all belong to it. quchip represents each part explicitly. Line properties such as gain, delay, and crosstalk belong to the control chain, not to Hamiltonian terms written by hand.
 
@@ -102,21 +105,19 @@ The complete example derives short and selective nominal-pi Gaussian drives from
 
 ![Conditional resonator IQ paths with emphasized final points](https://raw.githubusercontent.com/quchip/quchip/main/docs/images/hello_dispersive_readout_iq.png)
 
-The complete walkthrough is available in the [documentation](https://docs.quchip.org/examples/hello-chip).
+The complete walkthrough is available in the [dynamics guide](https://docs.quchip.org/guides/dynamics-pulses-and-readout).
 
 ## Examples
 
-- [From the SQA 2026 talk](https://docs.quchip.org/guides/from-sqa-2026): follow the presentation from dressed statics and pulse-level dynamics through model reduction and checked derivatives.
-- [Resolve and sweep a chip](https://docs.quchip.org/examples/resolve-and-sweep): reproduce the talk's bus-mediated avoided crossing and inspect the four dropped RWA bands.
-- [Hello, drive and readout](https://docs.quchip.org/examples/hello-chip): compare qubit-drive leakage, then resolve pulse-level dispersive readout on the same chip.
-- [Reduce and replay a chip](https://docs.quchip.org/examples/reduce-and-replay): run a compact active-patch reduction, inspect its validity, and compare the full and reduced dynamics.
-- [Differentiate a driven chip](https://docs.quchip.org/examples/differentiate-a-driven-chip): reproduce the talk's pulse-amplitude, Gaussian-shape, and detuning derivatives, then check them with finite differences.
-- [Cookbook](https://docs.quchip.org/cookbook): practical conventions and task recipes.
+- [From the SQA 2026 talk](https://docs.quchip.org/guides/from-sqa-2026): five runnable entry points, from defining a chip through differentiating it.
+- [Statics and parameter studies](https://docs.quchip.org/guides/statics-and-parameter-studies): read dressed observables, sweep parameters, and track assignments through an avoided crossing.
+- [Dynamics, pulses, observables, and readout](https://docs.quchip.org/guides/dynamics-pulses-and-readout): build pulse schedules, batch experiments, inspect states, and simulate a resonator response.
+- [Chip transformations](https://docs.quchip.org/guides/chip-transformations): rebind, serialize, partition, eliminate, fit, and replay reduced models.
+- [Differentiability](https://docs.quchip.org/guides/differentiability): differentiate static and dynamic losses, fit a published fluxonium spectrum, and combine shared-parameter experiments.
+- [Cookbook](https://docs.quchip.org/cookbook): conventions for writing and using quchip examples.
 - [Extension guide](https://docs.quchip.org/extensions): author devices, couplings, time-dependent terms, drives, envelopes, dissipation, local spaces, and interop mappings.
 
 ## Project status and contributing
-
-`quchip` is under active development. While it remains in 0.x, minor releases may refine public APIs; see the [changelog](https://github.com/quchip/quchip/blob/main/CHANGELOG.md).
 
 Report bugs and model requests through [GitHub Issues](https://github.com/quchip/quchip/issues). Use [Discussions](https://github.com/quchip/quchip/discussions) for questions and open-ended proposals. See the [contributing guide](https://github.com/quchip/quchip/blob/main/CONTRIBUTING.md) before making code or physics changes.
 

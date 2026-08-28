@@ -44,9 +44,9 @@ invalidated deterministically. This machinery — the seed, the
 is owned by the shared :class:`~quchip.utils.state_versioning.StateVersioned`
 mixin; :class:`BaseDevice` only contributes its untracked-name set
 (``label``) and the ``levels`` cache-invalidation hook
-(:meth:`_on_attr_set`). Tracking is switched on automatically exactly once
-after the outermost ``__init__`` returns, so subclasses no longer call
-``_finish_init`` by hand.
+(:meth:`_on_attr_set`). Tracking switches on automatically exactly once
+after the outermost ``__init__`` returns; subclasses do not call
+``_finish_init`` directly.
 
 Auto-labeling
 -------------
@@ -87,7 +87,7 @@ import copy
 import weakref
 from abc import ABC, abstractmethod
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Mapping, TypeVar
 
 import jax.numpy as jnp
 
@@ -311,6 +311,19 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
     #: ``("E_C", "E_J", "E_L", "phi_ext")``.
     tunable_param_names: ClassVar[tuple[str, ...]] = ()
 
+    #: ``(dressed_observable, declared_field)`` pairs used when this device
+    #: appears in the desired-chip form of ``fit_a_dress``.  Empty means that
+    #: the model makes no automatic dressed-target claim; circuit-level models
+    #: can remain fixed until the user supplies explicit constraints.
+    dressed_fit_target_fields: ClassVar[tuple[tuple[str, str], ...]] = ()
+
+    #: Bare parameters normally varied to reproduce
+    #: :attr:`dressed_fit_target_fields`. This remains separate from
+    #: :attr:`tunable_param_names`: a model may expose parameters for sweeps
+    #: without claiming that inverse design can identify all of them from its
+    #: default dressed observables.
+    dressed_fit_param_names: ClassVar[tuple[str, ...]] = ()
+
     # A device's ``label`` is identity metadata, not a physics parameter, so
     # rebinding it must not invalidate engine caches. Everything else public is
     # tracked. (``levels`` is tracked *and* triggers the cache hook below.)
@@ -428,6 +441,22 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         """
         return {name: getattr(self, name) for name in self.tunable_param_names}
 
+    def default_dressed_targets(self) -> dict[str, Any]:
+        """Return declared numbers interpreted as dressed-fit targets.
+
+        This hook reads component fields and never diagonalizes a chip. A
+        device class opts in by declaring
+        :attr:`dressed_fit_target_fields`.
+        """
+        return {
+            observable: getattr(self, field)
+            for observable, field in self.dressed_fit_target_fields
+        }
+
+    def default_fit_parameters(self) -> tuple[str, ...]:
+        """Return the conservative bare-parameter selection for default targets."""
+        return self.dressed_fit_param_names
+
     def set_tunable_param(self, name: str, value: Any) -> None:
         """Update a bare parameter named in :meth:`tunable_params`.
 
@@ -517,6 +546,16 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
             return
         raise KeyError(name)
 
+    def set_parameter_values(self, values: Mapping[str, Any]) -> None:
+        """Apply a group of local parameter values on an isolated device copy.
+
+        The default is equivalent to repeated :meth:`set_parameter_value`
+        calls. Devices with coupled parameter semantics may override this hook
+        so the result does not depend on mapping order.
+        """
+        for name, value in values.items():
+            self.set_parameter_value(name, value)
+
     def _attach_chip(self, chip: "Chip") -> None:
         """Register *chip* as an owner for context-dependent device properties."""
         self._owner_chips.add(chip)
@@ -603,8 +642,8 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         are frame-invariant and unaffected either way.
 
         Defaults to :attr:`drive_freq` (the dressed 0->1 frequency), so an
-        unset device co-rotates at its own transition — bit-identical to the
-        prior behavior. Set it to model a control/LO reference that differs
+        unset device co-rotates at its own transition. Set it to model a
+        control/LO reference that differs
         from the qubit frequency (a calibration detuning). It is a *frame /
         readout* reference only: it does **not** detune drives — the drive
         carrier is a separate choice, so a real LO error must also set the

@@ -85,6 +85,12 @@ class BaseCoupling(StateVersioned, Registrable, ABC, registry_root=True):
     # :class:`~quchip.chip.couplings.TunableCapacitive`.
     reduces_to_crosskerr: ClassVar[bool] = False
 
+    #: Observable represented by this coupling's declared scalar when the
+    #: enclosing chip is passed to ``fit_a_dress`` as a dressed
+    #: specification. Concrete coupling models override this when their
+    #: inverse-design quantity is a dressed interaction observable.
+    default_fit_observable: ClassVar[str] = "coupling_strength"
+
     # The endpoint device references are structural — a rebinding during
     # ``copy()`` is not a physics change — so they must not bump state_version.
     # Mutation tracking, the seed, ``state_version`` and ``_finish_init`` are
@@ -200,6 +206,14 @@ class BaseCoupling(StateVersioned, Registrable, ABC, registry_root=True):
         overrides this.
         """
         setattr(self, self.coupling_strength_name, value)
+
+    def default_dressed_target(self) -> tuple[str, Any]:
+        """Return this edge's component-owned inverse-design constraint.
+
+        The value is read directly from the declared coupling scalar.  No
+        chip-level observable is evaluated here.
+        """
+        return self.default_fit_observable, self.coupling_strength
 
     @abstractmethod
     def interaction_hamiltonian(self) -> Operator:

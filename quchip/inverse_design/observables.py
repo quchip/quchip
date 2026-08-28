@@ -1,12 +1,8 @@
-"""Target-spec construction for ``fit_a_dress``.
+"""Target compilation for :func:`quchip.fit_a_dress`.
 
-The fit takes two independent target channels from the user
-(``coupling_targets``, ``observable_targets``) and merges them with
-each device's *current* ``freq``/``anharmonicity`` — which act as
-default anchors — into a single flat tuple of :class:`TargetSpec`
-records. Explicit observable targets always override same-``(kind,
-label)`` device defaults; couplings contribute a target only when
-listed in ``coupling_targets``.
+The desired-chip path reads component-declared numbers without dressing the
+input chip. The deprecated compatibility path remains separate so its
+seed-and-target semantics are not silently reinterpreted during migration.
 """
 
 from __future__ import annotations
@@ -15,6 +11,20 @@ from dataclasses import dataclass
 from typing import Any
 
 from quchip.utils.labeling import resolve_label
+
+
+_DRESSED_KIND_ALIASES = {
+    "g": "coupling_strength",
+    "coupling_strength": "coupling_strength",
+    "chi": "cross_kerr",
+    "cross_kerr": "cross_kerr",
+    "static_zz": "cross_kerr",
+    "zz": "cross_kerr",
+    "exchange": "exchange_rate",
+    "exchange_rate": "exchange_rate",
+    "freq": "freq",
+    "anharmonicity": "anharmonicity",
+}
 
 
 @dataclass(frozen=True)
@@ -31,11 +41,90 @@ class TargetSpec:
         that locates this target on the chip.
     target
         Desired value in GHz.
+    source
+        Where the target came from: ``"component default"``, ``"explicit"``,
+        or ``"legacy"`` for the deprecated compatibility contract.
     """
 
     kind: str
     label: Any
     target: float
+    source: str = "legacy"
+
+
+def _normalize_dressed_kind(kind: object) -> str:
+    """Return the canonical desired-chip observable name for *kind*."""
+    name = str(kind)
+    try:
+        return _DRESSED_KIND_ALIASES[name]
+    except KeyError as exc:
+        available = sorted(set(_DRESSED_KIND_ALIASES.values()))
+        raise ValueError(f"Unknown dressed constraint {name!r}. Available canonical names: {available}.") from exc
+
+
+def _resolve_target_locator(locator: Any) -> Any:
+    """Normalize a component or pair locator without evaluating a chip."""
+    if isinstance(locator, tuple):
+        if len(locator) != 2:
+            raise ValueError(f"Pair constraints require exactly two device objects or labels, got {locator!r}.")
+        return tuple(resolve_label(part) for part in locator)
+    return resolve_label(locator)
+
+
+def build_dressed_target_specs(
+    chip,
+    constraints: dict | None = None,
+) -> tuple[TargetSpec, ...]:
+    """Compile a desired chip's declared numbers into dressed constraints.
+
+    Unlike :func:`build_target_specs`, this desired-chip path never calls a
+    dressed-analysis method on ``chip``. Devices and couplings provide their
+    component-owned defaults; explicit constraints extend those defaults,
+    replace the same ``(kind, locator)`` entry, or remove it with ``None``.
+
+    Parameters
+    ----------
+    chip
+        Numerical desired-chip specification.
+    constraints
+        Optional ``{component_or_pair: {observable: value_or_none}}`` mapping.
+        Pair locators need not correspond to a direct coupling edge.
+    """
+    keyed: dict[tuple[str, Any], TargetSpec] = {}
+
+    for device in chip.devices:
+        for kind, value in device.default_dressed_targets().items():
+            canonical = _normalize_dressed_kind(kind)
+            spec = TargetSpec(canonical, device.label, float(value), "component default")
+            keyed[(spec.kind, spec.label)] = spec
+
+    for coupling in chip.couplings:
+        kind, value = coupling.default_dressed_target()
+        canonical = _normalize_dressed_kind(kind)
+        spec = TargetSpec(canonical, coupling.label, float(value), "component default")
+        keyed[(spec.kind, spec.label)] = spec
+
+    if constraints is None:
+        return tuple(keyed.values())
+    if not isinstance(constraints, dict):
+        raise TypeError(f"constraints must be None or a dict, got {type(constraints).__name__}")
+
+    for raw_locator, metrics in constraints.items():
+        locator = _resolve_target_locator(raw_locator)
+        if not isinstance(metrics, dict):
+            raise TypeError(
+                "constraints values must be dicts mapping observable names to "
+                f"numeric values or None, got {type(metrics).__name__} for {locator!r}."
+            )
+        for raw_kind, value in metrics.items():
+            kind = _normalize_dressed_kind(raw_kind)
+            key = (kind, locator)
+            if value is None:
+                keyed.pop(key, None)
+            else:
+                keyed[key] = TargetSpec(kind, locator, float(value), "explicit")
+
+    return tuple(keyed.values())
 
 
 def infer_coupling_mode(coupling, override: str | None = None) -> str:
@@ -113,9 +202,7 @@ def _coerce_explicit_target_specs(observable_targets: dict | None) -> tuple[Targ
                 "observable_targets values must be dicts mapping observable kinds to numeric targets, "
                 f"got {type(metrics).__name__}"
             )
-        resolved_key = (
-            tuple(resolve_label(part) for part in key) if isinstance(key, tuple) else resolve_label(key)
-        )
+        resolved_key = tuple(resolve_label(part) for part in key) if isinstance(key, tuple) else resolve_label(key)
         for kind, target in metrics.items():
             specs.append(TargetSpec(str(kind), resolved_key, float(target)))
     return tuple(specs)

@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 import jax.numpy as jnp
+import jax.tree_util as jtu
 import numpy as np
 
 from quchip.backend import EigensystemData, Operator, State, _backend_context
@@ -140,6 +141,62 @@ class DressedResult:
                 "eigenstates are unavailable."
             )
         return self._eigensystem.eigenstates
+
+
+@dataclass(frozen=True)
+class KerrMatrix:
+    """Labeled dressed self-Kerr and cross-Kerr coefficients in GHz.
+
+    ``labels`` follows chip device order. ``values`` is a real symmetric
+    square array: diagonal entries are dressed anharmonicities and
+    off-diagonal entries are full-pull cross-Kerr shifts.
+    """
+
+    labels: tuple[str, ...]
+    values: Any
+
+    def __post_init__(self) -> None:
+        labels = tuple(self.labels)
+        if not all(isinstance(label, str) for label in labels):
+            raise TypeError("KerrMatrix labels must be strings.")
+        if len(set(labels)) != len(labels):
+            raise ValueError(f"KerrMatrix labels must be unique, got {labels!r}.")
+
+        values = jnp.asarray(self.values)
+        expected_shape = (len(labels), len(labels))
+        if values.shape != expected_shape:
+            raise ValueError(f"KerrMatrix values shape must be {expected_shape}, got {values.shape}.")
+        if jnp.iscomplexobj(values):
+            raise ValueError("KerrMatrix values must be real.")
+        symmetric = maybe_concrete_scalar(
+            jnp.allclose(values, values.T, rtol=0.0, atol=0.0, equal_nan=True)
+        )
+        if symmetric is not None and not bool(symmetric):
+            raise ValueError("KerrMatrix values must be symmetric.")
+
+        object.__setattr__(self, "labels", labels)
+        object.__setattr__(self, "values", values)
+
+    def _index(self, device: str | BaseDevice) -> int:
+        label = resolve_label(device)
+        try:
+            return self.labels.index(label)
+        except ValueError:
+            raise KeyError(f"Unknown KerrMatrix label {label!r}. Available labels: {self.labels}.") from None
+
+    def __getitem__(self, key: tuple[str | BaseDevice, str | BaseDevice]) -> Any:
+        """Return one coefficient by device object or label on each axis."""
+        if not isinstance(key, tuple) or len(key) != 2:
+            raise TypeError("KerrMatrix lookup requires two devices: matrix[a, b].")
+        row, column = key
+        return self.values[self._index(row), self._index(column)]
+
+
+jtu.register_pytree_node(
+    KerrMatrix,
+    lambda matrix: ((matrix.values,), matrix.labels),
+    lambda labels, children: KerrMatrix(labels=labels, values=children[0]),
+)
 
 
 class ChipAnalysis:
@@ -890,14 +947,74 @@ class ChipAnalysis:
         >>> chip = Chip([q0, q1], couplings=[Capacitive(q0, q1, g=0.02)])
         >>> zz = chip.dispersive_shift(q0, q1)  # residual ZZ in GHz
         """
+        index_a, _ = self._chip._resolve_device_index(device_a)
+        index_b, _ = self._chip._resolve_device_index(device_b)
         eigenvalues, _, _, kernel_labeling = self._compute_array_labeled()
-        precomputed = (eigenvalues, kernel_labeling)
+        return self._kerr_entry(
+            index_a,
+            index_b,
+            eigenvalues=eigenvalues,
+            labeling=kernel_labeling,
+        )
 
-        def e(a: int, b: int) -> Any:
-            label = self._label_from_plain_mapping({device_a: a, device_b: b})
-            return self._eigenvalue_of_label(label, precomputed=precomputed)
+    def _kerr_entry(
+        self,
+        index_a: int,
+        index_b: int,
+        *,
+        eigenvalues: Any,
+        labeling: Labeling,
+    ) -> Any:
+        """Evaluate one dressed Kerr coefficient from a labeled eigensystem."""
+        n_devices = len(self._chip.devices)
+        if not 0 <= index_a < n_devices or not 0 <= index_b < n_devices:
+            raise IndexError(f"Kerr matrix indices must be in [0, {n_devices}), got {(index_a, index_b)}.")
 
-        return e(1, 1) - e(1, 0) - e(0, 1) + e(0, 0)
+        precomputed = (eigenvalues, labeling)
+        ground = (0,) * n_devices
+
+        def energy(*excitations: tuple[int, int]) -> Any:
+            label = list(ground)
+            for index, level in excitations:
+                label[index] = level
+            return self._eigenvalue_of_label(tuple(label), precomputed=precomputed)
+
+        e0 = energy()
+        if index_a == index_b:
+            if self._semantic_dims()[index_a] < 3:
+                dtype = jnp.real(jnp.asarray(eigenvalues)).dtype
+                return jnp.asarray(jnp.nan, dtype=dtype)
+            return energy((index_a, 2)) - 2.0 * energy((index_a, 1)) + e0
+
+        return energy((index_a, 1), (index_b, 1)) - energy((index_a, 1)) - energy((index_b, 1)) + e0
+
+    def kerr_matrix(self) -> KerrMatrix:
+        """Return the dressed self-Kerr and cross-Kerr matrix in GHz.
+
+        Labels and axes follow chip device order. Diagonal entries are dressed
+        anharmonicities; an entry is ``NaN`` when that device has fewer than
+        three resolved levels. Off-diagonal entries use the full-pull
+        ``E11 - E10 - E01 + E00`` convention.
+        """
+        eigenvalues, _, _, labeling = self._compute_array_labeled()
+        n_devices = len(self._chip.devices)
+        dtype = jnp.real(jnp.asarray(eigenvalues)).dtype
+        values = jnp.zeros((n_devices, n_devices), dtype=dtype)
+
+        for row in range(n_devices):
+            for column in range(row, n_devices):
+                entry = jnp.real(
+                    self._kerr_entry(
+                        row,
+                        column,
+                        eigenvalues=eigenvalues,
+                        labeling=labeling,
+                    )
+                )
+                values = values.at[row, column].set(entry)
+                values = values.at[column, row].set(entry)
+
+        return KerrMatrix(labels=self._device_labels(), values=values)
 
     def effective_subspace_hamiltonian(
         self,
@@ -952,14 +1069,14 @@ class ChipAnalysis:
 
     def dressed_anharmonicity(self, device: str | BaseDevice) -> float:
         """Dressed anharmonicity (GHz): ``E_2 − 2·E_1 + E_0``, others grounded."""
+        index, _ = self._chip._resolve_device_index(device)
         eigenvalues, _, _, kernel_labeling = self._compute_array_labeled()
-        precomputed = (eigenvalues, kernel_labeling)
-
-        def e(n: int) -> Any:
-            label = self._label_from_plain_mapping({device: n})
-            return self._eigenvalue_of_label(label, precomputed=precomputed)
-
-        return e(2) - 2.0 * e(1) + e(0)
+        return self._kerr_entry(
+            index,
+            index,
+            eigenvalues=eigenvalues,
+            labeling=kernel_labeling,
+        )
 
     def transition_frequency(
         self,

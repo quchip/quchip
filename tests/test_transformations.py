@@ -314,7 +314,7 @@ def test_eliminate_unknown_method_raises_value_error():
 
 
 def test_registry_apparatus_is_gone():
-    """The analytic elimination-rule registry is deleted; no legacy shim remains."""
+    """Deprecated analytic-registry symbols are not exposed."""
     import quchip
 
     assert not hasattr(quchip, "register_elimination_rule")
@@ -494,7 +494,7 @@ def test_eliminate_coupling_target_capacitive_lamb_shifts_both_endpoints():
 
 
 def test_eliminate_coupling_target_tunable_capacitive_reports_validity():
-    """Coupling-target elimination of a TunableCapacitive reports non-empty validity (previously empty)."""
+    """Tunable-capacitive elimination reports validity metrics."""
     from quchip.chip.transformations import eliminate
 
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")

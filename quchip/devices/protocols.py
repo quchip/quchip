@@ -9,8 +9,8 @@ attached operator.
 These Protocols are :func:`typing.runtime_checkable` so that
 ``isinstance(device, ChargeCoupled)`` works at runtime. A device
 conforms by defining the named method — no explicit subclassing
-required (matches :class:`~quchip.interop.eigenbasis.EigenbasisDevice`
-and any future third-party device).
+required. This includes
+:class:`~quchip.interop.eigenbasis.EigenbasisDevice` and external devices.
 
 The accessors follow the common operator extension contract: symbolic
 expressions are preferred, while matrices and pure JAX callables remain
@@ -56,9 +56,8 @@ class PhaseCoupled(Protocol):
 class FluxCoupled(Protocol):
     """Device exposes the physical flux-line coupling operator.
 
-    For a fluxonium this is :math:`\\hat\\varphi`; for a
-    flux-tunable transmon (future follow-up) it will be a flux-modulated
-    term. Used by :class:`~quchip.control.drive.FluxDrive`.
+    For a fluxonium this is :math:`\\hat\\varphi`. Used by
+    :class:`~quchip.control.drive.FluxDrive`.
     """
 
     def flux_coupling_operator(self) -> Operator:

@@ -11,6 +11,9 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+]
 dependencies = [
     "numpy",
     "qutip>=5.0",
@@ -49,6 +52,9 @@ markers = [
     "examples: freshness and receipt coverage for the shipped examples",
     "optional_backend: tests that require the dynamiqs optional backend",
     "viz: visualization coverage",
+]
+filterwarnings = [
+    "ignore:coupling_targets=, observable_targets=, and fit_parameters= are deprecated since quchip 0\\.2\\.1:DeprecationWarning",
 ]
 
 [tool.setuptools.packages.find]

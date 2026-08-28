@@ -1,4 +1,4 @@
-"""ParametricDrive wiring surface (spec §4.3)."""
+"""ParametricDrive wiring behavior."""
 
 from __future__ import annotations
 

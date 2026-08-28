@@ -1,4 +1,4 @@
-"""Coupling label access on Chip (spec §4.1 refinement: label-space targets)."""
+"""Coupling label access on Chip."""
 
 from __future__ import annotations
 

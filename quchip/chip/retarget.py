@@ -1,4 +1,4 @@
-"""Retarget registry: convert control lines stranded by ``eliminate()`` (spec §6.4).
+"""Retarget registry for control lines stranded by ``eliminate()``.
 
 A control line whose target has no image in the reduced model — its device
 was eliminated, or its coupling touched the eliminated mode — would

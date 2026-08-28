@@ -163,8 +163,8 @@ def assign_global_greedy(
 
     At each step, finds the ``(label, dressed_idx)`` pair with the highest
     remaining overlap, assigns it, and masks out that label's row and that
-    column so neither is reused. Equivalent to the legacy Python
-    ``sorted+set+dict`` path but pure JAX.
+    column so neither is reused. This pure-JAX implementation assigns each
+    label and dressed index at most once.
 
     Margins are computed from the *unmasked* overlap matrix, so they
     describe per-label confidence independent of assignment order.
@@ -227,8 +227,9 @@ def assign_rowwise_greedy(
     largest *remaining* entry, whereas this visits rows in (original) row-max
     order. In exactly that regime the assignment is intrinsically ambiguous and
     ``Chip.dress`` already warns that bare labels are approximate.
-    Pass ``policy=assign_global_greedy`` to :func:`label_eigensystem` for exact
-    legacy semantics. Row-max ties are broken by ascending index (``argsort``).
+    Pass ``policy=assign_global_greedy`` to :func:`label_eigensystem` for
+    global-greedy ordering. Row-max ties are broken by ascending index
+    (``argsort``).
 
     Margins (``top1 - top2`` per label) come from the *unmasked* matrix via
     ``top_k``, so they match :func:`assign_global_greedy`'s margins and avoid a
@@ -274,11 +275,9 @@ def _labeling_arrays(
     """JIT-compiled numeric core: ``overlaps -> (indices, chosen, margins, duplicates)``.
 
     The assignment policy runs a ``lax.scan`` (global-greedy) or sort
-    (argmax). Executed **eagerly** — as it was when this lived inline in
-    :func:`label_eigensystem` — every primitive of that scan dispatches
-    one-at-a-time through JAX, costing ~30 ms for a modest Hilbert space
-    even though the arithmetic is trivial. Wrapping the core in
-    :func:`jax.jit` fuses the whole scan into a single compiled XLA call
+    (argmax). Without JIT, every primitive of that scan dispatches separately
+    through JAX, costing ~30 ms for a modest Hilbert space. Wrapping the core
+    in :func:`jax.jit` fuses the whole scan into a single compiled XLA call
     (compiled once per ``(shape, policy)`` and cached for the session),
     which is the dominant cost of the eager dressing path
     (``Chip.state``/``Chip.freq``/``Chip.dress``).
@@ -348,8 +347,8 @@ def track_path(
 
     Step 0 is labeled against ``initial_reference``. For each subsequent
     step, the reference becomes the *previous step's selected eigvecs*
-    (an :class:`EigenstateReference`). This is SuperGrad's continuation
-    trick generalized: the path is a stacked eigvec tensor (typically the
+    (an :class:`EigenstateReference`). This continuation method accepts a
+    stacked eigvec tensor (typically the
     output of ``vmap(eigh)`` over a parameter grid), so it composes with
     any JAX-side parameter sweep.
 

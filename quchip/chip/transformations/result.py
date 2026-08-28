@@ -25,8 +25,7 @@ class ChipTransform(Protocol):
 
 
 class _HasFreq(Protocol):
-    """Typing-only view of the ``freq`` attribute every concrete BaseDevice subclass
-    declares (devices/base.py contract point 2), but BaseDevice itself does not."""
+    """Typing-only view of ``freq`` on concrete device subclasses."""
 
     freq: Any
 
@@ -124,7 +123,7 @@ class EliminationResult:
         lamb_shift`` and ``T1_before`` from ``purcell_rate`` are exact
         identities of how :func:`eliminate` derives ``freq_after``/``T1``, not
         an approximation. Multi-survivor targets add the emitted exchange edge
-        (Yan-formula tag) and a ZZ line (placeholder under ``method="sw"``,
+        (Yan-formula tag) and a ZZ line (unavailable under ``method="sw"``,
         the exact residual under ``method="exact"``); any control-line
         retarget and the per-coupling validity verdict follow. Traced
         parameters render as ``<traced>`` and are never concretized; for use

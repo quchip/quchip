@@ -1,12 +1,9 @@
 """Schedule-aware active-patch reduction: eliminate spectators, keep the driven patch.
 
-The activity analysis is structural — scheduled targets plus ``hops``
-coupling-graph steps. Amplitudes, detunings, and rigorous error bounds are
-declared out-of-scope refinements; the honesty signal is the per-step
-Schrieffer-Wolff validity carried on the result, plus a ``UserWarning`` (see
-:func:`_warn_on_poor_validity`) raised at fold time for any step whose
-validity comes back poor — the reduction still proceeds, but the caller is
-told which fold to distrust.
+The activity analysis uses scheduled targets plus ``hops`` coupling-graph
+steps. It does not rank devices by amplitude, detuning, or an error bound.
+The result records per-step Schrieffer-Wolff validity, and
+:func:`_warn_on_poor_validity` emits a ``UserWarning`` for a poor fold.
 """
 
 from __future__ import annotations
@@ -85,9 +82,8 @@ def _line_targets(chip: "Chip", line: Any) -> tuple[str, ...]:
 def _warn_on_poor_validity(step: "EliminationResult", target: str) -> None:
     """Warn (never raise) when a fold's Schrieffer-Wolff validity is poor.
 
-    Honesty signal for :func:`active_patch`: the reduction proceeds
-    regardless, but a poor ``g/Δ`` means that step's folded physics is a
-    weaker approximation than usual. ``is_valid`` may be a *traced* JAX
+    The reduction proceeds regardless, but a poor ``g/Δ`` indicates low
+    approximation quality for that fold. ``is_valid`` may be a *traced* JAX
     boolean when ``eliminate`` runs under ``jit``/``grad``
     (:class:`~quchip.chip.transformations.result.EliminationResult`'s
     ``validity`` docstring) — branching a Python ``if`` on a tracer would
@@ -103,7 +99,7 @@ def _warn_on_poor_validity(step: "EliminationResult", target: str) -> None:
             warnings.warn(
                 f"active_patch: eliminating '{target}' folds coupling '{coupling_label}' with "
                 f"poor Schrieffer-Wolff validity (g/Δ={g_over_delta!r}, needs < 0.1); proceeding "
-                "anyway — treat this step's effective_params/validity as a weaker approximation.",
+                "anyway — inspect this step's effective_params and validity before use.",
                 UserWarning,
                 stacklevel=2,
             )
@@ -111,7 +107,7 @@ def _warn_on_poor_validity(step: "EliminationResult", target: str) -> None:
 
 @dataclass(frozen=True)
 class ActivePatchResult:
-    """A reduced patch chip, the re-bound sequence, and the reduction's honesty record.
+    """A reduced patch chip, the re-bound sequence, and the reduction validity record.
 
     Attributes
     ----------

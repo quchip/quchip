@@ -1159,7 +1159,7 @@ class QuantumSequence:
         """Return a deep copy.
 
         ``_entries`` is the single source of truth, so only it is deep-copied;
-        the chip is shared, matching the previous shallow-copy behavior.
+        the clone and source sequence share the chip.
         """
         cloned = copy.copy(self)
         cloned._entries = copy.deepcopy(self._entries)
