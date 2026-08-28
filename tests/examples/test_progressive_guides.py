@@ -24,6 +24,37 @@ EXECUTED_BLOCK_RE = re.compile(
     r"```python\n(.*?)\n```\n\nOutput:\n\n```text\n(.*?)\n```",
     re.DOTALL,
 )
+NUMBER_RE = re.compile(
+    r"(?<![A-Za-z_])[-+]?(?:(?:\d+\.\d*)|(?:\.\d+)|(?:\d+))"
+    r"(?:[eE][-+]?\d+)?(?![A-Za-z_])"
+)
+
+
+def _assert_output_matches(actual: str, expected: str) -> None:
+    """Compare guide output exactly except for numerical solver roundoff."""
+    actual = actual.strip()
+    expected = expected.strip()
+    assert NUMBER_RE.sub("<number>", actual) == NUMBER_RE.sub("<number>", expected)
+
+    actual_numbers = np.array([float(value) for value in NUMBER_RE.findall(actual)])
+    expected_numbers = np.array([float(value) for value in NUMBER_RE.findall(expected)])
+    np.testing.assert_allclose(actual_numbers, expected_numbers, rtol=1e-10, atol=1e-12)
+
+
+def test_guide_output_comparison_accepts_solver_roundoff() -> None:
+    """Platform-level numerical roundoff does not stale an executed guide."""
+    _assert_output_matches(
+        "dressed f01: 4.998533473435458",
+        "dressed f01: 4.99853347343543",
+    )
+
+
+def test_guide_output_comparison_rejects_meaningful_changes() -> None:
+    """Guide checks still reject changed prose and changed results."""
+    with pytest.raises(AssertionError):
+        _assert_output_matches("dressed f01: 4.9", "dressed f01: 5.0")
+    with pytest.raises(AssertionError):
+        _assert_output_matches("bare f01: 5.0", "dressed f01: 5.0")
 
 
 def _run_first_cell(path: str) -> dict[str, object]:
@@ -131,7 +162,7 @@ def test_defining_guide_outputs_match_a_fresh_execution() -> None:
                 warnings.filterwarnings("ignore", message="FigureCanvasAgg is non-interactive")
                 with contextlib.redirect_stdout(captured):
                     exec(compile(code, f"{path}#cell-{index}", "exec"), namespace)
-            assert captured.getvalue().strip() == expected.strip()
+            _assert_output_matches(captured.getvalue(), expected)
 
 
 @pytest.mark.examples
@@ -147,4 +178,4 @@ def test_sqa_snippets_execute_independently() -> None:
         captured = io.StringIO()
         with contextlib.redirect_stdout(captured):
             exec(compile(snippet, f"{path}#snippet-{index + 1}", "exec"), namespace)
-        assert captured.getvalue().strip() == expected.strip()
+        _assert_output_matches(captured.getvalue(), expected)
