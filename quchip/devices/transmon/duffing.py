@@ -121,6 +121,11 @@ class DuffingTransmon(FockDevice):
     _type_prefix: ClassVar[str] = "duffing"
     _default_levels: ClassVar[int] = 3
     tunable_param_names = ("freq", "anharmonicity")
+    dressed_fit_target_fields = (
+        ("freq", "freq"),
+        ("anharmonicity", "anharmonicity"),
+    )
+    dressed_fit_param_names = ("freq", "anharmonicity")
     approximation = "Duffing expansion: cosine Josephson potential truncated at 4th order."
     computational = True
 

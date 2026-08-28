@@ -17,17 +17,23 @@ jupyter:
 
 # Differentiability
 
-The progression is scalar loss through statics, scalar loss through one driven
-sequence, then a joint loss built from several experiments.
+Start with a scalar loss through statics, pass the same pattern through one
+driven sequence, then combine several experiments in a joint loss.
 
 ## Losses through statics
 
 A scalar loss has a gradient. A vector residual has a Jacobian. Both pass
 through the same public `Chip.with_params()` call.
 
+The second observable uses the sigma-z convention
+$\chi_{\sigma_z}=\mathrm{dispersive\_shift}/2$. The scalar method returns the
+full pull $E_{11}-E_{10}-E_{01}+E_{00}$.
+
 ```python
 import jax
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
+import numpy as np
 
 from quchip import Capacitive, Chip, DuffingTransmon, Resonator
 from quchip.backend.dynamiqs import DynamiqsBackend
@@ -48,8 +54,8 @@ target = jnp.array([5.05, -0.0010])
 
 def observables(th):
     c = chip.with_params(dict(zip(names, th)))
-    chi = c.dispersive_shift("q", "r") / 2
-    return jnp.stack([jnp.asarray(c.freq("q")), jnp.asarray(chi)])
+    chi_sigma_z = c.dispersive_shift("q", "r") / 2
+    return jnp.stack([jnp.asarray(c.freq("q")), jnp.asarray(chi_sigma_z)])
 
 
 def residual(th):
@@ -62,30 +68,367 @@ def loss(th):
 
 static_gradient = jax.grad(loss)(theta)
 static_jacobian = jax.jacrev(residual)(theta)
-static_step = jnp.array([1.0e-4, 1.0e-5, 1.0e-5])
-static_finite_difference = jnp.stack(
-    [
-        (loss(theta + static_step[index] * jnp.eye(3)[index])
-         - loss(theta - static_step[index] * jnp.eye(3)[index]))
-        / (2.0 * static_step[index])
-        for index in range(3)
-    ]
-)
 
 {
-    "observables_f01_chi": observables(theta),
+    "observables_f01_chi_sigma_z": observables(theta),
     "gradient_shape": static_gradient.shape,
-    "gradient": static_gradient,
     "jacobian_shape": static_jacobian.shape,
-    "jacobian": static_jacobian,
-    "central_difference": static_finite_difference,
 }
 ```
+
+<!-- executed-output:start -->
+
+Output:
+
+```text
+{'observables_f01_chi_sigma_z': Array([ 4.99853347e+00, -1.43010024e-04], dtype=float64),
+ 'gradient_shape': (3,),
+ 'jacobian_shape': (2, 3)}
+```
+
+<!-- executed-output:end -->
 
 The parameter vector mixes GHz-scale frequencies and a smaller coupling. For
 optimization, work in dimensionless coordinates such as fractional frequency
 changes or MHz-scale offsets. The gradient then measures comparable design
 moves instead of inheriting the arbitrary numerical size of each unit.
+
+Sweep the coupling around the evaluation point, then draw the tangent predicted
+by the corresponding Jacobian column. The derivative is the tangent's slope;
+its departure from the full curve shows that it is a local statement.
+
+```python
+coupling_values = jnp.linspace(0.02, 0.08, 61)
+observable_sweep = jax.vmap(
+    lambda coupling: observables(theta.at[2].set(coupling))
+)(coupling_values)
+coupling_tangent = observables(theta) + (
+    coupling_values[:, None] - theta[2]
+) * static_jacobian[:, 2]
+
+static_figure, static_axes = plt.subplots(1, 2, figsize=(9.2, 3.8), layout="constrained")
+for observable_index, (axis, ylabel, scale) in enumerate(
+    zip(
+        static_axes,
+        (r"$f_{01}$ (GHz)", r"$\chi_{\sigma_z}$ (MHz)"),
+        (1.0, 1.0e3),
+        strict=True,
+    )
+):
+    axis.plot(
+        1.0e3 * coupling_values,
+        scale * observable_sweep[:, observable_index],
+        color="#246FA8",
+        linewidth=2.2,
+        label="quchip sweep",
+    )
+    axis.plot(
+        1.0e3 * coupling_values,
+        scale * coupling_tangent[:, observable_index],
+        color="#C92F33",
+        linestyle="--",
+        linewidth=1.8,
+        label="local tangent",
+    )
+    axis.plot(
+        1.0e3 * theta[2],
+        scale * observables(theta)[observable_index],
+        marker="o",
+        color="#16181C",
+        linestyle="none",
+    )
+    axis.set(xlabel=r"Capacitive coupling $g$ (MHz)", ylabel=ylabel)
+    axis.grid(alpha=0.2)
+
+static_axes[0].legend(frameon=False)
+
+static_figure_path = "../docs/images/differentiate_static_slope.png"
+static_figure.savefig(static_figure_path, dpi=180)
+plt.show()
+```
+
+```{figure} ../images/differentiate_static_slope.png
+:width: 760px
+:alt: Qubit frequency and dispersive shift swept over capacitive coupling with local tangent lines at 50 megahertz
+
+The black point is where `jax.jacrev` evaluates the slope. The dispersive shift
+bends away from its tangent faster than $f_{01}$ over this range.
+```
+
+## Fit experimental statics
+
+Stefanski *et al.* fitted a fluxonium spectrum to obtain $E_C$, $E_J$, and
+$E_L$. Their [paper](https://arxiv.org/abs/2411.13437) and
+[analysis repository](https://github.com/AndersenQubitLab/FPA-RO-experimental)
+publish the extracted frequencies and fitted parameters. Here we start away
+from those parameters and minimize a differentiable quchip loss.
+
+Every eighth measurement enters the fit. The intervening points remain held
+out, and the plotted model uses its own 351-point flux grid.
+
+```python
+import csv
+import io
+import json
+from urllib.request import urlopen
+
+from scipy.optimize import minimize
+
+from quchip import Fluxonium
+
+paper_data_root = (
+    "https://raw.githubusercontent.com/AndersenQubitLab/"
+    "FPA-RO-experimental/57dc268dd048d1372db082c3ddd97a04871580bf"
+)
+
+with urlopen(f"{paper_data_root}/processed_data_fx8.csv") as response:  # noqa: S310
+    spectrum_rows = list(
+        csv.DictReader(io.StringIO(response.read().decode("utf-8")))
+    )
+
+published_values = np.asarray(
+    [float(spectrum_rows[index]["energy_params"]) for index in range(5)]
+)
+published_energies = published_values[[3, 2, 4]]  # E_C, E_J, E_L
+
+measured_flux_all = np.asarray(
+    [float(row["phi_ext_qubit"]) for row in spectrum_rows if row["phi_ext_qubit"]]
+)
+measured_f01_all = np.asarray(
+    [float(row["qubit_freq"]) for row in spectrum_rows if row["qubit_freq"]]
+)
+paper_window = measured_flux_all <= 0.85
+measured_flux = measured_flux_all[paper_window]
+measured_f01 = measured_f01_all[paper_window]
+
+training_indices = np.arange(0, measured_flux.size, 8)
+holdout_mask = np.ones(measured_flux.size, dtype=bool)
+holdout_mask[training_indices] = False
+training_flux = jnp.asarray(measured_flux[training_indices])
+training_f01 = jnp.asarray(measured_f01[training_indices])
+```
+
+The optimization model uses a 160-point phase grid. Logarithmic coordinates
+keep the three circuit energies positive and put them on comparable numerical
+scales.
+
+```python
+fit_q = Fluxonium(
+    E_C=0.72,
+    E_J=4.4,
+    E_L=0.68,
+    phi_ext=0.5,
+    levels=4,
+    num_basis=160,
+    phi_max=5.0 * np.pi,
+    basis="eigen",
+    label="q",
+)
+fit_chip = Chip(
+    [fit_q],
+    [],
+    basis="eigen",
+    frame="lab",
+    backend=DynamiqsBackend(),
+)
+
+energy_scale = jnp.asarray([1.0, 4.0, 1.0])
+initial_energies = np.asarray([0.72, 4.4, 0.68])
+initial_coordinates = jnp.log(jnp.asarray(initial_energies) / energy_scale)
+
+
+def energies_from_coordinates(coordinates):
+    return energy_scale * jnp.exp(coordinates)
+
+
+def fluxonium_f01(energies, phi_ext):
+    point = fit_chip.with_params(
+        {
+            "q.E_C": energies[0],
+            "q.E_J": energies[1],
+            "q.E_L": energies[2],
+            "q.phi_ext": phi_ext,
+        }
+    )
+    return point.freq("q")
+
+
+def spectrum_prediction(coordinates, flux):
+    energies = energies_from_coordinates(coordinates)
+    return jax.vmap(lambda phi: fluxonium_f01(energies, phi))(flux)
+
+
+def pseudo_huber(residual):
+    return 2.0 * (jnp.sqrt(1.0 + residual**2) - 1.0)
+
+
+def experimental_loss(coordinates):
+    residual_mhz = 1.0e3 * (
+        spectrum_prediction(coordinates, training_flux) - training_f01
+    )
+    return jnp.mean(pseudo_huber(residual_mhz / 3.0))
+
+
+initial_loss, initial_gradient = jax.value_and_grad(experimental_loss)(
+    initial_coordinates
+)
+{
+    "training_points": len(training_indices),
+    "holdout_points": int(holdout_mask.sum()),
+    "initial_loss": initial_loss,
+    "initial_gradient": initial_gradient,
+}
+```
+
+<!-- executed-output:start -->
+
+Output:
+
+```text
+{'training_points': 20,
+ 'holdout_points': 133,
+ 'initial_loss': Array(69.1958024, dtype=float64),
+ 'initial_gradient': Array([-172.56931354, -330.94152066, -487.32690024], dtype=float64)}
+```
+
+<!-- executed-output:end -->
+
+SciPy supplies bounded optimizer control. JAX supplies the loss and its exact
+gradient at every iteration.
+
+```python
+compiled_loss_and_gradient = jax.jit(jax.value_and_grad(experimental_loss))
+loss_history = []
+
+
+def scipy_objective(coordinates):
+    value, gradient = compiled_loss_and_gradient(jnp.asarray(coordinates))
+    return float(value), np.asarray(gradient, dtype=float)
+
+
+fit = minimize(
+    scipy_objective,
+    np.asarray(initial_coordinates),
+    method="L-BFGS-B",
+    jac=True,
+    bounds=[
+        (np.log(0.3), np.log(1.5)),
+        (np.log(2.0 / 4.0), np.log(6.0 / 4.0)),
+        (np.log(0.3), np.log(1.5)),
+    ],
+    callback=lambda coordinates: loss_history.append(
+        scipy_objective(coordinates)[0]
+    ),
+    options={"maxiter": 160, "ftol": 1.0e-12, "gtol": 1.0e-9},
+)
+
+recovered_energies = np.asarray(
+    energies_from_coordinates(jnp.asarray(fit.x)),
+    dtype=float,
+)
+```
+
+Evaluation starts from a new 351-point model grid. After that forward
+calculation, interpolation places the model at the held-out measurement
+coordinates for the residual check.
+
+```python
+model_flux = jnp.linspace(0.5, 0.85, 351)
+model_f01 = np.asarray(spectrum_prediction(jnp.asarray(fit.x), model_flux))
+predicted_at_measurements = np.interp(
+    measured_flux,
+    np.asarray(model_flux),
+    model_f01,
+)
+holdout_residual_mhz = 1.0e3 * (
+    predicted_at_measurements[holdout_mask] - measured_f01[holdout_mask]
+)
+
+fit_figure, (fit_axis, history_axis) = plt.subplots(
+    1,
+    2,
+    figsize=(10.0, 4.2),
+    layout="constrained",
+)
+fit_axis.scatter(
+    measured_flux[holdout_mask],
+    measured_f01[holdout_mask],
+    s=13,
+    color="0.35",
+    alpha=0.55,
+    label="held out",
+)
+fit_axis.scatter(
+    measured_flux[training_indices],
+    measured_f01[training_indices],
+    s=23,
+    color="#C92F33",
+    marker="x",
+    label="fit points",
+)
+fit_axis.plot(model_flux, model_f01, color="#246FA8", linewidth=2.2, label="quchip")
+fit_axis.set(
+    xlabel=r"External flux $\Phi_{\mathrm{ext}}/\Phi_0$",
+    ylabel=r"$f_{01}$ (GHz)",
+)
+fit_axis.legend(frameon=False)
+fit_axis.grid(color="0.88")
+
+history_axis.semilogy(loss_history, color="#C92F33", linewidth=2.0)
+history_axis.set(xlabel="Optimizer iteration", ylabel="Spectrum loss")
+history_axis.grid(color="0.88")
+
+experimental_fit_path = "../docs/images/differentiate_fluxonium_fit.png"
+fit_figure.savefig(experimental_fit_path, dpi=180)
+plt.show()
+```
+
+```{figure} ../images/differentiate_fluxonium_fit.png
+:width: 760px
+:alt: Fluxonium spectrum fitted on sparse experimental points with held-out measurements and convergence history
+
+Twenty measurements determine the loss. The remaining 133 points test the
+recovered spectrum.
+```
+
+```python
+experimental_fit_receipt = {
+    "fit_success": bool(fit.success),
+    "iterations": int(fit.nit),
+    "training_points": len(training_indices),
+    "holdout_points": int(holdout_mask.sum()),
+    "published_E_C_E_J_E_L": published_energies.tolist(),
+    "initial_E_C_E_J_E_L": initial_energies.tolist(),
+    "recovered_E_C_E_J_E_L": recovered_energies.tolist(),
+    "relative_parameter_error": (
+        (recovered_energies - published_energies) / published_energies
+    ).tolist(),
+    "holdout_median_absolute_error_mhz": float(
+        np.median(np.abs(holdout_residual_mhz))
+    ),
+    "holdout_rmse_mhz": float(np.sqrt(np.mean(holdout_residual_mhz**2))),
+}
+
+print(
+    "RESULT experimental_statics="
+    + json.dumps(experimental_fit_receipt, sort_keys=True, separators=(",", ":"))
+)
+```
+
+<!-- executed-output:start -->
+
+Output:
+
+```text
+RESULT experimental_statics={"fit_success":true,"holdout_median_absolute_error_mhz":0.8806134062853133,"holdout_points":133,"holdout_rmse_mhz":6.967105516086113,"initial_E_C_E_J_E_L":[0.72,4.4,0.68],"iterations":17,"published_E_C_E_J_E_L":[0.8652719648666846,3.8217399868188027,0.8215798519627777],"recovered_E_C_E_J_E_L":[0.8704199128839734,3.820362983228374,0.8208603168362569],"relative_parameter_error":[0.005949514402771569,-0.0003603080259719065,-0.0008757945132196185],"training_points":20}
+```
+
+<!-- executed-output:end -->
+
+The recovered circuit energies are within $0.6\%$ of the authors' values. The
+few large spectroscopy residuals remain in the holdout RMSE; the median error
+is $0.88$ MHz. This section fits the isolated fluxonium spectrum. The paper's
+full fit also included the coupled readout resonator.
 
 ## Losses through simple dynamics
 
@@ -133,8 +476,6 @@ sequence.schedule(
 times = jnp.linspace(0.0, 60.0, 121)
 ```
 
-## Name the physical perturbations
-
 One unit in the perturbation vector means $1\%$ in pulse amplitude, $1\%$ in
 the Gaussian parameter $N_\sigma$, or $1$ MHz in pulse detuning. quchip defines
 $\sigma=\mathrm{duration}/(2N_\sigma)$, so increasing $N_\sigma$ by $1\%$
@@ -170,8 +511,6 @@ def final_population(perturbation):
     return jnp.real(result.population("q", level=1)[-1])
 ```
 
-## Differentiate the solve
-
 The output is one scalar. `jax.grad` returns one derivative for each input,
 while `jax.value_and_grad` evaluates the population and its gradient together.
 
@@ -195,11 +534,23 @@ loss0, loss_gradient = jax.jit(jax.value_and_grad(dynamic_loss))(origin)
 }
 ```
 
-At this slightly under-rotated operating point, increasing the amplitude or
-detuning raises the final population. Increasing $N_\sigma$ narrows the
-Gaussian and lowers the final population.
+<!-- executed-output:start -->
 
-## Check the derivative independently
+Output:
+
+```text
+{'population': Array(0.99551809, dtype=float64),
+ 'population_gradient': Array([ 0.00157614, -0.00156723,  0.00337811], dtype=float64),
+ 'loss': Array(2.68420188e-07, dtype=float64),
+ 'loss_gradient': Array([ 1.63317434e-06, -1.62394008e-06,  3.50034612e-06], dtype=float64)}
+```
+
+<!-- executed-output:end -->
+
+At this operating point, increasing amplitude or detuning raises the final
+population; narrowing the Gaussian lowers it.
+
+### Check the result
 
 Automatic differentiation should agree with a numerical derivative, but a
 single finite-difference step can agree accidentally. We halve the step four
@@ -223,8 +574,6 @@ def central_differences(step):
 finite_differences = jnp.stack([central_differences(step) for step in steps])
 relative_errors = jnp.abs(finite_differences - gradient) / jnp.maximum(jnp.abs(gradient), 1.0e-12)
 ```
-
-## See the local derivative and its check
 
 The upper panel compares the predicted population changes with central finite
 differences. The lower panel plots their relative error across step sizes.
@@ -377,6 +726,23 @@ multi_loss_gradient = jax.grad(multi_loss)(shared_origin)
 }
 ```
 
+<!-- executed-output:start -->
+
+Output:
+
+```text
+{'experiments': 3,
+ 'shared_parameters': ('q.freq', 'amplitude scale', 'carrier correction'),
+ 'residual_shape': (3,),
+ 'jacobian_shape': (3, 3),
+ 'jacobian_by_experiment': Array([[ -0.63212694,   0.3771558 ,   0.63212694],
+        [ -0.79642264,   0.89604468,   0.79642264],
+        [ 11.59017361,   0.17943505, -11.59017361]], dtype=float64),
+ 'joint_loss_gradient': Array([-0.09309369,  0.04532239,  0.09309369], dtype=float64)}
+```
+
+<!-- executed-output:end -->
+
 Rows of the Jacobian belong to experiments; columns belong to shared physical
 parameters. The weighted scalar loss contracts those rows into one gradient.
 Keep the Jacobian when diagnosing which experiment constrains which parameter,
@@ -425,13 +791,23 @@ gradient_receipt = {
 print(f"RESULT gradient={json.dumps(gradient_receipt, sort_keys=True, separators=(',', ':'))}")
 ```
 
+<!-- executed-output:start -->
+
+Output:
+
+```text
+RESULT gradient={"backend":"dynamiqs","base_population":0.99551809283684,"figure":"../docs/images/differentiate_a_driven_chip.png","first_order_only":true,"fixed_structure_during_trace":true,"gradient_per_reference_perturbation":{"pulse.0.amplitude":0.0015761406257590448,"pulse.0.freq":0.003378107041808197,"pulse.0.sigmas":-0.001567228852927645},"maximum_relative_error_across_steps":0.005832718427203168,"multi_sequence_count":3,"multi_sequence_jacobian_shape":[3,3],"multi_sequence_loss_gradient":[-0.09309368743280567,0.0453223899145748,0.0930936874328054],"original_sequence_unchanged":true,"parameter_paths":["pulse.0.amplitude","pulse.0.sigmas","pulse.0.freq"],"solver":"sesolve"}
+```
+
+<!-- executed-output:end -->
+
 ## Boundaries of this gradient
 
 The traced calculation keeps the device graph, Hilbert-space dimensions, and
 RWA band selection fixed. dynamiqs supports this automatic-differentiation
 path; QuTiP remains available for ordinary solves and sweeps but does not
-provide gradients. Eigenvector derivatives also require care near degenerate
-subspaces. Gradients also inherit the solver tolerances, local-basis
+provide gradients. Eigenvector derivatives require care near degenerate
+subspaces. Gradients inherit the solver tolerances, local-basis
 truncation, frame, approximation, and loss scaling chosen for the forward
 calculation.
 

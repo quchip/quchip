@@ -1,16 +1,13 @@
-"""Inverse-design utilities.
+"""Inverse design from a numerical dressed-chip specification.
 
-Fit bare chip parameters (device ``freq``/``anharmonicity``, a
-coupling's scalar strength) so that dressed observables (frequencies,
-anharmonicities, ``chi``, ``zz``, exchange) match user-supplied
-targets. The fit is
-classical (``scipy.optimize.least_squares``) but every downstream use
-of the returned :class:`~quchip.chip.chip.Chip` remains fully
-JAX-traceable and differentiable — see
-:func:`quchip.inverse_design.fit.fit_a_dress` for details.
+Component classes declare which input numbers are dressed targets and which
+bare parameters normally move. :func:`fit_a_dress` compiles those declarations
+without evaluating the desired chip, then solves the resulting static
+observable problem with SciPy and an exact JAX Jacobian when available. The
+fitted chip remains traceable and differentiable downstream.
 """
 
 from quchip.inverse_design.fit import fit_a_dress
-from quchip.inverse_design.types import FitADressResult, ObservableReport
+from quchip.inverse_design.types import FitADressResult, FitParameterReport, ObservableReport
 
-__all__ = ["fit_a_dress", "FitADressResult", "ObservableReport"]
+__all__ = ["fit_a_dress", "FitADressResult", "FitParameterReport", "ObservableReport"]

@@ -22,7 +22,7 @@ import numpy as np
 from quchip.backend import _backend_context
 from quchip.backend.protocol import Backend, Operator, State
 from quchip.approximations import Approximation, RWA, require_approximation
-from quchip.chip.analysis import ChipAnalysis, DressedResult
+from quchip.chip.analysis import ChipAnalysis, DressedResult, KerrMatrix
 from quchip.chip.baths import Bath
 from quchip.chip.coupling_base import BaseCoupling
 from quchip.chip.states import _DEFAULT_LEVEL_SYMBOLS
@@ -812,12 +812,25 @@ class Chip:
     # ------------------------------------------------------------------
 
     def plot_graph(
-        self, path: str = "chip_topology.html", *, full: bool = True, exclude: set[str] | None = None, **kwargs: Any
+        self,
+        path: str = "chip_topology.html",
+        *,
+        full: bool = True,
+        exclude: set[str] | None = None,
+        values: str = "bare",
+        **kwargs: Any,
     ) -> str:
         """Render chip topology — delegates to :mod:`quchip.viz.chip`."""
         from quchip.viz.chip import plot_graph
 
-        return plot_graph(self, path, full=full, exclude=exclude, **kwargs)
+        return plot_graph(
+            self,
+            path,
+            full=full,
+            exclude=exclude,
+            values=values,
+            **kwargs,
+        )
 
     def plot_energy_levels(self, *, ax: Any = None, **kwargs: Any) -> Any:
         """Render dressed spectrum — delegates to :mod:`quchip.viz.chip`."""
@@ -986,6 +999,13 @@ class Chip:
     # interaction strength equals the dressed dispersive (cross-Kerr) shift.
     static_zz = dispersive_shift
     zz = dispersive_shift
+
+    def kerr_matrix(self) -> KerrMatrix:
+        """Return the labeled dressed self-Kerr and cross-Kerr matrix in GHz.
+
+        See :meth:`ChipAnalysis.kerr_matrix`.
+        """
+        return self._analysis.kerr_matrix()
 
     def dressed_anharmonicity(self, device: str | BaseDevice) -> float:
         """Dressed anharmonicity of one device with others grounded (GHz).
@@ -1210,10 +1230,11 @@ class Chip:
             )
 
         cloned = self.clone()
+        device_bindings: dict[int, dict[str, Any]] = {}
         for path, value in bindings.items():
             kind, index, name, _ = targets[path]
             if kind == "device":
-                cloned._devices[index].set_parameter_value(name, value)
+                device_bindings.setdefault(index, {})[name] = value
             elif kind == "coupling":
                 cloned._couplings[index].set_parameter_value(name, value)
             elif kind == "drive":
@@ -1225,6 +1246,8 @@ class Chip:
                 cloned._control_equipment._signal_chain[index] = transform.with_parameter_value(name, value)
             else:
                 cloned._baths[index].set_parameter_value(name, value)
+        for index, local_bindings in device_bindings.items():
+            cloned._devices[index].set_parameter_values(local_bindings)
         return cloned
 
     def partition(self) -> "PartitionResult":

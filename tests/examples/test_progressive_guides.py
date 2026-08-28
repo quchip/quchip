@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import re
+import subprocess
+import sys
 import warnings
 from pathlib import Path
 
@@ -16,6 +20,10 @@ matplotlib.use("Agg")
 
 ROOT = Path(__file__).resolve().parents[2]
 CODE_BLOCK_RE = re.compile(r"```python\n(.*?)\n```", re.DOTALL)
+EXECUTED_BLOCK_RE = re.compile(
+    r"```python\n(.*?)\n```\n\nOutput:\n\n```text\n(.*?)\n```",
+    re.DOTALL,
+)
 
 
 def _run_first_cell(path: str) -> dict[str, object]:
@@ -24,15 +32,17 @@ def _run_first_cell(path: str) -> dict[str, object]:
     namespace: dict[str, object] = {"__name__": "__guide_example__"}
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message="FigureCanvasAgg is non-interactive")
-        exec(compile(first.source, str(ROOT / path), "exec"), namespace)
+        with contextlib.chdir(ROOT / "examples"):
+            exec(compile(first.source, str(ROOT / path), "exec"), namespace)
     return namespace
 
 
 @pytest.mark.examples
-def test_statics_guide_starts_with_a_small_sweep() -> None:
-    """The opening statics cell resolves the intended avoided crossing."""
+def test_statics_guide_starts_with_a_small_declaration() -> None:
+    """The opening statics cell reads one declared chip before sweeping it."""
     example = _run_first_cell("examples/01_resolve_and_sweep.md")
-    assert 4.3e-3 < float(np.min(example["splitting"])) < 4.5e-3
+    assert tuple(device.label for device in example["chip"].devices) == ("q1", "q2", "bus")
+    assert float(example["chip"].freq("q1")) > 5.0
 
 
 @pytest.mark.examples
@@ -45,12 +55,12 @@ def test_dynamics_guide_starts_with_one_pulse_and_one_solve() -> None:
 
 
 @pytest.mark.examples
-def test_transformations_guide_starts_with_one_active_patch() -> None:
-    """The opening transformation cell replays one reduced schedule."""
+def test_transformations_guide_starts_with_one_immutable_parameter_change() -> None:
+    """The opening transformation cell changes one number on an isolated copy."""
     example = _run_first_cell("examples/02_reduce_and_replay.md")
-    assert example["patch"].active_labels == ("q0", "q1")
-    assert example["patch"].eliminated_labels == ("q2",)
-    assert np.max(np.abs(example["p_full"] - example["p_small"])) < 1.0e-5
+    assert example["chip"].parameters["q.freq"] == 5.0
+    assert example["rebound"].parameters["q.freq"] == 5.1
+    assert example["cloned"] is not example["chip"]
 
 
 @pytest.mark.examples
@@ -64,12 +74,13 @@ def test_differentiability_guide_starts_with_static_shapes() -> None:
 
 
 def test_sqa_snippets_are_small_and_link_once_per_topic() -> None:
-    """The SQA page contains four runnable-sized snippets and four canonical links."""
+    """The SQA page contains five runnable snippets and canonical links."""
     source = (ROOT / "docs" / "guides" / "from-sqa-2026.md").read_text(encoding="utf-8")
     snippets = CODE_BLOCK_RE.findall(source)
-    assert len(snippets) == 4
+    assert len(snippets) == 5
     assert all(len(snippet.splitlines()) <= 36 for snippet in snippets)
     for route in (
+        "defining-and-inspecting-a-chip",
         "statics-and-parameter-studies",
         "dynamics-pulses-and-readout",
         "chip-transformations",
@@ -79,13 +90,61 @@ def test_sqa_snippets_are_small_and_link_once_per_topic() -> None:
     assert "github.com" not in source
 
 
+def test_committed_markdown_contains_current_notebook_outputs() -> None:
+    """Every canonical Markdown guide contains outputs from its executed pair."""
+    check = subprocess.run(
+        [sys.executable, "tools/sync_example_outputs.py", "--check"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert check.returncode == 0, check.stdout + check.stderr
+    for path in sorted((ROOT / "examples").glob("0[0-3]_*.md")):
+        assert "<!-- executed-output:start -->" in path.read_text(encoding="utf-8")
+
+
+@pytest.mark.examples
+def test_defining_guide_outputs_match_a_fresh_execution() -> None:
+    """The standalone introductory guide shows the output its cells produce."""
+    pytest.importorskip("scqubits")
+    path = ROOT / "docs" / "guides" / "defining-and-inspecting-a-chip.md"
+    source = path.read_text(encoding="utf-8")
+    blocks = EXECUTED_BLOCK_RE.findall(source)
+    assert len(blocks) == 10
+    for required in (
+        "CrossKerr",
+        "cross_kerr",
+        '"exchange_rate"',
+        "constraints=constraints",
+        "fit.history",
+        "np.minimum.accumulate",
+        "fit_a_dress_convergence.png",
+    ):
+        assert required in source
+
+    namespace: dict[str, object] = {"__name__": "__defining_guide__"}
+    with contextlib.chdir(path.parent):
+        for index, (code, expected) in enumerate(blocks, start=1):
+            captured = io.StringIO()
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="FigureCanvasAgg is non-interactive")
+                with contextlib.redirect_stdout(captured):
+                    exec(compile(code, f"{path}#cell-{index}", "exec"), namespace)
+            assert captured.getvalue().strip() == expected.strip()
+
+
 @pytest.mark.examples
 @pytest.mark.optional_backend
 def test_sqa_snippets_execute_independently() -> None:
-    """Every snippet on the SQA page runs without relying on an earlier block."""
+    """Every SQA snippet runs alone and produces its displayed output."""
     pytest.importorskip("dynamiqs")
     path = ROOT / "docs" / "guides" / "from-sqa-2026.md"
-    snippets = CODE_BLOCK_RE.findall(path.read_text(encoding="utf-8"))
-    for index, snippet in enumerate(snippets):
+    snippets = EXECUTED_BLOCK_RE.findall(path.read_text(encoding="utf-8"))
+    assert len(snippets) == 5
+    for index, (snippet, expected) in enumerate(snippets):
         namespace: dict[str, object] = {"__name__": f"__sqa_snippet_{index}__"}
-        exec(compile(snippet, f"{path}#snippet-{index + 1}", "exec"), namespace)
+        captured = io.StringIO()
+        with contextlib.redirect_stdout(captured):
+            exec(compile(snippet, f"{path}#snippet-{index + 1}", "exec"), namespace)
+        assert captured.getvalue().strip() == expected.strip()

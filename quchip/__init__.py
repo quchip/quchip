@@ -49,6 +49,7 @@ from quchip.chip import (
     CrossKerr,
     DressedResult,
     EliminationResult,
+    KerrMatrix,
     TunableCapacitive,
     active_patch,
     eliminate,
@@ -109,7 +110,7 @@ from quchip.devices.transmon.duffing import DuffingTransmon
 from quchip.devices.transmon.flux_tunable import FluxTunableTransmon
 from quchip.engine import build_problem, simulate, solve_many, solve_problem
 from quchip.interop import EigenbasisDevice, ModelMapping
-from quchip.inverse_design import FitADressResult, ObservableReport, fit_a_dress
+from quchip.inverse_design import FitADressResult, FitParameterReport, ObservableReport, fit_a_dress
 from quchip.results import ObservableTrace, PartitionedSimulationResult, SimulationBatchResult, SimulationResult
 from quchip.sweep import SpectrumSweep, Sweep, ZippedSweep
 from quchip.utils.constants import Phi_0, hbar, k_B
@@ -181,6 +182,7 @@ __all__ = [
     "CrossKerr",
     "TunableCapacitive",
     "DressedResult",
+    "KerrMatrix",
     "Bath",
     "ChipTransform",
     "EliminationResult",
@@ -236,6 +238,7 @@ __all__ = [
     # Inverse design
     "fit_a_dress",
     "FitADressResult",
+    "FitParameterReport",
     "ObservableReport",
     # Analysis
     "analyze_cross_resonance",

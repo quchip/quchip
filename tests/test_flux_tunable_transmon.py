@@ -150,15 +150,126 @@ class TestFluxTunableTransmon:
         assert q2.levels == q.levels
         assert q2.label == q.label
 
-    def test_flux_bias_mutation_leaves_hamiltonian_unchanged(self):
-        """Mutating flux_bias leaves hamiltonian() unchanged; the local H depends only on freq/anharmonicity."""
+    def test_flux_bias_mutation_retunes_frequency_and_hamiltonian(self):
+        """Changing the operating bias preserves the SQUID calibration and retunes the local model."""
         from quchip import FluxTunableTransmon
 
         q = FluxTunableTransmon(freq=4.47, anharmonicity=-0.2006, flux_bias=0.0, levels=3)
+        expected_frequency = float(q.frequency_at(0.3))
+        E_J_max_before = float(q._E_J_max)
         H_before = np.asarray(q.hamiltonian().matrix())
+
         q.flux_bias = 0.3
+
         H_after = np.asarray(q.hamiltonian().matrix())
-        npt.assert_allclose(H_before, H_after, atol=1e-12)
+        npt.assert_allclose(q.freq, expected_frequency, rtol=1e-10)
+        npt.assert_allclose(float(q._E_J_max), E_J_max_before, rtol=1e-10)
+        assert not np.allclose(H_before, H_after)
+        npt.assert_allclose(np.linalg.eigvalsh(H_after)[1], expected_frequency, rtol=1e-10)
+
+    def test_chip_flux_bias_rebind_is_immutable_and_public(self):
+        """``c.flux_bias`` is a public chip parameter that retunes only the returned chip."""
+        from quchip import Chip, FluxTunableTransmon
+
+        q = FluxTunableTransmon(
+            freq=4.47,
+            anharmonicity=-0.2006,
+            flux_bias=0.0,
+            levels=3,
+            label="c",
+        )
+        chip = Chip([q])
+        expected_frequency = float(q.frequency_at(0.2))
+
+        rebound = chip.with_params({"c.flux_bias": 0.2})
+
+        assert chip.parameters["c.flux_bias"] == 0.0
+        assert chip.parameters["c.freq"] == 4.47
+        assert rebound.parameters["c.flux_bias"] == 0.2
+        npt.assert_allclose(rebound.parameters["c.freq"], expected_frequency, rtol=1e-10)
+        npt.assert_allclose(float(rebound["c"]._E_J_max), float(q._E_J_max), rtol=1e-10)
+
+    def test_freq_and_flux_bias_rebind_define_one_order_independent_anchor(self):
+        """Explicit frequency and bias together recalibrate at that operating point."""
+        from quchip import Chip, FluxTunableTransmon
+
+        q = FluxTunableTransmon(
+            freq=4.47,
+            anharmonicity=-0.2006,
+            flux_bias=0.0,
+            label="c",
+        )
+        chip = Chip([q])
+
+        freq_first = chip.with_params({"c.freq": 4.1, "c.flux_bias": 0.2})
+        flux_first = chip.with_params({"c.flux_bias": 0.2, "c.freq": 4.1})
+
+        for rebound in (freq_first, flux_first):
+            assert rebound.parameters["c.flux_bias"] == 0.2
+            assert rebound.parameters["c.freq"] == 4.1
+            npt.assert_allclose(float(rebound["c"].frequency_at(0.2)), 4.1, rtol=1e-10)
+
+    def test_flux_bias_and_anharmonicity_rebind_use_the_new_calibration(self):
+        """Grouped flux rebinding applies calibration parameters before moving the bias."""
+        from quchip import Chip, FluxTunableTransmon
+
+        q = FluxTunableTransmon(
+            freq=4.47,
+            anharmonicity=-0.2006,
+            flux_bias=0.0,
+            label="c",
+        )
+        chip = Chip([q])
+        expected = chip.with_params({"c.anharmonicity": -0.24})["c"]
+        expected.flux_bias = 0.3
+
+        rebound = chip.with_params(
+            {"c.flux_bias": 0.3, "c.anharmonicity": -0.24}
+        )
+
+        npt.assert_allclose(rebound.parameters["c.freq"], expected.freq, rtol=1e-10)
+        npt.assert_allclose(
+            float(rebound["c"]._E_J_max), float(expected._E_J_max), rtol=1e-10
+        )
+
+    def test_flux_bias_has_one_period_inverse_design_bounds(self):
+        """Explicit flux optimization stays inside one canonical SQUID period."""
+        from quchip import FluxTunableTransmon
+
+        q = FluxTunableTransmon(freq=4.47, anharmonicity=-0.2006)
+
+        assert q.tunable_param_bounds("flux_bias", 0.0) == (-0.5, 0.5)
+
+    def test_flux_bias_rebind_round_trips_and_remains_jax_differentiable(self):
+        """A rebound calibration serializes and its Hamiltonian remains differentiable in flux."""
+        import jax
+        import jax.numpy as jnp
+
+        from quchip import Chip, FluxTunableTransmon
+        from quchip.backend.dynamiqs import DynamiqsBackend
+
+        q = FluxTunableTransmon(
+            freq=4.47,
+            anharmonicity=-0.2006,
+            flux_bias=0.0,
+            levels=3,
+            label="c",
+        )
+        chip = Chip([q], backend=DynamiqsBackend())
+        rebound = chip.with_params({"c.flux_bias": 0.2})
+        restored = Chip.from_dict(rebound.to_dict())
+        assert restored.parameters["c.flux_bias"] == pytest.approx(0.2)
+        assert restored.parameters["c.freq"] == pytest.approx(rebound.parameters["c.freq"])
+
+        def first_transition(flux_bias):
+            shifted = chip.with_params({"c.flux_bias": flux_bias})
+            matrix = shifted.hamiltonian().matrix(backend=shifted.backend)
+            energies = jnp.linalg.eigvalsh(matrix)
+            return energies[1] - energies[0]
+
+        gradient = jax.jit(jax.grad(first_transition))(0.2)
+        assert jnp.isfinite(gradient)
+        assert abs(float(gradient)) > 1.0e-6
 
     def test_anharmonicity_zero_rejected_at_construction(self):
         """anharmonicity=0 raises ValueError; E_C = |anharmonicity| would divide by zero in the SQUID inversion."""

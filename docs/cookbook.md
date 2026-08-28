@@ -1,97 +1,340 @@
 # Cookbook
 
-This cookbook collects the conventions that make quchip recipes physically legible and reproducible, followed by task-oriented recipes that link to complete executed notebooks.
+This page defines how quchip examples should read and the defaults users can
+expect them to follow. Each example starts with the smallest runnable answer,
+shows its output, then adds one physical or numerical idea at a time.
 
-## Core conventions
+## The example contract
 
-### Declare the physics first
+A quchip example should:
 
-Put parameters at the top, then construct devices, couplings, the chip, control lines, and a sequence in that order. Use quchip device and control abstractions instead of raw QuTiP operators, and do not hand-write an effective Hamiltonian in place of the physical model. Prefer object references over string labels.
+1. state the physical question;
+2. run through public APIs as written;
+3. show the result directly below the code that produced it;
+4. make units, frames, approximations, and truncations visible when they affect
+   the answer;
+5. preserve the source declaration when sweeping, fitting, or transforming;
+6. finish with a numerical or physical check tied to the reported observable.
 
-quchip uses GHz for ordinary frequencies, ns for time, and mK for temperature. Set the frame and chip approximation strategy explicitly, and state the model approximation and Hilbert-space truncation that matter for the result. `Exact()` retains every authored term; `RWA()` applies the engine's first-order operator-band reduction to the whole chip.
+Keep the first calculation small. A reader should get one useful result before
+meeting batching, model reduction, custom extensions, or differentiation.
 
-### Inspect authored and resolved physics
+## Declare the physics first
 
-Use `chip.unresolved_hamiltonian()` to inspect the static expressions supplied by devices and couplings. Use `chip.hamiltonian()` for the canonical result after local-basis resolution, retained-level truncation, frame resolution, and the selected approximation. Use `sequence.hamiltonian()` when scheduled drives must be included. These methods return inspectable expressions; call `.matrix()` only at a numerical boundary.
+Construct devices, couplings, and the chip before adding controls or analysis.
+Import supported classes from `quchip`; use submodule imports only for a public
+optional backend or extension surface.
 
-### Prepare the intended state
+```python
+from quchip import Capacitive, Chip, DuffingTransmon, Resonator
 
-Use `chip.state()` by default. It returns the dressed eigenstate assigned to the requested bare labels and is safe inside `jax.jit`, `grad`, and `vmap`. Use `chip.bare_state()` only when the question intentionally concerns a bare product state, such as a swap or transfer experiment; explain that choice where it appears.
+q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=4, label="q")
+r = Resonator(freq=7.0, levels=5, label="r")
+chip = Chip([q, r], [Capacitive(q, r, g=0.05, label="qr")])
+```
 
-### Let analysis dress automatically
+Use object references while constructing and scheduling. Give every component
+a short stable label; labels become parameter paths such as `q.freq` and
+`qr.g`.
 
-Methods such as `chip.freq()` and dispersive analyses dress the chip when needed. Do not call `chip.dress()` explicitly before them. A resonant control sequence should normally use the dressed transition returned by the chip, not the device's bare declaration.
+quchip uses ordinary GHz for frequencies and couplings, ns for time, mK for
+temperature, and `1/ns` for Lindblad rates. Put units in prose, output labels,
+and plot axes rather than encoding them in variable names alone.
 
-### Let the model choose the solver
+## Make resolution choices inspectable
 
-QuTiP is the default backend. When no solver is specified, quchip selects `mesolve` if the declared model contributes collapse operators and `sesolve` otherwise. Noise parameters such as a resonator quality factor therefore change the equation being solved without changing the sequence.
+Defaults are fine when they do not affect the lesson. Set the frame and
+approximation explicitly before interpreting rotating terms, dropped bands, or
+solver dynamics.
 
-### Sweep through the batch API
+Use the inspection surfaces in this order:
 
-For a sweep, vary a scheduled pulse handle or the `initial_state` and call `sequence.simulate_batch()` with batch axes. Zip fields that must change together, such as a pulse's duration and amplitude. This keeps the parameter structure attached to the sequence and avoids manual simulation loops.
+```python
+description = chip.describe()
+authored_latex = chip.unresolved_hamiltonian().latex()
+canonical_latex = chip.hamiltonian().latex()
 
-### Read stored results directly
+resolved = chip.resolve(frame="rotating")
+frame = resolved.resolved_frame
+approximation = resolved.approximation
+dropped_terms = resolved.dropped_terms_summary()
+```
 
-Solves store the state trajectory and final state by default, including when `e_ops` are requested. A `SimulationResult` can therefore provide `population()` and `plot_populations()` from the same run; a `SimulationBatchResult` stacks `population()` and `expect()` over its sweep axes. Set `options={"store_states": False}` only when the trajectory is unnecessary.
+- `describe()` shows the declared components, units, frame, approximation, and
+  Hilbert-space size.
+- `unresolved_hamiltonian()` preserves the authored device and coupling
+  expressions.
+- `hamiltonian()` shows the canonical expression after basis, frame,
+  truncation, and approximation policies.
+- `resolve()` carries the basis transforms, frame frequencies, approximation,
+  dropped terms, and collapse terms used by the backend.
 
-### Derive checks and report receipts
+Call `.matrix()` only when the numerical array is itself needed. A named
+operator such as `H_0` in resolved LaTeX is an opaque numerical leaf, not
+missing physics; read the authored expression and the resolution record beside
+it.
 
-Choose tolerances from solver accuracy, Hilbert truncation, approximation validity, spectral bandwidth, or a simple physical estimate. Do not turn a previous output into the expected answer. Report compact, machine-readable JSON receipts so a reader can judge the actual run.
+## Distinguish bare declarations from dressed observables
 
-### Keep outputs focused
+Device constructor values describe local models. Ask the `Chip` for quantities
+of the coupled system:
 
-Explain the flow in prose rather than print narration. Make the smallest figure set that answers the question, label axes with units, and make any traced-out subsystem explicit.
+```python
+bare_frequency = q.freq
+dressed_frequency = chip.freq(q)
+conditional_resonator_frequency = chip.freq(r, when={q: 1})
+```
 
-## Compare Gaussian drive leakage
+Use dressed transitions for resonant carriers unless the example intentionally
+studies a bare detuning. `chip.freq()`, `transition_frequency()`,
+`dressed_anharmonicity()`, `dispersive_shift()`, and `static_zz()` dress the
+chip when needed; do not call `dress()` first merely as setup.
 
-### Purpose
+Use `kerr_matrix()` when the question involves several self-Kerr and
+cross-Kerr coefficients:
 
-Drive a multilevel transmon at its dressed $0\rightarrow1$ transition and show how pulse bandwidth controls population of $|2\rangle$.
+```python
+kerr = chip.kerr_matrix()
+kerr.labels
+kerr[q, r]
+```
 
-### Assumptions
+The axes follow `chip.devices`. Diagonal entries are
+$E(2_i)-2E(1_i)+E(0)$; off-diagonal entries are
+$E(1_i,1_j)-E(1_i)-E(1_j)+E(0)$. Both are dressed quantities in ordinary
+GHz. They need not equal similarly named component parameters because every
+device and interaction in the chip contributes to the dressed energies. A
+device with fewer than three resolved levels has `NaN` on its diagonal. Under
+the `KerrCavity` convention $H=\omega n-Kn(n-1)$, the diagonal is $-2K$.
 
-The transmon uses the Duffing approximation and remains capacitively coupled to the declared lossy resonator. The chip uses a rotating frame and `RWA()` for the complete Hamiltonian. Retain enough transmon levels for the broader pulse's leakage to be physical.
+Prepare states with `chip.state()` by default. Use `chip.bare_state()` only
+when the question concerns a bare product state, and say why.
 
-### Minimal usage
+## Choose the smallest public surface
 
-Read `f01 = chip.freq(qubit)` and `f12 = chip.transition_frequency(qubit, 1, 2)`. For a Gaussian with temporal standard deviation $\sigma_t$, compare a short pulse whose spectral width $1/(2\pi\sigma_t)$ approaches $|f_{12}-f_{01}|$ with a longer selective pulse of the same shape. Integrate each unit-amplitude waveform and set its amplitude so $2\pi\int E(t)\,dt=\pi$; this is a nominal-pi area prescription, not a simulated calibration.
+| Question | Start with |
+|---|---|
+| One dressed observable | `chip.freq()` or another `Chip` analysis method |
+| A few changed parameters | `chip.with_params()` |
+| A spectrum over a grid | `SpectrumSweep` and `Sweep` |
+| One pulse experiment | `QuantumSequence.simulate()` |
+| Related pulse experiments | `QuantumSequence.simulate_batch()` |
+| A smaller effective model | `eliminate()` or `active_patch()` |
+| Independent connected components | `chip.partition()` |
+| Bare parameters from dressed targets | `fit_a_dress()` |
+| A scalar derivative | `jax.grad()` |
+| A residual or trace derivative | `jax.jacrev()` or `jax.jacfwd()` |
 
-### Expected receipt
+Static examples should not create a `QuantumSequence`. Dynamic examples should
+not replace a declared device or coupling with a hand-written effective matrix
+unless the comparison itself is the subject.
 
-Report both dressed frequencies, both durations, final $P_1$, and peak $P_2$. The long pulse should end near $|1\rangle$ with materially less leakage than the short pulse.
+## Rebind instead of mutating
 
-### Common mistake
+`with_params()` returns a new chip or sequence. Use it for sweeps, local design
+changes, and differentiable parameter maps:
 
-Do not choose durations by matching an earlier output or optimize the amplitude until one simulation reaches a desired population. Derive duration from the dressed adjacent-line separation and amplitude from the waveform integral, then let the multilevel solve reveal the leakage.
+```python
+shifted = chip.with_params({"q.freq": 5.1, "qr.g": 0.045})
+```
 
-### Full notebook
+Keep the original object and show that its parameters did not move when this
+matters to the example. Use `clone()` for a structural copy and
+`to_dict()`/`from_dict()` for a declared-model round trip.
 
-Read the {doc}`dynamics and readout guide <guides/dynamics-pulses-and-readout>` or
-{download}`download the full executed notebook <../examples/00_hello_chip.ipynb>`.
+## Sweep calibrated controls
 
-## Read out one dressed qubit
+For `FluxTunableTransmon`, `freq` is the calibrated local frequency at
+`flux_bias`. Together they anchor the SQUID dispersion. Rebinding only
+`flux_bias` preserves that calibration and retunes the Hamiltonian, so sweep
+the physical device coordinate directly:
 
-### Purpose
+```python
+import numpy as np
 
-Perform dispersive readout by resolving the resonator response conditioned on the dressed qubit state using the same declared chip.
+from quchip import SpectrumSweep, Sweep
 
-### Assumptions
+flux_values = np.linspace(0.0, 0.3, 101)
+sweep = SpectrumSweep(
+    chip,
+    [Sweep(flux_values, name="coupler.flux_bias")],
+).run(progress=False)
+```
 
-The readout is a truncated lossy linear resonator, and the transmon-resonator interaction uses the chip's declared RWA. Its finite quality factor contributes photon loss, so the automatic solver selects `mesolve` on the default QuTiP backend.
+Set `freq` and `flux_bias` in the same `with_params()` call when defining a new
+calibration anchor. Use `frequency_at()` to inspect another bias without
+changing the chip and `flux_for_frequency()` for the inverse question on the
+monotonic lobe. Convert laboratory voltage or pulse amplitude to reduced flux
+before passing it to the device.
 
-### Minimal usage
+## Fit bare parameters from dressed targets
 
-Read both conditional frequencies with `chip.freq(readout, when={qubit: level})`, drive their midpoint with one Gaussian-edge flat-top pulse, vary dressed $|0,0\rangle$ and $|1,0\rangle$ through `initial_state`, and call `simulate_batch` once. Derive the duration as the larger of five resonator lifetimes and half the inverse conditional pull. Record local $a$ to recover the two IQ paths. Advanced readout statistics will be treated in a later analysis example.
+`fit_a_dress(desired)` treats component numbers as dressed constraints and
+returns the corresponding bare chip as `fit.chip`. Common devices target their
+dressed frequency and anharmonicity. A `Capacitive` or `CrossKerr` scalar
+targets the full cross-Kerr $E_{11}-E_{10}-E_{01}+E_{00}$; it is not the
+starting bare coupling strength in this call. Add pair observables with
+`constraints=` and use `vary=` only when the component defaults are not the
+parameters you want to move:
 
-### Expected receipt
+```python
+fit = fit_a_dress(
+    desired,
+    constraints={(q0, q1): {"exchange_rate": -0.0022}},
+)
+```
 
-Report the conditional frequencies, midpoint carrier, rounded duration, final IQ separation, and solver. Plot both IQ paths with emphasized final points and equal aspect ratio.
+Start with `print(fit.summary())`. It reports each target and its source, each
+bare parameter and starting-point choice, the final loss, and the scaled
+Jacobian rank and condition number. Use `fit.final_targets`,
+`fit.parameter_reports`, and `fit.solver_info` for programmatic inspection.
+`fit.history` records the loss at distinct residual evaluations; plot
+`numpy.minimum.accumulate(fit.history)` for a monotone best-so-far curve because
+numerical-Jacobian probes also appear in the raw history.
 
-### Common mistake
+The automatic plan raises when it has too few targets or a rank-deficient
+final Jacobian. An explicit `vary=` plan may be intentionally ambiguous; in
+that case the fit returns with a warning and records the weak parameter
+directions in `fit.solver_info`.
 
-Driving at the bare `readout.freq` ignores qubit-state-dependent dressing. Do not replace the pulse-level model with a hand-written effective Hamiltonian, use a steady-state shortcut, or add synthetic acquisition clouds.
+## Build pulse schedules from physical controls
 
-### Full notebook
+Wire a public drive to its target, schedule an envelope, and keep the returned
+pulse handle when a later batch varies that pulse.
 
-Read the {doc}`dynamics and readout guide <guides/dynamics-pulses-and-readout>` or
-{download}`download the full executed notebook <../examples/00_hello_chip.ipynb>`.
+```python
+from quchip import ChargeDrive, Gaussian, QuantumSequence
+
+line = ChargeDrive(q, label="xy")
+chip.wire(line)
+
+sequence = QuantumSequence(chip)
+pulse = sequence.schedule(
+    line,
+    envelope=Gaussian(duration=20.0, sigmas=3.0, amplitude=0.04),
+    freq=chip.freq(q),
+)
+```
+
+Use channel cursors, `delay()`, and `barrier()` for serial timing. Supply
+`start_time` only for intentional overlap. Put global phase on
+`schedule(..., phase=...)`; keep envelope parameters responsible for waveform
+shape.
+
+For related experiments, vary the pulse handle or `initial_state` and call
+`simulate_batch()`. Zip duration and amplitude when calibration requires them
+to move together. Avoid a manual Python loop of independent solves when the
+batch API represents the same study.
+
+## Let the declared model choose the equation
+
+QuTiP is the default backend. With no explicit solver, quchip uses `sesolve`
+for a closed model and `mesolve` when devices, drives, couplings, or baths
+contribute collapse channels. Adding a resonator quality factor or a bath can
+therefore change the equation without changing the pulse schedule.
+
+Use the dynamiqs backend when a calculation needs JAX differentiation through
+the solve. Keep graph structure, Hilbert dimensions, and approximation masks
+fixed while tracing.
+
+## Read results at the level of the question
+
+Use:
+
+- `population()` for a local occupation;
+- `expect()` for a declared observable trace;
+- `overlap()` for a target state;
+- `reduced_state()` for one subsystem;
+- `check_truncation()` before trusting a small local basis.
+
+Pass `e_ops=chip.e_ops(...)` when expectation traces are the main output.
+Stored states remain available by default; disable them only when the memory
+tradeoff is intentional.
+
+Do not narrate a calculation with a series of `print()` calls. In a notebook,
+display a compact dict or result object. In a Markdown snippet, keep the print
+if it helps copy-paste use and place the captured output immediately below it.
+
+```python
+summary = {
+    "dressed_f01_ghz": float(chip.freq(q)),
+    "chi_ghz": float(chip.dispersive_shift(q, r) / 2),
+}
+summary
+```
+
+Long examples may finish with a machine-readable receipt: a compact dict or
+JSON record containing the parameters, outputs, checks, solver, and generated
+figure paths from that run. A receipt records evidence; it does not replace the
+reader-facing result shown earlier.
+
+## Check the reported quantity
+
+Choose checks from the physics and numerics of the example:
+
+- add local levels and compare the reported transition, population, or shift;
+- refine a time or sweep grid;
+- compare an automatic derivative with several central-difference steps;
+- read RWA dropped terms and compare their band amplitude with their frame
+  frequency;
+- read transformation validity before comparing reduced and full dynamics;
+- inspect dressed-state assignment overlaps near hybridization.
+
+Do not set a tolerance from the residual produced by the run being tested.
+Derive it from solver accuracy, truncation convergence, an approximation
+parameter such as `g / detuning`, or a stated physical estimate.
+
+## Keep plots tied to observables
+
+Make the smallest figure that answers the question. Label axes with units and
+state what was traced out or conditioned on. Plot the scheduled envelope when
+pulse shape explains the result. Use equal aspect ratio for an IQ plane and a
+log scale only when the orders of magnitude matter.
+
+Use `chip.plot_graph()` for connectivity. Its default labels are the declared
+bare frequencies and coupling strengths, so drawing the graph stays cheap and
+does not hide a diagonalization. Ask for `values="dressed"` when the dressed
+transition frequencies and full-pull cross-Kerr values are the point of the
+figure, or `values="both"` when comparing the model inputs with its dressed
+observables. The topology itself does not change between these views.
+
+Every committed figure must come from the code shown in the example. Record
+its path in the final receipt so a rerun overwrites the documented artifact.
+
+The paired Markdown guide must also contain the captured textual outputs from
+its executed notebook. Run `python tools/sync_example_outputs.py` after
+execution, and use `--check` in verification. Jupytext source parity alone is
+not enough because plain Markdown does not preserve notebook outputs.
+
+## Handle optional models and extensions explicitly
+
+State the required extra before the first optional import, for example
+`quchip[dynamiqs]` or `quchip[scqubits]`. After importing from another library,
+inspect labels, truncations, basis projections, and interactions before using
+the converted chip.
+
+Write an extension only when shipped components cannot express the local
+physics. Choose the public extension surface by ownership: device, coupling,
+drive, envelope, signal transform, dissipation channel, local space, or model
+mapping. Extension code returns symbolic quchip physics and must not branch on
+a backend.
+
+## Use specific names
+
+Avoid `recipe` as a generic name for an example. Say what the object is:
+example, procedure, pulse schedule, parameter study, fit, reduction, or bath
+model.
+
+`Bath.recipe` is the one established API use. It selects a built-in
+collapse-channel model: `"thermal"`, `"collective_decay"`, or
+`"correlated_dephasing"`. In prose and inspection output, call this the bath
+model; retain `recipe` only when naming the constructor argument, attribute, or
+serialized field.
+
+## Examples that follow these conventions
+
+- {doc}`Define and inspect a chip <guides/defining-and-inspecting-a-chip>`
+- {doc}`Statics and parameter studies <guides/statics-and-parameter-studies>`
+- {doc}`Dynamics, pulses, observables, and readout <guides/dynamics-pulses-and-readout>`
+- {doc}`Chip transformations <guides/chip-transformations>`
+- {doc}`Differentiability <guides/differentiability>`
