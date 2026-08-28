@@ -2,7 +2,7 @@
 
 This file records notable user-visible changes to quchip.
 
-## [0.2.1] - 2026-08-25
+## [0.2.1] - 2026-08-28
 
 ### Fixed
 
