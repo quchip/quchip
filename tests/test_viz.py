@@ -118,6 +118,35 @@ def test_plot_graph_returns_html_path(driven_chip, tmp_path: Path) -> None:
     assert path.endswith(".html")
 
 
+def test_plot_graph_can_show_dressed_values(tmp_path: Path) -> None:
+    """The dressed graph labels device frequencies and full-pull cross-Kerr values."""
+    q = qc.DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+    r = qc.Resonator(freq=7.0, levels=4, label="r")
+    chip = qc.Chip([q, r], [qc.Capacitive(q, r, g=0.05, label="qr")])
+
+    path = chip.plot_graph(str(tmp_path / "dressed.html"), values="dressed")
+    content = Path(path).read_text()
+
+    assert f"f01={float(chip.freq(q)):.6f} GHz" in content
+    assert f"K={float(chip.kerr_matrix()[q, r]):.3g} GHz" in content
+    assert "g=0.05 GHz" not in content
+
+
+def test_plot_graph_can_show_bare_and_dressed_values(tmp_path: Path) -> None:
+    """The combined view retains declared values alongside dressed observables."""
+    q = qc.DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+    r = qc.Resonator(freq=7.0, levels=4, label="r")
+    chip = qc.Chip([q, r], [qc.Capacitive(q, r, g=0.05, label="qr")])
+
+    path = chip.plot_graph(str(tmp_path / "both.html"), values="both")
+    content = Path(path).read_text()
+
+    assert "bare=5.000 GHz" in content
+    assert f"f01={float(chip.freq(q)):.6f} GHz" in content
+    assert "g=0.05 GHz" in content
+    assert f"K={float(chip.kerr_matrix()[q, r]):.3g} GHz" in content
+
+
 def test_plot_energy_levels_chip_returns_figure(driven_chip) -> None:
     """plot_energy_levels(chip) returns a Figure."""
     chip, _q, _r, _drive = driven_chip
@@ -197,6 +226,10 @@ def test_collect_topology_represents_coupling_as_junction_node() -> None:
     junction_id = _coupling_node_id("tc")
     assert junction_id in nodes
     assert nodes[junction_id]["kind"] == "coupling"
+    assert nodes[_device_node_id("q0")]["label"] == "q0\n5.000 GHz"
+    assert "g=0.01 GHz" in nodes[junction_id]["label"]
+    assert "f01=" not in nodes[_device_node_id("q0")]["label"]
+    assert "K=" not in nodes[junction_id]["label"]
     edge_pairs = {(start, end) for start, end, _data in edges}
     assert (_device_node_id("q0"), junction_id) in edge_pairs
     assert (junction_id, _device_node_id("q1")) in edge_pairs
@@ -273,6 +306,13 @@ def test_plot_graph_rejects_unknown_layout(driven_chip, tmp_path: Path) -> None:
     chip, _q, _r, _drive = driven_chip
     with pytest.raises(ValueError, match="force_atlas"):
         qc.plot_graph(chip, str(tmp_path / "bad.html"), layout="not_a_real_layout")
+
+
+def test_plot_graph_rejects_unknown_value_mode(driven_chip, tmp_path: Path) -> None:
+    """plot_graph rejects an unsupported value annotation mode."""
+    chip, _q, _r, _drive = driven_chip
+    with pytest.raises(ValueError, match="values must be one of"):
+        qc.plot_graph(chip, str(tmp_path / "bad-values.html"), values="effective")
 
 
 # ---------------------------------------------------------------------------

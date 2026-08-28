@@ -14,6 +14,21 @@ This file records notable user-visible changes to quchip.
 - Added a post-talk guide that follows the SQA 2026 presentation from dressed statics and pulse-level dynamics through model reduction and differentiation using public APIs.
 - Added three executed notebooks covering a bus-mediated avoided crossing with an RWA audit, active-patch reduction with a forward comparison, and pulse-gradient checks against central finite differences.
 
+### Inverse design
+
+- `fit_a_dress(desired)` treats component values as numerical dressed targets and accepts additional `constraints=`, an explicit `vary=` allowlist, and `start=` overrides.
+- Fit results now report target sources, bare-parameter seed and sign choices, bounds, final Jacobian rank, condition number, and weak parameter directions through structured fields and `fit.summary()`.
+
+### Analysis
+
+- Added `chip.kerr_matrix()`, returning a frozen, labeled, differentiable matrix of dressed self-Kerr and full-pull cross-Kerr coefficients in chip device order.
+- Devices with fewer than three resolved levels report `NaN` only on the self-Kerr diagonal; their defined pairwise cross-Kerr entries remain available.
+- `FluxTunableTransmon.flux_bias` is now a bindable, sweepable chip parameter. A flux-only rebind preserves the SQUID calibration and retunes the local Hamiltonian; supplying `freq` and `flux_bias` together defines a new anchor.
+
+### Deprecated
+
+- `fit_a_dress()` keyword arguments `coupling_targets=`, `observable_targets=`, and `fit_parameters=` retain their 0.2.x seed-chip behavior but now emit `DeprecationWarning`. Use the desired-chip API with `constraints=`, `vary=`, and `start=`; the compatibility keywords will be removed in 0.3.0.
+
 ## [0.2.0] - 2026-08-14
 
 ### Highlights

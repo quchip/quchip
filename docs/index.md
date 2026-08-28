@@ -34,12 +34,13 @@ Optional extras: `quchip[dynamiqs]` for the JAX-native backend, `quchip[viz]` fo
 
 The guides begin with a small runnable calculation and add one idea at a time:
 
+- {doc}`Define and inspect a chip <guides/defining-and-inspecting-a-chip>`
 - {doc}`Statics and parameter studies <guides/statics-and-parameter-studies>`
 - {doc}`Dynamics, pulses, observables, and readout <guides/dynamics-pulses-and-readout>`
 - {doc}`Chip transformations <guides/chip-transformations>`
 - {doc}`Differentiability <guides/differentiability>`
 
-The {doc}`cookbook` collects the conventions behind executable quchip recipes.
+The {doc}`cookbook` defines the conventions used by executable quchip examples.
 
 ```{figure} images/hello_qubit_drive_leakage.png
 :width: 760px
@@ -55,9 +56,9 @@ The {doc}`cookbook` collects the conventions behind executable quchip recipes.
 
 ## Start from the SQA 2026 talk
 
-The {doc}`post-talk page <guides/from-sqa-2026>` contains four runnable snippets
-and one documentation link for each topic. The guides stand on their own; no
-knowledge of the presentation is required.
+The {doc}`post-talk page <guides/from-sqa-2026>` contains a short runnable
+snippet and one documentation link for each topic. The guides stand on their
+own; no knowledge of the presentation is required.
 
 The accompanying paper is [quchip: A Differentiable Toolkit for Modeling Quantum Devices](https://arxiv.org/abs/2607.17081) (arXiv:2607.17081); citation metadata is in the repository's [CITATION.cff](https://github.com/quchip/quchip/blob/main/CITATION.cff).
 
@@ -66,6 +67,7 @@ The accompanying paper is [quchip: A Differentiable Toolkit for Modeling Quantum
 :hidden:
 
 guides/from-sqa-2026
+guides/defining-and-inspecting-a-chip
 guides/statics-and-parameter-studies
 guides/dynamics-pulses-and-readout
 guides/chip-transformations

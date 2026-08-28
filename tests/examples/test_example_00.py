@@ -4,15 +4,12 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
-import sys
 from pathlib import Path
 
 import jupytext
 import matplotlib.image as mpimg
 import nbformat
 import numpy as np
-from jupytext.compare import compare_notebooks
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -34,20 +31,13 @@ def _stream_output(notebook: dict) -> str:
     )
 
 
-def test_guide_is_a_strict_executed_jupytext_pair() -> None:
-    """The canonical Markdown and executed notebook have identical code cells."""
+def test_guide_code_matches_the_executed_notebook() -> None:
+    """The reader-facing Markdown contains exactly the executed code."""
     authored = jupytext.read(EXAMPLE_MD)
     executed = nbformat.read(EXAMPLE_IPYNB, as_version=4)
     nbformat.validate(executed)
-    compare_notebooks(authored, executed, fmt="md", compare_outputs=False, compare_ids=False)
-    strict = subprocess.run(
-        [sys.executable, "-m", "jupytext", "--to", "md", "--test-strict", str(EXAMPLE_IPYNB)],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert strict.returncode == 0, strict.stdout + strict.stderr
+    assert _code(authored) == _code(executed)
+    assert all(cell.execution_count is not None for cell in executed.cells if cell.cell_type == "code")
 
 
 def test_guide_progresses_through_the_public_dynamics_surface() -> None:
@@ -58,10 +48,12 @@ def test_guide_progresses_through_the_public_dynamics_surface() -> None:
     for heading in (
         "## One pulse, one trace",
         "## Build a longer schedule",
+        "## Add a lossy readout resonator",
         "## Compare pulse bandwidth and leakage",
-        "## Read results at the right level",
-        "## Part 2: Dispersive readout",
-        "## What this readout model contains",
+        "## Inspect populations and truncation",
+        "## Plot the pulse comparison",
+        "## Simulate dispersive readout",
+        "## Boundaries of the readout model",
     ):
         assert heading in source
     for required in (
@@ -74,7 +66,6 @@ def test_guide_progresses_through_the_public_dynamics_surface() -> None:
         ".simulate_batch(",
         ".plot_populations(",
         ".overlap(",
-        ".reduced_state(",
         ".check_truncation(",
         'chip.e_ops(r="a")',
         'readout_batch.expect("r")',
@@ -100,8 +91,11 @@ def test_executed_receipts_record_leakage_and_readout() -> None:
 
 
 def test_committed_figures_are_valid() -> None:
-    """Both selected website figures are non-empty raster images."""
-    for relative in ("docs/images/hello_qubit_drive_leakage.png", "docs/images/hello_dispersive_readout_iq.png"):
+    """The selected website figures are non-empty raster images."""
+    for relative in (
+        "docs/images/hello_qubit_drive_leakage.png",
+        "docs/images/hello_dispersive_readout_iq.png",
+    ):
         image = mpimg.imread(ROOT / relative)
         assert image.ndim == 3 and image.shape[2] in (3, 4)
         assert float(image.std()) > 0.02

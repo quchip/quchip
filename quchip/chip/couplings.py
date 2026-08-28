@@ -97,6 +97,7 @@ class Capacitive(CouplingModel):
     _type_prefix: ClassVar[str] = "cap"
     folds_exchange: ClassVar[bool] = True
     reduces_to_crosskerr: ClassVar[bool] = True
+    default_fit_observable: ClassVar[str] = "cross_kerr"
 
     g: Scalar = parameter(default=UNBOUND, unit="GHz", symbol="g")
 
@@ -198,6 +199,7 @@ class TunableCapacitive(CouplingModel):
     is_effective: ClassVar[bool] = True
     folds_exchange: ClassVar[bool] = True
     reduces_to_crosskerr: ClassVar[bool] = True
+    default_fit_observable: ClassVar[str] = "cross_kerr"
 
     g_0: Scalar = parameter(default=UNBOUND, unit="GHz", symbol="g_0")
 
@@ -258,6 +260,7 @@ class CrossKerr(CouplingModel):
 
     _type_prefix: ClassVar[str] = "crosskerr"
     is_effective: ClassVar[bool] = True
+    default_fit_observable: ClassVar[str] = "cross_kerr"
 
     chi: Scalar = parameter(default=UNBOUND, unit="GHz", symbol=r"\chi")
 

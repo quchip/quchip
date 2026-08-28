@@ -7,7 +7,7 @@ into a solver-ready problem. Dressed-state analysis lives in
 ``chip._analysis`` (exposed via the chip's public methods).
 """
 
-from quchip.chip.analysis import DressedResult
+from quchip.chip.analysis import DressedResult, KerrMatrix
 from quchip.chip.baths import Bath
 from quchip.chip.chip import Chip
 from quchip.chip.couplings import Capacitive, Coupling, CrossKerr, TunableCapacitive
@@ -25,6 +25,7 @@ from quchip.chip.transformations import (
 __all__ = [
     "Chip",
     "DressedResult",
+    "KerrMatrix",
     "Bath",
     "Capacitive",
     "Coupling",
