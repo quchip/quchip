@@ -107,6 +107,8 @@ class Resonator(FockDevice):
     _type_prefix: ClassVar[str] = "resonator"
     _default_levels: ClassVar[int] = 10
     tunable_param_names = ("freq",)
+    dressed_fit_target_fields = (("freq", "freq"),)
+    dressed_fit_param_names = ("freq",)
 
     freq: Scalar = parameter(default=UNBOUND, positive=True, unit="GHz", symbol=r"\omega")
     quality_factor: Scalar = parameter(default=None, positive=True, noise=True, kw_only=True)

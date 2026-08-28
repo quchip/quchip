@@ -391,6 +391,28 @@ strong-drive Stark shifts, pulse-bandwidth leakage, or echo/cancellation calibra
 This convention follows the effective-Hamiltonian decompositions of Magesan and Gambetta, Phys. Rev. A 101,
 052308 (2020), and Malekakhlagh, Magesan, and McKay, Phys. Rev. A 102, 042605 (2020).
 
+### 9.3 Dressed Kerr matrix
+
+`Chip.kerr_matrix()` evaluates one labeled eigensystem and returns a symmetric
+matrix in `chip.devices` order. For distinct devices,
+
+```text
+K[i,j] = E(1_i,1_j) - E(1_i) - E(1_j) + E(0),
+```
+
+which is the same full-pull convention as `Chip.dispersive_shift(i, j)` and
+the static-ZZ coefficient for two qubits. On the diagonal,
+
+```text
+K[i,i] = E(2_i) - 2 E(1_i) + E(0),
+```
+
+which is `Chip.dressed_anharmonicity(i)`. A device with fewer than three
+resolved levels has `NaN` on the diagonal; its defined off-diagonal entries
+remain available. Every entry comes from the complete dressed chip rather
+than from a matching authored edge. In particular, an isolated
+`KerrCavity` with `H = omega*n - K*n*(n-1)` has `K[i,i] = -2*K`.
+
 ## 10. Adiabatic Elimination and Dispersive Readout
 
 Sources: [`quchip/chip/transformations/`](quchip/chip/transformations/), [`quchip/analysis/dispersive_readout.py`](quchip/analysis/dispersive_readout.py)
@@ -443,7 +465,7 @@ S_ij = V_ij / (E_i − E_j)        (i, j straddling P/Q; E = diag H)
 H_eff = P (H + (1/2)[S, V]) P
 ```
 
-(Bravyi, DiVincenzo & Loss, Ann. Phys. 326, 2793 (2011), 2nd order). Nested `where` guards handle the division: an exactly degenerate cross pair with no matrix element contributes zero with a *finite gradient*, whereas a single `where` would propagate a `NaN` backward through the unselected branch. Survivor parameters are obtained by indexing `H_eff`: `freq_after(s) = E(1_s) − E(0)`; the pair exchange is the `<1_a|H_eff|1_b>` element. A pre-existing direct edge is already included in `H_eff`, so the emitted edge carries the total coupling and the reported `j_eff` subtracts the direct contribution. Alongside `J`, the bridge fold records its linearization
+(Bravyi, DiVincenzo & Loss, Ann. Phys. 326, 2793 (2011), 2nd order). Nested `where` guards handle the division: an exactly degenerate cross pair with no matrix element contributes zero with a *finite gradient*, whereas a single `where` would propagate a `NaN` backward through the unselected branch. Survivor parameters are obtained by indexing `H_eff`: `freq_after(s) = E(1_s) − E(0)`; the pair exchange is the `<1_a|H_eff|1_b>` element. An authored direct edge is included in `H_eff`, so the emitted edge carries the total coupling and the reported `j_eff` subtracts the direct contribution. Alongside `J`, the bridge fold records its linearization
 
 ```text
 dJ/domega_c = (g_a*g_b/2)(1/Delta_a^2 + 1/Delta_b^2)
@@ -522,7 +544,7 @@ Band decomposition, coefficient construction, observable recombination, and the 
 
 The following operations require concrete Python values:
 
-- `Chip.dress()` returns a concrete dict-based view and is not traceable. The bare→dressed assignment itself is discrete and piecewise. Traced callers should use `Chip.energy()`, `Chip.freq(target, when=...)`, or `Chip.dispersive_shift()`, which route through `label_eigensystem` in the pure-JAX kernel in `quchip/chip/dressing.py`; labeled energy lookup stays differentiable away from label discontinuities. `track_path` is a separate continuation utility for following labels through a stacked eigensystem along a parameter sweep.
+- `Chip.dress()` returns a concrete dict-based view and is not traceable. The bare→dressed assignment itself is discrete and piecewise. Traced callers should use `Chip.energy()`, `Chip.freq(target, when=...)`, `Chip.dispersive_shift()`, or `Chip.kerr_matrix()`, which route through `label_eigensystem` in the pure-JAX kernel in `quchip/chip/dressing.py`; labeled energy lookup stays differentiable away from label discontinuities. `track_path` is a separate continuation utility for following labels through a stacked eigensystem along a parameter sweep.
 - Human-facing serialization and diagnostics coerce to Python scalars.
 
 Other engine paths avoid implicit conversion to host arrays.

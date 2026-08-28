@@ -1,4 +1,4 @@
-"""Parametric capability hooks on couplings (spec §4.2, §4.5)."""
+"""Parametric capability hooks on couplings."""
 
 from __future__ import annotations
 

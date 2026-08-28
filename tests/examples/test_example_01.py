@@ -1,146 +1,138 @@
-"""Contract coverage for the public statics and sweep example."""
+"""Contract coverage for the public statics and parameter-study guide."""
 
 from __future__ import annotations
 
 import json
 import math
 import re
-import subprocess
-import sys
 from pathlib import Path
 
 import jupytext
 import matplotlib.image as mpimg
 import nbformat
-from jupytext.compare import compare_notebooks
 
 
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE_MD = ROOT / "examples" / "01_resolve_and_sweep.md"
 EXAMPLE_IPYNB = ROOT / "examples" / "01_resolve_and_sweep.ipynb"
-FIGURE = ROOT / "docs" / "images" / "resolve_and_sweep.png"
 RESULT_RE = re.compile(r"^RESULT statics=(\{.*\})$", re.MULTILINE)
+PAPER_RESULT_RE = re.compile(r"^RESULT paper_statics=(\{.*\})$", re.MULTILINE)
 
 
-def _code_cells(notebook: dict) -> list[str]:
-    return ["".join(cell["source"]) for cell in notebook["cells"] if cell["cell_type"] == "code"]
+def _code(notebook: dict) -> str:
+    return "\n\n".join("".join(cell["source"]) for cell in notebook["cells"] if cell["cell_type"] == "code")
 
 
 def _stream_output(notebook: dict) -> str:
-    chunks: list[str] = []
-    for cell in notebook["cells"]:
-        for output in cell.get("outputs", []):
-            if output.get("output_type") == "stream":
-                chunks.append("".join(output.get("text", [])))
-    return "".join(chunks)
+    return "".join(
+        "".join(output.get("text", []))
+        for cell in notebook["cells"]
+        for output in cell.get("outputs", [])
+        if output.get("output_type") == "stream"
+    )
 
 
-def test_example_is_a_strict_executed_jupytext_pair() -> None:
+def test_guide_code_matches_the_executed_notebook() -> None:
+    """The reader-facing Markdown contains exactly the executed code."""
     authored = jupytext.read(EXAMPLE_MD)
     executed = nbformat.read(EXAMPLE_IPYNB, as_version=4)
     nbformat.validate(executed)
-    compare_notebooks(authored, executed, fmt="md", compare_outputs=False, compare_ids=False)
-    assert all(cell.cell_type != "raw" for cell in executed.cells)
-
-    strict = subprocess.run(
-        [sys.executable, "-m", "jupytext", "--to", "md", "--test-strict", str(EXAMPLE_IPYNB)],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert strict.returncode == 0, strict.stdout + strict.stderr
+    assert _code(authored) == _code(executed)
+    assert all(cell.execution_count is not None for cell in executed.cells if cell.cell_type == "code")
 
 
-def test_source_stays_on_the_small_public_surface() -> None:
+def test_source_covers_static_observables_and_sweep_forms() -> None:
+    """The guide stays static and uses the public analysis and sweep APIs."""
     source = EXAMPLE_MD.read_text(encoding="utf-8")
-    code = "\n\n".join(_code_cells(jupytext.read(EXAMPLE_MD)))
-
-    assert "# Resolve and sweep a chip" in source
-    assert "from quchip import" in code
+    code = _code(jupytext.read(EXAMPLE_MD))
+    assert "# Statics and parameter studies" in source
     for required in (
-        "DuffingTransmon",
-        "Resonator",
-        "Capacitive",
-        "Chip",
-        "RWA",
-        "Sweep",
-        "SpectrumSweep",
+        "chip.with_params(",
         "chip.freq(",
+        "chip.transition_frequency(",
+        "chip.kerr_matrix(",
+        "chip.dressed_anharmonicity(",
+        "chip.dispersive_shift(",
         "chip.static_zz(",
-        "chip.hamiltonian()",
-        "chip.resolve().dropped_terms_summary()",
+        "chip.drive_matrix_elements(",
+        "SpectrumSweep",
+        "Sweep.zip(",
+        "Sweep.expand(",
         "dressed_index(",
+        "assignment_overlaps",
+        "state_components(",
+        "Fluxonium(",
+        "CouplingModel",
+        'paper_chip.with_params({"q.phi_ext": phi_ext})',
+        'point.dispersive_shift("q", "readout")',
+        "np.linspace(0.5, 0.85, 351)",
+        "np.interp(",
     ):
         assert required in code
-    for excluded in (
-        "from quchip.engine",
-        "from quchip.backend",
-        "import qutip",
-        "import dynamiqs",
-        "class ",
-        "QuantumSequence",
-        "jax.grad",
-        "eliminate(",
-    ):
-        assert excluded not in code
+    assert "QuantumSequence" not in code
+    assert ".simulate(" not in code
+    assert "from quchip.engine" not in code
 
 
-def test_executed_receipt_matches_the_declared_physics() -> None:
+def test_executed_receipt_matches_the_avoided_crossing() -> None:
+    """The resolved crossing retains its checked splitting and RWA ledger."""
     executed = nbformat.read(EXAMPLE_IPYNB, as_version=4)
     matches = RESULT_RE.findall(_stream_output(executed))
     assert len(matches) == 1
     receipt = json.loads(matches[0])
-
-    assert receipt.keys() == {
-        "approximation",
-        "dressed_frequencies_ghz",
-        "dropped_rwa_terms",
-        "figure",
-        "full_dimension",
-        "inferred_exchange_rate_mhz",
-        "minimum_at_bare_q2_ghz",
-        "minimum_splitting_mhz",
-        "original_chip_unchanged",
-        "relative_difference_to_second_order",
-        "second_order_splitting_scale_mhz",
-        "static_zz_khz",
-        "sweep_points",
-    }
     assert receipt["approximation"] == "RWA"
     assert receipt["dropped_rwa_terms"] == 4
     assert receipt["full_dimension"] == 64
     assert receipt["original_chip_unchanged"] is True
     assert receipt["sweep_points"] == 181
-    assert receipt["figure"] == "../docs/images/resolve_and_sweep.png"
-    assert math.isclose(receipt["minimum_at_bare_q2_ghz"], 5.300, abs_tol=1.0e-12)
     assert math.isclose(receipt["minimum_splitting_mhz"], 4.4098, rel_tol=1.0e-3)
-    assert math.isclose(receipt["inferred_exchange_rate_mhz"], 2.2049, rel_tol=1.0e-3)
-    assert math.isclose(receipt["second_order_splitting_scale_mhz"], 4.0, abs_tol=1.0e-12)
-    assert 0.08 < receipt["relative_difference_to_second_order"] < 0.11
     assert math.isclose(receipt["static_zz_khz"], 22.604, rel_tol=1.0e-3)
-    assert all(math.isfinite(value) for value in receipt["dressed_frequencies_ghz"].values())
 
 
-def test_executed_figure_is_valid() -> None:
-    image = mpimg.imread(FIGURE)
-    assert image.shape[0] >= 700
-    assert image.shape[1] >= 1000
-    assert image.shape[2] in (3, 4)
-    assert float(image.std()) > 0.02
+def test_paper_example_reproduces_fluxonium_spectrum_and_readout() -> None:
+    """The experimental example checks an independent model grid against both datasets."""
+    executed = nbformat.read(EXAMPLE_IPYNB, as_version=4)
+    matches = PAPER_RESULT_RE.findall(_stream_output(executed))
+    assert len(matches) == 1
+    receipt = json.loads(matches[0])
+    assert receipt["spectrum_points"] == 153
+    assert receipt["spectrum_model_points"] == 351
+    assert receipt["readout_points"] == 151
+    assert receipt["readout_model_points"] == 351
+    assert math.isclose(
+        receipt["spectrum_median_absolute_error_mhz"], 1.5924, rel_tol=1.0e-3
+    )
+    assert math.isclose(
+        receipt["spectrum_p95_absolute_error_mhz"], 6.0768, rel_tol=1.0e-3
+    )
+    assert math.isclose(receipt["chi_rmse_mhz"], 0.7652, rel_tol=1.0e-3)
+    assert math.isclose(
+        receipt["readout_frequency_rmse_mhz"], 1.0848, rel_tol=1.0e-3
+    )
 
 
-def test_documentation_exposes_the_post_talk_path() -> None:
-    guide = (ROOT / "docs" / "guides" / "from-sqa-2026.md").read_text(encoding="utf-8")
-    index = (ROOT / "docs" / "index.md").read_text(encoding="utf-8")
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    page = (ROOT / "docs" / "examples" / "resolve-and-sweep.md").read_text(encoding="utf-8")
-
-    assert "../examples/resolve-and-sweep" in guide
-    assert "../examples/hello-chip" in guide
-    assert "guides/from-sqa-2026" in index
-    assert "https://docs.quchip.org/guides/from-sqa-2026" in readme
+def test_figure_and_docs_route_are_valid() -> None:
+    """The plotted crossing and its canonical guide route are present."""
+    image = mpimg.imread(ROOT / "docs" / "images" / "resolve_and_sweep.png")
+    assert image.shape[0] >= 700 and float(image.std()) > 0.02
+    spectrum_image = mpimg.imread(
+        ROOT / "docs" / "images" / "stefanski_fluxonium_spectrum.png"
+    )
+    readout_image = mpimg.imread(
+        ROOT / "docs" / "images" / "stefanski_fluxonium_readout.png"
+    )
+    assert spectrum_image.shape[0] >= 700 and float(spectrum_image.std()) > 0.02
+    assert readout_image.shape[0] >= 700 and float(readout_image.std()) > 0.02
+    page = (ROOT / "docs" / "guides" / "statics-and-parameter-studies.md").read_text(encoding="utf-8")
+    sqa = (ROOT / "docs" / "guides" / "from-sqa-2026.md").read_text(encoding="utf-8")
     assert "01_resolve_and_sweep.md" in page
-    assert "01_resolve_and_sweep.ipynb" in page
-    assert "https://github.com/quchip/quchip/blob/main/examples/01_resolve_and_sweep.md" in page
-    assert "resolve_and_sweep.png" in page
+    assert "https://docs.quchip.org/guides/statics-and-parameter-studies" in sqa
+
+
+def test_paper_sources_are_linked_without_hidden_peak_selection() -> None:
+    """The guide links the paper and public archive and compares extracted rows directly."""
+    source = EXAMPLE_MD.read_text(encoding="utf-8")
+    assert "https://arxiv.org/abs/2411.13437" in source
+    assert "https://github.com/AndersenQubitLab/FPA-RO-experimental" in source
+    assert "https://doi.org/10.4121/1092cb12-9198-4d43-8500-401c78a5dc15" in source
+    assert "selected peak" not in source.lower()

@@ -315,7 +315,7 @@ class ZeroPiMapping(ModelMapping):
     on a joint phi-grid / charge-basis product space; quchip has no native
     model for it, since none of its circuit devices carry a second coordinate.
     Rather than reimplementing that two-mode Hamiltonian, this mapping takes
-    the exact-lane recipe: diagonalize with scqubits once, then hand the
+    the frozen-snapshot path: diagonalize with scqubits once, then hand the
     resulting energies and eigenbasis-projected operators to
     :class:`~quchip.interop.eigenbasis.EigenbasisDevice`, which treats an
     already-diagonal spectrum as its native basis (see that class's
@@ -326,10 +326,10 @@ class ZeroPiMapping(ModelMapping):
 
     The snapshot reproduces ``obj``'s spectrum and charge/phase matrix
     elements exactly, at the parameter point it was taken at, but it is a
-    frozen numeric table, not a Hamiltonian recipe: unlike the parametric
-    mappings above, the imported device is not differentiable with respect
-    to ZeroPi's circuit parameters (``EJ``, ``EL``, ``ECJ``, ``EC``, ``ng``,
-    ``flux``). This is the reference recipe for wrapping any other
+    frozen numeric table, not a parametric Hamiltonian model. Unlike the
+    parametric mappings above, the imported device is not differentiable with
+    respect to ZeroPi's circuit parameters (``EJ``, ``EL``, ``ECJ``, ``EC``,
+    ``ng``, ``flux``). This is the reference path for wrapping any other
     scqubits (or third-party) type quchip has no native model for.
     """
 

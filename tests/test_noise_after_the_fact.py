@@ -315,8 +315,8 @@ def test_noise_parameter_names_reflect_declared_channels():
 def test_set_noise_is_the_complete_noise_description():
     """chip.set_noise() replaces the entire noise configuration; unmentioned params are cleared."""
     chip, q, r = _lossless_pair()
-    q.T1 = 10_000.0                                                    # pre-existing noise...
-    chip.add_bath(Bath("thermal", temperature=100.0, rate=1e-3))       # ...and a bath
+    q.T1 = 10_000.0                                                    # initial noise to replace
+    chip.add_bath(Bath("thermal", temperature=100.0, rate=1e-3))       # initial bath to replace
 
     chip.set_noise(
         {"r": dict(quality_factor=5_000.0)},

@@ -6,10 +6,10 @@ parameters are extracted, how the eliminated mode's jump operator is carried
 into the reduced frame, whether a residual ZZ and a pathway attribution are
 available, and what higher-order physics the reduction drops. This module
 factors those decision points into a :class:`ReductionMethod` strategy keyed
-in :data:`_REDUCTION_METHODS`, so a new route (a higher-order Schrieffer-Wolff,
-a numeric fit) registers a strategy with :func:`register_reduction_method`
-rather than threading another ``method ==`` branch through the fold — the
-same registration pattern as :mod:`quchip.chip.retarget`'s rule registry.
+in :data:`_REDUCTION_METHODS`. New routes, such as a higher-order
+Schrieffer-Wolff method or numeric fit, register with
+:func:`register_reduction_method`, following the rule registry in
+:mod:`quchip.chip.retarget`.
 
 Dispatch keys on the *static* ``method`` string, never a traced value:
 the two shipped strategies, :class:`SchriefferWolffMethod`
@@ -88,9 +88,8 @@ class ReductionMethod:
 
     A concrete strategy declares its :attr:`name` (the ``method`` string
     :func:`eliminate` dispatches on) and implements the five hooks below. Each
-    receives the :class:`DeviceReductionContext` the caller assembled; a hook
-    returns the same shape its ``method == name`` branch produced before this
-    seam existed, so the fold loop is identical across routes.
+    receives the :class:`DeviceReductionContext` the caller assembled. Each
+    hook returns the shape required by the shared fold loop.
 
     Every hook body runs on ``jax.grad``/``jit`` paths and must stay traceable:
     no ``float()``/``int()``/``bool()`` or Python branching on a traced value.

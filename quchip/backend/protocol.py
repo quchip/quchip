@@ -824,9 +824,8 @@ class Backend(ABC):
 
         Centralizes the time-dependence filter both backends apply when
         lowering dynamic terms. ``DynamicTerm.time_dependence`` is typed as
-        ``ScalarModulation``, so the ``isinstance`` guard is defensive — it
-        keeps any future non-scalar modulation from silently contributing a
-        malformed RHS — while leaving observed behavior unchanged.
+        ``ScalarModulation``; the ``isinstance`` guard prevents a non-scalar
+        modulation from contributing a malformed RHS.
         """
         from quchip.engine.ir import ScalarModulation
 

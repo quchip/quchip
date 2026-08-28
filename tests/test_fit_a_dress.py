@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -20,7 +22,11 @@ from quchip.chip.coupling_base import BaseCoupling
 from quchip.devices.base import BaseDevice
 from quchip.inverse_design.fit import _estimate_bare_g, _pack_initial_params, _static_exchange_rate
 from quchip.inverse_design import fit as fit_module
-from quchip.inverse_design.observables import TargetSpec, build_target_specs
+from quchip.inverse_design.observables import (
+    TargetSpec,
+    build_dressed_target_specs,
+    build_target_specs,
+)
 from quchip.inverse_design.subsystems import build_local_subsystem, device_labels_for_local_eval
 from quchip.inverse_design import FitADressResult, ObservableReport
 
@@ -216,8 +222,285 @@ def test_fit_a_dress_public_exports() -> None:
     assert ObservableReport.__name__ == "ObservableReport"
 
 
+def test_devices_declare_numeric_dressed_fit_defaults_without_dressing() -> None:
+    """Common spectral devices map constructor numbers to dressed targets directly."""
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+    r = Resonator(freq=7.0, levels=4, label="r")
+
+    assert q.default_dressed_targets() == {"freq": 5.0, "anharmonicity": -0.25}
+    assert q.default_fit_parameters() == ("freq", "anharmonicity")
+    assert r.default_dressed_targets() == {"freq": 7.0}
+    assert r.default_fit_parameters() == ("freq",)
+
+
+@pytest.mark.parametrize(
+    "coupling",
+    [
+        lambda q, r: Capacitive(q, r, g=-0.00025, label="cap"),
+        lambda q, r: TunableCapacitive(q, r, g_0=-0.00025, label="tunable"),
+        lambda q, r: CrossKerr(q, r, chi=-0.00025, label="crosskerr"),
+    ],
+)
+def test_dispersive_couplings_declare_cross_kerr_as_their_default_fit_target(coupling) -> None:
+    """A coupling class, not endpoint heuristics, owns its default inverse-design meaning."""
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+    r = Resonator(freq=7.0, levels=4, label="r")
+    edge = coupling(q, r)
+
+    assert edge.default_dressed_target() == ("cross_kerr", -0.00025)
+
+
+def test_dressed_target_compilation_never_evaluates_the_desired_chip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The desired chip is a numeric specification, not a runnable seed model."""
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+    r = Resonator(freq=7.0, levels=4, label="r")
+    edge = Capacitive(q, r, g=-0.00025, label="qr")
+    desired = Chip([q, r], [edge], frame="rotating")
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("desired chip was evaluated")
+
+    monkeypatch.setattr(desired, "freq", forbidden)
+    monkeypatch.setattr(desired, "dressed_anharmonicity", forbidden)
+    monkeypatch.setattr(desired, "static_zz", forbidden)
+
+    specs = build_dressed_target_specs(desired)
+
+    assert [(spec.kind, spec.label, spec.target) for spec in specs] == [
+        ("freq", "q", 5.0),
+        ("anharmonicity", "q", -0.25),
+        ("freq", "r", 7.0),
+        ("cross_kerr", "qr", -0.00025),
+    ]
+    assert [spec.source for spec in specs] == [
+        "component default",
+        "component default",
+        "component default",
+        "component default",
+    ]
+
+
+def test_explicit_constraints_extend_replace_and_remove_component_defaults() -> None:
+    """Pair constraints are additive; same-edge values replace or remove defaults."""
+    q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
+    q1 = DuffingTransmon(freq=5.2, anharmonicity=-0.24, levels=3, label="q1")
+    bus = Resonator(freq=7.0, levels=3, label="bus")
+    edge = Capacitive(q0, bus, g=-0.00025, label="q0-bus")
+    desired = Chip([q0, q1, bus], [edge], frame="rotating")
+
+    specs = build_dressed_target_specs(
+        desired,
+        constraints={
+            edge: {"cross_kerr": -0.0003},
+            (q0, q1): {"exchange_rate": -0.0022},
+            (q1, bus): {"zz": 0.00015},
+        },
+    )
+    keyed = {(spec.kind, spec.label): spec.target for spec in specs}
+
+    assert keyed[("cross_kerr", "q0-bus")] == -0.0003
+    assert keyed[("exchange_rate", ("q0", "q1"))] == -0.0022
+    assert keyed[("cross_kerr", ("q1", "bus"))] == 0.00015
+    assert all(
+        spec.source == "explicit"
+        for spec in specs
+        if (spec.kind, spec.label)
+        in {
+            ("cross_kerr", "q0-bus"),
+            ("exchange_rate", ("q0", "q1")),
+            ("cross_kerr", ("q1", "bus")),
+        }
+    )
+
+    without_edge_default = build_dressed_target_specs(
+        desired,
+        constraints={edge: {"cross_kerr": None}},
+    )
+    assert ("cross_kerr", "q0-bus") not in {(spec.kind, spec.label) for spec in without_edge_default}
+
+
+def test_fit_a_dress_treats_a_capacitive_scalar_as_a_cross_kerr_target() -> None:
+    """The desired edge number is a dressed constraint, not the fitted bare g."""
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=4, label="q")
+    r = Resonator(freq=7.0, levels=5, label="r")
+    edge = Capacitive(q, r, g=-0.00025, label="qr")
+    desired = Chip([q, r], [edge], frame="rotating")
+
+    fit = fit_a_dress(desired, max_nfev=300)
+
+    assert fit.chip.static_zz("q", "r") == pytest.approx(-0.00025, abs=2e-6)
+    assert fit.final_params["qr.g"] > 0.0
+    assert fit.solver_info["n_free_parameters"] == 4
+    assert fit.solver_info["n_target_residuals"] == 4
+    assert fit.solver_info["input_contract"] == "desired-chip"
+    assert {(report.kind, report.label): report.source for report in fit.final_targets}[
+        ("cross_kerr", "qr")
+    ] == "component default"
+    coupling_report = next(report for report in fit.parameter_reports if report.name == "qr.g")
+    assert coupling_report.seed_source == "isolated-pair root solve"
+    assert coupling_report.sign_choice == "positive convention"
+    assert coupling_report.lower_bound < 0.0 < coupling_report.upper_bound
+
+
+def test_fit_a_dress_records_a_user_supplied_coupling_sign() -> None:
+    """An explicit coupling start owns the sign branch and the receipt says so."""
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+    r = Resonator(freq=7.0, levels=3, label="r")
+    edge = Capacitive(q, r, g=-0.00025, label="qr")
+    desired = Chip([q, r], [edge], frame="rotating")
+
+    fit = fit_a_dress(desired, start={"qr.g": -0.05})
+
+    report = next(report for report in fit.parameter_reports if report.name == "qr.g")
+    assert report.initial == pytest.approx(-0.05)
+    assert report.final < 0.0
+    assert report.seed_source == "user start"
+    assert report.sign_choice == "user supplied"
+
+
+def test_fit_a_dress_summary_is_a_compact_human_readable_receipt() -> None:
+    """The common result inspection path is one summary, not several dict dumps."""
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+    fit = fit_a_dress(Chip([q], frame="rotating"))
+
+    summary = fit.summary()
+
+    assert "fit_a_dress: converged" in summary
+    assert "targets: 2" in summary
+    assert "parameters: 2" in summary
+    assert "identifiability: rank 2/2" in summary
+    assert "q.freq" in summary
+    assert "q.anharmonicity" in summary
+    assert repr(fit) != summary
+
+
+def test_parameter_report_is_part_of_the_public_inverse_design_api() -> None:
+    """Parameter receipts are typed public data, not an undocumented solver-info blob."""
+    from quchip.inverse_design import FitParameterReport
+
+    report = FitParameterReport(
+        name="q.freq",
+        initial=4.9,
+        final=5.0,
+        lower_bound=0.0,
+        upper_bound=10.0,
+        seed_source="component declaration",
+    )
+
+    assert report.delta == pytest.approx(0.1)
+
+
+def test_automatic_desired_chip_fit_rejects_a_rank_deficient_jacobian(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Equal target/parameter counts do not make an automatic flat direction safe."""
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+    desired = Chip([q], frame="rotating")
+
+    def only_freq(candidate, spec, evaluator):
+        del spec, evaluator
+        return candidate["q"].freq
+
+    monkeypatch.setattr(fit_module, "_evaluate_spec", only_freq)
+
+    with pytest.raises(ValueError, match=r"Jacobian rank 1 for 2 free parameters"):
+        fit_a_dress(desired)
+
+
+def test_manual_rank_deficient_fit_returns_diagnostics_with_a_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit vary plan may return ambiguity, but it cannot hide it."""
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+    desired = Chip([q], frame="rotating")
+
+    def only_freq(candidate, spec, evaluator):
+        del spec, evaluator
+        return candidate["q"].freq
+
+    monkeypatch.setattr(fit_module, "_evaluate_spec", only_freq)
+
+    with pytest.warns(UserWarning, match=r"Jacobian rank 1 for 2 free parameters"):
+        fit = fit_a_dress(
+            desired,
+            vary={q: ("freq", "anharmonicity")},
+        )
+
+    assert fit.solver_info["jacobian_rank"] == 1
+    assert fit.solver_info["rank_deficient"] is True
+    assert np.isinf(fit.solver_info["jacobian_condition_number"])
+    weak = fit.solver_info["weak_parameter_directions"]
+    assert weak
+    assert abs(weak[0]["relative_weights"]["q.anharmonicity"]) == pytest.approx(1.0)
+
+
+def test_automatic_desired_chip_fit_rejects_an_underdetermined_target_plan() -> None:
+    """Removing a default target cannot leave an automatic free parameter floating."""
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+    desired = Chip([q], frame="rotating")
+
+    with pytest.raises(ValueError, match=r"2 free parameters but only 1 target residual"):
+        fit_a_dress(desired, constraints={q: {"anharmonicity": None}})
+
+
+def test_fit_a_dress_accepts_manual_vary_and_start_overrides() -> None:
+    """Advanced users can replace automatic parameter selection and starting values."""
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+    desired = Chip([q], frame="rotating")
+
+    fit = fit_a_dress(
+        desired,
+        vary={q: ("freq",)},
+        start={"q.freq": 4.8},
+    )
+
+    assert fit.initial_params == {"q.freq": 4.8}
+    assert fit.final_params["q.freq"] == pytest.approx(5.0, abs=1e-8)
+    assert fit.chip.dressed_anharmonicity("q") == pytest.approx(-0.25, abs=1e-8)
+
+
+def test_desired_chip_selection_errors_name_vary_not_the_legacy_keyword() -> None:
+    """Desired-chip errors use the vocabulary shown in its public signature."""
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+    desired = Chip([q])
+
+    with pytest.raises(ValueError, match=r"vary\['q'\]"):
+        fit_a_dress(desired, vary={q: "freq"})
+
+
+def test_compatibility_keywords_emit_one_caller_facing_deprecation_warning() -> None:
+    """The old keyword family gives one actionable warning at the user's call site."""
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+    chip = Chip([q], frame="rotating")
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        fit_a_dress(chip, fit_parameters={q: ("freq",)})
+
+    deprecations = [item for item in caught if issubclass(item.category, DeprecationWarning)]
+    assert len(deprecations) == 1
+    assert deprecations[0].filename == __file__
+    assert "deprecated since quchip 0.2.1" in str(deprecations[0].message)
+    assert "removed in 0.3.0" in str(deprecations[0].message)
+    assert "vary=" in str(deprecations[0].message)
+
+
+def test_desired_chip_api_does_not_emit_a_deprecation_warning() -> None:
+    """The replacement constraints/vary/start contract stays warning-free."""
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        fit_a_dress(Chip([q], frame="rotating"))
+
+    assert not any(issubclass(item.category, DeprecationWarning) for item in caught)
+
+
 def test_fit_a_dress_retains_scipy_jacobian_without_dynamiqs(monkeypatch: pytest.MonkeyPatch) -> None:
     """A QuTiP-only installation retains SciPy's numerical Jacobian."""
+
     def unavailable(*args, **kwargs):
         raise ImportError("dynamiqs unavailable")
 
@@ -288,14 +571,14 @@ def test_fit_a_dress_does_not_mutate_input_chip() -> None:
     chip = Chip([q, r], [coupling], frame="rotating")
 
     original = (q.freq, q.anharmonicity, coupling.g)
-    with pytest.warns(UserWarning, match="underdetermined by count"):
-        _ = fit_a_dress(chip)
+    _ = fit_a_dress(chip)
 
     assert (q.freq, q.anharmonicity, coupling.g) == original
 
 
 def test_bare_g_seed_uses_isolated_subchip_devices(monkeypatch: pytest.MonkeyPatch) -> None:
     """_estimate_bare_g calls chip.freq safely even when repr() is invoked on a target device."""
+
     class ReprDevice(BaseDevice):
         _type_prefix = "repr_device"
 
@@ -343,6 +626,7 @@ def test_bare_g_seed_uses_isolated_subchip_devices(monkeypatch: pytest.MonkeyPat
 
 def test_base_device_repr_is_safe_with_multiple_chip_contexts() -> None:
     """A device's repr reports '<multiple chip contexts>' rather than raising when shared across chips."""
+
     class ReprDevice(BaseDevice):
         _type_prefix = "repr_device"
 
@@ -376,18 +660,21 @@ def test_fit_a_dress_respects_coupling_target_override_to_g() -> None:
 
 def test_fit_a_dress_switches_to_local_subsystems_above_threshold() -> None:
     """fit_a_dress switches to local-subsystem evaluation once max_hilbert_dim is exceeded."""
-    q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=4, label="q0")
-    q1 = DuffingTransmon(freq=5.2, anharmonicity=-0.24, levels=4, label="q1")
-    r0 = Resonator(freq=7.0, levels=10, label="r0")
-    r1 = Resonator(freq=7.3, levels=10, label="r1")
+    q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
+    q1 = DuffingTransmon(freq=5.2, anharmonicity=-0.24, levels=3, label="q1")
+    r0 = Resonator(freq=7.0, levels=3, label="r0")
+    r1 = Resonator(freq=7.3, levels=3, label="r1")
     chip = Chip(
         [q0, q1, r0, r1],
-        [Capacitive(q0, r0, g=-1.0e-4), Capacitive(q1, r1, g=-1.2e-4), Capacitive(q0, q1, g=-0.001)],
+        [
+            Capacitive(q0, r0, g=-1.0e-4),
+            Capacitive(q1, r1, g=-1.2e-4),
+            Capacitive(q0, q1, g=0.001),
+        ],
         frame="rotating",
     )
 
-    with pytest.warns(UserWarning, match="underdetermined by count"):
-        result = fit_a_dress(chip, max_hilbert_dim=100)
+    result = fit_a_dress(chip, max_hilbert_dim=50)
 
     assert any(report.evaluator == "local" for report in result.final_targets)
 
@@ -398,19 +685,38 @@ def test_fit_a_dress_returns_structured_result_fields() -> None:
     r = Resonator(freq=7.0, levels=10, label="r")
     chip = Chip([q, r], [Capacitive(q, r, g=-1.2e-4)], frame="rotating")
 
-    with pytest.warns(UserWarning, match="underdetermined by count"):
-        result = fit_a_dress(chip)
+    result = fit_a_dress(chip)
 
     assert result.history.shape[0] >= 1
     assert result.loss >= 0.0
     assert result.solver_info["method"] == "trf"
     assert result.solver_info["n_free_parameters"] == 4
-    assert result.solver_info["n_target_residuals"] == 3
-    assert result.solver_info["underdetermined_by_count"] is True
+    assert result.solver_info["n_target_residuals"] == 4
+    assert result.solver_info["underdetermined_by_count"] is False
+    assert result.solver_info["input_contract"] == "desired-chip"
     assert result.initial_targets
     assert result.final_targets
     assert result.initial_params
     assert result.final_params
+
+
+def test_fit_a_dress_history_records_objective_evaluations() -> None:
+    """The returned history supports a real convergence plot, not two endpoints."""
+    q = DuffingTransmon(freq=4.8, anharmonicity=-0.25, levels=3, label="q")
+    chip = Chip([q], frame="rotating", backend="qutip")
+
+    result = fit_a_dress(
+        chip,
+        observable_targets={q: {"freq": 5.1}},
+        fit_parameters={q: ("freq",)},
+    )
+
+    assert result.history.ndim == 1
+    assert len(result.history) > 2
+    assert result.history[0] > result.history[-1]
+    assert result.history[-1] == pytest.approx(result.loss)
+    assert result.solver_info["history_axis"] == "distinct residual evaluation"
+    assert result.solver_info["n_recorded_evaluations"] == len(result.history)
 
 
 def test_fit_rebind_returns_fitted_clones_for_seed_devices() -> None:
@@ -419,8 +725,7 @@ def test_fit_rebind_returns_fitted_clones_for_seed_devices() -> None:
     r = Resonator(freq=7.0, levels=10, label="r")
     chip = Chip([q, r], [Capacitive(q, r, g=-1.2e-4)], frame="rotating")
 
-    with pytest.warns(UserWarning, match="underdetermined by count"):
-        result = fit_a_dress(chip)
+    result = fit_a_dress(chip)
 
     q_f, r_f = result.rebind(q, r)
     assert q_f is result.chip.device_map["q"]
@@ -433,6 +738,7 @@ def test_fit_rebind_returns_fitted_clones_for_seed_devices() -> None:
     assert r_f is not r
 
     import pytest as _pytest
+
     with _pytest.raises(ValueError):
         result.rebind()
 
@@ -625,9 +931,7 @@ def test_static_exchange_rate_matches_pinned_value_on_bus_coupled_pair() -> None
     chip = Chip([control, target, bus], [c_bus, t_bus], frame="rotating")
 
     got = float(_static_exchange_rate(chip, ("control", "target")))
-    oracle = chip.effective_subspace_hamiltonian(
-        ({control: 1, target: 0, bus: 0}, {control: 0, target: 1, bus: 0})
-    )
+    oracle = chip.effective_subspace_hamiltonian(({control: 1, target: 0, bus: 0}, {control: 0, target: 1, bus: 0}))
     assert got == pytest.approx(complex(oracle[0, 1]).real, abs=1e-10)
 
 

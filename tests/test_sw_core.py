@@ -1,4 +1,4 @@
-"""Schrieffer-Wolff kernels reproduce the closed-form 2nd-order results (spec §6.2)."""
+"""Schrieffer-Wolff kernels reproduce closed-form second-order results."""
 
 from __future__ import annotations
 

@@ -22,7 +22,7 @@ import numpy as np
 from quchip.backend import _backend_context
 from quchip.backend.protocol import Backend, Operator, State
 from quchip.approximations import Approximation, RWA, require_approximation
-from quchip.chip.analysis import ChipAnalysis, DressedResult
+from quchip.chip.analysis import ChipAnalysis, DressedResult, KerrMatrix
 from quchip.chip.baths import Bath
 from quchip.chip.coupling_base import BaseCoupling
 from quchip.chip.states import _DEFAULT_LEVEL_SYMBOLS
@@ -772,11 +772,11 @@ class Chip:
         new_ids = {id(bath) for bath in new_baths}
         for bath in self._baths:
             if id(bath) not in new_ids:
-                changes.append(f"baths: - {bath.label} ({bath.recipe})")
+                changes.append(f"baths: - {bath.label} (model={bath.recipe})")
         for bath in new_baths:
             if id(bath) not in old_ids:
                 extra = f", {bath.temperature} mK" if bath.temperature is not None else ""
-                changes.append(f"baths: + {bath.label} ({bath.recipe}{extra})")
+                changes.append(f"baths: + {bath.label} (model={bath.recipe}{extra})")
         self._baths = tuple(new_baths)
 
         for line in changes:
@@ -812,12 +812,25 @@ class Chip:
     # ------------------------------------------------------------------
 
     def plot_graph(
-        self, path: str = "chip_topology.html", *, full: bool = True, exclude: set[str] | None = None, **kwargs: Any
+        self,
+        path: str = "chip_topology.html",
+        *,
+        full: bool = True,
+        exclude: set[str] | None = None,
+        values: str = "bare",
+        **kwargs: Any,
     ) -> str:
         """Render chip topology — delegates to :mod:`quchip.viz.chip`."""
         from quchip.viz.chip import plot_graph
 
-        return plot_graph(self, path, full=full, exclude=exclude, **kwargs)
+        return plot_graph(
+            self,
+            path,
+            full=full,
+            exclude=exclude,
+            values=values,
+            **kwargs,
+        )
 
     def plot_energy_levels(self, *, ax: Any = None, **kwargs: Any) -> Any:
         """Render dressed spectrum — delegates to :mod:`quchip.viz.chip`."""
@@ -987,6 +1000,13 @@ class Chip:
     static_zz = dispersive_shift
     zz = dispersive_shift
 
+    def kerr_matrix(self) -> KerrMatrix:
+        """Return the labeled dressed self-Kerr and cross-Kerr matrix in GHz.
+
+        See :meth:`ChipAnalysis.kerr_matrix`.
+        """
+        return self._analysis.kerr_matrix()
+
     def dressed_anharmonicity(self, device: str | BaseDevice) -> float:
         """Dressed anharmonicity of one device with others grounded (GHz).
 
@@ -1049,9 +1069,8 @@ class Chip:
 
         Overloaded: no ``target`` returns the full ``{label: freq}`` dict;
         a single ``target`` (label or device) returns one scalar 0→1
-        frequency. The runtime body is unchanged — under ``jax.jit`` the
-        scalar is a traced 0-d array, so the overload is type-only and
-        does not alter traceability.
+        frequency. Under ``jax.jit`` the scalar is a traced 0-d array; the
+        overload is type-only and preserves traceability.
         """
         return self._analysis.freq(target, when=when)
 
@@ -1211,10 +1230,11 @@ class Chip:
             )
 
         cloned = self.clone()
+        device_bindings: dict[int, dict[str, Any]] = {}
         for path, value in bindings.items():
             kind, index, name, _ = targets[path]
             if kind == "device":
-                cloned._devices[index].set_parameter_value(name, value)
+                device_bindings.setdefault(index, {})[name] = value
             elif kind == "coupling":
                 cloned._couplings[index].set_parameter_value(name, value)
             elif kind == "drive":
@@ -1226,6 +1246,8 @@ class Chip:
                 cloned._control_equipment._signal_chain[index] = transform.with_parameter_value(name, value)
             else:
                 cloned._baths[index].set_parameter_value(name, value)
+        for index, local_bindings in device_bindings.items():
+            cloned._devices[index].set_parameter_values(local_bindings)
         return cloned
 
     def partition(self) -> "PartitionResult":

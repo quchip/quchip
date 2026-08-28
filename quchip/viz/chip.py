@@ -17,6 +17,7 @@ _NODE_SHAPES = {"device": "dot", "drive": "diamond", "coupling": "square"}
 _NODE_SIZES = {"device": 25, "drive": 15, "coupling": 12}
 _EDGE_COLORS = {"coupling": "#4d4d4d", "wiring": "#ff7f0e", "crosstalk": "#b22222"}
 _EDGE_LENGTHS = {"coupling": 150, "wiring": 80, "crosstalk": 300}
+_VALUE_MODES = {"bare", "dressed", "both"}
 
 
 def _device_node_id(label: str) -> str:
@@ -34,11 +35,38 @@ def _drive_node_id(label: str) -> str:
     return f"drive:{label}"
 
 
-def _device_label(device: Any) -> str:
-    """Return the multi-line node label for *device*: its label and current ``freq``."""
-    freq = maybe_concrete_scalar(getattr(device, "freq", None))
-    freq_text = "n/a" if freq is None else f"{freq:.3f} GHz"
-    return f"{device.label}\n{freq_text}"
+def _frequency_text(value: Any, *, precision: int = 3) -> str:
+    """Format a concrete frequency in GHz, or ``"n/a"`` when unavailable."""
+    concrete = maybe_concrete_scalar(value)
+    return "n/a" if concrete is None else f"{concrete:.{precision}f} GHz"
+
+
+def _device_label(device: Any, *, dressed_frequency: Any = None, values: str = "bare") -> str:
+    """Return a device label annotated with bare, dressed, or both frequencies."""
+    bare_text = _frequency_text(getattr(device, "freq", None))
+    dressed_text = _frequency_text(dressed_frequency, precision=6)
+    if values == "bare":
+        return f"{device.label}\n{bare_text}"
+    if values == "dressed":
+        return f"{device.label}\nf01={dressed_text}"
+    return f"{device.label}\nbare={bare_text}\nf01={dressed_text}"
+
+
+def _coupling_label(coupling: Any, *, dressed_kerr: Any = None, values: str = "bare") -> tuple[str, str]:
+    """Return junction and edge labels for bare strength and/or dressed cross-Kerr."""
+    strength = maybe_concrete_scalar(coupling.coupling_strength)
+    strength_text = "n/a" if strength is None else f"{strength:.3g} GHz"
+    kerr = maybe_concrete_scalar(dressed_kerr)
+    kerr_text = "n/a" if kerr is None else f"{kerr:.3g} GHz"
+    class_name = type(coupling).__name__
+    if values == "bare":
+        physics_lines = [f"g={strength_text}"]
+    elif values == "dressed":
+        physics_lines = [f"K={kerr_text}"]
+    else:
+        physics_lines = [f"g={strength_text}", f"K={kerr_text}"]
+    edge_label = "\n".join((class_name, *physics_lines))
+    return f"{coupling.label}\n{edge_label}", edge_label
 
 
 def _control_label(drive: Any) -> str:
@@ -54,7 +82,10 @@ def _control_label(drive: Any) -> str:
 
 
 def _collect_topology(
-    chip: Chip, *, exclude: set[str] | None = None
+    chip: Chip,
+    *,
+    exclude: set[str] | None = None,
+    values: str = "bare",
 ) -> tuple[dict[str, dict[str, Any]], list[tuple[str, str, dict[str, Any]]]]:
     """Collect node/edge dicts for devices, couplings, drives, and crosstalks.
 
@@ -76,15 +107,27 @@ def _collect_topology(
     drives) and *edges* is a list of ``(start, end, attributes)``
     triples of namespaced node ids.
     """
+    if values not in _VALUE_MODES:
+        raise ValueError(f"values must be one of {sorted(_VALUE_MODES)}, got {values!r}")
+
     _exclude = exclude or set()
     nodes: dict[str, dict[str, Any]] = {}
     edges: list[tuple[str, str, dict[str, Any]]] = []
     coupling_labels: set[str] = set()
+    dressed_frequencies: dict[str, Any] = {}
+    dressed_kerr: Any = None
+    if values != "bare":
+        dressed_frequencies = chip.freq()
+        dressed_kerr = chip.kerr_matrix()
 
     for device in chip.devices:
         nodes[_device_node_id(device.label)] = {
             "kind": "device",
-            "label": _device_label(device),
+            "label": _device_label(
+                device,
+                dressed_frequency=dressed_frequencies.get(device.label),
+                values=values,
+            ),
             "class_name": type(device).__name__,
             "computational": device.computational,
         }
@@ -92,13 +135,19 @@ def _collect_topology(
     if "coupling" not in _exclude:
         for coupling in chip.couplings:
             coupling_labels.add(coupling.label)
-            strength = maybe_concrete_scalar(coupling.coupling_strength)
-            strength_text = "n/a" if strength is None else f"{strength:.3g} GHz"
             junction_id = _coupling_node_id(coupling.label)
-            edge_label = f"{type(coupling).__name__}\ng={strength_text}"
+            junction_label, edge_label = _coupling_label(
+                coupling,
+                dressed_kerr=(
+                    None
+                    if dressed_kerr is None
+                    else dressed_kerr[coupling.device_a_label, coupling.device_b_label]
+                ),
+                values=values,
+            )
             nodes[junction_id] = {
                 "kind": "coupling",
-                "label": f"{coupling.label}\n{edge_label}",
+                "label": junction_label,
                 "class_name": type(coupling).__name__,
                 "computational": False,
             }
@@ -167,6 +216,7 @@ def plot_graph(
     *,
     full: bool = True,
     exclude: set[str] | None = None,
+    values: str = "bare",
     layout: str = "force_atlas",
     height: str = "800px",
     width: str = "100%",
@@ -196,6 +246,13 @@ def plot_graph(
     couplings also removes any edge-pump controls that would otherwise
     dangle (see :func:`_collect_topology`).
 
+    ``values="bare"`` preserves the declaration view: device frequencies and
+    coupling strengths come directly from component parameters and require no
+    diagonalization. ``values="dressed"`` instead labels devices with dressed
+    :math:`f_{01}` and coupling junctions with the full-pull cross-Kerr
+    :math:`K_{ab}`. ``values="both"`` shows both annotations. These modes do
+    not change the topology.
+
     Parameters
     ----------
     chip : Chip
@@ -206,6 +263,9 @@ def plot_graph(
         If ``False``, hide drives and crosstalk unless *exclude* is given.
     exclude : set of str, optional
         Any of ``{"coupling", "drive", "crosstalk"}`` to hide entirely.
+    values : {"bare", "dressed", "both"}
+        Physical values shown on device and coupling nodes. Defaults to the
+        declared bare values.
     layout : str
         ``"force_atlas"`` or ``"hierarchical"``.
     height, width : str
@@ -222,7 +282,7 @@ def plot_graph(
     ImportError
         ``pyvis`` is not installed.
     ValueError
-        *layout* is not one of ``"force_atlas"`` or ``"hierarchical"``.
+        *layout* or *values* is not one of its supported choices.
     """
     try:
         from pyvis.network import Network
@@ -236,7 +296,7 @@ def plot_graph(
     if exclude is None and not full:
         exclude = {"drive", "crosstalk"}
 
-    nodes, edges = _collect_topology(chip, exclude=exclude)
+    nodes, edges = _collect_topology(chip, exclude=exclude, values=values)
 
     class_names = list(dict.fromkeys(data["class_name"] for data in nodes.values()))
     class_colors = _cyclic_colors(class_names, _GRAPH_PALETTE)

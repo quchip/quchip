@@ -58,7 +58,7 @@ class TestDynamiqsNormTraceability:
     """DynamiqsBackend.norm returns a native scalar; states.superposition stays tracer-safe."""
 
     def test_norm_returns_native_array_not_python_float(self, dynamiqs_backend) -> None:
-        """norm() no longer forces float(), so it survives inside a jax.jit trace."""
+        """norm() returns a native scalar inside a ``jax.jit`` trace."""
         import jax
         import jax.numpy as jnp
 

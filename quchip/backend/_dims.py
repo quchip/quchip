@@ -101,10 +101,8 @@ def default_solver_steps(metadata: dict[str, Any], tlist: Any) -> int | None:
     ``nsteps`` is an *abort ceiling* for adaptive integrators, not a
     step-size choice — the integrator picks its own step and the ceiling
     only decides when to give up, so a generous value costs nothing on a
-    converging solve. The previous tight budget (10/period, min 500) sat
-    at the same order as the true step count of high-order methods at
-    tight tolerance over long spans, which forced user code to carry
-    ``{"nsteps": 200_000}`` overrides; the floor now bakes that in.
+    converging solve. The 200,000-step floor accommodates high-order methods
+    at tight tolerance over long spans without requiring a caller override.
 
     The fastest oscillation is the larger of the static spectral span
     (``spectral_bound_ghz``) and the largest time-dependent carrier

@@ -32,7 +32,7 @@ from quchip.utils.labeling import auto_label, resolve_label
 if TYPE_CHECKING:
     from quchip.chip.chip import Chip
 
-_RECIPES = ("thermal", "collective_decay", "correlated_dephasing")
+_BATH_MODELS = ("thermal", "collective_decay", "correlated_dephasing")
 
 
 def _bose_occupation(temperature: Any, frequency: Any) -> Any:
@@ -53,7 +53,9 @@ class Bath:
     Parameters
     ----------
     recipe : str
-        One of ``"thermal"``, ``"collective_decay"``, ``"correlated_dephasing"``.
+        Built-in collapse-channel model. One of ``"thermal"``,
+        ``"collective_decay"``, or ``"correlated_dephasing"``. The argument
+        name is retained for API and serialization compatibility.
     targets : list[BaseDevice | str] | None
         Devices the bath couples to (objects or labels). ``None`` (default)
         means *every* device in the chip — natural for a global thermal bath.
@@ -64,14 +66,12 @@ class Bath:
         Bath–device coupling rate γ in 1/ns. For ``"thermal"`` it is the
         environmental coupling rate (explicit — never silently borrowed from a
         device ``T1``, so it cannot double-count device-level noise). For the
-        collective recipes it is the overall jump rate. ``None`` defaults to
+        collective models it is the overall jump rate. ``None`` defaults to
         ``1.0`` (user controls the absolute scale elsewhere).
     correlated : bool
         ``"thermal"`` only: ``False`` (default) emits independent per-device
-        channels sharing one temperature. ``True`` is reserved for a genuinely
-        collective thermal jump operator and currently raises
-        :class:`NotImplementedError` — it is a documented future refinement, not
-        a silent no-op. The collective recipes always emit a single correlated
+        channels sharing one temperature. ``True`` is unsupported and raises
+        :class:`NotImplementedError`. The collective models always emit a single correlated
         operator regardless of this flag.
     label : str | None
         Auto-generated ``"bath_{n}"`` when omitted.
@@ -98,13 +98,15 @@ class Bath:
         correlated: bool = False,
         label: str | None = None,
     ) -> None:
-        if recipe not in _RECIPES:
-            raise ValueError(f"Unknown bath recipe {recipe!r}. Expected one of {_RECIPES}.")
+        if recipe not in _BATH_MODELS:
+            raise ValueError(
+                f"Unknown bath model {recipe!r}. Expected one of {_BATH_MODELS}."
+            )
         if recipe == "thermal" and temperature is None:
-            raise ValueError("The 'thermal' recipe requires a temperature (mK).")
+            raise ValueError("The 'thermal' bath model requires a temperature (mK).")
         if recipe == "thermal" and correlated:
             raise NotImplementedError(
-                "Collective thermal baths are not yet implemented; use correlated=False "
+                "Collective thermal baths are unsupported; use correlated=False "
                 "(independent channels sharing one temperature)."
             )
         self.recipe = recipe
@@ -140,8 +142,8 @@ class Bath:
     def separable(self) -> bool:
         """Whether this bath factorizes into independent per-target channels.
 
-        ``True`` for recipes that emit one collapse operator per target
-        (``"thermal"`` with independent channels); ``False`` for recipes that
+        ``True`` for models that emit one collapse operator per target
+        (``"thermal"`` with independent channels); ``False`` for models that
         emit a single jump operator summed over targets (``"collective_decay"``,
         ``"correlated_dephasing"``). Partitioning treats a non-separable bath's
         target set as one inseparable block.
@@ -149,10 +151,10 @@ class Bath:
         return self.recipe == "thermal"
 
     def __repr__(self) -> str:
-        """Return a compact recipe / target summary."""
+        """Return a compact bath-model and target summary."""
         targets = "all" if self._targets is None else [resolve_label(t) for t in self._targets]
         return (
-            f"Bath(label={self.label!r}, recipe={self.recipe!r}, "
+            f"Bath(label={self.label!r}, model={self.recipe!r}, "
             f"temperature={self.temperature}, rate={self.rate}, targets={targets})"
         )
 
@@ -180,19 +182,18 @@ class Bath:
         )
 
     def physics_notes(self) -> list[str]:
-        """Return human-readable declarations of this bath's recipe and scope.
+        """Return human-readable declarations of this bath's model and scope.
 
         Mirrors :meth:`~quchip.chip.coupling_base.BaseCoupling.physics_notes`:
-        one entry naming the recipe and its targets, plus a recipe-specific
+        one entry naming the model and its targets, plus a model-specific
         assumption a user of this bath should be aware of.
         """
         targets = "all devices" if self._targets is None else ", ".join(resolve_label(t) for t in self._targets)
-        notes = [f"Recipe: '{self.recipe}'; targets: {targets}."]
+        notes = [f"Bath model: '{self.recipe}'; targets: {targets}."]
         if self.recipe == "thermal":
             notes.append(
-                "Independent per-target thermal channels sharing one bath temperature "
-                "(correlated=True — a genuinely collective thermal jump operator — is reserved "
-                "and currently raises NotImplementedError)."
+                "Independent per-target thermal channels sharing one bath temperature; "
+                "correlated=True is unsupported."
             )
         elif self.recipe == "collective_decay":
             notes.append(
@@ -298,7 +299,7 @@ class Bath:
 
         ``"thermal"`` emits independent per-target relaxation/absorption
         pairs sharing one bath temperature (:meth:`_bose`). The two
-        collective recipes instead each emit a single jump operator summed
+        collective models instead each emit a single jump operator summed
         over the resolved targets:
 
         - ``"collective_decay"``: ``L = sum_i a_i`` at rate ``gamma`` — an
@@ -355,7 +356,7 @@ class Bath:
                 )
             return tuple(terms)
 
-        # Collective recipes: a single summed jump operator over the targets.
+        # Collective models: a single summed jump operator over the targets.
         summed: PhysicsExpr | None = None
         for lbl in labels:
             device = chip[lbl]

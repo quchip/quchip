@@ -1,0 +1,14 @@
+coupler_frequency_ghz,static_zz_khz,error_khz
+# Source: Collodo et al., Phys. Rev. Lett. 125, 240502 (2020), Fig. 2(a).
+# Dataset: https://doi.org/10.3929/ethz-b-000502238 (CC BY 4.0).
+# Values copied without modification from raw_figures/fig2a_zz.dat.
+7.612,-85.5,0
+7.738,-58.9,4
+7.97,-66.2,2.1
+8.073,-95.9,13.4
+7.477,-127.9,3.6
+7.335,-219.3,4.4
+7.027,-679.9,6.6
+6.864,-1117,5.6
+6.282,-6747,340
+5.884,-29637,976
