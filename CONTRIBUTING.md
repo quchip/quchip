@@ -39,6 +39,8 @@ python -m pytest -m extended
 
 Tests that require dynamiqs use the `optional_backend` marker and call `pytest.importorskip("dynamiqs")`, so they skip cleanly when dynamiqs is unavailable.
 
+Test public behavior and physical invariants, not implementation details. A behavior-preserving refactor should not require mechanical test edits; see [Change-Detector Tests Considered Harmful](https://testing.googleblog.com/2015/01/testing-on-toilet-change-detector-tests.html).
+
 Before opening a pull request, run:
 
 ```bash
