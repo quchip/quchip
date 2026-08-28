@@ -8,6 +8,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
 concurrency:
@@ -49,7 +51,9 @@ jobs:
       - run: uv run --no-sync pytest -m "core or physics_sentinel"
 
   test-full:
-    if: github.event_name != 'pull_request'
+    # The merge queue runs this against the PR combined with current main.
+    # Keep it available manually, but do not spend a full-suite run per push.
+    if: github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
