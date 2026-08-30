@@ -233,9 +233,16 @@ for a closed model and `mesolve` when devices, drives, couplings, or baths
 contribute collapse channels. Adding a resonator quality factor or a bath can
 therefore change the equation without changing the pulse schedule.
 
-Use the dynamiqs backend when a calculation needs JAX differentiation through
-the solve. Keep graph structure, Hilbert dimensions, and approximation masks
-fixed while tracing.
+For a time-independent QuTiP problem with no explicit solver method or step
+control, quchip uses diagonal propagation at all requested save times when the
+total Hilbert dimension is at most 64 for `sesolve`, or at most 12 for
+`mesolve` (whose Liouvillian dimension is the square of the Hilbert dimension).
+Driven problems, larger spaces, and explicit method or step options keep
+QuTiP's selected adaptive integrator. For dynamiqs, method selection remains
+explicit through `options={"method": ...}`; its default is `Tsit5`.
+
+See {doc}`Backend and solver options <guides/choosing-a-backend>` for available
+methods, option syntax, batching, and gradient controls.
 
 ## Read results at the level of the question
 

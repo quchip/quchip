@@ -17,6 +17,7 @@ References
 
 from __future__ import annotations
 
+import math
 import os
 import warnings
 from dataclasses import dataclass
@@ -239,6 +240,11 @@ def _sample_coeff_array(signal: Any, sample_tlist: Any) -> np.ndarray:
 # envelope has no discontinuity to ring across and keeps the default cubic
 # order (unspecified below).
 _WINDOWED_COEFFICIENT_ORDER = 1
+
+# QuTiP's diagonal integrator materializes a dense d x d Hamiltonian or
+# d^2 x d^2 Liouvillian. These measured caps keep that setup bounded.
+_MAX_STATIC_HILBERT_DIM = 64
+_MAX_STATIC_LIOUVILLIAN_HILBERT_DIM = 12
 
 
 def _envelope_coefficient(envelope: Any, sample_tlist: Any) -> Any:
@@ -697,6 +703,35 @@ class QuTiPBackend(Backend):
         resolved.pop("gradient", None)
         return resolved
 
+    def _resolve_automatic_solver_options(
+        self,
+        options: dict[str, Any],
+        *,
+        user_options: dict[str, Any],
+        engine_result: Any,
+        solver_name: str,
+        tlist: Any,
+    ) -> dict[str, Any]:
+        """Select QuTiP's diagonal propagator for small constant generators."""
+        _ = tlist
+        resolved = dict(options)
+        if {"method", "nsteps", "max_step"} & user_options.keys() or engine_result.dynamic_terms:
+            return resolved
+
+        dimension = math.prod(engine_result.dims)
+        limit = (
+            _MAX_STATIC_HILBERT_DIM
+            if solver_name == "sesolve"
+            else _MAX_STATIC_LIOUVILLIAN_HILBERT_DIM
+        )
+        if dimension > limit:
+            return resolved
+
+        resolved["method"] = "diag"
+        resolved.pop("nsteps", None)
+        resolved.pop("max_step", None)
+        return resolved
+
     _default_nsteps = staticmethod(default_solver_steps)
 
     def coerce_state(self, state: State, dims: tuple[int, ...] | None = None) -> State:
@@ -920,10 +955,11 @@ class QuTiPBackend(Backend):
             engine_result = problem.engine_result
             c_ops = self._collapse_operators(engine_result)
             solver_name = problem.solver or ("mesolve" if c_ops else "sesolve")
-            opts = self._merge_options(
-                problem.options,
+            opts = self._resolve_problem_options(
+                problem,
                 metadata=engine_result.metadata,
                 tlist=tlist_arr,
+                solver_name=solver_name,
             )
             tasks.append(
                 _QuTiPBatchTask(
