@@ -653,6 +653,25 @@ class Backend(ABC):
         """
         return dict(options)
 
+    def _resolve_automatic_solver_options(
+        self,
+        options: dict[str, Any],
+        *,
+        user_options: dict[str, Any],
+        engine_result: "EngineResult",
+        solver_name: str,
+        tlist: Any,
+    ) -> dict[str, Any]:
+        """Select a backend-native fast path when the assembled problem is eligible.
+
+        The protocol default preserves the resolved options. Concrete backends
+        may use the engine result's static structure and fixed Hilbert-space
+        dimensions to select a native constant-generator method. Physics values
+        must not be concretized here.
+        """
+        _ = user_options, engine_result, solver_name, tlist
+        return dict(options)
+
     def coerce_state(self, state: State, dims: tuple[int, ...] | None = None) -> State:
         """Convert a foreign-native *state* into this backend's native form.
 
@@ -763,10 +782,11 @@ class Backend(ABC):
             c_ops = self._collapse_operators(problem.engine_result)
             solver_name = problem.solver or ("mesolve" if c_ops else "sesolve")
             solver_names.append(solver_name)
-            opts = self._merge_options(
-                problem.options,
+            opts = self._resolve_problem_options(
+                problem,
                 metadata=problem.engine_result.metadata,
                 tlist=tlist_arr,
+                solver_name=solver_name,
             )
             dict_problems.append(
                 self._element_solver_kwargs(
@@ -851,6 +871,24 @@ class Backend(ABC):
         merged.update(user_options)
         return self.resolve_solver_options(merged, metadata=metadata, tlist=tlist)
 
+    def _resolve_problem_options(
+        self,
+        problem: Any,
+        *,
+        metadata: dict[str, Any],
+        tlist: Any,
+        solver_name: str,
+    ) -> dict[str, Any]:
+        """Merge options and apply one backend-owned automatic-method decision."""
+        resolved = self._merge_options(problem.options, metadata=metadata, tlist=tlist)
+        return self._resolve_automatic_solver_options(
+            resolved,
+            user_options=problem.options,
+            engine_result=problem.engine_result,
+            solver_name=solver_name,
+            tlist=tlist,
+        )
+
     def _resolve_solve_config(
         self,
         problem: Any,
@@ -872,7 +910,12 @@ class Backend(ABC):
         tlist_arr = self.array_module.asarray(problem.tlist, dtype=float)
         c_ops = self._collapse_operators(engine_result)
         solver_name = problem.solver or ("mesolve" if c_ops else "sesolve")
-        opts = self._merge_options(problem.options, metadata=prepared.metadata, tlist=tlist_arr)
+        opts = self._resolve_problem_options(
+            problem,
+            metadata=prepared.metadata,
+            tlist=tlist_arr,
+            solver_name=solver_name,
+        )
         e_ops_arg = problem.e_ops if isinstance(problem.e_ops, list) else None
         return tlist_arr, c_ops, solver_name, opts, e_ops_arg
 
