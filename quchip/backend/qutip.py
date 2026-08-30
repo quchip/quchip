@@ -17,6 +17,7 @@ References
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 import warnings
@@ -51,6 +52,9 @@ from quchip.engine.ir import (
     signal_children,
 )
 from quchip.utils.jax_utils import maybe_concrete_scalar
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -715,7 +719,21 @@ class QuTiPBackend(Backend):
         """Select QuTiP's diagonal propagator for small constant generators."""
         _ = tlist
         resolved = dict(options)
-        if {"method", "nsteps", "max_step"} & user_options.keys() or engine_result.dynamic_terms:
+
+        adaptive_options = {"atol", "rtol", "nsteps", "max_step"}
+        explicit_method = user_options.get("method")
+        if explicit_method == "diag":
+            discarded = adaptive_options & user_options.keys()
+            for key in adaptive_options:
+                resolved.pop(key, None)
+            if discarded:
+                _LOGGER.info(
+                    "Explicit QuTiP method='diag' discarded unsupported adaptive options: %s.",
+                    ", ".join(sorted(discarded)),
+                )
+            return resolved
+
+        if explicit_method is not None or engine_result.dynamic_terms:
             return resolved
 
         dimension = math.prod(engine_result.dims)
@@ -727,9 +745,16 @@ class QuTiPBackend(Backend):
         if dimension > limit:
             return resolved
 
+        discarded = adaptive_options & user_options.keys()
+        for key in adaptive_options:
+            resolved.pop(key, None)
+        if discarded:
+            _LOGGER.info(
+                "Automatic QuTiP method='diag' discarded unsupported adaptive options: %s.",
+                ", ".join(sorted(discarded)),
+            )
+
         resolved["method"] = "diag"
-        resolved.pop("nsteps", None)
-        resolved.pop("max_step", None)
         return resolved
 
     _default_nsteps = staticmethod(default_solver_steps)
