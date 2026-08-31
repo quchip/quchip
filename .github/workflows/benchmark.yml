@@ -51,10 +51,10 @@ jobs:
         env:
           EVENT_MAIN_SHA: ${{ github.event_name == 'push' && github.event.before || '' }}
         run: |
-          if [[ -z "$EVENT_MAIN_SHA" || "$EVENT_MAIN_SHA" == "0000000000000000000000000000000000000000" ]]; then
+          if ! git cat-file -e "${EVENT_MAIN_SHA}^{commit}" 2>/dev/null; then
+            echo "::notice::Previous main is unavailable; using current main."
             EVENT_MAIN_SHA=$(git rev-parse origin/main)
           fi
-          git cat-file -e "${EVENT_MAIN_SHA}^{commit}"
           echo "main_sha=$EVENT_MAIN_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Record environment
