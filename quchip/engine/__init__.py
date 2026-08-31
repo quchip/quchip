@@ -48,16 +48,21 @@ from quchip.engine.ir import (
     DroppedTerm,
     DynamicTerm,
     EngineResult,
+    PortTerm,
     ScalarModulation,
     SolveBatch,
     SolveProblem,
+    SteadyStateProblem,
     StaticTerm,
 )
 from quchip.engine.basis import BasisRecord
 
 __all__ = [
     "simulate",
+    "steadystate",
+    "steadystate_batch",
     "build_problem",
+    "build_steadystate_problem",
     "solve_problem",
     "solve_many",
     "solve_batch",
@@ -68,12 +73,35 @@ __all__ = [
     "DroppedTerm",
     "DynamicTerm",
     "EngineResult",
+    "PortTerm",
     "ScalarModulation",
     "SolveBatch",
     "SolveProblem",
+    "SteadyStateProblem",
     "StaticTerm",
     "BasisRecord",
 ]
+
+
+def build_steadystate_problem(chip: Any, **kwargs: Any) -> SteadyStateProblem:
+    """Build a frozen static Lindblad steady-state request."""
+    from quchip.engine.steady_state import build_steadystate_problem as _build
+
+    return _build(chip, **kwargs)
+
+
+def steadystate(chip: Any, **kwargs: Any) -> Any:
+    """Solve a chip's unique static Lindblad steady state."""
+    from quchip.engine.steady_state import steadystate as _solve
+
+    return _solve(chip, **kwargs)
+
+
+def steadystate_batch(chip: Any, *axes: Any, **kwargs: Any) -> Any:
+    """Solve static Lindblad steady states over parameter axes."""
+    from quchip.engine.steady_state import steadystate_batch as _solve_batch
+
+    return _solve_batch(chip, *axes, **kwargs)
 
 
 # Wrapper bodies defer the heavy imports so package import stays cheap and

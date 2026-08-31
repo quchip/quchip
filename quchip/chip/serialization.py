@@ -52,6 +52,8 @@ def serialize_chip(chip: "Chip") -> dict[str, Any]:
     }
     if chip.baths:
         data["baths"] = [bath.to_dict() for bath in chip.baths]
+    if chip.ports:
+        data["ports"] = [port.to_dict() for port in chip.ports]
     if chip.control_equipment is not None:
         data["control_equipment"] = chip.control_equipment.to_dict()
     return data
@@ -76,6 +78,7 @@ def deserialize_chip(data: dict[str, Any]) -> "Chip":
         "devices",
         "couplings",
         "baths",
+        "ports",
         "control_equipment",
     }
     unknown = set(data) - allowed
@@ -100,6 +103,9 @@ def deserialize_chip(data: dict[str, Any]) -> "Chip":
     from quchip.chip.baths import Bath
 
     baths = [Bath.from_dict(bd) for bd in data.get("baths", [])]
+    from quchip.chip.ports import Port
+
+    ports = [Port.from_dict(pd) for pd in data.get("ports", [])]
 
     control_equipment = (
         ControlEquipment.from_dict(data["control_equipment"], device_map, coupling_map)
@@ -116,6 +122,7 @@ def deserialize_chip(data: dict[str, Any]) -> "Chip":
         approximation=approximation,
         basis=cast(Literal["native", "eigen"], data.get("basis", "native")),
         baths=baths or None,
+        ports=ports or None,
     )
     if control_equipment is not None:
         chip.connect(control_equipment)
@@ -146,6 +153,7 @@ def clone_chip(chip: "Chip") -> "Chip":
         basis=chip.basis,
         backend=chip._backend,
         baths=[bath.copy() for bath in chip.baths] or None,
+        ports=[port.copy() for port in chip.ports] or None,
     )
     if chip.control_equipment is not None:
         cloned.connect(chip.control_equipment.copy(device_map, cloned.coupling_map))

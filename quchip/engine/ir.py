@@ -954,7 +954,7 @@ class CanonicalOperator:
 
 # ── Hamiltonian Terms ───────────────────────────────────────────────
 
-TermOrigin: TypeAlias = Literal["device", "coupling", "drive", "crosstalk", "flux"]
+TermOrigin: TypeAlias = Literal["device", "coupling", "drive", "crosstalk", "flux", "port"]
 
 
 @dataclass(frozen=True)
@@ -1007,7 +1007,8 @@ class CollapseTerm:
             "T1": "T_1",
             "T2": "T_2",
             "thermal_population": r"\bar n",
-            "quality_factor": "Q",
+            "internal_quality_factor": "Q_\\mathrm{int}",
+            "external_quality_factor": "Q_\\mathrm{ext}",
         }
         rendered: list[str] = []
         for path in self.parameter_paths:
@@ -1021,6 +1022,18 @@ class CollapseTerm:
         arguments = ", ".join(rendered)
         suffix = rf"\!\left({arguments}\right)" if arguments else ""
         return rf"\hat L_{{{self.source},{self.channel}}}{suffix}"
+
+
+@dataclass(frozen=True)
+class PortTerm:
+    """Resolved input-output channel before the ``sqrt(rate)`` scaling."""
+
+    operator: CanonicalOperator
+    rate: Any
+    phase: Any
+    frame_frequency: Any
+    label: str
+    parameter_paths: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1103,6 +1116,7 @@ class EngineResult:
     metadata: dict[str, Any] = field(default_factory=dict)
     dropped_terms: tuple[DroppedTerm, ...] = ()
     collapse_terms: tuple[CollapseTerm, ...] = ()
+    port_terms: tuple[PortTerm, ...] = ()
     bases: Mapping[str, Any] = field(default_factory=dict)
     authored: Any = None
     resolved_frame: Any = None
@@ -1118,6 +1132,7 @@ class EngineResult:
             tuple(term.operator for term in self.static_terms)
             + tuple(term.operator for term in self.dynamic_terms)
             + tuple(term.operator for term in self.collapse_terms)
+            + tuple(term.operator for term in self.port_terms)
         )
         operator_payloads = tuple(
             (
@@ -1143,6 +1158,10 @@ class EngineResult:
                 tuple(term.coefficient for term in self.static_terms),
                 tuple(term.time_dependence for term in self.dynamic_terms),
                 tuple(term.rate for term in self.collapse_terms),
+                tuple(
+                    (term.rate, term.phase, term.frame_frequency)
+                    for term in self.port_terms
+                ),
                 tuple(
                     (term.amplitude, term.frequency)
                     for term in self.dropped_terms
@@ -1310,6 +1329,7 @@ class HamiltonianTemplate:
     #: variant-specific carrier-frequency hint is recomputed per instantiation.
     static_spectral_bound_ghz: float | None = None
     collapse_terms: tuple[Any, ...] = ()            # tuple[CollapseTerm, ...]
+    port_terms: tuple[Any, ...] = ()                # tuple[PortTerm, ...]
     bases: Mapping[str, Any] = field(default_factory=dict)
     authored: Any = None
 
@@ -1398,6 +1418,25 @@ class SolveProblem:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "options", _reject_backend_option(self.options, cls_name="SolveProblem"))
+
+
+@dataclass(frozen=True)
+class SteadyStateProblem:
+    """Immutable static Lindblad request handed from a chip to its backend."""
+
+    chip: Any
+    engine_result: EngineResult
+    e_ops: Any = None
+    e_ops_meta: Any = None
+    resolved_frame: Any = None
+    options: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "options",
+            _reject_backend_option(self.options, cls_name="SteadyStateProblem"),
+        )
 
 
 @dataclass(frozen=True)

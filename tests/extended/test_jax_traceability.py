@@ -214,14 +214,14 @@ def test_base_device_collapse_operators_accept_traced_noise_params() -> None:
     assert jnp.isfinite(value)
 
 
-def test_resonator_quality_factor_collapse_accepts_traced_frequency() -> None:
+def test_resonator_internal_quality_factor_collapse_accepts_traced_frequency() -> None:
     """Q-factor photon loss should preserve traced resonator frequency."""
     backend = _JaxCollapseBackend()
 
     @jax.jit
     def q_loss_coeff(freq: jax.Array) -> jax.Array:
         with _backend_context(backend):
-            resonator = Resonator(freq=freq, quality_factor=10_000.0, levels=3)
+            resonator = Resonator(freq=freq, internal_quality_factor=10_000.0, levels=3)
             c_ops = resonator.collapse_operators()
         return jnp.real(c_ops[0][0, 1])
 

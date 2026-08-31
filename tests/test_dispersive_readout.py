@@ -21,7 +21,7 @@ from quchip.chip.transformations import eliminate
 
 def _readout_chip(g=0.05):
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=4, label="q")
-    r = Resonator(freq=6.5, quality_factor=5000.0, levels=6, label="r")
+    r = Resonator(freq=6.5, internal_quality_factor=5000.0, levels=6, label="r")
     return Chip([q, r], couplings=[Capacitive(q, r, g=g)]), q, r
 
 
@@ -54,8 +54,8 @@ def test_eliminate_reports_kappa_matching_purcell_kappa():
     assert float(res.effective_params["q"]["kappa"]) == pytest.approx(2 * np.pi * 6.5 / 5000.0, rel=1e-9)
 
 
-def test_eliminate_without_quality_factor_reports_kappa_zero():
-    """A resonator with no quality_factor set reports kappa = 0."""
+def test_eliminate_without_internal_quality_factor_reports_kappa_zero():
+    """A resonator with no internal_quality_factor set reports kappa = 0."""
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
     r = Resonator(freq=6.5, levels=4, label="r")
     chip = Chip([q, r], couplings=[Capacitive(q, r, g=0.05)])

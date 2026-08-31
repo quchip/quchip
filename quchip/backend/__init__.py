@@ -40,6 +40,7 @@ from quchip.backend.containers import (
     PreparedBatch,
     PreparedHamiltonian,
     SolverResult,
+    SteadyStateSolverResult,
     VmappedBatch,
 )
 from quchip.backend.protocol import Backend, Operator, State
@@ -49,6 +50,7 @@ __all__ = [
     "Operator",
     "State",
     "SolverResult",
+    "SteadyStateSolverResult",
     "PreparedHamiltonian",
     "PreparedBatch",
     "EagerBatch",

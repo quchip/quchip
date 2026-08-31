@@ -11,7 +11,7 @@ def test_purcell_decay_matches_full_solve():
     # Full: excited qubit + lossy resonator -> qubit decays at the Purcell rate.
     g = 0.04
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=2, label="q")
-    r = Resonator(freq=7.0, quality_factor=2000.0, levels=4, label="r")
+    r = Resonator(freq=7.0, internal_quality_factor=2000.0, levels=4, label="r")
     full = Chip([q, r], couplings=[Capacitive(q, r, g=g)])
 
     reduced = eliminate(full, "r").chip

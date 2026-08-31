@@ -619,9 +619,10 @@ def fit_a_dress(
 
     ``fit_a_dress(desired)`` reads component-owned target declarations without
     evaluating ``desired``. Common spectral devices interpret their declared
-    frequencies and anharmonicities as dressed targets. Capacitive and
-    cross-Kerr couplings interpret their declared scalar as the full
-    ``cross_kerr = E11 - E10 - E01 + E00`` target.  The returned
+    frequencies and anharmonicities as dressed targets. A ``Capacitive`` edge
+    between two non-computational modes targets the dressed
+    ``exchange_rate``. Other ``Capacitive`` edges and ``CrossKerr`` couplings
+    target the full ``cross_kerr = E11 - E10 - E01 + E00``. The returned
     :attr:`~quchip.inverse_design.types.FitADressResult.chip` is a fitted clone;
     ``desired`` is never mutated.
 

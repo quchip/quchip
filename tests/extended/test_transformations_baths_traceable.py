@@ -97,7 +97,7 @@ def test_eliminate_effective_params_are_jittable_and_grad_in_g():
     """eliminate()'s effective freq_after is jittable and its gradient in g matches the perturbative 2g/Δ."""
     def freq_after(g):
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=2, label="q")
-        r = Resonator(freq=7.0, quality_factor=3000.0, levels=3, label="r")
+        r = Resonator(freq=7.0, internal_quality_factor=3000.0, levels=3, label="r")
         chip = Chip([q, r], couplings=[Capacitive(q, r, g=g)])
         return eliminate(chip, "r").effective_params["q"]["freq_after"]
 
@@ -112,7 +112,7 @@ def test_chi_is_traced_and_grad_matches_leading_order():
     """eliminate()'s chi stays traced and dchi/dg matches the leading-order chi ∝ g² scaling."""
     def chi_of_g(g):
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
-        r = Resonator(freq=6.5, quality_factor=5000.0, levels=4, label="r")
+        r = Resonator(freq=6.5, internal_quality_factor=5000.0, levels=4, label="r")
         chip = Chip([q, r], couplings=[Capacitive(q, r, g=g)])
         return eliminate(chip, "r").effective_params["q"]["chi"]
 
@@ -130,7 +130,7 @@ def test_readout_snr_is_differentiable_through_the_full_pipeline():
 
     def snr_of_g(g):
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
-        r = Resonator(freq=6.5, quality_factor=5000.0, levels=4, label="r")
+        r = Resonator(freq=6.5, internal_quality_factor=5000.0, levels=4, label="r")
         chip = Chip([q, r], couplings=[Capacitive(q, r, g=g)])
         eff = eliminate(chip, "r").effective_params["q"]
         ro = analyze_dispersive_readout(chi=eff["chi"], kappa=eff["kappa"], tau=500.0, n_photons=2.0)
@@ -148,7 +148,7 @@ def test_eliminated_chip_solve_is_jittable_and_grad_in_g():
     """A solve on the eliminated (reduced) chip is jittable and its gradient in g is finite and negative."""
     def final_excited(g):
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=2, label="q")
-        r = Resonator(freq=7.0, quality_factor=2000.0, levels=3, label="r")
+        r = Resonator(freq=7.0, internal_quality_factor=2000.0, levels=3, label="r")
         full = Chip([q, r], couplings=[Capacitive(q, r, g=g)])
         reduced = eliminate(full, "r").chip
         rq = reduced["q"]

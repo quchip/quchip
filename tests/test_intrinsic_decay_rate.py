@@ -23,14 +23,14 @@ def test_base_device_intrinsic_decay_rate_is_none_without_t1():
 
 def test_resonator_intrinsic_decay_rate_combines_q_and_t1():
     """Resonator sums its Q-derived photon loss and T1 rates rather than prioritizing one."""
-    r = Resonator(freq=7.0, quality_factor=5000.0, levels=6, label="r", T1=15_000.0)
+    r = Resonator(freq=7.0, internal_quality_factor=5000.0, levels=6, label="r", T1=15_000.0)
     kappa = 2 * np.pi * 7.0 / 5000.0
     t1_rate = 1.0 / 15_000.0
     assert r.intrinsic_decay_rate() == pytest.approx(kappa + t1_rate)
 
 
 def test_resonator_intrinsic_decay_rate_is_none_without_q_or_t1():
-    """A resonator with neither quality_factor nor T1 reports no decay channel."""
+    """A resonator with neither internal_quality_factor nor T1 reports no decay channel."""
     r = Resonator(freq=7.0, levels=6, label="r")
     assert r.intrinsic_decay_rate() is None
 
@@ -52,7 +52,7 @@ def test_base_device_intrinsic_decay_rate_thermal_population_only():
 def test_resonator_intrinsic_decay_rate_combines_q_t1_and_thermal_population():
     """Resonator's Q-derived kappa is unaffected by thermal_population; only the T1 channel is boosted."""
     r = Resonator(
-        freq=7.0, quality_factor=5000.0, levels=6, label="r", T1=15_000.0, thermal_population=0.05
+        freq=7.0, internal_quality_factor=5000.0, levels=6, label="r", T1=15_000.0, thermal_population=0.05
     )
     kappa = 2 * np.pi * 7.0 / 5000.0
     t1_rate = (0.05 + 1.0) / 15_000.0

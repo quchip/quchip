@@ -42,8 +42,8 @@ def _lossless_pair() -> tuple[Chip, DuffingTransmon, Resonator]:
 # ---------------------------------------------------------------------------
 
 
-def test_posthoc_t1_and_quality_factor_reflected_in_next_simulate():
-    """Setting T1/quality_factor after construction is reflected in the next simulate call."""
+def test_posthoc_t1_and_internal_quality_factor_reflected_in_next_simulate():
+    """Setting T1/internal_quality_factor after construction is reflected in the next simulate call."""
     chip, q, r = _lossless_pair()
     excited = chip.bare_state({q: 1, r: 1})
     e_ops = {q: q.number_operator(), r: r.number_operator()}
@@ -53,7 +53,7 @@ def test_posthoc_t1_and_quality_factor_reflected_in_next_simulate():
     assert np.real(before.expect("r"))[-1] == pytest.approx(1.0, abs=1e-9)
 
     q.T1 = 51_600.0
-    r.quality_factor = 5_000.0
+    r.internal_quality_factor = 5_000.0
 
     after = simulate(chip, [], TLIST, initial_state=excited, e_ops=e_ops)
     t_final = TLIST[-1]
@@ -78,10 +78,10 @@ def test_posthoc_noise_flips_default_solver():
 
 
 def test_noise_removed_posthoc_restores_lossless_evolution():
-    """Clearing T1/quality_factor after the fact restores lossless evolution."""
+    """Clearing T1/internal_quality_factor after the fact restores lossless evolution."""
     chip, q, r = _lossless_pair()
     q.T1 = 51_600.0
-    r.quality_factor = 5_000.0
+    r.internal_quality_factor = 5_000.0
     excited = chip.bare_state({q: 1, r: 1})
     e_ops = {q: q.number_operator(), r: r.number_operator()}
 
@@ -89,7 +89,7 @@ def test_noise_removed_posthoc_restores_lossless_evolution():
     assert np.real(noisy.expect("r"))[-1] < 0.5  # sanity: dissipation was active
 
     q.T1 = None
-    r.quality_factor = None
+    r.internal_quality_factor = None
 
     clean = simulate(chip, [], TLIST, initial_state=excited, e_ops=e_ops)
     assert np.real(clean.expect("q"))[-1] == pytest.approx(1.0, abs=1e-9)
@@ -116,14 +116,14 @@ def test_posthoc_mutation_validated_like_constructor():
 
 def test_posthoc_declarative_sign_constraints_enforced():
     """A post-construction write to a declared positive parameter enforces its sign constraint."""
-    r = Resonator(freq=7.0, levels=3, label="r", quality_factor=5_000.0)
+    r = Resonator(freq=7.0, levels=3, label="r", internal_quality_factor=5_000.0)
 
-    with pytest.raises(ValueError, match="quality_factor"):
-        r.quality_factor = -5_000.0
-    assert r.quality_factor == 5_000.0  # the rejected write must not stick
+    with pytest.raises(ValueError, match="internal_quality_factor"):
+        r.internal_quality_factor = -5_000.0
+    assert r.internal_quality_factor == 5_000.0  # the rejected write must not stick
 
-    r.quality_factor = None  # None means "remove the channel" and must stay allowed
-    assert r.quality_factor is None
+    r.internal_quality_factor = None  # None means "remove the channel" and must stay allowed
+    assert r.internal_quality_factor is None
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +303,7 @@ def test_noise_channel_metadata_is_not_public():
 def test_noise_parameter_names_reflect_declared_channels():
     """noise_parameter_names() follows fields declared with noise=True."""
     assert DuffingTransmon.noise_parameter_names() == ("T1", "T2", "thermal_population")
-    assert Resonator.noise_parameter_names() == ("T1", "T2", "thermal_population", "quality_factor")
+    assert Resonator.noise_parameter_names() == ("T1", "T2", "thermal_population", "internal_quality_factor")
     assert LeakyTransmon.noise_parameter_names() == ("T1", "T2", "thermal_population", "leakage_rate")
 
 
@@ -319,15 +319,15 @@ def test_set_noise_is_the_complete_noise_description():
     chip.add_bath(Bath("thermal", temperature=100.0, rate=1e-3))       # initial bath to replace
 
     chip.set_noise(
-        {"r": dict(quality_factor=5_000.0)},
+        {"r": dict(internal_quality_factor=5_000.0)},
         baths=[Bath("collective_decay", targets=[q, r], rate=1e-4, label="col")],
     )
     assert q.T1 is None                       # unmentioned -> cleared (replace-all)
-    assert r.quality_factor == 5_000.0
+    assert r.internal_quality_factor == 5_000.0
     assert [b.label for b in chip.baths] == ["col"]
 
     chip.set_noise()                          # no args == clear everything
-    assert r.quality_factor is None
+    assert r.internal_quality_factor is None
     assert chip.baths == ()
 
 
@@ -336,8 +336,8 @@ def test_set_noise_matches_equivalent_attribute_writes():
     chip_a, qa, ra = _lossless_pair()
     chip_b, qb, rb = _lossless_pair()
     qa.T1 = 51_600.0
-    ra.quality_factor = 5_000.0
-    chip_b.set_noise({qb: dict(T1=51_600.0), rb: dict(quality_factor=5_000.0)})
+    ra.internal_quality_factor = 5_000.0
+    chip_b.set_noise({qb: dict(T1=51_600.0), rb: dict(internal_quality_factor=5_000.0)})
 
     assert len(chip_a.collapse_contributions()) == len(chip_b.collapse_contributions()) == 2
     e_ops_a = {qa: qa.number_operator(), ra: ra.number_operator()}

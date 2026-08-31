@@ -63,6 +63,9 @@ def independence_edges(chip: "Chip") -> list[tuple[str, str]]:
             continue
         targets = bath.resolve_targets(chip)
         edges.extend((targets[0], other) for other in targets[1:])
+    for port in chip.ports:
+        port_targets = port.resolve_targets(chip)
+        edges.extend((port_targets[0], other) for other in port_targets[1:])
     equipment = chip.control_equipment
     if equipment is not None:
         line_devices = {line.label: _line_device_labels(chip, line) for line in equipment.lines}
@@ -159,6 +162,15 @@ def _component_baths(clone: "Chip", member_set: set[str]) -> list[Any]:
     return kept
 
 
+def _component_ports(clone: "Chip", member_set: set[str]) -> list[Any]:
+    """Return ports whose complete target support belongs to one component."""
+    return [
+        port.copy()
+        for port in clone.ports
+        if set(port.resolve_targets(clone)).issubset(member_set)
+    ]
+
+
 def _transform_drive_labels(transform: "SignalTransform") -> tuple[str, ...]:
     """Drive labels a signal transform references."""
     return transform.referenced_lines()
@@ -209,6 +221,7 @@ def _build_component_chip(chip: "Chip", clone: "Chip", index: int, group: list[s
         approximation=clone.approximation,
         backend=clone._backend,
         baths=_component_baths(clone, member_set) or None,
+        ports=_component_ports(clone, member_set) or None,
     )
     equipment = clone.control_equipment
     if equipment is not None and lines:

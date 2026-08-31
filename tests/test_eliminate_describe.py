@@ -45,7 +45,7 @@ def test_describe_reports_correct_before_after_freq_for_bridge():
 def test_describe_reports_correct_purcell_folded_t1():
     """A leaf elimination's Purcell fold shows the exact before/after T1 in microseconds."""
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q", T1=30_000.0)
-    r = Resonator(freq=7.0, quality_factor=5000.0, levels=4, label="r")
+    r = Resonator(freq=7.0, internal_quality_factor=5000.0, levels=4, label="r")
     chip = Chip([q, r], couplings=[Capacitive(q, r, g=0.08, label="cap0")])
 
     res = eliminate(chip, "r")
@@ -130,7 +130,7 @@ def test_describe_never_raises_on_a_fully_traced_result():
     def run(g):
         q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=2, label="q0", T1=30_000.0)
         q1 = DuffingTransmon(freq=5.2, anharmonicity=-0.24, levels=2, label="q1")
-        bus = Resonator(freq=6.3, levels=3, label="bus", quality_factor=5000.0)
+        bus = Resonator(freq=6.3, levels=3, label="bus", internal_quality_factor=5000.0)
         chip = Chip(
             [q0, q1, bus],
             couplings=[Capacitive(q0, bus, g=g, label="leg0"), Capacitive(q1, bus, g=0.08, label="leg1")],

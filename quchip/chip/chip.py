@@ -24,6 +24,7 @@ from quchip.backend.protocol import Backend, Operator, State
 from quchip.approximations import Approximation, RWA, require_approximation
 from quchip.chip.analysis import ChipAnalysis, DressedResult, KerrMatrix
 from quchip.chip.baths import Bath
+from quchip.chip.ports import Port
 from quchip.chip.coupling_base import BaseCoupling
 from quchip.chip.states import _DEFAULT_LEVEL_SYMBOLS
 from quchip.control.drive import BaseDrive, CouplingDrive
@@ -39,6 +40,7 @@ if TYPE_CHECKING:
     from quchip.chip.partition import PartitionResult
     from quchip.engine.ir import EngineResult, FrameSpec, SolveProblem
     from quchip.results.results import SimulationBatchResult, SimulationResult
+    from quchip.results.steady_state import SteadyStateResult
 
 
 def _format_float(value: float | None) -> str:
@@ -92,6 +94,26 @@ def _concrete_cache_value(value: Any) -> Any:
     return concrete
 
 
+def _operator_cache_value(value: Any) -> Any:
+    """Return a content-based cache key for one concrete port operator."""
+    if value is None or isinstance(value, str):
+        return value
+    operator = value
+    if hasattr(operator, "matrix"):
+        operator = operator.matrix()
+    elif hasattr(operator, "to_jax"):
+        operator = operator.to_jax()
+    elif hasattr(operator, "full"):
+        operator = operator.full()
+    if contains_tracer(operator):
+        raise ValueError
+    try:
+        array = np.asarray(operator)
+    except (TypeError, ValueError) as error:
+        raise ValueError from error
+    return array.shape, array.dtype.str, array.tobytes()
+
+
 def _frame_cache_value(frame: Any) -> Any:
     """Return a stable cache key for one concrete frame specification."""
     if isinstance(frame, str):
@@ -117,7 +139,7 @@ class Chip:
       delegated to :class:`~quchip.chip.analysis.ChipAnalysis`,
     - state factories (:meth:`state`, :meth:`bare_state`),
     - observable construction (:meth:`observable`, :meth:`e_ops`),
-    - solver surface (:meth:`solve`, :meth:`solve_many`),
+    - solver surface (:meth:`solve`, :meth:`solve_many`, :meth:`steadystate`),
     - control wiring (:meth:`wire`, :meth:`connect`),
     - serialization / cloning (:meth:`to_dict`, :meth:`from_dict`,
       :meth:`clone`, :meth:`updated`).
@@ -157,6 +179,11 @@ class Chip:
         this policy.
     backend : str or Backend, optional
         Chip-specific backend. ``None`` uses the process default.
+    baths : list[Bath], optional
+        Shared or collective unobserved environments.
+    ports : list[Port], optional
+        Accessible Markovian input-output channels. Ports add collapse
+        channels without adding Hilbert-space factors.
 
     Examples
     --------
@@ -178,6 +205,7 @@ class Chip:
         basis: Literal["native", "eigen"] = "native",
         backend: str | Backend | None = None,
         baths: list[Bath] | None = None,
+        ports: list[Port] | None = None,
     ) -> None:
         duplicates = [lbl for lbl, count in Counter(d.label for d in devices).items() if count > 1]
         if duplicates:
@@ -205,6 +233,14 @@ class Chip:
         for bath in baths or ():
             self._validate_bath(bath)
         self._baths = tuple(baths) if baths else ()
+        port_duplicates = [lbl for lbl, n in Counter(port.label for port in ports or ()).items() if n > 1]
+        if port_duplicates:
+            raise ValueError(f"Duplicate port labels: {port_duplicates}. Each port must have a unique label.")
+        for port in ports or ():
+            if not isinstance(port, Port):
+                raise TypeError(f"Expected a Port, got {type(port).__name__}: {port!r}")
+            port.resolve_targets(self)
+        self._ports = tuple(ports) if ports else ()
         if basis not in ("native", "eigen"):
             raise ValueError(f"basis must be 'native' or 'eigen', got {basis!r}")
         self._basis = basis
@@ -387,6 +423,18 @@ class Chip:
                     )
                     for bath in self.baths
                 ),
+                tuple(
+                    (
+                        port.label,
+                        tuple(port.resolve_targets(self)),
+                        tuple(
+                            (name, _concrete_cache_value(value))
+                            for name, value in port.parameter_values().items()
+                        ),
+                        _operator_cache_value(port.operator),
+                    )
+                    for port in self.ports
+                ),
             )
         except ValueError:
             signature = None
@@ -479,8 +527,22 @@ class Chip:
         which components carry noise — see the ``"chip"`` entry of
         :meth:`physics_notes`.
         """
+        return [
+            (operator, rate, support, source, channel, parameter_paths)
+            for operator, rate, support, source, channel, parameter_paths, _owner in (
+                self._collapse_contributions_with_owners(bases)
+            )
+        ]
+
+    def _collapse_contributions_with_owners(
+        self,
+        bases: Mapping[str, Any] | None = None,
+    ) -> list[tuple[Operator, Any, tuple[int, ...], str, str, tuple[str, ...], Any]]:
+        """Return collapse contributions with exact component ownership for assembly."""
         backend = self.backend
-        out: list[tuple[Operator, Any, tuple[int, ...], str, str, tuple[str, ...]]] = []
+        out: list[
+            tuple[Operator, Any, tuple[int, ...], str, str, tuple[str, ...], Any]
+        ] = []
         with _backend_context(backend):
             for i, dev in enumerate(self._devices):
                 out.extend(
@@ -491,6 +553,7 @@ class Chip:
                         dev.label,
                         channel.name,
                         parameter_paths,
+                        dev,
                     )
                     for channel, parameter_paths in dev._collapse_channels_with_paths(
                         None if bases is None else bases[dev.label]
@@ -511,6 +574,7 @@ class Chip:
                                 line.label,
                                 channel.name,
                                 parameter_paths,
+                                line,
                             )
                         )
             for coupling in self._couplings:
@@ -525,6 +589,7 @@ class Chip:
                             coupling.label,
                             channel.name,
                             parameter_paths,
+                            coupling,
                         )
                     )
             for bath in self.baths:
@@ -537,6 +602,21 @@ class Chip:
                             bath.label,
                             channel.name,
                             parameter_paths,
+                            bath,
+                        )
+                    )
+            for port in self.ports:
+                support = tuple(self._label_to_index[label] for label in port.resolve_targets(self))
+                for channel, parameter_paths in port._collapse_channels_with_paths(self):
+                    out.append(
+                        (
+                            channel.operator,
+                            channel.rate,
+                            support,
+                            port.label,
+                            channel.name,
+                            parameter_paths,
+                            port,
                         )
                     )
         return out
@@ -638,6 +718,19 @@ class Chip:
     def baths(self) -> tuple[Bath, ...]:
         """Chip-level baths (shared/collective dissipation), insertion order."""
         return self._baths
+
+    @property
+    def ports(self) -> tuple[Port, ...]:
+        """Accessible Markovian input-output channels, in declaration order."""
+        return self._ports
+
+    def port(self, port: str | Port) -> Port:
+        """Return one declared port by object or label."""
+        label = resolve_label(port)
+        for candidate in self._ports:
+            if candidate.label == label:
+                return candidate
+        raise KeyError(f"No port labeled '{label}'. Available: {[candidate.label for candidate in self._ports]}")
 
     def add_bath(self, bath: Bath) -> Bath:
         """Attach a bath to this chip and return it (for fluent use).
@@ -1083,7 +1176,7 @@ class Chip:
 
         Returns a dict keyed ``"chip"`` for the chip-level entry, and
         ``"<kind>:<label>"`` — ``kind`` one of ``"device"``, ``"coupling"``,
-        ``"drive"``, ``"bath"`` — for every component, mapping to that
+        ``"drive"``, ``"bath"``, ``"port"`` — for every component, mapping to that
         component's declared approximations: Hilbert truncation, model
         regime, RWA status, noise-channel selection, and any other
         non-obvious assumption the component explicitly declares. Keys are
@@ -1116,6 +1209,8 @@ class Chip:
             notes[f"coupling:{coupling.label}"] = list(coupling.physics_notes())
         for bath in self.baths:
             notes[f"bath:{bath.label}"] = list(bath.physics_notes())
+        for port in self.ports:
+            notes[f"port:{port.label}"] = list(port.physics_notes())
         return notes
 
     # ------------------------------------------------------------------
@@ -1168,6 +1263,9 @@ class Chip:
         for index, bath in enumerate(self._baths):
             for name, value in bath.parameter_values().items():
                 add(f"bath.{bath.label}.{name}", ("bath", index, name, value))
+        for index, port in enumerate(self._ports):
+            for name, value in port.parameter_values().items():
+                add(f"port.{port.label}.{name}", ("port", index, name, value))
         return targets
 
     @property
@@ -1213,6 +1311,10 @@ class Chip:
                     (bath.label, bath.recipe, tuple(bath.resolve_targets(self)))
                     for bath in self._baths
                 ),
+                "ports": tuple(
+                    (port.label, tuple(port.resolve_targets(self)))
+                    for port in self._ports
+                ),
                 "frame": self._frame_spec,
                 "approximation": type(self._approximation).__name__,
                 "backend": type(self.backend).__name__,
@@ -1244,8 +1346,10 @@ class Chip:
                 assert cloned._control_equipment is not None
                 transform = cloned._control_equipment._signal_chain[index]
                 cloned._control_equipment._signal_chain[index] = transform.with_parameter_value(name, value)
-            else:
+            elif kind == "bath":
                 cloned._baths[index].set_parameter_value(name, value)
+            else:
+                cloned._ports[index].set_parameter_value(name, value)
         for index, local_bindings in device_bindings.items():
             cloned._devices[index].set_parameter_values(local_bindings)
         return cloned
@@ -1697,6 +1801,47 @@ class Chip:
                 self._check_problem(problem, index=i)
 
         return solve_many(batch_or_problems, progress=progress)
+
+    def steadystate(
+        self,
+        *,
+        e_ops: dict | None = None,
+        options: dict | None = None,
+        frame: FrameSpec | None = None,
+        approximation: Approximation | None = None,
+    ) -> "SteadyStateResult":
+        """Solve this chip's unique static Lindblad steady state."""
+        from quchip.engine.steady_state import steadystate
+
+        return steadystate(
+            self,
+            e_ops=e_ops,
+            options=options,
+            frame=frame,
+            approximation=approximation,
+        )
+
+    def steadystate_batch(
+        self,
+        *axes: Any,
+        e_ops: dict | None = None,
+        options: dict | None = None,
+        frame: FrameSpec | None = None,
+        approximation: Approximation | None = None,
+        progress: bool = True,
+    ) -> Any:
+        """Solve static Lindblad steady states over parameter sweep axes."""
+        from quchip.engine.steady_state import steadystate_batch
+
+        return steadystate_batch(
+            self,
+            *axes,
+            e_ops=e_ops,
+            options=options,
+            frame=frame,
+            approximation=approximation,
+            progress=progress,
+        )
 
     # ------------------------------------------------------------------
     # Misc

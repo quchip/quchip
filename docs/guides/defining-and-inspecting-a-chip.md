@@ -60,7 +60,7 @@ Devices (2)
 q — DuffingTransmon
     T1 = None   T2 = None   thermal_population = None   freq = 5 GHz   anharmonicity = -0.25 GHz   levels = 4
 r — Resonator
-    T1 = None   T2 = None   thermal_population = None   freq = 7 GHz   quality_factor = None   levels = 5
+    T1 = None   T2 = None   thermal_population = None   freq = 7 GHz   internal_quality_factor = None   levels = 5
 
 Couplings (1)
 ─────────────

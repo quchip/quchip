@@ -37,7 +37,7 @@ Declare the chip once, then use the same model for dressed-state analysis, model
   <img src="https://raw.githubusercontent.com/quchip/quchip/main/docs/images/quchip_pipeline_light.png" alt="quchip pipeline from declared devices and control parameters through model resolution, simulation, observables, and gradients" width="1084">
 </picture>
 
-QuTiP is the default simulation backend. The optional dynamiqs backend is JAX-native and keeps declared device and control parameters differentiable through a solve. The scqubits integration imports and exports selected device and composite models.
+QuTiP is the default simulation backend. The optional dynamiqs backend is JAX-native and keeps declared device and control parameters differentiable through a solve. The [backend guide](https://docs.quchip.org/guides/choosing-a-backend.html) compares their numerical and workflow tradeoffs. The scqubits integration imports and exports selected device and composite models.
 
 `quchip` uses GHz for ordinary frequencies, ns for time, and mK for temperature. The implemented conventions and approximations are documented in the [physics guide](https://docs.quchip.org/physics).
 
@@ -79,7 +79,7 @@ qubit = DuffingTransmon(
 readout = Resonator(
     freq=6.8,
     levels=10,
-    quality_factor=6800,
+    internal_quality_factor=6800,
     label="r",
 )
 coupling = Capacitive(qubit, readout, g=0.060, label="qr")

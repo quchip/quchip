@@ -171,11 +171,12 @@ before passing it to the device.
 
 `fit_a_dress(desired)` treats component numbers as dressed constraints and
 returns the corresponding bare chip as `fit.chip`. Common devices target their
-dressed frequency and anharmonicity. A `Capacitive` or `CrossKerr` scalar
-targets the full cross-Kerr $E_{11}-E_{10}-E_{01}+E_{00}$; it is not the
-starting bare coupling strength in this call. Add pair observables with
-`constraints=` and use `vary=` only when the component defaults are not the
-parameters you want to move:
+dressed frequency and anharmonicity. A `Capacitive` edge between two
+non-computational modes targets the dressed exchange rate. Other `Capacitive`
+edges and `CrossKerr` couplings target the full cross-Kerr
+$E_{11}-E_{10}-E_{01}+E_{00}$. These values are targets, not starting bare
+coupling strengths. Add pair observables with `constraints=` and use `vary=`
+only when the component defaults are not the parameters you want to move:
 
 ```python
 fit = fit_a_dress(
@@ -233,9 +234,18 @@ for a closed model and `mesolve` when devices, drives, couplings, or baths
 contribute collapse channels. Adding a resonator quality factor or a bath can
 therefore change the equation without changing the pulse schedule.
 
-Use the dynamiqs backend when a calculation needs JAX differentiation through
-the solve. Keep graph structure, Hilbert dimensions, and approximation masks
-fixed while tracing.
+For a time-independent QuTiP problem with no explicit solver method, quchip
+uses diagonal propagation at all requested save times when the total Hilbert
+dimension is at most 64 for `sesolve`, or at most 12 for `mesolve` (whose
+Liouvillian dimension is the square of the Hilbert dimension). `diag` does not
+use adaptive tolerances or step controls, so quchip removes `atol`, `rtol`,
+`nsteps`, and `max_step` and logs the discarded options at `INFO` level. Driven
+problems, larger spaces, and an explicit non-`diag` method keep QuTiP's selected
+adaptive integrator. For dynamiqs, method selection remains explicit through
+`options={"method": ...}`; its default is `Tsit5`.
+
+See {doc}`Backend and solver options <guides/choosing-a-backend>` for available
+methods, option syntax, batching, and gradient controls.
 
 ## Read results at the level of the question
 

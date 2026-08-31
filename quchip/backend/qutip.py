@@ -17,6 +17,8 @@ References
 
 from __future__ import annotations
 
+import logging
+import math
 import os
 import warnings
 from dataclasses import dataclass
@@ -40,6 +42,7 @@ from quchip.backend.containers import (
     DeferredBatch,
     PreparedHamiltonian,
     SolverResult,
+    SteadyStateSolverResult,
 )
 from quchip.backend.protocol import Backend, Operator, State
 from quchip.engine.ir import (
@@ -50,6 +53,9 @@ from quchip.engine.ir import (
     signal_children,
 )
 from quchip.utils.jax_utils import maybe_concrete_scalar
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -239,6 +245,11 @@ def _sample_coeff_array(signal: Any, sample_tlist: Any) -> np.ndarray:
 # envelope has no discontinuity to ring across and keeps the default cubic
 # order (unspecified below).
 _WINDOWED_COEFFICIENT_ORDER = 1
+
+# QuTiP's diagonal integrator materializes a dense d x d Hamiltonian or
+# d^2 x d^2 Liouvillian. These measured caps keep that setup bounded.
+_MAX_STATIC_HILBERT_DIM = 64
+_MAX_STATIC_LIOUVILLIAN_HILBERT_DIM = 12
 
 
 def _envelope_coefficient(envelope: Any, sample_tlist: Any) -> Any:
@@ -697,6 +708,56 @@ class QuTiPBackend(Backend):
         resolved.pop("gradient", None)
         return resolved
 
+    def _resolve_automatic_solver_options(
+        self,
+        options: dict[str, Any],
+        *,
+        user_options: dict[str, Any],
+        engine_result: Any,
+        solver_name: str,
+        tlist: Any,
+    ) -> dict[str, Any]:
+        """Select QuTiP's diagonal propagator for small constant generators."""
+        _ = tlist
+        resolved = dict(options)
+
+        adaptive_options = {"atol", "rtol", "nsteps", "max_step"}
+        explicit_method = user_options.get("method")
+        if explicit_method == "diag":
+            discarded = adaptive_options & user_options.keys()
+            for key in adaptive_options:
+                resolved.pop(key, None)
+            if discarded:
+                _LOGGER.info(
+                    "Explicit QuTiP method='diag' discarded unsupported adaptive options: %s.",
+                    ", ".join(sorted(discarded)),
+                )
+            return resolved
+
+        if explicit_method is not None or engine_result.dynamic_terms:
+            return resolved
+
+        dimension = math.prod(engine_result.dims)
+        limit = (
+            _MAX_STATIC_HILBERT_DIM
+            if solver_name == "sesolve"
+            else _MAX_STATIC_LIOUVILLIAN_HILBERT_DIM
+        )
+        if dimension > limit:
+            return resolved
+
+        discarded = adaptive_options & user_options.keys()
+        for key in adaptive_options:
+            resolved.pop(key, None)
+        if discarded:
+            _LOGGER.info(
+                "Automatic QuTiP method='diag' discarded unsupported adaptive options: %s.",
+                ", ".join(sorted(discarded)),
+            )
+
+        resolved["method"] = "diag"
+        return resolved
+
     _default_nsteps = staticmethod(default_solver_steps)
 
     def coerce_state(self, state: State, dims: tuple[int, ...] | None = None) -> State:
@@ -745,6 +806,70 @@ class QuTiPBackend(Backend):
         runner = MESolver(self._coerce_solver_rhs(H), c_ops, options=self._runner_options(options))
         result = runner.run(rho0, tlist, e_ops=e_ops)
         return self._wrap_result(result, solver="mesolve", extra_stats=self._solver_stats(runner))
+
+    def steadystate(self, problem: Any) -> SteadyStateSolverResult:
+        """Solve a static Lindblad generator with :func:`qutip.steadystate`."""
+        if problem.engine_result.dynamic_terms:
+            raise ValueError("steadystate() requires a static resolved Hamiltonian.")
+
+        prepared = self.prepare_hamiltonian(problem.engine_result)
+        collapse_ops = self._collapse_operators(problem.engine_result)
+        options = dict(problem.options)
+        rank_tolerance = options.pop("rank_tolerance", None)
+        diagnostic_max_dimension = int(options.pop("diagnostic_max_dimension", 16))
+        if diagnostic_max_dimension < 0:
+            raise ValueError("diagnostic_max_dimension must be non-negative.")
+        method = options.pop("method", "direct")
+        solver = options.pop("solver", None)
+        state = qutip.steadystate(
+            prepared.rhs,
+            collapse_ops,
+            method=method,
+            solver=solver,
+            **options,
+        )
+
+        liouvillian = qutip.liouvillian(prepared.rhs, collapse_ops)
+        if hasattr(liouvillian.data, "as_scipy"):
+            sparse_liouvillian = liouvillian.data.as_scipy().tocsr()
+        else:
+            from scipy.sparse import csr_matrix
+
+            sparse_liouvillian = csr_matrix(liouvillian.data.to_array())
+        state_vector = np.asarray(qutip.operator_to_vector(state).full(), dtype=complex).reshape(-1)
+        residual = float(np.linalg.norm(sparse_liouvillian @ state_vector))
+        dimension = state.shape[0]
+        nullity = None
+        condition_number = None
+        if dimension <= diagnostic_max_dimension:
+            dense_liouvillian = np.asarray(sparse_liouvillian.toarray(), dtype=complex)
+            singular_values = np.linalg.svd(dense_liouvillian, compute_uv=False)
+            if rank_tolerance is None:
+                scale = singular_values[0] if singular_values.size else 0.0
+                rank_tolerance = max(dense_liouvillian.shape) * np.finfo(float).eps * scale
+            nullity = int(np.count_nonzero(singular_values <= rank_tolerance))
+            trace_row = np.zeros(dense_liouvillian.shape[1], dtype=complex)
+            trace_row[:: dimension + 1] = 1.0
+            constrained = dense_liouvillian.copy()
+            constrained[-1, :] = trace_row
+            condition_number = float(np.linalg.cond(constrained))
+        expectations = None
+        if isinstance(problem.e_ops, list):
+            expectations = [qutip.expect(operator, state) for operator in problem.e_ops]
+
+        return SteadyStateSolverResult(
+            state=state,
+            expect=expectations,
+            stats={
+                "method": method,
+                "solver": solver,
+                "uniqueness_checked": nullity is not None,
+                "diagnostic_max_dimension": diagnostic_max_dimension,
+            },
+            residual=residual,
+            nullity=nullity,
+            condition_number=condition_number,
+        )
 
     @staticmethod
     def _runner_options(options: dict[str, Any] | None) -> dict[str, Any]:
@@ -920,10 +1045,11 @@ class QuTiPBackend(Backend):
             engine_result = problem.engine_result
             c_ops = self._collapse_operators(engine_result)
             solver_name = problem.solver or ("mesolve" if c_ops else "sesolve")
-            opts = self._merge_options(
-                problem.options,
+            opts = self._resolve_problem_options(
+                problem,
                 metadata=engine_result.metadata,
                 tlist=tlist_arr,
+                solver_name=solver_name,
             )
             tasks.append(
                 _QuTiPBatchTask(
