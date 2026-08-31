@@ -19,12 +19,12 @@ explicit ``(K/2) n(n-1)`` term (see ``examples/kerr_cat_qubit.py``).
 
 Optional dissipation
 --------------------
-Passing ``quality_factor = Q`` adds a single photon-loss collapse
+Passing ``internal_quality_factor = Q`` adds a single unobserved photon-loss collapse
 operator ``sqrt(kappa) a`` with :math:`\\kappa = 2\\pi\\,f/Q`
 (angular decay rate, rad/ns).
 
 **Quality-factor convention (physics, not a unit conversion).**
-``quality_factor`` is defined against the *ordinary* frequency
+``internal_quality_factor`` is defined against the *ordinary* frequency
 ``freq`` (GHz) carried by this class. The resulting decay rate is
 :math:`\\kappa = 2\\pi\\,f/Q` (angular, rad/ns). The :math:`2\\pi`
 here is intrinsic to the physical definition of Q — not an
@@ -79,8 +79,8 @@ class Resonator(FockDevice):
     freq : float
         Bare cavity frequency ω in GHz. Must be positive. May be a JAX
         tracer for sweeps / gradients.
-    quality_factor : float | None, optional
-        Loaded Q referenced to the ordinary frequency ``freq`` in GHz.
+    internal_quality_factor : float | None, optional
+        Internal Q referenced to the ordinary frequency ``freq`` in GHz.
         When set, adds a photon-loss Lindblad channel
         ``sqrt(2*pi*freq/Q) a`` with angular decay rate
         ``kappa = 2*pi*freq/Q`` in rad/ns. Must be positive. Like every
@@ -99,7 +99,7 @@ class Resonator(FockDevice):
     Example
     -------
     >>> from quchip.devices import Resonator
-    >>> r = Resonator(freq=7.2, quality_factor=10_000, levels=8)
+    >>> r = Resonator(freq=7.2, internal_quality_factor=10_000, levels=8)
     >>> len(r.collapse_operators()) >= 1
     True
     """
@@ -111,7 +111,7 @@ class Resonator(FockDevice):
     dressed_fit_param_names = ("freq",)
 
     freq: Scalar = parameter(default=UNBOUND, positive=True, unit="GHz", symbol=r"\omega")
-    quality_factor: Scalar = parameter(default=None, positive=True, noise=True, kw_only=True)
+    internal_quality_factor: Scalar = parameter(default=None, positive=True, noise=True, kw_only=True)
 
     approximation = "Linear harmonic oscillator with no Kerr or cross-Kerr self-interaction."
 
@@ -121,26 +121,26 @@ class Resonator(FockDevice):
 
     def dissipation(self, op: LocalOps, p: Any) -> tuple[CollapseChannel, ...]:
         channels = super().dissipation(op, p)
-        if self.quality_factor is None:
+        if self.internal_quality_factor is None:
             return channels
         return channels + (
-            CollapseChannel(op.a, 2 * np.pi * p.freq / p.quality_factor, "photon_loss"),
+            CollapseChannel(op.a, 2 * np.pi * p.freq / p.internal_quality_factor, "internal_photon_loss"),
         )
 
     def physics_notes(self) -> list[str]:
         """Return declared harmonic-oscillator and dissipation assumptions."""
         notes = super().physics_notes()
         notes.append("Linear harmonic oscillator (no Kerr, no cross-Kerr self-interaction)")
-        if self.quality_factor is not None:
-            notes.append("Dissipation: photon loss at rate κ = 2π·ω/Q")
+        if self.internal_quality_factor is not None:
+            notes.append("Internal dissipation: photon loss at rate κ_internal = 2π·ω/Q_internal")
         return notes
 
     def intrinsic_decay_rate(self) -> Any | None:
         """Combined lowering-channel rate: ``κ = 2π·freq/Q`` photon loss plus the thermal-emission rate.
 
-        Both :attr:`quality_factor` and ``T1``/``thermal_population`` build
+        Both :attr:`internal_quality_factor` and ``T1``/``thermal_population`` build
         independent lowering-operator collapse channels on this device (the
-        ``photon_loss`` channel, a pure loss channel unaffected by
+        ``internal_photon_loss`` channel, a pure loss channel unaffected by
         ``thermal_population``, and the inherited
         thermal-emission channel — see
         :meth:`~quchip.devices.base.BaseDevice.intrinsic_decay_rate` for its
@@ -150,7 +150,11 @@ class Resonator(FockDevice):
         under-count decay when both are set. ``None`` only when neither is
         set.
         """
-        kappa = None if self.quality_factor is None else 2 * np.pi * self.freq / self.quality_factor
+        kappa = (
+            None
+            if self.internal_quality_factor is None
+            else 2 * np.pi * self.freq / self.internal_quality_factor
+        )
         thermal_rate = super().intrinsic_decay_rate()
         if kappa is None and thermal_rate is None:
             return None

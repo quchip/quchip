@@ -79,7 +79,7 @@ qubit = DuffingTransmon(
 readout = Resonator(
     freq=6.8,
     levels=10,
-    quality_factor=6800,
+    internal_quality_factor=6800,
     label="r",
 )
 coupling = Capacitive(qubit, readout, g=0.060, label="qr")

@@ -54,11 +54,14 @@ scaling:
 from __future__ import annotations
 
 import warnings
+from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from math import prod
 from typing import TYPE_CHECKING, Any, Mapping, cast
 
+import jax
 import jax.numpy as jnp
+import numpy as np
 
 from quchip.approximations import Approximation, Exact, RWA, require_approximation
 from quchip.backend import _backend_context
@@ -82,6 +85,7 @@ from quchip.engine.ir import (
     DynamicTerm,
     EngineResult,
     Multiply,
+    PortTerm,
     ResolvedFrame,
     ScalarModulation,
     SignalProgram,
@@ -98,7 +102,7 @@ from quchip.engine.basis import (
 )
 from quchip.engine.solver_hints import _solver_hint_metadata, _static_diagonal_span
 from quchip.utils.constants import TWO_PI
-from quchip.utils.jax_utils import array_namespace, maybe_concrete_scalar
+from quchip.utils.jax_utils import array_namespace, contains_tracer, maybe_concrete_scalar
 from quchip.engine.bands import (
     decompose_canonical_bands,
     decompose_two_body_canonical_bands,
@@ -228,23 +232,20 @@ def _project_on_support(
             record.transform_operator(backend.to_array(local)),
             dims=[[record.resolved_dim], [record.resolved_dim]],
         )
-    if len(support) == 2:
-        record_a = bases[chip.devices[support[0]].label]
-        record_b = bases[chip.devices[support[1]].label]
-        if record_a.kind == record_b.kind == "native":
+    if len(support) >= 2:
+        records = [bases[chip.devices[index].label] for index in support]
+        if all(record.kind == "native" for record in records):
             return local
-        xp = array_namespace(record_a.vectors)
-        transform = xp.kron(record_a.vectors, record_b.vectors)
+        xp = array_namespace(records[0].vectors)
+        transform = records[0].vectors
+        for record in records[1:]:
+            transform = xp.kron(transform, record.vectors)
         matrix = transform.conj().T @ backend.to_array(local) @ transform
+        resolved_dims = [record.resolved_dim for record in records]
         return backend.from_array(
             matrix,
-            dims=[
-                [record_a.resolved_dim, record_b.resolved_dim],
-                [record_a.resolved_dim, record_b.resolved_dim],
-            ],
+            dims=[resolved_dims, resolved_dims],
         )
-    if support:
-        raise ValueError(f"Operators may act on zero, one, or two supports; got {support!r}.")
 
     if all(record.kind == "native" for record in bases.values()):
         return local
@@ -300,25 +301,35 @@ def _build_static_h0(
             continue
         with _backend_context(backend):
             record = resolution.bases[dev.label]
-            from quchip.devices.spaces import FockSpace
-
-            space = dev.local_space()
-            frame_matrix = (
-                record.transform_operator(space.matrix("n"))
-                if isinstance(space, FockSpace)
-                else record.level_operator()
-            )
-            level_operator = (
-                space.operator("n", backend)
-                if isinstance(space, FockSpace) and record.kind == "native"
-                else backend.from_array(
-                    frame_matrix,
-                    dims=[[record.resolved_dim], [record.resolved_dim]],
-                )
-            )
+            level_operator = _resolved_frame_operator(dev, record, backend)
             n_emb = backend.embed(level_operator, idx, dims)
         h0 = h0 - TWO_PI * omega_ref * n_emb
     return h0
+
+
+def _resolved_frame_operator(device: Any, record: BasisRecord, backend: Backend) -> Operator:
+    """Return one device's frame generator in its resolved solver basis."""
+    from quchip.devices.spaces import FockSpace
+
+    space = device.local_space()
+    if isinstance(space, FockSpace) and record.kind == "native":
+        return space.operator("n", backend)
+    return backend.from_array(
+        _resolved_frame_matrix(device, record),
+        dims=[[record.resolved_dim], [record.resolved_dim]],
+    )
+
+
+def _resolved_frame_matrix(device: Any, record: BasisRecord) -> Any:
+    """Return one device's frame generator as a dense resolved matrix."""
+    from quchip.devices.spaces import FockSpace
+
+    space = device.local_space()
+    return (
+        record.transform_operator(space.matrix("n"))
+        if isinstance(space, FockSpace)
+        else record.level_operator()
+    )
 
 
 # -- Dynamic-term assembly helpers ---------------------------------------
@@ -344,12 +355,22 @@ def _collect_collapse_terms(
     chip: "Chip",
     backend: Backend,
     resolution: _LocalResolution,
-) -> tuple[CollapseTerm, ...]:
+) -> tuple[tuple[CollapseTerm, ...], dict[int, CollapseTerm]]:
     """Canonicalize every component-owned collapse operator."""
     labels = tuple(device.label for device in chip.devices)
     terms: list[CollapseTerm] = []
+    port_terms: dict[int, CollapseTerm] = {}
+    port_ids = {id(port) for port in chip.ports}
     with _backend_context(backend):
-        for operator, rate, support, source, channel, parameter_paths in chip.collapse_contributions(resolution.bases):
+        for (
+            operator,
+            rate,
+            support,
+            source,
+            channel,
+            parameter_paths,
+            owner,
+        ) in chip._collapse_contributions_with_owners(resolution.bases):
             local = _project_on_support(chip, operator, support, resolution.bases, backend)
             resolved_rate = materialize_expr(rate, backend)
             embedded = embed_on_support(backend, local, support, resolution.dims)
@@ -358,15 +379,197 @@ def _collect_collapse_terms(
                 subsystem_labels=labels,
                 tag=f"collapse:{source}:{channel}",
             )
-            terms.append(
-                CollapseTerm(
-                    operator=canonical,
-                    rate=resolved_rate,
-                    source=source,
-                    channel=channel,
-                    parameter_paths=parameter_paths,
-                )
+            term = CollapseTerm(
+                operator=canonical,
+                rate=resolved_rate,
+                source=source,
+                channel=channel,
+                parameter_paths=parameter_paths,
             )
+            terms.append(term)
+            if id(owner) in port_ids:
+                port_terms[id(owner)] = term
+    return tuple(terms), port_terms
+
+
+def _concrete_port_resolution(
+    chip: "Chip",
+    port: Any,
+    backend: Backend,
+    resolution: _LocalResolution,
+) -> tuple[np.ndarray, tuple[np.ndarray, ...]]:
+    """Materialize one explicit port and its local frame generators concretely."""
+    support = tuple(chip._label_to_index[label] for label in port.resolve_targets(chip))
+    records = resolution.bases
+    traced = contains_tracer(
+        tuple(value for record in records.values() for value in (record.vectors, record.energy_vectors))
+    )
+    context = jax.ensure_compile_time_eval() if traced else nullcontext()
+    with context, _backend_context(backend):
+        if traced:
+            concrete_records: dict[str, BasisRecord] = {}
+            for device in chip.devices:
+                matrix = materialize_array(device.unresolved_hamiltonian())
+                policy = chip.resolve_basis(device)
+                levels = device.resolved_dimension(chip.basis) if policy == "eigen" else None
+                concrete_records[device.label] = resolve_local_basis(
+                    matrix,
+                    basis=policy,
+                    levels=levels,
+                )
+            records = concrete_records
+        operator = _project_on_support(
+            chip,
+            port._authored_operator(chip),
+            support,
+            records,
+            backend,
+        )
+        values = np.asarray(backend.to_array(operator), dtype=complex)
+        generators = tuple(
+            np.asarray(
+                _resolved_frame_matrix(
+                    chip.devices[index],
+                    records[chip.devices[index].label],
+                ),
+                dtype=complex,
+            )
+            for index in support
+        )
+    return values, generators
+
+
+def _frequency_groups(frequencies: tuple[Any, ...]) -> tuple[tuple[int, ...], ...]:
+    """Group frame frequencies whose equality is safe to establish in Python."""
+    groups: list[list[int]] = []
+    for index, frequency in enumerate(frequencies):
+        for group in groups:
+            representative = frequencies[group[0]]
+            first = maybe_concrete_scalar(frequency)
+            second = maybe_concrete_scalar(representative)
+            if frequency is representative or (
+                first is not None and second is not None and first == second
+            ):
+                group.append(index)
+                break
+        else:
+            groups.append([index])
+    return tuple(tuple(group) for group in groups)
+
+
+def _port_frame_frequency(
+    chip: "Chip",
+    port: Any,
+    resolved_frame: "ResolvedFrame",
+    backend: Backend,
+    resolution: _LocalResolution,
+) -> Any:
+    """Return the common frame phase of every band in one explicit port."""
+    values, generators = _concrete_port_resolution(chip, port, backend, resolution)
+    norm = float(np.linalg.norm(values))
+    if norm <= 0.0:
+        raise ValueError(f"Port {port.label!r} requires a nonzero coupling operator.")
+
+    eigenvalues: list[np.ndarray] = []
+    transforms: list[np.ndarray] = []
+    for generator in generators:
+        values_i, vectors_i = np.linalg.eigh(generator)
+        eigenvalues.append(np.real_if_close(values_i).real)
+        transforms.append(vectors_i)
+    transform = transforms[0]
+    for local in transforms[1:]:
+        transform = np.kron(transform, local)
+    band_values = transform.conj().T @ values @ transform
+    rows, columns = np.nonzero(np.abs(band_values) > 1e-10 * norm)
+    dimensions = tuple(len(items) for items in eigenvalues)
+    state_indices = np.indices(dimensions).reshape(len(dimensions), -1)
+    weights = np.asarray(
+        [
+            [
+                eigenvalues[index][state_indices[index, column]]
+                - eigenvalues[index][state_indices[index, row]]
+                for index in range(len(dimensions))
+            ]
+            for row, column in zip(rows, columns, strict=True)
+        ]
+    )
+    weights[np.abs(weights) < 1e-10] = 0.0
+    rounded = np.rint(weights)
+    weights = np.where(np.abs(weights - rounded) < 1e-10, rounded, weights)
+
+    labels = port.resolve_targets(chip)
+    frequencies = tuple(resolved_frame.frequencies[label] for label in labels)
+    groups = _frequency_groups(frequencies)
+    signatures: list[tuple[float, tuple[float, ...]]] = []
+    traced_groups: list[tuple[tuple[int, ...], Any]] = []
+    for group in groups:
+        representative = frequencies[group[0]]
+        concrete = maybe_concrete_scalar(representative)
+        if concrete is None:
+            traced_groups.append((group, representative))
+    for band in weights:
+        constant = 0.0
+        traced_coefficients: list[float] = []
+        for group in groups:
+            coefficient = float(np.sum(band[list(group)]))
+            representative = frequencies[group[0]]
+            concrete = maybe_concrete_scalar(representative)
+            if concrete is None:
+                traced_coefficients.append(coefficient)
+            else:
+                constant += coefficient * concrete
+        signatures.append((constant, tuple(traced_coefficients)))
+
+    reference = signatures[0]
+    if any(
+        not np.isclose(constant, reference[0], atol=1e-10, rtol=1e-10)
+        or not np.allclose(coefficients, reference[1], atol=1e-10, rtol=1e-10)
+        for constant, coefficients in signatures[1:]
+    ):
+        raise ValueError(
+            f"Port {port.label!r} has operator bands with different phases in the selected frame. "
+            "Use a common frame for collective terms, use the lab frame, or use QuantumSequence for time evolution."
+        )
+    frequency: Any = reference[0]
+    has_term = frequency != 0.0
+    for coefficient, (_, representative) in zip(reference[1], traced_groups, strict=True):
+        if coefficient == 0.0:
+            continue
+        term = representative if coefficient == 1.0 else coefficient * representative
+        frequency = frequency + term if has_term else term
+        has_term = True
+    return frequency
+
+
+def _collect_port_terms(
+    chip: "Chip",
+    port_collapses: dict[int, CollapseTerm],
+    resolved_frame: "ResolvedFrame",
+    backend: Backend,
+    resolution: _LocalResolution,
+) -> tuple[PortTerm, ...]:
+    """Expose each resolved accessible channel without re-deriving its coupling operator."""
+    if not chip.ports:
+        return ()
+    terms: list[PortTerm] = []
+    for port in chip.ports:
+        collapse = port_collapses.get(id(port))
+        if collapse is None:
+            raise RuntimeError(f"Port {port.label!r} must resolve to exactly one collapse term.")
+        terms.append(
+            PortTerm(
+                operator=collapse.operator,
+                rate=collapse.rate,
+                phase=port.phase,
+                frame_frequency=(
+                    resolved_frame.frequencies[port.resolve_targets(chip)[0]]
+                    if port.operator is None
+                    else _port_frame_frequency(chip, port, resolved_frame, backend, resolution)
+                ),
+                label=port.label,
+                parameter_paths=collapse.parameter_paths + (f"port.{port.label}.phase",),
+            )
+        )
     return tuple(terms)
 
 
@@ -1096,6 +1299,7 @@ def _template_from_engine_result(
         weight_zero_drops=weight_zero_drops,
         static_spectral_bound_ghz=base_result.metadata.get("static_spectral_bound_ghz"),
         collapse_terms=base_result.collapse_terms,
+        port_terms=base_result.port_terms,
         bases=base_result.bases,
         authored=base_result.authored,
     )
@@ -1220,6 +1424,7 @@ def compile_hamiltonian_template(
         approximation=strategy,
     )
 
+    collapse_terms, port_collapses = _collect_collapse_terms(chip, backend, resolution)
     return HamiltonianTemplate(
         resolved_frame=resolved_frame,
         approximation=strategy,
@@ -1231,7 +1436,14 @@ def compile_hamiltonian_template(
         dropped_terms=_collect_dropped_terms(chip, resolved_frame) + tuple(coupling_dropped),
         weight_zero_drops=weight_zero_drops,
         static_spectral_bound_ghz=static_spectral_bound_ghz,
-        collapse_terms=_collect_collapse_terms(chip, backend, resolution),
+        collapse_terms=collapse_terms,
+        port_terms=_collect_port_terms(
+            chip,
+            port_collapses,
+            resolved_frame,
+            backend,
+            resolution,
+        ),
         bases=resolution.bases,
         authored=chip.unresolved_hamiltonian(),
     )
@@ -1326,6 +1538,7 @@ def instantiate_engine_result(
         metadata=metadata,
         dropped_terms=template.dropped_terms + tuple(fresh_dropped),
         collapse_terms=template.collapse_terms,
+        port_terms=template.port_terms,
         bases=template.bases,
         authored=template.authored,
         resolved_frame=template.resolved_frame,
@@ -1402,6 +1615,7 @@ def _build_static_analysis_result(
         result,
         dynamic_terms=(),
         collapse_terms=(),
+        port_terms=(),
         metadata=metadata,
     )
 

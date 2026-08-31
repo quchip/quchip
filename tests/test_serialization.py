@@ -65,7 +65,7 @@ def _build_chip(frame: str | float | dict[str, float] = "rotating") -> Chip:
         T1=20.0,
         T2=30.0,
     )
-    r = Resonator(freq=7.0, levels=5, label="r", quality_factor=1e4)
+    r = Resonator(freq=7.0, levels=5, label="r", internal_quality_factor=1e4)
     coupling = Capacitive(q, r, g=0.02)
 
     readout = ChargeDrive(
@@ -131,16 +131,16 @@ def test_device_round_trip_is_json_safe() -> None:
     assert restored.thermal_population == pytest.approx(device.thermal_population)
 
 
-def test_resonator_round_trip_preserves_quality_factor() -> None:
+def test_resonator_round_trip_preserves_internal_quality_factor() -> None:
     """A Resonator's to_dict/from_dict round trip preserves its quality factor."""
-    resonator = Resonator(freq=7.2, levels=6, label="r0", quality_factor=2e4)
+    resonator = Resonator(freq=7.2, levels=6, label="r0", internal_quality_factor=2e4)
     payload = resonator.to_dict()
     restored = Resonator.from_dict(payload)
 
     json.dumps(payload)
     _assert_json_primitives(payload)
     assert restored.freq == pytest.approx(resonator.freq)
-    assert restored.quality_factor == pytest.approx(resonator.quality_factor)
+    assert restored.internal_quality_factor == pytest.approx(resonator.internal_quality_factor)
     assert restored.levels == resonator.levels
 
 

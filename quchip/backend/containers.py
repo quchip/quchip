@@ -57,6 +57,18 @@ class SolverResult:
     solver: str = ""
 
 
+@dataclass(frozen=True)
+class SteadyStateSolverResult:
+    """Backend payload for one stationary Lindblad solve."""
+
+    state: Any
+    expect: list[Any] | None = None
+    stats: dict[str, Any] = field(default_factory=dict)
+    residual: Any = None
+    nullity: Any = None
+    condition_number: Any = None
+
+
 @dataclass
 class PreparedHamiltonian:
     """Backend-native Hamiltonian produced by :meth:`Backend.prepare_hamiltonian`.

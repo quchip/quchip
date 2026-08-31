@@ -155,7 +155,7 @@ def test_collapse_transform_yields_purcell_rate():
     from quchip.chip.sw import purcell_rate_from, transform_collapse
 
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
-    r = Resonator(freq=7.0, levels=4, label="r", quality_factor=1e4)
+    r = Resonator(freq=7.0, levels=4, label="r", internal_quality_factor=1e4)
     chip = Chip([q, r], couplings=[Capacitive(q, r, g=0.05, label="c")])
     backend = chip.backend
 
@@ -185,7 +185,7 @@ def test_collapse_transform_yields_purcell_rate():
     assert abs(float(rate) - expected) / expected < 1e-6
 
 
-def test_no_quality_factor_means_no_channel():
+def test_no_internal_quality_factor_means_no_channel():
     """Q=None → the mode has no photon-loss channel; the caller's static decision bit."""
     r = Resonator(freq=7.0, levels=4, label="r_bare")
     assert r.collapse_operators() == []

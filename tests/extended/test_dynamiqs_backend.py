@@ -345,7 +345,7 @@ def test_dict_eops_preserve_sparse_layout() -> None:
     """decompose_eops preserves the dia layout for dict-form expectation operators."""
     backend = DynamiqsBackend()
     qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=3, label="q")
-    resonator = Resonator(freq=6.8, levels=5, label="r", quality_factor=1e6)
+    resonator = Resonator(freq=6.8, levels=5, label="r", internal_quality_factor=1e6)
     chip = Chip([qubit, resonator], [Capacitive(qubit, resonator, g=0.04)], backend=backend)
 
     e_ops_solver, _ = decompose_eops(chip.e_ops(r="a"), chip, backend)
@@ -358,7 +358,7 @@ def test_chip_hamiltonian_emits_no_sparse_dense_warning() -> None:
     """chip.hamiltonian() does not trigger dynamiqs's sparse-to-dense layout conversion warning."""
     backend = DynamiqsBackend()
     qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=3, label="q")
-    resonator = Resonator(freq=6.8, levels=5, label="r", quality_factor=1e6)
+    resonator = Resonator(freq=6.8, levels=5, label="r", internal_quality_factor=1e6)
     chip = Chip([qubit, resonator], [Capacitive(qubit, resonator, g=0.04)], backend=backend)
 
     with warnings.catch_warnings(record=True) as captured:
@@ -372,7 +372,7 @@ def test_rotating_frame_assembly_emits_no_sparse_dense_warning() -> None:
     """build_engine_result in the rotating frame does not trigger the sparse-to-dense warning."""
     backend = DynamiqsBackend()
     qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=3, label="q")
-    resonator = Resonator(freq=6.8, levels=5, label="r", quality_factor=1e6)
+    resonator = Resonator(freq=6.8, levels=5, label="r", internal_quality_factor=1e6)
     chip = Chip(
         [qubit, resonator],
         [Capacitive(qubit, resonator, g=0.04)],

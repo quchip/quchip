@@ -101,6 +101,17 @@ class Capacitive(CouplingModel):
 
     g: Scalar = parameter(default=UNBOUND, unit="GHz", symbol="g")
 
+    def default_dressed_target(self) -> tuple[str, Any]:
+        """Use exchange rate for an edge between non-computational modes."""
+        if (
+            isinstance(self.device_a, BaseDevice)
+            and isinstance(self.device_b, BaseDevice)
+            and not self.device_a.computational
+            and not self.device_b.computational
+        ):
+            return "exchange_rate", self.coupling_strength
+        return super().default_dressed_target()
+
     def interaction(self, a: EndpointOps, b: EndpointOps, p: Any) -> PhysicsExpr:
         """Return the full capacitive interaction ``g * (a + a†)(b + b†)``."""
         return _full(p.g, a, b)

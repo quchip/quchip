@@ -52,6 +52,7 @@ from quchip.backend.containers import (  # noqa: E402
     EigensystemData,
     PreparedHamiltonian,
     SolverResult,
+    SteadyStateSolverResult,
 )
 from quchip.backend.protocol import Backend, Operator, State  # noqa: E402
 from quchip.engine.ir import (  # noqa: E402
@@ -512,6 +513,63 @@ class DynamiqsBackend(Backend):
             **self._solve_kwargs(e_ops, options),
         )
         return self._wrap_result(result, solver="mesolve")
+
+    def steadystate(self, problem: Any) -> SteadyStateSolverResult:
+        """Solve a static Lindblad generator by a trace-constrained JAX solve."""
+        if problem.engine_result.dynamic_terms:
+            raise ValueError("steadystate() requires a static resolved Hamiltonian.")
+
+        options = dict(problem.options)
+        method = options.pop("method", "direct")
+        if method != "direct":
+            raise ValueError("Dynamiqs steady states support only method='direct'.")
+        rank_tolerance = options.pop("rank_tolerance", None)
+        if options:
+            raise ValueError(
+                "Unknown Dynamiqs steady-state options: " + ", ".join(sorted(options))
+            )
+
+        prepared = self.prepare_hamiltonian(problem.engine_result)
+        collapse_ops = self._collapse_operators(problem.engine_result)
+        liouvillian = self.to_array(dq.slindbladian(prepared.rhs, collapse_ops))
+        dimension = math.prod(problem.engine_result.dims)
+
+        trace_row = jnp.zeros((dimension * dimension,), dtype=jnp.complex128)
+        trace_row = trace_row.at[:: dimension + 1].set(1.0)
+        constrained = liouvillian.at[-1, :].set(trace_row)
+        target = jnp.zeros((dimension * dimension,), dtype=jnp.complex128)
+        target = target.at[-1].set(1.0)
+        state_vector = jnp.linalg.solve(constrained, target)
+
+        singular_values = jnp.linalg.svd(liouvillian, compute_uv=False)
+        if rank_tolerance is None:
+            rank_tolerance = (
+                max(liouvillian.shape)
+                * jnp.finfo(jnp.float64).eps
+                * singular_values[0]
+            )
+        nullity = jnp.sum(singular_values <= rank_tolerance)
+        state_array = jnp.reshape(state_vector, (dimension, dimension)).T
+        state_array = jnp.where(
+            nullity == 1,
+            state_array,
+            jnp.full_like(state_array, jnp.nan + 0.0j),
+        )
+        state = dq.asqarray(state_array, dims=tuple(problem.engine_result.dims))
+        residual = jnp.linalg.norm(liouvillian @ state_vector)
+        condition_number = jnp.linalg.cond(constrained)
+        expectations = None
+        if isinstance(problem.e_ops, list):
+            expectations = [dq.expect(operator, state) for operator in problem.e_ops]
+
+        return SteadyStateSolverResult(
+            state=state,
+            expect=expectations,
+            stats={"method": method, "uniqueness_enforced": True},
+            residual=residual,
+            nullity=nullity,
+            condition_number=condition_number,
+        )
 
     # ------------------------------------------------------------------
     # Cached single-problem dispatch (amortize the XLA/diffrax compile floor)

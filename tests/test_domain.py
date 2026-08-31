@@ -112,14 +112,14 @@ class TestResonator:
         overlap = abs(backend.expect(ket_0 * backend.dag(ket_0), psi))
         assert abs(overlap - 1.0) < 1e-10
 
-    def test_collapse_operators_with_quality_factor(self) -> None:
+    def test_collapse_operators_with_internal_quality_factor(self) -> None:
         """Q=10000 at f=5 GHz produces one collapse op with coefficient sqrt(2π·f/Q)."""
         # Convention lock-in (issue #66): Q is defined against the ordinary frequency, so
         # kappa = 2*pi*f/Q (rad/ns). The 2*pi is part of Q's physical definition, not a
         # units-boundary conversion, and must not move out of resonator.py.
         freq = 5.0
         Q = 10000.0
-        r = Resonator(freq=freq, quality_factor=Q, levels=5)
+        r = Resonator(freq=freq, internal_quality_factor=Q, levels=5)
         c_ops = r.collapse_operators()
         assert len(c_ops) == 1
 
@@ -127,8 +127,8 @@ class TestResonator:
         c_full = c_ops[0].full()
         np.testing.assert_allclose(abs(c_full[0, 1]), expected_sqrt_kappa, atol=1e-10)
 
-    def test_collapse_operators_without_quality_factor(self) -> None:
-        """No quality_factor → empty list."""
+    def test_collapse_operators_without_internal_quality_factor(self) -> None:
+        """No internal_quality_factor → empty list."""
         r = Resonator(freq=6.0, levels=5)
         c_ops = r.collapse_operators()
         assert c_ops == []
@@ -483,11 +483,11 @@ class TestCollapseOperators:
         )
 
     def test_resonator_Q_plus_T1(self) -> None:
-        """Resonator with quality_factor AND T1 → Q-loss + T1 relaxation."""
+        """Resonator with internal_quality_factor AND T1 → Q-loss + T1 relaxation."""
         freq = 6.0
         Q = 1e4
         T1 = 50_000.0
-        r = Resonator(freq=freq, quality_factor=Q, levels=5, T1=T1)
+        r = Resonator(freq=freq, internal_quality_factor=Q, levels=5, T1=T1)
         c_ops = r.collapse_operators()
         # BaseDevice T1 produces 1 op, Resonator Q produces 1 op → 2 total
         assert len(c_ops) == 2
@@ -506,7 +506,7 @@ class TestCollapseOperators:
         """Resonator Q-factor loss is produced without additional noise terms."""
         freq = 6.0
         Q = 1e4
-        r = Resonator(freq=freq, quality_factor=Q, levels=5)
+        r = Resonator(freq=freq, internal_quality_factor=Q, levels=5)
         c_ops = r.collapse_operators()
         assert len(c_ops) == 1  # Only Q-based loss
 

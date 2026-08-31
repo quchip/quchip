@@ -242,12 +242,41 @@ def test_devices_declare_numeric_dressed_fit_defaults_without_dressing() -> None
     ],
 )
 def test_dispersive_couplings_declare_cross_kerr_as_their_default_fit_target(coupling) -> None:
-    """A coupling class, not endpoint heuristics, owns its default inverse-design meaning."""
+    """Qubit-bearing dispersive edges retain their cross-Kerr target."""
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
     r = Resonator(freq=7.0, levels=4, label="r")
     edge = coupling(q, r)
 
     assert edge.default_dressed_target() == ("cross_kerr", -0.00025)
+
+
+def test_capacitive_between_noncomputational_modes_defaults_to_exchange_rate() -> None:
+    """A non-computational edge targets its dressed exchange rate."""
+    readout = Resonator(freq=7.0, levels=4, label="readout")
+    filter_mode = Resonator(freq=7.2, levels=4, label="filter")
+    edge = Capacitive(readout, filter_mode, g=0.03, label="readout-filter")
+    desired = Chip([readout, filter_mode], [edge], frame="rotating")
+
+    assert edge.default_dressed_target() == ("exchange_rate", 0.03)
+    assert [
+        (spec.kind, spec.label, spec.target)
+        for spec in build_dressed_target_specs(desired)
+        if spec.label == "readout-filter"
+    ] == [("exchange_rate", "readout-filter", 0.03)]
+
+
+def test_fit_a_dress_matches_noncomputational_capacitive_exchange_rate() -> None:
+    """The automatic plan fits a resonator pair through dressed exchange."""
+    readout = Resonator(freq=7.0, levels=4, label="readout")
+    filter_mode = Resonator(freq=7.2, levels=4, label="filter")
+    edge = Capacitive(readout, filter_mode, g=0.03, label="readout-filter")
+
+    fit = fit_a_dress(Chip([readout, filter_mode], [edge], frame="rotating"), max_nfev=300)
+
+    report = next(item for item in fit.final_targets if item.label == "readout-filter")
+    assert report.kind == "exchange_rate"
+    assert report.final == pytest.approx(0.03, abs=1e-8)
+    assert float(_static_exchange_rate(fit.chip, ("readout", "filter"))) == pytest.approx(0.03, abs=1e-8)
 
 
 def test_dressed_target_compilation_never_evaluates_the_desired_chip(

@@ -48,6 +48,7 @@ from quchip.backend.containers import (
     PreparedBatch,
     PreparedHamiltonian,
     SolverResult,
+    SteadyStateSolverResult,
     VmappedBatch,
 )
 
@@ -702,6 +703,10 @@ class Backend(ABC):
                                 e_ops=e_ops_arg, options=opts)
         return self.mesolve(prepared.rhs, psi0, tlist_arr,
                             c_ops=c_ops, e_ops=e_ops_arg, options=opts)
+
+    def steadystate(self, problem: Any) -> SteadyStateSolverResult:
+        """Solve one static Lindblad problem in the backend's native representation."""
+        raise NotImplementedError(f"{type(self).__name__} must implement steadystate()")
 
     def parallel_solve_problems(
         self,

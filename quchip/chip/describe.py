@@ -141,6 +141,19 @@ def describe_chip(chip: "Chip") -> str:
                 detail += f"   ({'   '.join(extras)})"
             lines.append(detail)
 
+    if chip.ports:
+        lines.append("")
+        lines += _section(f"Ports ({len(chip.ports)})")
+        for port in chip.ports:
+            targets = ", ".join(port.resolve_targets(chip))
+            if port.rate is not None:
+                port_coupling = _param_text("rate", port.rate, "1/ns")
+            else:
+                port_coupling = _param_text("external_quality_factor", port.external_quality_factor, None)
+            lines.append(
+                f"{port.label} — {targets}   {port_coupling}   phase = {format_value(port.phase)} rad"
+            )
+
     return "\n".join(lines)
 
 

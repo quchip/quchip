@@ -129,14 +129,28 @@ def rebuild_chip(source_chip: Any, *, devices: Any, couplings: Any) -> Any:
     """
     from quchip.chip.chip import Chip
 
+    device_list = list(devices)
+    survivor_labels = {device.label for device in device_list}
+    ports = []
+    for port in source_chip.ports:
+        targets = set(port.resolve_targets(source_chip))
+        removed = targets - survivor_labels
+        if removed:
+            raise NotImplementedError(
+                f"Transformation removes {sorted(removed)}, targeted by port {port.label!r}. "
+                "Keep the port-coupled device; an effective input-output port requires an explicit retarget rule."
+            )
+        ports.append(port.copy())
+
     return Chip(
-        devices=list(devices),
+        devices=device_list,
         couplings=list(couplings) or None,
         label=source_chip.label,
         frame=dict(source_chip.frame) if isinstance(source_chip.frame, dict) else source_chip.frame,
         approximation=source_chip.approximation,
         backend=source_chip._backend,
         baths=[bath.copy() for bath in source_chip.baths] or None,
+        ports=ports or None,
     )
 
 

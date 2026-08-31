@@ -92,9 +92,10 @@ Source: [`quchip/devices/resonator.py`](quchip/devices/resonator.py)
 H = omega * n
 ```
 
-If `quality_factor` is set, the resonator contributes photon loss with authored
-operator `a` and rate `2π * omega / Q` in `1/ns`. Backend lowering forms the
-Lindblad operator `sqrt(2π * omega / Q) * a`.
+If `internal_quality_factor` is set, the resonator contributes unobserved
+photon loss with authored operator `a` and rate `2π * omega / Q_internal` in
+`1/ns`. Backend lowering forms the Lindblad operator
+`sqrt(2π * omega / Q_internal) * a`.
 
 ### 3.3 Collapse operators
 
@@ -110,6 +111,32 @@ Devices, drives, couplings, and baths author `CollapseChannel` records that
 keep the local operator separate from its non-negative rate in `1/ns`. The
 engine projects and embeds the operator while preserving the rate; backend
 lowering applies `sqrt(rate)` exactly once.
+
+### 3.3.1 Accessible ports
+
+Source: [`quchip/chip/ports.py`](quchip/chip/ports.py),
+[`quchip/engine/input_output.py`](quchip/engine/input_output.py),
+[`quchip/analysis/vna.py`](quchip/analysis/vna.py)
+
+A `Port` is an accessible Markovian channel. It owns a dimensionless operator
+`A_p`, an external rate `kappa_p`, and a reference-plane phase `phi_p`:
+
+```text
+L_p = exp(i phi_p) sqrt(kappa_p) A_p
+b_out,p = b_in,p - L_p
+```
+
+The dissipator uses `L_p`. A coherent input `beta_p` in
+`sqrt(photons/ns)` contributes the angular Hamiltonian
+
+```text
+H_input = i (beta_p L_p^dagger - beta_p^* L_p).
+```
+
+Mean output, spectra, and correlations use the same `L_p`. For a single
+resonator, `external_quality_factor` gives
+`kappa_p = 2π * freq / Q_external`. Internal resonator loss and every port are
+separate collapse channels, so `kappa_total` is their sum.
 
 Noise parameters are ordinary tracked attributes: set (or clear with `None`) at construction **or any time after** — collapse operators are rebuilt from current values on every solve, and post-construction writes get the same validation as the constructor. Chip-level shared/collective dissipation lives in `Bath` ([`quchip/chip/baths.py`](quchip/chip/baths.py)), attached at construction or later via `chip.add_bath(...)`; bath rates are Lindblad-ready 1/ns with no assembly `2π` (that boundary is Hamiltonian-only — a component's *intrinsic* `2π`, e.g. a resonator's `κ = 2π·f/Q`, is its own physics).
 
@@ -319,6 +346,18 @@ Dict-form `e_ops` are decomposed into the same excitation bands used by the fram
 
 This makes `result.expect` a **co-rotating readout**: observables are always reported in each device's `reference_freq` frame, independent of the integration frame the solver used. So transverse observables (`<a>`, `<sigma_x>`) come back as the non-oscillatory demodulated envelope a lab readout produces — slow, and turning at `Δ = omega - omega_ref` when the reference is detuned; diagonal observables (populations) are frame-invariant. In the default `"rotating"` mode the integration frame *is* the reference frame, so the demodulation is a no-op and `result.expect` equals `Tr(O·rho)` on the same states `result.states` returns. The raw, un-demodulated band sum (the observable in the integration frame) remains available on each `ObservableTrace` as `.raw`.
 
+### 8.1 Stationary solves and scattering
+
+`Chip.steadystate()` solves `L(rho_ss) = 0` together with
+`Tr(rho_ss) = 1`. It requires a static resolved Hamiltonian and a unique
+normalized stationary state. `VNA.sweep()` adds continuous-wave port terms in
+their stationary tone frames. Small-signal scattering differentiates the
+output mean around the fixed-tone state; finite-amplitude scattering subtracts
+that operating-point output and divides by the swept input amplitude.
+
+If frame and approximation resolution leave dynamic terms, the stationary
+APIs raise. Periodic/Floquet stationary states are not implemented.
+
 ## 9. Dressing
 
 Source: [`quchip/chip/chip.py`](quchip/chip/chip.py)
@@ -433,7 +472,7 @@ the *full* resonator pull per qubit excitation. This is **2×** the σ_z-convent
 
 Analytic cross-checks (2nd-order dispersive): two-level `chi = 2g^2/Delta`; Duffing transmon `chi = 2g^2*alpha/(Delta*(Delta+alpha))` with `Delta = f_q − f_r` (Koch et al., PRA 76, 042319, §IV). Critical photon number `n_crit = Delta^2/(4g^2)`.
 
-`effective_params[q]["kappa"]` is the eliminated mode's total downward decay rate, in 1/ns, as returned by `intrinsic_decay_rate()`. For a resonator it includes `2π*f_r/Q` when `quality_factor` is set and the inherited thermal-emission rate when `T1` or `thermal_population` is set. The latter is `(nbar + 1)/T1` with `T1`, or `nbar + 1` when only `thermal_population` is present. The reported value is `0.0` only when none of these lowering channels is configured. Bridge legs report `chi = 0.0`: bus/coupler modes are not readout modes, and their dressed pull would double-count the mediated exchange.
+`effective_params[q]["kappa"]` is the eliminated mode's total intrinsic downward decay rate, in 1/ns, as returned by `intrinsic_decay_rate()`. For a resonator it includes `2π*f_r/Q_internal` when `internal_quality_factor` is set and the inherited thermal-emission rate when `T1` or `thermal_population` is set. The latter is `(nbar + 1)/T1` with `T1`, or `nbar + 1` when only `thermal_population` is present. A port-coupled mode cannot be eliminated without an explicit input-output retarget rule. The reported value is `0.0` only when none of these lowering channels is configured. Bridge legs report `chi = 0.0`: bus/coupler modes are not readout modes, and their dressed pull would double-count the mediated exchange.
 
 Gradients through `chi` follow the same rule as `Chip.freq` (§13): the eigensystem must come from a JAX-capable backend.
 

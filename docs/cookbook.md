@@ -171,11 +171,12 @@ before passing it to the device.
 
 `fit_a_dress(desired)` treats component numbers as dressed constraints and
 returns the corresponding bare chip as `fit.chip`. Common devices target their
-dressed frequency and anharmonicity. A `Capacitive` or `CrossKerr` scalar
-targets the full cross-Kerr $E_{11}-E_{10}-E_{01}+E_{00}$; it is not the
-starting bare coupling strength in this call. Add pair observables with
-`constraints=` and use `vary=` only when the component defaults are not the
-parameters you want to move:
+dressed frequency and anharmonicity. A `Capacitive` edge between two
+non-computational modes targets the dressed exchange rate. Other `Capacitive`
+edges and `CrossKerr` couplings target the full cross-Kerr
+$E_{11}-E_{10}-E_{01}+E_{00}$. These values are targets, not starting bare
+coupling strengths. Add pair observables with `constraints=` and use `vary=`
+only when the component defaults are not the parameters you want to move:
 
 ```python
 fit = fit_a_dress(

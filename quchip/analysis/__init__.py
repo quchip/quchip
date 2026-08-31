@@ -37,6 +37,7 @@ from quchip.analysis.effective_hamiltonian import (
     effective_hamiltonian,
     effective_hamiltonian_between_states,
 )
+from quchip.analysis.vna import PortTone, VNA
 
 __all__ = [
     "CRHamiltonianResult",
@@ -50,4 +51,6 @@ __all__ = [
     "analyze_static_zz",
     "effective_hamiltonian",
     "effective_hamiltonian_between_states",
+    "PortTone",
+    "VNA",
 ]

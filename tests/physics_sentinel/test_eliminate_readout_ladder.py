@@ -38,10 +38,10 @@ _AMPLITUDE = 0.02
 _DURATION = 80.0  # ~1.9 ring-up times (1/kappa_ordinary ~= 43 ns)
 
 
-def _readout_chip(*, quality_factor: float | None) -> Chip:
+def _readout_chip(*, internal_quality_factor: float | None) -> Chip:
     """Fresh qubit + probed readout resonator, wired with a ``ChargeDrive`` probe on the resonator."""
     q = DuffingTransmon(freq=_Q_FREQ, anharmonicity=-0.25, levels=3, label="q")
-    r = Resonator(freq=_R_FREQ, levels=_R_LEVELS, quality_factor=quality_factor, label="r")
+    r = Resonator(freq=_R_FREQ, levels=_R_LEVELS, internal_quality_factor=internal_quality_factor, label="r")
     readout = ChargeDrive(target=r, label="readout")
     return Chip(
         [q, r],
@@ -67,7 +67,7 @@ def _probe_pointer(chip: Chip, readout_freq: float, qubit_level: int) -> complex
 
 def test_readout_pointer_separation_agrees_full_vs_reduced():
     """CrossKerr-reduced pointer separation (phase and magnitude) matches the full qubit+resonator probe."""
-    full = _readout_chip(quality_factor=_QUALITY_FACTOR)
+    full = _readout_chip(internal_quality_factor=_QUALITY_FACTOR)
     q, r = full["q"], full["r"]
     readout_freq = 0.5 * (full.freq(r, {q: 0}) + full.freq(r, {q: 1}))
     reduced = eliminate(full, "qr").chip
@@ -92,7 +92,7 @@ def test_readout_pointer_separation_agrees_full_vs_reduced():
 
 def test_reduced_readout_does_not_force_density_matrix_solve():
     """The CrossKerr reduction never forces mesolve when the full chip wouldn't need it either."""
-    full = _readout_chip(quality_factor=None)
+    full = _readout_chip(internal_quality_factor=None)
     q, r = full["q"], full["r"]
     readout_freq = 0.5 * (full.freq(r, {q: 0}) + full.freq(r, {q: 1}))
     reduced = eliminate(full, "qr").chip
@@ -119,7 +119,7 @@ def test_reduced_readout_does_not_force_density_matrix_solve():
 
 def test_reduced_readout_collapse_profile_matches_full_chip():
     """With a lossy resonator, the reduction leaves the collapse-operator profile untouched."""
-    full = _readout_chip(quality_factor=_QUALITY_FACTOR)
+    full = _readout_chip(internal_quality_factor=_QUALITY_FACTOR)
     q, r = full["q"], full["r"]
     readout_freq = 0.5 * (full.freq(r, {q: 0}) + full.freq(r, {q: 1}))
     reduced = eliminate(full, "qr").chip

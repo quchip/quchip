@@ -27,7 +27,7 @@ from quchip.devices.transmon.duffing import DuffingTransmon
 
 def _demo_chip() -> tuple[Chip, ChargeDrive, DuffingTransmon, Resonator]:
     q = DuffingTransmon(freq=5.24, anharmonicity=-0.26, levels=3, T1=51_570.0, T2=23_800.0, label="q")
-    r = Resonator(freq=6.65, levels=8, quality_factor=5598.0, label="r")
+    r = Resonator(freq=6.65, levels=8, internal_quality_factor=5598.0, label="r")
     chip = Chip(
         [q, r],
         couplings=[Capacitive(q, r, g=0.060)],
