@@ -106,15 +106,16 @@ steps separately.
 
 For a constant problem, quchip selects `diag` automatically when:
 
-- the user did not set `method`, `nsteps`, or `max_step`;
+- the user did not select another `method`;
 - the resolved Hamiltonian has no time-dependent terms; and
 - the total Hilbert dimension is at most 64 for `sesolve`, or at most 12 for
   `mesolve`.
 
 The open-system propagator acts on a $d^2$-dimensional vectorized density
 matrix, so its dense diagonalization reaches the practical cap sooner. An
-explicit method or step option always takes precedence over the automatic
-choice.
+explicit non-`diag` method always takes precedence. `diag` does not use
+adaptive tolerances or step controls, so quchip removes `atol`, `rtol`,
+`nsteps`, and `max_step` and records that choice at `INFO` level.
 
 For a finite pulse inside a long idle interval, quchip derives a QuTiP
 `max_step` from the narrowest pulse window when the user has not supplied one.

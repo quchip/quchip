@@ -233,13 +233,15 @@ for a closed model and `mesolve` when devices, drives, couplings, or baths
 contribute collapse channels. Adding a resonator quality factor or a bath can
 therefore change the equation without changing the pulse schedule.
 
-For a time-independent QuTiP problem with no explicit solver method or step
-control, quchip uses diagonal propagation at all requested save times when the
-total Hilbert dimension is at most 64 for `sesolve`, or at most 12 for
-`mesolve` (whose Liouvillian dimension is the square of the Hilbert dimension).
-Driven problems, larger spaces, and explicit method or step options keep
-QuTiP's selected adaptive integrator. For dynamiqs, method selection remains
-explicit through `options={"method": ...}`; its default is `Tsit5`.
+For a time-independent QuTiP problem with no explicit solver method, quchip
+uses diagonal propagation at all requested save times when the total Hilbert
+dimension is at most 64 for `sesolve`, or at most 12 for `mesolve` (whose
+Liouvillian dimension is the square of the Hilbert dimension). `diag` does not
+use adaptive tolerances or step controls, so quchip removes `atol`, `rtol`,
+`nsteps`, and `max_step` and logs the discarded options at `INFO` level. Driven
+problems, larger spaces, and an explicit non-`diag` method keep QuTiP's selected
+adaptive integrator. For dynamiqs, method selection remains explicit through
+`options={"method": ...}`; its default is `Tsit5`.
 
 See {doc}`Backend and solver options <guides/choosing-a-backend>` for available
 methods, option syntax, batching, and gradient controls.
