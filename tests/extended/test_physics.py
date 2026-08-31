@@ -692,7 +692,7 @@ class TestPhotonLoss:
         """Mean photon number decays as ``<n>(t) = <n>(0) * exp(-kappa_angular*t)``, kappa_angular = 2*pi*freq/Q."""
         freq = 6.0
         Q = 10000
-        r = Resonator(freq=freq, levels=10, label="r", quality_factor=Q)
+        r = Resonator(freq=freq, levels=10, label="r", internal_quality_factor=Q)
         chip = Chip([r])
         chip.set_frame("rotating")
 

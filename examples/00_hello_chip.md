@@ -70,32 +70,6 @@ one_pulse_figure.savefig(one_pulse_figure_path, dpi=180)
 plt.show()
 ```
 
-<!-- executed-output:start -->
-
-Output:
-
-```text
-/Users/fermious/.matplotlib is not a writable directory
-```
-
-```text
-Matplotlib created a temporary cache directory at /var/folders/br/2_469j7j7vg2p9r2p4x4zv240000gn/T/matplotlib-fs4eba6x because there was an issue with the default path ({configdir}); it is highly recommended to set the MPLCONFIGDIR environment variable to a writable directory, in particular to speed up the import of Matplotlib and to better support multiprocessing.
-```
-
-```text
-
-Fontconfig error: No writable cache directories
-	/opt/homebrew/var/cache/fontconfig
-	/Users/fermious/.cache/fontconfig
-	/Users/fermious/.fontconfig
-```
-
-```text
-Matplotlib is building the font cache; this may take a moment.
-```
-
-<!-- executed-output:end -->
-
 ```{figure} ../images/dynamics_one_pulse.png
 :width: 640px
 :alt: Qubit populations during one Gaussian pulse
@@ -195,7 +169,7 @@ qubit = DuffingTransmon(
 readout = Resonator(
     freq=6.8,
     levels=10,
-    quality_factor=6.8 / resonator_linewidth,
+    internal_quality_factor=6.8 / resonator_linewidth,
     label="r",
 )
 chip = Chip(
@@ -573,7 +547,7 @@ the chip Hamiltonian and its local Lindblad channels.
 They do not include an amplifier chain, digitizer, sampled measurement noise,
 or a classifier. Those belong in a measurement model built from the simulated
 output. Likewise, `T1`, `T2`, `thermal_population`, and resonator
-`quality_factor` describe device-level relaxation, dephasing, heating, and
+`internal_quality_factor` describe device-level relaxation, dephasing, heating, and
 photon loss; they are not a complete laboratory noise budget.
 
 ## Dynamics map

@@ -69,6 +69,47 @@ result = sequence.simulate(
 | Heterogeneous problem list | QuTiP process-parallel solves |
 | JAX gradient, `jit`, or accelerator execution | dynamiqs |
 | Master-equation integration with a Rouchon scheme | dynamiqs `Rouchon1`/`Rouchon2`/`Rouchon3` |
+| One stationary Lindblad state with sparse solver choices | QuTiP `steadystate` |
+| A stationary state or VNA response inside `jax.jit` or `jax.grad` | dynamiqs constrained direct solve |
+
+## Steady-state solvers
+
+`chip.steadystate()` skips time integration and solves the static Lindblad
+equation directly. The resolved Hamiltonian must have no dynamic terms, and
+the normalized stationary state must be unique.
+
+QuTiP passes these choices to [`qutip.steadystate`](https://github.com/qutip/qutip):
+
+```python
+result = chip.steadystate(
+    options={"method": "direct", "solver": "spsolve"},
+)
+```
+
+| `method` | Solver choices | Use it for |
+|---|---|---|
+| `direct` | `solve`, `lstsq`, `spsolve`, `gmres`, `lgmres`, `bicgstab`, and `mkl_spsolve` when installed | The usual stationary solve; choose dense or sparse linear algebra to match the Liouvillian |
+| `eigen` | Sparse or dense eigensolver | Finding the zero-eigenvalue state directly |
+| `svd` | Dense SVD | Small systems where a dense null-space calculation is acceptable |
+| `power` | The direct-method linear solvers | Inverse-power iteration near the zero eigenvalue |
+| `propagator` | Repeated propagator application | Convergence from an initial density matrix |
+
+The residual is evaluated with QuTiP's sparse Liouvillian. Nullity and
+condition number require dense linear algebra, so quchip computes them only
+through total Hilbert dimension 16 by default. Change that threshold with
+`options={"diagnostic_max_dimension": 24}`; above it, both fields are `None`.
+
+The dynamiqs backend uses `method="direct"`. dynamiqs does not supply a public
+steady-state solver in the supported release, so quchip constructs the
+Liouvillian, replaces one row with `Tr(rho) = 1`, and calls `jax.numpy.linalg.solve`.
+That path keeps stationary observables and finite-amplitude VNA response inside
+JAX transformations. It reports the residual, nullity, and condition number;
+it does not add a regularizer to a singular generator. Outside JAX tracing a
+non-unique generator raises. Inside `jax.jit`, where Python exceptions cannot
+depend on traced values, the result state is `NaN` when the nullity is not one.
+
+The {doc}`steady-state and microwave-port guide <steady-state-and-vna>` shows
+the state, scattering, spectrum, and correlation APIs.
 
 ## QuTiP methods
 

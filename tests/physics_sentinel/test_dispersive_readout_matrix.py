@@ -22,7 +22,7 @@ from quchip import (
 
 def _run_readout(*, frame: str, approximation, qubit_level: int) -> tuple[np.ndarray, np.ndarray]:
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=3, label="q")
-    r = Resonator(freq=6.8, levels=6, label="r", quality_factor=1e6)
+    r = Resonator(freq=6.8, levels=6, label="r", internal_quality_factor=1e6)
     readout = ChargeDrive(target=r, label="readout")
     chip = Chip(
         devices=[q, r],

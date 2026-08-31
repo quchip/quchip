@@ -42,6 +42,7 @@ from quchip.backend.containers import (
     DeferredBatch,
     PreparedHamiltonian,
     SolverResult,
+    SteadyStateSolverResult,
 )
 from quchip.backend.protocol import Backend, Operator, State
 from quchip.engine.ir import (
@@ -805,6 +806,70 @@ class QuTiPBackend(Backend):
         runner = MESolver(self._coerce_solver_rhs(H), c_ops, options=self._runner_options(options))
         result = runner.run(rho0, tlist, e_ops=e_ops)
         return self._wrap_result(result, solver="mesolve", extra_stats=self._solver_stats(runner))
+
+    def steadystate(self, problem: Any) -> SteadyStateSolverResult:
+        """Solve a static Lindblad generator with :func:`qutip.steadystate`."""
+        if problem.engine_result.dynamic_terms:
+            raise ValueError("steadystate() requires a static resolved Hamiltonian.")
+
+        prepared = self.prepare_hamiltonian(problem.engine_result)
+        collapse_ops = self._collapse_operators(problem.engine_result)
+        options = dict(problem.options)
+        rank_tolerance = options.pop("rank_tolerance", None)
+        diagnostic_max_dimension = int(options.pop("diagnostic_max_dimension", 16))
+        if diagnostic_max_dimension < 0:
+            raise ValueError("diagnostic_max_dimension must be non-negative.")
+        method = options.pop("method", "direct")
+        solver = options.pop("solver", None)
+        state = qutip.steadystate(
+            prepared.rhs,
+            collapse_ops,
+            method=method,
+            solver=solver,
+            **options,
+        )
+
+        liouvillian = qutip.liouvillian(prepared.rhs, collapse_ops)
+        if hasattr(liouvillian.data, "as_scipy"):
+            sparse_liouvillian = liouvillian.data.as_scipy().tocsr()
+        else:
+            from scipy.sparse import csr_matrix
+
+            sparse_liouvillian = csr_matrix(liouvillian.data.to_array())
+        state_vector = np.asarray(qutip.operator_to_vector(state).full(), dtype=complex).reshape(-1)
+        residual = float(np.linalg.norm(sparse_liouvillian @ state_vector))
+        dimension = state.shape[0]
+        nullity = None
+        condition_number = None
+        if dimension <= diagnostic_max_dimension:
+            dense_liouvillian = np.asarray(sparse_liouvillian.toarray(), dtype=complex)
+            singular_values = np.linalg.svd(dense_liouvillian, compute_uv=False)
+            if rank_tolerance is None:
+                scale = singular_values[0] if singular_values.size else 0.0
+                rank_tolerance = max(dense_liouvillian.shape) * np.finfo(float).eps * scale
+            nullity = int(np.count_nonzero(singular_values <= rank_tolerance))
+            trace_row = np.zeros(dense_liouvillian.shape[1], dtype=complex)
+            trace_row[:: dimension + 1] = 1.0
+            constrained = dense_liouvillian.copy()
+            constrained[-1, :] = trace_row
+            condition_number = float(np.linalg.cond(constrained))
+        expectations = None
+        if isinstance(problem.e_ops, list):
+            expectations = [qutip.expect(operator, state) for operator in problem.e_ops]
+
+        return SteadyStateSolverResult(
+            state=state,
+            expect=expectations,
+            stats={
+                "method": method,
+                "solver": solver,
+                "uniqueness_checked": nullity is not None,
+                "diagnostic_max_dimension": diagnostic_max_dimension,
+            },
+            residual=residual,
+            nullity=nullity,
+            condition_number=condition_number,
+        )
 
     @staticmethod
     def _runner_options(options: dict[str, Any] | None) -> dict[str, Any]:

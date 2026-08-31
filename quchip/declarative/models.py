@@ -440,7 +440,7 @@ class DeviceModel(BaseDevice, metaclass=DeclarativeMeta):
         """Extend the base noise-field checks with declared sign constraints.
 
         The same :func:`validate_sign` the constructor's resolver runs, so
-        e.g. ``r.quality_factor = -5_000.0`` fails after the fact exactly as
+        e.g. ``r.internal_quality_factor = -5_000.0`` fails after the fact exactly as
         it would at construction (concrete scalars only; tracers pass).
         """
         super()._validate_param_write(name, value)

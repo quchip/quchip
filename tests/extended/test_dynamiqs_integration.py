@@ -63,7 +63,7 @@ def _run_rabi_population(backend_name: str) -> np.ndarray:
 def _run_dispersive_expectation(backend_name: str) -> np.ndarray:
     _set_backend(backend_name)
     qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=3, label="q")
-    resonator = Resonator(freq=6.8, levels=5, label="r", quality_factor=1e6)
+    resonator = Resonator(freq=6.8, levels=5, label="r", internal_quality_factor=1e6)
     coupling = Capacitive(qubit, resonator, g=0.04)
     readout_drive = ChargeDrive(target=resonator, label="readout")
     chip = Chip(

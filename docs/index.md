@@ -40,6 +40,7 @@ The guides begin with a small runnable calculation and add one idea at a time:
 
 - {doc}`Define and inspect a chip <guides/defining-and-inspecting-a-chip>`
 - {doc}`Backend and solver options <guides/choosing-a-backend>`
+- {doc}`Steady state and microwave ports <guides/steady-state-and-vna>`
 - {doc}`Statics and parameter studies <guides/statics-and-parameter-studies>`
 - {doc}`Dynamics, pulses, observables, and readout <guides/dynamics-pulses-and-readout>`
 - {doc}`Chip transformations <guides/chip-transformations>`
@@ -74,6 +75,7 @@ The accompanying paper is [quchip: A Differentiable Toolkit for Modeling Quantum
 guides/from-sqa-2026
 guides/defining-and-inspecting-a-chip
 guides/choosing-a-backend
+guides/steady-state-and-vna
 guides/statics-and-parameter-studies
 guides/dynamics-pulses-and-readout
 guides/chip-transformations

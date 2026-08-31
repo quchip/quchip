@@ -34,6 +34,7 @@ band because they carry no equivalent structural declaration.
 
 from __future__ import annotations
 
+from math import prod
 from typing import Any
 
 import numpy as np
@@ -633,7 +634,20 @@ def embed_on_support(backend: Any, op: Any, support: tuple[int, ...], dims: Any)
         return backend.embed(op, support[0], dims)
     if len(support) == 2:
         return backend.embed_two_body(op, support[0], support[1], dims)
-    raise ValueError(
-        f"Unsupported operator support arity {len(support)}; "
-        "the engine embeds 0-, 1-, and 2-body component operators."
+    if len(set(support)) != len(support):
+        raise ValueError(f"Operator support repeats a subsystem: {support!r}.")
+    dimensions = tuple(int(value) for value in dims)
+    rest = tuple(index for index in range(len(dimensions)) if index not in support)
+    current_order = support + rest
+    xp = _array_namespace(backend.to_array(op))
+    local = xp.asarray(backend.to_array(op), dtype=complex)
+    rest_dimension = prod(dimensions[index] for index in rest)
+    combined = xp.kron(local, xp.eye(rest_dimension, dtype=complex))
+    current_dims = tuple(dimensions[index] for index in current_order)
+    tensor = combined.reshape(current_dims + current_dims)
+    row_permutation = tuple(current_order.index(index) for index in range(len(dimensions)))
+    column_permutation = tuple(index + len(dimensions) for index in row_permutation)
+    embedded = xp.transpose(tensor, row_permutation + column_permutation).reshape(
+        (prod(dimensions), prod(dimensions))
     )
+    return backend.from_array(embedded, dims=[list(dimensions), list(dimensions)])

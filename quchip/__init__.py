@@ -31,6 +31,8 @@ from quchip.analysis import (  # noqa: E402
     DispersiveReadoutResult,
     EffectiveHamiltonianResult,
     StaticZZResult,
+    PortTone,
+    VNA,
     analyze_cross_resonance,
     analyze_cr_susceptibility,
     analyze_dispersive_readout,
@@ -42,6 +44,7 @@ from quchip.backend import get_default_backend, set_default_backend  # noqa: E40
 from quchip.chip import (
     ActivePatchResult,
     Bath,
+    Port,
     Capacitive,
     Chip,
     ChipTransform,
@@ -108,10 +111,28 @@ from quchip.devices.spaces import ChargeSpace, CustomSpace, FockSpace, LocalSpac
 from quchip.devices.transmon.charge_basis import ChargeBasisTransmon
 from quchip.devices.transmon.duffing import DuffingTransmon
 from quchip.devices.transmon.flux_tunable import FluxTunableTransmon
-from quchip.engine import build_problem, simulate, solve_many, solve_problem
+from quchip.engine import (
+    build_problem,
+    build_steadystate_problem,
+    simulate,
+    solve_many,
+    solve_problem,
+    steadystate,
+    steadystate_batch,
+)
 from quchip.interop import EigenbasisDevice, ModelMapping
 from quchip.inverse_design import FitADressResult, FitParameterReport, ObservableReport, fit_a_dress
-from quchip.results import ObservableTrace, PartitionedSimulationResult, SimulationBatchResult, SimulationResult
+from quchip.results import (
+    ObservableTrace,
+    PartitionedSimulationResult,
+    SimulationBatchResult,
+    SimulationResult,
+    SteadyStateBatchResult,
+    SteadyStateResult,
+    SParameterResult,
+    OutputCorrelationResult,
+    OutputSpectrumResult,
+)
 from quchip.sweep import SpectrumSweep, Sweep, ZippedSweep
 from quchip.utils.constants import Phi_0, hbar, k_B
 
@@ -184,6 +205,7 @@ __all__ = [
     "DressedResult",
     "KerrMatrix",
     "Bath",
+    "Port",
     "ChipTransform",
     "EliminationResult",
     "eliminate",
@@ -204,9 +226,17 @@ __all__ = [
     "build_problem",
     "solve_problem",
     "solve_many",
+    "steadystate",
+    "steadystate_batch",
+    "build_steadystate_problem",
     "ObservableTrace",
     "SimulationBatchResult",
     "SimulationResult",
+    "SteadyStateResult",
+    "SteadyStateBatchResult",
+    "SParameterResult",
+    "OutputSpectrumResult",
+    "OutputCorrelationResult",
     "PartitionedSimulationResult",
     # Sequence
     "QuantumSequence",
@@ -251,6 +281,8 @@ __all__ = [
     "DispersiveReadoutResult",
     "EffectiveHamiltonianResult",
     "StaticZZResult",
+    "PortTone",
+    "VNA",
     # Third-party interop
     "ModelMapping",
     "EigenbasisDevice",

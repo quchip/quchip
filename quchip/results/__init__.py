@@ -11,11 +11,22 @@ results into a :class:`~quchip.results.partitioned.PartitionedSimulationResult`.
 
 from quchip.results.partitioned import PartitionedSimulationResult
 from quchip.results.results import ObservableTrace, SimulationBatchResult, SimulationResult, wrap_solver_result
+from quchip.results.steady_state import SteadyStateBatchResult, SteadyStateResult
+from quchip.results.input_output import (
+    OutputCorrelationResult,
+    OutputSpectrumResult,
+    SParameterResult,
+)
 
 __all__ = [
     "ObservableTrace",
     "SimulationBatchResult",
     "SimulationResult",
+    "SteadyStateResult",
+    "SteadyStateBatchResult",
+    "SParameterResult",
+    "OutputSpectrumResult",
+    "OutputCorrelationResult",
     "PartitionedSimulationResult",
     "wrap_solver_result",
 ]
