@@ -85,7 +85,6 @@ from quchip.engine.ir import (
     DynamicTerm,
     EngineResult,
     Multiply,
-    PortTerm,
     ResolvedFrame,
     ScalarModulation,
     SignalProgram,
@@ -104,6 +103,7 @@ from quchip.engine.solver_hints import _solver_hint_metadata, _static_diagonal_s
 from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import array_namespace, contains_tracer, maybe_concrete_scalar
 from quchip.engine.bands import (
+    _decompose_product_canonical_bands,
     decompose_canonical_bands,
     decompose_two_body_canonical_bands,
     embed_on_support,
@@ -141,23 +141,27 @@ class _LocalResolution:
     dims: tuple[int, ...]
 
 
-def _two_body_semantic_transform(
+def _support_semantic_transform(
     chip: "Chip",
-    first: int,
-    second: int,
+    support: tuple[int, ...],
     bases: Mapping[str, BasisRecord],
 ) -> Any | None:
-    device_a = chip.devices[first]
-    device_b = chip.devices[second]
-    transform_a = semantic_to_solver_transform(device_a, bases[device_a.label])
-    transform_b = semantic_to_solver_transform(device_b, bases[device_b.label])
-    if transform_a is None and transform_b is None:
+    transforms = [
+        semantic_to_solver_transform(chip.devices[index], bases[chip.devices[index].label])
+        for index in support
+    ]
+    if all(transform is None for transform in transforms):
         return None
-    if transform_a is None:
-        transform_a = jnp.eye(bases[device_a.label].resolved_dim, dtype=jnp.complex128)
-    if transform_b is None:
-        transform_b = jnp.eye(bases[device_b.label].resolved_dim, dtype=jnp.complex128)
-    return jnp.kron(transform_a, transform_b)
+    resolved = [
+        jnp.eye(bases[chip.devices[index].label].resolved_dim, dtype=jnp.complex128)
+        if transform is None
+        else transform
+        for index, transform in zip(support, transforms, strict=True)
+    ]
+    product_transform = resolved[0]
+    for transform in resolved[1:]:
+        product_transform = jnp.kron(product_transform, transform)
+    return product_transform
 
 
 def _resolve_local_system(chip: "Chip", backend: Backend) -> _LocalResolution:
@@ -353,14 +357,15 @@ def _apply_2pi_canonical(backend: Backend, embedded: Operator, *, dims, labels, 
 
 def _collect_collapse_terms(
     chip: "Chip",
+    resolved_frame: "ResolvedFrame",
     backend: Backend,
     resolution: _LocalResolution,
-) -> tuple[tuple[CollapseTerm, ...], dict[int, CollapseTerm]]:
-    """Canonicalize every component-owned collapse operator."""
+) -> tuple[CollapseTerm, ...]:
+    """Canonicalize every collapse channel and attach accessible-port metadata."""
     labels = tuple(device.label for device in chip.devices)
     terms: list[CollapseTerm] = []
-    port_terms: dict[int, CollapseTerm] = {}
-    port_ids = {id(port) for port in chip.ports}
+    ports_by_id = {id(port): port for port in chip.ports}
+    port_counts = dict.fromkeys(ports_by_id, 0)
     with _backend_context(backend):
         for (
             operator,
@@ -379,17 +384,29 @@ def _collect_collapse_terms(
                 subsystem_labels=labels,
                 tag=f"collapse:{source}:{channel}",
             )
+            port = ports_by_id.get(id(owner))
             term = CollapseTerm(
                 operator=canonical,
                 rate=resolved_rate,
                 source=source,
                 channel=channel,
                 parameter_paths=parameter_paths,
+                phase=port.phase if port is not None else None,
+                frame_frequency=(
+                    resolved_frame.frequencies[port.resolve_targets(chip)[0]]
+                    if port is not None and port.operator is None
+                    else _port_frame_frequency(chip, port, resolved_frame, backend, resolution)
+                    if port is not None
+                    else None
+                ),
             )
             terms.append(term)
-            if id(owner) in port_ids:
-                port_terms[id(owner)] = term
-    return tuple(terms), port_terms
+            if port is not None:
+                port_counts[id(port)] += 1
+    for port in chip.ports:
+        if port_counts[id(port)] != 1:
+            raise RuntimeError(f"Port {port.label!r} must resolve to exactly one collapse term.")
+    return tuple(terms)
 
 
 def _concrete_port_resolution(
@@ -397,9 +414,10 @@ def _concrete_port_resolution(
     port: Any,
     backend: Backend,
     resolution: _LocalResolution,
-) -> tuple[np.ndarray, tuple[np.ndarray, ...]]:
-    """Materialize one explicit port and its local frame generators concretely."""
-    support = tuple(chip._label_to_index[label] for label in port.resolve_targets(chip))
+) -> CanonicalOperator:
+    """Materialize one explicit port in its semantic product basis."""
+    labels = port.resolve_targets(chip)
+    support = tuple(chip._label_to_index[label] for label in labels)
     records = resolution.bases
     traced = contains_tracer(
         tuple(value for record in records.values() for value in (record.vectors, record.energy_vectors))
@@ -426,17 +444,20 @@ def _concrete_port_resolution(
             backend,
         )
         values = np.asarray(backend.to_array(operator), dtype=complex)
-        generators = tuple(
-            np.asarray(
-                _resolved_frame_matrix(
-                    chip.devices[index],
-                    records[chip.devices[index].label],
-                ),
-                dtype=complex,
-            )
-            for index in support
-        )
-    return values, generators
+        transform = _support_semantic_transform(chip, support, records)
+        if transform is not None:
+            concrete_transform = np.asarray(transform, dtype=complex)
+            values = concrete_transform.conj().T @ values @ concrete_transform
+    norm = float(np.linalg.norm(values))
+    if norm > 0.0:
+        values = np.where(np.abs(values) > 1e-10 * norm, values, 0.0)
+    return CanonicalOperator.from_dense(
+        values,
+        dims=tuple(records[label].resolved_dim for label in labels),
+        basis="semantic",
+        subsystem_labels=labels,
+        tag=f"port:{port.label}",
+    )
 
 
 def _frequency_groups(frequencies: tuple[Any, ...]) -> tuple[tuple[int, ...], ...]:
@@ -465,37 +486,10 @@ def _port_frame_frequency(
     resolution: _LocalResolution,
 ) -> Any:
     """Return the common frame phase of every band in one explicit port."""
-    values, generators = _concrete_port_resolution(chip, port, backend, resolution)
-    norm = float(np.linalg.norm(values))
-    if norm <= 0.0:
+    canonical = _concrete_port_resolution(chip, port, backend, resolution)
+    bands = _decompose_product_canonical_bands(canonical, canonical.dims)
+    if not bands:
         raise ValueError(f"Port {port.label!r} requires a nonzero coupling operator.")
-
-    eigenvalues: list[np.ndarray] = []
-    transforms: list[np.ndarray] = []
-    for generator in generators:
-        values_i, vectors_i = np.linalg.eigh(generator)
-        eigenvalues.append(np.real_if_close(values_i).real)
-        transforms.append(vectors_i)
-    transform = transforms[0]
-    for local in transforms[1:]:
-        transform = np.kron(transform, local)
-    band_values = transform.conj().T @ values @ transform
-    rows, columns = np.nonzero(np.abs(band_values) > 1e-10 * norm)
-    dimensions = tuple(len(items) for items in eigenvalues)
-    state_indices = np.indices(dimensions).reshape(len(dimensions), -1)
-    weights = np.asarray(
-        [
-            [
-                eigenvalues[index][state_indices[index, column]]
-                - eigenvalues[index][state_indices[index, row]]
-                for index in range(len(dimensions))
-            ]
-            for row, column in zip(rows, columns, strict=True)
-        ]
-    )
-    weights[np.abs(weights) < 1e-10] = 0.0
-    rounded = np.rint(weights)
-    weights = np.where(np.abs(weights - rounded) < 1e-10, rounded, weights)
 
     labels = port.resolve_targets(chip)
     frequencies = tuple(resolved_frame.frequencies[label] for label in labels)
@@ -507,11 +501,11 @@ def _port_frame_frequency(
         concrete = maybe_concrete_scalar(representative)
         if concrete is None:
             traced_groups.append((group, representative))
-    for band in weights:
+    for band in bands:
         constant = 0.0
         traced_coefficients: list[float] = []
         for group in groups:
-            coefficient = float(np.sum(band[list(group)]))
+            coefficient = float(sum(band[index] for index in group))
             representative = frequencies[group[0]]
             concrete = maybe_concrete_scalar(representative)
             if concrete is None:
@@ -539,38 +533,6 @@ def _port_frame_frequency(
         frequency = frequency + term if has_term else term
         has_term = True
     return frequency
-
-
-def _collect_port_terms(
-    chip: "Chip",
-    port_collapses: dict[int, CollapseTerm],
-    resolved_frame: "ResolvedFrame",
-    backend: Backend,
-    resolution: _LocalResolution,
-) -> tuple[PortTerm, ...]:
-    """Expose each resolved accessible channel without re-deriving its coupling operator."""
-    if not chip.ports:
-        return ()
-    terms: list[PortTerm] = []
-    for port in chip.ports:
-        collapse = port_collapses.get(id(port))
-        if collapse is None:
-            raise RuntimeError(f"Port {port.label!r} must resolve to exactly one collapse term.")
-        terms.append(
-            PortTerm(
-                operator=collapse.operator,
-                rate=collapse.rate,
-                phase=port.phase,
-                frame_frequency=(
-                    resolved_frame.frequencies[port.resolve_targets(chip)[0]]
-                    if port.operator is None
-                    else _port_frame_frequency(chip, port, resolved_frame, backend, resolution)
-                ),
-                label=port.label,
-                parameter_paths=collapse.parameter_paths + (f"port.{port.label}.phase",),
-            )
-        )
-    return tuple(terms)
 
 
 def _dynamic_term(
@@ -667,10 +629,9 @@ def _resolve_coupling_terms(
         sub_bands = decompose_two_body_canonical_bands(
             canonical,
             [d_a, d_b],
-            semantic_to_solver=_two_body_semantic_transform(
+            semantic_to_solver=_support_semantic_transform(
                 chip,
-                idx_a,
-                idx_b,
+                (idx_a, idx_b),
                 resolution.bases,
             ),
         )
@@ -786,10 +747,9 @@ def _component_time_terms(
                 for weights, band in decompose_two_body_canonical_bands(
                     canonical,
                     [dim_a, dim_b],
-                    semantic_to_solver=_two_body_semantic_transform(
+                    semantic_to_solver=_support_semantic_transform(
                         chip,
-                        idx_a,
-                        idx_b,
+                        (idx_a, idx_b),
                         resolution.bases,
                     ),
                 ).items()
@@ -1053,7 +1013,7 @@ def _resolved_drive_bands(
         for (delta_a, delta_b), band_canonical in decompose_two_body_canonical_bands(
             canonical,
             [d_a, d_b],
-            semantic_to_solver=_two_body_semantic_transform(chip, idx_a, idx_b, bases),
+            semantic_to_solver=_support_semantic_transform(chip, (idx_a, idx_b), bases),
         ).items():
             if not approximation.keeps_operator_band((delta_a, delta_b)):
                 continue
@@ -1299,7 +1259,6 @@ def _template_from_engine_result(
         weight_zero_drops=weight_zero_drops,
         static_spectral_bound_ghz=base_result.metadata.get("static_spectral_bound_ghz"),
         collapse_terms=base_result.collapse_terms,
-        port_terms=base_result.port_terms,
         bases=base_result.bases,
         authored=base_result.authored,
     )
@@ -1424,7 +1383,7 @@ def compile_hamiltonian_template(
         approximation=strategy,
     )
 
-    collapse_terms, port_collapses = _collect_collapse_terms(chip, backend, resolution)
+    collapse_terms = _collect_collapse_terms(chip, resolved_frame, backend, resolution)
     return HamiltonianTemplate(
         resolved_frame=resolved_frame,
         approximation=strategy,
@@ -1437,13 +1396,6 @@ def compile_hamiltonian_template(
         weight_zero_drops=weight_zero_drops,
         static_spectral_bound_ghz=static_spectral_bound_ghz,
         collapse_terms=collapse_terms,
-        port_terms=_collect_port_terms(
-            chip,
-            port_collapses,
-            resolved_frame,
-            backend,
-            resolution,
-        ),
         bases=resolution.bases,
         authored=chip.unresolved_hamiltonian(),
     )
@@ -1538,7 +1490,6 @@ def instantiate_engine_result(
         metadata=metadata,
         dropped_terms=template.dropped_terms + tuple(fresh_dropped),
         collapse_terms=template.collapse_terms,
-        port_terms=template.port_terms,
         bases=template.bases,
         authored=template.authored,
         resolved_frame=template.resolved_frame,
@@ -1615,7 +1566,6 @@ def _build_static_analysis_result(
         result,
         dynamic_terms=(),
         collapse_terms=(),
-        port_terms=(),
         metadata=metadata,
     )
 

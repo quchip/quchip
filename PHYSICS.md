@@ -354,6 +354,9 @@ normalized stationary state. `VNA.sweep()` adds continuous-wave port terms in
 their stationary tone frames. Small-signal scattering differentiates the
 output mean around the fixed-tone state; finite-amplitude scattering subtracts
 that operating-point output and divides by the swept input amplitude.
+The engine supplies canonical sources and observables for stationary response,
+spectrum, and correlation queries. Each backend constructs and solves its own
+native Liouvillian.
 
 If frame and approximation resolution leave dynamic terms, the stationary
 APIs raise. Periodic/Floquet stationary states are not implemented.

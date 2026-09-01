@@ -807,13 +807,26 @@ class QuTiPBackend(Backend):
         result = runner.run(rho0, tlist, e_ops=e_ops)
         return self._wrap_result(result, solver="mesolve", extra_stats=self._solver_stats(runner))
 
+    def _stationary_system(self, engine_result: Any) -> tuple[Qobj, list[Qobj], Qobj]:
+        """Lower one static engine description to QuTiP's native stationary system."""
+        if engine_result.dynamic_terms:
+            raise ValueError("Stationary analysis requires a static resolved Hamiltonian.")
+        hamiltonian = self.prepare_hamiltonian(engine_result).rhs
+        collapse_ops = self._collapse_operators(engine_result)
+        return hamiltonian, collapse_ops, qutip.liouvillian(hamiltonian, collapse_ops)
+
+    @staticmethod
+    def _scipy_liouvillian(liouvillian: Qobj) -> Any:
+        """Expose a QuTiP Liouvillian as SciPy CSR without densifying it."""
+        if hasattr(liouvillian.data, "as_scipy"):
+            return liouvillian.data.as_scipy().tocsr()
+        return sparse.csr_matrix(liouvillian.data.to_array())
+
     def steadystate(self, problem: Any) -> SteadyStateSolverResult:
         """Solve a static Lindblad generator with :func:`qutip.steadystate`."""
-        if problem.engine_result.dynamic_terms:
-            raise ValueError("steadystate() requires a static resolved Hamiltonian.")
-
-        prepared = self.prepare_hamiltonian(problem.engine_result)
-        collapse_ops = self._collapse_operators(problem.engine_result)
+        hamiltonian, collapse_ops, liouvillian = self._stationary_system(
+            problem.engine_result
+        )
         options = dict(problem.options)
         rank_tolerance = options.pop("rank_tolerance", None)
         diagnostic_max_dimension = int(options.pop("diagnostic_max_dimension", 16))
@@ -822,20 +835,14 @@ class QuTiPBackend(Backend):
         method = options.pop("method", "direct")
         solver = options.pop("solver", None)
         state = qutip.steadystate(
-            prepared.rhs,
+            hamiltonian,
             collapse_ops,
             method=method,
             solver=solver,
             **options,
         )
 
-        liouvillian = qutip.liouvillian(prepared.rhs, collapse_ops)
-        if hasattr(liouvillian.data, "as_scipy"):
-            sparse_liouvillian = liouvillian.data.as_scipy().tocsr()
-        else:
-            from scipy.sparse import csr_matrix
-
-            sparse_liouvillian = csr_matrix(liouvillian.data.to_array())
+        sparse_liouvillian = self._scipy_liouvillian(liouvillian)
         state_vector = np.asarray(qutip.operator_to_vector(state).full(), dtype=complex).reshape(-1)
         residual = float(np.linalg.norm(sparse_liouvillian @ state_vector))
         dimension = state.shape[0]
@@ -870,6 +877,77 @@ class QuTiPBackend(Backend):
             nullity=nullity,
             condition_number=condition_number,
         )
+
+    def stationary_resolvent(
+        self,
+        engine_result: Any,
+        source: Any,
+        observables: tuple[tuple[str, Any], ...],
+        frequencies: Any,
+    ) -> dict[str, Any]:
+        """Evaluate stationary resolvents with QuTiP's sparse Liouvillian."""
+        _, _, liouvillian = self._stationary_system(engine_result)
+        matrix = self._scipy_liouvillian(liouvillian)
+        source_operator = self.from_canonical_operator(source)
+        source_vector = np.asarray(
+            qutip.operator_to_vector(source_operator).full(), dtype=complex
+        ).reshape(-1)
+        dimension = source_operator.shape[0]
+        trace_row = np.zeros(dimension * dimension, dtype=complex)
+        trace_row[:: dimension + 1] = 1.0
+        identity = sparse.identity(matrix.shape[0], dtype=complex, format="csr")
+        native_observables = tuple(
+            (label, self.from_canonical_operator(operator))
+            for label, operator in observables
+        )
+        values: dict[str, list[Any]] = {label: [] for label, _ in observables}
+        target = source_vector.copy()
+        target[-1] = 0.0
+
+        for frequency in np.atleast_1d(np.asarray(frequencies, dtype=float)):
+            constrained = (matrix + 1j * (2.0 * np.pi) * frequency * identity).tolil()
+            constrained[-1, :] = trace_row
+            response_vector = sparse.linalg.spsolve(constrained.tocsc(), target)
+            response = Qobj(
+                response_vector.reshape((dimension, dimension), order="F"),
+                dims=source_operator.dims,
+            )
+            for label, observable in native_observables:
+                values[label].append((observable * response).tr())
+
+        return {label: np.asarray(items) for label, items in values.items()}
+
+    def stationary_propagate(
+        self,
+        engine_result: Any,
+        initial: Any,
+        observables: tuple[tuple[str, Any], ...],
+        times: Any,
+    ) -> dict[str, Any]:
+        """Propagate regression operators with QuTiP's sparse Liouvillian."""
+        _, _, liouvillian = self._stationary_system(engine_result)
+        matrix = self._scipy_liouvillian(liouvillian)
+        initial_operator = self.from_canonical_operator(initial)
+        initial_vector = np.asarray(
+            qutip.operator_to_vector(initial_operator).full(), dtype=complex
+        ).reshape(-1)
+        dimension = initial_operator.shape[0]
+        native_observables = tuple(
+            (label, self.from_canonical_operator(operator))
+            for label, operator in observables
+        )
+        values: dict[str, list[Any]] = {label: [] for label, _ in observables}
+
+        for time in np.atleast_1d(np.asarray(times, dtype=float)):
+            evolved_vector = sparse.linalg.expm_multiply(matrix * time, initial_vector)
+            evolved = Qobj(
+                evolved_vector.reshape((dimension, dimension), order="F"),
+                dims=initial_operator.dims,
+            )
+            for label, observable in native_observables:
+                values[label].append((observable * evolved).tr())
+
+        return {label: np.asarray(items) for label, items in values.items()}
 
     @staticmethod
     def _runner_options(options: dict[str, Any] | None) -> dict[str, Any]:

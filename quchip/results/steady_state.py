@@ -6,10 +6,9 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Mapping
 
-import numpy as np
-
 from quchip.backend import Backend, SteadyStateSolverResult
 from quchip.devices.base import BaseDevice
+from quchip.results._batch import BatchResult
 from quchip.utils.labeling import resolve_label
 
 
@@ -114,61 +113,9 @@ def build_steady_state_result(
     )
 
 
-@dataclass(frozen=True, init=False)
-class SteadyStateBatchResult:
+class SteadyStateBatchResult(BatchResult[SteadyStateResult]):
     """Immutable stationary results reshaped to their declared sweep grid."""
-
-    _results: tuple[SteadyStateResult, ...]
-    _shape: tuple[int, ...]
-    _axes: tuple[tuple[str, Any], ...]
-
-    def __init__(
-        self,
-        results: list[SteadyStateResult],
-        *,
-        shape: tuple[int, ...],
-        axes: tuple[tuple[str, Any], ...],
-    ) -> None:
-        if int(np.prod(shape, dtype=int)) != len(results):
-            raise ValueError(f"Batch shape {shape} does not match {len(results)} results.")
-        object.__setattr__(self, "_results", tuple(results))
-        object.__setattr__(self, "_shape", tuple(shape))
-        object.__setattr__(self, "_axes", tuple(axes))
-
-    @property
-    def results(self) -> tuple[SteadyStateResult, ...]:
-        """Return stationary results in C-order sweep order."""
-        return self._results
-
-    @property
-    def shape(self) -> tuple[int, ...]:
-        """Return the natural sweep-grid shape."""
-        return self._shape
-
-    @property
-    def axes(self) -> tuple[tuple[str, Any], ...]:
-        """Return named sweep-axis metadata."""
-        return self._axes
-
-    @property
-    def backend(self) -> Backend:
-        """Return the backend shared by every result."""
-        if not self._results:
-            raise RuntimeError("Empty batch has no backend.")
-        return self._results[0]._backend
-
-    def __len__(self) -> int:
-        return len(self._results)
-
-    def __iter__(self):
-        return iter(self._results)
-
-    def __getitem__(self, item: int) -> SteadyStateResult:
-        return self._results[item]
 
     def expect(self, key: Any, index: int | None = None) -> Any:
         """Return one expectation value reshaped to the sweep grid."""
-        values = self.backend.array_module.asarray(
-            [result.expect(key, index=index) for result in self._results]
-        )
-        return self.backend.array_module.reshape(values, self._shape + tuple(values.shape[1:]))
+        return self._reshape([result.expect(key, index=index) for result in self._results])

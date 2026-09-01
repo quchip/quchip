@@ -993,13 +993,20 @@ class DynamicTerm:
 
 @dataclass(frozen=True)
 class CollapseTerm:
-    """Backend-neutral Lindblad operator and its separate rate."""
+    """Backend-neutral Lindblad channel, optionally exposed as a port."""
 
     operator: CanonicalOperator
     rate: Any
     source: str
     channel: str
     parameter_paths: tuple[str, ...] = ()
+    phase: Any = None
+    frame_frequency: Any = None
+
+    @property
+    def label(self) -> str:
+        """Return the input-output label for an accessible channel."""
+        return self.source
 
     def latex(self) -> str:
         """Render this collapse channel as an opaque named operator."""
@@ -1022,19 +1029,6 @@ class CollapseTerm:
         arguments = ", ".join(rendered)
         suffix = rf"\!\left({arguments}\right)" if arguments else ""
         return rf"\hat L_{{{self.source},{self.channel}}}{suffix}"
-
-
-@dataclass(frozen=True)
-class PortTerm:
-    """Resolved input-output channel before the ``sqrt(rate)`` scaling."""
-
-    operator: CanonicalOperator
-    rate: Any
-    phase: Any
-    frame_frequency: Any
-    label: str
-    parameter_paths: tuple[str, ...] = ()
-
 
 @dataclass(frozen=True)
 class DroppedTerm:
@@ -1116,7 +1110,6 @@ class EngineResult:
     metadata: dict[str, Any] = field(default_factory=dict)
     dropped_terms: tuple[DroppedTerm, ...] = ()
     collapse_terms: tuple[CollapseTerm, ...] = ()
-    port_terms: tuple[PortTerm, ...] = ()
     bases: Mapping[str, Any] = field(default_factory=dict)
     authored: Any = None
     resolved_frame: Any = None
@@ -1132,7 +1125,6 @@ class EngineResult:
             tuple(term.operator for term in self.static_terms)
             + tuple(term.operator for term in self.dynamic_terms)
             + tuple(term.operator for term in self.collapse_terms)
-            + tuple(term.operator for term in self.port_terms)
         )
         operator_payloads = tuple(
             (
@@ -1157,10 +1149,9 @@ class EngineResult:
                 operator_payloads,
                 tuple(term.coefficient for term in self.static_terms),
                 tuple(term.time_dependence for term in self.dynamic_terms),
-                tuple(term.rate for term in self.collapse_terms),
                 tuple(
                     (term.rate, term.phase, term.frame_frequency)
-                    for term in self.port_terms
+                    for term in self.collapse_terms
                 ),
                 tuple(
                     (term.amplitude, term.frequency)
@@ -1172,6 +1163,11 @@ class EngineResult:
                 self.metadata,
             )
         )
+
+    @property
+    def port_terms(self) -> tuple[CollapseTerm, ...]:
+        """Return collapse channels that cross an accessible port boundary."""
+        return tuple(term for term in self.collapse_terms if term.frame_frequency is not None)
 
     def hamiltonian(self) -> PhysicsExpr:
         """Return the exact canonical Hamiltonian as an inspectable expression.
@@ -1296,7 +1292,8 @@ class HamiltonianTemplate:
     * ``drive_terms`` — pre-embedded, 2π-scaled drive bands
       (:class:`~quchip.engine.assembly.CompiledDriveTerm`) ready
       for per-variant reinstantiation.
-    * ``collapse_terms`` — canonical component-owned Lindblad operators.
+    * ``collapse_terms`` — canonical Lindblad channels, including accessible
+      port metadata where present.
     * ``reference_drive_ops`` — the structural yardstick used by
       :func:`~quchip.engine.assembly.instantiate_engine_result`
       to reject drive-ops that change the template's skeleton (device,
@@ -1329,7 +1326,6 @@ class HamiltonianTemplate:
     #: variant-specific carrier-frequency hint is recomputed per instantiation.
     static_spectral_bound_ghz: float | None = None
     collapse_terms: tuple[Any, ...] = ()            # tuple[CollapseTerm, ...]
-    port_terms: tuple[Any, ...] = ()                # tuple[PortTerm, ...]
     bases: Mapping[str, Any] = field(default_factory=dict)
     authored: Any = None
 

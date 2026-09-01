@@ -9,10 +9,8 @@ import numpy as np
 
 from quchip.engine.input_output import (
     add_port_inputs,
-    dense_liouvillian,
     port_operators,
-    same_frequency,
-    small_signal_response,
+    resolve_stationary_engine,
 )
 from quchip.engine.ir import CanonicalOperator, EngineResult, SteadyStateProblem
 from quchip.engine.steady_state import solve_steadystate_problem
@@ -21,7 +19,7 @@ from quchip.results.input_output import (
     OutputSpectrumResult,
     SParameterResult,
 )
-from quchip.sweep import Sweep, ZippedSweep, _iter_axis_points
+from quchip.sweep import Sweep, ZippedSweep, _axis_metadata, _iter_axis_points
 from quchip.utils.constants import TWO_PI, hbar
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
 
@@ -112,7 +110,11 @@ class VNA:
             cache_key = (coord, frequency_index)
             if cache_key not in operating_cache:
                 tones = self._tone_values(params)
-                engine = self._resolved_engine(frequency, tones)
+                engine = resolve_stationary_engine(
+                    self.chip,
+                    tuple((label, tone_frequency) for label, tone_frequency, _ in tones)
+                    + ((self.input.label, frequency),),
+                )
                 operating_engine = add_port_inputs(engine, self.chip.backend, tones)
                 operating = _solve_engine(self.chip, operating_engine, options)
                 resolved_operators = port_operators(operating_engine, self.chip.backend)
@@ -120,7 +122,7 @@ class VNA:
             operating_engine, operating, resolved_operators = operating_cache[cache_key]
 
             if amplitude is None:
-                values = small_signal_response(
+                values = _small_signal_response(
                     operating_engine,
                     operating.state,
                     self.chip.backend,
@@ -228,17 +230,23 @@ class VNA:
         fluctuation = field - mean * identity
         intensity = xp.real(xp.trace(xp.conj(xp.swapaxes(field, -1, -2)) @ field @ rho))
         coherent_flux = xp.abs(mean) ** 2
-        source = (fluctuation @ rho).T.reshape(-1)
-        observable = xp.conj(xp.swapaxes(fluctuation, -1, -2))
-        liouvillian = dense_liouvillian(engine, self.chip.backend, operation="Output spectrum")
-        spectra = []
-        for frequency in frequency_values:
-            shifted = liouvillian + 1j * (2.0 * np.pi) * xp.asarray(frequency) * xp.eye(
-                liouvillian.shape[0], dtype=complex
-            )
-            propagated = -xp.linalg.pinv(shifted) @ source
-            matrix = propagated.reshape(rho.shape).T
-            spectra.append(2.0 * xp.real(xp.trace(observable @ matrix)))
+        source = _canonical_matrix(
+            -(fluctuation @ rho),
+            operators[output_port.label],
+            tag=f"spectrum-source:{output_port.label}",
+        )
+        observable = _canonical_matrix(
+            xp.conj(xp.swapaxes(fluctuation, -1, -2)),
+            operators[output_port.label],
+            tag=f"spectrum-observable:{output_port.label}",
+        )
+        response = self.chip.backend.stationary_resolvent(
+            engine,
+            source,
+            ((output_port.label, observable),),
+            frequency_values,
+        )[output_port.label]
+        spectra = 2.0 * xp.real(response)
         return OutputSpectrumResult(
             port=output_port.label,
             frequencies=frequency_values,
@@ -311,16 +319,22 @@ class VNA:
         ):
             raise ValueError("Normalized output correlations require nonzero output intensity.")
 
-        initial = input_field @ rho if order == 1 else input_field @ rho @ input_field_dag
-        observable = output_field_dag if order == 1 else output_number
-        liouvillian = dense_liouvillian(engine, backend, operation=f"g{order}")
-        initial_vector = initial.T.reshape(-1)
-        unnormalized = []
-        for delay in delay_values:
-            evolved = _matrix_exponential(liouvillian * xp.asarray(delay), xp) @ initial_vector
-            evolved_state = evolved.reshape(rho.shape).T
-            unnormalized.append(xp.trace(observable @ evolved_state))
-        raw = xp.asarray(unnormalized)
+        initial = _canonical_matrix(
+            input_field @ rho if order == 1 else input_field @ rho @ input_field_dag,
+            operators[input_port.label],
+            tag=f"g{order}-initial:{input_port.label}",
+        )
+        observable = _canonical_matrix(
+            output_field_dag if order == 1 else output_number,
+            operators[output_port.label],
+            tag=f"g{order}-observable:{output_port.label}",
+        )
+        raw = backend.stationary_propagate(
+            engine,
+            initial,
+            ((output_port.label, observable),),
+            delay_values,
+        )[output_port.label]
         denominator = (
             xp.sqrt(input_intensity * output_intensity)
             if order == 1
@@ -357,12 +371,15 @@ class VNA:
         for port_label, _frequency, amplitude in tones:
             incoming[port_label] = incoming.get(port_label, 0.0) + amplitude
         target = self.input.resolve_targets(self.chip)[0]
-        reference_frequency = getattr(self.chip[target], "freq")
-        for port_label, frequency, _ in tones:
-            if port_label == self.input.label:
-                reference_frequency = frequency
-                break
-        engine = self._resolved_engine(reference_frequency, tones)
+        reference_frequency = next(
+            (frequency for port_label, frequency, _ in tones if port_label == self.input.label),
+            getattr(self.chip[target], "freq"),
+        )
+        engine = resolve_stationary_engine(
+            self.chip,
+            tuple((label, frequency) for label, frequency, _ in tones)
+            + ((self.input.label, reference_frequency),),
+        )
         driven_engine = add_port_inputs(engine, self.chip.backend, tones)
         state = _solve_engine(self.chip, driven_engine, options)
         return driven_engine, state, port_operators(driven_engine, self.chip.backend), incoming
@@ -374,69 +391,6 @@ class VNA:
             amplitude = params.get(f"__vna_tone_{tone._index}_amplitude", tone.amplitude)
             tones.append((tone.port, freq, amplitude))
         return tuple(tones)
-
-    def _resolved_engine(self, probe_frequency: Any, tones: tuple[tuple[str, Any, Any], ...]) -> EngineResult:
-        device_frequencies: dict[str, Any] = {}
-        stationary_frequencies: list[Any] = []
-        for port_label, frequency, _ in (*tones, (self.input.label, probe_frequency, 0.0)):
-            stationary_frequencies.append(frequency)
-            port = self.chip.port(port_label)
-            for target in port.resolve_targets(self.chip):
-                if target in device_frequencies and not same_frequency(device_frequencies[target], frequency):
-                    raise ValueError(
-                        f"Ports address {target!r} with distinct stationary tones. "
-                        "Use QuantumSequence for time evolution; periodic/Floquet steady states are not supported."
-                    )
-                device_frequencies[target] = frequency
-        # Exchange terms are stationary only when both endpoints share a
-        # frame. Carry the frame of an addressed filter or resonator through
-        # its passive exchange network; diagonal couplings such as CrossKerr
-        # deliberately do not join the components, so pump and probe may keep
-        # independent carriers.
-        changed = True
-        while changed:
-            changed = False
-            for coupling in self.chip.couplings:
-                if not getattr(coupling, "folds_exchange", False):
-                    continue
-                left = coupling.device_a_label
-                right = coupling.device_b_label
-                left_frequency = device_frequencies.get(left)
-                right_frequency = device_frequencies.get(right)
-                if left_frequency is None and right_frequency is not None:
-                    device_frequencies[left] = right_frequency
-                    changed = True
-                elif right_frequency is None and left_frequency is not None:
-                    device_frequencies[right] = left_frequency
-                    changed = True
-                elif (
-                    left_frequency is not None
-                    and right_frequency is not None
-                    and not same_frequency(left_frequency, right_frequency)
-                ):
-                    raise ValueError(
-                        f"Exchange-coupled devices {left!r} and {right!r} are addressed by "
-                        "distinct stationary tones. Use QuantumSequence for time evolution; "
-                        "periodic/Floquet steady states are not supported."
-                    )
-        # A single carrier defines one global rotating frame. Applying it to
-        # every device keeps passive number-conserving paths stationary, such
-        # as feedline -> Purcell filter -> readout, without inventing a port on
-        # each unaddressed internal mode. Multiple carriers still use their
-        # explicitly addressed frames and are rejected below if any terms
-        # remain time dependent.
-        one_carrier = all(
-            same_frequency(stationary_frequencies[0], frequency)
-            for frequency in stationary_frequencies[1:]
-        )
-        frame = stationary_frequencies[0] if one_carrier else device_frequencies
-        engine = self.chip.resolve(frame=frame)
-        if engine.dynamic_terms:
-            raise ValueError(
-                "The selected tones leave dynamic Hamiltonian terms after frame and approximation resolution. "
-                "Use QuantumSequence for time evolution; periodic/Floquet steady states are not supported."
-            )
-        return engine
 
 
 def _axis_values(values: Any) -> tuple[Any, bool]:
@@ -471,18 +425,10 @@ def _public_axes(
     tones: list[PortTone] | None = None,
 ) -> tuple[tuple[str, Any], ...]:
     tone_list = tones or []
-    axes: list[tuple[str, Any]] = []
-    for variation in variations:
-        if isinstance(variation, ZippedSweep):
-            names = tuple(_public_axis_name(item.name, tone_list) for item in variation.sweeps)
-            values = tuple(
-                {names[j]: item.values[index] for j, item in enumerate(variation.sweeps)}
-                for index in range(variation.size)
-            )
-            axes.append(("/".join(names), values))
-        else:
-            axes.append((_public_axis_name(variation.name, tone_list), variation.values))
-    return tuple(axes)
+    return _axis_metadata(
+        variations,
+        rename=lambda name: _public_axis_name(name, tone_list),
+    )
 
 
 def _solve_engine(chip: Any, engine: EngineResult, options: dict | None) -> Any:
@@ -521,9 +467,55 @@ def _finite_response(
     return response
 
 
+def _small_signal_response(
+    engine: EngineResult,
+    state: Any,
+    backend: Any,
+    port_operators: dict[str, CanonicalOperator],
+    input_label: str,
+    output_labels: tuple[str, ...],
+) -> dict[str, Any]:
+    """Evaluate the port response through the backend stationary resolvent."""
+    xp = backend.array_module
+    rho = xp.asarray(backend.to_array(state), dtype=complex)
+    input_operator = xp.asarray(port_operators[input_label].to_dense(), dtype=complex)
+    input_dag = xp.conj(xp.swapaxes(input_operator, -1, -2))
+    source = _canonical_matrix(
+        -(input_dag @ rho - rho @ input_dag),
+        port_operators[input_label],
+        tag=f"linear-response-source:{input_label}",
+    )
+    response = backend.stationary_resolvent(
+        engine,
+        source,
+        tuple((label, port_operators[label]) for label in output_labels),
+        (0.0,),
+    )
+    return {
+        label: (1.0 if label == input_label else 0.0) - response[label][0]
+        for label in output_labels
+    }
+
+
 def _output_field_matrix(operator: CanonicalOperator, incoming: Any, xp: Any) -> Any:
     coupling = xp.asarray(operator.to_dense(), dtype=complex)
     return xp.asarray(incoming) * xp.eye(coupling.shape[0], dtype=complex) - coupling
+
+
+def _canonical_matrix(
+    values: Any,
+    template: CanonicalOperator,
+    *,
+    tag: str,
+) -> CanonicalOperator:
+    """Attach resolved subsystem metadata to a stationary query matrix."""
+    return CanonicalOperator.from_dense(
+        values,
+        dims=template.dims,
+        basis=template.basis,
+        subsystem_labels=template.subsystem_labels,
+        tag=tag,
+    )
 
 
 def _input_powers(
@@ -548,13 +540,3 @@ def _input_powers(
         return power
     power = xp.reshape(power, (1,) * variation_rank + tuple(power.shape))
     return xp.broadcast_to(power, result_shape)
-
-
-def _matrix_exponential(matrix: Any, xp: Any) -> Any:
-    if xp.__name__.startswith("jax"):
-        import jax.scipy.linalg as jsp_linalg
-
-        return jsp_linalg.expm(matrix)
-    from scipy.linalg import expm
-
-    return expm(np.asarray(matrix, dtype=complex))

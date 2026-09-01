@@ -34,8 +34,9 @@ band because they carry no equivalent structural declaration.
 
 from __future__ import annotations
 
+from itertools import product
 from math import prod
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -458,53 +459,81 @@ def decompose_two_body_canonical_bands(
     """
     if len(dims) != 2:
         raise ValueError(f"dims must have exactly 2 entries, got {len(dims)}")
-    d_a, d_b = dims
-    d_total = d_a * d_b
-    if canonical.shape != (d_total, d_total):
-        raise ValueError(f"canonical shape {canonical.shape} does not match dims product ({d_total}, {d_total})")
+    return cast(
+        dict[tuple[int, int], CanonicalOperator],
+        _decompose_product_canonical_bands(
+            canonical,
+            dims,
+            semantic_to_solver=semantic_to_solver,
+        ),
+    )
+
+
+def _decompose_product_canonical_bands(
+    canonical: CanonicalOperator,
+    dims: list[int] | tuple[int, ...],
+    *,
+    semantic_to_solver: Any | None = None,
+) -> dict[tuple[int, ...], CanonicalOperator]:
+    """Decompose an N-subsystem product operator by per-subsystem level change."""
+    if not dims or any(dim < 1 for dim in dims):
+        raise ValueError(f"dims must contain positive subsystem dimensions, got {dims}")
+    total_dim = prod(dims)
+    if canonical.shape != (total_dim, total_dim):
+        raise ValueError(
+            f"canonical shape {canonical.shape} does not match dims product "
+            f"({total_dim}, {total_dim})"
+        )
 
     if semantic_to_solver is not None:
         transform = semantic_to_solver
-        semantic_canonical = _sandwich_canonical(canonical, transform.conj().T, transform)
+        semantic = _sandwich_canonical(canonical, transform.conj().T, transform)
         return {
             weights: _sandwich_canonical(band, transform, transform.conj().T)
-            for weights, band in decompose_two_body_canonical_bands(
-                semantic_canonical,
+            for weights, band in _decompose_product_canonical_bands(
+                semantic,
                 dims,
             ).items()
         }
 
     if canonical.layout == "dense" or _canonical_has_nonconcrete_structure(canonical):
-        dense_bands = _decompose_coupling_dense(canonical_to_dense_array(canonical), dims)
-        return {
-            band: CanonicalOperator.from_dense(
-                matrix,
+        matrix = canonical_to_dense_array(canonical)
+        xp = _array_namespace(matrix)
+        parent_norm = _concrete_parent_norm(matrix)
+        states = np.stack(np.unravel_index(np.arange(total_dim), dims), axis=-1)
+        changes = states[None, :, :] - states[:, None, :]
+        zero = xp.zeros_like(matrix)
+        dense_bands: dict[tuple[int, ...], CanonicalOperator] = {}
+        for weights in product(*(range(-(dim - 1), dim) for dim in dims)):
+            band_values = xp.where(np.all(changes == weights, axis=-1), matrix, zero)
+            if (
+                parent_norm is not None
+                and _frobenius_norm(band_values) <= _BAND_NORM_RTOL * parent_norm
+            ):
+                continue
+            dense_bands[weights] = CanonicalOperator.from_dense(
+                band_values,
                 dims=canonical.dims,
                 basis=canonical.basis,
                 subsystem_labels=canonical.subsystem_labels,
                 tag=canonical.tag,
             )
-            for band, matrix in dense_bands.items()
-        }
+        return dense_bands
 
     rows, cols, values = canonical_to_coo(canonical)
     parent_norm = _concrete_parent_norm(values)
-    delta_a = (cols // d_b) - (rows // d_b)
-    delta_b = (cols % d_b) - (rows % d_b)
+    row_states = np.stack(np.unravel_index(rows, dims), axis=-1)
+    column_states = np.stack(np.unravel_index(cols, dims), axis=-1)
+    changes = column_states - row_states
 
-    # Single pass: group nonzero entries by the (Δa, Δb) band they belong to,
-    # building only the bands that are actually populated rather than scanning
-    # all (2·d_a−1)·(2·d_b−1) candidate pairs (a bilinear coupling populates a
-    # handful). ``sorted`` keeps the band order identical to the old nested
-    # ``range`` loop, so downstream order-sensitive consumers are unaffected.
-    bands: dict[tuple[int, int], CanonicalOperator] = {}
-    for band in sorted({(int(a), int(b)) for a, b in zip(delta_a.tolist(), delta_b.tolist())}):
-        mask = (delta_a == band[0]) & (delta_b == band[1])
+    bands: dict[tuple[int, ...], CanonicalOperator] = {}
+    for weights in sorted({tuple(int(value) for value in change) for change in changes}):
+        mask = np.all(changes == weights, axis=1)
         positions = np.flatnonzero(mask)
         band_values = values[positions]
         if parent_norm is not None and _frobenius_norm(band_values) <= _BAND_NORM_RTOL * parent_norm:
             continue
-        bands[band] = _canonical_from_csr(
+        bands[weights] = _canonical_from_csr(
             rows[positions],
             cols[positions],
             band_values,
@@ -514,38 +543,6 @@ def decompose_two_body_canonical_bands(
             subsystem_labels=canonical.subsystem_labels,
             tag=canonical.tag,
         )
-    return bands
-
-
-def _decompose_coupling_dense(
-    matrix: Any,
-    dims: list[int],
-) -> dict[tuple[int, int], Any]:
-    """Dense ``(delta_a, delta_b)`` decomposition; used when the payload is dense-layout or JAX-traced.
-
-    Drops low-norm bands by the same relative ``_BAND_NORM_RTOL`` test as
-    :func:`_build_weighted_bands`, for concrete payloads only.
-    """
-    d_a, d_b = dims
-    total_dim = d_a * d_b
-    xp = _array_namespace(matrix)
-    parent_norm = _concrete_parent_norm(matrix)
-    flat_idx = xp.arange(total_dim, dtype=int)
-    row_a = (flat_idx // d_b)[:, None]
-    row_b = (flat_idx % d_b)[:, None]
-    col_a = (flat_idx // d_b)[None, :]
-    col_b = (flat_idx % d_b)[None, :]
-    delta_a_grid = col_a - row_a
-    delta_b_grid = col_b - row_b
-    zero = xp.zeros_like(matrix)
-
-    bands: dict[tuple[int, int], Any] = {}
-    for delta_a in range(-(d_a - 1), d_a):
-        for delta_b in range(-(d_b - 1), d_b):
-            band = xp.where((delta_a_grid == delta_a) & (delta_b_grid == delta_b), matrix, zero)
-            if parent_norm is not None and _frobenius_norm(band) <= _BAND_NORM_RTOL * parent_norm:
-                continue
-            bands[(delta_a, delta_b)] = band
     return bands
 
 

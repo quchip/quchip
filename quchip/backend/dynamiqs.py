@@ -39,6 +39,7 @@ from dynamiqs.qarrays.sparsedia_qarray import SparseDIAQArray
 
 import jax  # noqa: E402
 import jax.numpy as jnp  # noqa: E402
+import jax.scipy.linalg as jsp_linalg  # noqa: E402
 import jax.tree_util as jtu  # noqa: E402
 
 from quchip.backend._dims import (  # noqa: E402
@@ -514,11 +515,16 @@ class DynamiqsBackend(Backend):
         )
         return self._wrap_result(result, solver="mesolve")
 
+    def _stationary_liouvillian(self, engine_result: Any) -> Any:
+        """Lower one static engine description to Dynamiqs' JAX Liouvillian."""
+        if engine_result.dynamic_terms:
+            raise ValueError("Stationary analysis requires a static resolved Hamiltonian.")
+        hamiltonian = self.prepare_hamiltonian(engine_result).rhs
+        collapse_ops = self._collapse_operators(engine_result)
+        return self.to_array(dq.slindbladian(hamiltonian, collapse_ops))
+
     def steadystate(self, problem: Any) -> SteadyStateSolverResult:
         """Solve a static Lindblad generator by a trace-constrained JAX solve."""
-        if problem.engine_result.dynamic_terms:
-            raise ValueError("steadystate() requires a static resolved Hamiltonian.")
-
         options = dict(problem.options)
         method = options.pop("method", "direct")
         if method != "direct":
@@ -529,9 +535,7 @@ class DynamiqsBackend(Backend):
                 "Unknown Dynamiqs steady-state options: " + ", ".join(sorted(options))
             )
 
-        prepared = self.prepare_hamiltonian(problem.engine_result)
-        collapse_ops = self._collapse_operators(problem.engine_result)
-        liouvillian = self.to_array(dq.slindbladian(prepared.rhs, collapse_ops))
+        liouvillian = self._stationary_liouvillian(problem.engine_result)
         dimension = math.prod(problem.engine_result.dims)
 
         trace_row = jnp.zeros((dimension * dimension,), dtype=jnp.complex128)
@@ -570,6 +574,62 @@ class DynamiqsBackend(Backend):
             nullity=nullity,
             condition_number=condition_number,
         )
+
+    def stationary_resolvent(
+        self,
+        engine_result: Any,
+        source: Any,
+        observables: tuple[tuple[str, Any], ...],
+        frequencies: Any,
+    ) -> dict[str, Any]:
+        """Evaluate stationary resolvents with Dynamiqs' JAX Liouvillian."""
+        liouvillian = self._stationary_liouvillian(engine_result)
+        dimension = math.prod(engine_result.dims)
+        source_vector = jnp.asarray(source.to_dense(), dtype=jnp.complex128).T.reshape(-1)
+        trace_row = jnp.zeros((dimension * dimension,), dtype=jnp.complex128)
+        trace_row = trace_row.at[:: dimension + 1].set(1.0)
+        identity = jnp.eye(dimension * dimension, dtype=jnp.complex128)
+        native_observables = tuple(
+            (label, jnp.asarray(operator.to_dense(), dtype=jnp.complex128))
+            for label, operator in observables
+        )
+        values: dict[str, list[Any]] = {label: [] for label, _ in observables}
+        target = source_vector.at[-1].set(0.0)
+
+        for frequency in jnp.atleast_1d(jnp.asarray(frequencies, dtype=float)):
+            shifted = liouvillian + 1j * (2.0 * jnp.pi) * frequency * identity
+            constrained = shifted.at[-1, :].set(trace_row)
+            response = jnp.linalg.solve(constrained, target).reshape((dimension, dimension)).T
+            for label, observable in native_observables:
+                values[label].append(jnp.trace(observable @ response))
+
+        return {label: jnp.asarray(items) for label, items in values.items()}
+
+    def stationary_propagate(
+        self,
+        engine_result: Any,
+        initial: Any,
+        observables: tuple[tuple[str, Any], ...],
+        times: Any,
+    ) -> dict[str, Any]:
+        """Propagate regression operators with Dynamiqs' JAX Liouvillian."""
+        liouvillian = self._stationary_liouvillian(engine_result)
+        dimension = math.prod(engine_result.dims)
+        initial_vector = jnp.asarray(initial.to_dense(), dtype=jnp.complex128).T.reshape(-1)
+        native_observables = tuple(
+            (label, jnp.asarray(operator.to_dense(), dtype=jnp.complex128))
+            for label, operator in observables
+        )
+        values: dict[str, list[Any]] = {label: [] for label, _ in observables}
+
+        for time in jnp.atleast_1d(jnp.asarray(times, dtype=float)):
+            evolved = (jsp_linalg.expm(liouvillian * time) @ initial_vector).reshape(
+                (dimension, dimension)
+            ).T
+            for label, observable in native_observables:
+                values[label].append(jnp.trace(observable @ evolved))
+
+        return {label: jnp.asarray(items) for label, items in values.items()}
 
     # ------------------------------------------------------------------
     # Cached single-problem dispatch (amortize the XLA/diffrax compile floor)

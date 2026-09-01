@@ -40,7 +40,7 @@ def test_internal_loss_and_ports_are_distinct_collapse_channels() -> None:
     np.testing.assert_allclose(rates["out"], 2 * np.pi * 6.8 / 18_000)
     assert paths["in"] == ("r.freq", "port.in.external_quality_factor")
     assert [term.label for term in port_terms] == ["in", "out"]
-    assert port_terms[0].operator is next(term.operator for term in terms if term.source == "in")
+    assert port_terms[0] is next(term for term in terms if term.source == "in")
 
 
 def test_loaded_quality_factor_name_is_removed() -> None:
@@ -91,9 +91,11 @@ def test_collective_port_can_span_more_than_two_devices() -> None:
     )
     chip = Chip(devices, ports=[Port(devices, rate=0.01, operator=operator, label="common")])
 
-    term = next(term for term in chip.resolve().collapse_terms if term.source == "common")
+    resolved = chip.resolve(frame={device.label: 6.0 for device in devices})
+    term = next(term for term in resolved.collapse_terms if term.source == "common")
 
     np.testing.assert_allclose(term.operator.to_dense(), operator)
+    assert term.frame_frequency == pytest.approx(6.0)
     assert chip.partition().is_trivial
 
 
@@ -143,6 +145,10 @@ def test_port_with_mixed_frame_bands_is_rejected_as_dynamic() -> None:
     assert chip.resolve(frame="lab").port_terms[0].frame_frequency == 0.0
     with pytest.raises(ValueError, match="different phases"):
         chip.resolve(frame={"r": 6.0})
+
+    nearly_lowering = Port(resonator, rate=0.02, operator=lowering + 1e-11 * lowering.T, label="p")
+    near_chip = Chip([resonator], ports=[nearly_lowering])
+    assert near_chip.resolve(frame={"r": 6.0}).port_terms[0].frame_frequency == pytest.approx(6.0)
 
 
 def test_explicit_port_uses_the_resolved_energy_frame_for_charge_basis_devices() -> None:

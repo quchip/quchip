@@ -205,8 +205,16 @@ def test_dynamiqs_finite_response_is_jittable_and_differentiable() -> None:
     assert jnp.isfinite(gradient)
 
 
-def test_dynamiqs_explicit_port_frequency_is_jittable_and_differentiable() -> None:
-    """A fixed explicit port operator keeps the VNA frequency traceable."""
+@pytest.mark.parametrize(
+    ("amplitude", "frequency"),
+    [(0.01, 6.0), (None, 6.01)],
+    ids=["finite", "small-signal"],
+)
+def test_dynamiqs_explicit_port_frequency_is_jittable_and_differentiable(
+    amplitude: float | None,
+    frequency: float,
+) -> None:
+    """Finite and differential VNA paths preserve an explicit port's traced frequency."""
     pytest.importorskip("dynamiqs")
     import jax
     import jax.numpy as jnp
@@ -217,9 +225,9 @@ def test_dynamiqs_explicit_port_frequency_is_jittable_and_differentiable() -> No
     vna = VNA(Chip([resonator], ports=[port], backend="dynamiqs"), input=port, outputs=[port])
 
     def reflection(frequency):
-        return jnp.real(vna.sweep(jnp.asarray([frequency]), amplitude=0.01).s11[0])
+        return jnp.real(vna.sweep(jnp.asarray([frequency]), amplitude=amplitude).s11[0])
 
-    value, gradient = jax.jit(jax.value_and_grad(reflection))(jnp.asarray(6.0))
+    value, gradient = jax.jit(jax.value_and_grad(reflection))(jnp.asarray(frequency))
 
     assert jnp.isfinite(value)
     assert jnp.isfinite(gradient)

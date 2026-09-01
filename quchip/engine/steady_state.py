@@ -93,7 +93,7 @@ def steadystate_batch(
     progress: bool = True,
 ) -> SteadyStateBatchResult:
     """Solve stationary states over Cartesian or zipped parameter axes."""
-    from quchip.sweep import ZippedSweep, _iter_axis_points
+    from quchip.sweep import _axis_metadata, _iter_axis_points
 
     shape, expanded = _iter_axis_points(axes)
     iterator = expanded
@@ -112,19 +112,8 @@ def steadystate_batch(
         )
         for _, params in iterator
     ]
-    axis_metadata: list[tuple[str, Any]] = []
-    for axis in axes:
-        if isinstance(axis, ZippedSweep):
-            names = tuple(member.name for member in axis.sweeps)
-            values = tuple(
-                {member.name: member.values[index] for member in axis.sweeps}
-                for index in range(axis.size)
-            )
-            axis_metadata.append(("/".join(names), values))
-        else:
-            axis_metadata.append((axis.name, axis.values))
     return SteadyStateBatchResult(
         results,
         shape=shape,
-        axes=tuple(axis_metadata),
+        axes=_axis_metadata(axes),
     )

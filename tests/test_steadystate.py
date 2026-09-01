@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
+
 import numpy as np
 import pytest
 
@@ -145,3 +147,5 @@ def test_steady_state_batch_preserves_sweep_shape_and_expectations() -> None:
     assert result.shape == (3,)
     assert result.axes[0][0] == "r.thermal_population"
     np.testing.assert_allclose(np.real(result.expect(mode)), [0.0, 0.09998, 0.19936], atol=8e-4)
+    with pytest.raises(FrozenInstanceError):
+        result._shape = (99,)

@@ -708,6 +708,38 @@ class Backend(ABC):
         """Solve one static Lindblad problem in the backend's native representation."""
         raise NotImplementedError(f"{type(self).__name__} must implement steadystate()")
 
+    def stationary_resolvent(
+        self,
+        engine_result: "EngineResult",
+        source: "CanonicalOperator",
+        observables: tuple[tuple[str, "CanonicalOperator"], ...],
+        frequencies: Any,
+    ) -> dict[str, Any]:
+        """Evaluate trace-zero stationary resolvents in the backend's native representation.
+
+        For every ordinary-GHz offset ``f``, solve
+        ``(L + i 2π f) X = source`` with ``Tr(X) = 0`` and return
+        ``Tr(observable X)`` for each named observable. The engine supplies
+        canonical operators; each backend owns Liouvillian construction and
+        the numerical linear solve.
+        """
+        raise NotImplementedError(f"{type(self).__name__} must implement stationary_resolvent()")
+
+    def stationary_propagate(
+        self,
+        engine_result: "EngineResult",
+        initial: "CanonicalOperator",
+        observables: tuple[tuple[str, "CanonicalOperator"], ...],
+        times: Any,
+    ) -> dict[str, Any]:
+        """Propagate an operator under a static Liouvillian and evaluate observables.
+
+        ``initial`` need not be a normalized density matrix. This supports
+        quantum-regression queries while keeping the propagation algorithm
+        and numerical Liouvillian backend-owned.
+        """
+        raise NotImplementedError(f"{type(self).__name__} must implement stationary_propagate()")
+
     def parallel_solve_problems(
         self,
         problems: list["SolveProblem"],

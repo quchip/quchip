@@ -20,7 +20,7 @@ Girvin & Wallraff, *Circuit quantum electrodynamics*, Rev. Mod. Phys.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
 import numpy as np
 
@@ -188,6 +188,28 @@ def _iter_axis_points(
             params.update(groups[group_index][entry_index])
         expanded.append((coord, params))
     return shape, expanded
+
+
+def _axis_metadata(
+    axes: Sequence[Sweep | ZippedSweep],
+    rename: Callable[[str], str] = str,
+) -> tuple[tuple[str, Any], ...]:
+    """Return named grid metadata for ordinary and zipped sweep axes."""
+    metadata: list[tuple[str, Any]] = []
+    for axis in axes:
+        if isinstance(axis, ZippedSweep):
+            names = tuple(rename(sweep.name) for sweep in axis.sweeps)
+            values = tuple(
+                {
+                    name: sweep.values[index]
+                    for name, sweep in zip(names, axis.sweeps, strict=True)
+                }
+                for index in range(axis.size)
+            )
+            metadata.append(("/".join(names), values))
+        else:
+            metadata.append((rename(axis.name), axis.values))
+    return tuple(metadata)
 
 
 @dataclass
