@@ -994,7 +994,7 @@ class Chip:
         force: bool = False,
         labeling: str = "DE",
     ) -> DressedResult:
-        """Compute (or retrieve) the dressed-state decomposition. See :meth:`ChipAnalysis.dress`."""
+        """Diagonalize the exact lab-frame Hamiltonian, independently of :attr:`approximation`."""
         return self._analysis.dress(
             overlap_threshold=overlap_threshold,
             force=force,
