@@ -116,6 +116,7 @@ lowering applies `sqrt(rate)` exactly once.
 
 Source: [`quchip/chip/ports.py`](quchip/chip/ports.py),
 [`quchip/control/field.py`](quchip/control/field.py),
+[`quchip/observables.py`](quchip/observables.py),
 [`quchip/engine/input_output.py`](quchip/engine/input_output.py),
 [`quchip/analysis/vna.py`](quchip/analysis/vna.py)
 
@@ -160,8 +161,25 @@ For the one-port identity case this reduces to the angular Hamiltonian
 H_input = i (beta_p^* L_p - beta_p L_p^dagger).
 ```
 
-Mean output, spectra, and correlations use the same `L_p`. For a single
-resonator, `external_quality_factor` gives
+Transient output observables are reconstructed from that same solve-bound
+model:
+
+```text
+<b_out,j> = c_j + <L_j>,
+<X_theta,j> = Re[exp(-i theta) <b_out,j>],
+<b_out,j^dagger b_out,j>
+  = |c_j|^2 + 2 Re[c_j^* <L_j>] + <L_j^dagger L_j>.
+```
+
+`OutputAmplitude`, `OutputQuadrature`, and `OutputPhotonFlux` lower only the
+required `L_j` and `L_j^dagger L_j` moments into backend expectation
+operators. The coherent background is evaluated from the retained beta
+programs; it is not inserted as an identity operator. The last expression is
+normally ordered photon flux. A reciprocal exposure delay shifts the complete
+boundary trace to the reported reference plane, with zero field before the
+simulation's initial boundary data can arrive.
+
+For a single resonator, `external_quality_factor` gives
 `kappa_p = 2π * freq / Q_external`. Internal resonator loss and every port are
 separate collapse channels, so `kappa_total` is their sum.
 
@@ -401,8 +419,17 @@ This makes `result.expect` a **co-rotating readout**: observables are always rep
 `Tr(rho_ss) = 1`. It requires a static resolved Hamiltonian and a unique
 normalized stationary state. `VNA.sweep()` adds continuous-wave port terms in
 their stationary tone frames. Small-signal scattering differentiates the
-output mean around the fixed-tone state; finite-amplitude scattering subtracts
-that operating-point output and divides by the swept input amplitude.
+output mean around the fixed-tone state,
+
+```text
+S_ji(f) = d <b_out,j> / d beta_in,i  at beta_probe -> 0.
+```
+
+The direct term comes from the resolved scalar `S`; the system term comes from
+the stationary response of `L` under the same coherent-input Hamiltonian.
+Finite-power spectroscopy is a `CoherentInput` time-domain simulation, not a
+second VNA probe mode. Fixed finite pumps remain valid VNA operating-point
+fields.
 The engine supplies canonical sources and observables for stationary response,
 spectrum, and correlation queries. Each backend constructs and solves its own
 native Liouvillian.

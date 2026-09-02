@@ -13,24 +13,16 @@ from quchip.utils.labeling import resolve_label
 
 @dataclass(frozen=True)
 class SParameterResult:
-    """Complex port response over a declared VNA sweep grid."""
+    """Complex small-signal scattering over a declared VNA sweep grid."""
 
     frequencies: Any
     input_port: str
     output_ports: tuple[str, ...]
-    input_amplitudes: Any | None
-    input_photon_fluxes: Any | None
-    input_powers: Any | None
     axes: tuple[tuple[str, Any], ...]
     shape: tuple[int, ...]
     steady_states: tuple[Any, ...]
     diagnostics: tuple[Mapping[str, Any], ...]
     _response: Mapping[tuple[str, str], Any] = field(repr=False)
-
-    @property
-    def input_power_unit(self) -> str:
-        """Unit of :attr:`input_powers`."""
-        return "W"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_response", MappingProxyType(dict(self._response)))

@@ -18,6 +18,11 @@ This module performs the two operations that tie those frames together:
   transformation applied to each band — equivalent to moving the
   observable from the simulation frame to the control frame.
 
+Output-field specs take a parallel path: they lower the resolved ``L`` and
+``L dagger L`` moments before the solve, then reconstruct ``S beta + L`` from
+the solve-bound coherent inputs and propagate it to the exposure reference
+plane afterward.
+
 Observable reconstruction reads per-device demodulation frequencies from
 :class:`~quchip.engine.ir.ResolvedFrame` and forms the demodulation
 phase ``exp(i · 2π · ω · w · t)``. This is the inverse of the
@@ -27,13 +32,20 @@ rotating-frame shift applied to the Hamiltonian during assembly.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence
 
 import numpy as np
 
 from quchip.backend import Backend, SolverResult
 from quchip.chip.chip import Chip
 from quchip.engine.ir import ResolvedFrame
+from quchip.observables import (
+    OutputAmplitude,
+    OutputObservable,
+    OutputPhotonFlux,
+    OutputQuadrature,
+    is_output_observable,
+)
 from quchip.results.results import ObservableTrace
 from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import array_namespace as _array_namespace
@@ -62,6 +74,15 @@ class BandMeta:
     sub_index: int | None = None
 
 
+@dataclass(frozen=True)
+class OutputMeta:
+    """Reconstruction recipe for one solver-facing output operator."""
+
+    key: EOpKey
+    observable: OutputObservable
+    role: Literal["amplitude", "flux"]
+
+
 def _resolve_eop_key(key: Any) -> EOpKey:
     if isinstance(key, str):
         return key
@@ -75,7 +96,8 @@ def decompose_eops(
     chip: Chip,
     backend: Backend,
     bases: Mapping[str, Any] | None = None,
-) -> tuple[list[Any], list[BandMeta]]:
+    engine_result: Any | None = None,
+) -> tuple[list[Any], list[BandMeta | OutputMeta]]:
     """Flatten dict-form ``e_ops`` into ``(ops, meta)`` ready for the solver.
 
     Supported key shapes:
@@ -86,6 +108,9 @@ def decompose_eops(
     * ``("label_a", "label_b")`` with a tuple ``(op_a, op_b)`` — each
       operator is split into single-mode bands on its device and all
       band pairs are tensored, producing two-body ``(w_a, w_b)`` bands.
+    * A string trace name with an ``OutputAmplitude``, ``OutputQuadrature``,
+      or ``OutputPhotonFlux`` value — the required resolved SLH moments are
+      lowered directly and reconstructed after the solve.
 
     For each band, the returned :class:`BandMeta` records the original
     key, the weight, and the sub-index (distinguishing entries when the
@@ -96,12 +121,30 @@ def decompose_eops(
         bases = chip.resolve().bases
 
     flat_ops: list[Any] = []
-    meta: list[BandMeta] = []
+    meta: list[BandMeta | OutputMeta] = []
 
     dims = chip.dims
 
     for raw_key, val in e_ops_dict.items():
         key = _resolve_eop_key(raw_key)
+
+        if is_output_observable(val):
+            if not isinstance(key, str):
+                raise ValueError("Output observable trace names must be strings.")
+            if engine_result is None:
+                raise ValueError(
+                    "Output observables require a resolved transient solve; "
+                    "pass them to QuantumSequence.simulate(..., e_ops=...)."
+                )
+            _append_output_eops(
+                flat_ops,
+                meta,
+                key=key,
+                observable=val,
+                engine_result=engine_result,
+                backend=backend,
+            )
+            continue
 
         if isinstance(key, str):
             device_label = key
@@ -191,6 +234,49 @@ def decompose_eops(
         raise ValueError("e_ops dict keys must be device labels (str) or 2-tuples of device labels")
 
     return flat_ops, meta
+
+
+def _append_output_eops(
+    flat_ops: list[Any],
+    meta: list[BandMeta | OutputMeta],
+    *,
+    key: EOpKey,
+    observable: OutputObservable,
+    engine_result: Any,
+    backend: Backend,
+) -> None:
+    """Lower one field recipe to the moments the backend must evaluate."""
+    external = {channel.key: channel for channel in engine_result.slh.external_channels}
+    channel = external.get(observable.exposure)
+    if channel is None:
+        raise ValueError(
+            f"Unknown output exposure {observable.exposure!r}. "
+            f"Available exposures: {list(external)}."
+        )
+
+    coupling = channel.coupling
+    flat_ops.append(backend.from_canonical_operator(coupling))
+    meta.append(OutputMeta(key=key, observable=observable, role="amplitude"))
+    if not isinstance(observable, OutputPhotonFlux):
+        return
+
+    values = coupling.to_dense()
+    xp = backend.array_module
+    number = xp.conj(xp.swapaxes(values, -1, -2)) @ values
+    from quchip.engine.ir import CanonicalOperator
+
+    flat_ops.append(
+        backend.from_canonical_operator(
+            CanonicalOperator.from_dense(
+                number,
+                dims=coupling.dims,
+                basis=coupling.basis,
+                subsystem_labels=coupling.subsystem_labels,
+                tag=f"output_flux:{observable.exposure}",
+            )
+        )
+    )
+    meta.append(OutputMeta(key=key, observable=observable, role="flux"))
 
 
 def recombine_expect(
@@ -287,8 +373,9 @@ def build_observable_traces(
     tlist: np.ndarray,
     chip: Chip,
     *,
-    dict_meta: list[BandMeta],
+    dict_meta: list[BandMeta | OutputMeta],
     resolved_frame: ResolvedFrame,
+    engine_result: Any,
 ) -> dict[EOpKey, ObservableTrace | list[ObservableTrace]]:
     """Wrap solver expectations into phase-corrected :class:`ObservableTrace` objects.
 
@@ -298,15 +385,21 @@ def build_observable_traces(
     e_ops keys. Each value is an :class:`ObservableTrace` (or a list
     when the user supplied multiple operators for the same key).
     """
-    del chip  # recombination uses the resolved frame metadata
+    del chip  # reconstruction uses resolved solve metadata
     raw_expect = solver_result.expect
     if isinstance(raw_expect, dict):
         flat_expect: Sequence[Any] = list(raw_expect.values())
     else:
         flat_expect = raw_expect or []
+    ordinary_expect = [
+        values
+        for values, meta in zip(flat_expect, dict_meta, strict=True)
+        if isinstance(meta, BandMeta)
+    ]
+    ordinary_meta = [meta for meta in dict_meta if isinstance(meta, BandMeta)]
     band_sum, phase_corrected = recombine_expect(
-        flat_expect=flat_expect,
-        meta_list=dict_meta,
+        flat_expect=ordinary_expect,
+        meta_list=ordinary_meta,
         tlist=tlist,
         frame_freqs=resolved_frame.demod_freqs,
         direction="demodulate",
@@ -321,4 +414,100 @@ def build_observable_traces(
             ]
         else:
             traces[key] = ObservableTrace(values=values, raw=raw)
+    traces.update(
+        _build_output_traces(
+            flat_expect,
+            dict_meta,
+            tlist=tlist,
+            engine_result=engine_result,
+        )
+    )
     return traces
+
+
+def _build_output_traces(
+    flat_expect: Sequence[Any],
+    meta_list: Sequence[BandMeta | OutputMeta],
+    *,
+    tlist: Any,
+    engine_result: Any,
+) -> dict[EOpKey, ObservableTrace]:
+    """Reconstruct ``b_out = S b_in + L`` moments at reference planes."""
+    output_pairs = [
+        (values, meta)
+        for values, meta in zip(flat_expect, meta_list, strict=True)
+        if isinstance(meta, OutputMeta)
+    ]
+    if not output_pairs:
+        return {}
+
+    sample = output_pairs[0][0]
+    xp = _array_namespace(sample)
+    times = xp.asarray(tlist, dtype=float)
+    external = engine_result.slh.external_channels
+    exposure_index = {channel.key: index for index, channel in enumerate(external)}
+    incident = [xp.zeros_like(times, dtype=complex) for _ in external]
+    from quchip.engine.ir import evaluate_signal_program
+
+    for bound in engine_result.coherent_inputs:
+        index = exposure_index.get(bound.exposure)
+        if index is not None:
+            incident[index] = incident[index] + evaluate_signal_program(
+                bound.beta,
+                times,
+                xp=xp,
+            )
+
+    grouped: dict[EOpKey, dict[str, Any]] = {}
+    specs: dict[EOpKey, OutputObservable] = {}
+    for values, meta in output_pairs:
+        grouped.setdefault(meta.key, {})[meta.role] = xp.asarray(values)
+        specs[meta.key] = meta.observable
+
+    traces: dict[EOpKey, ObservableTrace] = {}
+    for key, moments in grouped.items():
+        observable = specs[key]
+        output_index = exposure_index[observable.exposure]
+        channel = external[output_index]
+        direct = xp.zeros_like(times, dtype=complex)
+        for input_index, beta in enumerate(incident):
+            direct = direct + xp.asarray(engine_result.slh.S[output_index, input_index]) * beta
+
+        frame_frequency = (
+            0.0
+            if channel.collapse.frame_frequency is None
+            else channel.collapse.frame_frequency
+        )
+        carrier = xp.exp(-1j * TWO_PI * xp.asarray(frame_frequency) * times)
+        lowering = carrier * moments["amplitude"]
+        field = direct + lowering
+
+        if isinstance(observable, OutputAmplitude):
+            boundary = field
+        elif isinstance(observable, OutputQuadrature):
+            boundary = xp.real(xp.exp(-1j * xp.asarray(observable.phase)) * field)
+        else:
+            number = xp.real(moments["flux"])
+            boundary = (
+                xp.abs(direct) ** 2
+                + 2.0 * xp.real(xp.conj(direct) * lowering)
+                + number
+            )
+        values = _delay_trace(boundary, times, channel.reference_delay, xp)
+        traces[key] = ObservableTrace(values=values, raw=boundary)
+    return traces
+
+
+def _delay_trace(values: Any, times: Any, delay: Any, xp: Any) -> Any:
+    """Propagate one boundary trace to its reciprocal external reference plane."""
+    from quchip.utils.jax_utils import maybe_concrete_scalar
+
+    concrete = maybe_concrete_scalar(delay)
+    if concrete is not None and concrete == 0.0:
+        return values
+    query = times - xp.asarray(delay)
+    real = xp.interp(query, times, xp.real(values), left=0.0, right=0.0)
+    if not xp.iscomplexobj(values):
+        return real
+    imag = xp.interp(query, times, xp.imag(values), left=0.0, right=0.0)
+    return real + 1j * imag

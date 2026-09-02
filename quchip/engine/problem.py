@@ -206,6 +206,7 @@ def _prepare_context_eops(
         context.chip,
         context.chip.backend,
         engine_result.bases,
+        engine_result=engine_result,
     )
 
 

@@ -102,8 +102,9 @@ through total Hilbert dimension 16 by default. Change that threshold with
 The dynamiqs backend uses `method="direct"`. dynamiqs does not supply a public
 steady-state solver in the supported release, so quchip constructs the
 Liouvillian, replaces one row with `Tr(rho) = 1`, and calls `jax.numpy.linalg.solve`.
-That path keeps stationary observables and finite-amplitude VNA response inside
-JAX transformations. It reports the residual, nullity, and condition number;
+That path keeps stationary observables, pumped small-signal VNA response, and
+transient output observables inside JAX transformations. It reports the
+residual, nullity, and condition number;
 it does not add a regularizer to a singular generator. Outside JAX tracing a
 non-unique generator raises. Inside `jax.jit`, where Python exceptions cannot
 depend on traced values, the result state is `NaN` when the nullity is not one.

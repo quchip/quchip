@@ -127,6 +127,7 @@ from quchip.engine import (
 )
 from quchip.interop import EigenbasisDevice, ModelMapping
 from quchip.inverse_design import FitADressResult, FitParameterReport, ObservableReport, fit_a_dress
+from quchip.observables import OutputAmplitude, OutputPhotonFlux, OutputQuadrature
 from quchip.results import (
     ObservableTrace,
     PartitionedSimulationResult,
@@ -238,6 +239,9 @@ __all__ = [
     "steadystate_batch",
     "build_steadystate_problem",
     "ObservableTrace",
+    "OutputAmplitude",
+    "OutputQuadrature",
+    "OutputPhotonFlux",
     "SimulationBatchResult",
     "SimulationResult",
     "SteadyStateResult",

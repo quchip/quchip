@@ -20,8 +20,9 @@ from quchip.results.input_output import (
     SParameterResult,
 )
 from quchip.sweep import Sweep, ZippedSweep, _axis_metadata, _iter_axis_points
-from quchip.utils.constants import TWO_PI, hbar
+from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
+from quchip.utils.labeling import resolve_label
 
 
 @dataclass(frozen=True)
@@ -34,13 +35,20 @@ class PortTone:
     _index: int
 
 
+@dataclass(frozen=True)
+class _ExposureRef:
+    """Validated external SLH exposure retained by label."""
+
+    label: str
+
+
 class VNA:
-    """Sweep one input port and report complex output-field response."""
+    """Sweep one incident exposure and report differential output scattering."""
 
     def __init__(self, chip: Any, *, input: Any, outputs: list[Any] | tuple[Any, ...]) -> None:
         self.chip = chip
-        self.input = chip.port(input)
-        self.outputs = tuple(chip.port(port) for port in outputs)
+        self.input = _resolve_exposure(chip, input)
+        self.outputs = tuple(_resolve_exposure(chip, port) for port in outputs)
         if not self.outputs:
             raise ValueError("VNA requires at least one output port.")
         labels = [port.label for port in self.outputs]
@@ -51,7 +59,7 @@ class VNA:
 
     def pump(self, port: Any, *, freq: Any, amplitude: Any) -> PortTone:
         """Add a fixed background tone and return its variation handle."""
-        resolved = self.chip.port(port)
+        resolved = _resolve_exposure(self.chip, port)
         tone = PortTone(resolved.label, freq, amplitude, len(self._tones))
         self._tones.append(tone)
         return tone
@@ -75,25 +83,20 @@ class VNA:
         self,
         frequencies: Any,
         *variations: Sweep | ZippedSweep,
-        amplitude: Any | None = None,
         options: dict | None = None,
         progress: bool = False,
     ) -> SParameterResult:
-        """Compute differential or finite-amplitude scattering response."""
+        """Compute the differential scattering response around fixed pumps."""
         self._validate_variations(variations)
         freq_values, freq_is_axis = _axis_values(frequencies)
-        amplitude_values, amplitude_is_axis = _amplitude_values(amplitude)
         variation_shape, variation_points = _iter_axis_points(variations)
         shape = variation_shape
-        if amplitude_is_axis:
-            shape += (len(amplitude_values),)
         if freq_is_axis:
             shape += (len(freq_values),)
 
         points = [
-            (coord, params, amplitude_index, probe_amplitude, frequency_index, frequency)
+            (coord, params, frequency_index, frequency)
             for coord, params in variation_points
-            for amplitude_index, probe_amplitude in enumerate(amplitude_values)
             for frequency_index, frequency in enumerate(freq_values)
         ]
         iterator: Any = points
@@ -106,7 +109,7 @@ class VNA:
         steady_states: list[Any] = []
         diagnostics: list[dict[str, Any]] = []
         operating_cache: dict[tuple[tuple[int, ...], int], tuple[Any, Any, Any]] = {}
-        for coord, params, _amplitude_index, probe_amplitude, frequency_index, frequency in iterator:
+        for coord, params, frequency_index, frequency in iterator:
             cache_key = (coord, frequency_index)
             if cache_key not in operating_cache:
                 tones = self._tone_values(params)
@@ -121,33 +124,16 @@ class VNA:
                 operating_cache[cache_key] = (operating_engine, operating, resolved_operators)
             operating_engine, operating, resolved_operators = operating_cache[cache_key]
 
-            if amplitude is None:
-                values = _small_signal_response(
-                    operating_engine,
-                    operating.state,
-                    self.chip.backend,
-                    resolved_operators,
-                    self.input.label,
-                    tuple(port.label for port in self.outputs),
-                )
-                state = operating
-            else:
-                driven_engine = add_port_inputs(
-                    operating_engine,
-                    self.chip.backend,
-                    ((self.input.label, frequency, probe_amplitude),),
-                )
-                driven = _solve_engine(self.chip, driven_engine, options)
-                values = _finite_response(
-                    operating.state,
-                    driven.state,
-                    self.chip.backend,
-                    resolved_operators,
-                    self.input.label,
-                    tuple(port.label for port in self.outputs),
-                    probe_amplitude,
-                )
-                state = driven
+            values = _small_signal_response(
+                operating_engine,
+                operating.state,
+                self.chip.backend,
+                resolved_operators,
+                self.input.label,
+                tuple(port.label for port in self.outputs),
+                frequency,
+            )
+            state = operating
 
             for label, value in values.items():
                 responses[label].append(value)
@@ -167,30 +153,12 @@ class VNA:
             for label, values in responses.items()
         }
         axes = _public_axes(variations, self._tones)
-        if amplitude_is_axis:
-            axes += (("amplitude", amplitude_values),)
         if freq_is_axis:
             axes += (("frequency", freq_values),)
-        photon_fluxes = (
-            None
-            if amplitude is None
-            else xp.abs(xp.asarray(amplitude_values if amplitude_is_axis else amplitude)) ** 2
-        )
         return SParameterResult(
             frequencies=freq_values if freq_is_axis else freq_values[0],
             input_port=self.input.label,
             output_ports=tuple(port.label for port in self.outputs),
-            input_amplitudes=(amplitude_values if amplitude_is_axis else amplitude),
-            input_photon_fluxes=photon_fluxes,
-            input_powers=_input_powers(
-                photon_fluxes,
-                freq_values if freq_is_axis else freq_values[0],
-                amplitude_is_axis=amplitude_is_axis,
-                frequency_is_axis=freq_is_axis,
-                variation_rank=len(variation_shape),
-                result_shape=shape,
-                xp=xp,
-            ),
             axes=axes,
             shape=shape,
             steady_states=tuple(steady_states),
@@ -217,7 +185,7 @@ class VNA:
         coherent carrier is reported separately because it is a delta peak,
         not a finite sampled spectral density.
         """
-        output_port = self.chip.port(output)
+        output_port = _resolve_exposure(self.chip, output)
         frequency_values, _ = _axis_values(frequencies)
         engine, state, operators, incoming = self._stationary_output(options)
         xp = self.chip.backend.array_module
@@ -288,8 +256,8 @@ class VNA:
         order: int,
         options: dict | None,
     ) -> OutputCorrelationResult:
-        output_port = self.chip.port(output)
-        input_port = output_port if input is None else self.chip.port(input)
+        output_port = _resolve_exposure(self.chip, output)
+        input_port = output_port if input is None else _resolve_exposure(self.chip, input)
         delay_values, _ = _axis_values(delays)
         if not contains_tracer(delay_values) and np.any(np.asarray(delay_values) < 0):
             raise ValueError("Stationary output correlations require non-negative delays.")
@@ -367,13 +335,9 @@ class VNA:
         options: dict | None,
     ) -> tuple[EngineResult, Any, dict[str, CanonicalOperator], dict[str, Any]]:
         tones = self._tone_values({})
-        incoming: dict[str, Any] = {}
-        for port_label, _frequency, amplitude in tones:
-            incoming[port_label] = incoming.get(port_label, 0.0) + amplitude
-        target = self.input.resolve_targets(self.chip)[0]
         reference_frequency = next(
             (frequency for port_label, frequency, _ in tones if port_label == self.input.label),
-            getattr(self.chip[target], "freq"),
+            _exposure_reference_frequency(self.chip, self.input.label),
         )
         engine = resolve_stationary_engine(
             self.chip,
@@ -382,7 +346,27 @@ class VNA:
         )
         driven_engine = add_port_inputs(engine, self.chip.backend, tones)
         state = _solve_engine(self.chip, driven_engine, options)
-        return driven_engine, state, port_operators(driven_engine, self.chip.backend), incoming
+        incoming = _stationary_output_backgrounds(driven_engine, tones, self.chip.backend)
+        operators = port_operators(driven_engine, self.chip.backend)
+        xp = self.chip.backend.array_module
+        for channel in driven_engine.slh.external_channels:
+            frequency = (
+                0.0
+                if channel.collapse.frame_frequency is None
+                else channel.collapse.frame_frequency
+            )
+            phase = xp.exp(
+                1j
+                * TWO_PI
+                * xp.asarray(frequency)
+                * xp.asarray(channel.reference_delay)
+            )
+            operators[channel.key] = operators[channel.key].scaled(
+                phase,
+                tag=f"reference_plane:{channel.key}",
+            )
+            incoming[channel.key] = phase * incoming[channel.key]
+        return driven_engine, state, operators, incoming
 
     def _tone_values(self, params: dict[str, Any]) -> tuple[tuple[str, Any, Any], ...]:
         tones: list[tuple[str, Any, Any]] = []
@@ -402,13 +386,24 @@ def _axis_values(values: Any) -> tuple[Any, bool]:
     return array, True
 
 
-def _amplitude_values(amplitude: Any | None) -> tuple[Any, bool]:
-    if amplitude is None or np.ndim(amplitude) == 0:
-        return (amplitude,), False
-    array = amplitude if hasattr(amplitude, "shape") else np.asarray(amplitude)
-    if len(array) == 0:
-        raise ValueError("VNA amplitude sweep cannot be empty.")
-    return array, True
+def _resolve_exposure(chip: Any, value: Any) -> _ExposureRef:
+    """Resolve a Port object or label against the external SLH boundary."""
+    label = resolve_label(value)
+    available = [channel.key for channel in chip.resolve().slh.external_channels]
+    if label not in available:
+        raise ValueError(f"Unknown VNA exposure {label!r}. Available exposures: {available}.")
+    return _ExposureRef(label)
+
+
+def _exposure_reference_frequency(chip: Any, label: str) -> Any:
+    """Return the exposure carrier in the chip's natural rotating frame."""
+    resolved = chip.resolve(frame="rotating")
+    for channel in resolved.slh.external_channels:
+        if channel.key == label:
+            frequency = channel.collapse.frame_frequency
+            return 0.0 if frequency is None else frequency
+    available = [channel.key for channel in resolved.slh.external_channels]
+    raise ValueError(f"Unknown VNA exposure {label!r}. Available exposures: {available}.")
 
 
 def _public_axis_name(name: str, tones: list[PortTone]) -> str:
@@ -443,28 +438,31 @@ def _solve_engine(chip: Any, engine: EngineResult, options: dict | None) -> Any:
     return solve_steadystate_problem(problem)
 
 
-def _finite_response(
-    operating_state: Any,
-    driven_state: Any,
+def _stationary_output_backgrounds(
+    engine: EngineResult,
+    tones: tuple[tuple[str, Any, Any], ...],
     backend: Any,
-    port_operators: dict[str, CanonicalOperator],
-    input_label: str,
-    output_labels: tuple[str, ...],
-    amplitude: Any,
 ) -> dict[str, Any]:
+    """Return ``S beta`` at each Markov boundary for fixed reference-plane tones."""
     xp = backend.array_module
-    if not contains_tracer(amplitude) and np.ndim(amplitude) == 0 and complex(amplitude) == 0:
-        raise ValueError("Finite-amplitude VNA response requires a nonzero input amplitude.")
-    operating = xp.asarray(backend.to_array(operating_state), dtype=complex)
-    driven = xp.asarray(backend.to_array(driven_state), dtype=complex)
-    response: dict[str, Any] = {}
-    for label in output_labels:
-        operator = xp.asarray(port_operators[label].to_dense())
-        change = xp.trace(operator @ (driven - operating))
-        if label == input_label:
-            change = change + xp.asarray(amplitude)
-        response[label] = change / xp.asarray(amplitude)
-    return response
+    external = engine.slh.external_channels
+    exposure_index = {channel.key: index for index, channel in enumerate(external)}
+    incident = [xp.asarray(0.0 + 0.0j) for _ in external]
+    for label, frequency, amplitude in tones:
+        index = exposure_index[label]
+        incident[index] = incident[index] + xp.asarray(amplitude) * xp.exp(
+            1j * TWO_PI * xp.asarray(frequency) * xp.asarray(external[index].reference_delay)
+        )
+    return {
+        channel.key: sum(
+            (
+                xp.asarray(engine.slh.S[output_index, input_index]) * beta
+                for input_index, beta in enumerate(incident)
+            ),
+            start=xp.asarray(0.0 + 0.0j),
+        )
+        for output_index, channel in enumerate(external)
+    }
 
 
 def _small_signal_response(
@@ -474,15 +472,24 @@ def _small_signal_response(
     port_operators: dict[str, CanonicalOperator],
     input_label: str,
     output_labels: tuple[str, ...],
+    frequency: Any,
 ) -> dict[str, Any]:
     """Evaluate the port response through the backend stationary resolvent."""
     xp = backend.array_module
     rho = xp.asarray(backend.to_array(state), dtype=complex)
-    input_operator = xp.asarray(port_operators[input_label].to_dense(), dtype=complex)
+    external = engine.slh.external_channels
+    exposure_index = {channel.key: index for index, channel in enumerate(external)}
+    input_index = exposure_index[input_label]
+    template = port_operators[external[0].key]
+    input_operator = xp.zeros(template.shape, dtype=complex)
+    for output_index, channel in enumerate(external):
+        input_operator = input_operator + xp.conj(
+            xp.asarray(engine.slh.S[output_index, input_index])
+        ) * xp.asarray(port_operators[channel.key].to_dense(), dtype=complex)
     input_dag = xp.conj(xp.swapaxes(input_operator, -1, -2))
     source = _canonical_matrix(
         input_dag @ rho - rho @ input_dag,
-        port_operators[input_label],
+        template,
         tag=f"linear-response-source:{input_label}",
     )
     response = backend.stationary_resolvent(
@@ -491,10 +498,21 @@ def _small_signal_response(
         tuple((label, port_operators[label]) for label in output_labels),
         (0.0,),
     )
-    return {
-        label: (1.0 if label == input_label else 0.0) + response[label][0]
-        for label in output_labels
-    }
+    input_phase = xp.exp(
+        1j * TWO_PI * xp.asarray(frequency) * xp.asarray(external[input_index].reference_delay)
+    )
+    result: dict[str, Any] = {}
+    for label in output_labels:
+        output_index = exposure_index[label]
+        output_phase = xp.exp(
+            1j
+            * TWO_PI
+            * xp.asarray(frequency)
+            * xp.asarray(external[output_index].reference_delay)
+        )
+        boundary = xp.asarray(engine.slh.S[output_index, input_index]) + response[label][0]
+        result[label] = input_phase * output_phase * boundary
+    return result
 
 
 def _output_field_matrix(operator: CanonicalOperator, incoming: Any, xp: Any) -> Any:
@@ -516,27 +534,3 @@ def _canonical_matrix(
         subsystem_labels=template.subsystem_labels,
         tag=tag,
     )
-
-
-def _input_powers(
-    photon_fluxes: Any | None,
-    frequencies: Any,
-    *,
-    amplitude_is_axis: bool,
-    frequency_is_axis: bool,
-    variation_rank: int,
-    result_shape: tuple[int, ...],
-    xp: Any,
-) -> Any | None:
-    """Convert GHz and photons/ns to coherent input power in watts."""
-    if photon_fluxes is None:
-        return None
-    flux = xp.asarray(photon_fluxes)
-    frequency = xp.asarray(frequencies)
-    if amplitude_is_axis and frequency_is_axis:
-        flux = flux[..., None]
-    power = hbar * TWO_PI * 1e18 * flux * frequency
-    if not result_shape:
-        return power
-    power = xp.reshape(power, (1,) * variation_rank + tuple(power.shape))
-    return xp.broadcast_to(power, result_shape)

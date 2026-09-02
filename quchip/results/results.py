@@ -531,13 +531,19 @@ def _wrap(
     tlist: Any,
     e_ops_meta: Any,
     resolved_frame: Any,
+    engine_result: Any,
 ) -> SimulationResult:
     observable_traces = None
     if e_ops_meta is not None:
         from quchip.engine.observables import build_observable_traces
 
         observable_traces = build_observable_traces(
-            solver_result, tlist, chip, dict_meta=e_ops_meta, resolved_frame=resolved_frame
+            solver_result,
+            tlist,
+            chip,
+            dict_meta=e_ops_meta,
+            resolved_frame=resolved_frame,
+            engine_result=engine_result,
         )
     return SimulationResult(
         solver_result=solver_result,
@@ -563,6 +569,7 @@ def wrap_solver_result(solver_result: SolverResult, problem: SolveProblem, backe
         tlist=problem.tlist,
         e_ops_meta=problem.e_ops_meta,
         resolved_frame=problem.resolved_frame,
+        engine_result=problem.engine_result,
     )
 
 
@@ -580,6 +587,7 @@ def wrap_solver_results_from_batch(
             tlist=problem.tlist,
             e_ops_meta=problem.e_ops_meta,
             resolved_frame=problem.resolved_frame,
+            engine_result=problem.engine_result,
         )
         for solver_result, problem in zip(solver_results, batch.problems)
     ]

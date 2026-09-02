@@ -12,6 +12,7 @@ from typing import Any
 
 from quchip.chip.partition import connected_components
 from quchip.engine.ir import CanonicalOperator, EngineResult, StaticTerm
+from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import maybe_concrete_scalar
 
 
@@ -23,9 +24,32 @@ def resolve_stationary_engine(
     if not port_frequencies:
         raise ValueError("Stationary port analysis requires at least one tone frequency.")
 
+    reference = port_frequencies[0][1]
+    one_carrier = all(
+        same_frequency(reference, frequency)
+        for _, frequency in port_frequencies[1:]
+    )
+    if one_carrier:
+        engine = chip.resolve(frame=reference)
+        _validate_port_frequencies(engine, port_frequencies)
+        if engine.dynamic_terms:
+            raise ValueError(
+                "The selected tones leave dynamic Hamiltonian terms after frame and approximation resolution. "
+                "Use QuantumSequence for time evolution; periodic/Floquet steady states are not supported."
+            )
+        return engine
+
     device_frequencies: dict[str, Any] = {}
     for port_label, frequency in port_frequencies:
-        for target in chip.port(port_label).resolve_targets(chip):
+        try:
+            targets = chip.port(port_label).resolve_targets(chip)
+        except KeyError as exc:
+            raise ValueError(
+                "Distinct stationary tones through composed PortNetwork exposures "
+                "are not representable by one static frame. Use QuantumSequence "
+                "for time evolution."
+            ) from exc
+        for target in targets:
             assigned = device_frequencies.get(target)
             if assigned is not None and not same_frequency(assigned, frequency):
                 raise ValueError(
@@ -52,12 +76,7 @@ def resolve_stationary_engine(
             )
         device_frequencies.update({label: reference for label in component})
 
-    reference = port_frequencies[0][1]
-    one_carrier = all(
-        same_frequency(reference, frequency)
-        for _, frequency in port_frequencies[1:]
-    )
-    engine = chip.resolve(frame=reference if one_carrier else device_frequencies)
+    engine = chip.resolve(frame=device_frequencies)
     if engine.dynamic_terms:
         raise ValueError(
             "The selected tones leave dynamic Hamiltonian terms after frame and approximation resolution. "
@@ -71,8 +90,7 @@ def port_operators(engine: EngineResult, backend: Any) -> dict[str, CanonicalOpe
     """Return each resolved ``L_p = exp(i phi) sqrt(kappa) A_p`` operator."""
     operators: dict[str, CanonicalOperator] = {}
     for channel in engine.slh.external_channels:
-        term = channel.collapse
-        operators[term.label] = channel.coupling.with_metadata(tag=f"port:{term.label}")
+        operators[channel.key] = channel.coupling.with_metadata(tag=f"port:{channel.key}")
     return operators
 
 
@@ -85,18 +103,33 @@ def add_port_inputs(
     if not tones:
         return engine
     xp = backend.array_module
+    external = engine.slh.external_channels
     operators = port_operators(engine, backend)
+    exposure_index = {channel.key: index for index, channel in enumerate(external)}
     _validate_port_frequencies(
         engine,
         tuple((port_label, frequency) for port_label, frequency, _ in tones),
     )
-    terms = list(engine.applied_hamiltonian.static_terms)
+    incident = [xp.asarray(0.0 + 0.0j) for _ in external]
     for port_label, frequency, amplitude in tones:
-        coupling = operators[port_label]
+        input_index = exposure_index[port_label]
+        delay = external[input_index].reference_delay
+        incident[input_index] = incident[input_index] + xp.asarray(amplitude) * xp.exp(
+            1j * TWO_PI * xp.asarray(frequency) * xp.asarray(delay)
+        )
+
+    terms = list(engine.applied_hamiltonian.static_terms)
+    for output_index, channel in enumerate(external):
+        coefficient = xp.asarray(0.0 + 0.0j)
+        for input_index, amplitude in enumerate(incident):
+            coefficient = coefficient + xp.asarray(
+                engine.slh.S[output_index, input_index]
+            ) * amplitude
+        coupling = operators[channel.key]
         values = coupling.to_dense()
         h_input = 1j * (
-            xp.conj(xp.asarray(amplitude)) * values
-            - xp.asarray(amplitude) * xp.conj(xp.swapaxes(values, -1, -2))
+            xp.conj(coefficient) * values
+            - coefficient * xp.conj(xp.swapaxes(values, -1, -2))
         )
         terms.append(
             StaticTerm(
@@ -105,10 +138,10 @@ def add_port_inputs(
                     dims=coupling.dims,
                     basis=coupling.basis,
                     subsystem_labels=coupling.subsystem_labels,
-                    tag=f"input:{port_label}",
+                    tag=f"input:{channel.key}",
                 ),
                 origin="port",
-                metadata={"port": port_label},
+                metadata={"port": channel.key},
             )
         )
     return engine.with_applied_hamiltonian_terms(static_terms=tuple(terms))
@@ -119,7 +152,10 @@ def _validate_port_frequencies(
     port_frequencies: tuple[tuple[str, Any], ...],
 ) -> None:
     """Check that every requested tone matches its resolved port phase."""
-    port_terms = {term.label: term for term in engine.port_terms}
+    port_terms = {
+        channel.key: channel.collapse_term
+        for channel in engine.slh.external_channels
+    }
     for port_label, frequency in port_frequencies:
         if port_label not in port_terms:
             raise ValueError(f"Unknown resolved port {port_label!r}.")

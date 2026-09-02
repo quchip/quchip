@@ -85,25 +85,60 @@ s21 = result.s21
 s_out_in = result.s(output_port, input_port)
 ```
 
-With no `amplitude`, `sweep()` computes the differential response around the
-current fixed-tone operating point. A finite complex amplitude returns the
-change from that operating point divided by the input amplitude:
+`sweep()` computes the small-signal derivative around the current fixed-tone
+operating point:
 
-```python
-result = vna.sweep(
-    np.linspace(6.75, 6.85, 501),
-    amplitude=np.geomspace(1e-4, 1e-1, 31),
-)
-
-assert result.s21.shape == (31, 501)
-assert np.allclose(result.input_photon_fluxes, abs(result.input_amplitudes) ** 2)
-input_power_watts = result.input_powers
+```text
+S_ji(f) = d <b_out,j> / d beta_in,i  at beta_probe -> 0.
 ```
 
-Every tone amplitude is the incoming field `beta` in `sqrt(photons/ns)` at
-the declared port reference plane. The port rate converts `beta` into the
-Hamiltonian drive. Source power at another reference plane needs its own
-attenuation model.
+The direct background is the resolved network `S`; the device response comes
+from `L` and the stationary Liouvillian. Exposure delays transform both ends
+between the chip boundary and the declared reference planes.
+
+## Finite fields and transient outputs
+
+Use an explicit coherent field simulation for finite-power spectroscopy,
+ring-up, ring-down, reflection, transmission, or emitted wave packets:
+
+```python
+from quchip import (
+    CoherentInput,
+    OutputAmplitude,
+    OutputPhotonFlux,
+    OutputQuadrature,
+    QuantumSequence,
+    Square,
+)
+
+sequence = QuantumSequence(chip)
+sequence.schedule(
+    CoherentInput(input_port),
+    envelope=Square(duration=200.0, amplitude=0.02),
+    freq=6.8,
+)
+transient = sequence.simulate(
+    tlist=np.linspace(0.0, 300.0, 601),
+    e_ops={
+        "transmission": OutputAmplitude(output_port),
+        "I": OutputQuadrature(output_port, phase=0.0),
+        "flux": OutputPhotonFlux(output_port),
+    },
+    partition=False,
+)
+
+b_out = transient.expect("transmission")
+quadrature_i = transient.expect("I")
+photon_flux = transient.expect("flux")
+```
+
+The scheduled amplitude is the incoming field `beta` in
+`sqrt(photons/ns)`, so `abs(beta)**2` is incident photon flux in photons/ns.
+The field follows `b_out = S b_in + L`. `OutputQuadrature(..., phase=theta)`
+uses `Re[exp(-i theta) <b_out>]`; `OutputPhotonFlux` is the normally ordered
+`<b_out^dagger b_out>`. Values are reported at the exposure reference plane;
+the matching `ObservableTrace.raw` is the Markov-boundary trace before its
+outbound delay.
 
 ## Two-tone response
 
@@ -164,7 +199,8 @@ records both `input_port` and `output_port`.
 
 QuTiP exposes several stationary algorithms and dense or sparse linear
 solvers. dynamiqs uses quchip's direct JAX solve for stationary work and keeps
-finite-amplitude response differentiable. Both use the same port operator for
-damping, coherent input, mean output, spectra, and correlations. See the
+small-signal response and transient output traces differentiable. Both use the
+same resolved SLH operators for damping, coherent input, mean output, spectra,
+and correlations. See the
 {doc}`backend guide <choosing-a-backend>` for the concrete solver options and
 links to both projects.
