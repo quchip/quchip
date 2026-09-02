@@ -30,6 +30,7 @@ from quchip.engine.ir import (
     DriveOp,
     DynamicTerm,
     EngineResult,
+    ResolvedSLH,
     ScalarModulation,
     evaluate_signal_program,
 )
@@ -91,25 +92,31 @@ def test_callable_ir_snapshot() -> None:
         subsystem_labels=("q",),
     )
     desc_dsp = EngineResult(
-        static_terms=(),
-        dynamic_terms=(
-            DynamicTerm(
-                operator=op,
-                time_dependence=ScalarModulation(signal=Carrier(freq=0.05)),
-                origin="drive",
+        slh=ResolvedSLH.from_terms(
+            static_terms=(),
+            dynamic_terms=(
+                DynamicTerm(
+                    operator=op,
+                    time_dependence=ScalarModulation(signal=Carrier(freq=0.05)),
+                    origin="drive",
+                ),
             ),
+            collapse_terms=(),
         ),
         dims=(2,),
         metadata={},
     )
     desc_ideal = EngineResult(
-        static_terms=(),
-        dynamic_terms=(
-            DynamicTerm(
-                operator=op,
-                time_dependence=ScalarModulation(signal=Constant(0.05 + 0.0j)),
-                origin="drive",
+        slh=ResolvedSLH.from_terms(
+            static_terms=(),
+            dynamic_terms=(
+                DynamicTerm(
+                    operator=op,
+                    time_dependence=ScalarModulation(signal=Constant(0.05 + 0.0j)),
+                    origin="drive",
+                ),
             ),
+            collapse_terms=(),
         ),
         dims=(2,),
         metadata={},

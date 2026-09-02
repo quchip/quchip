@@ -9,6 +9,20 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
+from quchip.engine.ir import EngineResult, ResolvedSLH
+
+
+def _empty_engine_result(**kwargs) -> EngineResult:
+    """Build an empty resolved model for metadata-only validation tests."""
+    return EngineResult(
+        slh=ResolvedSLH.from_terms(
+            static_terms=(),
+            dynamic_terms=(),
+            collapse_terms=(),
+        ),
+        **kwargs,
+    )
+
 
 class TestTlistValidation:
     """prepare_solve_problem_context rejects a malformed concrete tlist."""
@@ -325,37 +339,30 @@ class TestBatchMetadataAggregation:
 
     def test_max_step_ns_aggregates_by_minimum(self):
         """max_step_ns takes the minimum across batch elements."""
-        from quchip.engine.ir import EngineResult
         from quchip.engine.ir import _aggregate_batch_metadata
 
-        wide = EngineResult(static_terms=(), dynamic_terms=(), metadata={"max_step_ns": 10.0})
-        narrow = EngineResult(static_terms=(), dynamic_terms=(), metadata={"max_step_ns": 2.5})
+        wide = _empty_engine_result(metadata={"max_step_ns": 10.0})
+        narrow = _empty_engine_result(metadata={"max_step_ns": 2.5})
         metadata = _aggregate_batch_metadata([wide, narrow])
         assert metadata["max_step_ns"] == pytest.approx(2.5)
 
     def test_max_step_ns_omitted_when_any_element_lacks_it(self):
         """A single element missing max_step_ns (e.g. from tracing) omits it for the whole batch."""
-        from quchip.engine.ir import EngineResult
         from quchip.engine.ir import _aggregate_batch_metadata
 
-        has_hint = EngineResult(static_terms=(), dynamic_terms=(), metadata={"max_step_ns": 10.0})
-        missing_hint = EngineResult(static_terms=(), dynamic_terms=(), metadata={})
+        has_hint = _empty_engine_result(metadata={"max_step_ns": 10.0})
+        missing_hint = _empty_engine_result(metadata={})
         metadata = _aggregate_batch_metadata([has_hint, missing_hint])
         assert "max_step_ns" not in metadata
 
     def test_carrier_and_spectral_bounds_aggregate_by_maximum(self):
         """max_carrier_freq_ghz and spectral_bound_ghz take the maximum across batch elements."""
-        from quchip.engine.ir import EngineResult
         from quchip.engine.ir import _aggregate_batch_metadata
 
-        a = EngineResult(
-            static_terms=(),
-            dynamic_terms=(),
+        a = _empty_engine_result(
             metadata={"max_carrier_freq_ghz": 5.0, "spectral_bound_ghz": 1.0},
         )
-        b = EngineResult(
-            static_terms=(),
-            dynamic_terms=(),
+        b = _empty_engine_result(
             metadata={"max_carrier_freq_ghz": 7.5, "spectral_bound_ghz": 0.5},
         )
         metadata = _aggregate_batch_metadata([a, b])
@@ -367,11 +374,11 @@ class TestSolveBatchPointRetention:
     """SolveBatch keeps each point's complete problem snapshot."""
 
     def test_batch_rejects_structural_dimension_changes(self):
-        from quchip.engine.ir import EngineResult, SolveBatch, SolveProblem
+        from quchip.engine.ir import SolveBatch, SolveProblem
 
         first = SolveProblem(
             chip=None,
-            engine_result=EngineResult(static_terms=(), dynamic_terms=(), dims=(2,)),
+            engine_result=_empty_engine_result(dims=(2,)),
             initial_state=None,
             tlist=(0.0, 1.0),
         )
@@ -384,12 +391,12 @@ class TestSolveBatchPointRetention:
 
     def test_element_restores_dropped_terms(self):
         """dropped_terms set on a single-element batch reappear on the reconstructed element."""
-        from quchip.engine.ir import DroppedTerm, EngineResult, SolveBatch, SolveProblem
+        from quchip.engine.ir import DroppedTerm, SolveBatch, SolveProblem
 
         record = DroppedTerm(source="d0", operator="drive band w=+0 on q0", reason="test", band_weights=(0,))
         problem = SolveProblem(
             chip=None,
-            engine_result=EngineResult(static_terms=(), dynamic_terms=(), dropped_terms=(record,)),
+            engine_result=_empty_engine_result(dropped_terms=(record,)),
             initial_state=None,
             tlist=(0.0, 1.0),
         )
@@ -399,7 +406,7 @@ class TestSolveBatchPointRetention:
 
     def test_element_restores_its_own_frequency_not_another_elements(self):
         """Two elements with different dropped-term frequencies each restore their own, not the reference's."""
-        from quchip.engine.ir import DroppedTerm, EngineResult, SolveBatch, SolveProblem
+        from quchip.engine.ir import DroppedTerm, SolveBatch, SolveProblem
 
         record_a = DroppedTerm(
             source="d0", operator="drive band w=+0 on q0", reason="test", band_weights=(0,), frequency=5.0
@@ -409,7 +416,7 @@ class TestSolveBatchPointRetention:
         )
         problem_a = SolveProblem(
             chip=None,
-            engine_result=EngineResult(static_terms=(), dynamic_terms=(), dropped_terms=(record_a,)),
+            engine_result=_empty_engine_result(dropped_terms=(record_a,)),
             initial_state=None,
             tlist=(0.0, 1.0),
         )

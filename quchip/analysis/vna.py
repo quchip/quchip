@@ -460,7 +460,7 @@ def _finite_response(
     response: dict[str, Any] = {}
     for label in output_labels:
         operator = xp.asarray(port_operators[label].to_dense())
-        change = -xp.trace(operator @ (driven - operating))
+        change = xp.trace(operator @ (driven - operating))
         if label == input_label:
             change = change + xp.asarray(amplitude)
         response[label] = change / xp.asarray(amplitude)
@@ -481,7 +481,7 @@ def _small_signal_response(
     input_operator = xp.asarray(port_operators[input_label].to_dense(), dtype=complex)
     input_dag = xp.conj(xp.swapaxes(input_operator, -1, -2))
     source = _canonical_matrix(
-        -(input_dag @ rho - rho @ input_dag),
+        input_dag @ rho - rho @ input_dag,
         port_operators[input_label],
         tag=f"linear-response-source:{input_label}",
     )
@@ -492,14 +492,14 @@ def _small_signal_response(
         (0.0,),
     )
     return {
-        label: (1.0 if label == input_label else 0.0) - response[label][0]
+        label: (1.0 if label == input_label else 0.0) + response[label][0]
         for label in output_labels
     }
 
 
 def _output_field_matrix(operator: CanonicalOperator, incoming: Any, xp: Any) -> Any:
     coupling = xp.asarray(operator.to_dense(), dtype=complex)
-    return xp.asarray(incoming) * xp.eye(coupling.shape[0], dtype=complex) - coupling
+    return xp.asarray(incoming) * xp.eye(coupling.shape[0], dtype=complex) + coupling
 
 
 def _canonical_matrix(

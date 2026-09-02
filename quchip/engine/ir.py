@@ -16,8 +16,8 @@ defines four families of immutable, JAX-pytree-friendly types:
    dense / CSR / DIA layouts plus subsystem metadata. Backends convert
    to and from this format.
 
-3. Hamiltonian terms — :class:`StaticTerm`, :class:`DynamicTerm`, and
-   their :class:`EngineResult` container.
+3. Resolved open-system physics — :class:`ResolvedSLH` plus
+   solve-applied Hamiltonian terms in :class:`EngineResult`.
 
 4. Solve requests — :class:`SolveProblem` and :class:`SolveBatch`, the
    frozen hand-offs to backends. ``backend`` selection is chip-owned
@@ -42,6 +42,7 @@ from quchip.utils.jax_utils import (
     contains_tracer,
     is_jax_namespace,
     maybe_concrete_scalar,
+    select_array_module,
 )
 from quchip.utils.constants import TWO_PI
 
@@ -821,6 +822,14 @@ class CanonicalOperator:
             tag=self.tag if tag is None else tag,
         )
 
+    def scaled(self, factor: Any, *, tag: str | None = None) -> "CanonicalOperator":
+        """Return a scalar multiple without changing the operator layout."""
+        return replace(
+            self,
+            values=self.values * factor,
+            tag=self.tag if tag is None else tag,
+        )
+
     def diagonal(self) -> Any:
         """Return the main diagonal without materializing a sparse matrix."""
         xp = array_namespace(self.values)
@@ -1030,6 +1039,141 @@ class CollapseTerm:
         suffix = rf"\!\left({arguments}\right)" if arguments else ""
         return rf"\hat L_{{{self.source},{self.channel}}}{suffix}"
 
+
+ChannelAccess: TypeAlias = Literal["exposed", "hidden"]
+
+
+@dataclass(frozen=True)
+class HamiltonianProgram:
+    """Resolved static and time-dependent Hamiltonian contributions."""
+
+    static_terms: tuple[StaticTerm, ...] = ()
+    dynamic_terms: tuple[DynamicTerm, ...] = ()
+
+
+@dataclass(frozen=True)
+class SLHChannel:
+    """One resolved Markov channel and its boundary accessibility."""
+
+    key: str
+    accessibility: ChannelAccess
+    collapse: CollapseTerm
+
+    @property
+    def coupling(self) -> CanonicalOperator:
+        """Return the physical coupling operator for this channel."""
+        phase = 0.0 if self.collapse.phase is None else self.collapse.phase
+        prefer_jax = contains_tracer((self.collapse.rate, phase)) or any(
+            is_jax_namespace(array_namespace(value))
+            for value in (self.collapse.rate, phase)
+        )
+        xp = select_array_module(prefer_jax)
+        return self.collapse.operator.scaled(
+            xp.exp(1j * xp.asarray(phase)) * xp.sqrt(xp.asarray(self.collapse.rate)),
+            tag=f"slh:{self.key}",
+        )
+
+
+@dataclass(frozen=True)
+class ResolvedSLH:
+    """Immutable, input-free normal form for resolved Markovian physics."""
+
+    scattering: Any
+    hamiltonian: HamiltonianProgram
+    channels: tuple[SLHChannel, ...] = ()
+
+    def __post_init__(self) -> None:
+        scattering = self.scattering
+        if isinstance(scattering, np.ndarray) or not hasattr(scattering, "shape"):
+            scattering = np.array(scattering, dtype=complex, copy=True)
+            scattering.setflags(write=False)
+            object.__setattr__(self, "scattering", scattering)
+        shape = tuple(scattering.shape)
+        expected_shape = (len(self.channels), len(self.channels))
+        if shape != expected_shape:
+            raise ValueError(
+                "ResolvedSLH scattering must have one row and column per channel; "
+                f"got {shape} for {len(self.channels)} channels."
+            )
+
+        keys = tuple(channel.key for channel in self.channels)
+        if len(set(keys)) != len(keys):
+            raise ValueError("ResolvedSLH channel keys must be unique.")
+
+        seen_hidden = False
+        for channel in self.channels:
+            if channel.accessibility == "hidden":
+                seen_hidden = True
+            elif channel.accessibility == "exposed" and seen_hidden:
+                raise ValueError("ResolvedSLH exposed channels must appear before hidden channels.")
+
+        if not contains_tracer(scattering):
+            concrete = np.asarray(scattering, dtype=complex)
+            identity = np.eye(len(self.channels), dtype=complex)
+            if not np.allclose(concrete.conj().T @ concrete, identity, rtol=1e-10, atol=1e-12):
+                raise ValueError("ResolvedSLH concrete scattering must be unitary.")
+
+    @classmethod
+    def from_terms(
+        cls,
+        *,
+        static_terms: tuple[StaticTerm, ...],
+        dynamic_terms: tuple[DynamicTerm, ...],
+        collapse_terms: tuple[CollapseTerm, ...],
+    ) -> "ResolvedSLH":
+        """Build the current identity-scattering model from engine terms."""
+        exposed: list[SLHChannel] = []
+        hidden: list[SLHChannel] = []
+        key_counts: dict[str, int] = {}
+        for collapse in collapse_terms:
+            accessibility: ChannelAccess = (
+                "exposed" if collapse.frame_frequency is not None else "hidden"
+            )
+            prefix = "external" if accessibility == "exposed" else "hidden"
+            base_key = f"{prefix}.{collapse.source}.{collapse.channel}"
+            occurrence = key_counts.get(base_key, 0) + 1
+            key_counts[base_key] = occurrence
+            channel = SLHChannel(
+                key=base_key if occurrence == 1 else f"{base_key}#{occurrence}",
+                accessibility=accessibility,
+                collapse=collapse,
+            )
+            (exposed if accessibility == "exposed" else hidden).append(channel)
+        channels = tuple((*exposed, *hidden))
+        return cls(
+            scattering=np.eye(len(channels), dtype=complex),
+            hamiltonian=HamiltonianProgram(
+                static_terms=tuple(static_terms),
+                dynamic_terms=tuple(dynamic_terms),
+            ),
+            channels=channels,
+        )
+
+    @property
+    def S(self) -> Any:
+        """Return the scalar scattering matrix."""
+        return self.scattering
+
+    @property
+    def L(self) -> tuple[CanonicalOperator, ...]:
+        """Return physical coupling operators in channel order."""
+        return tuple(channel.coupling for channel in self.channels)
+
+    @property
+    def H(self) -> HamiltonianProgram:
+        """Return the resolved Hamiltonian program."""
+        return self.hamiltonian
+
+    @property
+    def external_channels(self) -> tuple[SLHChannel, ...]:
+        """Return the exposed boundary channels."""
+        return tuple(channel for channel in self.channels if channel.accessibility == "exposed")
+
+    @property
+    def hidden_channels(self) -> tuple[SLHChannel, ...]:
+        """Return channels traced out by the modeled experiment."""
+        return tuple(channel for channel in self.channels if channel.accessibility == "hidden")
+
 @dataclass(frozen=True)
 class DroppedTerm:
     """Advisory record for a Hamiltonian term elided by an approximation.
@@ -1084,7 +1228,7 @@ class DroppedTerm:
 
 @dataclass(frozen=True)
 class EngineResult:
-    """Backend-agnostic time-dependent Hamiltonian passed to backends.
+    """Backend-neutral resolved physics passed to backends.
 
     Represents
 
@@ -1092,7 +1236,10 @@ class EngineResult:
         H(t) \\;=\\; \\sum_s c_s \\, O_s
                    \\;+\\; \\sum_d O_d \\, f_d(t)
 
-    where each static / dynamic operator already carries 2π and each
+    The immutable ``slh`` value is the input-free Markov model. Scheduled
+    controls and solve-bound coherent-source Hamiltonians live in
+    ``applied_hamiltonian``; the term properties combine both programs for
+    existing backend consumers. Each static / dynamic operator already carries 2π and each
     ``f_d(t)`` is a :class:`ScalarModulation` over a
     :class:`SignalProgram` AST. ``metadata`` carries advisory solver
     hints (e.g. ``max_carrier_freq_ghz``, ``max_step_ns``); a backend may
@@ -1104,16 +1251,52 @@ class EngineResult:
     etc.) — advisory metadata for auditing, never consumed by backends.
     """
 
-    static_terms: tuple[StaticTerm, ...]
-    dynamic_terms: tuple[DynamicTerm, ...]
+    slh: ResolvedSLH
+    applied_hamiltonian: HamiltonianProgram = field(default_factory=HamiltonianProgram)
     dims: tuple[int, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
     dropped_terms: tuple[DroppedTerm, ...] = ()
-    collapse_terms: tuple[CollapseTerm, ...] = ()
     bases: Mapping[str, Any] = field(default_factory=dict)
     authored: Any = None
     resolved_frame: Any = None
     approximation: Any = None
+
+    @property
+    def static_terms(self) -> tuple[StaticTerm, ...]:
+        """Return resolved and solve-applied static Hamiltonian terms."""
+        return self.slh.H.static_terms + self.applied_hamiltonian.static_terms
+
+    @property
+    def dynamic_terms(self) -> tuple[DynamicTerm, ...]:
+        """Return resolved and solve-applied time-dependent Hamiltonian terms."""
+        return self.slh.H.dynamic_terms + self.applied_hamiltonian.dynamic_terms
+
+    @property
+    def collapse_terms(self) -> tuple[CollapseTerm, ...]:
+        """Return collapse records in complete SLH channel order."""
+        return tuple(channel.collapse for channel in self.slh.channels)
+
+    def with_applied_hamiltonian_terms(
+        self,
+        *,
+        static_terms: tuple[StaticTerm, ...] | None = None,
+        dynamic_terms: tuple[DynamicTerm, ...] | None = None,
+    ) -> "EngineResult":
+        """Return a copy with solve-bound Hamiltonian terms replaced."""
+        applied = replace(
+            self.applied_hamiltonian,
+            static_terms=(
+                self.applied_hamiltonian.static_terms
+                if static_terms is None
+                else tuple(static_terms)
+            ),
+            dynamic_terms=(
+                self.applied_hamiltonian.dynamic_terms
+                if dynamic_terms is None
+                else tuple(dynamic_terms)
+            ),
+        )
+        return replace(self, applied_hamiltonian=applied)
 
     def _contains_tracer(self) -> bool:
         """Return whether any value-bearing field belongs to a JAX trace.
@@ -1167,7 +1350,7 @@ class EngineResult:
     @property
     def port_terms(self) -> tuple[CollapseTerm, ...]:
         """Return collapse channels that cross an accessible port boundary."""
-        return tuple(term for term in self.collapse_terms if term.frame_frequency is not None)
+        return tuple(channel.collapse for channel in self.slh.external_channels)
 
     def hamiltonian(self) -> PhysicsExpr:
         """Return the exact canonical Hamiltonian as an inspectable expression.

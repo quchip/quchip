@@ -11,8 +11,10 @@ import quchip.engine.ir as ir
 from quchip.engine.ir import (
     CanonicalOperator,
     Carrier,
+    CollapseTerm,
     DynamicTerm,
     EngineResult,
+    ResolvedSLH,
     ScalarModulation,
     SolveProblem,
     StaticTerm,
@@ -279,8 +281,11 @@ class TestTermTypes:
             origin="coupling",
         )
         desc = EngineResult(
-            static_terms=(static,),
-            dynamic_terms=(dynamic,),
+            slh=ResolvedSLH.from_terms(
+                static_terms=(static,),
+                dynamic_terms=(dynamic,),
+                collapse_terms=(),
+            ),
             dims=(3,),
             metadata={"frame_mode": "rotating"},
         )
@@ -288,6 +293,37 @@ class TestTermTypes:
         assert len(desc.dynamic_terms) == 1
         assert desc.dims == (3,)
         assert desc.metadata["frame_mode"] == "rotating"
+
+    def test_engine_result_exposes_slh_term_views(self):
+        """The existing term properties are read-only views of one resolved SLH value."""
+        operator = CanonicalOperator.from_dense(
+            np.eye(2, dtype=complex),
+            dims=(2,),
+            basis="native",
+            subsystem_labels=("q",),
+        )
+        static = StaticTerm(operator=operator)
+        dynamic = DynamicTerm(
+            operator=operator,
+            time_dependence=ScalarModulation(signal=Carrier(freq=1.0)),
+        )
+        collapse = CollapseTerm(
+            operator=operator,
+            rate=0.1,
+            source="q",
+            channel="relaxation",
+        )
+
+        slh = ResolvedSLH.from_terms(
+            static_terms=(static,),
+            dynamic_terms=(dynamic,),
+            collapse_terms=(collapse,),
+        )
+        result = EngineResult(slh=slh)
+
+        assert result.static_terms is result.slh.H.static_terms
+        assert result.dynamic_terms is result.slh.H.dynamic_terms
+        assert result.collapse_terms == tuple(channel.collapse for channel in result.slh.channels)
 
     def test_engine_result_hamiltonian_matrix_is_public_ghz_time_slice(self):
         """Hamiltonian inspection converts canonical angular terms back to public GHz."""
@@ -298,12 +334,15 @@ class TestTermTypes:
             subsystem_labels=("q",),
         )
         result = EngineResult(
-            static_terms=(StaticTerm(operator=op, coefficient=2.0),),
-            dynamic_terms=(
-                DynamicTerm(
-                    operator=op,
-                    time_dependence=ScalarModulation(signal=Carrier(freq=1.0)),
+            slh=ResolvedSLH.from_terms(
+                static_terms=(StaticTerm(operator=op, coefficient=2.0),),
+                dynamic_terms=(
+                    DynamicTerm(
+                        operator=op,
+                        time_dependence=ScalarModulation(signal=Carrier(freq=1.0)),
+                    ),
                 ),
+                collapse_terms=(),
             ),
             dims=(2,),
         )
@@ -502,7 +541,14 @@ class TestDroppedTerms:
                 amplitude=g,
                 frequency=10.2,
             )
-            description = EngineResult(static_terms=(), dynamic_terms=(), dropped_terms=(record,))
+            description = EngineResult(
+                slh=ResolvedSLH.from_terms(
+                    static_terms=(),
+                    dynamic_terms=(),
+                    collapse_terms=(),
+                ),
+                dropped_terms=(record,),
+            )
             seen["summary"] = description.dropped_terms_summary()
             return record.amplitude * 2.0  # raw value stays live for autodiff
 

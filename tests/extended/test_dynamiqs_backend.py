@@ -33,6 +33,7 @@ from quchip.engine.ir import (  # noqa: E402
     Constant,
     DynamicTerm,
     EngineResult,
+    ResolvedSLH,
     ScalarModulation,
     Window,
 )
@@ -287,13 +288,16 @@ def test_prepare_scalar_modulation_hamiltonian_remains_callable() -> None:
         subsystem_labels=("q",),
     )
     desc = EngineResult(
-        static_terms=(),
-        dynamic_terms=(
-            DynamicTerm(
-                operator=op,
-                time_dependence=ScalarModulation(signal=Carrier(freq=0.5)),
-                origin="drive",
+        slh=ResolvedSLH.from_terms(
+            static_terms=(),
+            dynamic_terms=(
+                DynamicTerm(
+                    operator=op,
+                    time_dependence=ScalarModulation(signal=Carrier(freq=0.5)),
+                    origin="drive",
+                ),
             ),
+            collapse_terms=(),
         ),
         dims=(2,),
         metadata={},
@@ -317,19 +321,22 @@ def test_prepare_windowed_scalar_modulation_supports_traced_stop_time() -> None:
     @jax.jit
     def sample_rhs(stop):
         desc = EngineResult(
-            static_terms=(),
-            dynamic_terms=(
-                DynamicTerm(
-                    operator=op,
-                    time_dependence=ScalarModulation(
-                        signal=Window(
-                            child=Constant(1.0 + 0.0j),
-                            start=0.0,
-                            stop=stop,
-                        )
+            slh=ResolvedSLH.from_terms(
+                static_terms=(),
+                dynamic_terms=(
+                    DynamicTerm(
+                        operator=op,
+                        time_dependence=ScalarModulation(
+                            signal=Window(
+                                child=Constant(1.0 + 0.0j),
+                                start=0.0,
+                                stop=stop,
+                            )
+                        ),
+                        origin="drive",
                     ),
-                    origin="drive",
                 ),
+                collapse_terms=(),
             ),
             dims=(2,),
             metadata={},

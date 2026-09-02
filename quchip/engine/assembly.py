@@ -84,6 +84,8 @@ from quchip.engine.ir import (
     DroppedTerm,
     DynamicTerm,
     EngineResult,
+    HamiltonianProgram,
+    ResolvedSLH,
     Multiply,
     ResolvedFrame,
     ScalarModulation,
@@ -1470,13 +1472,14 @@ def instantiate_engine_result(
             )
         )
 
-    dynamic_terms = template.invariant_dynamic_terms + tuple(
+    applied_dynamic_terms = tuple(
         replace(
             term,
             time_dependence=ScalarModulation(signal=_simplify_signal(term.time_dependence.signal)),
         )
         for term in fresh_terms
     )
+    dynamic_terms = template.invariant_dynamic_terms + applied_dynamic_terms
 
     metadata: dict[str, Any] = {"frame": str(template.resolved_frame)}
     if template.static_spectral_bound_ghz is not None:
@@ -1484,12 +1487,15 @@ def instantiate_engine_result(
     metadata.update(_solver_hint_metadata(template.static_spectral_bound_ghz, dynamic_terms))
 
     return EngineResult(
-        static_terms=template.static_terms,
-        dynamic_terms=dynamic_terms,
+        slh=ResolvedSLH.from_terms(
+            static_terms=template.static_terms,
+            dynamic_terms=template.invariant_dynamic_terms,
+            collapse_terms=template.collapse_terms,
+        ),
+        applied_hamiltonian=HamiltonianProgram(dynamic_terms=applied_dynamic_terms),
         dims=dims,
         metadata=metadata,
         dropped_terms=template.dropped_terms + tuple(fresh_dropped),
-        collapse_terms=template.collapse_terms,
         bases=template.bases,
         authored=template.authored,
         resolved_frame=template.resolved_frame,
@@ -1564,8 +1570,12 @@ def _build_static_analysis_result(
     metadata = {key: value for key, value in result.metadata.items() if key in {"frame", "spectral_bound_ghz"}}
     return replace(
         result,
-        dynamic_terms=(),
-        collapse_terms=(),
+        slh=ResolvedSLH.from_terms(
+            static_terms=result.static_terms,
+            dynamic_terms=(),
+            collapse_terms=(),
+        ),
+        applied_hamiltonian=HamiltonianProgram(),
         metadata=metadata,
     )
 

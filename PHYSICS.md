@@ -123,14 +123,14 @@ A `Port` is an accessible Markovian channel. It owns a dimensionless operator
 
 ```text
 L_p = exp(i phi_p) sqrt(kappa_p) A_p
-b_out,p = b_in,p - L_p
+b_out,p = b_in,p + L_p
 ```
 
 The dissipator uses `L_p`. A coherent input `beta_p` in
 `sqrt(photons/ns)` contributes the angular Hamiltonian
 
 ```text
-H_input = i (beta_p L_p^dagger - beta_p^* L_p).
+H_input = i (beta_p^* L_p - beta_p L_p^dagger).
 ```
 
 Mean output, spectra, and correlations use the same `L_p`. For a single

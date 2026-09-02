@@ -29,6 +29,59 @@ def _linear_resonator(*, kappa_in: float, kappa_out: float = 0.0):
     return resonator, input_port, output_port, Chip([resonator], ports=ports)
 
 
+def test_coherent_port_input_uses_standard_slh_hamiltonian_sign() -> None:
+    """A coherent source composes as i(beta* L - beta L-dagger)."""
+    from quchip.engine.input_output import (
+        add_port_inputs,
+        port_operators,
+        resolve_stationary_engine,
+    )
+
+    _, input_port, _, chip = _linear_resonator(kappa_in=0.04)
+    engine = resolve_stationary_engine(chip, ((input_port.label, 6.0),))
+    beta = 0.02 + 0.01j
+    coupling = port_operators(engine, chip.backend)[input_port.label].to_dense()
+
+    driven = add_port_inputs(engine, chip.backend, ((input_port.label, 6.0, beta),))
+
+    expected = 1j * (np.conj(beta) * coupling - beta * coupling.conj().T)
+    np.testing.assert_allclose(driven.static_terms[-1].operator.to_dense(), expected)
+
+
+def test_coherent_port_input_leaves_resolved_slh_input_free() -> None:
+    """Binding beta adds solve physics beside the immutable resolved SLH value."""
+    from quchip.engine.input_output import add_port_inputs, resolve_stationary_engine
+
+    _, input_port, _, chip = _linear_resonator(kappa_in=0.04)
+    engine = resolve_stationary_engine(chip, ((input_port.label, 6.0),))
+
+    driven = add_port_inputs(
+        engine,
+        chip.backend,
+        ((input_port.label, 6.0, 0.02 + 0.01j),),
+    )
+
+    assert driven.slh is engine.slh
+    assert driven.slh.H == engine.slh.H
+    assert len(driven.static_terms) == len(engine.static_terms) + 1
+
+
+def test_output_field_uses_standard_slh_plus_sign() -> None:
+    """The reported field is b_out = beta I + L at the reference plane."""
+    from quchip.analysis.vna import _output_field_matrix
+    from quchip.engine.input_output import port_operators, resolve_stationary_engine
+
+    _, input_port, _, chip = _linear_resonator(kappa_in=0.04)
+    engine = resolve_stationary_engine(chip, ((input_port.label, 6.0),))
+    coupling = port_operators(engine, chip.backend)[input_port.label]
+    beta = 0.02 + 0.01j
+
+    output = _output_field_matrix(coupling, beta, np)
+
+    expected = beta * np.eye(coupling.shape[0], dtype=complex) + coupling.to_dense()
+    np.testing.assert_allclose(output, expected)
+
+
 def test_one_sided_small_signal_reflection_matches_analytic_response() -> None:
     resonator, input_port, _, chip = _linear_resonator(kappa_in=0.04)
     frequencies = np.array([5.98, 6.0, 6.03])
@@ -320,7 +373,7 @@ def test_nonlinear_stationary_state_matches_long_time_master_equation() -> None:
     coupling = np.exp(1j * port_term.phase) * np.sqrt(port_term.rate) * backend.from_canonical_operator(
         port_term.operator
     )
-    hamiltonian = hamiltonian + 1j * (amplitude * coupling.dag() - amplitude.conjugate() * coupling)
+    hamiltonian = hamiltonian + 1j * (amplitude.conjugate() * coupling - amplitude * coupling.dag())
     collapse = [
         np.sqrt(term.rate) * backend.from_canonical_operator(term.operator)
         for term in engine.collapse_terms

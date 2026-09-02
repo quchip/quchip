@@ -149,7 +149,7 @@ class Port:
         """Return the input-output convention owned by this port."""
         return [
             "This accessible Markovian channel uses "
-            "L = exp(i phase) sqrt(rate) A and b_out = b_in - L; "
+            "L = exp(i phase) sqrt(rate) A and b_out = b_in + L; "
             "the same L sets damping, coherent input coupling, and reported output."
         ]
 

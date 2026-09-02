@@ -8,7 +8,6 @@ Liouvillian construction and solution remain backend-owned.
 
 from __future__ import annotations
 
-from dataclasses import replace
 from typing import Any
 
 from quchip.chip.partition import connected_components
@@ -70,21 +69,10 @@ def resolve_stationary_engine(
 
 def port_operators(engine: EngineResult, backend: Any) -> dict[str, CanonicalOperator]:
     """Return each resolved ``L_p = exp(i phi) sqrt(kappa) A_p`` operator."""
-    xp = backend.array_module
     operators: dict[str, CanonicalOperator] = {}
-    for term in engine.port_terms:
-        values = (
-            xp.exp(1j * xp.asarray(term.phase))
-            * xp.sqrt(xp.asarray(term.rate))
-            * term.operator.to_dense()
-        )
-        operators[term.label] = CanonicalOperator.from_dense(
-            values,
-            dims=term.operator.dims,
-            basis=term.operator.basis,
-            subsystem_labels=term.operator.subsystem_labels,
-            tag=f"port:{term.label}",
-        )
+    for channel in engine.slh.external_channels:
+        term = channel.collapse
+        operators[term.label] = channel.coupling.with_metadata(tag=f"port:{term.label}")
     return operators
 
 
@@ -93,7 +81,7 @@ def add_port_inputs(
     backend: Any,
     tones: tuple[tuple[str, Any, Any], ...],
 ) -> EngineResult:
-    """Add stationary ``i(beta L† - beta* L)`` terms in angular units."""
+    """Add stationary ``i(beta* L - beta L†)`` terms in angular units."""
     if not tones:
         return engine
     xp = backend.array_module
@@ -102,13 +90,13 @@ def add_port_inputs(
         engine,
         tuple((port_label, frequency) for port_label, frequency, _ in tones),
     )
-    terms = list(engine.static_terms)
+    terms = list(engine.applied_hamiltonian.static_terms)
     for port_label, frequency, amplitude in tones:
         coupling = operators[port_label]
         values = coupling.to_dense()
         h_input = 1j * (
-            xp.asarray(amplitude) * xp.conj(xp.swapaxes(values, -1, -2))
-            - xp.conj(xp.asarray(amplitude)) * values
+            xp.conj(xp.asarray(amplitude)) * values
+            - xp.asarray(amplitude) * xp.conj(xp.swapaxes(values, -1, -2))
         )
         terms.append(
             StaticTerm(
@@ -123,7 +111,7 @@ def add_port_inputs(
                 metadata={"port": port_label},
             )
         )
-    return replace(engine, static_terms=tuple(terms))
+    return engine.with_applied_hamiltonian_terms(static_terms=tuple(terms))
 
 
 def _validate_port_frequencies(

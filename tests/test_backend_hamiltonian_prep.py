@@ -14,7 +14,14 @@ from quchip.control.envelopes import Square
 from quchip.control.equipment import ControlEquipment
 from quchip.devices.transmon.duffing import DuffingTransmon
 from quchip.declarative.expr import materialize_expr
-from quchip.engine.ir import CanonicalOperator, Carrier, DynamicTerm, EngineResult, ScalarModulation
+from quchip.engine.ir import (
+    CanonicalOperator,
+    Carrier,
+    DynamicTerm,
+    EngineResult,
+    ResolvedSLH,
+    ScalarModulation,
+)
 from quchip.engine.frames import resolve_frame
 from quchip.engine.assembly import build_engine_result
 
@@ -102,13 +109,16 @@ class TestPrepareHamiltonian:
             subsystem_labels=("q",),
         )
         desc = EngineResult(
-            static_terms=(),
-            dynamic_terms=(
-                DynamicTerm(
-                    operator=op,
-                    time_dependence=ScalarModulation(signal=Carrier(freq=0.2)),
-                    origin="drive",
+            slh=ResolvedSLH.from_terms(
+                static_terms=(),
+                dynamic_terms=(
+                    DynamicTerm(
+                        operator=op,
+                        time_dependence=ScalarModulation(signal=Carrier(freq=0.2)),
+                        origin="drive",
+                    ),
                 ),
+                collapse_terms=(),
             ),
             dims=(3,),
             metadata={},
