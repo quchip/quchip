@@ -963,7 +963,9 @@ class CanonicalOperator:
 
 # ── Hamiltonian Terms ───────────────────────────────────────────────
 
-TermOrigin: TypeAlias = Literal["device", "coupling", "drive", "crosstalk", "flux", "port"]
+TermOrigin: TypeAlias = Literal[
+    "device", "coupling", "drive", "crosstalk", "flux", "port", "network"
+]
 
 
 @dataclass(frozen=True)
@@ -1058,10 +1060,14 @@ class SLHChannel:
     key: str
     accessibility: ChannelAccess
     collapse: CollapseTerm
+    coupling_operator: CanonicalOperator | None = None
+    reference_delay: Any = 0.0
 
     @property
     def coupling(self) -> CanonicalOperator:
         """Return the physical coupling operator for this channel."""
+        if self.coupling_operator is not None:
+            return self.coupling_operator
         phase = 0.0 if self.collapse.phase is None else self.collapse.phase
         prefer_jax = contains_tracer((self.collapse.rate, phase)) or any(
             is_jax_namespace(array_namespace(value))
@@ -1071,6 +1077,20 @@ class SLHChannel:
         return self.collapse.operator.scaled(
             xp.exp(1j * xp.asarray(phase)) * xp.sqrt(xp.asarray(self.collapse.rate)),
             tag=f"slh:{self.key}",
+        )
+
+    @property
+    def collapse_term(self) -> CollapseTerm:
+        """Return the solver-facing collapse record for this resolved channel."""
+        if self.coupling_operator is None:
+            return self.collapse
+        return replace(
+            self.collapse,
+            operator=self.coupling_operator,
+            rate=1.0,
+            source=self.key,
+            channel="resolved_slh",
+            phase=None,
         )
 
 
@@ -1174,6 +1194,11 @@ class ResolvedSLH:
         """Return channels traced out by the modeled experiment."""
         return tuple(channel for channel in self.channels if channel.accessibility == "hidden")
 
+    @property
+    def collapse_terms(self) -> tuple[CollapseTerm, ...]:
+        """Return solver-facing collapse records in resolved channel order."""
+        return tuple(channel.collapse_term for channel in self.channels)
+
 @dataclass(frozen=True)
 class DroppedTerm:
     """Advisory record for a Hamiltonian term elided by an approximation.
@@ -1274,7 +1299,7 @@ class EngineResult:
     @property
     def collapse_terms(self) -> tuple[CollapseTerm, ...]:
         """Return collapse records in complete SLH channel order."""
-        return tuple(channel.collapse for channel in self.slh.channels)
+        return tuple(channel.collapse_term for channel in self.slh.channels)
 
     def with_applied_hamiltonian_terms(
         self,
@@ -1350,7 +1375,7 @@ class EngineResult:
     @property
     def port_terms(self) -> tuple[CollapseTerm, ...]:
         """Return collapse channels that cross an accessible port boundary."""
-        return tuple(channel.collapse for channel in self.slh.external_channels)
+        return tuple(channel.collapse_term for channel in self.slh.external_channels)
 
     def hamiltonian(self) -> PhysicsExpr:
         """Return the exact canonical Hamiltonian as an inspectable expression.
@@ -1490,6 +1515,7 @@ class HamiltonianTemplate:
     resolved_frame: Any  # ResolvedFrame
     approximation: Any
     dims: tuple[int, ...]
+    slh: Any  # ResolvedSLH
     static_terms: tuple[Any, ...] = ()              # tuple[StaticTerm, ...]
     invariant_dynamic_terms: tuple[Any, ...] = ()   # tuple[DynamicTerm, ...]
     drive_terms: tuple[Any, ...] = ()               # tuple[assembly.CompiledDriveTerm, ...]

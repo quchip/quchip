@@ -138,6 +138,28 @@ resonator, `external_quality_factor` gives
 `kappa_p = 2π * freq / Q_external`. Internal resonator loss and every port are
 separate collapse channels, so `kappa_total` is their sum.
 
+### 3.3.2 Field networks
+
+Source: [`quchip/chip/port_network.py`](quchip/chip/port_network.py),
+[`quchip/engine/ir.py`](quchip/engine/ir.py)
+
+A `PortNetwork` composes accessible ports and instantaneous scalar scattering
+before the engine lowers the resolved SLH value. For a series connection with
+`G2` after `G1`, quchip uses
+
+```text
+S = S2 S1
+L = L2 + S2 L1
+H = H1 + H2 + Im(L2^dagger S2 L1).
+```
+
+Concrete scattering must be unitary. Loss is represented by an explicit
+unitary dilation: an attenuator with power transmission `eta` has amplitude
+transmission `sqrt(eta)` and a hidden vacuum channel with amplitude
+`sqrt(1-eta)`. Network exposures define the external channel order. Their
+optional reciprocal delay moves the incident and reported reference planes;
+it never enters the instantaneous `S` or generates a Hamiltonian term.
+
 Noise parameters are ordinary tracked attributes: set (or clear with `None`) at construction **or any time after** — collapse operators are rebuilt from current values on every solve, and post-construction writes get the same validation as the constructor. Chip-level shared/collective dissipation lives in `Bath` ([`quchip/chip/baths.py`](quchip/chip/baths.py)), attached at construction or later via `chip.add_bath(...)`; bath rates are Lindblad-ready 1/ns with no assembly `2π` (that boundary is Hamiltonian-only — a component's *intrinsic* `2π`, e.g. a resonator's `κ = 2π·f/Q`, is its own physics).
 
 ### 3.4 Authored local spaces and solver bases

@@ -52,8 +52,8 @@ def serialize_chip(chip: "Chip") -> dict[str, Any]:
     }
     if chip.baths:
         data["baths"] = [bath.to_dict() for bath in chip.baths]
-    if chip.ports:
-        data["ports"] = [port.to_dict() for port in chip.ports]
+    if chip.port_network is not None:
+        data["port_network"] = chip.port_network.to_dict()
     if chip.control_equipment is not None:
         data["control_equipment"] = chip.control_equipment.to_dict()
     return data
@@ -79,6 +79,7 @@ def deserialize_chip(data: dict[str, Any]) -> "Chip":
         "couplings",
         "baths",
         "ports",
+        "port_network",
         "control_equipment",
     }
     unknown = set(data) - allowed
@@ -103,8 +104,16 @@ def deserialize_chip(data: dict[str, Any]) -> "Chip":
     from quchip.chip.baths import Bath
 
     baths = [Bath.from_dict(bd) for bd in data.get("baths", [])]
+    from quchip.chip.port_network import PortNetwork
     from quchip.chip.ports import Port
 
+    if "port_network" in data and "ports" in data:
+        raise TypeError("Serialized Chip cannot contain both 'ports' and 'port_network'.")
+    port_network = (
+        PortNetwork.from_dict(data["port_network"])
+        if "port_network" in data
+        else None
+    )
     ports = [Port.from_dict(pd) for pd in data.get("ports", [])]
 
     control_equipment = (
@@ -123,6 +132,7 @@ def deserialize_chip(data: dict[str, Any]) -> "Chip":
         basis=cast(Literal["native", "eigen"], data.get("basis", "native")),
         baths=baths or None,
         ports=ports or None,
+        port_network=port_network,
     )
     if control_equipment is not None:
         chip.connect(control_equipment)
@@ -153,7 +163,7 @@ def clone_chip(chip: "Chip") -> "Chip":
         basis=chip.basis,
         backend=chip._backend,
         baths=[bath.copy() for bath in chip.baths] or None,
-        ports=[port.copy() for port in chip.ports] or None,
+        port_network=None if chip.port_network is None else chip.port_network.copy(),
     )
     if chip.control_equipment is not None:
         cloned.connect(chip.control_equipment.copy(device_map, cloned.coupling_map))

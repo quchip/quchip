@@ -24,6 +24,7 @@ from quchip.backend.protocol import Backend, Operator, State
 from quchip.approximations import Approximation, RWA, require_approximation
 from quchip.chip.analysis import ChipAnalysis, DressedResult, KerrMatrix
 from quchip.chip.baths import Bath
+from quchip.chip.port_network import PortNetwork
 from quchip.chip.ports import Port
 from quchip.chip.coupling_base import BaseCoupling
 from quchip.chip.states import _DEFAULT_LEVEL_SYMBOLS
@@ -182,8 +183,9 @@ class Chip:
     baths : list[Bath], optional
         Shared or collective unobserved environments.
     ports : list[Port], optional
-        Accessible Markovian input-output channels. Ports add collapse
-        channels without adding Hilbert-space factors.
+        Compatibility shorthand for an identity-exposed :class:`PortNetwork`.
+    port_network : PortNetwork, optional
+        Complete accessible field boundary. Attach at most one network.
 
     Examples
     --------
@@ -206,6 +208,7 @@ class Chip:
         backend: str | Backend | None = None,
         baths: list[Bath] | None = None,
         ports: list[Port] | None = None,
+        port_network: PortNetwork | None = None,
     ) -> None:
         duplicates = [lbl for lbl, count in Counter(d.label for d in devices).items() if count > 1]
         if duplicates:
@@ -233,14 +236,24 @@ class Chip:
         for bath in baths or ():
             self._validate_bath(bath)
         self._baths = tuple(baths) if baths else ()
-        port_duplicates = [lbl for lbl, n in Counter(port.label for port in ports or ()).items() if n > 1]
+        if ports and port_network is not None:
+            raise ValueError("Pass either ports or port_network, not both.")
+        if port_network is not None and not isinstance(port_network, PortNetwork):
+            raise TypeError(
+                f"Expected a PortNetwork, got {type(port_network).__name__}: {port_network!r}"
+            )
+        if port_network is None and ports:
+            port_network = PortNetwork.from_ports(ports)
+        network_ports = () if port_network is None else port_network.ports
+        port_duplicates = [lbl for lbl, n in Counter(port.label for port in network_ports).items() if n > 1]
         if port_duplicates:
             raise ValueError(f"Duplicate port labels: {port_duplicates}. Each port must have a unique label.")
-        for port in ports or ():
+        for port in network_ports:
             if not isinstance(port, Port):
                 raise TypeError(f"Expected a Port, got {type(port).__name__}: {port!r}")
             port.resolve_targets(self)
-        self._ports = tuple(ports) if ports else ()
+        self._port_network = port_network
+        self._ports = tuple(network_ports)
         if basis not in ("native", "eigen"):
             raise ValueError(f"basis must be 'native' or 'eigen', got {basis!r}")
         self._basis = basis
@@ -435,6 +448,7 @@ class Chip:
                     )
                     for port in self.ports
                 ),
+                None if self.port_network is None else self.port_network.fingerprint(),
             )
         except ValueError:
             signature = None
@@ -724,6 +738,11 @@ class Chip:
         """Accessible Markovian input-output channels, in declaration order."""
         return self._ports
 
+    @property
+    def port_network(self) -> PortNetwork | None:
+        """Return the attached accessible field boundary, if any."""
+        return self._port_network
+
     def port(self, port: str | Port) -> Port:
         """Return one declared port by object or label."""
         label = resolve_label(port)
@@ -731,6 +750,27 @@ class Chip:
             if candidate.label == label:
                 return candidate
         raise KeyError(f"No port labeled '{label}'. Available: {[candidate.label for candidate in self._ports]}")
+
+    def connect_network(self, network: PortNetwork) -> None:
+        """Attach the chip's one complete accessible field boundary."""
+        if not isinstance(network, PortNetwork):
+            raise TypeError(f"Expected a PortNetwork, got {type(network).__name__}: {network!r}")
+        if self._port_network is not None:
+            raise ValueError(
+                "A PortNetwork is already attached; call disconnect_network() before replacing it."
+            )
+        network.validate_for(self)
+        self._port_network = network
+        self._ports = network.ports
+        self._resolved_result_cache = None
+
+    def disconnect_network(self) -> PortNetwork | None:
+        """Detach and return the accessible field boundary."""
+        network = self._port_network
+        self._port_network = None
+        self._ports = ()
+        self._resolved_result_cache = None
+        return network
 
     def add_bath(self, bath: Bath) -> Bath:
         """Attach a bath to this chip and return it (for fluent use).
@@ -1211,6 +1251,8 @@ class Chip:
             notes[f"bath:{bath.label}"] = list(bath.physics_notes())
         for port in self.ports:
             notes[f"port:{port.label}"] = list(port.physics_notes())
+        if self.port_network is not None:
+            notes[f"network:{self.port_network.label}"] = list(self.port_network.physics_notes())
         return notes
 
     # ------------------------------------------------------------------
@@ -1266,6 +1308,9 @@ class Chip:
         for index, port in enumerate(self._ports):
             for name, value in port.parameter_values().items():
                 add(f"port.{port.label}.{name}", ("port", index, name, value))
+        if self._port_network is not None:
+            for name, value in self._port_network.parameters.items():
+                add(f"network.{name}", ("network", 0, name, value))
         return targets
 
     @property
@@ -1315,6 +1360,15 @@ class Chip:
                     (port.label, tuple(port.resolve_targets(self)))
                     for port in self._ports
                 ),
+                "port_network": (
+                    None
+                    if self._port_network is None
+                    else (
+                        self._port_network.label,
+                        tuple(component.label for component in self._port_network.components),
+                        self._port_network.exposures,
+                    )
+                ),
                 "frame": self._frame_spec,
                 "approximation": type(self._approximation).__name__,
                 "backend": type(self.backend).__name__,
@@ -1348,6 +1402,9 @@ class Chip:
                 cloned._control_equipment._signal_chain[index] = transform.with_parameter_value(name, value)
             elif kind == "bath":
                 cloned._baths[index].set_parameter_value(name, value)
+            elif kind == "network":
+                assert cloned._port_network is not None
+                cloned._port_network.set_parameter_value(name, value)
             else:
                 cloned._ports[index].set_parameter_value(name, value)
         for index, local_bindings in device_bindings.items():

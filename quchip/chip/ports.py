@@ -13,6 +13,7 @@ from quchip.utils.labeling import auto_label, resolve_label
 
 if TYPE_CHECKING:
     from quchip.chip.chip import Chip
+    from quchip.chip.port_network import FieldTerminal, PortNetwork, SLHComponent
 
 
 class Port:
@@ -50,6 +51,31 @@ class Port:
         self.operator = operator
         self.phase = phase
         self.label = label if label is not None else auto_label(self._type_prefix)
+        self._network: PortNetwork | None = None
+        self._network_component: SLHComponent | None = None
+
+    def _bind_network(self, network: "PortNetwork", component: "SLHComponent") -> None:
+        """Bind terminal access to the one network that owns this port."""
+        if self._network is not None and self._network is not network:
+            raise ValueError(
+                f"Port {self.label!r} already belongs to another PortNetwork; copy it first."
+            )
+        self._network = network
+        self._network_component = component
+
+    @property
+    def input(self) -> "FieldTerminal":
+        """Return this port's field input terminal."""
+        if self._network_component is None:
+            raise AttributeError("A Port has terminals only after it belongs to a PortNetwork.")
+        return self._network_component.input
+
+    @property
+    def output(self) -> "FieldTerminal":
+        """Return this port's field output terminal."""
+        if self._network_component is None:
+            raise AttributeError("A Port has terminals only after it belongs to a PortNetwork.")
+        return self._network_component.output
 
     @staticmethod
     def _validate_positive(name: str, value: Any) -> None:
