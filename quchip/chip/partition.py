@@ -190,6 +190,7 @@ def _distribute_control_lines(
 def _build_component_chip(chip: "Chip", clone: "Chip", index: int, group: list[str], lines: list[Any]) -> "Chip":
     """Assemble one component's solve-ready sub-chip: its devices, internal couplings, baths, frame, equipment."""
     from quchip.chip.chip import Chip as _Chip
+    from quchip.chip.port_network import PortNetwork
     from quchip.control.equipment import ControlEquipment
 
     member_set = set(group)
@@ -206,6 +207,7 @@ def _build_component_chip(chip: "Chip", clone: "Chip", index: int, group: list[s
         {k: v for k, v in clone.frame.items() if k in member_set}
         if isinstance(clone.frame, dict) else clone.frame
     )
+    ports = _component_ports(clone, member_set)
     sub = _Chip(
         devices=devices,
         couplings=couplings or None,
@@ -214,7 +216,7 @@ def _build_component_chip(chip: "Chip", clone: "Chip", index: int, group: list[s
         approximation=clone.approximation,
         backend=clone._backend,
         baths=_component_baths(clone, member_set) or None,
-        ports=_component_ports(clone, member_set) or None,
+        port_network=PortNetwork.from_ports(ports) if ports else None,
     )
     equipment = clone.control_equipment
     if equipment is not None and lines:

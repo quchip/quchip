@@ -152,9 +152,9 @@ def build_problem(
         (backend selection is chip-owned).
     e_ops : dict, optional
         Observables keyed by device label (or a 2-tuple of labels for a
-        two-body observable). A string trace name may instead map to an
-        ``OutputAmplitude``, ``OutputQuadrature``, or ``OutputPhotonFlux``
-        spec for an accessible SLH exposure.
+        two-body observable). An external-plane object may instead map to its
+        ``plane.output`` request; read the complete field afterward with
+        ``result.output(plane)``.
     initial_state : optional
         Initial state; ``None`` defaults to the chip ground state.
 

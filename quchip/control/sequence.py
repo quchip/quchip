@@ -369,8 +369,8 @@ class QuantumSequence:
         target : str | ControlEndpoint | BaseDevice | BaseCoupling
             Accepted forms, resolved in this order:
 
-            * :class:`~quchip.control.field.CoherentInput` — scheduled on its
-              external SLH exposure without entering ``ControlEquipment``.
+            * ``network.expose(...).input`` — scheduled at that external
+              reference plane without entering ``ControlEquipment``.
             * :class:`BaseDrive` — scheduled directly on that drive.
             * :class:`BaseDevice` — uses the device's first connected
               drive; pass the drive object explicitly when a device

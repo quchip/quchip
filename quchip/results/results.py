@@ -56,6 +56,41 @@ class ObservableTrace:
     raw: Any
 
 
+@dataclass(frozen=True)
+class OutputFieldTrace:
+    """Complete transient field reported at one external reference plane.
+
+    ``amplitude`` is the complex mean field ``<b_out>`` and ``photon_flux``
+    is the normally ordered ``<b_out dagger b_out>`` in photons/ns.
+    ``raw_*`` retain the same moments at the Markov boundary before the
+    reciprocal reference-plane delay.
+    """
+
+    exposure: str
+    times: Any
+    amplitude: Any
+    photon_flux: Any
+    raw_amplitude: Any
+    raw_photon_flux: Any
+
+    def quadrature(self, phase: Any = 0.0) -> Any:
+        r"""Return ``Re[exp(-i phase) <b_out>]`` without another solve."""
+        from quchip.utils.jax_utils import array_namespace
+
+        xp = array_namespace(self.amplitude)
+        return xp.real(xp.exp(-1j * xp.asarray(phase)) * self.amplitude)
+
+    @property
+    def final_amplitude(self) -> Any:
+        """Return the final complex output amplitude."""
+        return self.amplitude[..., -1]
+
+    @property
+    def final_photon_flux(self) -> Any:
+        """Return the final normally ordered photon flux."""
+        return self.photon_flux[..., -1]
+
+
 _NO_STATES_MSG = "No states stored — pass options={'store_states': True} to the solver."
 
 
@@ -87,11 +122,13 @@ class SimulationResult:
         *,
         device_info: list[tuple[str, bool]] | None = None,
         observable_traces: dict[Any, ObservableTrace | list[ObservableTrace]] | None = None,
+        output_traces: dict[Any, OutputFieldTrace] | None = None,
     ) -> None:
         self._backend = backend
         self.times = backend.array_module.asarray(solver_result.times, dtype=float)
         self.states = solver_result.states
         self._expect_data: dict[Any, ObservableTrace | list[ObservableTrace]] | None = observable_traces
+        self._output_data = {} if output_traces is None else dict(output_traces)
         self.solver = solver_result.solver
         self.stats = dict(solver_result.stats) if solver_result.stats else {}
         self.dims = list(dims)
@@ -146,6 +183,25 @@ class SimulationResult:
 
     # Alias: reads nicely at call sites that say "give me the values array".
     expect_values = expect
+
+    # ------------------------------------------------------------------
+    # External fields
+    # ------------------------------------------------------------------
+
+    @property
+    def outputs(self) -> dict[Any, OutputFieldTrace]:
+        """Return complete output-field traces keyed by exposure label."""
+        return dict(self._output_data)
+
+    def output(self, exposure: Any) -> OutputFieldTrace:
+        """Return one field trace by exposure object or label."""
+        label = resolve_label(exposure)
+        try:
+            return self._output_data[label]
+        except KeyError as exc:
+            raise KeyError(
+                f"No output for {label!r}. Available exposures: {sorted(self._output_data)}"
+            ) from exc
 
     # ------------------------------------------------------------------
     # States, partial traces, overlaps
@@ -465,6 +521,8 @@ class SimulationResult:
         ]
         if self._expect_data is not None:
             parts.append(f"expect=dict({len(self._expect_data)} keys)")
+        if self._output_data:
+            parts.append(f"outputs=dict({len(self._output_data)} keys)")
         return ", ".join(parts) + ")"
 
 
@@ -503,6 +561,21 @@ class SimulationBatchResult(BatchResult[SimulationResult]):
         values = self._reshape([r.expect(key, index=index) for r in self._results])
         return self._reduce_time_axis(values, reduce)
 
+    def output(self, exposure: Any) -> OutputFieldTrace:
+        """Return one complete field trace reshaped to the natural sweep grid."""
+        traces = [result.output(exposure) for result in self._results]
+        if not traces:
+            raise RuntimeError("Empty batch has no output fields.")
+        first = traces[0]
+        return OutputFieldTrace(
+            exposure=first.exposure,
+            times=first.times,
+            amplitude=self._reshape([trace.amplitude for trace in traces]),
+            photon_flux=self._reshape([trace.photon_flux for trace in traces]),
+            raw_amplitude=self._reshape([trace.raw_amplitude for trace in traces]),
+            raw_photon_flux=self._reshape([trace.raw_photon_flux for trace in traces]),
+        )
+
     def population(self, device: str | BaseDevice, level: int = 0, *, reduce: str | None = None) -> Any:
         """Return population traces reshaped to the natural sweep grid."""
         values = self._reshape([r.population_array(device, level) for r in self._results])
@@ -534,10 +607,11 @@ def _wrap(
     engine_result: Any,
 ) -> SimulationResult:
     observable_traces = None
+    output_traces = None
     if e_ops_meta is not None:
         from quchip.engine.observables import build_observable_traces
 
-        observable_traces = build_observable_traces(
+        observable_traces, output_traces = build_observable_traces(
             solver_result,
             tlist,
             chip,
@@ -551,6 +625,7 @@ def _wrap(
         dims=chip.dims,
         device_info=[(d.label, d.computational) for d in chip.devices],
         observable_traces=observable_traces,
+        output_traces=output_traces,
     )
 
 

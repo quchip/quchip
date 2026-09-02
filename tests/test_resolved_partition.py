@@ -8,11 +8,9 @@ import pytest
 from quchip import (
     Capacitive,
     Chip,
-    CoherentInput,
     CollapseChannel,
     Coupling,
     Exact,
-    OutputAmplitude,
     PortNetwork,
     QuantumSequence,
     RWA,
@@ -142,17 +140,19 @@ def test_field_io_declines_component_solve_but_keeps_automatic_simulation() -> N
     network = PortNetwork(scattering=np.asarray([[0.0, 1.0], [1.0, 0.0]]), label="swap")
     network.port("left", target=first, rate=0.02)
     network.port("right", target=second, rate=0.03)
+    left_plane = network.exposure("left")
+    right_plane = network.exposure("right")
     chip = Chip([first, second], port_network=network, frame={"a": 5.0, "b": 5.4})
     sequence = QuantumSequence(chip)
     sequence.schedule(
-        CoherentInput("left"),
+        left_plane.input,
         envelope=Square(duration=0.2, amplitude=0.01),
     )
 
     result = sequence.simulate(
         tlist=np.linspace(0.0, 0.2, 3),
-        e_ops={"right_out": OutputAmplitude("right")},
+        e_ops={right_plane: right_plane.output},
     )
 
     assert not isinstance(result, PartitionedSimulationResult)
-    assert result.expect("right_out").shape == (3,)
+    assert result.output(right_plane).amplitude.shape == (3,)

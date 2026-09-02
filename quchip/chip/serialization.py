@@ -78,7 +78,6 @@ def deserialize_chip(data: dict[str, Any]) -> "Chip":
         "devices",
         "couplings",
         "baths",
-        "ports",
         "port_network",
         "control_equipment",
     }
@@ -105,16 +104,11 @@ def deserialize_chip(data: dict[str, Any]) -> "Chip":
 
     baths = [Bath.from_dict(bd) for bd in data.get("baths", [])]
     from quchip.chip.port_network import PortNetwork
-    from quchip.chip.ports import Port
-
-    if "port_network" in data and "ports" in data:
-        raise TypeError("Serialized Chip cannot contain both 'ports' and 'port_network'.")
     port_network = (
         PortNetwork.from_dict(data["port_network"])
         if "port_network" in data
         else None
     )
-    ports = [Port.from_dict(pd) for pd in data.get("ports", [])]
 
     control_equipment = (
         ControlEquipment.from_dict(data["control_equipment"], device_map, coupling_map)
@@ -131,7 +125,6 @@ def deserialize_chip(data: dict[str, Any]) -> "Chip":
         approximation=approximation,
         basis=cast(Literal["native", "eigen"], data.get("basis", "native")),
         baths=baths or None,
-        ports=ports or None,
         port_network=port_network,
     )
     if control_equipment is not None:

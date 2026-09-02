@@ -245,16 +245,25 @@ def test_network_dilation_precedes_stable_identity_hidden_baths() -> None:
     )
 
 
-def test_legacy_ports_form_an_explicit_identity_network() -> None:
-    """Legacy chip ports lower to the same explicit identity network boundary."""
+def test_from_ports_builds_an_explicit_identity_network() -> None:
+    """Existing port objects can seed the sole explicit network boundary."""
     resonator = Resonator(freq=6.0, levels=2, label="r")
     port = Port(resonator, rate=0.01, label="readout")
 
-    chip = Chip([resonator], ports=[port])
+    chip = Chip([resonator], port_network=PortNetwork.from_ports([port]))
 
     assert chip.port_network is not None
     assert chip.port_network.ports == (port,)
     np.testing.assert_allclose(chip.resolve().slh.S, [[1.0]])
+
+
+def test_chip_has_one_network_construction_path() -> None:
+    """Ports enter a chip through its sole network-owned boundary."""
+    resonator = Resonator(freq=6.0, levels=2, label="r")
+    port = Port(resonator, rate=0.01, label="readout")
+
+    with pytest.raises(TypeError, match="ports"):
+        Chip([resonator], ports=[port])  # type: ignore[call-arg]
 
 
 def test_second_network_cannot_silently_replace_the_first() -> None:

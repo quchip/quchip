@@ -44,7 +44,6 @@ from quchip.backend import get_default_backend, set_default_backend  # noqa: E40
 from quchip.chip import (
     ActivePatchResult,
     Bath,
-    FieldTerminal,
     Port,
     PortNetwork,
     Capacitive,
@@ -55,7 +54,6 @@ from quchip.chip import (
     DressedResult,
     EliminationResult,
     KerrMatrix,
-    SLHComponent,
     TunableCapacitive,
     active_patch,
     eliminate,
@@ -65,8 +63,6 @@ from quchip.chip import (
 )
 from quchip.control import (
     ChargeDrive,
-    CoherentInput,
-    ControlEndpoint,
     ControlEquipment,
     CouplingDrive,
     Crosstalk,
@@ -127,7 +123,6 @@ from quchip.engine import (
 )
 from quchip.interop import EigenbasisDevice, ModelMapping
 from quchip.inverse_design import FitADressResult, FitParameterReport, ObservableReport, fit_a_dress
-from quchip.observables import OutputAmplitude, OutputPhotonFlux, OutputQuadrature
 from quchip.results import (
     ObservableTrace,
     PartitionedSimulationResult,
@@ -212,9 +207,7 @@ __all__ = [
     "KerrMatrix",
     "Bath",
     "Port",
-    "FieldTerminal",
     "PortNetwork",
-    "SLHComponent",
     "ChipTransform",
     "EliminationResult",
     "eliminate",
@@ -239,9 +232,6 @@ __all__ = [
     "steadystate_batch",
     "build_steadystate_problem",
     "ObservableTrace",
-    "OutputAmplitude",
-    "OutputQuadrature",
-    "OutputPhotonFlux",
     "SimulationBatchResult",
     "SimulationResult",
     "SteadyStateResult",
@@ -261,8 +251,6 @@ __all__ = [
     "hbar",
     "Phi_0",
     # Control
-    "CoherentInput",
-    "ControlEndpoint",
     "CouplingDrive",
     "DeviceDrive",
     "Delay",

@@ -14,7 +14,9 @@ from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar, selec
 from quchip.utils.labeling import auto_label, resolve_label
 
 if TYPE_CHECKING:
+    from quchip.control.field import CoherentInput
     from quchip.engine.ir import ResolvedSLH
+    from quchip.observables import OutputField
 
 
 TerminalDirection = Literal["input", "output"]
@@ -109,13 +111,46 @@ class SLHComponent:
         )
 
 
-@dataclass(frozen=True)
-class _Exposure:
+@dataclass(frozen=True, eq=False)
+class FieldExposure:
+    """One named reciprocal reference plane on a :class:`PortNetwork`."""
+
     label: str
-    input_key: TerminalKey
-    output_key: TerminalKey
+    _input_key: TerminalKey = field(repr=False)
+    _output_key: TerminalKey = field(repr=False)
     delay: Any = 0.0
-    hidden: bool = False
+    _hidden: bool = field(default=False, repr=False)
+    _network_token: object = field(repr=False, compare=False, kw_only=True)
+
+    def __eq__(self, other: object) -> bool:
+        """Compare stable plane identity within one network."""
+        return (
+            isinstance(other, FieldExposure)
+            and self._network_token is other._network_token
+            and self.label == other.label
+        )
+
+    def __hash__(self) -> int:
+        """Hash stable plane identity within one network."""
+        return hash((id(self._network_token), self.label))
+
+    @property
+    def input(self) -> "CoherentInput":
+        """Return the coherent-field endpoint scheduled at this plane."""
+        if self._hidden:
+            raise AttributeError("Hidden vacuum channels cannot be driven.")
+        from quchip.control.field import CoherentInput
+
+        return CoherentInput(self.label, label=f"{self.label}.input")
+
+    @property
+    def output(self) -> "OutputField":
+        """Return the complete transient output-field request for this plane."""
+        if self._hidden:
+            raise AttributeError("Hidden vacuum channels are not observable.")
+        from quchip.observables import OutputField
+
+        return OutputField(self.label)
 
 
 @dataclass
@@ -157,7 +192,7 @@ class PortNetwork:
         self._component_parameters: dict[str, dict[str, Any]] = {}
         self._connections: dict[TerminalKey, TerminalKey] = {}
         self._used_outputs: dict[TerminalKey, TerminalKey] = {}
-        self._exposures: list[_Exposure] = []
+        self._exposures: list[FieldExposure] = []
 
     @classmethod
     def from_ports(
@@ -184,9 +219,23 @@ class PortNetwork:
         return tuple(self._components.values())
 
     @property
-    def exposures(self) -> tuple[str, ...]:
-        """Return explicitly authored external exposure labels."""
-        return tuple(exposure.label for exposure in self._exposures if not exposure.hidden)
+    def exposures(self) -> tuple[FieldExposure, ...]:
+        """Return the complete external reference planes in channel order."""
+        return tuple(exposure for exposure in self._effective_exposures() if not exposure._hidden)
+
+    def exposure(self, exposure: str | FieldExposure) -> FieldExposure:
+        """Return one external reference plane by object or label."""
+        if isinstance(exposure, FieldExposure) and exposure._network_token is not self._token:
+            raise ValueError(f"Exposure {exposure.label!r} belongs to another PortNetwork.")
+        label = resolve_label(exposure)
+        exposures = self.exposures
+        for candidate in exposures:
+            if candidate.label == label:
+                return candidate
+        raise KeyError(
+            f"No exposure labeled {label!r}. Available: "
+            f"{[candidate.label for candidate in exposures]}"
+        )
 
     @property
     def S(self) -> Any:
@@ -201,7 +250,7 @@ class PortNetwork:
             for (output, input_), value in self._authored_scattering.items():
                 values[f"scattering.{resolve_label(output)}.{resolve_label(input_)}"] = value
         for exposure in self._exposures:
-            if not exposure.hidden:
+            if not exposure._hidden:
                 values[f"exposure.{exposure.label}.delay"] = exposure.delay
         for label, parameters in self._component_parameters.items():
             for name, value in parameters.items():
@@ -378,8 +427,8 @@ class PortNetwork:
         input: FieldTerminal,
         output: FieldTerminal,
         delay: Any = 0.0,
-    ) -> None:
-        """Name one external input/output pair and its reciprocal reference delay."""
+    ) -> FieldExposure:
+        """Name and return one external input/output reference plane."""
         self._validate_terminal(input, "input")
         self._validate_terminal(output, "output")
         self._reject_hidden_terminal(input)
@@ -398,7 +447,15 @@ class PortNetwork:
                 concrete = None
         if concrete is not None and concrete < 0:
             raise ValueError("Exposure delay must be non-negative.")
-        self._exposures.append(_Exposure(label, input.key, output.key, delay))
+        exposure = FieldExposure(
+            label,
+            input.key,
+            output.key,
+            delay,
+            _network_token=self._token,
+        )
+        self._exposures.append(exposure)
+        return exposure
 
     def validate_for(self, chip: Any) -> None:
         """Validate every quantum port target against ``chip``."""
@@ -424,7 +481,7 @@ class PortNetwork:
             ),
             tuple(self._connections.items()),
             tuple(
-                (item.label, item.input_key, item.output_key, self._cache_value(item.delay))
+                (item.label, item._input_key, item._output_key, self._cache_value(item.delay))
                 for item in self._exposures
             ),
             self._cache_value(self._authored_scattering),
@@ -482,7 +539,7 @@ class PortNetwork:
                     replace(
                         port_channels[exposure.label],
                         key=exposure.label,
-                        accessibility="hidden" if exposure.hidden else "exposed",
+                        accessibility="hidden" if exposure._hidden else "exposed",
                         reference_delay=exposure.delay,
                     )
                 )
@@ -497,7 +554,7 @@ class PortNetwork:
             channels.append(
                 SLHChannel(
                     key=exposure.label,
-                    accessibility="hidden" if exposure.hidden else "exposed",
+                    accessibility="hidden" if exposure._hidden else "exposed",
                     collapse=template,
                     coupling_operator=coupling,
                     reference_delay=exposure.delay,
@@ -559,8 +616,8 @@ class PortNetwork:
             "exposures": [
                 {
                     "label": exposure.label,
-                    "input": list(exposure.input_key),
-                    "output": list(exposure.output_key),
+                    "input": list(exposure._input_key),
+                    "output": list(exposure._output_key),
                     "delay": self._serialize_scalar(exposure.delay),
                 }
                 for exposure in self._exposures
@@ -610,11 +667,12 @@ class PortNetwork:
             network._used_outputs[output_key] = input_key
         for payload in data.get("exposures", []):
             network._exposures.append(
-                _Exposure(
+                FieldExposure(
                     payload["label"],
                     tuple(payload["input"]),
                     tuple(payload["output"]),
                     cls._deserialize_scalar(payload.get("delay", 0.0)),
+                    _network_token=network._token,
                 )
             )
         return network
@@ -661,7 +719,10 @@ class PortNetwork:
                 )
         copied._connections = dict(self._connections)
         copied._used_outputs = dict(self._used_outputs)
-        copied._exposures = list(self._exposures)
+        copied._exposures = [
+            replace(exposure, _network_token=copied._token)
+            for exposure in self._exposures
+        ]
         copied._component_kinds = dict(self._component_kinds)
         copied._component_parameters = {
             label: dict(parameters)
@@ -791,12 +852,12 @@ class PortNetwork:
         self._components[component.label] = component
         return component
 
-    def _effective_exposures(self) -> tuple[_Exposure, ...]:
+    def _effective_exposures(self) -> tuple[FieldExposure, ...]:
         exposed = list(self._exposures)
         used = {
             key
             for exposure in self._exposures
-            for key in (exposure.input_key, exposure.output_key)
+            for key in (exposure._input_key, exposure._output_key)
         }
         for component in self.components:
             if not any(port is not None for port in component._local_ports):
@@ -810,26 +871,34 @@ class PortNetwork:
                 or output_key in used
             )
             if not touched:
-                exposed.append(_Exposure(component.label, input_key, output_key))
-        hidden: list[_Exposure] = []
+                exposed.append(
+                    FieldExposure(
+                        component.label,
+                        input_key,
+                        output_key,
+                        _network_token=self._token,
+                    )
+                )
+        hidden: list[FieldExposure] = []
         for component in self.components:
             for input_name, output_name, label in component._hidden_pairs:
                 hidden.append(
-                    _Exposure(
+                    FieldExposure(
                         label,
                         (component.label, input_name),
                         (component.label, output_name),
-                        hidden=True,
+                        _hidden=True,
+                        _network_token=self._token,
                     )
                 )
         return tuple((*exposed, *hidden))
 
     def _compile(
         self,
-    ) -> tuple[tuple[_Exposure, ...], Any, list[dict[str, Any]], list[tuple[str, str, Any]]]:
+    ) -> tuple[tuple[FieldExposure, ...], Any, list[dict[str, Any]], list[tuple[str, str, Any]]]:
         exposures = self._effective_exposures()
-        covered_inputs = {exposure.input_key for exposure in exposures}
-        covered_outputs = {exposure.output_key for exposure in exposures}
+        covered_inputs = {exposure._input_key for exposure in exposures}
+        covered_outputs = {exposure._output_key for exposure in exposures}
         all_inputs = {
             (component.label, name) for component in self.components for name in component.input_names
         }
@@ -852,7 +921,7 @@ class PortNetwork:
         for column, exposure in enumerate(exposures):
             basis = [0.0] * size
             basis[column] = 1.0
-            input_fields[exposure.input_key] = _AffineField(basis, {})
+            input_fields[exposure._input_key] = _AffineField(basis, {})
 
         pending = list(self._components)
         generated_pairs: list[tuple[str, str, Any]] = []
@@ -900,13 +969,13 @@ class PortNetwork:
             if not progressed:
                 raise ValueError("PortNetwork contains instantaneous feedback or a connection cycle.")
 
-        rows = [output_fields[exposure.output_key] for exposure in exposures]
+        rows = [output_fields[exposure._output_key] for exposure in exposures]
         scattering_rows = [row.scattering for row in rows]
         xp = select_array_module(contains_tracer(scattering_rows))
         scattering = xp.asarray(scattering_rows, dtype=complex)
         coupling_maps = [row.coupling for row in rows]
 
-        external_count = sum(not exposure.hidden for exposure in exposures)
+        external_count = sum(not exposure._hidden for exposure in exposures)
         boundary = self._boundary_scattering(tuple(exposure.label for exposure in exposures[:external_count]))
         if boundary is not None:
             boundary_xp = select_array_module(contains_tracer((scattering, boundary)))
@@ -1122,7 +1191,7 @@ class PortNetwork:
 
     def _terminal_is_exposed(self, terminal: FieldTerminal) -> bool:
         return any(
-            terminal.key in (exposure.input_key, exposure.output_key)
+            terminal.key in (exposure._input_key, exposure._output_key)
             for exposure in self._exposures
         )
 
@@ -1184,4 +1253,4 @@ class PortNetwork:
             return False
 
 
-__all__ = ["FieldTerminal", "PortNetwork", "SLHComponent"]
+__all__ = ["PortNetwork"]

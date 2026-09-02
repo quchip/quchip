@@ -21,6 +21,11 @@ from quchip import (
 )
 
 
+def _network(*ports: Port) -> PortNetwork:
+    """Return the explicit identity boundary for the supplied ports."""
+    return PortNetwork.from_ports(ports)
+
+
 def _linear_resonator(*, kappa_in: float, kappa_out: float = 0.0):
     resonator = Resonator(freq=6.0, levels=8, label="r")
     input_port = Port(resonator, rate=kappa_in, label="in")
@@ -29,7 +34,7 @@ def _linear_resonator(*, kappa_in: float, kappa_out: float = 0.0):
     if kappa_out:
         output_port = Port(resonator, rate=kappa_out, label="out")
         ports.append(output_port)
-    return resonator, input_port, output_port, Chip([resonator], ports=ports)
+    return resonator, input_port, output_port, Chip([resonator], port_network=_network(*ports))
 
 
 def test_coherent_port_input_uses_standard_slh_hamiltonian_sign() -> None:
@@ -153,14 +158,18 @@ def test_resonance_distinguishes_undercritical_and_overcoupling(
 ) -> None:
     resonator = Resonator(freq=6.0, levels=5, label="r", T1=1.0 / internal_rate)
     port = Port(resonator, rate=external_rate, label="p")
-    result = VNA(Chip([resonator], ports=[port]), input=port, outputs=[port]).sweep([6.0])
+    result = VNA(
+        Chip([resonator], port_network=_network(port)),
+        input=port,
+        outputs=[port],
+    ).sweep([6.0])
 
     expected = (internal_rate - external_rate) / (internal_rate + external_rate)
     np.testing.assert_allclose(result.s11, [expected], atol=2e-8)
 
 
 def test_vna_probe_has_no_finite_amplitude_mode() -> None:
-    """Finite-power spectroscopy belongs to CoherentInput simulations."""
+    """Finite-power spectroscopy belongs to external-plane input simulations."""
     assert "amplitude" not in inspect.signature(VNA.sweep).parameters
 
 
@@ -178,7 +187,7 @@ def test_vna_result_does_not_depend_on_chip_default_frame() -> None:
     def response(frame):
         resonator = Resonator(freq=6.0, levels=5, label="r")
         port = Port(resonator, rate=0.04, label="p")
-        chip = Chip([resonator], ports=[port], frame=frame)
+        chip = Chip([resonator], port_network=_network(port), frame=frame)
         return VNA(chip, input=port, outputs=[port]).sweep([5.98, 6.0, 6.02]).s11
 
     np.testing.assert_allclose(response("lab"), response("rotating"), atol=2e-8)
@@ -192,7 +201,7 @@ def test_one_carrier_probes_passive_modes_behind_the_port() -> None:
     chip = Chip(
         [purcell_filter, readout],
         couplings=[Capacitive(purcell_filter, readout, g=0.01)],
-        ports=[feedline],
+        port_network=_network(feedline),
     )
 
     result = VNA(chip, input=feedline, outputs=[feedline]).sweep([5.99, 6.0, 6.02])
@@ -206,7 +215,7 @@ def test_fixed_tone_variation_uses_pump_axes_without_new_drive_physics() -> None
     auxiliary = Resonator(freq=5.0, levels=3, label="aux")
     readout_port = Port(readout, rate=0.03, label="readout_port")
     pump_port = Port(auxiliary, rate=0.04, label="pump_port")
-    chip = Chip([readout, auxiliary], ports=[readout_port, pump_port])
+    chip = Chip([readout, auxiliary], port_network=_network(readout_port, pump_port))
     vna = VNA(chip, input=readout_port, outputs=[readout_port])
     pump = vna.pump(pump_port, freq=5.0, amplitude=0.02)
 
@@ -223,7 +232,7 @@ def test_distinct_stationary_tones_on_one_mode_require_time_evolution() -> None:
     resonator = Resonator(freq=6.0, levels=4, label="r")
     probe = Port(resonator, rate=0.02, label="probe")
     pump_port = Port(resonator, rate=0.02, label="pump")
-    chip = Chip([resonator], ports=[probe, pump_port])
+    chip = Chip([resonator], port_network=_network(probe, pump_port))
     vna = VNA(chip, input=probe, outputs=[probe])
     vna.pump(pump_port, freq=5.9, amplitude=0.01)
 
@@ -238,7 +247,11 @@ def test_qutip_and_dynamiqs_vna_response_agree() -> None:
         resonator = Resonator(freq=6.0, levels=5, label="r")
         input_port = Port(resonator, rate=0.02, label="in")
         output_port = Port(resonator, rate=0.03, label="out")
-        chip = Chip([resonator], ports=[input_port, output_port], backend=backend)
+        chip = Chip(
+            [resonator],
+            port_network=_network(input_port, output_port),
+            backend=backend,
+        )
         return VNA(chip, input=input_port, outputs=[output_port]).sweep([5.98, 6.0, 6.02]).s21
 
     np.testing.assert_allclose(np.asarray(response("dynamiqs")), response("qutip"), atol=2e-8)
@@ -252,7 +265,7 @@ def test_dynamiqs_pumped_small_signal_response_is_jittable_and_differentiable() 
 
     resonator = Resonator(freq=6.0, levels=3, label="r")
     port = Port(resonator, rate=0.04, label="p")
-    chip = Chip([resonator], ports=[port], backend="dynamiqs")
+    chip = Chip([resonator], port_network=_network(port), backend="dynamiqs")
 
     def reflection(amplitude):
         vna = VNA(chip, input=port, outputs=[port])
@@ -276,7 +289,11 @@ def test_dynamiqs_explicit_port_frequency_is_jittable_and_differentiable(
     resonator = Resonator(freq=6.0, levels=3, label="r")
     lowering = np.diag(np.sqrt(np.arange(1, 3)), k=1).astype(complex)
     port = Port(resonator, rate=0.04, operator=lowering, label="p")
-    vna = VNA(Chip([resonator], ports=[port], backend="dynamiqs"), input=port, outputs=[port])
+    vna = VNA(
+        Chip([resonator], port_network=_network(port), backend="dynamiqs"),
+        input=port,
+        outputs=[port],
+    )
 
     def reflection(frequency):
         return jnp.real(vna.sweep(jnp.asarray([frequency])).s11[0])
@@ -292,7 +309,7 @@ def test_resonantly_driven_two_level_population_matches_optical_bloch_solution()
     amplitude = 0.03
     qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=2, label="q")
     port = Port(qubit, rate=decay_rate, label="drive")
-    chip = Chip([qubit], ports=[port])
+    chip = Chip([qubit], port_network=_network(port))
 
     vna = VNA(chip, input=port, outputs=[port])
     vna.pump(port, freq=5.0, amplitude=amplitude)
@@ -312,7 +329,7 @@ def test_two_tone_cross_kerr_model_produces_a_pump_frequency_axis() -> None:
     chip = Chip(
         [qubit, resonator],
         [CrossKerr(qubit, resonator, chi=-0.03)],
-        ports=[qubit_port, readout_port],
+        port_network=_network(qubit_port, readout_port),
     )
     vna = VNA(chip, input=readout_port, outputs=[readout_port])
     pump = vna.pump(qubit_port, freq=5.0, amplitude=0.04)
@@ -339,7 +356,7 @@ def test_two_tone_probe_frame_propagates_through_passive_filter_network() -> Non
             CrossKerr(qubit, resonator, chi=-0.003),
             Capacitive(purcell_filter, resonator, g=0.010),
         ],
-        ports=[qubit_port, feedline],
+        port_network=_network(qubit_port, feedline),
     )
     vna = VNA(chip, input=feedline, outputs=[feedline])
     pump = vna.pump(qubit_port, freq=5.0, amplitude=0.02)
@@ -360,7 +377,7 @@ def test_nonlinear_stationary_state_matches_long_time_master_equation() -> None:
     amplitude = 0.05
     cavity = KerrCavity(freq=6.0, kerr=0.03, levels=8, label="c")
     port = Port(cavity, rate=0.05, label="p")
-    chip = Chip([cavity], ports=[port], backend="qutip")
+    chip = Chip([cavity], port_network=_network(port), backend="qutip")
     vna = VNA(chip, input=port, outputs=[port])
     vna.pump(port, freq=6.0, amplitude=amplitude)
     stationary = vna.sweep([6.0])

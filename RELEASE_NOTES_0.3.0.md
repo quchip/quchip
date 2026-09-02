@@ -21,16 +21,16 @@ external reciprocal reference plane only. They do not enter the Markov model.
 
 ## Drives and measured fields
 
-`CoherentInput` uses the normal sequence scheduling grammar. Its complex
-amplitude is bound when a solve is built, outside immutable `ResolvedSLH`, and
-`abs(beta)**2` is photon flux in photons/ns. Direct charge/flux drives and
-coherent port fields therefore share one scheduling grammar while
-retaining their different physical couplings.
+`network.expose(...)` returns the external reference plane used for both
+directions. Schedule `plane.input` with the normal sequence grammar; its
+complex amplitude is bound when a solve is built, outside immutable
+`ResolvedSLH`, and `abs(beta)**2` is photon flux in photons/ns.
 
-Transient output amplitude, quadrature, and normally ordered photon flux are
-computed from the resolved `b_out = S b_in + L` relation. The VNA remains a
-strict small-signal derivative about fixed operating fields. Finite-power
-spectroscopy is an explicit coherent-input simulation.
+Request `plane.output` once, then read the complex amplitude, any quadrature,
+and normally ordered photon flux from `result.output(plane)`. All three come
+from the resolved `b_out = S b_in + L` relation. The VNA remains a strict
+small-signal derivative about fixed operating fields. Finite-power
+spectroscopy uses the same external-plane input.
 
 ## Analysis and reductions
 

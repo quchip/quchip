@@ -13,13 +13,13 @@ from typing import Any
 def _uses_field_boundary(drive_ops: list, e_ops: dict | None) -> bool:
     """Whether a solve needs the unsplit PortNetwork reference plane."""
     from quchip.engine.ir import CoherentOp
-    from quchip.observables import is_output_observable
+    from quchip.observables import is_output_field
 
     if any(isinstance(operation, CoherentOp) for operation in drive_ops):
         return True
     if not e_ops:
         return False
-    return any(is_output_observable(value) for value in e_ops.values())
+    return any(is_output_field(value) for value in e_ops.values())
 
 
 def _scheduled_coupling_supports(chip: Any, drive_ops: list) -> tuple[tuple[str, ...], ...]:

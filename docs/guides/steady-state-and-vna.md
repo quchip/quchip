@@ -47,7 +47,7 @@ occupations = states.expect(r)
 ## Separate internal loss from measured ports
 
 ```python
-from quchip import Chip, Port, Resonator
+from quchip import Chip, PortNetwork, Resonator
 
 r = Resonator(
     freq=6.8,
@@ -56,9 +56,18 @@ r = Resonator(
     label="readout",
 )
 
-input_port = Port(r, external_quality_factor=15_000, label="in")
-output_port = Port(r, external_quality_factor=18_000, label="out")
-chip = Chip([r], ports=[input_port, output_port])
+network = PortNetwork(label="feedline")
+input_port = network.port(
+    "in",
+    target=r,
+    external_quality_factor=15_000,
+)
+output_port = network.port(
+    "out",
+    target=r,
+    external_quality_factor=18_000,
+)
+chip = Chip([r], port_network=network)
 ```
 
 The resonator owns its unobserved loss. Each port owns one accessible external
@@ -77,24 +86,23 @@ as one boundary object:
 ```python
 from quchip import PortNetwork
 
-network = PortNetwork(label="measurement_line")
-coupler = network.port(
+measurement_network = PortNetwork(label="measurement_line")
+coupler = measurement_network.port(
     "coupler",
     target=r,
     external_quality_factor=15_000,
 )
-cable = network.phase_shift("cable", phase=0.12)
-network.cascade(coupler, cable)
-network.expose(
+cable = measurement_network.phase_shift("cable", phase=0.12)
+measurement_network.cascade(coupler, cable)
+vna_plane = measurement_network.expose(
     "vna_plane",
     input=coupler.input,
     output=cable.output,
     delay=3.2,
 )
 
-chip = Chip([r])
-chip.connect_network(network)
-resolved = chip.resolve()
+measurement_chip = Chip([r], port_network=measurement_network)
+resolved = measurement_chip.resolve()
 print(resolved.slh.S)
 print(resolved.slh.L)
 ```
@@ -137,42 +145,33 @@ Use an explicit coherent field simulation for finite-power spectroscopy,
 ring-up, ring-down, reflection, transmission, or emitted wave packets:
 
 ```python
-from quchip import (
-    CoherentInput,
-    OutputAmplitude,
-    OutputPhotonFlux,
-    OutputQuadrature,
-    QuantumSequence,
-    Square,
-)
+from quchip import QuantumSequence, Square
 
-sequence = QuantumSequence(chip)
+sequence = QuantumSequence(measurement_chip)
 sequence.schedule(
-    CoherentInput(input_port),
+    vna_plane.input,
     envelope=Square(duration=200.0, amplitude=0.02),
     freq=6.8,
 )
 transient = sequence.simulate(
     tlist=np.linspace(0.0, 300.0, 601),
-    e_ops={
-        "transmission": OutputAmplitude(output_port),
-        "I": OutputQuadrature(output_port, phase=0.0),
-        "flux": OutputPhotonFlux(output_port),
-    },
+    e_ops={vna_plane: vna_plane.output},
 )
 
-b_out = transient.expect("transmission")
-quadrature_i = transient.expect("I")
-photon_flux = transient.expect("flux")
+field = transient.output(vna_plane)
+b_out = field.amplitude
+quadrature_i = field.quadrature(phase=0.0)
+photon_flux = field.photon_flux
 ```
 
 The scheduled amplitude is the incoming field `beta` in
 `sqrt(photons/ns)`, so `abs(beta)**2` is incident photon flux in photons/ns.
-The field follows `b_out = S b_in + L`. `OutputQuadrature(..., phase=theta)`
-uses `Re[exp(-i theta) <b_out>]`; `OutputPhotonFlux` is the normally ordered
+The field follows `b_out = S b_in + L`. `field.quadrature(phase=theta)` uses
+`Re[exp(-i theta) <b_out>]`, so changing the analysis phase does not require
+another solve. `field.photon_flux` is the normally ordered
 `<b_out^dagger b_out>`. Values are reported at the exposure reference plane;
-the matching `ObservableTrace.raw` is the Markov-boundary trace before its
-outbound delay.
+`field.raw_amplitude` and `field.raw_photon_flux` retain the Markov-boundary
+traces before the outbound delay.
 
 ## Two-tone response
 

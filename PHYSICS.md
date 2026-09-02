@@ -128,8 +128,9 @@ L_p = exp(i phi_p) sqrt(kappa_p) A_p
 b_out,p = b_in,p + L_p
 ```
 
-The dissipator uses `L_p`. A scheduled `CoherentInput` consumes the same
-envelope, phase, carrier, and start-time grammar as a classical drive, with
+The dissipator uses `L_p`. Scheduling an external plane's `input` consumes the
+same envelope, phase, carrier, and start-time grammar as a classical drive,
+with
 
 ```text
 beta_i(t) = A(t) exp(i theta) exp(-i 2π f t),
@@ -152,7 +153,7 @@ adds a second damping channel.
 
 `ResolvedSLH` itself stays input-free. Per-solve beta programs are retained on
 `EngineResult.coherent_inputs` for later output-field reconstruction. Classical
-`ControlEquipment` transforms do not accept `CoherentInput`; field attenuation,
+`ControlEquipment` transforms do not accept field inputs; field attenuation,
 phase, crosstalk, and reference-plane delay belong to `PortNetwork`.
 
 For the one-port identity case this reduces to the angular Hamiltonian
@@ -171,13 +172,15 @@ model:
   = |c_j|^2 + 2 Re[c_j^* <L_j>] + <L_j^dagger L_j>.
 ```
 
-`OutputAmplitude`, `OutputQuadrature`, and `OutputPhotonFlux` lower only the
-required `L_j` and `L_j^dagger L_j` moments into backend expectation
-operators. The coherent background is evaluated from the retained beta
-programs; it is not inserted as an identity operator. The last expression is
-normally ordered photon flux. A reciprocal exposure delay shifts the complete
-boundary trace to the reported reference plane, with zero field before the
-simulation's initial boundary data can arrive.
+An external plane's `output` request lowers `L_j` and `L_j^dagger L_j` into
+backend expectation operators. `result.output(plane)` returns the reconstructed
+complex amplitude and normally ordered photon flux; any quadrature phase is a
+post-solve projection of the complex amplitude. The coherent background is
+evaluated from the retained beta programs rather than inserted as an identity
+operator. A reciprocal exposure delay shifts the complete boundary trace to
+the reported reference plane, with zero field before the simulation's initial
+boundary data can arrive. The result also retains both moments at the Markov
+boundary before that delay.
 
 For a single resonator, `external_quality_factor` gives
 `kappa_p = 2π * freq / Q_external`. Internal resonator loss and every port are
@@ -432,9 +435,9 @@ S_ji(f) = d <b_out,j> / d beta_in,i  at beta_probe -> 0.
 
 The direct term comes from the resolved scalar `S`; the system term comes from
 the stationary response of `L` under the same coherent-input Hamiltonian.
-Finite-power spectroscopy is a `CoherentInput` time-domain simulation, not a
-second VNA probe mode. Fixed finite pumps remain valid VNA operating-point
-fields.
+Finite-power spectroscopy schedules an external-plane input in a time-domain
+simulation; it is not a second VNA probe mode. Fixed finite pumps remain valid
+VNA operating-point fields.
 The engine supplies canonical sources and observables for stationary response,
 spectrum, and correlation queries. Each backend constructs and solves its own
 native Liouvillian.

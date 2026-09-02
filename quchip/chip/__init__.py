@@ -10,7 +10,7 @@ into a solver-ready problem. Dressed-state analysis lives in
 from quchip.chip.analysis import DressedResult, KerrMatrix
 from quchip.chip.baths import Bath
 from quchip.chip.chip import Chip
-from quchip.chip.port_network import FieldTerminal, PortNetwork, SLHComponent
+from quchip.chip.port_network import PortNetwork
 from quchip.chip.ports import Port
 from quchip.chip.couplings import Capacitive, Coupling, CrossKerr, TunableCapacitive
 from quchip.chip.retarget import register_retarget_rule
@@ -30,9 +30,7 @@ __all__ = [
     "KerrMatrix",
     "Bath",
     "Port",
-    "FieldTerminal",
     "PortNetwork",
-    "SLHComponent",
     "Capacitive",
     "Coupling",
     "CrossKerr",

@@ -10,6 +10,7 @@ from quchip import (
     Chip,
     CollapseChannel,
     Port,
+    PortNetwork,
     Resonator,
 )
 
@@ -24,7 +25,7 @@ def test_internal_loss_and_ports_are_distinct_collapse_channels() -> None:
     )
     input_port = Port(resonator, external_quality_factor=15_000, label="in")
     output_port = Port(resonator, external_quality_factor=18_000, label="out")
-    chip = Chip([resonator], ports=[input_port, output_port])
+    chip = Chip([resonator], port_network=PortNetwork.from_ports([input_port, output_port]))
 
     terms = chip.resolve().collapse_terms
     port_terms = chip.resolve().port_terms
@@ -53,7 +54,7 @@ def test_collective_port_round_trips_and_connects_partition() -> None:
     lowering = np.array([[0.0, 1.0], [0.0, 0.0]], dtype=complex)
     operator = np.kron(lowering, np.eye(2)) + 0.5j * np.kron(np.eye(2), lowering)
     port = Port([first, second], rate=0.02, operator=operator, phase=0.3, label="feedline")
-    chip = Chip([first, second], ports=[port])
+    chip = Chip([first, second], port_network=PortNetwork.from_ports([port]))
 
     restored = Chip.from_dict(chip.to_dict())
 
@@ -67,7 +68,9 @@ def test_collective_port_round_trips_and_connects_partition() -> None:
 def test_port_parameters_rebind_without_mutating_source() -> None:
     """Port rate and phase use stable parameter paths and immutable chip rebinding."""
     resonator = Resonator(freq=6.8, levels=3, label="r")
-    chip = Chip([resonator], ports=[Port(resonator, rate=0.01, phase=0.2, label="readout")])
+    network = PortNetwork(label="line")
+    network.port("readout", target=resonator, rate=0.01, phase=0.2)
+    chip = Chip([resonator], port_network=network)
 
     shifted = chip.with_params({"port.readout.rate": 0.03, "port.readout.phase": -0.4})
 
@@ -86,7 +89,12 @@ def test_collective_port_can_span_more_than_two_devices() -> None:
         + np.kron(np.kron(np.eye(2), lowering), np.eye(2))
         + np.kron(np.kron(np.eye(2), np.eye(2)), lowering)
     )
-    chip = Chip(devices, ports=[Port(devices, rate=0.01, operator=operator, label="common")])
+    chip = Chip(
+        devices,
+        port_network=PortNetwork.from_ports(
+            [Port(devices, rate=0.01, operator=operator, label="common")]
+        ),
+    )
 
     resolved = chip.resolve(frame={device.label: 6.0 for device in devices})
     term = next(term for term in resolved.collapse_terms if term.source == "common")
@@ -124,14 +132,14 @@ def test_port_with_mixed_frame_bands_is_rejected_as_dynamic() -> None:
         dtype=complex,
     )
     port = Port(resonator, rate=0.02, operator=lowering + lowering.T, label="p")
-    chip = Chip([resonator], ports=[port])
+    chip = Chip([resonator], port_network=PortNetwork.from_ports([port]))
 
     assert chip.resolve(frame="lab").port_terms[0].frame_frequency == 0.0
     with pytest.raises(ValueError, match="different phases"):
         chip.resolve(frame={"r": 6.0})
 
     nearly_lowering = Port(resonator, rate=0.02, operator=lowering + 1e-11 * lowering.T, label="p")
-    near_chip = Chip([resonator], ports=[nearly_lowering])
+    near_chip = Chip([resonator], port_network=PortNetwork.from_ports([nearly_lowering]))
     assert near_chip.resolve(frame={"r": 6.0}).port_terms[0].frame_frequency == pytest.approx(6.0)
 
 
@@ -150,7 +158,10 @@ def test_explicit_port_uses_the_resolved_energy_frame_for_charge_basis_devices()
     lowering = np.outer(vectors[:, 0], vectors[:, 1].conj())
     port = Port(transmon, rate=0.02, operator=lowering, label="drive")
 
-    term = Chip([transmon], ports=[port]).resolve(frame={"q": transmon.freq}).port_terms[0]
+    term = Chip(
+        [transmon],
+        port_network=PortNetwork.from_ports([port]),
+    ).resolve(frame={"q": transmon.freq}).port_terms[0]
 
     assert term.frame_frequency == pytest.approx(transmon.freq)
 
@@ -159,7 +170,12 @@ def test_in_place_port_operator_mutation_invalidates_resolution_cache() -> None:
     """Mutating a public dense port operator cannot return stale resolved physics."""
     resonator = Resonator(freq=6.0, levels=2, label="r")
     operator = np.array([[0.0, 1.0], [0.0, 0.0]], dtype=complex)
-    chip = Chip([resonator], ports=[Port(resonator, rate=0.02, operator=operator, label="p")])
+    chip = Chip(
+        [resonator],
+        port_network=PortNetwork.from_ports(
+            [Port(resonator, rate=0.02, operator=operator, label="p")]
+        ),
+    )
     first = chip.resolve(frame="lab")
 
     operator[0, 1] = 0.5
@@ -181,7 +197,10 @@ def test_port_collapse_ownership_does_not_depend_on_display_labels() -> None:
     resonator = CollidingResonator(freq=6.0, levels=3, label="shared")
     port = Port(resonator, rate=0.02, label="shared")
 
-    resolved = Chip([resonator], ports=[port]).resolve(frame="lab")
+    resolved = Chip(
+        [resonator],
+        port_network=PortNetwork.from_ports([port]),
+    ).resolve(frame="lab")
 
     assert len(resolved.collapse_terms) == 2
     assert resolved.port_terms[0].rate == pytest.approx(0.02)

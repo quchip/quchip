@@ -182,8 +182,6 @@ class Chip:
         Chip-specific backend. ``None`` uses the process default.
     baths : list[Bath], optional
         Shared or collective unobserved environments.
-    ports : list[Port], optional
-        Compatibility shorthand for an identity-exposed :class:`PortNetwork`.
     port_network : PortNetwork, optional
         Complete accessible field boundary. Attach at most one network.
 
@@ -207,7 +205,6 @@ class Chip:
         basis: Literal["native", "eigen"] = "native",
         backend: str | Backend | None = None,
         baths: list[Bath] | None = None,
-        ports: list[Port] | None = None,
         port_network: PortNetwork | None = None,
     ) -> None:
         duplicates = [lbl for lbl, count in Counter(d.label for d in devices).items() if count > 1]
@@ -236,14 +233,10 @@ class Chip:
         for bath in baths or ():
             self._validate_bath(bath)
         self._baths = tuple(baths) if baths else ()
-        if ports and port_network is not None:
-            raise ValueError("Pass either ports or port_network, not both.")
         if port_network is not None and not isinstance(port_network, PortNetwork):
             raise TypeError(
                 f"Expected a PortNetwork, got {type(port_network).__name__}: {port_network!r}"
             )
-        if port_network is None and ports:
-            port_network = PortNetwork.from_ports(ports)
         network_ports = () if port_network is None else port_network.ports
         port_duplicates = [lbl for lbl, n in Counter(port.label for port in network_ports).items() if n > 1]
         if port_duplicates:
@@ -1366,7 +1359,7 @@ class Chip:
                     else (
                         self._port_network.label,
                         tuple(component.label for component in self._port_network.components),
-                        self._port_network.exposures,
+                        tuple(exposure.label for exposure in self._port_network.exposures),
                     )
                 ),
                 "frame": self._frame_spec,

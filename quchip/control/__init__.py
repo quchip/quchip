@@ -2,7 +2,6 @@
 
 from quchip.control.equipment import ControlEquipment, CrosstalkMatrix
 from quchip.control.signal import AnalyticSignal, Crosstalk, Delay, Gain, SignalTransform
-from quchip.control.field import CoherentInput, ControlEndpoint
 from quchip.control.drive import (
     BaseDrive,
     ChargeDrive,
@@ -27,8 +26,6 @@ __all__ = [
     # Drive classes
     "BaseDrive",
     "AnalyticSignal",
-    "CoherentInput",
-    "ControlEndpoint",
     "CouplingDrive",
     "DeviceDrive",
     "SignalTransform",

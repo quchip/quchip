@@ -8,8 +8,6 @@ import jax.numpy as jnp
 from quchip import (
     ChargeDrive,
     Chip,
-    CoherentInput,
-    ControlEndpoint,
     ControlEquipment,
     Delay,
     DuffingTransmon,
@@ -20,6 +18,7 @@ from quchip import (
 )
 from quchip import Crosstalk, Gain
 from quchip.control.drive import BaseDrive
+from quchip.control.field import CoherentInput, ControlEndpoint
 from quchip.engine.ir import CoherentOp, evaluate_signal_program
 
 

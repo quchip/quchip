@@ -59,8 +59,8 @@ def _reject_field_endpoint(value: Any, *, transform: str) -> None:
 
     if isinstance(value, CoherentInput):
         raise TypeError(
-            f"{transform} does not accept CoherentInput. Use PortNetwork scattering "
-            "or an exposure reference-plane delay for field propagation."
+            f"{transform} does not accept an external-plane input. Use PortNetwork "
+            "scattering or a reference-plane delay for field propagation."
         )
 
 

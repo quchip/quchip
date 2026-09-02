@@ -18,10 +18,10 @@ This module performs the two operations that tie those frames together:
   transformation applied to each band — equivalent to moving the
   observable from the simulation frame to the control frame.
 
-Output-field specs take a parallel path: they lower the resolved ``L`` and
-``L dagger L`` moments before the solve, then reconstruct ``S beta + L`` from
-the solve-bound coherent inputs and propagate it to the exposure reference
-plane afterward.
+An external-plane output request takes a parallel path: one request lowers
+both the resolved ``L`` and ``L dagger L`` moments before the solve. Afterward,
+quchip reconstructs ``S beta + L`` from the solve-bound input and propagates
+the complete field trace to the requested reference plane.
 
 Observable reconstruction reads per-device demodulation frequencies from
 :class:`~quchip.engine.ir.ResolvedFrame` and forms the demodulation
@@ -39,14 +39,8 @@ import numpy as np
 from quchip.backend import Backend, SolverResult
 from quchip.chip.chip import Chip
 from quchip.engine.ir import ResolvedFrame
-from quchip.observables import (
-    OutputAmplitude,
-    OutputObservable,
-    OutputPhotonFlux,
-    OutputQuadrature,
-    is_output_observable,
-)
-from quchip.results.results import ObservableTrace
+from quchip.observables import OutputField, is_output_field
+from quchip.results.results import ObservableTrace, OutputFieldTrace
 from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import array_namespace as _array_namespace
 from quchip.utils.labeling import resolve_label
@@ -79,7 +73,7 @@ class OutputMeta:
     """Reconstruction recipe for one solver-facing output operator."""
 
     key: EOpKey
-    observable: OutputObservable
+    observable: OutputField
     role: Literal["amplitude", "flux"]
 
 
@@ -108,9 +102,8 @@ def decompose_eops(
     * ``("label_a", "label_b")`` with a tuple ``(op_a, op_b)`` — each
       operator is split into single-mode bands on its device and all
       band pairs are tensored, producing two-body ``(w_a, w_b)`` bands.
-    * A string trace name with an ``OutputAmplitude``, ``OutputQuadrature``,
-      or ``OutputPhotonFlux`` value — the required resolved SLH moments are
-      lowered directly and reconstructed after the solve.
+    * A string trace name with an ``OutputField`` value — the resolved first
+      and normally ordered second moments are reconstructed after the solve.
 
     For each band, the returned :class:`BandMeta` records the original
     key, the weight, and the sub-index (distinguishing entries when the
@@ -122,15 +115,21 @@ def decompose_eops(
 
     flat_ops: list[Any] = []
     meta: list[BandMeta | OutputMeta] = []
+    output_exposures: set[str] = set()
 
     dims = chip.dims
 
     for raw_key, val in e_ops_dict.items():
         key = _resolve_eop_key(raw_key)
 
-        if is_output_observable(val):
+        if is_output_field(val):
             if not isinstance(key, str):
                 raise ValueError("Output observable trace names must be strings.")
+            if val.exposure in output_exposures:
+                raise ValueError(
+                    f"Output exposure {val.exposure!r} may be requested only once per solve."
+                )
+            output_exposures.add(val.exposure)
             if engine_result is None:
                 raise ValueError(
                     "Output observables require a resolved transient solve; "
@@ -139,7 +138,6 @@ def decompose_eops(
             _append_output_eops(
                 flat_ops,
                 meta,
-                key=key,
                 observable=val,
                 engine_result=engine_result,
                 backend=backend,
@@ -240,8 +238,7 @@ def _append_output_eops(
     flat_ops: list[Any],
     meta: list[BandMeta | OutputMeta],
     *,
-    key: EOpKey,
-    observable: OutputObservable,
+    observable: OutputField,
     engine_result: Any,
     backend: Backend,
 ) -> None:
@@ -256,9 +253,13 @@ def _append_output_eops(
 
     coupling = channel.coupling
     flat_ops.append(backend.from_canonical_operator(coupling))
-    meta.append(OutputMeta(key=key, observable=observable, role="amplitude"))
-    if not isinstance(observable, OutputPhotonFlux):
-        return
+    meta.append(
+        OutputMeta(
+            key=observable.exposure,
+            observable=observable,
+            role="amplitude",
+        )
+    )
 
     values = coupling.to_dense()
     xp = backend.array_module
@@ -276,7 +277,13 @@ def _append_output_eops(
             )
         )
     )
-    meta.append(OutputMeta(key=key, observable=observable, role="flux"))
+    meta.append(
+        OutputMeta(
+            key=observable.exposure,
+            observable=observable,
+            role="flux",
+        )
+    )
 
 
 def recombine_expect(
@@ -376,7 +383,10 @@ def build_observable_traces(
     dict_meta: list[BandMeta | OutputMeta],
     resolved_frame: ResolvedFrame,
     engine_result: Any,
-) -> dict[EOpKey, ObservableTrace | list[ObservableTrace]]:
+) -> tuple[
+    dict[EOpKey, ObservableTrace | list[ObservableTrace]],
+    dict[EOpKey, OutputFieldTrace],
+]:
     """Wrap solver expectations into phase-corrected :class:`ObservableTrace` objects.
 
     Pulls the flat per-band expectations out of *solver_result*, calls
@@ -414,15 +424,15 @@ def build_observable_traces(
             ]
         else:
             traces[key] = ObservableTrace(values=values, raw=raw)
-    traces.update(
+    return (
+        traces,
         _build_output_traces(
             flat_expect,
             dict_meta,
             tlist=tlist,
             engine_result=engine_result,
-        )
+        ),
     )
-    return traces
 
 
 def _build_output_traces(
@@ -431,7 +441,7 @@ def _build_output_traces(
     *,
     tlist: Any,
     engine_result: Any,
-) -> dict[EOpKey, ObservableTrace]:
+) -> dict[EOpKey, OutputFieldTrace]:
     """Reconstruct ``b_out = S b_in + L`` moments at reference planes."""
     output_pairs = [
         (values, meta)
@@ -459,12 +469,12 @@ def _build_output_traces(
             )
 
     grouped: dict[EOpKey, dict[str, Any]] = {}
-    specs: dict[EOpKey, OutputObservable] = {}
+    specs: dict[EOpKey, OutputField] = {}
     for values, meta in output_pairs:
         grouped.setdefault(meta.key, {})[meta.role] = xp.asarray(values)
         specs[meta.key] = meta.observable
 
-    traces: dict[EOpKey, ObservableTrace] = {}
+    traces: dict[EOpKey, OutputFieldTrace] = {}
     for key, moments in grouped.items():
         observable = specs[key]
         output_index = exposure_index[observable.exposure]
@@ -482,19 +492,20 @@ def _build_output_traces(
         lowering = carrier * moments["amplitude"]
         field = direct + lowering
 
-        if isinstance(observable, OutputAmplitude):
-            boundary = field
-        elif isinstance(observable, OutputQuadrature):
-            boundary = xp.real(xp.exp(-1j * xp.asarray(observable.phase)) * field)
-        else:
-            number = xp.real(moments["flux"])
-            boundary = (
-                xp.abs(direct) ** 2
-                + 2.0 * xp.real(xp.conj(direct) * lowering)
-                + number
-            )
-        values = _delay_trace(boundary, times, channel.reference_delay, xp)
-        traces[key] = ObservableTrace(values=values, raw=boundary)
+        number = xp.real(moments["flux"])
+        boundary_flux = (
+            xp.abs(direct) ** 2
+            + 2.0 * xp.real(xp.conj(direct) * lowering)
+            + number
+        )
+        traces[key] = OutputFieldTrace(
+            exposure=observable.exposure,
+            times=times,
+            amplitude=_delay_trace(field, times, channel.reference_delay, xp),
+            photon_flux=_delay_trace(boundary_flux, times, channel.reference_delay, xp),
+            raw_amplitude=field,
+            raw_photon_flux=boundary_flux,
+        )
     return traces
 
 

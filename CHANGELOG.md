@@ -8,8 +8,8 @@ This file records notable user-visible changes to quchip.
 
 - Added an immutable, input-free scalar-S SLH normal form to every resolved engine snapshot. With no ports, ordinary closed/open-system quchip workflows retain their existing behavior.
 - Added `PortNetwork` for symbolic series composition, named exposures, convenient scalar scattering, reciprocal reference-plane delays, and unitary vacuum dilation of attenuation.
-- Added solve-time `CoherentInput` scheduling through the shared control-endpoint grammar; coherent amplitudes are in `sqrt(photons/ns)` and are not stored on `ResolvedSLH`.
-- Added transient `OutputAmplitude`, `OutputQuadrature`, and `OutputPhotonFlux` observables derived from the same `b_out = S b_in + L` boundary. VNA probing is explicitly small signal; finite-power spectroscopy uses a coherent-input simulation.
+- Added external-plane input scheduling through `network.expose(...).input`; coherent amplitudes are in `sqrt(photons/ns)` and are not stored on `ResolvedSLH`.
+- Added complete transient field traces through `result.output(plane)`, with complex amplitude, arbitrary post-solve quadratures, normally ordered photon flux, and the pre-delay Markov-boundary values derived from the same `b_out = S b_in + L` model. VNA probing remains small signal.
 
 ### Resolved analysis and transformations
 
