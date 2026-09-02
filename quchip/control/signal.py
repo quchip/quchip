@@ -53,6 +53,17 @@ from quchip.utils.registry import Registrable
 SignalKey = tuple[str, int]  # (line_label, source_index)
 
 
+def _reject_field_endpoint(value: Any, *, transform: str) -> None:
+    """Keep field propagation in PortNetwork rather than control equipment."""
+    from quchip.control.field import CoherentInput
+
+    if isinstance(value, CoherentInput):
+        raise TypeError(
+            f"{transform} does not accept CoherentInput. Use PortNetwork scattering "
+            "or an exposure reference-plane delay for field propagation."
+        )
+
+
 @dataclass(frozen=True)
 class AnalyticSignal:
     """Complete complex classical signal delivered on one control line.
@@ -187,6 +198,7 @@ class Delay(SignalTransform):
     _parameter_names = ("delta_t",)
 
     def __init__(self, line: str | Any, delta_t: float) -> None:
+        _reject_field_endpoint(line, transform="ControlEquipment.Delay")
         object.__setattr__(self, "line", resolve_label(line))
         object.__setattr__(self, "delta_t", delta_t)
 
@@ -222,6 +234,7 @@ class Gain(SignalTransform):
     _parameter_names = ("factor",)
 
     def __init__(self, line: str | Any, factor: complex) -> None:
+        _reject_field_endpoint(line, transform="ControlEquipment.Gain")
         object.__setattr__(self, "line", resolve_label(line))
         object.__setattr__(self, "factor", factor)
 
@@ -297,6 +310,8 @@ class Crosstalk(SignalTransform):
         theta: float = 0.0,
         delay: float = 0.0,
     ) -> None:
+        _reject_field_endpoint(source, transform="ControlEquipment.Crosstalk")
+        _reject_field_endpoint(victim, transform="ControlEquipment.Crosstalk")
         object.__setattr__(self, "source", resolve_label(source))
         object.__setattr__(self, "victim", resolve_label(victim))
         object.__setattr__(self, "beta", beta)

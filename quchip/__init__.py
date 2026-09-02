@@ -65,6 +65,8 @@ from quchip.chip import (
 )
 from quchip.control import (
     ChargeDrive,
+    CoherentInput,
+    ControlEndpoint,
     ControlEquipment,
     CouplingDrive,
     Crosstalk,
@@ -255,6 +257,8 @@ __all__ = [
     "hbar",
     "Phi_0",
     # Control
+    "CoherentInput",
+    "ControlEndpoint",
     "CouplingDrive",
     "DeviceDrive",
     "Delay",

@@ -174,6 +174,12 @@ class ControlEquipment:
         *,
         signal_chain: list[SignalTransform] | None = None,
     ) -> None:
+        invalid = [line for line in lines if not isinstance(line, BaseDrive)]
+        if invalid:
+            raise TypeError(
+                "ControlEquipment lines must be BaseDrive instances; coherent field "
+                "inputs are scheduled directly and propagate through PortNetwork."
+            )
         self._lines = list(lines)
         self._signal_chain = list(signal_chain) if signal_chain else []
 

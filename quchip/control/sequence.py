@@ -1,9 +1,10 @@
 """Declarative pulse programming for a :class:`~quchip.chip.chip.Chip`.
 
 :class:`QuantumSequence` is the user-facing scheduling API. It tracks
-per-``(device, drive)`` timing cursors, per-device virtual-Z phase
-frames, and cross-device barriers, then materializes the schedule into
-:class:`~quchip.engine.ir.DriveOp` objects for the engine.
+per-endpoint timing cursors, per-device virtual-Z phase frames, and
+cross-device barriers, then materializes the schedule into classical
+:class:`~quchip.engine.ir.DriveOp` and field
+:class:`~quchip.engine.ir.CoherentOp` records for the engine.
 
 Conventions
 -----------
@@ -60,8 +61,9 @@ from quchip.control.drive import (
     PhaseDrive,
 )
 from quchip.control.envelopes import Envelope
+from quchip.control.field import CoherentInput, ControlEndpoint
 from quchip.devices.base import BaseDevice
-from quchip.engine.ir import DriveOp, EngineResult, HamiltonianTemplate
+from quchip.engine.ir import CoherentOp, ControlOp, DriveOp, EngineResult, HamiltonianTemplate
 from quchip.engine.assembly import (
     build_engine_result,
     compile_hamiltonian_template,
@@ -97,6 +99,7 @@ class _PulseEntry:
     freq: float | None
     requested_start_time: float | None
     phase: float
+    coherent_input: CoherentInput | None = None
 
 
 @dataclass(frozen=True)
@@ -148,7 +151,7 @@ class QuantumSequence:
     conveniences :meth:`charge`, :meth:`phase`, :meth:`flux`);
     synchronize channels with :meth:`barrier` and :meth:`delay`. The
     schedule is materialized lazily into
-    :class:`~quchip.engine.ir.DriveOp` objects by :meth:`build_problem`
+    engine control-operation records by :meth:`build_problem`
     and :meth:`build_batch`.
 
     Wherever a device/drive is expected, either the object itself or its
@@ -322,9 +325,37 @@ class QuantumSequence:
         )
         return PulseHandle(self, len(self._entries) - 1)
 
+    def _schedule_on_coherent_input(
+        self,
+        coherent_input: CoherentInput,
+        *,
+        envelope: Envelope,
+        freq: float | None,
+        start_time: float | None = None,
+        phase: float = 0.0,
+    ) -> PulseHandle:
+        exposures = [channel.key for channel in self._chip.resolve().slh.external_channels]
+        if coherent_input.exposure not in exposures:
+            raise ValueError(
+                f"Unknown coherent-input exposure {coherent_input.exposure!r}. "
+                f"Available exposures: {exposures}."
+            )
+        self._entries.append(
+            _PulseEntry(
+                target_label=coherent_input.exposure,
+                drive_label=coherent_input.label,
+                envelope=envelope,
+                freq=freq,
+                requested_start_time=start_time,
+                phase=phase,
+                coherent_input=coherent_input,
+            )
+        )
+        return PulseHandle(self, len(self._entries) - 1)
+
     def schedule(
         self,
-        target: str | BaseDrive | BaseDevice | BaseCoupling,
+        target: str | ControlEndpoint | BaseDevice | BaseCoupling,
         *,
         envelope: Envelope,
         freq: float | None = None,
@@ -335,9 +366,11 @@ class QuantumSequence:
 
         Parameters
         ----------
-        target : str | BaseDrive | BaseDevice | BaseCoupling
+        target : str | ControlEndpoint | BaseDevice | BaseCoupling
             Accepted forms, resolved in this order:
 
+            * :class:`~quchip.control.field.CoherentInput` — scheduled on its
+              external SLH exposure without entering ``ControlEquipment``.
             * :class:`BaseDrive` — scheduled directly on that drive.
             * :class:`BaseDevice` — uses the device's first connected
               drive; pass the drive object explicitly when a device
@@ -371,6 +404,14 @@ class QuantumSequence:
             Per-pulse phase offset, composed with any accumulated
             virtual-Z.
         """
+        if isinstance(target, CoherentInput):
+            return self._schedule_on_coherent_input(
+                target,
+                envelope=envelope,
+                freq=freq,
+                start_time=start_time,
+                phase=phase,
+            )
         if isinstance(target, BaseDrive):
             drive = target
         else:
@@ -531,8 +572,8 @@ class QuantumSequence:
         return _cursor_max(cursors.values()) if cursors else 0.0
 
     @property
-    def scheduled_ops(self) -> tuple[DriveOp, ...]:
-        """Materialize and return the scheduled :class:`DriveOp` tuple."""
+    def scheduled_ops(self) -> tuple[ControlOp, ...]:
+        """Materialize scheduled classical-drive and coherent-field operations."""
         return tuple(self._materialize_drive_ops())
 
     @property
@@ -575,8 +616,8 @@ class QuantumSequence:
         overrides: Mapping[tuple[int, str], Any] | None = None,
         *,
         collect_ops: bool,
-    ) -> tuple[dict[tuple[str, str], Any], dict[str, Any], list[DriveOp]]:
-        """Replay ``_entries`` into final cursors, floors, and (optionally) DriveOps.
+    ) -> tuple[dict[tuple[str, str], Any], dict[str, Any], list[ControlOp]]:
+        """Replay ``_entries`` into final cursors, floors, and optional control ops.
 
         This is the single implementation of the delay-shift, barrier-alignment,
         floor, default-start, and virtual-Z phase semantics. Both the cursor
@@ -590,7 +631,7 @@ class QuantumSequence:
 
         ``overrides`` maps ``(entry_index, field) -> value``; only ``duration``
         (on a delay entry or pulse envelope) and ``start_time``/``freq``/``phase``
-        (on a pulse) affect the replay. ``collect_ops`` gates DriveOp building
+        (on a pulse) affect the replay. ``collect_ops`` gates operation building
         and the per-device drive lookup needed for virtual-Z routing.
         """
         overrides = {} if overrides is None else dict(overrides)
@@ -604,9 +645,12 @@ class QuantumSequence:
                 if isinstance(line, CouplingDrive):
                     assert line.target_label is not None
                     cursors[(line.target_label, line.label)] = 0.0
+        for entry in self._entries:
+            if isinstance(entry, _PulseEntry) and entry.coherent_input is not None:
+                cursors[(entry.target_label, entry.drive_label)] = 0.0
         floors: dict[str, Any] = {}
         phases: dict[str, Any] = {dev.label: 0.0 for dev in self._chip.devices}
-        drive_ops: list[DriveOp] = []
+        drive_ops: list[ControlOp] = []
 
         for entry_index, entry in enumerate(self._entries):
             if isinstance(entry, _FrameShiftEntry):
@@ -678,30 +722,41 @@ class QuantumSequence:
                 freq = overrides.get((entry_index, "freq"), entry.freq)
                 phase = overrides.get((entry_index, "phase"), entry.phase)
                 phase_offset = phase
-                if freq is not None:
+                if freq is not None and entry.coherent_input is None:
                     phase_offset = phase_offset + phases.get(entry.target_label, 0.0)
-                drive_ops.append(
-                    DriveOp(
-                        target_label=entry.target_label,
-                        envelope=envelope,
-                        freq=freq,
-                        start_time=start_time,
-                        phase_offset=phase_offset,
-                        drive_label=entry.drive_label,
+                if entry.coherent_input is None:
+                    drive_ops.append(
+                        DriveOp(
+                            target_label=entry.target_label,
+                            envelope=envelope,
+                            freq=freq,
+                            start_time=start_time,
+                            phase_offset=phase_offset,
+                            drive_label=entry.drive_label,
+                        )
                     )
-                )
+                else:
+                    drive_ops.append(
+                        CoherentOp(
+                            coherent_input=entry.coherent_input,
+                            envelope=envelope,
+                            freq=freq,
+                            start_time=start_time,
+                            phase_offset=phase_offset,
+                        )
+                    )
             cursors[key] = start_time + envelope.duration
         return cursors, floors, drive_ops
 
     def _replay_cursors(
         self, overrides: Mapping[tuple[int, str], Any] | None = None
     ) -> tuple[dict[tuple[str, str], Any], dict[str, Any]]:
-        """Replay ``_entries`` to their final ``(cursors, floors)`` without building DriveOps."""
+        """Replay ``_entries`` to final ``(cursors, floors)`` without building operations."""
         cursors, floors, _ = self._replay(overrides, collect_ops=False)
         return cursors, floors
 
-    def _materialize_drive_ops(self, overrides: Mapping[tuple[int, str], Any] | None = None) -> list[DriveOp]:
-        """Replay ``_entries`` into the scheduled :class:`DriveOp` list."""
+    def _materialize_drive_ops(self, overrides: Mapping[tuple[int, str], Any] | None = None) -> list[ControlOp]:
+        """Replay ``_entries`` into the scheduled control-operation list."""
         return self._replay(overrides, collect_ops=True)[2]
 
     def build_problem(

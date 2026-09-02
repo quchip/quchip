@@ -139,8 +139,8 @@ def build_problem(
     ----------
     chip : Chip
         The chip whose Hamiltonian, frame, and backend are assembled.
-    drive_ops : list of DriveOp
-        Scheduled drive operations, typically produced by a
+    drive_ops : list of ControlOp
+        Scheduled classical-drive or coherent-field operations, typically produced by a
         :class:`~quchip.control.sequence.QuantumSequence`.
     tlist : array_like
         Solver time grid in ns.
@@ -203,8 +203,8 @@ def build_engine_result(chip: Any, drive_ops: list, **kwargs: Any) -> EngineResu
     ----------
     chip : Chip
         The chip whose device, coupling, and drive Hamiltonians are assembled.
-    drive_ops : list of DriveOp
-        Scheduled drive operations to embed as dynamic terms.
+    drive_ops : list of ControlOp
+        Scheduled classical-drive or coherent-field operations to embed as dynamic terms.
     **kwargs
         Forwarded to
         :func:`quchip.engine.assembly.build_engine_result`
@@ -248,8 +248,8 @@ def simulate(
     ----------
     chip : Chip
         The chip to simulate.
-    drive_ops : list of DriveOp
-        Scheduled drive operations, typically produced by a
+    drive_ops : list of ControlOp
+        Scheduled classical-drive or coherent-field operations, typically produced by a
         :class:`~quchip.control.sequence.QuantumSequence`.
     tlist : array_like
         Solver time grid in ns.

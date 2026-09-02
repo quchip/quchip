@@ -115,6 +115,7 @@ lowering applies `sqrt(rate)` exactly once.
 ### 3.3.1 Accessible ports
 
 Source: [`quchip/chip/ports.py`](quchip/chip/ports.py),
+[`quchip/control/field.py`](quchip/control/field.py),
 [`quchip/engine/input_output.py`](quchip/engine/input_output.py),
 [`quchip/analysis/vna.py`](quchip/analysis/vna.py)
 
@@ -126,8 +127,34 @@ L_p = exp(i phi_p) sqrt(kappa_p) A_p
 b_out,p = b_in,p + L_p
 ```
 
-The dissipator uses `L_p`. A coherent input `beta_p` in
-`sqrt(photons/ns)` contributes the angular Hamiltonian
+The dissipator uses `L_p`. A scheduled `CoherentInput` consumes the same
+envelope, phase, carrier, and start-time grammar as a classical drive, with
+
+```text
+beta_i(t) = A(t) exp(i theta) exp(-i 2π f t),
+|beta_i|^2 = incident photon flux in photons/ns.
+```
+
+There is no implicit conjugation or factor of one half. For a general resolved
+boundary, the field arriving at each coupling channel is
+
+```text
+c_j(t) = sum_i S_ji beta_i(t),
+H_input(t) = i sum_j (c_j^* L_j - c_j L_j^dagger).
+```
+
+This Hamiltonian is the canonical solver form obtained by composing the
+coherent source `W_beta = (I, beta, 0)` with the resolved SLH model and then
+gauging the displaced collapse operators back to the input-free `L`. The
+collapse channels therefore remain unchanged: applying a coherent field never
+adds a second damping channel.
+
+`ResolvedSLH` itself stays input-free. Per-solve beta programs are retained on
+`EngineResult.coherent_inputs` for later output-field reconstruction. Classical
+`ControlEquipment` transforms do not accept `CoherentInput`; field attenuation,
+phase, crosstalk, and reference-plane delay belong to `PortNetwork`.
+
+For the one-port identity case this reduces to the angular Hamiltonian
 
 ```text
 H_input = i (beta_p^* L_p - beta_p L_p^dagger).

@@ -1252,6 +1252,21 @@ class DroppedTerm:
 
 
 @dataclass(frozen=True)
+class BoundCoherentInput:
+    """One solve-bound incident field, retained outside input-free SLH.
+
+    ``reference_beta`` is the signal scheduled at the authored external
+    reference plane. ``beta`` includes the exposure's inbound propagation
+    delay and is the field composed with the Markov boundary.
+    """
+
+    exposure: str
+    source_label: str
+    beta: SignalProgram
+    reference_beta: SignalProgram
+
+
+@dataclass(frozen=True)
 class EngineResult:
     """Backend-neutral resolved physics passed to backends.
 
@@ -1278,6 +1293,7 @@ class EngineResult:
 
     slh: ResolvedSLH
     applied_hamiltonian: HamiltonianProgram = field(default_factory=HamiltonianProgram)
+    coherent_inputs: tuple[BoundCoherentInput, ...] = ()
     dims: tuple[int, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
     dropped_terms: tuple[DroppedTerm, ...] = ()
@@ -1364,6 +1380,10 @@ class EngineResult:
                 tuple(
                     (term.amplitude, term.frequency)
                     for term in self.dropped_terms
+                ),
+                tuple(
+                    (item.beta, item.reference_beta)
+                    for item in self.coherent_inputs
                 ),
                 basis_payloads,
                 authored_values,
@@ -1519,6 +1539,7 @@ class HamiltonianTemplate:
     static_terms: tuple[Any, ...] = ()              # tuple[StaticTerm, ...]
     invariant_dynamic_terms: tuple[Any, ...] = ()   # tuple[DynamicTerm, ...]
     drive_terms: tuple[Any, ...] = ()               # tuple[assembly.CompiledDriveTerm, ...]
+    coherent_terms: tuple[Any, ...] = ()            # tuple[assembly.CompiledCoherentTerm, ...]
     reference_drive_ops: tuple[Any, ...] = ()       # tuple[DriveOp, ...]
     dropped_terms: tuple[Any, ...] = ()             # tuple[DroppedTerm, ...]
     #: Single-tone weight-zero bands dropped structurally under RWA during engine assembly.
@@ -1753,3 +1774,32 @@ class DriveOp:
     start_time: float = 0.0
     phase_offset: float = 0.0
     drive_label: str = ""
+
+
+@dataclass(frozen=True)
+class CoherentOp:
+    """Coherent field operation scheduled on an external SLH exposure."""
+
+    coherent_input: Any
+    envelope: Envelope
+    freq: float | None = None
+    start_time: float = 0.0
+    phase_offset: float = 0.0
+
+    @property
+    def exposure(self) -> str:
+        """Return the external exposure receiving this incident field."""
+        return self.coherent_input.exposure
+
+    @property
+    def target_label(self) -> str:
+        """Alias the exposure for common solve-window diagnostics."""
+        return self.exposure
+
+    @property
+    def drive_label(self) -> str:
+        """Alias the endpoint label for common scheduling diagnostics."""
+        return self.coherent_input.label
+
+
+ControlOp: TypeAlias = DriveOp | CoherentOp

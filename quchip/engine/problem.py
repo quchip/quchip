@@ -22,7 +22,7 @@ import numpy as np
 
 from quchip.approximations import Approximation
 from quchip.engine.ir import (
-    DriveOp,
+    ControlOp,
     EngineResult,
     ScalarModulation,
     SolveBatch,
@@ -103,7 +103,7 @@ def _validate_tlist(tlist: Any) -> None:
         raise ValueError("tlist must be strictly increasing.")
 
 
-def _validate_drive_op_window(drive_op: DriveOp, tlist: Any) -> None:
+def _validate_drive_op_window(drive_op: ControlOp, tlist: Any) -> None:
     """Require *drive_op*'s pulse window to overlap ``tlist`` with positive measure.
 
     Raises ``ValueError`` unless
@@ -127,8 +127,8 @@ def _validate_drive_op_window(drive_op: DriveOp, tlist: Any) -> None:
         )
 
 
-def validate_drive_ops_window(drive_ops: list[DriveOp], tlist: Any) -> None:
-    """Validate every ``DriveOp`` in *drive_ops* against :func:`_validate_drive_op_window`."""
+def validate_drive_ops_window(drive_ops: list[ControlOp], tlist: Any) -> None:
+    """Validate every scheduled control op against its solve interval."""
     for drive_op in drive_ops:
         _validate_drive_op_window(drive_op, tlist)
 
@@ -140,7 +140,7 @@ def prepare_solve_problem_context(
     solver: str | None = None,
     options: dict | None = None,
     e_ops: dict | None = None,
-    drive_ops: list[DriveOp] | None = None,
+    drive_ops: list[ControlOp] | None = None,
     approximation: Approximation | None = None,
 ) -> SolveProblemContext:
     """Resolve the frame and retain authored observables and state specifications.
@@ -325,7 +325,7 @@ def build_solve_batch_from_results(
 
 def build_solve_problem(
     chip: Chip,
-    drive_ops: list[DriveOp],
+    drive_ops: list[ControlOp],
     tlist: Any,
     *,
     solver: str | None = None,

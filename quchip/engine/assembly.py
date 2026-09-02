@@ -77,11 +77,15 @@ from quchip.declarative.expr import (
 )
 from quchip.engine.ir import HamiltonianTemplate
 from quchip.engine.ir import (
+    BoundCoherentInput,
     CanonicalOperator,
     Carrier,
     CollapseTerm,
+    CoherentOp,
+    Conjugate,
     Constant,
     DroppedTerm,
+    DriveOp,
     DynamicTerm,
     EngineResult,
     HamiltonianProgram,
@@ -90,6 +94,7 @@ from quchip.engine.ir import (
     ResolvedFrame,
     ScalarModulation,
     SignalProgram,
+    Scale,
     StaticTerm,
     TermOrigin,
     _as_time_coefficient,
@@ -103,7 +108,11 @@ from quchip.engine.basis import (
 )
 from quchip.engine.solver_hints import _solver_hint_metadata, _static_diagonal_span
 from quchip.utils.constants import TWO_PI
-from quchip.utils.jax_utils import array_namespace, contains_tracer, maybe_concrete_scalar
+from quchip.utils.jax_utils import (
+    array_namespace,
+    contains_tracer,
+    maybe_concrete_scalar,
+)
 from quchip.engine.bands import (
     _decompose_product_canonical_bands,
     decompose_canonical_bands,
@@ -115,7 +124,7 @@ from quchip.engine.bands import (
 
 if TYPE_CHECKING:
     from quchip.chip.chip import Chip
-    from quchip.engine.ir import DriveOp
+    from quchip.engine.ir import ControlOp
 
 
 def _weight_zero_dropped_term(*, source: str, device_label: str, drive_freq: Any) -> DroppedTerm:
@@ -902,6 +911,18 @@ class CompiledDriveTerm:
 
 
 @dataclass(frozen=True)
+class CompiledCoherentTerm:
+    """One ``S[j, i] beta_i`` contribution to the canonical source drive."""
+
+    operation_index: int
+    exposure: str
+    scattering: Any
+    lowering: CanonicalOperator
+    raising: CanonicalOperator
+    frame_frequency: Any
+
+
+@dataclass(frozen=True)
 class _StructuralDrop:
     """Template-cached pointer to a carrier-driven weight-zero band drop.
 
@@ -1114,10 +1135,13 @@ def _compile_drive_terms(
 
 def _build_delivered_signals(
     chip: "Chip",
-    drive_ops: list["DriveOp"],
+    drive_ops: list["ControlOp"],
 ) -> list[_DeliveredSignal]:
     """Build, transform, and route complete signals to destination drives."""
-    resolved = _resolve_drives(chip, drive_ops)
+    resolved = _resolve_drives(
+        chip,
+        [operation for operation in drive_ops if isinstance(operation, DriveOp)],
+    )
     raw_signals: dict[tuple[str, int], AnalyticSignal] = {}
     for source_index, (drive, drive_op, target) in enumerate(resolved):
         signal = drive.signal(drive_op, target)
@@ -1148,6 +1172,144 @@ def _build_delivered_signals(
             )
         )
     return delivered
+
+
+def _is_concrete_zero(value: Any) -> bool:
+    """Return whether *value* is safely known to be scalar zero."""
+    if contains_tracer(value):
+        return False
+    try:
+        concrete = np.asarray(value)
+    except Exception:
+        return False
+    return concrete.ndim == 0 and bool(concrete == 0)
+
+
+def _compile_coherent_terms(
+    slh: ResolvedSLH,
+    control_ops: list["ControlOp"],
+) -> tuple[CompiledCoherentTerm, ...]:
+    """Compile operator skeletons for coherent-source composition.
+
+    Cascading ``W_beta = (I, beta, 0)`` before ``(S, L, H)`` gives
+    ``c = S beta``. Canonicalizing the displaced collapse operators back to
+    the input-free ``L`` produces ``H_beta = i(c* L - c L dagger)``.
+    """
+    external = slh.external_channels
+    exposure_index = {channel.key: index for index, channel in enumerate(external)}
+    compiled: list[CompiledCoherentTerm] = []
+    for operation_index, operation in enumerate(control_ops):
+        if not isinstance(operation, CoherentOp):
+            continue
+        input_index = exposure_index.get(operation.exposure)
+        if input_index is None:
+            raise ValueError(
+                f"Unknown coherent-input exposure {operation.exposure!r}. "
+                f"Available exposures: {list(exposure_index)}."
+            )
+        for output_index, channel in enumerate(external):
+            scattering = slh.S[output_index, input_index]
+            if _is_concrete_zero(scattering):
+                continue
+            lowering = channel.coupling.with_metadata(
+                tag=f"coherent_input:{operation.exposure}:{channel.key}:L"
+            )
+            dense = lowering.to_dense()
+            xp = array_namespace(dense)
+            raising = CanonicalOperator.from_dense(
+                xp.conj(xp.swapaxes(dense, -1, -2)),
+                dims=lowering.dims,
+                basis=lowering.basis,
+                subsystem_labels=lowering.subsystem_labels,
+                tag=f"coherent_input:{operation.exposure}:{channel.key}:Ldagger",
+            )
+            compiled.append(
+                CompiledCoherentTerm(
+                    operation_index=operation_index,
+                    exposure=operation.exposure,
+                    scattering=scattering,
+                    lowering=lowering,
+                    raising=raising,
+                    frame_frequency=(
+                        0.0
+                        if channel.collapse.frame_frequency is None
+                        else channel.collapse.frame_frequency
+                    ),
+                )
+            )
+    return tuple(compiled)
+
+
+def _frame_shifted(program: SignalProgram, frequency: Any) -> SignalProgram:
+    """Attach one operator-frame phase unless it is concretely zero."""
+    if _is_concrete_zero(frequency):
+        return program
+    return Multiply((program, Carrier(freq=TWO_PI * frequency, sign=-1)))
+
+
+def _instantiate_coherent_terms(
+    template: HamiltonianTemplate,
+    control_ops: list["ControlOp"],
+) -> tuple[tuple[DynamicTerm, ...], tuple[BoundCoherentInput, ...]]:
+    """Bind beta programs and materialize their solve-applied Hamiltonian."""
+    external = {channel.key: channel for channel in template.slh.external_channels}
+    boundary_signals: dict[int, AnalyticSignal] = {}
+    bound: list[BoundCoherentInput] = []
+    for operation_index, operation in enumerate(control_ops):
+        if not isinstance(operation, CoherentOp):
+            continue
+        channel = external[operation.exposure]
+        reference = operation.coherent_input.signal(operation, channel)
+        if not isinstance(reference, AnalyticSignal):
+            raise TypeError(
+                f"{type(operation.coherent_input).__name__}.signal() must return "
+                f"AnalyticSignal, got {type(reference).__name__}."
+            )
+        boundary = (
+            reference
+            if _is_concrete_zero(channel.reference_delay)
+            else reference.shifted(channel.reference_delay)
+        )
+        boundary_signals[operation_index] = boundary
+        bound.append(
+            BoundCoherentInput(
+                exposure=operation.exposure,
+                source_label=operation.coherent_input.label,
+                beta=boundary.program,
+                reference_beta=reference.program,
+            )
+        )
+
+    dynamic: list[DynamicTerm] = []
+    for compiled in template.coherent_terms:
+        beta = boundary_signals[compiled.operation_index].program
+        xp = array_namespace(compiled.scattering)
+        scattering = xp.asarray(compiled.scattering)
+        lowering_signal = _frame_shifted(
+            Scale(Conjugate(beta), factor=1j * xp.conj(scattering)),
+            compiled.frame_frequency,
+        )
+        raising_signal = _frame_shifted(
+            Scale(beta, factor=-1j * scattering),
+            -compiled.frame_frequency,
+        )
+        dynamic.extend(
+            (
+                DynamicTerm(
+                    operator=compiled.lowering,
+                    time_dependence=ScalarModulation(signal=lowering_signal),
+                    origin="port",
+                    tag=f"coherent_input:{compiled.exposure}",
+                ),
+                DynamicTerm(
+                    operator=compiled.raising,
+                    time_dependence=ScalarModulation(signal=raising_signal),
+                    origin="port",
+                    tag=f"coherent_input:{compiled.exposure}",
+                ),
+            )
+        )
+    return tuple(dynamic), tuple(bound)
 
 
 def _drive_scalar_program(
@@ -1197,7 +1359,7 @@ def _collect_dropped_terms(chip: "Chip", resolved_frame: "ResolvedFrame") -> tup
 
 def _validate_variant_drive_ops(
     template: HamiltonianTemplate,
-    drive_ops: list["DriveOp"],
+    drive_ops: list["ControlOp"],
 ) -> None:
     """Check that *drive_ops* match the template's drive, target, and envelope shape."""
     reference_ops = template.reference_drive_ops
@@ -1208,6 +1370,11 @@ def _validate_variant_drive_ops(
         )
 
     for index, (reference_op, variant_op) in enumerate(zip(reference_ops, drive_ops)):
+        if type(variant_op) is not type(reference_op):
+            raise ValueError(
+                f"Variant control op {index} uses {type(variant_op).__name__}, "
+                f"expected {type(reference_op).__name__}."
+            )
         if variant_op.target_label != reference_op.target_label:
             raise ValueError(
                 f"Variant drive op {index} targets '{variant_op.target_label}', expected '{reference_op.target_label}'."
@@ -1229,7 +1396,7 @@ def _validate_variant_drive_ops(
 
 def _template_from_engine_result(
     chip: "Chip",
-    drive_ops: list["DriveOp"],
+    drive_ops: list["ControlOp"],
     base_result: EngineResult,
     resolved_frame: "ResolvedFrame",
 ) -> HamiltonianTemplate:
@@ -1249,6 +1416,7 @@ def _template_from_engine_result(
         subsystem_labels=subsystem_labels,
         approximation=base_result.approximation,
     )
+    coherent_terms = _compile_coherent_terms(base_result.slh, drive_ops)
     return HamiltonianTemplate(
         resolved_frame=resolved_frame,
         approximation=base_result.approximation,
@@ -1257,6 +1425,7 @@ def _template_from_engine_result(
         static_terms=base_result.slh.H.static_terms,
         invariant_dynamic_terms=base_result.slh.H.dynamic_terms,
         drive_terms=drive_terms,
+        coherent_terms=coherent_terms,
         reference_drive_ops=tuple(drive_ops),
         dropped_terms=base_result.dropped_terms,
         weight_zero_drops=weight_zero_drops,
@@ -1269,7 +1438,7 @@ def _template_from_engine_result(
 
 def compile_hamiltonian_template(
     chip: "Chip",
-    drive_ops: list["DriveOp"],
+    drive_ops: list["ControlOp"],
     *,
     resolved_frame: "ResolvedFrame",
     approximation: Approximation | None = None,
@@ -1388,6 +1557,7 @@ def compile_hamiltonian_template(
     )
     if chip.port_network is not None:
         slh = chip.port_network.resolve(slh)
+    coherent_terms = _compile_coherent_terms(slh, drive_ops)
     # Static terms are invariant across a homogeneous sweep, including any
     # Hamiltonian generated by network composition. Store the bound in GHz.
     resolved_static_span = _static_diagonal_span(slh.H.static_terms)
@@ -1402,6 +1572,7 @@ def compile_hamiltonian_template(
         static_terms=slh.H.static_terms,
         invariant_dynamic_terms=slh.H.dynamic_terms,
         drive_terms=drive_terms,
+        coherent_terms=coherent_terms,
         reference_drive_ops=tuple(drive_ops),
         dropped_terms=_collect_dropped_terms(chip, resolved_frame) + tuple(coupling_dropped),
         weight_zero_drops=weight_zero_drops,
@@ -1414,7 +1585,7 @@ def compile_hamiltonian_template(
 
 def instantiate_engine_result(
     template: HamiltonianTemplate,
-    drive_ops: list["DriveOp"],
+    drive_ops: list["ControlOp"],
     chip: "Chip",
 ) -> EngineResult:
     """Rebuild signal-program leaves from *drive_ops* and attach them to the template's operators."""
@@ -1481,13 +1652,15 @@ def instantiate_engine_result(
             )
         )
 
-    applied_dynamic_terms = tuple(
+    applied_drive_terms = tuple(
         replace(
             term,
             time_dependence=ScalarModulation(signal=_simplify_signal(term.time_dependence.signal)),
         )
         for term in fresh_terms
     )
+    coherent_terms, coherent_inputs = _instantiate_coherent_terms(template, drive_ops)
+    applied_dynamic_terms = applied_drive_terms + coherent_terms
     dynamic_terms = template.invariant_dynamic_terms + applied_dynamic_terms
 
     metadata: dict[str, Any] = {"frame": str(template.resolved_frame)}
@@ -1506,6 +1679,7 @@ def instantiate_engine_result(
     return EngineResult(
         slh=slh,
         applied_hamiltonian=HamiltonianProgram(dynamic_terms=applied_dynamic_terms),
+        coherent_inputs=coherent_inputs,
         dims=dims,
         metadata=metadata,
         dropped_terms=template.dropped_terms + tuple(fresh_dropped),
@@ -1518,7 +1692,7 @@ def instantiate_engine_result(
 
 def build_engine_result(
     chip: "Chip",
-    drive_ops: list["DriveOp"],
+    drive_ops: list["ControlOp"],
     *,
     resolved_frame: "ResolvedFrame",
     approximation: Approximation | None = None,
@@ -1538,8 +1712,8 @@ def build_engine_result(
     chip : Chip
         The chip whose device, coupling, and drive Hamiltonians are
         assembled (2π applied at this boundary).
-    drive_ops : list of DriveOp
-        Scheduled drive operations to embed as dynamic terms.
+    drive_ops : list of ControlOp
+        Scheduled classical-drive or coherent-field operations to embed as dynamic terms.
     resolved_frame : ResolvedFrame
         Resolved frame carrying the per-device frame frequencies,
         demodulation frequencies, and frame mode.
