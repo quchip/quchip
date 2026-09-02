@@ -104,7 +104,13 @@ def plan_stranded_lines(
     return survivor_lines, retarget_plan
 
 
-def rebuild_chip(source_chip: Any, *, devices: Any, couplings: Any) -> Any:
+def rebuild_chip(
+    source_chip: Any,
+    *,
+    devices: Any,
+    couplings: Any,
+    port_replacements: dict[str, Any] | None = None,
+) -> Any:
     """Construct a reduced chip carrying the source chip's frame, RWA, backend, and baths.
 
     The label, frame (deep-copied when a per-device dict), RWA flag, backend,
@@ -131,16 +137,20 @@ def rebuild_chip(source_chip: Any, *, devices: Any, couplings: Any) -> Any:
 
     device_list = list(devices)
     survivor_labels = {device.label for device in device_list}
-    ports = []
+    replacements = {} if port_replacements is None else dict(port_replacements)
     for port in source_chip.ports:
         targets = set(port.resolve_targets(source_chip))
         removed = targets - survivor_labels
-        if removed:
+        if removed and port.label not in replacements:
             raise NotImplementedError(
                 f"Transformation removes {sorted(removed)}, targeted by port {port.label!r}. "
                 "Keep the port-coupled device; an effective input-output port requires an explicit retarget rule."
             )
-        ports.append(port.copy())
+    network = (
+        None
+        if source_chip.port_network is None
+        else source_chip.port_network._copy_with_port_replacements(replacements)
+    )
 
     return Chip(
         devices=device_list,
@@ -150,7 +160,7 @@ def rebuild_chip(source_chip: Any, *, devices: Any, couplings: Any) -> Any:
         approximation=source_chip.approximation,
         backend=source_chip._backend,
         baths=[bath.copy() for bath in source_chip.baths] or None,
-        ports=ports or None,
+        port_network=network,
     )
 
 

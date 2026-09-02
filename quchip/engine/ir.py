@@ -1267,6 +1267,22 @@ class BoundCoherentInput:
 
 
 @dataclass(frozen=True)
+class _ResolvedDressingContext:
+    """Frozen basis/backend data needed to analyze one resolved snapshot.
+
+    This is deliberately private engine metadata: backends still consume the
+    canonical operators in :class:`EngineResult`, while ``dress()`` uses the
+    backend that created the snapshot to preserve native eigenstate objects.
+    The reference vectors are copied from assembly-time basis resolution, so
+    later mutation of the source chip cannot change the result.
+    """
+
+    backend: Any = field(repr=False, compare=False)
+    reference_vectors: Any = field(repr=False, compare=False)
+    reference_keys: tuple[tuple[int, ...], ...]
+
+
+@dataclass(frozen=True)
 class EngineResult:
     """Backend-neutral resolved physics passed to backends.
 
@@ -1301,6 +1317,12 @@ class EngineResult:
     authored: Any = None
     resolved_frame: Any = None
     approximation: Any = None
+    dynamical_supports: tuple[tuple[str, ...], ...] = ()
+    _dressing_context: _ResolvedDressingContext | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     @property
     def static_terms(self) -> tuple[StaticTerm, ...]:
@@ -1316,6 +1338,29 @@ class EngineResult:
     def collapse_terms(self) -> tuple[CollapseTerm, ...]:
         """Return collapse records in complete SLH channel order."""
         return tuple(channel.collapse_term for channel in self.slh.channels)
+
+    def dress(
+        self,
+        *,
+        at_time: Any | None = None,
+        overlap_threshold: float = 0.5,
+        labeling: str = "DE",
+    ) -> Any:
+        """Dress this resolved Hamiltonian, optionally at one instant.
+
+        Unlike :meth:`Chip.dress <quchip.Chip.dress>`, this method analyzes
+        the selected frame and approximation stored in this snapshot. A
+        snapshot carrying dynamic Hamiltonian terms requires ``at_time``;
+        the result is an instantaneous eigensystem, not a Floquet analysis.
+        """
+        from quchip.chip.analysis import dress_engine_result
+
+        return dress_engine_result(
+            self,
+            at_time=at_time,
+            overlap_threshold=overlap_threshold,
+            labeling=labeling,
+        )
 
     def with_applied_hamiltonian_terms(
         self,
@@ -1558,6 +1603,8 @@ class HamiltonianTemplate:
     collapse_terms: tuple[Any, ...] = ()            # tuple[CollapseTerm, ...]
     bases: Mapping[str, Any] = field(default_factory=dict)
     authored: Any = None
+    dressing_context: Any = None
+    dynamical_supports: tuple[tuple[str, ...], ...] = ()
 
 
 # ── Frame Types ─────────────────────────────────────────────────────

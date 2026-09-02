@@ -6,14 +6,11 @@ import numpy as np
 import pytest
 
 from quchip import (
-    Capacitive,
     ChargeBasisTransmon,
     Chip,
     CollapseChannel,
-    DuffingTransmon,
     Port,
     Resonator,
-    eliminate,
 )
 
 
@@ -97,19 +94,6 @@ def test_collective_port_can_span_more_than_two_devices() -> None:
     np.testing.assert_allclose(term.operator.to_dense(), operator)
     assert term.frame_frequency == pytest.approx(6.0)
     assert chip.partition().is_trivial
-
-
-def test_elimination_refuses_to_drop_a_port_boundary() -> None:
-    qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=3, label="q")
-    resonator = Resonator(freq=6.0, levels=4, label="r")
-    chip = Chip(
-        [qubit, resonator],
-        [Capacitive(qubit, resonator, g=0.04)],
-        ports=[Port(resonator, rate=0.03, label="readout")],
-    )
-
-    with pytest.raises(NotImplementedError, match="effective input-output port"):
-        eliminate(chip, resonator)
 
 
 def test_port_coupling_kind_cannot_be_made_ambiguous_after_construction() -> None:

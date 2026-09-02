@@ -71,6 +71,41 @@ kappa_total = 2 pi f / Q_internal + 2 pi f / Q_in + 2 pi f / Q_out.
 A port with an explicit `rate` uses `1/ns`. A collective port can target
 several devices and take one dimensionless operator on that joint support.
 
+For an explicit microwave network, define the field graph first and attach it
+as one boundary object:
+
+```python
+from quchip import PortNetwork
+
+network = PortNetwork(label="measurement_line")
+coupler = network.port(
+    "coupler",
+    target=r,
+    external_quality_factor=15_000,
+)
+cable = network.phase_shift("cable", phase=0.12)
+network.cascade(coupler, cable)
+network.expose(
+    "vna_plane",
+    input=coupler.input,
+    output=cable.output,
+    delay=3.2,
+)
+
+chip = Chip([r])
+chip.connect_network(network)
+resolved = chip.resolve()
+print(resolved.slh.S)
+print(resolved.slh.L)
+```
+
+`PortNetwork` composes instantaneous scalar scattering with the port coupling
+operators. Scattering mappings use `(output, input)` keys. Attenuators are
+parameterized by power transmission and add their vacuum channel explicitly,
+so the resolved scattering matrix remains unitary. An exposure `delay` moves
+the reciprocal external reference plane; it does not become a Markov-network
+component.
+
 ## One-tone response
 
 ```python
@@ -124,7 +159,6 @@ transient = sequence.simulate(
         "I": OutputQuadrature(output_port, phase=0.0),
         "flux": OutputPhotonFlux(output_port),
     },
-    partition=False,
 )
 
 b_out = transient.expect("transmission")

@@ -10,6 +10,31 @@ from collections.abc import Mapping
 from typing import Any
 
 
+def _uses_field_boundary(drive_ops: list, e_ops: dict | None) -> bool:
+    """Whether a solve needs the unsplit PortNetwork reference plane."""
+    from quchip.engine.ir import CoherentOp
+    from quchip.observables import is_output_observable
+
+    if any(isinstance(operation, CoherentOp) for operation in drive_ops):
+        return True
+    if not e_ops:
+        return False
+    return any(is_output_observable(value) for value in e_ops.values())
+
+
+def _scheduled_coupling_supports(chip: Any, drive_ops: list) -> tuple[tuple[str, ...], ...]:
+    """Return coupling endpoints activated only by this solve's drives."""
+    supports: list[tuple[str, ...]] = []
+    for operation in drive_ops:
+        coupling = chip.coupling_map.get(operation.target_label)
+        if coupling is None:
+            continue
+        support = (coupling.device_a_label, coupling.device_b_label)
+        if support not in supports:
+            supports.append(support)
+    return tuple(supports)
+
+
 def maybe_simulate_partitioned(
     chip: Any,
     drive_ops: list,
@@ -26,7 +51,20 @@ def maybe_simulate_partitioned(
     """Run per-component solves when the chip splits; ``None`` declines to the joint path."""
     if initial_state is not None and not isinstance(initial_state, Mapping):
         return None
-    part = chip.partition()
+    # Field inputs and outputs are defined at the complete network reference
+    # plane. Component solves remain exact for internal observables, but the
+    # current result combiner does not yet reconstruct a split field boundary;
+    # keep these requests on the ordinary joint path.
+    if _uses_field_boundary(drive_ops, e_ops):
+        return None
+    resolved = chip.resolve(approximation=approximation)
+    from quchip.chip.partition import partition_chip
+
+    part = partition_chip(
+        chip,
+        resolved=resolved,
+        extra_supports=_scheduled_coupling_supports(chip, drive_ops),
+    )
     if part.is_trivial:
         return None
 

@@ -55,7 +55,7 @@ if TYPE_CHECKING:
 
 
 _DRESS_TRACING_ERROR = (
-    "Chip.dress() returns a concrete dict-keyed DressedResult and is not "
+    "Dressing returns a concrete dict-keyed DressedResult and is not "
     "traceable under jax.jit/grad/vmap. Use Chip.energy(), Chip.freq(), "
     "Chip.dispersive_shift(), or Chip.state() inside transforms — they "
     "route through the array-only kernel in quchip.chip.dressing and stay "
@@ -141,6 +141,124 @@ class DressedResult:
                 "eigenstates are unavailable."
             )
         return self._eigensystem.eigenstates
+
+
+def _materialize_dressed_result(
+    eigenvalues: Any,
+    eigenvector_matrix: Any,
+    eigensystem: EigensystemData,
+    kernel_labeling: Labeling,
+    *,
+    overlap_threshold: float,
+    labeling: str,
+    warning_stacklevel: int,
+) -> DressedResult:
+    """Build the eager label-keyed result shared by chip and resolved dressing."""
+    if contains_tracer((kernel_labeling.indices, kernel_labeling.overlaps)):
+        raise RuntimeError(_DRESS_TRACING_ERROR)
+
+    bare_labels = kernel_labeling.keys
+    indices_np = np.asarray(kernel_labeling.indices)
+    overlaps_np = np.asarray(kernel_labeling.overlaps)
+    state_map: dict[tuple[int, ...], int] = {}
+    bare_labels_by_dressed_index: dict[int, tuple[int, ...]] = {}
+    assignment_overlaps: dict[tuple[int, ...], float] = {}
+    dressed_eigenvalues: dict[tuple[int, ...], Any] = {}
+    for k, bare_label in enumerate(bare_labels):
+        index = int(indices_np[k])
+        state_map[bare_label] = index
+        bare_labels_by_dressed_index[index] = bare_label
+        assignment_overlaps[bare_label] = float(overlaps_np[k])
+        dressed_eigenvalues[bare_label] = eigenvalues[index]
+
+    hybridized_labels = tuple(
+        bare_label
+        for bare_label in bare_labels
+        if assignment_overlaps[bare_label] < overlap_threshold
+    )
+    if hybridized_labels:
+        preview = ", ".join(
+            f"{label} ({assignment_overlaps[label]:.3f})"
+            for label in sorted(
+                hybridized_labels,
+                key=lambda item: assignment_overlaps[item],
+            )[:4]
+        )
+        warnings.warn(
+            "Strong hybridization detected during dressed-state assignment; "
+            "bare labels are approximate for "
+            f"{len(hybridized_labels)} states. Lowest-overlap labels: "
+            f"{preview}. Inspect DressedResult.assignment_overlaps for "
+            "full assignment quality.",
+            UserWarning,
+            stacklevel=warning_stacklevel,
+        )
+
+    return DressedResult(
+        eigenvalues=eigenvalues,
+        state_map=state_map,
+        dressed_eigenvalues=dressed_eigenvalues,
+        assignment_overlaps=assignment_overlaps,
+        hybridized_labels=hybridized_labels,
+        bare_labels=bare_labels,
+        bare_labels_by_dressed_index=bare_labels_by_dressed_index,
+        eigenvector_matrix=eigenvector_matrix,
+        overlap_threshold=float(overlap_threshold),
+        labeling=labeling,
+        _eigensystem=eigensystem,
+    )
+
+
+def dress_engine_result(
+    result: "EngineResult",
+    *,
+    at_time: Any | None = None,
+    overlap_threshold: float = 0.5,
+    labeling: str = "DE",
+) -> DressedResult:
+    """Materialize the instantaneous dressed eigensystem of an engine snapshot."""
+    if labeling != "DE":
+        raise ValueError(f"Unsupported labeling {labeling!r}. Only 'DE' is implemented.")
+    if result._dressing_context is None:
+        raise RuntimeError(
+            "EngineResult has no resolved dressing context; obtain it from Chip.resolve() "
+            "or a built solve problem."
+        )
+    if result.dynamic_terms and at_time is None:
+        raise ValueError(
+            "A dynamic EngineResult requires dress(at_time=...); this is an "
+            "instantaneous eigensystem, not a Floquet analysis."
+        )
+    context = result._dressing_context
+    backend = context.backend
+    hamiltonian = result.hamiltonian().matrix(t=at_time, backend=backend)
+    if contains_tracer((hamiltonian, context.reference_vectors)):
+        raise RuntimeError(_DRESS_TRACING_ERROR)
+    native_hamiltonian = backend.from_array(
+        hamiltonian,
+        dims=[list(result.dims), list(result.dims)],
+    )
+    eigensystem = backend.eigensystem_data(native_hamiltonian)
+    eigenvalues = eigensystem.eigenvalues
+    eigenvector_matrix = eigensystem.eigenvector_matrix
+    reference = EigenstateReference(
+        vectors=context.reference_vectors,
+        keys=context.reference_keys,
+    )
+    kernel_labeling = label_eigensystem(
+        jnp.asarray(eigenvector_matrix),
+        reference,
+        policy=assign_rowwise_greedy,
+    )
+    return _materialize_dressed_result(
+        eigenvalues,
+        eigenvector_matrix,
+        eigensystem,
+        kernel_labeling,
+        overlap_threshold=float(overlap_threshold),
+        labeling=labeling,
+        warning_stacklevel=4,
+    )
 
 
 @dataclass(frozen=True)
@@ -519,57 +637,14 @@ class ChipAnalysis:
 
         eigenvalues, eigenvector_matrix, eigensystem, kernel_labeling = self._compute_array_labeled()
 
-        if not self._array_labeled_concrete(kernel_labeling):
-            raise RuntimeError(_DRESS_TRACING_ERROR)
-
-        # The kernel already carries the local-energy product keys in
-        # Kronecker order; reuse them instead of rebuilding the product.
-        bare_labels = kernel_labeling.keys
-        indices_np = np.asarray(kernel_labeling.indices)
-        overlaps_np = np.asarray(kernel_labeling.overlaps)
-
-        state_map: dict[tuple[int, ...], int] = {}
-        bare_labels_by_dressed_index: dict[int, tuple[int, ...]] = {}
-        assignment_overlaps: dict[tuple[int, ...], float] = {}
-        dressed_eigenvalues: dict[tuple[int, ...], Any] = {}
-        for k, bare_label in enumerate(bare_labels):
-            idx = int(indices_np[k])
-            state_map[bare_label] = idx
-            bare_labels_by_dressed_index[idx] = bare_label
-            assignment_overlaps[bare_label] = float(overlaps_np[k])
-            dressed_eigenvalues[bare_label] = eigenvalues[idx]
-
-        hybridized_labels = tuple(
-            bare_label for bare_label in bare_labels
-            if assignment_overlaps[bare_label] < overlap_threshold
-        )
-        if hybridized_labels:
-            preview = ", ".join(
-                f"{label} ({assignment_overlaps[label]:.3f})"
-                for label in sorted(hybridized_labels, key=lambda item: assignment_overlaps[item])[:4]
-            )
-            warnings.warn(
-                "Strong hybridization detected during dressed-state assignment; "
-                "bare labels are approximate for "
-                f"{len(hybridized_labels)} states. Lowest-overlap labels: "
-                f"{preview}. Inspect DressedResult.assignment_overlaps for "
-                "full assignment quality.",
-                UserWarning,
-                stacklevel=2,
-            )
-
-        result = DressedResult(
-            eigenvalues=eigenvalues,
-            state_map=state_map,
-            dressed_eigenvalues=dressed_eigenvalues,
-            assignment_overlaps=assignment_overlaps,
-            hybridized_labels=hybridized_labels,
-            bare_labels=bare_labels,
-            bare_labels_by_dressed_index=bare_labels_by_dressed_index,
-            eigenvector_matrix=eigenvector_matrix,
+        result = _materialize_dressed_result(
+            eigenvalues,
+            eigenvector_matrix,
+            eigensystem,
+            kernel_labeling,
             overlap_threshold=float(overlap_threshold),
             labeling=labeling,
-            _eigensystem=eigensystem,
+            warning_stacklevel=3,
         )
         self._dressed_result = result
         self._dressed_signature = signature

@@ -53,6 +53,7 @@ scaling:
 
 from __future__ import annotations
 
+import itertools
 import warnings
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
@@ -90,6 +91,7 @@ from quchip.engine.ir import (
     EngineResult,
     HamiltonianProgram,
     ResolvedSLH,
+    _ResolvedDressingContext,
     Multiply,
     ResolvedFrame,
     ScalarModulation,
@@ -371,10 +373,11 @@ def _collect_collapse_terms(
     resolved_frame: "ResolvedFrame",
     backend: Backend,
     resolution: _LocalResolution,
-) -> tuple[CollapseTerm, ...]:
+) -> tuple[tuple[CollapseTerm, ...], tuple[tuple[str, ...], ...]]:
     """Canonicalize every collapse channel and attach accessible-port metadata."""
     labels = tuple(device.label for device in chip.devices)
     terms: list[CollapseTerm] = []
+    supports: list[tuple[str, ...]] = []
     ports_by_id = {id(port): port for port in chip.ports}
     port_counts = dict.fromkeys(ports_by_id, 0)
     with _backend_context(backend):
@@ -389,6 +392,10 @@ def _collect_collapse_terms(
         ) in chip._collapse_contributions_with_owners(resolution.bases):
             local = _project_on_support(chip, operator, support, resolution.bases, backend)
             resolved_rate = materialize_expr(rate, backend)
+            if len(support) > 1 and not _is_concrete_zero(resolved_rate):
+                resolved_support = tuple(labels[index] for index in support)
+                if resolved_support not in supports:
+                    supports.append(resolved_support)
             embedded = embed_on_support(backend, local, support, resolution.dims)
             canonical = backend.to_canonical_operator(embedded).with_metadata(
                 dims=resolution.dims,
@@ -417,7 +424,7 @@ def _collect_collapse_terms(
     for port in chip.ports:
         if port_counts[id(port)] != 1:
             raise RuntimeError(f"Port {port.label!r} must resolve to exactly one collapse term.")
-    return tuple(terms)
+    return tuple(terms), tuple(supports)
 
 
 def _concrete_port_resolution(
@@ -497,13 +504,15 @@ def _port_frame_frequency(
     resolution: _LocalResolution,
 ) -> Any:
     """Return the common frame phase of every band in one explicit port."""
+    labels = port.resolve_targets(chip)
+    frequencies = tuple(resolved_frame.frequencies[label] for label in labels)
+    if all(maybe_concrete_scalar(frequency) == 0.0 for frequency in frequencies):
+        return 0.0
     canonical = _concrete_port_resolution(chip, port, backend, resolution)
     bands = _decompose_product_canonical_bands(canonical, canonical.dims)
     if not bands:
         raise ValueError(f"Port {port.label!r} requires a nonzero coupling operator.")
 
-    labels = port.resolve_targets(chip)
-    frequencies = tuple(resolved_frame.frequencies[label] for label in labels)
     groups = _frequency_groups(frequencies)
     signatures: list[tuple[float, tuple[float, ...]]] = []
     traced_groups: list[tuple[tuple[int, ...], Any]] = []
@@ -578,6 +587,7 @@ def _resolve_coupling_terms(
     list[Operator],
     list[tuple[Operator, ScalarModulation]],
     list[DroppedTerm],
+    list[tuple[str, ...]],
 ]:
     """Project and band-resolve every coupling once.
 
@@ -602,11 +612,13 @@ def _resolve_coupling_terms(
     frame_corrections: list[Operator] = []
     td_terms: list[tuple[Operator, ScalarModulation]] = []
     dropped: list[DroppedTerm] = []
+    supports: list[tuple[str, ...]] = []
     dims = resolution.dims
     label_to_index = {dev.label: i for i, dev in enumerate(chip.devices)}
 
     for coupling in chip.couplings:
         pair = (coupling.device_a_label, coupling.device_b_label)
+        resolved_here = False
         idx_a = label_to_index[pair[0]]
         idx_b = label_to_index[pair[1]]
         filters_terms = approximation.filters_terms
@@ -620,6 +632,8 @@ def _resolve_coupling_terms(
             resolution.bases,
             backend,
         )
+        if _is_concrete_zero_array(backend.to_array(h_full)):
+            continue
 
         # In a zero frame, an Exact interaction remains wholly static and
         # needs no band decomposition.
@@ -628,6 +642,7 @@ def _resolve_coupling_terms(
             conc_b = maybe_concrete_scalar(omega_b)
             if conc_a is not None and conc_a == 0.0 and conc_b is not None and conc_b == 0.0:
                 interactions.append(backend.embed_two_body(h_full, idx_a, idx_b, dims))
+                supports.append(pair)
                 continue
 
         d_a = resolution.bases[pair[0]].resolved_dim
@@ -670,6 +685,7 @@ def _resolve_coupling_terms(
                 continue
             band_op = backend.from_canonical_operator(band_canonical)
             retained.append(band_op)
+            resolved_here = True
             concrete_osc = maybe_concrete_scalar(osc_freq)
             if concrete_osc is not None and concrete_osc == 0.0:
                 continue
@@ -690,8 +706,12 @@ def _resolve_coupling_terms(
                 interactions.append(backend.embed_two_body(local_static, idx_a, idx_b, dims))
         else:
             interactions.append(backend.embed_two_body(h_full, idx_a, idx_b, dims))
+            resolved_here = True
 
-    return interactions, frame_corrections, td_terms, dropped
+        if resolved_here:
+            supports.append(pair)
+
+    return interactions, frame_corrections, td_terms, dropped, supports
 
 
 def _component_time_terms(
@@ -700,11 +720,12 @@ def _component_time_terms(
     backend: Backend,
     resolution: _LocalResolution,
     approximation: Approximation,
-) -> tuple[list[DynamicTerm], list[DroppedTerm]]:
+) -> tuple[list[DynamicTerm], list[DroppedTerm], list[tuple[str, ...]]]:
     """Project component time terms, then apply frame carriers and coupling RWA."""
     labels = tuple(device.label for device in chip.devices)
     dynamic: list[DynamicTerm] = []
     dropped: list[DroppedTerm] = []
+    supports: list[tuple[str, ...]] = []
 
     for local_op, coefficient, support, owner, origin, tag in chip.dynamic_contributions():
         modulation = _as_time_coefficient(coefficient, owner=type(owner).__name__)
@@ -806,7 +827,9 @@ def _component_time_terms(
                     time_dependence=ScalarModulation(signal=signal),
                 )
             )
-    return dynamic, dropped
+            if len(owner_labels) > 1 and owner_labels not in supports:
+                supports.append(owner_labels)
+    return dynamic, dropped, supports
 
 
 # -- Drive resolution ----------------------------------------------------
@@ -1185,6 +1208,16 @@ def _is_concrete_zero(value: Any) -> bool:
     return concrete.ndim == 0 and bool(concrete == 0)
 
 
+def _is_concrete_zero_array(value: Any) -> bool:
+    """Return whether an array payload is safely known to vanish."""
+    if contains_tracer(value):
+        return False
+    try:
+        return bool(np.all(np.asarray(value) == 0))
+    except Exception:
+        return False
+
+
 def _compile_coherent_terms(
     slh: ResolvedSLH,
     control_ops: list["ControlOp"],
@@ -1433,6 +1466,32 @@ def _template_from_engine_result(
         collapse_terms=base_result.collapse_terms,
         bases=base_result.bases,
         authored=base_result.authored,
+        dressing_context=base_result._dressing_context,
+        dynamical_supports=base_result.dynamical_supports,
+    )
+
+
+def _resolved_dressing_context(
+    chip: "Chip",
+    resolution: _LocalResolution,
+) -> _ResolvedDressingContext:
+    """Freeze assembly-time basis references for ``EngineResult.dress()``."""
+    local_vectors: list[Any] = []
+    for device in chip.devices:
+        record = resolution.bases[device.label]
+        transform = semantic_to_solver_transform(device, record)
+        if transform is None:
+            transform = jnp.eye(record.resolved_dim, dtype=jnp.complex128)
+        local_vectors.append(transform)
+    product_vectors = local_vectors[0]
+    for vectors in local_vectors[1:]:
+        product_vectors = jnp.kron(product_vectors, vectors)
+    return _ResolvedDressingContext(
+        backend=chip.backend,
+        reference_vectors=product_vectors.T,
+        reference_keys=tuple(
+            itertools.product(*(range(dimension) for dimension in resolution.dims))
+        ),
     )
 
 
@@ -1472,7 +1531,13 @@ def compile_hamiltonian_template(
     dims = resolution.dims
     subsystem_labels = tuple(d.label for d in chip.devices)
 
-    coupling_h0, coupling_frame_static, coupling_td, coupling_dropped = _resolve_coupling_terms(
+    (
+        coupling_h0,
+        coupling_frame_static,
+        coupling_td,
+        coupling_dropped,
+        coupling_supports,
+    ) = _resolve_coupling_terms(
         chip,
         resolved_frame,
         backend,
@@ -1521,7 +1586,7 @@ def compile_hamiltonian_template(
             )
         )
 
-    component_dynamic, component_dropped = _component_time_terms(
+    component_dynamic, component_dropped, component_supports = _component_time_terms(
         chip,
         resolved_frame,
         backend,
@@ -1549,7 +1614,12 @@ def compile_hamiltonian_template(
         approximation=strategy,
     )
 
-    collapse_terms = _collect_collapse_terms(chip, resolved_frame, backend, resolution)
+    collapse_terms, collapse_supports = _collect_collapse_terms(
+        chip,
+        resolved_frame,
+        backend,
+        resolution,
+    )
     slh = ResolvedSLH.from_terms(
         static_terms=static_terms,
         dynamic_terms=simplified_invariant,
@@ -1557,6 +1627,21 @@ def compile_hamiltonian_template(
     )
     if chip.port_network is not None:
         slh = chip.port_network.resolve(slh)
+    channel_supports = list(collapse_supports)
+    for bath in chip.baths:
+        targets = tuple(bath.resolve_targets(chip))
+        if not bath.separable and len(targets) > 1:
+            channel_supports.append(targets)
+    network_supports = (
+        ()
+        if chip.port_network is None
+        else chip.port_network.dynamical_supports(chip)
+    )
+    dynamical_supports = tuple(
+        dict.fromkeys(
+            (*coupling_supports, *component_supports, *channel_supports, *network_supports)
+        )
+    )
     coherent_terms = _compile_coherent_terms(slh, drive_ops)
     # Static terms are invariant across a homogeneous sweep, including any
     # Hamiltonian generated by network composition. Store the bound in GHz.
@@ -1580,6 +1665,8 @@ def compile_hamiltonian_template(
         collapse_terms=slh.collapse_terms,
         bases=resolution.bases,
         authored=chip.unresolved_hamiltonian(),
+        dressing_context=_resolved_dressing_context(chip, resolution),
+        dynamical_supports=dynamical_supports,
     )
 
 
@@ -1687,6 +1774,8 @@ def instantiate_engine_result(
         authored=template.authored,
         resolved_frame=template.resolved_frame,
         approximation=template.approximation,
+        dynamical_supports=template.dynamical_supports,
+        _dressing_context=template.dressing_context,
     )
 
 

@@ -113,6 +113,25 @@ def test_cascade_generates_series_coupling_and_hamiltonian() -> None:
     np.testing.assert_allclose(generated[0].operator.to_dense(), expected_h)
 
 
+def test_cascade_rejects_mixed_rotating_frame_frequencies() -> None:
+    """Static SLH composition refuses channels with a missing relative carrier."""
+    first = Resonator(freq=5.0, levels=2, label="a")
+    second = Resonator(freq=6.0, levels=2, label="b")
+    network = PortNetwork(label="line")
+    a = network.port("a_port", target=first, rate=0.04)
+    b = network.port("b_port", target=second, rate=0.09)
+    network.cascade(a, b)
+    network.expose("feedline", input=a.input, output=b.output)
+    chip = Chip(
+        [first, second],
+        port_network=network,
+        frame={"a": 5.0, "b": 6.0},
+    )
+
+    with pytest.raises(ValueError, match="different rotating-frame frequencies"):
+        chip.resolve()
+
+
 def test_phase_component_enters_series_coupling_and_generated_hamiltonian() -> None:
     """A phase shifter rotates both series coupling and its generated Hamiltonian."""
     first = Resonator(freq=5.0, levels=2, label="a")

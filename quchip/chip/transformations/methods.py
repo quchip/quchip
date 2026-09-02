@@ -28,7 +28,6 @@ import numpy as np
 from quchip.chip.sw import (
     _exact_eigensystem,
     bare_index,
-    basis_row,
     exact_reduction,
     exact_transform_collapse,
     extract_pair_parameters,
@@ -107,16 +106,8 @@ class ReductionMethod:
         """
         raise NotImplementedError
 
-    def survivor_amplitudes(self, ctx: DeviceReductionContext) -> dict[str, Any]:
-        """Survivor-lowering amplitude of the mode's transformed unit jump operator.
-
-        One entry per ``ctx.survivor_labels``: the amplitude with which the
-        eliminated mode's own (unit, dimensionless) lowering operator, carried
-        into the reduced frame with the route's rotation, drives that survivor.
-        The caller folds each amplitude into a Purcell rate with
-        :func:`~quchip.chip.sw.purcell_rate_from`. Only called when the mode
-        dissipates.
-        """
+    def transform_operator(self, ctx: DeviceReductionContext, operator: Any) -> Any:
+        """Carry a full operator into the kept mode-ground manifold."""
         raise NotImplementedError
 
     def residual_zz(self, ctx: DeviceReductionContext, pair_params: dict, a: str, b: str) -> Any | None:
@@ -149,16 +140,8 @@ class SchriefferWolffMethod(ReductionMethod):
         p_index = np.flatnonzero(ctx.p_mask)
         return extract_pair_parameters(h_eff, p_index, ctx.labels, ctx.dims, ctx.mode_label)
 
-    def survivor_amplitudes(self, ctx: DeviceReductionContext) -> dict[str, Any]:
-        mode_index = ctx.labels.index(ctx.mode_label)
-        c_full = jnp.asarray(
-            ctx.chip.backend.to_array(ctx.chip.backend.embed(ctx.mode.lowering_operator(), mode_index, ctx.dims)),
-            dtype=complex,
-        )
-        c_eff = transform_collapse(c_full, ctx.s, ctx.p_mask)
-        p_index = np.flatnonzero(ctx.p_mask)
-        ground_row = basis_row(p_index, ctx.labels, ctx.dims)
-        return {surv: c_eff[ground_row, basis_row(p_index, ctx.labels, ctx.dims, surv)] for surv in ctx.survivor_labels}
+    def transform_operator(self, ctx: DeviceReductionContext, operator: Any) -> Any:
+        return transform_collapse(operator, ctx.s, ctx.p_mask)
 
     def residual_zz(self, ctx: DeviceReductionContext, pair_params: dict, a: str, b: str) -> Any | None:
         return None
@@ -187,17 +170,16 @@ class ExactReduction(ReductionMethod):
     def pair_parameters(self, ctx: DeviceReductionContext) -> dict:
         return exact_reduction(ctx.chip, ctx.mode_label, ctx.survivor_labels)
 
-    def survivor_amplitudes(self, ctx: DeviceReductionContext) -> dict[str, Any]:
-        mode_index = ctx.labels.index(ctx.mode_label)
-        c_full = jnp.asarray(
-            ctx.chip.backend.to_array(ctx.chip.backend.embed(ctx.mode.lowering_operator(), mode_index, ctx.dims)),
-            dtype=complex,
-        )
+    def transform_operator(self, ctx: DeviceReductionContext, operator: Any) -> Any:
         _, evecs, labeling = _exact_eigensystem(ctx.h, ctx.dims)
-        kept = [int(labeling.indices[bare_index(ctx.labels, ctx.dims)])]
-        kept += [int(labeling.indices[bare_index(ctx.labels, ctx.dims, surv)]) for surv in ctx.survivor_labels]
-        c_eff = exact_transform_collapse(c_full, evecs, jnp.array(kept))
-        return {surv: c_eff[0, i + 1] for i, surv in enumerate(ctx.survivor_labels)}
+        kept_bare = np.flatnonzero(ctx.p_mask)
+        kept_dressed = jnp.asarray(labeling.indices)[kept_bare]
+        return exact_transform_collapse(
+            operator,
+            evecs,
+            kept_dressed,
+            kept_bare,
+        )
 
     def residual_zz(self, ctx: DeviceReductionContext, pair_params: dict, a: str, b: str) -> Any | None:
         return jnp.real(pair_params[("zz", a, b)])

@@ -188,6 +188,19 @@ r: kind=native, native=5, resolved=5, V=(5, 5)
   [qr] coupling band (Δa=+1, Δb=+1) on q·r  (counter-rotating under RWA; amp 0.173205 GHz, freq 11.9996 GHz)
 ```
 
+The two dressing modes answer different questions. `chip.dress()` always
+diagonalizes the complete intrinsic static Hamiltonian in the lab frame,
+independently of the chip's solve approximation. A resolved snapshot instead
+owns the model selected for simulation. A static snapshot calls `dress()`
+directly, for example `chip.resolve(frame="lab").dress()`. The rotating-frame
+snapshot above contains dynamic coupling bands, so choose the instant
+explicitly with `resolved.dress(at_time=25.0)`. For a built solve problem use
+`problem.engine_result.dress(at_time=25.0)`.
+
+That result is the eigensystem of the instantaneous resolved Hamiltonian. It
+is not a Floquet or cycle-averaged spectrum; omitting `at_time` on a dynamic
+snapshot raises.
+
 The rotating-frame frequencies define
 
 ```{math}

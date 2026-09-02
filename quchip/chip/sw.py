@@ -312,18 +312,28 @@ def exact_reduction(chip: "Chip", mode_label: str, survivor_labels: list[str]) -
     return params
 
 
-def exact_transform_collapse(c_full: Any, evecs: Any, kept_dressed_indices: Any) -> Any:
-    """``c_eff = P U† c U P`` with ``U`` the labeled eigenvector matrix (dense).
+def exact_transform_collapse(
+    c_full: Any,
+    evecs: Any,
+    kept_dressed_indices: Any,
+    kept_bare_indices: Any,
+) -> Any:
+    """``c_eff = P U† c U P`` in the bare-label-fixed dressed gauge.
 
     Rotates the jump operator into the dressed basis and keeps the rows and
     columns of the kept block's assigned dressed states. This is the exact
     counterpart of :func:`transform_collapse`; the caller records the selected
     dissipation treatment in the result notes.
     """
-    u = jnp.asarray(evecs)
-    c_dressed = u.conj().T @ jnp.asarray(c_full) @ u
     kept = jnp.asarray(kept_dressed_indices)
-    return c_dressed[kept[:, None], kept[None, :]]
+    bare = jnp.asarray(kept_bare_indices)
+    selected = jnp.asarray(evecs)[:, kept]
+    anchors = selected[bare, jnp.arange(kept.shape[0])]
+    magnitudes = jnp.abs(anchors)
+    safe = jnp.where(magnitudes > 0.0, magnitudes, 1.0)
+    phases = jnp.where(magnitudes > 0.0, jnp.conj(anchors) / safe, 1.0 + 0.0j)
+    selected = selected * phases[None, :]
+    return selected.conj().T @ jnp.asarray(c_full) @ selected
 
 
 def pathway_attribution(h: Any, s: Any, p_mask: Any, i_idx: int, j_idx: int) -> list[tuple[int, Any]]:

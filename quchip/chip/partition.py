@@ -49,23 +49,16 @@ def _line_device_labels(chip: "Chip", line: Any) -> tuple[str, ...]:
     return (target,)
 
 
-def independence_edges(chip: "Chip") -> list[tuple[str, str]]:
+def independence_edges(chip: "Chip", resolved: Any | None = None) -> list[tuple[str, str]]:
     """Label pairs that must share one solve.
 
     A clique over N labels is emitted as an (N-1)-edge star — identical
     connected components, fewer edges.
     """
+    resolved = chip.resolve() if resolved is None else resolved
     edges: list[tuple[str, str]] = []
-    for coupling in chip.couplings:
-        edges.append((coupling.device_a_label, coupling.device_b_label))
-    for bath in chip.baths:
-        if bath.separable:
-            continue
-        targets = bath.resolve_targets(chip)
-        edges.extend((targets[0], other) for other in targets[1:])
-    for port in chip.ports:
-        port_targets = port.resolve_targets(chip)
-        edges.extend((port_targets[0], other) for other in port_targets[1:])
+    for support in resolved.dynamical_supports:
+        edges.extend((support[0], other) for other in support[1:])
     equipment = chip.control_equipment
     if equipment is not None:
         line_devices = {line.label: _line_device_labels(chip, line) for line in equipment.lines}
@@ -234,7 +227,12 @@ def _build_component_chip(chip: "Chip", clone: "Chip", index: int, group: list[s
     return sub
 
 
-def partition_chip(chip: "Chip") -> PartitionResult:
+def partition_chip(
+    chip: "Chip",
+    *,
+    resolved: Any | None = None,
+    extra_supports: tuple[tuple[str, ...], ...] = (),
+) -> PartitionResult:
     """Split a chip into independent sub-chips along its independence graph.
 
     Exact: the joint solve of the original chip factorizes as the tensor
@@ -245,7 +243,23 @@ def partition_chip(chip: "Chip") -> PartitionResult:
 
     labels = [d.label for d in chip.devices]
     chip_order = tuple(labels)
-    groups = connected_components(labels, independence_edges(chip))
+    resolved = chip.resolve() if resolved is None else resolved
+    edges = independence_edges(chip, resolved)
+    for support in extra_supports:
+        edges.extend((support[0], other) for other in support[1:])
+    groups = connected_components(labels, edges)
+    has_network_hamiltonian = any(
+        term.origin == "network" for term in resolved.slh.H.static_terms
+    )
+    if has_network_hamiltonian and len(groups) > 1:
+        return PartitionResult(
+            components=(PartitionComponent(labels=chip_order, chip=chip),),
+            chip_order=chip_order,
+            notes=(
+                "Kept a joint solve because the PortNetwork generated Hamiltonian terms; "
+                "v0.3 does not slice an active field graph across component chips.",
+            ),
+        )
     if len(groups) == 1:
         return PartitionResult(
             components=(PartitionComponent(labels=chip_order, chip=chip),),

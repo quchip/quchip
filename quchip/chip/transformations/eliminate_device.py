@@ -27,12 +27,16 @@ from itertools import combinations
 from typing import TYPE_CHECKING, Any, cast
 
 import jax.numpy as jnp
+import numpy as np
 
+from quchip.approximations import Exact
 from quchip.backend import _backend_context
 from quchip.chip.couplings import Capacitive, TunableCapacitive
+from quchip.chip.ports import Port
 from quchip.engine.approximations import apply_operator_band_filter
 from quchip.chip.sw import (
     bare_hamiltonian,
+    basis_row,
     mode_blocks,
     purcell_rate_from,
     sylvester_generator,
@@ -50,6 +54,8 @@ from quchip.chip.transformations.result import EliminationResult, LazyEffectiveP
 from quchip.control.drive import FluxDrive
 from quchip.declarative.expr import materialize_expr
 from quchip.devices.protocols import FrequencyControlled
+from quchip.devices.resonator import Resonator
+from quchip.devices.spaces import FockSpace
 from quchip.utils.labeling import LabelKeyedDict, resolve_label
 
 if TYPE_CHECKING:
@@ -137,6 +143,63 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
         other = c.device_b_label if c.device_a_label == mode_label else c.device_a_label
         survivors.append((other, c))
     is_multi = len(survivors) >= 2
+    mode_device: Any = chip[mode_label]
+    affected_ports = [
+        port
+        for port in chip.ports
+        if mode_label in port.resolve_targets(chip)
+    ]
+    if affected_ports:
+        if not isinstance(mode_device, Resonator):
+            raise NotImplementedError(
+                "Network-connected elimination currently supports a linear Resonator target; "
+                f"{mode_label!r} is {type(mode_device).__name__}. Keep the boundary mode."
+            )
+        if not survivors:
+            raise NotImplementedError(
+                f"Cannot eliminate port-coupled Resonator {mode_label!r} without a coupled survivor."
+            )
+        if len(chip.devices) != 2:
+            raise NotImplementedError(
+                "Network-connected elimination currently requires exactly one survivor; "
+                "multi-device effective boundary support is deferred."
+            )
+        survivor_device = chip[survivors[0][0]]
+        if survivor_device.resolved_dimension(chip.basis) != survivor_device.local_space().dimension:
+            raise NotImplementedError(
+                "Network-connected elimination does not yet lift a transformed port from a "
+                "projected survivor basis back into its authored local space."
+            )
+        affected_labels = {port.label for port in affected_ports}
+        assert chip.port_network is not None
+        if any(
+            affected_labels.intersection((downstream, upstream))
+            for downstream, upstream, _coefficient in chip.port_network._active_generated_pairs()
+        ):
+            raise NotImplementedError(
+                "Cannot eliminate a port that participates in a cascade-generated Hamiltonian; "
+                "joint SLH adiabatic elimination is not implemented."
+            )
+        unsupported = [
+            port.label
+            for port in affected_ports
+            if port.resolve_targets(chip) != (mode_label,) or port.operator is not None
+        ]
+        if unsupported:
+            raise NotImplementedError(
+                "Network-connected linear-mode elimination currently transforms the mode's "
+                f"default lowering ports only; unsupported ports: {unsupported}."
+            )
+        non_fock = [
+            label
+            for label, _ in survivors
+            if not isinstance(chip[label].local_space(), FockSpace)
+        ]
+        if non_fock:
+            raise NotImplementedError(
+                "Network-connected linear-mode elimination requires Fock-space survivors so "
+                f"the effective lowering channel is explicit; unsupported: {non_fock}."
+            )
 
     # A bath that *explicitly* targets the eliminated mode would dangle after
     # reduction and raise KeyError at solve time — fail fast and clearly here.
@@ -156,8 +219,6 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
     # bath guard above.
     result_kind = "edge" if is_multi else "leaf-fold"
     equipment = chip.control_equipment
-    mode_device: Any = chip[mode_label]
-
     def classify(line: Any) -> StrandedLine | None:
         from quchip.control.drive import CouplingDrive
 
@@ -213,7 +274,10 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
     mode_is_frequency_controlled = isinstance(mode, FrequencyControlled) or any(
         isinstance(line, FluxDrive) for line, _ in retarget_plan
     )
-    h, labels, dims = bare_hamiltonian(chip)
+    h, labels, dims = bare_hamiltonian(
+        chip,
+        approximation=Exact() if method == "exact" else None,
+    )
     # Survivor pairs are keyed in the chip's device order everywhere — the
     # pair extraction, the exact route, and the fold loop below — so the two
     # sides of every ("J", a, b) lookup agree no matter what order the legs
@@ -239,7 +303,28 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
     pair_params = reduction.pair_parameters(ctx)
 
     kappa, has_purcell = mode_decay_rate(mode)
-    amplitudes = reduction.survivor_amplitudes(ctx) if has_purcell else {}
+    transformed_mode_operator: Any | None = None
+    if has_purcell or affected_ports:
+        mode_index = labels.index(mode_label)
+        mode_operator = jnp.asarray(
+            chip.backend.to_array(
+                chip.backend.embed(mode.lowering_operator(), mode_index, dims)
+            ),
+            dtype=complex,
+        )
+        transformed_mode_operator = reduction.transform_operator(ctx, mode_operator)
+    amplitudes: dict[str, Any] = {}
+    if has_purcell:
+        assert transformed_mode_operator is not None
+        p_index = np.flatnonzero(ctx.p_mask)
+        ground_row = basis_row(p_index, ctx.labels, ctx.dims)
+        amplitudes = {
+            survivor: transformed_mode_operator[
+                ground_row,
+                basis_row(p_index, ctx.labels, ctx.dims, survivor),
+            ]
+            for survivor in ctx.survivor_labels
+        }
     if getattr(mode, "thermal_population", None) is not None:
         # The Purcell fold below carries only the mode's lowering-operator
         # (downward) rate into the survivor's T1; thermal_population's
@@ -471,7 +556,29 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
             next(iter(exchange_by_pair.values())) if single_pair else exchange_by_pair
         )
 
-    final = rebuild_chip(chip, devices=reduced_devices, couplings=kept_couplings)
+    port_replacements: dict[str, Port] = {}
+    if affected_ports:
+        assert transformed_mode_operator is not None
+        port_target = survivor_labels[0]
+        for port in affected_ports:
+            port_replacements[port.label] = Port(
+                port_target,
+                rate=port.rate_value(chip),
+                operator=transformed_mode_operator,
+                phase=port.phase,
+                label=port.label,
+            )
+        notes.append(
+            f"Transformed port(s) {sorted(port_replacements)} through the {method} reduction; "
+            "the PortNetwork scattering and exposure reference planes are retained."
+        )
+
+    final = rebuild_chip(
+        chip,
+        devices=reduced_devices,
+        couplings=kept_couplings,
+        port_replacements=port_replacements,
+    )
     reattach_equipment(
         chip,
         final,

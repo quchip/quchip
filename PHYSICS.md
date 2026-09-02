@@ -204,6 +204,11 @@ transmission `sqrt(eta)` and a hidden vacuum channel with amplitude
 `sqrt(1-eta)`. Network exposures define the external channel order. Their
 optional reciprocal delay moves the incident and reported reference planes;
 it never enters the instantaneous `S` or generates a Hamiltonian term.
+Static composition of several quantum ports requires a common rotating-frame
+frequency. Different local carriers would make both the collective `L` and
+`Im(L2^dagger S2 L1)` explicitly time dependent; until dynamic collapse
+channels exist, quchip rejects that network and directs the model to the lab
+or a common frame.
 
 Noise parameters are ordinary tracked attributes: set (or clear with `None`) at construction **or any time after** — collapse operators are rebuilt from current values on every solve, and post-construction writes get the same validation as the constructor. Chip-level shared/collective dissipation lives in `Bath` ([`quchip/chip/baths.py`](quchip/chip/baths.py)), attached at construction or later via `chip.add_bath(...)`; bath rates are Lindblad-ready 1/ns with no assembly `2π` (that boundary is Hamiltonian-only — a component's *intrinsic* `2π`, e.g. a resonator's `κ = 2π·f/Q`, is its own physics).
 
@@ -439,7 +444,7 @@ APIs raise. Periodic/Floquet stationary states are not implemented.
 
 ## 9. Dressing
 
-Source: [`quchip/chip/chip.py`](quchip/chip/chip.py)
+Sources: [`quchip/chip/chip.py`](quchip/chip/chip.py), [`quchip/chip/analysis.py`](quchip/chip/analysis.py)
 
 `Chip.dress()` diagonalizes the full static lab-frame Hamiltonian, assigns bare product states to dressed eigenstates by overlap, and stores a `DressedResult` containing:
 
@@ -450,7 +455,12 @@ Source: [`quchip/chip/chip.py`](quchip/chip/chip.py)
 
 `Chip.freq()` evaluates dressed `0 -> 1` frequencies through the traceable array-labeling cache; those frequencies are not stored in `DressedResult`.
 
-Dressing is lab-frame analysis. It is not part of the runtime frame transform.
+`Chip.dress()` is always intrinsic static lab-frame analysis. It is not part
+of the runtime frame transform. A resolved `EngineResult` also provides
+`dress()`, which diagonalizes that snapshot's selected frame and approximation.
+If the snapshot has dynamic Hamiltonian terms, `dress(at_time=...)` is required
+and evaluates their signal programs at that instant. This is an instantaneous
+eigensystem, not Floquet or cycle-averaged analysis.
 
 ### 9.1 Dressed drive matrix elements
 
@@ -551,7 +561,7 @@ the *full* resonator pull per qubit excitation. This is **2×** the σ_z-convent
 
 Analytic cross-checks (2nd-order dispersive): two-level `chi = 2g^2/Delta`; Duffing transmon `chi = 2g^2*alpha/(Delta*(Delta+alpha))` with `Delta = f_q − f_r` (Koch et al., PRA 76, 042319, §IV). Critical photon number `n_crit = Delta^2/(4g^2)`.
 
-`effective_params[q]["kappa"]` is the eliminated mode's total intrinsic downward decay rate, in 1/ns, as returned by `intrinsic_decay_rate()`. For a resonator it includes `2π*f_r/Q_internal` when `internal_quality_factor` is set and the inherited thermal-emission rate when `T1` or `thermal_population` is set. The latter is `(nbar + 1)/T1` with `T1`, or `nbar + 1` when only `thermal_population` is present. A port-coupled mode cannot be eliminated without an explicit input-output retarget rule. The reported value is `0.0` only when none of these lowering channels is configured. Bridge legs report `chi = 0.0`: bus/coupler modes are not readout modes, and their dressed pull would double-count the mediated exchange.
+`effective_params[q]["kappa"]` is the eliminated mode's total intrinsic downward decay rate, in 1/ns, as returned by `intrinsic_decay_rate()`. For a resonator it includes `2π*f_r/Q_internal` when `internal_quality_factor` is set and the inherited thermal-emission rate when `T1` or `thermal_population` is set. The latter is `(nbar + 1)/T1` with `T1`, or `nbar + 1` when only `thermal_population` is present. The reported value is `0.0` only when none of these intrinsic lowering channels is configured. An external default port on a linear resonator is transformed separately as described in §10.5 and is not folded into survivor `T1`; this avoids counting its Purcell channel twice. Bridge legs report `chi = 0.0`: bus/coupler modes are not readout modes, and their dressed pull would double-count the mediated exchange.
 
 Gradients through `chi` follow the same rule as `Chip.freq` (§13): the eigensystem must come from a JAX-capable backend.
 
@@ -607,10 +617,25 @@ The eliminated mode's own jump operator is carried into the reduced frame by the
 
 ```text
 c_eff = P (c + [S, c]) P            (sw — 1st order in S, matching H_eff's 2nd order)
-c_eff = P U† c U P                  (exact — U the labeled eigenvector matrix)
+c_eff = P U† c U P                  (exact — U in a bare-label-fixed eigenvector gauge)
 ```
 
-and the survivor-lowering amplitude gives the inherited (Purcell) rate `|amplitude|^2 * kappa`. The result's `notes` record that the projection is exact for the *spectrum* but approximate for *dissipation*: the discarded `Q`-block dynamics also dephase and decay. `validity` reports, per eliminated coupling, `g_over_delta` (2nd-order smallness; `is_valid` gates at `< 0.1`) and `min_block_gap` — the smallest bare-energy gap the Sylvester generator crossed. A small gap with a nonzero matrix element is the perturbative expansion's failure mode even when every `g/Delta` is small.
+For intrinsic mode loss, the survivor-lowering amplitude gives the inherited
+(Purcell) rate `|amplitude|^2 * kappa`. For an external default port on a
+linear resonator, the complete `c_eff` matrix becomes that port's operator on
+one unprojected Fock-space survivor; the port's rate, phase, scalar scattering,
+and exposure reference plane are retained. Custom or collective boundary
+operators, projected or multiple survivors, a nonlinear eliminated boundary
+target, and ports participating in a cascade-generated Hamiltonian are
+rejected rather than approximated or double-counted.
+
+The result's `notes` record that the projection is exact for the *spectrum*
+but approximate for *dissipation*: the discarded `Q`-block dynamics also
+dephase and decay. `validity` reports, per eliminated coupling,
+`g_over_delta` (2nd-order smallness; `is_valid` gates at `< 0.1`) and
+`min_block_gap` — the smallest bare-energy gap the Sylvester generator
+crossed. A small gap with a nonzero matrix element is the perturbative
+expansion's failure mode even when every `g/Delta` is small.
 
 ## 11. Parametric Edge Control
 
