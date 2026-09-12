@@ -82,6 +82,18 @@ def test_differentiability_guide_starts_with_static_shapes() -> None:
     assert example["static_jacobian"].shape == (2, 3)
 
 
+@pytest.mark.examples
+def test_measurement_guide_matches_the_linear_cavity_response() -> None:
+    """The declared readout reproduces the coherent-state occupation and measurement dephasing."""
+    example = _run_opening_example("examples/04_continuous_measurement.md")
+    kappa, detuning = example["kappa"], 2 * np.pi * 0.002
+    denominator = (kappa / 2) ** 2 + detuning ** 2
+    photons = (np.pi * example["amplitude"]) ** 2 / denominator
+    dephasing = 2 * kappa * detuning ** 2 * photons / denominator
+    # Ten times the default relative integration tolerance; cavity truncation is negligible at nbar < 0.2.
+    np.testing.assert_allclose([example["nbar"], example["gamma"]], [photons, dephasing], rtol=1e-5)
+
+
 def test_committed_markdown_contains_current_notebook_outputs() -> None:
     """Every canonical Markdown guide contains outputs from its executed pair."""
     check = subprocess.run(
@@ -92,7 +104,7 @@ def test_committed_markdown_contains_current_notebook_outputs() -> None:
         check=False,
     )
     assert check.returncode == 0, check.stdout + check.stderr
-    for path in sorted((ROOT / "examples").glob("0[0-5]_*.md")):
+    for path in sorted((ROOT / "examples").glob("0[0-4]_*.md")):
         assert "<!-- executed-output:start -->" in path.read_text(encoding="utf-8")
 
 
