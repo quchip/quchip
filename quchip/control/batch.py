@@ -199,20 +199,10 @@ def _expand_axis_overrides(
     """
     axis_slices: list[list[dict[tuple[int | None, str], Any]]] = []
     for axis in axes:
-        if isinstance(axis, ZippedBatchAxis):
-            slice_: list[dict[tuple[int | None, str], Any]] = []
-            for i in range(axis.size):
-                point: dict[tuple[int | None, str], Any] = {}
-                for subaxis in axis.axes:
-                    point[subaxis.override_key] = subaxis.values[i]
-                slice_.append(point)
-            axis_slices.append(slice_)
-        else:
-            axis_slices.append(
-                [
-                    {axis.override_key: axis.values[i]}
-                    for i in range(axis.size)
-                ]
-            )
+        members = axis.axes if isinstance(axis, ZippedBatchAxis) else (axis,)
+        axis_slices.append([
+            {member.override_key: member.values[i] for member in members}
+            for i in range(axis.size)
+        ])
 
     return expand_axis_groups(axis_slices)

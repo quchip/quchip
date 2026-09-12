@@ -61,9 +61,7 @@ def _synthesize_envelope_init(cls: type["Envelope"]) -> Any:
     def __init__(self: Envelope, *args: Any, **kwargs: Any) -> None:
         bound = signature.bind(self, *args, **kwargs)
         bound.apply_defaults()
-        arguments = dict(bound.arguments)
-        arguments.pop("self")
-        Envelope.__init__(self, **arguments)
+        Envelope.__init__(**bound.arguments)
 
     __init__.__signature__ = signature  # type: ignore[attr-defined]
     __init__.__qualname__ = f"{cls.__qualname__}.__init__"

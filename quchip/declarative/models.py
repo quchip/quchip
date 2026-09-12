@@ -193,11 +193,7 @@ def _synthesize_device_init(cls: Any) -> Any:
         kwargs = BaseDevice._normalize_parameter_names(kwargs)
         bound = signature.bind(self, *args, **kwargs)
         bound.apply_defaults()
-        arguments = dict(bound.arguments)
-        arguments.pop("self")
-        levels = arguments.pop("levels")
-        label = arguments.pop("label")
-        DeviceModel.__init__(self, levels=levels, label=label, **arguments)
+        DeviceModel.__init__(**bound.arguments)
 
     __init__.__signature__ = signature  # type: ignore[attr-defined]
     __init__.__qualname__ = f"{cls.__qualname__}.__init__"
@@ -244,18 +240,7 @@ def _synthesize_coupling_init(cls: Any) -> Any:
     def __init__(self: Any, *args: Any, **kwargs: Any) -> None:
         bound = signature.bind(self, *args, **kwargs)
         bound.apply_defaults()
-        arguments = dict(bound.arguments)
-        arguments.pop("self")
-        device_a = arguments.pop("device_a")
-        device_b = arguments.pop("device_b")
-        label = arguments.pop("label")
-        CouplingModel.__init__(
-            self,
-            device_a,
-            device_b,
-            label=label,
-            **arguments,
-        )
+        CouplingModel.__init__(**bound.arguments)
 
     __init__.__signature__ = signature  # type: ignore[attr-defined]
     __init__.__qualname__ = f"{cls.__qualname__}.__init__"

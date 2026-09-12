@@ -131,8 +131,8 @@ def measure(
     offsets = noise_grid(noise_frequencies)
     xp = vna.chip.backend.array_module
     modes = tuple(device.label for device in vna.chip.devices if isinstance(device.local_space(), FockSpace))
-    captured, means, incident, diagnostics, delays, parameters = [], [], [], [], [], []
-    mode_amplitudes, photon_numbers, mode_frequencies = [], [], []
+    captured: list[_Acquisition] = []
+    incident, parameters = [], []
     points: list[Any] = []
     for _, params in variation_points:
         chip = vna._chip_at(params)
@@ -161,31 +161,27 @@ def measure(
         else:
             acquired = capture_linear(
                 linear, chip.backend, labels, input_label, frequency, amplitude, xp.asarray(offsets))
-        means.append(acquired.mean)
-        captured.append(acquired.components)
-        delays.append(acquired.delays)
-        mode_amplitudes.append(acquired.mode_amplitudes)
-        photon_numbers.append(acquired.photon_numbers)
-        mode_frequencies.append(acquired.mode_frequencies)
+        captured.append(acquired)
         incident.append(xp.asarray(amplitude))
-        diagnostics.append(acquired.diagnostics)
     size = 2 * len(labels)
-    names = tuple(captured[0])
-    if any(tuple(point) != names for point in captured):
+    names = tuple(captured[0].components)
+    if any(tuple(point.components) != names for point in captured):
         raise ValueError("Measurement variations must preserve noise source structure.")
     components = {
-        name: (xp.stack([point[name][0] for point in captured]).reshape((*shape, size, size)),
-               xp.stack([point[name][1] for point in captured]).reshape((*shape, len(offsets), size, size)))
+        name: (xp.stack([point.components[name][0] for point in captured]).reshape((*shape, size, size)),
+               xp.stack([point.components[name][1] for point in captured]).reshape((*shape, len(offsets), size, size)))
         for name in names
     }
     return VNAMeasurement(
         ports=labels, input=resolve_label(input_label),
         frequencies=frequency_values if frequency_axis else frequency_values[0],
         amplitudes=amplitude_values if amplitude_axis else amplitude_values[0], axes=axes, shape=shape,
-        diagnostics=tuple(diagnostics), values=xp.stack(means).reshape((*shape, len(labels))),
+        diagnostics=tuple(point.diagnostics for point in captured),
+        values=xp.stack([point.mean for point in captured]).reshape((*shape, len(labels))),
         incident=xp.stack(incident).reshape(shape), noise_frequencies=offsets, noise_components=components,
-        output_delays=xp.stack(delays).reshape((*shape, len(labels))), parameters=tuple(parameters),
-        modes=modes, mode_amplitudes=xp.stack(mode_amplitudes).reshape((*shape, len(modes))),
-        photon_numbers=xp.stack(photon_numbers).reshape((*shape, len(modes))),
-        mode_frequencies=xp.stack(mode_frequencies).reshape((*shape, len(modes))),
+        output_delays=xp.stack([point.delays for point in captured]).reshape((*shape, len(labels))),
+        parameters=tuple(parameters), modes=modes,
+        mode_amplitudes=xp.stack([point.mode_amplitudes for point in captured]).reshape((*shape, len(modes))),
+        photon_numbers=xp.stack([point.photon_numbers for point in captured]).reshape((*shape, len(modes))),
+        mode_frequencies=xp.stack([point.mode_frequencies for point in captured]).reshape((*shape, len(modes))),
     )

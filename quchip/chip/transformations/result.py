@@ -31,19 +31,6 @@ class ChipTransform(Protocol):
     def chip(self) -> "Chip": ...
 
 
-class _HasFreq(Protocol):
-    """Typing-only view of ``freq`` on concrete device subclasses."""
-
-    freq: Any
-
-
-class _HasG(Protocol):
-    """Typing-only view of the scalar coupling strength every Capacitive-like
-    coupling exposes; not declared on BaseCoupling itself."""
-
-    g: Any
-
-
 @dataclass(frozen=True)
 class ReductionMap:
     """A captured subspace map in the source and target lab-frame solver bases.
