@@ -69,6 +69,8 @@ def _render_output(output: dict[str, Any]) -> str | None:
     plain = _text(data.get("text/plain", ""))
     if "image/png" in data and plain.startswith("<Figure size"):
         return None
+    if "text/html" in data and plain.startswith("<IPython.core.display."):
+        return None
     return _fenced_text(plain) if plain.strip() else None
 
 

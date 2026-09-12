@@ -32,6 +32,7 @@ from quchip import RWA, Capacitive, ChargeDrive, Chip, DuffingTransmon, Gaussian
 
 frequencies = (5.00, 5.35, 5.70, 6.05)
 coupling_strength = 0.012
+
 qubits = [
     DuffingTransmon(freq=freq, anharmonicity=-0.25, levels=3, label=f"q{index}")
     for index, freq in enumerate(frequencies)
@@ -53,11 +54,13 @@ The source chip and sequence remain unchanged.
 ```python
 drive = ChargeDrive(qubits[0], label="q0-charge")
 _ = chip.wire(drive)
+
 sequence = QuantumSequence(chip)
 _ = sequence.schedule(
     drive, envelope=Gaussian(duration=60.0, sigmas=3.0, amplitude=0.04 / 3),
     freq=chip.freq(qubits[0]),
 )
+
 patch = sequence.active_patch(hops=1, method="sw")
 ```
 
@@ -70,6 +73,7 @@ import matplotlib.pyplot as plt
 
 plt.style.use("../docs/_static/quchip.mplstyle")
 plt.rcParams["text.usetex"] = bool(shutil.which("latex"))
+
 topology_figure, topology_axes = plt.subplots(2, 1, figsize=(7.2, 3.0), layout="constrained")
 for axis, model, title in zip(
     topology_axes, (chip, patch.chip), (r"Full chain $\cdot$ 81 states", r"Active patch $\cdot$ 9 states"),
@@ -92,6 +96,7 @@ for axis, model, title in zip(
     axis.set(xlim=(-0.6, 3.5), ylim=(-0.4, 0.55))
     axis.set_title(title, loc="left")
     axis.axis("off")
+
 topology_figure.savefig("../docs/images/active_patch_topology.svg")
 plt.show()
 ```
@@ -157,6 +162,7 @@ residual_axis.set(
 )
 
 figure_path = "../docs/images/reduce_and_replay.svg"
+
 figure.savefig(figure_path)
 plt.show()
 ```

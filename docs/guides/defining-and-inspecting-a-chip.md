@@ -73,6 +73,7 @@ these full pulls off-diagonal and dressed anharmonicities on the diagonal.
 
 ```python
 shifted = chip.with_params({"q.freq": 5.1})
+
 print(f"Original bare / dressed: {q.freq:.3f} / {chip.freq(q):.6f} GHz")
 print(f"Changed bare / dressed: {shifted.parameters['q.freq']:.3f} / {shifted.freq('q'):.6f} GHz")
 ```
@@ -93,6 +94,7 @@ Both render as equations when displayed in a notebook.
 ```python
 declared = chip.unresolved_hamiltonian()
 resolved = chip.resolve(frame="rotating")
+
 print(resolved.dropped_terms_summary())
 ```
 
@@ -121,6 +123,7 @@ target_pull = Capacitive(target_q, target_r, g=-0.0003, label="qr")
 target = Chip([target_q, target_r], [target_pull])
 
 fit = fit_a_dress(target)
+
 print(f"Converged: {fit.converged}; normalized loss: {fit.loss:.2e}")
 ```
 

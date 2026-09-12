@@ -106,6 +106,11 @@ photon loss with authored operator `a` and rate `2π * omega / Q_internal` in
 
 ### 3.3 Collapse operators
 
+`Qubit(freq=...)` is an intrinsically two-level device with
+`H/h = freq * |1><1|`. Its frequency is in GHz; a frame at that frequency
+removes free precession. It inherits the T1/T2 channels below and has no
+numerical truncation boundary. Use a transmon model when higher levels matter.
+
 Source: [`quchip/devices/base.py`](quchip/devices/base.py)
 
 The standard dissipators are:

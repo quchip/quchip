@@ -63,6 +63,7 @@ from quchip import ChargeDrive, Chip, DuffingTransmon, Gaussian, QuantumSequence
 
 q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
 chip = Chip([q], frame="rotating")
+
 line = ChargeDrive(q, label="xy")
 chip.wire(line)
 

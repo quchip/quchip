@@ -6,6 +6,7 @@ the full device protocol.
 
 Public models
 -------------
+* :class:`Qubit` — ideal two-level system, ``H = freq * |1><1|``.
 * :class:`Resonator` — linear harmonic mode, ``H = omega * n_hat``.
 * :class:`DuffingTransmon` — Duffing-anharmonic transmon qubit,
   ``H = omega * n + (alpha/2) * n * (n - I)``.
@@ -28,6 +29,7 @@ from quchip.devices.fluxonium import Fluxonium
 from quchip.devices.fock import FockDevice
 from quchip.devices.kerr_cavity import KerrCavity
 from quchip.devices.protocols import ChargeCoupled, FluxCoupled, FrequencyControlled, PhaseCoupled
+from quchip.devices.qubit import Qubit
 from quchip.devices.resonator import Resonator
 from quchip.devices.spaces import ChargeSpace, CustomSpace, FockSpace, LocalSpace, PhaseGridSpace, TruncationBoundary
 from quchip.devices.transmon.charge_basis import ChargeBasisTransmon
@@ -51,5 +53,6 @@ __all__ = [
     "TruncationBoundary",
     "PhaseCoupled",
     "PhaseGridSpace",
+    "Qubit",
     "Resonator",
 ]

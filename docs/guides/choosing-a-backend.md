@@ -170,6 +170,7 @@ problem = sequence.build_problem(
     run_args={"ntraj": 100, "seeds": 42},
     options={"dt": 0.01, "store_measurement": "end", "keep_runs_results": True},
 )
+
 channel = problem.engine_result.slh.channels[0]
 result = chip.solve(with_monitoring(problem, {channel.key: 0.5}))
 ```
@@ -232,6 +233,7 @@ from quchip import with_truncation
 
 problem = sequence.build_problem(times, states="none")
 result = chip.solve(with_truncation(problem))
+
 maximum = result.check_truncation()
 ```
 

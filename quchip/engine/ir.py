@@ -2092,7 +2092,7 @@ class SolveProblem:
     def __post_init__(self) -> None:
         if self.solver not in (None, "sesolve", "mesolve", "mcsolve", "ssesolve", "smesolve",
                                "jssesolve", "dssesolve", "dsmesolve"):
-            raise ValueError(f"Unknown native solver {self.solver!r}.")
+            raise ValueError(f"Unknown solver {self.solver!r}.")
         if self.run_args and not self.stochastic:
             raise ValueError("run_args requires an explicitly selected native trajectory solver.")
         if self.states is None and not self.stochastic:

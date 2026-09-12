@@ -111,6 +111,7 @@ from quchip.devices.fluxonium import Fluxonium
 from quchip.devices.fock import FockDevice
 from quchip.devices.kerr_cavity import KerrCavity
 from quchip.devices.protocols import ChargeCoupled, FluxCoupled, PhaseCoupled
+from quchip.devices.qubit import Qubit
 from quchip.devices.resonator import Resonator
 from quchip.devices.spaces import ChargeSpace, CustomSpace, FockSpace, LocalSpace, PhaseGridSpace, TruncationBoundary
 from quchip.devices.transmon.charge_basis import ChargeBasisTransmon
@@ -206,6 +207,7 @@ __all__ = [
     "FluxTunableTransmon",
     "Fluxonium",
     "KerrCavity",
+    "Qubit",
     "LocalSpace",
     "TruncationBoundary",
     "Resonator",

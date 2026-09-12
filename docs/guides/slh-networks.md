@@ -63,6 +63,7 @@ filtered_line.expose("feedline", at=filtered_line.port("feed", target=f, rate=ka
 filtered = Chip(
     [q, r, f], [qr, rf], port_network=filtered_line, frame="lab", approximation=RWA(),
 )
+
 chips = {"Unfiltered": unfiltered, "Filtered": filtered}
 ```
 
@@ -75,7 +76,9 @@ import matplotlib.pyplot as plt
 
 plt.style.use("../_static/quchip.mplstyle")
 plt.rcParams["text.usetex"] = bool(shutil.which("latex"))
+
 ink, muted = "#16181C", "#50565A"
+
 fig, axes = plt.subplots(2, 1, figsize=(7.2, 5.8), layout="constrained")
 for axis, filtered_circuit in zip(axes, [False, True]):
     axis.set(xlim=(-0.1, 11.3), ylim=(-1.0, 3.5), aspect="equal")
@@ -132,6 +135,7 @@ for axis, filtered_circuit in zip(axes, [False, True]):
         axis.plot([10.35 - width, 10.35 + width], [y, y], color=ink, lw=1.3)
     linewidth = r"$\kappa_f/2\pi$ = 230 MHz" if filtered_circuit else r"$\kappa_{\mathrm{ext}}/2\pi$ = 1 MHz"
     axis.text(10.6, -0.42, linewidth, ha="right", va="top", fontsize=9.5, color=muted)
+
 fig.savefig("slh_circuits.svg")
 plt.close(fig)
 ```
@@ -154,6 +158,7 @@ the same time grid and records all local occupations.
 
 ```python
 times = np.r_[np.linspace(0, 100, 201), np.linspace(100, 120_000, 1201)[1:]]
+
 results = {}
 occupations = {}
 for name, chip in chips.items():
@@ -190,8 +195,10 @@ for (name, occupation), color in zip(occupations.items(), ["#C92F33", "#246FA8"]
               label=rf"{name}: {lifetimes[name] / 1000:.1f} $\mu$s")
 axis.plot(times / 1000, np.exp(-times / 60_000), color="#16181C", ls=":", lw=1.8,
           label=r"Intrinsic qubit: 60 $\mu$s")
+
 axis.set(xlabel=r"Time ($\mu$s)", ylabel="Qubit occupation", xlim=(0, 120), ylim=(0, 1.02))
 axis.legend()
+
 fig.savefig("slh_t1_budget.svg")
 plt.close(fig)
 ```
@@ -291,6 +298,7 @@ for name, chip in chips.items():
     fit = (ring_times >= 100) & (ring_times <= 600)
     kappa = -np.polyfit(ring_times[fit], np.log(nr[fit]), 1)[0]
     linewidths.append(kappa / (2 * np.pi) * 1000)
+
 np.testing.assert_allclose(linewidths[1], linewidths[0], rtol=0.05)
 ```
 
