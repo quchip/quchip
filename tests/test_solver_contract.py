@@ -23,7 +23,7 @@ def test_explicit_schrodinger_solver_cannot_discard_dissipation(backend):
     """Selecting ket evolution explicitly must not silently remove declared decay."""
     problem = _sequence(backend, noisy=True).build_problem([0.0, 1.0], solver="sesolve")
     with pytest.raises(ValueError, match="dissipation"):
-        solve_problem(problem, check_truncation=False)
+        solve_problem(problem)
 
 
 @pytest.mark.parametrize("options", [{"atol": 1e-10}, {"max_step": 0.01}, {"typo": 1}])
@@ -31,14 +31,14 @@ def test_dynamiqs_rejects_unsupported_options(options):
     """Unsupported flat options fail rather than appearing to configure the native solver."""
     problem = _sequence("dynamiqs").build_problem([0.0, 1.0], options=options)
     with pytest.raises(ValueError, match="[Uu]nsupported.*option"):
-        solve_problem(problem, check_truncation=False)
+        solve_problem(problem)
 
 
 def test_qutip_explicit_diag_rejects_adaptive_controls():
     """Explicit diagonal propagation cannot claim to apply adaptive tolerances."""
     problem = _sequence().build_problem([0.0, 1.0], options={"method": "diag", "rtol": 1e-8})
     with pytest.raises(ValueError, match="diag.*option"):
-        solve_problem(problem, check_truncation=False)
+        solve_problem(problem)
 
 
 @pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
@@ -47,7 +47,7 @@ def test_dissipation_exclusion_is_explicit_and_captured(backend):
     seq = _sequence(backend, noisy=True)
     times = np.linspace(0.0, 2.0, 5)
     problem = seq.build_problem(times, dissipation=False, solver="sesolve", initial_state={"q": 1})
-    result = solve_problem(problem, check_truncation=False)
+    result = solve_problem(problem)
     assert problem.dissipation is False
     assert result.dissipation is False
     assert not problem.engine_result.collapse_terms
@@ -102,7 +102,7 @@ def test_partitioned_simulation_propagates_dissipation_choice():
     """Independent component solves cannot accidentally re-enable requested exclusions."""
     devices = [DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=2, label=label, T1=20.0) for label in ("a", "b")]
     seq = QuantumSequence(Chip(devices, frame="rotating"))
-    result = seq.simulate(tlist=[0.0, 1.0], initial_state={"a": 1, "b": 1}, dissipation=False, check_truncation=False)
+    result = seq.simulate(tlist=[0.0, 1.0], initial_state={"a": 1, "b": 1}, dissipation=False)
     assert result.dissipation is False
     for component in result.components:
         assert component.dissipation is False
@@ -118,7 +118,7 @@ def test_results_report_effective_numerical_settings(backend):
         options = {"method": dq.method.Tsit5(atol=1e-10, rtol=1e-9)}
     else:
         options = {"atol": 1e-10, "rtol": 1e-9}
-    result = _sequence(backend).simulate(tlist=[0.0, 1.0], options=options, check_truncation=False)
+    result = _sequence(backend).simulate(tlist=[0.0, 1.0], options=options)
     effective = result.stats["options"]
     if backend == "dynamiqs":
         assert effective["method"].atol == 1e-10

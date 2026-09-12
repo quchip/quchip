@@ -728,6 +728,40 @@ class QuTiPBackend(Backend):
     # Single-problem solver dispatch
     # ------------------------------------------------------------------
 
+    def solve_problem(self, problem: Any) -> SolverResult:
+        if not problem.stochastic:
+            return super().solve_problem(problem)
+        if problem.solver not in ("mcsolve", "ssesolve", "smesolve"):
+            raise ValueError(f"QuTiP does not provide {problem.solver!r}.")
+        options = dict(problem.options)
+        if problem.states is not None:
+            if {"store_states", "store_final_state"} & options.keys():
+                raise ValueError("Conflicting states and native storage options.")
+            options.update(store_states=problem.states == "all", store_final_state=problem.states == "final")
+        rhs = self.prepare_hamiltonian(problem.engine_result, problem.tlist).rhs
+        from copy import deepcopy
+
+        kwargs = dict(e_ops=problem.e_ops, options=options, **problem.run_args)
+        if "seeds" in kwargs:
+            kwargs["seeds"] = deepcopy(kwargs["seeds"])
+        if problem.solver == "mcsolve":
+            operators = self._collapse_operators(problem.engine_result)
+            if not operators:
+                raise ValueError(
+                    "mcsolve requires a declared jump channel; use a deterministic solver for closed evolution."
+                )
+            kwargs["c_ops"] = operators
+        else:
+            from quchip.engine.monitoring import monitored_operators
+
+            loss, monitored, etas = monitored_operators(problem)
+            kwargs["sc_ops"] = [np.sqrt(eta) * op for eta, op in zip(etas, monitored)]
+            if problem.solver == "smesolve":
+                kwargs["c_ops"] = loss + [np.sqrt(1 - eta) * op for eta, op in zip(etas, monitored)]
+        native = getattr(qutip, problem.solver)(
+            rhs, self.coerce_state(problem.initial_state, dims=problem.engine_result.dims), problem.tlist, **kwargs)
+        return SolverResult(times=problem.tlist, solver=problem.solver, native=native)
+
     def sesolve(
         self,
         H: Any,
@@ -1150,6 +1184,9 @@ class QuTiPBackend(Backend):
         --------
         quchip.backend.protocol.Backend.solve_batch
         """
+        if any(problem.stochastic for problem in batch.problems):
+            return self._parallel_map(task=self.solve_problem, items=list(batch.problems),
+                                      n_jobs=1, progress=progress, desc="quchip trajectories")
         if batch.batch_size == 0:
             return []
 
@@ -1336,7 +1373,7 @@ class QuTiPBackend(Backend):
             iterator = tqdm(enumerate(items), total=len(items), desc=desc) if progress else enumerate(items)
             return [indexed_task(entry) for entry in iterator]
 
-        if len(items) < self._PARALLEL_MIN_BATCH:
+        if n_jobs == 1 or len(items) < self._PARALLEL_MIN_BATCH:
             return sequential()
 
         try:

@@ -58,7 +58,8 @@ class SolveProblemContext:
     _base_result: EngineResult | None
     solver: str | None
     options: dict[str, Any]
-    states: StateStorage = "all"
+    run_args: dict[str, Any]
+    states: StateStorage | None = None
     dissipation: bool = True
     automatic_sampling: bool = False
 
@@ -97,8 +98,9 @@ def prepare_solve_problem_context(
     drive_ops: list[ControlOp] | None = None,
     approximation: Approximation | None = None,
     frame: Any = None,
-    states: StateStorage = "all",
+    states: StateStorage | None = None,
     dissipation: bool = True,
+    run_args: dict | None = None,
 ) -> SolveProblemContext:
     """Resolve the frame and retain authored observables and state specifications.
 
@@ -130,13 +132,14 @@ def prepare_solve_problem_context(
     )
     return SolveProblemContext(
         chip=chip,
-        tlist=tlist_arr,
+        tlist=tlist if isinstance(tlist, tuple) and solver in ("jssesolve", "dssesolve") else tlist_arr,
         e_ops=e_ops,
         resolved_frame=base_result.resolved_frame,
         approximation=base_result.approximation,
         _base_result=base_result,
         solver=solver,
         options={} if options is None else options,
+        run_args={} if run_args is None else run_args,
         automatic_sampling=automatic,
         states=states,
         dissipation=dissipation,
@@ -274,6 +277,7 @@ def build_solve_batch_from_results(
                 resolved_frame=context.resolved_frame,
                 solver=context.solver,
                 options=context.options,
+                run_args=context.run_args,
                 states=context.states,
             )
         )
@@ -293,8 +297,9 @@ def build_solve_problem(
     initial_state: Any | None = None,
     approximation: Approximation | None = None,
     frame: Any = None,
-    states: StateStorage = "all",
+    states: StateStorage | None = None,
     dissipation: bool = True,
+    run_args: dict | None = None,
 ) -> SolveProblem:
     """Resolve, assemble, and package a frozen :class:`SolveProblem`.
 
@@ -311,7 +316,7 @@ def build_solve_problem(
         chip,
         tlist,
         solver=solver,
-        options=options,
+        options=options, run_args=run_args,
         e_ops=e_ops,
         drive_ops=drive_ops,
         approximation=approximation,
@@ -338,6 +343,7 @@ def build_solve_problem(
         resolved_frame=context.resolved_frame,
         solver=context.solver,
         options=context.options,
+        run_args=context.run_args,
         states=context.states,
     )
     return sample_problems([problem])[0] if context.automatic_sampling else problem
@@ -348,6 +354,7 @@ def solve_problem_list(problems: list[SolveProblem], *, progress: bool = True,
     """Dispatch each captured backend's requests and restore original point order."""
     from quchip.results.results import SimulationBatchResult
 
+    problems = assign_point_noise(problems)
     groups: dict[int, list[tuple[int, SolveProblem]]] = {}
     for index, problem in enumerate(problems):
         groups.setdefault(id(problem.backend), []).append((index, problem))
@@ -440,7 +447,9 @@ def _solve_backend_problems(
             _op_list_key(problem.e_ops),
             tuple(id(term.operator) for term in desc.collapse_terms),
             _options_key(problem.options),
+            _options_key({key: value for key, value in problem.run_args.items() if key not in ("keys", "seeds")}),
             problem.states,
+            _options_key(problem.monitoring or {}),
             id(problem.resolved_frame),
         )
 
@@ -448,7 +457,7 @@ def _solve_backend_problems(
     for idx, problem in enumerate(problems):
         groups.setdefault(_skeleton_prefilter_key(problem), []).append((idx, problem))
 
-    if len(groups) > 1:
+    if len(groups) > 1 and not any(problem.stochastic for problem in problems):
         parallel_results = backend.parallel_solve_problems(problems, progress=progress)
         if parallel_results is not None:
             if len(parallel_results) != len(problems):
@@ -496,3 +505,31 @@ def _solve_backend_problems(
             "backend returned incomplete results."
         )
     return SimulationBatchResult(ordered_results)
+
+
+def assign_point_noise(problems: list[SolveProblem], *, split_keys: bool = False) -> list[SolveProblem]:
+    """Assign omitted QuTiP seeds in logical point order before grouping.
+
+    Explicit native seeds/keys are retained, including deliberately shared noise.
+    Dynamiqs keys remain a required native input.
+    """
+    if split_keys and any("keys" in problem.run_args for problem in problems):
+        import jax
+        from jax import random
+
+        assigned = []
+        for index, problem in enumerate(problems):
+            keys = problem.run_args.get("keys")
+            if problem.stochastic and keys is not None:
+                typed = jax.dtypes.issubdtype(keys.dtype, jax.dtypes.prng_key)
+                explicit = keys.ndim == (2 if typed else 3)
+                point_keys = keys[index] if explicit else jax.vmap(lambda key: random.fold_in(key, index))(keys)
+                problem = replace(problem, run_args={**problem.run_args, "keys": point_keys})
+            assigned.append(problem)
+        problems = assigned
+    if not any(p.solver in ("mcsolve", "ssesolve", "smesolve") and "seeds" not in p.run_args for p in problems):
+        return problems
+    seeds = np.random.SeedSequence().spawn(len(problems))
+    return [replace(problem, run_args={**problem.run_args, "seeds": seed})
+            if problem.solver in ("mcsolve", "ssesolve", "smesolve") and "seeds" not in problem.run_args
+            else problem for problem, seed in zip(problems, seeds)]

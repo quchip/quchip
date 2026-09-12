@@ -118,8 +118,24 @@ def compile_truncation(plan: TruncationPlan, backend: Any) -> TruncationPlan:
     return replace(plan, operators=tuple(operators), metadata=tuple(metadata), sampled=True)
 
 
-def sample_truncation(problem: Any) -> Any:
-    """Append private diagnostic observables to an ephemeral solve request."""
+def with_truncation(problem: Any) -> Any:
+    """Return a request collecting physical cutoff populations without saving states.
+
+    Parameters
+    ----------
+    problem : SolveProblem or SolveBatch
+        Captured request or parameter batch. Its existing time grid is preserved;
+        samples can miss excursions between save times and do not prove convergence.
+
+    Returns
+    -------
+    SolveProblem or SolveBatch
+        Request with additional diagnostic observables. No solve is performed.
+    """
+    from quchip.engine.ir import SolveBatch
+
+    if isinstance(problem, SolveBatch):
+        return replace(problem, problems=tuple(with_truncation(p) for p in problem.problems))
     plan = problem.truncation
     if plan is None or plan.sampled:
         return problem
@@ -147,11 +163,15 @@ def evaluate_boundaries(result: Any) -> tuple[TruncationPlan, tuple[Any, ...]]:
         return plan, result._boundary_traces
     if not plan.checks:
         return plan, ()
-    if result._states is None:
-        raise RuntimeError('Boundary samples unavailable; run with check_truncation=True or states="all".')
+    if result._states is None and result._final_state is None:
+        raise RuntimeError('Boundary samples unavailable; prepare with_truncation(problem) or retain states="all".')
     plan = compile_truncation(plan, result._backend)
-    values = [result._backend.expect_over_time(operator, result._stacked_states()) for operator in plan.operators]
-    traces = boundary_traces(plan, values, result.times, result._backend)
+    final_only = result._states is None
+    states = result._backend.stack_states([result._final_state]) if final_only else result._stacked_states()
+    times = result.times[-1:] if final_only else result.times
+    values = [result._backend.expect_over_time(operator, states) for operator in plan.operators]
+    traces = boundary_traces(plan, values, times, result._backend)
+    result.stats["truncation_sampling"] = "final state only" if final_only else "saved time grid"
     if not contains_tracer(traces):
         result._boundary_traces = traces
     return plan, traces

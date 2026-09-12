@@ -92,7 +92,7 @@ def test_committed_markdown_contains_current_notebook_outputs() -> None:
         check=False,
     )
     assert check.returncode == 0, check.stdout + check.stderr
-    for path in sorted((ROOT / "examples").glob("0[0-3]_*.md")):
+    for path in sorted((ROOT / "examples").glob("0[0-5]_*.md")):
         assert "<!-- executed-output:start -->" in path.read_text(encoding="utf-8")
 
 

@@ -243,7 +243,7 @@ class TestSimulationBatchResultAxes:
         frequencies = np.array([5.0, 6.0])
         batch = sequence.build_batch(sequence.vary("q.freq", frequencies), tlist=[0.0, 1.0])
         frequencies[:] = 9.0
-        result = solve_batch(batch, progress=False, check_truncation=False)
+        result = solve_batch(batch, progress=False)
         np.testing.assert_array_equal(batch.axes[0][1], [5.0, 6.0])
         np.testing.assert_array_equal(result.axes[0][1], [point.chip.freq("q") for point in batch])
         for index in (1.9, "1"):

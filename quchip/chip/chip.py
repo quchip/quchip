@@ -2106,41 +2106,23 @@ class Chip:
                 f"problems[{index}] was built for a different chip. All problems must share the same chip instance."
             )
 
-    def solve(
-        self,
-        problem: "SolveProblem",
-        *,
-        check_truncation: bool = True,
-        truncation_threshold: float = 1e-3,
-    ) -> "SimulationResult":
+    def solve(self, problem: "SolveProblem") -> "SimulationResult":
         """Solve a typed :class:`SolveProblem` through this chip's backend.
 
-        Routes through the common :func:`~quchip.engine.solve_problem`
-        chokepoint, so the Hilbert-truncation safety net applies by default;
-        pass ``check_truncation=False`` to opt out or retune
-        ``truncation_threshold``.
+        Call ``result.check_truncation()`` to inspect saved boundary samples.
 
         Parameters
         ----------
         problem : SolveProblem
             Prepared problem built for this chip.
-        check_truncation : bool, default=True
-            Check boundary populations after the solve.
-        truncation_threshold : float, default=0.001
-            Maximum allowed boundary population.
         """
         from quchip.engine import solve_problem
 
         self._check_problem(problem)
-        return solve_problem(
-            problem,
-            check_truncation=check_truncation,
-            truncation_threshold=truncation_threshold,
-        )
+        return solve_problem(problem)
 
     def solve_many(
         self, batch_or_problems: Any, *, progress: bool = True,
-        check_truncation: bool = True, truncation_threshold: float = 1e-3,
     ) -> "SimulationBatchResult":
         """Solve a :class:`SolveBatch` or list of problems.
 
@@ -2155,10 +2137,6 @@ class Chip:
             Batch or prepared problems built for this chip.
         progress : bool, default=True
             Show backend progress where supported.
-        check_truncation : bool, default=True
-            Check boundary populations after each solve.
-        truncation_threshold : float, default=0.001
-            Maximum allowed boundary population.
         """
         from quchip.engine import solve_many
         from quchip.engine.ir import SolveBatch
@@ -2171,8 +2149,7 @@ class Chip:
             for i, problem in enumerate(batch_or_problems):
                 self._check_problem(problem, index=i)
 
-        return solve_many(batch_or_problems, progress=progress,
-                          check_truncation=check_truncation, truncation_threshold=truncation_threshold)
+        return solve_many(batch_or_problems, progress=progress)
 
     def steadystate(
         self,

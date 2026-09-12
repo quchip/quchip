@@ -659,7 +659,7 @@ class QuantumSequence:
         if tlist is not None:
             if duration is not None:
                 raise ValueError("duration and tlist are mutually exclusive.")
-            return tlist if is_jax_namespace(array_namespace(tlist)) else np.asarray(tlist)
+            return tlist if isinstance(tlist, tuple) or is_jax_namespace(array_namespace(tlist)) else np.asarray(tlist)
 
         cursors, _ = self._replay_cursors(overrides)
         end = maybe_concrete_scalar(_cursor_max(cursors.values()) if cursors else 0.0)
@@ -830,8 +830,9 @@ class QuantumSequence:
         initial_state: Any | None = None,
         approximation: Approximation | None = None,
         frame: FrameSpec | None = None,
-        states: StateStorage = "all",
+        states: StateStorage | None = None,
         dissipation: bool = True,
+        run_args: dict | None = None,
         *,
         duration: Any | None = None,
     ) -> "SolveProblem":
@@ -852,9 +853,14 @@ class QuantumSequence:
             solver when omitted.
         options : dict, optional
             Backend numerical options. Use ``states`` to select state retention.
-        states : {"all", "final", "none"}, default "all"
-            Retain the full state history, only the final state, or neither.
+        states : {"all", "final", "none"} or None, default None
+            None saves all deterministic states and preserves native stochastic defaults.
+            Explicit values retain the full state history, only the final state, or neither.
             Requested observable traces are retained independently.
+        run_args : dict or None, default None
+            Native trajectory call keywords: QuTiP seeds, ntraj, heterodyne,
+            target_tol, timeout; Dynamiqs keys, method, gradient, etas.
+            Assembled physics and native options cannot be overridden here.
         e_ops : dict, optional
             Expectation operators keyed by device label (or a 2-tuple of
             device labels for a two-body operator), mapping to a local
@@ -889,7 +895,7 @@ class QuantumSequence:
             drive_ops,
             actual_tlist,
             solver=solver,
-            options=options,
+            options=options, run_args=run_args,
             e_ops=e_ops,
             initial_state=initial_state,
             approximation=approximation,
@@ -1067,8 +1073,9 @@ class QuantumSequence:
         e_ops: dict | None = None,
         initial_state: Any | None = None,
         approximation: Approximation | None = None,
-        states: StateStorage = "all",
+        states: StateStorage | None = None,
         dissipation: bool = True,
+        run_args: dict | None = None,
         duration: Any | None = None,
     ) -> "SolveBatch":
         """Build a batched solve request from explicit sweep axes.
@@ -1083,14 +1090,19 @@ class QuantumSequence:
             Backend solver name; ``None`` uses its default.
         options : dict or None, default=None
             Backend numerical options.
+        run_args : dict or None, default None
+            Native trajectory call keywords: QuTiP seeds, ntraj, heterodyne,
+            target_tol, timeout; Dynamiqs keys, method, gradient, etas.
+            Assembled physics and native options cannot be overridden here.
         e_ops : dict or None, default=None
             Local expectation-operator specifications.
         initial_state : Any or None, default=None
             Initial ket, density matrix, or state mapping.
         approximation : Approximation or None, default=None
             Engine approximation override.
-        states : {"all", "final", "none"}, default="all"
-            State-retention policy.
+        states : {"all", "final", "none"} or None, default=None
+            None saves all deterministic states and preserves native stochastic defaults.
+            Explicit values select state retention; native storage conflicts raise.
         dissipation : bool, default=True
             Include authored collapse channels when true.
         duration : float or None, default=None
@@ -1136,7 +1148,7 @@ class QuantumSequence:
                         drive_ops,
                         point_tlist.bounds if isinstance(point_tlist, AutomaticTimeGrid) else point_tlist,
                         solver=solver,
-                        options=options,
+                        options=options, run_args=run_args,
                         e_ops=e_ops,
                         initial_state=(axis_initial_state if axis_initial_state is not None else initial_state),
                         approximation=approximation,
@@ -1150,9 +1162,11 @@ class QuantumSequence:
 
             if tlist is None:
                 problems = sample_problems(problems)
+            from quchip.engine.problem import assign_point_noise
+
             return SolveBatch(
                 chip=self._chip,
-                problems=tuple(problems),
+                problems=tuple(assign_point_noise(problems, split_keys=True)),
                 params=params_store,
                 shape=shape,
                 axes=tuple(_axis_metadata(axis) for axis in axes),
@@ -1163,7 +1177,7 @@ class QuantumSequence:
             self._chip,
             actual_tlist,
             solver=solver,
-            options=options,
+            options=options, run_args=run_args,
             e_ops=e_ops,
             drive_ops=reference_drive_ops,
             approximation=approximation,
@@ -1196,8 +1210,11 @@ class QuantumSequence:
         batch = build_solve_batch_from_results(
             context, engine_results, initial_states=initial_states
         )
+        from quchip.engine.problem import assign_point_noise
+
         return replace(
             batch,
+            problems=tuple(assign_point_noise(list(batch.problems), split_keys=True)),
             params=params_store,
             shape=shape,
             axes=tuple(_axis_metadata(axis) for axis in axes),
@@ -1256,12 +1273,11 @@ class QuantumSequence:
         initial_state: Any | None = None,
         *,
         backend: Any | None = None,
-        check_truncation: bool = True,
-        truncation_threshold: float = 1e-3,
         partition: bool = True,
         approximation: Approximation | None = None,
-        states: StateStorage = "all",
+        states: StateStorage | None = None,
         dissipation: bool = True,
+        run_args: dict | None = None,
         duration: Any | None = None,
     ) -> "SimulationResult":
         """Build and solve one scheduled simulation.
@@ -1275,6 +1291,10 @@ class QuantumSequence:
             Backend solver name, such as ``"mesolve"`` or ``"sesolve"``.
         options : dict, optional
             Backend-specific solver options.
+        run_args : dict or None, default None
+            Native trajectory call keywords: QuTiP seeds, ntraj, heterodyne,
+            target_tol, timeout; Dynamiqs keys, method, gradient, etas.
+            Assembled physics and native options cannot be overridden here.
         e_ops : dict, optional
             Named observables to evaluate.
         initial_state : object or mapping, optional
@@ -1282,16 +1302,13 @@ class QuantumSequence:
             mappings may supply one state per partitioned component.
         backend : object or {"qutip", "dynamiqs"}, optional
             Per-call backend override.
-        check_truncation : bool, default=True
-            Check retained-level populations against ``truncation_threshold``.
-        truncation_threshold : float, default=1e-3
-            Maximum allowed omitted-level population for the check.
         partition : bool, default=True
             Solve independent chip components separately when the initial state
             permits it.
         approximation : Approximation, optional
             Override the chip's approximation for this solve.
-        states : {"all", "final", "none"}, default="all"
+        states : {"all", "final", "none"} or None, default=None
+            None saves all deterministic states and preserves native stochastic defaults.
             State storage policy for the returned result.
         dissipation : bool, default=True
             Include declared collapse channels when ``True``.
@@ -1330,10 +1347,8 @@ class QuantumSequence:
             drive_ops = self._materialize_drive_ops()
             return _engine_simulate(
                 self._chip, drive_ops, actual_tlist,
-                solver=solver, options=options, e_ops=e_ops,
+                solver=solver, options=options, run_args=run_args, e_ops=e_ops,
                 initial_state=initial_state,
-                check_truncation=check_truncation,
-                truncation_threshold=truncation_threshold,
                 partition=partition,
                 approximation=approximation,
                 states=states,
@@ -1349,11 +1364,10 @@ class QuantumSequence:
         initial_state: Any | None = None,
         backend: Any | None = None,
         progress: bool = True,
-        check_truncation: bool = True,
-        truncation_threshold: float = 1e-3,
         approximation: Approximation | None = None,
-        states: StateStorage = "all",
+        states: StateStorage | None = None,
         dissipation: bool = True,
+        run_args: dict | None = None,
         duration: Any | None = None,
     ) -> "SimulationBatchResult":
         """Build and solve a batched sweep over pulse or sequence parameters.
@@ -1363,18 +1377,15 @@ class QuantumSequence:
         *axes : BatchAxis or ZippedBatchAxis
             Cartesian sweep axes. A :class:`ZippedBatchAxis` pairs member axes
             pointwise and therefore contributes one batch dimension.
-        tlist, solver, options, e_ops, initial_state, backend
+        tlist, solver, options, run_args, e_ops, initial_state, backend
             As for :meth:`simulate`; one initial state is reused for every
             batch point unless it is a supported mapping.
         progress : bool, default=True
             Show backend batch progress when supported.
-        check_truncation : bool, default=True
-            Check retained-level populations at every batch point.
-        truncation_threshold : float, default=1e-3
-            Maximum allowed omitted-level population.
         approximation : Approximation, optional
             Per-batch approximation override.
-        states : {"all", "final", "none"}, default="all"
+        states : {"all", "final", "none"} or None, default=None
+            None saves all deterministic states and preserves native stochastic defaults.
             State storage policy for each batch result.
         dissipation : bool, default=True
             Include declared collapse channels.
@@ -1399,7 +1410,7 @@ class QuantumSequence:
                 tlist=tlist,
                 duration=duration,
                 solver=solver,
-                options=options,
+                options=options, run_args=run_args,
                 e_ops=e_ops,
                 initial_state=initial_state,
                 approximation=approximation,
@@ -1408,7 +1419,6 @@ class QuantumSequence:
             )
             result = self._chip.solve_many(
                 problem_batch, progress=progress,
-                check_truncation=check_truncation, truncation_threshold=truncation_threshold,
             )
         return result
     def active_patch(self, *, hops: int = 1, method: str = "sw") -> "ActivePatchResult":

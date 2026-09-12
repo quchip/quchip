@@ -2022,14 +2022,18 @@ class SolveProblem:
         Metadata used to reconstruct public observables.
     resolved_frame : ResolvedFrame
         Captured integration and demodulation frame.
-    solver : {"sesolve", "mesolve"} or None
+    solver : str or None
         Explicit solver selection.
     options : dict
         Backend solver options; a ``"backend"`` key is rejected.
+    run_args : dict
+        Native trajectory call keywords, separate from integrator options.
+    monitoring : dict or None
+        Captured channel-index to (efficiency, phase) selection; prepare with_monitoring().
     truncation : object or None
         Captured boundary-population plan.
-    states : {"all", "final", "none"}
-        State-retention policy.
+    states : {"all", "final", "none"} or None
+        None retains native stochastic defaults; deterministic requests resolve it to all.
     backend : Backend
         Captured backend owner.
     device_info : tuple
@@ -2046,9 +2050,16 @@ class SolveProblem:
     solver: str | None = None
     options: dict[str, Any] = field(default_factory=dict)
     truncation: Any = field(default=None, repr=False, compare=False, kw_only=True)
-    states: StateStorage = field(default="all", kw_only=True)
+    states: StateStorage | None = field(default=None, kw_only=True)
+    run_args: dict[str, Any] = field(default_factory=dict, kw_only=True)
+    monitoring: dict[int, tuple[Any, Any]] | None = field(default=None, kw_only=True)
     backend: Any = field(default=None, repr=False, compare=False, kw_only=True)
     device_info: tuple[tuple[str, bool], ...] = field(default=(), kw_only=True)
+
+    @property
+    def stochastic(self) -> bool:
+        """Whether an explicitly selected native solver produces trajectories."""
+        return self.solver not in (None, "sesolve", "mesolve")
 
     @property
     def dissipation(self) -> bool:
@@ -2079,15 +2090,31 @@ class SolveProblem:
         return "sesolve" if is_ket and not self.engine_result.collapse_terms else "mesolve"
 
     def __post_init__(self) -> None:
-        if self.solver not in (None, "sesolve", "mesolve"):
-            raise ValueError(f"Unknown solver {self.solver!r}; choose 'sesolve' or 'mesolve'.")
-        if not isinstance(self.states, str) or self.states not in ("all", "final", "none"):
+        if self.solver not in (None, "sesolve", "mesolve", "mcsolve", "ssesolve", "smesolve",
+                               "jssesolve", "dssesolve", "dsmesolve"):
+            raise ValueError(f"Unknown native solver {self.solver!r}.")
+        if self.run_args and not self.stochastic:
+            raise ValueError("run_args requires an explicitly selected native trajectory solver.")
+        if self.states is None and not self.stochastic:
+            object.__setattr__(self, "states", "all")
+        if self.states not in (None, "all", "final", "none"):
             raise ValueError('states must be "all", "final", or "none".')
         options = _reject_backend_option(self.options, cls_name="SolveProblem")
         if "t0" in options:
             raise ValueError("The initial-state time is tlist[0]; set tlist instead of option 't0'.")
-        if {"store_states", "store_final_state"} & options.keys():
+        if not self.stochastic and {"store_states", "store_final_state"} & options.keys():
             raise ValueError('Use states="all"|"final"|"none" instead of storage flags in options.')
+        reserved = {"H", "state", "psi0", "rho0", "tlist", "tsave", "e_ops", "exp_ops", "options",
+                    "c_ops", "sc_ops", "jump_ops"} & self.run_args.keys()
+        if reserved:
+            raise ValueError(f"run_args cannot override assembled inputs: {sorted(reserved)}")
+        object.__setattr__(self, "monitoring", _capture_solve_input(self.monitoring))
+        run_args = _capture_solve_input(self.run_args)
+        if "seeds" in run_args:
+            from copy import deepcopy
+
+            run_args["seeds"] = deepcopy(run_args["seeds"])
+        object.__setattr__(self, "run_args", run_args)
         object.__setattr__(self, "options", _capture_solve_input(options))
         object.__setattr__(self, "tlist", _capture_solve_input(self.tlist))
         object.__setattr__(self, "e_ops", _capture_solve_input(self.e_ops))

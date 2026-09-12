@@ -446,7 +446,7 @@ xy = ChargeDrive(q, label="xy")
 rabi_chip.wire(xy)
 rabi = QuantumSequence(rabi_chip)
 rabi.schedule(xy, envelope=Square(duration=40.0, amplitude=0.025), freq=5.0)
-result = rabi.simulate(tlist=np.linspace(0, 40, 81), check_truncation=False)
+result = rabi.simulate(tlist=np.linspace(0, 40, 81))
 
 detector = IQReadout.from_wiring(
     readout_chip, readout, frequency=6.5,

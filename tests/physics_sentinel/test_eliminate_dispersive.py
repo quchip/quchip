@@ -21,15 +21,13 @@ def test_purcell_decay_matches_full_solve():
         full, [], tlist,
         initial_state=full.bare_state({q: 1}),
         e_ops={q: q.projector(1, 1)},
-        check_truncation=False,
-    )
+        )
     red_q = reduced["q"]
     red_excited = simulate(
         reduced, [], tlist,
         initial_state=reduced.bare_state({red_q: 1}),
         e_ops={red_q: red_q.projector(1, 1)},
-        check_truncation=False,
-    )
+        )
 
     full_curve = np.real(full_excited.expect("q"))
     red_curve = np.real(red_excited.expect("q"))

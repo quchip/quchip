@@ -485,7 +485,6 @@ def final_population(perturbation):
     result = rebound.simulate(
         tlist=times,
         initial_state={"q": 0},
-        check_truncation=False,
         partition=False,
     )
     return jnp.real(result.population("q", level=1)[-1])
@@ -573,7 +572,6 @@ def experiment_outputs(shared):
         result = rebound.simulate(
             tlist=multi_times,
             initial_state={"q": 0},
-            check_truncation=False,
             partition=False,
         )
         values.append(jnp.real(result.population("q", level=1)[-1]))
@@ -632,7 +630,6 @@ loss gradient to take an optimization step.
 reference_result = sequence.simulate(
     tlist=times,
     initial_state={"q": 0},
-    check_truncation=False,
     partition=False,
 )
 

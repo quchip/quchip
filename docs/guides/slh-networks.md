@@ -163,7 +163,7 @@ for name, chip in chips.items():
     initial = dressed.eigenstates[dressed.state_map[label]]
     nops = chip.e_ops(**{device.label: "n" for device in chip.devices})
     result = QuantumSequence(chip).simulate(
-        tlist=times, initial_state=initial, e_ops=nops, check_truncation=False,
+        tlist=times, initial_state=initial, e_ops=nops
     )
     results[name] = result
     occupations[name] = np.array([np.real(result.expect(key)) for key in nops])
@@ -263,7 +263,7 @@ for checked_chip, grid in ((filtered, fine_grid), (expanded, times)):
     initial = dressed.eigenstates[dressed.state_map[(1, 0, 0)]]
     nops = checked_chip.e_ops(q="n")
     checked = QuantumSequence(checked_chip).simulate(
-        tlist=grid, initial_state=initial, e_ops=nops, check_truncation=False,
+        tlist=grid, initial_state=initial, e_ops=nops
     )
     nq = np.real(checked.expect(next(iter(nops))))
     tail = (grid >= 1000) & (nq > 1e-3)
@@ -285,7 +285,7 @@ for name, chip in chips.items():
     nops = chip.e_ops(r="n")
     ring = QuantumSequence(chip).simulate(
         tlist=ring_times, initial_state=chip.bare_state(r=1),
-        e_ops=nops, check_truncation=False,
+        e_ops=nops
     )
     nr = np.real(ring.expect(next(iter(nops))))
     fit = (ring_times >= 100) & (ring_times <= 600)

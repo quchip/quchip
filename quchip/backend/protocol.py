@@ -1023,6 +1023,8 @@ class Backend(ABC):
         SolverResult
             Native solver payload for the requested calculation.
         """
+        if problem.stochastic:
+            raise NotImplementedError(f"{type(self).__name__} does not implement native solver {problem.solver!r}.")
         prepared = self.prepare_hamiltonian(problem.engine_result, problem.tlist)
         tlist_arr, c_ops, solver, opts, e_ops_arg = self._resolve_solve_config(
             problem, prepared

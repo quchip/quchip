@@ -1165,3 +1165,19 @@ this coherent-field readout model; calibrated conditional distributions may incl
 those effects instead. A calibrated full covariance must not receive the same
 apparatus noise a second time. Input baths and port decay remain in the declared
 quantum dynamics, irrespective of the readout model.
+
+
+## Continuous trajectory monitoring
+
+Native jump and diffusive solvers evolve the captured Hamiltonian and declared
+channels. `with_monitoring` selects physical SLH couplings with their authored
+phases. At efficiency eta, QuTiP receives sqrt(eta) exp(-i phase) L and
+sqrt(1-eta) L; their dissipators sum to D[L]. Dynamiqs receives L and eta through
+its native SME interface. Pure SSE cannot omit unobserved loss.
+
+Native measurement records describe selected L in the integration frame, without
+adding coherent incident beta or downstream receiver noise. Native weighted jump
+averages include deterministic no-click paths. Truncation checks are explicit
+and cover available samples, with final-only coverage identified separately.
+See [the solver guide](docs/guides/choosing-a-backend.md) and
+[Wiseman and Milburn, chapter 4](https://doi.org/10.1017/CBO9780511813948).

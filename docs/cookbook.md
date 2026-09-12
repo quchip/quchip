@@ -174,7 +174,7 @@ wired model. Do not add apparatus noise twice to an existing calibration.
 | Field versus occupation | `abs(⟨a⟩)²` is the coherent part; `⟨a†a⟩` includes incoherent photons. |
 | Jump rate versus output flux | `jump_rate()` returns `⟨L†L⟩`; dephasing and absorption jumps are not emitted photons. |
 | A dressed label near an avoided crossing | Inspect `assignment_overlaps` or `state_components()`. Lowering the overlap threshold does not improve the assignment. |
-| No truncation warning | Increase local levels and compare the observable; the warning only checks sampled boundary populations. |
+| A small boundary population | Call `result.check_truncation()` explicitly, then increase local levels and compare the observable. The check covers only available samples. |
 | A smooth trace | Refine the output grid separately from the solver tolerances. |
 
 QuTiP is the default. Choose dynamiqs for JAX gradients and compiled batches.

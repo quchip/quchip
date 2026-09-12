@@ -16,7 +16,7 @@ def preparation(backend="qutip", *, mixed=False, states="final"):
     if mixed:
         state = chip.backend.from_array(state @ state.conj().T, dims=[list(chip.dims), list(chip.dims)])
     result = QuantumSequence(chip).simulate(tlist=[0., 1.], initial_state=state,
-        states=states, check_truncation=False)
+        states=states)
     return chip, q, result
 
 
@@ -46,7 +46,7 @@ def test_bell_joint_measurement_and_custom_complex_bases(mixed):
     if mixed:
         state = chip.backend.from_array(state @ state.conj().T, dims=[list(chip.dims), list(chip.dims)])
     result = QuantumSequence(chip).simulate(tlist=[0., 1.], initial_state=state,
-        partition=False, check_truncation=False)
+        partition=False)
     joint = result.measure(*devices)
     np.testing.assert_allclose(joint.probabilities, [.5, 0, 0, .5], atol=1e-10)
     assert set(np.asarray(joint.sample(500, seed=1).indices)) == {0, 3}
@@ -64,8 +64,7 @@ def test_energy_basis_snapshot_and_custom_basis_validation():
             return .1*op.n + p.tilt*(op.a + op.adag)
     q = TiltedQubit(levels=2, label="q")
     chip = Chip([q], frame="lab")
-    result = QuantumSequence(chip).simulate(tlist=[0., .1], initial_state=chip.bare_state(q=0),
-                                           check_truncation=False)
+    result = QuantumSequence(chip).simulate(tlist=[0., .1], initial_state=chip.bare_state(q=0))
     q.tilt = -.03
     np.testing.assert_allclose(result.measure(q).probabilities, [1, 0], atol=1e-12)
     assert result.measure(q, basis="solver").probabilities[1] > .05
@@ -107,8 +106,7 @@ def test_batch_coordinates_and_partitioned_measurement_avoid_joint_state(monkeyp
     a = DuffingTransmon(freq=5., anharmonicity=-.2, levels=2, label="a")
     b = Resonator(freq=6., levels=3, label="b")
     chip = Chip([a, b], frame="rotating")
-    result = QuantumSequence(chip).simulate(tlist=[0., 1.], initial_state={"a": 1, "b": 2},
-                                          check_truncation=False)
+    result = QuantumSequence(chip).simulate(tlist=[0., 1.], initial_state={"a": 1, "b": 2})
     def forbidden(*args, **kwargs):
         raise AssertionError("Rebuilt an unnecessary joint state")
     monkeypatch.setattr(type(result), "final_state", property(forbidden))
@@ -146,7 +144,7 @@ def test_closed_rabi_needs_no_readout_pulse_or_master_equation():
     chip.wire(line)
     sequence = QuantumSequence(chip)
     sequence.schedule(line, envelope=Square(duration=20., amplitude=.025), freq=5.)
-    result = sequence.simulate(tlist=np.linspace(0, 20, 21), check_truncation=False)
+    result = sequence.simulate(tlist=np.linspace(0, 20, 21))
     assert result.solver == "sesolve"
     for i in (0, 5, 10, 20):
         np.testing.assert_allclose(result.measure(q, t=result.times[i]).probabilities[1],
@@ -166,7 +164,7 @@ def wired_result(*, backend="qutip", gain=100., noise=1., loss=.25):
     drive = net.expose("drive", at=circ.port(1))
     out = net.expose("out", at=attenuator.port(2))
     chip = Chip([r], port_network=net, frame="rotating", backend=backend)
-    result = QuantumSequence(chip).simulate(tlist=[0., 1.], states="final", check_truncation=False)
+    result = QuantumSequence(chip).simulate(tlist=[0., 1.], states="final")
     return chip, out, drive, result
 
 
@@ -227,7 +225,7 @@ def test_partitioned_custom_basis_validation_and_phase_convention():
     hadamard = np.array([[1., 1.], [1., -1.]])/np.sqrt(2)
     for partition in (True, False):
         result = QuantumSequence(Chip([a, b], frame="rotating")).simulate(
-            tlist=[0., .1], partition=partition, check_truncation=False)
+            tlist=[0., .1], partition=partition)
         with pytest.raises(ValueError, match="mapping"):
             result.measure(a, b, basis=hadamard)
         with pytest.raises(ValueError, match="unmeasured"):
@@ -237,7 +235,7 @@ def test_partitioned_custom_basis_validation_and_phase_convention():
     for frame, expected in (("lab", [0, 1]), ("rotating", [1, 0])):
         chip = Chip([a], frame=frame)
         result = QuantumSequence(chip).simulate(tlist=[0., .1],
-            initial_state=np.ones((2, 1))/np.sqrt(2), check_truncation=False)
+            initial_state=np.ones((2, 1))/np.sqrt(2))
         np.testing.assert_allclose(result.measure(a, basis=hadamard).probabilities, expected, atol=1e-12)
 
 
@@ -253,7 +251,7 @@ def test_thermal_evolution_and_downstream_noise_have_separate_owners():
     r = first_chip["r"]
     r.T1 = 10.
     r.thermal_occupation = .2
-    warm = QuantumSequence(first_chip).simulate(tlist=[0., 10.], check_truncation=False)
+    warm = QuantumSequence(first_chip).simulate(tlist=[0., 10.])
     assert warm.solver == "mesolve"
     assert warm.measure(r).probabilities[1] > .05
 
@@ -304,7 +302,7 @@ def test_bandpass_noise_and_partitioned_wiring_forwarding():
     net.expose("drive", at=circ.port(1))
     out = net.expose("out", at=amp.port(2))
     result = QuantumSequence(Chip([q, r], port_network=net, frame="rotating")).simulate(
-        tlist=[0., 1.], check_truncation=False)
+        tlist=[0., 1.])
     receiver = IQReceiver(1000)
     passing = result.iq_readout(out, means=[-.1, .1], frequency=6., receiver=receiver)
     stopped = result.iq_readout(out, means=[-.1, .1], frequency=9., receiver=receiver)

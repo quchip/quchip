@@ -43,4 +43,8 @@ Model reduction <chip-transformations>
 Gradients and parameter fitting <differentiability>
 Cookbook <../cookbook>
 SQA 2026 examples <from-sqa-2026>
+Quantum jumps <quantum-jumps>
+Conditional monitoring <conditional-monitoring>
 ```
+
+See also {doc}`quantum-jumps` and {doc}`conditional-monitoring`.

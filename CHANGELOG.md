@@ -2,6 +2,16 @@
 
 This file records notable user-visible changes to quchip.
 
+## Unreleased
+
+- Add native quantum-jump and diffusive SSE/SME solvers on QuTiP and Dynamiqs,
+  with parameter batches, native results, and explicit monitored-channel selection.
+- Truncation diagnostics are now explicit. Remove `check_truncation` and
+  `truncation_threshold` from solve calls; use `result.check_truncation()` or
+  prepare `with_truncation(problem)` when saving only diagnostics.
+- Omitted stochastic storage uses native defaults. Native run keywords go in
+  `run_args`; integrator options remain in `options`.
+
 ## [0.3.0] - 2026-09-06
 
 ### Fixes

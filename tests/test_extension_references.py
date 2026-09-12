@@ -262,8 +262,7 @@ def test_lossy_kerr_two_photon_fock_state_follows_exact_decay_law():
         times,
         initial_state=chip.bare_state({cavity: 2}),
         e_ops={cavity: cavity.number_operator()},
-        check_truncation=False,
-    )
+        )
 
     np.testing.assert_allclose(
         np.real(result.expect(cavity)),

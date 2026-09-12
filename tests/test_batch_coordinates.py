@@ -13,7 +13,7 @@ def _batch(backend, times):
     sequence = QuantumSequence(chip)
     return solve_many([sequence.build_problem(grid, initial_state={"q": 1},
                        e_ops={"q": q.number_operator()}) for grid in times],
-                      progress=False, check_truncation=False)
+                      progress=False)
 
 
 @pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
@@ -58,7 +58,7 @@ def test_output_field_stacking_rejects_different_time_coordinates(backend):
     sequence = QuantumSequence(chip)
     grids = [[0.0, 1.0, 3.0], [0.0, 2.0, 3.0]]
     batch = solve_many([sequence.build_problem(grid, initial_state={"r": 1}, e_ops={plane: plane.output})
-                       for grid in grids], check_truncation=False, progress=False)
+                       for grid in grids], progress=False)
     with pytest.raises(ValueError, match="different time grids"):
         batch.output(plane)
     for point, times in zip(batch, grids):

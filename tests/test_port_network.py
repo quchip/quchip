@@ -913,8 +913,7 @@ def test_cascaded_degenerate_modes_solve_and_transfer_the_excitation() -> None:
         e_ops={"b": chip["b"].number_operator()},
         initial_state=chip.bare_state({"a": 1, "b": 0}),
         partition=False,
-        check_truncation=False,
-    )
+        )
     occupation = np.asarray(result.expect("b")).real
     np.testing.assert_allclose(occupation[np.argmin(np.abs(times - 40.0))], 4.0 / np.e**2, atol=2e-3)
     assert times[np.argmax(occupation)] == pytest.approx(40.0, abs=1.0)

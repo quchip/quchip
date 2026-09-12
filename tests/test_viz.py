@@ -65,8 +65,7 @@ def correlator_result() -> SimulationResult:
     initial_state = chip.superposition({q0: 0, q1: 0}, {q0: 0, q1: 1})
     return qc.simulate(
         chip, [], np.linspace(0.0, 10.0, 11), initial_state=initial_state, e_ops=e_ops,
-        check_truncation=False,
-    )
+        )
 
 
 def _density_matrix_from_weights(weights: dict[tuple[int, ...], float], dims: list[int]) -> object:

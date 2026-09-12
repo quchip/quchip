@@ -43,7 +43,7 @@ def test_native_gradient_modes_keep_decay_derivative(gradient_name):
         problem = QuantumSequence(chip).build_problem([0.0, 0.1, 1.0], initial_state={"q": 1},
             e_ops={"q": q.number_operator()}, states="none", options={"gradient": gradient})
         results = solve_batch(SolveBatch(chip=chip, problems=(problem, problem)),
-                              progress=False, check_truncation=False)
+                              progress=False)
         return jnp.real(results.expect("q", reduce="last").sum())
 
     derivative = jax.jacfwd(objective) if gradient_name == "Forward" else jax.grad(objective)
@@ -63,8 +63,8 @@ def test_expm_final_density_matrix_preserves_coherence_and_subsystem_dimensions(
              else (chip.bare_state(q=0) + 1j * chip.bare_state(q=1))) / np.sqrt(2)
     problem = QuantumSequence(chip).build_problem([0.0, 0.1, 1.0], initial_state=state,
         states="final", options={"method": dq.method.Expm()})
-    results = (solve_batch(SolveBatch(chip=chip, problems=(problem, problem)), progress=False, check_truncation=False)
-               if batched else [solve_problem(problem, check_truncation=False)])
+    results = (solve_batch(SolveBatch(chip=chip, problems=(problem, problem)), progress=False)
+               if batched else [solve_problem(problem)])
     decay = np.exp(-0.1)
     expected = np.zeros((4, 4) if multipart else (2, 2), dtype=complex)
     if multipart:
@@ -96,9 +96,9 @@ def test_expm_rejects_nonfinite_native_output(batched):
     with pytest.raises(RuntimeError, match="Nonfinite"):
         if batched:
             solve_batch(SolveBatch(chip=problems[0].chip, problems=tuple(problems)),
-                         progress=False, check_truncation=False)
+                         progress=False)
         else:
-            solve_problem(problems[1], check_truncation=False)
+            solve_problem(problems[1])
 
 
 @pytest.mark.parametrize("method_name", ["JumpMonteCarlo", "DiffusiveMonteCarlo"])
@@ -114,7 +114,7 @@ def test_stochastic_methods_have_an_explicit_support_boundary(method_name):
     problem = QuantumSequence(Chip([q], backend="dynamiqs")).build_problem([0.0, 1.0],
         initial_state={"q": 1}, options={"method": method})
     with pytest.raises(ValueError, match="deterministic.*Monte Carlo"):
-        solve_problem(problem, check_truncation=False)
+        solve_problem(problem)
 
 
 @pytest.mark.parametrize("batched", [False, True])
@@ -132,8 +132,8 @@ def test_expm_final_density_matrix_keeps_jit_gradient(batched):
         problem = QuantumSequence(chip).build_problem([0.0, 1.0], initial_state={"q": 1},
             states="final", options={"method": dq.method.Expm()})
         result = (solve_batch(SolveBatch(chip=chip, problems=(problem, problem)),
-                             progress=False, check_truncation=False)[0] if batched
-                  else solve_problem(problem, check_truncation=False))
+                             progress=False)[0] if batched
+                  else solve_problem(problem))
         return jnp.real(chip.backend.to_array(result.final_state)[1, 1])
 
     value, derivative = objective(jnp.asarray(10.0))
@@ -156,8 +156,8 @@ def test_expm_nonfinite_check_survives_gradient_only(batched):
         problem = QuantumSequence(chip).build_problem([0.0, 1.0], initial_state={"q": 1},
             states="final", options={"method": dq.method.Expm()})
         result = (solve_batch(SolveBatch(chip=chip, problems=(problem, problem)),
-                             progress=False, check_truncation=False)[0] if batched
-                  else solve_problem(problem, check_truncation=False))
+                             progress=False)[0] if batched
+                  else solve_problem(problem))
         return jnp.real(result.final_state.to_jax()[1, 0])
 
     assert np.isfinite(objective(jnp.asarray(5.0)))

@@ -45,12 +45,11 @@ def maybe_simulate_partitioned(
     *,
     solver: str | None,
     options: dict | None,
+    run_args: dict | None,
     e_ops: dict | None,
     initial_state: Any | None,
-    check_truncation: bool,
-    truncation_threshold: float,
     approximation: Any | None,
-    states: StateStorage = "all",
+    states: StateStorage | None = None,
     dissipation: bool = True,
 ) -> Any | None:
     """Run per-component solves when the chip splits; ``None`` declines to the joint path."""
@@ -91,7 +90,7 @@ def maybe_simulate_partitioned(
     automatic = isinstance(tlist, AutomaticTimeGrid)
     times = tlist.bounds if automatic else tlist
     problems = [
-        build_problem(comp.chip, ops_i, times, solver=solver, options=options,
+        build_problem(comp.chip, ops_i, times, solver=solver, options=options, run_args=run_args,
                       e_ops=eops_i or None, initial_state=state_i,
                       approximation=approximation, states=states, dissipation=dissipation)
         for comp, ops_i, eops_i, state_i in zip(part.components, per_ops, per_eops, per_state)
@@ -102,6 +101,5 @@ def maybe_simulate_partitioned(
 
         common_times = automatic_tlist(problems, combine=True)
         problems = [replace(problem, tlist=common_times) for problem in problems]
-    results = [solve_problem(problem, check_truncation=check_truncation,
-                             truncation_threshold=truncation_threshold) for problem in problems]
+    results = [solve_problem(problem) for problem in problems]
     return PartitionedSimulationResult(results, part, key_plan)

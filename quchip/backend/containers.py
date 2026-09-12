@@ -73,7 +73,9 @@ class SolverResult:
         Solver-specific diagnostics (integrator step count, batch index,
         etc.). Purely informational; no physics depends on it.
     solver
-        The dispatched solver name (``"sesolve"`` or ``"mesolve"``).
+        The dispatched native solver name.
+    native
+        Unmodified stochastic result, or None for a deterministic payload.
     """
 
     times: Any
@@ -82,6 +84,7 @@ class SolverResult:
     final_state: Any | None = None
     stats: dict[str, Any] = field(default_factory=dict)
     solver: str = ""
+    native: Any = None
 
 
 @dataclass(frozen=True)

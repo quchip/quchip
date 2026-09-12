@@ -163,6 +163,9 @@ _LAZY_VIZ_EXPORTS = {
 from quchip.results.terminal import IQReadout, StateMeasurement, StateSamples
 
 __all__ = [
+    "with_truncation",
+    "with_monitoring",
+    "TrajectoryResult",
     "IQReadout",
     "StateMeasurement",
     "StateSamples",
@@ -397,3 +400,7 @@ def __dir__() -> list[str]:
     never appear in ``dir()`` or tab-completion until first accessed.
     """
     return sorted(set(globals()) | set(_LAZY_INTEROP_EXPORTS) | set(_LAZY_VIZ_EXPORTS))
+
+from quchip.engine.truncation import with_truncation
+from quchip.engine.monitoring import with_monitoring
+from quchip.results.trajectories import TrajectoryResult

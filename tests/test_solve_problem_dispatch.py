@@ -47,7 +47,7 @@ class TestBuildSolveProblem:
         problem = build_problem(chip, [], np.linspace(0.0, 2.0, 5), initial_state={q: 1}, e_ops={q: q.sigma_z})
         q.levels = 4
         q.freq = 5.2
-        result = solve_problem(problem, check_truncation=False)
+        result = solve_problem(problem)
 
         assert tuple(result.dims) == (3,)
         assert result.reduced_state(2.0, "q").shape == (3, 3)
@@ -63,7 +63,7 @@ class TestBuildSolveProblem:
         times[:] = np.linspace(0.0, 4.0, 5)
         state.data = chip.bare_state({q: 0}).data
 
-        result = solve_problem(problem, check_truncation=False)
+        result = solve_problem(problem)
         npt.assert_array_equal(result.times, np.linspace(0.0, 2.0, 5))
         npt.assert_allclose(result.population("q", 1), 1.0, atol=1e-12)
 
@@ -88,14 +88,14 @@ class TestBuildSolveProblem:
         seq.charge(q, envelope=envelope)
         times = np.linspace(0.0, 10.0, 21)
         problem = seq.build_problem(times)
-        before = solve_problem(problem, check_truncation=False).population("q", 1)
+        before = solve_problem(problem).population("q", 1)
         assert before[-1] > 0.09
         if source == "envelope":
             envelope.amplitude = 0.0
         else:
             factor[...] = 0.0
-        after = solve_problem(problem, check_truncation=False).population("q", 1)
-        fresh = solve_problem(seq.build_problem(times), check_truncation=False).population("q", 1)
+        after = solve_problem(problem).population("q", 1)
+        fresh = solve_problem(seq.build_problem(times)).population("q", 1)
         npt.assert_allclose(after, before, atol=1e-12)
         npt.assert_allclose(fresh, 0.0, atol=1e-12)
 
@@ -119,7 +119,7 @@ class TestBuildSolveProblem:
         problem = build_problem(chip, [], np.linspace(0.0, 2.0, 5))
         try:
             set_default_backend(LaterBackend())
-            result = solve_problem(problem, check_truncation=False)
+            result = solve_problem(problem)
             npt.assert_allclose(result.population("q", 0), 1.0, atol=1e-12)
             variant = replace(problem, solver="sesolve")
             assert variant.backend is problem.backend
@@ -295,7 +295,7 @@ class TestQuantumSequenceBuildProblem:
 
         problem = sequence.build_problem()
 
-        result = sequence.simulate(states="none", check_truncation=False)
+        result = sequence.simulate(states="none")
         npt.assert_array_equal(problem.tlist, result.times)
         assert problem.tlist[0] == 0.0
         assert problem.tlist[-1] == 50.0
@@ -582,7 +582,7 @@ class TestSolverSelection:
         """A mixed initial state must evolve as U rho U^dagger even without collapse terms."""
         chip, rho = self._mixed_ancilla_chip()
         result = QuantumSequence(chip).simulate(
-            np.linspace(0.0, 40.0, 41), initial_state=rho, partition=False, check_truncation=False
+            np.linspace(0.0, 40.0, 41), initial_state=rho, partition=False
         )
         final = chip.backend.to_array(result.final_state)
         assert result.solver == "mesolve"

@@ -167,8 +167,9 @@ def build_problem(
     e_ops: dict | None = None,
     initial_state: Any | None = None,
     approximation: Any | None = None,
-    states: StateStorage = "all",
+    states: StateStorage | None = None,
     dissipation: bool = True,
+    run_args: dict | None = None,
 ) -> SolveProblem:
     """Resolve, assemble, and package a frozen :class:`SolveProblem`.
 
@@ -185,12 +186,16 @@ def build_problem(
         :class:`~quchip.control.sequence.QuantumSequence`.
     tlist : array_like
         Solver time grid in ns.
-    solver : {"sesolve", "mesolve"}, optional
+    solver : str, optional
         Solver selection. ``None`` selects ``sesolve`` only for a ket with no
         collapse terms; otherwise it selects ``mesolve``.
     options : dict, optional
         Backend solver options. Must not contain a ``"backend"`` key
         (backend selection is chip-owned).
+    run_args : dict or None, default None
+        Native trajectory call keywords: QuTiP seeds, ntraj, heterodyne,
+        target_tol, timeout; Dynamiqs keys, method, gradient, etas.
+        Assembled physics and native options cannot be overridden here.
     e_ops : dict, optional
         Observables keyed by device label (or a 2-tuple of labels for a
         two-body observable). An external-plane object may instead map to its
@@ -201,7 +206,7 @@ def build_problem(
     approximation : Approximation or None, optional
         Approximation strategy, such as :class:`~quchip.RWA`, used during
         assembly. ``None`` uses the chip declaration.
-    states : {"all", "final", "none"}, default="all"
+    states : {"all", "final", "none"} or None, default=None
         State history retention policy. ``"all"`` stores every state,
         ``"final"`` stores only the final state, and ``"none"`` stores no
         state history.
@@ -240,7 +245,7 @@ def build_problem(
     return _build(
         chip, drive_ops, tlist,
         solver=solver,
-        options=options,
+        options=options, run_args=run_args,
         e_ops=e_ops,
         initial_state=initial_state,
         approximation=approximation,
@@ -282,12 +287,11 @@ def simulate(
     options: dict | None = None,
     e_ops: dict | None = None,
     initial_state: Any | None = None,
-    check_truncation: bool = True,
-    truncation_threshold: float = 1e-3,
     partition: bool = True,
     approximation: Any | None = None,
-    states: StateStorage = "all",
+    states: StateStorage | None = None,
     dissipation: bool = True,
+    run_args: dict | None = None,
 ) -> "SimulationResult":
     """Build a :class:`SolveProblem`, dispatch it, and wrap the solver output.
 
@@ -295,9 +299,7 @@ def simulate(
     or ``"mesolve"``; ``None`` selects ``sesolve`` only for a ket with no
     collapse terms, and otherwise selects ``mesolve``. ``e_ops`` is dict-form,
     keyed by device label (or a 2-tuple of labels for two-body observables),
-    and favors object references via :func:`~quchip.utils.labeling.resolve_label`. The
-    Hilbert-truncation safety net is inherited from :func:`solve_problem`;
-    ``check_truncation`` / ``truncation_threshold`` are threaded down.
+    and favors object references via :func:`~quchip.utils.labeling.resolve_label`.
 
     ``approximation`` selects the captured Hamiltonian approximation,
     ``states`` is ``"all"``, ``"final"``, or ``"none"``, and ``dissipation``
@@ -312,12 +314,16 @@ def simulate(
         :class:`~quchip.control.sequence.QuantumSequence`.
     tlist : array_like
         Solver time grid in ns.
-    solver : {"sesolve", "mesolve"}, optional
+    solver : str, optional
         Solver selection. ``None`` selects ``sesolve`` only for a ket with no
         collapse terms; otherwise it selects ``mesolve``.
     options : dict, optional
         Backend solver options. Must not contain a ``"backend"`` key
         (backend selection is chip-owned).
+    run_args : dict or None, default None
+        Native trajectory call keywords: QuTiP seeds, ntraj, heterodyne,
+        target_tol, timeout; Dynamiqs keys, method, gradient, etas.
+        Assembled physics and native options cannot be overridden here.
     e_ops : dict, optional
         Observables keyed by device label (or a 2-tuple of labels for a
         two-body observable).
@@ -330,14 +336,10 @@ def simulate(
     approximation : Approximation or None, optional
         Approximation strategy captured during assembly; ``None`` uses the
         chip declaration.
-    states : {"all", "final", "none"}, default="all"
+    states : {"all", "final", "none"} or None, default=None
         Retain all states, only the final state, or no states.
     dissipation : bool, default=True
         Include resolved collapse channels in the solve.
-    check_truncation : bool, default True
-        Screen sampled populations near the model's truncation boundaries.
-    truncation_threshold : float, default 1e-3
-        Sampled boundary population above which the truncation check warns.
     partition : bool, default True
         When the chip splits into independent sub-chips (see
         :meth:`Chip.partition`), dispatch one solve per component and
@@ -358,8 +360,7 @@ def simulate(
     Raises
     ------
     ValueError
-        If ``solver`` is neither ``"sesolve"`` nor ``"mesolve"``, if
-        ``tlist`` is not one-dimensional, finite, strictly increasing,
+        If the native solver is unknown or ``tlist`` is not one-dimensional, finite, strictly increasing,
         and at least two points long. Value-dependent grid checks require
         concrete values; shape checks also run under tracing.
     RuntimeError
@@ -380,13 +381,12 @@ def simulate(
     >>> result = simulate(chip, list(seq.scheduled_ops), tlist, e_ops={q: q.number_operator()})
     >>> populations = result.expect(q)
     """
-    if partition:
+    if partition and solver in (None, "sesolve", "mesolve"):
         from quchip.engine.partitioned import maybe_simulate_partitioned
 
         partitioned = maybe_simulate_partitioned(
             chip, drive_ops, tlist,
-            solver=solver, options=options, e_ops=e_ops, initial_state=initial_state,
-            check_truncation=check_truncation, truncation_threshold=truncation_threshold,
+            solver=solver, options=options, run_args=run_args, e_ops=e_ops, initial_state=initial_state,
             approximation=approximation,
             states=states,
             dissipation=dissipation,
@@ -397,7 +397,7 @@ def simulate(
     problem = build_problem(
         chip, drive_ops, tlist,
         solver=solver,
-        options=options,
+        options=options, run_args=run_args,
         e_ops=e_ops,
         initial_state=initial_state,
         approximation=approximation,
@@ -405,12 +405,10 @@ def simulate(
         dissipation=dissipation,
     )
     try:
-        return solve_problem(
-            problem,
-            check_truncation=check_truncation,
-            truncation_threshold=truncation_threshold,
-        )
+        return solve_problem(problem)
     except Exception as e:
+        if problem.stochastic:
+            raise
         chosen_solver = problem.solver or "auto"
         collapse_terms = problem.engine_result.collapse_terms
         tlist_arr = chip.backend.array_module.asarray(problem.tlist, dtype=float)
@@ -424,41 +422,24 @@ def simulate(
 
 def solve_problem(
     problem: SolveProblem,
-    *,
-    check_truncation: bool = True,
-    truncation_threshold: float = 1e-3,
 ) -> "SimulationResult":
     """Dispatch a :class:`SolveProblem` through its chip backend.
 
-    All single-solve paths call this function. Unless
-    ``check_truncation=False``, it screens the wrapped result for
-    sampled boundary populations and warns above ``truncation_threshold``.
+    Call ``result.check_truncation()`` explicitly to inspect saved samples.
 
     Parameters
     ----------
     problem : SolveProblem
         Frozen request produced by :func:`build_problem`.
-    check_truncation : bool, default=True
-        Evaluate sampled boundary populations after solving.
-    truncation_threshold : float, default=1e-3
-        Warning threshold for boundary population.
     """
     from quchip.results.results import wrap_solver_result
 
-    if check_truncation:
-        from quchip.engine.truncation import sample_truncation
-
-        problem = sample_truncation(problem)
     backend = problem.backend
-    result = wrap_solver_result(backend.solve_problem(problem), problem, backend)
-    if check_truncation:
-        result.check_truncation(threshold=truncation_threshold)
-    return result
+    return wrap_solver_result(backend.solve_problem(problem), problem, backend)
 
 
 def solve_batch(
     batch: "SolveBatch", *, progress: bool = True,
-    check_truncation: bool = True, truncation_threshold: float = 1e-3,
 ) -> "SimulationBatchResult":
     """Dispatch a :class:`SolveBatch` through its chip backend.
 
@@ -471,23 +452,17 @@ def solve_batch(
         Captured batch of compatible solve requests.
     progress : bool, default=True
         Show backend progress.
-    check_truncation : bool, default=True
-        Check sampled truncation boundaries.
-    truncation_threshold : float, default=1e-3
-        Warning threshold for boundary population.
     """
     from quchip.results.results import SimulationBatchResult, wrap_solver_results_from_batch
 
     if batch.batch_size == 0:
         return SimulationBatchResult([])
 
-    if check_truncation:
-        from dataclasses import replace
-        from quchip.engine.truncation import sample_truncation
-
-        batch = replace(batch, problems=tuple(sample_truncation(problem) for problem in batch.problems))
     from quchip.backend import BatchSolveError
+    from quchip.engine.problem import assign_point_noise
+    from dataclasses import replace
 
+    batch = replace(batch, problems=tuple(assign_point_noise(list(batch.problems))))
     try:
         backend = batch.problems[0].backend
         if batch.has_shared_tlist:
@@ -500,9 +475,6 @@ def solve_batch(
                 parameters=tuple(batch.params_at(index) for index in range(batch.batch_size)))
     except BatchSolveError as exc:
         raise BatchSolveError(exc.index, exc.detail, batch.params_at(exc.index)) from exc
-    if check_truncation:
-        for element in result:
-            element.check_truncation(threshold=truncation_threshold)
     return result.with_sweep_metadata(shape=batch.shape, axes=batch.axes) if batch.axes else result
 
 
@@ -510,8 +482,6 @@ def solve_many(
     batch_or_problems: "SolveBatch | list[SolveProblem]",
     *,
     progress: bool = True,
-    check_truncation: bool = True,
-    truncation_threshold: float = 1e-3,
 ) -> "SimulationBatchResult":
     """Solve a native batch or an ordered collection of captured requests.
 
@@ -525,14 +495,9 @@ def solve_many(
         Requests to dispatch.
     progress : bool, default=True
         Show backend progress.
-    check_truncation : bool, default=True
-        Check sampled truncation boundaries.
-    truncation_threshold : float, default=1e-3
-        Warning threshold for boundary population.
     """
     if isinstance(batch_or_problems, SolveBatch):
-        return solve_batch(batch_or_problems, progress=progress,
-                           check_truncation=check_truncation, truncation_threshold=truncation_threshold)
+        return solve_batch(batch_or_problems, progress=progress)
 
     problems = list(batch_or_problems)
     from quchip.results.results import SimulationBatchResult
@@ -546,12 +511,4 @@ def solve_many(
 
     from quchip.engine.problem import solve_problem_list
 
-    if check_truncation:
-        from quchip.engine.truncation import sample_truncation
-
-        problems = [sample_truncation(problem) for problem in problems]
-    result = solve_problem_list(problems, progress=progress)
-    if check_truncation:
-        for element in result:
-            element.check_truncation(threshold=truncation_threshold)
-    return result
+    return solve_problem_list(problems, progress=progress)
