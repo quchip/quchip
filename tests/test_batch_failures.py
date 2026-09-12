@@ -27,7 +27,7 @@ def _batch(*, grid=False, backend="qutip", amplitude=100.0):
 def test_native_failure_reports_flat_index_parameters_and_cause(backend):
     batch = _batch(grid=True, backend=backend)
     with pytest.raises(RuntimeError, match="Batch point 2 failed") as caught:
-        solve_batch(batch, progress=False, check_truncation=False)
+        solve_batch(batch, progress=False)
     error = caught.value
     assert error.index == 2
     assert error.parameters == {"amp": 100.0, "freq": 5.0}
@@ -55,7 +55,7 @@ def test_numerical_worker_failure_is_not_retried_sequentially(monkeypatch):
     with warnings.catch_warnings(record=True) as messages:
         warnings.simplefilter("always")
         with pytest.raises(RuntimeError, match="Batch point 1 failed"):
-            solve_batch(batch, progress=False, check_truncation=False)
+            solve_batch(batch, progress=False)
     assert len(calls) == 2
     assert not any("falling back" in str(message.message) for message in messages)
 
@@ -67,7 +67,7 @@ def test_failure_index_survives_heterogeneous_backend_grouping():
     batch = _batch()
     problems = [independent, batch[0], batch[2], batch[1]]
     with pytest.raises(RuntimeError, match="Batch point 3 failed") as caught:
-        solve_many(problems, progress=False, check_truncation=False)
+        solve_many(problems, progress=False)
     assert caught.value.index == 3
     assert "Excess work" in str(caught.value)
 
@@ -81,10 +81,10 @@ def test_actual_worker_error_preserves_point_context_and_pool_usability(monkeypa
     with warnings.catch_warnings(record=True) as messages:
         warnings.simplefilter("always")
         with pytest.raises(RuntimeError, match="Batch point 1 failed") as caught:
-            solve_batch(batch, progress=False, check_truncation=False)
+            solve_batch(batch, progress=False)
     assert caught.value.parameters == {"amp": 100.0}
     assert not any("falling back" in str(message.message) for message in messages)
-    results = solve_many([batch[0], batch[2]], progress=False, check_truncation=False)
+    results = solve_many([batch[0], batch[2]], progress=False)
     assert len(results) == 2
     assert all(abs(point.expect("q")[-1]) < 1e-12 for point in results)
 
@@ -93,7 +93,7 @@ def test_incomplete_backend_output_is_never_a_partial_batch(monkeypatch):
     batch = _batch()
     monkeypatch.setattr(batch.problems[0].backend, "solve_batch", lambda *args, **kwargs: [])
     with pytest.raises(RuntimeError, match="returned 0 results for 3 batch points"):
-        solve_batch(batch, progress=False, check_truncation=False)
+        solve_batch(batch, progress=False)
 
 
 @pytest.mark.parametrize("consumer", ["value_and_grad", "grad", "vmap"])
@@ -103,7 +103,7 @@ def test_dynamiqs_failure_keeps_runtime_parameters_under_jit_and_gradient(consum
 
     def objective(amplitude):
         batch = _batch(backend="dynamiqs", amplitude=amplitude)
-        result = solve_batch(batch, progress=False, check_truncation=False)
+        result = solve_batch(batch, progress=False)
         return jnp.real(result.expect("q", reduce="last").sum())
 
     evaluate = jax.jit(jax.value_and_grad(objective))
@@ -135,7 +135,7 @@ def test_compiled_heterogeneous_failure_uses_original_collection_index(consumer)
         batch = _batch(backend="dynamiqs", amplitude=amplitude)
         independent = _problem("dynamiqs", 3, 10.0)
         results = solve_many([independent, batch[0], batch[2], batch[1]],
-                              progress=False, check_truncation=False)
+                              progress=False)
         return jnp.asarray(7.0) if consumer == "constant" else jnp.real(results[0].expect("q")[-1])
 
     evaluate = jax.jit(jax.grad(objective) if consumer == "grad" else objective)
@@ -154,7 +154,7 @@ def test_compiled_varying_grid_failure_keeps_sweep_parameters():
     def objective(amplitude):
         batch = _batch(backend="dynamiqs", amplitude=amplitude)
         batch = replace(batch, problems=(batch[0], replace(batch[1], tlist=np.array([0.0, 0.1, 2.0])), batch[2]))
-        result = solve_batch(batch, progress=False, check_truncation=False)
+        result = solve_batch(batch, progress=False)
         return jnp.real(result.expect("q", reduce="last").sum())
 
     objective(jnp.asarray(0.1)).block_until_ready()

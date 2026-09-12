@@ -32,8 +32,7 @@ def test_partial_interval_preserves_initial_time_and_carrier_phase(backend):
     sequence.schedule(drive, envelope=Square(duration=1.0, amplitude=0.4), start_time=8.0)
     times = np.array([3.0, 3.17, 3.9, 4.2])
     initial = (chip.backend.basis(2, 0) + chip.backend.basis(2, 1)) / np.sqrt(2)
-    result = sequence.simulate(times, initial_state=initial, partition=False, check_truncation=False,
-                               options=_options(backend))
+    result = sequence.simulate(times, initial_state=initial, partition=False, options=_options(backend))
     np.testing.assert_array_equal(result.times, times)
     phase = 2 * np.pi * 0.2 * (times - times[0]) + (0.07 / 0.13) * (
         np.sin(2 * np.pi * 0.13 * times - 0.2) - np.sin(2 * np.pi * 0.13 * times[0] - 0.2)
@@ -48,8 +47,7 @@ def test_pulse_touching_interval_has_no_evolution(backend, start):
     chip, drive, sequence = _sequence(backend)
     sequence.schedule(drive, envelope=Square(duration=2.0, amplitude=0.4), start_time=start)
     initial = (chip.backend.basis(2, 0) + chip.backend.basis(2, 1)) / np.sqrt(2)
-    result = sequence.simulate([2.0, 6.0], initial_state=initial, partition=False, check_truncation=False,
-                               options=_options(backend))
+    result = sequence.simulate([2.0, 6.0], initial_state=initial, partition=False, options=_options(backend))
     coherence = chip.backend.to_array(chip.backend.state_to_dm(result.final_state))[0, 1]
     np.testing.assert_allclose(coherence, 0.5 * np.exp(2j * np.pi * 0.2 * 4), atol=2e-6)
 
@@ -84,7 +82,7 @@ def test_duration_is_exclusive_and_cannot_cut_schedule():
 def test_unscheduled_duration_includes_idle_dynamics(backend):
     chip, _, sequence = _sequence(backend)
     initial = (chip.backend.basis(2, 0) + chip.backend.basis(2, 1)) / np.sqrt(2)
-    result = sequence.simulate(duration=1.25, initial_state=initial, check_truncation=False)
+    result = sequence.simulate(duration=1.25, initial_state=initial)
     coherence = chip.backend.to_array(chip.backend.state_to_dm(result.final_state))[0, 1]
     np.testing.assert_allclose(coherence, 0.5j, atol=2e-6)
     assert result.times[0] == 0.0
@@ -113,7 +111,7 @@ def test_duration_batch_solves_each_actual_interval(backend):
     initial = (chip.backend.basis(2, 0) + chip.backend.basis(2, 1)) / np.sqrt(2)
     durations = [1.0, 3.0]
     result = sequence.simulate_batch(pulse.vary("duration", durations), initial_state=initial,
-                                    states="final", check_truncation=False, progress=False,
+                                    states="final", progress=False,
                                     options=_options(backend))
     for point, duration in zip(result, durations):
         assert point.times[0] == 0.0

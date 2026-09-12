@@ -31,7 +31,7 @@ def test_automatic_idle_grid_resolves_fast_population_exchange(backend):
         import dynamiqs as dq
         options = {"method": dq.method.Tsit5(rtol=1e-9, atol=1e-11)}
     result = QuantumSequence(chip).simulate(options=options, duration=1.0, initial_state=chip.backend.basis(2, 0),
-                                           check_truncation=False, partition=False, e_ops={"q": q.number_operator()})
+                                           partition=False, e_ops={"q": q.number_operator()})
     times = np.asarray(result.times)
     assert np.max(np.diff(times)) <= 1 / (32 * 2 * q.rate)
     np.testing.assert_allclose(result.expect("q"),
@@ -119,7 +119,7 @@ def test_narrow_gaussian_trace_matches_integrated_pulse_area(backend):
     start, duration, sigmas, amplitude = 3.0, 0.1, 12.0, 50.0
     sequence.schedule(drive, envelope=Gaussian(duration=duration, sigmas=sigmas, amplitude=amplitude),
                       start_time=start, freq=5.0)
-    result = sequence.simulate(duration=7.0, check_truncation=False, states="none",
+    result = sequence.simulate(duration=7.0, states="none",
                                e_ops={"q": q.number_operator()})
     times = np.asarray(result.times)
     local = np.clip(times - start, 0, duration)
@@ -137,7 +137,7 @@ def test_readout_demodulation_is_sampled_even_when_solver_state_is_stationary():
     chip = Chip([q], frame={"q": 5.0})
     initial = (chip.backend.basis(2, 0) + chip.backend.basis(2, 1)) / np.sqrt(2)
     result = QuantumSequence(chip).simulate(duration=1.0, initial_state=initial,
-                                           e_ops=chip.e_ops(q="X"), check_truncation=False)
+                                           e_ops=chip.e_ops(q="X"))
     assert len(result.times) >= 161
     np.testing.assert_allclose(result.expect("q"), np.cos(2 * np.pi * 5 * result.times), atol=1e-7)
 
@@ -184,7 +184,7 @@ def test_automatic_grid_can_be_reused_for_differentiation():
     def objective(amplitude):
         variant = sequence.with_params({"pulse.0.amplitude": amplitude})
         result = variant.simulate(tlist=times, e_ops={"q": q.number_operator()}, states="none",
-                                  check_truncation=False, partition=False)
+                                  partition=False)
         return jnp.real(result.expect("q")[-1])
 
     value, gradient = objective(jnp.asarray(0.07))
@@ -204,13 +204,13 @@ def test_partitioned_automatic_grid_supports_simultaneous_correlations():
     sequence.charge(q0, envelope=Square(duration=10.0, amplitude=0.07))
     sequence.charge(q1, envelope=Square(duration=10.0, amplitude=0.13))
     e_ops = chip.e_ops(correlators={("q0", "q1"): ("Z", "Z")})
-    result = sequence.simulate(e_ops=e_ops, check_truncation=False)
+    result = sequence.simulate(e_ops=e_ops)
     assert isinstance(result, PartitionedSimulationResult)
     for component in result.components:
         np.testing.assert_array_equal(component.times, result.times)
     expected = np.cos(2 * np.pi * 0.07 * result.times) * np.cos(2 * np.pi * 0.13 * result.times)
     np.testing.assert_allclose(result.expect(("q0", "q1")), expected, atol=2e-5)
-    joint = sequence.simulate(tlist=result.times, e_ops=e_ops, check_truncation=False, partition=False)
+    joint = sequence.simulate(tlist=result.times, e_ops=e_ops, partition=False)
     np.testing.assert_allclose(result.expect(("q0", "q1")), joint.expect(("q0", "q1")), atol=2e-5)
 
 
@@ -225,8 +225,14 @@ def test_native_cutoff_reconstruction_is_sampled_in_rotating_frame():
 
     q = Exchange(label="q", levels=2)
     chip = Chip([q], frame="rotating")
-    result = QuantumSequence(chip).simulate(duration=1.0, initial_state=chip.backend.basis(2, 0),
-                                           states="none", truncation_threshold=2.0)
+    from quchip import with_truncation
+    from quchip.engine import solve_problem
+    from quchip.engine.sampling import automatic_tlist
+
+    problem = with_truncation(QuantumSequence(chip).build_problem(
+        [0.0, 1.0], initial_state=chip.backend.basis(2, 0), states="none"))
+    from dataclasses import replace
+    result = solve_problem(replace(problem, tlist=automatic_tlist([problem])))
     assert result.check_truncation(threshold=2.0)["q"] > 0.997
     np.testing.assert_allclose(result._boundary_traces[0],
                                np.sin(2 * np.pi * q.rate * result.times) ** 2, atol=1e-6)
@@ -242,7 +248,7 @@ def test_requested_output_carrier_is_resolved_in_rotating_frame():
     plane = network.external_port("coupler")
     initial = (chip.backend.basis(2, 0) + chip.backend.basis(2, 1)) / np.sqrt(2)
     result = QuantumSequence(chip).simulate(duration=1.0, initial_state=initial,
-                                           e_ops={plane: plane.output}, states="none", check_truncation=False)
+                                           e_ops={plane: plane.output}, states="none")
     assert len(result.times) >= 161
     expected = np.sqrt(0.001) / 2 * np.exp((-0.001 / 2 - 2j * np.pi * 5) * result.times)
     np.testing.assert_allclose(result.output(plane).amplitude, expected, atol=1e-8)
@@ -261,7 +267,7 @@ def test_narrow_output_pulse_survives_reference_plane_delays():
     sequence = QuantumSequence(chip)
     sequence.schedule(plane.input, envelope=Square(duration=0.01, amplitude=0.1))
     result = sequence.simulate(duration=3.0, e_ops={plane: plane.output},
-                               states="none", check_truncation=False)
+                               states="none")
     field = result.output(plane)
     assert len(result.times) < 1000
     assert np.max(field.photon_flux) == pytest.approx(0.01, abs=1e-6)
@@ -342,7 +348,7 @@ def test_delayed_emission_resolves_an_ordinary_drive_transition():
     chip.wire(drive)
     sequence = QuantumSequence(chip)
     sequence.schedule(drive, envelope=Square(duration=0.01, amplitude=25), start_time=0.3, freq=0.2)
-    options = dict(e_ops={plane: plane.output}, states="none", check_truncation=False)
+    options = dict(e_ops={plane: plane.output}, states="none")
     result = sequence.simulate(duration=3.0, **options)
     dense = sequence.simulate(tlist=np.linspace(0, 3, 6001), **options)
     field = result.output(plane).amplitude
@@ -364,7 +370,7 @@ def test_delayed_initial_emission_preserves_zero_fill_onset():
     chip = Chip([mode], port_network=network, frame="rotating")
     initial = (chip.backend.basis(2, 0) + chip.backend.basis(2, 1)) / np.sqrt(2)
     result = QuantumSequence(chip).simulate(duration=3.0, initial_state=initial,
-                                            e_ops={plane: plane.output}, states="none", check_truncation=False)
+                                            e_ops={plane: plane.output}, states="none")
     assert 1.0 in result.times
     assert np.nextafter(1.0, 0.0) in result.times
     field = result.output(plane).amplitude

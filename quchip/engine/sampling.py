@@ -78,7 +78,8 @@ def _problem_scales(problem: Any) -> tuple[float, list[tuple[float, Any]], list[
         2 * float(_concrete(term.rate)) * float(_concrete(operator_norm_bound(term.operator))) ** 2
         for term in engine.collapse_terms
     )
-    demodulation = float(_concrete(boundary_sampling_frequency(problem.truncation)))
+    demodulation = (float(_concrete(boundary_sampling_frequency(problem.truncation)))
+                    if problem.truncation is not None and problem.truncation.sampled else 0.0)
     output_shifts = set()
     channels = {channel.key: channel for channel in engine.slh.external_channels}
     for meta in problem.e_ops_meta or ():

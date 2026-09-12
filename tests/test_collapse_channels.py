@@ -218,8 +218,7 @@ def test_lossy_charge_drive_relaxes_one_excitation_at_its_authored_rate():
         times,
         initial_state=chip.bare_state({device: 1}),
         e_ops={device: device.number_operator()},
-        check_truncation=False,
-    )
+        )
 
     np.testing.assert_allclose(
         np.real(result.expect(device)),
@@ -252,8 +251,7 @@ def test_collective_decay_bright_state_decays_at_twice_the_channel_rate():
         times,
         initial_state=bright,
         e_ops={a: a.number_operator(), b: b.number_operator()},
-        check_truncation=False,
-    )
+        )
     excitations = np.real(result.expect(a) + result.expect(b))
 
     np.testing.assert_allclose(

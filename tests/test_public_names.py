@@ -100,8 +100,7 @@ def test_legacy_collapse_flux_returns_the_same_physical_jump_rate():
     q = DuffingTransmon(freq=5, anharmonicity=-.2, levels=2, T1=100, label="q")
     chip = Chip([q], frame="rotating")
     result = QuantumSequence(chip).simulate(
-        tlist=[0, 10], initial_state=chip.state(q=1), check_truncation=False,
-    )
+        tlist=[0, 10], initial_state=chip.state(q=1), )
     channel = result.collapse_channels[0]
     expected = np.exp(-np.asarray(result.times)/100)/100
     np.testing.assert_allclose(result.jump_rate(channel), expected, rtol=1e-6)

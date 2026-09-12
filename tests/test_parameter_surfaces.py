@@ -301,8 +301,7 @@ def test_chip_with_params_is_differentiable_on_dynamiqs() -> None:
             tlist=tlist,
             e_ops={circuit: observable},
             progress=False,
-            check_truncation=False,
-        )
+            )
         population = results.population(circuit, level=1, reduce="last")
         number = results.expect(circuit, reduce="last")
         return jnp.sum(population + 0.01 * jnp.real(number))
@@ -430,7 +429,6 @@ def test_active_noise_is_rebindable_and_retained_in_engine_result() -> None:
         tlist=jnp.linspace(0.0, 2.0, 8),
         initial_state={"q": 1},
         progress=False,
-        check_truncation=False,
-    )
+        )
     excited = results.population("q", level=1, reduce="last")
     assert excited[0] < excited[1]

@@ -79,8 +79,7 @@ def test_commuting_device_time_evolution_matches_exact_phase(backend: str) -> No
         tlist=np.linspace(0.0, duration, 121),
         initial_state=initial,
         options=options,
-        check_truncation=False,
-    )
+        )
 
     accumulated_phase = 2.0 * np.pi * (
         frequency * duration

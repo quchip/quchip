@@ -2,6 +2,9 @@
 
 from typing import Any
 
+from quchip import TrajectoryResult, with_monitoring, with_truncation
+from quchip.engine.ir import SolveProblem
+
 from quchip import CouplingDrive, DeviceDrive, Envelope, TimeCoefficient
 from quchip.control import SignalTransform
 from quchip.declarative import CouplingModel, DeviceModel, Scalar, parameter, setting, qnp
@@ -84,3 +87,12 @@ class ExternalAttenuator(SignalTransform, serializable=True):
 
 
 attenuator = ExternalAttenuator(line="pump", loss=0.5)
+
+
+# Native trajectories retain the standard analysis view for each run.
+
+
+def inspect_trajectory(problem: SolveProblem, result: TrajectoryResult) -> None:
+    prepared: SolveProblem = with_truncation(with_monitoring(problem, {}))
+    result.run(0).check_truncation()
+    _ = prepared, result.native, result.expect("q")

@@ -22,7 +22,7 @@ def _batch(states, noisy=True, scales=(1.0, 2.0)):
 @pytest.mark.parametrize("states", ["all", "final", "none"])
 @pytest.mark.parametrize("noisy", [False, True])
 def test_point_observables_obey_native_storage_choice(states, noisy):
-    result = solve_batch(_batch(states, noisy), check_truncation=False, progress=False)
+    result = solve_batch(_batch(states, noisy), progress=False)
     for scale, point in zip((1.0, 2.0), result):
         expected = scale * np.exp(-np.asarray(point.times) / 10) if noisy else scale
         np.testing.assert_allclose(point.expect("q"), expected, atol=3e-6)
@@ -42,7 +42,7 @@ def test_point_observables_keep_native_jit_gradients_without_histories():
     @jax.value_and_grad
     def objective(scale):
         batch = _batch("none", scales=(scale, 2 * scale))
-        result = solve_batch(batch, check_truncation=False, progress=False)
+        result = solve_batch(batch, progress=False)
         return jnp.real(result.expect("q", reduce="last").sum())
 
     value, derivative = objective(jnp.asarray(0.7))
@@ -69,7 +69,7 @@ def test_point_observables_follow_dynamic_pulse_axes_and_gradients():
             tlist=[0.0, 2.0], states="none", e_ops={"q": q.number_operator()})
         batch = replace(batch, problems=tuple(replace(problem, e_ops=[scale * op for op in problem.e_ops])
                          for scale, problem in zip((1.0, 2.0), batch.problems)))
-        result = solve_batch(batch, check_truncation=False, progress=False)
+        result = solve_batch(batch, progress=False)
         return jnp.real(result.expect("q", reduce="last").sum())
 
     value, derivative = objective(jnp.asarray(1.0))

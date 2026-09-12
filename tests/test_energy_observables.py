@@ -153,8 +153,7 @@ def test_population_uses_captured_local_energy_states(basis, backend, mixed):
     else:
         options = {"atol": 1e-10, "rtol": 1e-10}
     result = QuantumSequence(chip).simulate(
-        tlist=np.linspace(0.0, 0.2, 5), initial_state=state, partition=False, check_truncation=False,
-        options=options,
+        tlist=np.linspace(0.0, 0.2, 5), initial_state=state, partition=False, options=options,
     )
     q.mixing = 0.8
     expected = 0.75 if mixed else 1.0
@@ -205,8 +204,7 @@ def test_energy_population_is_independent_of_integration_frame(basis):
         chip = Chip([q], basis=basis, frame=frame)
         result = QuantumSequence(chip).simulate(
             tlist=np.linspace(0.0, 1.0, 21), initial_state=chip.bare_state(q=1),
-            e_ops=chip.e_ops(q="Z"), partition=False, check_truncation=False,
-        )
+            e_ops=chip.e_ops(q="Z"), partition=False, )
         np.testing.assert_allclose(result.population(q, 1), 1.0, atol=1e-9)
         np.testing.assert_allclose(result.expect(q), -1.0, atol=1e-9)
 

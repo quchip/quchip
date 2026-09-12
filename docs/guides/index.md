@@ -11,6 +11,8 @@ New to quchip? Start with {doc}`your first chip <defining-and-inspecting-a-chip>
   compare dressed observables and track states through avoided crossings.
 - {doc}`Pulses, leakage, and readout <dynamics-pulses-and-readout>`:
   compare pulse bandwidth, leakage, and conditional resonator response.
+- {doc}`What happens during a qubit measurement? <continuous-measurement>`:
+  follow single trajectories, map their density, and condition on an endpoint.
 
 ## Microwave networks
 
@@ -43,4 +45,5 @@ Model reduction <chip-transformations>
 Gradients and parameter fitting <differentiability>
 Cookbook <../cookbook>
 SQA 2026 examples <from-sqa-2026>
+What happens during a qubit measurement? <continuous-measurement>
 ```

@@ -60,7 +60,7 @@ def _drive_cr_phase(amp: float, f_drive: float, duration: float = 30.0) -> tuple
             initial_state=chip.superposition({q: 0}, {q: 1}),
             options={"atol": 1e-12, "rtol": 1e-10, "nsteps": 10_000_000},
         )
-        result = solve_problem(problem, check_truncation=False)
+        result = solve_problem(problem)
         phase[approximation] = np.angle(np.asarray(result.expect(q.label))[-1])
 
     grid = np.linspace(0.0, duration, 4001)

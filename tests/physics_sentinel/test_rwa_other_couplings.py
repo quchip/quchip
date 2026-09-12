@@ -107,8 +107,7 @@ def test_two_photon_exchange_survives_rwa():
         tlist,
         initial_state=chip.bare_state({ka: 2, kb: 0}),
         e_ops={ka: ka.number_operator(), kb: kb.number_operator()},
-        check_truncation=False,
-    )
+        )
     n_a = np.real(np.asarray(result.expect("ka2ph")))
     n_b = np.real(np.asarray(result.expect("kb2ph")))
     assert float(n_a.min()) < 0.01

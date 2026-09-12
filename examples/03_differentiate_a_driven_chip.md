@@ -38,13 +38,13 @@ from quchip import Capacitive, Chip, DuffingTransmon, Resonator
 
 q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=4, label="q")
 r = Resonator(freq=7.0, levels=4, label="r")
+
 chip = Chip(
     [q, r],
     [Capacitive(q, r, g=0.05, label="qr")],
     frame="rotating",
     backend="dynamiqs",
 )
-
 ```
 
 Define a scalar fitting objective and vector residual. `jax.grad` gives the loss gradient;
@@ -81,7 +81,6 @@ observable_sweep = jax.vmap(
 coupling_tangent = observables(theta) + (
     coupling_values[:, None] - theta[2]
 ) * static_jacobian[:, 2]
-
 ```
 
 <details>
@@ -315,7 +314,6 @@ predicted_at_measurements = np.interp(
 holdout_residual_mhz = 1.0e3 * (
     predicted_at_measurements[holdout_mask] - measured_f01[holdout_mask]
 )
-
 ```
 
 <details>
@@ -439,6 +437,7 @@ qubit = DuffingTransmon(
     levels=3,
     label="q",
 )
+
 chip = Chip(
     [qubit],
     frame="rotating",
@@ -454,6 +453,7 @@ _ = sequence.schedule(
     envelope=Gaussian(duration=40.0, sigmas=sigmas0, amplitude=amplitude0),
     freq=frequency0,
 )
+
 times = jnp.linspace(0.0, 60.0, 121)
 original_parameters = dict(sequence.parameters)
 ```
@@ -485,13 +485,13 @@ def final_population(perturbation):
     result = rebound.simulate(
         tlist=times,
         initial_state={"q": 0},
-        check_truncation=False,
         partition=False,
     )
     return jnp.real(result.population("q", level=1)[-1])
+
+
 origin = jnp.zeros(3)
 population0, gradient = jax.jit(jax.value_and_grad(final_population))(origin)
-
 ```
 
 
@@ -503,6 +503,7 @@ population; narrowing the Gaussian lowers it.
 
 ```python
 impact = np.asarray(gradient) * 1000
+
 figure, axis = plt.subplots(figsize=(7.2, 2.8), layout="constrained")
 axis.barh(perturbation_labels, impact, height=0.55,
           color=["#C92F33" if value >= 0 else "#246FA8" for value in impact])
@@ -513,6 +514,7 @@ axis.grid(False, axis="y")
 axis.grid(True, axis="x")
 axis.spines["left"].set_visible(False)
 axis.tick_params(axis="y", length=0)
+
 figure_path = "../docs/images/differentiate_a_driven_chip.svg"
 figure.savefig(figure_path)
 plt.show()
@@ -573,7 +575,6 @@ def experiment_outputs(shared):
         result = rebound.simulate(
             tlist=multi_times,
             initial_state={"q": 0},
-            check_truncation=False,
             partition=False,
         )
         values.append(jnp.real(result.population("q", level=1)[-1]))
@@ -603,7 +604,6 @@ The Jacobian has one row per experiment and one column per shared parameter.
 ```python
 multi_jacobian = jax.jacrev(multi_residual)(shared_origin)
 multi_loss_gradient = jax.grad(multi_loss)(shared_origin)
-
 ```
 
 <!-- executed-output:start -->
@@ -632,7 +632,6 @@ loss gradient to take an optimization step.
 reference_result = sequence.simulate(
     tlist=times,
     initial_state={"q": 0},
-    check_truncation=False,
     partition=False,
 )
 

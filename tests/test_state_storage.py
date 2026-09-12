@@ -17,7 +17,7 @@ def _sequence(backend):
 def test_observable_history_is_independent_of_state_storage(backend, storage, batch):
     seq, q = _sequence(backend)
     times = np.linspace(0.0, 2.0, 5)
-    kwargs = dict(tlist=times, states=storage, e_ops={"q": q.number_operator()}, check_truncation=False)
+    kwargs = dict(tlist=times, states=storage, e_ops={"q": q.number_operator()})
     if batch:
         results = seq.simulate_batch(seq.vary("initial_state", [{"q": 1}, {"q": 0}]), **kwargs)
     else:
@@ -42,7 +42,7 @@ def test_observable_history_is_independent_of_state_storage(backend, storage, ba
             )
 
 
-@pytest.mark.parametrize("storage", ["auto", True, None])
+@pytest.mark.parametrize("storage", ["auto", True])
 def test_invalid_state_storage_is_rejected(storage):
     seq, _ = _sequence("qutip")
     with pytest.raises(ValueError, match="states"):
@@ -59,7 +59,7 @@ def test_public_storage_flags_have_one_replacement(flag):
 @pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
 def test_final_state_lookup_requires_a_retained_time(backend):
     seq, _ = _sequence(backend)
-    result = seq.simulate(tlist=[0.0, 1.0, 2.0], states="final", check_truncation=False)
+    result = seq.simulate(tlist=[0.0, 1.0, 2.0], states="final")
     np.testing.assert_array_equal(result._backend.to_array(result.state_at(2.0)),
                                   result._backend.to_array(result.final_state))
     with pytest.raises(RuntimeError, match='states="all"'):
@@ -71,8 +71,7 @@ def test_final_state_lookup_requires_a_retained_time(backend):
 def test_batch_final_projections_do_not_require_histories(backend, noisy):
     seq, _ = _sequence(backend)
     batch = seq.simulate_batch(seq.vary("initial_state", [{"q": 1}, {"q": 0}]),
-                               tlist=[0.0, 1.0], states="final", dissipation=noisy,
-                               check_truncation=False)
+                               tlist=[0.0, 1.0], states="final", dissipation=noisy)
     target = seq._chip.backend.basis(2, 1)
     targets = [target, target]
     np.testing.assert_allclose(batch.final_overlap_magnitudes(targets),
@@ -86,7 +85,7 @@ def test_batch_final_projections_do_not_require_histories(backend, noisy):
 
 def test_state_lookup_is_exact_by_default_with_explicit_nearest():
     seq, _ = _sequence("qutip")
-    result = seq.simulate(tlist=[0.0, 1.0, 2.0], check_truncation=False)
+    result = seq.simulate(tlist=[0.0, 1.0, 2.0])
     with pytest.raises(ValueError, match="saved time"):
         result.state_at(0.9)
     assert result.state_at(0.9, method="nearest") is result.states[1]

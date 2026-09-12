@@ -19,9 +19,11 @@ from quchip import Capacitive, Chip, IQReceiver, PortNetwork, Resonator, RWA, VN
 mode_frequencies = np.array([6.4, 6.5, 6.6])
 internal_q = np.array([1800, 3200, 2400])
 external_q = np.array([450, 750, 550])
+
 bus = Resonator(freq=6.5, levels=3, internal_quality_factor=100_000, label="bus")
 resonators = [Resonator(freq=f, levels=3, internal_quality_factor=qi, label=f"r{i+1}")
               for i, (f, qi) in enumerate(zip(mode_frequencies, internal_q))]
+
 bus_qe = 6.5
 bus_external_rate = 2 * np.pi * bus.freq / bus_qe
 bus_total_rate = bus_external_rate + 2 * np.pi * bus.freq / bus.internal_quality_factor
@@ -29,6 +31,7 @@ external_rates = 2 * np.pi * mode_frequencies / external_q
 coupling_strengths = np.sqrt(external_rates * (
     (bus_total_rate / 2)**2 + (2 * np.pi * (mode_frequencies - bus.freq))**2
 ) / bus_external_rate) / (2 * np.pi)
+
 couplings = [Capacitive(bus, r, g=g, label=f"bus_r{i+1}")
              for i, (r, g) in enumerate(zip(resonators, coupling_strengths))]
 ```
@@ -65,16 +68,19 @@ def passband(frequency):
 fridge = PortNetwork(label="thermal_fridge")
 port = fridge.port("bus_coupler", target=bus, external_quality_factor=bus_qe)
 input_filter = fridge.filter("input_4_8GHz", transfer=passband)
+
 n_4k, n_cp, n_mxc = 12.329033161427, 0.046220887106121, 1.6829628323748e-07
 att_4k = fridge.attenuator("att_4K", loss_db=20, thermal_occupation=n_4k)
 att_cp = fridge.attenuator("att_CP", loss_db=20, thermal_occupation=n_cp)
 att_mxc = fridge.attenuator("att_MXC", loss_db=20, thermal_occupation=n_mxc)
+
 circ = fridge.circulator("circ")
 iso_1 = fridge.isolator("iso_1", thermal_occupation=n_mxc)
 iso_2 = fridge.isolator("iso_2", thermal_occupation=n_mxc)
 iso_loss = fridge.attenuator("iso_insertion", loss_db=1, thermal_occupation=n_mxc)
 output_filter = fridge.filter("output_4_8GHz", transfer=passband,
                               thermal_occupation=n_mxc)
+
 coax = fridge.attenuator("output_coax", loss_db=2, thermal_occupation=n_4k)
 hemt = fridge.amplifier("HEMT_4K", gain_db=40, added_noise=8.0140842782029)
 room_amp = fridge.amplifier("amp_RT", gain_db=20, added_noise=925.22946424527)
@@ -121,10 +127,12 @@ from matplotlib.patches import Arc, Circle, FancyArrowPatch, Polygon, Rectangle
 
 plt.style.use("../_static/quchip.mplstyle")
 plt.rcParams["text.usetex"] = bool(shutil.which("latex"))
+
 fig, axis = plt.subplots(figsize=(7.2, 6.9), layout="constrained")
 axis.set(xlim=(0, 11.6), ylim=(0, 10.6))
 axis.set_aspect("equal")
 axis.axis("off")
+
 blue, red, ink, muted = "#246FA8", "#C92F33", "#16181C", "#50565A"
 stages = [
     ("300 K", "", 8.6, 10.6), ("50 K", "", 7.5, 8.6), ("4 K", "", 6.1, 7.5),
@@ -210,9 +218,11 @@ box(x_out, 6.42, "2 dB")
 label(x_out + 0.5, 6.42, "Coax", ha="left", va="center", fontsize=8.5)
 amplifier(x_out, 7.12, "HEMT 40 dB")
 amplifier(x_out, 9.0, "Amplifier 20 dB")
+
 box(5.3, 1.35, "Bus 6.5 GHz", width=3.8, height=0.5)
 for x, frequency in zip((4.0, 5.3, 6.6), mode_frequencies):
     box(x, 0.45, f"{frequency:g} GHz", width=1.1, height=0.5)
+
 fig.savefig("fridge_wiring.svg")
 plt.close(fig)
 ```
@@ -246,8 +256,10 @@ steady_state = vna.sweep(frequencies).s(readout, drive)
 fig, magnitude_axis = plt.subplots(figsize=(6.4, 3.2), layout="constrained")
 phase_axis = magnitude_axis.twinx()
 phase_axis.grid(False)
+
 magnitude_axis.plot(frequencies, 20 * np.log10(np.abs(steady_state)), color="#C92F33")
 phase_axis.plot(frequencies, np.unwrap(np.angle(steady_state)) * 180 / np.pi, color="#246FA8", ls="--")
+
 magnitude_axis.set(xlabel="Probe frequency (GHz)", ylabel=r"$|S_{21}|$ (dB)",
                    xlim=(frequencies[0], frequencies[-1]))
 phase_axis.set(ylabel=r"Phase of $S_{21}$ (degrees)", yticks=[0, 180, 360, 540, 720, 900, 1080])
@@ -259,6 +271,7 @@ phase_axis.spines["right"].set_visible(True)
 phase_axis.spines["right"].set_color("#246FA8")
 magnitude_axis.spines["left"].set_color("#C92F33")
 magnitude_axis.ticklabel_format(useOffset=False, axis="x")
+
 fig.savefig("fridge_s21.svg")
 plt.close(fig)
 ```
@@ -302,6 +315,7 @@ The common random seed makes that change visible point by point.
 ```python
 fig, axes = plt.subplots(2, 2, figsize=(7.2, 4.6), sharex=True, sharey="row", layout="constrained")
 fig.get_layout_engine().set(h_pad=0.02, w_pad=0.02)
+
 steady_state_phase = np.unwrap(np.angle(steady_state))
 for column, (samples, title) in enumerate(zip((short, long), ("1 ms integration", "100 ms integration"))):
     observed = samples.ratio(readout)[0]
@@ -313,10 +327,12 @@ for column, (samples, title) in enumerate(zip((short, long), ("1 ms integration"
     axes[1, column].plot(frequencies, steady_state_phase * 180 / np.pi, color="#16181C", lw=1.2)
     axes[0, column].set_title(title)
     axes[1, column].set_xlabel("Probe frequency (GHz)")
+
 axes[0, 0].set_ylabel("Output / input (dB)")
 axes[1, 0].set(ylabel="Unwrapped phase (degrees)", yticks=[0, 360, 720, 1080])
 axes[0, 1].legend(loc="lower right")
 axes[1, 1].set_xlim(frequencies[0], frequencies[-1])
+
 fig.savefig("fridge_measurement.svg")
 plt.close(fig)
 ```
@@ -340,10 +356,12 @@ contribution to it.
 statistics = measurement.statistics(receiver=IQReceiver(integration_time=1_000_000))
 budget = statistics.noise_contributions(readout)
 np.testing.assert_allclose(sum(budget.values()), statistics.covariance(readout), atol=1e-12)
+
 noise_dbm_hz = measurement.noise_spectrum(readout, unit="dBm/Hz")
 carrier_noise = noise_dbm_hz[..., len(measurement.noise_frequencies) // 2]
 short_error = np.sqrt(np.mean(np.abs(short.ratio(readout)[0] - steady_state)**2))
 long_error = np.sqrt(np.mean(np.abs(long.ratio(readout)[0] - steady_state)**2))
+
 print(f"RESULT receiver_noise_dBm_per_Hz={np.mean(carrier_noise):.6f}")
 print(f"RESULT short_complex_ratio_rmse={short_error:.6f}")
 print(f"RESULT long_complex_ratio_rmse={long_error:.6f}")
@@ -442,17 +460,21 @@ from quchip import ChargeDrive, DuffingTransmon, IQReadout, QuantumSequence, Squ
 
 q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=2, label="q")
 rabi_chip = Chip([q], frame="rotating")
+
 xy = ChargeDrive(q, label="xy")
 rabi_chip.wire(xy)
+
 rabi = QuantumSequence(rabi_chip)
 rabi.schedule(xy, envelope=Square(duration=40.0, amplitude=0.025), freq=5.0)
-result = rabi.simulate(tlist=np.linspace(0, 40, 81), check_truncation=False)
+
+result = rabi.simulate(tlist=np.linspace(0, 40, 81))
 
 detector = IQReadout.from_wiring(
     readout_chip, readout, frequency=6.5,
     means=[-0.01+0.001875j, 0.01-0.001875j],
     receiver=IQReceiver(integration_time=100_000),
 )
+
 measurement = result.measure(q, t=10.0)
 shots = measurement.sample(1000, readout=detector, seed=7)
 ```
@@ -503,6 +525,7 @@ for outcome, color in enumerate((blue, red)):
     axes[1].scatter(points.real, points.imag, s=6, alpha=0.65, color=color,
                     edgecolors="none", label=f"Outcome {outcome}")
     axes[1].plot(centers[outcome, 0], centers[outcome, 1], "+", color=ink, ms=9, mew=1.4)
+
 span = np.max(np.abs(centers)) + 4*np.sqrt(np.max(np.diag(covariance)))
 tangent = np.array([-direction[1], direction[0]]) / np.linalg.norm(direction)
 boundary = centers.mean(axis=0)[:, None] + tangent[:, None]*np.array([-span, span])
@@ -512,6 +535,7 @@ axes[1].set(xlabel=r"I ($1/\sqrt{\mathrm{ns}}$)", ylabel=r"Q ($1/\sqrt{\mathrm{n
 axes[1].set_aspect("equal", adjustable="box")
 axes[1].legend(fontsize=8, loc="upper center", ncol=2)
 figure.suptitle(r"Fridge output at 6.5 GHz $\cdot$ 100 $\mu$s integration", fontsize=12)
+
 figure.savefig("terminal_rabi.svg")
 plt.close(figure)
 ```

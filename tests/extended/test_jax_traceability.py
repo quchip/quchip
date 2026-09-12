@@ -69,8 +69,7 @@ def test_gaussian_ramsey_delay_gradient_matches_finite_difference() -> None:
             tlist=tlist,
             initial_state=initial_state,
             progress=False,
-            check_truncation=False,
-        )
+            )
         return jnp.reshape(result.population("q", level=1, reduce="last"), (-1,))[0]
 
     delay = jnp.asarray(80.0)
@@ -258,8 +257,7 @@ def test_chip_state_dressed_initial_state_traces_through_simulate() -> None:
             [],
             jnp.linspace(0.0, 10.0, 8),
             initial_state=chip.state({q: 1, r: 0}),
-            check_truncation=False,
-        )
+            )
         return result.population(q, level=1)
 
     def loss(freq):
@@ -296,7 +294,7 @@ def test_default_initial_state_omitted_traces_through_simulate() -> None:
             approximation=RWA(),
             backend="dynamiqs",
         )
-        result = simulate(chip, [], jnp.linspace(0.0, 10.0, 8), check_truncation=False)
+        result = simulate(chip, [], jnp.linspace(0.0, 10.0, 8))
         return result.population(q, level=0)[-1]
 
     fn = jax.jit(jax.value_and_grad(loss))

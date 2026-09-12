@@ -23,6 +23,7 @@ DEFAULT_PAIRS = (
     "01_resolve_and_sweep",
     "02_reduce_and_replay",
     "03_differentiate_a_driven_chip",
+    "04_continuous_measurement",
 )
 OUTPUT_START = "<!-- executed-output:start -->"
 OUTPUT_END = "<!-- executed-output:end -->"
@@ -67,6 +68,8 @@ def _render_output(output: dict[str, Any]) -> str | None:
 
     plain = _text(data.get("text/plain", ""))
     if "image/png" in data and plain.startswith("<Figure size"):
+        return None
+    if "text/html" in data and plain.startswith("<IPython.core.display."):
         return None
     return _fenced_text(plain) if plain.strip() else None
 

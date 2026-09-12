@@ -54,6 +54,7 @@ q2 = DuffingTransmon(
     label="q2",
 )
 bus = Resonator(freq=bus_frequency, levels=4, label="bus")
+
 chip = Chip(
     [q1, q2, bus],
     couplings=[
@@ -104,7 +105,6 @@ q1_label_position = sweep_result.bare_labels.index(q1_label)
 q1_assignment_overlap = np.asarray(
     sweep_result.assignment_overlaps[..., q1_label_position]
 )
-
 ```
 
 <details>
@@ -530,6 +530,7 @@ paper_parameters = {
     "resonator_frequency_ghz": resonator_frequency,
     "readout_coupling_ghz": readout_coupling,
 }
+
 paper_parameters
 ```
 
@@ -581,7 +582,6 @@ def isolated_f01(phi_ext):
     )
     return float(q.freq)
 
-
 ```
 
 Evaluate the spectrum on its own flux grid and compare it with the measured points.
@@ -591,7 +591,6 @@ paper_model_flux = np.linspace(0.5, 0.85, 351)
 predicted_f01_grid = np.asarray([isolated_f01(phi) for phi in paper_model_flux])
 predicted_f01_at_data = np.interp(paper_flux, paper_model_flux, predicted_f01_grid)
 f01_residual_mhz = 1.0e3 * (predicted_f01_at_data - measured_f01)
-
 ```
 
 <details>
@@ -699,7 +698,6 @@ class FluxoniumReadoutCoupling(CouplingModel):
         ) * q.charge
         return p.g * (lowering * r.adag + raising * r.a)
 
-
 ```
 
 Use the published interaction with the fitted circuit parameters.
@@ -724,6 +722,7 @@ paper_edge = FluxoniumReadoutCoupling(
     oscillator_length=(8.0 * paper_E_C / paper_E_L) ** 0.25,
     label="q-readout",
 )
+
 paper_chip = Chip(
     [paper_q, paper_readout],
     [paper_edge],
@@ -748,7 +747,6 @@ readout_flux = readout_flux_all[readout_window]
 measured_fr0 = measured_fr0_all[readout_window]
 measured_fr1 = measured_fr1_all[readout_window]
 measured_chi_mhz = measured_chi_all[readout_window]
-
 
 ```
 
@@ -868,6 +866,7 @@ operating_points = {
         "quchip_chi_mhz": flux_pulsed[2],
     },
 }
+
 operating_points
 ```
 

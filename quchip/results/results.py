@@ -746,7 +746,7 @@ class SimulationResult:
         return plot_wigner(self, index, trace_out=trace_out, ax=ax, **kwargs)
 
     def check_truncation(self, *, threshold: float = DEFAULT_TRUNCATION_THRESHOLD) -> dict[str, Any]:
-        """Report each device's maximum boundary population over sampling times.
+        """Report each device's maximum boundary population over available samples.
 
         This warning heuristic can miss excursions between samples. Increase the
         relevant cutoff and compare observables to establish convergence. Native
@@ -768,19 +768,20 @@ class SimulationResult:
             warnings.warn(f"Truncation diagnostic unavailable: {reason}", UserWarning, stacklevel=2)
         xp = self._backend.array_module
         observed: dict[str, Any] = {}
-        traced = contains_tracer(traces)
+        maxima = tuple(xp.maximum(0.0, xp.max(trace)) for trace in traces)
+        traced = contains_tracer(maxima)
         if traced:
             warnings.warn(
                 "Truncation boundary populations are traced; warning thresholds cannot be evaluated here. "
-                "Check the concrete result afterward, or pass check_truncation=False to disable the automatic check.",
+                "Check the concrete result afterward.",
                 UserWarning, stacklevel=2,
             )
-        for check, trace in zip(plan.checks, traces, strict=True):
-            maximum = xp.maximum(0.0, xp.max(trace))
+        for check, maximum in zip(plan.checks, maxima, strict=True):
             observed[check.label] = xp.maximum(observed.get(check.label, 0.0), maximum)
             if not traced and float(maximum) > threshold:
                 warnings.warn(
                     f"Device {check.label!r}: maximum sampled {check.boundary.description} population "
+                    f"({self.stats.get('truncation_sampling', 'saved time grid')}) "
                     f"{float(maximum):.3g} > threshold {threshold:.3g}. "
                     f"{check.boundary.convergence_hint} This is a sampling heuristic, not an error bound.",
                     UserWarning, stacklevel=2,
@@ -1084,6 +1085,10 @@ def wrap_solver_result(solver_result: SolverResult, problem: SolveProblem, backe
     backend : Backend
         Backend that owns the native states and arrays.
     """
+    if solver_result.native is not None:
+        from quchip.results.trajectories import TrajectoryResult
+
+        return TrajectoryResult(solver_result.native, problem)
     from quchip.engine.truncation import boundary_traces
 
     plan = problem.truncation

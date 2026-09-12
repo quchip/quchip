@@ -93,7 +93,6 @@ def test_jit_and_grad_through_driven_mesolve_matches_finite_difference():
             initial_state=chip.bare_state({q: 0}),
             e_ops=chip.e_ops(q="n"),
             states="none", options={"method": method},
-            check_truncation=False,
             partition=False,
         )
 

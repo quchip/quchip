@@ -16,7 +16,7 @@ def _decaying_qubit():
     chip = Chip([qubit], frame="rotating")
     times = np.linspace(0.0, 60.0, 121)
     result = QuantumSequence(chip).simulate(
-        times, initial_state=chip.bare_state(q=1), partition=False, check_truncation=False
+        times, initial_state=chip.bare_state(q=1), partition=False
     )
     return chip, times, result
 
@@ -43,8 +43,7 @@ def test_jump_rate_requires_stored_states_and_known_keys() -> None:
         initial_state=chip.bare_state(q=1),
         states="final",
         partition=False,
-        check_truncation=False,
-    )
+        )
     with pytest.raises(RuntimeError, match='states="all"'):
         result.jump_rate(result.collapse_channels[0])
     with pytest.raises(KeyError, match="matches no channel"):
@@ -65,7 +64,7 @@ def test_port_flux_matches_the_raw_output_flux_for_vacuum_input_only() -> None:
     times = np.linspace(0.0, 40.0, 41)
     e_ops = {plane: plane.output}
     quiet = QuantumSequence(chip).simulate(
-        times, e_ops=e_ops, initial_state=chip.bare_state(r=1), partition=False, check_truncation=False
+        times, e_ops=e_ops, initial_state=chip.bare_state(r=1), partition=False
     )
     np.testing.assert_allclose(quiet.jump_rate("line"), quiet.output("line").raw_photon_flux, atol=1e-10)
     assert quiet.jump_rate(plane) is quiet.jump_rate("line")
@@ -74,7 +73,7 @@ def test_port_flux_matches_the_raw_output_flux_for_vacuum_input_only() -> None:
 
     driven = QuantumSequence(chip)
     driven.schedule(CoherentInput("line"), envelope=Square(duration=40.0, amplitude=0.05), freq=6.0)
-    result = driven.simulate(times, e_ops=e_ops, partition=False, check_truncation=False)
+    result = driven.simulate(times, e_ops=e_ops, partition=False)
     residual = np.asarray(result.output("line").raw_photon_flux) - np.asarray(result.jump_rate("line"))
     assert np.max(np.abs(residual)) > 1e-4  # |S beta|^2 and the interference term, absent for vacuum input
 
@@ -92,7 +91,7 @@ def test_batch_jump_rate_stacks_per_point_traces() -> None:
     pulse = sequence.schedule(drive, envelope=Square(duration=20.0, amplitude=0.01), freq=5.0)
     axis = pulse.vary("amplitude", [0.01, 0.02], name="amp")
     times = np.linspace(0.0, 20.0, 21)
-    batch = sequence.simulate_batch(axis, tlist=times, progress=False, check_truncation=False)
+    batch = sequence.simulate_batch(axis, tlist=times, progress=False)
     key = batch[0].collapse_channels[0]
     stacked = np.asarray(batch.jump_rate(key))
     assert stacked.shape == (2, 21)
@@ -105,8 +104,7 @@ def test_later_eager_flux_query_does_not_reuse_a_traced_cache():
 
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=2, T1=10.0, label="q")
     chip = Chip([q], backend="dynamiqs", frame="rotating")
-    result = QuantumSequence(chip).simulate(tlist=[0.0, 1.0, 3.0], initial_state={"q": 1},
-                                            check_truncation=False)
+    result = QuantumSequence(chip).simulate(tlist=[0.0, 1.0, 3.0], initial_state={"q": 1})
     key = result.collapse_channels[0]
     compiled = jax.jit(lambda: result.jump_rate(key))()
     np.testing.assert_allclose(result.jump_rate(key), compiled)

@@ -40,6 +40,7 @@ chip = Chip(
     [qubit, readout], [Capacitive(qubit, readout, g=0.060, label="qr")],
     frame="rotating", approximation=RWA(),
 )
+
 qubit_line = ChargeDrive(qubit, label="qubit-charge")
 readout_line = ChargeDrive(readout, label="readout-charge")
 _ = chip.wire(qubit_line, readout_line)
@@ -74,6 +75,7 @@ Each batch member starts in dressed |0,0⟩ and uses the same time grid.
 drive_sequence = QuantumSequence(chip)
 drive = drive_sequence.schedule(qubit_line, envelope=drive_pulses[0], freq=f01)
 drive_times = np.linspace(0, drive_durations[-1], 601)
+
 drive_batch = drive_sequence.simulate_batch(
     drive_sequence.zip(
         drive.vary("duration", drive_durations),
@@ -103,7 +105,9 @@ import matplotlib.pyplot as plt
 
 plt.style.use("../docs/_static/quchip.mplstyle")
 plt.rcParams["text.usetex"] = bool(shutil.which("latex"))
+
 colors = ("#16181C", "#246FA8", "#C92F33")
+
 figure, axes = plt.subplots(2, 1, figsize=(6.6, 5.2), sharex=True, layout="constrained")
 for index, (axis, name, envelope) in enumerate(zip(axes, ("Short", "Long"), drive_pulses)):
     for level, color in enumerate(colors):
@@ -120,9 +124,12 @@ for index, (axis, name, envelope) in enumerate(zip(axes, ("Short", "Long"), driv
     pulse_axis.tick_params(axis="y", colors="#6D7277")
     axis.set(ylabel="Population", ylim=(-0.02, 1.02), xlim=(0, drive_times[-1]))
     axis.set_title(fr"{name} Gaussian $\cdot$ {envelope.duration:.2f} ns")
+
 axes[0].legend(ncol=3, loc="upper right", fontsize=9)
 axes[1].set_xlabel("Time (ns)")
+
 figure.savefig("../docs/images/hello_qubit_drive_leakage.svg")
+
 figure.savefig("../docs/images/hello_qubit_drive_leakage.png")
 plt.show()
 ```
@@ -174,6 +181,7 @@ readout_frequencies = [
 ]
 readout_carrier = np.mean(readout_frequencies)
 readout.reference_freq = readout_carrier
+
 readout_pulse = GaussianEdge(duration=900.0, edge_duration=40.0, sigmas=3, amplitude=0.0012)
 readout_sequence = QuantumSequence(chip)
 _ = readout_sequence.schedule(readout_line, envelope=readout_pulse, freq=readout_carrier)
@@ -186,6 +194,7 @@ the 900 ns readout pulse.
 
 ```python
 readout_times = np.linspace(0, 900, 181)
+
 readout_batch = readout_sequence.simulate_batch(
     readout_sequence.vary(
         "initial_state",
@@ -213,10 +222,12 @@ iq_separation = np.abs(alpha[0] - alpha[1])
 ```python
 figure, (time_axis, iq_axis) = plt.subplots(2, 1, figsize=(6.0, 6.4),
                                          height_ratios=(0.55, 2.2), layout="constrained")
+
 time_axis.plot(readout_times, 1000 * readout_pulse.sample(readout_times, real=True),
                color="#16181C", lw=1.8)
 time_axis.set(xlabel="Time (ns)", ylabel="Envelope (MHz)", xlim=(0, 900), yticks=[0, 1.2])
 time_axis.set_title("(a) Readout pulse")
+
 for level, color in enumerate(("#246FA8", "#C92F33")):
     path = alpha[level]
     iq_axis.plot(path.real, path.imag, color=color, lw=1.8,
@@ -231,13 +242,16 @@ for level, color in enumerate(("#246FA8", "#C92F33")):
     start, end = path[90], path[96]
     iq_axis.annotate("", (end.real, end.imag), (start.real, start.imag),
                      arrowprops={"arrowstyle": "->", "color": color, "lw": 1.8})
+
 iq_axis.plot(0, 0, "+", color="#16181C", ms=8)
 iq_axis.set(xlabel=r"$\mathrm{Re}\,\alpha$", ylabel=r"$\mathrm{Im}\,\alpha$",
             xlim=(1.15 * alpha.real.min(), 0.22), ylim=(1.2 * alpha.imag.min(), 1.2 * alpha.imag.max()))
 iq_axis.set_title("(b) Intracavity IQ in the drive frame")
 iq_axis.set_aspect("equal", adjustable="box")
 iq_axis.legend(fontsize=9, loc="upper right")
+
 figure.savefig("../docs/images/hello_dispersive_readout_iq.svg")
+
 figure.savefig("../docs/images/hello_dispersive_readout_iq.png")
 plt.show()
 ```
@@ -313,9 +327,11 @@ clear_q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=3, T1=60_000, lab
 clear_r = Resonator(freq=7.0, levels=4, internal_quality_factor=200_000, label="r")
 clear_f = Resonator(freq=7.02, levels=2, internal_quality_factor=100_000, label="f")
 clear_r.reference_freq = clear_carrier
+
 clear_network = PortNetwork(label="feedline")
 filter_rate = 2 * np.pi * 0.230
 chip_port = clear_network.expose("feedline", at=clear_network.port("feed", target=clear_f, rate=filter_rate))
+
 clear_chip = Chip(
     [clear_q, clear_r, clear_f],
     [Capacitive(clear_q, clear_r, g=0.105, label="qr"),
@@ -335,9 +351,11 @@ for this circuit; changing the circuit or carrier requires retuning them.
 hold_amplitude = 0.008
 segment_amplitudes = np.array([2.318735, 0.378724, 1.0, -1.318735, 0.621276])
 segment_edges = np.array([100, 300, 500, 900, 1100, 1300])
+
 square_sequence = QuantumSequence(clear_chip)
 _ = square_sequence.schedule(chip_port.input, envelope=Square(duration=800, amplitude=hold_amplitude),
                              freq=clear_carrier, start_time=100)
+
 clear_sequence = QuantumSequence(clear_chip)
 for start, duration, scale in zip(segment_edges[:-1], np.diff(segment_edges), segment_amplitudes):
     _ = clear_sequence.schedule(
@@ -355,6 +373,7 @@ The `matrix_form` solver option requires [QuTiP 5.3+](https://qutip.readthedocs.
 clear_times = np.linspace(0, 1900, 9501)
 clear_dressed = clear_chip.resolve().dress(overlap_threshold=0.0)
 clear_preparations = [clear_dressed.eigenstates[clear_dressed.state_map[(level, 0, 0)]] for level in (0, 1)]
+
 clear_batches = {}
 for name, pulse_sequence in [("Square", square_sequence), ("CLEAR", clear_sequence)]:
     clear_batches[name] = pulse_sequence.simulate_batch(
@@ -363,6 +382,7 @@ for name, pulse_sequence in [("Square", square_sequence), ("CLEAR", clear_sequen
         states="none", progress=False,
         options={"method": "vern9", "matrix_form": True, "rtol": 1e-7, "atol": 1e-10},
     )
+
 clear_occupations = {name: np.stack([batch.expect("q"), batch.expect("r", index=0), batch.expect("f")]).real
                      for name, batch in clear_batches.items()}
 clear_iq = {name: np.asarray(batch.expect("r", index=1)) for name, batch in clear_batches.items()}
@@ -402,9 +422,11 @@ for column, name in enumerate(('Square', 'CLEAR')):
     population_axis.text(1.1, .075, 'Deplete' if name == 'CLEAR' else 'Passive decay',
                          ha='center', color='#6D7277', fontsize=9)
     population_axis.set(xlabel=r'Time ($\mu$s)', xlim=(0, 1.9), ylim=(1e-7, .15), xticks=[0, .5, 1, 1.5])
+
 axes[0, 0].set_ylabel(r'Input $\beta/\beta_{\mathrm{hold}}$')
 axes[1, 0].set_ylabel(r'Mean occupation $\langle n\rangle$')
 axes[1, 0].legend(fontsize=9, loc='lower left')
+
 figure.savefig("../docs/images/clear_populations.svg")
 plt.show()
 ```
@@ -445,8 +467,11 @@ for axis, name in zip(axes, ('Square', 'CLEAR')):
     axis.set_title(name)
     axis.set_xlabel(r'$\mathrm{Re}\,\alpha_r$')
     axis.set_aspect('equal', adjustable='box')
+
 axes[0].set_ylabel(r'$\mathrm{Im}\,\alpha_r$')
+
 axes[0].legend(fontsize=9, loc='upper left')
+
 figure.savefig("../docs/images/clear_iq.svg")
 plt.show()
 ```

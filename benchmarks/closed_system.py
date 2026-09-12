@@ -225,7 +225,7 @@ def _solve_quchip(model: tuple[Any, list[str]]) -> np.ndarray:
     from quchip.engine import solve_problem
 
     problem, labels = model
-    result = solve_problem(problem, check_truncation=False)
+    result = solve_problem(problem)
     return np.stack([np.real(np.asarray(result.expect(label))) for label in labels])
 
 

@@ -10,7 +10,7 @@ def _result(backend, states="none"):
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=2, T1=10.0, label="q")
     sequence = QuantumSequence(Chip([q], backend=backend, frame="rotating"))
     return sequence.simulate(tlist=[2.0, 3.0, 5.0], initial_state={"q": 1},
-                             states=states, e_ops={"q": q.number_operator()}, check_truncation=False)
+                             states=states, e_ops={"q": q.number_operator()})
 
 
 @pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
@@ -82,7 +82,7 @@ def test_partitioned_observable_lookup_uses_the_shared_saved_grid():
     q1 = DuffingTransmon(freq=6.0, anharmonicity=-0.2, levels=2, label="b")
     chip = Chip([q0, q1], frame="rotating")
     result = QuantumSequence(chip).simulate(tlist=[0.0, 1.0, 3.0],
-        e_ops={"a": q0.number_operator()}, states="none", check_truncation=False)
+        e_ops={"a": q0.number_operator()}, states="none")
     np.testing.assert_array_equal(result.observable_at([0.0, 3.0], result.expect("a")), [0.0, 0.0])
 
 
@@ -99,7 +99,7 @@ def test_observable_lookup_inside_a_differentiated_solve():
         candidate = chip.with_params({"q.T1": t1})
         result = QuantumSequence(candidate).simulate(tlist=jnp.asarray([0.0, 1.0, 3.0]),
             initial_state={"q": 1}, e_ops={"q": candidate["q"].number_operator()},
-            states="none", check_truncation=False)
+            states="none")
         return jnp.real(result.observable_at(2.0, result.expect("q"), method="interpolate"))
 
     value, derivative = decay(jnp.asarray(10.0))
@@ -133,7 +133,7 @@ def test_partitioned_state_lookup_preserves_mixed_state_kind_and_order():
     q1 = DuffingTransmon(freq=6.0, anharmonicity=-0.2, levels=2, label="b")
     chip = Chip([q0, q1], frame="rotating")
     sequence = QuantumSequence(chip)
-    options = dict(tlist=[0.0, 1.0, 3.0], initial_state={"a": 1, "b": 1}, check_truncation=False)
+    options = dict(tlist=[0.0, 1.0, 3.0], initial_state={"a": 1, "b": 1})
     result = sequence.simulate(**options)
     joint = sequence.simulate(**options, partition=False)
     with pytest.warns(UserWarning, match="joint state"):

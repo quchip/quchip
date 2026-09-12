@@ -58,8 +58,7 @@ def test_thermal_bath_solve_is_jittable_and_grad_in_temperature():
             chip, [], tlist,
             initial_state=chip.bare_state(),
             e_ops={m: m.number_operator()},
-            check_truncation=False,
-        )
+            )
         return jnp.real(res.expect("m")[-1])
 
     value = jax.jit(final_n)(jnp.float64(300.0))
@@ -80,8 +79,7 @@ def test_collective_decay_bath_solve_is_jittable_and_grad_in_rate():
             chip, [], tlist,
             initial_state=chip.bare_state({q0: 1}),
             e_ops={q0: q0.projector(1, 1)},
-            check_truncation=False,
-        )
+            )
         return jnp.real(res.expect("q0")[-1])
 
     value = jax.jit(final_excited)(jnp.float64(0.02))
@@ -157,8 +155,7 @@ def test_eliminated_chip_solve_is_jittable_and_grad_in_g():
             reduced, [], tlist,
             initial_state=reduced.bare_state({rq: 1}),
             e_ops={rq: rq.projector(1, 1)},
-            check_truncation=False,
-        )
+            )
         return jnp.real(res.expect("q")[-1])
 
     value = jax.jit(final_excited)(jnp.float64(0.05))

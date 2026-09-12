@@ -89,7 +89,7 @@ def test_zero_observables_preserve_authored_coordinates(backend):
         e_ops={"q": [scale * n, n, 0 * n], "r": 0 * r.number_operator(),
                ("q", "r"): (n, scale * r.number_operator())},
     ) for scale in (0.0, 2.0)]
-    result = solve_many(problems, check_truncation=False, progress=False)
+    result = solve_many(problems, progress=False)
     np.testing.assert_allclose(result.expect("q", index=0), [[0, 0], [2, 2]], atol=1e-8)
     np.testing.assert_allclose(result.expect("q", index=1), 1, atol=1e-8)
     np.testing.assert_allclose(result.expect("q", index=2), 0, atol=1e-8)
@@ -112,8 +112,7 @@ def test_observable_list_coordinates_and_gradient_at_zero():
     def first_observable(scale):
         result = QuantumSequence(chip).simulate(
             [0.0, 0.1], initial_state={"q": 1}, states="none",
-            e_ops={"q": [scale * n, n]}, check_truncation=False,
-        )
+            e_ops={"q": [scale * n, n]}, )
         return jnp.real(result.expect("q", index=0)[-1])
 
     value, derivative = first_observable(jnp.asarray(0.0))

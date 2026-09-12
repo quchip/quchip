@@ -716,6 +716,10 @@ class DynamiqsBackend(Backend):
         return cache
 
     def solve_problem(self, problem: Any) -> SolverResult:
+        if problem.stochastic:
+            inputs = self._trajectory_inputs(problem)
+            return SolverResult(times=problem.tlist, solver=problem.solver,
+                                native=getattr(dq, problem.solver)(**inputs))
         engine_result = problem.engine_result
         if not self._engine_result_is_cacheable(engine_result):
             return super().solve_problem(problem)
@@ -761,6 +765,33 @@ class DynamiqsBackend(Backend):
             tlist_arr,
         )
         return self._wrap_result(result, solver=solver_name, options=opts)
+
+    def _trajectory_inputs(self, problem: Any) -> dict[str, Any]:
+        if problem.solver not in ("jssesolve", "dssesolve", "dsmesolve"):
+            raise ValueError(f"Dynamiqs does not provide {problem.solver!r}.")
+        options = dict(problem.options)
+        if problem.states is not None:
+            if "save_states" in options:
+                raise ValueError("Conflicting states and native save_states.")
+            options["save_states"] = problem.states == "all"
+        kwargs = dict(H=self.prepare_hamiltonian(problem.engine_result, problem.tlist).rhs,
+                      tsave=problem.tlist, exp_ops=problem.e_ops, options=dq.Options(**options), **problem.run_args)
+        state = self.coerce_state(problem.initial_state, dims=problem.engine_result.dims)
+        kwargs["rho0" if problem.solver == "dsmesolve" else "psi0"] = state
+        if problem.solver in ("dssesolve", "dsmesolve") and (
+            problem.monitoring is not None or problem.solver == "dssesolve"
+        ):
+            from quchip.engine.monitoring import monitored_operators
+
+            loss, monitored, etas = monitored_operators(problem)
+            kwargs["jump_ops"] = loss + monitored
+            if problem.solver == "dsmesolve":
+                if "etas" in problem.run_args:
+                    raise ValueError("Choose with_monitoring or native etas, not both.")
+                kwargs["etas"] = jnp.asarray([0.0] * len(loss) + etas)
+        else:
+            kwargs["jump_ops"] = self._collapse_operators(problem.engine_result)
+        return kwargs
 
     @staticmethod
     def _engine_result_is_cacheable(engine_result: Any) -> bool:
@@ -1076,6 +1107,31 @@ class DynamiqsBackend(Backend):
         --------
         quchip.backend.protocol.Backend.solve_batch
         """
+        if any(problem.stochastic for problem in batch.problems):
+            solver = batch.problems[0].solver
+            if any(problem.solver != solver for problem in batch.problems):
+                raise ValueError("A native trajectory batch requires one solver.")
+            inputs = [self._trajectory_inputs(problem) for problem in batch.problems]
+            shared = {"tsave": inputs[0].pop("tsave")}
+            for kwargs in inputs[1:]:
+                kwargs.pop("tsave")
+            if solver == "dsmesolve":
+                # Native 0.3.4 validates and partitions efficiencies in Python.
+                shared["etas"] = inputs[0].pop("etas")
+                for kwargs in inputs[1:]:
+                    if not np.array_equal(kwargs.pop("etas"), shared["etas"]):
+                        raise ValueError(
+                            "Native SME batching requires shared efficiencies; use solve_many(list(batch))."
+                        )
+            static = [eqx.partition(kwargs, eqx.is_array)[1] for kwargs in inputs]
+            if any(not eqx.tree_equal(static[0], value) for value in static[1:]):
+                raise ValueError("Native trajectory batches require matching methods and run options.")
+            stacked = jtu.tree_map(lambda *values: jnp.stack(values) if eqx.is_array(values[0]) else values[0],
+                                   *inputs)
+            native = eqx.filter_vmap(lambda kwargs: getattr(dq, solver)(**kwargs, **shared))(stacked)
+            return [SolverResult(times=problem.tlist, solver=solver,
+                                 native=jtu.tree_map(lambda value: value[i] if eqx.is_array(value) else value, native))
+                    for i, problem in enumerate(batch.problems)]
         if batch.batch_size == 0:
             return []
 
