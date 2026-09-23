@@ -947,21 +947,9 @@ class _ArrayLowerer:
 
     @staticmethod
     def embed_two_body(local: Any, first: int, second: int, dims: tuple[int, ...]) -> Any:
-        if first > second:
-            first, second = second, first
-            local = jnp.asarray(local).reshape(
-                dims[second], dims[first], dims[second], dims[first]
-            ).transpose(1, 0, 3, 2).reshape(
-                dims[first] * dims[second], dims[first] * dims[second]
-            )
-        order = [first, second] + [index for index in range(len(dims)) if index not in (first, second)]
-        ordered_dims = [dims[index] for index in order]
-        result = jnp.asarray(local)
-        for dimension in ordered_dims[2:]:
-            result = jnp.kron(result, jnp.eye(dimension, dtype=jnp.complex128))
-        inverse = [order.index(index) for index in range(len(dims))]
-        axes = inverse + [len(dims) + index for index in inverse]
-        return result.reshape(*(ordered_dims + ordered_dims)).transpose(*axes).reshape(prod(dims), prod(dims))
+        from quchip.backend._dims import _embed_array
+
+        return _embed_array(local, (first, second), dims, jnp)
 
 
 _ARRAY_LOWERER = _ArrayLowerer()

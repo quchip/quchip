@@ -108,21 +108,21 @@ class EigenstateReference:
     keys: tuple[Any, ...]
 
 
-def compute_overlaps(reference: Any, evecs: jnp.ndarray) -> jnp.ndarray:
-    """``|<ref_k | psi_j>|**2`` matrix, shape ``(n_labels, n_dressed)``.
-
-    Specialized for :class:`BareProductReference` to skip materializing an
-    identity matrix: bare products are the Kronecker standard basis, so
-    ``|<k|psi_j>|**2 = |evecs[k, j]|**2``.
-    """
+def _reference_amplitudes(reference: Any, evecs: jnp.ndarray) -> jnp.ndarray:
+    """Express solver eigenvectors in the captured reference coordinates."""
     if isinstance(reference, BareProductReference):
         amplitudes = evecs.reshape(*reference.dims, evecs.shape[-1])
         for axis, vectors in enumerate(reference.local_vectors):
             if vectors is not None:
                 amplitudes = jnp.tensordot(vectors.conj().T, amplitudes, axes=(1, axis))
                 amplitudes = jnp.moveaxis(amplitudes, 0, axis)
-        return jnp.abs(amplitudes.reshape(evecs.shape)) ** 2
-    return jnp.abs(reference.vectors.conj() @ evecs) ** 2
+        return amplitudes.reshape(evecs.shape)
+    return reference.vectors.conj() @ evecs
+
+
+def compute_overlaps(reference: Any, evecs: jnp.ndarray) -> jnp.ndarray:
+    """``|<ref_k | psi_j>|**2`` matrix, shape ``(n_labels, n_dressed)``."""
+    return jnp.abs(_reference_amplitudes(reference, evecs)) ** 2
 
 
 def _top2_margins(overlaps: jnp.ndarray) -> jnp.ndarray:
@@ -409,27 +409,3 @@ def track_path(
         duplicates=duplicates_path,
         swap_events=swap_events,
     )
-
-
-def phase_fixed_transform(labeling: Labeling, evecs: jnp.ndarray) -> jnp.ndarray:
-    """Phase-fixed transform from Kronecker basis to labeled dressed basis.
-
-    Returns a complex ``(dim, n_labels)`` matrix whose columns are the
-    dressed eigenstates assigned to ``labeling.keys``, with each column
-    phase-rotated so its largest-magnitude component is real-positive.
-    Eigh's default phase convention is gauge-arbitrary; this fix makes
-    ``U`` a smooth function of physical parameters under :func:`vmap` and
-    therefore safe for ``U.conj().T @ O @ U``-style dressed-basis
-    transforms (see :meth:`ChipAnalysis.operator_in_dressed_basis`).
-
-    Only meaningful when ``labeling.indices`` is a permutation. If any
-    ``labeling.duplicates`` is True, two columns of ``U`` will be
-    identical — caller's responsibility to guard.
-    """
-    U = evecs[:, labeling.indices]
-    abs_U = jnp.abs(U)
-    pivot_rows = jnp.argmax(abs_U, axis=0)
-    n_labels = U.shape[1]
-    pivots = U[pivot_rows, jnp.arange(n_labels)]
-    phases = jnp.exp(-1j * jnp.angle(pivots))
-    return U * phases[None, :]

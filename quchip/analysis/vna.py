@@ -334,58 +334,10 @@ class VNA:
                 f"Plane {input_label!r} already carries a fixed pump. The finite_power() probe must be "
                 "the only tone entering the selected input so that <b_out>/beta is unambiguous."
             )
-        freq_values, freq_is_axis = _axis_values(frequencies)
-        amp_values, amp_is_axis = _axis_values(amplitudes)
-        reserved = (["amplitude"] if amp_is_axis else []) + (["frequency"] if freq_is_axis else [])
-        self._validate_variations(variations, reserved=reserved)
-        variation_shape, variation_points = _iter_axis_points(variations)
-        shape = variation_shape
-        axes = _public_axes(variations)
-        if amp_is_axis:
-            shape += (len(amp_values),)
-            axes += (("amplitude", amp_values),)
-        if freq_is_axis:
-            shape += (len(freq_values),)
-            axes += (("frequency", freq_values),)
-        labels = self.ports
-        xp = self.chip.backend.array_module
+        from quchip.analysis.measurement import _acquire
 
-        points = [
-            (tones, chip, amplitude, frequency)
-            for tones, chip in ((self._tone_values(p), self._chip_at(p)) for _, p in variation_points)
-            for amplitude in amp_values
-            for frequency in freq_values
-        ]
-        iterator: Any = points
-        if progress:
-            from tqdm import tqdm
-
-            iterator = tqdm(points, desc="VNA power")
-
-        values: list[Any] = []
-        incident: list[Any] = []
-        diagnostics: list[Mapping[str, Any]] = []
-        for tones, chip, amplitude, frequency in iterator:
-            all_tones = tones + ((input_label, frequency, xp.conj(amplitude)),)
-            operating = _operating_point(
-                chip, all_tones, frequency, (), options
-            )
-            values.append(
-                _plane_means(operating.engine, operating.state.state, chip.backend, labels, all_tones, frequency)
-            )
-            incident.append(xp.asarray(amplitude))
-            diagnostics.append(operating.diagnostics)
-        return MeanFieldResponseResult(
-            ports=labels,
-            input=input_label,
-            frequencies=freq_values if freq_is_axis else freq_values[0],
-            amplitudes=amp_values if amp_is_axis else amp_values[0],
-            axes=axes,
-            shape=shape,
-            diagnostics=tuple(diagnostics),
-            values=xp.conj(xp.reshape(xp.stack(values), (*shape, len(labels)))),
-            incident=xp.reshape(xp.stack(incident), shape),
-        )
+        return _acquire(self, frequencies, amplitudes, variations, labels=self.ports,
+                        input_label=input_label, options=options, progress=progress)
 
     def _validate_variations(
         self, variations: tuple[Sweep | ZippedSweep, ...], *, reserved: Sequence[str] = ()
@@ -491,8 +443,9 @@ class VNA:
         index = next(i for i, item in enumerate(engine.slh.channels) if item.key == output_port)
         boundary_field = xp.einsum("i,ijk->jk", output_mixing(engine.slh, carrier, xp)[index], all_fields)
         field = cw_transfer(channel.reference.outbound, carrier, xp) * boundary_field
-        mean = xp.trace(field @ rho)
-        intensity = xp.real(xp.trace(xp.conj(xp.swapaxes(field, -1, -2)) @ field @ rho))
+        field_rho = field @ rho
+        mean = xp.trace(field_rho)
+        intensity = xp.real(xp.einsum("ij,ij->", field.conj(), field_rho))
         coherent_flux = xp.abs(mean) ** 2
         from quchip.analysis.measurement import capture_noise
         components, _ = capture_noise(operating, self.chip.backend, (output_port,), carrier,
@@ -622,8 +575,8 @@ class VNA:
         input_field_dag = xp.conj(xp.swapaxes(input_field, -1, -2))
         output_number = output_field_dag @ output_field
         input_number = input_field_dag @ input_field
-        output_intensity = xp.real(xp.trace(output_number @ rho))
-        input_intensity = xp.real(xp.trace(input_number @ rho))
+        output_intensity = xp.real(xp.einsum("ij,ji->", output_number, rho))
+        input_intensity = xp.real(xp.einsum("ij,ji->", input_number, rho))
         concrete_output = maybe_concrete_scalar(output_intensity)
         concrete_input = maybe_concrete_scalar(input_intensity)
         if (
@@ -957,7 +910,7 @@ def _plane_means(
     backgrounds = _stationary_output_backgrounds(engine, tones, backend)
     channels = {channel.key: channel for channel in engine.slh.external_channels}
     boundaries = xp.stack([backgrounds.get(channel.key, 0.0)
-                           + xp.trace(xp.asarray(operators[channel.key].to_dense()) @ rho)
+                           + xp.einsum("ij,ji->", xp.asarray(operators[channel.key].to_dense()), rho)
                            for channel in engine.slh.channels])
     boundaries = output_mixing(engine.slh, frequency, xp) @ boundaries
     means = []

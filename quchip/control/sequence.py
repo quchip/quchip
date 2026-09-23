@@ -63,7 +63,7 @@ from quchip.control.drive import (
 from quchip.control.envelopes import Envelope
 from quchip.control.field import CoherentInput, ControlEndpoint
 from quchip.devices.base import BaseDevice
-from quchip.engine.ir import StateStorage, CoherentOp, ControlOp, DriveOp, EngineResult, HamiltonianTemplate
+from quchip.engine.ir import StateStorage, CoherentOp, ControlOp, DriveOp, EngineResult
 from quchip.engine.assembly import (
     build_engine_result,
     compile_hamiltonian_template,
@@ -1035,35 +1035,6 @@ class QuantumSequence:
                         "create the axis from a fresh handle."
                     )
 
-    def _build_batch_point_result(
-        self,
-        template: HamiltonianTemplate,
-        reference_result: Any,
-        overrides: dict[tuple[int | None, str], Any],
-        *,
-        shared_initial_state: Any | None,
-    ) -> tuple[Any, Any]:
-        """Return ``(EngineResult, initial_state)`` for one batch point."""
-        axis_initial_state = overrides.get((None, "initial_state"))
-        entry_overrides = self._entry_overrides(overrides)
-
-        if axis_initial_state is not None and shared_initial_state is not None:
-            raise ValueError("initial_state may be provided either as a shared scalar or as a batch axis, not both")
-
-        if entry_overrides:
-            # Entry overrides only mutate scalar fields (envelope params, freq,
-            # phase, start_time), never the operator skeleton, so re-instantiating
-            # the compiled template cannot fail structural validation. Call it
-            # directly — a ValueError here is a real engine error, not a fallback
-            # trigger.
-            drive_ops = self._materialize_drive_ops(entry_overrides)
-            engine_result = instantiate_engine_result(template, drive_ops, self._chip)
-        else:
-            engine_result = reference_result
-
-        initial_state = axis_initial_state if axis_initial_state is not None else shared_initial_state
-        return engine_result, initial_state
-
     def build_batch(
         self,
         *axes: BatchAxis | ZippedBatchAxis,
@@ -1196,14 +1167,17 @@ class QuantumSequence:
         engine_results: list[Any] = []
         initial_states: list[Any] = []
         for coord, overrides in expanded:
-            engine_result, resolved_initial_state = self._build_batch_point_result(
-                template,
-                reference_result,
-                overrides,
-                shared_initial_state=initial_state,
-            )
+            axis_initial_state = overrides.get((None, "initial_state"))
+            entry_overrides = self._entry_overrides(overrides)
+            if axis_initial_state is not None and initial_state is not None:
+                raise ValueError("initial_state may be provided either as a shared scalar or as a batch axis, not both")
+            engine_result = reference_result
+            if entry_overrides:
+                # Scalar-only entry overrides keep the skeleton; engine errors must propagate.
+                drive_ops = self._materialize_drive_ops(entry_overrides)
+                engine_result = instantiate_engine_result(template, drive_ops, self._chip)
             engine_results.append(engine_result)
-            initial_states.append(resolved_initial_state)
+            initial_states.append(axis_initial_state if axis_initial_state is not None else initial_state)
 
             params_store[coord] = self._point_params(axes, coord)
 

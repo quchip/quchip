@@ -422,7 +422,7 @@ class Backend(ABC):
         state_arr = np.asarray(self.to_array(state), dtype=complex)
         if state_arr.ndim == 2 and state_arr.shape[1] == 1:
             return complex(np.conj(state_arr).T @ op_arr @ state_arr)
-        return complex(np.trace(op_arr @ state_arr))
+        return complex(np.einsum("ij,ji->", op_arr, state_arr))
 
     def ptrace(self, state: State, keep: int | list[int], dims: list[int]) -> State:
         """Reduce a composite state onto subsystem(s) *keep* via partial trace.

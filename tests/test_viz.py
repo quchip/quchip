@@ -311,8 +311,8 @@ def test_plot_state_dm_heatmaps_share_symmetric_normalization(multi_device_state
     plt.close(fig)
 
 
-def test_wigner_from_density_matrix_matches_qutip_for_complex_superposition() -> None:
-    """_wigner_from_density_matrix matches qutip.wigner to tight tolerance for a complex Fock superposition."""
+def test_wigner_complex_superposition_has_expected_quadrature() -> None:
+    """The vacuum/one-photon superposition has the analytic momentum interference term."""
     dim = 6
     psi = (qutip.basis(dim, 0) + 1j * qutip.basis(dim, 1)).unit()
     rho = psi * psi.dag()
@@ -320,20 +320,24 @@ def test_wigner_from_density_matrix_matches_qutip_for_complex_superposition() ->
     xvec = np.linspace(-4.0, 4.0, 81)
 
     actual = _wigner_from_density_matrix(rho_np, xvec, xvec)
-    expected = qutip.wigner(rho, xvec, xvec, g=np.sqrt(2))
+    x, p = np.meshgrid(xvec, xvec)
+    radius = x**2 + p**2
+    expected = np.exp(-radius) * (radius + np.sqrt(2) * p) / np.pi
 
     np.testing.assert_allclose(actual, expected, atol=1e-10)
 
 
-def test_wigner_from_density_matrix_matches_qutip_for_fock_state() -> None:
-    """_wigner_from_density_matrix matches qutip.wigner to tight tolerance for a pure Fock state."""
+def test_wigner_two_photon_state_matches_laguerre_polynomial() -> None:
+    """The two-photon Wigner function is exp(-r²) L₂(2r²)/pi."""
     dim = 5
     rho = qutip.ket2dm(qutip.basis(dim, 2))
     rho_np = rho.full()
     xvec = np.linspace(-4.0, 4.0, 61)
 
     actual = _wigner_from_density_matrix(rho_np, xvec, xvec)
-    expected = qutip.wigner(rho, xvec, xvec, g=np.sqrt(2))
+    x, p = np.meshgrid(xvec, xvec)
+    radius = x**2 + p**2
+    expected = np.exp(-radius) * (1 - 4 * radius + 2 * radius**2) / np.pi
 
     np.testing.assert_allclose(actual, expected, atol=1e-10)
 

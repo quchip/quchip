@@ -46,7 +46,7 @@ import jax.tree_util as jtu  # noqa: E402
 from quchip.backend._response import linear_response, stationary_condition_number
 from quchip.utils.values import DeferredValue
 from quchip.backend._dims import (  # noqa: E402
-    compute_two_body_permutation,
+    _embed_array,
     default_solver_steps,
     normalize_dims_from_list,
     validate_two_body_indices,
@@ -360,24 +360,15 @@ class DynamiqsBackend(Backend):
         if canonical.is_sparse:
             return self._embed_two_body_sparse(canonical, index_a, index_b, dims)
 
-        op_dense, first_idx, second_idx = self._reorder_two_body_array(op_ab, index_a, index_b, dims)
-        reorder, inverse_reorder = compute_two_body_permutation(first_idx, second_idx, dims)
-        reordered_dims = [dims[idx] for idx in reorder]
-        op_ordered = dq.asqarray(op_dense, dims=(dims[first_idx], dims[second_idx]))
-
-        factors: list[Operator] = [op_ordered]
-        factors.extend(dq.eye(dim) for dim in reordered_dims[2:])
-        full_reordered = self.tensor(*factors)
-
-        n_devices = len(dims)
-        # Reshape to rank-2N, apply the inverse permutation to both the row
-        # and column index groups so subsystem ordering matches the original.
-        perm = tuple(inverse_reorder + [n_devices + idx for idx in inverse_reorder])
-        dense = self.to_array(full_reordered).reshape(tuple(reordered_dims) + tuple(reordered_dims))
-        # math.prod, not jnp: dims are static Python ints, and a reshape size
-        # must stay concrete — jnp constants are tracers inside a jit trace.
-        restored = jnp.transpose(dense, axes=perm).reshape(math.prod(dims), -1)
-        return dq.asqarray(restored, dims=tuple(dims))
+        validate_two_body_indices(index_a, index_b, dims)
+        expected_dim = dims[index_a] * dims[index_b]
+        if canonical.shape != (expected_dim, expected_dim):
+            raise ValueError(
+                f"Two-body operator dimension {canonical.shape[0]} does not match "
+                f"dims[{index_a}]*dims[{index_b}] = {expected_dim}"
+            )
+        embedded = _embed_array(self.to_array(op_ab), (index_a, index_b), dims, jnp)
+        return dq.asqarray(embedded, dims=tuple(dims))
 
     def basis(self, n: int, k: int) -> State:
         return dq.basis(n, k)
@@ -566,8 +557,7 @@ class DynamiqsBackend(Backend):
         liouvillian = self.prepare_stationary(problem.engine_result, prepared=prepared).liouvillian
         dimension = math.prod(problem.engine_result.dims)
 
-        trace_row = jnp.zeros((dimension * dimension,), dtype=jnp.complex128)
-        trace_row = trace_row.at[:: dimension + 1].set(1.0)
+        trace_row = jnp.eye(dimension, dtype=jnp.complex128).reshape(-1)
         constrained = liouvillian.at[-1, :].set(trace_row)
         target = jnp.zeros((dimension * dimension,), dtype=jnp.complex128)
         target = target.at[-1].set(1.0)
@@ -628,8 +618,7 @@ class DynamiqsBackend(Backend):
             axis=1,
         )
         targets = targets.at[-1, :].set(0.0)
-        trace_row = jnp.zeros((dimension * dimension,), dtype=jnp.complex128)
-        trace_row = trace_row.at[:: dimension + 1].set(1.0)
+        trace_row = jnp.eye(dimension, dtype=jnp.complex128).reshape(-1)
         identity = jnp.eye(dimension * dimension, dtype=jnp.complex128)
         native_observables = tuple(
             (label, jnp.asarray(operator.to_dense(), dtype=jnp.complex128))
@@ -646,7 +635,7 @@ class DynamiqsBackend(Backend):
             for column, (source_label, _) in enumerate(sources):
                 response = solutions[:, column].reshape((dimension, dimension)).T
                 for label, observable in native_observables:
-                    values[(source_label, label)].append(jnp.trace(observable @ response))
+                    values[(source_label, label)].append(jnp.einsum("ij,ji->", observable, response))
 
         return {key: jnp.asarray(items) for key, items in values.items()}
 
@@ -673,38 +662,14 @@ class DynamiqsBackend(Backend):
                 (dimension, dimension)
             ).T
             for label, observable in native_observables:
-                values[label].append(jnp.trace(observable @ evolved))
+                values[label].append(jnp.einsum("ij,ji->", observable, evolved))
 
         return {label: jnp.asarray(items) for label, items in values.items()}
 
-    # ------------------------------------------------------------------
-    # Cached single-problem dispatch (amortize the XLA/diffrax compile floor)
-    # ------------------------------------------------------------------
-    #
-    # A fresh ``simulate()`` re-runs ``prepare_hamiltonian`` (new closures) and
-    # re-enters ``dq.sesolve`` with a structurally-fresh ``H`` pytree, so XLA
-    # re-traces every call (~490 ms floor). An optimization inner loop that
-    # repeatedly solves the SAME operator skeleton with different (traced)
-    # pulse parameters pays that floor on every iteration.
-    #
-    # The fix below builds H *inside* a ``jax.jit``-compiled solve from the
-    # engine's clean quchip-side pytrees (qarrays + ``ScalarModulation`` ASTs,
-    # whose treedefs are stable across rebuilds, unlike dynamiqs' ephemeral
-    # ``BatchedCallable`` closure ids). Every physics datum (static/dynamic
-    # operator values, signal leaves, coefficients, c_ops, e_ops, psi0, tlist)
-    # flows as a TRACED jit argument, so:
-    #   * jax.grad / jax.vmap still flow;
-    #   * a structurally-identical problem with different values reuses the
-    #     compiled artifact (jax's own jit cache, keyed on argument treedefs +
-    #     the static solver/options config);
-    #   * NO operator/coefficient is closed over by value, so there is no
-    #     stale-value reuse across e.g. a device-frequency sweep.
-    #
-    # The backend-private ``_jit_solve_cache`` maps a STATIC config signature
-    # (solver name + options/method objects + e_ops/c_ops presence) to a
-    # jitted callable. It stores ONLY pure functions + static metadata, never a
-    # tracer (avoids stale-trace-context bugs). The cache lives entirely in the
-    # backend; the engine emits the same EngineResult regardless.
+    # Build H inside jit from stable quchip pytrees, avoiding ephemeral Dynamiqs closure keys.
+    # Cache only callables and static solver configuration; pass all physics data (operators,
+    # coefficients, states, times and observables) as traced arguments. JAX then reuses matching
+    # structures without capturing stale values or tracers, preserving grad/vmap across sweeps.
 
     _jit_solve_cache: dict[Any, Any]
 
@@ -795,13 +760,7 @@ class DynamiqsBackend(Backend):
 
     @staticmethod
     def _engine_result_is_cacheable(engine_result: Any) -> bool:
-        """Return whether every dynamic term is a ``ScalarModulation`` that can be rebuilt inside the jit.
-
-        A purely static result (``dynamic_terms == []``) is intentionally
-        cacheable: ``all(...)`` over an empty sequence is ``True``, and the jit
-        builds a static-only RHS from the (still traced) static operators. This
-        is correct but an unusual use of a cache aimed at dynamic problems.
-        """
+        """Accept static results and results whose dynamic terms are all rebuildable ScalarModulations."""
         terms = getattr(engine_result, "dynamic_terms", None)
         if terms is None:
             return False
@@ -821,17 +780,8 @@ class DynamiqsBackend(Backend):
         n_dynamic: int,
         n_c_ops: int,
     ) -> Any:
-        """Return a cached single or vmapped solve for this static config.
-
-        The key is built ONLY from static/structural metadata: solver name,
-        the (hashable, value-equal) dynamiqs ``Options``/``method``/``gradient``
-        objects, observable/collapse/term *counts*, and the e_ops presence flag.
-        No traced array, and no operator/coefficient *value*, touches the key:
-        those all flow as jit arguments, where jax's own cache keys on their
-        treedefs + shapes. Two structurally-different problems therefore land on
-        different compiled artifacts (either via this dict for graph-affecting
-        config, or via jax's argument-treedef cache for operator structure).
-        """
+        """Cache single or vmapped solves by static solver configuration and term counts.
+        JAX keys numerical arguments by pytree structure and shape; no physics values enter this key."""
         key = (
             "batch" if batched else "single",
             point_e_ops,
@@ -1025,7 +975,8 @@ class DynamiqsBackend(Backend):
         """
         engine_results = tuple(problem.engine_result for problem in batch.problems)
         cached_native = self._make_op_cache()
-        if all(result.static_terms is engine_results[0].static_terms for result in engine_results[1:]):
+        static_term_ids = engine_results[0]._static_term_ids
+        if all(result._static_term_ids == static_term_ids for result in engine_results[1:]):
             static_operators = [
                 cached_native(term.operator)
                 for term in engine_results[0].static_terms
@@ -1202,31 +1153,6 @@ class DynamiqsBackend(Backend):
             if shape[1] == 1 or shape[0] == shape[1]:
                 return (shape[0],)
         return None
-
-    def _reorder_two_body_array(
-        self,
-        op_ab: Operator,
-        index_a: int,
-        index_b: int,
-        dims: Sequence[int],
-    ) -> tuple[Any, int, int]:
-        """Validate indices and reorder a two-body operator into ascending device order."""
-        validate_two_body_indices(index_a, index_b, dims)
-
-        dense = self.to_array(op_ab)
-        expected_dim = dims[index_a] * dims[index_b]
-        if dense.shape[0] != expected_dim or dense.shape[1] != expected_dim:
-            raise ValueError(
-                f"Two-body operator dimension {dense.shape[0]} does not match "
-                f"dims[{index_a}]*dims[{index_b}] = {expected_dim}"
-            )
-
-        if index_a < index_b:
-            return dense, index_a, index_b
-
-        d_a, d_b = dims[index_a], dims[index_b]
-        swapped = dense.reshape(d_a, d_b, d_a, d_b).transpose(1, 0, 3, 2).reshape(d_b * d_a, d_b * d_a)
-        return swapped, index_b, index_a
 
     def _embed_two_body_sparse(
         self,

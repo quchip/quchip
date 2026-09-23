@@ -30,6 +30,7 @@ from quchip.chip.couplings import Capacitive
 from quchip.control import ChargeDrive, ControlEquipment
 from quchip.devices.resonator import Resonator
 from quchip.devices.transmon.duffing import DuffingTransmon
+from quchip.devices.transmon.charge_basis import ChargeBasisTransmon
 from quchip.extensions import ChargePhaseDrive
 
 
@@ -39,6 +40,49 @@ ALPHA = -0.25
 G = 0.05
 Q_LEVELS = 4
 R_LEVELS = 10
+
+
+@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])
+@pytest.mark.parametrize("basis", ["native", "eigen"])
+def test_dressed_analysis_uses_local_energy_labels(backend, basis) -> None:
+    """Dressed observables and components use energy labels in either solver basis."""
+    if backend == "dynamiqs":
+        pytest.importorskip("dynamiqs")
+    q = ChargeBasisTransmon(
+        E_C=0.25, E_J=12.0, n_g=0.13, num_basis=7, basis=basis, label="q",
+        **({"levels": 4} if basis == "eigen" else {}),
+    )
+    drive = ChargeDrive(q, label="xy")
+    chip = Chip([q], backend=backend, control_equipment=ControlEquipment([drive]))
+    # Independent isolated-device eigenbasis: no coupling can mix energy labels.
+    energies, vectors = np.linalg.eigh(np.asarray(q.unresolved_hamiltonian().matrix()))
+    vectors = vectors[:, :chip.total_dim]
+    reference = np.asarray(chip._analysis.engine_result().bases[q.label].energy_vectors)
+    phases = np.sum(vectors.conj() * reference, axis=0)
+    vectors = vectors * (phases / np.abs(phases))
+    expected_n = vectors.conj().T @ np.asarray(q.charge_coupling_operator()) @ vectors
+    dressed_n = chip.backend.to_array(chip.operator_in_dressed_basis(q, "n"))
+    np.testing.assert_allclose(dressed_n, expected_n, atol=1e-12)
+    explicit = chip.operator_in_dressed_basis(q, chip.observable(q, "n"))
+    np.testing.assert_allclose(chip.backend.to_array(explicit), expected_n, atol=1e-12)
+    element = chip.drive_matrix_elements(({q: 2}, {q: 3}), drives=[drive])[drive]
+    assert element == pytest.approx(expected_n[3, 2], abs=1e-12)
+    assert chip.state_components({q: 1})[(1,)] == pytest.approx(1.0, abs=1e-12)
+    effective = chip.effective_subspace_hamiltonian(({q: 0}, {q: 1}))
+    np.testing.assert_allclose(effective, np.diag(energies[:2]), atol=1e-12)
+    assert isinstance(effective, np.ndarray)
+    assert effective.dtype == np.complex128
+    with pytest.raises(ValueError):
+        chip.effective_subspace_hamiltonian(({q: 0}, {q: 0}))
+    with pytest.raises(ValueError, match="at least one state"):
+        chip.effective_subspace_hamiltonian(())
+    if backend == "dynamiqs":
+        import jax
+
+        state = jax.jit(lambda ej: chip.with_params({"q.E_J": ej}).state(q=1))(12.0)
+        np.testing.assert_allclose(
+            abs(chip.backend.to_array(state)), abs(chip.backend.to_array(chip.state(q=1))), atol=1e-12,
+        )
 
 
 @pytest.fixture

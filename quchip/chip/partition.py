@@ -6,11 +6,10 @@ or classical drive crosstalk between lines targeting them. All decisions are
 made from labels and object presence — never from parameter values, which
 may be JAX tracers.
 
-When splitting observables via split_e_ops: every user key is resolved and
-validated up front (duplicate resolved keys and malformed correlator values
-both raise), then grouped per (component, label) before anything is emitted,
-so collisions never depend on dict iteration order. A user key whose value is
-already a list keeps index=None in its LocalEop — the wrapper passes the
+When splitting observables via split_e_ops, keys are resolved and validated
+while local observables and cross-component factors are grouped. Factor indices
+are assigned afterward, so collisions never depend on dict iteration order.
+A user key whose value is already a list keeps index=None in its LocalEop — the wrapper passes the
 user's own indices through unchanged, and any injected factor is appended
 after them. A scalar local value that collides with one or more factors gets
 re-indexed to 0, with each factor appended after it in encounter order. The
@@ -331,23 +330,9 @@ def split_drive_ops(part: PartitionResult, chip: "Chip", drive_ops: list) -> lis
     return per
 
 
-@dataclass(frozen=True)
-class _ResolvedEntry:
-    """One user e_ops entry after label resolution and validation (PASS 0 output)."""
-
-    key: Any
-    value: Any
-    resolved: Any
-    is_tuple: bool
-    label_a: str
-    label_b: str
-    comp_a: int
-    comp_b: int
-
-
 @dataclass
 class _LabelGroup:
-    """Everything landing on one (component, label) slot, before PASS 2 emits it.
+    """Local observables and correlator factors sharing one (component, label) slot.
 
     ``local`` is the plain (non-cross) entry for this slot, if any, as
     ``(resolved_key, value)``. ``factors`` are cross-component correlator
@@ -360,21 +345,19 @@ class _LabelGroup:
 
 
 def split_e_ops(part: PartitionResult, e_ops: dict | None) -> tuple[list[dict], dict]:
-    """Distribute dict-form e_ops over components; cross-component correlators become factor pairs.
-
-    Order-independent by construction: every key is resolved and validated in
-    one pass (PASS 0), grouped per (component, label) in a second pass (PASS 1),
-    and only then emitted (PASS 2) — so no fixup pass over already-built plan
-    entries is ever needed, and dict iteration order cannot change the result.
-    """
+    """Group local observables and cross-component factors before assigning indices."""
     per: list[dict] = [dict() for _ in part.components]
     plan: dict[Any, LocalEop | CrossEop] = {}
     if not e_ops:
         return per, plan
 
-    # ---- PASS 0: resolve every key, validate for duplicates and shape ----
-    entries: list[_ResolvedEntry] = []
+    groups: dict[tuple[int, str], _LabelGroup] = {}
+    cross_owners: dict[tuple[str, str], tuple[int, int]] = {}
     seen: dict[Any, Any] = {}
+
+    def group(component: int, label: str) -> _LabelGroup:
+        return groups.setdefault((component, label), _LabelGroup())
+
     for key, value in e_ops.items():
         if isinstance(key, tuple):
             label_a, label_b = (resolve_label(k) for k in key)
@@ -389,99 +372,57 @@ def split_e_ops(part: PartitionResult, e_ops: dict | None) -> tuple[list[dict], 
             )
         seen[resolved] = key
 
-        is_tuple = isinstance(key, tuple)
-        if is_tuple:
-            comp_a, comp_b = part.owner_of(label_a), part.owner_of(label_b)
-            if comp_a != comp_b and (not isinstance(value, (tuple, list)) or len(value) != 2):
-                raise ValueError(
-                    f"Cross-component e_ops key {key!r} needs a 2-element (op_a, op_b) value; "
-                    f"got {value!r}"
-                )
-        else:
-            comp_a = comp_b = part.owner_of(label_a)
-
-        entries.append(
-            _ResolvedEntry(
-                key=key,
-                value=value,
-                resolved=resolved,
-                is_tuple=is_tuple,
-                label_a=label_a,
-                label_b=label_b,
-                comp_a=comp_a,
-                comp_b=comp_b,
+        if not isinstance(key, tuple):
+            group(part.owner_of(label_a), label_a).local = (resolved, value)
+            continue
+        comp_a, comp_b = part.owner_of(label_a), part.owner_of(label_b)
+        if comp_a == comp_b:
+            per[comp_a][resolved] = value
+            plan[resolved] = LocalEop(component=comp_a, key=resolved)
+            continue
+        if not isinstance(value, (tuple, list)) or len(value) != 2:
+            raise ValueError(
+                f"Cross-component e_ops key {key!r} needs a 2-element (op_a, op_b) value; "
+                f"got {value!r}"
             )
-        )
+        op_a, op_b = value
+        group(comp_a, label_a).factors.append((resolved, "a", op_a))
+        group(comp_b, label_b).factors.append((resolved, "b", op_b))
+        cross_owners[resolved] = (comp_a, comp_b)
 
-    # ---- PASS 1: group everything landing under a device-label key ----
-    groups: dict[tuple[int, str], _LabelGroup] = {}
-
-    def _group(component: int, label: str) -> _LabelGroup:
-        return groups.setdefault((component, label), _LabelGroup())
-
-    for entry in entries:
-        if not entry.is_tuple:
-            _group(entry.comp_a, entry.label_a).local = (entry.resolved, entry.value)
-            continue
-        if entry.comp_a == entry.comp_b:
-            # Same-component tuple key: verbatim, cannot collide with label keys.
-            per[entry.comp_a][entry.resolved] = entry.value
-            plan[entry.resolved] = LocalEop(component=entry.comp_a, key=entry.resolved, index=None)
-            continue
-        op_a, op_b = entry.value
-        _group(entry.comp_a, entry.label_a).factors.append((entry.resolved, "a", op_a))
-        _group(entry.comp_b, entry.label_b).factors.append((entry.resolved, "b", op_b))
-
-    # ---- PASS 2: emit per-label entries; record each factor's final index ----
     factor_index: dict[tuple[Any, str], int | None] = {}
-    for (component, label), group in groups.items():
-        local = group.local
-        factors = group.factors
-
+    for (component, label), entries in groups.items():
+        local, factors = entries.local, entries.factors
         if not factors:
-            # A group exists only because PASS 1 wrote to it, so a factor-less
-            # group always carries a local entry.
             assert local is not None
-            resolved_key, value = local
+            resolved, value = local
             per[component][label] = value
-            plan[resolved_key] = LocalEop(component=component, key=label, index=None)
+            plan[resolved] = LocalEop(component=component, key=label)
+            continue
+        if local is None and len(factors) == 1:
+            key, side, op = factors[0]
+            per[component][label] = op
+            factor_index[(key, side)] = None
             continue
 
-        if local is None:
-            if len(factors) == 1:
-                norm_key, side, op = factors[0]
-                per[component][label] = op
-                factor_index[(norm_key, side)] = None
-                continue
-            values = []
-            for i, (norm_key, side, op) in enumerate(factors):
-                values.append(op)
-                factor_index[(norm_key, side)] = i
-            per[component][label] = values
-            continue
-
-        resolved_key, value = local
-        if isinstance(value, list):
-            values = list(value)
-            plan[resolved_key] = LocalEop(component=component, key=label, index=None)
-        else:
-            values = [value]
-            plan[resolved_key] = LocalEop(component=component, key=label, index=0)
-        offset = len(values)
-        for i, (norm_key, side, op) in enumerate(factors):
+        values = []
+        if local is not None:
+            resolved, value = local
+            values = list(value) if isinstance(value, list) else [value]
+            plan[resolved] = LocalEop(
+                component=component, key=label, index=None if isinstance(value, list) else 0,
+            )
+        for key, side, op in factors:
+            factor_index[(key, side)] = len(values)
             values.append(op)
-            factor_index[(norm_key, side)] = offset + i
         per[component][label] = values
 
-    # ---- Build CrossEops now that every factor's final index is known ----
-    for entry in entries:
-        if not entry.is_tuple or entry.comp_a == entry.comp_b:
-            continue
-        norm_key = entry.resolved
-        entry_a = LocalEop(component=entry.comp_a, key=entry.label_a, index=factor_index[(norm_key, "a")])
-        entry_b = LocalEop(component=entry.comp_b, key=entry.label_b, index=factor_index[(norm_key, "b")])
-        plan[norm_key] = CrossEop(a=entry_a, b=entry_b)
-
+    for (label_a, label_b), (comp_a, comp_b) in cross_owners.items():
+        key = (label_a, label_b)
+        plan[key] = CrossEop(
+            a=LocalEop(component=comp_a, key=label_a, index=factor_index[(key, "a")]),
+            b=LocalEop(component=comp_b, key=label_b, index=factor_index[(key, "b")]),
+        )
     return per, plan
 
 

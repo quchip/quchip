@@ -80,21 +80,18 @@ def describe_chip(chip: "Chip") -> str:
         lines += [f"           {line}" for line in _format_frame_plan(plan)]
     lines.append(f"Approx.  : {type(chip.approximation).__name__}")
     lines.append(f"Dressed  : {'cached' if chip.is_dressed else 'not computed'}")
-    dims = [d.levels for d in chip.devices]
+    dims = chip.dims
     if dims:
-        total = 1
-        for n in dims:
-            total *= n
         lines.append(
-            f"Hilbert  : {' x '.join(str(n) for n in dims)} = {total} levels"
+            f"Hilbert  : {' x '.join(str(n) for n in dims)} = {chip.total_dim} levels"
         )
 
     lines.append("")
     lines += _section(f"Devices ({len(chip.devices)})")
-    for dev in chip.devices:
+    for dev, dim in zip(chip.devices, dims):
         lines.append(f"{dev.label} — {type(dev).__name__}")
         params = _declared_param_line(dev)
-        detail = f"{params}   levels = {dev.levels}" if params else f"levels = {dev.levels}"
+        detail = f"{params}   levels = {dim}" if params else f"levels = {dim}"
         lines.append(f"    {detail}")
         noise = [
             _param_text(name, getattr(dev, name), unit)

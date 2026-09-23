@@ -30,6 +30,7 @@ from quchip.declarative.dissipation import CollapseChannel, normalize_dissipatio
 from quchip.declarative.expr import ParameterNamespace, as_operator_expr
 from quchip.declarative.ops import LocalOps
 from quchip.declarative.parameters import (
+    _synthesize_init,
     KeywordOnlyDeclarativeMeta,
     Parameter,
     constructor_field,
@@ -85,19 +86,10 @@ def _synthesize_drive_init(cls: type["BaseDrive"]) -> Any:
         )
     )
 
-    def __init__(self: BaseDrive, *args: Any, **kwargs: Any) -> None:
-        bound = signature.bind(self, *args, **kwargs)
-        bound.apply_defaults()
-        arguments = dict(bound.arguments)
-        arguments.pop("self")
-        target = arguments.pop("target")
-        label = arguments.pop("label")
-        BaseDrive.__init__(self, target=target, label=label, **arguments)
-
-    __init__.__signature__ = signature  # type: ignore[attr-defined]
-    __init__.__qualname__ = f"{cls.__qualname__}.__init__"
-    __init__.__doc__ = f"Initialize {cls.__name__} from its target and declared fields."
-    return __init__
+    return _synthesize_init(
+        cls, signature, BaseDrive.__init__,
+        doc=f"Initialize {cls.__name__} from its target and declared fields.",
+    )
 
 
 class BaseDrive(Registrable, registry_root=True, metaclass=KeywordOnlyDeclarativeMeta):

@@ -126,8 +126,11 @@ def concatenate(*systems: ResolvedSLH, prefixes: Sequence[str] | None = None) ->
     if any(system.output_network is not None for system in systems):
         raise ValueError("Compose the physical PortNetwork before resolving branched output reference sections.")
     xp = _array_module(systems)
+    assemble_blocks = block_diag
+    if xp is not np:
+        from jax.scipy.linalg import block_diag as assemble_blocks
     grid = np.ix_(order, order)
-    scattering = _block_diagonal([xp.asarray(system.scattering, dtype=complex) for system in systems], xp)[grid]
+    scattering = assemble_blocks(*(xp.asarray(system.scattering, dtype=complex) for system in systems))[grid]
     support = block_diag(*(np.asarray(system.support, dtype=bool) for system in systems))[grid]
     channels = tuple(replace(entries[index], coupling_operator=entries[index].coupling) for index in order)
     return ResolvedSLH(
@@ -273,22 +276,12 @@ def _require_joinable(operation: str, upstream: SLHChannel, downstream: SLHChann
 
 
 def _same_carrier(first: Any, second: Any) -> bool:
+    """Allow concrete roundoff in static SLH composition; traced carriers require identity."""
     first_concrete = maybe_concrete_scalar(first)
     second_concrete = maybe_concrete_scalar(second)
     if first_concrete is not None and second_concrete is not None:
         return bool(np.isclose(first_concrete, second_concrete, rtol=1e-12, atol=1e-12))
     return first is second
-
-
-def _block_diagonal(blocks: list[Any], xp: Any) -> Any:
-    sizes = [block.shape[0] for block in blocks]
-    total = sum(sizes)
-    rows = []
-    for offset, block in zip(np.cumsum([0, *sizes[:-1]]), blocks, strict=True):
-        before = xp.zeros((block.shape[0], int(offset)), dtype=complex)
-        after = xp.zeros((block.shape[0], total - int(offset) - block.shape[0]), dtype=complex)
-        rows.append(xp.concatenate((before, block, after), axis=1))
-    return xp.concatenate(rows, axis=0)
 
 
 def _dag(matrices: Any, xp: Any) -> Any:

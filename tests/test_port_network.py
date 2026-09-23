@@ -373,6 +373,11 @@ def test_network_graph_round_trips_and_clone_remains_independent() -> None:
     restored = Chip.from_dict(json.loads(json.dumps(chip.to_dict())))
     cloned = chip.clone()
 
+    malformed = network.to_dict()
+    malformed["connections"][0]["input"][0] = "missing"
+    with pytest.raises(ValueError, match="Unknown component"):
+        PortNetwork.from_dict(malformed)
+
     np.testing.assert_allclose(restored.resolve().slh.S, chip.resolve().slh.S)
     np.testing.assert_allclose(restored.resolve().slh.L[0].to_dense(), chip.resolve().slh.L[0].to_dense())
     assert restored.resolve().slh.external_channels[0].reference == chip.resolve().slh.external_channels[0].reference

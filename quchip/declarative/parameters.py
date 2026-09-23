@@ -14,7 +14,7 @@ from __future__ import annotations
 import inspect
 from abc import ABCMeta
 from dataclasses import dataclass
-from typing import Any, TypeAlias, TypeVar, dataclass_transform
+from typing import Any, Callable, TypeAlias, TypeVar, dataclass_transform
 
 from quchip.utils.jax_utils import maybe_concrete_scalar
 from quchip.utils.values import copy_value
@@ -261,6 +261,29 @@ def build_declared_signature(
         params.append(inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY, default=default))
     params.extend(trailing)
     return inspect.Signature(params)
+
+
+def _synthesize_init(
+    cls: type,
+    signature: inspect.Signature,
+    initializer: Callable[..., None],
+    *,
+    doc: str | None = None,
+    normalize_kwargs: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+) -> Any:
+    """Bind a declared signature before delegating to its owning initializer."""
+    def __init__(self: Any, *args: Any, **kwargs: Any) -> None:
+        if normalize_kwargs is not None:
+            kwargs = normalize_kwargs(kwargs)
+        bound = signature.bind(self, *args, **kwargs)
+        bound.apply_defaults()
+        initializer(**bound.arguments)
+
+    __init__.__signature__ = signature  # type: ignore[attr-defined]
+    __init__.__qualname__ = f"{cls.__qualname__}.__init__"
+    __init__.__module__ = initializer.__module__
+    __init__.__doc__ = doc
+    return __init__
 
 
 def resolve_declared_params(

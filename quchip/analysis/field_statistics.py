@@ -79,11 +79,9 @@ def quadrature_transfer(upper: Any, lower: Any, xp: Any) -> Any:
 
 def block_diagonal(blocks: Any, xp: Any) -> Any:
     """Assemble per-output IQ blocks, preserving leading batch axes."""
-    count = blocks.shape[-3]
-    selectors = xp.eye(count)
-    return xp.sum(xp.stack([
-        xp.kron(selectors[i:i+1].T @ selectors[i:i+1], blocks[..., i, :, :])
-        for i in range(count)]), axis=0)
+    count, rows, columns = blocks.shape[-3:]
+    return xp.einsum("ij,...iab->...iajb", xp.eye(count), blocks).reshape(
+        (*blocks.shape[:-3], count * rows, count * columns))
 
 
 def proper_spectrum(upper: Any, lower: Any, xp: Any) -> Any:

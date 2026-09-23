@@ -11,6 +11,7 @@ time in ns.
 
 from __future__ import annotations
 
+from math import prod
 from typing import Any, Sequence
 
 import numpy as np
@@ -44,9 +45,6 @@ def compute_two_body_permutation(
     ascending index order, followed by spectators) and *inverse* maps each
     original position to its new slot so ``order[inverse[i]] == i``.
 
-    Used by backends to embed a two-body operator acting on arbitrary device
-    indices into the full tensor product without densifying spectators.
-
     Parameters
     ----------
     idx_a, idx_b
@@ -68,6 +66,20 @@ def compute_two_body_permutation(
     for new_pos, old_pos in enumerate(order):
         inverse[old_pos] = new_pos
     return order, inverse
+
+
+def _embed_array(local: Any, support: Sequence[int], dims: Sequence[int], xp: Any) -> Any:
+    """Pad an ordered local tensor with spectators and restore the full subsystem order."""
+    support = tuple(support)
+    rest = tuple(index for index in range(len(dims)) if index not in support)
+    order = support + rest
+    ordered_dims = tuple(dims[index] for index in order)
+    matrix = xp.asarray(local)
+    if rest:
+        matrix = xp.kron(matrix, xp.eye(prod(dims[index] for index in rest), dtype=complex))
+    inverse = tuple(order.index(index) for index in range(len(dims)))
+    axes = inverse + tuple(len(dims) + index for index in inverse)
+    return xp.transpose(matrix.reshape(ordered_dims + ordered_dims), axes).reshape(prod(dims), prod(dims))
 
 
 def normalize_dims_from_list(

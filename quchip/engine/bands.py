@@ -155,30 +155,19 @@ def prune_zero_diagonals(canonical: CanonicalOperator) -> CanonicalOperator:
     )
 
 
-def _build_weighted_bands(
-    matrix: Any,
-    weights: Any,
-    band_values: range,
-) -> dict[int, Any]:
-    """Mask *matrix* by each weight in *band_values*; drop low-norm bands for concrete arrays only.
-
-    A band is dropped when its Frobenius norm is at most ``_BAND_NORM_RTOL``
-    of *matrix*'s own Frobenius norm -- relative to the parent operator, not
-    an absolute cutoff, so the test scales with the operator's own
-    magnitude. Traced JAX arrays retain every band to keep the set of bands
-    statically known across jit traces. Concrete (tracer-free) JAX arrays
-    are inspectable and drop low-norm bands exactly like NumPy payloads.
-    """
+def _decompose_dense_bands(matrix: Any, dims: tuple[int, ...]) -> dict[tuple[int, ...], Any]:
+    """Partition by product-basis level changes; prune only concrete relative norms."""
     xp = _array_namespace(matrix)
+    states = np.stack(np.unravel_index(np.arange(prod(dims)), dims), axis=-1)
+    changes = states[None, :, :] - states[:, None, :]
     zero = xp.zeros_like(matrix)
     parent_norm = _concrete_parent_norm(matrix)
-
-    bands: dict[int, Any] = {}
-    for weight in band_values:
-        band = xp.where(weights == weight, matrix, zero)
+    bands: dict[tuple[int, ...], Any] = {}
+    for weights in product(*(range(-(dim - 1), dim) for dim in dims)):
+        band = xp.where(np.all(changes == weights, axis=-1), matrix, zero)
         if parent_norm is not None and _frobenius_norm(band) <= _BAND_NORM_RTOL * parent_norm:
             continue
-        bands[weight] = band
+        bands[weights] = band
     return bands
 
 
@@ -200,12 +189,8 @@ def decompose_bands(
     if op_matrix.shape != (dim, dim):
         raise ValueError(f"op_matrix shape {op_matrix.shape} does not match ({dim}, {dim})")
 
-    xp = _array_namespace(op_matrix)
-    matrix = xp.asarray(op_matrix)
-    row_idx = xp.arange(dim, dtype=int)[:, None]
-    col_idx = xp.arange(dim, dtype=int)[None, :]
-    weights = col_idx - row_idx
-    return _build_weighted_bands(matrix, weights, range(-(dim - 1), dim))
+    matrix = _array_namespace(op_matrix).asarray(op_matrix)
+    return {weights[0]: band for weights, band in _decompose_dense_bands(matrix, (dim,)).items()}
 
 
 def _all_entries_coo(canonical: CanonicalOperator) -> tuple[Any, Any, Any]:
@@ -397,52 +382,11 @@ def decompose_canonical_bands(
     if canonical.shape != (dim, dim):
         raise ValueError(f"canonical shape {canonical.shape} does not match ({dim}, {dim})")
 
-    if semantic_to_solver is not None:
-        transform = semantic_to_solver
-        semantic_canonical = _sandwich_canonical(canonical, transform.conj().T, transform)
-        return {
-            weight: _sandwich_canonical(band, transform, transform.conj().T)
-            for weight, band in decompose_canonical_bands(
-                semantic_canonical,
-                dim,
-            ).items()
-        }
-
-    if canonical.layout == "dense" or _canonical_has_nonconcrete_structure(canonical):
-        dense_bands = decompose_bands(canonical_to_dense_array(canonical), dim)
-        return {
-            weight: CanonicalOperator.from_dense(
-                band,
-                dims=canonical.dims,
-                basis=canonical.basis,
-                subsystem_labels=canonical.subsystem_labels,
-                tag=canonical.tag,
-            )
-            for weight, band in dense_bands.items()
-        }
-
-    rows, cols, values = canonical_to_coo(canonical)
-    parent_norm = _concrete_parent_norm(values)
-    bands: dict[int, CanonicalOperator] = {}
-    for weight in range(-(dim - 1), dim):
-        mask = (cols - rows) == weight
-        if not np.any(mask):
-            continue
-        positions = np.flatnonzero(mask)
-        band_values = values[positions]
-        if parent_norm is not None and _frobenius_norm(band_values) <= _BAND_NORM_RTOL * parent_norm:
-            continue
-        bands[weight] = _canonical_band_from_single_weight(
-            weight,
-            cols[positions],
-            band_values,
-            shape=canonical.shape,
-            dims=canonical.dims,
-            basis=canonical.basis,
-            subsystem_labels=canonical.subsystem_labels,
-            tag=canonical.tag,
-        )
-    return bands
+    return {
+        weights[0]: band for weights, band in _decompose_product_canonical_bands(
+            canonical, (dim,), semantic_to_solver=semantic_to_solver,
+        ).items()
+    }
 
 
 def decompose_two_body_canonical_bands(
@@ -501,28 +445,13 @@ def _decompose_product_canonical_bands(
         }
 
     if canonical.layout == "dense" or _canonical_has_nonconcrete_structure(canonical):
-        matrix = canonical_to_dense_array(canonical)
-        xp = _array_namespace(matrix)
-        parent_norm = _concrete_parent_norm(matrix)
-        states = np.stack(np.unravel_index(np.arange(total_dim), dims), axis=-1)
-        changes = states[None, :, :] - states[:, None, :]
-        zero = xp.zeros_like(matrix)
-        dense_bands: dict[tuple[int, ...], CanonicalOperator] = {}
-        for weights in product(*(range(-(dim - 1), dim) for dim in dims)):
-            band_values = xp.where(np.all(changes == weights, axis=-1), matrix, zero)
-            if (
-                parent_norm is not None
-                and _frobenius_norm(band_values) <= _BAND_NORM_RTOL * parent_norm
-            ):
-                continue
-            dense_bands[weights] = CanonicalOperator.from_dense(
-                band_values,
-                dims=canonical.dims,
-                basis=canonical.basis,
-                subsystem_labels=canonical.subsystem_labels,
-                tag=canonical.tag,
+        return {
+            weights: CanonicalOperator.from_dense(
+                values, dims=canonical.dims, basis=canonical.basis,
+                subsystem_labels=canonical.subsystem_labels, tag=canonical.tag,
             )
-        return dense_bands
+            for weights, values in _decompose_dense_bands(canonical.to_dense(), tuple(dims)).items()
+        }
 
     rows, cols, values = canonical_to_coo(canonical)
     parent_norm = _concrete_parent_norm(values)
@@ -531,21 +460,18 @@ def _decompose_product_canonical_bands(
     changes = column_states - row_states
 
     bands: dict[tuple[int, ...], CanonicalOperator] = {}
+    metadata: dict[str, Any] = dict(shape=canonical.shape, dims=canonical.dims, basis=canonical.basis,
+                                    subsystem_labels=canonical.subsystem_labels, tag=canonical.tag)
     for weights in sorted({tuple(int(value) for value in change) for change in changes}):
         mask = np.all(changes == weights, axis=1)
         positions = np.flatnonzero(mask)
         band_values = values[positions]
         if parent_norm is not None and _frobenius_norm(band_values) <= _BAND_NORM_RTOL * parent_norm:
             continue
-        bands[weights] = _canonical_from_csr(
-            rows[positions],
-            cols[positions],
-            band_values,
-            shape=canonical.shape,
-            dims=canonical.dims,
-            basis=canonical.basis,
-            subsystem_labels=canonical.subsystem_labels,
-            tag=canonical.tag,
+        bands[weights] = (
+            _canonical_band_from_single_weight(weights[0], cols[positions], band_values, **metadata)
+            if len(dims) == 1 else
+            _canonical_from_csr(rows[positions], cols[positions], band_values, **metadata)
         )
     return bands
 
@@ -637,18 +563,10 @@ def embed_on_support(backend: Any, op: Any, support: tuple[int, ...], dims: Any)
         return backend.embed_two_body(op, support[0], support[1], dims)
     if len(set(support)) != len(support):
         raise ValueError(f"Operator support repeats a subsystem: {support!r}.")
+    from quchip.backend._dims import _embed_array
+
     dimensions = tuple(int(value) for value in dims)
-    rest = tuple(index for index in range(len(dimensions)) if index not in support)
-    current_order = support + rest
-    xp = _array_namespace(backend.to_array(op))
-    local = xp.asarray(backend.to_array(op), dtype=complex)
-    rest_dimension = prod(dimensions[index] for index in rest)
-    combined = xp.kron(local, xp.eye(rest_dimension, dtype=complex))
-    current_dims = tuple(dimensions[index] for index in current_order)
-    tensor = combined.reshape(current_dims + current_dims)
-    row_permutation = tuple(current_order.index(index) for index in range(len(dimensions)))
-    column_permutation = tuple(index + len(dimensions) for index in row_permutation)
-    embedded = xp.transpose(tensor, row_permutation + column_permutation).reshape(
-        (prod(dimensions), prod(dimensions))
-    )
+    local = backend.to_array(op)
+    xp = _array_namespace(local)
+    embedded = _embed_array(xp.asarray(local, dtype=complex), support, dimensions, xp)
     return backend.from_array(embedded, dims=[list(dimensions), list(dimensions)])

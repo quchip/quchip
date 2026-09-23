@@ -1655,7 +1655,7 @@ class Chip:
         print(f"- approximation: {type(self._approximation).__name__}")
         print(f"- dressed: {'yes' if self.is_dressed else 'no'}")
         print("- device list:")
-        for dev in self._devices:
+        for dev, dim in zip(self._devices, self.dims):
             bare_freq = getattr(dev, "freq", None)
             connected = sorted(
                 line.label for line in self.control_equipment.lines
@@ -1666,7 +1666,7 @@ class Chip:
                 f"  - {dev.label}: {type(dev).__name__} "
                 f"(freq={_format_float(bare_freq)} GHz, "
                 f"dressed={_format_float(self.freq(dev))} GHz, "
-                f"levels={dev.levels}, lines={line_text})"
+                f"levels={dim}, lines={line_text})"
             )
         print("- couplings:")
         if self._couplings:
@@ -1882,9 +1882,7 @@ class Chip:
         **device_state_kwargs : int
             Per-device energy levels keyed by label.
         """
-        from quchip.chip.states import state
-
-        return state(self, device_states, **device_state_kwargs)
+        return self._analysis.state(device_states, **device_state_kwargs)
 
     def bare_state(
         self,

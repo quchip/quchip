@@ -982,6 +982,12 @@ class CanonicalOperator:
             tag=self.tag if tag is None else tag,
         )
 
+    def _csr_rows(self, xp: Any) -> Any:
+        """Expand row pointers while keeping the nonzero count static under JAX."""
+        counts = xp.diff(xp.asarray(self.indptr, dtype=int))
+        repeat_kwargs = {"total_repeat_length": self.values.shape[0]} if is_jax_namespace(xp) else {}
+        return xp.repeat(xp.arange(self.shape[0], dtype=int), counts, **repeat_kwargs)
+
     def diagonal(self) -> Any:
         """Return the main diagonal without materializing a sparse matrix."""
         xp = array_namespace(self.values)
@@ -998,14 +1004,7 @@ class CanonicalOperator:
             )
 
         indices = xp.asarray(self.indices, dtype=int)
-        indptr = xp.asarray(self.indptr, dtype=int)
-        counts = indptr[1:] - indptr[:-1]
-        repeat_kwargs = (
-            {"total_repeat_length": self.values.shape[0]}
-            if is_jax_namespace(xp)
-            else {}
-        )
-        rows = xp.repeat(xp.arange(self.shape[0], dtype=int), counts, **repeat_kwargs)
+        rows = self._csr_rows(xp)
         selected = xp.where(indices == rows, values, 0)
         diagonal = xp.zeros(self.shape[0], dtype=values.dtype)
         if is_jax_namespace(xp):
@@ -1033,14 +1032,7 @@ class CanonicalOperator:
         if self.layout == "csr":
             values = xp.asarray(self.values, dtype=complex)
             indices = xp.asarray(self.indices, dtype=int)
-            indptr = xp.asarray(self.indptr, dtype=int)
-            counts = indptr[1:] - indptr[:-1]
-            repeat_kwargs = (
-                {"total_repeat_length": self.values.shape[0]}
-                if is_jax_namespace(xp)
-                else {}
-            )
-            rows = xp.repeat(xp.arange(self.shape[0], dtype=int), counts, **repeat_kwargs)
+            rows = self._csr_rows(xp)
             dense = xp.zeros(self.shape, dtype=values.dtype)
             if is_jax_namespace(xp):
                 return dense.at[rows, indices].set(values)
@@ -1638,6 +1630,11 @@ class EngineResult:
         return self.slh.H.static_terms + self.applied_hamiltonian.static_terms
 
     @property
+    def _static_term_ids(self) -> tuple[int, ...]:
+        """Identify retained terms, never the temporary aggregate tuple."""
+        return tuple(id(term) for term in self.static_terms)
+
+    @property
     def dynamic_terms(self) -> tuple[DynamicTerm, ...]:
         """Return resolved and solve-applied time-dependent Hamiltonian terms."""
         return self.slh.H.dynamic_terms + self.applied_hamiltonian.dynamic_terms
@@ -1847,21 +1844,10 @@ def _aggregate_batch_metadata(engine_results: list[EngineResult]) -> dict[str, A
     for key in ("max_carrier_freq_ghz", "spectral_bound_ghz", "max_step_ns"):
         metadata.pop(key, None)
 
-    carrier_values = [
-        result.metadata["max_carrier_freq_ghz"]
-        for result in engine_results
-        if "max_carrier_freq_ghz" in result.metadata
-    ]
-    if carrier_values:
-        metadata["max_carrier_freq_ghz"] = max(carrier_values)
-
-    spectral_values = [
-        result.metadata["spectral_bound_ghz"]
-        for result in engine_results
-        if "spectral_bound_ghz" in result.metadata
-    ]
-    if spectral_values:
-        metadata["spectral_bound_ghz"] = max(spectral_values)
+    for key in ("max_carrier_freq_ghz", "spectral_bound_ghz"):
+        values = [result.metadata[key] for result in engine_results if key in result.metadata]
+        if values:
+            metadata[key] = max(values)
 
     step_values = [result.metadata.get("max_step_ns") for result in engine_results]
     non_none = [value for value in step_values if value is not None]
@@ -1884,59 +1870,24 @@ def _aggregate_batch_metadata(engine_results: list[EngineResult]) -> dict[str, A
 
 @dataclass(frozen=True)
 class HamiltonianTemplate:
-    """Chip-topology-invariant Hamiltonian skeleton.
+    """Captured chip physics and pre-embedded bands for homogeneous drive sweeps.
 
-    Contains:
-
-    * ``static_terms`` — already assembled ``H₀`` and any static
-      (same-frame) coupling folds.
-    * ``invariant_dynamic_terms`` — dynamic terms whose signal programs
-      do not depend on drive variants (e.g. band-decomposed couplings),
-      already simplified at template-compile time.
-    * ``drive_terms`` — pre-embedded, 2π-scaled drive bands
-      (:class:`~quchip.engine.assembly.CompiledDriveTerm`) ready
-      for per-variant reinstantiation.
-    * ``collapse_terms`` — canonical Lindblad channels, including accessible
-      port metadata where present.
-    * ``reference_drive_ops`` — the structural yardstick used by
-      :func:`~quchip.engine.assembly.instantiate_engine_result`
-      to reject drive-ops that change the template's skeleton (device,
-      drive, envelope type, or drive type).
-
-    Sweep leaves (envelope parameters, drive frequencies, phases, frame
-    scalars) are *not* in the template; they rebuild on every
-    instantiation.
+    ``base_result`` owns invariant operators, channels, bases and diagnostics.
+    Reference operations and delivered keys guard the routing and pulse topology;
+    only signal-program leaves are rebuilt for each variant.
     """
 
-    resolved_frame: Any  # ResolvedFrame
-    approximation: Any
-    dims: tuple[int, ...]
-    slh: Any  # ResolvedSLH
-    static_terms: tuple[Any, ...] = ()              # tuple[StaticTerm, ...]
-    invariant_dynamic_terms: tuple[Any, ...] = ()   # tuple[DynamicTerm, ...]
+    base_result: EngineResult
     drive_terms: tuple[Any, ...] = ()               # tuple[assembly.CompiledDriveTerm, ...]
     coherent_terms: tuple[Any, ...] = ()            # tuple[assembly.CompiledCoherentTerm, ...]
     reference_drive_ops: tuple[Any, ...] = ()       # tuple[DriveOp, ...]
     delivered_keys: frozenset[SignalKey] = frozenset()
-    dropped_terms: tuple[Any, ...] = ()             # tuple[DroppedTerm, ...]
     #: Single-tone weight-zero bands dropped structurally under RWA during engine assembly.
     #: time (:func:`~quchip.engine.assembly._compile_drive_terms`).
     #: The drop decision needs no drive frequency; resolving each entry into
     #: a :class:`DroppedTerm` does, so this stays a pointer
     #: (``tuple[assembly._StructuralDrop, ...]``) until instantiation.
     weight_zero_drops: tuple[Any, ...] = ()
-    #: Advisory spectral-bound hint (ordinary GHz) for the *static* terms.
-    #: Computed once at template compile — the static terms are invariant
-    #: across a sweep, so re-materializing their dense diagonal on every
-    #: instantiation is wasted work. ``None`` when empty, oversized, or not
-    #: fully concrete (a traced coefficient stays dynamic). Only the
-    #: variant-specific carrier-frequency hint is recomputed per instantiation.
-    static_spectral_bound_ghz: float | None = None
-    collapse_terms: tuple[Any, ...] = ()            # tuple[CollapseTerm, ...]
-    bases: Mapping[str, Any] = field(default_factory=dict)
-    authored: Any = None
-    dressing_context: Any = None
-    dynamical_supports: tuple[tuple[str, ...], ...] = ()
 
 
 # ── Frame Types ─────────────────────────────────────────────────────
@@ -2115,12 +2066,7 @@ class SolveProblem:
         if reserved:
             raise ValueError(f"run_args cannot override assembled inputs: {sorted(reserved)}")
         object.__setattr__(self, "monitoring", _capture_solve_input(self.monitoring))
-        run_args = _capture_solve_input(self.run_args)
-        if "seeds" in run_args:
-            from copy import deepcopy
-
-            run_args["seeds"] = deepcopy(run_args["seeds"])
-        object.__setattr__(self, "run_args", run_args)
+        object.__setattr__(self, "run_args", _capture_solve_input(self.run_args))
         object.__setattr__(self, "options", _capture_solve_input(options))
         object.__setattr__(self, "tlist", _capture_solve_input(self.tlist))
         object.__setattr__(self, "e_ops", _capture_solve_input(self.e_ops))

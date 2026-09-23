@@ -296,8 +296,8 @@ def test_cr_susceptibility_ignores_eigensolver_column_signs(monkeypatch) -> None
     reference = analyze_cr_susceptibility(chip, control, target, drive=drive)
     compute = chip._analysis._compute_array_labeled
 
-    def sign_flipped_eigensystem():
-        eigenvalues, eigenvectors, overlaps, labeling = compute()
+    def sign_flipped_eigensystem(engine_result=None):
+        eigenvalues, eigenvectors, overlaps, labeling = compute(engine_result)
         signs = np.where(np.arange(eigenvectors.shape[1]) % 2, -1.0, 1.0)
         return eigenvalues, eigenvectors * signs[None, :], overlaps, labeling
 

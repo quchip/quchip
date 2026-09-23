@@ -11,8 +11,7 @@ from quchip.declarative.expr import PhysicsExpr
 from quchip.declarative.dissipation import CollapseChannel
 from quchip.devices.base import (
     BaseDevice,
-    _energy_dephasing_channel,
-    _matrix_element_emission_channel,
+    _energy_basis_dissipation,
 )
 
 
@@ -151,10 +150,7 @@ class EigenbasisDevice(BaseDevice):
         EigenbasisDevice : Dissipation choices and physics reference.
         """
         del op
-        return tuple(
-            _matrix_element_emission_channel(self, p)
-            + _energy_dephasing_channel(self, p)
-        )
+        return _energy_basis_dissipation(self, p)
 
     def unresolved_hamiltonian(self) -> PhysicsExpr:
         """Return the frozen source spectrum as the authored Hamiltonian."""

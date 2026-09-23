@@ -146,11 +146,6 @@ def _engineering_iq(spectrum: Any, xp: Any) -> Any:
     return signs[:, None] * xp.conj(spectrum) * signs[None, :]
 
 
-def _integrate(values: Any, frequencies: Any, xp: Any) -> Any:
-    weights = xp.diff(frequencies)
-    return xp.sum((values[..., 1:, :, :] + values[..., :-1, :, :]) * weights[:, None, None] / 2, axis=-3)
-
-
 def integrate_noise(values: Any, noise_frequencies: Any, noise_components: Any,
                     output_delays: Any, receiver: IQReceiver) -> tuple[Any, Any, Any]:
     """Integrate normal spectra plus detector vacuum; return covariance, budget, DC gain.
@@ -161,6 +156,7 @@ def integrate_noise(values: Any, noise_frequencies: Any, noise_components: Any,
     receiver_upper = None if receiver.transfer is None else receiver.transfer(noise_frequencies)
     xp = select_array_module(is_jax_array(values)
                              or contains_tracer((receiver.integration_time, receiver_upper)))
+    trapezoid = getattr(xp, "trapezoid", None) or xp.trapz
     frequencies = xp.asarray(noise_frequencies)
     delays = xp.repeat(output_delays, 2, axis=-1)
     overlap = xp.maximum(1 - xp.abs(delays[..., :, None] - delays[..., None, :]) / receiver.integration_time, 0)
@@ -172,7 +168,7 @@ def integrate_noise(values: Any, noise_frequencies: Any, noise_components: Any,
         lower = xp.asarray(receiver.transfer(-frequencies)) + xp.zeros_like(frequencies)
         mean_gain = receiver.transfer(xp.asarray(0.0))
         local = quadrature_transfer(upper, lower, xp)
-        transform = xp.stack([xp.kron(xp.eye(count), block) for block in local])
+        transform = xp.kron(xp.eye(count), local)
     components = dict(noise_components)
     components["receiver.vacuum"] = (xp.broadcast_to(xp.eye(2 * count) / 2,
                                                     (*values.shape[:-1], 2 * count, 2 * count)),
@@ -192,8 +188,8 @@ def integrate_noise(values: Any, noise_frequencies: Any, noise_components: Any,
         edge_bounds.append(xp.max(xp.abs(spectrum[..., xp.asarray([0, -1]), :, :]))
                            / (xp.pi**2 * frequencies[-1] * receiver.integration_time**2))
         weighted = xp.real(spectrum) * window[:, None, None]
-        contributions[name] = analytic + _integrate(weighted, frequencies, xp)
-        coarse.append(analytic + _integrate(weighted[..., ::2, :, :], frequencies[::2], xp))
+        contributions[name] = analytic + trapezoid(weighted, x=frequencies, axis=-3)
+        coarse.append(analytic + trapezoid(weighted[..., ::2, :, :], x=frequencies[::2], axis=-3))
     covariance = sum(contributions.values())
     covariance = (covariance + xp.swapaxes(covariance, -1, -2)) / 2
     if not contains_tracer((covariance, receiver.integration_time)):

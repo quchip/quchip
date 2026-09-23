@@ -20,7 +20,6 @@ from quchip.chip.dressing import (
     assign_rowwise_greedy,
     compute_overlaps,
     label_eigensystem,
-    phase_fixed_transform,
     track_path,
 )
 
@@ -249,15 +248,3 @@ class TestTrackPath:
         # Path's final step and a direct labeling of the final eigensystem
         # should agree in the smooth (non-crossing) regime.
         assert path.final.indices.tolist() == direct.indices.tolist()
-
-
-class TestPhaseFixedTransform:
-    def test_phase_fixed_U_is_unitary(self) -> None:
-        """phase_fixed_transform returns a unitary transformation matrix."""
-        ref = BareProductReference(dims=(2, 2))
-        H = _two_qubit_H(jnp.float32(0.05))
-        evals, evecs = jnp.linalg.eigh(H)
-        labeling = label_eigensystem(evecs, ref)
-        U = phase_fixed_transform(labeling, evecs)
-        residual = jnp.linalg.norm(U.conj().T @ U - jnp.eye(U.shape[1]))
-        assert float(residual) < 1e-5

@@ -46,21 +46,8 @@ _SUPPORTED_EXPORT_COUPLINGS = "Capacitive, TunableCapacitive, CrossKerr, or prod
 
 
 def _eigenbasis_matrix(subsys: Any, operator: Any) -> np.ndarray:
-    """Return *operator* on *subsys* as a truncated energy-eigenbasis matrix.
-
-    scqubits stores an ``InteractionTerm`` operator either as a bound method
-    (evaluated in the eigenbasis on demand) or as a raw matrix in the
-    subsystem's native basis:
-
-    * A callable is invoked with ``energy_esys=True`` so scqubits returns the
-      ``truncated_dim x truncated_dim`` eigenbasis matrix directly. Operators
-      that are already in their eigenbasis (e.g. an ``Oscillator`` in the Fock
-      basis) expose a no-argument method; those are called bare, mirroring
-      scqubits' own ``identity_wrap`` fallback.
-    * A raw native-basis matrix is projected with the subsystem's eigenvectors,
-      ``V^\\dagger O V`` with ``V`` the lowest ``truncated_dim`` columns of
-      ``subsys.eigensys`` — the same projection scqubits applies internally.
-    """
+    """Return a truncated eigenbasis operator: call with energy_esys=True
+    (or no arguments for Fock methods), or project a raw native matrix as V† O V."""
     if callable(operator):
         try:
             matrix = operator(energy_esys=True)
@@ -128,15 +115,8 @@ def _product_interaction(
     matrix_b: np.ndarray,
     add_hc: bool,
 ) -> Callable[[Any, Any, Any], Any]:
-    """Build the callable-form interaction ``g·A⊗B`` (plus h.c. when *add_hc*).
-
-    ``g_strength`` is folded into the first factor so the returned closure needs
-    no scalar prefactor and the host :class:`~quchip.chip.couplings.Coupling`
-    keeps ``g = 1.0`` (``g_strength`` may be complex, which the coupling's real
-    ``g`` could not carry). The closure builds ``M = A_g ⊗ B`` from the frozen
-    matrices via the backend and returns ``M + M^\\dagger`` for the type-2
-    (``add_hc``) interaction, matching scqubits' ``V = g A B + h.c.``.
-    """
+    """Fold possibly complex g into the first frozen factor; the host Coupling
+    keeps g=1. Add the Hermitian conjugate when requested."""
     matrix_a_g = g_strength * matrix_a
     matrix_b = np.asarray(matrix_b, dtype=complex)
 
@@ -155,13 +135,8 @@ def _coupling_from_term(
     devices: list[Any],
     index: int,
 ) -> Coupling:
-    """Transcribe one scqubits ``InteractionTerm`` into a quchip ``Coupling``.
-
-    Rejects string-expression interactions
-    (``InteractionTermStr``) and products of other than two operators. Both
-    raise :class:`NotImplementedError` with a re-expression hint rather than
-    importing a partial interaction.
-    """
+    """Translate one pairwise operator-product term; reject string expressions
+    and non-pairwise forms rather than importing a partial interaction."""
     from scqubits.core.hilbert_space import InteractionTermStr
 
     if isinstance(term, InteractionTermStr):
@@ -231,12 +206,7 @@ def import_hilbertspace(hs: Any, **opts: Any) -> Chip:
 
 
 def _concrete_strength(value: Any, coupling: Any) -> Any:
-    """Return *value* as a concrete scalar, or raise on a JAX tracer.
-
-    Export is eager: a coupling strength carrying a
-    tracer (inside ``jit``/``grad``) cannot be written into a static scqubits
-    object, so it fails here rather than silently dropping the swept value.
-    """
+    """Require an eager scalar; traced strengths cannot populate a static scqubits object."""
     scalar = maybe_concrete_scalar(value)
     if scalar is None:
         raise ValueError(
@@ -251,30 +221,11 @@ def _coupling_product_factors(
     backend: Any,
     bases: Any,
 ) -> tuple[Any, np.ndarray, np.ndarray]:
-    r"""Return ``(g, A, B)`` reproducing the complete ``H_int = g·A⊗B``.
+    """Return the complete interaction as (g, A, B), densified through backend.
 
-    Each supported coupling factorizes into a scalar strength and two device
-    operators; the factors are the coupling's own operator definitions,
-    evaluated on the endpoint devices and densified through *backend*, so the
-    exported interaction is term-for-term identical to the one quchip assembles
-    (:meth:`~quchip.chip.coupling_base.BaseCoupling.interaction_hamiltonian`):
-
-    * :class:`~quchip.chip.couplings.Capacitive` /
-      :class:`~quchip.chip.couplings.TunableCapacitive` — the full product of
-      each endpoint's physical charge-like factor. Devices implementing
-      :class:`~quchip.devices.protocols.ChargeCoupled` supply their authored
-      charge operator; other devices use ``a + a†``. The complete form is
-      always exported because scqubits interaction terms apply no rotating-wave
-      truncation of their own.
-    * :class:`~quchip.chip.couplings.CrossKerr` — ``χ·n̂_a n̂_b``, so
-      ``A = n̂_a`` and ``B = n̂_b``.
-    * product-form :class:`~quchip.chip.couplings.Coupling` — the user's
-      ``g·op_a(a)⊗op_b(b)``, so ``A``/``B`` are exactly those two factors.
-
-    A callable-form :class:`~quchip.chip.couplings.Coupling` (whose interaction
-    is an opaque two-device closure, not a factorizable product) and any other
-    coupling type raise :class:`NotImplementedError` naming the supported set.
-    """
+    Capacitive factors use authored charge operators or a+a†; cross-Kerr uses
+    number operators; product Coupling uses its authored factors. Reject opaque
+    callable forms. scqubits applies no rotating-wave filtering to these products."""
 
     def matrix(device: Any, op: Any) -> np.ndarray:
         from quchip.declarative.expr import materialize_expr
@@ -332,36 +283,17 @@ def _charge_factor(device: Any, matrix: Any) -> np.ndarray:
 
 
 def _lift_to_native(subsys: Any, matrix: np.ndarray) -> np.ndarray:
-    r"""Lift a truncated-eigenbasis operator into *subsys*' native basis.
+    """Lift with V O V† so scqubits projects back to the retained matrix.
 
-    scqubits assembles an ``op1``/``op2`` interaction by projecting each raw
-    matrix from the subsystem's *native* basis into its truncated eigenbasis
-    (``V^\dagger O V`` with ``V`` the native eigenvectors). quchip supplies the
-    operator already in the truncated eigenbasis, so the inverse lift
-    ``V O V^\dagger`` is applied first: scqubits' projection then recovers the
-    quchip matrix exactly (``V^\dagger V = I`` on the kept subspace). For a
-    subsystem whose native dimension already equals its truncated dimension
-    (an ``Oscillator``) the lift is the identity. This keeps the exported
-    interaction a plain ndarray product term — re-importable through
-    :func:`import_hilbertspace` unchanged — rather than an opaque full-space
-    ``qobj`` scqubits' assembly would take verbatim but the importer could not
-    factorize.
-    """
+    Keeping ndarray product factors, rather than opaque full-space Qobjs, permits re-import."""
     _, evecs = subsys.eigensys(evals_count=subsys.truncated_dim)
     v = np.asarray(evecs, dtype=complex)[:, : subsys.truncated_dim]
     return v @ matrix @ v.conj().T
 
 
 def _warn_if_cross_basis(device: Any, subsys: Any) -> None:
-    """Warn when *device* and its exported *subsys* diagonalize different-sized bases.
-
-    A device whose authored basis dimension differs from the exported
-    subsystem's native dimension — for example a fluxonium phase grid versus
-    scqubits' oscillator cutoff — is reconstructed in a different numerical
-    discretization. Its exported spectrum therefore agrees only to the
-    cross-discretization accuracy. A charge-basis transmon exports one-to-one
-    and does not trigger this warning.
-    """
+    """Warn when source and exported native dimensions differ: spectra then
+    agree only to cross-discretization accuracy. Charge-basis transmons map directly."""
     eigenvectors = getattr(device, "eigenvectors", None)
     if eigenvectors is None:
         return
@@ -377,18 +309,8 @@ def _warn_if_cross_basis(device: Any, subsys: Any) -> None:
 
 
 def _check_approximation_exportable(chip: Chip, coupling: Any) -> None:
-    """Reject a filtered interaction that scqubits would export in full.
-
-    scqubits export always emits the complete operator product
-    (:func:`_coupling_product_factors`). For :class:`~quchip.chip.couplings.Capacitive`,
-    :class:`~quchip.chip.couplings.TunableCapacitive`, and product-form
-    :class:`~quchip.chip.couplings.Coupling`, the filtered form is a genuinely
-    different operator than the complete form, so exporting one of these under a
-    `RWA` would silently reproduce different physics than the
-    chip's own dressed dynamics. :class:`~quchip.chip.couplings.CrossKerr` is
-    exempt: its interaction is diagonal in the excitation-number basis, so RWA
-    masking is a no-op on it.
-    """
+    """Reject filtered non-diagonal products: scqubits exports them in full.
+    Cross-Kerr is exempt because rotating-wave filtering leaves it unchanged."""
     if isinstance(coupling, CrossKerr):
         return
     approximation_sensitive = isinstance(coupling, (Capacitive, TunableCapacitive)) or (

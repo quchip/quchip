@@ -161,11 +161,7 @@ class SimulationResult:
         self.dims = list(dims)
         self.device_info = device_info
         self._final_state = solver_result.final_state
-        # Lazily populated caches, built once and reused across accessors; declared
-        # here so the cached attributes are explicit rather than first appearing
-        # mid-method. ``_stacked_cache`` holds the (T, …) stacked trajectory used by
-        # the batched over-time extractors; ``_basis_labels_cache`` holds the
-        # full-chip Fock-tuple basis read by the population / truncation helpers.
+        # Cache native trajectories and the labels used by the full population dictionary.
         self._stacked_cache: Any = None
         self._basis_labels_cache: list[tuple[int, ...]] | None = None
 
@@ -394,12 +390,7 @@ class SimulationResult:
 
     @property
     def _basis_labels(self) -> list[tuple[int, ...]]:
-        """Return the full-chip computational basis as Fock tuples ``(n1, …, nK)`` (cached).
-
-        One entry per basis vector of the whole chip, in ``dims`` order. Built
-        once and shared by :attr:`populations`, :meth:`population`, and
-        :meth:`check_truncation` rather than each recomputing the product.
-        """
+        """Cache solver-product labels for the full population dictionary."""
         cached = self._basis_labels_cache
         if cached is None:
             cached = list(itertools.product(*[range(d) for d in self.dims]))
@@ -637,15 +628,11 @@ class SimulationResult:
             embedded = backend.embed(projector, dev_idx, self.dims)
             return xp.real(backend.expect_over_time(embedded, self._stacked_states()))
 
-        # Full-chip diagonal populations (T, ∏dims) in one batched op, then sum
-        # the basis states whose Fock index on *device* equals *level* — the
-        # marginal P(level) without a per-point ptrace/expect loop.
+        # Marginalize the other devices without enumerating product-basis labels.
         diags = backend.populations_over_time(self._stacked_states())
-        basis_labels = self._basis_labels
-        select = xp.asarray(
-            np.array([1.0 if tup[dev_idx] == level else 0.0 for tup in basis_labels], dtype=float)
-        )
-        return xp.real(diags @ select)
+        axes = tuple(index + 1 for index in range(len(self.dims)) if index != dev_idx)
+        marginal = xp.sum(diags.reshape((len(diags), *self.dims)), axis=axes)
+        return xp.real(marginal @ xp.asarray(np.arange(dev_dim) == level, dtype=float))
 
     # ------------------------------------------------------------------
     # Plot shims — delegate to the (lazy) viz module
@@ -1035,44 +1022,6 @@ class SimulationBatchResult(BatchResult[SimulationResult]):
 # ---------------------------------------------------------------------------
 
 
-def _wrap(
-    solver_result: SolverResult,
-    backend: Backend,
-    *,
-    device_info: tuple[tuple[str, bool], ...],
-    tlist: Any,
-    e_ops_meta: Any,
-    resolved_frame: Any,
-    engine_result: Any,
-) -> SimulationResult:
-    observable_traces = None
-    output_traces = None
-    if e_ops_meta is not None:
-        from quchip.engine.observables import build_observable_traces
-
-        observable_traces, output_traces = build_observable_traces(
-            solver_result,
-            tlist,
-            dict_meta=e_ops_meta,
-            resolved_frame=resolved_frame,
-            engine_result=engine_result,
-        )
-    from quchip.analysis.field_noise import ReadoutWiring
-
-    return SimulationResult(
-        solver_result=solver_result,
-        backend=backend,
-        dims=engine_result.dims,
-        device_info=device_info,
-        observable_traces=observable_traces,
-        output_traces=output_traces,
-        channels=engine_result.slh.channels if engine_result.dissipation else (),
-        bases=engine_result.bases,
-        dissipation=engine_result.dissipation,
-        readout_wiring=ReadoutWiring.capture(engine_result.slh, backend.array_module),
-    )
-
-
 def wrap_solver_result(solver_result: SolverResult, problem: SolveProblem, backend: Backend) -> SimulationResult:
     """Wrap a raw backend :class:`SolverResult` into a user-facing :class:`SimulationResult`.
 
@@ -1106,14 +1055,32 @@ def wrap_solver_result(solver_result: SolverResult, problem: SolveProblem, backe
         user_values = flat[:-count] if count else flat
         samples = boundary_traces(plan, diagnostic, problem.tlist, backend)
         solver_result = replace(solver_result, expect=user_values or None)
-    result = _wrap(
-        solver_result,
-        backend,
+    engine_result = problem.engine_result
+    observable_traces = None
+    output_traces = None
+    if problem.e_ops_meta is not None:
+        from quchip.engine.observables import build_observable_traces
+
+        observable_traces, output_traces = build_observable_traces(
+            solver_result,
+            problem.tlist,
+            dict_meta=problem.e_ops_meta,
+            resolved_frame=problem.resolved_frame,
+            engine_result=engine_result,
+        )
+    from quchip.analysis.field_noise import ReadoutWiring
+
+    result = SimulationResult(
+        solver_result=solver_result,
+        backend=backend,
+        dims=engine_result.dims,
         device_info=problem.device_info,
-        tlist=problem.tlist,
-        e_ops_meta=problem.e_ops_meta,
-        resolved_frame=problem.resolved_frame,
-        engine_result=problem.engine_result,
+        observable_traces=observable_traces,
+        output_traces=output_traces,
+        channels=engine_result.slh.channels if engine_result.dissipation else (),
+        bases=engine_result.bases,
+        dissipation=engine_result.dissipation,
+        readout_wiring=ReadoutWiring.capture(engine_result.slh, backend.array_module),
     )
     result._truncation = plan
     result._boundary_traces = samples

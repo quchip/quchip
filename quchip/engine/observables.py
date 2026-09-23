@@ -46,7 +46,6 @@ from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import array_namespace as _array_namespace
 from quchip.utils.labeling import resolve_label
 from quchip.engine.bands import embed_single_mode_bands, local_mode_bands
-from quchip.engine.basis import semantic_to_solver_transform
 
 EOpKey = str | tuple[str, str]
 BandWeight = int | tuple[int, int]
@@ -171,7 +170,7 @@ def decompose_eops(
                     dim=dev_dim,
                     label=device_label,
                     dims=dims,
-                    semantic_to_solver=semantic_to_solver_transform(dev, basis),
+                    semantic_to_solver=basis.energy_to_solver(),
                 ) or [(0, backend.embed(op, dev_idx, dims))]:
                     flat_ops.append(embedded)
                     meta.append(
@@ -209,14 +208,14 @@ def decompose_eops(
                 op_a,
                 dim=dim_a,
                 label=label_a,
-                semantic_to_solver=semantic_to_solver_transform(dev_a, basis_a),
+                semantic_to_solver=basis_a.energy_to_solver(),
             ) or [(0, op_a)]:
                 for w_b, band_b in local_mode_bands(
                     backend,
                     op_b,
                     dim=dim_b,
                     label=label_b,
-                    semantic_to_solver=semantic_to_solver_transform(dev_b, basis_b),
+                    semantic_to_solver=basis_b.energy_to_solver(),
                 ) or [(0, op_b)]:
                     product = backend.tensor(band_a, band_b)
                     embedded = backend.embed_two_body(product, idx_a, idx_b, dims)

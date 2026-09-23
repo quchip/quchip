@@ -8,10 +8,11 @@ import jax
 
 from quchip.approximations import Approximation
 from quchip.chip.ports import Port
-from quchip.declarative.expr import PhysicsExpr, _bound_values, materialize_expr
+from quchip.declarative.expr import PhysicsExpr, _bound_values, _walk_expr, materialize_expr
 from quchip.devices.spaces import FockSpace
 from quchip.engine.assembly import _apply_2pi_scalar
 from quchip.engine.ir import LinearResponseProblem
+from quchip.engine.output_network import pad_mixing
 from quchip.engine.reference import cw_transfer
 from quchip.utils.jax_utils import maybe_concrete_scalar
 
@@ -118,8 +119,7 @@ def _build_linear_response_problem(
     )
     network_size = len(compiled.channels)
     full_size = network_size + len(hidden_couplings)
-    scattering = xp.eye(full_size, dtype=complex)
-    scattering = _set_block(scattering, xp.asarray(compiled.scattering), network_size)
+    scattering = pad_mixing(xp.asarray(compiled.scattering, dtype=complex), full_size, xp)
     external_labels = tuple(channel.exposure.label for channel in compiled.channels if not channel.exposure._hidden)
     try:
         plane_indices = tuple(external_labels.index(label) for label in plane_labels)
@@ -273,10 +273,11 @@ def _operator_terms(expression: PhysicsExpr, backend: Any) -> list[tuple[Any, tu
             value = _scalar_value(scalar, backend, bindings=bindings)
             return [(value * coefficient, factors) for coefficient, factors in expand(operator)]
         if node.kind in {"matmul", "tensor"}:
+            left, right = expand(node.args[0]), expand(node.args[1])
             return [
                 (left_coefficient * right_coefficient, left_factors + right_factors)
-                for left_coefficient, left_factors in expand(node.args[0])
-                for right_coefficient, right_factors in expand(node.args[1])
+                for left_coefficient, left_factors in left
+                for right_coefficient, right_factors in right
             ]
         raise _UnsupportedLinearModel
 
@@ -292,12 +293,8 @@ def _scalar_value(
     if not isinstance(expression, PhysicsExpr):
         return expression
     allowed = {"literal", "parameter", "function", "add", "sub", "mul", "scale", "pow"}
-    stack = [expression]
-    while stack:
-        node = stack.pop()
-        if node.labels or node.kind not in allowed:
-            raise _UnsupportedLinearModel
-        stack.extend(arg for arg in node.args if isinstance(arg, PhysicsExpr))
+    if any(node.labels or node.kind not in allowed for node in _walk_expr(expression)):
+        raise _UnsupportedLinearModel
     return materialize_expr(expression, backend, bindings=bindings)
 
 
@@ -306,11 +303,4 @@ def _add_entry(array: Any, row: int, column: int | None, value: Any) -> Any:
     if hasattr(array, "at"):
         return array.at[index].add(value)
     array[index] += value
-    return array
-
-
-def _set_block(array: Any, block: Any, size: int) -> Any:
-    if hasattr(array, "at"):
-        return array.at[:size, :size].set(block)
-    array[:size, :size] = block
     return array

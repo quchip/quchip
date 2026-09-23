@@ -73,102 +73,58 @@ def _validate_level_pair(lower: Any, upper: Any, dimension: int) -> None:
         )
 
 
-def _energy_basis_for_noise(device: Any) -> "BasisRecord":
+def _energy_basis_dissipation(device: Any, p: Any) -> tuple[CollapseChannel, ...]:
+    """Build relaxation and dephasing from one retained energy basis."""
     from quchip.engine.basis import resolve_device_basis
 
-    levels = device.projection_levels or device.local_space().dimension
-    return resolve_device_basis(device, basis="eigen", levels=levels)
-
-
-def _semantic_level_operator(basis: "BasisRecord", operator: Any) -> Any:
-    """Express an energy-level operator in the authored local basis."""
-    vectors = basis.energy_vectors[:, : basis.resolved_dim]
-    return vectors @ operator @ vectors.conj().T
-
-
-def _matrix_element_emission_channel(
-    device: Any,
-    p: Any,
-) -> list[CollapseChannel]:
-    """Matrix-element-weighted relaxation in the local energy ordering."""
-    record = _energy_basis_for_noise(device)
-    if device.collapse_model == "ladder":
-        dimension = record.resolved_dim
-        lower = jnp.diag(jnp.sqrt(jnp.arange(1, dimension)), 1).astype(jnp.complex128)
-        authored_lower = _semantic_level_operator(record, lower)
-        rate = 1.0 / p.T1 if device.T1 is not None else 1.0
-        occupation = (
-            p.thermal_occupation
-            if device.thermal_occupation is not None
-            else device.thermal_occupation
-        )
-        return BaseDevice._emission_channels(
-            rate,
-            occupation,
-            authored_lower,
-            authored_lower.conj().T,
-            emission_name="matrix_element_emission",
-            absorption_name="matrix_element_absorption",
-        ) if device.T1 is not None or device.thermal_occupation is not None else []
-    if device.T1 is None:
-        return []
-
-    physical = (
-        device.phase_coupling_operator()
-        if device.coupling_channel == "flux"
-        else device.charge_coupling_operator()
+    ladder = device.collapse_model == "ladder"
+    relaxation = device.T1 is not None or (ladder and device.thermal_occupation is not None)
+    dephasing = BaseDevice._dephasing_rate(device.T1, device.T2) is not None
+    if not relaxation and not dephasing:
+        return ()
+    record = resolve_device_basis(
+        device, basis="eigen", levels=device.projection_levels or device.local_space().dimension,
     )
-    matrix_elements = record.energy_vectors.conj().T @ physical @ record.energy_vectors
-    normalization = jnp.abs(matrix_elements[0, 1]) ** 2
-    norm_concrete = maybe_concrete_scalar(normalization)
-    if norm_concrete is not None and norm_concrete < 1e-24:
-        raise ValueError("The selected coupling_channel has a dark 0-to-1 transition.")
-
-    terms: list[CollapseChannel] = []
     vectors = record.energy_vectors
-    for upper in range(1, record.resolved_dim):
-        for lower_index in range(upper):
-            rate_ratio = jnp.abs(matrix_elements[lower_index, upper]) ** 2 / normalization
-            ratio_concrete = maybe_concrete_scalar(rate_ratio)
-            if ratio_concrete is not None and ratio_concrete < device.collapse_rate_threshold:
-                continue
-            down = jnp.outer(vectors[:, lower_index], vectors[:, upper].conj())
-            terms.extend(
-                BaseDevice._emission_channels(
-                    rate_ratio / p.T1,
-                    (
-                        p.thermal_occupation
-                        if device.thermal_occupation is not None
-                        else device.thermal_occupation
-                    ),
-                    down,
-                    down.conj().T,
-                    emission_name="matrix_element_emission",
-                    absorption_name="matrix_element_absorption",
-                )
-            )
-    return terms
-
-
-def _energy_dephasing_channel(
-    device: Any,
-    p: Any,
-) -> list[CollapseChannel]:
-    gamma_phi = BaseDevice._dephasing_rate(device.T1, device.T2)
-    if gamma_phi is None:
-        return []
-    record = _energy_basis_for_noise(device)
-    level_index = jnp.diag(jnp.arange(record.resolved_dim, dtype=jnp.complex128))
-    symbolic_gamma = 1.0 / p.T2
-    if device.T1 is not None:
-        symbolic_gamma = symbolic_gamma - 1.0 / (2.0 * p.T1)
-    return [
-        CollapseChannel(
-            _semantic_level_operator(record, level_index),
-            2.0 * symbolic_gamma,
-            "pure_dephasing",
+    transitions: list[tuple[Any, Any]] = []
+    if relaxation and ladder:
+        lower = jnp.diag(jnp.sqrt(jnp.arange(1, record.resolved_dim)), 1).astype(jnp.complex128)
+        transitions.append((vectors @ lower @ vectors.conj().T, 1.0 / p.T1 if device.T1 is not None else 1.0))
+    elif relaxation:
+        physical = (
+            device.phase_coupling_operator()
+            if device.coupling_channel == "flux"
+            else device.charge_coupling_operator()
+        )
+        matrix_elements = vectors.conj().T @ physical @ vectors
+        normalization = jnp.abs(matrix_elements[0, 1]) ** 2
+        norm_concrete = maybe_concrete_scalar(normalization)
+        if norm_concrete is not None and norm_concrete < 1e-24:
+            raise ValueError("The selected coupling_channel has a dark 0-to-1 transition.")
+        for upper in range(1, record.resolved_dim):
+            for lower_index in range(upper):
+                rate_ratio = jnp.abs(matrix_elements[lower_index, upper]) ** 2 / normalization
+                ratio_concrete = maybe_concrete_scalar(rate_ratio)
+                if ratio_concrete is not None and ratio_concrete < device.collapse_rate_threshold:
+                    continue
+                down = jnp.outer(vectors[:, lower_index], vectors[:, upper].conj())
+                transitions.append((down, rate_ratio / p.T1))
+    occupation = p.thermal_occupation if device.thermal_occupation is not None else None
+    channels = [
+        channel
+        for down, rate in transitions
+        for channel in BaseDevice._emission_channels(
+            rate, occupation, down, down.conj().T,
+            emission_name="matrix_element_emission", absorption_name="matrix_element_absorption",
         )
     ]
+    if dephasing:
+        rate = 1.0 / p.T2
+        if device.T1 is not None:
+            rate = rate - 1.0 / (2.0 * p.T1)
+        channels.append(CollapseChannel(record.authored_level_operator(), 2.0 * rate, "pure_dephasing"))
+    return tuple(channels)
+
 
 #: Self-type for fluent helpers (e.g. ``_restore_reference_freq``) so a
 #: ``from_dict`` returning ``cls(...)._restore_reference_freq(d)`` keeps the

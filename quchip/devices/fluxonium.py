@@ -11,7 +11,7 @@ from quchip.declarative.models import DeviceModel
 from quchip.declarative.ops import LocalOps
 from quchip.declarative.parameters import UNBOUND, Scalar, parameter
 from quchip.declarative.dissipation import CollapseChannel
-from quchip.devices.base import _energy_dephasing_channel, _matrix_element_emission_channel
+from quchip.devices.base import _energy_basis_dissipation
 from quchip.devices.spaces import PhaseGridSpace
 
 
@@ -90,10 +90,7 @@ class Fluxonium(DeviceModel):
 
     def dissipation(self, op: Any, p: Any) -> tuple[CollapseChannel, ...]:
         del op
-        return tuple(
-            _matrix_element_emission_channel(self, p)
-            + _energy_dephasing_channel(self, p)
-        )
+        return _energy_basis_dissipation(self, p)
 
     def __init__(
         self,

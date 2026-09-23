@@ -139,7 +139,7 @@ def superposition(
     an ``(amplitude, spec)`` tuple for weighted mixing. Uniform weights
     by default; results are normalized to unit norm.
 
-    Unlike :func:`state`, this stays in the bare product basis — no
+    Unlike :meth:`~quchip.Chip.state`, this stays in the bare product basis — no
     dressed diagonalization — so the probe basis is explicit.
 
     Examples
@@ -195,27 +195,6 @@ def superposition(
     return psi / safe_norm
 
 
-def state(
-    chip: "Chip",
-    device_states: Mapping[str | "BaseDevice", int] | str | None = None,
-    /,
-    **device_state_kwargs: int,
-) -> State:
-    """Dressed eigenstate assigned from the given product-state level labels.
-
-    Accepts a string shorthand (e.g. ``"eg1"``) when
-    :func:`set_state_order` has been called.
-
-    Safe inside ``jax.jit``/``grad``/``vmap``: under tracing the
-    assigned eigenvector column is selected through the
-    :func:`~quchip.chip.dressing.label_eigensystem` array kernel, so
-    dressed initial states are differentiable end-to-end. The global
-    phase is gauge-dependent (``eigh`` column convention) —
-    populations and ``|overlap|`` figures of merit are unaffected.
-    """
-    return chip._analysis.state(device_states, **device_state_kwargs)
-
-
 def bare_state(
     chip: "Chip",
     device_states: Mapping[str | "BaseDevice", int | State] | str | None = None,
@@ -226,7 +205,7 @@ def bare_state(
 
     Each device may be specified as either an energy-level index (``int``)
     or a ket vector in that device's authored local space. Devices not
-    mentioned default to the ground state (level 0). Unlike :func:`state`
+    mentioned default to the ground state (level 0). Unlike :meth:`~quchip.Chip.state`
     this does **not** diagonalize the coupled system.
 
     Accepts a string shorthand (e.g. ``"eg1"``) when

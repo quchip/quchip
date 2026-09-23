@@ -271,12 +271,14 @@ def _h_eff_on_basis(chip: "Chip", basis: Sequence[tuple[int, ...]]) -> Any:
     :func:`effective_hamiltonian_between_states` (exactly two explicit
     states) — see :class:`EffectiveHamiltonianResult` for the construction.
     """
-    dims = tuple(dev.levels for dev in chip.devices)
-    eigenvalues, evecs, _, labeling = chip._analysis._compute_array_labeled()
-    evecs = jnp.asarray(evecs)
-    eigenvalues = jnp.asarray(eigenvalues)
+    analysis = chip._analysis
+    engine = analysis.engine_result()
+    eigenvalues, evecs, _, labeling = analysis._compute_array_labeled(engine)
+    evecs = analysis._semantic_amplitudes(evecs, engine)
 
-    bare_idx_list = [int(np.ravel_multi_index(state, dims)) for state in basis]
+    bare_idx_list = [int(np.ravel_multi_index(state, engine.dims)) for state in basis]
+    if not bare_idx_list:
+        raise ValueError("Effective subspace must contain at least one state.")
     dressed_idx = jnp.stack([labeling.indices[i] for i in bare_idx_list])
 
     return exact_subspace(eigenvalues, evecs, bare_idx_list, dressed_idx).hamiltonian

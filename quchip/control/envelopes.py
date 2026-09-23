@@ -41,6 +41,7 @@ import jax.tree_util as jtu
 
 from quchip.declarative import qnp
 from quchip.declarative.parameters import (
+    _synthesize_init,
     DeclarativeMeta,
     Scalar,
     build_declared_signature,
@@ -58,15 +59,10 @@ def _synthesize_envelope_init(cls: type["Envelope"]) -> Any:
     """Build a constructor from declared envelope parameters."""
     signature = build_declared_signature(parameter_fields(cls))
 
-    def __init__(self: Envelope, *args: Any, **kwargs: Any) -> None:
-        bound = signature.bind(self, *args, **kwargs)
-        bound.apply_defaults()
-        Envelope.__init__(**bound.arguments)
-
-    __init__.__signature__ = signature  # type: ignore[attr-defined]
-    __init__.__qualname__ = f"{cls.__qualname__}.__init__"
-    __init__.__doc__ = f"Initialize {cls.__name__} from its declared parameters."
-    return __init__
+    return _synthesize_init(
+        cls, signature, Envelope.__init__,
+        doc=f"Initialize {cls.__name__} from its declared parameters.",
+    )
 
 
 class Envelope(Registrable, ABC, registry_root=True, metaclass=DeclarativeMeta):

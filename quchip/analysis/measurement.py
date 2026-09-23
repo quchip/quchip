@@ -17,6 +17,7 @@ from quchip.engine.reference import (
     FieldChannel, cw_transfer,
 )
 from quchip.results.measurement import VNAMeasurement
+from quchip.results.input_output import MeanFieldResponseResult
 from quchip.sweep import Sweep, ZippedSweep, _iter_axis_points
 from quchip.utils.jax_utils import contains_tracer
 from quchip.utils.labeling import resolve_label
@@ -100,9 +101,7 @@ def measure(
     input: Any, outputs: Any, noise_frequencies: Any, options: Any, progress: bool,
 ) -> VNAMeasurement:
     """Acquire physical fields and correlations once per probe/sweep point."""
-    from quchip.analysis.vna import (
-        _axis_values, _operating_point, _plane_means, _public_axes, _resolve_exposure,
-    )
+    from quchip.analysis.vna import _resolve_exposure
     if isinstance(outputs, str):
         raise TypeError("outputs must be a sequence of plane objects or labels, not a string.")
     labels = tuple(vna.ports) if outputs is None else tuple(_resolve_exposure(vna.chip, plane) for plane in outputs)
@@ -116,6 +115,18 @@ def measure(
         input_label = _resolve_exposure(vna.chip, input)
     if any(tone.port == input_label for tone in vna._tones):
         raise ValueError("The measurement probe must be the only tone on its input.")
+    return _acquire(vna, frequencies, amplitudes, variations, labels=labels, input_label=input_label,
+                    options=options, progress=progress, noise=True, noise_frequencies=noise_frequencies)
+
+
+def _acquire(
+    vna: Any, frequencies: Any, amplitudes: Any, variations: tuple[Sweep | ZippedSweep, ...], *,
+    labels: tuple[str, ...], input_label: str, options: Any, progress: bool,
+    noise: bool = False, noise_frequencies: Any = None,
+) -> Any:
+    """Acquire one finite-probe grid, with optional noise and mode observables."""
+    from quchip.analysis.vna import _axis_values, _operating_point, _plane_means, _public_axes
+
     frequency_values, frequency_axis = _axis_values(frequencies)
     amplitude_values, amplitude_axis = _axis_values(amplitudes)
     vna._validate_variations(variations, reserved=(
@@ -128,16 +139,17 @@ def measure(
     if frequency_axis:
         shape += (len(frequency_values),)
         axes += (("frequency", frequency_values),)
-    offsets = noise_grid(noise_frequencies)
+    offsets = noise_grid(noise_frequencies) if noise else None
     xp = vna.chip.backend.array_module
-    modes = tuple(device.label for device in vna.chip.devices if isinstance(device.local_space(), FockSpace))
+    modes = tuple(device.label for device in vna.chip.devices
+                  if isinstance(device.local_space(), FockSpace)) if noise else ()
     captured: list[_Acquisition] = []
     incident, parameters = [], []
     points: list[Any] = []
     for _, params in variation_points:
         chip = vna._chip_at(params)
         linear = (try_build_linear_response_problem(chip, frequency_values, plane_labels=labels)
-                  if not vna._tones and options is None else None)
+                  if noise and not vna._tones and options is None else None)
         if linear is not None and not contains_tracer((linear.hamiltonian, linear.couplings)):
             couplings = np.asarray(linear.couplings)
             drift = -1j*np.asarray(linear.hamiltonian)-couplings.conj().T@couplings/2
@@ -147,15 +159,18 @@ def measure(
                       for amplitude in amplitude_values for frequency in frequency_values)
     if progress:
         from tqdm import tqdm
-        points = tqdm(points, desc="VNA measurement")
+        points = tqdm(points, desc="VNA measurement" if noise else "VNA power")
     for chip, linear, params, amplitude, frequency in points:
-        parameters.append(dict(chip.parameters))
+        if noise:
+            parameters.append(dict(chip.parameters))
         tones = vna._tone_values(params) + ((input_label, frequency, xp.conj(amplitude)),)
         if linear is None:
             operating = _operating_point(chip, tones, frequency, (), options)
             mean = _plane_means(operating.engine, operating.state.state, chip.backend, labels, tones, frequency)
-            components, output_delays = capture_noise(operating, chip.backend, labels, frequency, xp.asarray(offsets))
-            amplitudes_at_point, numbers_at_point, frames_at_point = capture_modes(chip, operating, modes)
+            components, output_delays = (capture_noise(operating, chip.backend, labels, frequency, xp.asarray(offsets))
+                                         if noise else ({}, None))
+            amplitudes_at_point, numbers_at_point, frames_at_point = (
+                capture_modes(chip, operating, modes) if noise else (None, None, None))
             acquired = _Acquisition(mean, components, output_delays, operating.diagnostics,
                                     amplitudes_at_point, numbers_at_point, frames_at_point)
         else:
@@ -163,6 +178,17 @@ def measure(
                 linear, chip.backend, labels, input_label, frequency, xp.conj(amplitude), xp.asarray(offsets))
         captured.append(acquired)
         incident.append(xp.asarray(amplitude))
+    response = dict(
+        ports=labels, input=resolve_label(input_label),
+        frequencies=frequency_values if frequency_axis else frequency_values[0],
+        amplitudes=amplitude_values if amplitude_axis else amplitude_values[0], axes=axes, shape=shape,
+        diagnostics=tuple(point.diagnostics for point in captured),
+        values=xp.conj(xp.stack([point.mean for point in captured]).reshape((*shape, len(labels)))),
+        incident=xp.stack(incident).reshape(shape),
+    )
+    if not noise:
+        return MeanFieldResponseResult(**response)
+    assert offsets is not None
     size = 2 * len(labels)
     names = tuple(captured[0].components)
     if any(tuple(point.components) != names for point in captured):
@@ -175,12 +201,7 @@ def measure(
         for name in names
     }
     return VNAMeasurement(
-        ports=labels, input=resolve_label(input_label),
-        frequencies=frequency_values if frequency_axis else frequency_values[0],
-        amplitudes=amplitude_values if amplitude_axis else amplitude_values[0], axes=axes, shape=shape,
-        diagnostics=tuple(point.diagnostics for point in captured),
-        values=xp.conj(xp.stack([point.mean for point in captured]).reshape((*shape, len(labels)))),
-        incident=xp.stack(incident).reshape(shape), noise_frequencies=offsets, noise_components=components,
+        **response, noise_frequencies=offsets, noise_components=components,
         output_delays=xp.stack([point.delays for point in captured]).reshape((*shape, len(labels))),
         parameters=tuple(parameters), modes=modes,
         mode_amplitudes=xp.stack([point.mode_amplitudes for point in captured]).reshape((*shape, len(modes))),

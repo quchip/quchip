@@ -7,7 +7,25 @@ import pytest
 
 from quchip import Chip, DuffingTransmon, QuantumSequence
 from quchip.engine import solve_batch
-from quchip.engine.ir import SolveBatch
+from quchip.engine.ir import CanonicalOperator, SolveBatch, StaticTerm
+
+
+@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
+def test_batch_keeps_distinct_applied_static_hamiltonians(backend):
+    q = DuffingTransmon(freq=1 / (2 * np.pi), anharmonicity=-0.2, levels=2, label="q")
+    chip = Chip([q], backend=backend)
+    times = np.linspace(0.0, 1.0, 11)
+    problem = QuantumSequence(chip).build_problem(times, e_ops={"q": q.number_operator()}, states="none")
+    x = CanonicalOperator.from_dense(np.array([[0.0, 1.0], [1.0, 0.0]]),
+        dims=(2,), basis="solver", subsystem_labels=("q",))
+    strengths = (0.2, 0.8)
+    problems = tuple(replace(problem, engine_result=problem.engine_result.with_applied_hamiltonian_terms(
+        static_terms=(StaticTerm(x, strength),))) for strength in strengths)
+    results = solve_batch(SolveBatch(chip=chip, problems=problems), progress=False)
+    for strength, result in zip(strengths, results):
+        frequency = np.sqrt(strength**2 + 0.25)
+        expected = (strength / frequency * np.sin(frequency * times)) ** 2
+        np.testing.assert_allclose(result.expect("q"), expected, atol=2e-6)
 
 
 def _batch(states, noisy=True, scales=(1.0, 2.0)):

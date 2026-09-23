@@ -436,45 +436,14 @@ def plot_expectation(
 
 
 def _wigner_from_density_matrix(rho: np.ndarray, xvec: np.ndarray, yvec: np.ndarray) -> np.ndarray:
-    """Wigner function of *rho* via the Laguerre-polynomial Fock expansion.
+    """Evaluate W(x, p) with [X, P] = i and integral Tr(rho).
 
-    Uses the optics convention ``alpha = (x + i y) / sqrt(2)`` so that
-    ``x = <X>`` and ``p = <P>`` with ``[X, P] = i``. The normalisation is
-    the standard one: ``int W(x, p) dx dp = Tr(rho) = 1``.
-
-    The series is the Cahill-Glauber representation
-    (``Phys. Rev. 177, 1882, 1969``),
-
-    .. math::
-
-        W(\\alpha) = \\frac{2}{\\pi} \\sum_{m, n} \\rho_{mn}
-          \\langle n | D(\\alpha) (-1)^{\\hat N} D^{\\dagger}(\\alpha) | m \\rangle,
-
-    evaluated with associated Laguerre polynomials (see Leonhardt,
-    *Essential Quantum Optics*, Ch. 3).
+    QuTiP's Clenshaw expansion uses alpha = (x + i*p)/sqrt(2).
+    See Leonhardt, Essential Quantum Optics, chapter 3.
     """
-    from scipy.special import gammaln, genlaguerre
+    from qutip import Qobj, wigner
 
-    dim = rho.shape[0]
-    X, Y = np.meshgrid(xvec, yvec)
-    A = (X + 1j * Y) / np.sqrt(2)
-    B = 4.0 * np.abs(A) ** 2
-
-    W = np.zeros(A.shape, dtype=float)
-    for m in range(dim):
-        if np.abs(rho[m, m]) > 0.0:
-            W += np.real(rho[m, m] * (-1) ** m * genlaguerre(m, 0)(B))
-        for n in range(m + 1, dim):
-            if np.abs(rho[m, n]) > 0.0:
-                W += 2.0 * np.real(
-                    rho[m, n]
-                    * (-1) ** m
-                    * (2.0 * A) ** (n - m)
-                    * np.exp(0.5 * (gammaln(m + 1) - gammaln(n + 1)))
-                    * genlaguerre(m, n - m)(B)
-                )
-
-    return W * np.exp(-B / 2.0) / np.pi
+    return wigner(Qobj(rho), xvec, yvec, g=np.sqrt(2), method="clenshaw")
 
 
 def plot_wigner(

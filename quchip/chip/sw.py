@@ -53,7 +53,6 @@ def bare_hamiltonian(
     leaving the authored Hamiltonian unchanged. It intentionally materializes
     a dense matrix.
     """
-    from quchip.engine.basis import semantic_to_solver_transform
     from quchip.engine.assembly import _analysis_matrix_ghz
 
     labels = [dev.label for dev in chip.devices]
@@ -64,7 +63,7 @@ def bare_hamiltonian(
     semantic_to_solver: Any | None = None
     for device in chip.devices:
         record = result.bases[device.label]
-        local_transform = semantic_to_solver_transform(device, record)
+        local_transform = record.energy_to_solver()
         if local_transform is None:
             local_transform = jnp.eye(record.resolved_dim, dtype=jnp.complex128)
         semantic_to_solver = (

@@ -12,6 +12,8 @@ import numpy as np
 
 from quchip.chip.ports import Port
 from quchip.engine.field_noise import amplifier_values, attenuation_value, noise_parameters, thermal_occupation_value
+from quchip.engine.output_network import pad_mixing
+from quchip.engine.slh import _same_carrier
 from quchip.engine.reference import (
     FieldChannel,
     ReferenceAmplifier,
@@ -24,7 +26,7 @@ from quchip.engine.reference import (
     has_colored_noise,
     source_occupation,
 )
-from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar, select_array_module
+from quchip.utils.jax_utils import contains_tracer, select_array_module
 from quchip.utils.labeling import auto_label, resolve_label
 from quchip.utils.values import copy_value
 from quchip.utils.deprecation import warn_renamed
@@ -1248,12 +1250,8 @@ class PortNetwork:
         xp = select_array_module(contains_tracer(compiled.scattering))
         full_support = np.eye(full_size, dtype=bool)
         full_support[: len(channels), : len(channels)] = compiled.support
-        full_scattering = xp.eye(full_size, dtype=complex)
-        if channels:
-            if hasattr(full_scattering, "at"):
-                full_scattering = full_scattering.at[: len(channels), : len(channels)].set(compiled.scattering)
-            else:
-                full_scattering[: len(channels), : len(channels)] = compiled.scattering
+        full_scattering = (pad_mixing(xp.asarray(compiled.scattering, dtype=complex), full_size, xp)
+                           if channels else xp.eye(full_size, dtype=complex))
         return ResolvedSLH(
             scattering=full_scattering,
             hamiltonian=HamiltonianProgram(
@@ -1389,18 +1387,19 @@ class PortNetwork:
             }
             getattr(network, kind)(payload["label"], **parameters)
         for payload in data.get("connections", []):
-            input_key = tuple(payload["input"])
-            output_key = tuple(payload["output"])
-            network._connections[input_key] = output_key
-            network._used_outputs[output_key] = input_key
+            input_component, input_name = payload["input"]
+            output_component, output_name = payload["output"]
+            network.connect(
+                FieldTerminal(output_component, output_name, "output", network._token),
+                FieldTerminal(input_component, input_name, "input", network._token),
+            )
         for payload in data.get("exposures", []):
-            network._exposures.append(
-                NetworkPort(
-                    payload["label"],
-                    tuple(payload["input"]),
-                    tuple(payload["output"]),
-                    _network_token=network._token,
-                )
+            input_component, input_name = payload["input"]
+            output_component, output_name = payload["output"]
+            network.expose(
+                payload["label"],
+                input=FieldTerminal(input_component, input_name, "input", network._token),
+                output=FieldTerminal(output_component, output_name, "output", network._token),
             )
         return network
 
@@ -2031,11 +2030,7 @@ class PortNetwork:
                     "PortNetwork scattering shape must match exposed channels; "
                     f"got {boundary.shape} for {external_count}."
                 )
-            full_boundary = boundary_xp.eye(size, dtype=complex)
-            if hasattr(full_boundary, "at"):
-                full_boundary = full_boundary.at[:external_count, :external_count].set(boundary)
-            else:
-                full_boundary[:external_count, :external_count] = boundary
+            full_boundary = pad_mixing(boundary, size, boundary_xp)
             scattering = full_boundary @ scattering
             coupling_maps = [
                 self._combine_maps(full_boundary[row], coupling_maps)
@@ -2064,7 +2059,7 @@ class PortNetwork:
     @staticmethod
     def _output_network(embedded, groups, nodes, feeds, fields, inputs, peeled, scattering, boundary):
         """Freeze acyclic downstream field maps, preserving a unitary solver boundary."""
-        from quchip.engine.output_network import OutputNetwork, OutputStep, pad_mixing
+        from quchip.engine.output_network import OutputNetwork, OutputStep
         xp = select_array_module(contains_tracer(scattering))
         inverse = xp.conj(xp.asarray(scattering).T)
         affected = set()
@@ -2254,15 +2249,6 @@ class PortNetwork:
             if not PortNetwork._is_concrete_zero(coefficient)
         )
 
-    @staticmethod
-    def _same_frame_frequency(first: Any, second: Any) -> bool:
-        """Return whether two port carriers are statically known to coincide."""
-        first_concrete = maybe_concrete_scalar(first)
-        second_concrete = maybe_concrete_scalar(second)
-        if first_concrete is not None and second_concrete is not None:
-            return bool(np.isclose(first_concrete, second_concrete, rtol=1e-12, atol=1e-12))
-        return first is second
-
     @classmethod
     def _common_frame_frequency(
         cls,
@@ -2277,7 +2263,7 @@ class PortNetwork:
             return None
         reference = channels[sources[0]].collapse.frame_frequency
         if any(
-            not cls._same_frame_frequency(
+            not _same_carrier(
                 reference,
                 channels[source].collapse.frame_frequency,
             )

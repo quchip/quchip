@@ -10,6 +10,7 @@ import jax.tree_util as jtu
 
 from quchip.declarative import qnp
 from quchip.declarative.parameters import (
+    _synthesize_init,
     Parameter,
     UNBOUND,
     DeclarativeMeta,
@@ -32,21 +33,11 @@ def _synthesize_coefficient_init(
     """Build a constructor from a coefficient's declared fields."""
     signature = build_declared_signature(fields)
 
-    def __init__(self: Any, *args: Any, **kwargs: Any) -> None:
-        bound = signature.bind(self, *args, **kwargs)
-        bound.apply_defaults()
-        arguments = dict(bound.arguments)
-        arguments.pop("self")
-        for name, value in resolve_declared_params(
-            cls,
-            arguments,
-            fields=fields,
-        ).items():
+    def initialize(self: Any, **arguments: Any) -> None:
+        for name, value in resolve_declared_params(cls, arguments, fields=fields).items():
             setattr(self, name, value)
 
-    __init__.__signature__ = signature  # type: ignore[attr-defined]
-    __init__.__qualname__ = f"{cls.__qualname__}.__init__"
-    return __init__
+    return _synthesize_init(cls, signature, initialize)
 
 
 class TimeCoefficient(Registrable, ABC, registry_root=True, metaclass=DeclarativeMeta):

@@ -34,7 +34,6 @@ from scipy import sparse
 from quchip.backend._response import linear_response, stationary_condition_number
 from quchip.utils.values import DeferredValue
 from quchip.backend._dims import (
-    compute_two_body_permutation,
     default_solver_steps,
     validate_two_body_indices,
 )
@@ -95,40 +94,13 @@ def _coeff_callable(signal: Any) -> Callable[[float, Any], complex]:
     return _coeff
 
 
-# Minimum number of samples used to interpolate a slow (carrier-free) envelope.
-# The user's output tlist can be far coarser than the envelope's features —
-# the extreme being a 2-point [t0, t_end] "final state only" grid. Envelope
-# evaluation is a vectorized AST pass, so a ~1k-point floor costs microseconds
-# per band. Windowed envelopes get additional local resolution regardless
-# (see :func:`_augmented_sample_grid`); this floor is what a non-windowed
-# envelope relies on alone.
+# Resolve slow, carrier-free envelopes even with a two-point output tlist.
 _MIN_ENVELOPE_SAMPLES = 1001
-
-# Local per-window subgrid density (samples/ns) merged into the base sample
-# grid around each Window node's edges (see :func:`_augmented_sample_grid`).
-# Bounded by the window's own width, not the solve span, so cost does not
-# scale with idle-span length. This density preserves sampling accuracy for
-# windowed envelopes.
+# Window cost scales with pulse width, not idle-span length; the floor resolves sub-ns pulses.
 _WINDOW_SUBGRID_POINTS_PER_NS = 40.0
-
-# Minimum interior samples spanning a window, regardless of width. Caps the
-# density-based count from below: a sub-ns window (e.g. 0.01 ns) would
-# otherwise get only 1-2 interior points from _WINDOW_SUBGRID_POINTS_PER_NS
-# alone, silently corrupting the sampled pulse area. Bounded by the
-# window's own width still, not the solve span.
 _MIN_WINDOW_INTERIOR_SAMPLES = 41
-
-# Extra span (ns) sampled just outside each window edge so the interpolant
-# sees the envelope's true zero on both sides of the start/stop discontinuity,
-# not just a single grid cell straddling it.
+# Zero-valued margins expose each discontinuity; a sparse skeleton covers the remaining zero plateau.
 _WINDOW_EDGE_PADDING_NS = 1.0
-
-# Canonical skeleton size spanning the full base-grid range for a windowed
-# envelope's coefficient grid. Outside any window the envelope is exactly
-# zero (Window.evaluate's mask), so a handful of skeleton points represents
-# that region exactly regardless of count — a windowed envelope's
-# coefficient fidelity therefore never depends on how dense the user's
-# output tlist happens to be, only on the window's own local subgrid.
 _CANONICAL_BASE_SKELETON_POINTS = 3
 
 
@@ -143,19 +115,7 @@ def _collect_window_bounds(signal: Any) -> list[tuple[float, float]]:
 
 
 def _local_window_subgrid(start: float, stop: float) -> np.ndarray:
-    """Build a dense grid resolving ``[start, stop]`` plus a small zero-valued margin on each side.
-
-    Interior samples span ``[start, stop]`` via ``np.linspace`` (which
-    places *start* and *stop* at exact grid points by construction), at
-    ``_WINDOW_SUBGRID_POINTS_PER_NS`` density
-    floored at ``_MIN_WINDOW_INTERIOR_SAMPLES`` so a window narrower than
-    ``1 / _WINDOW_SUBGRID_POINTS_PER_NS`` ns is never left under-resolved.
-    *start* and *stop* are unioned explicitly to guarantee exact boundary
-    samples. A small zero-valued
-    margin (``_WINDOW_EDGE_PADDING_NS``) is sampled on each side outside
-    ``[start, stop]`` so the interpolant sees the true zero on both sides
-    of the boundary discontinuity, not just a single grid cell straddling it.
-    """
+    """Resolve a window with exact edge nodes, at least 41 interior points, and zero-valued margins."""
     width = stop - start
     interior_n = max(int(np.ceil(width * _WINDOW_SUBGRID_POINTS_PER_NS)) + 1, _MIN_WINDOW_INTERIOR_SAMPLES)
     interior = np.linspace(start, stop, interior_n)
@@ -169,24 +129,9 @@ def _local_window_subgrid(start: float, stop: float) -> np.ndarray:
 
 
 def _augmented_sample_grid(envelope: Any, base_grid: Any) -> np.ndarray:
-    """Return a window-aware coefficient grid, decoupled from the user's output-tlist density.
-
-    A windowed envelope is exactly zero outside ``[start, stop]`` while
-    generally nonzero *at* the boundary (e.g. a truncated Gaussian) —
-    cubic-spline interpolation across that jump smears or rings regardless
-    of how dense *base_grid* is globally, and a windowed pulse's fidelity
-    must not depend on what output times the user happened to request. So
-    when the envelope carries at least one concrete window bound (see
-    :func:`_collect_window_bounds`), its coefficient grid is built
-    canonically: a fixed-size skeleton spanning the full solve range
-    (exact outside any window, where the value is identically zero,
-    regardless of point count) unioned with a locally dense subgrid
-    resolving each window (:func:`_local_window_subgrid`, bounded by the
-    window's own width, not the solve span). *base_grid* contributes only
-    its endpoints in that case. A non-windowed envelope uses *base_grid*
-    directly instead — its fidelity is governed by
-    :meth:`QuTiPBackend._resolve_envelope_sample_tlist`.
-    """
+    """Use the base grid without windows; otherwise combine the solve-span skeleton,
+    feature times, adjacent edge floats and local subgrids. Window accuracy must
+    not depend on output-tlist density or idle-span length."""
     bounds = _collect_window_bounds(envelope)
     base = np.asarray(base_grid, dtype=float)
     if not bounds:
@@ -221,16 +166,8 @@ def _sample_coeff_array(signal: Any, sample_tlist: Any) -> np.ndarray:
     return np.broadcast_to(arr, (len(sample_tlist),)).copy()
 
 
-# Interpolation order for a windowed envelope's sampled coefficient array.
-# Linear (order=1) is mathematically bounded by its two bracketing node
-# values, so it cannot overshoot the envelope's zero plateau. The default
-# cubic (order=3) extrapolates across the canonical grid's highly
-# non-uniform knot spacing — a dense local subgrid immediately adjacent to
-# the sparse full-span skeleton (see _augmented_sample_grid) — and rings
-# far outside the window: measured -2423 at t=50 ns for a 0.1 ns pulse
-# placed at t=150.17 ns in a [0, 308] ns span, order=3. A non-windowed
-# envelope has no discontinuity to ring across and keeps the default cubic
-# order (unspecified below).
+# Linear interpolation cannot overshoot the discontinuous zero plateau, unlike cubic interpolation
+# across dense pulse knots and sparse idle knots. Non-windowed envelopes retain the cubic default.
 _WINDOWED_COEFFICIENT_ORDER = 1
 
 # Cap diag at Hilbert D=64 for sesolve and Liouvillian D²=1024 (Hilbert D=32) for mesolve.
@@ -240,16 +177,8 @@ _MAX_STATIC_LIOUVILLIAN_DIM = 1024
 
 
 def _envelope_coefficient(envelope: Any, sample_tlist: Any) -> Any:
-    """Build the QuTiP coefficient for one carrier-free envelope: sampled array or exact callable.
-
-    A windowed envelope (see :func:`_collect_window_bounds`) is sampled on
-    the canonical, tlist-density-independent grid from
-    :func:`_augmented_sample_grid` and interpolated at
-    :data:`_WINDOWED_COEFFICIENT_ORDER` to avoid cubic ringing across the
-    window-edge discontinuity. A non-windowed envelope is interpolated
-    from *sample_tlist* directly at the default cubic order. Falls back to
-    an exact callable when no concrete sample grid is available at all.
-    """
+    """Sample windowed envelopes locally with linear interpolation to avoid edge ringing.
+    Use the base grid otherwise, or an exact callable when no concrete grid is available."""
     if sample_tlist is None:
         return qutip.coefficient(_coeff_callable(envelope))
     bounds = _collect_window_bounds(envelope)
@@ -268,17 +197,8 @@ def _envelope_coefficient(envelope: Any, sample_tlist: Any) -> Any:
 
 
 def _carrier_coefficient(freq: Any) -> Any:
-    """Build the analytic carrier ``exp(i·freq·t)`` as a QuTiP coefficient (``freq`` angular, rad/ns).
-
-    Kept analytic — never sampled — so a resonant carrier integrates to
-    solver tolerance instead of accumulating cubic-spline interpolation
-    error (the lab-frame frame-invariance bug).
-
-    QuTiP-only boundary: the closure captures ``freq`` and is invoked by
-    the QuTiP solver at concrete times. QuTiP is not JAX-native, so this
-    callable is never evaluated under tracing — a traced ``freq`` would be
-    concretized by the solver, never inside a ``jit``.
-    """
+    """Keep exp(i·freq·t) analytic, with angular freq in rad/ns.
+    QuTiP evaluates the closure only at concrete times; this is not a JAX-traced path."""
     def _carrier(t: float, *args: Any, **kwargs: Any) -> complex:
         return complex(np.exp(1j * freq * t))
 
@@ -286,16 +206,7 @@ def _carrier_coefficient(freq: Any) -> Any:
 
 
 def _band_coefficient(band: Any, sample_tlist: Any) -> Any:
-    """Build the QuTiP coefficient for one carrier band: sampled slow envelope × analytic carrier.
-
-    The carrier-free envelope coefficient is built by
-    :func:`_envelope_coefficient` — canonical, tlist-density-independent
-    sampling at a ringing-safe interpolation order for a windowed
-    envelope, or direct interpolation of *sample_tlist* (or an exact
-    callable) otherwise. A concretely zero band frequency needs no
-    carrier, so the common resonant rotating-frame case stays a pure
-    envelope coefficient.
-    """
+    """Multiply the slow-envelope coefficient by an analytic carrier, omitted at concrete zero frequency."""
     env_coeff = _envelope_coefficient(band.envelope, sample_tlist)
     freq = maybe_concrete_scalar(band.freq)
     if freq is not None and freq == 0.0:
@@ -304,25 +215,12 @@ def _band_coefficient(band: Any, sample_tlist: Any) -> Any:
 
 
 def _dynamic_term_entries(op: Qobj, signal: Any, sample_tlist: Any) -> list[list[Any]]:
-    """Return QuTiP ``[op, coeff]`` pairs — one per carrier band of *signal*.
-
-    The signal is band-normalized into ``Σ_k envelope_k(t)·exp(i·freq_k·t)``
-    so each fast carrier stays analytic while only the slow envelope is
-    sampled — physics a backend can represent exactly is never forced
-    through pre-sampling.
-    """
+    """Return one QuTiP [operator, coefficient] entry per carrier band."""
     return [[op, _band_coefficient(band, sample_tlist)] for band in decompose_carrier_bands(signal)]
 
 
 def _assemble_qobjevo(static_rhs: Qobj | None, op_signal_pairs: Any, sample_tlist: Any) -> qutip.QobjEvo:
-    """Seed-extend-assemble a ``QobjEvo`` from a static ``Qobj`` and dynamics.
-
-    The term list is seeded with *static_rhs* (when present) and extended with
-    one ``[op, coeff]`` band entry per dynamic ``(Qobj, signal)`` pair before a
-    single ``QobjEvo`` assembly. Coefficients carry their own sample grids.
-    Shared by :meth:`QuTiPBackend.prepare_hamiltonian` and the per-element
-    batch RHS builder so the assembly path lives in one place.
-    """
+    """Combine an optional static operator and dynamic entries into a QobjEvo."""
     terms: list[Any] = []
     if static_rhs is not None:
         terms.append(static_rhs)
@@ -535,65 +433,20 @@ class QuTiPBackend(Backend):
         index_b: int,
         dims: Sequence[int],
     ) -> Operator:
-        op_ordered, first_idx, second_idx = self._reorder_two_body_op(op_ab, index_a, index_b, dims)
-        return self._embed_ordered_two_body(op_ordered, first_idx, second_idx, dims)
-
-    @staticmethod
-    def _reorder_two_body_op(
-        op_ab: Qobj, index_a: int, index_b: int, dims: Sequence[int]
-    ) -> tuple[Qobj, int, int]:
-        """Validate indices; SWAP-permute subsystems when ``index_a > index_b``.
-
-        The SWAP is done on the sparse CSR structure (COO-remap) so nothing
-        gets densified here.
-        """
         validate_two_body_indices(index_a, index_b, dims)
-        expected_dim = dims[index_a] * dims[index_b]
+        local_dims = [dims[index_a], dims[index_b]]
+        expected_dim = local_dims[0] * local_dims[1]
         if op_ab.shape[0] != expected_dim:
             raise ValueError(
                 f"Two-body operator dimension {op_ab.shape[0]} does not match "
                 f"dims[{index_a}]*dims[{index_b}] = {expected_dim}"
             )
-
-        d_a, d_b = dims[index_a], dims[index_b]
-        if index_a < index_b:
-            target_dims = [[d_a, d_b], [d_a, d_b]]
-            op_ordered = op_ab if op_ab.dims == target_dims else Qobj(op_ab.data, dims=target_dims)
-            return op_ordered, index_a, index_b
-
-        # SWAP via sparse index remapping to avoid densifying sparse operators.
-        coo = op_ab.to("CSR").data_as("csr_matrix").tocoo()
-        row_a, row_b = np.divmod(coo.row, d_b)
-        col_a, col_b = np.divmod(coo.col, d_b)
-        dim_total = d_a * d_b
-        swapped = sparse.coo_matrix(
-            (coo.data, (row_b * d_a + row_a, col_b * d_a + col_a)),
-            shape=(dim_total, dim_total),
-        ).tocsr()
-        return Qobj(swapped, dims=[[d_b, d_a], [d_b, d_a]]), index_b, index_a
-
-    @staticmethod
-    def _embed_ordered_two_body(
-        op_ordered: Qobj, first_idx: int, second_idx: int, dims: Sequence[int]
-    ) -> Qobj:
-        """Embed a positionally-ordered two-body op; adjacent → direct tensor, else permute."""
-        n_devices = len(dims)
-        if second_idx == first_idx + 1:
-            ops: list[Qobj] = []
-            for i in range(n_devices):
-                if i == first_idx:
-                    ops.append(op_ordered)
-                elif i == second_idx:
-                    continue
-                else:
-                    ops.append(qutip.qeye(dims[i]))
-            return qutip.tensor(ops)
-
-        reorder, inverse_reorder = compute_two_body_permutation(first_idx, second_idx, dims)
-        reordered_dims = [dims[j] for j in reorder]
-        reordered_ops: list[Qobj] = [op_ordered]
-        reordered_ops.extend(qutip.qeye(reordered_dims[j]) for j in range(2, len(reorder)))
-        return qutip.tensor(reordered_ops).permute(inverse_reorder)
+        local = op_ab if op_ab.dims == [local_dims, local_dims] else Qobj(op_ab.data, dims=[local_dims, local_dims])
+        if index_b == index_a + 1:
+            # Keep native tensor layout selection for adjacent, ordered targets.
+            return qutip.tensor([local if index == index_a else qutip.qeye(dim)
+                                 for index, dim in enumerate(dims) if index != index_b])
+        return qutip.expand_operator(local.to("CSR"), list(dims), targets=[int(index_a), int(index_b)])
 
     # ------------------------------------------------------------------
     # State factories
@@ -1134,10 +987,10 @@ class QuTiPBackend(Backend):
         """
         cached_qobj = self._make_op_cache()
         engine_results = tuple(problem.engine_result for problem in batch.problems)
-        static_cache: dict[int, Qobj | None] = {}
+        static_cache: dict[tuple[int, ...], Qobj | None] = {}
         static_rhs: list[Qobj | None] = []
         for result in engine_results:
-            key = id(result.static_terms)
+            key = result._static_term_ids
             if key not in static_cache:
                 static_cache[key] = self._sum_terms(result.static_terms, cached_qobj)
             static_rhs.append(static_cache[key])

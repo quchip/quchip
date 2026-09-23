@@ -213,12 +213,3 @@ def resolve_device_basis(
 
     matrix = materialize_array(device.unresolved_hamiltonian())
     return resolve_local_basis(matrix, basis=basis, levels=levels)
-
-
-def semantic_to_solver_transform(device: Any, record: BasisRecord) -> Any | None:
-    """Map semantic local levels into the resolved solver basis when needed.
-
-    Local levels label isolated energy states. ``None`` means those labels already coincide with
-    solver indices, allowing sparse band decomposition to stay sparse.
-    """
-    return record.energy_to_solver()

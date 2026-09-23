@@ -65,12 +65,8 @@ def _pair_labels(label: Any, kind: str) -> tuple[str, str]:
 
 
 def _static_exchange_rate(chip: Chip, label: Any) -> Any:
-    """Off-diagonal element of the single-excitation effective Hamiltonian.
-
-    Returns the static exchange rate between two devices in GHz, via the
-    public :func:`~quchip.analysis.effective_hamiltonian.effective_hamiltonian_between_states`
-    seam — no direct access to chip/analysis internals here.
-    """
+    """Read the real single-excitation off-diagonal element in GHz through
+    the public effective_hamiltonian_between_states calculation."""
     a, b = _pair_labels(label, "exchange")
     n = len(chip.devices)
     state_a = [0] * n
@@ -87,38 +83,12 @@ def _estimate_bare_g(
     spec: TargetSpec,
     seed_strength_bounds: tuple[float, float] = (1e-6, 0.25),
 ) -> float:
-    """Root-solve a 2-device sub-chip to find a bare coupling strength that matches signed full cross-Kerr.
+    """Root-seed the signed full cross-Kerr on an isolated two-device copy.
 
-    A good seed matters because the outer least-squares problem is
-    non-convex in the coupling strength near the dispersive regime. The
-    only requirement here is that the target observable be *bracketed*
-    by the endpoints of ``seed_strength_bounds`` — checked below, not
-    merely assumed. The observable need not be monotone in between:
-    :func:`scipy.optimize.brentq` finds a strength consistent with the
-    target regardless of whether the observable increases or decreases
-    across the bracket. The search runs on a 2-device sub-chip — no
-    neighbors, no crosstalk — for a strength that reproduces the target
-    observable, handing that value to the full fit.
-
-    The sub-chip is built via the coupling's own structural copy/rebind
-    path (:meth:`~quchip.chip.coupling_base.BaseCoupling.copy`), which
-    preserves constructor-only subclass state without coupling-type reconstruction, so this works for
-    any coupling, not only ``g``-attribute ones — and
-    :meth:`~quchip.chip.coupling_base.BaseCoupling.set_coupling_strength`
-    writes each trial magnitude. It also carries over the parent chip's
-    backend for evaluating the local fit model.
-
-    Parameters
-    ----------
-    seed_strength_bounds
-        ``(lo, hi)`` magnitude bounds for the root solve.
-
-    Raises
-    ------
-    ValueError
-        The target observable is not bracketed by the endpoint values —
-        seeding never returns a saturated endpoint silently.
-    """
+    Require the target to be bracketed by seed_strength_bounds; monotonicity
+    is unnecessary for brentq. Preserve the coupling copy/rebind path, including
+    constructor-only state, and the parent backend. Set trials through the
+    coupling-strength interface. An unbracketed target raises, never saturates."""
     target_val = float(spec.target)
     if target_val == 0.0:
         return 0.0
@@ -175,32 +145,11 @@ def _resolve_vary(
     chip: Chip,
     vary: Mapping,
 ) -> tuple[dict[str, tuple[str, ...]], dict[str, tuple[str, ...]]]:
-    """Resolve a ``vary`` mapping into per-device and per-coupling free-parameter allowlists.
+    """Resolve complete device/coupling free-parameter allowlists.
 
-    ``vary`` is the *complete* free-parameter selection: a
-    component (device or coupling, given as the object or its label) absent
-    from the mapping is fully frozen, and an empty name-collection value
-    explicitly freezes a listed component. Device parameter names validate
-    against :meth:`~quchip.devices.base.BaseDevice.tunable_params` (which
-    walks the device's declared ``tunable_param_names`` — the generic seam
-    a user-authored :class:`~quchip.devices.base.BaseDevice` subclass
-    already gets for free); coupling names validate against exactly
-    ``(coupling.coupling_strength_name,)``.
-
-    Returns
-    -------
-    tuple[dict[str, tuple[str, ...]], dict[str, tuple[str, ...]]]
-        ``(device_selection, coupling_selection)``, each ``{label: names}``
-        for the components actually listed in ``vary``.
-
-    Raises
-    ------
-    ValueError
-        A key does not match any device or coupling label on ``chip``; a
-        name is not among the resolved component's declared tunables; two
-        keys resolve to the same label; or a value is a bare string rather
-        than a collection of names.
-    """
+    Absent components and empty selections stay frozen. Accept objects or labels;
+    reject duplicate labels, unknown tunables and bare string selections. Return
+    (device_selection, coupling_selection) mappings."""
     devices_by_label = {device.label: device for device in chip.devices}
     couplings_by_label = {coupling.label: coupling for coupling in chip.couplings}
     known_labels = sorted(set(devices_by_label) | set(couplings_by_label))
@@ -262,11 +211,8 @@ def _pack_initial_params(
     device_selection: Mapping[str, tuple[str, ...]],
     coupling_selection: Mapping[str, tuple[str, ...]],
 ) -> tuple[list[str], np.ndarray]:
-    """Pack selected parameters, seeding nonlinear cross-Kerr coupling targets.
-
-    Other couplings start from their declared strength. Device parameters
-    retain declaration order; absent selections remain fixed in candidates.
-    """
+    """Pack selected parameters in declaration order, root-seeding nonlinear
+    cross-Kerr targets; other couplings retain their declared strengths."""
     names = _selected_parameter_names(chip, device_selection, coupling_selection)
     name_set = set(names)
     values: list[float] = []
@@ -342,16 +288,7 @@ def _evaluate_spec(candidate: Chip, spec: TargetSpec, evaluator: str) -> Any:
 
 
 def _auto_bounds(chip: Chip, names: list[str], x0: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Per-parameter box bounds that keep the TRF solver physical.
-
-    A coupling's scalar strength (``g``, ``g_0``, ``chi``, …) is symmetric
-    around zero — the *sign* of a capacitive-type coupling carries physical
-    meaning and must not be frozen. Every device-side parameter delegates
-    to :meth:`~quchip.devices.base.BaseDevice.tunable_param_bounds` so
-    each device declares the valid range for its own bare parameters
-    (``freq``, ``anharmonicity``, ``E_C``/``E_J``/``E_L``/``phi_ext``,
-    ``n_g``, …) without any global registry.
-    """
+    """Use device-owned parameter bounds and sign-symmetric coupling-strength bounds."""
     devices_by_label = {device.label: device for device in chip.devices}
     couplings_by_label = {coupling.label: coupling for coupling in chip.couplings}
     lower: list[float] = []

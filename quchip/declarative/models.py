@@ -26,6 +26,7 @@ from quchip.declarative.dynamics import (
     bind_time_coefficient,
 )
 from quchip.declarative.parameters import (
+    _synthesize_init,
     Parameter,
     UNBOUND,
     DeclarativeMeta,
@@ -189,16 +190,11 @@ def _synthesize_device_init(cls: Any) -> Any:
     )
     signature = build_declared_signature(param_fields, trailing)
 
-    def __init__(self: Any, *args: Any, **kwargs: Any) -> None:
-        kwargs = BaseDevice._normalize_parameter_names(kwargs)
-        bound = signature.bind(self, *args, **kwargs)
-        bound.apply_defaults()
-        DeviceModel.__init__(**bound.arguments)
-
-    __init__.__signature__ = signature  # type: ignore[attr-defined]
-    __init__.__qualname__ = f"{cls.__qualname__}.__init__"
-    __init__.__doc__ = f"Initialize {cls.__name__} from its declared parameters."
-    return __init__
+    return _synthesize_init(
+        cls, signature, DeviceModel.__init__,
+        normalize_kwargs=BaseDevice._normalize_parameter_names,
+        doc=f"Initialize {cls.__name__} from its declared parameters.",
+    )
 
 
 def _synthesize_coupling_init(cls: Any) -> Any:
@@ -237,15 +233,10 @@ def _synthesize_coupling_init(cls: Any) -> Any:
     parameters.append(inspect.Parameter("label", inspect.Parameter.KEYWORD_ONLY, default=None))
     signature = inspect.Signature(parameters)
 
-    def __init__(self: Any, *args: Any, **kwargs: Any) -> None:
-        bound = signature.bind(self, *args, **kwargs)
-        bound.apply_defaults()
-        CouplingModel.__init__(**bound.arguments)
-
-    __init__.__signature__ = signature  # type: ignore[attr-defined]
-    __init__.__qualname__ = f"{cls.__qualname__}.__init__"
-    __init__.__doc__ = f"Initialize {cls.__name__} from its endpoints and declared fields."
-    return __init__
+    return _synthesize_init(
+        cls, signature, CouplingModel.__init__,
+        doc=f"Initialize {cls.__name__} from its endpoints and declared fields.",
+    )
 
 
 class DeviceModel(BaseDevice, metaclass=DeclarativeMeta):

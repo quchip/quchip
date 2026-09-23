@@ -17,15 +17,6 @@ from quchip.utils.jax_utils import (
 )
 
 
-def _setitem(arr: Any, idx: tuple[int, int], value: Any) -> Any:
-    """Functional setitem: uses ``.at[...].set`` for JAX, ``copy+assign`` for NumPy."""
-    if hasattr(arr, "at"):
-        return arr.at[idx].set(value)
-    out = arr.copy()
-    out[idx] = value
-    return out
-
-
 class CrosstalkMatrix(SignalTransform, serializable=True):
     """Dense crosstalk transform and matrix view in control-line order.
 
@@ -255,29 +246,25 @@ class ControlEquipment:
         index = {label: i for i, label in enumerate(labels)}
         n = len(labels)
 
-        entries: list[tuple[int, int, Any, Any, Any]] = []
+        entries: dict[tuple[int, int], tuple[Any, Any, Any]] = {}
         any_traced = False
         for t in self.crosstalks:
             if t.source not in index or t.victim not in index:
                 continue
             i = index[t.victim]
             j = index[t.source]
-            entries.append((i, j, t.beta, t.theta, t.delay))
+            entries[i, j] = (t.beta, t.theta, t.delay)
             for val in (t.beta, t.theta, t.delay):
                 if _is_traced(val):
                     any_traced = True
 
         xp = _select_array_module(any_traced)
 
-        beta = xp.eye(n, dtype=float) if n else xp.zeros((0, 0), dtype=float)
-        theta = xp.zeros((n, n), dtype=float)
-        delay = xp.zeros((n, n), dtype=float)
-
-        for i, j, b, th, dl in entries:
-            beta = _setitem(beta, (i, j), xp.asarray(b, dtype=float))
-            theta = _setitem(theta, (i, j), xp.asarray(th, dtype=float))
-            delay = _setitem(delay, (i, j), xp.asarray(dl, dtype=float))
-
+        grid = [[entries.get((i, j), (float(i == j), 0.0, 0.0)) for j in range(n)] for i in range(n)]
+        beta, theta, delay = (
+            xp.asarray([[cell[field] for cell in row] for row in grid], dtype=float).reshape(n, n)
+            for field in range(3)
+        )
         return CrosstalkMatrix(labels=labels, beta=beta, theta=theta, delay=delay)
 
     def set_crosstalk_matrix(
@@ -336,10 +323,10 @@ class ControlEquipment:
         matrix_beta = xp.asarray(beta, dtype=float)
         matrix_theta = xp.zeros((n, n), dtype=float) if theta is None else xp.asarray(theta, dtype=float)
         matrix_delay = xp.zeros((n, n), dtype=float) if delay is None else xp.asarray(delay, dtype=float)
-        for i in range(n):
-            matrix_beta = _setitem(matrix_beta, (i, i), xp.asarray(1.0, dtype=float))
-            matrix_theta = _setitem(matrix_theta, (i, i), xp.asarray(0.0, dtype=float))
-            matrix_delay = _setitem(matrix_delay, (i, i), xp.asarray(0.0, dtype=float))
+        diagonal = xp.eye(n, dtype=bool)
+        matrix_beta = xp.where(diagonal, 1.0, matrix_beta)
+        matrix_theta = xp.where(diagonal, 0.0, matrix_theta)
+        matrix_delay = xp.where(diagonal, 0.0, matrix_delay)
 
         kept = [
             transform for transform in self._signal_chain

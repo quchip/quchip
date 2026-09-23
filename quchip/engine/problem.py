@@ -165,6 +165,7 @@ def _prepare_context_eops(
 def _validate_batch_skeleton(engine_results: list[EngineResult]) -> None:
     """Require equivalent Hamiltonian skeletons without rebuilding solve inputs."""
     ref = engine_results[0]
+    static_term_ids = ref._static_term_ids
     n_dyn = len(ref.dynamic_terms)
     _prefix = "build_solve_batch_from_results: "
 
@@ -176,7 +177,7 @@ def _validate_batch_skeleton(engine_results: list[EngineResult]) -> None:
                 f"element {idx} uses {type(result.approximation).__name__}, "
                 f"expected {type(ref.approximation).__name__}."
             )
-        if result.static_terms is not ref.static_terms:
+        if result._static_term_ids != static_term_ids:
             raise ValueError(
                 _prefix + "all engine results must share identical static_terms (by identity); "
                 f"element {idx} differs."
@@ -234,7 +235,7 @@ def build_solve_batch_from_results(
 ) -> SolveBatch:
     """Package homogeneous :class:`EngineResult`s as one :class:`SolveBatch`.
 
-    All results must share ``static_terms`` identity, the same number
+    All results must share the same static term objects, the same number
     of dynamic terms, and matching operator payloads per slot (by identity
     or by canonical fingerprint — crosstalk rebuilds equal-by-value
     operators on every instantiation). ``initial_states=None`` constructs
@@ -248,19 +249,15 @@ def build_solve_batch_from_results(
     batch_size = len(engine_results)
 
     if initial_states is None:
-        states: tuple[Any, ...] = tuple(
-            materialize_state_spec(context.chip, None, result.bases)
-            for result in engine_results
-        )
+        initial_states = [None] * batch_size
     elif len(initial_states) != batch_size:
         raise ValueError(
             f"initial_states length {len(initial_states)} does not match batch_size {batch_size}"
         )
-    else:
-        states = tuple(
-            materialize_state_spec(context.chip, state_spec, result.bases)
-            for state_spec, result in zip(initial_states, engine_results)
-        )
+    states = tuple(
+        materialize_state_spec(context.chip, state_spec, result.bases)
+        for state_spec, result in zip(initial_states, engine_results)
+    )
 
     shared_metadata = _aggregate_batch_metadata(engine_results)
     e_ops, e_ops_meta = _prepare_context_eops(context, ref)
@@ -439,7 +436,7 @@ def _solve_backend_problems(
         solver_name = problem.solver_name(problem.backend)
         return (
             solver_name,
-            id(desc.static_terms),
+            desc._static_term_ids,
             tuple(id(term.operator) for term in desc.dynamic_terms),
             tuple(term.origin for term in desc.dynamic_terms),
             tuple(term.tag for term in desc.dynamic_terms),

@@ -74,13 +74,10 @@ def add_port_inputs(
             external[input_index].reference.inbound, frequency, xp
         )
 
+    coefficients = xp.asarray(engine.slh.S)[:, :len(external)] @ xp.asarray(incident)
     terms = list(engine.applied_hamiltonian.static_terms)
     for output_index, channel in enumerate(engine.slh.channels):
-        coefficient = xp.asarray(0.0 + 0.0j)
-        for input_index, amplitude in enumerate(incident):
-            coefficient = coefficient + xp.asarray(
-                engine.slh.S[output_index, input_index]
-            ) * amplitude
+        coefficient = coefficients[output_index]
         coupling = operators[channel.key]
         values = coupling.to_dense()
         h_input = 1j * (
