@@ -4,6 +4,13 @@ This file records notable user-visible changes to quchip.
 
 ## Unreleased
 
+- `effective_hamiltonian` and `effective_hamiltonian_between_states` index the
+  resolved product basis, so eigen-projected charge-basis devices no longer
+  raise a singular-Gram-matrix error. Traced dressed states and `describe()`
+  report the same retained dimensions.
+- Collective and other multi-device collapse channels are now checked for a
+  single removable frame phase. Unequal device frames raise before solving
+  instead of silently retaining a static jump operator.
 - VNA S-parameters, finite-power fields, field correlations, and IQ statistics now follow the
   engineering `e^{+jωt}` convention, where `j = −i`, including network phases
   and delays. Remove manual conjugation of VNA outputs; conjugate old complex

@@ -153,3 +153,14 @@ def test_baths_flow_into_collected_c_ops():
     term = build_problem(callable_bath, [], tlist).engine_result.collapse_terms[0]
     assert term.channel == "callable_decay"
     assert float(term.rate) == pytest.approx(2e-3)
+
+
+def test_collective_decay_rejects_unequal_device_frames():
+    """A static summed jump operator beats between unequal frames; reject instead of solving it silently."""
+    a = Resonator(freq=5.0, levels=2, label="a")
+    b = Resonator(freq=5.0, levels=2, label="b")
+    bath = Bath("collective_decay", targets=[a, b], rate=0.1)
+
+    assert len(Chip([a, b], baths=[bath], frame=5.0).resolve().collapse_terms) == 1
+    with pytest.raises(ValueError, match="Collapse channel.*different phases"):
+        Chip([a, b], baths=[bath], frame={"a": 5.0, "b": 6.0}).resolve()

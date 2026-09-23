@@ -80,7 +80,7 @@ def describe_chip(chip: "Chip") -> str:
         lines += [f"           {line}" for line in _format_frame_plan(plan)]
     lines.append(f"Approx.  : {type(chip.approximation).__name__}")
     lines.append(f"Dressed  : {'cached' if chip.is_dressed else 'not computed'}")
-    dims = [d.levels for d in chip.devices]
+    dims = [d.resolved_dimension(chip.basis) for d in chip.devices]
     if dims:
         total = 1
         for n in dims:

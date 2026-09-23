@@ -785,7 +785,7 @@ class ChipAnalysis:
         if contains_tracer((eigenvector_matrix, kernel_labeling.indices)):
             bare_idx = self._bare_label_index(label_t)
             column = jnp.asarray(eigenvector_matrix)[:, kernel_labeling.indices[bare_idx]]
-            dims = [device.levels for device in self._chip.devices]
+            dims = list(self._semantic_dims())
             return self._chip.backend.from_array(column.reshape(-1, 1), dims=[dims, [1] * len(dims)])
 
         dressed = self._ensure_dressed()
