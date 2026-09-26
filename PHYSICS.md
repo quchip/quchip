@@ -117,9 +117,14 @@ Source: [`quchip/devices/base.py`](quchip/devices/base.py)
 
 The standard dissipators are:
 
-- `T1`: relaxation through `a`
+- `T1`: relaxation through the device's `lowering_operator()` (the declared `a` by default)
 - `T2`: pure dephasing through `sqrt(2*gamma_phi) * n` with `gamma_phi = 1/T2 - 1/(2*T1)`. The factor `2` makes the 0–1 coherence decay at `1/(2*T1) + gamma_phi = 1/T2`, so the input `T2` is the resulting coherence time (when `thermal_occupation == 0`). The number operator `n` gives the standard `(m-n)^2` dephasing scaling across higher levels.
 - thermal up/down channels when `thermal_occupation` is set
+
+Custom devices select these operators through `lowering_operator()`,
+`raising_operator()` and `number_operator()`, or declare channels directly.
+The lifetime interpretation above assumes a unit 0–1 lowering matrix element
+and dephasing eigenvalues separated by one; other normalizations change it.
 
 Devices, drives, couplings, and baths author `CollapseChannel` records that
 keep the local operator separate from its non-negative rate in `1/ns`. The
@@ -1061,8 +1066,10 @@ c_eff = B† c B                      (exact — B is the retained Löwdin embed
 
 For the exact route, `B = V_selected (S^(-1/2) W)†` uses the same selected eigenvectors and overlap matrix as the retained Hamiltonian. It is isometric and independent of arbitrary eigenvector phases.
 
-For intrinsic mode loss, the survivor-lowering amplitude gives the inherited
-(Purcell) rate `|amplitude|^2 * kappa`. Both models retain the complete transformed mode jump
+For intrinsic mode loss, the inherited (Purcell) diagnostic sums
+`rate * |<0|L_eff|1_survivor>|^2` over the eliminated device's declared channels.
+`kappa` similarly sums its isolated 1-to-0 rates. For a unit lowering channel
+this is `kappa * |amplitude|^2`. Both models retain the complete transformed mode jump
 matrix and its own rate, including separate thermal emission and absorption
 channels. It does not replace a collective jump by independent T1 channels.
 `EffectiveTerms` are captured in authored coordinates and use the ordinary
@@ -1070,7 +1077,7 @@ basis and frame compiler without a second band-removal approximation. A static
 collective jump must have one removable global phase in the selected frame;
 unequal band phases require a compatible common frame or the lab frame.
 For an external default port on a
-linear resonator, the complete `c_eff` matrix becomes that port's operator on
+declared harmonic Fock mode, the complete `c_eff` matrix becomes that port's operator on
 one unprojected Fock-space survivor; the port's rate, phase, scalar scattering,
 and exposure reference plane are retained. Custom or collective boundary
 operators, projected or multiple survivors, a nonlinear eliminated boundary
@@ -1122,7 +1129,7 @@ The retargeted line keeps its label, and `schedule()` resolves drive-line labels
 
 The engine relies on four physics assumptions:
 
-1. Frame generators are built from per-device number operators `n_i`.
+1. Each frame generator is the isolated energy-level index operator, expressed in the selected solver basis. It need not equal a device's physical number operator.
 2. Single-device and two-device operators can be decomposed by excitation-change bands.
 3. The `"rotating"` frame uses each device's explicit reference or the chip-resolved dressed transition.
 4. Each drive builds a complete analytic signal with an optional carrier, then

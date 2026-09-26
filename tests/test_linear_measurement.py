@@ -6,6 +6,24 @@ import pytest
 from quchip import Capacitive, Chip, IQReceiver, PortNetwork, Resonator, RWA, VNA
 
 
+@pytest.mark.parametrize("operator", [None, "a"])
+def test_custom_lowering_port_keeps_its_normalization(operator):
+    """A harmonic Hamiltonian does not imply a unit-amplitude port operator."""
+    class DipoleMode(Resonator):
+        def lowering_operator(self):
+            return 2 * super().lowering_operator()
+
+    def reflection(mode, rate):
+        network = PortNetwork()
+        port = network.port("p", target=mode, operator=operator, rate=rate)
+        probe = network.expose("probe", at=port)
+        chip = Chip([mode], port_network=network)
+        return VNA(chip).sweep([5.99, 6., 6.01]).s(probe, probe)
+
+    np.testing.assert_allclose(reflection(DipoleMode(6., levels=3), .01),
+                               reflection(Resonator(6., levels=3), .04), atol=1e-10)
+
+
 def thermal_fridge(*, backend="qutip", filter_first=True):
     r = Resonator(freq=6.0, levels=8, internal_quality_factor=10_000, label="r")
     net = PortNetwork(label="fridge")

@@ -5,6 +5,9 @@ microwave measurements, reductions and fitting.
 
 New to quchip? Start with {doc}`your first chip <defining-and-inspecting-a-chip>`.
 
+- {doc}`Extending quchip <../extensions>`: declare your own operators, models and controls.
+- {doc}`An atom coupled to a cavity <atom-cavity>`: spin dynamics, response and fitting.
+
 ## Spectra and dynamics
 
 - {doc}`Spectra and parameter sweeps <statics-and-parameter-studies>`:
@@ -38,6 +41,8 @@ For API choices and common pitfalls, see the {doc}`cookbook <../cookbook>`.
 :hidden:
 :maxdepth: 1
 
+Extending quchip <../extensions>
+An atom coupled to a cavity <atom-cavity>
 Spectra and parameter sweeps <statics-and-parameter-studies>
 Pulses, leakage, and readout <dynamics-pulses-and-readout>
 Readout and fridge wiring <steady-state-and-vna>

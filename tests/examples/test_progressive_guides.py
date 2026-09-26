@@ -109,9 +109,12 @@ def test_committed_markdown_contains_current_notebook_outputs() -> None:
 
 
 @pytest.mark.examples
-@pytest.mark.parametrize("guide", ["defining-and-inspecting-a-chip", "steady-state-and-vna", "slh-networks"])
+@pytest.mark.parametrize("guide", ["defining-and-inspecting-a-chip", "steady-state-and-vna", "slh-networks",
+                                  pytest.param("atom-cavity", marks=pytest.mark.optional_backend)])
 def test_guide_outputs_match_a_fresh_execution(guide: str) -> None:
     """Standalone guides execute their physical checks and reproduce shown output."""
+    if guide == "atom-cavity":
+        pytest.importorskip("dynamiqs")
     path = ROOT / "docs" / "guides" / f"{guide}.md"
     source = path.read_text(encoding="utf-8")
     blocks = EXECUTED_BLOCK_RE.findall(source)

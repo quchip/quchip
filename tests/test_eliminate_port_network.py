@@ -113,7 +113,7 @@ def test_eliminate_rejects_port_connected_nonlinear_target() -> None:
     network.port("drive", target=qubit, rate=0.02)
     chip = Chip([qubit], port_network=network)
 
-    with pytest.raises(NotImplementedError, match="linear Resonator"):
+    with pytest.raises(NotImplementedError, match="linear Fock-mode"):
         eliminate(chip, "q")
 
 
@@ -173,3 +173,26 @@ def test_field_elimination_rejects_projected_survivor_basis() -> None:
 
     with pytest.raises(NotImplementedError, match="projected survivor basis"):
         eliminate(chip, "r")
+
+
+def test_eliminate_custom_harmonic_boundary_matches_resonator() -> None:
+    """A declared harmonic mode has the same reduced boundary as a Resonator."""
+    from quchip import FockDevice, Scalar, parameter
+
+    class HarmonicMode(FockDevice):
+        freq: Scalar = parameter(positive=True)
+
+        def local_hamiltonian(self, op, p):
+            return p.freq * op.n
+
+    reference, _ = _readout_chip()
+    q = reference["q"].copy()
+    mode = HarmonicMode(6.0, levels=3, label="r")
+    network = PortNetwork()
+    network.port("readout", target=mode, rate=0.03, phase=0.2)
+    custom = Chip([q, mode], [Capacitive(q, mode, g=0.04)], port_network=network)
+    expected = eliminate(reference, "r").chip.resolve()
+    actual = eliminate(custom, "r").chip.resolve()
+    np.testing.assert_allclose(actual.hamiltonian().matrix(), expected.hamiltonian().matrix(), atol=1e-12)
+    np.testing.assert_allclose(actual.slh.external_channels[0].coupling.to_dense(),
+                               expected.slh.external_channels[0].coupling.to_dense(), atol=1e-12)

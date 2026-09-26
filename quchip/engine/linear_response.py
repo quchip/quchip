@@ -9,6 +9,7 @@ import jax
 from quchip.approximations import Approximation
 from quchip.chip.ports import Port
 from quchip.declarative.expr import PhysicsExpr, _bound_values, materialize_expr
+from quchip.devices.base import BaseDevice
 from quchip.devices.spaces import FockSpace
 from quchip.engine.assembly import _apply_2pi_scalar
 from quchip.engine.ir import LinearResponseProblem
@@ -18,6 +19,21 @@ from quchip.utils.jax_utils import maybe_concrete_scalar
 
 class _UnsupportedLinearModel(Exception):
     """Signal that a valid chip requires the general stationary solver."""
+
+
+def is_linear_mode(device: Any, backend: Any) -> bool:
+    """Whether the authored local Hamiltonian is a passive harmonic Fock mode."""
+    from quchip.approximations import Exact
+
+    if not isinstance(device.local_space(), FockSpace) or device._time_terms():
+        return False
+    try:
+        _add_hamiltonian_expr(backend.array_module.zeros((1, 1), dtype=complex),
+                              device.unresolved_hamiltonian(), Exact(),
+                              {device.label: 0}, backend, local=True)
+    except _UnsupportedLinearModel:
+        return False
+    return True
 
 
 def try_build_linear_response_problem(
@@ -194,7 +210,8 @@ def _port_coupling_vector(port: Port, chip: Any, mode_index: dict[str, int], bac
     xp = backend.array_module
     targets = port.resolve_targets(chip)
     if port.operator is None or isinstance(port.operator, str) and port.operator == "a":
-        if len(targets) != 1:
+        if (len(targets) != 1
+                or type(chip[targets[0]]).lowering_operator is not BaseDevice.lowering_operator):
             raise _UnsupportedLinearModel
         vector = xp.zeros((len(mode_index),), dtype=complex)
         vector = _add_entry(vector, mode_index[targets[0]], None, 1.0)

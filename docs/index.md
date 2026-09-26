@@ -5,7 +5,7 @@
 # quchip documentation
 
 ```{container} docs-intro
-Model superconducting quantum devices in Python. Declare devices, couplings,
+Model quantum devices in Python. Declare devices, couplings,
 controls, and losses, then calculate spectra, simulate pulses, or fit parameters.
 ```
 

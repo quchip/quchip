@@ -25,7 +25,9 @@
   <a href="https://docs.quchip.org"><img src="https://github.com/quchip/quchip/actions/workflows/docs.yml/badge.svg?branch=main" alt="Documentation build status"></a>
 </p>
 
-`quchip` is an open-source Python toolkit for modelling superconducting quantum chips.
+`quchip` is an open-source Python toolkit for modelling quantum devices.
+Its built-in models cover circuit QED; custom Hamiltonians, operators, and loss
+channels describe other systems, such as [an atom coupled to a cavity](https://docs.quchip.org/guides/atom-cavity).
 
 A predictive chip model needs more than a Hamiltonian. Device physics, control-line transformations, frames, approximations, dissipation, and measured observables all need explicit places in the model. Gain, delay, and crosstalk remain properties of the control chain instead of being folded into Hamiltonian coefficients by hand.
 

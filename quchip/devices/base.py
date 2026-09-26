@@ -810,11 +810,6 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         """Identity operator on the truncated Fock basis."""
         return self.local_space().operator("I", get_default_backend())
 
-    # Operator-name vocabulary recognized by :meth:`local_operator`. Subclasses
-    # that expose extra named operators extend this tuple (so the "unknown
-    # operator" error lists them) and override :meth:`local_operator`.
-    _LOCAL_OPERATOR_NAMES: tuple[str, ...] = ("X", "Y", "Z", "a", "a_dag", "n", "I")
-
     def local_operator(self, name: str) -> Operator:
         """Map an operator-name string to this device's own local operator.
 
@@ -831,12 +826,8 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         (lowering), ``"a_dag"`` (raising), ``"I"`` (identity). The device owns
         this vocabulary. ``"charge"``, ``"phase"`` and ``"flux"`` use
         the corresponding physical coupling operator when declared.
-        A subclass exposing extra named
-        operators overrides this method — extending
-        :attr:`_LOCAL_OPERATOR_NAMES` and delegating to
-        ``super().local_operator(name)`` for the base set — and the chip's
-        observable surface (:meth:`Chip.observable`, :meth:`Chip.e_ops`) gains
-        the operator without any engine or :class:`Chip` change.
+        Other names are looked up in :meth:`local_space`. A subclass may
+        override this method to supply additional derived operators.
         """
         physical = {
             "charge": "charge_coupling_operator",
@@ -860,11 +851,10 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
             return self.raising_operator()
         if name == "I":
             return self.identity()
-        available = [*self._LOCAL_OPERATOR_NAMES, *(key for key, field in physical.items() if hasattr(self, field))]
-        raise ValueError(
-            f"Unknown operator '{name}' for device '{self.label}'. "
-            f"Available: {sorted(available)}"
-        )
+        try:
+            return self.local_space().operator(name, get_default_backend())
+        except ValueError as error:
+            raise ValueError(f"Unknown operator {name!r} for device {self.label!r}: {error}") from error
 
     def basis_state(self, n: int) -> State:
         """Return Fock basis state ``|n>``.
@@ -1040,27 +1030,37 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
     # -- Collapse operators ------------------------------------------------
 
     def dissipation(self, op: Any, p: Any) -> tuple[CollapseChannel, ...]:
-        """Return the common T1, T2, and thermal device channels."""
+        """Return T1/T2 channels using the device's lowering, raising and number hooks."""
+        def operator(name: str, hook: str) -> Any:
+            # Keep inherited operators symbolic for parameter discovery and
+            # linear-response lowering; overridden hooks own their physics.
+            if getattr(type(self), hook) is getattr(BaseDevice, hook):
+                return op[name]
+            return getattr(self, hook)()
+
         channels: list[CollapseChannel] = []
         if self.T1 is not None or self.thermal_occupation is not None:
             occupation = 0.0 if self.thermal_occupation is None else p.thermal_occupation
             base_rate = 1.0 / p.T1 if self.T1 is not None else 1.0
             channels.append(
-                CollapseChannel(op.a, base_rate * (occupation + 1.0), "thermal_emission")
+                CollapseChannel(operator("a", "lowering_operator"),
+                                base_rate * (occupation + 1.0), "thermal_emission")
             )
             occupation_value = maybe_concrete_scalar(
                 0.0 if self.thermal_occupation is None else self.thermal_occupation
             )
             if occupation_value is None or occupation_value > 0:
                 channels.append(
-                    CollapseChannel(op.adag, base_rate * occupation, "thermal_absorption")
+                    CollapseChannel(operator("adag", "raising_operator"),
+                                    base_rate * occupation, "thermal_absorption")
                 )
         gamma_phi = self._dephasing_rate(self.T1, self.T2)
         if gamma_phi is not None:
             symbolic_gamma = 1.0 / p.T2
             if self.T1 is not None:
                 symbolic_gamma = symbolic_gamma - 1.0 / (2.0 * p.T1)
-            channels.append(CollapseChannel(op.n, 2.0 * symbolic_gamma, "pure_dephasing"))
+            channels.append(CollapseChannel(operator("n", "number_operator"),
+                                            2.0 * symbolic_gamma, "pure_dephasing"))
         return tuple(channels)
 
     def _collapse_channels_with_paths(

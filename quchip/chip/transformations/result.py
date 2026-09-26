@@ -129,7 +129,9 @@ class EliminationResult:
     effective_params
         Per-survivor ``lamb_shift``, ``freq_after``, ``chi`` (GHz), and
         ``purcell_rate``, ``kappa`` (1/ns). The Purcell rate summarizes the
-        first lowering transition; it does not replace the retained jumps.
+        first downward transition summed over the removed device's channels;
+        ``kappa`` is its isolated 1-to-0 rate. These diagnostics do not replace
+        the retained jumps.
         ``chi`` is the full conditional mode-frequency difference, twice
         the sigma-Z half-pull convention. It is zero for a bus touching
         multiple survivors; otherwise it is evaluated from the captured
