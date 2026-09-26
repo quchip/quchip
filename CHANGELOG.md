@@ -4,6 +4,11 @@ This file records notable user-visible changes to quchip.
 
 ## Unreleased
 
+- Custom devices can use declared operator names for ports and observables,
+  and existing lowering, raising and number hooks for T1/T2 channels.
+  Elimination supports non-capacitive mediated exchange, derives decay
+  summaries from declared channels, and accepts custom harmonic Fock boundaries.
+  A worked atom–cavity guide covers driving, reflection, reduction and fitting.
 - `effective_hamiltonian` and `effective_hamiltonian_between_states` index the
   resolved product basis, so eigen-projected charge-basis devices no longer
   raise a singular-Gram-matrix error. Traced dressed states and `describe()`

@@ -212,17 +212,6 @@ def extract_pair_parameters(
     return params
 
 
-def purcell_rate_from(c_eff_survivor_lowering_amplitude: Any, kappa: Any) -> Any:
-    """``rate = |amplitude|² · κ`` — the mediated decay a survivor inherits.
-
-    ``amplitude`` is the survivor-lowering matrix element of the transformed
-    *unit* jump operator (dimensionless, ``≈ g/Δ`` in the dispersive case);
-    ``κ`` is the eliminated mode's own rate in 1/ns, so the result is
-    Lindblad-ready without any further unit conversion.
-    """
-    return jnp.abs(c_eff_survivor_lowering_amplitude) ** 2 * kappa
-
-
 def _exact_eigensystem(h: Any, dims: tuple[int, ...]) -> tuple[Any, Any, Labeling]:
     """Diagonalize and label one semantic-basis Hamiltonian."""
     eigenvalues, eigenvectors = jnp.linalg.eigh(jnp.asarray(h))

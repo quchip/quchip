@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "quchip"
 dynamic = ["version"]
-description = "Superconducting quantum device simulation toolkit"
+description = "Differentiable quantum device modelling toolkit"
 authors = [{name = "Ibraheem AlYousef", email = "ibraheem@quchip.org"}]
 readme = "README.md"
 requires-python = ">=3.11"

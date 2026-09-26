@@ -224,6 +224,29 @@ A custom local space defines its dimension and the matrices available by name.
 Its `LocalSpace.matrix()` implementation must return a matrix with that fixed
 dimension. See `quchip.extensions.SpinHalf` for a complete two-level example.
 
+Named ports and observables use the same vocabulary: an operator declared as
+`op["dipole"]` is available through `device.local_operator("dipole")` and
+`network.port(..., operator="dipole")`. The conventional names `"a"`, `"a_dag"`,
+`"n"`, `"X"`, `"Y"`, `"Z"`, and `"I"` retain their device-hook meanings.
+
+Default T1 and thermal channels use `lowering_operator()` and
+`raising_operator()`; T2 uses `number_operator()`. Override those hooks to
+select your model's transitions and dephasing operator, or declare the
+complete channels in `dissipation()`. Matrix-element normalization determines
+how a channel's rate relates to measured lifetimes. quchip does not infer
+selection rules or dipole strengths from energy levels. The energy-level
+index used by frames is separate from these physical operators.
+
+For an intrinsically finite model, override `truncation_boundary()` to return
+`None`. For a numerical cutoff, supply a `TruncationBoundary`; an undeclared
+custom cutoff is reported unavailable. The {doc}`atom–cavity example
+<guides/atom-cavity>` follows a spin model through dynamics, response,
+reduction, differentiation and fitting.
+
+Units remain GHz, ns and mK for every model: enter 1 MHz as `0.001` GHz and
+1 microsecond as `1000` ns. Frames provide one reference frequency per device;
+multitone terms may retain explicit time dependence. Local spaces are finite.
+
 Subclass `ModelMapping` when a third-party object needs an explicit conversion.
 Set `source` for import, `target` and `library` for export, and implement only
 the directions the mapping supports. Importing `quchip.extensions` does not

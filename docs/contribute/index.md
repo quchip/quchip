@@ -19,7 +19,6 @@ Software citation metadata is in [CITATION.cff](https://github.com/quchip/quchip
 :hidden:
 :maxdepth: 1
 
-Extending quchip <../extensions>
 Writing examples <writing-examples>
 Contributing <../contributing>
 Release notes <../release-notes>

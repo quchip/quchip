@@ -79,4 +79,16 @@ class SpinHalf(DeviceModel):
 
     def charge_coupling_operator(self) -> Any:
         op = LocalOps(label=self.label, space=self.local_space(), device=self)
-        return op["charge"]
+        return op.sigma_x
+
+    def lowering_operator(self) -> Any:
+        """Return the spin's declared downward transition."""
+        return self.local_operator("sigma_minus")
+
+    def raising_operator(self) -> Any:
+        """Return the spin's declared upward transition."""
+        return self.local_operator("sigma_plus")
+
+    def number_operator(self) -> Any:
+        """Return the excited-state projector used by the T2 channel."""
+        return self.raising_operator() @ self.lowering_operator()

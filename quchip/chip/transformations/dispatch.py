@@ -95,9 +95,9 @@ def eliminate(chip: "Chip", target: Any, *, method: str = "sw") -> EliminationRe
       map. Surviving devices and direct couplings retain their authored values.
       A mode connecting several survivors contributes a separate mediated
       exchange edge per pair, with ``∂J/∂ω_c`` reported for control retargeting.
-      Fixed modes emit :class:`~quchip.chip.couplings.Capacitive`; modes with
-      frequency control or a retargeted flux line emit
-      :class:`~quchip.chip.couplings.TunableCapacitive`. Direct and mediated
+      Capacitive legs emit :class:`~quchip.chip.couplings.Capacitive` or
+      :class:`~quchip.chip.couplings.TunableCapacitive` when controls require it;
+      other legs emit a first-transition exchange edge. Direct and mediated
       contributions can cancel in the complete Hamiltonian. Successive
       reductions compose through ``eliminate(eliminate(chip, "TC1").chip, "TC2")``.
     - **Coupling target** — keep both endpoints and remove the selected edge.
