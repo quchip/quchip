@@ -855,7 +855,11 @@ class PortNetwork:
 
         Place the section with :meth:`link` or :meth:`connect`. The compiler peels it
         from an adjacent exposure leg, so it never enters the Markovian ``S``, ``L``,
-        or ``H``. Continuous-wave APIs evaluate the transfer at each frequency;
+        or ``H``: it reshapes the propagating field and leaves every collapse
+        operator, including the radiative (Purcell) decay of coupled devices,
+        unchanged. Model a Purcell filter as a :class:`~quchip.Resonator` between
+        the readout mode and the port instead (see the Purcell filtering guide).
+        Continuous-wave APIs evaluate the transfer at each frequency;
         transient APIs use its narrowband value at the relevant carrier. Concrete
         evaluations with ``|H| > 1`` raise. Networks containing filters cannot be
         serialized with :meth:`to_dict`; ``Chip.clone()`` and ``Chip.with_params()``

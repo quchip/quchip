@@ -373,12 +373,19 @@ def _collect_collapse_terms(
             retained_coordinates = isinstance(owner, EffectiveTerms) or any(
                 terms.projection is not None for terms in chip.effective_terms
             )
-            if retained_coordinates and not _is_concrete_zero(resolved_rate):
-                frequencies = tuple(resolved_frame.frequencies[labels[index]] for index in support)
+            # A static collapse operator is only frame-invariant up to one global
+            # phase; multi-device channels (collective baths, custom couplings) can
+            # beat between unequal device frames, so they get the same check as
+            # retained-coordinate effective channels.
+            # Support-free channels (baths) already span the whole chip.
+            check_support = support or tuple(range(len(labels)))
+            if (retained_coordinates or len(check_support) > 1) and not _is_concrete_zero(resolved_rate):
+                frequencies = tuple(resolved_frame.frequencies[labels[index]] for index in check_support)
                 if not all(maybe_concrete_scalar(frequency) == 0.0 for frequency in frequencies):
-                    bands = _authored_bands(chip, operator, local, support, resolution.bases, backend)
+                    bands = _authored_bands(chip, operator, local, check_support, resolution.bases, backend)
+                    kind = "Effective channel" if retained_coordinates else "Collapse channel"
                     _common_band_frame_frequency(tuple(bands), frequencies,
-                                                 source=f"Effective channel {source!r}/{channel!r}")
+                                                 source=f"{kind} {source!r}/{channel!r}")
             if len(support) > 1 and not _is_concrete_zero(resolved_rate):
                 resolved_support = tuple(labels[index] for index in support)
                 if resolved_support not in supports:

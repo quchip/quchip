@@ -177,19 +177,13 @@ def _materialize_dressed_result(
         if assignment_overlaps[bare_label] < overlap_threshold
     )
     if hybridized_labels:
-        preview = ", ".join(
-            f"{label} ({assignment_overlaps[label]:.3f})"
-            for label in sorted(
-                hybridized_labels,
-                key=lambda item: assignment_overlaps[item],
-            )[:4]
-        )
+        # Fixed text, so the default warning filter shows it once per call
+        # site instead of once per sweep point.
         warnings.warn(
             "Strong hybridization detected during dressed-state assignment; "
-            "bare labels are approximate for "
-            f"{len(hybridized_labels)} states. Lowest-overlap labels: "
-            f"{preview}. Inspect DressedResult.assignment_overlaps for "
-            "full assignment quality.",
+            f"bare labels with overlap below {overlap_threshold} are approximate. "
+            "Inspect DressedResult.hybridized_labels and "
+            "DressedResult.assignment_overlaps for the affected states.",
             UserWarning,
             stacklevel=warning_stacklevel,
         )
@@ -385,8 +379,8 @@ class ChipAnalysis:
     def _analysis_signature(self) -> tuple[Any, ...]:
         """Hashable fingerprint covering every structural input to dressing.
 
-        Ports and the port network enter because cascades add coherent terms to
-        the dressed Hamiltonian. Traced values are keyed by identity; a traced
+        Retained effective terms, ports and the port network enter because they
+        add coherent terms to the dressed Hamiltonian. Traced values are keyed by identity; a traced
         result is never cached anyway.
         """
         from quchip.chip.chip import _operator_cache_value
@@ -403,6 +397,12 @@ class ChipAnalysis:
                 return _operator_cache_value(value)
             except ValueError:
                 return ("traced", id(value))
+
+        def terms_key(terms: Any) -> Any:
+            try:
+                return terms.fingerprint()
+            except ValueError:
+                return ("traced", id(terms))
 
         network = chip.port_network
         try:
@@ -422,6 +422,7 @@ class ChipAnalysis:
                 )
                 for coupling in chip.couplings
             ),
+            tuple(terms_key(terms) for terms in chip.effective_terms),
             tuple(
                 (
                     port.label,
@@ -785,7 +786,7 @@ class ChipAnalysis:
         if contains_tracer((eigenvector_matrix, kernel_labeling.indices)):
             bare_idx = self._bare_label_index(label_t)
             column = jnp.asarray(eigenvector_matrix)[:, kernel_labeling.indices[bare_idx]]
-            dims = [device.levels for device in self._chip.devices]
+            dims = list(self._semantic_dims())
             return self._chip.backend.from_array(column.reshape(-1, 1), dims=[dims, [1] * len(dims)])
 
         dressed = self._ensure_dressed()

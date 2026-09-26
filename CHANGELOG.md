@@ -4,6 +4,26 @@ This file records notable user-visible changes to quchip.
 
 ## Unreleased
 
+- `effective_hamiltonian` and `effective_hamiltonian_between_states` index the
+  resolved product basis, so eigen-projected charge-basis devices no longer
+  raise a singular-Gram-matrix error. Traced dressed states and `describe()`
+  report the same retained dimensions.
+- Collective and other multi-device collapse channels are now checked for a
+  single removable frame phase. Unequal device frames raise before solving
+  instead of silently retaining a static jump operator.
+- `eliminate()` assembles the retained correction at the approximation the
+  route reads (all bands for `method="exact"`), so a reduced chip's dressed
+  energies and `static_zz` match the source's under RWA instead of counting
+  its own couplings' counter-rotating terms twice.
+- Retained effective terms enter the dressed-analysis cache key; a chip
+  resolved before a coupling elimination no longer reports bare energies.
+- The hybridization warning has fixed text and is shown once per call site.
+- `fit_a_dress` summaries mark targets whose error exceeds 1% of the target.
+- dynamiqs solves default to `Dopri8(rtol=1e-9, atol=1e-11)` instead of the
+  native `Tsit5()` (`rtol = atol = 1e-6`), at which pulse-parameter gradients
+  could be off by a factor of two. Pass `method` to restore the old integrator.
+- Docs: `Capacitive` authors `g n_a n_b` on charge and phase-grid endpoints;
+  `PortNetwork.filter` leaves Purcell decay unchanged.
 - VNA S-parameters, finite-power fields, field correlations, and IQ statistics now follow the
   engineering `e^{+jωt}` convention, where `j = −i`, including network phases
   and delays. Remove manual conjugation of VNA outputs; conjugate old complex

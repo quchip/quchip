@@ -68,6 +68,11 @@ from quchip.engine.ir import (  # noqa: E402
     signal_window_bounds,
 )
 
+# Default integrator tolerances; pulse-parameter gradients converge at these,
+# not at the native Tsit5 defaults (rtol = atol = 1e-6).
+_DEFAULT_RTOL = 1e-9
+_DEFAULT_ATOL = 1e-11
+
 
 def _signal_discontinuities(signal: Any) -> Any:
     """Flatten absolute pulse edges across native batch points for Diffrax."""
@@ -849,9 +854,7 @@ class DynamiqsBackend(Backend):
         if fn is not None:
             return fn
 
-        kwargs: dict[str, Any] = {"options": options_obj}
-        if method_obj is not None:
-            kwargs["method"] = method_obj
+        kwargs: dict[str, Any] = {"options": options_obj, "method": method_obj}
         if gradient is not None:
             kwargs["gradient"] = gradient
 
@@ -903,10 +906,8 @@ class DynamiqsBackend(Backend):
         kwargs: dict[str, Any] = {
             "exp_ops": e_ops,
             "options": self._options_from_dict(options),
+            "method": self._method_from_dict(options),
         }
-        method = self._method_from_dict(options)
-        if method is not None:
-            kwargs["method"] = method
         # Opt-in differentiation mode. Default (no key) leaves dynamiqs'
         # checkpointed reverse-mode adjoint untouched. ``dq.gradient.Forward()``
         # (paired with ``jax.jacfwd``/``jvp``, never ``jax.grad``) is ~2.5x
@@ -1348,20 +1349,20 @@ class DynamiqsBackend(Backend):
 
     @staticmethod
     def _method_from_dict(options: dict[str, Any] | None) -> Any:
-        """Extract an explicit ``method`` or build ``Tsit5(max_steps=...)`` from ``max_steps``.
+        """Return the explicit ``method`` or the default ``Dopri8`` integrator.
 
-        ``max_steps`` is an abort ceiling (see :meth:`resolve_solver_options`
-        for the step-size-bound limitation this implies for finite-support
-        pulses in long idle spans).
+        The default tolerances keep pulse-parameter gradients converged, not
+        only the states. ``max_steps`` is an abort ceiling (see
+        :meth:`resolve_solver_options` for the step-size-bound limitation this
+        implies for finite-support pulses in long idle spans).
         """
         options = DynamiqsBackend._normalize_dq_options(options)
         method = options.get("method")
         if method is not None:
             return method
         max_steps = options.get("max_steps")
-        if max_steps is not None:
-            return dq.method.Tsit5(max_steps=int(max_steps))
-        return None
+        steps = {} if max_steps is None else {"max_steps": int(max_steps)}
+        return dq.method.Dopri8(rtol=_DEFAULT_RTOL, atol=_DEFAULT_ATOL, **steps)
 
     # ------------------------------------------------------------------
     # Internal: pytree / operator stacking

@@ -209,12 +209,12 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
 
     effective_params: dict[str, Any] = LabelKeyedDict()
     validity: dict[str, Any] = LabelKeyedDict()
-    # bare_hamiltonian() assembles the engine-consumed Hamiltonian at the
-    # chip's approximation strategy, so filtered terms are actually
-    # dropped only when at least one touching coupling resolves RWA True —
-    # never claim the drop unconditionally.
+    # The route reads one static model; the remainder below is assembled at
+    # the same approximation so the retained correction is exactly what the
+    # route resolved (PHYSICS.md §10.6).
+    approximation = reduction.source_approximation(chip)
     dropped_items = ["ring-up transients"]
-    if method != "exact" and chip.approximation.filters_terms and survivors:
+    if approximation.filters_terms and survivors:
         dropped_items.insert(0, "counter-rotating terms")
     notes = [
         f"Adiabatic elimination (method='{method}'): steady-state (vacuum) reduction.",
@@ -231,10 +231,7 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
     mode_is_frequency_controlled = isinstance(mode, FrequencyControlled) or any(
         isinstance(line, FluxDrive) for line, _ in retarget_plan
     )
-    h, labels, dims = bare_hamiltonian(
-        chip,
-        approximation=Exact() if method == "exact" else None,
-    )
+    h, labels, dims = bare_hamiltonian(chip, approximation=approximation)
     # Survivor pairs are keyed in the chip's device order everywhere — the
     # pair extraction, the exact route, and the fold loop below — so the two
     # sides of every ("J", a, b) lookup agree no matter what order the legs
@@ -246,7 +243,7 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
     # Capture the full lab-frame matrix now; diagonalize only if chi is read.
     report_h = None
     if not is_multi and survivors:
-        report_h = h if method == "exact" else bare_hamiltonian(chip, approximation=Exact())[0]
+        report_h = h if not approximation.filters_terms else bare_hamiltonian(chip, approximation=Exact())[0]
 
     p_mask, _ = mode_blocks(dims, labels, mode_label)
     min_gap = cross_block_gap(h, p_mask)
@@ -422,7 +419,7 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
     lift = transforms[0]
     for transform in transforms[1:]:
         lift = jnp.kron(lift, transform)
-    final_resolved = final.resolve(frame="lab")
+    final_resolved = final.resolve(frame="lab", approximation=approximation)
     final_matrix = jnp.asarray(final_resolved.hamiltonian().matrix(backend=final.backend), dtype=complex)
     final_lift = final_resolved.bases[survivor_labels[0]].vectors
     for label in survivor_labels[1:]:

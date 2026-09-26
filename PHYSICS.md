@@ -54,6 +54,8 @@ full: g * (a + a†)(b + b†)
 
 `interaction_hamiltonian()` always returns this full form. The RWA form `g * (a†b + ab†)` is never authored directly — it is what remains once the bands that change total excitation are masked out by the chip or filtered by the engine.
 
+`a + a†` is the charge-like operator of a `FockSpace` endpoint. On a `ChargeSpace` or `PhaseGridSpace` endpoint (`ChargeBasisTransmon`, `Fluxonium`) the charge-like operator is `n`, so the same declaration authors `g * n_a n_b`, or `g * (a + a†) n_b` for a mixed pair (`EndpointOps.charge`, [`quchip/declarative/ops.py`](quchip/declarative/ops.py)). The two operators have different matrix elements — `<0|a + a†|1> = 1` against `<0|n|1> ≈ (E_J/8E_C)^{1/4}/√2` for a transmon — so one numerical `g` is not one physical coupling across bases. Match models across bases through dressed quantities (exchange, χ, ZZ), not through `g`. Relatedly, `ChargeDrive` on a Fock device addresses the quadrature `i(a − a†)` while the coupling charge operator is `a + a†`; both are charge-like and differ by a phase convention (§2.3).
+
 ### 2.3 Chip and sequence Hamiltonians
 
 `Chip.unresolved_hamiltonian()` embeds every authored device Hamiltonian and full coupling interaction into the total declared Hilbert space. It is the exact static lab-frame expression before local-basis resolution, retained-level truncation, frame transformation, or RWA.
@@ -1086,6 +1088,8 @@ expansion's failure mode even when every `g/Delta` is small.
 ### 10.6 State and observable maps
 
 Device elimination leaves surviving devices' authored frequencies and local bases unchanged. The retained Hamiltonian correction owns their shifts; `effective_params` reports the reduction's transition diagnostics. Use `chip.freq(...)` for a reduced chip's coupled transitions. To reduce another operating point, rebind the source model and eliminate again.
+
+The retained correction is the route's retained Hamiltonian minus the reduced chip's own assembled matrix at the approximation that produced it: all bands for `method="exact"`, the chip's approximation for `method="sw"`. Dressed queries always read the all-band static model, so under `method="exact"` a reduced chip reproduces the source's labeled energies exactly and `reduced.static_zz(a, b)` equals `effective_params["exchange"]["zz"]`. Under `method="sw"` the reduced dressed spectrum is the second-order one; compare its diagnostics through `effective_params`. Retained effective terms are part of the dressed-analysis cache key, so attaching them to a chip that was already resolved invalidates its cached dressing.
 
 `result.mapping` captures source and target labels, dimensions, backend and lab-frame solver coordinates. Its `embedding` maps retained coordinates into the source space. `project_operator(operator)` returns `B† O B`; `project_state(state)` returns `B† psi` or `B† rho B`; `lift_state(state)` performs the reverse embedding. These methods accept full numerical matrices and backend-native objects and return native objects on the captured backend. Projection preserves the lost norm or trace, so discarded population remains visible. No state is silently renormalized. Rotating-frame trajectory states must be expressed in lab coordinates before using this map.
 

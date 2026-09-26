@@ -526,7 +526,11 @@ def fit_a_dress(
     ----------
     chip
         Desired dressed-chip specification. Component declarations supply
-        numerical targets; no dressed analysis is run on this object.
+        numerical targets; no dressed analysis is run on this object. A chip
+        declared for simulation is not a specification: its bare coupling
+        strengths become ``cross_kerr`` or ``exchange_rate`` targets, which a
+        frequency-only ``vary`` cannot meet. State such targets explicitly with
+        ``constraints`` and read the unmet-target line of ``summary()``.
     constraints
         Additional ``{component_or_pair: {observable: value_or_none}}``
         constraints. Supported canonical observables are ``"freq"``,

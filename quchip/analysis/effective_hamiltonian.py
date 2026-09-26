@@ -271,7 +271,7 @@ def _h_eff_on_basis(chip: "Chip", basis: Sequence[tuple[int, ...]]) -> Any:
     :func:`effective_hamiltonian_between_states` (exactly two explicit
     states) — see :class:`EffectiveHamiltonianResult` for the construction.
     """
-    dims = tuple(dev.levels for dev in chip.devices)
+    dims = chip._analysis._semantic_dims()
     eigenvalues, evecs, _, labeling = chip._analysis._compute_array_labeled()
     evecs = jnp.asarray(evecs)
     eigenvalues = jnp.asarray(eigenvalues)

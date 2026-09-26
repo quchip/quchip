@@ -69,7 +69,8 @@ an explicit `max_step` or `nsteps` overrides its corresponding limit.
 
 ## dynamiqs integration and gradients
 
-Pass a native method object with its tolerances:
+Pass a native method object to change the integrator or its tolerances, for
+example for stiff dynamics:
 
 ```python
 import dynamiqs as dq
@@ -77,13 +78,13 @@ import dynamiqs as dq
 result = sequence.simulate(
     tlist=times,
     backend="dynamiqs",
-    options={"method": dq.method.Dopri8(rtol=1e-9, atol=1e-11, max_steps=100_000)},
+    options={"method": dq.method.Kvaerno5(rtol=1e-9, atol=1e-11, max_steps=100_000)},
 )
 ```
 
 | Calculation | Methods |
 |---|---|
-| General differentiable dynamics | `Tsit5` (default), `Dopri5`, `Dopri8` |
+| General differentiable dynamics | `Dopri8` (default, `rtol=1e-9`, `atol=1e-11`), `Dopri5`, `Tsit5` |
 | Stiff dynamics | `Kvaerno3`, `Kvaerno5` |
 | Fixed-step reference | `Euler(dt=...)` |
 | Rouchon master equation | `Rouchon1`, `Rouchon2`, `Rouchon3` |

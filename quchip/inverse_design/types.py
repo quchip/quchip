@@ -87,6 +87,15 @@ class FitParameterReport:
         return self.final - self.initial
 
 
+_UNMET_RELATIVE = 1e-2
+_UNMET_FLOOR_GHZ = 1e-6
+
+
+def _target_unmet(report: "ObservableReport") -> bool:
+    """True when a target's final error exceeds 1% of its magnitude (floor 1 kHz)."""
+    return abs(report.residual) > max(_UNMET_RELATIVE * abs(report.target), _UNMET_FLOOR_GHZ)
+
+
 @dataclass(frozen=True)
 class FitADressResult:
     """Result of a :func:`fit_a_dress` optimization run.
@@ -179,11 +188,17 @@ class FitADressResult:
             condition_text = "inf"
         else:
             condition_text = f"{float(condition):.3g}"
+        unmet = [report for report in self.final_targets if _target_unmet(report)]
         lines = [
             f"fit_a_dress: {status} | loss {self.loss:.3g} | "
             f"targets: {len(self.final_targets)} | parameters: {n_parameters}",
             f"identifiability: rank {rank}/{n_parameters} | condition {condition_text}",
         ]
+        if unmet:
+            lines.append(
+                f"{len(unmet)} of {len(self.final_targets)} targets remain unmet (error above 1% of "
+                "the target): the targets, the model, or the vary selection are inconsistent."
+            )
         if self.message is not None:
             lines.append(self.message)
         if self.final_targets:
@@ -194,10 +209,11 @@ class FitADressResult:
                     if isinstance(target_report.label, tuple)
                     else str(target_report.label)
                 )
+                marker = "  <- unmet" if _target_unmet(target_report) else ""
                 lines.append(
                     f"  {locator}.{target_report.kind} [{target_report.source}]: "
                     f"{target_report.target:.6g} -> {target_report.final:.6g} "
-                    f"(error {target_report.residual:+.2g})"
+                    f"(error {target_report.residual:+.2g}){marker}"
                 )
         if self.parameter_reports:
             lines.append("bare parameters (GHz):")

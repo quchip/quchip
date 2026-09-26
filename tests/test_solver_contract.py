@@ -129,3 +129,32 @@ def test_results_report_effective_numerical_settings(backend):
         assert effective["atol"] == 1e-10
         assert effective["rtol"] == 1e-9
         assert effective["nsteps"] > 0
+
+
+@pytest.mark.optional_backend
+def test_dynamiqs_default_tolerances_converge_pulse_gradients():
+    """A pulse-duration derivative at default options matches a central difference."""
+    pytest.importorskip("dynamiqs")
+    import jax
+    import jax.numpy as jnp
+
+    from quchip import RWA, Capacitive, ChargeDrive, FluxTunableTransmon, GaussianEdge
+
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=3, label="q")
+    c = FluxTunableTransmon(freq=6.5, anharmonicity=-0.2, levels=3, label="c")
+    chip = Chip([q, c], [Capacitive(q, c, g=0.08)], frame="rotating", approximation=RWA(), backend="dynamiqs")
+    chip.wire(ChargeDrive("c", label="d"))
+    sequence = QuantumSequence(chip)
+    sequence.schedule("d", envelope=GaussianEdge(duration=60.0, edge_duration=15.0, sigmas=3, amplitude=0.01),
+                      freq=6.5)
+    ket = chip.state({"q": 1, "c": 0})
+    tlist = jnp.linspace(0.0, 80.0, 81)
+
+    def survival(duration):
+        result = sequence.with_params({"pulse.0.duration": duration}).simulate(tlist=tlist, initial_state=ket)
+        return jnp.asarray(result.overlap(ket))[-1]
+
+    h = 0.01
+    central = (survival(60.0 + h) - survival(60.0 - h)) / (2 * h)
+    # Native Tsit5 defaults (rtol = atol = 1e-6) give a 4.5% error here.
+    np.testing.assert_allclose(jax.grad(survival)(jnp.asarray(60.0)), central, rtol=1e-4)

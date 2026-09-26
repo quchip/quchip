@@ -312,3 +312,22 @@ def test_jax_backed_selection_gets_exact_jacobian_sized_to_the_reduced_vector(
     assert checked
     assert set(result.final_params) == {"q.freq", "q.anharmonicity"}
     assert result.solver_info["jacobian"] == "jax"
+
+
+def test_summary_flags_targets_the_selection_cannot_meet() -> None:
+    """A frequency-only vary cannot meet a 500 MHz cross-Kerr target; the summary says so."""
+    from quchip import Capacitive, Chip, DuffingTransmon, Resonator, fit_a_dress
+
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+    r = Resonator(freq=7.0, levels=4, label="r")
+    desired = Chip([q, r], [Capacitive(q, r, g=0.02, label="qr")], frame="rotating")
+    fit = fit_a_dress(
+        desired,
+        constraints={"q": {"freq": 5.0, "anharmonicity": None}, "r": {"freq": None}, "qr": {"cross_kerr": 0.5}},
+        vary={"q": ("freq",)},
+        max_nfev=20,
+    )
+    text = fit.summary()
+    assert "targets remain unmet" in text
+    assert "qr.cross_kerr" in text and "<- unmet" in text
+    assert "q.freq" in text.split("targets (GHz):")[1].splitlines()[1]

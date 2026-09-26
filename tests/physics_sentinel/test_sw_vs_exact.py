@@ -59,3 +59,26 @@ def test_min_block_gap_exceeds_coupling_scale():
     # Measured min_block_gap ~= 1.1 GHz (tighter q1-bus detuning) vs g = 0.08 GHz -- comfortably inside
     # eliminate()'s declared-valid perturbative regime (g_over_delta < 0.1).
     assert gap_leg0 > _LEG_G
+
+
+def test_exact_route_reduced_chip_reproduces_source_spectrum_under_rwa():
+    """The reduced chip's dressed energies equal the source's under the chip's RWA."""
+    full = _bridge_chip()
+    reduced = eliminate(full, "bus", method="exact").chip
+    for q0_level, q1_level in ((0, 0), (0, 1), (1, 0), (1, 1)):
+        source = float(full.energy(q0=q0_level, q1=q1_level, bus=0))
+        target = float(reduced.energy(q0=q0_level, q1=q1_level))
+        assert target == pytest.approx(source, abs=1e-9)
+    assert float(reduced.static_zz("q0", "q1")) == pytest.approx(float(full.static_zz("q0", "q1")), abs=1e-9)
+
+
+def test_exact_coupling_route_reduced_chip_reproduces_source_spectrum_under_rwa():
+    """Removing an edge exactly leaves every retained dressed energy unchanged."""
+    q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
+    q1 = DuffingTransmon(freq=5.2, anharmonicity=-0.24, levels=3, label="q1")
+    full = Chip([q0, q1], [Capacitive(q0, q1, g=0.01, label="edge")], frame="rotating", approximation=RWA())
+    reduced = eliminate(full, "edge", method="exact").chip
+    for q0_level, q1_level in ((0, 0), (0, 1), (1, 0), (1, 1), (0, 2), (2, 0)):
+        source = float(full.energy(q0=q0_level, q1=q1_level))
+        target = float(reduced.energy(q0=q0_level, q1=q1_level))
+        assert target == pytest.approx(source, abs=1e-9)

@@ -72,3 +72,22 @@ def test_effective_hamiltonian_describe_runs():
     chip = _two_qubit_chip()
     text = effective_hamiltonian(chip, ["q0", "q1"]).describe()
     assert "Effective Hamiltonian" in text
+
+
+def test_projected_charge_basis_devices_index_resolved_dimensions():
+    """Eigen-projected devices flatten bare labels with retained dims, not the authored charge cutoff."""
+    from quchip import ChargeBasisTransmon, Exact
+
+    q = ChargeBasisTransmon(E_C=0.2, E_J=15.0, num_basis=31, levels=3, basis="eigen", label="q")
+    r = ChargeBasisTransmon(E_C=0.22, E_J=17.0, num_basis=31, levels=4, basis="eigen", label="r")
+    chip = Chip([q, r], [Capacitive(q, r, g=0.01)], approximation=Exact())
+    assert chip.resolve().dims == (3, 4)
+
+    result = effective_hamiltonian(chip, {"q": 2, "r": 2})
+    h_eff = np.asarray(result.h_eff)
+    assert h_eff.shape == (4, 4)
+    assert np.allclose(h_eff, h_eff.conj().T)
+
+    # des Cloizeaux keeps the selected dressed eigenvalues exactly.
+    expected = sorted(chip.energy(q=i, r=j) for i in range(2) for j in range(2))
+    assert np.allclose(np.sort(np.linalg.eigvalsh(h_eff)), expected)

@@ -134,7 +134,7 @@ def reduce_coupling(chip: "Chip", target: Any, method: str) -> EliminationResult
     final = rebuild_chip(chip, devices=cloned.devices,
                          couplings=[c for c in cloned.couplings if c.label != coupling_label],
                          effective_terms=())
-    resolved = final.resolve(frame="lab")
+    resolved = final.resolve(frame="lab", approximation=approximation)
     lift = reduce(jnp.kron, (source.bases[label].energy_vectors for label in labels))
     final_lift = reduce(jnp.kron, (resolved.bases[label].vectors for label in labels))
     remaining_h = jnp.asarray(resolved.hamiltonian().matrix(backend=chip.backend))

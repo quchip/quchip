@@ -22,9 +22,8 @@ from quchip.utils.jax_utils import contains_tracer
 
 def solve_with_status(H: Any, jumps: list[Any], state: Any, times: Any,
                       observables: Any, *, solver: str, options: Any,
-                      method: Any = None, gradient: Any = None) -> tuple[Any, Any]:
+                      method: Any, gradient: Any = None) -> tuple[Any, Any]:
     """Run one native lane, retaining status for Diffrax-backed methods."""
-    method = dq.method.Tsit5() if method is None else method
     ordinary = (dq.method.Euler, dq.method.Dopri5, dq.method.Dopri8,
                 dq.method.Tsit5, dq.method.Kvaerno3, dq.method.Kvaerno5)
     rouchon = (dq.method.Rouchon1, dq.method.Rouchon2, dq.method.Rouchon3)

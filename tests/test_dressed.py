@@ -402,3 +402,22 @@ def test_cached_qutip_kerr_values_remain_accessible_inside_jit():
     chip = Chip([q, r], [Capacitive(q, r, g=0.08)], backend="qutip")
     expected = float(chip.dispersive_shift("q", "r"))
     assert jax.jit(lambda scale: chip.dispersive_shift("q", "r") * scale)(2.0) == pytest.approx(2 * expected)
+
+
+def test_hybridization_warning_text_is_independent_of_the_affected_states() -> None:
+    """Sweeps emit one warning per call site: the text carries no per-point numbers."""
+    import warnings as _warnings
+
+    from quchip import Capacitive, Chip, Resonator
+
+    texts = []
+    for detuning in (0.0, 0.002):
+        r_a = Resonator(freq=6.0, levels=4, label="r_a")
+        r_b = Resonator(freq=6.0 + detuning, levels=4, label="r_b")
+        chip = Chip([r_a, r_b], [Capacitive(r_a, r_b, g=0.05)])
+        with _warnings.catch_warnings(record=True) as captured:
+            _warnings.simplefilter("always")
+            result = chip.dress()
+        assert result.hybridized_labels
+        texts.append([str(w.message) for w in captured if "Strong hybridization" in str(w.message)])
+    assert texts[0] == texts[1] and len(texts[0]) == 1
