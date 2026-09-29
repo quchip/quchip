@@ -4,7 +4,9 @@ pyEPR's ``QuantumAnalysis`` holds the normalized participation, sign,
 frequency and junction-energy matrices of each analysed variation. The
 ``EPRanalysis`` of Quantum Metal, imported as ``qiskit_metal``, runs pyEPR
 through its HFSS renderer and keeps that ``QuantumAnalysis`` on the renderer.
-Both objects are read through their public attributes, so this module imports
+pyEPR's ``PyaedtDistributedAnalysis`` extracts one variation over PyAEDT and
+keeps its frequencies, participations, signs and inductances as arrays. All
+three are read through their public attributes, so this module imports
 neither package.
 """
 
@@ -15,7 +17,7 @@ from typing import Any
 
 import numpy as np
 
-from quchip.interop.epr import EPRModel
+from quchip.interop.epr import _GHZ_HENRY, EPRModel
 
 
 def _quantum_analysis(analysis: Any) -> Any:
@@ -32,7 +34,8 @@ def _quantum_analysis(analysis: Any) -> Any:
             "run its EPR spectrum analysis first, for example with run_epr()."
         )
     raise TypeError(
-        f"Expected a pyEPR QuantumAnalysis or a Quantum Metal EPRanalysis, got {type(analysis).__name__}."
+        "Expected a pyEPR QuantumAnalysis or PyaedtDistributedAnalysis, or a Quantum Metal EPRanalysis, "
+        f"got {type(analysis).__name__}."
     )
 
 
@@ -68,6 +71,20 @@ def _quality_factors(quantum: Any, variation: str, n_modes: int) -> np.ndarray |
     return None if np.all(np.isinf(values)) else values
 
 
+def _pyaedt_results(analysis: Any, variation: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return the frequencies, participations, signs and junction energies of a PyAEDT analysis."""
+    if variation is not None:
+        raise ValueError("A pyEPR PyaedtDistributedAnalysis holds one solved variation; omit variation.")
+    if analysis.PJ is None:
+        raise ValueError("This pyEPR PyaedtDistributedAnalysis has no results yet; run do_EPR_analysis() first.")
+    return (
+        np.asarray(analysis.freqs_GHz, dtype=float),
+        np.asarray(analysis.PJ, dtype=float),
+        np.asarray(analysis.SJ, dtype=float),
+        _GHZ_HENRY / np.asarray(analysis.Ljs, dtype=float),
+    )
+
+
 def from_pyepr(
     analysis: Any,
     variation: Any = None,
@@ -80,12 +97,14 @@ def from_pyepr(
 
     Parameters
     ----------
-    analysis : pyEPR.QuantumAnalysis or Quantum Metal EPRanalysis
-        pyEPR quantum analysis, or a Quantum Metal ``EPRanalysis`` whose EPR
+    analysis : pyEPR.QuantumAnalysis, pyEPR PyaedtDistributedAnalysis or Quantum Metal EPRanalysis
+        pyEPR quantum analysis; pyEPR's PyAEDT analysis after
+        ``do_EPR_analysis()``; or a Quantum Metal ``EPRanalysis`` whose EPR
         spectrum analysis has run.
     variation : str, int or None, default None
         pyEPR variation key, such as ``"0"``. ``None`` selects the only
-        analysed variation and raises when there are several.
+        analysed variation and raises when there are several. A PyAEDT
+        analysis holds one variation and requires ``None``.
     modes : sequence of int or None, default None
         Positions in pyEPR's analysed-mode order, as accepted by
         ``QuantumAnalysis.analyze_variation``. ``None`` keeps every mode.
@@ -100,34 +119,42 @@ def from_pyepr(
     EPRModel
         HFSS mode frequencies in GHz, pyEPR's normalized participations and
         signs, junction energies from pyEPR's ``Ljs``, and the finite HFSS
-        eigenmode quality factors, if any. Lossless modes carry ``inf``.
+        eigenmode quality factors, if any. Lossless modes carry ``inf``. A
+        PyAEDT analysis gives its own participations and no quality factors.
 
     Raises
     ------
     TypeError
-        *analysis* is neither supported type.
+        *analysis* is not one of the supported types.
     ValueError
-        The variation is ambiguous or unknown, or a Quantum Metal analysis
-        has not run its EPR spectrum analysis.
+        The variation is ambiguous or unknown, a Quantum Metal analysis has
+        not run its EPR spectrum analysis, or a PyAEDT analysis has no results
+        or was given a variation.
 
     Notes
     -----
     The participations are pyEPR's normalized matrix, so a first-order
     :meth:`EPRModel.chip` reproduces pyEPR's ``chi_O1`` and ``f_1`` results
     for the same modes and junctions, with quchip's sign convention and units.
+    A PyAEDT analysis stores the participations its ``analyze()`` uses, so the
+    cosine chip reproduces that diagonalization at equal truncation.
 
     References
     ----------
     Minev et al., npj Quantum Inf. 7, 131 (2021),
     https://doi.org/10.1038/s41534-021-00461-8.
     """
-    quantum = _quantum_analysis(analysis)
-    key = _variation(quantum, variation)
-    participations, signs, omega, josephson = (np.asarray(m, dtype=float) for m in
-                                               quantum.get_epr_base_matrices(key)[:4])
-    freqs = np.diag(omega)
-    energies = np.diag(josephson)
-    quality = _quality_factors(quantum, key, freqs.shape[0])
+    quality: np.ndarray | None = None
+    if hasattr(analysis, "PJ") and hasattr(analysis, "freqs_GHz"):
+        freqs, participations, signs, energies = _pyaedt_results(analysis, variation)
+    else:
+        quantum = _quantum_analysis(analysis)
+        key = _variation(quantum, variation)
+        participations, signs, omega, josephson = (np.asarray(m, dtype=float) for m in
+                                                   quantum.get_epr_base_matrices(key)[:4])
+        freqs = np.diag(omega)
+        energies = np.diag(josephson)
+        quality = _quality_factors(quantum, key, freqs.shape[0])
 
     rows = list(range(freqs.shape[0])) if modes is None else [int(mode) for mode in modes]
     columns = list(range(energies.shape[0])) if junctions is None else [int(j) for j in junctions]

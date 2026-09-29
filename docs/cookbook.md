@@ -92,9 +92,13 @@ readout = epr.chip(levels={"q": 3, "r": 12}, nonlinearity="first_order").with_pa
 Frequencies are the linear eigenmodes in GHz, participations the fraction of
 each mode's inductive energy in each junction, and inductances in H. `chip()`
 keeps the junction cosine exactly and warns when a mode needs more levels. For
-a pyEPR `QuantumAnalysis` or a Quantum Metal `EPRanalysis`, use
-`from_pyepr(analysis, variation="0")`. pyEPR prints `chi_O1` and `chi_ND` in
+a pyEPR `QuantumAnalysis` or `PyaedtDistributedAnalysis`, or a Quantum Metal
+`EPRanalysis`, use `from_pyepr(analysis)`, with `variation="0"` to pick one
+point of a sweep. pyEPR prints `chi_O1` and `chi_ND` in
 MHz with the opposite sign; compare them with `-1e3 * chip.kerr_matrix().values`.
+`EPRModel.from_phi_zpf(freqs, phi_zpf, junction_inductances=...)` takes pyEPR's
+reduced phase fluctuations instead of participations. Give a flux-tuned SQUID
+the inductance at its operating flux.
 
 The cosine chip carries the junction term without rotating-wave filtering, so
 long rotating-frame simulations are expensive. Bind its dressed values to the

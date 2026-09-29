@@ -424,6 +424,16 @@ Sources: [`quchip/interop/epr.py`](quchip/interop/epr.py), [`quchip/interop/pyep
 H = sum_m f_m n_m - sum_j E_J,j [cos(phi_j) - 1 + phi_j^2 / 2],   phi_j = sum_m phi_mj (a_m + a_m†)
 ```
 
+`EPRModel.from_phi_zpf` takes `phi_mj` directly, as pyEPR's
+`epr_numerical_diagonalization` does, and rejects values that imply `p_mj > 1`.
+A DC SQUID with junction energies `E_J1`, `E_J2`, negligible loop inductance and
+flux phase `phi_ext` has the potential `-E_J cos(phi - phi_0)` with
+`E_J = sqrt(E_J1^2 + E_J2^2 + 2 E_J1 E_J2 cos(phi_ext))`. When no current holds
+it away from `phi_0`, it is one junction with that `E_J`, both in the field
+simulation and in this Hamiltonian. A junction held away from the minimum of its
+own cosine, as in an rf-SQUID loop or a SNAIL, adds odd-order terms that the
+model omits.
+
 `chip()` builds this Hamiltonian by default: one `Resonator` per mode and the
 junction term as `EffectiveTerms`, which the engine never filters under
 `RWA()`. `cos_trunc` keeps the Taylor series through `phi^(2 cos_trunc)`. It

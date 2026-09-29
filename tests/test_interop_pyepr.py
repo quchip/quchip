@@ -103,8 +103,38 @@ def test_metal_epr_analysis_is_read_through_its_renderer():
     not_run = SimpleNamespace(sim=SimpleNamespace(renderer=SimpleNamespace(epr_quantum_analysis=None)))
     with pytest.raises(ValueError, match="run its EPR spectrum analysis"):
         from_pyepr(not_run)
-    with pytest.raises(TypeError, match="pyEPR QuantumAnalysis or a Quantum Metal EPRanalysis"):
+    with pytest.raises(TypeError, match="PyaedtDistributedAnalysis, or a Quantum Metal EPRanalysis"):
         from_pyepr(object())
+
+
+def _pyaedt_analysis(**results):
+    """pyEPR PyaedtDistributedAnalysis attributes, which stay None until do_EPR_analysis() runs."""
+    fields = dict(freqs_GHz=None, Ljs=None, PJ=None, SJ=None)
+    fields.update(results)
+    return SimpleNamespace(**fields)
+
+
+def test_pyaedt_analysis_imports_its_arrays():
+    """A PyAEDT analysis's frequencies, participations, signs and inductances become the model."""
+    inductances = np.array([12e-9, 11e-9])
+    analysis = _pyaedt_analysis(freqs_GHz=FREQS, Ljs=inductances, PJ=PARTICIPATIONS, SJ=SIGNS)
+    model = from_pyepr(analysis, modes=[1, 0], junctions=[1], labels=["b", "a"])
+
+    reference = EPRModel(FREQS, PARTICIPATIONS, junction_inductances=inductances)
+    np.testing.assert_array_equal(model.freqs, FREQS[[1, 0]])
+    np.testing.assert_array_equal(model.participations, PARTICIPATIONS[[1, 0]][:, [1]])
+    np.testing.assert_array_equal(model.signs, SIGNS[[1, 0]][:, [1]])
+    np.testing.assert_allclose(model.junction_energies, reference.junction_energies[[1]], rtol=1e-15)
+    assert model.labels == ("b", "a") and model.quality_factors is None
+
+
+def test_pyaedt_analysis_needs_results_and_no_variation():
+    """A PyAEDT analysis must have run do_EPR_analysis() and holds exactly one variation."""
+    with pytest.raises(ValueError, match="do_EPR_analysis"):
+        from_pyepr(_pyaedt_analysis())
+    solved = _pyaedt_analysis(freqs_GHz=FREQS, Ljs=[12e-9, 11e-9], PJ=PARTICIPATIONS, SJ=SIGNS)
+    with pytest.raises(ValueError, match="one solved variation"):
+        from_pyepr(solved, variation="0")
 
 
 def test_from_pyepr_is_a_lazy_top_level_export():

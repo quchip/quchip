@@ -64,6 +64,26 @@ def test_single_junction_cosine_model_matches_the_charge_basis_transmon():
 
 
 @pytest.mark.validation
+def test_dc_squid_enters_with_its_operating_point_josephson_energy():
+    """A p = 1 mode at the SQUID's operating-point E_J reproduces the two-junction charge-basis spectrum."""
+    charging, first, second, flux_phase = 0.25, 14.0, 9.0, 0.4 * np.pi
+    josephson = np.sqrt(first**2 + second**2 + 2 * first * second * np.cos(flux_phase))  # E_J / E_C = 75
+    # 4 E_C (n - n_g)^2 - E_J1 cos(phi) - E_J2 cos(phi - phi_ext), where e^{i phi} raises n by one.
+    charge = np.arange(-20, 21)
+    tunneling = np.full(charge.size - 1, -0.5 * (first + second * np.exp(-1j * flux_phase)))
+    squid = np.diag(4 * charging * (charge - 0.25) ** 2) + np.diag(tunneling, -1) + np.diag(tunneling.conj(), 1)
+    exact = np.linalg.eigvalsh(squid)[:4] - np.linalg.eigvalsh(squid)[0]
+    model = EPRModel([np.sqrt(8 * josephson * charging)], [[1.0]], junction_energies=[josephson], labels=["t"])
+
+    coarse, fine = (_spectrum(model.chip(levels=n), 4) for n in (20, 30))
+
+    # As for the single junction: the last Fock increment bounds the truncation error, and
+    # charge dispersion at n_g = 1/4 stays below 1e-8 GHz for E_J / E_C = 75.
+    assert np.max(np.abs(fine - exact)) < np.max(np.abs(fine - coarse))
+    assert np.max(np.abs(fine - exact)) < 1e-7
+
+
+@pytest.mark.validation
 def test_two_junction_normal_modes_match_exact_coupled_transmons():
     """Hybridized two-junction EPR data reproduce the node-basis spectrum through two excitations."""
     c1, c2, cg, l1, l2 = 110e-15, 118e-15, 5e-15, 9.5e-9, 9.0e-9
@@ -242,3 +262,32 @@ def test_imported_models_reproduce_pyepr_first_order_and_diagonalized_results(tm
     np.testing.assert_allclose([1e3 * full.freq(label) for label in labels],
                                np.real(np.asarray(reference["f_ND"])), rtol=1e-11)
     np.testing.assert_array_equal(model.quality_factors, [1.5e6, np.inf, 2e4])
+
+
+# pyEPR's own fock_trunc = 9 is below convergence on purpose, as in the comparison above.
+@pytest.mark.filterwarnings("ignore:The cosine chip is not converged:UserWarning")
+def test_imported_pyaedt_analysis_reproduces_its_diagonalization():
+    """from_pyepr on pyEPR's PyAEDT analysis gives the f_ND and chi_ND of its own analyze()."""
+    pytest.importorskip("pyEPR")
+    from types import SimpleNamespace
+
+    from pyEPR.ansys_pyaedt import PyaedtDistributedAnalysis
+
+    from quchip import from_pyepr
+
+    # The arrays do_EPR_analysis() stores for pyEPR's PyAEDT demo transmon.
+    analysis = PyaedtDistributedAnalysis(SimpleNamespace(junctions={"j1": {}}))
+    analysis.freqs_GHz = np.array([4.815509, 5.060004])
+    analysis.Ljs = np.array([12.9201e-9])
+    analysis.PJ = np.array([[0.9755], [0.0061]])
+    analysis.SJ = np.array([[-1.0], [1.0]])
+    f_nd, chi_nd = analysis.analyze(cos_trunc=8, fock_trunc=9)
+    chip = from_pyepr(analysis).chip(levels=9, cos_trunc=8)
+
+    # pyEPR returns f_ND in Hz and chi_ND in MHz with the opposite sign. Its PyAEDT path forms
+    # phi_zpf with rounded constants whose (Phi_0/2pi)^2/h is 1.5e-8 below the value its
+    # Hamiltonian uses, which moves chi by about twice that (measured: 3.6e-8) and the
+    # frequencies by less (1.7e-9); quchip's constants match the Hamiltonian's to 1e-15.
+    np.testing.assert_allclose([chip.freq(label) for label in ("mode_0", "mode_1")], np.real(f_nd) / 1e9,
+                               rtol=1e-8)
+    np.testing.assert_allclose(-1e3 * np.asarray(chip.kerr_matrix().values), np.real(chi_nd), rtol=1e-7, atol=1e-9)

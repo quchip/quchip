@@ -178,6 +178,34 @@ def test_replace_returns_a_new_model_with_named_fields_changed():
         model.replace(frequency=[5.0, 6.0, 7.0])
 
 
+def test_phi_zpf_inputs_rebuild_the_same_model():
+    """from_phi_zpf inverts phi_zpf: participations, signs and phases match the source model."""
+    model = _model()
+    rebuilt = EPRModel.from_phi_zpf(FREQS, model.phi_zpf, junction_inductances=INDUCTANCES, labels=model.labels)
+
+    np.testing.assert_allclose(rebuilt.participations, model.participations, rtol=1e-12)
+    np.testing.assert_array_equal(rebuilt.signs, model.signs)
+    np.testing.assert_allclose(rebuilt.phi_zpf, model.phi_zpf, rtol=1e-12)
+
+
+def test_phi_zpf_beyond_the_whole_inductive_energy_is_rejected():
+    """Phase fluctuations that put more than a mode's inductive energy in one junction raise."""
+    # f = 0.5 GHz, L_J = 500 nH and phi_zpf = 2 imply p = 2 E_J phi_zpf^2 / f = 5.2.
+    with pytest.raises(ValueError, match="above 1"):
+        EPRModel.from_phi_zpf([0.5], [[2.0]], junction_inductances=[500e-9])
+
+
+def test_phi_zpf_participations_are_differentiable():
+    """d p / d phi_zpf = 4 E_J phi_zpf / f through a traced phase fluctuation."""
+    import jax
+    import jax.numpy as jnp
+
+    def participation(phase):
+        return EPRModel.from_phi_zpf([5.0], jnp.full((1, 1), phase), junction_energies=[20.0]).participations[0, 0]
+
+    assert float(jax.grad(participation)(0.2)) == pytest.approx(4 * 20.0 * 0.2 / 5.0, rel=1e-12)
+
+
 @pytest.mark.parametrize(
     ("arguments", "message"),
     [

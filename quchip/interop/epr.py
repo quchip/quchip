@@ -127,7 +127,8 @@ class EPRModel:
     junction_energies : array_like, shape (J,), optional
         Josephson energies :math:`E_{J,j}` in GHz of the linear junction
         inductances. Give exactly one of ``junction_energies`` and
-        ``junction_inductances``.
+        ``junction_inductances``. A DC SQUID enters with its value at the
+        operating flux; see Notes.
     junction_inductances : array_like, shape (J,), optional
         Linear junction inductances :math:`L_{J,j}` in H, converted with
         :math:`E_J = (\Phi_0/2\pi)^2/(h L_J)`.
@@ -165,8 +166,19 @@ class EPRModel:
         \hat\varphi_j = \sum_m \varphi_{mj}\,(a_m + a_m^\dagger).
 
     The quadratic part of each junction potential is already included in
-    :math:`f_m`. First-order perturbation theory in the quartic term gives the
-    diagonal Kerr Hamiltonian
+    :math:`f_m`. A DC SQUID with junction energies :math:`E_{J1}` and
+    :math:`E_{J2}`, negligible loop inductance and flux phase
+    :math:`\varphi_\mathrm{ext}` has the single-cosine potential
+    :math:`-E_J\cos(\hat\varphi - \varphi_0)` with
+    :math:`E_J = (E_{J1}^2 + E_{J2}^2 + 2E_{J1}E_{J2}\cos\varphi_\mathrm{ext})^{1/2}`.
+    When no current holds it away from :math:`\varphi_0`, it enters this
+    Hamiltonian exactly with that :math:`E_J`, which the field simulation must
+    use as well. A junction held away from the minimum of its own cosine, as in
+    an rf-SQUID loop or a SNAIL, adds odd-order terms that this Hamiltonian
+    omits.
+
+    First-order perturbation theory in the quartic term gives the diagonal Kerr
+    Hamiltonian
 
     .. math::
 
@@ -317,6 +329,65 @@ class EPRModel:
         return self._signs * xp.sqrt(
             0.5 * self._freqs[:, None] * self._participations / self._junction_energies[None, :]
         )
+
+    @classmethod
+    def from_phi_zpf(
+        cls,
+        freqs: Any,
+        phi_zpf: Any,
+        *,
+        junction_energies: Any = None,
+        junction_inductances: Any = None,
+        labels: Sequence[str] | None = None,
+        quality_factors: Any = None,
+    ) -> "EPRModel":
+        r"""Build a model from reduced zero-point phase fluctuations.
+
+        pyEPR's ``epr_numerical_diagonalization`` takes :math:`\varphi_{mj}`
+        instead of participations. This inverts :attr:`phi_zpf`:
+        :math:`p_{mj} = 2E_{J,j}\varphi_{mj}^2/f_m` and
+        :math:`s_{mj} = \operatorname{sign}\varphi_{mj}`, with ``+1`` for zero.
+
+        Parameters
+        ----------
+        freqs : array_like, shape (M,)
+            Linear eigenmode frequencies :math:`f_m` in GHz.
+        phi_zpf : array_like, shape (M, J)
+            Reduced zero-point phase fluctuation :math:`\varphi_{mj}` of
+            junction ``j`` in mode ``m``.
+        junction_energies, junction_inductances : array_like, shape (J,), optional
+            Josephson energies in GHz or linear inductances in H, as for
+            :class:`EPRModel`. Give exactly one.
+        labels : sequence of str, optional
+            Unique mode labels, as for :class:`EPRModel`.
+        quality_factors : array_like, shape (M,), optional
+            Total mode quality factors, as for :class:`EPRModel`.
+
+        Returns
+        -------
+        EPRModel
+            Model whose :attr:`phi_zpf` equals ``phi_zpf``.
+
+        Raises
+        ------
+        ValueError
+            A phase fluctuation implies a participation above 1, which no
+            linear circuit realizes, or the inputs fail the constructor's checks.
+        """
+        phases = _real_array("phi_zpf", phi_zpf, 2)
+        linear = cls(freqs, np.zeros(phases.shape), junction_energies=junction_energies,
+                     junction_inductances=junction_inductances, labels=labels, quality_factors=quality_factors)
+        participations = 2 * linear.junction_energies[None, :] * phases**2 / linear.freqs[:, None]
+        concrete = _concrete(participations)
+        if concrete is not None and np.any(concrete > 1):
+            mode, junction = np.unravel_index(np.argmax(concrete), concrete.shape)
+            raise ValueError(
+                f"phi_zpf implies participation 2 E_J phi_zpf**2 / f = {concrete[mode, junction]:.3g} for mode "
+                f"{linear.labels[mode]!r} and junction {junction}, above 1: a mode cannot store more than its "
+                "inductive energy in one junction. Check that freqs is in GHz and the junction values."
+            )
+        xp = jnp if contains_tracer(phases) else np
+        return linear.replace(participations=participations, signs=xp.where(phases < 0, -1.0, 1.0))
 
     def replace(self, **changes: Any) -> "EPRModel":
         """Return a copy with selected constructor arguments replaced.

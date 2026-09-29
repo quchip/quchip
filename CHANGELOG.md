@@ -10,8 +10,9 @@ This file records notable user-visible changes to quchip.
   builds the junction-cosine Hamiltonian that pyEPR diagonalizes numerically
   and warns when a mode needs more Fock levels; `nonlinearity="first_order"`
   builds pyEPR's first-order Kerr Hamiltonian instead. `from_pyepr` reads one
-  variation of a pyEPR `QuantumAnalysis` or a Quantum Metal `EPRanalysis`
-  without a new dependency.
+  variation of a pyEPR `QuantumAnalysis` or `PyaedtDistributedAnalysis`, or a
+  Quantum Metal `EPRanalysis`, without a new dependency, and
+  `EPRModel.from_phi_zpf` takes reduced zero-point phase fluctuations.
   A new guide sweeps the junction inductance of a transmon–resonator circuit,
   compares both chips with the exact node-basis circuit, and simulates the
   readout consequence of the first-order error; the cookbook adds a recipe.
