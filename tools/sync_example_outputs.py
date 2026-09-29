@@ -24,6 +24,7 @@ DEFAULT_PAIRS = (
     "02_reduce_and_replay",
     "03_differentiate_a_driven_chip",
     "04_continuous_measurement",
+    "05_energy_participation",
 )
 OUTPUT_START = "<!-- executed-output:start -->"
 OUTPUT_END = "<!-- executed-output:end -->"

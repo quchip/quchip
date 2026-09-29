@@ -18,6 +18,7 @@ rates in 1/ns.
 | Outcomes from a saved quantum state | `result.measure()` |
 | Bare parameters that meet dressed targets | `fit_a_dress()` |
 | A reduced model around driven devices | `sequence.active_patch()` |
+| A chip from an eigenmode simulation, pyEPR or Quantum Metal | `EPRModel.chip()`, `from_pyepr()` |
 
 The {doc}`guides <guides/index>` develop these workflows. The
 {doc}`focused studies <studies/index>` apply them to specific physical questions.
@@ -69,6 +70,38 @@ configuration; use `with_params()` for a partial change.
 For `FluxTunableTransmon`, sweep `flux_bias` to move along its calibrated
 frequency curve. Set `freq` and `flux_bias` together to change the calibration
 anchor. `to_dict()` and `from_dict()` save and restore model declarations.
+
+## Import an energy-participation analysis
+
+```python
+from quchip import EPRModel
+
+epr = EPRModel(
+    freqs=[4.896, 7.217], participations=[[0.9985], [0.0015]],
+    junction_inductances=[11e-9], labels=["q", "r"], quality_factors=[2.0e6, 1.5e4],
+)
+full = epr.chip(levels={"q": 20, "r": 8})
+kerr = full.kerr_matrix()
+readout = epr.chip(levels={"q": 3, "r": 12}, nonlinearity="first_order").with_params({
+    "q.freq": full.freq("q"), "q.anharmonicity": kerr["q", "q"],
+    "r.freq": full.freq("r"), "r.anharmonicity": kerr["r", "r"],
+    "q_r.chi": kerr["q", "r"],
+})
+```
+
+Frequencies are the linear eigenmodes in GHz, participations the fraction of
+each mode's inductive energy in each junction, and inductances in H. `chip()`
+keeps the junction cosine exactly and warns when a mode needs more levels. For
+a pyEPR `QuantumAnalysis` or a Quantum Metal `EPRanalysis`, use
+`from_pyepr(analysis, variation="0")`. pyEPR prints `chi_O1` and `chi_ND` in
+MHz with the opposite sign; compare them with `-1e3 * chip.kerr_matrix().values`.
+
+The cosine chip carries the junction term without rotating-wave filtering, so
+long rotating-frame simulations are expensive. Bind its dressed values to the
+diagonal first-order chip, as above. `nonlinearity="first_order"` on its own
+gives pyEPR's first-order values, about 10% off at transmon zero-point phases.
+Changing a junction inductance also moves the modes, so rebuild the model from
+a new field simulation.
 
 ## Keep the pulse handle for sweeps
 

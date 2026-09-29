@@ -250,7 +250,9 @@ multitone terms may retain explicit time dependence. Local spaces are finite.
 Subclass `ModelMapping` when a third-party object needs an explicit conversion.
 Set `source` for import, `target` and `library` for export, and implement only
 the directions the mapping supports. Importing `quchip.extensions` does not
-load optional scqubits modules.
+load optional scqubits modules. Energy-participation results from any field
+solver enter through `EPRModel` instead; see
+{doc}`energy-participation quantization <guides/energy-participation>`.
 
 ## Control equipment
 

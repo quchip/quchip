@@ -39,7 +39,7 @@ Declare the chip once, then use the same model for dressed-state analysis, model
   <img src="https://docs.quchip.org/_static/readme/quchip_pipeline_light.png" alt="quchip pipeline from declared devices and control parameters through model resolution, simulation, observables, and gradients" width="1084">
 </picture>
 
-QuTiP is the default simulation backend. The optional dynamiqs backend is JAX-native and keeps declared device and control parameters differentiable through a solve. The [backend guide](https://docs.quchip.org/guides/choosing-a-backend.html) compares their numerical and workflow tradeoffs. The scqubits integration imports and exports selected device and composite models.
+QuTiP is the default simulation backend. The optional dynamiqs backend is JAX-native and keeps declared device and control parameters differentiable through a solve. The [backend guide](https://docs.quchip.org/guides/choosing-a-backend.html) compares their numerical and workflow tradeoffs. The scqubits integration imports and exports selected device and composite models. `EPRModel` builds chips from energy-participation analyses of eigenmode simulations, including pyEPR and Quantum Metal results.
 
 `quchip` uses GHz for ordinary frequencies, ns for time, and mK for temperature. The implemented conventions and approximations are documented in the [physics guide](https://docs.quchip.org/physics).
 
@@ -132,6 +132,7 @@ The [dynamics guide](https://docs.quchip.org/guides/dynamics-pulses-and-readout)
 - [Pulses, leakage, and readout](https://docs.quchip.org/guides/dynamics-pulses-and-readout): compare pulse selectivity, conditional resonator response, and cavity depletion.
 - [Readout and fridge wiring](https://docs.quchip.org/guides/steady-state-and-vna): calculate VNA traces and qubit readout with receiver noise.
 - [Model reduction](https://docs.quchip.org/guides/chip-transformations): compare a reduced model with the full pulse simulation.
+- [Energy-participation quantization](https://docs.quchip.org/guides/energy-participation): build a chip from an eigenmode simulation, pyEPR or Quantum Metal.
 - [Gradients and parameter fitting](https://docs.quchip.org/guides/differentiability): differentiate spectra and pulse responses, and fit measured circuit parameters.
 - [Extending quchip](https://docs.quchip.org/extensions): define custom models, controls, dissipation and interoperability mappings.
 - [Cookbook](https://docs.quchip.org/cookbook): practical API choices, tips and common pitfalls.
