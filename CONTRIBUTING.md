@@ -177,10 +177,46 @@ Open an issue before starting a large change or adding a device, coupling, drive
 ## Releases
 
 Keep release notes in `CHANGELOG.md` under `## [version] - YYYY-MM-DD`.
-Before tagging, move the changes from `Unreleased` into the versioned section
-and run `python tools/release_notes.py <version>` to inspect the release body.
-The documentation includes the changelog, and the tag workflow uses that same
-section for the GitHub release after publishing to PyPI.
+Each entry has two parts:
+
+1. `### 0.x series highlights`: a short cumulative overview of the main
+   capabilities introduced in that feature series. While quchip is pre-1.0,
+   a new series starts at `0.x.0` (for example, 0.4.0). Carry the overview into
+   later patch releases, updating it only for substantial additions. Describe
+   these as series capabilities so older features are not presented as new
+   in the current patch.
+2. `### Changes since <previous release>`: changes since the immediately
+   preceding published tag, with a full comparison link. Use the following
+   `####` categories in order, omitting empty categories: Changes and migration,
+   New features, Fixes, Performance, Compatibility, Documentation and examples,
+   Development. At the first release of a series, the overview summarizes the
+   features detailed here; later patches retain the overview and list only
+   their own changes here.
+
+Write one short bullet per user-visible outcome, with a PR link. Combine
+related implementation changes. Lead the series overview with new scientific
+capabilities, such as solvers and device models. State supported equations,
+backends, and experimental limits where relevant. Keep internal refactors and
+CI details brief in Development; performance claims need measured evidence.
+
+Changes to defaults, approximations, units, signs, initial states, or tolerances
+must explain the old and new behavior and any required user action, even when
+signatures are unchanged. Intentional changes to documented behavior belong in
+Changes and migration. Fixes describe the affected case and correction;
+flag numerical consequences there too. Deprecations identify the replacement
+and planned removal release. Keep migration steps in the release entry unless
+a longer guide is needed.
+
+Before tagging, review the entire change set since the previous published tag,
+move `Unreleased` into the dated entry, and run
+`python tools/release_notes.py <version>` to inspect the release body. The docs
+include the changelog, and the tag workflow uses that same section for GitHub
+after publishing to PyPI. Avoid separately maintained copies.
+
+For editorial corrections after publication, merge the changelog update,
+regenerate the GitHub release body with the same command, and verify both the
+published release and deployed docs. Keep the published tag and package intact;
+code changes require another release.
 
 ## Policies
 

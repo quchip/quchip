@@ -6,7 +6,24 @@ This file records notable user-visible changes to quchip.
 
 ## [0.4.0] - 2026-09-29 <a id="quchip-0-4-0"></a>
 
-Changes since [v0.3.2](https://github.com/quchip/quchip/compare/v0.3.2...v0.4.0).
+### 0.4 series highlights
+
+The 0.4 series adds continuous-measurement trajectories and extends custom-device
+and effective-Hamiltonian workflows:
+
+- Quantum-jump and diffusive trajectories on QuTiP and Dynamiqs, with native
+  results, parameter batches, and explicit monitored channels.
+- Custom operator names across noise, ports, observables, and elimination,
+  plus an ideal two-level `Qubit` model.
+- Elimination of retained `EffectiveTerms`, with dressed parameter reports
+  and inspectable approximation notes. Dressed analysis follows the chip's
+  selected approximation.
+
+### Changes since 0.3.2
+
+[Full comparison: v0.3.2 → v0.4.0](https://github.com/quchip/quchip/compare/v0.3.2...v0.4.0).
+
+#### Changes and migration
 
 - Dressed analysis now follows `chip.approximation`, including frequencies,
   states, Kerr shifts and drive matrix elements. Previously these queries
@@ -14,23 +31,7 @@ Changes since [v0.3.2](https://github.com/quchip/quchip/compare/v0.3.2...v0.4.0)
   chip with `approximation=Exact()` to recover the previous full-Hamiltonian
   analysis. Dressed queries remain independent of the integration frame.
   Elimination and its χ report follow the same choice; `method="exact"`
-  diagonalizes the selected Hamiltonian without restoring discarded bands.
-- `eliminate()` accepts the label of an `EffectiveTerms` contribution. With
-  `method="exact"` it diagonalizes those terms together with the local
-  Hamiltonians of their devices, keeps every device and edge authored, and
-  retains the level shifts as a correction, so dressed queries on the reduced
-  chip return the source spectrum. `effective_params` reports each device's
-  dressed transition, Lamb shift, anharmonicity and cross-Kerr shifts.
-  Coupling and effective-term reductions share one implementation of the
-  retained change of coordinates. `Chip` now rejects effective-term labels
-  that collide with device or coupling labels.
-- `EffectiveTerms` carry producer `notes`. `Chip.physics_notes()` lists each
-  contribution under `effective:<label>` with its support, assembly rule,
-  channels and notes, and `describe()` lists them. Device and coupling
-  eliminations record their approximations on the retained terms, including
-  the notes of earlier contributions they absorb. Serialized effective terms
-  include `notes` when present; payloads without them still load.
-  `Resonator.physics_notes()` states its harmonic approximation once.
+  diagonalizes the selected Hamiltonian without restoring discarded bands. ([#71](https://github.com/quchip/quchip/pull/71))
 - Solves with `initial_state=None` now use the all-ground-labeled eigenstate of
   the undriven static lab-frame Hamiltonian retained by the solve's
   approximation. The default RWA with ordinary couplings remains a bare
@@ -38,69 +39,107 @@ Changes since [v0.3.2](https://github.com/quchip/quchip/compare/v0.3.2...v0.4.0)
   selects the same physical state as `chip.state()` for the all-ground label.
   Retained bands, effective terms, or network Hamiltonian terms that couple
   the vacuum can dress an RWA start. Rotating-frame solves apply `U(tlist[0])†`. Pass `chip.bare_state()`
-  explicitly to keep the previous bare start.
+  explicitly to keep the previous bare start. ([#64](https://github.com/quchip/quchip/pull/64))
+- Deterministic Dynamiqs solves default to `Dopri8(rtol=1e-9, atol=1e-11)` instead of the
+  native `Tsit5()` (`rtol = atol = 1e-6`), at which pulse-parameter gradients
+  could be off by a factor of two. Pass `method` to restore the old integrator. ([#57](https://github.com/quchip/quchip/pull/57))
+- VNA S-parameters, finite-power fields, field correlations, and IQ statistics now follow the
+  engineering `e^{+jωt}` convention, where `j = −i`, including network phases
+  and delays. Remove manual conjugation of VNA outputs; conjugate old complex
+  probe and pump amplitudes to reproduce the same physical drive. Internal
+  mode observables and authored network parameters keep their physics convention. ([#46](https://github.com/quchip/quchip/pull/46))
+- Wiring-derived IQ readouts share the VNA convention for supplied boundary
+  means, detector fields, and receiver filtering. Conjugate raw simulation
+  fields before supplying them as readout templates. Receiver-filter validation
+  now also accepts JAX arrays. ([#46](https://github.com/quchip/quchip/pull/46))
+- Truncation diagnostics are now explicit. Remove `check_truncation` and
+  `truncation_threshold` from solve calls; use `result.check_truncation()` or
+  prepare `with_truncation(problem)` when saving only diagnostics. ([#45](https://github.com/quchip/quchip/pull/45))
+- Omitted stochastic storage uses native defaults. Put native call keywords
+  in `run_args` and integrator options in `options`. For stochastic Dynamiqs
+  calls, `options` holds native solver keywords; `method` and `gradient` go
+  in `run_args`. See the
+  [backend options](https://docs.quchip.org/guides/choosing-a-backend.html#native-stochastic-trajectories). ([#45](https://github.com/quchip/quchip/pull/45))
+
+#### New features
+
+- Added native quantum-jump trajectories (`mcsolve` on QuTiP, `jssesolve` on
+  Dynamiqs), diffusive stochastic Schrödinger equations (`ssesolve` /
+  `dssesolve`), and diffusive stochastic master equations (`smesolve` /
+  `dsmesolve`). Supports parameter batches, native results, and explicit
+  monitored-channel selection. See the
+  [solver and storage guide](https://docs.quchip.org/guides/choosing-a-backend.html#native-stochastic-trajectories). ([#45](https://github.com/quchip/quchip/pull/45))
+- Added the ideal two-level `Qubit` model. ([#45](https://github.com/quchip/quchip/pull/45))
+- Custom devices can use declared operator names for ports and observables,
+  and existing lowering, raising and number hooks for T1/T2 channels.
+  Elimination supports non-capacitive mediated exchange, derives decay
+  summaries from declared channels, and accepts custom harmonic Fock boundaries. ([#58](https://github.com/quchip/quchip/pull/58))
+- `eliminate()` accepts the label of an `EffectiveTerms` contribution. With
+  `method="exact"` it diagonalizes those terms together with the local
+  Hamiltonians of their devices, keeps every device and edge authored, and
+  retains the level shifts as a correction, so dressed queries on the reduced
+  chip return the source spectrum. `effective_params` reports each device's
+  dressed transition, Lamb shift, anharmonicity and cross-Kerr shifts.
+  `Chip` rejects effective-term labels that collide with device or coupling labels. ([#69](https://github.com/quchip/quchip/pull/69))
+- `EffectiveTerms` carry producer `notes`. `Chip.physics_notes()` lists each
+  contribution under `effective:<label>` with its support, assembly rule,
+  channels and notes, and `describe()` lists them. Device and coupling
+  eliminations record their approximations on the retained terms, including
+  the notes of earlier contributions they absorb. Serialized effective terms
+  include `notes` when present; payloads without them still load.
+  `Resonator.physics_notes()` states its harmonic approximation once. ([#69](https://github.com/quchip/quchip/pull/69))
+- `fit_a_dress` summaries mark targets whose error exceeds 1% of the target. ([#57](https://github.com/quchip/quchip/pull/57))
+
+#### Fixes
+
+- `from_scqubits` and `to_scqubits` now convert energies between scqubits'
+  global unit, `scqubits.get_units()`, and GHz. Previously they assumed GHz, so
+  objects built after `scqubits.set_units("MHz")`, such as Quantum Metal's LOM
+  composites, imported 1000 times too large. ([#72](https://github.com/quchip/quchip/pull/72))
 - Per-call backend overrides no longer re-project QuTiP `Qobj` or dynamiqs
   `QArray` initial states returned by `chip.state()`, `chip.bare_state()`, or
   `chip.superposition()` in `simulate()` or `simulate_batch()`. Hand-built
   foreign-backend states now also use resolved solver coordinates. NumPy/JAX
-  arrays and symbolic or callable states remain authored-space kets.
+  arrays and symbolic or callable states remain authored-space kets. ([#63](https://github.com/quchip/quchip/pull/63))
+- `effective_hamiltonian` and `effective_hamiltonian_between_states` index the
+  resolved product basis, so eigen-projected charge-basis devices no longer
+  raise a singular-Gram-matrix error. Traced dressed states and `describe()`
+  report the same retained dimensions. ([#50](https://github.com/quchip/quchip/pull/50))
+- Collective and other multi-device collapse channels are now checked for a
+  single removable frame phase. Unequal device frames raise before solving
+  instead of silently retaining a static jump operator. ([#50](https://github.com/quchip/quchip/pull/50))
+- Retained effective terms enter the dressed-analysis cache key; a chip
+  resolved before a coupling elimination no longer reports bare energies. ([#57](https://github.com/quchip/quchip/pull/57))
+- Preserve shifted square-pulse endpoints when floating-point subtraction
+  rounds the local time past the pulse duration. ([#46](https://github.com/quchip/quchip/pull/46))
+- The hybridization warning has fixed text and is shown once per call site. ([#57](https://github.com/quchip/quchip/pull/57))
+
+#### Compatibility
+
 - The dynamiqs backend targets dynamiqs 0.3.6, whose qarray rewrite broke the
   previous import. The `dynamiqs` extra requires dynamiqs 0.3.6 or newer and
   caps jax below 0.11.1 until a dynamiqs release includes dynamiqs/dynamiqs#1145.
   Stochastic Dynamiqs `options` are passed as native solver keywords:
   `save_states`, `cartesian_batching` and `save_extra`, plus `t0` and
-  `nmaxclick` for `jssesolve`.
-- Custom devices can use declared operator names for ports and observables,
-  and existing lowering, raising and number hooks for T1/T2 channels.
-  Elimination supports non-capacitive mediated exchange, derives decay
-  summaries from declared channels, and accepts custom harmonic Fock boundaries.
-  An NV-centre guide models a spin-1 defect and its ¹⁴N nucleus through
-  field-dependent resonances, pulsed ODMR and Ramsey fringes.
-- `effective_hamiltonian` and `effective_hamiltonian_between_states` index the
-  resolved product basis, so eigen-projected charge-basis devices no longer
-  raise a singular-Gram-matrix error. Traced dressed states and `describe()`
-  report the same retained dimensions.
-- Collective and other multi-device collapse channels are now checked for a
-  single removable frame phase. Unequal device frames raise before solving
-  instead of silently retaining a static jump operator.
-- Retained effective terms enter the dressed-analysis cache key; a chip
-  resolved before a coupling elimination no longer reports bare energies.
-- The hybridization warning has fixed text and is shown once per call site.
-- `fit_a_dress` summaries mark targets whose error exceeds 1% of the target.
-- dynamiqs solves default to `Dopri8(rtol=1e-9, atol=1e-11)` instead of the
-  native `Tsit5()` (`rtol = atol = 1e-6`), at which pulse-parameter gradients
-  could be off by a factor of two. Pass `method` to restore the old integrator.
-- Docs: `Capacitive` authors `g n_a n_b` on charge and phase-grid endpoints;
-  `PortNetwork.filter` leaves Purcell decay unchanged.
-- VNA S-parameters, finite-power fields, field correlations, and IQ statistics now follow the
-  engineering `e^{+jωt}` convention, where `j = −i`, including network phases
-  and delays. Remove manual conjugation of VNA outputs; conjugate old complex
-  probe and pump amplitudes to reproduce the same physical drive. Internal
-  mode observables and authored network parameters keep their physics convention.
-- Wiring-derived IQ readouts share the VNA convention for supplied boundary
-  means, detector fields, and receiver filtering. Conjugate raw simulation
-  fields before supplying them as readout templates. Receiver-filter validation
-  now also accepts JAX arrays.
-- Preserve shifted square-pulse endpoints when floating-point subtraction
-  rounds the local time past the pulse duration.
+  `nmaxclick` for `jssesolve`. ([#59](https://github.com/quchip/quchip/pull/59))
 
-- Add the ideal two-level `Qubit` model.
-- Add native quantum-jump and diffusive SSE/SME solvers on QuTiP and Dynamiqs,
-  with parameter batches, native results, and explicit monitored-channel selection.
-- Truncation diagnostics are now explicit. Remove `check_truncation` and
-  `truncation_threshold` from solve calls; use `result.check_truncation()` or
-  prepare `with_truncation(problem)` when saving only diagnostics.
-- Omitted stochastic storage uses native defaults. Native run keywords go in
-  `run_args`; integrator options remain in `options`.
-- `from_scqubits` and `to_scqubits` now convert energies between scqubits'
-  global unit, `scqubits.get_units()`, and GHz. Previously they assumed GHz, so
-  objects built after `scqubits.set_units("MHz")`, such as Quantum Metal's LOM
-  composites, imported 1000 times too large.
+#### Documentation and examples
+
+- Added an NV-centre guide modelling a spin-1 defect and its ¹⁴N nucleus through
+  field-dependent resonances, pulsed ODMR, and Ramsey fringes.
+  ([#66](https://github.com/quchip/quchip/pull/66))
+- Added a continuous-measurement guide for stochastic trajectories.
+  ([#45](https://github.com/quchip/quchip/pull/45))
+- Clarified that `Capacitive` authors `g n_a n_b` on charge and phase-grid endpoints;
+  `PortNetwork.filter` leaves Purcell decay unchanged. ([#57](https://github.com/quchip/quchip/pull/57))
+
+#### Development
+
 - The contributor workflow starts PRs as drafts. Marking a PR ready for
   review runs validation; later pushes rerun it. Documentation, workflow changes and version-only
-  release metadata use lightweight checks.
+  release metadata use lightweight checks. ([#73](https://github.com/quchip/quchip/pull/73))
 - Historical release notes are consolidated in this changelog. Tagged
-  releases extract their notes from the matching dated section.
+  releases extract their notes from the matching dated section. ([#68](https://github.com/quchip/quchip/pull/68))
 
 ## [0.3.2] - 2026-09-10 <a id="quchip-0-3-2"></a>
 
