@@ -17,6 +17,11 @@ New to quchip? Start with {doc}`your first chip <defining-and-inspecting-a-chip>
 - {doc}`What happens during a qubit measurement? <continuous-measurement>`:
   follow single trajectories, map their density, and condition on an endpoint.
 
+## From a layout
+
+- {doc}`Energy-participation quantization <energy-participation>`:
+  build a chip from an eigenmode simulation or a pyEPR or Quantum Metal analysis.
+
 ## Microwave networks
 
 - {doc}`Readout and fridge wiring <steady-state-and-vna>`:
@@ -51,4 +56,5 @@ Gradients and parameter fitting <differentiability>
 Cookbook <../cookbook>
 SQA 2026 examples <from-sqa-2026>
 What happens during a qubit measurement? <continuous-measurement>
+Energy-participation quantization <energy-participation>
 ```

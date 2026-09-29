@@ -126,7 +126,7 @@ from quchip.engine import (
     steadystate,
     steadystate_batch,
 )
-from quchip.interop import EigenbasisDevice, ModelMapping
+from quchip.interop import EigenbasisDevice, EPRModel, ModelMapping
 from quchip.inverse_design import FitADressResult, FitParameterReport, ObservableReport, fit_a_dress
 from quchip.results import (
     ObservableTrace,
@@ -146,6 +146,7 @@ from quchip.sweep import SpectrumSweep, Sweep, ZippedSweep
 from quchip.utils.constants import Phi_0, hbar, k_B
 
 _LAZY_INTEROP_EXPORTS = {
+    "from_pyepr": ("quchip.interop.pyepr", "from_pyepr"),
     "from_scqubits": ("quchip.interop.scqubits", "from_scqubits"),
     "to_scqubits": ("quchip.interop.scqubits", "to_scqubits"),
 }
@@ -315,7 +316,9 @@ __all__ = [
     # Third-party interop
     "ModelMapping",
     "EigenbasisDevice",
+    "EPRModel",
     # Interop (lazy)
+    "from_pyepr",
     "from_scqubits",
     "to_scqubits",
     # Visualization (lazy)

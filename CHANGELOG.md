@@ -4,6 +4,18 @@ This file records notable user-visible changes to quchip.
 
 ## Unreleased
 
+- Add `EPRModel`, an energy-participation description of a Josephson circuit
+  (linear mode frequencies, junction participations and signs, junction
+  energies or inductances, and optional quality factors). `EPRModel.chip()`
+  builds the junction-cosine Hamiltonian that pyEPR diagonalizes numerically
+  and warns when a mode needs more Fock levels; `nonlinearity="first_order"`
+  builds pyEPR's first-order Kerr Hamiltonian instead. `from_pyepr` reads one
+  variation of a pyEPR `QuantumAnalysis` or `PyaedtDistributedAnalysis`, or a
+  Quantum Metal `EPRanalysis`, without a new dependency, and
+  `EPRModel.from_phi_zpf` takes reduced zero-point phase fluctuations.
+  A new guide sweeps the junction inductance of a transmon–resonator circuit,
+  compares both chips with the exact node-basis circuit, and simulates the
+  readout consequence of the first-order error; the cookbook adds a recipe.
 - Solves with `initial_state=None` now use the all-ground-labeled eigenstate of
   the undriven static lab-frame Hamiltonian retained by the solve's
   approximation. The default RWA with ordinary couplings remains a bare

@@ -411,6 +411,57 @@ Local basis projection and dressed transition assignment are separate. Basis
 projection selects the tensor factors used by the solver; dressed assignment
 labels eigenstates of the coupled static chip.
 
+### 3.6 Energy-participation models
+
+Sources: [`quchip/interop/epr.py`](quchip/interop/epr.py), [`quchip/interop/pyepr.py`](quchip/interop/pyepr.py)
+
+`EPRModel` describes a Josephson circuit by linear eigenmode frequencies `f_m`
+(GHz), inductive participations `p_mj`, signs `s_mj` and junction energies
+`E_J,j = (Phi_0/2π)^2 / (h L_J,j)` (GHz). With reduced zero-point phases
+`phi_mj = s_mj * sqrt(p_mj f_m / (2 E_J,j))`, the Hamiltonian is
+
+```text
+H = sum_m f_m n_m - sum_j E_J,j [cos(phi_j) - 1 + phi_j^2 / 2],   phi_j = sum_m phi_mj (a_m + a_m†)
+```
+
+`EPRModel.from_phi_zpf` takes `phi_mj` directly, as pyEPR's
+`epr_numerical_diagonalization` does, and rejects values that imply `p_mj > 1`.
+A DC SQUID with junction energies `E_J1`, `E_J2`, negligible loop inductance and
+flux phase `phi_ext` has the potential `-E_J cos(phi - phi_0)` with
+`E_J = sqrt(E_J1^2 + E_J2^2 + 2 E_J1 E_J2 cos(phi_ext))`. When no current holds
+it away from `phi_0`, it is one junction with that `E_J`, both in the field
+simulation and in this Hamiltonian. A junction held away from the minimum of its
+own cosine, as in an rf-SQUID loop or a SNAIL, adds odd-order terms that the
+model omits.
+
+`chip()` builds this Hamiltonian by default: one `Resonator` per mode and the
+junction term as `EffectiveTerms`, which the engine never filters under
+`RWA()`. `cos_trunc` keeps the Taylor series through `phi^(2 cos_trunc)`. It
+warns when a mode, diagonalized alone with the junction term, changes its
+anharmonicity by more than 1% with two more levels.
+`chip(nonlinearity="first_order")` builds the first-order result,
+
+```text
+chi_mn = (f_m f_n / 4) sum_j p_mj p_nj / E_J,j
+H_1 = sum_m (f_m - Delta_m) n_m + sum_m (A_m / 2) n_m (n_m - 1) + sum_{m<n} K_mn n_m n_n
+```
+
+with `Delta_m = sum_n chi_mn / 2`, `A_m = -chi_mm / 2` on a `DuffingTransmon`
+and `K_mn = -chi_mn` on a `CrossKerr`. For this chip, `kerr_matrix()` equals
+`A_m` and `K_mn`. pyEPR prints the same matrix as `chi_O1` in MHz with the
+opposite sign and its first-order frequencies as `f_1`; its numerically
+diagonalized `chi_ND` and `f_ND` correspond to the cosine chip's
+`kerr_matrix()` and `freq()`. A quality factor `Q_m` becomes an energy-decay
+rate `2π f_m / Q_m`: `T1 = Q_m / (2π f_m)` on the first-order mode and
+`internal_quality_factor = Q_m` on the cosine mode. `H_1` is the diagonal part
+of the quartic term in the linear-mode Fock basis, so its relative error grows
+as `phi_mj^2`. At transmon values near 0.4 it is about 10% in `A_m` and larger
+in `K_mn`; it remains the closed form for chips too large to diagonalize.
+
+An `EPRModel` is a snapshot of one linear solution. Changing `E_J` leaves `f_m`
+and `p_mj` fixed, although a physical inductance change also moves them.
+Minev et al., npj Quantum Inf. 7, 131 (2021), derive the method.
+
 ## 4. Frames
 
 ### 4.1 What frame selection means
