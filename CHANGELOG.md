@@ -4,6 +4,8 @@ This file records notable user-visible changes to quchip.
 
 ## Unreleased
 
+### Changes since 0.4.0
+
 #### Fixes
 
 - `eliminate(..., method="exact")` of a chip whose approximation conserves total
