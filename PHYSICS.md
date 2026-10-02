@@ -1133,11 +1133,16 @@ dependence of the Purcell coupling across the sweep, of order
 `kappa_e` is the port rate, and `kappa_i` is the eliminated mode's internal
 damping of `<a>`, read from its own channels: lowering channels add their
 rate, raising channels subtract it, and pure dephasing adds it. The
-section's internal-loss bath is vacuum. Custom or collective boundary
-operators, projected survivors, a mode with several ports, a plane that also
-carries other fields, a nonlinear eliminated boundary target, and ports
-participating in a cascade-generated Hamiltonian are rejected rather than
-approximated or double-counted.
+section's internal-loss bath is vacuum. A port that an earlier elimination
+transformed already acts on every survivor and reaches a later eliminated mode
+only through that dressing. The later reduction transforms it like an inherited
+channel and gives it no section, so both readout modes of a chip can be
+eliminated in either order. Like an inherited channel, it drops its direct
+scattering through the later mode, of order `rate |<0|L|1>|^2 / Delta`. Custom
+or collective boundary operators, projected survivors, a mode with several
+ports, a plane that also carries other fields, a nonlinear eliminated boundary
+target, and ports participating in a cascade-generated Hamiltonian are rejected
+rather than approximated or double-counted.
 
 The result's `notes` record that the projection is exact for the *spectrum*
 but approximate for *dissipation*: the discarded `Q`-block dynamics also

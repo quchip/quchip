@@ -238,6 +238,101 @@ def test_reduced_boundary_serializes_with_the_chip() -> None:
     )
 
 
+def _two_readout_chip(backend: str = "qutip") -> Chip:
+    """Two qubits on a bus, each read out through its own port-coupled resonator."""
+    first = DuffingTransmon(freq=5.326, anharmonicity=-0.262, levels=2, label="q1", T1=30000.0)
+    second = DuffingTransmon(freq=5.192, anharmonicity=-0.264, levels=2, label="q2", T1=30000.0)
+    bus = Resonator(freq=6.298, levels=2, label="bus")
+    readout1 = Resonator(freq=6.558, levels=2, label="r1")
+    readout2 = Resonator(freq=6.657, levels=2, label="r2")
+    network = PortNetwork(label="feed")
+    network.port("p1", target=readout1, rate=0.01)
+    network.port("p2", target=readout2, rate=0.01)
+    couplings = [Capacitive(first, bus, g=0.03), Capacitive(second, bus, g=0.03),
+                 Capacitive(first, readout1, g=0.04), Capacitive(second, readout2, g=0.04)]
+    return Chip([first, second, bus, readout1, readout2], couplings, port_network=network, frame=5.2,
+                approximation=RWA(), backend=backend)
+
+
+def _eliminate_in_order(chip: Chip, order: tuple[str, ...], method: str) -> Chip:
+    for mode in order:
+        chip = eliminate(chip, mode, method=method).chip
+    return chip
+
+
+@pytest.mark.parametrize("method", ["sw", "exact"])
+def test_second_readout_elimination_carries_the_earlier_transformed_port(method) -> None:
+    """Both readout modes reduce in either order; the earlier transformed port moves onto the survivors."""
+    from quchip import VNA
+
+    frequencies = np.array([5.15, 5.25, 5.4])
+    sweeps = []
+    for order in (("r1", "r2"), ("r2", "r1")):
+        reduced = _eliminate_in_order(_two_readout_chip(), order, method)
+        assert {port.label: port.resolve_targets(reduced) for port in reduced.ports} == {
+            "p1": ("q1", "q2", "bus"), "p2": ("q1", "q2", "bus"),
+        }
+        assert reduced.port_network is not None
+        assert {"r1_reflection", "r2_reflection"} <= {component.label for component in reduced.port_network.components}
+        sweeps.append(np.asarray(VNA(reduced).sweep(frequencies).matrix))
+    # The orders differ only in higher-order dressing, measured at 5e-8, well
+    # below either reduction's residual against the full chip (about 3e-6).
+    np.testing.assert_allclose(sweeps[0], sweeps[1], atol=2e-7)
+
+
+@pytest.mark.optional_backend
+def test_reduced_chip_with_transformed_and_kept_ports_resolves_inside_jit() -> None:
+    """A transformed joint port and a kept survivor port keep their declared changes inside jit."""
+    pytest.importorskip("dynamiqs")
+    reduced = eliminate(_two_readout_chip(backend="dynamiqs"), "r1", method="exact").chip
+    eager = reduced.resolve()
+    eager_jumps = [reduced.backend.to_array(op) for op in reduced.backend._collapse_operators(eager)]
+
+    def jumps(t1):
+        candidate = reduced.with_params({"q1.T1": t1})
+        return [candidate.backend.to_array(op) for op in candidate.backend._collapse_operators(candidate.resolve())]
+
+    traced = jax.jit(jumps)(30000.0)
+    assert len(traced) == len(eager_jumps)
+    for actual, expected in zip(traced, eager_jumps, strict=True):
+        np.testing.assert_allclose(np.asarray(actual), np.asarray(expected), atol=1e-12)
+
+
+@pytest.mark.validation
+def test_doubly_reduced_boundary_reproduces_the_full_two_port_response() -> None:
+    """Eliminating both readout modes leaves each port with only its own Purcell dispersion residual."""
+    from quchip import VNA
+
+    chip = _two_readout_chip()
+    frequencies = np.array([5.15, 5.19, 5.2, 5.25, 5.32, 5.33, 5.4])
+    full = np.asarray(VNA(chip).sweep(frequencies).matrix)
+    reduced = np.asarray(VNA(_eliminate_in_order(chip, ("r1", "r2"), "exact")).sweep(frequencies).matrix)
+
+    # Each reflection misses 2.8 (g/Δ)² κ/(2π|Δ|) of its own readout mode, as
+    # for a single elimination; transmission between the ports is far smaller.
+    next_order = [0.04**2 / detuning**2 * 0.01 / (2 * np.pi * detuning) for detuning in (1.232, 1.465)]
+    for index, bound in enumerate(next_order):
+        assert np.max(np.abs(full[:, index, index] - reduced[:, index, index])) < 4 * bound
+    assert np.max(np.abs(full[:, 1, 0] - reduced[:, 1, 0])) < min(next_order)
+    assert np.max(np.abs(full[:, 0, 1] - reduced[:, 0, 1])) < min(next_order)
+
+
+def test_field_elimination_rejects_an_authored_joint_port() -> None:
+    """A port authored across two modes reaches each directly and has no reduced boundary."""
+    first = Resonator(freq=6.0, levels=2, label="r1")
+    second = Resonator(freq=6.2, levels=2, label="r2")
+    qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=2, label="q")
+    lowering = np.diag([1.0], 1)
+    network = PortNetwork(label="line")
+    network.port("joint", target=(first, second), rate=0.01,
+                 operator=np.kron(lowering, np.eye(2)) + np.kron(np.eye(2), lowering))
+    chip = Chip([qubit, first, second], [Capacitive(qubit, first, g=0.04), Capacitive(qubit, second, g=0.04)],
+                port_network=network, approximation=RWA())
+
+    with pytest.raises(NotImplementedError, match="unsupported ports: \\['joint'\\]"):
+        eliminate(chip, "r1")
+
+
 def test_field_elimination_rejects_a_mode_with_several_ports() -> None:
     """A mode transmitting between two ports has no reduced boundary yet."""
     with pytest.raises(NotImplementedError, match="transmission between them"):

@@ -22,6 +22,8 @@ This file records notable user-visible changes to quchip.
 - Port-coupled modes can be eliminated on chips with more than two devices. The
   transformed port acts jointly on every survivor, and stationary-tone frame
   planning keeps the sign of each port band, so VNA accepts the joint operator.
+  A later elimination transforms that port again, so both readout modes of a
+  chip can be eliminated in either order.
   ([#77](https://github.com/quchip/quchip/issues/77))
 - `PortNetwork.mode_reflection(...)` adds a serializable two-sided reference
   section that reflects like a damped linear mode.

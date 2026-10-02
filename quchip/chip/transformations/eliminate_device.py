@@ -101,6 +101,15 @@ def _conserves_excitation_number(chip: "Chip", approximation: Any) -> bool:
     return chip.port_network is None or not chip.port_network._active_generated_pairs()
 
 
+def _retained_port_labels(chip: "Chip") -> set[str]:
+    """Labels of ports whose operators an earlier reduction put in retained coordinates."""
+    return {
+        key.removeprefix("port:")
+        for terms in chip.effective_terms if terms.projection is not None
+        for key, _ in terms.projection.overrides if key.startswith("port:")
+    }
+
+
 def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
     """Adiabatically eliminate a far-detuned device, folding its effect into the survivors.
 
@@ -135,10 +144,18 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
         for port in chip.ports
         if mode_label in port.resolve_targets(chip)
     ]
+    # A port that an earlier reduction transformed already acts on every
+    # survivor of that reduction and reaches this mode only through its
+    # dressing; it is transformed again like an inherited channel. The mode's
+    # own ports form the reduced boundary and keep its reflection.
+    retained_ports = _retained_port_labels(chip)
+    carried_ports = [port for port in affected_ports if port.label in retained_ports]
+    boundary_ports = [port for port in affected_ports if port.label not in retained_ports]
+    reflection_plane: str | None = None
     if affected_ports:
         from quchip.engine.linear_response import is_linear_mode
 
-        if not is_linear_mode(mode_device, chip.backend):
+        if boundary_ports and not is_linear_mode(mode_device, chip.backend):
             raise NotImplementedError(
                 "Network-connected elimination currently supports a linear Fock-mode target; "
                 f"{mode_label!r} is {type(mode_device).__name__}. Keep the boundary mode."
@@ -167,20 +184,23 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
             )
         unsupported = [
             port.label
-            for port in affected_ports
+            for port in boundary_ports
             if port.resolve_targets(chip) != (mode_label,) or port.operator is not None
         ]
         if unsupported:
             raise NotImplementedError(
                 "Network-connected linear-mode elimination currently transforms the mode's "
-                f"default lowering ports only; unsupported ports: {unsupported}."
+                "default lowering ports and ports an earlier reduction transformed; "
+                f"unsupported ports: {unsupported}."
             )
-        if len(affected_ports) > 1:
+        if len(boundary_ports) > 1:
             raise NotImplementedError(
-                f"Mode {mode_label!r} couples to ports {[port.label for port in affected_ports]}; its "
+                f"Mode {mode_label!r} couples to ports {[port.label for port in boundary_ports]}; its "
                 "frequency-dependent transmission between them has no reduced boundary yet. Keep the mode."
             )
-        reflection_plane = chip.port_network._exclusive_exposure(affected_ports[0].label)
+    if boundary_ports:
+        assert chip.port_network is not None
+        reflection_plane = chip.port_network._exclusive_exposure(boundary_ports[0].label)
         non_fock = [
             label
             for label, _ in survivors
@@ -299,12 +319,20 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
         embedded = embed_on_support(chip.backend, native, support, dims)
         return local, reduction.transform_operator(ctx, jnp.asarray(chip.backend.to_array(embedded)))
 
-    transformed_mode_operator: Any | None = None
+    # Every collapse operator as the source chip resolves it, including the
+    # captured coordinates of an earlier reduction.
+    contributions = chip._collapse_contributions_with_owners(source_bases)
+    port_sources: dict[str, tuple[Any, tuple[str, ...]]] = {}
+    for operator, _rate, support, _source, _name, _paths, owner in contributions:
+        if any(owner is port for port in affected_ports):
+            port_sources[owner.label] = (operator, tuple(labels[index] for index in support) or tuple(labels))
+    transformed_ports = {
+        label: transform_operator(operator, support_labels)[1]
+        for label, (operator, support_labels) in port_sources.items()
+    }
     mode_lowering: Any | None = None
-    if affected_ports:
-        mode_lowering, transformed_mode_operator = transform_operator(
-            affected_ports[0]._authored_operator(chip), (mode_label,),
-        )
+    if boundary_ports:
+        mode_lowering, _ = transform_operator(boundary_ports[0]._authored_operator(chip), (mode_label,))
 
     for survivor_label in touching_labels:
         freq_after = jnp.real(pair_params[survivor_label]["freq_after"])
@@ -416,22 +444,22 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
         lift = jnp.kron(lift, transform)
     port_replacements: dict[str, Port] = {}
     if affected_ports:
-        assert transformed_mode_operator is not None
         # The transformed boundary acts on every survivor: the reduction mixes
         # the eliminated mode into all retained coordinates it couples to.
         port_targets = tuple(survivor_labels) if len(survivor_labels) > 1 else survivor_labels[0]
-        port_operator: Any = lift @ transformed_mode_operator @ lift.conj().T
-        port_changes = None if sectors is None else authored_excitation_changes(
-            affected_ports[0]._authored_operator(chip), (mode_label,), chip.backend, source_bases,
-        )
-        if port_changes is not None:
-            # Declared so the frame check keeps one band when the payload is traced.
-            port_operator = PhysicsExpr.from_matrix(
-                port_operator, labels=tuple(survivor_labels),
-                dims=tuple(chip[label].local_space().dimension for label in survivor_labels),
-                name="transformed_port", excitation_changes=port_changes,
-            )
+        survivor_dims = tuple(chip[label].local_space().dimension for label in survivor_labels)
         for port in affected_ports:
+            port_operator: Any = lift @ transformed_ports[port.label] @ lift.conj().T
+            source_operator, source_labels = port_sources[port.label]
+            port_changes = None if sectors is None else authored_excitation_changes(
+                source_operator, source_labels, chip.backend, source_bases,
+            )
+            if port_changes is not None:
+                # Declared so the frame check keeps one band when the payload is traced.
+                port_operator = PhysicsExpr.from_matrix(
+                    port_operator, labels=tuple(survivor_labels), dims=survivor_dims,
+                    name="transformed_port", excitation_changes=port_changes,
+                )
             port_replacements[port.label] = Port(
                 port_targets,
                 rate=port.rate_value(chip),
@@ -443,6 +471,12 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
             f"Transformed port(s) {sorted(port_replacements)} through the {method} reduction; "
             "the PortNetwork scattering and existing reference sections are retained."
         )
+        if carried_ports:
+            notes.append(
+                f"Port(s) {sorted(port.label for port in carried_ports)} from an earlier reduction reach "
+                f"{mode_label!r} only through its dressing; like inherited channels, they drop their direct "
+                f"scattering through {mode_label!r}, of order rate·|<0|L|1>|²/Δ."
+            )
 
     final = rebuild_chip(
         chip,
@@ -495,7 +529,6 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
                 internal_rate = internal_rate - 2.0 * rate * jnp.real(adjoint[0, 1])
 
     removed_owners = {id(mode), *(id(coupling) for coupling in touching)}
-    contributions = chip._collapse_contributions_with_owners(source_bases)
     for operator, rate, support, owner_label, name, _paths, owner in contributions:
         if id(owner) in removed_owners or isinstance(owner, EffectiveTerms):
             support_labels = tuple(labels[index] for index in support) if support else tuple(labels)
@@ -533,11 +566,11 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
     final = rebuild_chip(chip, devices=final.devices, couplings=final.couplings,
                          port_replacements=port_replacements,
                          effective_terms=(*final.effective_terms, terms), baths=projected_baths)
-    if affected_ports:
+    if boundary_ports:
         # The transformed port carries the survivors' emission; the eliminated
         # mode's own reflection, S_r(f), stays on the external plane.
         network = final.port_network
-        assert network is not None
+        assert network is not None and reflection_plane is not None
         section_label = f"{mode_label}_reflection"
         suffix = 1
         while section_label in {component.label for component in network.components}:
@@ -546,7 +579,7 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
         section = network.mode_reflection(
             section_label,
             freq=incoming_frequencies[mode_label],
-            external_rate=affected_ports[0].rate_value(chip),
+            external_rate=boundary_ports[0].rate_value(chip),
             internal_rate=internal_rate,
             reference_freq=incoming_frequencies[touching_labels[0]],
         )
