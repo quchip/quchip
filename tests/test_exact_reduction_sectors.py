@@ -3,7 +3,7 @@ import jax
 import numpy as np
 import pytest
 
-from quchip import Capacitive, Chip, DuffingTransmon, Resonator, RWA, eliminate, simulate
+from quchip import Capacitive, Chip, DuffingTransmon, PortNetwork, Resonator, RWA, eliminate, simulate
 from quchip.chip.sw import excitation_sectors
 
 pytestmark = pytest.mark.optional_backend
@@ -18,7 +18,7 @@ def _bus_chip(alphas=(-0.262, -0.264), levels=(3, 3, 2), g=0.03, backend="dynami
                 frame=5.2, approximation=RWA(), backend=backend)
 
 
-def _readout_chip(alphas=(-0.262, -0.264), levels=(4, 4, 4, 3, 3), g=0.04, backend="dynamiqs"):
+def _readout_chip(alphas=(-0.262, -0.264), levels=(4, 4, 4, 3, 3), g=0.04, backend="dynamiqs", ports=False):
     q1 = DuffingTransmon(freq=5.326, anharmonicity=alphas[0], levels=levels[0], label="q1", T1=30000.)
     q2 = DuffingTransmon(freq=5.192, anharmonicity=alphas[1], levels=levels[1], label="q2", T1=30000.)
     bus = Resonator(freq=6.298, levels=levels[2], label="bus", internal_quality_factor=2e5)
@@ -26,7 +26,13 @@ def _readout_chip(alphas=(-0.262, -0.264), levels=(4, 4, 4, 3, 3), g=0.04, backe
     r2 = Resonator(freq=6.657, levels=levels[4], label="r2", internal_quality_factor=1.2e5)
     couplings = [Capacitive(q1, bus, g=0.03), Capacitive(q2, bus, g=0.03),
                  Capacitive(q1, r1, g=g, label="q1_r1"), Capacitive(q2, r2, g=0.04)]
-    return Chip([q1, q2, bus, r1, r2], couplings, frame=5.2, approximation=RWA(), backend=backend)
+    network = None
+    if ports:
+        network = PortNetwork(label="feed")
+        network.port("r1", target=r1, rate=0.01)
+        network.port("r2", target=r2, rate=0.01)
+    return Chip([q1, q2, bus, r1, r2], couplings, port_network=network, frame=5.2, approximation=RWA(),
+                backend=backend)
 
 
 def _off_band(operator, dims, changes):
@@ -82,6 +88,44 @@ def test_exact_reduction_resolves_identically_inside_jit():
     np.testing.assert_allclose(h, eager_h, atol=1e-12)
     for jump, expected in zip(jumps, eager_jumps, strict=True):
         np.testing.assert_allclose(jump, expected, atol=1e-12)
+
+
+def _resolved_matrices(chip):
+    resolved = chip.resolve()
+    jumps = [chip.backend.to_array(op) for op in chip.backend._collapse_operators(resolved)]
+    return resolved.hamiltonian().matrix(backend=chip.backend), jumps
+
+
+def _assert_jit_matches_eager(build, value):
+    eager_h, eager_jumps = _resolved_matrices(build(value))
+    h, jumps = jax.jit(lambda x: _resolved_matrices(build(x)))(value)
+    np.testing.assert_allclose(h, eager_h, atol=1e-12)
+    assert len(jumps) == len(eager_jumps)
+    for jump, expected in zip(jumps, eager_jumps, strict=True):
+        np.testing.assert_allclose(jump, expected, atol=1e-12)
+
+
+@pytest.mark.parametrize("method", ["sw", "exact"])
+def test_kept_ports_resolve_identically_inside_jit(method):
+    """Ports on surviving modes keep the lowering change of their authored operator inside jit."""
+    reduced = eliminate(_readout_chip(levels=(2, 2, 2, 2, 2), ports=True), "bus", method=method).chip
+    # Nothing traced but the resolve itself, then a traced survivor parameter.
+    assert jax.jit(lambda x: (reduced.resolve(), x)[1])(1.0) == 1.0
+    _assert_jit_matches_eager(lambda t1: reduced.with_params({"q1.T1": t1}), 30000.)
+
+
+def test_transformed_port_declares_its_excitation_change_inside_jit():
+    """A port transformed by an elimination traced inside jit resolves in the rotating frame."""
+    def reduced(g):
+        qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q", T1=20000.)
+        resonator = Resonator(freq=6.0, levels=3, label="r")
+        network = PortNetwork(label="m")
+        network.port("r", target=resonator, rate=0.05)
+        chip = Chip([qubit, resonator], [Capacitive(qubit, resonator, g=g)], port_network=network,
+                    frame=5.0, approximation=RWA(), backend="dynamiqs")
+        return eliminate(chip, "r", method="exact").chip
+
+    _assert_jit_matches_eager(reduced, 0.06)
 
 
 @pytest.mark.validation

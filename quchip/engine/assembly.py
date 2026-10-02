@@ -459,14 +459,20 @@ def _concrete_port_resolution(
             records,
             backend,
         )
-        values = np.asarray(backend.to_array(operator), dtype=complex)
+        payload = backend.to_array(operator)
         transform = _support_semantic_transform(chip, support, records)
+        # A port transformed inside jit or grad keeps a traced payload. Its
+        # band decomposition then keeps every candidate the declared
+        # excitation changes allow, so it is not pruned here.
+        xp = jnp if contains_tracer(payload) else np
+        values = xp.asarray(payload, dtype=complex)
         if transform is not None:
             concrete_transform = np.asarray(transform, dtype=complex)
             values = concrete_transform.conj().T @ values @ concrete_transform
-    norm = float(np.linalg.norm(values))
-    if norm > 0.0:
-        values = np.where(np.abs(values) > 1e-10 * norm, values, 0.0)
+    if xp is np:
+        norm = float(np.linalg.norm(values))
+        if norm > 0.0:
+            values = np.where(np.abs(values) > 1e-10 * norm, values, 0.0)
     return CanonicalOperator.from_dense(
         values,
         dims=tuple(records[label].resolved_dim for label in labels),
@@ -481,7 +487,9 @@ def _port_bands(
 ) -> dict[tuple[int, ...], CanonicalOperator]:
     """Excitation-change bands of one explicit port operator in its semantic product basis."""
     canonical = _concrete_port_resolution(chip, port, backend, resolution)
-    return _decompose_product_canonical_bands(canonical, canonical.dims)
+    return _decompose_product_canonical_bands(
+        canonical, canonical.dims, total_changes=declared_excitation_changes(port.operator),
+    )
 
 
 def _frequency_groups(frequencies: tuple[Any, ...]) -> tuple[tuple[int, ...], ...]:

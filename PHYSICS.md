@@ -1093,10 +1093,12 @@ collective jump must have one removable global phase in the selected frame;
 unequal band phases require a compatible common frame or the lab frame.
 A reduction of an excitation-conserving model records the total level change
 of each retained channel in `EffectiveTerms.excitation_changes`, and a projected
-surviving operator keeps the change of its authored operator. Band
-decomposition treats every other total change as a structural zero, so this
-check gives the same answer for concrete values and under `jax.grad` or
-`jax.jit`.
+surviving operator keeps the change of its authored operator. Ports follow the
+same rule: a port on a surviving mode keeps the change of its target's operator,
+which is built at compile time, and a transformed port operator declares the
+change of the port it replaces. Band decomposition treats every other total
+change as a structural zero, so this check gives the same answer for concrete
+values and under `jax.grad` or `jax.jit`.
 For an external default port on a
 declared harmonic Fock mode, the complete `c_eff` matrix becomes that port's operator on
 one unprojected Fock-space survivor; the port's rate, phase, scalar scattering,

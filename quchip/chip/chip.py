@@ -101,6 +101,12 @@ def _operator_cache_value(value: Any) -> Any:
     """Return a content-based cache key for one concrete port operator."""
     if value is None or isinstance(value, str):
         return value
+    if isinstance(value, PhysicsExpr) and value.kind == "matrix":
+        from quchip.utils.values import value_fingerprint
+
+        # Key the stored payload; a traced payload raises ValueError and disables the cache.
+        payload, dims, _name, changes = value.args
+        return value_fingerprint((payload, dims, value.labels, None if changes is None else tuple(sorted(changes))))
     operator = value
     if hasattr(operator, "matrix"):
         operator = operator.matrix()

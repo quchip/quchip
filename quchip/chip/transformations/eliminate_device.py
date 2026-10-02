@@ -57,7 +57,7 @@ from quchip.chip.transformations.plumbing import (
 )
 from quchip.chip.transformations.result import EliminationResult, LazyEffectiveParams, ReductionMap
 from quchip.control.drive import FluxDrive
-from quchip.declarative.expr import materialize_expr
+from quchip.declarative.expr import PhysicsExpr, materialize_expr
 from quchip.declarative.models import CouplingModel
 from quchip.declarative.parameters import Scalar, parameter
 from quchip.devices.protocols import FrequencyControlled
@@ -409,11 +409,22 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
     if affected_ports:
         assert transformed_mode_operator is not None
         port_target = survivor_labels[0]
+        port_operator: Any = transformed_mode_operator
+        port_changes = None if sectors is None else authored_excitation_changes(
+            affected_ports[0]._authored_operator(chip), (mode_label,), chip.backend, source_bases,
+        )
+        if port_changes is not None:
+            # Declared so the frame check keeps one band when the payload is traced.
+            port_operator = PhysicsExpr.from_matrix(
+                transformed_mode_operator, labels=(port_target,),
+                dims=(chip[port_target].local_space().dimension,), name="transformed_port",
+                excitation_changes=port_changes,
+            )
         for port in affected_ports:
             port_replacements[port.label] = Port(
                 port_target,
                 rate=port.rate_value(chip),
-                operator=transformed_mode_operator,
+                operator=port_operator,
                 phase=port.phase,
                 label=port.label,
             )
