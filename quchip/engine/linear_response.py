@@ -50,6 +50,126 @@ def try_build_linear_response_problem(
         return None
 
 
+def try_build_weak_probe_problem(
+    chip: Any,
+    frequencies: Any,
+    *,
+    plane_labels: tuple[str, ...],
+) -> tuple[LinearResponseProblem, str] | None:
+    """Return a compact problem for an infinitesimal probe and its route, or ``None``.
+
+    A passive harmonic chip keeps its mode equations (``"linear_response"``).
+    An excitation-conserving chip with a stationary vacuum is projected onto its
+    vacuum and one-excitation states (``"vacuum_response"``). Both are exact for
+    an infinitesimal probe. Only the harmonic route stays exact for a finite
+    probe or noisy inputs.
+    """
+    problem = try_build_linear_response_problem(chip, frequencies, plane_labels=plane_labels)
+    if problem is not None:
+        return problem, "linear_response"
+    try:
+        return _build_vacuum_response_problem(chip, frequencies, plane_labels=plane_labels), "vacuum_response"
+    except _UnsupportedLinearModel:
+        return None
+
+
+def _build_vacuum_response_problem(
+    chip: Any,
+    frequencies: Any,
+    *,
+    plane_labels: tuple[str, ...],
+) -> LinearResponseProblem:
+    """Project an excitation-conserving chip onto its vacuum and one-excitation states.
+
+    The static Hamiltonian must conserve the total energy-level index ``N``,
+    every port must lower ``N`` by one, and every other channel must either
+    lower ``N`` by one or conserve it. With vacuum inputs the vacuum is then
+    stationary, and to first order in the probe the coherences ``|1_j><0|``
+    evolve in the one-excitation block alone, whatever the anharmonicities,
+    cross-Kerr terms or cutoffs. A conserving channel with ``L|0> = c|0>`` adds
+    ``c* L_1 - |c|²/2 - (L†L)_1 / 2`` to that block.
+    """
+    from quchip.chip.effective import authored_excitation_changes, conserves_excitation_number
+
+    if (chip.port_network is None or chip.dynamic_contributions()
+            or not conserves_excitation_number(chip, chip.approximation)):
+        raise _UnsupportedLinearModel
+    backend = chip.backend
+    labels = tuple(device.label for device in chip.devices)
+    resolved = chip.resolve(frame="lab")
+    bases = resolved.bases
+    for operator, rate, support, _source, _channel, _paths, owner in chip._collapse_contributions_with_owners(bases):
+        if maybe_concrete_scalar(_scalar_value(rate, backend)) == 0.0:
+            continue
+        operator_labels = tuple(labels[index] for index in support) if support else labels
+        changes = authored_excitation_changes(operator, operator_labels, backend, bases)
+        lowering = changes is not None and changes <= {1}
+        if not lowering and (changes != {0} or isinstance(owner, Port)):
+            raise _UnsupportedLinearModel
+
+    slh = resolved.slh
+    if slh.H.dynamic_terms or slh.output_network is not None:
+        raise _UnsupportedLinearModel
+    if any(channel.input_occupation is not None
+           and maybe_concrete_scalar(channel.input_occupation) != 0.0 for channel in slh.channels):
+        raise _UnsupportedLinearModel
+
+    xp = backend.array_module
+    records = [bases[label] for label in labels]
+    excited = tuple(index for index, record in enumerate(records) if record.resolved_dim > 1)
+
+    def product_state(raised: int | None) -> Any:
+        state = xp.ones((1,), dtype=complex)
+        for index, record in enumerate(records):
+            state = xp.kron(state, xp.asarray(record.energy_state(1 if index == raised else 0), dtype=complex))
+        return state
+
+    vacuum = product_state(None)
+    states = xp.stack([product_state(index) for index in excited], axis=1)
+    identity = xp.eye(len(excited), dtype=complex)
+    hamiltonian = sum(
+        (term.coefficient * xp.asarray(term.operator.to_dense(), dtype=complex) for term in slh.H.static_terms),
+        start=xp.zeros((vacuum.shape[0],) * 2, dtype=complex),
+    )
+    block = states.conj().T @ hamiltonian @ states - (vacuum.conj() @ hamiltonian @ vacuum) * identity
+    rows = []
+    for channel in slh.channels:
+        coupling = xp.asarray(channel.coupling.to_dense(), dtype=complex)
+        lifted = coupling @ states
+        row = vacuum.conj() @ lifted
+        shift = vacuum.conj() @ coupling @ vacuum
+        block = block + 1j * (
+            xp.conj(shift) * (states.conj().T @ lifted)
+            - 0.5 * xp.abs(shift) ** 2 * identity
+            - 0.5 * (lifted.conj().T @ lifted - xp.outer(row.conj(), row))
+        )
+        rows.append(row)
+
+    keys = tuple(channel.key for channel in slh.channels)
+    external = tuple(channel.key for channel in slh.external_channels)
+    if any(label not in external for label in plane_labels):
+        raise ValueError(f"Unknown linear-response exposure. Available exposures: {list(external)}")
+    plane_indices = tuple(keys.index(label) for label in plane_labels)
+    frequency_values = xp.asarray(frequencies, dtype=float)
+
+    def transfer_columns(runs: list[Any]) -> Any:
+        return xp.stack(
+            [xp.broadcast_to(cw_transfer(run, frequency_values, xp), frequency_values.shape) for run in runs],
+            axis=1,
+        )
+
+    return LinearResponseProblem(
+        frequencies=frequencies,
+        mode_labels=tuple(labels[index] for index in excited),
+        hamiltonian=block,
+        couplings=xp.stack(rows),
+        scattering=xp.asarray(slh.S, dtype=complex),
+        plane_indices=plane_indices,
+        inbound_transfer=transfer_columns([channel.reference.inbound for channel in slh.channels]),
+        outbound_transfer=transfer_columns([channel.reference.outbound for channel in slh.channels]),
+    )
+
+
 def _build_linear_response_problem(
     chip: Any,
     frequencies: Any,

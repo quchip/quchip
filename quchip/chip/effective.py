@@ -58,6 +58,27 @@ def authored_excitation_changes(
         return concrete_excitation_changes(matrix, dims, vectors)
 
 
+def conserves_excitation_number(chip: Any, approximation: Any) -> bool:
+    """Return whether a chip's static model structurally conserves the total energy-level index.
+
+    Device Hamiltonians are diagonal in their energy bases. The approximation
+    must keep only bands of zero total weight, every retained term must declare
+    conservation, and no port pair may generate a cascade Hamiltonian.
+
+    Parameters
+    ----------
+    chip : Chip
+        Chip whose static model is checked.
+    approximation : Approximation
+        Approximation the static model is resolved with.
+    """
+    if not approximation.conserves_excitation_number():
+        return False
+    if any(terms.excitation_changes is None for terms in chip.effective_terms):
+        return False
+    return chip.port_network is None or not chip.port_network._active_generated_pairs()
+
+
 @dataclass(frozen=True, eq=False)
 class OperatorProjection:
     """Captured authored coordinates for operators of surviving components.

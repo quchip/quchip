@@ -33,7 +33,12 @@ import numpy as np
 
 from quchip.utils.values import DeferredValue
 from quchip.chip.couplings import Capacitive, TunableCapacitive
-from quchip.chip.effective import EffectiveTerms, OperatorProjection, authored_excitation_changes
+from quchip.chip.effective import (
+    EffectiveTerms,
+    OperatorProjection,
+    authored_excitation_changes,
+    conserves_excitation_number,
+)
 from quchip.declarative.dissipation import CollapseChannel
 from quchip.chip.ports import Port
 from quchip.engine.bands import embed_on_support
@@ -85,20 +90,6 @@ class _MediatedExchange(CouplingModel):
                     + backend.tensor(a.device.sigma_minus, b.device.sigma_plus))
         return as_operator_expr(operator, labels=(a.label, b.label),
                                 dims=(a.space.dimension, b.space.dimension), name="exchange")
-
-
-def _conserves_excitation_number(chip: "Chip", approximation: Any) -> bool:
-    """Whether the static model structurally conserves the total energy-level index.
-
-    Device Hamiltonians are diagonal in their energy bases, the approximation
-    keeps only zero-total bands, retained terms declare conservation, and no
-    port pair generates a cascade Hamiltonian.
-    """
-    if not approximation.conserves_excitation_number():
-        return False
-    if any(terms.excitation_changes is None for terms in chip.effective_terms):
-        return False
-    return chip.port_network is None or not chip.port_network._active_generated_pairs()
 
 
 def _retained_port_labels(chip: "Chip") -> set[str]:
@@ -278,7 +269,7 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
     # A structurally conserving model has no matrix elements between
     # total-excitation sectors; removing their round-off keeps both routes,
     # and every captured map, inside the sectors.
-    sectors = excitation_sectors(dims) if _conserves_excitation_number(chip, approximation) else None
+    sectors = excitation_sectors(dims) if conserves_excitation_number(chip, approximation) else None
     if sectors is not None:
         h = jnp.where(sectors[:, None] == sectors[None, :], h, 0.0)
     # Survivor pairs are keyed in the chip's device order everywhere — the
