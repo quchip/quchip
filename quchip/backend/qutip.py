@@ -31,6 +31,7 @@ from qutip.solver.mesolve import MESolver
 from qutip.solver.sesolve import SESolver
 from scipy import sparse
 
+from quchip.backend._memory import require_memory
 from quchip.backend._response import linear_response, stationary_condition_number
 from quchip.utils.values import DeferredValue
 from quchip.backend._dims import (
@@ -169,6 +170,60 @@ def _sample_coeff_array(signal: Any, sample_tlist: Any) -> np.ndarray:
 # Linear interpolation cannot overshoot the discontinuous zero plateau, unlike cubic interpolation
 # across dense pulse knots and sparse idle knots. Non-windowed envelopes retain the cubic default.
 _WINDOWED_COEFFICIENT_ORDER = 1
+
+# QuTiP 5 assembles a Lindblad superoperator term by term and keeps one term per
+# time-dependent Hamiltonian part. With dense inputs, measured assembly peaks near
+# six dense D²×D² arrays plus four per time-dependent part; CSR inputs peak near
+# 1.5 × 24 bytes per stored superoperator entry.
+_DENSE_SUPEROPERATOR_PEAK_COPIES = 6
+_DENSE_SUPEROPERATOR_COPIES_PER_PART = 4
+_SPARSE_SUPEROPERATOR_ENTRY_BYTES = 36
+
+
+def _operator_parts(operator: Any) -> list[Qobj]:
+    """Return the constant operators of a ``Qobj`` or ``QobjEvo``."""
+    if isinstance(operator, qutip.QobjEvo):
+        return [part[0] if isinstance(part, list) else part for part in operator.to_list()]
+    return [operator]
+
+
+def _superoperator_peak_bytes(hamiltonian: Any, collapse_ops: Sequence[Any]) -> int:
+    """Estimate QuTiP's peak memory while assembling a Lindblad superoperator."""
+    hamiltonian_parts = _operator_parts(hamiltonian)
+    collapse_parts = [_operator_parts(op) for op in collapse_ops]
+    dimension = int(hamiltonian_parts[0].shape[0])
+    copies = _DENSE_SUPEROPERATOR_PEAK_COPIES + _DENSE_SUPEROPERATOR_COPIES_PER_PART * (len(hamiltonian_parts) - 1)
+    dense = copies * 16 * dimension**4
+    parts = [*hamiltonian_parts, *(part for group in collapse_parts for part in group)]
+    if any(isinstance(part.data, qutip.data.Dense) for part in parts):
+        return dense
+
+    def stored(group: list[Qobj]) -> int:
+        return sum(part.to("CSR").data_as("csr_matrix").nnz for part in group)
+
+    # spre(H) and spost(H) store nnz(H)·D entries each; sprepost(c, c†) stores
+    # nnz(c)², and c†c has at most min(D², nnz(c)²) entries before its two lifts.
+    entries = 2 * stored(hamiltonian_parts) * dimension
+    for group in collapse_parts:
+        count = stored(group)
+        entries += count**2 + 2 * min(dimension**2, count**2) * dimension
+    return min(dense, _SPARSE_SUPEROPERATOR_ENTRY_BYTES * entries)
+
+
+def _require_superoperator_memory(hamiltonian: Any, collapse_ops: Sequence[Any], *, task: str, remedy: str) -> None:
+    """Raise before QuTiP assembles a Liouvillian that cannot fit in memory."""
+    dimension = int(_operator_parts(hamiltonian)[0].shape[0])
+    require_memory(
+        _superoperator_peak_bytes(hamiltonian, collapse_ops),
+        task=f"{task} at Hilbert dimension D = {dimension}",
+        remedy=remedy,
+    )
+
+
+# Dense canonical payloads with at most this fraction of nonzero entries are
+# stored as CSR. Below it CSR uses less memory than dense storage, including in
+# every superoperator term built from the operator.
+_CSR_MAX_FILL = 0.25
 
 # Cap diag at Hilbert D=64 for sesolve and Liouvillian D²=1024 (Hilbert D=32) for mesolve.
 # The mesolve setup scales roughly as D⁶ in time and D⁴ in memory.
@@ -611,6 +666,10 @@ class QuTiPBackend(Backend):
             kwargs["sc_ops"] = [np.sqrt(eta) * op for eta, op in zip(etas, monitored)]
             if problem.solver == "smesolve":
                 kwargs["c_ops"] = loss + [np.sqrt(1 - eta) * op for eta, op in zip(etas, monitored)]
+                _require_superoperator_memory(
+                    rhs, [*kwargs["c_ops"], *kwargs["sc_ops"]], task="QuTiP smesolve's D²×D² Liouvillian",
+                    remedy="Reduce the device cutoffs.",
+                )
         native = getattr(qutip, problem.solver)(
             rhs, self.coerce_state(problem.initial_state, dims=problem.engine_result.dims), problem.tlist, **kwargs)
         return SolverResult(times=problem.tlist, solver=problem.solver, native=native)
@@ -636,7 +695,13 @@ class QuTiPBackend(Backend):
         e_ops: list[Operator] | None = None,
         options: dict[str, Any] | None = None,
     ) -> SolverResult:
-        runner = MESolver(self._coerce_solver_rhs(H), c_ops, options=self._runner_options(options))
+        rhs = self._coerce_solver_rhs(H)
+        _require_superoperator_memory(
+            rhs, c_ops or [], task="QuTiP mesolve's D²×D² Liouvillian",
+            remedy="Use backend='dynamiqs', whose mesolve applies the Lindblad generator without "
+                   "forming it, or reduce the device cutoffs.",
+        )
+        runner = MESolver(rhs, c_ops, options=self._runner_options(options))
         result = runner.run(rho0, tlist, e_ops=e_ops)
         return self._wrap_result(result, solver="mesolve", extra_stats=self._solver_stats(runner))
 
@@ -646,6 +711,10 @@ class QuTiPBackend(Backend):
             raise ValueError("Stationary analysis requires a static resolved Hamiltonian.")
         hamiltonian = self.prepare_hamiltonian(engine_result).rhs
         collapse_ops = self._collapse_operators(engine_result)
+        _require_superoperator_memory(
+            hamiltonian, collapse_ops, task="The D²×D² stationary Liouvillian",
+            remedy="Reduce the device cutoffs.",
+        )
         return qutip.liouvillian(hamiltonian, collapse_ops)
 
     @staticmethod
@@ -1268,10 +1337,18 @@ class QuTiPBackend(Backend):
 
     @staticmethod
     def _canonical_to_qobj(canonical: Any) -> Qobj:
-        """Reconstruct a ``Qobj`` from a ``CanonicalOperator`` (dense or sparse)."""
+        """Reconstruct a ``Qobj`` from a ``CanonicalOperator`` (dense or sparse).
+
+        A dense payload that is mostly exact zeros, such as a band of a captured
+        reduced-model matrix, is stored as CSR so the superoperators QuTiP builds
+        from it stay sparse.
+        """
         dims = [list(canonical.dims), list(canonical.dims)]
         if canonical.layout == "dense":
-            return Qobj(np.asarray(canonical.values, dtype=complex), dims=dims, dtype="Dense")
+            values = np.asarray(canonical.values, dtype=complex)
+            if np.count_nonzero(values) > _CSR_MAX_FILL * values.size:
+                return Qobj(values, dims=dims, dtype="Dense")
+            return Qobj(sparse.csr_matrix(values), dims=dims, dtype="CSR")
         return Qobj(QuTiPBackend._canonical_to_csr_matrix(canonical), dims=dims, dtype="CSR")
 
     @staticmethod

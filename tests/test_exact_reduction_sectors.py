@@ -3,7 +3,7 @@ import jax
 import numpy as np
 import pytest
 
-from quchip import Capacitive, Chip, DuffingTransmon, Resonator, RWA, eliminate
+from quchip import Capacitive, Chip, DuffingTransmon, Resonator, RWA, eliminate, simulate
 from quchip.chip.sw import excitation_sectors
 
 pytestmark = pytest.mark.optional_backend
@@ -115,3 +115,28 @@ def test_gradient_through_exact_elimination_matches_finite_difference():
     g, step = 0.03, 1e-5
     finite_difference = (element(g + step) - element(g - step)) / (2 * step)
     np.testing.assert_allclose(jax.grad(element)(g), finite_difference, rtol=1e-7)
+
+
+@pytest.mark.validation
+def test_qutip_reduced_master_equation_stays_sparse_and_matches_dynamiqs(monkeypatch):
+    """QuTiP stores reduced-model jumps as CSR and its master equation matches dense storage and dynamiqs."""
+    import dynamiqs
+    import quchip.backend.qutip as qutip_backend
+
+    def final_state(backend, options):
+        reduced = eliminate(_readout_chip(levels=(2, 2, 2, 2, 2), backend=backend), "bus", method="exact").chip
+        psi = np.zeros(int(np.prod(reduced.dims)), dtype=complex)
+        psi[int(np.ravel_multi_index((1, 0, 0, 0), tuple(reduced.dims)))] = 1.0
+        result = simulate(reduced, [], np.linspace(0.0, 20.0, 5), solver="mesolve", initial_state=psi,
+                          states="final", options=options)
+        return reduced, np.asarray(reduced.backend.to_array(result.state_at(result.times[-1])))
+
+    tight = {"atol": 1e-12, "rtol": 1e-12, "nsteps": 10**7}
+    reduced, sparse = final_state("qutip", tight)
+    jumps = reduced.backend._collapse_operators(reduced.resolve())
+    assert {type(jump.data).__name__ for jump in jumps} == {"CSR"}
+    monkeypatch.setattr(qutip_backend, "_CSR_MAX_FILL", -1.0)
+    _, dense = final_state("qutip", tight)
+    _, reference = final_state("dynamiqs", {"method": dynamiqs.method.Tsit5(atol=1e-12, rtol=1e-12, max_steps=10**7)})
+    np.testing.assert_allclose(sparse, dense, atol=1e-11)
+    np.testing.assert_allclose(sparse, reference, atol=1e-7)

@@ -185,3 +185,49 @@ class TestCoerceOperator:
         m = np.array([[0.0, 1.0 + 2.0j], [0.0, 0.0]])
         d = backend.dag(m)
         npt.assert_allclose(np.asarray(backend.to_array(d)), m.conj().T, atol=1e-14)
+
+
+class TestSuperoperatorMemory:
+    """QuTiP keeps structurally sparse operators sparse and refuses Liouvillians that cannot fit."""
+
+    def test_mostly_zero_dense_payloads_are_stored_sparse(self) -> None:
+        """Dense payloads at most a quarter nonzero become CSR without changing their values."""
+        from quchip.engine.ir import CanonicalOperator
+
+        def stored(values: np.ndarray) -> object:
+            canonical = CanonicalOperator.from_dense(values, dims=(4,), basis="fock", subsystem_labels=("0",))
+            return QuTiPBackend._canonical_to_qobj(canonical)
+
+        sparse_values = np.zeros((4, 4), dtype=complex)
+        sparse_values[0, 1] = 2.0
+        sparse, dense = stored(sparse_values), stored(np.ones((4, 4), dtype=complex))
+        assert type(sparse.data).__name__ == "CSR"
+        assert type(dense.data).__name__ == "Dense"
+        npt.assert_array_equal(sparse.full(), sparse_values)
+
+    def test_estimate_counts_dense_copies_and_sparse_entries(self) -> None:
+        """The peak estimate counts dense copies per Hamiltonian part and sparse entries otherwise."""
+        import qutip
+
+        from quchip.backend.qutip import _superoperator_peak_bytes
+
+        dense_h = qutip.Qobj(np.ones((5, 5)), dtype="Dense")
+        drives = [qutip.Qobj(np.eye(5, k=k), dtype="Dense") for k in (1, 2)]
+        evolving = qutip.QobjEvo([dense_h, [drives[0], lambda t: np.cos(t)], [drives[1], lambda t: np.sin(t)]])
+        assert _superoperator_peak_bytes(dense_h, [qutip.destroy(5)]) == 6 * 16 * 5**4
+        assert _superoperator_peak_bytes(evolving, [qutip.destroy(5)]) == (6 + 2 * 4) * 16 * 5**4
+        assert _superoperator_peak_bytes(qutip.num(30), [qutip.destroy(30)]) < 16 * 30**4
+
+    def test_mesolve_raises_before_building_a_liouvillian_that_cannot_fit(
+        self, backend: QuTiPBackend, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """mesolve raises MemoryError naming dynamiqs before assembling an oversized Liouvillian."""
+        import qutip
+
+        from quchip.backend import _memory
+
+        monkeypatch.setattr(_memory, "available_memory_bytes", lambda: 10**6)
+        hamiltonian = qutip.Qobj(np.ones((12, 12)), dtype="Dense")
+        with pytest.raises(MemoryError, match="backend='dynamiqs'"):
+            backend.mesolve(hamiltonian, qutip.basis(12, 0), [0.0, 1.0], c_ops=[qutip.destroy(12)])
+        assert _memory.available_memory_bytes() == 10**6

@@ -16,6 +16,18 @@ This file records notable user-visible changes to quchip.
   excitation change, and projected surviving operators keep the change of their
   authored operator, so band decomposition no longer depends on traced values.
   ([#78](https://github.com/quchip/quchip/issues/78), [#79](https://github.com/quchip/quchip/issues/79))
+- QuTiP `mesolve`, `smesolve` and stationary solves raise `MemoryError` before
+  assembling a superoperator whose estimated peak exceeds available memory,
+  instead of being killed by the operating system. The dynamiqs stationary
+  Liouvillian uses the same check. ([#80](https://github.com/quchip/quchip/issues/80))
+
+#### Performance
+
+- The QuTiP backend stores dense operators with at most one quarter nonzero
+  entries as CSR, so superoperator terms built from reduced-model bands and
+  jumps stay sparse. A lossy `mesolve` of a reduced model at Hilbert dimension
+  144 now peaks near 1.3 GB instead of an estimated 1.2 TB.
+  ([#80](https://github.com/quchip/quchip/issues/80))
 
 ## [0.4.0] - 2026-09-29 <a id="quchip-0-4-0"></a>
 

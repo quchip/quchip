@@ -43,6 +43,7 @@ import jax.numpy as jnp  # noqa: E402
 import jax.scipy.linalg as jsp_linalg  # noqa: E402
 import jax.tree_util as jtu  # noqa: E402
 
+from quchip.backend._memory import require_memory
 from quchip.backend._response import linear_response, stationary_condition_number
 from quchip.utils.values import DeferredValue
 from quchip.backend._dims import (  # noqa: E402
@@ -524,6 +525,13 @@ class DynamiqsBackend(Backend):
             raise ValueError("Stationary analysis requires a static resolved Hamiltonian.")
         hamiltonian = self.prepare_hamiltonian(engine_result).rhs
         collapse_ops = self._collapse_operators(engine_result)
+        dimension = math.prod(engine_result.dims)
+        # The dense D²×D² generator alone is a lower bound on the solve's memory.
+        require_memory(
+            16 * dimension**4,
+            task=f"The dense D²×D² stationary Liouvillian at Hilbert dimension D = {dimension}",
+            remedy="Reduce the device cutoffs.",
+        )
         return self.to_array(dq.slindbladian(hamiltonian, collapse_ops))
 
     def steadystate(self, problem: Any, *, prepared: PreparedStationary | None = None) -> SteadyStateSolverResult:
