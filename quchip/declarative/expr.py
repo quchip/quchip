@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from math import prod
 from typing import Any, Mapping
@@ -81,6 +81,7 @@ class PhysicsExpr:
         labels: tuple[str, ...],
         dims: tuple[int, ...],
         name: str | None = None,
+        excitation_changes: Iterable[int] | None = None,
     ) -> "PhysicsExpr":
         """Create a named backend-neutral matrix contribution.
 
@@ -92,10 +93,16 @@ class PhysicsExpr:
             Matching ordered endpoint labels and positive dimensions.
         name : str or None
             Optional display name.
+        excitation_changes : iterable of int or None
+            Total energy-level changes, column minus row in the captured
+            energy bases, that the matrix can carry. Band decomposition treats
+            every other total change as a structural zero, also for traced
+            payloads. ``None`` declares no structure.
         """
         if len(labels) != len(dims):
             raise ValueError("Matrix labels and dimensions must have the same length.")
-        return cls("matrix", (copy_value(value, readonly=True), tuple(dims), name), tuple(labels))
+        changes = None if excitation_changes is None else frozenset(int(c) for c in excitation_changes)
+        return cls("matrix", (copy_value(value, readonly=True), tuple(dims), name, changes), tuple(labels))
 
     @classmethod
     def from_function(
@@ -773,6 +780,13 @@ def _matching_local_basis(
     return record
 
 
+def declared_excitation_changes(expr: Any) -> frozenset[int] | None:
+    """Return the total energy-level changes a matrix contribution declares, if any."""
+    if isinstance(expr, PhysicsExpr) and expr.kind == "matrix":
+        return expr.args[3]
+    return None
+
+
 def is_energy_diagonal(expr: Any, bases: Mapping[str, Any]) -> bool:
     """Whether authored algebra guarantees zero energy-change weight in captured bases."""
     from quchip.devices.spaces import ChargeSpace, FockSpace, PhaseGridSpace
@@ -823,7 +837,7 @@ def materialize_expr(
 
             return evaluate_signal_program(node.args[0], t, xp=backend.array_module)
         if node.kind == "matrix":
-            value, dims, _name = node.args
+            value, dims, *_ = node.args
             return backend.from_array(
                 value,
                 dims=[list(dims), list(dims)],
@@ -990,7 +1004,7 @@ def _latex(expr: PhysicsExpr, parent_precedence: int = 0) -> str:
         _signal, name = expr.args
         return rf"{name}\!\left(t\right)"
     if expr.kind == "matrix":
-        _value, _dims, name = expr.args
+        name = expr.args[2]
         if name is not None:
             return name
         return rf"\hat H_{{{','.join(expr.labels)}}}"

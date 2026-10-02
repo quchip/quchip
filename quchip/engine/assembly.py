@@ -35,11 +35,12 @@ from quchip.approximations import Approximation, RWA, require_approximation
 from quchip.backend import _backend_context
 from quchip.backend.protocol import Backend, Operator
 from quchip.control.drive import BaseDrive, CouplingDrive
-from quchip.chip.effective import EffectiveTerms
+from quchip.chip.effective import EffectiveTerms, authored_excitation_changes
 from quchip.control.signal import AnalyticSignal, SignalKey
 from quchip.declarative.expr import (
     PhysicsExpr,
     as_operator_expr,
+    declared_excitation_changes,
     is_energy_diagonal,
     materialize_array,
     materialize_expr,
@@ -206,14 +207,18 @@ def _prepare_engine_assembly(
 
 
 def _retained_operator(chip: "Chip", operator: Any, support: tuple[int, ...], backend: Backend,
-                       owner_key: str | None = None) -> tuple[Any, tuple[int, ...]]:
+                       owner_key: str | None = None, *,
+                       bases: Mapping[str, BasisRecord] | None = None) -> tuple[Any, tuple[int, ...]]:
     """Apply a retained model's captured coordinates to a surviving physical operator."""
     labels = tuple(chip.devices[i].label for i in support)
     for terms in chip.effective_terms:
         projection = terms.projection
         if projection is not None and set(labels) <= set(projection.target_labels):
+            changes = None if terms.excitation_changes is None else authored_excitation_changes(
+                operator, labels, backend, bases,
+            )
             matrix = backend.to_array(materialize_expr(operator, backend))
-            return (projection.apply(matrix, labels, owner_key),
+            return (projection.apply(matrix, labels, owner_key, excitation_changes=changes),
                     tuple(chip.device_index(label) for label in projection.target_labels))
         if projection is not None and set(labels) & set(projection.target_labels):
             raise NotImplementedError("An operator spans a partial retained projection.")
@@ -626,12 +631,13 @@ def _authored_bands(
     if is_energy_diagonal(authored, bases):
         return {(0,) * len(support): canonical}
     transform = _support_semantic_transform(chip, support, bases)
+    changes = declared_excitation_changes(authored)
     if len(support) == 1:
         return {(weight,): band for weight, band in decompose_canonical_bands(
-            canonical, dims[0], semantic_to_solver=transform,
+            canonical, dims[0], semantic_to_solver=transform, total_changes=changes,
         ).items()}
     return _decompose_product_canonical_bands(
-        canonical, dims, semantic_to_solver=transform,
+        canonical, dims, semantic_to_solver=transform, total_changes=changes,
     )
 
 
@@ -828,7 +834,7 @@ def _component_time_terms(
             owner=owner,
             scope=owner.label,
         )
-        local_op, support = _retained_operator(chip, local_op, support, backend)
+        local_op, support = _retained_operator(chip, local_op, support, backend, bases=resolution.bases)
         owner_labels = tuple(chip.devices[index].label for index in support)
         projected = _project_on_support(chip, local_op, support, resolution.bases, backend)
         bands = _authored_bands(chip, local_op, projected, support, resolution.bases, backend, tag=tag)
@@ -1039,7 +1045,7 @@ def drive_bands(
                 matrix = vectors @ jnp.asarray(backend.to_array(local_band)) @ vectors.conj().T
                 projected, active_support = _retained_operator(
                     chip, PhysicsExpr.from_matrix(matrix, labels=pair, dims=local_dims),
-                    support, backend, f"drive:{drive.label}")
+                    support, backend, f"drive:{drive.label}", bases=bases)
                 local_band = _project_on_support(chip, projected, active_support, bases, backend)
                 transformed = _authored_bands(chip, projected, local_band, active_support, bases, backend)
             else:

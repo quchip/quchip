@@ -651,7 +651,7 @@ class Chip:
             for terms in self.effective_terms:
                 support = tuple(self._label_to_index[label] for label in terms.labels)
                 for channel in terms.channels:
-                    out.append((terms.expression(channel.operator), channel.rate, support,
+                    out.append((terms.channel_expression(channel), channel.rate, support,
                                 terms.label, channel.name, (), terms))
             for port in self.ports:
                 support = tuple(self._label_to_index[label] for label in port.resolve_targets(self))
@@ -667,8 +667,9 @@ class Chip:
                             port,
                         )
                     )
-        projections = [terms.projection for terms in self.effective_terms if terms.projection is not None]
-        if projections:
+        projected_terms = [terms for terms in self.effective_terms if terms.projection is not None]
+        if projected_terms:
+            from quchip.chip.effective import authored_excitation_changes
             from quchip.declarative.expr import materialize_expr
 
             projected = []
@@ -678,11 +679,16 @@ class Chip:
                     isinstance(owner, Bath) and owner._retained is not None
                 ):
                     operator_labels = tuple(labels[index] for index in support) if support else labels
-                    for projection in projections:
+                    for terms in projected_terms:
+                        projection = terms.projection
+                        assert projection is not None
                         if set(operator_labels) <= set(projection.target_labels):
+                            changes = None if terms.excitation_changes is None else authored_excitation_changes(
+                                operator, operator_labels, backend, bases,
+                            )
                             local = backend.to_array(materialize_expr(operator, backend, local_bases=bases))
                             owner_key = f"port:{owner.label}" if isinstance(owner, Port) else None
-                            operator = projection.apply(local, operator_labels, owner_key)
+                            operator = projection.apply(local, operator_labels, owner_key, excitation_changes=changes)
                             support = tuple(self._label_to_index[label] for label in projection.target_labels)
                             break
                         if set(operator_labels) & set(projection.target_labels):

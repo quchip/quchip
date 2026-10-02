@@ -54,6 +54,7 @@ __all__ = [
     "decompose_two_body_canonical_bands",
     "canonical_to_coo",
     "canonical_to_dense_array",
+    "concrete_excitation_changes",
     "local_mode_bands",
     "embed_single_mode_bands",
     "prune_zero_diagonals",
@@ -155,8 +156,41 @@ def prune_zero_diagonals(canonical: CanonicalOperator) -> CanonicalOperator:
     )
 
 
-def _decompose_dense_bands(matrix: Any, dims: tuple[int, ...]) -> dict[tuple[int, ...], Any]:
-    """Partition by product-basis level changes; prune only concrete relative norms."""
+def concrete_excitation_changes(
+    matrix: Any,
+    dims: tuple[int, ...],
+    energy_vectors: Any | None = None,
+) -> frozenset[int] | None:
+    """Return the total level changes carried by a concrete operator.
+
+    ``matrix`` acts on a product basis whose energy-ordered states are the
+    columns of ``energy_vectors``; ``None`` means the product basis is already
+    energy ordered. ``dims`` counts the energy levels per subsystem. Exact
+    nonzero comparison can add round-off weights but never omits a band.
+    Traced payloads return ``None``: their bands are not statically known.
+    """
+    if contains_tracer((matrix, energy_vectors)):
+        return None
+    values = np.asarray(matrix, dtype=complex)
+    if energy_vectors is not None:
+        vectors = np.asarray(energy_vectors, dtype=complex)
+        values = vectors.conj().T @ values @ vectors
+    levels = np.indices(tuple(dims)).reshape(len(dims), -1).sum(axis=0)
+    rows, cols = np.nonzero(values)
+    return frozenset(int(change) for change in np.unique(levels[cols] - levels[rows]))
+
+
+def _decompose_dense_bands(
+    matrix: Any,
+    dims: tuple[int, ...],
+    total_changes: frozenset[int] | None = None,
+) -> dict[tuple[int, ...], Any]:
+    """Partition by product-basis level changes; prune only concrete relative norms.
+
+    ``total_changes`` declares which total level changes the operator can
+    carry; candidate bands outside it are structurally zero and are skipped
+    even when the payload is traced.
+    """
     xp = _array_namespace(matrix)
     states = np.stack(np.unravel_index(np.arange(prod(dims)), dims), axis=-1)
     changes = states[None, :, :] - states[:, None, :]
@@ -164,6 +198,8 @@ def _decompose_dense_bands(matrix: Any, dims: tuple[int, ...]) -> dict[tuple[int
     parent_norm = _concrete_parent_norm(matrix)
     bands: dict[tuple[int, ...], Any] = {}
     for weights in product(*(range(-(dim - 1), dim) for dim in dims)):
+        if total_changes is not None and sum(weights) not in total_changes:
+            continue
         band = xp.where(np.all(changes == weights, axis=-1), matrix, zero)
         if parent_norm is not None and _frobenius_norm(band) <= _BAND_NORM_RTOL * parent_norm:
             continue
@@ -363,6 +399,7 @@ def decompose_canonical_bands(
     dim: int,
     *,
     semantic_to_solver: Any | None = None,
+    total_changes: frozenset[int] | None = None,
 ) -> dict[int, CanonicalOperator]:
     """Decompose a canonical single-mode operator by weight ``w = col − row``.
 
@@ -375,7 +412,9 @@ def decompose_canonical_bands(
 
     Subsystem metadata (``dims``, ``basis``, ``subsystem_labels``,
     ``tag``) is copied onto every band so downstream engine operations can continue
-    to reason about which subsystem each band lives on.
+    to reason about which subsystem each band lives on. ``total_changes``
+    optionally declares the weights the operator can carry; other weights are
+    skipped as structural zeros.
     """
     if dim < 1:
         raise ValueError(f"dim must be positive, got {dim}")
@@ -384,7 +423,7 @@ def decompose_canonical_bands(
 
     return {
         weights[0]: band for weights, band in _decompose_product_canonical_bands(
-            canonical, (dim,), semantic_to_solver=semantic_to_solver,
+            canonical, (dim,), semantic_to_solver=semantic_to_solver, total_changes=total_changes,
         ).items()
     }
 
@@ -422,8 +461,13 @@ def _decompose_product_canonical_bands(
     dims: list[int] | tuple[int, ...],
     *,
     semantic_to_solver: Any | None = None,
+    total_changes: frozenset[int] | None = None,
 ) -> dict[tuple[int, ...], CanonicalOperator]:
-    """Decompose an N-subsystem product operator by per-subsystem level change."""
+    """Decompose an N-subsystem product operator by per-subsystem level change.
+
+    ``total_changes`` declares the total level changes the operator can carry;
+    bands with any other total weight are skipped as structural zeros.
+    """
     if not dims or any(dim < 1 for dim in dims):
         raise ValueError(f"dims must contain positive subsystem dimensions, got {dims}")
     total_dim = prod(dims)
@@ -441,6 +485,7 @@ def _decompose_product_canonical_bands(
             for weights, band in _decompose_product_canonical_bands(
                 semantic,
                 dims,
+                total_changes=total_changes,
             ).items()
         }
 
@@ -450,7 +495,9 @@ def _decompose_product_canonical_bands(
                 values, dims=canonical.dims, basis=canonical.basis,
                 subsystem_labels=canonical.subsystem_labels, tag=canonical.tag,
             )
-            for weights, values in _decompose_dense_bands(canonical.to_dense(), tuple(dims)).items()
+            for weights, values in _decompose_dense_bands(
+                canonical.to_dense(), tuple(dims), total_changes,
+            ).items()
         }
 
     rows, cols, values = canonical_to_coo(canonical)
@@ -463,6 +510,8 @@ def _decompose_product_canonical_bands(
     metadata: dict[str, Any] = dict(shape=canonical.shape, dims=canonical.dims, basis=canonical.basis,
                                     subsystem_labels=canonical.subsystem_labels, tag=canonical.tag)
     for weights in sorted({tuple(int(value) for value in change) for change in changes}):
+        if total_changes is not None and sum(weights) not in total_changes:
+            continue
         mask = np.all(changes == weights, axis=1)
         positions = np.flatnonzero(mask)
         band_values = values[positions]

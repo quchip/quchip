@@ -1068,7 +1068,7 @@ One full diagonalization of the Hamiltonian retained by `chip.approximation`; `m
 zz(a, b) = E(1,1) − E(1,0) − E(0,1) + E(0,0)        (≡ Chip.dispersive_shift)
 ```
 
-The complete retained Hamiltonian and its pair exchange are read through the symmetrically (Löwdin-)orthonormalized subspace projection `S^(−1/2) (W E W†) S^(−1/2)` with `W` the overlap block and `S = W W†` — the des-Cloizeaux effective Hamiltonian, whose spectrum equals the labeled energies exactly. The energies are exact, but this basis is not the canonical SW rotation, so off-diagonal reads agree with `method="sw"` only through 2nd order. `method="exact"` validates the ground, touching-survivor single excitations and their pair excitations: each diagnostic label must have a distinct majority dressed eigenstate. The full retained overlap Gram matrix must also permit stable orthonormalization. These checks apply in eager, compiled and gradient-only execution. In that regime, near-degenerate dressed states straddle the bare labels and quantities assigned to a single label are not well defined. Use `method="sw"` or shift the operating point.
+The complete retained Hamiltonian and its pair exchange are read through the symmetrically (Löwdin-)orthonormalized subspace projection `S^(−1/2) (W E W†) S^(−1/2)` with `W` the overlap block and `S = W W†` — the des-Cloizeaux effective Hamiltonian, whose spectrum equals the labeled energies exactly. The energies are exact, but this basis is not the canonical SW rotation, so off-diagonal reads agree with `method="sw"` only through 2nd order. When `chip.approximation` keeps only bands of zero total weight, as `RWA()` does, the static model conserves the total energy-level index and the exact route diagonalizes each total-excitation sector separately. Its retained Hamiltonian, jump operators and coordinate map then have exact zeros between sectors rather than round-off that depends on near-degeneracies across sectors. This requires earlier retained terms to declare the same conservation and no cascade-generated network Hamiltonian; otherwise the route diagonalizes the full matrix. `method="exact"` validates the ground, touching-survivor single excitations and their pair excitations: each diagnostic label must have a distinct majority dressed eigenstate. The full retained overlap Gram matrix must also permit stable orthonormalization. These checks apply in eager, compiled and gradient-only execution. In that regime, near-degenerate dressed states straddle the bare labels and quantities assigned to a single label are not well defined. Use `method="sw"` or shift the operating point.
 
 ### 10.5 Collapse transforms and validity metrics
 
@@ -1091,6 +1091,12 @@ channels. It does not replace a collective jump by independent T1 channels.
 basis and frame compiler without a second band-removal approximation. A static
 collective jump must have one removable global phase in the selected frame;
 unequal band phases require a compatible common frame or the lab frame.
+A reduction of an excitation-conserving model records the total level change
+of each retained channel in `EffectiveTerms.excitation_changes`, and a projected
+surviving operator keeps the change of its authored operator. Band
+decomposition treats every other total change as a structural zero, so this
+check gives the same answer for concrete values and under `jax.grad` or
+`jax.jit`.
 For an external default port on a
 declared harmonic Fock mode, the complete `c_eff` matrix becomes that port's operator on
 one unprojected Fock-space survivor; the port's rate, phase, scalar scattering,
@@ -1163,7 +1169,7 @@ Devices, couplings, and drives supply the domain-specific physics. The engine ha
 
 ## 13. JAX Traceability Boundaries
 
-Band decomposition, coefficient construction, observable recombination, and the backend-free Hamiltonian IR preserve JAX arrays.
+Band decomposition, coefficient construction, observable recombination, and the backend-free Hamiltonian IR preserve JAX arrays. A traced dense payload keeps every candidate band unless its structure is declared: sparse layouts declare their entries, and a matrix contribution can declare its total excitation changes (`PhysicsExpr.from_matrix(..., excitation_changes=...)`), as reductions of excitation-conserving models do.
 
 The following operations require concrete Python values:
 

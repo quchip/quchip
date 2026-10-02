@@ -4,6 +4,19 @@ This file records notable user-visible changes to quchip.
 
 ## Unreleased
 
+#### Fixes
+
+- `eliminate(..., method="exact")` of a chip whose approximation conserves total
+  excitation number, such as `RWA()`, now diagonalizes each excitation sector
+  separately. Retained terms no longer carry ~1e-12 entries between sectors,
+  which made the rotating-frame collapse-operator check fail at some parameter
+  values. ([#78](https://github.com/quchip/quchip/issues/78))
+- Reduced chips resolve the same under `jax.jit` and `jax.grad` as eagerly.
+  `EffectiveTerms.excitation_changes` declares each retained channel's total
+  excitation change, and projected surviving operators keep the change of their
+  authored operator, so band decomposition no longer depends on traced values.
+  ([#78](https://github.com/quchip/quchip/issues/78), [#79](https://github.com/quchip/quchip/issues/79))
+
 ## [0.4.0] - 2026-09-29 <a id="quchip-0-4-0"></a>
 
 ### 0.4 series highlights

@@ -211,9 +211,41 @@ def extract_pair_parameters(
     return params
 
 
-def _exact_eigensystem(h: Any, dims: tuple[int, ...]) -> tuple[Any, Any, Labeling]:
-    """Diagonalize and label one semantic-basis Hamiltonian."""
-    eigenvalues, eigenvectors = jnp.linalg.eigh(jnp.asarray(h))
+def excitation_sectors(dims: tuple[int, ...]) -> np.ndarray:
+    """Total energy-level index of every C-order product state."""
+    return np.indices(tuple(dims)).reshape(len(dims), -1).sum(axis=0)
+
+
+def _sector_eigh(h: Any, sectors: np.ndarray) -> tuple[Any, Any]:
+    """Diagonalize each total-excitation block; return ascending eigenpairs.
+
+    Eigenvectors have exact zeros outside their own sector, so round-off can
+    neither mix sectors nor make the result depend on near-degeneracies
+    between them.
+    """
+    eigenvalues = jnp.zeros(h.shape[0], dtype=h.real.dtype)
+    eigenvectors = jnp.zeros(h.shape, dtype=h.dtype)
+    start = 0
+    for sector in np.unique(sectors):
+        rows = np.flatnonzero(sectors == sector)
+        columns = np.arange(start, start + rows.size)
+        values, vectors = jnp.linalg.eigh(h[np.ix_(rows, rows)])
+        eigenvalues = eigenvalues.at[columns].set(values)
+        eigenvectors = eigenvectors.at[np.ix_(rows, columns)].set(vectors)
+        start += rows.size
+    order = jnp.argsort(eigenvalues)
+    return eigenvalues[order], eigenvectors[:, order]
+
+
+def _exact_eigensystem(h: Any, dims: tuple[int, ...], sectors: np.ndarray | None = None) -> tuple[Any, Any, Labeling]:
+    """Diagonalize and label one semantic-basis Hamiltonian.
+
+    ``sectors`` gives each product state's total excitation number when the
+    Hamiltonian is known to conserve it; each sector is then diagonalized
+    separately.
+    """
+    h = jnp.asarray(h)
+    eigenvalues, eigenvectors = jnp.linalg.eigh(h) if sectors is None else _sector_eigh(h, sectors)
     labeling = label_eigensystem(
         eigenvectors,
         BareProductReference(dims),
@@ -297,9 +329,13 @@ def exact_subspace(eigenvalues: Any, eigenvectors: Any, kept_indices: Any, dress
 
 
 def exact_mode_subspace(h: Any, labels: list[str], dims: tuple[int, ...], mode_label: str,
-                        survivor_labels: list[str]) -> ExactSubspace:
-    """Diagonalize one model and validate its computational label assignment."""
-    eigenvalues, eigenvectors, labeling = _exact_eigensystem(h, dims)
+                        survivor_labels: list[str], sectors: np.ndarray | None = None) -> ExactSubspace:
+    """Diagonalize one model and validate its computational label assignment.
+
+    With ``sectors``, the Hamiltonian conserves total excitation number and the
+    retained map keeps every sector separate.
+    """
+    eigenvalues, eigenvectors, labeling = _exact_eigensystem(h, dims, sectors)
     p_mask, _ = mode_blocks(dims, labels, mode_label)
     kept = np.flatnonzero(p_mask)
     ground = [0] * len(labels)

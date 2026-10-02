@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from quchip.declarative.expr import PhysicsExpr, materialize_array, materialize_scalar
+from quchip.declarative.expr import PhysicsExpr, declared_excitation_changes, materialize_array, materialize_scalar
 from quchip.declarative.ops import EndpointOps, LocalOps
 from quchip.devices.spaces import FockSpace
 
@@ -142,3 +142,14 @@ def test_opaque_function_displays_arguments_and_stays_differentiable():
         return jnp.real(rebound.unresolved_hamiltonian().matrix(backend=ArrayBackend())[1, 1])
 
     assert jax.grad(device_loss)(jnp.asarray(5.0)) == pytest.approx(1.0)
+
+
+def test_matrix_contribution_declares_excitation_changes_without_changing_its_value():
+    """A declared matrix keeps its value and reports the declared total level changes."""
+    value = jnp.array([[0.0, 1.0], [0.0, 0.0]])
+    declared = PhysicsExpr.from_matrix(value, labels=("a",), dims=(2,), excitation_changes=[1])
+    plain = PhysicsExpr.from_matrix(value, labels=("a",), dims=(2,))
+    assert declared_excitation_changes(declared) == frozenset({1})
+    assert declared_excitation_changes(plain) is None
+    assert declared_excitation_changes(PhysicsExpr.literal(1.0)) is None
+    assert jnp.array_equal(materialize_array(declared), materialize_array(plain))
