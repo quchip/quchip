@@ -94,19 +94,22 @@ def _lowest_eigenpairs(matrix: Any, levels: int) -> tuple[Any, Any]:
 
     A traced matrix uses :func:`_differentiable_eigenpairs`, which supports
     forward- and reverse-mode differentiation through device parameters. A
-    constant matrix uses the plain eigensolve so
-    ``jax.ensure_compile_time_eval`` can finish inside ``jit``; a
-    custom-derivative call would always be staged.
+    constant matrix is solved with NumPy, so it is never staged inside
+    ``jit`` and compiles no device program; a custom-derivative call would
+    always be staged.
     """
     if contains_tracer(matrix):
         values, vectors = _differentiable_eigenpairs(matrix, levels)
+        xp = jnp
     else:
-        values, vectors = _eigenpairs(matrix, levels)
+        values, vectors = np.linalg.eigh(np.asarray(matrix))
+        values, vectors = values[:levels], vectors[:, :levels]
+        xp = np
     # Fix each phase by its largest authored-basis component (first on ties).
     # The pivot is locally constant; derivatives include the phase adjustment.
-    pivots = vectors[jnp.argmax(jnp.abs(vectors), axis=0), jnp.arange(levels)]
-    phases = jnp.conj(pivots) / jnp.abs(pivots)
-    return values, vectors * phases
+    pivots = vectors[xp.argmax(xp.abs(vectors), axis=0), xp.arange(levels)]
+    phases = xp.conj(pivots) / xp.abs(pivots)
+    return jnp.asarray(values), jnp.asarray(vectors * phases)
 
 
 @dataclass(frozen=True)

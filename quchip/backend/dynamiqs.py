@@ -64,7 +64,7 @@ from quchip.backend.containers import (  # noqa: E402
     SolverResult,
     SteadyStateSolverResult,
 )
-from quchip.backend.protocol import Backend, Operator, State  # noqa: E402
+from quchip.backend.protocol import Backend, Operator, State, _is_unit  # noqa: E402
 from quchip.engine.ir import (  # noqa: E402
     Add,
     ScalarModulation,
@@ -127,6 +127,14 @@ def _dia_qarray(dims: tuple[int, ...], offsets: tuple[int, ...], diags: Any) -> 
 def _complex_payload(values: Any) -> Any:
     """Complex JAX array of *values*, converted on the host when they are concrete."""
     return jnp.asarray(values if contains_tracer(values) else np.asarray(values, dtype=complex), dtype=jnp.complex128)
+
+
+def _concrete_coefficient(value: Any) -> np.ndarray | None:
+    """A concrete numeric scalar as a 0-d NumPy array (real stays real), else ``None``."""
+    if contains_tracer(value) or np.ndim(value) != 0:
+        return None
+    array = np.asarray(value)
+    return array if array.dtype.kind in "iufc" else None
 
 
 def _host_dia(op: Any) -> tuple[tuple[int, ...], np.ndarray] | None:
@@ -502,6 +510,20 @@ class DynamiqsBackend(Backend):
         keep_arg = tuple(keep) if isinstance(keep, list) else keep
         reduced = dq.ptrace(stacked_states, keep_arg, dims=tuple(dims))
         return jnp.asarray(reduced.to_jax(), dtype=jnp.complex128)
+
+    def linear_combination(self, terms: Sequence[tuple[Any, Operator]]) -> Operator:
+        """Accumulate concrete sparse-DIA terms on the host; other terms use qarray arithmetic."""
+        hosts = [(_concrete_coefficient(coefficient), _host_dia(op)) for coefficient, op in terms]
+        dims = {tuple(op.dims) for _, op in terms if isinstance(op, QArray)}
+        if not hosts or len(dims) != 1 or any(c is None or h is None for c, h in hosts):
+            return super().linear_combination(terms)
+        offsets = sorted({offset for _, (term_offsets, _) in hosts for offset in term_offsets})
+        index = {offset: row for row, offset in enumerate(offsets)}
+        diags = np.zeros((len(offsets), hosts[0][1][1].shape[-1]), dtype=complex)
+        for (coefficient, (term_offsets, term_diags)), (raw, _) in zip(hosts, terms):
+            rows = [index[offset] for offset in term_offsets]
+            diags[rows] += term_diags if _is_unit(raw) else coefficient * term_diags
+        return _dia_qarray(dims.pop(), tuple(offsets), diags)
 
     def tensor(self, *operators: Operator) -> Operator:
         if len(operators) == 1:

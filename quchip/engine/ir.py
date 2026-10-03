@@ -1025,6 +1025,12 @@ class CanonicalOperator:
             component for component in (self.values, self.indices, self.offsets) if component is not None
         )
         xp = array_namespace(payload)
+        parts = (self.values, self.indices, self.indptr, self.offsets)
+        if is_jax_namespace(xp) and not contains_tracer(parts):
+            # A concrete JAX payload densifies on the host: each device scatter on a new shape compiles.
+            host = replace(self, **{name: None if part is None else np.asarray(part)
+                                    for name, part in zip(("values", "indices", "indptr", "offsets"), parts)})
+            return xp.asarray(host.to_dense())
 
         if self.layout == "dense":
             return xp.asarray(self.values, dtype=complex)

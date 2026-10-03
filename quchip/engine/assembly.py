@@ -295,15 +295,11 @@ def _build_static_h0(
     assembly paths where the 2π boundary is crossed.
     """
     dims = resolution.dims
-    h0: Operator | None = None
-    for idx, local in enumerate(resolution.hamiltonians):
-        embedded = backend.embed(local, idx, dims)
-        h0 = embedded if h0 is None else h0 + embedded
-    for embedded in static_couplings:
-        h0 = embedded if h0 is None else h0 + embedded
-    if h0 is None:
+    bare = [backend.embed(local, idx, dims) for idx, local in enumerate(resolution.hamiltonians)]
+    bare += static_couplings
+    if not bare:
         raise ValueError("A chip must contain at least one device.")
-    h0 = TWO_PI * h0
+    terms = [(TWO_PI, backend.linear_combination([(1, op) for op in bare]))]
     for idx, dev in enumerate(chip.devices):
         omega_ref = resolved_frame.frequencies.get(dev.label, 0.0)
         concrete_omega = maybe_concrete_scalar(omega_ref)
@@ -313,8 +309,8 @@ def _build_static_h0(
             record = resolution.bases[dev.label]
             level_operator = _resolved_frame_operator(record, backend)
             n_emb = backend.embed(level_operator, idx, dims)
-        h0 = h0 - TWO_PI * omega_ref * n_emb
-    return h0
+        terms.append((-(TWO_PI * omega_ref), n_emb))
+    return backend.linear_combination(terms)
 
 
 def _resolved_frame_operator(record: BasisRecord, backend: Backend) -> Operator:
@@ -817,15 +813,17 @@ def _resolve_coupling_terms(
             concrete_osc = maybe_concrete_scalar(osc_freq)
             if concrete_osc is not None and concrete_osc == 0.0:
                 continue
-            scaled = TWO_PI * embed_on_support(backend, band_op, support, dims)
-            frame_corrections.append(-scaled)
+            embedded = embed_on_support(backend, band_op, support, dims)
+            scaled = backend.linear_combination([(TWO_PI, embedded)])
+            frame_corrections.append(backend.linear_combination([(-TWO_PI, embedded)]))
             td_terms.append((scaled, ScalarModulation(signal=Carrier(freq=TWO_PI * osc_freq, sign=-1))))
 
         if filters_terms and sub_bands and not retained:
             warnings.warn(f"Coupling {contribution.label!r} vanishes entirely under RWA().", UserWarning, stacklevel=3)
         if filters_terms:
             if retained:
-                interactions.append(embed_on_support(backend, sum(retained[1:], start=retained[0]), support, dims))
+                interactions.append(embed_on_support(
+                    backend, backend.linear_combination([(1, op) for op in retained]), support, dims))
         else:
             interactions.append(embed_on_support(backend, h_full, support, dims))
         if retained or not filters_terms:
@@ -1586,8 +1584,8 @@ def compile_hamiltonian_template(
         resolution,
         coupling_h0,
     )
-    for op in coupling_frame_static:
-        h0 = h0 + op
+    if coupling_frame_static:
+        h0 = backend.linear_combination([(1, h0), *((1, op) for op in coupling_frame_static)])
 
     # The coupling fold above cancels the lab-frame interaction out of H₀
     # exactly, leaving its diagonal offsets stored as explicit zeros; prune
@@ -1874,7 +1872,13 @@ def _analysis_matrix_ghz(result: EngineResult) -> Any:
     cross through a non-JAX inspection backend. Time-dependent terms are not
     part of a static dressed-state calculation.
     """
-    terms = [term.coefficient * term.operator.to_dense() / TWO_PI for term in result.static_terms]
-    if not terms:
+    if not result.static_terms:
         raise ValueError("EngineResult contains no static Hamiltonian terms.")
+    pairs = [(term.coefficient, term.operator.to_dense()) for term in result.static_terms]
+    xp = array_namespace(pairs[0][1])
+    if not contains_tracer(pairs):
+        # Concrete terms combine on the host and return in their own namespace.
+        terms = [np.asarray(coefficient) * np.asarray(matrix) / TWO_PI for coefficient, matrix in pairs]
+        return xp.asarray(sum(terms[1:], start=terms[0]))
+    terms = [coefficient * matrix / TWO_PI for coefficient, matrix in pairs]
     return sum(terms[1:], start=terms[0])

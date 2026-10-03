@@ -242,3 +242,25 @@ def test_backend_operator_factories_match_dynamiqs(dynamiqs_backend, layout) -> 
             npt.assert_allclose(np.asarray(ours.to_jax()), np.asarray(reference.to_jax()), rtol=0.0, atol=1e-15)
     finally:
         set_global_layout(previous)
+
+
+@pytest.mark.unit
+def test_linear_combination_matches_operator_arithmetic(dynamiqs_backend) -> None:
+    """Sparse-DIA, dense and traced-coefficient combinations equal the same sum formed with qarray arithmetic."""
+    import jax
+    import dynamiqs as dq
+
+    a = dynamiqs_backend.tensor(dynamiqs_backend.destroy(3), dynamiqs_backend.identity(2))
+    n = dynamiqs_backend.tensor(dynamiqs_backend.number(3), dynamiqs_backend.identity(2))
+    x = dynamiqs_backend.tensor(dynamiqs_backend.identity(3), dynamiqs_backend.create(2))
+    dense = dq.asqarray(np.arange(36.0).reshape(6, 6) + 0.5j, dims=(3, 2))
+    cases = [[(1, a), (2.5, n), (-1j, x)], [(1, n), (0.3, dense)], [(np.float64(2.0), a.dag()), (1, a)]]
+    for terms in cases:
+        expected = sum((c * op for c, op in terms[1:]), start=terms[0][0] * terms[0][1])
+        combined = dynamiqs_backend.linear_combination(terms)
+        npt.assert_allclose(np.asarray(combined.to_jax()), np.asarray(expected.to_jax()), rtol=0, atol=1e-14)
+
+    def traced(scale):
+        return dynamiqs_backend.linear_combination([(scale, a), (1, n)]).to_jax()
+
+    npt.assert_allclose(np.asarray(jax.jit(traced)(0.7)), np.asarray((0.7 * a + n).to_jax()), atol=1e-14)
