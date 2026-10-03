@@ -111,12 +111,23 @@ def _dia_qarray(dims: tuple[int, ...], offsets: tuple[int, ...], diags: Any) -> 
 
     Concrete diagonals are checked on the host and wrapped directly. Dynamiqs
     checks each diagonal with a device computation that compiles once per
-    shape, which dominates building a chip's operators outside JIT.
+    shape, which dominates building a chip's operators outside JIT; inside a
+    trace the same check stages a host callback per diagonal. Traced
+    diagonals are instead zeroed outside the matrix bounds.
     """
     dims = tuple(int(dim) for dim in dims)
     offsets = tuple(int(offset) for offset in offsets)
-    if contains_tracer(diags) or np.ndim(diags) != 2:
+    if np.ndim(diags) != 2:
         return QArray(dims, False, SparseDIADataArray(offsets, jnp.asarray(diags, dtype=jnp.complex128)))
+    if contains_tracer(diags):
+        inside = np.ones(np.shape(diags), dtype=bool)
+        for row, offset in enumerate(offsets):
+            if offset > 0:
+                inside[row, :offset] = False
+            elif offset < 0:
+                inside[row, offset:] = False
+        values = jnp.where(inside, jnp.asarray(diags, dtype=jnp.complex128), 0.0)
+        return jtu.tree_unflatten(_dia_structure(dims, offsets), [values])
     host = np.asarray(diags, dtype=complex)
     for row, offset in zip(host, offsets):
         if np.any(row[:offset] if offset >= 0 else row[offset:]):
@@ -135,6 +146,23 @@ def _concrete_coefficient(value: Any) -> np.ndarray | None:
         return None
     array = np.asarray(value)
     return array if array.dtype.kind in "iufc" else None
+
+
+def _dia_parts(op: Any) -> tuple[tuple[int, ...], Any] | None:
+    """Offsets and diagonals, concrete or traced, of an unbatched sparse-DIA qarray, else ``None``."""
+    if isinstance(op, QArray) and op.layout is dq.dia and op.ndim == 2:
+        return tuple(int(offset) for offset in op.data.offsets), op.data.diags
+    return None
+
+
+def _kron_dia_traced(left: tuple[tuple[int, ...], Any],
+                     right: tuple[tuple[int, ...], Any]) -> tuple[tuple[int, ...], Any]:
+    """:func:`_kron_dia` for diagonals that may be traced."""
+    (left_offsets, left_diags), (right_offsets, right_diags) = left, right
+    offsets = (np.asarray(left_offsets)[:, None] * right_diags.shape[-1] + np.asarray(right_offsets)).ravel()
+    unique, inverse = np.unique(offsets, return_inverse=True)
+    diags = jnp.zeros((unique.size, left_diags.shape[-1] * right_diags.shape[-1]), dtype=jnp.complex128)
+    return tuple(int(offset) for offset in unique), diags.at[inverse].add(jnp.kron(left_diags, right_diags))
 
 
 def _host_dia(op: Any) -> tuple[tuple[int, ...], np.ndarray] | None:
@@ -512,18 +540,29 @@ class DynamiqsBackend(Backend):
         return jnp.asarray(reduced.to_jax(), dtype=jnp.complex128)
 
     def linear_combination(self, terms: Sequence[tuple[Any, Operator]]) -> Operator:
-        """Accumulate concrete sparse-DIA terms on the host; other terms use qarray arithmetic."""
-        hosts = [(_concrete_coefficient(coefficient), _host_dia(op)) for coefficient, op in terms]
+        """Accumulate sparse-DIA terms into one qarray, on the host when every term is concrete.
+
+        Other layouts use qarray arithmetic.
+        """
+        parts = [_dia_parts(op) for _, op in terms]
         dims = {tuple(op.dims) for _, op in terms if isinstance(op, QArray)}
-        if not hosts or len(dims) != 1 or any(c is None or h is None for c, h in hosts):
+        if not terms or len(dims) != 1 or any(part is None for part in parts):
             return super().linear_combination(terms)
-        offsets = sorted({offset for _, (term_offsets, _) in hosts for offset in term_offsets})
+        offsets = sorted({offset for term_offsets, _ in parts for offset in term_offsets})
         index = {offset: row for row, offset in enumerate(offsets)}
-        diags = np.zeros((len(offsets), hosts[0][1][1].shape[-1]), dtype=complex)
-        for (coefficient, (term_offsets, term_diags)), (raw, _) in zip(hosts, terms):
-            rows = [index[offset] for offset in term_offsets]
-            diags[rows] += term_diags if _is_unit(raw) else coefficient * term_diags
-        return _dia_qarray(dims.pop(), tuple(offsets), diags)
+        shape = (len(offsets), parts[0][1].shape[-1])
+        coefficients = [_concrete_coefficient(coefficient) for coefficient, _ in terms]
+        if all(c is not None for c in coefficients) and not contains_tracer([diags for _, diags in parts]):
+            total = np.zeros(shape, dtype=complex)
+            for (raw, _), coefficient, (term_offsets, term_diags) in zip(terms, coefficients, parts):
+                rows = [index[offset] for offset in term_offsets]
+                total[rows] += np.asarray(term_diags) if _is_unit(raw) else coefficient * np.asarray(term_diags)
+        else:
+            total = jnp.zeros(shape, dtype=jnp.complex128)
+            for (raw, _), (term_offsets, term_diags) in zip(terms, parts):
+                rows = np.asarray([index[offset] for offset in term_offsets], dtype=int)
+                total = total.at[rows].add(term_diags if _is_unit(raw) else raw * term_diags)
+        return _dia_qarray(dims.pop(), tuple(offsets), total)
 
     def tensor(self, *operators: Operator) -> Operator:
         if len(operators) == 1:
@@ -531,7 +570,13 @@ class DynamiqsBackend(Backend):
         sparse = [_host_dia(op) for op in operators]
         dense = [_host_dense(op) for op in operators]
         if not all(s is not None or d is not None for s, d in zip(sparse, dense)):
-            return dq.tensor(*operators)
+            traced = [_dia_parts(op) for op in operators]
+            if not all(part is not None for part in traced):
+                return dq.tensor(*operators)
+            product = traced[0]
+            for factor in traced[1:]:
+                product = _kron_dia_traced(product, factor)
+            return _dia_qarray(tuple(dim for op in operators for dim in op.dims), *product)
         # Concrete factors: the same product dynamiqs forms, computed on the host.
         dims = tuple(dim for op in operators for dim in op.dims)
         if all(factor is not None for factor in sparse):
