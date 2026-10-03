@@ -266,10 +266,45 @@ class TestSuperoperatorMemory:
         drive = qutip.coefficient(lambda t: 0.3 * np.exp(-0.7j * t))
         hermitian = qutip.QobjEvo([0.2 * mode.dag() * mode, [mode, drive], [mode.dag(), drive.conj()]])
         one_sided = qutip.QobjEvo([0.2 * mode.dag() * mode, [mode.dag(), drive]])
-        options = {"method": "vern9", "rtol": 1e-10, "atol": 1e-12}
-        for hamiltonian in (hermitian, one_sided):
-            expected = qutip.mesolve(hamiltonian, qutip.basis(5, 0), [0.0, 5.0], c_ops=[0.1 * mode],
-                                     options=options).final_state
-            result = backend.mesolve(hamiltonian, qutip.basis(5, 0), [0.0, 5.0], c_ops=[0.1 * mode],
-                                     options=options)
-            npt.assert_allclose(result.final_state.full(), expected.full(), atol=1e-9)
+        mixed = 0.7 * qutip.ket2dm(qutip.basis(5, 0)) + 0.3 * qutip.ket2dm(qutip.basis(5, 2))
+        coherence = qutip.basis(5, 0) * qutip.basis(5, 1).dag()
+        for method in ("vern9", "adams"):
+            options = {"method": method, "rtol": 1e-10, "atol": 1e-12}
+            for hamiltonian in (hermitian, one_sided):
+                for state in (qutip.basis(5, 0), mixed, coherence):
+                    expected = qutip.mesolve(hamiltonian, state, [0.0, 5.0], c_ops=[0.1 * mode],
+                                             options=options).final_state
+                    result = backend.mesolve(hamiltonian, state, [0.0, 5.0], c_ops=[0.1 * mode], options=options)
+                    npt.assert_allclose(result.final_state.full(), expected.full(), atol=1e-9)
+
+    def test_packed_hermitian_mesolve_matches_the_full_liouvillian(self, backend: QuTiPBackend) -> None:
+        """Integrating the upper triangle of a Hermitian state reproduces every saved state and expectation."""
+        import qutip
+        from qutip.solver.mesolve import MESolver
+
+        from quchip.backend.qutip import _HermitianMESolver, _lindblad_generator
+
+        a, b = qutip.tensor(qutip.destroy(8), qutip.qeye(6)), qutip.tensor(qutip.qeye(8), qutip.destroy(6))
+        drive = qutip.coefficient(lambda t: 0.4 * np.exp(1.3j * t) * np.sin(0.5 * t))
+        hamiltonian = qutip.QobjEvo([0.3 * a.dag() * a + 0.05 * (a.dag() * b + b.dag() * a),
+                                     [a, drive], [a.dag(), drive.conj()]])
+        collapse = [0.2 * a, 0.1 * b, 0.05 * a.dag() * a]
+        tlist = np.linspace(0.0, 4.0, 9)
+        state = qutip.ket2dm((qutip.tensor(qutip.basis(8, 1), qutip.basis(6, 0))
+                              + 1j * qutip.tensor(qutip.basis(8, 0), qutip.basis(6, 2))).unit())
+        e_ops = [a.dag() * a, b.dag() * b, a + a.dag()]
+        options = {"method": "vern9", "rtol": 1e-11, "atol": 1e-13, "store_states": True}
+        generator, constant = _lindblad_generator(hamiltonian, collapse, tlist)
+        packed = _HermitianMESolver(generator, constant, options=options).run(state, tlist, e_ops=e_ops)
+        generator, constant = _lindblad_generator(hamiltonian, collapse, tlist)
+        full = MESolver(generator, [constant], options=options).run(state, tlist, e_ops=e_ops)
+        for ours, reference in zip(packed.states, full.states, strict=True):
+            assert ours.isherm
+            npt.assert_allclose(ours.full(), reference.full(), atol=1e-10)
+        npt.assert_allclose(np.asarray(packed.expect), np.asarray(full.expect), atol=1e-10)
+
+        for method in ("vern9", "adams"):
+            options = {"method": method, "rtol": 1e-10, "atol": 1e-12}
+            expected = qutip.mesolve(hamiltonian, state, tlist, c_ops=collapse, options=options).final_state
+            result = backend.mesolve(hamiltonian, state, tlist, c_ops=collapse, options=options)
+            npt.assert_allclose(result.final_state.full(), expected.full(), atol=1e-8)

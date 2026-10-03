@@ -438,6 +438,121 @@ def _lindblad_generator(hamiltonian: Any, collapse_ops: Sequence[Any], tlist: An
     return generator, constant
 
 
+# Integrators that only apply the right-hand side to their state, so they can integrate a packed one.
+_PACKED_STATE_METHODS = frozenset({"adams", "bdf", "lsoda", "dop853", "vern7", "vern9", "tsit5"})
+# The packed right-hand side runs in Python; below this Hilbert dimension its call
+# overhead outweighs the halved sparse and vector work (break-even near 40).
+_PACKED_STATE_MIN_DIMENSION = 48
+
+
+class _HermitianPacking:
+    """Index maps between a column-stacked density matrix and its packed upper triangle."""
+
+    def __init__(self, dimension: int) -> None:
+        rows, cols = np.triu_indices(dimension)
+        order = np.lexsort((rows, cols))
+        rows, cols = rows[order], cols[order]
+        self.dimension, self.size = dimension, rows.size
+        self.upper = rows + cols * dimension
+        self.index = np.full((dimension, dimension), -1, dtype=np.int64)
+        self.index[rows, cols] = np.arange(rows.size)
+        lower_rows, lower_cols = np.tril_indices(dimension, -1)
+        self.lower = lower_rows + lower_cols * dimension
+        self.mirror = self.index[lower_cols, lower_rows]
+
+    def split(self, superoperator: Qobj) -> list[sparse.csr_matrix]:
+        """Rows (i ≤ j) of a superoperator as its parts acting on the packed ``x`` and on ``conj(x)``."""
+        data = superoperator.data
+        matrix = data.as_scipy() if hasattr(data, "as_scipy") else sparse.csr_matrix(data.to_array())
+        rows = sparse.csr_matrix(matrix)[self.upper].tocoo()
+        i, j = rows.col % self.dimension, rows.col // self.dimension
+        upper = i <= j
+        shape = (self.size, self.size)
+        return [
+            sparse.csr_matrix((rows.data[upper], (rows.row[upper], self.index[i[upper], j[upper]])), shape=shape),
+            sparse.csr_matrix((rows.data[~upper], (rows.row[~upper], self.index[j[~upper], i[~upper]])), shape=shape),
+        ]
+
+    def pack(self, vector: np.ndarray) -> np.ndarray:
+        return vector[self.upper]
+
+    def unpack(self, packed: np.ndarray) -> np.ndarray:
+        vector = np.empty(self.dimension**2, dtype=complex)
+        vector[self.upper] = packed
+        vector[self.lower] = np.conj(packed[self.mirror])
+        return vector
+
+
+class _PackedLindbladian(qutip.QobjEvo):
+    """Lindblad generator acting on the packed upper triangle of a Hermitian density matrix.
+
+    The rows (i ≤ j) of ``L·vec(ρ)`` read the lower triangle of ``ρ`` as the
+    conjugate of the upper one, so each part acts as ``A·x + B·conj(x)`` on the
+    packed state ``x``, and one stacked sparse product applies every part.
+    """
+
+    def __init__(self, constant: Qobj, dynamic: Sequence[list], packing: _HermitianPacking) -> None:
+        super().__init__(qutip.qeye(packing.size))
+        superoperators = (constant, *(op for op, _ in dynamic))
+        self._stacked = sparse.hstack([block for op in superoperators for block in packing.split(op)], format="csr")
+        self._coefficients = [coefficient for _, coefficient in dynamic]
+        self._size = packing.size
+        self._inputs = np.empty(2 * len(superoperators) * packing.size, dtype=complex)
+
+    def matmul_data(self, t: Any, state: Any, out: Any = None, scale: complex = 1) -> Any:
+        size, inputs = self._size, self._inputs
+        x = (state.as_ndarray() if isinstance(state, qutip.data.Dense) else state.to_array()).reshape(-1)
+        inputs[:size] = x
+        np.conjugate(x, out=inputs[size:2 * size])
+        for k, coefficient in enumerate(self._coefficients, start=1):
+            np.multiply(inputs[:2 * size], coefficient(t), out=inputs[2 * k * size:2 * (k + 1) * size])
+        result = self._stacked @ inputs
+        if scale != 1:
+            result *= scale
+        if out is not None:
+            result += out.to_array().reshape(-1)
+        return qutip.data.Dense(result.reshape(-1, 1), copy=False)
+
+
+class _HermitianMESolver(MESolver):
+    """``MESolver`` integrating the packed upper triangle of a Hermitian density matrix.
+
+    A Hermiticity-preserving generator keeps ``ρ`` Hermitian, so the strictly
+    lower triangle carries no information: the integrator advances half the
+    entries and applies half the sparse rows. Saved states are unpacked, so
+    results, expectation values and options behave as for ``MESolver``.
+    """
+
+    def __init__(self, generator: Any, constant: Qobj, *, options: dict[str, Any]) -> None:
+        dynamic = generator.to_list()
+        self._packed = None
+        super().__init__(generator, [constant], options=options)
+        self._packing = _HermitianPacking(math.isqrt(constant.shape[0]))
+        self._packed = _PackedLindbladian(constant, dynamic, self._packing)
+        self._integrator = self._get_integrator()
+
+    def _get_integrator(self) -> Any:
+        if self._packed is None:
+            return super()._get_integrator()
+        return self.avail_integrators()[self._options["method"]](self._packed, self.options)
+
+    def _prepare_state(self, state: Qobj) -> Any:
+        vector = super()._prepare_state(state).to_array().reshape(-1)
+        return qutip.data.Dense(self._packing.pack(vector).reshape(-1, 1), copy=False)
+
+    def _restore_state(self, data: Any, *, copy: bool = True) -> Qobj:
+        vector = self._packing.unpack(data.to_array().reshape(-1))
+        return super()._restore_state(qutip.data.Dense(vector.reshape(-1, 1), copy=False), copy=False)
+
+
+def _packs_hermitian_state(state: Any, options: dict[str, Any]) -> bool:
+    """Whether a lifted master equation from ``state`` may integrate a packed Hermitian state."""
+    method = options.get("method", MESolver.solver_options["method"])
+    if not isinstance(method, str) or method not in _PACKED_STATE_METHODS:
+        return False
+    return state.shape[0] >= _PACKED_STATE_MIN_DIMENSION and (state.isket or (state.isoper and state.isherm))
+
+
 # A loky reusable executor respawns its worker pool after a short idle window
 # (10 s by default), and that respawn costs ~3 s on the next sweep. Sweeps in an
 # interactive session arrive minutes apart, so the pool is kept warm for an hour.
@@ -862,7 +977,10 @@ class QuTiPBackend(Backend):
         else:
             # A superoperator collapse term joins the generator as its constant part.
             generator, constant = lifted
-            runner = MESolver(generator, [constant], options=options)
+            if _packs_hermitian_state(rho0, options):
+                runner = _HermitianMESolver(generator, constant, options=options)
+            else:
+                runner = MESolver(generator, [constant], options=options)
         result = runner.run(rho0, tlist, e_ops=e_ops)
         return self._wrap_result(result, solver="mesolve", extra_stats=self._solver_stats(runner))
 
