@@ -200,7 +200,8 @@ class TestPermuteStateTraceability:
 
 def test_prepared_hamiltonian_is_the_engine_hamiltonian(dynamiqs_backend) -> None:
     """The modulated sum of static, pulse and crosstalk terms evaluates to the engine's H(t)."""
-    from quchip import RWA, Capacitive, ChargeDrive, ControlEquipment, DuffingTransmon, Gaussian, QuantumSequence, Square
+    from quchip import (RWA, Capacitive, ChargeDrive, ControlEquipment, DuffingTransmon, Gaussian, QuantumSequence,
+                        Square)
 
     qubits = [DuffingTransmon(freq=f, anharmonicity=-0.25, levels=3, label=f"q{i}") for i, f in enumerate((5.0, 5.2))]
     equipment = ControlEquipment([ChargeDrive(q, label=f"d{i}") for i, q in enumerate(qubits)])
