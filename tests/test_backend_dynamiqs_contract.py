@@ -224,6 +224,7 @@ def test_prepared_hamiltonian_is_the_engine_hamiltonian(dynamiqs_backend) -> Non
 def test_backend_operator_factories_match_dynamiqs(dynamiqs_backend, layout) -> None:
     """Ladder, number, identity and tensor products agree with dynamiqs in value, layout, dims and structure."""
     import dynamiqs as dq
+    import jax
     import jax.tree_util as jtu
     from dynamiqs.qarrays.layout import get_layout, set_global_layout
 
@@ -243,6 +244,16 @@ def test_backend_operator_factories_match_dynamiqs(dynamiqs_backend, layout) -> 
             assert ours.dims == reference.dims
             assert jtu.tree_structure(ours) == jtu.tree_structure(reference)
             npt.assert_allclose(np.asarray(ours.to_jax()), np.asarray(reference.to_jax()), rtol=0.0, atol=1e-15)
+
+        def traced(scale):
+            factors = (scale * dynamiqs_backend.create(3), mixed[1], dynamiqs_backend.identity(2))
+            ours, reference = dynamiqs_backend.tensor(*factors), dq.tensor(*factors)
+            assert ours.layout is reference.layout
+            assert ours.dims == reference.dims
+            return ours.to_jax(), reference.to_jax()
+
+        ours, reference = jax.jit(traced)(0.7)
+        npt.assert_allclose(np.asarray(ours), np.asarray(reference), rtol=0.0, atol=1e-15)
     finally:
         set_global_layout(previous)
 
@@ -263,15 +274,23 @@ def test_linear_combination_matches_operator_arithmetic(dynamiqs_backend) -> Non
         combined = dynamiqs_backend.linear_combination(terms)
         npt.assert_allclose(np.asarray(combined.to_jax()), np.asarray(expected.to_jax()), rtol=0, atol=1e-14)
 
-    def traced(scale):
-        return dynamiqs_backend.linear_combination([(scale, a), (1, n)]).to_jax()
+    assert dynamiqs_backend.linear_combination(cases[0]).layout is dq.dia
+    assert dynamiqs_backend.linear_combination(cases[1]).layout is dq.dense
 
-    npt.assert_allclose(np.asarray(jax.jit(traced)(0.7)), np.asarray((0.7 * a + n).to_jax()), atol=1e-14)
+    for other in (n, dense):
+        def traced(scale, other=other):
+            combined = dynamiqs_backend.linear_combination([(scale, a), (1, other)])
+            assert combined.layout is other.layout
+            return combined.to_jax()
+
+        expected = (0.7 * a + other).to_jax()
+        npt.assert_allclose(np.asarray(jax.jit(traced)(0.7)), np.asarray(expected), atol=1e-14)
 
 
 def test_matmul_matches_operator_arithmetic(dynamiqs_backend) -> None:
     """Sparse-DIA and dense products equal qarray products, and two sparse-DIA factors stay sparse."""
     import jax
+    import jax.tree_util as jtu
     import dynamiqs as dq
 
     a = dynamiqs_backend.tensor(dynamiqs_backend.destroy(3), dynamiqs_backend.identity(2))
@@ -283,7 +302,13 @@ def test_matmul_matches_operator_arithmetic(dynamiqs_backend) -> None:
         npt.assert_allclose(np.asarray(product.to_jax()), np.asarray(expected), rtol=0, atol=1e-12)
     assert dynamiqs_backend.matmul(a.dag(), a).layout is dq.dia
 
-    def traced(scale):
-        return dynamiqs_backend.matmul(scale * a.dag(), a).to_jax()
+    lowered = dynamiqs_backend.destroy(2)
+    for left, right in [(a.dag(), a), (a, x.dag() @ a), (lowered, lowered)]:
+        def traced(scale, left=left, right=right):
+            ours, reference = dynamiqs_backend.matmul(scale * left, right), (scale * left) @ right
+            assert ours.layout is dq.dia
+            assert jtu.tree_structure(ours) == jtu.tree_structure(reference)
+            return ours.to_jax(), reference.to_jax()
 
-    npt.assert_allclose(np.asarray(jax.jit(traced)(0.7)), np.asarray((0.7 * a.dag() @ a).to_jax()), atol=1e-14)
+        ours, reference = jax.jit(traced)(0.7)
+        npt.assert_allclose(np.asarray(ours), np.asarray(reference), rtol=0, atol=1e-14)

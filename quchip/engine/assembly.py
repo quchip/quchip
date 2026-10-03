@@ -335,7 +335,7 @@ def _resolved_frame_operator(record: BasisRecord, backend: Backend) -> Operator:
 
 def _apply_2pi_canonical(backend: Backend, embedded: Operator, *, dims, labels, tag: str) -> CanonicalOperator:
     """Apply the ``2π`` boundary to an embedded lab-frame operator and canonicalize."""
-    return backend.to_canonical_operator(TWO_PI * embedded).with_metadata(
+    return backend.to_canonical_operator(backend.linear_combination([(TWO_PI, embedded)])).with_metadata(
         dims=dims,
         subsystem_labels=labels,
         tag=tag,

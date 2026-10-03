@@ -174,6 +174,45 @@ def _kron_dia_traced(left: tuple[tuple[int, ...], Any],
     return tuple(int(offset) for offset in unique), diags.at[inverse].add(jnp.kron(left_diags, right_diags))
 
 
+def _matmul_dia_traced(left: tuple[tuple[int, ...], Any],
+                       right: tuple[tuple[int, ...], Any]) -> tuple[tuple[int, ...], Any]:
+    """Product of two sparse-DIA operators whose diagonals may be traced, on dynamiqs' output offsets.
+
+    Entry ``k`` of output diagonal ``p + q`` gathers ``left[p][k - q]·right[q][k]``
+    for every pair of input offsets in one vectorized step.
+    """
+    (left_offsets, left_diags), (right_offsets, right_diags) = left, right
+    n = left_diags.shape[-1]
+    pairs = [(row, column, lo + ro) for row, lo in enumerate(left_offsets)
+             for column, ro in enumerate(right_offsets) if abs(lo + ro) < n]
+    if not pairs:
+        return (), jnp.zeros((0, n), dtype=jnp.complex128)
+    rows, columns, offsets = (np.asarray(values) for values in zip(*pairs))
+    unique, inverse = np.unique(offsets, return_inverse=True)
+    shifted = np.arange(n) - np.asarray(right_offsets)[columns][:, None]
+    inside = (shifted >= 0) & (shifted < n)
+    products = jnp.where(inside, left_diags[rows[:, None], np.clip(shifted, 0, n - 1)] * right_diags[columns], 0.0)
+    diags = jnp.zeros((unique.size, n), dtype=jnp.complex128).at[inverse.ravel()].add(products)
+    return tuple(int(offset) for offset in unique), diags
+
+
+def _dense_linear_combination(terms: Sequence[tuple[Any, Any]], dims: tuple[int, ...]) -> QArray:
+    """Dense ``Σ cᵢ·Aᵢ`` of unbatched qarrays, summed on the host when every term is concrete."""
+    host_terms = []
+    for raw, op in terms:
+        coefficient, matrix = _concrete_coefficient(raw), _host_matrix(op)
+        if coefficient is None or matrix is None:
+            traced = sum(term.to_jax() if _is_unit(scale) else scale * term.to_jax() for scale, term in terms)
+            return dq.asqarray(traced, dims=dims)
+        host_terms.append(matrix if _is_unit(raw) else coefficient * matrix)
+    return dq.asqarray(jnp.asarray(sum(host_terms)), dims=dims)
+
+
+def _plain_operators(operators: Sequence[Any]) -> bool:
+    """True when every operator is an unbatched, unvectorized qarray on one Hilbert space shape."""
+    return all(isinstance(op, QArray) and op.ndim == 2 and not op.vectorized for op in operators)
+
+
 def _host_dia(op: Any) -> tuple[tuple[int, ...], np.ndarray] | None:
     """Offsets and host diagonals of a concrete, unbatched sparse-DIA qarray, else ``None``."""
     if isinstance(op, QArray) and op.layout is dq.dia and op.ndim == 2 and not contains_tracer(op.data.diags):
@@ -568,28 +607,42 @@ class DynamiqsBackend(Backend):
         return jnp.asarray(reduced.to_jax(), dtype=jnp.complex128)
 
     def matmul(self, a: Operator, b: Operator) -> Operator:
-        """Multiply concrete operators on the host, keeping a product of sparse-DIA factors sparse."""
-        left, right = _host_matrix(a), _host_matrix(b)
-        if left is None or right is None or tuple(a.dims) != tuple(b.dims):
+        """Multiply operators, keeping a product of sparse-DIA factors sparse.
+
+        Concrete factors multiply on the host; traced sparse-DIA factors
+        multiply their diagonals directly.
+        """
+        if not _plain_operators((a, b)) or tuple(a.dims) != tuple(b.dims):
             return super().matmul(a, b)
+        left, right = _host_matrix(a), _host_matrix(b)
+        if left is None or right is None:
+            left_dia, right_dia = _dia_parts(a), _dia_parts(b)
+            if left_dia is None or right_dia is None:
+                return super().matmul(a, b)
+            return _dia_qarray(tuple(a.dims), *_matmul_dia_traced(left_dia, right_dia))
         product = left @ right
         if a.layout is dq.dia and b.layout is dq.dia:
             return _dia_qarray(tuple(a.dims), *_dense_to_dia(product))
         return dq.asqarray(jnp.asarray(product), dims=tuple(a.dims))
 
     def linear_combination(self, terms: Sequence[tuple[Any, Operator]]) -> Operator:
-        """Accumulate sparse-DIA terms into one qarray, on the host when every term is concrete.
+        """Accumulate scalar multiples of operators into one qarray, on the host when every term is concrete.
 
-        Other layouts use qarray arithmetic.
+        Sparse-DIA terms sum their diagonals into a sparse-DIA result; a sum
+        that includes a dense term is dense, as in qarray arithmetic. Batched
+        operators or coefficients use qarray arithmetic.
         """
-        parts = [_dia_parts(op) for _, op in terms]
-        dims = {tuple(op.dims) for _, op in terms if isinstance(op, QArray)}
-        if not terms or len(dims) != 1 or any(part is None for part in parts):
+        operators = [op for _, op in terms]
+        dims = {tuple(op.dims) for op in operators if isinstance(op, QArray)}
+        if not terms or len(dims) != 1 or not _plain_operators(operators) or any(np.ndim(c) for c, _ in terms):
             return super().linear_combination(terms)
+        parts = [_dia_parts(op) for op in operators]
+        if any(part is None for part in parts):
+            return _dense_linear_combination(terms, dims.pop())
+        coefficients = [_concrete_coefficient(coefficient) for coefficient, _ in terms]
         offsets = sorted({offset for term_offsets, _ in parts for offset in term_offsets})
         index = {offset: row for row, offset in enumerate(offsets)}
         shape = (len(offsets), parts[0][1].shape[-1])
-        coefficients = [_concrete_coefficient(coefficient) for coefficient, _ in terms]
         if all(c is not None for c in coefficients) and not contains_tracer([diags for _, diags in parts]):
             total = np.zeros(shape, dtype=complex)
             for (raw, _), coefficient, (term_offsets, term_diags) in zip(terms, coefficients, parts):
@@ -610,6 +663,10 @@ class DynamiqsBackend(Backend):
         if not all(s is not None or d is not None for s, d in zip(sparse, dense)):
             traced = [_dia_parts(op) for op in operators]
             if not all(part is not None for part in traced):
+                if any(part is not None for part in traced) and _plain_operators(operators):
+                    # A dense factor makes the product dense, as in qarray arithmetic.
+                    return dq.asqarray(reduce(jnp.kron, [op.to_jax() for op in operators]),
+                                       dims=tuple(dim for op in operators for dim in op.dims))
                 return dq.tensor(*operators)
             product = traced[0]
             for factor in traced[1:]:
@@ -1207,8 +1264,8 @@ class DynamiqsBackend(Backend):
 
         return PreparedHamiltonian(rhs=rhs, metadata=dict(engine_result.metadata))
 
-    @staticmethod
     def _assemble_modulated_rhs(
+        self,
         static_ops: Sequence[Any],
         static_coeffs: Sequence[Any],
         dyn_ops: Sequence[Any],
@@ -1226,15 +1283,12 @@ class DynamiqsBackend(Backend):
         at a time nests their callables up to N deep and traces each signal
         O(N) times.
         """
-        rhs = None
-        for op, coeff in zip(static_ops, static_coeffs):
-            term = coeff * op
-            rhs = term if rhs is None else rhs + term
-        if not dyn_ops:
-            return rhs
-        summed = _summed_hamiltonian(static_ops, static_coeffs, dyn_ops, dyn_signals)
+        summed = _summed_hamiltonian(static_ops, static_coeffs, dyn_ops, dyn_signals) if dyn_ops else None
         if summed is not None:
             return summed
+        rhs = self.linear_combination(list(zip(static_coeffs, static_ops))) if static_ops else None
+        if not dyn_ops:
+            return rhs
         dynamic = [
             dq.modulated(_SignalCallable(signal), op, discontinuity_ts=_signal_discontinuities(signal))
             for op, signal in zip(dyn_ops, dyn_signals)
