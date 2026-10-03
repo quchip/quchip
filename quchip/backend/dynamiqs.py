@@ -64,6 +64,7 @@ from quchip.backend.containers import (  # noqa: E402
 )
 from quchip.backend.protocol import Backend, Operator, State  # noqa: E402
 from quchip.engine.ir import (  # noqa: E402
+    Add,
     ScalarModulation,
     _aggregate_batch_metadata,
     evaluate_signal_program,
@@ -74,6 +75,26 @@ from quchip.engine.ir import (  # noqa: E402
 # not at the native Tsit5 defaults (rtol = atol = 1e-6).
 _DEFAULT_RTOL = 1e-9
 _DEFAULT_ATOL = 1e-11
+
+
+def _shared_operator_slots(results: Sequence[Any]) -> list[list[int]]:
+    """Group dynamic slots whose operator is one object in every result.
+
+    Terms sharing an operator form one modulated term whose signal is their
+    sum, so each step applies the operator once however many pulses and
+    crosstalk paths drive it.
+    """
+    groups: dict[tuple[int, ...], list[int]] = {}
+    for slot in range(len(results[0].dynamic_terms)):
+        groups.setdefault(tuple(id(result.dynamic_terms[slot].operator) for result in results), []).append(slot)
+    return list(groups.values())
+
+
+def _summed_modulation(modulations: Sequence[Any]) -> Any:
+    """One scalar modulation equal to the sum of *modulations*."""
+    if len(modulations) == 1:
+        return modulations[0]
+    return ScalarModulation(signal=Add(tuple(modulation.signal for modulation in modulations)))
 
 
 def _dia_qarray(dims: tuple[int, ...], offsets: tuple[int, ...], diags: Any) -> QArray:
@@ -721,8 +742,10 @@ class DynamiqsBackend(Backend):
             jnp.asarray(t.coefficient, dtype=jnp.complex128)
             for t in engine_result.static_terms
         ]
-        dyn_ops = [self.from_canonical_operator(t.operator) for t in engine_result.dynamic_terms]
-        dyn_mods = [t.time_dependence for t in engine_result.dynamic_terms]
+        groups = [[engine_result.dynamic_terms[slot] for slot in group]
+                  for group in _shared_operator_slots((engine_result,))]
+        dyn_ops = [self.from_canonical_operator(terms[0].operator) for terms in groups]
+        dyn_mods = [_summed_modulation([t.time_dependence for t in terms]) for terms in groups]
 
         solve_fn = self._cached_jit_solve(
             solver_name=solver_name,
@@ -919,9 +942,14 @@ class DynamiqsBackend(Backend):
         static_coeffs = [term.coefficient for term in engine_result.static_terms]
         dyn_ops: list[Any] = []
         dyn_signals: list[Any] = []
+        slots: dict[int, int] = {}
         for operator, signal in self._scalar_dynamic_terms(engine_result):
-            dyn_ops.append(self.from_canonical_operator(operator))
-            dyn_signals.append(signal)
+            slot = slots.setdefault(id(operator), len(dyn_ops))
+            if slot == len(dyn_ops):
+                dyn_ops.append(self.from_canonical_operator(operator))
+                dyn_signals.append([])
+            dyn_signals[slot].append(signal)
+        dyn_signals = [signals[0] if len(signals) == 1 else Add(tuple(signals)) for signals in dyn_signals]
 
         rhs = self._assemble_modulated_rhs(static_ops, static_coeffs, dyn_ops, dyn_signals)
         if rhs is None:
@@ -1017,7 +1045,8 @@ class DynamiqsBackend(Backend):
 
         dynamic_operators: list[Any] = []
         dynamic_signals: list[Any] = []
-        for slot in range(len(engine_results[0].dynamic_terms)):
+        for group in _shared_operator_slots(engine_results):
+            slot = group[0]
             terms = tuple(result.dynamic_terms[slot] for result in engine_results)
             if all(term.operator is terms[0].operator for term in terms[1:]):
                 op = cached_native(terms[0].operator)
@@ -1025,7 +1054,7 @@ class DynamiqsBackend(Backend):
                 op = self._stack_qarray_batch(
                     [cached_native(term.operator) for term in terms]
                 )
-            slot_signals = batch.signals_for(slot)
+            slot_signals = tuple(map(_summed_modulation, zip(*(batch.signals_for(member) for member in group))))
             ref_td = slot_signals[0]
             if not isinstance(ref_td, ScalarModulation):
                 raise ValueError(f"dynamiqs prepare_batch only supports ScalarModulation (slot {slot}).")

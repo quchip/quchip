@@ -1162,19 +1162,29 @@ def _compile_drive_terms(
     """
     compiled: list[CompiledDriveTerm] = []
     structural_drops: list[_StructuralDrop] = []
+    # A line's bands do not depend on the signal it delivers: every pulse and
+    # crosstalk path reaching the line shares one operator per band, which
+    # lets backends apply it once.
+    line_bands: dict[tuple[str, str], list[tuple[_ResolvedDriveBand, CanonicalOperator]]] = {}
     for delivered_key, delivered in delivered_signals.items():
         drive = delivered.drive
         target = delivered.target
-        for band in _resolved_drive_bands(
-            chip,
-            drive,
-            target,
-            resolved_frame,
-            bases=bases,
-            dims=dims,
-            backend=backend,
-            approximation=approximation,
-        ):
+        line = (drive.label, target.label)
+        if line not in line_bands:
+            line_bands[line] = [
+                (band, _apply_2pi_canonical(backend, band.operator, dims=dims, labels=subsystem_labels, tag=band.tag))
+                for band in _resolved_drive_bands(
+                    chip,
+                    drive,
+                    target,
+                    resolved_frame,
+                    bases=bases,
+                    dims=dims,
+                    backend=backend,
+                    approximation=approximation,
+                )
+            ]
+        for band, operator in line_bands[line]:
             if (
                 band.filter_signal_bands
                 and delivered.signal.carrier is not None
@@ -1189,13 +1199,7 @@ def _compile_drive_terms(
                 continue
             compiled.append(
                 CompiledDriveTerm(
-                    operator=_apply_2pi_canonical(
-                        backend,
-                        band.operator,
-                        dims=dims,
-                        labels=subsystem_labels,
-                        tag=band.tag,
-                    ),
+                    operator=operator,
                     delivered_key=delivered_key,
                     hamiltonian_term_index=band.hamiltonian_term_index,
                     weight=band.weight,
