@@ -371,6 +371,70 @@ def _assemble_qobjevo(static_rhs: Qobj | None, op_signal_pairs: Any, sample_tlis
     return qutip.QobjEvo(terms)
 
 
+def _canonical_key(op: Qobj) -> tuple:
+    """Content key of an operator, equal for equal matrices however they are stored."""
+    matrix = (op.data_as("csr_matrix") if isinstance(op.data, qutip.data.CSR) else sparse.csr_matrix(op.full())).copy()
+    matrix.sum_duplicates()
+    matrix.eliminate_zeros()
+    return (repr(op.dims), matrix.indptr.astype(np.int64).tobytes(), matrix.indices.astype(np.int64).tobytes(),
+            matrix.data.tobytes())
+
+
+# Times at which a Hamiltonian's paired coefficients must be conjugate before
+# its terms are lifted as Hermitian.
+_HERMITIAN_CHECK_TIMES = 129
+
+
+def _is_hermitian_sum(terms: Sequence[list], tlist: Any) -> bool:
+    """Whether ``Σ_k c_k(t)·A_k`` is Hermitian: each operator's adjoint carries the conjugate coefficient."""
+    classes: dict[tuple, tuple[Qobj, list[Any]]] = {}
+    for op, coefficient in terms:
+        classes.setdefault(_canonical_key(op), (op, []))[1].append(coefficient)
+    span = np.asarray(tlist, dtype=float)
+    times = np.linspace(span[0], span[-1], _HERMITIAN_CHECK_TIMES)
+    sums = {key: np.array([sum(c(t) for c in coefficients) for t in times])
+            for key, (_, coefficients) in classes.items()}
+    for key, (op, _) in classes.items():
+        partner = sums.get(_canonical_key(op.dag()))
+        values = sums[key]
+        if partner is None or not np.allclose(partner, values.conj(), rtol=1e-12,
+                                              atol=1e-12 * np.abs(values).max(initial=0.0)):
+            return False
+    return True
+
+
+def _lindblad_generator(hamiltonian: Any, collapse_ops: Sequence[Any], tlist: Any) -> tuple[Any, Qobj] | None:
+    """Lift a Hermitian time-dependent Hamiltonian and its dissipators with one part per coefficient.
+
+    QuTiP lifts ``ρH†`` separately, so a term ``c(t)·A`` becomes ``spre(A)``
+    with ``c`` and ``spost(A†)`` with ``c̄``, and the dissipators join as a
+    second constant part. For a Hermitian ``H(t)``, ``ρH† = ρH``: each term
+    lifts to the single part ``-i(spre(A) - spost(A))`` and the static
+    Hamiltonian shares one constant part with every dissipator, halving the
+    time-dependent sparse products per step. A quchip Hamiltonian is
+    Hermitian because every drive band carries its Hermitian partner; the
+    pairing is checked on the operators and their coefficients.
+
+    Returns the time-dependent generator and the constant part, or ``None``
+    to leave the input to QuTiP's construction.
+    """
+    if not isinstance(hamiltonian, qutip.QobjEvo) or not all(isinstance(op, Qobj) for op in collapse_ops):
+        return None
+    static, dynamic = [], []
+    for part in hamiltonian.to_list():
+        if isinstance(part, Qobj):
+            static.append(part)
+        elif isinstance(part, list) and len(part) == 2 and isinstance(part[0], Qobj) and callable(part[1]):
+            dynamic.append(part)
+        else:
+            return None
+    if not dynamic or not (static or collapse_ops) or not _is_hermitian_sum(dynamic, tlist):
+        return None
+    constant = qutip.liouvillian(sum(static[1:], start=static[0]) if static else None, list(collapse_ops))
+    generator = qutip.QobjEvo([[-1j * (qutip.spre(op) - qutip.spost(op)), coefficient] for op, coefficient in dynamic])
+    return generator, constant
+
+
 # A loky reusable executor respawns its worker pool after a short idle window
 # (10 s by default), and that respawn costs ~3 s on the next sweep. Sweeps in an
 # interactive session arrive minutes apart, so the pool is kept warm for an hour.
@@ -788,7 +852,14 @@ class QuTiPBackend(Backend):
             remedy="Use backend='dynamiqs', whose mesolve applies the Lindblad generator without "
                    "forming it, or reduce the device cutoffs.",
         )
-        runner = MESolver(rhs, c_ops, options=self._runner_options(options))
+        options = self._runner_options(options)
+        lifted = None if options.get("matrix_form") else _lindblad_generator(rhs, c_ops or [], tlist)
+        if lifted is None:
+            runner = MESolver(rhs, c_ops, options=options)
+        else:
+            # A superoperator collapse term joins the generator as its constant part.
+            generator, constant = lifted
+            runner = MESolver(generator, [constant], options=options)
         result = runner.run(rho0, tlist, e_ops=e_ops)
         return self._wrap_result(result, solver="mesolve", extra_stats=self._solver_stats(runner))
 

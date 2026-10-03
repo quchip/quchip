@@ -257,3 +257,19 @@ class TestSuperoperatorMemory:
         with pytest.raises(MemoryError, match="backend='dynamiqs'"):
             backend.mesolve(hamiltonian, qutip.basis(12, 0), [0.0, 1.0], c_ops=[qutip.destroy(12)])
         assert _memory.available_memory_bytes() == 10**6
+
+    def test_mesolve_matches_qutip_for_driven_lossy_hamiltonians(self, backend: QuTiPBackend) -> None:
+        """A driven lossy mode evolves as under QuTiP's own Liouvillian, with or without the drive's partner."""
+        import qutip
+
+        mode = qutip.destroy(5)
+        drive = qutip.coefficient(lambda t: 0.3 * np.exp(-0.7j * t))
+        hermitian = qutip.QobjEvo([0.2 * mode.dag() * mode, [mode, drive], [mode.dag(), drive.conj()]])
+        one_sided = qutip.QobjEvo([0.2 * mode.dag() * mode, [mode.dag(), drive]])
+        options = {"method": "vern9", "rtol": 1e-10, "atol": 1e-12}
+        for hamiltonian in (hermitian, one_sided):
+            expected = qutip.mesolve(hamiltonian, qutip.basis(5, 0), [0.0, 5.0], c_ops=[0.1 * mode],
+                                     options=options).final_state
+            result = backend.mesolve(hamiltonian, qutip.basis(5, 0), [0.0, 5.0], c_ops=[0.1 * mode],
+                                     options=options)
+            npt.assert_allclose(result.final_state.full(), expected.full(), atol=1e-9)
