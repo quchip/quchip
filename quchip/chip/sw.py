@@ -376,7 +376,7 @@ def exact_mode_subspace(h: Any, labels: list[str], dims: tuple[int, ...], mode_l
             pair[labels.index(other)] = 1
             diagnostics.append(tuple(pair))
     rows = np.array([np.ravel_multi_index(occupation, dims) for occupation in diagnostics])
-    xp = concrete_array_module(eigenvectors)
+    xp = concrete_array_module(eigenvectors, labeling.indices)
     weights = xp.abs(eigenvectors[rows]) ** 2
     best = xp.argmax(weights, axis=1)
     duplicate = xp.any(xp.triu(best[:, None] == best[None, :], k=1))

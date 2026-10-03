@@ -15,7 +15,10 @@ from typing import Any, Callable
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax import lax
+
+from quchip.utils.jax_utils import concrete_array_module, contains_tracer
 
 
 @dataclass(frozen=True)
@@ -109,20 +112,26 @@ class EigenstateReference:
 
 
 def _reference_amplitudes(reference: Any, evecs: jnp.ndarray) -> jnp.ndarray:
-    """Express solver eigenvectors in the captured reference coordinates."""
+    """Express solver eigenvectors in the captured reference coordinates.
+
+    Concrete inputs combine on the host, where they compile no device programs.
+    """
     if isinstance(reference, BareProductReference):
-        amplitudes = evecs.reshape(*reference.dims, evecs.shape[-1])
+        xp = concrete_array_module(evecs, reference.local_vectors)
+        amplitudes = xp.asarray(evecs).reshape(*reference.dims, evecs.shape[-1])
         for axis, vectors in enumerate(reference.local_vectors):
             if vectors is not None:
-                amplitudes = jnp.tensordot(vectors.conj().T, amplitudes, axes=(1, axis))
-                amplitudes = jnp.moveaxis(amplitudes, 0, axis)
+                amplitudes = xp.tensordot(xp.asarray(vectors).conj().T, amplitudes, axes=(1, axis))
+                amplitudes = xp.moveaxis(amplitudes, 0, axis)
         return amplitudes.reshape(evecs.shape)
-    return reference.vectors.conj() @ evecs
+    xp = concrete_array_module(evecs, reference.vectors)
+    return xp.asarray(reference.vectors).conj() @ xp.asarray(evecs)
 
 
 def compute_overlaps(reference: Any, evecs: jnp.ndarray) -> jnp.ndarray:
     """``|<ref_k | psi_j>|**2`` matrix, shape ``(n_labels, n_dressed)``."""
-    return jnp.abs(_reference_amplitudes(reference, evecs)) ** 2
+    amplitudes = _reference_amplitudes(reference, evecs)
+    return concrete_array_module(amplitudes).abs(amplitudes) ** 2
 
 
 def _top2_margins(overlaps: jnp.ndarray) -> jnp.ndarray:
@@ -323,7 +332,11 @@ def label_eigensystem(
     a ``static_argnames`` entry, never as a dynamic (traced) argument.
     """
     overlaps = compute_overlaps(reference, evecs)
-    indices, chosen_overlaps, margins, duplicates = _labeling_arrays(overlaps, policy)
+    arrays = _labeling_arrays(overlaps, policy)
+    if not contains_tracer(arrays):
+        # Host copies of a concrete labeling: looking labels up compiles nothing.
+        arrays = tuple(np.asarray(array) for array in arrays)
+    indices, chosen_overlaps, margins, duplicates = arrays
     return Labeling(
         keys=tuple(reference.keys),
         indices=indices,

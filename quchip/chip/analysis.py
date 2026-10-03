@@ -239,7 +239,7 @@ def dress_engine_result(
     eigenvalues = eigensystem.eigenvalues
     eigenvector_matrix = eigensystem.eigenvector_matrix
     kernel_labeling = label_eigensystem(
-        jnp.asarray(eigenvector_matrix),
+        eigenvector_matrix,
         context.reference,
         policy=assign_rowwise_greedy,
     )
@@ -269,9 +269,7 @@ def _labeled_eigensystem(engine_result: "EngineResult", backend: Any) -> tuple[A
     eigensystem = backend.eigensystem_data(
         backend.from_array(_analysis_matrix_ghz(engine_result), dims=[dims, dims])
     )
-    labeling = label_eigensystem(
-        jnp.asarray(eigensystem.eigenvector_matrix), context.reference, policy=assign_rowwise_greedy
-    )
+    labeling = label_eigensystem(eigensystem.eigenvector_matrix, context.reference, policy=assign_rowwise_greedy)
     return eigensystem.eigenvalues, eigensystem.eigenvector_matrix, eigensystem, labeling
 
 
@@ -494,7 +492,7 @@ class ChipAnalysis:
         context = engine_result._dressing_context
         if context is None:
             raise RuntimeError("Resolved analysis is missing its captured dressing reference.")
-        return _reference_amplitudes(context.reference, jnp.asarray(eigenvectors))
+        return _reference_amplitudes(context.reference, eigenvectors)
 
     def _canonical_bare_labels(self) -> tuple[tuple[int, ...], ...]:
         """Product energy-level labels in chip order."""

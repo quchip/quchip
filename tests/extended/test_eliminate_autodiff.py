@@ -100,3 +100,15 @@ def test_grad_through_reduced_chip_pump_amplitude():
     assert np.isfinite(float(grad))
     # Measured: grad = -0.6283194, finite_diff = -0.6283190, relative error = 7.7e-7.
     assert abs(float(grad) - float(finite_diff)) < 0.2 * abs(float(finite_diff))
+
+
+def test_exact_reduction_of_a_constant_chip_inside_jit_matches_eager():
+    """A constant chip reduced exactly inside an outer jit gives the eager reduced model."""
+    full = _bridge_chip_dynamiqs().with_params({"q0.freq": 4.9, "q1.freq": 5.1})
+
+    def reduced_frequencies():
+        reduced = eliminate(full, "fc", method="exact").chip
+        return jnp.stack([reduced.freq("q0"), reduced.freq("q1")])
+
+    np.testing.assert_allclose(np.asarray(jax.jit(reduced_frequencies)()), np.asarray(reduced_frequencies()),
+                               rtol=0.0, atol=1e-12)
