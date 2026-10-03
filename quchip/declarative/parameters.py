@@ -382,12 +382,15 @@ def copy_authored_fields(source: Any, target: Any) -> None:
         object.__setattr__(target, name, value)
 
 
-def component_fingerprint(component: Any) -> Any:
-    """Track authored buffer edits as well as ordinary versioned assignments."""
+def component_fingerprint(component: Any, *, traced: bool = False) -> Any:
+    """Track authored buffer edits as well as ordinary versioned assignments.
+
+    ``traced=True`` keys traced values by identity; see :func:`~quchip.utils.values.scoped_entry`.
+    """
     from quchip.utils.values import value_fingerprint
 
     try:
-        values = value_fingerprint(authored_component_values(component))
+        values = value_fingerprint(authored_component_values(component), traced=traced)
     except (ValueError, RecursionError):
         # A fresh key prevents reuse when the payload cannot be inspected.
         values = object()

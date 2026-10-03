@@ -16,9 +16,10 @@ from __future__ import annotations
 from collections import Counter
 from math import prod
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence, overload
+from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping, Sequence, overload
 
 import numpy as np
+from jax.core import Tracer
 
 from quchip.backend import _backend_context
 from quchip.backend.protocol import Backend, Operator, State
@@ -38,6 +39,7 @@ from quchip.devices.base import BaseDevice
 from quchip.engine.frames import FramePlan
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
 from quchip.utils.labeling import LabelKeyedDict, resolve_label
+from quchip.utils.values import TracedKey, scoped_entry, scoped_hit
 
 if TYPE_CHECKING:
     from quchip.chip.partition import PartitionResult
@@ -87,14 +89,27 @@ def _as_physics_expr(
     return PhysicsExpr.from_matrix(backend.to_array(authored), labels=labels, dims=dims, name=name)
 
 
-def _concrete_cache_value(value: Any) -> Any:
-    """Return one stable scalar cache value or raise for traced/non-scalars."""
+def _concrete_cache_value(value: Any, *, traced: bool = False) -> Any:
+    """Return one stable scalar cache value or raise for non-scalars.
+
+    A tracer keys by identity when ``traced`` is true and raises otherwise.
+    """
     if value is None:
         return None
+    if traced and isinstance(value, Tracer):
+        return TracedKey(id(value))
     concrete = maybe_concrete_scalar(value)
     if concrete is None:
         raise ValueError
     return concrete
+
+
+def _identity_if_opaque(fingerprint: Callable[[], Any], owner: Any) -> Any:
+    """Content key from *fingerprint*, or *owner*'s identity when its payload is traced or opaque."""
+    try:
+        return fingerprint()
+    except ValueError:
+        return TracedKey(id(owner))
 
 
 def _operator_cache_value(value: Any) -> Any:
@@ -123,8 +138,8 @@ def _operator_cache_value(value: Any) -> Any:
     return array.shape, array.dtype.str, array.tobytes()
 
 
-def _frame_cache_value(frame: Any) -> Any:
-    """Return a stable cache key for one concrete frame specification."""
+def _frame_cache_value(frame: Any, *, traced: bool = False) -> Any:
+    """Return a stable cache key for one frame specification; see :func:`_concrete_cache_value`."""
     if isinstance(frame, str):
         return frame
     if isinstance(frame, FramePlan):
@@ -133,11 +148,11 @@ def _frame_cache_value(frame: Any) -> Any:
     if isinstance(frame, Mapping):
         return tuple(
             sorted(
-                (resolve_label(label), _concrete_cache_value(value))
+                (resolve_label(label), _concrete_cache_value(value, traced=traced))
                 for label, value in frame.items()
             )
         )
-    return _concrete_cache_value(frame)
+    return _concrete_cache_value(frame, traced=traced)
 
 
 class Chip:
@@ -338,13 +353,13 @@ class Chip:
         backend = self.backend
         signature = (
             type(backend).__qualname__,
-            tuple(component_fingerprint(d) for d in self._devices),
-            tuple(component_fingerprint(c) for c in self._couplings),
+            tuple(component_fingerprint(d, traced=True) for d in self._devices),
+            tuple(component_fingerprint(c, traced=True) for c in self._couplings),
             tuple(id(terms) for terms in self.effective_terms),
         )
         cache = self._unresolved_hamiltonian_cache
-        if cache is not None and cache[0] == signature and not contains_tracer(cache[1]):
-            return cache[1]
+        if scoped_hit(cache, signature):
+            return cache[2]
 
         with _backend_context(backend):
             labels = tuple(device.label for device in self._devices)
@@ -380,9 +395,8 @@ class Chip:
         assert H is not None
         for terms in self.effective_terms:
             H = H + terms.expression().embed(labels, self.authored_dims)
-        # Do not cache expressions whose values belong to a JAX trace.
-        if not contains_tracer(H.numeric_values()):
-            self._unresolved_hamiltonian_cache = (signature, H)
+        # Expressions whose values belong to a JAX trace are reused only inside that trace.
+        self._unresolved_hamiltonian_cache = scoped_entry(signature, H, traced=contains_tracer(H.numeric_values()))
         return H
 
     def hamiltonian(self) -> PhysicsExpr:
@@ -431,25 +445,25 @@ class Chip:
                 id(self.backend),
                 strategy,
                 self.basis,
-                _frame_cache_value(frame_spec),
-                tuple(component_fingerprint(device) for device in self.devices),
+                _frame_cache_value(frame_spec, traced=True),
+                tuple(component_fingerprint(device, traced=True) for device in self.devices),
                 tuple(
-                    (device.label, _concrete_cache_value(device._reference_freq_override))
+                    (device.label, _concrete_cache_value(device._reference_freq_override, traced=True))
                     for device in self.devices
                 ),
                 tuple(
                     (device.label, id(type(device).dissipation))
                     for device in self.devices
                 ),
-                tuple(component_fingerprint(coupling) for coupling in self.couplings),
-                tuple(terms.fingerprint() for terms in self.effective_terms),
+                tuple(component_fingerprint(coupling, traced=True) for coupling in self.couplings),
+                tuple(_identity_if_opaque(terms.fingerprint, terms) for terms in self.effective_terms),
                 tuple(
                     (
                         line.label,
                         type(line),
                         line.target_label,
                         tuple(
-                            (name, _concrete_cache_value(getattr(line, name)))
+                            (name, _concrete_cache_value(getattr(line, name), traced=True))
                             for name in line.parameter_values()
                         ),
                         id(type(line).dissipation),
@@ -461,8 +475,8 @@ class Chip:
                         bath.label,
                         bath.recipe,
                         tuple(bath.resolve_targets(self)),
-                        _concrete_cache_value(bath.temperature),
-                        _concrete_cache_value(bath.rate),
+                        _concrete_cache_value(bath.temperature, traced=True),
+                        _concrete_cache_value(bath.rate, traced=True),
                     )
                     for bath in self.baths
                 ),
@@ -471,21 +485,21 @@ class Chip:
                         port.label,
                         tuple(port.resolve_targets(self)),
                         tuple(
-                            (name, _concrete_cache_value(value))
+                            (name, _concrete_cache_value(value, traced=True))
                             for name, value in port.parameter_values().items()
                         ),
-                        _operator_cache_value(port.operator),
+                        _identity_if_opaque(lambda: _operator_cache_value(port.operator), port.operator),
                     )
                     for port in self.ports
                 ),
-                None if self.port_network is None else self.port_network.fingerprint(),
+                None if (network := self.port_network) is None else _identity_if_opaque(network.fingerprint, network),
             )
         except ValueError:
             signature = None
 
         cache = self._resolved_result_cache
-        if signature is not None and cache is not None and cache[0] == signature:
-            return cache[1]
+        if signature is not None and scoped_hit(cache, signature):
+            return cache[2]
 
         local_resolution, resolved_frame = _prepare_engine_assembly(self, frame_spec, strategy, resolution=_resolution)
         result = build_engine_result(
@@ -495,8 +509,9 @@ class Chip:
             approximation=strategy,
             _local_resolution=local_resolution,
         )
-        if signature is not None and not result._contains_tracer():
-            self._resolved_result_cache = (signature, result)
+        if signature is not None:
+            # A traced resolution is reused only inside the JAX trace that produced it.
+            self._resolved_result_cache = scoped_entry(signature, result, traced=result._contains_tracer())
         return result
 
     # ------------------------------------------------------------------

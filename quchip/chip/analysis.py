@@ -47,6 +47,7 @@ from quchip.chip.states import _bare_state_from_bases, normalize_device_state_ma
 from quchip.devices.base import BaseDevice, _validate_level_pair
 from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
+from quchip.utils.values import TracedKey, scoped_entry, scoped_hit
 from quchip.utils.labeling import LabelKeyedDict, bare_label_from_mapping, resolve_label, top_components
 
 if TYPE_CHECKING:
@@ -403,10 +404,10 @@ class ChipAnalysis:
         self._chip = chip
         self._dressed_result: DressedResult | None = None
         self._dressed_signature: tuple[Any, ...] | None = None
-        self._array_cache: tuple[Any, Any, Any, Labeling] | None = None
-        self._array_signature: tuple[Any, ...] | None = None
-        self._engine_result_cache: tuple[tuple[Any, ...], EngineResult] | None = None
-        self._ground_cache: tuple[tuple[Any, ...], Any] | None = None
+        # Cache entries are (key, trace scope, value); see quchip.utils.values.scoped_entry.
+        self._array_cache: tuple[Any, Any, tuple[Any, Any, Any, Labeling]] | None = None
+        self._engine_result_cache: tuple[Any, Any, EngineResult] | None = None
+        self._ground_cache: tuple[Any, Any, Any] | None = None
         self._bare_labels_cache: tuple[
             tuple[tuple[int, ...], ...], dict[tuple[int, ...], int]
         ] | None = None
@@ -416,8 +417,8 @@ class ChipAnalysis:
         """Hashable fingerprint covering every structural input to dressing.
 
         Retained effective terms, ports and the port network enter because they
-        add coherent terms to the dressed Hamiltonian. Traced values are keyed by identity; a traced
-        result is never cached anyway.
+        add coherent terms to the dressed Hamiltonian. Traced values are keyed by identity, so their
+        results are reused only inside the trace that produced them.
         """
         from quchip.chip.chip import _operator_cache_value
         from quchip.declarative.parameters import component_fingerprint
@@ -426,36 +427,36 @@ class ChipAnalysis:
 
         def scalar(value: Any) -> Any:
             concrete = maybe_concrete_scalar(value)
-            return ("traced", id(value)) if concrete is None else concrete
+            return TracedKey(id(value)) if concrete is None else concrete
 
         def operator(value: Any) -> Any:
             try:
                 return _operator_cache_value(value)
             except ValueError:
-                return ("traced", id(value))
+                return TracedKey(id(value))
 
         def terms_key(terms: Any) -> Any:
             try:
                 return terms.fingerprint()
             except ValueError:
-                return ("traced", id(terms))
+                return TracedKey(id(terms))
 
         network = chip.port_network
         try:
             network_key = None if network is None else network.fingerprint()
         except ValueError:
-            network_key = ("traced", id(network))
+            network_key = TracedKey(id(network))
         return (
             f"{type(chip.backend).__module__}.{type(chip.backend).__qualname__}",
             chip.basis,
             chip.approximation,
-            tuple(component_fingerprint(device) for device in chip.devices),
+            tuple(component_fingerprint(device, traced=True) for device in chip.devices),
             tuple(
                 (
                     f"{type(coupling).__module__}.{type(coupling).__qualname__}",
                     coupling.device_a_label,
                     coupling.device_b_label,
-                    component_fingerprint(coupling),
+                    component_fingerprint(coupling, traced=True),
                 )
                 for coupling in chip.couplings
             ),
@@ -478,16 +479,15 @@ class ChipAnalysis:
 
         signature = self._analysis_signature()
         cache = self._engine_result_cache
-        if cache is not None and cache[0] == signature:
-            return cache[1]
+        if scoped_hit(cache, signature):
+            return cache[2]
 
         result = _build_static_analysis_result(
             self._chip,
             approximation=self._chip.approximation,
             _local_resolution=_local_resolution,
         )
-        if not result._contains_tracer():
-            self._engine_result_cache = (signature, result)
+        self._engine_result_cache = scoped_entry(signature, result, traced=result._contains_tracer())
         return result
 
     def _semantic_amplitudes(self, eigenvectors: Any, engine_result: EngineResult) -> Any:
@@ -563,29 +563,24 @@ class ChipAnalysis:
         self,
         engine_result: EngineResult | None = None,
     ) -> tuple[Any, Any, Any, Labeling]:
-        """Return the array eigensystem and labeling, caching only tracer-free results."""
+        """Return the array eigensystem and labeling; traced results are reused only inside their trace."""
         chip = self._chip
         signature = self._analysis_signature()
-        if (
-            self._array_cache is not None
-            and self._array_signature == signature
-            and not contains_tracer(self._array_cache)
-        ):
-            return self._array_cache
+        if scoped_hit(self._array_cache, signature):
+            return self._array_cache[2]
 
         if engine_result is None:
             engine_result = self.engine_result()
-        elif not engine_result._contains_tracer():
-            self._engine_result_cache = (signature, engine_result)
+        else:
+            self._engine_result_cache = scoped_entry(signature, engine_result, traced=engine_result._contains_tracer())
         result = _labeled_eigensystem(engine_result, chip.backend)
         # The 3rd slot carries the EigensystemData (lazy eigenstates) rather than
         # a materialized ket list — nothing on the hot path reads it. The cache
         # tracer-check covers only slots (0, 1, 3); touching slot 2 would force
         # the lazy ``eigenstates`` property and defeat the deferral.
-        eigenvalues, _, _, labeling = result
-        if not contains_tracer((eigenvalues, labeling.indices, labeling.overlaps)):
-            self._array_cache = result
-            self._array_signature = signature
+        eigenvalues, vectors, _, labeling = result
+        traced = contains_tracer((eigenvalues, vectors, labeling.indices, labeling.overlaps))
+        self._array_cache = scoped_entry(signature, result, traced=traced)
         return result
 
     def _ground_ket(self, approximation: "Approximation") -> Any | None:
@@ -593,8 +588,8 @@ class ChipAnalysis:
 
         The ket uses solver coordinates and has real, nonnegative overlap on
         the bare product. ``None`` means the bare product is already an
-        eigenstate. Tracer-free results cache against the analysis signature
-        and ``approximation``. A traced ket is differentiated by first-order
+        eigenstate. Results cache against the analysis signature and
+        ``approximation``; traced ones only inside their trace. A traced ket is differentiated by first-order
         perturbation theory over the same eigensystem, masking gaps at the
         tolerance of :func:`~quchip.engine.basis._differentiable_eigenpairs`.
         """
@@ -602,8 +597,8 @@ class ChipAnalysis:
         from quchip.engine.basis import _differentiable_eigenvector
 
         key = (self._analysis_signature(), approximation)
-        if self._ground_cache is not None and self._ground_cache[0] == key:
-            return self._ground_cache[1]
+        if scoped_hit(self._ground_cache, key):
+            return self._ground_cache[2]
         chip = self._chip
         backend = chip.backend
         # Reuse dressed analysis only when it describes the solve's approximation.
@@ -627,8 +622,7 @@ class ChipAnalysis:
                 matrix = jnp.asarray(_analysis_matrix_ghz(static))
                 column = _differentiable_eigenvector(matrix, values[index], values, vectors, column)
             ket = _phase_fixed_state(column, xp.vdot(xp.asarray(backend.to_array(bare)).reshape(-1), column), xp)
-        if not contains_tracer(ket):
-            self._ground_cache = (key, ket)
+        self._ground_cache = scoped_entry(key, ket, traced=contains_tracer(ket))
         return ket
 
     def _bare_label_index(self, label: tuple[int, ...]) -> int:
