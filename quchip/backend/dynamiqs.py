@@ -121,6 +121,70 @@ class _SignalCallable(eqx.Module):
         return jnp.asarray(evaluate_signal_program(self.signal, t, xp=jnp))
 
 
+class _SummedHamiltonian(eqx.Module):
+    """``H(t) = H₀ + Σ_k c_k(t)·A_k`` assembled as one qarray per call.
+
+    A sum of dynamiqs modulated terms scales, adds and validates one qarray
+    per term at every right-hand-side evaluation. Here the diagonals (or
+    dense blocks) of all terms are added into one array whose layout was
+    validated once, when the Hamiltonian was assembled.
+    """
+
+    treedef: Any = eqx.field(static=True)
+    rows: tuple[tuple[int, ...], ...] | None = eqx.field(static=True)
+    base: Any
+    terms: tuple[Any, ...]
+    signals: tuple[_SignalCallable, ...]
+
+    def __call__(self, t: float) -> Any:
+        data = self.base
+        for index, (term, signal) in enumerate(zip(self.terms, self.signals)):
+            scaled = signal(t) * term
+            if self.rows is None:
+                data = data + scaled
+            else:
+                data = data.at[np.asarray(self.rows[index], dtype=int)].add(scaled)
+        return jtu.tree_unflatten(self.treedef, [data])
+
+
+def _summed_hamiltonian(static_ops: Sequence[Any], static_coeffs: Sequence[Any], dyn_ops: Sequence[Any],
+                        dyn_signals: Sequence[Any]) -> Any:
+    """Return a time-callable sum of unbatched terms, or ``None`` when an operator or signal is batched."""
+    operators = [*static_ops, *dyn_ops]
+    if any(op.ndim != 2 for op in operators):
+        return None
+    signals = tuple(_SignalCallable(signal) for signal in dyn_signals)
+    if any(jax.eval_shape(signal, 0.0).shape for signal in signals):
+        return None
+    if all(op.layout is dq.dia for op in operators):
+        offsets = tuple(sorted({int(offset) for op in operators for offset in op.data.offsets}))
+        index = {offset: row for row, offset in enumerate(offsets)}
+        n = operators[0].shape[-1]
+        base = jnp.zeros((len(offsets), n), dtype=jnp.complex128)
+        for op, coeff in zip(static_ops, static_coeffs):
+            static_rows = np.asarray([index[int(o)] for o in op.data.offsets], dtype=int)
+            base = base.at[static_rows].add(coeff * op.data.diags)
+        rows: tuple[tuple[int, ...], ...] | None = tuple(
+            tuple(index[int(o)] for o in op.data.offsets) for op in dyn_ops
+        )
+        terms = tuple(jnp.asarray(op.data.diags, dtype=jnp.complex128) for op in dyn_ops)
+        template = _dia_qarray(operators[0].dims, offsets, base)
+    else:
+        n = operators[0].shape[-1]
+        base = jnp.zeros((n, n), dtype=jnp.complex128)
+        for op, coeff in zip(static_ops, static_coeffs):
+            base = base + coeff * op.to_jax()
+        rows = None
+        terms = tuple(jnp.asarray(op.to_jax(), dtype=jnp.complex128) for op in dyn_ops)
+        template = dq.asqarray(base, dims=operators[0].dims)
+    leaves, treedef = jtu.tree_flatten(template)
+    if len(leaves) != 1:
+        return None
+    hamiltonian = _SummedHamiltonian(treedef, rows, base, terms, signals)
+    edges = [edge for edge in map(_signal_discontinuities, dyn_signals) if edge is not None]
+    return dq.timecallable(hamiltonian, discontinuity_ts=jnp.concatenate(edges) if edges else None)
+
+
 @dataclass(frozen=True)
 class _DynamiqsBatchHamiltonian:
     """Stable native leaves used to assemble one vmapped RHS inside JIT."""
@@ -980,12 +1044,15 @@ class DynamiqsBackend(Backend):
         for op, coeff in zip(static_ops, static_coeffs):
             term = coeff * op
             rhs = term if rhs is None else rhs + term
+        if not dyn_ops:
+            return rhs
+        summed = _summed_hamiltonian(static_ops, static_coeffs, dyn_ops, dyn_signals)
+        if summed is not None:
+            return summed
         dynamic = [
             dq.modulated(_SignalCallable(signal), op, discontinuity_ts=_signal_discontinuities(signal))
             for op, signal in zip(dyn_ops, dyn_signals)
         ]
-        if not dynamic:
-            return rhs
         terms = dynamic if rhs is None else [dq.constant(rhs), *dynamic]
         return terms[0] if len(terms) == 1 else SummedTimeQArray(terms)
 
