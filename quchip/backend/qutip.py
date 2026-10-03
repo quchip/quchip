@@ -17,6 +17,7 @@ References
 
 from __future__ import annotations
 
+import cmath
 import math
 import os
 import warnings
@@ -289,8 +290,10 @@ def _envelope_coefficient(envelope: Any, sample_tlist: Any) -> Any:
 def _carrier_coefficient(freq: Any) -> Any:
     """Keep exp(i·freq·t) analytic, with angular freq in rad/ns.
     QuTiP evaluates the closure only at concrete times; this is not a JAX-traced path."""
+    rate = 1j * complex(freq)
+
     def _carrier(t: float, *args: Any, **kwargs: Any) -> complex:
-        return complex(np.exp(1j * freq * t))
+        return cmath.exp(rate * t)
 
     return qutip.coefficient(_carrier)
 
