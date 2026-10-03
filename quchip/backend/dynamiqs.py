@@ -101,9 +101,18 @@ def _summed_modulation(modulations: Sequence[Any]) -> Any:
 
 @lru_cache(maxsize=None)
 def _dia_structure(dims: tuple[int, ...], offsets: tuple[int, ...]) -> Any:
-    """Pytree structure of an unbatched sparse-DIA qarray, found by abstract evaluation."""
-    diags = jax.ShapeDtypeStruct((len(offsets), math.prod(dims)), jnp.complex128)
-    return jtu.tree_structure(jax.eval_shape(lambda d: QArray(dims, False, SparseDIADataArray(offsets, d)), diags))
+    """Pytree structure of an unbatched sparse-DIA qarray whose one leaf is its diagonals.
+
+    The instances are assembled field by field: running their constructors,
+    even abstractly, traces dynamiqs' per-diagonal checks for every offset set.
+    """
+    data = object.__new__(SparseDIADataArray)
+    object.__setattr__(data, "offsets", offsets)
+    object.__setattr__(data, "diags", 0)
+    qarray = object.__new__(QArray)
+    for name, value in (("dims", dims), ("vectorized", False), ("data", data)):
+        object.__setattr__(qarray, name, value)
+    return jtu.tree_structure(qarray)
 
 
 def _dia_qarray(dims: tuple[int, ...], offsets: tuple[int, ...], diags: Any) -> QArray:

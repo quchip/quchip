@@ -222,8 +222,9 @@ def test_prepared_hamiltonian_is_the_engine_hamiltonian(dynamiqs_backend) -> Non
 @pytest.mark.unit
 @pytest.mark.parametrize("layout", ["dia", "dense"])
 def test_backend_operator_factories_match_dynamiqs(dynamiqs_backend, layout) -> None:
-    """Ladder, number, identity and tensor products agree with dynamiqs in value, layout and dims."""
+    """Ladder, number, identity and tensor products agree with dynamiqs in value, layout, dims and structure."""
     import dynamiqs as dq
+    import jax.tree_util as jtu
     from dynamiqs.qarrays.layout import get_layout, set_global_layout
 
     previous = get_layout()
@@ -240,6 +241,7 @@ def test_backend_operator_factories_match_dynamiqs(dynamiqs_backend, layout) -> 
         for ours, reference in pairs:
             assert ours.layout is reference.layout
             assert ours.dims == reference.dims
+            assert jtu.tree_structure(ours) == jtu.tree_structure(reference)
             npt.assert_allclose(np.asarray(ours.to_jax()), np.asarray(reference.to_jax()), rtol=0.0, atol=1e-15)
     finally:
         set_global_layout(previous)
