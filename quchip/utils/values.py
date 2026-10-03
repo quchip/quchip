@@ -10,6 +10,7 @@ import jax
 import jax.tree_util as jtu
 import numpy as np
 from jax.core import Tracer
+from jax.extend.core import get_opaque_trace_state
 
 
 def copy_value(value: Any, *, readonly: bool = False) -> Any:
@@ -95,13 +96,13 @@ def scoped_entry(key: Any, value: Any, *, traced: bool) -> tuple[Any, Any, Any]:
     nested or later trace. Other entries are valid everywhere.
     """
     scoped = traced or any(isinstance(leaf, TracedKey) for leaf in jtu.tree_leaves(key))
-    return key, jax.core.get_opaque_trace_state() if scoped else None, value
+    return key, get_opaque_trace_state() if scoped else None, value
 
 
 def scoped_hit(entry: tuple[Any, Any, Any] | None, key: Any) -> bool:
     """Whether *entry* holds *key* and, when scoped, belongs to the current trace."""
     return (entry is not None and entry[0] == key
-            and (entry[1] is None or entry[1] == jax.core.get_opaque_trace_state()))
+            and (entry[1] is None or entry[1] == get_opaque_trace_state()))
 
 
 @dataclass(eq=False)
