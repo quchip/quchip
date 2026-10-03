@@ -71,8 +71,10 @@ QuTiP's `mesolve` assembles the Lindblad generator as a D²×D² superoperator,
 with one term per time-dependent Hamiltonian part. Operators whose entries
 are at most one quarter nonzero, such as the bands and jumps of a reduced
 model, are stored as CSR, so these terms stay sparse. Before assembly, quchip
-estimates the peak memory and raises `MemoryError` when it exceeds the
-available memory. dynamiqs applies the generator without forming it.
+estimates the peak memory from the entries QuTiP keeps, which excludes
+products below its tidy-up tolerance, and raises `MemoryError` when the
+estimate exceeds the available memory. dynamiqs applies the generator without
+forming it.
 
 ## dynamiqs integration and gradients
 

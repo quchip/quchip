@@ -173,11 +173,13 @@ _WINDOWED_COEFFICIENT_ORDER = 1
 
 # QuTiP 5 assembles a Lindblad superoperator term by term and keeps one term per
 # time-dependent Hamiltonian part. With dense inputs, measured assembly peaks near
-# six dense D²×D² arrays plus four per time-dependent part; CSR inputs peak near
-# 1.5 × 24 bytes per stored superoperator entry.
+# six dense D²×D² arrays plus four per time-dependent part. With CSR inputs each
+# term is added into a running sum whose output is sized for both operands before
+# trimming, so the previous sum, the new term and the new sum coexist: measured
+# peaks stay below three copies of the final storage.
 _DENSE_SUPEROPERATOR_PEAK_COPIES = 6
 _DENSE_SUPEROPERATOR_COPIES_PER_PART = 4
-_SPARSE_SUPEROPERATOR_ENTRY_BYTES = 36
+_SPARSE_SUPEROPERATOR_PEAK_COPIES = 3
 
 
 def _operator_parts(operator: Any) -> list[Qobj]:
@@ -187,8 +189,26 @@ def _operator_parts(operator: Any) -> list[Qobj]:
     return [operator]
 
 
+def _pairs_reaching(magnitudes: np.ndarray, atol: float) -> int:
+    """Count ordered pairs of stored magnitudes whose product reaches ``atol``."""
+    ordered = np.sort(magnitudes)
+    if atol <= 0.0:
+        return int(ordered.size**2)
+    with np.errstate(divide="ignore"):
+        partners = np.searchsorted(ordered, atol / ordered)
+    return int(ordered.size**2 - partners.sum())
+
+
 def _superoperator_peak_bytes(hamiltonian: Any, collapse_ops: Sequence[Any]) -> int:
-    """Estimate QuTiP's peak memory while assembling a Lindblad superoperator."""
+    """Estimate QuTiP's peak memory while assembling a Lindblad superoperator.
+
+    The sparse estimate counts the entries QuTiP keeps. spre(H) and spost(H)
+    store nnz(H)·D entries each. A jump term c ⊗ c* keeps only pairs of entries
+    whose product reaches QuTiP's tidy-up tolerance, and the jump terms of all
+    operators share positions in the running sum, so their union is bounded by
+    the pairs of the elementwise largest magnitude. Each c†c keeps the entries
+    where |c|ᵀ|c| reaches the tolerance, and its two lifts store D copies.
+    """
     hamiltonian_parts = _operator_parts(hamiltonian)
     collapse_parts = [_operator_parts(op) for op in collapse_ops]
     dimension = int(hamiltonian_parts[0].shape[0])
@@ -198,16 +218,31 @@ def _superoperator_peak_bytes(hamiltonian: Any, collapse_ops: Sequence[Any]) -> 
     if any(isinstance(part.data, qutip.data.Dense) for part in parts):
         return dense
 
-    def stored(group: list[Qobj]) -> int:
-        return sum(part.to("CSR").data_as("csr_matrix").nnz for part in group)
+    def magnitude(group: list[Qobj]) -> Any:
+        matrix = abs(group[0].to("CSR").data_as("csr_matrix"))
+        for part in group[1:]:
+            matrix = matrix + abs(part.to("CSR").data_as("csr_matrix"))
+        return matrix.tocsr()
 
-    # spre(H) and spost(H) store nnz(H)·D entries each; sprepost(c, c†) stores
-    # nnz(c)², and c†c has at most min(D², nnz(c)²) entries before its two lifts.
-    entries = 2 * stored(hamiltonian_parts) * dimension
-    for group in collapse_parts:
-        count = stored(group)
-        entries += count**2 + 2 * min(dimension**2, count**2) * dimension
-    return min(dense, _SPARSE_SUPEROPERATOR_ENTRY_BYTES * entries)
+    atol = float(qutip.settings.core["auto_tidyup_atol"]) if qutip.settings.core["auto_tidyup"] else 0.0
+    entries = 2 * dimension * sum(part.to("CSR").data_as("csr_matrix").nnz for part in hamiltonian_parts)
+    if collapse_parts:
+        magnitudes = [magnitude(group) for group in collapse_parts]
+        # Every part pair of a time-dependent jump keeps its own coefficient.
+        separate = sum(len(group) ** 2 * _pairs_reaching(matrix.data, atol)
+                       for group, matrix in zip(collapse_parts, magnitudes))
+        envelope = magnitudes[0]
+        for matrix in magnitudes[1:]:
+            envelope = envelope.maximum(matrix)
+        shared = _pairs_reaching(envelope.data, atol)
+        entries += separate if any(len(group) > 1 for group in collapse_parts) else min(separate, shared)
+        products = [(matrix.T @ matrix).tocsr() for matrix in magnitudes]
+        for product in products:
+            product.data[product.data < atol] = 0.0
+            product.eliminate_zeros()
+        entries += 2 * dimension * sum(products[1:], start=products[0]).nnz
+    entry_bytes = 16 + np.dtype(qutip.core.data.base.idxint_dtype).itemsize
+    return min(dense, _SPARSE_SUPEROPERATOR_PEAK_COPIES * entry_bytes * entries)
 
 
 def _require_superoperator_memory(hamiltonian: Any, collapse_ops: Sequence[Any], *, task: str, remedy: str) -> None:

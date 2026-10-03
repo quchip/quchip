@@ -218,6 +218,32 @@ class TestSuperoperatorMemory:
         assert _superoperator_peak_bytes(evolving, [qutip.destroy(5)]) == (6 + 2 * 4) * 16 * 5**4
         assert _superoperator_peak_bytes(qutip.num(30), [qutip.destroy(30)]) < 16 * 30**4
 
+    @pytest.mark.parametrize("tiny", [0.0, 1e-9], ids=["local-loss", "tiny-entries"])
+    def test_sparse_estimate_follows_the_entries_qutip_stores(self, tiny: float) -> None:
+        """The sparse estimate stays within a small factor above the assembled Liouvillian.
+
+        Local loss keeps c†c diagonal, and QuTiP drops products below its
+        tidy-up tolerance, so tiny entries store no pairs among themselves.
+        """
+        import qutip
+
+        from quchip.backend.qutip import _superoperator_peak_bytes
+
+        dims = (4, 4, 4)
+        modes = [
+            qutip.tensor(*[qutip.destroy(d) if index == k else qutip.qeye(d) for index, d in enumerate(dims)])
+            for k in range(len(dims))
+        ]
+        hamiltonian = sum(mode.dag() * mode for mode in modes) + 0.01 * (
+            modes[0].dag() * modes[1] + modes[1].dag() * modes[0]
+        )
+        noise = qutip.Qobj(np.random.default_rng(7).normal(size=(64, 64)), dims=modes[0].dims)
+        jumps = [(np.sqrt(0.01) * mode + tiny * noise).to("CSR") for mode in modes]
+
+        entry_bytes = 16 + np.dtype(qutip.core.data.base.idxint_dtype).itemsize
+        stored = qutip.liouvillian(hamiltonian, jumps).data_as("csr_matrix").nnz * entry_bytes
+        assert stored <= _superoperator_peak_bytes(hamiltonian.to("CSR"), jumps) <= 6 * stored
+
     def test_mesolve_raises_before_building_a_liouvillian_that_cannot_fit(
         self, backend: QuTiPBackend, monkeypatch: pytest.MonkeyPatch
     ) -> None:
