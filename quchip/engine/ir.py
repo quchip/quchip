@@ -2097,6 +2097,8 @@ class LinearResponseProblem:
     """Passive-linear input-output request handed to a backend.
 
     ``hamiltonian`` is the number-conserving mode matrix in angular units,
+    or, for a weak probe of an excitation-conserving chip, its one-excitation
+    block, which may carry a non-Hermitian part from number-conserving channels;
     ``couplings`` stacks the channel rows of ``L = C a``, and ``scattering``
     is the complete instantaneous SLH matrix including hidden vacuum and loss
     channels. Frequencies remain ordinary GHz at the public boundary.
@@ -2110,7 +2112,8 @@ class LinearResponseProblem:
     frequencies : array_like
         Probe frequencies in GHz.
     mode_labels : tuple of str
-        Linear Fock modes in matrix order.
+        Linear Fock modes, or the devices whose first excited levels span the
+        one-excitation states, in matrix order.
     hamiltonian : array_like
         Number-conserving mode matrix in rad/ns.
     couplings : array_like

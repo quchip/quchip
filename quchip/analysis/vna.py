@@ -17,7 +17,7 @@ from quchip.engine.input_output import (
     resolve_stationary_engine,
     same_frequency,
 )
-from quchip.engine.linear_response import try_build_linear_response_problem
+from quchip.engine.linear_response import try_build_weak_probe_problem
 from quchip.results.measurement import VNAMeasurement
 from quchip.engine.output_network import output_mixing
 from quchip.engine.reference import cw_transfer, has_amplifier, ReferenceFilter, ReferenceLoss
@@ -658,9 +658,10 @@ class VNA:
         matrices: list[Any] = []
         diagnostics: list[Mapping[str, Any]] = []
         for chip in chips:
-            problem = try_build_linear_response_problem(chip, frequencies, plane_labels=labels)
-            if problem is None:
+            built = try_build_weak_probe_problem(chip, frequencies, plane_labels=labels)
+            if built is None:
                 return None
+            problem, route = built
             solved = chip.backend.linear_response(problem)
             indices = list(problem.plane_indices)
             transfer = (
@@ -670,7 +671,7 @@ class VNA:
             matrices.append(chip.backend.array_module.asarray(transfer * solved.responses))
             diagnostics.extend(
                 _LazyDiagnostics({
-                    "solver": "linear_response",
+                    "solver": route,
                     "mode_count": len(problem.mode_labels),
                     "residual": solved.residuals[index],
                     "condition_number": lambda index=index, condition=solved._condition_numbers: condition()[index],

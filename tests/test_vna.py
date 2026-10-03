@@ -870,10 +870,10 @@ def test_eight_resonator_cascade_matches_exact_series_product() -> None:
 
 
 def test_coupled_mode_response_matches_general_liouvillian_fallback() -> None:
-    """Mode-space scattering agrees with the general solver for a coupled linear chip."""
+    """Mode-space, one-excitation and general-solver scattering agree for a coupled linear chip."""
     frequencies = np.asarray([5.97, 6.0, 6.04])
 
-    def response(*, explicit_operator: bool):
+    def response(*, explicit_operator: bool, options: dict | None = None):
         first = Resonator(freq=6.0, levels=3, label="a")
         second = Resonator(freq=6.035, levels=3, label="b")
         operator = (
@@ -887,13 +887,16 @@ def test_coupled_mode_response_matches_general_liouvillian_fallback() -> None:
             [Capacitive(first, second, g=0.012)],
             port_network=_network(port),
         )
-        return VNA(chip, ports=[port]).sweep(frequencies)
+        return VNA(chip, ports=[port]).sweep(frequencies, options=options)
 
     linear = response(explicit_operator=False)
-    general = response(explicit_operator=True)
+    projected = response(explicit_operator=True)
+    general = response(explicit_operator=True, options={"method": "direct"})
 
     np.testing.assert_allclose(linear.s11, general.s11, atol=2e-10)
+    np.testing.assert_allclose(projected.s11, general.s11, atol=2e-10)
     assert {item["solver"] for item in linear.diagnostics} == {"linear_response"}
+    assert {item["solver"] for item in projected.diagnostics} == {"vacuum_response"}
     assert {item["solver"] for item in general.diagnostics} == {"stationary_resolvent"}
 
 
@@ -949,20 +952,23 @@ def test_reordered_saved_level_uses_its_physical_spectrum(backend, custom_space)
     result = VNA(chip, ports=["readout"]).sweep(frequencies)
     expected = 1 - 0.04 / (0.02 + 2j * np.pi * (frequencies - 5.98))
     np.testing.assert_allclose(result.s11, expected, atol=2e-10)
-    assert {item["solver"] for item in result.diagnostics} == {"stationary_resolvent"}
+    assert {item["solver"] for item in result.diagnostics} == {"vacuum_response"}
 
 
-def test_nonlinear_hamiltonian_retains_stationary_fallback() -> None:
-    """A structurally nonlinear mode remains on the general stationary solver."""
+def test_nonlinear_mode_weak_probe_uses_its_one_excitation_block() -> None:
+    """A Kerr mode's weak-probe reflection is the linear cavity's, from the one-excitation block."""
     cavity = KerrCavity(freq=6.0, kerr=0.02, levels=3, label="c")
     port = Port(cavity, rate=0.04, label="readout")
+    vna = VNA(Chip([cavity], port_network=_network(port)), ports=[port])
+    frequencies = np.asarray([5.99, 6.0, 6.01])
 
-    result = VNA(
-        Chip([cavity], port_network=_network(port)),
-        ports=[port],
-    ).sweep([6.0])
+    weak = vna.sweep(frequencies)
+    general = vna.sweep(frequencies, options={"method": "direct"})
 
-    assert {item["solver"] for item in result.diagnostics} == {"stationary_resolvent"}
+    np.testing.assert_allclose(weak.s11, 1 - 0.04 / (0.02 + 2j * np.pi * (frequencies - 6.0)), atol=1e-12)
+    np.testing.assert_allclose(general.s11, weak.s11, atol=2e-8)
+    assert {item["solver"] for item in weak.diagnostics} == {"vacuum_response"}
+    assert {item["solver"] for item in general.diagnostics} == {"stationary_resolvent"}
 
 
 def test_dynamiqs_linear_response_is_jittable_and_differentiable() -> None:

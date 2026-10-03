@@ -747,9 +747,34 @@ S_out,in(f) = S_out,in + C_out (-i 2π f I - A)^(-1) B_in.
 
 The engine then applies the inbound and outbound factors to that response.
 
-Nonlinear, pumped, active, dynamic, or opaque operator models retain the
-stationary-Liouvillian route. This selection is structural and does not depend
-on the numerical value of a traced parameter.
+`VNA.sweep()` extends this form to pump-free models that conserve the total
+energy-level index `N` but are not harmonic, such as Duffing transmons,
+pure dephasing, or reduced chips with retained terms. The resolved static
+Hamiltonian must conserve `N` (an approximation such as `RWA()` that keeps only
+zero-total bands, declared retained terms, and no cascade-generated term), every
+port must lower `N` by one, every other channel must either lower `N` by one or
+conserve it, and every input must be vacuum. The vacuum is then stationary, and
+to first order in the probe the coherences `|1_j><0|` stay in the
+one-excitation block. The engine projects the lab-frame model onto the vacuum
+`|0>` and the states `|1_j>` that raise one device to its first excited level:
+
+```text
+Omega = H_1 - <0|H|0> I,     C_k = <0|L_k|1>,     c_k = <0|L_k|0>,
+A = -i Omega - sum_k (L_k^dagger L_k)_1 / 2 + sum_k [c_k^* (L_k)_1 - |c_k|^2 / 2],
+```
+
+where `X_1 = <1|X|1>` is the one-excitation block. A lowering channel has
+`(L^dagger L)_1 = C^dagger C` and `c = (L)_1 = 0`, which recovers the harmonic
+`A`. The response then follows from the same mode-space formula. It is exact for an
+infinitesimal probe, independent of anharmonicities, cross-Kerr terms and
+cutoffs, and its size is the number of devices. VNA diagnostics name the route
+`"vacuum_response"`. Finite-power and noisy measurements keep the harmonic
+condition above, because only a harmonic model responds linearly at finite
+amplitude.
+
+Nonlinear models outside these conditions, and pumped, active, dynamic, or
+opaque operator models, retain the stationary-Liouvillian route. This selection
+is structural and does not depend on the numerical value of a traced parameter.
 Active local terms also retain the general route: a weight-only RWA does not
 establish whether a local parametric term is off resonance in its authored frame.
 

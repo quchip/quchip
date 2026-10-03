@@ -55,6 +55,15 @@ This file records notable user-visible changes to quchip.
 
 #### Performance
 
+- `VNA.sweep()` solves weak-probe scattering of pump-free chips that conserve
+  total excitation number in their one-excitation block: Duffing transmons,
+  pure dephasing, and reduced chips with retained terms, as long as every input
+  is vacuum. Previously any such term fell back to a dense D²×D² stationary
+  solve. On one machine, the reported transmon-resonator sweep at Hilbert
+  dimension 64 took 540 s and now takes 10 s, mostly the frame's
+  reference-frequency analysis. Dimension 400 runs in 10 s instead of needing
+  about 410 GB. Diagnostics name the route `"vacuum_response"`.
+  ([#81](https://github.com/quchip/quchip/issues/81))
 - The QuTiP backend stores dense operators with at most one quarter nonzero
   entries as CSR, so superoperator terms built from reduced-model bands and
   jumps stay sparse. A lossy `mesolve` of a reduced model at Hilbert dimension
