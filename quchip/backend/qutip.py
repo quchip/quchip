@@ -295,27 +295,79 @@ def _carrier_coefficient(freq: Any) -> Any:
     return qutip.coefficient(_carrier)
 
 
-def _band_coefficient(band: Any, sample_tlist: Any) -> Any:
-    """Multiply the slow-envelope coefficient by an analytic carrier, omitted at concrete zero frequency."""
-    env_coeff = _envelope_coefficient(band.envelope, sample_tlist)
-    freq = maybe_concrete_scalar(band.freq)
-    if freq is not None and freq == 0.0:
-        return env_coeff
-    return env_coeff * _carrier_coefficient(band.freq)
+def _summed_envelope_coefficient(envelopes: Sequence[Any], sample_tlist: Any) -> Any:
+    """Return one coefficient equal to the sum of the envelopes' own coefficients.
+
+    Linear interpolants of windowed envelopes add exactly on the union of
+    their grids, and cubic interpolants on one shared grid add their samples,
+    since interpolation is linear in the data. Envelopes without a concrete
+    grid keep their exact callables.
+    """
+    if sample_tlist is None or len(envelopes) == 1:
+        parts = [_envelope_coefficient(envelope, sample_tlist) for envelope in envelopes]
+    else:
+        parts, linear, cubic = [], [], []
+        for envelope in envelopes:
+            try:
+                grid = np.asarray(_augmented_sample_grid(envelope, sample_tlist), dtype=float)
+            except NotImplementedError:
+                parts.append(qutip.coefficient(_coeff_callable(envelope)))
+                continue
+            samples = _sample_coeff_array(envelope, grid)
+            (linear if _collect_window_bounds(envelope) else cubic).append((grid, samples))
+        if cubic and all(np.array_equal(grid, cubic[0][0]) for grid, _ in cubic):
+            parts.append(qutip.coefficient(sum(samples for _, samples in cubic), tlist=cubic[0][0]))
+        else:
+            parts.extend(qutip.coefficient(samples, tlist=grid) for grid, samples in cubic)
+        if linear:
+            union = np.unique(np.concatenate([grid for grid, _ in linear]))
+            total = np.zeros(union.shape, dtype=complex)
+            for grid, samples in linear:
+                nonzero = np.flatnonzero(samples)
+                if nonzero.size == 0:
+                    continue
+                # The interpolant vanishes beyond the nodes bracketing its nonzero samples.
+                lo = np.searchsorted(union, grid[max(nonzero[0] - 1, 0)])
+                hi = np.searchsorted(union, grid[min(nonzero[-1] + 1, grid.size - 1)], side="right")
+                nodes = union[lo:hi]
+                total[lo:hi] += np.interp(nodes, grid, samples.real) + 1j * np.interp(nodes, grid, samples.imag)
+            parts.append(qutip.coefficient(total, tlist=union, order=_WINDOWED_COEFFICIENT_ORDER))
+    total = parts[0]
+    for part in parts[1:]:
+        total = total + part
+    return total
 
 
-def _dynamic_term_entries(op: Qobj, signal: Any, sample_tlist: Any) -> list[list[Any]]:
-    """Return one QuTiP [operator, coefficient] entry per carrier band."""
-    return [[op, _band_coefficient(band, sample_tlist)] for band in decompose_carrier_bands(signal)]
+def _qobj_key(op: Qobj) -> tuple:
+    """Exact content key of an operator; equal operators stored differently may get different keys."""
+    if isinstance(op.data, qutip.data.CSR):
+        matrix = op.data_as("csr_matrix")
+        payload = (matrix.indptr.tobytes(), matrix.indices.tobytes(), matrix.data.tobytes())
+    else:
+        payload = (np.ascontiguousarray(op.full()).tobytes(),)
+    return (repr(op.dims), type(op.data).__name__, *payload)
 
 
 def _assemble_qobjevo(static_rhs: Qobj | None, op_signal_pairs: Any, sample_tlist: Any) -> qutip.QobjEvo:
-    """Combine an optional static operator and dynamic entries into a QobjEvo."""
-    terms: list[Any] = []
-    if static_rhs is not None:
-        terms.append(static_rhs)
+    """Combine an optional static operator and dynamic entries into a QobjEvo.
+
+    Carrier bands acting through equal operators at one concrete frequency
+    share a coefficient, ``(Σ_k envelope_k(t))·exp(i·freq·t)``, so a solver
+    step applies each operator once per carrier frequency however many
+    pulses and crosstalk paths drive it.
+    """
+    terms: list[Any] = [] if static_rhs is None else [static_rhs]
+    groups: dict[tuple, tuple[Qobj, Any, list[Any]]] = {}
     for op, signal in op_signal_pairs:
-        terms.extend(_dynamic_term_entries(op, signal, sample_tlist))
+        key = _qobj_key(op)
+        for band in decompose_carrier_bands(signal):
+            freq = maybe_concrete_scalar(band.freq)
+            groups.setdefault((key, id(band) if freq is None else freq), (op, band.freq, []))[2].append(band.envelope)
+    for op, freq, envelopes in groups.values():
+        coefficient = _summed_envelope_coefficient(envelopes, sample_tlist)
+        if maybe_concrete_scalar(freq) != 0.0:
+            coefficient = coefficient * _carrier_coefficient(freq)
+        terms.append([op, coefficient])
     return qutip.QobjEvo(terms)
 
 
@@ -1028,7 +1080,7 @@ class QuTiPBackend(Backend):
         Each dynamic coefficient is band-normalized: every carrier stays
         analytic while only its slow, carrier-free envelope is sampled
         (on *tlist*, locally densified around any window edge — see
-        :func:`_band_coefficient` / :func:`_augmented_sample_grid`). This
+        :func:`_assemble_qobjevo` / :func:`_augmented_sample_grid`). This
         avoids cubic-spline error from pre-sampling the full
         ``envelope·carrier`` product, including for resonant carriers in the
         lab frame.
@@ -1071,7 +1123,7 @@ class QuTiPBackend(Backend):
         Each unique :class:`CanonicalOperator` is converted exactly once
         (shared across elements) and only the slow, carrier-free envelope
         is sampled on the user grid, locally densified around any window
-        edge (carriers stay analytic — see :func:`_band_coefficient`).
+        edge (carriers stay analytic — see :func:`_assemble_qobjevo`).
         Final ``QobjEvo`` assembly lives in :meth:`solve_batch` so larger
         concrete sweeps can build and solve each point inside loky workers.
 
@@ -1220,7 +1272,7 @@ class QuTiPBackend(Backend):
     def _resolve_envelope_sample_tlist(tlist: Any) -> Any:
         """Return the base sample grid for interpolating carrier-free slow envelopes; ``None`` otherwise.
 
-        Carriers are kept analytic (see :func:`_band_coefficient`), so no
+        Carriers are kept analytic (see :func:`_assemble_qobjevo`), so no
         dense per-carrier oversampling is needed — only the slow envelope
         is interpolated. This grid's *density* governs fidelity for a
         **non-windowed** envelope only: a too-coarse output tlist is
