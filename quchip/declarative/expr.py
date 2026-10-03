@@ -11,7 +11,7 @@ from typing import Any, Mapping
 import jax.numpy as jnp
 import numpy as np
 
-from quchip.utils.jax_utils import contains_tracer
+from quchip.utils.jax_utils import concrete_array_module
 from quchip.utils.values import copy_value, value_fingerprint
 
 
@@ -906,11 +906,6 @@ def materialize_expr(
     return lower(expr)
 
 
-def _array_module(*values: Any) -> Any:
-    """NumPy for concrete operands; JAX once any operand is traced."""
-    return jnp if contains_tracer(values) else np
-
-
 class _ArrayLowerer:
     """Minimal operator algebra for backend-independent JAX materialization.
 
@@ -923,7 +918,7 @@ class _ArrayLowerer:
     @staticmethod
     def from_array(value: Any, dims: Any = None) -> Any:
         del dims
-        return _array_module(value).asarray(value, dtype=complex)
+        return concrete_array_module(value).asarray(value, dtype=complex)
 
     @staticmethod
     def to_array(value: Any) -> Any:
@@ -951,7 +946,7 @@ class _ArrayLowerer:
 
     @staticmethod
     def dag(value: Any) -> Any:
-        return _array_module(value).asarray(value).conj().T
+        return concrete_array_module(value).asarray(value).conj().T
 
     @staticmethod
     def matmul(left: Any, right: Any) -> Any:
@@ -959,11 +954,11 @@ class _ArrayLowerer:
 
     @staticmethod
     def tensor(left: Any, right: Any) -> Any:
-        return _array_module(left, right).kron(left, right)
+        return concrete_array_module(left, right).kron(left, right)
 
     @staticmethod
     def embed(local: Any, target: int, dims: tuple[int, ...]) -> Any:
-        xp = _array_module(local)
+        xp = concrete_array_module(local)
         factors = [xp.eye(dim, dtype=complex) for dim in dims]
         factors[target] = local
         result = factors[0]
@@ -975,7 +970,7 @@ class _ArrayLowerer:
     def embed_two_body(local: Any, first: int, second: int, dims: tuple[int, ...]) -> Any:
         from quchip.backend._dims import _embed_array
 
-        return _embed_array(local, (first, second), dims, _array_module(local))
+        return _embed_array(local, (first, second), dims, concrete_array_module(local))
 
 
 _ARRAY_LOWERER = _ArrayLowerer()

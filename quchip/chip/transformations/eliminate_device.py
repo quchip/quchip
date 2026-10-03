@@ -28,9 +28,9 @@ from functools import reduce
 from itertools import combinations
 from typing import TYPE_CHECKING, Any
 
-import jax.numpy as jnp
 import numpy as np
 
+from quchip.utils.jax_utils import concrete_array_module
 from quchip.utils.values import DeferredValue
 from quchip.chip.couplings import Capacitive, TunableCapacitive
 from quchip.chip.effective import (
@@ -99,6 +99,21 @@ def _retained_port_labels(chip: "Chip") -> set[str]:
         for terms in chip.effective_terms if terms.projection is not None
         for key, _ in terms.projection.overrides if key.startswith("port:")
     }
+
+
+# A concrete reduction runs on the host, where it compiles no device programs;
+# a traced one stays in JAX.
+def _array(value: Any) -> Any:
+    return concrete_array_module(value).asarray(value, dtype=complex)
+
+
+def _kron(*factors: Any) -> Any:
+    xp = concrete_array_module(factors)
+    return reduce(xp.kron, (xp.asarray(factor) for factor in factors))
+
+
+def _real(value: Any) -> Any:
+    return concrete_array_module(value).real(value)
 
 
 def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
@@ -271,7 +286,7 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
     # and every captured map, inside the sectors.
     sectors = excitation_sectors(dims) if conserves_excitation_number(chip, approximation) else None
     if sectors is not None:
-        h = jnp.where(sectors[:, None] == sectors[None, :], h, 0.0)
+        h = concrete_array_module(h).where(sectors[:, None] == sectors[None, :], h, 0.0)
     # Survivor pairs are keyed in the chip's device order everywhere — the
     # pair extraction, the exact route, and the fold loop below — so the two
     # sides of every ("J", a, b) lookup agree no matter what order the legs
@@ -294,21 +309,21 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
     )
     pair_params = reduction.pair_parameters(ctx)
     incoming_frequencies = {
-        label: jnp.real(h[bare_index(labels, dims, label), bare_index(labels, dims, label)] - h[0, 0])
+        label: _real(h[bare_index(labels, dims, label), bare_index(labels, dims, label)] - h[0, 0])
         for label in labels
     }
 
     source_bases = chip.resolve(frame="lab").bases
 
     def transform_operator(operator: Any, support_labels: tuple[str, ...]) -> tuple[Any, Any]:
-        local = jnp.asarray(chip.backend.to_array(materialize_expr(operator, chip.backend)))
-        transform = reduce(jnp.kron, (source_bases[label].energy_vectors for label in support_labels))
+        local = _array(chip.backend.to_array(materialize_expr(operator, chip.backend)))
+        transform = _kron(*(source_bases[label].energy_vectors for label in support_labels))
         local = transform.conj().T @ local @ transform
         support = tuple(labels.index(label) for label in support_labels)
         local_dims = [dims[index] for index in support]
         native = chip.backend.from_array(local, dims=[local_dims, local_dims])
         embedded = embed_on_support(chip.backend, native, support, dims)
-        return local, reduction.transform_operator(ctx, jnp.asarray(chip.backend.to_array(embedded)))
+        return local, reduction.transform_operator(ctx, _array(chip.backend.to_array(embedded)))
 
     # Every collapse operator as the source chip resolves it, including the
     # captured coordinates of an earlier reduction.
@@ -326,7 +341,7 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
         mode_lowering, _ = transform_operator(boundary_ports[0]._authored_operator(chip), (mode_label,))
 
     for survivor_label in touching_labels:
-        freq_after = jnp.real(pair_params[survivor_label]["freq_after"])
+        freq_after = _real(pair_params[survivor_label]["freq_after"])
         lamb_shift = freq_after - incoming_frequencies[survivor_label]
 
         chi_value: Any
@@ -380,7 +395,7 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
         used_labels = set(survivor_labels) | {edge.label for edge in kept_couplings}
         for label_a, label_b in pairs:
             before = ctx.h[bare_index(labels, dims, label_a), bare_index(labels, dims, label_b)]
-            mediated_strength = jnp.real(pair_params[("J", label_a, label_b)] - before)
+            mediated_strength = _real(pair_params[("J", label_a, label_b)] - before)
             dj_domega_c = (
                 leg_g[label_a] * leg_g[label_b] / 2.0
                 * (1.0 / leg_delta[label_a] ** 2 + 1.0 / leg_delta[label_b] ** 2)
@@ -429,10 +444,7 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
         )
 
     # Retained energy coordinates lift to the survivors' authored coordinates.
-    transforms = [source_bases[label].energy_vectors for label in survivor_labels]
-    lift = transforms[0]
-    for transform in transforms[1:]:
-        lift = jnp.kron(lift, transform)
+    lift = _kron(*(source_bases[label].energy_vectors for label in survivor_labels))
     port_replacements: dict[str, Port] = {}
     if affected_ports:
         # The transformed boundary acts on every survivor: the reduction mixes
@@ -482,10 +494,8 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
     # of this matrix; they must not determine which elements survive.
     retained_h = reduction.retained_hamiltonian(ctx)
     final_resolved = final.resolve(frame="lab", approximation=approximation)
-    final_matrix = jnp.asarray(final_resolved.hamiltonian().matrix(backend=final.backend), dtype=complex)
-    final_lift = final_resolved.bases[survivor_labels[0]].vectors
-    for label in survivor_labels[1:]:
-        final_lift = jnp.kron(final_lift, final_resolved.bases[label].vectors)
+    final_matrix = _array(final_resolved.hamiltonian().matrix(backend=final.backend))
+    final_lift = _kron(*(final_resolved.bases[label].vectors for label in survivor_labels))
     correction = lift @ retained_h @ lift.conj().T - final_lift @ final_matrix @ final_lift.conj().T
     inherited_channels = []
     channel_changes: dict[str, frozenset[int]] = {}
@@ -511,13 +521,13 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
             ground = basis_row(p_index, labels, dims)
             for survivor in touching_labels:
                 row = basis_row(p_index, labels, dims, survivor)
-                effective_params[survivor]["purcell_rate"] += rate * jnp.abs(transformed[ground, row]) ** 2
-                effective_params[survivor]["kappa"] += rate * jnp.abs(local[0, 1]) ** 2
+                effective_params[survivor]["purcell_rate"] += rate * abs(transformed[ground, row]) ** 2
+                effective_params[survivor]["kappa"] += rate * abs(local[0, 1]) ** 2
             if mode_lowering is not None:
-                jump = jnp.asarray(local)
+                jump = local
                 number = jump.conj().T @ jump
                 adjoint = jump.conj().T @ mode_lowering @ jump - 0.5 * (number @ mode_lowering + mode_lowering @ number)
-                internal_rate = internal_rate - 2.0 * rate * jnp.real(adjoint[0, 1])
+                internal_rate = internal_rate - 2.0 * rate * _real(adjoint[0, 1])
 
     removed_owners = {id(mode), *(id(coupling) for coupling in touching)}
     for operator, rate, support, owner_label, name, _paths, owner in contributions:
@@ -525,19 +535,19 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
             support_labels = tuple(labels[index] for index in support) if support else tuple(labels)
             inherit_channel(CollapseChannel(operator, rate, name), support_labels,
                             name if owner is mode else f"{owner_label}.{name}")
-    source_lift = reduce(jnp.kron, (source_bases[label].energy_vectors for label in labels))
+    source_lift = _kron(*(source_bases[label].energy_vectors for label in labels))
     step_embedding = source_lift @ reduction.embedding(ctx) @ lift.conj().T
     projected_baths = []
     for bath in chip.baths:
         copied = bath.copy()
         copied._retained = {}
         for label, frequency, lowering, number in bath._target_operators(chip, source_bases):
-            matrices = [jnp.asarray(chip.backend.to_array(materialize_expr(op, chip.backend)))
+            matrices = [_array(chip.backend.to_array(materialize_expr(op, chip.backend)))
                         for op in (lowering, number)]
             if bath._retained is None:
                 for terms in chip.effective_terms:
                     if terms.projection is not None:
-                        matrices = [jnp.asarray(chip.backend.to_array(materialize_expr(
+                        matrices = [_array(chip.backend.to_array(materialize_expr(
                             terms.projection.apply(op, tuple(labels)), chip.backend))) for op in matrices]
             copied._retained[label] = (frequency, *[step_embedding.conj().T @ op @ step_embedding
                                                    for op in matrices])
@@ -581,7 +591,7 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
             "Purcell coupling across a sweep, of order (g/Δ)²κ/Δ; the section's internal-loss bath is vacuum."
         )
     source_factors = tuple(
-        source_bases[label].vectors.conj().T @ source_bases[label].energy_vectors for label in labels
+        _array(source_bases[label].vectors).conj().T @ _array(source_bases[label].energy_vectors) for label in labels
     )
     target_to_solver = final_lift.conj().T @ lift
     mapping = ReductionMap(
@@ -589,7 +599,7 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
         target_labels=tuple(survivor_labels), target_dims=tuple(final_resolved.dims),
         _backend=chip.backend,
         _embedding=DeferredValue(
-            lambda: reduce(jnp.kron, source_factors) @ reduction.embedding(ctx) @ target_to_solver.conj().T
+            lambda: _kron(*source_factors) @ reduction.embedding(ctx) @ target_to_solver.conj().T
         ),
     )
     reattach_equipment(

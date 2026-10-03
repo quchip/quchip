@@ -1,12 +1,12 @@
 """Schrieffer-Wolff reduction kernels (2nd order) on bare chip blocks.
 
-Numerical kernels use ``jax.numpy`` and support tracing; a conditional host
-check reports coupled singularities. No traced physics is coerced to Python
-scalars. ``H`` is the chip's bare
-Hamiltonian in the C-order product basis, ordinary GHz; block masks are static
-NumPy booleans (dims are static). The caller (the elimination handlers in
-``quchip.chip.transformations``) owns cloning, folding, and control-plane
-concerns.
+Numerical kernels follow their inputs: a concrete chip reduces with NumPy on
+the host, a traced one with ``jax.numpy``; a conditional host check reports
+coupled singularities. No traced physics is coerced to Python scalars. ``H``
+is the chip's bare Hamiltonian in the C-order product basis, ordinary GHz;
+block masks are static NumPy booleans (dims are static). The caller (the
+elimination handlers in ``quchip.chip.transformations``) owns cloning,
+folding, and control-plane concerns.
 
 The partition eliminates one mode: P = the mode in its ground state, Q =
 everything else. The generator solves the Sylvester condition
@@ -31,7 +31,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from quchip.chip.dressing import BareProductReference, Labeling, assign_rowwise_greedy, label_eigensystem
-from quchip.utils.jax_utils import contains_tracer
+from quchip.utils.jax_utils import concrete_array_module, contains_tracer
 
 if TYPE_CHECKING:
     from quchip.approximations import Approximation
@@ -47,7 +47,7 @@ def bare_hamiltonian(
     *,
     approximation: "Approximation | None" = None,
 ) -> tuple[Any, list[str], tuple[int, ...]]:
-    """Full bare Hamiltonian as a dense ``jnp`` array in GHz, with labels and dims.
+    """Full bare Hamiltonian as a dense array in GHz, with labels and dims.
 
     This analysis-only path applies the chip's approximation strategy while
     leaving the authored Hamiltonian unchanged. It intentionally materializes
@@ -59,17 +59,19 @@ def bare_hamiltonian(
     # Dressed-state analysis retains the complete authored Hamiltonian.
     # Reduction acts on the model selected for engine use.
     result = chip.resolve(frame="lab", approximation=approximation)
-    h = jnp.asarray(_analysis_matrix_ghz(result), dtype=complex)
+    h = _analysis_matrix_ghz(result)
+    records = [result.bases[device.label] for device in chip.devices]
+    transforms = [record.energy_to_solver() for record in records]
+    xp = concrete_array_module(h, transforms)
+    h = xp.asarray(h, dtype=complex)
     semantic_to_solver: Any | None = None
-    for device in chip.devices:
-        record = result.bases[device.label]
-        local_transform = record.energy_to_solver()
+    for record, local_transform in zip(records, transforms):
         if local_transform is None:
-            local_transform = jnp.eye(record.resolved_dim, dtype=jnp.complex128)
+            local_transform = xp.eye(record.resolved_dim, dtype=complex)
         semantic_to_solver = (
-            local_transform
+            xp.asarray(local_transform)
             if semantic_to_solver is None
-            else jnp.kron(semantic_to_solver, local_transform)
+            else xp.kron(semantic_to_solver, local_transform)
         )
     if semantic_to_solver is not None:
         h = semantic_to_solver.conj().T @ h @ semantic_to_solver
@@ -91,10 +93,11 @@ def mode_blocks(dims: tuple[int, ...], labels: list[str], mode_label: str) -> tu
 
 def cross_block_gap(h: Any, p_mask: Any) -> Any:
     """Smallest coupled P/Q bare-energy gap at diagnostic working precision."""
-    energies = jnp.real(jnp.diagonal(h))
+    xp = concrete_array_module(h)
+    energies = xp.real(xp.diagonal(h))
     cross = p_mask[:, None] ^ p_mask[None, :]
-    active = cross & (jnp.abs(h) > _WORKING_PRECISION)
-    return jnp.min(jnp.where(active, jnp.abs(energies[:, None] - energies[None, :]), jnp.inf))
+    active = cross & (xp.abs(h) > _WORKING_PRECISION)
+    return xp.min(xp.where(active, xp.abs(energies[:, None] - energies[None, :]), xp.inf))
 
 
 def _reject_coupled_degeneracy(invalid: Any) -> None:
@@ -126,18 +129,20 @@ def sylvester_generator(h: Any, p_mask: Any) -> tuple[Any, Any]:
         working precision — a traced scalar, diagnostics only
         (``jnp.inf`` when no cross entry couples).
     """
-    energies = jnp.real(jnp.diagonal(h))
-    v = h - jnp.diag(jnp.diagonal(h))
+    xp = concrete_array_module(h)
+    energies = xp.real(xp.diagonal(h))
+    v = h - xp.diag(xp.diagonal(h))
     cross = p_mask[:, None] ^ p_mask[None, :]
-    return interaction_generator(energies, jnp.where(cross, v, 0.0)), cross_block_gap(h, p_mask)
+    return interaction_generator(energies, xp.where(cross, v, 0.0)), cross_block_gap(h, p_mask)
 
 
 def interaction_generator(energies: Any, interaction: Any) -> Any:
     """First-order anti-Hermitian generator removing an interaction's off-diagonal part."""
+    xp = concrete_array_module(energies, interaction)
     denom = energies[:, None] - energies[None, :]
-    v = interaction - jnp.diag(jnp.diagonal(interaction))
-    invalid = jnp.any((denom == 0.0) & (v != 0.0))
-    if contains_tracer((energies, interaction)):
+    v = interaction - xp.diag(xp.diagonal(interaction))
+    invalid = xp.any((denom == 0.0) & (v != 0.0))
+    if xp is jnp:
         jax.lax.cond(
             invalid,
             lambda flag: jax.debug.callback(_reject_coupled_degeneracy, flag),
@@ -146,13 +151,14 @@ def interaction_generator(energies: Any, interaction: Any) -> Any:
         )
     else:
         _reject_coupled_degeneracy(invalid)
-    s = v / jnp.where(denom != 0.0, denom, 1.0)
-    return jnp.where(invalid, jnp.full_like(s, jnp.nan), s)
+    s = v / xp.where(denom != 0.0, denom, 1.0)
+    return xp.where(invalid, xp.full_like(s, xp.nan), s)
 
 
 def h_effective_second_order(h: Any, s: Any, p_mask: Any) -> Any:
     """``H_eff = P (H + ½[S, V]) P`` restricted to the P block (dense, GHz)."""
-    v = h - jnp.diag(jnp.diagonal(h))
+    xp = concrete_array_module(h, s)
+    v = h - xp.diag(xp.diagonal(h))
     h_eff_full = h + 0.5 * (s @ v - v @ s)
     p_index = np.flatnonzero(p_mask)
     return h_eff_full[np.ix_(p_index, p_index)]
@@ -197,14 +203,15 @@ def extract_pair_parameters(
     plus ``("J", a, b): h_eff[<1_a|, |1_b>]`` for every survivor pair — the
     effective exchange between the two single-excitation states.
     """
+    xp = concrete_array_module(h_eff)
     survivors = [lab for lab in labels if lab != mode_label]
     ground = basis_row(p_index, labels, dims)
-    e_0 = jnp.real(h_eff[ground, ground])
+    e_0 = xp.real(h_eff[ground, ground])
 
     params: dict[Any, Any] = {}
     for surv in survivors:
         row = basis_row(p_index, labels, dims, surv)
-        params[surv] = {"freq_after": jnp.real(h_eff[row, row]) - e_0}
+        params[surv] = {"freq_after": xp.real(h_eff[row, row]) - e_0}
     for i, a in enumerate(survivors):
         for b in survivors[i + 1:]:
             params[("J", a, b)] = h_eff[basis_row(p_index, labels, dims, a), basis_row(p_index, labels, dims, b)]
@@ -221,8 +228,21 @@ def _sector_eigh(h: Any, sectors: np.ndarray) -> tuple[Any, Any]:
 
     Eigenvectors have exact zeros outside their own sector, so round-off can
     neither mix sectors nor make the result depend on near-degeneracies
-    between them.
+    between them. A concrete Hamiltonian is diagonalized on the host, where
+    the differently sized blocks compile no device programs.
     """
+    if not contains_tracer(h):
+        h = np.asarray(h)
+        eigenvalues = np.zeros(h.shape[0], dtype=h.real.dtype)
+        eigenvectors = np.zeros(h.shape, dtype=h.dtype)
+        start = 0
+        for sector in np.unique(sectors):
+            rows = np.flatnonzero(sectors == sector)
+            columns = np.arange(start, start + rows.size)
+            eigenvalues[columns], eigenvectors[np.ix_(rows, columns)] = np.linalg.eigh(h[np.ix_(rows, rows)])
+            start += rows.size
+        order = np.argsort(eigenvalues, kind="stable")
+        return eigenvalues[order], eigenvectors[:, order]
     eigenvalues = jnp.zeros(h.shape[0], dtype=h.real.dtype)
     eigenvectors = jnp.zeros(h.shape, dtype=h.dtype)
     start = 0
@@ -237,6 +257,11 @@ def _sector_eigh(h: Any, sectors: np.ndarray) -> tuple[Any, Any]:
     return eigenvalues[order], eigenvectors[:, order]
 
 
+def _eigh(h: Any) -> tuple[Any, Any]:
+    """Ascending eigenpairs of a Hermitian matrix, computed on the host when it is concrete."""
+    return jnp.linalg.eigh(h) if contains_tracer(h) else np.linalg.eigh(np.asarray(h))
+
+
 def _exact_eigensystem(h: Any, dims: tuple[int, ...], sectors: np.ndarray | None = None) -> tuple[Any, Any, Labeling]:
     """Diagonalize and label one semantic-basis Hamiltonian.
 
@@ -244,8 +269,7 @@ def _exact_eigensystem(h: Any, dims: tuple[int, ...], sectors: np.ndarray | None
     Hamiltonian is known to conserve it; each sector is then diagonalized
     separately.
     """
-    h = jnp.asarray(h)
-    eigenvalues, eigenvectors = jnp.linalg.eigh(h) if sectors is None else _sector_eigh(h, sectors)
+    eigenvalues, eigenvectors = _eigh(h) if sectors is None else _sector_eigh(h, sectors)
     labeling = label_eigensystem(
         eigenvectors,
         BareProductReference(dims),
@@ -280,20 +304,21 @@ def _inverse_sqrt_hermitian(matrix: Any, iterations: int = 64) -> Any:
     mode differentiation and resolves condition numbers through ``1e8`` in
     double precision.
     """
+    xp = concrete_array_module(matrix)
     matrix = 0.5 * (matrix + matrix.conj().T)
-    scale = jnp.linalg.norm(matrix, ord="fro")
-    identity = jnp.eye(matrix.shape[0], dtype=matrix.dtype)
+    scale = xp.linalg.norm(matrix, ord="fro")
+    identity = xp.eye(matrix.shape[0], dtype=matrix.dtype)
     y = matrix / scale
     z = identity
     for _ in range(iterations):
         correction = 0.5 * (3.0 * identity - z @ y)
         y = y @ correction
         z = correction @ z
-    inverse_sqrt = z / jnp.sqrt(scale)
+    inverse_sqrt = z / xp.sqrt(scale)
     inverse_sqrt = 0.5 * (inverse_sqrt + inverse_sqrt.conj().T)
-    residual = jnp.linalg.norm(inverse_sqrt @ matrix @ inverse_sqrt - identity)
+    residual = xp.linalg.norm(inverse_sqrt @ matrix @ inverse_sqrt - identity)
     _check_exact_condition(
-        ~jnp.isfinite(residual) | (residual > 1e-9),
+        ~xp.isfinite(residual) | (residual > 1e-9),
         "The projected dressed-state Gram matrix is singular or too ill-conditioned "
         "for stable symmetric orthonormalization.",
     )
@@ -310,15 +335,17 @@ class ExactSubspace:
     kept_indices: Any
 
     def transform_operator(self, operator: Any) -> Any:
-        return self.embedding.conj().T @ jnp.asarray(operator) @ self.embedding
+        xp = concrete_array_module(self.embedding, operator)
+        return self.embedding.conj().T @ xp.asarray(operator) @ self.embedding
 
 
 def exact_subspace(eigenvalues: Any, eigenvectors: Any, kept_indices: Any, dressed_indices: Any) -> ExactSubspace:
     """Use one Lowdin map for a complete retained Hamiltonian and every operator."""
     kept = np.array(kept_indices, dtype=int, copy=True)
     kept.flags.writeable = False
-    selected = jnp.asarray(eigenvectors)[:, jnp.asarray(dressed_indices)]
-    energies = jnp.asarray(eigenvalues)[jnp.asarray(dressed_indices)]
+    xp = concrete_array_module(eigenvalues, eigenvectors, dressed_indices)
+    selected = xp.asarray(eigenvectors)[:, xp.asarray(dressed_indices)]
+    energies = xp.asarray(eigenvalues)[xp.asarray(dressed_indices)]
     w = selected[kept]
     inverse_sqrt = _inverse_sqrt_hermitian(w @ w.conj().T)
     unitary = inverse_sqrt @ w
@@ -349,21 +376,23 @@ def exact_mode_subspace(h: Any, labels: list[str], dims: tuple[int, ...], mode_l
             pair[labels.index(other)] = 1
             diagnostics.append(tuple(pair))
     rows = np.array([np.ravel_multi_index(occupation, dims) for occupation in diagnostics])
-    weights = jnp.abs(eigenvectors[rows]) ** 2
-    best = jnp.argmax(weights, axis=1)
-    duplicate = jnp.any(jnp.triu(best[:, None] == best[None, :], k=1))
+    xp = concrete_array_module(eigenvectors)
+    weights = xp.abs(eigenvectors[rows]) ** 2
+    best = xp.argmax(weights, axis=1)
+    duplicate = xp.any(xp.triu(best[:, None] == best[None, :], k=1))
     _check_exact_condition(
-        duplicate | jnp.any(jnp.max(weights, axis=1) < .5 + 1e-6),
+        duplicate | xp.any(xp.max(weights, axis=1) < .5 + 1e-6),
         f"Exact reduction of {mode_label!r} cannot label the kept block: Near-degenerate dressed states "
         "leave computational bare labels without distinct majority eigenstates. Shift the operating point "
         "or use an appropriate SW reduction.",
     )
-    return exact_subspace(eigenvalues, eigenvectors, kept, jnp.asarray(labeling.indices)[kept])
+    return exact_subspace(eigenvalues, eigenvectors, kept, xp.asarray(labeling.indices)[kept])
 
 
 def exact_pair_parameters(subspace: ExactSubspace, labels: list[str], dims: tuple[int, ...], mode_label: str,
                           survivor_labels: list[str]) -> dict:
     """Report labeled energies and exchange entries from the complete retained model."""
+    xp = concrete_array_module(subspace.energies)
     params = extract_pair_parameters(subspace.hamiltonian, subspace.kept_indices, labels, dims, mode_label)
     rows = {int(index): row for row, index in enumerate(subspace.kept_indices)}
 
@@ -375,7 +404,7 @@ def exact_pair_parameters(subspace: ExactSubspace, labels: list[str], dims: tupl
     for index, label in enumerate(survivor_labels):
         params[label]["freq_after"] = energy(label) - ground
         for other in survivor_labels[index + 1:]:
-            params[("zz", label, other)] = jnp.real(energy(label, other) - energy(label) - energy(other) + ground)
+            params[("zz", label, other)] = xp.real(energy(label, other) - energy(label) - energy(other) + ground)
     return params
 
 
@@ -390,7 +419,8 @@ def pathway_attribution(h: Any, s: Any, p_mask: Any, i_idx: int, j_idx: int) -> 
     returned (diagnostics remain complete either way — extra entries are
     exact zeros).
     """
-    v = h - jnp.diag(jnp.diagonal(h))
+    xp = concrete_array_module(h, s)
+    v = h - xp.diag(xp.diagonal(h))
     amounts = 0.5 * (s[i_idx, :] * v[:, j_idx] - v[i_idx, :] * s[:, j_idx])
 
     q_index = np.flatnonzero(~np.asarray(p_mask))
