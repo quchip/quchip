@@ -1066,9 +1066,12 @@ def drive_bands(
                 for label in pair[1:]:
                     vectors = jnp.kron(vectors, bases[label].vectors)
                 matrix = vectors @ jnp.asarray(backend.to_array(local_band)) @ vectors.conj().T
+                # The band changes the total energy level by the sum of its charges; declaring it keeps a
+                # conserving projection's structurally empty bands out even when the drive is traced.
+                band_expr = PhysicsExpr.from_matrix(matrix, labels=pair, dims=local_dims,
+                                                    excitation_changes=(sum(charges),))
                 projected, active_support = _retained_operator(
-                    chip, PhysicsExpr.from_matrix(matrix, labels=pair, dims=local_dims),
-                    support, backend, f"drive:{drive.label}", bases=bases)
+                    chip, band_expr, support, backend, f"drive:{drive.label}", bases=bases)
                 local_band = _project_on_support(chip, projected, active_support, bases, backend)
                 transformed = _authored_bands(chip, projected, local_band, active_support, bases, backend)
             else:
