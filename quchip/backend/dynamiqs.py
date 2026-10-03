@@ -164,14 +164,25 @@ def _dia_parts(op: Any) -> tuple[tuple[int, ...], Any] | None:
     return None
 
 
+def _sum_rows(rows: np.ndarray, values: Any, count: int) -> Any:
+    """Add ``values`` into ``count`` complex rows at host indices ``rows``; distinct rows need no scatter."""
+    values = jnp.asarray(values, dtype=jnp.complex128)
+    if np.unique(rows).size < rows.size:
+        return jnp.zeros((count, values.shape[-1]), dtype=jnp.complex128).at[rows].add(values)
+    order = np.argsort(rows)
+    if rows.size == count and np.array_equal(rows[order], np.arange(count)):
+        return values if np.array_equal(order, np.arange(count)) else values[order]
+    return jnp.zeros((count, values.shape[-1]), dtype=jnp.complex128).at[rows].set(values)
+
+
 def _kron_dia_traced(left: tuple[tuple[int, ...], Any],
                      right: tuple[tuple[int, ...], Any]) -> tuple[tuple[int, ...], Any]:
     """:func:`_kron_dia` for diagonals that may be traced."""
     (left_offsets, left_diags), (right_offsets, right_diags) = left, right
     offsets = (np.asarray(left_offsets)[:, None] * right_diags.shape[-1] + np.asarray(right_offsets)).ravel()
     unique, inverse = np.unique(offsets, return_inverse=True)
-    diags = jnp.zeros((unique.size, left_diags.shape[-1] * right_diags.shape[-1]), dtype=jnp.complex128)
-    return tuple(int(offset) for offset in unique), diags.at[inverse].add(jnp.kron(left_diags, right_diags))
+    product = jnp.kron(left_diags, right_diags)
+    return tuple(int(offset) for offset in unique), _sum_rows(inverse.ravel(), product, unique.size)
 
 
 def _matmul_dia_traced(left: tuple[tuple[int, ...], Any],
@@ -652,10 +663,9 @@ class DynamiqsBackend(Backend):
                 rows = [index[offset] for offset in term_offsets]
                 total[rows] += np.asarray(term_diags) if _is_unit(raw) else coefficient * np.asarray(term_diags)
         else:
-            total = jnp.zeros(shape, dtype=jnp.complex128)
-            for (raw, _), (term_offsets, term_diags) in zip(terms, parts):
-                rows = np.asarray([index[offset] for offset in term_offsets], dtype=int)
-                total = total.at[rows].add(term_diags if _is_unit(raw) else raw * term_diags)
+            rows = np.asarray([index[offset] for term_offsets, _ in parts for offset in term_offsets], dtype=int)
+            scaled = [diags if _is_unit(raw) else raw * diags for (raw, _), (_, diags) in zip(terms, parts)]
+            total = _sum_rows(rows, scaled[0] if len(scaled) == 1 else jnp.concatenate(scaled), shape[0])
         return _dia_qarray(dims.pop(), tuple(offsets), total)
 
     def tensor(self, *operators: Operator) -> Operator:
