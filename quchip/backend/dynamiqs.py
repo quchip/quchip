@@ -190,6 +190,25 @@ def _dia_to_dense(offsets: Sequence[int], diags: np.ndarray) -> np.ndarray:
     return dense
 
 
+def _host_matrix(op: Any) -> np.ndarray | None:
+    """Dense host matrix of a concrete, unbatched qarray, else ``None``."""
+    sparse = _host_dia(op)
+    return _dia_to_dense(*sparse) if sparse is not None else _host_dense(op)
+
+
+def _dense_to_dia(matrix: np.ndarray) -> tuple[tuple[int, ...], np.ndarray]:
+    """Offsets and column-aligned diagonals holding a host matrix's nonzero entries."""
+    rows, columns = np.nonzero(matrix)
+    offsets = np.unique(columns - rows) if rows.size else np.zeros(1, dtype=int)
+    n = matrix.shape[-1]
+    cols = np.arange(n)
+    diags = np.zeros((offsets.size, n), dtype=complex)
+    for row, offset in enumerate(offsets):
+        valid = (cols - offset >= 0) & (cols - offset < n)
+        diags[row, valid] = matrix[cols[valid] - offset, cols[valid]]
+    return tuple(int(offset) for offset in offsets), diags
+
+
 def _kron_dia(left: tuple[tuple[int, ...], np.ndarray],
               right: tuple[tuple[int, ...], np.ndarray]) -> tuple[tuple[int, ...], np.ndarray]:
     """Kronecker product of two host sparse-DIA operators, adding diagonals that share an offset."""
@@ -538,6 +557,16 @@ class DynamiqsBackend(Backend):
         keep_arg = tuple(keep) if isinstance(keep, list) else keep
         reduced = dq.ptrace(stacked_states, keep_arg, dims=tuple(dims))
         return jnp.asarray(reduced.to_jax(), dtype=jnp.complex128)
+
+    def matmul(self, a: Operator, b: Operator) -> Operator:
+        """Multiply concrete operators on the host, keeping a product of sparse-DIA factors sparse."""
+        left, right = _host_matrix(a), _host_matrix(b)
+        if left is None or right is None or tuple(a.dims) != tuple(b.dims):
+            return super().matmul(a, b)
+        product = left @ right
+        if a.layout is dq.dia and b.layout is dq.dia:
+            return _dia_qarray(tuple(a.dims), *_dense_to_dia(product))
+        return dq.asqarray(jnp.asarray(product), dims=tuple(a.dims))
 
     def linear_combination(self, terms: Sequence[tuple[Any, Operator]]) -> Operator:
         """Accumulate sparse-DIA terms into one qarray, on the host when every term is concrete.

@@ -265,3 +265,23 @@ def test_linear_combination_matches_operator_arithmetic(dynamiqs_backend) -> Non
         return dynamiqs_backend.linear_combination([(scale, a), (1, n)]).to_jax()
 
     npt.assert_allclose(np.asarray(jax.jit(traced)(0.7)), np.asarray((0.7 * a + n).to_jax()), atol=1e-14)
+
+
+def test_matmul_matches_operator_arithmetic(dynamiqs_backend) -> None:
+    """Sparse-DIA and dense products equal qarray products, and two sparse-DIA factors stay sparse."""
+    import jax
+    import dynamiqs as dq
+
+    a = dynamiqs_backend.tensor(dynamiqs_backend.destroy(3), dynamiqs_backend.identity(2))
+    x = dynamiqs_backend.tensor(dynamiqs_backend.identity(3), dynamiqs_backend.create(2))
+    dense = dq.asqarray(np.arange(36.0).reshape(6, 6) + 0.5j, dims=(3, 2))
+    for left, right in [(a.dag(), a), (a, x), (a, dense), (dense, dense)]:
+        product = dynamiqs_backend.matmul(left, right)
+        expected = (left @ right).to_jax()
+        npt.assert_allclose(np.asarray(product.to_jax()), np.asarray(expected), rtol=0, atol=1e-12)
+    assert dynamiqs_backend.matmul(a.dag(), a).layout is dq.dia
+
+    def traced(scale):
+        return dynamiqs_backend.matmul(scale * a.dag(), a).to_jax()
+
+    npt.assert_allclose(np.asarray(jax.jit(traced)(0.7)), np.asarray((0.7 * a.dag() @ a).to_jax()), atol=1e-14)

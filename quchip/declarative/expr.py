@@ -6,6 +6,7 @@ import inspect
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from math import prod
+from numbers import Number
 from typing import Any, Mapping
 
 import jax.numpy as jnp
@@ -827,6 +828,8 @@ def materialize_expr(
     if missing:
         raise UnboundParameterError("Missing numerical bindings: " + ", ".join(missing))
 
+    combine = getattr(backend, "linear_combination", None)
+
     def lower(node: PhysicsExpr) -> Any:
         if node.kind == "literal":
             return node.args[0]
@@ -886,15 +889,21 @@ def materialize_expr(
             raise ValueError(f"Cannot embed a contribution with support {support}.")
         left = lower(node.args[0])
         right = lower(node.args[1])
-        if node.kind == "add":
-            return left + right
-        if node.kind == "sub":
-            return left - right
+        # A backend that combines operators itself can form concrete sums
+        # and scalings without device programs.
+        if node.kind in ("add", "sub"):
+            sign = 1 if node.kind == "add" else -1
+            if combine is not None and not (_is_scalar(left) or _is_scalar(right)):
+                return combine(((1, left), (sign, right)))
+            return left + right if sign == 1 else left - right
         if node.kind == "matmul":
             return backend.matmul(left, right)
         if node.kind == "tensor":
             return backend.tensor(left, right)
         if node.kind in ("scale", "mul"):
+            if combine is not None and _is_scalar(left) != _is_scalar(right):
+                scalar, operator = (left, right) if _is_scalar(left) else (right, left)
+                return combine(((scalar, operator),))
             return left * right
         if node.kind == "pow":
             exponent = node.args[1]
@@ -904,6 +913,11 @@ def materialize_expr(
         raise TypeError(f"Unknown PhysicsExpr kind {node.kind!r}.")
 
     return lower(expr)
+
+
+def _is_scalar(value: Any) -> bool:
+    """Whether a lowered value is a number rather than an operator."""
+    return isinstance(value, Number) or getattr(value, "shape", None) == ()
 
 
 class _ArrayLowerer:
