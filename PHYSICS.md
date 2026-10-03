@@ -478,6 +478,11 @@ A band of a scheduled drive or port coupling at frequency `f` is static when
 Σ_d k_d omega_d = f
 ```
 
+Assembly evaluates `Σ_d k_d omega_d` by first adding the integer changes of
+devices that share a frame frequency. A band whose changes cancel among them is
+then exactly static, and drive bands with equal carriers share one term, rather
+than differing by floating-point residues of about 1e-14 GHz.
+
 For example, a two-photon cavity pump at 10.2 GHz imposes
 `2 omega_cavity = 10.2 GHz` and pins the cavity frame to 5.1 GHz. Network
 cascades add coupling constraints. Dispersive and cross-Kerr terms have a zero

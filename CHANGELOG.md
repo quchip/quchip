@@ -19,6 +19,12 @@ This file records notable user-visible changes to quchip.
   authored operator, so band decomposition no longer depends on traced values.
   Ports follow the same rule, both those on surviving modes and those an
   elimination transformed. ([#78](https://github.com/quchip/quchip/issues/78), [#79](https://github.com/quchip/quchip/issues/79))
+- A band whose level changes cancel among devices that share a frame frequency
+  is now exactly static. Its frame frequency was summed one device at a time,
+  so level changes such as (3, −1, −2) left carriers of about 1e-14 GHz. An
+  exactly reduced two-qubit readout chip in a 5.2 GHz frame resolved 44 static
+  couplings as time-dependent terms and split drive bands with equal carriers
+  into separate terms. ([#78](https://github.com/quchip/quchip/issues/78))
 - QuTiP `mesolve`, `smesolve` and stationary solves raise `MemoryError` before
   assembling a superoperator whose estimated peak exceeds available memory,
   instead of being killed by the operating system. The dynamiqs stationary

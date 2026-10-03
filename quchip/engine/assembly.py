@@ -25,7 +25,7 @@ import itertools
 import warnings
 from dataclasses import dataclass, replace
 from math import prod
-from typing import TYPE_CHECKING, Any, Callable, Mapping, cast
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence, cast
 
 import jax
 import jax.numpy as jnp
@@ -510,6 +510,22 @@ def _frequency_groups(frequencies: tuple[Any, ...]) -> tuple[tuple[int, ...], ..
     return tuple(tuple(group) for group in groups)
 
 
+def _band_frame_frequency(weights: Sequence[int], frequencies: Sequence[Any]) -> Any:
+    """Return a band's frame frequency, the sum of each level change times its device's frame frequency.
+
+    Changes on devices that share a frame frequency are added as integers
+    first, so a band whose changes cancel there is exactly static rather than
+    carrying a round-off frequency.
+    """
+    frequencies = tuple(frequencies)
+    total: Any = 0.0
+    for group in _frequency_groups(frequencies):
+        weight = sum(int(weights[index]) for index in group)
+        if weight:
+            total = total + weight * frequencies[group[0]]
+    return total
+
+
 def _port_frame_frequency(
     chip: "Chip",
     port: Any,
@@ -782,7 +798,7 @@ def _resolve_coupling_terms(
         sub_bands = _authored_bands(chip, authored, h_full, support, resolution.bases, backend, tag="coupling_local")
         retained: list[Operator] = []
         for weights, band_canonical in sub_bands.items():
-            osc_freq = sum(weight * frequency for weight, frequency in zip(weights, frequencies) if weight)
+            osc_freq = _band_frame_frequency(weights, frequencies)
             if filters_terms and not approximation.keeps_operator_band(weights):
                 band_values = band_canonical.values
                 xp = array_namespace(band_values)
@@ -849,7 +865,7 @@ def _component_time_terms(
         frequencies = tuple(resolved_frame.frequencies.get(label, 0.0) for label in owner_labels)
 
         for weights, band in bands.items():
-            oscillation = sum(weight * frequency for weight, frequency in zip(weights, frequencies) if weight)
+            oscillation = _band_frame_frequency(weights, frequencies)
             if len(support) == 2 and not approximation.keeps_operator_band(weights):
                 values = band.values
                 xp = array_namespace(values)
@@ -1086,8 +1102,7 @@ def _resolved_drive_bands(
     for record, embedded, term_index, source_weight in drive_bands(
         chip, drive, target, bases, dims, backend, approximation
     ):
-        carrier = sum(charge * frequencies.get(label, 0.0)
-                      for label, charge in zip(record.devices, record.charges))
+        carrier = _band_frame_frequency(record.charges, [frequencies.get(label, 0.0) for label in record.devices])
         resolved.append(
             _ResolvedDriveBand(
                 operator=embedded,
@@ -1413,7 +1428,9 @@ def _collect_dropped_terms(chip: "Chip", resolved_frame: "ResolvedFrame") -> tup
         for record in coupling.dropped_terms():
             weights = record.band_weights
             if record.frequency is None and weights is not None and len(weights) == len(endpoint_labels):
-                freq = sum(w * resolved_frame.frequencies.get(lbl, 0.0) for w, lbl in zip(weights, endpoint_labels))
+                freq = _band_frame_frequency(
+                    weights, [resolved_frame.frequencies.get(label, 0.0) for label in endpoint_labels],
+                )
                 record = replace(record, frequency=abs(freq))
             gathered.append(record)
     return tuple(gathered)

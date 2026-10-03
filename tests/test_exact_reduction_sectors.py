@@ -3,7 +3,10 @@ import jax
 import numpy as np
 import pytest
 
-from quchip import Capacitive, Chip, DuffingTransmon, PortNetwork, Resonator, RWA, eliminate, simulate
+from quchip import (
+    Capacitive, ChargeDrive, Chip, DuffingTransmon, Gaussian, PortNetwork, QuantumSequence, Resonator, RWA,
+    eliminate, simulate,
+)
 from quchip.chip.sw import excitation_sectors
 
 pytestmark = pytest.mark.optional_backend
@@ -112,6 +115,24 @@ def test_kept_ports_resolve_identically_inside_jit(method):
     # Nothing traced but the resolve itself, then a traced survivor parameter.
     assert jax.jit(lambda x: (reduced.resolve(), x)[1])(1.0) == 1.0
     _assert_jit_matches_eager(lambda t1: reduced.with_params({"q1.T1": t1}), 30000.)
+
+
+def test_driven_reduction_in_a_common_frame_has_only_its_drive_carriers():
+    """Exactly static retained bands stay static, and drive bands sharing a carrier lower to one term."""
+    reduced = eliminate(_readout_chip(levels=(4, 4, 2, 2, 2)), "bus", method="exact").chip
+    drives = [ChargeDrive(target=reduced[label], label=f"drive_{label}") for label in ("q1", "q2")]
+    reduced.wire(*drives)
+    sequence = QuantumSequence(reduced)
+    for drive in drives:
+        sequence.schedule(drive, envelope=Gaussian(duration=40.0, amplitude=0.02, sigmas=4.0),
+                          freq=float(reduced.freq(reduced[drive.target_label])))
+
+    rotating, lab = sequence.resolve(), sequence.resolve(frame="lab")
+
+    # Level changes up to ±3 used to leave 1e-14 GHz carriers on static
+    # couplings and split equal drive carriers into separate terms.
+    assert not rotating.slh.H.dynamic_terms
+    assert len(rotating.applied_hamiltonian.dynamic_terms) == len(lab.applied_hamiltonian.dynamic_terms)
 
 
 def test_transformed_port_declares_its_excitation_change_inside_jit():
