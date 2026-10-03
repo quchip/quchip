@@ -4,6 +4,40 @@ This file records notable user-visible changes to quchip.
 
 ## Unreleased
 
+### Changes since 0.4.0
+
+#### Fixes
+
+- `eliminate(..., method="exact")` of a chip whose approximation conserves total
+  excitation number, such as `RWA()`, now diagonalizes each excitation sector
+  separately. Retained terms no longer carry ~1e-12 entries between sectors,
+  which made the rotating-frame collapse-operator check fail at some parameter
+  values. ([#78](https://github.com/quchip/quchip/issues/78))
+- Reduced chips resolve the same under `jax.jit` and `jax.grad` as eagerly.
+  `EffectiveTerms.excitation_changes` declares each retained channel's total
+  excitation change, and projected surviving operators keep the change of their
+  authored operator, so band decomposition no longer depends on traced values.
+  Ports follow the same rule, both those on surviving modes and those an
+  elimination transformed. ([#78](https://github.com/quchip/quchip/issues/78), [#79](https://github.com/quchip/quchip/issues/79))
+- A band whose level changes cancel among devices that share a frame frequency
+  is now exactly static. Its frame frequency was summed one device at a time,
+  so level changes such as (3, −1, −2) left carriers of about 1e-14 GHz. An
+  exactly reduced two-qubit readout chip in a 5.2 GHz frame resolved 44 static
+  couplings as time-dependent terms and split drive bands with equal carriers
+  into separate terms. ([#78](https://github.com/quchip/quchip/issues/78))
+- QuTiP `mesolve`, `smesolve` and stationary solves raise `MemoryError` before
+  assembling a superoperator whose estimated peak exceeds available memory,
+  instead of being killed by the operating system. The dynamiqs stationary
+  Liouvillian uses the same check. ([#80](https://github.com/quchip/quchip/issues/80))
+
+#### Performance
+
+- The QuTiP backend stores dense operators with at most one quarter nonzero
+  entries as CSR, so superoperator terms built from reduced-model bands and
+  jumps stay sparse. A lossy `mesolve` of a reduced model at Hilbert dimension
+  144 now peaks near 1.3 GB instead of an estimated 1.2 TB.
+  ([#80](https://github.com/quchip/quchip/issues/80))
+
 ## [0.4.0] - 2026-09-29 <a id="quchip-0-4-0"></a>
 
 ### 0.4 series highlights

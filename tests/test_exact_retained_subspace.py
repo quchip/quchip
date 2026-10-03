@@ -4,18 +4,18 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from quchip import Capacitive, Chip, DuffingTransmon, Exact, Resonator, eliminate
+from quchip import RWA, Capacitive, Chip, DuffingTransmon, Exact, Resonator, eliminate
 from quchip.chip.sw import bare_hamiltonian
 
 
-def _chip(backend, g=.08):
+def _chip(backend, g=.08, approximation=Exact()):
     q = DuffingTransmon(freq=5., anharmonicity=-.3, levels=4, label='q')
     r = Resonator(freq=7., levels=4, T1=100., thermal_occupation=.4, label='r')
-    return Chip([q, r], [Capacitive(q, r, g=g, label='qr')], backend=backend, approximation=Exact())
+    return Chip([q, r], [Capacitive(q, r, g=g, label='qr')], backend=backend, approximation=approximation)
 
 
 def _oracle(chip):
-    h, _, dims = bare_hamiltonian(chip, approximation=Exact())
+    h, _, dims = bare_hamiltonian(chip, approximation=chip.approximation)
     h = np.asarray(h)
     energies, vectors = np.linalg.eigh(h)
     bare = np.arange(dims[0]) * dims[1]
@@ -30,9 +30,12 @@ def _oracle(chip):
 
 
 @pytest.mark.validation
+@pytest.mark.parametrize('approximation', [Exact(), RWA()], ids=['exact', 'rwa'])
 @pytest.mark.parametrize('backend', ['qutip', 'dynamiqs'])
-def test_exact_model_retains_full_matrix_and_thermal_jump_coordinates(backend):
-    full = _chip(backend)
+def test_exact_model_retains_full_matrix_and_thermal_jump_coordinates(backend, approximation):
+    # Under RWA() the reduction diagonalizes each excitation sector separately;
+    # the oracle diagonalizes the full matrix.
+    full = _chip(backend, approximation=approximation)
     expected_h, embedding, *_ = _oracle(full)
     expected_jumps = [embedding.conj().T @ np.asarray(full.backend.to_array(op)) @ embedding
                       for op in full.backend._collapse_operators(full.resolve(frame='lab'))]

@@ -78,3 +78,11 @@ def test_rwa_rejects_invalid_explicit_band_sets():
         RWA(keep_bands={(0, 1.0)})
     with pytest.raises(ValueError, match="at least one"):
         RWA(keep_bands=set())
+
+
+def test_excitation_number_conservation_follows_the_retained_bands():
+    """Only approximations whose retained bands all have zero total weight conserve excitation number."""
+    assert RWA().conserves_excitation_number()
+    assert RWA(keep_bands={(1, -1), (-1, 1)}).conserves_excitation_number()
+    assert not RWA(keep_bands={(1, -1), (1, 1)}).conserves_excitation_number()
+    assert not Exact().conserves_excitation_number()

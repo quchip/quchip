@@ -25,7 +25,7 @@ import itertools
 import warnings
 from dataclasses import dataclass, replace
 from math import prod
-from typing import TYPE_CHECKING, Any, Callable, Mapping, cast
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence, cast
 
 import jax
 import jax.numpy as jnp
@@ -35,11 +35,12 @@ from quchip.approximations import Approximation, RWA, require_approximation
 from quchip.backend import _backend_context
 from quchip.backend.protocol import Backend, Operator
 from quchip.control.drive import BaseDrive, CouplingDrive
-from quchip.chip.effective import EffectiveTerms
+from quchip.chip.effective import EffectiveTerms, authored_excitation_changes
 from quchip.control.signal import AnalyticSignal, SignalKey
 from quchip.declarative.expr import (
     PhysicsExpr,
     as_operator_expr,
+    declared_excitation_changes,
     is_energy_diagonal,
     materialize_array,
     materialize_expr,
@@ -206,14 +207,18 @@ def _prepare_engine_assembly(
 
 
 def _retained_operator(chip: "Chip", operator: Any, support: tuple[int, ...], backend: Backend,
-                       owner_key: str | None = None) -> tuple[Any, tuple[int, ...]]:
+                       owner_key: str | None = None, *,
+                       bases: Mapping[str, BasisRecord] | None = None) -> tuple[Any, tuple[int, ...]]:
     """Apply a retained model's captured coordinates to a surviving physical operator."""
     labels = tuple(chip.devices[i].label for i in support)
     for terms in chip.effective_terms:
         projection = terms.projection
         if projection is not None and set(labels) <= set(projection.target_labels):
+            changes = None if terms.excitation_changes is None else authored_excitation_changes(
+                operator, labels, backend, bases,
+            )
             matrix = backend.to_array(materialize_expr(operator, backend))
-            return (projection.apply(matrix, labels, owner_key),
+            return (projection.apply(matrix, labels, owner_key, excitation_changes=changes),
                     tuple(chip.device_index(label) for label in projection.target_labels))
         if projection is not None and set(labels) & set(projection.target_labels):
             raise NotImplementedError("An operator spans a partial retained projection.")
@@ -454,14 +459,20 @@ def _concrete_port_resolution(
             records,
             backend,
         )
-        values = np.asarray(backend.to_array(operator), dtype=complex)
+        payload = backend.to_array(operator)
         transform = _support_semantic_transform(chip, support, records)
+        # A port transformed inside jit or grad keeps a traced payload. Its
+        # band decomposition then keeps every candidate the declared
+        # excitation changes allow, so it is not pruned here.
+        xp = jnp if contains_tracer(payload) else np
+        values = xp.asarray(payload, dtype=complex)
         if transform is not None:
             concrete_transform = np.asarray(transform, dtype=complex)
             values = concrete_transform.conj().T @ values @ concrete_transform
-    norm = float(np.linalg.norm(values))
-    if norm > 0.0:
-        values = np.where(np.abs(values) > 1e-10 * norm, values, 0.0)
+    if xp is np:
+        norm = float(np.linalg.norm(values))
+        if norm > 0.0:
+            values = np.where(np.abs(values) > 1e-10 * norm, values, 0.0)
     return CanonicalOperator.from_dense(
         values,
         dims=tuple(records[label].resolved_dim for label in labels),
@@ -476,7 +487,9 @@ def _port_bands(
 ) -> dict[tuple[int, ...], CanonicalOperator]:
     """Excitation-change bands of one explicit port operator in its semantic product basis."""
     canonical = _concrete_port_resolution(chip, port, backend, resolution)
-    return _decompose_product_canonical_bands(canonical, canonical.dims)
+    return _decompose_product_canonical_bands(
+        canonical, canonical.dims, total_changes=declared_excitation_changes(port.operator),
+    )
 
 
 def _frequency_groups(frequencies: tuple[Any, ...]) -> tuple[tuple[int, ...], ...]:
@@ -495,6 +508,22 @@ def _frequency_groups(frequencies: tuple[Any, ...]) -> tuple[tuple[int, ...], ..
         else:
             groups.append([index])
     return tuple(tuple(group) for group in groups)
+
+
+def _band_frame_frequency(weights: Sequence[int], frequencies: Sequence[Any]) -> Any:
+    """Return a band's frame frequency, the sum of each level change times its device's frame frequency.
+
+    Changes on devices that share a frame frequency are added as integers
+    first, so a band whose changes cancel there is exactly static rather than
+    carrying a round-off frequency.
+    """
+    frequencies = tuple(frequencies)
+    total: Any = 0.0
+    for group in _frequency_groups(frequencies):
+        weight = sum(int(weights[index]) for index in group)
+        if weight:
+            total = total + weight * frequencies[group[0]]
+    return total
 
 
 def _port_frame_frequency(
@@ -626,12 +655,13 @@ def _authored_bands(
     if is_energy_diagonal(authored, bases):
         return {(0,) * len(support): canonical}
     transform = _support_semantic_transform(chip, support, bases)
+    changes = declared_excitation_changes(authored)
     if len(support) == 1:
         return {(weight,): band for weight, band in decompose_canonical_bands(
-            canonical, dims[0], semantic_to_solver=transform,
+            canonical, dims[0], semantic_to_solver=transform, total_changes=changes,
         ).items()}
     return _decompose_product_canonical_bands(
-        canonical, dims, semantic_to_solver=transform,
+        canonical, dims, semantic_to_solver=transform, total_changes=changes,
     )
 
 
@@ -768,7 +798,7 @@ def _resolve_coupling_terms(
         sub_bands = _authored_bands(chip, authored, h_full, support, resolution.bases, backend, tag="coupling_local")
         retained: list[Operator] = []
         for weights, band_canonical in sub_bands.items():
-            osc_freq = sum(weight * frequency for weight, frequency in zip(weights, frequencies) if weight)
+            osc_freq = _band_frame_frequency(weights, frequencies)
             if filters_terms and not approximation.keeps_operator_band(weights):
                 band_values = band_canonical.values
                 xp = array_namespace(band_values)
@@ -828,14 +858,14 @@ def _component_time_terms(
             owner=owner,
             scope=owner.label,
         )
-        local_op, support = _retained_operator(chip, local_op, support, backend)
+        local_op, support = _retained_operator(chip, local_op, support, backend, bases=resolution.bases)
         owner_labels = tuple(chip.devices[index].label for index in support)
         projected = _project_on_support(chip, local_op, support, resolution.bases, backend)
         bands = _authored_bands(chip, local_op, projected, support, resolution.bases, backend, tag=tag)
         frequencies = tuple(resolved_frame.frequencies.get(label, 0.0) for label in owner_labels)
 
         for weights, band in bands.items():
-            oscillation = sum(weight * frequency for weight, frequency in zip(weights, frequencies) if weight)
+            oscillation = _band_frame_frequency(weights, frequencies)
             if len(support) == 2 and not approximation.keeps_operator_band(weights):
                 values = band.values
                 xp = array_namespace(values)
@@ -1039,7 +1069,7 @@ def drive_bands(
                 matrix = vectors @ jnp.asarray(backend.to_array(local_band)) @ vectors.conj().T
                 projected, active_support = _retained_operator(
                     chip, PhysicsExpr.from_matrix(matrix, labels=pair, dims=local_dims),
-                    support, backend, f"drive:{drive.label}")
+                    support, backend, f"drive:{drive.label}", bases=bases)
                 local_band = _project_on_support(chip, projected, active_support, bases, backend)
                 transformed = _authored_bands(chip, projected, local_band, active_support, bases, backend)
             else:
@@ -1072,8 +1102,7 @@ def _resolved_drive_bands(
     for record, embedded, term_index, source_weight in drive_bands(
         chip, drive, target, bases, dims, backend, approximation
     ):
-        carrier = sum(charge * frequencies.get(label, 0.0)
-                      for label, charge in zip(record.devices, record.charges))
+        carrier = _band_frame_frequency(record.charges, [frequencies.get(label, 0.0) for label in record.devices])
         resolved.append(
             _ResolvedDriveBand(
                 operator=embedded,
@@ -1399,7 +1428,9 @@ def _collect_dropped_terms(chip: "Chip", resolved_frame: "ResolvedFrame") -> tup
         for record in coupling.dropped_terms():
             weights = record.band_weights
             if record.frequency is None and weights is not None and len(weights) == len(endpoint_labels):
-                freq = sum(w * resolved_frame.frequencies.get(lbl, 0.0) for w, lbl in zip(weights, endpoint_labels))
+                freq = _band_frame_frequency(
+                    weights, [resolved_frame.frequencies.get(label, 0.0) for label in endpoint_labels],
+                )
                 record = replace(record, frequency=abs(freq))
             gathered.append(record)
     return tuple(gathered)

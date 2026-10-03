@@ -65,6 +65,9 @@ class DeviceReductionContext:
         The Sylvester generator rotating the P/Q partition of ``h``.
     p_mask
         Boolean mask selecting the kept (P) block of the product basis.
+    sectors
+        Total excitation number of each product state when ``h`` conserves
+        it, else ``None``.
     """
 
     mode_label: str
@@ -73,6 +76,7 @@ class DeviceReductionContext:
     dims: tuple[int, ...]
     h: Any
     p_mask: Any
+    sectors: np.ndarray | None = None
 
     @cached_property
     def s(self) -> Any:
@@ -89,7 +93,8 @@ class DeviceReductionContext:
 
     @cached_property
     def exact(self) -> Any:
-        return exact_mode_subspace(self.h, self.labels, self.dims, self.mode_label, self.survivor_labels)
+        return exact_mode_subspace(self.h, self.labels, self.dims, self.mode_label, self.survivor_labels,
+                                   self.sectors)
 
 
 class ReductionMethod:

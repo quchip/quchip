@@ -45,6 +45,14 @@ class Approximation(ABC):
         del weights
         return True
 
+    def conserves_excitation_number(self) -> bool:
+        """Return whether every retained band conserves the total energy-level index.
+
+        Elimination uses this structural guarantee to keep its exact reduction
+        and captured coordinate maps within total-excitation sectors.
+        """
+        return False
+
     def to_dict(self) -> dict[str, Any]:
         """Return the stable serialized strategy tag."""
         if type(self) is Exact:
@@ -123,6 +131,10 @@ class RWA(Approximation):
         if self.keep_bands is not None:
             return weights in self.keep_bands
         return sum(weights) == 0
+
+    def conserves_excitation_number(self) -> bool:
+        """Return whether every retained band has zero total weight."""
+        return self.keep_bands is None or all(sum(band) == 0 for band in self.keep_bands)
 
 
 def require_approximation(value: Any) -> Approximation:

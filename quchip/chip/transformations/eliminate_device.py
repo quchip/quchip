@@ -33,7 +33,7 @@ import numpy as np
 
 from quchip.utils.values import DeferredValue
 from quchip.chip.couplings import Capacitive, TunableCapacitive
-from quchip.chip.effective import EffectiveTerms, OperatorProjection
+from quchip.chip.effective import EffectiveTerms, OperatorProjection, authored_excitation_changes
 from quchip.declarative.dissipation import CollapseChannel
 from quchip.chip.ports import Port
 from quchip.engine.bands import embed_on_support
@@ -44,6 +44,7 @@ from quchip.chip.sw import (
     basis_row,
     mode_blocks,
     cross_block_gap,
+    excitation_sectors,
 )
 from quchip.chip.transformations.dispatch import EliminationTarget, register_elimination_target
 from quchip.chip.transformations.methods import DeviceReductionContext, lookup_reduction_method
@@ -56,7 +57,7 @@ from quchip.chip.transformations.plumbing import (
 )
 from quchip.chip.transformations.result import EliminationResult, LazyEffectiveParams, ReductionMap
 from quchip.control.drive import FluxDrive
-from quchip.declarative.expr import materialize_expr
+from quchip.declarative.expr import PhysicsExpr, materialize_expr
 from quchip.declarative.models import CouplingModel
 from quchip.declarative.parameters import Scalar, parameter
 from quchip.devices.protocols import FrequencyControlled
@@ -84,6 +85,20 @@ class _MediatedExchange(CouplingModel):
                     + backend.tensor(a.device.sigma_minus, b.device.sigma_plus))
         return as_operator_expr(operator, labels=(a.label, b.label),
                                 dims=(a.space.dimension, b.space.dimension), name="exchange")
+
+
+def _conserves_excitation_number(chip: "Chip", approximation: Any) -> bool:
+    """Whether the static model structurally conserves the total energy-level index.
+
+    Device Hamiltonians are diagonal in their energy bases, the approximation
+    keeps only zero-total bands, retained terms declare conservation, and no
+    port pair generates a cascade Hamiltonian.
+    """
+    if not approximation.conserves_excitation_number():
+        return False
+    if any(terms.excitation_changes is None for terms in chip.effective_terms):
+        return False
+    return chip.port_network is None or not chip.port_network._active_generated_pairs()
 
 
 def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
@@ -237,6 +252,12 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
         isinstance(line, FluxDrive) for line, _ in retarget_plan
     )
     h, labels, dims = bare_hamiltonian(chip, approximation=approximation)
+    # A structurally conserving model has no matrix elements between
+    # total-excitation sectors; removing their round-off keeps both routes,
+    # and every captured map, inside the sectors.
+    sectors = excitation_sectors(dims) if _conserves_excitation_number(chip, approximation) else None
+    if sectors is not None:
+        h = jnp.where(sectors[:, None] == sectors[None, :], h, 0.0)
     # Survivor pairs are keyed in the chip's device order everywhere — the
     # pair extraction, the exact route, and the fold loop below — so the two
     # sides of every ("J", a, b) lookup agree no matter what order the legs
@@ -255,6 +276,7 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
         dims=dims,
         h=h,
         p_mask=p_mask,
+        sectors=sectors,
     )
     pair_params = reduction.pair_parameters(ctx)
     incoming_frequencies = {
@@ -295,7 +317,7 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
             def _chi() -> Any:
                 from quchip.chip.analysis import kerr_entry
 
-                values, _, labeling = _exact_eigensystem(h, dims)
+                values, _, labeling = _exact_eigensystem(h, dims, sectors)
                 return kerr_entry(
                     mode_index, survivor_index, dims=dims, eigenvalues=values, labeling=labeling,
                 )
@@ -387,11 +409,22 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
     if affected_ports:
         assert transformed_mode_operator is not None
         port_target = survivor_labels[0]
+        port_operator: Any = transformed_mode_operator
+        port_changes = None if sectors is None else authored_excitation_changes(
+            affected_ports[0]._authored_operator(chip), (mode_label,), chip.backend, source_bases,
+        )
+        if port_changes is not None:
+            # Declared so the frame check keeps one band when the payload is traced.
+            port_operator = PhysicsExpr.from_matrix(
+                transformed_mode_operator, labels=(port_target,),
+                dims=(chip[port_target].local_space().dimension,), name="transformed_port",
+                excitation_changes=port_changes,
+            )
         for port in affected_ports:
             port_replacements[port.label] = Port(
                 port_target,
                 rate=port.rate_value(chip),
-                operator=transformed_mode_operator,
+                operator=port_operator,
                 phase=port.phase,
                 label=port.label,
             )
@@ -423,6 +456,7 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
         final_lift = jnp.kron(final_lift, final_resolved.bases[label].vectors)
     correction = lift @ retained_h @ lift.conj().T - final_lift @ final_matrix @ final_lift.conj().T
     inherited_channels = []
+    channel_changes: dict[str, frozenset[int]] = {}
 
     def inherit_channel(channel: CollapseChannel, support_labels: tuple[str, ...], name: str) -> None:
         local, transformed = transform_operator(channel.operator, support_labels)
@@ -431,6 +465,10 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
             lift @ transformed @ lift.conj().T,
             rate, name,
         ))
+        if sectors is not None:
+            changes = authored_excitation_changes(channel.operator, support_labels, chip.backend, source_bases)
+            if changes is not None:
+                channel_changes[name] = changes
         if support_labels == (mode_label,):
             p_index = np.flatnonzero(ctx.p_mask)
             ground = basis_row(p_index, labels, dims)
@@ -473,7 +511,8 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
                  "from intrinsic survivor noise.")
     terms = EffectiveTerms(tuple(survivor_labels), tuple(final.authored_dims), correction,
                            tuple(inherited_channels), label=f"retained_{mode_label}", projection=projection,
-                           notes=(*inherited_notes(chip), *notes))
+                           notes=(*inherited_notes(chip), *notes),
+                           excitation_changes=None if sectors is None else channel_changes)
     final = rebuild_chip(chip, devices=final.devices, couplings=final.couplings,
                          port_replacements=port_replacements,
                          effective_terms=(*final.effective_terms, terms), baths=projected_baths)
