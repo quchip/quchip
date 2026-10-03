@@ -6,6 +6,29 @@ This file records notable user-visible changes to quchip.
 
 ### Changes since 0.4.0
 
+#### Changes and migration
+
+- `eliminate()` of a port-coupled mode keeps the mode's own reflection on the
+  port's plane as a `PortNetwork.mode_reflection(...)` reference section.
+  Previously the reduced boundary kept only the transformed port, so VNA on the
+  reduced chip missed the mode's reflection by about κ/Δ (1e-2 in the reported
+  example); it now matches the full chip up to a correction of order
+  (g/Δ)²κ/Δ (8e-5). A mode with several ports, or a port whose plane also
+  carries other fields, now raises; keep such a mode in the model.
+  ([#76](https://github.com/quchip/quchip/issues/76))
+
+#### New features
+
+- Port-coupled modes can be eliminated on chips with more than two devices. The
+  transformed port acts jointly on every survivor, and stationary-tone frame
+  planning keeps the sign of each port band, so VNA accepts the joint operator.
+  A later elimination transforms that port again, so both readout modes of a
+  chip can be eliminated in either order.
+  ([#77](https://github.com/quchip/quchip/issues/77))
+- `PortNetwork.mode_reflection(...)` adds a serializable two-sided reference
+  section that reflects like a damped linear mode.
+  ([#76](https://github.com/quchip/quchip/issues/76))
+
 #### Fixes
 
 - `eliminate(..., method="exact")` of a chip whose approximation conserves total

@@ -724,7 +724,8 @@ def port_band_records(chip: "Chip", port: Any, resolution: _SystemResolution, ba
     rate = maybe_concrete_scalar(port.rate_value(chip))
     scale = None if rate is None else float(np.sqrt(abs(rate)))
     if port.operator is None:
-        return [BandRecord(labels, (-1,), scale, port.label)]
+        # The default lowering operator has weight column minus row = +1.
+        return [BandRecord(labels, (1,), scale, port.label)]
     records: list[BandRecord] = []
     for charges, band in _port_bands(chip, port, backend, resolution).items():
         amplitude = _concrete_amplitude(band.values)

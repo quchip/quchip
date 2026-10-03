@@ -298,6 +298,16 @@ requesting its filtered output raises before the solve. A concrete evaluation
 with `|H| > 1` also raises: filter sections are passive; use
 `network.amplifier(...)` for gain.
 
+`network.mode_reflection(...)` adds a two-sided passive reference section whose
+per-pass transfer `H(f)` squares to the reflection `S_r(f)` of a damped linear
+mode (section 10.5). A reflection plane therefore acquires `S_r(f)`, while a
+field crossing one leg, such as emission from the devices behind it, acquires
+`H(f)`. `H` is the continuous square root with a nonnegative real part at
+`reference_freq`; at that frequency it reproduces the emission phase
+`1 - i kappa_e / (2 Delta)` of a device detuned by `Delta` from the mode, to first
+order. Its parameters are tracked like those of `network.filter(...)`, and the
+section serializes.
+
 `network.amplifier(...)` adds a phase-preserving output-line reference section
 with power gain `G` and input-referred symmetrized added noise `n_add` in
 quanta. It amplifies side 1 to side 2 by `sqrt(G)` and is transparent in
@@ -1105,12 +1115,34 @@ change of the port it replaces. Band decomposition treats every other total
 change as a structural zero, so this check gives the same answer for concrete
 values and under `jax.grad` or `jax.jit`.
 For an external default port on a
-declared harmonic Fock mode, the complete `c_eff` matrix becomes that port's operator on
-one unprojected Fock-space survivor; the port's rate, phase, scalar scattering,
-and exposure reference plane are retained. Custom or collective boundary
-operators, projected or multiple survivors, a nonlinear eliminated boundary
-target, and ports participating in a cascade-generated Hamiltonian are
-rejected rather than approximated or double-counted.
+declared harmonic Fock mode, the complete `c_eff` matrix becomes that port's
+joint operator on every survivor, in their authored coordinates; the port's
+rate, phase, scalar scattering and existing reference sections are retained.
+The eliminated mode's own reflection,
+
+```text
+S_r(f) = ((kappa_i - kappa_e)/2 - i Omega) / ((kappa_e + kappa_i)/2 - i Omega),
+Omega = 2π (f - f_mode),
+```
+
+is not part of `c_eff`. It is kept as a `network.mode_reflection(...)` section
+at the core end of the port's plane, so a reflection sweep obeys
+`S_full(f) ≈ S_r(f) S_reduced(f)`. The remaining difference is the frequency
+dependence of the Purcell coupling across the sweep, of order
+`(g/Delta)^2 kappa_e/Delta`.
+`kappa_e` is the port rate, and `kappa_i` is the eliminated mode's internal
+damping of `<a>`, read from its own channels: lowering channels add their
+rate, raising channels subtract it, and pure dephasing adds it. The
+section's internal-loss bath is vacuum. A port that an earlier elimination
+transformed already acts on every survivor and reaches a later eliminated mode
+only through that dressing. The later reduction transforms it like an inherited
+channel and gives it no section, so both readout modes of a chip can be
+eliminated in either order. Like an inherited channel, it drops its direct
+scattering through the later mode, of order `rate |<0|L|1>|^2 / Delta`. Custom
+or collective boundary operators, projected survivors, a mode with several
+ports, a plane that also carries other fields, a nonlinear eliminated boundary
+target, and ports participating in a cascade-generated Hamiltonian are rejected
+rather than approximated or double-counted.
 
 The result's `notes` record that the projection is exact for the *spectrum*
 but approximate for *dissipation*: the discarded `Q`-block dynamics also

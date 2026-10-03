@@ -599,12 +599,12 @@ def frame_tones(
         if isinstance(operation, CoherentOp):
             records = _fed_port_records(chip, operation.exposure, resolution)
             source = f"{operation.drive_label} → {operation.exposure}"
-            tones += _signal_tones(AnalyticSignal.from_pulse(operation).program, records, span, source)
+            tones += _signal_tones(AnalyticSignal.from_pulse(operation).program, records, span, source, signed=True)
     return tones
 
 
 def _signal_tones(
-    program: Any, records: Sequence[Any], span: tuple[float, float] | None, source: str
+    program: Any, records: Sequence[Any], span: tuple[float, float] | None, source: str, *, signed: bool = False,
 ) -> list[FrameTone]:
     """One tone per nonzero carrier band of a scheduled signal, weighted by its windowed envelope energy."""
     tones: list[FrameTone] = []
@@ -612,7 +612,7 @@ def _signal_tones(
         if maybe_concrete_scalar(band.freq) == 0.0:
             continue
         energy = _program_energy(band.envelope, span)
-        tones += _tones_from_records(records, -band.freq / TWO_PI, energy, source)
+        tones += _tones_from_records(records, -band.freq / TWO_PI, energy, source, signed=signed)
     return tones
 
 
@@ -625,7 +625,8 @@ def stationary_tones(chip: "Chip", port_frequencies: Sequence[tuple[str, Any]], 
     """
     tones: list[FrameTone] = []
     for exposure, freq in port_frequencies:
-        tones += _tones_from_records(_fed_port_records(chip, exposure, resolution), freq, None, exposure)
+        tones += _tones_from_records(_fed_port_records(chip, exposure, resolution), freq, None, exposure,
+                                     signed=True)
     return tones
 
 
@@ -653,18 +654,31 @@ def _fed_port_records(chip: "Chip", exposure: str, resolution: Any) -> list[Any]
     return records
 
 
-def _tones_from_records(records: Sequence[Any], freq: Any, energy: float | None, source: str) -> list[FrameTone]:
-    """One tone per charged band record, fundamental bands declared before multiphoton ones."""
+def _tones_from_records(
+    records: Sequence[Any], freq: Any, energy: float | None, source: str, *, signed: bool = False,
+) -> list[FrameTone]:
+    """One tone per charged band record, fundamental bands declared before multiphoton ones.
+
+    Drive records list each band with its Hermitian partner, so a tone row only
+    fixes ``|k·ω| = |freq|``. A port's coupling operator ``L`` has no partner in
+    its records: band ``k`` of ``L`` is static only when ``k·ω = freq``. For
+    ``signed`` records, a band whose first charge is negative is therefore stated
+    as ``(-k)·ω = -freq`` before frame planning normalizes its sign.
+    """
     ordered = sorted((record for record in records if any(record.charges)), key=lambda r: sum(map(abs, r.charges)))
-    return [
-        FrameTone(
-            tuple(zip(record.devices, record.charges, strict=True)),
-            freq,
+    tones = []
+    for record in ordered:
+        charges = tuple(record.charges)
+        tone_freq = freq
+        if signed and next(charge for charge in charges if charge) < 0:
+            charges, tone_freq = tuple(-charge for charge in charges), -freq
+        tones.append(FrameTone(
+            tuple(zip(record.devices, charges, strict=True)),
+            tone_freq,
             None if energy is None or record.amplitude is None else record.amplitude**2 * energy,
             source,
-        )
-        for record in ordered
-    ]
+        ))
+    return tones
 
 
 def _window(operations: Sequence["ControlOp"], solve_window: Any) -> tuple[float, float] | None:
