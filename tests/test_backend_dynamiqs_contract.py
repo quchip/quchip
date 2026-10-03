@@ -216,3 +216,29 @@ def test_prepared_hamiltonian_is_the_engine_hamiltonian(dynamiqs_backend) -> Non
     for t in (3.0, 7.0, 12.5, 20.0, 26.5, 33.3):
         npt.assert_allclose(np.asarray(rhs(t).to_jax()),
                             2 * np.pi * np.asarray(result.hamiltonian().matrix(backend=chip.backend, t=t)), atol=1e-10)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("layout", ["dia", "dense"])
+def test_backend_operator_factories_match_dynamiqs(dynamiqs_backend, layout) -> None:
+    """Ladder, number, identity and tensor products agree with dynamiqs in value, layout and dims."""
+    import dynamiqs as dq
+    from dynamiqs.qarrays.layout import get_layout, set_global_layout
+
+    previous = get_layout()
+    dq.set_layout(layout)
+    try:
+        pairs = [(factory(n), reference(n)) for n in (1, 2, 4) for factory, reference in (
+            (dynamiqs_backend.destroy, dq.destroy), (dynamiqs_backend.create, dq.create),
+            (dynamiqs_backend.number, dq.number), (dynamiqs_backend.identity, dq.eye))]
+        factors = (dynamiqs_backend.destroy(3), dynamiqs_backend.identity(2),
+                   dynamiqs_backend.create(4) + 0.5 * dynamiqs_backend.number(4))
+        pairs.append((dynamiqs_backend.tensor(*factors), dq.tensor(*factors)))
+        mixed = (dynamiqs_backend.create(3), dq.asqarray(np.arange(4.0).reshape(2, 2) + 1j))
+        pairs.append((dynamiqs_backend.tensor(*mixed), dq.tensor(*mixed)))
+        for ours, reference in pairs:
+            assert ours.layout is reference.layout
+            assert ours.dims == reference.dims
+            npt.assert_allclose(np.asarray(ours.to_jax()), np.asarray(reference.to_jax()), rtol=0.0, atol=1e-15)
+    finally:
+        set_global_layout(previous)

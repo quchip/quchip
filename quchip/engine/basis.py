@@ -182,13 +182,14 @@ class BasisRecord:
     def level_operator(self) -> Any:
         """Return the energy-level index operator in the resolved solver basis."""
         if self.kind == "eigen":
-            return jnp.diag(jnp.arange(self.resolved_dim, dtype=jnp.complex128))
+            return jnp.asarray(np.diag(np.arange(self.resolved_dim, dtype=complex)))
         return self.authored_level_operator()
 
     def authored_level_operator(self) -> Any:
         """Energy-level index in the authored basis, on the retained subspace."""
-        indices = jnp.arange(self.energy_vectors.shape[1], dtype=jnp.complex128)
-        return (self.energy_vectors * indices) @ self.energy_vectors.conj().T
+        vectors = self.energy_vectors if contains_tracer(self.energy_vectors) else np.asarray(self.energy_vectors)
+        indices = np.arange(vectors.shape[1], dtype=complex)
+        return jnp.asarray((vectors * indices) @ vectors.conj().T)
 
 
 def resolve_local_basis(
@@ -208,7 +209,7 @@ def resolve_local_basis(
         energies, energy_vectors = _lowest_eigenpairs(hamiltonian, native_dim)
         return BasisRecord(
             kind="native",
-            vectors=jnp.eye(native_dim, dtype=hamiltonian.dtype),
+            vectors=jnp.asarray(np.eye(native_dim, dtype=hamiltonian.dtype)),
             energies=energies,
             energy_vectors=energy_vectors,
             native_dim=native_dim,

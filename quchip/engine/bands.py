@@ -277,6 +277,9 @@ def canonical_to_coo(canonical: CanonicalOperator) -> tuple[Any, Any, Any]:
     offsets = np.asarray(canonical.offsets, dtype=int)
     payload = canonical.values
     traced = contains_tracer(payload)
+    if not traced:
+        # Slice concrete diagonals on the host; each slice of a device array is a new XLA program.
+        payload = np.asarray(payload)
     xp = _array_namespace(payload)
     n_rows, n_cols = canonical.shape
 

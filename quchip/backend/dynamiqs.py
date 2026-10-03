@@ -27,12 +27,13 @@ from __future__ import annotations
 import itertools
 import math
 from dataclasses import dataclass, replace
-from functools import partial
+from functools import lru_cache, partial, reduce
 from typing import Any, Sequence
 
 import dynamiqs as dq
 import equinox as eqx
 import numpy as np
+from dynamiqs.qarrays.layout import get_layout
 from dynamiqs.qarrays.qarray import QArray
 from dynamiqs.qarrays.sparsedia_dataarray import SparseDIADataArray
 from dynamiqs.time_qarray import SummedTimeQArray
@@ -46,6 +47,7 @@ import jax.tree_util as jtu  # noqa: E402
 
 from quchip.backend._memory import require_memory
 from quchip.backend._response import linear_response, stationary_condition_number
+from quchip.utils.jax_utils import contains_tracer
 from quchip.utils.values import DeferredValue
 from quchip.backend._dims import (  # noqa: E402
     _embed_array,
@@ -97,9 +99,78 @@ def _summed_modulation(modulations: Sequence[Any]) -> Any:
     return ScalarModulation(signal=Add(tuple(modulation.signal for modulation in modulations)))
 
 
+@lru_cache(maxsize=None)
+def _dia_structure(dims: tuple[int, ...], offsets: tuple[int, ...]) -> Any:
+    """Pytree structure of an unbatched sparse-DIA qarray, found by abstract evaluation."""
+    diags = jax.ShapeDtypeStruct((len(offsets), math.prod(dims)), jnp.complex128)
+    return jtu.tree_structure(jax.eval_shape(lambda d: QArray(dims, False, SparseDIADataArray(offsets, d)), diags))
+
+
 def _dia_qarray(dims: tuple[int, ...], offsets: tuple[int, ...], diags: Any) -> QArray:
-    """Build an operator in sparse-DIA layout; *diags* may be traced, *offsets* are static."""
-    return QArray(dims, False, SparseDIADataArray(offsets, diags))
+    """Build an operator in sparse-DIA layout; *diags* may be traced, *offsets* are static.
+
+    Concrete diagonals are checked on the host and wrapped directly. Dynamiqs
+    checks each diagonal with a device computation that compiles once per
+    shape, which dominates building a chip's operators outside JIT.
+    """
+    dims = tuple(int(dim) for dim in dims)
+    offsets = tuple(int(offset) for offset in offsets)
+    if contains_tracer(diags) or np.ndim(diags) != 2:
+        return QArray(dims, False, SparseDIADataArray(offsets, jnp.asarray(diags, dtype=jnp.complex128)))
+    host = np.asarray(diags, dtype=complex)
+    for row, offset in zip(host, offsets):
+        if np.any(row[:offset] if offset >= 0 else row[offset:]):
+            raise ValueError("Sparse-DIA diagonals must be zero outside the matrix bounds.")
+    return jtu.tree_unflatten(_dia_structure(dims, offsets), [jnp.asarray(host)])
+
+
+def _complex_payload(values: Any) -> Any:
+    """Complex JAX array of *values*, converted on the host when they are concrete."""
+    return jnp.asarray(values if contains_tracer(values) else np.asarray(values, dtype=complex), dtype=jnp.complex128)
+
+
+def _host_dia(op: Any) -> tuple[tuple[int, ...], np.ndarray] | None:
+    """Offsets and host diagonals of a concrete, unbatched sparse-DIA qarray, else ``None``."""
+    if isinstance(op, QArray) and op.layout is dq.dia and op.ndim == 2 and not contains_tracer(op.data.diags):
+        return tuple(int(offset) for offset in op.data.offsets), np.asarray(op.data.diags)
+    return None
+
+
+def _host_dense(op: Any) -> np.ndarray | None:
+    """Host matrix of a concrete, unbatched dense qarray, else ``None``."""
+    if isinstance(op, QArray) and op.layout is dq.dense and op.ndim == 2 and not contains_tracer(op.data):
+        return np.asarray(op.to_jax())
+    return None
+
+
+def _dia_to_dense(offsets: Sequence[int], diags: np.ndarray) -> np.ndarray:
+    """Dense host matrix of host sparse-DIA diagonals (column-aligned, as dynamiqs stores them)."""
+    n = diags.shape[-1]
+    dense = np.zeros((n, n), dtype=complex)
+    cols = np.arange(n)
+    for offset, row in zip(offsets, diags):
+        valid = (cols - offset >= 0) & (cols - offset < n)
+        dense[cols[valid] - offset, cols[valid]] += row[valid]
+    return dense
+
+
+def _kron_dia(left: tuple[tuple[int, ...], np.ndarray],
+              right: tuple[tuple[int, ...], np.ndarray]) -> tuple[tuple[int, ...], np.ndarray]:
+    """Kronecker product of two host sparse-DIA operators, adding diagonals that share an offset."""
+    (left_offsets, left_diags), (right_offsets, right_diags) = left, right
+    offsets = (np.asarray(left_offsets)[:, None] * right_diags.shape[-1] + np.asarray(right_offsets)).ravel()
+    unique, inverse = np.unique(offsets, return_inverse=True)
+    diags = np.zeros((unique.size, left_diags.shape[-1] * right_diags.shape[-1]), dtype=complex)
+    np.add.at(diags, inverse, np.kron(left_diags, right_diags))
+    return tuple(int(offset) for offset in unique), diags
+
+
+def _layout_operator(n: int, offset: int, diagonal: np.ndarray) -> QArray:
+    """One-diagonal operator built on the host in the active dynamiqs layout."""
+    diags = np.asarray(diagonal, dtype=complex)[None, :]
+    if get_layout() is dq.dia:
+        return _dia_qarray((n,), (offset,), diags)
+    return dq.asqarray(jnp.asarray(_dia_to_dense((offset,), diags)), dims=(n,))
 
 
 def _signal_discontinuities(signal: Any) -> Any:
@@ -217,6 +288,9 @@ class DynamiqsBackend(Backend):
         return jnp
 
     def to_array(self, op: Operator) -> Any:
+        host = _host_dia(op)
+        if host is not None:
+            return jnp.asarray(_dia_to_dense(*host))
         if hasattr(op, "to_jax"):
             return jnp.asarray(op.to_jax(), dtype=jnp.complex128)
         if hasattr(op, "full"):
@@ -268,16 +342,16 @@ class DynamiqsBackend(Backend):
         return dense_layout()
 
     def destroy(self, n: int) -> Operator:
-        return dq.destroy(n)
+        return _layout_operator(n, 1, np.sqrt(np.arange(n, dtype=float)))
 
     def create(self, n: int) -> Operator:
-        return dq.create(n)
+        return _layout_operator(n, -1, np.append(np.sqrt(np.arange(1, n, dtype=float)), 0.0))
 
     def number(self, n: int) -> Operator:
-        return dq.number(n)
+        return _layout_operator(n, 0, np.arange(n, dtype=float))
 
     def identity(self, n: int) -> Operator:
-        return dq.eye(n)
+        return _layout_operator(n, 0, np.ones(n))
 
     def diag(self, values: Any, dims: list[list[int]] | None = None) -> Operator:
         r"""Build a backend-native sparse-DIA diagonal operator from main-diagonal *values*.
@@ -301,7 +375,7 @@ class DynamiqsBackend(Backend):
         --------
         quchip.backend.protocol.Backend.diag
         """
-        v = jnp.asarray(values, dtype=jnp.complex128).reshape(-1)
+        v = (jnp if contains_tracer(values) else np).asarray(values, dtype=complex).reshape(-1)
         n = v.shape[0]
         dim_tuple = self._coerce_dims(dims, (n, n))
         if dim_tuple is None:
@@ -318,7 +392,7 @@ class DynamiqsBackend(Backend):
             data = data.to_jax()
         elif hasattr(data, "full"):
             data = data.full()
-        array = jnp.asarray(data, dtype=jnp.complex128)
+        array = _complex_payload(data)
         dims_tuple = self._coerce_dims(dims, array.shape)
         if dims_tuple is None:
             return dq.asqarray(array)
@@ -353,21 +427,16 @@ class DynamiqsBackend(Backend):
     def from_canonical_operator(self, canonical: Any) -> Operator:
         dims = tuple(canonical.dims)
         if canonical.layout == "dense":
-            return dq.asqarray(jnp.asarray(canonical.values, dtype=jnp.complex128), dims=dims)
+            return dq.asqarray(_complex_payload(canonical.values), dims=dims)
         if canonical.layout == "dia":
             from quchip.engine.bands import canonical_to_dense_array
-            from quchip.utils.jax_utils import contains_tracer
 
             if contains_tracer(canonical.offsets):
                 # Sparse structure must be static. Value payloads may remain
                 # traced because sparse-DIA diagonals are JAX leaves.
                 dense = canonical_to_dense_array(canonical)
                 return dq.asqarray(jnp.asarray(dense, dtype=jnp.complex128), dims=dims)
-            return _dia_qarray(
-                dims,
-                tuple(int(x) for x in canonical.offsets),
-                jnp.asarray(canonical.values, dtype=jnp.complex128),
-            )
+            return _dia_qarray(dims, tuple(int(x) for x in canonical.offsets), canonical.values)
         from quchip.engine.bands import canonical_to_coo
 
         rows, cols, values = canonical_to_coo(canonical)
@@ -437,7 +506,19 @@ class DynamiqsBackend(Backend):
     def tensor(self, *operators: Operator) -> Operator:
         if len(operators) == 1:
             return operators[0]
-        return dq.tensor(*operators)
+        sparse = [_host_dia(op) for op in operators]
+        dense = [_host_dense(op) for op in operators]
+        if not all(s is not None or d is not None for s, d in zip(sparse, dense)):
+            return dq.tensor(*operators)
+        # Concrete factors: the same product dynamiqs forms, computed on the host.
+        dims = tuple(dim for op in operators for dim in op.dims)
+        if all(factor is not None for factor in sparse):
+            product = sparse[0]
+            for factor in sparse[1:]:
+                product = _kron_dia(product, factor)
+            return _dia_qarray(dims, *product)
+        matrices = [d if d is not None else _dia_to_dense(*s) for s, d in zip(sparse, dense)]
+        return dq.asqarray(jnp.asarray(reduce(np.kron, matrices)), dims=dims)
 
     # ------------------------------------------------------------------
     # Embedding helpers
@@ -1326,7 +1407,8 @@ class DynamiqsBackend(Backend):
         full_rows = (row_ab_offset[:, None] + spectator_offsets[None, :]).ravel().astype(int)
         full_cols = (col_ab_offset[:, None] + spectator_offsets[None, :]).ravel().astype(int)
         # Each source value fans out over n_spectators row/col pairs.
-        full_values = jnp.repeat(jnp.asarray(values, dtype=jnp.complex128), n_spectators)
+        xp = jnp if contains_tracer(values) else np
+        full_values = xp.repeat(xp.asarray(values, dtype=complex), n_spectators)
 
         return self._sparse_qarray_from_coo(full_rows, full_cols, full_values, tuple(dims))
 
@@ -1346,23 +1428,19 @@ class DynamiqsBackend(Backend):
         cols_np = np.asarray(cols, dtype=int)
         offsets = np.unique(cols_np - rows_np)
         n_diagonals = len(offsets)
-        values_jax = jnp.asarray(values, dtype=jnp.complex128)
+        # Integer index structure lives on NumPy; traced values stay in JAX, concrete ones on the host.
         if n_diagonals >= total_dim:
-            dense = jnp.zeros((total_dim, total_dim), dtype=jnp.complex128)
-            return dq.asqarray(
-                dense.at[rows_np, cols_np].add(values_jax),
-                dims=dims,
-            )
-        offset_to_idx = {int(offset): idx for idx, offset in enumerate(offsets.tolist())}
-
-        # Integer index structure lives on NumPy; values stay in JAX for traceability.
-        diag_indices = np.array(
-            [offset_to_idx[int(c - r)] for r, c in zip(rows_np, cols_np)], dtype=int,
-        )
-        diag_data = jnp.zeros((n_diagonals, total_dim), dtype=jnp.complex128)
-        diag_data = diag_data.at[diag_indices, cols_np].add(values_jax)
-
-        return _dia_qarray(dims, tuple(int(x) for x in offsets.tolist()), diag_data)
+            shape, index = (total_dim, total_dim), (rows_np, cols_np)
+        else:
+            shape, index = (n_diagonals, total_dim), (np.searchsorted(offsets, cols_np - rows_np), cols_np)
+        if contains_tracer(values):
+            data = jnp.zeros(shape, dtype=jnp.complex128).at[index].add(jnp.asarray(values, dtype=jnp.complex128))
+        else:
+            data = np.zeros(shape, dtype=complex)
+            np.add.at(data, index, np.asarray(values, dtype=complex))
+        if n_diagonals >= total_dim:
+            return dq.asqarray(jnp.asarray(data), dims=dims)
+        return _dia_qarray(dims, tuple(int(x) for x in offsets.tolist()), data)
 
     # ------------------------------------------------------------------
     # Internal: options / method builders
