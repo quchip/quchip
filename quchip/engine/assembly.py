@@ -784,7 +784,7 @@ def _resolve_coupling_terms(
         filters_terms = approximation.filters_terms and not contribution.retained
         authored = contribution.expression()
         h_full = _project_on_support(chip, authored, support, resolution.bases, backend)
-        if _is_concrete_zero_array(backend.to_array(h_full)):
+        if not contains_tracer(h_full) and _is_concrete_zero_array(backend.to_array(h_full)):
             continue
 
         if not filters_terms and all(maybe_concrete_scalar(freq) == 0.0 for freq in frequencies):

@@ -191,6 +191,8 @@ def _decompose_dense_bands(
     carry; candidate bands outside it are structurally zero and are skipped
     even when the payload is traced.
     """
+    if not contains_tracer(matrix):
+        matrix = np.asarray(matrix)
     xp = _array_namespace(matrix)
     states = np.stack(np.unravel_index(np.arange(prod(dims)), dims), axis=-1)
     changes = states[None, :, :] - states[:, None, :]
@@ -200,7 +202,8 @@ def _decompose_dense_bands(
     for weights in product(*(range(-(dim - 1), dim) for dim in dims)):
         if total_changes is not None and sum(weights) not in total_changes:
             continue
-        band = xp.where(np.all(changes == weights, axis=-1), matrix, zero)
+        mask = np.all(changes == weights, axis=-1)
+        band = np.where(mask, matrix, zero) if xp is np else matrix * mask
         if parent_norm is not None and _frobenius_norm(band) <= _BAND_NORM_RTOL * parent_norm:
             continue
         bands[weights] = band
@@ -286,6 +289,7 @@ def canonical_to_coo(canonical: CanonicalOperator) -> tuple[Any, Any, Any]:
     all_rows: list[np.ndarray] = []
     all_cols: list[np.ndarray] = []
     all_vals: list[Any] = []
+    all_diags: list[np.ndarray] = []
 
     for diag_idx, offset in enumerate(offsets):
         col_range = np.arange(n_cols, dtype=int)
@@ -295,10 +299,9 @@ def canonical_to_coo(canonical: CanonicalOperator) -> tuple[Any, Any, Any]:
         valid_rows = row_range[valid]
 
         if traced:
-            vals = payload[diag_idx, valid_cols]
             all_rows.append(valid_rows)
             all_cols.append(valid_cols)
-            all_vals.append(vals)
+            all_diags.append(np.full(valid_cols.size, diag_idx, dtype=int))
         else:
             vals = np.asarray(payload[diag_idx, valid_cols], dtype=complex)
             nonzero = vals != 0
@@ -315,7 +318,8 @@ def canonical_to_coo(canonical: CanonicalOperator) -> tuple[Any, Any, Any]:
     rows_out = np.concatenate(all_rows)
     cols_out = np.concatenate(all_cols)
     if traced:
-        values = xp.concatenate(all_vals)
+        # One gather for every diagonal keeps the traced program small.
+        values = payload[np.concatenate(all_diags), cols_out]
     else:
         values = np.concatenate(all_vals)
     return rows_out, cols_out, values
@@ -337,7 +341,7 @@ def _canonical_from_csr(
     rows_sorted = rows[order].astype(int, copy=False)
     cols_sorted = cols[order].astype(int, copy=False)
     if _is_jax_array(values):
-        values_sorted = values[order]
+        values_sorted = values if np.array_equal(order, np.arange(order.size)) else values[order]
     else:
         values_sorted = np.asarray(values, dtype=complex)[order]
     counts = np.bincount(rows_sorted, minlength=shape[0])
@@ -504,6 +508,8 @@ def _decompose_product_canonical_bands(
         }
 
     rows, cols, values = canonical_to_coo(canonical)
+    if not contains_tracer(values):
+        values = np.asarray(values, dtype=complex)
     parent_norm = _concrete_parent_norm(values)
     row_states = np.stack(np.unravel_index(rows, dims), axis=-1)
     column_states = np.stack(np.unravel_index(cols, dims), axis=-1)
@@ -512,12 +518,20 @@ def _decompose_product_canonical_bands(
     bands: dict[tuple[int, ...], CanonicalOperator] = {}
     metadata: dict[str, Any] = dict(shape=canonical.shape, dims=canonical.dims, basis=canonical.basis,
                                     subsystem_labels=canonical.subsystem_labels, tag=canonical.tag)
+    groups: list[tuple[tuple[int, ...], np.ndarray]] = []
     for weights in sorted({tuple(int(value) for value in change) for change in changes}):
         if total_changes is not None and sum(weights) not in total_changes:
             continue
-        mask = np.all(changes == weights, axis=1)
-        positions = np.flatnonzero(mask)
-        band_values = values[positions]
+        positions = np.flatnonzero(np.all(changes == weights, axis=1))
+        groups.append((weights, positions[np.lexsort((cols[positions], rows[positions]))]))
+    if not groups:
+        return bands
+    # Gather every band's values at once; each band is then a static slice.
+    ordered = values[np.concatenate([positions for _, positions in groups])]
+    start = 0
+    for weights, positions in groups:
+        band_values = ordered[start:start + positions.size]
+        start += positions.size
         if parent_norm is not None and _frobenius_norm(band_values) <= _BAND_NORM_RTOL * parent_norm:
             continue
         bands[weights] = (
