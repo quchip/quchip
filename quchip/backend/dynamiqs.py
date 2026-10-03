@@ -356,7 +356,10 @@ def _summed_hamiltonian(static_ops: Sequence[Any], static_coeffs: Sequence[Any],
         return None
     hamiltonian = _SummedHamiltonian(treedef, rows, base, terms, signals)
     edges = [edge for edge in map(_signal_discontinuities, dyn_signals) if edge is not None]
-    return dq.timecallable(hamiltonian, discontinuity_ts=jnp.concatenate(edges) if edges else None)
+    # dynamiqs keeps the callable as static pytree metadata; a plain function
+    # compares by identity, whereas the module would compare its arrays, which
+    # may be tracers of an earlier trace.
+    return dq.timecallable(lambda t: hamiltonian(t), discontinuity_ts=jnp.concatenate(edges) if edges else None)
 
 
 @dataclass(frozen=True)
