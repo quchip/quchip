@@ -35,6 +35,7 @@ import equinox as eqx
 import numpy as np
 from dynamiqs.qarrays.qarray import QArray
 from dynamiqs.qarrays.sparsedia_dataarray import SparseDIADataArray
+from dynamiqs.time_qarray import SummedTimeQArray
 
 # x64 is enabled at the package boundary in ``quchip/__init__.py``.
 
@@ -942,16 +943,23 @@ class DynamiqsBackend(Backend):
         ``dynamiqs.modulated``. Shared by :meth:`prepare_hamiltonian` and the
         cached-jit single-solve so the static/dynamic split lives in one place
         (the cached path passes traced operators/coefficients as jit arguments,
-        so this stays fully traceable).
+        so this stays fully traceable). The time-dependent terms form one sum:
+        dynamiqs' ``+`` re-broadcasts every earlier term, so adding N terms one
+        at a time nests their callables up to N deep and traces each signal
+        O(N) times.
         """
         rhs = None
         for op, coeff in zip(static_ops, static_coeffs):
             term = coeff * op
             rhs = term if rhs is None else rhs + term
-        for op, signal in zip(dyn_ops, dyn_signals):
-            dynamic = dq.modulated(_SignalCallable(signal), op, discontinuity_ts=_signal_discontinuities(signal))
-            rhs = dynamic if rhs is None else rhs + dynamic
-        return rhs
+        dynamic = [
+            dq.modulated(_SignalCallable(signal), op, discontinuity_ts=_signal_discontinuities(signal))
+            for op, signal in zip(dyn_ops, dyn_signals)
+        ]
+        if not dynamic:
+            return rhs
+        terms = dynamic if rhs is None else [dq.constant(rhs), *dynamic]
+        return terms[0] if len(terms) == 1 else SummedTimeQArray(terms)
 
     def prepare_batch(self, batch: Any) -> DeferredBatch:
         r"""Lower compatible problems into stable leaves for one vmapped solve.
