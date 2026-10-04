@@ -187,22 +187,23 @@ def test_stationary_matrix_matches_mode_space_matrix() -> None:
 
 def test_stationary_sweep_solves_an_unpumped_operating_point_once(monkeypatch) -> None:
     """Probe frequencies reuse a stationary operating point and match separate solves."""
-    import qutip
+    from quchip.backend.qutip import QuTiPBackend
 
     _, _, _, chip = _linear_resonator(kappa_in=0.04, kappa_out=0.02)
     frequencies = np.array([5.99, 6.0, 6.01])
     separate = [VNA(chip).sweep([frequency], options={"method": "direct"}).matrix for frequency in frequencies]
-    solves = []
-    steadystate = qutip.steadystate
+    reused = []
+    steadystate = QuTiPBackend.steadystate
 
-    def counted(*args, **kwargs):
-        solves.append(1)
-        return steadystate(*args, **kwargs)
+    def recorded(self, *args, **kwargs):
+        result = steadystate(self, *args, **kwargs)
+        reused.append(result.stats["guess_reused"])
+        return result
 
-    monkeypatch.setattr(qutip, "steadystate", counted)
+    monkeypatch.setattr(QuTiPBackend, "steadystate", recorded)
     swept = VNA(chip).sweep(frequencies, options={"method": "direct"})
 
-    assert len(solves) == 1
+    assert reused == [False, True, True]
     np.testing.assert_allclose(swept.matrix, np.concatenate(separate), atol=1e-13)
 
 

@@ -131,6 +131,28 @@ def test_qutip_returns_a_guess_only_when_it_is_stationary() -> None:
     np.testing.assert_allclose(resolved.state.full(), solved.state.full(), atol=1e-12)
 
 
+def test_qutip_default_direct_solve_matches_qutip_steadystate() -> None:
+    """The backend's own default direct solve reproduces qutip.steadystate's direct method."""
+    import qutip
+
+    from quchip import RWA, Capacitive
+    from quchip.engine.steady_state import build_steadystate_problem, solve_steadystate_problem
+
+    first = Resonator(freq=6.0, levels=4, label="a", T1=20.0, thermal_occupation=0.3)
+    second = Resonator(freq=6.03, levels=3, label="b", T1=35.0, T2=30.0)
+    chip = Chip([first, second], [Capacitive(first, second, g=0.05)], frame={"a": 6.0, "b": 6.0},
+                approximation=RWA(), backend="qutip")
+    problem = build_steadystate_problem(chip)
+
+    ours = solve_steadystate_problem(problem)
+    reference = qutip.steadystate(problem.backend.prepare_stationary(problem.engine_result).liouvillian)
+
+    assert ours.state.dims == reference.dims
+    assert ours.state.isherm
+    np.testing.assert_allclose(ours.state.full(), reference.full(), atol=1e-13)
+    assert ours.residual < 1e-12
+
+
 @pytest.mark.validation
 @pytest.mark.optional_backend
 def test_dynamiqs_steady_state_is_jittable_and_differentiable() -> None:

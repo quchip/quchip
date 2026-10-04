@@ -658,6 +658,33 @@ def _annihilates(liouvillian: sparse.csr_matrix, state: Any) -> bool:
     return bool(np.linalg.norm(liouvillian @ vector) <= _STATIONARY_REUSE_EPS * np.finfo(float).eps * scale)
 
 
+def _direct_steady_state(liouvillian: sparse.csr_matrix, dims: Sequence[int]) -> Qobj | None:
+    """Solve as ``qutip.steadystate``'s default direct method does, without its option scope.
+
+    QuTiP adds ``w·vec(1)ᵀ`` to the generator's first row, with ``w`` the mean
+    magnitude of its non-negligible entries, solves for ``w·e₀`` and keeps the
+    Hermitian part. Its solve runs inside an option scope whose entry and exit
+    rebuild every data-layer dispatcher, which takes longer than the solve for
+    small systems. Returns ``None`` for a generator without entries.
+    """
+    atol = qutip.settings.core["atol"]
+    data = liouvillian.data
+    significant = (np.abs(data.real) > atol) | (np.abs(data.imag) > atol)
+    if not significant.any():
+        return None
+    weight = float(np.abs(data[significant]).mean())
+    size = liouvillian.shape[0]
+    n = math.isqrt(size)
+    trace = sparse.csr_matrix(
+        (np.full(n, weight, dtype=complex), (np.zeros(n, dtype=int), np.arange(0, size, n + 1))), shape=(size, size),
+    )
+    target = np.zeros(size, dtype=complex)
+    target[0] = weight
+    vector = sparse.linalg.spsolve((liouvillian + trace).tocsr(), target)
+    rho = vector.reshape(n, n, order="F")
+    return Qobj(0.5 * (rho + rho.conj().T), dims=[list(dims), list(dims)], isherm=True)
+
+
 # A loky reusable executor respawns its worker pool after a short idle window
 # (10 s by default), and that respawn costs ~3 s on the next sweep. Sweeps in an
 # interactive session arrive minutes apart, so the pool is kept warm for an hour.
@@ -1154,7 +1181,10 @@ class QuTiPBackend(Backend):
         if guess is not None and reused:
             state = guess
         else:
-            state = qutip.steadystate(liouvillian, method=method, solver=solver, **options)
+            direct = method == "direct" and solver is None and not options
+            state = _direct_steady_state(sparse_liouvillian, problem.engine_result.dims) if direct else None
+            if state is None:
+                state = qutip.steadystate(liouvillian, method=method, solver=solver, **options)
 
         state_vector = np.asarray(qutip.operator_to_vector(state).full(), dtype=complex).reshape(-1)
         residual = float(np.linalg.norm(sparse_liouvillian @ state_vector))
