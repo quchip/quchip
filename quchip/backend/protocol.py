@@ -1089,7 +1089,9 @@ class Backend(ABC):
             raise ValueError("Stationary preparation belongs to a different backend or operating point.")
         return prepared
 
-    def steadystate(self, problem: Any, *, prepared: PreparedStationary | None = None) -> SteadyStateSolverResult:
+    def steadystate(
+        self, problem: Any, *, prepared: PreparedStationary | None = None, guess: State | None = None,
+    ) -> SteadyStateSolverResult:
         r"""Solve one static Lindblad problem in the backend's native representation.
 
         Parameters
@@ -1098,6 +1100,11 @@ class Backend(ABC):
             Captured static model, observables, and stationary solver options.
         prepared : PreparedStationary or None, default None
             Matching prepared generator; ``None`` builds it.
+        guess : State or None, default None
+            Native stationary state of a related generator, such as the same
+            model in a neighbouring frame. A backend may return it, with
+            diagnostics evaluated on this problem's generator, when it is
+            stationary here to round-off, instead of solving.
 
         Returns
         -------

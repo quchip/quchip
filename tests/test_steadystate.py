@@ -110,6 +110,27 @@ def test_qutip_skips_dense_rank_diagnostics_above_default_cap() -> None:
     assert result.stats["uniqueness_checked"] is False
 
 
+def test_qutip_returns_a_guess_only_when_it_is_stationary() -> None:
+    """A stationary guess comes back without a solve; any other guess is solved away."""
+    import qutip
+
+    from quchip.engine.steady_state import build_steadystate_problem, solve_steadystate_problem
+
+    mode = Resonator(freq=6.0, levels=4, label="r", T1=20.0, thermal_occupation=0.2)
+    problem = build_steadystate_problem(Chip([mode], frame="rotating", backend="qutip"))
+    solved = solve_steadystate_problem(problem)
+    assert solved.stats["guess_reused"] is False
+
+    reused = solve_steadystate_problem(problem, guess=solved.state)
+    assert reused.stats["guess_reused"] is True
+    assert reused.state is solved.state
+    assert reused.residual == solved.residual
+
+    resolved = solve_steadystate_problem(problem, guess=qutip.fock_dm(4, 0))
+    assert resolved.stats["guess_reused"] is False
+    np.testing.assert_allclose(resolved.state.full(), solved.state.full(), atol=1e-12)
+
+
 @pytest.mark.validation
 @pytest.mark.optional_backend
 def test_dynamiqs_steady_state_is_jittable_and_differentiable() -> None:

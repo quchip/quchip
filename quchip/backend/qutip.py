@@ -643,6 +643,21 @@ def _packs_hermitian_state(state: Any, options: dict[str, Any]) -> bool:
     return state.shape[0] >= _PACKED_STATE_MIN_DIMENSION and (state.isket or (state.isoper and state.isherm))
 
 
+# A reused stationary state may leave a residual of at most this many machine
+# epsilons of the generator's scale, as a direct solve does.
+_STATIONARY_REUSE_EPS = 16
+
+
+def _annihilates(liouvillian: sparse.csr_matrix, state: Any) -> bool:
+    """Whether a superoperator maps ``state`` to zero to round-off."""
+    size = math.isqrt(liouvillian.shape[0])
+    if not isinstance(state, Qobj) or not state.isoper or state.shape != (size, size):
+        return False
+    vector = np.asarray(qutip.operator_to_vector(state).full(), dtype=complex).reshape(-1)
+    scale = float(abs(liouvillian).sum(axis=0).max()) * float(np.linalg.norm(vector))
+    return bool(np.linalg.norm(liouvillian @ vector) <= _STATIONARY_REUSE_EPS * np.finfo(float).eps * scale)
+
+
 # A loky reusable executor respawns its worker pool after a short idle window
 # (10 s by default), and that respawn costs ~3 s on the next sweep. Sweeps in an
 # interactive session arrive minutes apart, so the pool is kept warm for an hour.
@@ -1093,7 +1108,9 @@ class QuTiPBackend(Backend):
             return liouvillian.data.as_scipy().tocsr()
         return sparse.csr_matrix(liouvillian.data.to_array())
 
-    def steadystate(self, problem: Any, *, prepared: PreparedStationary | None = None) -> SteadyStateSolverResult:
+    def steadystate(
+        self, problem: Any, *, prepared: PreparedStationary | None = None, guess: State | None = None,
+    ) -> SteadyStateSolverResult:
         r"""Solve a static Lindblad generator with :func:`qutip.steadystate`.
 
         Parameters
@@ -1102,6 +1119,10 @@ class QuTiPBackend(Backend):
             Captured static model, observables, and stationary solver options.
         prepared : PreparedStationary or None, default None
             Matching prepared generator; ``None`` builds it.
+        guess : Qobj or None, default None
+            Stationary state of a related generator. It is returned without a
+            solve when this generator annihilates it to round-off; the stats
+            record ``guess_reused``.
 
         Returns
         -------
@@ -1128,14 +1149,13 @@ class QuTiPBackend(Backend):
             raise ValueError("diagnostic_max_dimension must be non-negative.")
         method = options.pop("method", "direct")
         solver = options.pop("solver", None)
-        state = qutip.steadystate(
-            liouvillian,
-            method=method,
-            solver=solver,
-            **options,
-        )
-
         sparse_liouvillian = self._scipy_liouvillian(liouvillian)
+        reused = guess is not None and _annihilates(sparse_liouvillian, guess)
+        if guess is not None and reused:
+            state = guess
+        else:
+            state = qutip.steadystate(liouvillian, method=method, solver=solver, **options)
+
         state_vector = np.asarray(qutip.operator_to_vector(state).full(), dtype=complex).reshape(-1)
         residual = float(np.linalg.norm(sparse_liouvillian @ state_vector))
         dimension = state.shape[0]
@@ -1159,6 +1179,7 @@ class QuTiPBackend(Backend):
                 "solver": solver,
                 "uniqueness_checked": nullity is not None,
                 "diagnostic_max_dimension": diagnostic_max_dimension,
+                "guess_reused": reused,
             },
             residual=residual,
             nullity=nullity,

@@ -185,6 +185,27 @@ def test_stationary_matrix_matches_mode_space_matrix() -> None:
     np.testing.assert_allclose(general.matrix, linear.matrix, atol=2e-8)
 
 
+def test_stationary_sweep_solves_an_unpumped_operating_point_once(monkeypatch) -> None:
+    """Probe frequencies reuse a stationary operating point and match separate solves."""
+    import qutip
+
+    _, _, _, chip = _linear_resonator(kappa_in=0.04, kappa_out=0.02)
+    frequencies = np.array([5.99, 6.0, 6.01])
+    separate = [VNA(chip).sweep([frequency], options={"method": "direct"}).matrix for frequency in frequencies]
+    solves = []
+    steadystate = qutip.steadystate
+
+    def counted(*args, **kwargs):
+        solves.append(1)
+        return steadystate(*args, **kwargs)
+
+    monkeypatch.setattr(qutip, "steadystate", counted)
+    swept = VNA(chip).sweep(frequencies, options={"method": "direct"})
+
+    assert len(solves) == 1
+    np.testing.assert_allclose(swept.matrix, np.concatenate(separate), atol=1e-13)
+
+
 def test_hidden_dilation_channels_carry_probe_and_pump_fields() -> None:
     """Coherent sources sum conj(S) L over every channel, hidden vacuum outputs included."""
     resonator = Resonator(freq=6.0, levels=8, label="r")

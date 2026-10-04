@@ -876,7 +876,9 @@ class DynamiqsBackend(Backend):
         )
         return self.to_array(dq.slindbladian(hamiltonian, collapse_ops))
 
-    def steadystate(self, problem: Any, *, prepared: PreparedStationary | None = None) -> SteadyStateSolverResult:
+    def steadystate(
+        self, problem: Any, *, prepared: PreparedStationary | None = None, guess: State | None = None,
+    ) -> SteadyStateSolverResult:
         r"""Solve a static Lindblad generator by a trace-constrained JAX solve.
 
         Parameters
@@ -885,6 +887,9 @@ class DynamiqsBackend(Backend):
             Captured static model, observables, and stationary solver options.
         prepared : PreparedStationary or None, default None
             Matching prepared generator; ``None`` builds it.
+        guess : QArray or None, default None
+            Accepted for the backend protocol; the solve and its uniqueness
+            check always run, so the state stays differentiable.
 
         Returns
         -------
