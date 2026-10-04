@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import cmath
 import math
+import multiprocessing
 import os
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, Callable, Sequence
@@ -443,6 +445,64 @@ _PACKED_STATE_METHODS = frozenset({"adams", "bdf", "lsoda", "dop853", "vern7", "
 # The packed right-hand side runs in Python; below this Hilbert dimension its call
 # overhead outweighs the halved sparse and vector work (break-even near 40).
 _PACKED_STATE_MIN_DIMENSION = 48
+# SciPy releases the GIL in sparse products, so a packed product with at least
+# this many stored entries splits its rows over threads; a smaller one finishes
+# before the hand-off pays.
+_THREADED_PRODUCT_MIN_NNZ = 200_000
+# Sparse products are bound by memory bandwidth and stop gaining near four threads.
+_MAX_PRODUCT_THREADS = 4
+# Scaling the inputs by the coefficients joins the threads when it writes at least
+# this many entries; a shorter pass finishes before a second hand-off pays.
+_THREADED_SCALING_MIN_ENTRIES = 500_000
+# Thread pools by (process id, size): a forked child starts its own pool.
+_product_pools: dict[tuple[int, int], ThreadPoolExecutor] = {}
+
+
+def _thread_setting(name: str) -> int | None:
+    value = os.environ.get(name, "").strip()
+    return int(value) if value.isdigit() and int(value) > 0 else None
+
+
+def _product_threads() -> int:
+    """Threads for a packed master-equation product.
+
+    ``QUCHIP_NUM_THREADS`` sets the count. Otherwise a child process, such as
+    a sweep worker, uses one thread because its siblings share the machine;
+    ``OMP_NUM_THREADS`` applies next, and the default is up to four of the
+    CPUs available to the process.
+    """
+    explicit = _thread_setting("QUCHIP_NUM_THREADS")
+    if explicit is not None:
+        return explicit
+    if multiprocessing.parent_process() is not None:
+        return 1
+    available = getattr(os, "process_cpu_count", os.cpu_count)() or 1
+    return _thread_setting("OMP_NUM_THREADS") or max(1, min(_MAX_PRODUCT_THREADS, available))
+
+
+def _row_blocks(matrix: sparse.csr_matrix, count: int) -> list[tuple[int, int, sparse.csr_matrix]]:
+    """Contiguous row blocks of a CSR matrix holding about equal numbers of stored entries."""
+    if count <= 1:
+        return [(0, matrix.shape[0], matrix)]
+    bounds = np.searchsorted(matrix.indptr, np.linspace(0, matrix.nnz, count + 1)).clip(0, matrix.shape[0])
+    bounds[0], bounds[-1] = 0, matrix.shape[0]
+    return [(int(lo), int(hi), matrix[lo:hi]) for lo, hi in zip(bounds[:-1], bounds[1:]) if hi > lo]
+
+
+def _share(pool: ThreadPoolExecutor, task: Callable[[Any], None], items: Sequence[Any]) -> None:
+    """Run ``task`` over ``items``: the first on this thread, the rest on ``pool``."""
+    pending = [pool.submit(task, item) for item in items[1:]]
+    task(items[0])
+    for future in pending:
+        future.result()
+
+
+def _product_pool(threads: int) -> ThreadPoolExecutor:
+    key = (os.getpid(), threads)
+    pool = _product_pools.get(key)
+    if pool is None:
+        pool = _product_pools[key] = ThreadPoolExecutor(threads, thread_name_prefix="quchip-product")
+    return pool
 
 
 class _HermitianPacking:
@@ -488,29 +548,59 @@ class _PackedLindbladian(qutip.QobjEvo):
 
     The rows (i ≤ j) of ``L·vec(ρ)`` read the lower triangle of ``ρ`` as the
     conjugate of the upper one, so each part acts as ``A·x + B·conj(x)`` on the
-    packed state ``x``, and one stacked sparse product applies every part.
+    packed state ``x``, and one stacked sparse product applies every part. A
+    large product splits into row blocks on threads (see ``_product_threads``);
+    each row sums in the same order, so the result does not depend on the split.
     """
 
     def __init__(self, constant: Qobj, dynamic: Sequence[list], packing: _HermitianPacking) -> None:
         super().__init__(qutip.qeye(packing.size))
         superoperators = (constant, *(op for op, _ in dynamic))
-        self._stacked = sparse.hstack([block for op in superoperators for block in packing.split(op)], format="csr")
+        stacked = sparse.hstack([block for op in superoperators for block in packing.split(op)], format="csr")
+        threads = _product_threads() if stacked.nnz >= _THREADED_PRODUCT_MIN_NNZ else 1
+        self._blocks = _row_blocks(stacked, threads)
+        # The calling thread takes the first share of each step while the pool runs the rest.
+        self._pool = _product_pool(len(self._blocks) - 1) if len(self._blocks) > 1 else None
+        bounds = np.linspace(0, 2 * packing.size, len(self._blocks) + 1).astype(int)
+        threaded_scaling = 2 * packing.size * len(dynamic) >= _THREADED_SCALING_MIN_ENTRIES
+        self._chunks = list(zip(bounds[:-1], bounds[1:])) if threaded_scaling else [(0, 2 * packing.size)]
         self._coefficients = [coefficient for _, coefficient in dynamic]
         self._size = packing.size
         self._inputs = np.empty(2 * len(superoperators) * packing.size, dtype=complex)
+
+    def _scale_inputs(self, factors: list[complex], chunk: tuple[int, int]) -> None:
+        """Write ``c_k·[x, conj(x)]`` over one chunk of every coefficient's input block."""
+        low, high = chunk
+        span = 2 * self._size
+        for k, factor in enumerate(factors, start=1):
+            np.multiply(self._inputs[low:high], factor, out=self._inputs[k * span + low:k * span + high])
+
+    def _apply(self, result: np.ndarray, added: np.ndarray | None, scale: complex,
+               block: tuple[int, int, sparse.csr_matrix]) -> None:
+        low, high, rows = block
+        product = rows @ self._inputs
+        if scale != 1:
+            product *= scale
+        if added is not None:
+            product += added[low:high]
+        result[low:high] = product
 
     def matmul_data(self, t: Any, state: Any, out: Any = None, scale: complex = 1) -> Any:
         size, inputs = self._size, self._inputs
         x = (state.as_ndarray() if isinstance(state, qutip.data.Dense) else state.to_array()).reshape(-1)
         inputs[:size] = x
         np.conjugate(x, out=inputs[size:2 * size])
-        for k, coefficient in enumerate(self._coefficients, start=1):
-            np.multiply(inputs[:2 * size], coefficient(t), out=inputs[2 * k * size:2 * (k + 1) * size])
-        result = self._stacked @ inputs
-        if scale != 1:
-            result *= scale
+        factors = [coefficient(t) for coefficient in self._coefficients]
+        added = None
         if out is not None:
-            result += out.to_array().reshape(-1)
+            added = (out.as_ndarray() if isinstance(out, qutip.data.Dense) else out.to_array()).reshape(-1)
+        result = np.empty(size, dtype=complex)
+        if self._pool is None:
+            self._scale_inputs(factors, (0, 2 * size))
+            self._apply(result, added, scale, self._blocks[0])
+        else:
+            _share(self._pool, partial(self._scale_inputs, factors), self._chunks)
+            _share(self._pool, partial(self._apply, result, added, scale), self._blocks)
         return qutip.data.Dense(result.reshape(-1, 1), copy=False)
 
 

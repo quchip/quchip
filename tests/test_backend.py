@@ -308,3 +308,39 @@ class TestSuperoperatorMemory:
             expected = qutip.mesolve(hamiltonian, state, tlist, c_ops=collapse, options=options).final_state
             result = backend.mesolve(hamiltonian, state, tlist, c_ops=collapse, options=options)
             npt.assert_allclose(result.final_state.full(), expected.full(), atol=1e-8)
+
+    def test_threaded_packed_product_reproduces_one_thread(
+        self, backend: QuTiPBackend, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Splitting the packed product's rows over threads leaves the solution bit-for-bit unchanged."""
+        import qutip
+
+        from quchip.backend import qutip as qutip_backend
+
+        a, b = qutip.tensor(qutip.destroy(8), qutip.qeye(6)), qutip.tensor(qutip.qeye(8), qutip.destroy(6))
+        drive = qutip.coefficient(lambda t: 0.4 * np.exp(1.3j * t) * np.sin(0.5 * t))
+        hamiltonian = qutip.QobjEvo([0.3 * a.dag() * a + 0.05 * (a.dag() * b + b.dag() * a),
+                                     [a, drive], [a.dag(), drive.conj()]])
+        collapse = [0.2 * a, 0.1 * b]
+        state = qutip.ket2dm(qutip.tensor(qutip.basis(8, 1), qutip.basis(6, 0)))
+        monkeypatch.setattr(qutip_backend, "_THREADED_PRODUCT_MIN_NNZ", 0)
+        final = {}
+        for threads in ("1", "3"):
+            monkeypatch.setenv("QUCHIP_NUM_THREADS", threads)
+            result = backend.mesolve(hamiltonian, state, [0.0, 3.0], c_ops=collapse, options={"method": "vern9"})
+            final[threads] = result.final_state.full()
+        assert np.array_equal(final["1"], final["3"])
+
+    def test_packed_product_threads_follow_settings_and_worker_processes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """QUCHIP_NUM_THREADS wins; a child process runs one thread unless told otherwise; OMP_NUM_THREADS applies next."""
+        from quchip.backend import qutip as qutip_backend
+
+        monkeypatch.delenv("QUCHIP_NUM_THREADS", raising=False)
+        monkeypatch.setenv("OMP_NUM_THREADS", "2")
+        assert qutip_backend._product_threads() == 2
+        monkeypatch.setenv("QUCHIP_NUM_THREADS", "3")
+        assert qutip_backend._product_threads() == 3
+        monkeypatch.setattr(qutip_backend.multiprocessing, "parent_process", lambda: object())
+        assert qutip_backend._product_threads() == 3
+        monkeypatch.delenv("QUCHIP_NUM_THREADS")
+        assert qutip_backend._product_threads() == 1
