@@ -233,15 +233,15 @@ def _sector_eigh(h: Any, sectors: np.ndarray) -> tuple[Any, Any]:
     """
     if not contains_tracer(h):
         h = np.asarray(h)
-        eigenvalues = np.zeros(h.shape[0], dtype=h.real.dtype)
-        eigenvectors = np.zeros(h.shape, dtype=h.dtype)
+        eigenvalues: Any = np.zeros(h.shape[0], dtype=h.real.dtype)
+        eigenvectors: Any = np.zeros(h.shape, dtype=h.dtype)
         start = 0
         for sector in np.unique(sectors):
             rows = np.flatnonzero(sectors == sector)
             columns = np.arange(start, start + rows.size)
             eigenvalues[columns], eigenvectors[np.ix_(rows, columns)] = np.linalg.eigh(h[np.ix_(rows, rows)])
             start += rows.size
-        order = np.argsort(eigenvalues, kind="stable")
+        order: Any = np.argsort(eigenvalues, kind="stable")
         return eigenvalues[order], eigenvectors[:, order]
     eigenvalues = jnp.zeros(h.shape[0], dtype=h.real.dtype)
     eigenvectors = jnp.zeros(h.shape, dtype=h.dtype)

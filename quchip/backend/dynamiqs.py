@@ -650,8 +650,9 @@ class DynamiqsBackend(Backend):
         dims = {tuple(op.dims) for op in operators if isinstance(op, QArray)}
         if not terms or len(dims) != 1 or not _plain_operators(operators) or any(np.ndim(c) for c, _ in terms):
             return super().linear_combination(terms)
-        parts = [_dia_parts(op) for op in operators]
-        if any(part is None for part in parts):
+        maybe_parts = [_dia_parts(op) for op in operators]
+        parts = [part for part in maybe_parts if part is not None]
+        if len(parts) != len(maybe_parts):
             return _dense_linear_combination(terms, dims.pop())
         coefficients = [_concrete_coefficient(coefficient) for coefficient, _ in terms]
         offsets = sorted({offset for term_offsets, _ in parts for offset in term_offsets})
@@ -663,9 +664,10 @@ class DynamiqsBackend(Backend):
                 rows = [index[offset] for offset in term_offsets]
                 total[rows] += np.asarray(term_diags) if _is_unit(raw) else coefficient * np.asarray(term_diags)
         else:
-            rows = np.asarray([index[offset] for term_offsets, _ in parts for offset in term_offsets], dtype=int)
+            positions = np.asarray([index[offset] for term_offsets, _ in parts for offset in term_offsets],
+                                   dtype=np.intp)
             scaled = [diags if _is_unit(raw) else raw * diags for (raw, _), (_, diags) in zip(terms, parts)]
-            total = _sum_rows(rows, scaled[0] if len(scaled) == 1 else jnp.concatenate(scaled), shape[0])
+            total = _sum_rows(positions, scaled[0] if len(scaled) == 1 else jnp.concatenate(scaled), shape[0])
         return _dia_qarray(dims.pop(), tuple(offsets), total)
 
     def tensor(self, *operators: Operator) -> Operator:
@@ -675,24 +677,31 @@ class DynamiqsBackend(Backend):
         dense = [_host_dense(op) for op in operators]
         if not all(s is not None or d is not None for s, d in zip(sparse, dense)):
             traced = [_dia_parts(op) for op in operators]
-            if not all(part is not None for part in traced):
-                if any(part is not None for part in traced) and _plain_operators(operators):
+            traced_dia = [part for part in traced if part is not None]
+            if len(traced_dia) != len(traced):
+                if traced_dia and _plain_operators(operators):
                     # A dense factor makes the product dense, as in qarray arithmetic.
                     return dq.asqarray(reduce(jnp.kron, [op.to_jax() for op in operators]),
                                        dims=tuple(dim for op in operators for dim in op.dims))
                 return dq.tensor(*operators)
-            product = traced[0]
-            for factor in traced[1:]:
+            product = traced_dia[0]
+            for factor in traced_dia[1:]:
                 product = _kron_dia_traced(product, factor)
             return _dia_qarray(tuple(dim for op in operators for dim in op.dims), *product)
         # Concrete factors: the same product dynamiqs forms, computed on the host.
         dims = tuple(dim for op in operators for dim in op.dims)
-        if all(factor is not None for factor in sparse):
-            product = sparse[0]
-            for factor in sparse[1:]:
-                product = _kron_dia(product, factor)
-            return _dia_qarray(dims, *product)
-        matrices = [d if d is not None else _dia_to_dense(*s) for s, d in zip(sparse, dense)]
+        host_dia = [factor for factor in sparse if factor is not None]
+        if len(host_dia) == len(sparse):
+            host_product = host_dia[0]
+            for host_factor in host_dia[1:]:
+                host_product = _kron_dia(host_product, host_factor)
+            return _dia_qarray(dims, *host_product)
+        matrices: list[np.ndarray] = []
+        for host_sparse, host_dense in zip(sparse, dense):
+            if host_dense is not None:
+                matrices.append(host_dense)
+            elif host_sparse is not None:
+                matrices.append(_dia_to_dense(*host_sparse))
         return dq.asqarray(jnp.asarray(reduce(np.kron, matrices)), dims=dims)
 
     # ------------------------------------------------------------------
@@ -1610,6 +1619,7 @@ class DynamiqsBackend(Backend):
             shape, index = (total_dim, total_dim), (rows_np, cols_np)
         else:
             shape, index = (n_diagonals, total_dim), (np.searchsorted(offsets, cols_np - rows_np), cols_np)
+        data: Any
         if contains_tracer(values):
             data = jnp.zeros(shape, dtype=jnp.complex128).at[index].add(jnp.asarray(values, dtype=jnp.complex128))
         else:

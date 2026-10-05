@@ -1028,8 +1028,9 @@ class CanonicalOperator:
         parts = (self.values, self.indices, self.indptr, self.offsets)
         if is_jax_namespace(xp) and not contains_tracer(parts):
             # A concrete JAX payload densifies on the host: each device scatter on a new shape compiles.
-            host = replace(self, **{name: None if part is None else np.asarray(part)
-                                    for name, part in zip(("values", "indices", "indptr", "offsets"), parts)})
+            host_parts: dict[str, Any] = {name: None if part is None else np.asarray(part)
+                                          for name, part in zip(("values", "indices", "indptr", "offsets"), parts)}
+            host = replace(self, **host_parts)
             return xp.asarray(host.to_dense())
 
         if self.layout == "dense":

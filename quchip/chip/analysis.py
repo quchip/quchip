@@ -441,7 +441,7 @@ class ChipAnalysis:
 
         network = chip.port_network
         try:
-            network_key = None if network is None else network.fingerprint()
+            network_key: Any = None if network is None else network.fingerprint()
         except ValueError:
             network_key = TracedKey(id(network))
         return (

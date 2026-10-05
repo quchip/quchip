@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Callable
+from typing import Any, Callable, TypeGuard, TypeVar
 from dataclasses import dataclass, field
 
 import jax
@@ -47,6 +47,9 @@ def copy_value(value: Any, *, readonly: bool = False) -> Any:
     return capture(value)
 
 
+_T = TypeVar("_T")
+
+
 @dataclass(frozen=True)
 class TracedKey:
     """Cache-key stand-in for a JAX tracer: its identity within the trace that owns it."""
@@ -88,7 +91,7 @@ def value_fingerprint(value: Any, *, traced: bool = False) -> Any:
     return structure(tree), tuple(value_fingerprint(leaf, traced=traced) for leaf in leaves)
 
 
-def scoped_entry(key: Any, value: Any, *, traced: bool) -> tuple[Any, Any, Any]:
+def scoped_entry(key: Any, value: _T, *, traced: bool) -> tuple[Any, Any, _T]:
     """A cache entry ``(key, scope, value)``.
 
     An entry whose value is traced, or whose key holds a :class:`TracedKey`,
@@ -99,7 +102,7 @@ def scoped_entry(key: Any, value: Any, *, traced: bool) -> tuple[Any, Any, Any]:
     return key, get_opaque_trace_state() if scoped else None, value
 
 
-def scoped_hit(entry: tuple[Any, Any, Any] | None, key: Any) -> bool:
+def scoped_hit(entry: tuple[Any, Any, _T] | None, key: Any) -> TypeGuard[tuple[Any, Any, _T]]:
     """Whether *entry* holds *key* and, when scoped, belongs to the current trace."""
     return (entry is not None and entry[0] == key
             and (entry[1] is None or entry[1] == get_opaque_trace_state()))

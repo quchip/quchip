@@ -314,8 +314,8 @@ class Chip:
 
         # Both snapshots are keyed by their complete structural inputs below;
         # values produced under a JAX trace are never retained.
-        self._unresolved_hamiltonian_cache: tuple[Any, PhysicsExpr] | None = None
-        self._resolved_result_cache: tuple[tuple[Any, ...], EngineResult] | None = None
+        self._unresolved_hamiltonian_cache: tuple[Any, Any, PhysicsExpr] | None = None
+        self._resolved_result_cache: tuple[Any, Any, EngineResult] | None = None
 
         if frame != "lab":
             self.set_frame(frame)

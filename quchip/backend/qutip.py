@@ -311,7 +311,9 @@ def _summed_envelope_coefficient(envelopes: Sequence[Any], sample_tlist: Any) ->
     if sample_tlist is None or len(envelopes) == 1:
         parts = [_envelope_coefficient(envelope, sample_tlist) for envelope in envelopes]
     else:
-        parts, linear, cubic = [], [], []
+        parts = []
+        linear: list[tuple[np.ndarray, np.ndarray]] = []
+        cubic: list[tuple[np.ndarray, np.ndarray]] = []
         for envelope in envelopes:
             try:
                 grid = np.asarray(_augmented_sample_grid(envelope, sample_tlist), dtype=float)
@@ -345,6 +347,7 @@ def _summed_envelope_coefficient(envelopes: Sequence[Any], sample_tlist: Any) ->
 
 def _qobj_key(op: Qobj) -> tuple:
     """Exact content key of an operator; equal operators stored differently may get different keys."""
+    payload: tuple[bytes, ...]
     if isinstance(op.data, qutip.data.CSR):
         matrix = op.data_as("csr_matrix")
         payload = (matrix.indptr.tobytes(), matrix.indices.tobytes(), matrix.data.tobytes())

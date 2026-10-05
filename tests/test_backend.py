@@ -332,7 +332,7 @@ class TestSuperoperatorMemory:
         assert np.array_equal(final["1"], final["3"])
 
     def test_packed_product_threads_follow_settings_and_worker_processes(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """QUCHIP_NUM_THREADS wins; a child process runs one thread unless told otherwise; OMP_NUM_THREADS applies next."""
+        """QUCHIP_NUM_THREADS wins, then one thread in a child process, then OMP_NUM_THREADS."""
         from quchip.backend import qutip as qutip_backend
 
         monkeypatch.delenv("QUCHIP_NUM_THREADS", raising=False)

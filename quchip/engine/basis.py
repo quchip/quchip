@@ -100,7 +100,7 @@ def _lowest_eigenpairs(matrix: Any, levels: int) -> tuple[Any, Any]:
     """
     if contains_tracer(matrix):
         values, vectors = _differentiable_eigenpairs(matrix, levels)
-        xp = jnp
+        xp: Any = jnp
     else:
         values, vectors = np.linalg.eigh(np.asarray(matrix))
         values, vectors = values[:levels], vectors[:, :levels]
