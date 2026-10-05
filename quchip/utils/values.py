@@ -10,7 +10,11 @@ import jax
 import jax.tree_util as jtu
 import numpy as np
 from jax.core import Tracer
-from jax.extend.core import get_opaque_trace_state
+
+try:
+    from jax.extend.core import get_opaque_trace_state
+except ImportError:  # JAX before 0.10 exports it only from jax.core.
+    from jax.core import get_opaque_trace_state
 
 
 def copy_value(value: Any, *, readonly: bool = False) -> Any:
