@@ -625,6 +625,11 @@ class DynamiqsBackend(Backend):
 
         Concrete factors multiply on the host; traced sparse-DIA factors
         multiply their diagonals directly.
+
+        Parameters
+        ----------
+        a, b : Operator
+            Left and right matrix factors with compatible dimensions.
         """
         if not _plain_operators((a, b)) or tuple(a.dims) != tuple(b.dims):
             return super().matmul(a, b)
@@ -645,6 +650,11 @@ class DynamiqsBackend(Backend):
         Sparse-DIA terms sum their diagonals into a sparse-DIA result; a sum
         that includes a dense term is dense, as in qarray arithmetic. Batched
         operators or coefficients use qarray arithmetic.
+
+        Parameters
+        ----------
+        terms : sequence of (scalar, Operator)
+            At least one coefficient and operator pair on a common space.
         """
         operators = [op for _, op in terms]
         dims = {tuple(op.dims) for op in operators if isinstance(op, QArray)}
