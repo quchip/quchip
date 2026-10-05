@@ -101,6 +101,10 @@ This file records notable user-visible changes to quchip.
   here. A backend that overrides `steadystate()` must accept the keyword; it
   may ignore it.
 
+#### Documentation and examples
+
+- The NV-centre guide is removed.
+
 ## [0.4.0] - 2026-09-29 <a id="quchip-0-4-0"></a>
 
 ### 0.4 series highlights

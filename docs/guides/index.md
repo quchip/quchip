@@ -6,8 +6,6 @@ microwave measurements, reductions and fitting.
 New to quchip? Start with {doc}`your first chip <defining-and-inspecting-a-chip>`.
 
 - {doc}`Extending quchip <../extensions>`: declare your own operators, models and controls.
-- {doc}`An NV centre in diamond <nv-centre>`: a spin defect's field-dependent
-  resonances, pulsed ODMR and Ramsey fringes.
 
 ## Spectra and dynamics
 
@@ -43,7 +41,6 @@ For API choices and common pitfalls, see the {doc}`cookbook <../cookbook>`.
 :maxdepth: 1
 
 Extending quchip <../extensions>
-An NV centre in diamond <nv-centre>
 Spectra and parameter sweeps <statics-and-parameter-studies>
 Pulses, leakage, and readout <dynamics-pulses-and-readout>
 Readout and fridge wiring <steady-state-and-vna>

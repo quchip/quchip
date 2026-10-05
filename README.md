@@ -27,7 +27,7 @@
 
 `quchip` is an open-source Python toolkit for modelling quantum devices.
 Its built-in models cover circuit QED; custom Hamiltonians, operators, and loss
-channels describe other systems, such as [a nitrogen-vacancy centre in diamond](https://docs.quchip.org/guides/nv-centre).
+channels describe other systems.
 
 A predictive chip model needs more than a Hamiltonian. Device physics, control-line transformations, frames, approximations, dissipation, and measured observables all need explicit places in the model. Gain, delay, and crosstalk remain properties of the control chain instead of being folded into Hamiltonian coefficients by hand.
 
@@ -134,7 +134,6 @@ The [dynamics guide](https://docs.quchip.org/guides/dynamics-pulses-and-readout)
 - [Model reduction](https://docs.quchip.org/guides/chip-transformations): compare a reduced model with the full pulse simulation.
 - [Gradients and parameter fitting](https://docs.quchip.org/guides/differentiability): differentiate spectra and pulse responses, and fit measured circuit parameters.
 - [Extending quchip](https://docs.quchip.org/extensions): define custom models, controls, dissipation and interoperability mappings.
-- [An NV centre in diamond](https://docs.quchip.org/guides/nv-centre): model a spin defect and its nucleus, from field-dependent resonances to Ramsey fringes.
 - [Cookbook](https://docs.quchip.org/cookbook): practical API choices, tips and common pitfalls.
 - [SQA 2026 examples](https://docs.quchip.org/guides/from-sqa-2026): five short calculations from the talk.
 
