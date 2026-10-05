@@ -69,6 +69,37 @@ This file records notable user-visible changes to quchip.
   jumps stay sparse. A lossy `mesolve` of a reduced model at Hilbert dimension
   144 now peaks near 1.3 GB instead of an estimated 1.2 TB.
   ([#80](https://github.com/quchip/quchip/issues/80))
+- dynamiqs solves sum the time-dependent Hamiltonian into one array per step
+  from operators assembled on the host, and a traced chip reuses its resolution
+  and dressed analysis within one trace. On one machine, a jitted reverse-mode
+  gradient through an exact elimination and a dynamiqs pulse of a 576-state
+  chip took 830 s per call and now takes 3.7 s; a batch of eight pulse phases
+  takes 4.1 s instead of 20 s.
+- QuTiP `mesolve` of a Hermitian density matrix integrates its packed upper
+  triangle with one sparse product per step, and drive carriers acting through
+  the same operator share one coefficient. A lossy pulse on the same chip takes
+  200 s instead of 400 s, and a coherent 16-pulse train 7.3 s instead of 49 s.
+- Large packed QuTiP master-equation products split their rows over up to four
+  threads, which brings that lossy pulse to 145 s. `QUCHIP_NUM_THREADS`, or
+  else `OMP_NUM_THREADS`, sets the count; worker processes use one thread unless
+  `QUCHIP_NUM_THREADS` is set. Each row sums in the same order, so results do
+  not depend on the thread count.
+- Static analysis of concrete chips sums, diagonalizes, reduces and labels
+  operators with NumPy instead of compiling a JAX program for each array shape.
+  `fit_a_dress()` on the 576-state chip takes 3.1 s per fit instead of 15 s.
+- On the general stationary route, `VNA.sweep()` solves an operating point that
+  stays stationary across probe frequencies once instead of at every frequency.
+  The QuTiP backend runs its default direct steady-state solve without QuTiP's
+  per-call option scope, which rebuilt every data-layer dispatcher.
+  `steadystate_batch()` over 40 points runs 5.4 times faster and
+  `VNA.finite_power()` over 44 points 3.2 times faster.
+
+#### Compatibility
+
+- `Backend.steadystate()` takes an optional `guess`, a native stationary state
+  of a related problem that a backend may return when it is also stationary
+  here. A backend that overrides `steadystate()` must accept the keyword; it
+  may ignore it.
 
 ## [0.4.0] - 2026-09-29 <a id="quchip-0-4-0"></a>
 

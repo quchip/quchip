@@ -114,6 +114,11 @@ across worker processes; dynamiqs vectorizes homogeneous batches. Numerical
 failure raises with the original point index and parameter values when available.
 A failed batch does not return partial results.
 
+A large QuTiP master equation splits each sparse product over up to four
+threads. `QUCHIP_NUM_THREADS` sets the count, and `OMP_NUM_THREADS` applies when
+it is unset. Batch worker processes use one thread unless `QUCHIP_NUM_THREADS`
+is set. Results do not depend on the thread count.
+
 ## Stationary states
 
 `chip.steadystate()` requires a constant resolved generator and a unique
