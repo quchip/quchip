@@ -196,3 +196,119 @@ class TestPermuteStateTraceability:
         psi = np.kron(np.kron(q0_expected, q1_expected), q2_expected)
         expected_dm = np.outer(psi, psi.conj())
         npt.assert_allclose(np.asarray(value), expected_dm, atol=1e-5)
+
+
+def test_prepared_hamiltonian_is_the_engine_hamiltonian(dynamiqs_backend) -> None:
+    """The modulated sum of static, pulse and crosstalk terms evaluates to the engine's H(t)."""
+    from quchip import (RWA, Capacitive, ChargeDrive, ControlEquipment, DuffingTransmon, Gaussian, QuantumSequence,
+                        Square)
+
+    qubits = [DuffingTransmon(freq=f, anharmonicity=-0.25, levels=3, label=f"q{i}") for i, f in enumerate((5.0, 5.2))]
+    equipment = ControlEquipment([ChargeDrive(q, label=f"d{i}") for i, q in enumerate(qubits)])
+    equipment.set_crosstalk_matrix([[1.0, 0.1], [0.05, 1.0]], [[0.0, 0.3], [-0.2, 0.0]])
+    chip = Chip(qubits, [Capacitive(*qubits, g=0.01)], control_equipment=equipment, frame=5.1,
+                approximation=RWA(), backend="dynamiqs")
+    sequence = QuantumSequence(chip)
+    sequence.schedule("d0", envelope=Gaussian(duration=20.0, amplitude=0.02), freq=5.0, start_time=0.0)
+    sequence.schedule("d0", envelope=Gaussian(duration=20.0, amplitude=0.03), freq=5.0, start_time=20.0)
+    sequence.schedule("d1", envelope=Square(duration=13.0, amplitude=0.01), freq=5.0, phase=0.4, start_time=7.0)
+    result = sequence.resolve()
+    rhs = chip.backend.prepare_hamiltonian(result).rhs
+    for t in (3.0, 7.0, 12.5, 20.0, 26.5, 33.3):
+        npt.assert_allclose(np.asarray(rhs(t).to_jax()),
+                            2 * np.pi * np.asarray(result.hamiltonian().matrix(backend=chip.backend, t=t)), atol=1e-10)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("layout", ["dia", "dense"])
+def test_backend_operator_factories_match_dynamiqs(dynamiqs_backend, layout) -> None:
+    """Ladder, number, identity and tensor products agree with dynamiqs in value, layout, dims and structure."""
+    import dynamiqs as dq
+    import jax
+    import jax.tree_util as jtu
+    from dynamiqs.qarrays.layout import get_layout, set_global_layout
+
+    previous = get_layout()
+    dq.set_layout(layout)
+    try:
+        pairs = [(factory(n), reference(n)) for n in (1, 2, 4) for factory, reference in (
+            (dynamiqs_backend.destroy, dq.destroy), (dynamiqs_backend.create, dq.create),
+            (dynamiqs_backend.number, dq.number), (dynamiqs_backend.identity, dq.eye))]
+        factors = (dynamiqs_backend.destroy(3), dynamiqs_backend.identity(2),
+                   dynamiqs_backend.create(4) + 0.5 * dynamiqs_backend.number(4))
+        pairs.append((dynamiqs_backend.tensor(*factors), dq.tensor(*factors)))
+        mixed = (dynamiqs_backend.create(3), dq.asqarray(np.arange(4.0).reshape(2, 2) + 1j))
+        pairs.append((dynamiqs_backend.tensor(*mixed), dq.tensor(*mixed)))
+        for ours, reference in pairs:
+            assert ours.layout is reference.layout
+            assert ours.dims == reference.dims
+            assert jtu.tree_structure(ours) == jtu.tree_structure(reference)
+            npt.assert_allclose(np.asarray(ours.to_jax()), np.asarray(reference.to_jax()), rtol=0.0, atol=1e-15)
+
+        def traced(scale):
+            factors = (scale * dynamiqs_backend.create(3), mixed[1], dynamiqs_backend.identity(2))
+            ours, reference = dynamiqs_backend.tensor(*factors), dq.tensor(*factors)
+            assert ours.layout is reference.layout
+            assert ours.dims == reference.dims
+            return ours.to_jax(), reference.to_jax()
+
+        ours, reference = jax.jit(traced)(0.7)
+        npt.assert_allclose(np.asarray(ours), np.asarray(reference), rtol=0.0, atol=1e-15)
+    finally:
+        set_global_layout(previous)
+
+
+@pytest.mark.unit
+def test_linear_combination_matches_operator_arithmetic(dynamiqs_backend) -> None:
+    """Sparse-DIA, dense and traced-coefficient combinations equal the same sum formed with qarray arithmetic."""
+    import jax
+    import dynamiqs as dq
+
+    a = dynamiqs_backend.tensor(dynamiqs_backend.destroy(3), dynamiqs_backend.identity(2))
+    n = dynamiqs_backend.tensor(dynamiqs_backend.number(3), dynamiqs_backend.identity(2))
+    x = dynamiqs_backend.tensor(dynamiqs_backend.identity(3), dynamiqs_backend.create(2))
+    dense = dq.asqarray(np.arange(36.0).reshape(6, 6) + 0.5j, dims=(3, 2))
+    cases = [[(1, a), (2.5, n), (-1j, x)], [(1, n), (0.3, dense)], [(np.float64(2.0), a.dag()), (1, a)]]
+    for terms in cases:
+        expected = sum((c * op for c, op in terms[1:]), start=terms[0][0] * terms[0][1])
+        combined = dynamiqs_backend.linear_combination(terms)
+        npt.assert_allclose(np.asarray(combined.to_jax()), np.asarray(expected.to_jax()), rtol=0, atol=1e-14)
+
+    assert dynamiqs_backend.linear_combination(cases[0]).layout is dq.dia
+    assert dynamiqs_backend.linear_combination(cases[1]).layout is dq.dense
+
+    for other in (n, dense):
+        def traced(scale, other=other):
+            combined = dynamiqs_backend.linear_combination([(scale, a), (1, other)])
+            assert combined.layout is other.layout
+            return combined.to_jax()
+
+        expected = (0.7 * a + other).to_jax()
+        npt.assert_allclose(np.asarray(jax.jit(traced)(0.7)), np.asarray(expected), atol=1e-14)
+
+
+def test_matmul_matches_operator_arithmetic(dynamiqs_backend) -> None:
+    """Sparse-DIA and dense products equal qarray products, and two sparse-DIA factors stay sparse."""
+    import jax
+    import jax.tree_util as jtu
+    import dynamiqs as dq
+
+    a = dynamiqs_backend.tensor(dynamiqs_backend.destroy(3), dynamiqs_backend.identity(2))
+    x = dynamiqs_backend.tensor(dynamiqs_backend.identity(3), dynamiqs_backend.create(2))
+    dense = dq.asqarray(np.arange(36.0).reshape(6, 6) + 0.5j, dims=(3, 2))
+    for left, right in [(a.dag(), a), (a, x), (a, dense), (dense, dense)]:
+        product = dynamiqs_backend.matmul(left, right)
+        expected = (left @ right).to_jax()
+        npt.assert_allclose(np.asarray(product.to_jax()), np.asarray(expected), rtol=0, atol=1e-12)
+    assert dynamiqs_backend.matmul(a.dag(), a).layout is dq.dia
+
+    lowered = dynamiqs_backend.destroy(2)
+    for left, right in [(a.dag(), a), (a, x.dag() @ a), (lowered, lowered)]:
+        def traced(scale, left=left, right=right):
+            ours, reference = dynamiqs_backend.matmul(scale * left, right), (scale * left) @ right
+            assert ours.layout is dq.dia
+            assert jtu.tree_structure(ours) == jtu.tree_structure(reference)
+            return ours.to_jax(), reference.to_jax()
+
+        ours, reference = jax.jit(traced)(0.7)
+        npt.assert_allclose(np.asarray(ours), np.asarray(reference), rtol=0, atol=1e-14)

@@ -27,14 +27,16 @@ from __future__ import annotations
 import itertools
 import math
 from dataclasses import dataclass, replace
-from functools import partial
+from functools import lru_cache, partial, reduce
 from typing import Any, Sequence
 
 import dynamiqs as dq
 import equinox as eqx
 import numpy as np
+from dynamiqs.qarrays.layout import get_layout
 from dynamiqs.qarrays.qarray import QArray
 from dynamiqs.qarrays.sparsedia_dataarray import SparseDIADataArray
+from dynamiqs.time_qarray import SummedTimeQArray
 
 # x64 is enabled at the package boundary in ``quchip/__init__.py``.
 
@@ -43,7 +45,9 @@ import jax.numpy as jnp  # noqa: E402
 import jax.scipy.linalg as jsp_linalg  # noqa: E402
 import jax.tree_util as jtu  # noqa: E402
 
+from quchip.backend._memory import require_memory
 from quchip.backend._response import linear_response, stationary_condition_number
+from quchip.utils.jax_utils import contains_tracer
 from quchip.utils.values import DeferredValue
 from quchip.backend._dims import (  # noqa: E402
     _embed_array,
@@ -60,8 +64,9 @@ from quchip.backend.containers import (  # noqa: E402
     SolverResult,
     SteadyStateSolverResult,
 )
-from quchip.backend.protocol import Backend, Operator, State  # noqa: E402
+from quchip.backend.protocol import Backend, Operator, State, _is_unit  # noqa: E402
 from quchip.engine.ir import (  # noqa: E402
+    Add,
     ScalarModulation,
     _aggregate_batch_metadata,
     evaluate_signal_program,
@@ -74,9 +79,212 @@ _DEFAULT_RTOL = 1e-9
 _DEFAULT_ATOL = 1e-11
 
 
+def _shared_operator_slots(results: Sequence[Any]) -> list[list[int]]:
+    """Group dynamic slots whose operator is one object in every result.
+
+    Terms sharing an operator form one modulated term whose signal is their
+    sum, so each step applies the operator once however many pulses and
+    crosstalk paths drive it.
+    """
+    groups: dict[tuple[int, ...], list[int]] = {}
+    for slot in range(len(results[0].dynamic_terms)):
+        groups.setdefault(tuple(id(result.dynamic_terms[slot].operator) for result in results), []).append(slot)
+    return list(groups.values())
+
+
+def _summed_modulation(modulations: Sequence[Any]) -> Any:
+    """One scalar modulation equal to the sum of *modulations*."""
+    if len(modulations) == 1:
+        return modulations[0]
+    return ScalarModulation(signal=Add(tuple(modulation.signal for modulation in modulations)))
+
+
+@lru_cache(maxsize=None)
+def _dia_structure(dims: tuple[int, ...], offsets: tuple[int, ...]) -> Any:
+    """Pytree structure of an unbatched sparse-DIA qarray whose one leaf is its diagonals.
+
+    The instances are assembled field by field: running their constructors,
+    even abstractly, traces dynamiqs' per-diagonal checks for every offset set.
+    """
+    data = object.__new__(SparseDIADataArray)
+    object.__setattr__(data, "offsets", offsets)
+    object.__setattr__(data, "diags", 0)
+    qarray = object.__new__(QArray)
+    for name, value in (("dims", dims), ("vectorized", False), ("data", data)):
+        object.__setattr__(qarray, name, value)
+    return jtu.tree_structure(qarray)
+
+
 def _dia_qarray(dims: tuple[int, ...], offsets: tuple[int, ...], diags: Any) -> QArray:
-    """Build an operator in sparse-DIA layout; *diags* may be traced, *offsets* are static."""
-    return QArray(dims, False, SparseDIADataArray(offsets, diags))
+    """Build an operator in sparse-DIA layout; *diags* may be traced, *offsets* are static.
+
+    Concrete diagonals are checked on the host and wrapped directly. Dynamiqs
+    checks each diagonal with a device computation that compiles once per
+    shape, which dominates building a chip's operators outside JIT; inside a
+    trace the same check stages a host callback per diagonal. Traced
+    diagonals are instead zeroed outside the matrix bounds.
+    """
+    dims = tuple(int(dim) for dim in dims)
+    offsets = tuple(int(offset) for offset in offsets)
+    if np.ndim(diags) != 2:
+        return QArray(dims, False, SparseDIADataArray(offsets, jnp.asarray(diags, dtype=jnp.complex128)))
+    if contains_tracer(diags):
+        inside = np.ones(np.shape(diags), dtype=bool)
+        for row, offset in enumerate(offsets):
+            if offset > 0:
+                inside[row, :offset] = False
+            elif offset < 0:
+                inside[row, offset:] = False
+        values = jnp.where(inside, jnp.asarray(diags, dtype=jnp.complex128), 0.0)
+        return jtu.tree_unflatten(_dia_structure(dims, offsets), [values])
+    host = np.asarray(diags, dtype=complex)
+    for row, offset in zip(host, offsets):
+        if np.any(row[:offset] if offset >= 0 else row[offset:]):
+            raise ValueError("Sparse-DIA diagonals must be zero outside the matrix bounds.")
+    return jtu.tree_unflatten(_dia_structure(dims, offsets), [jnp.asarray(host)])
+
+
+def _complex_payload(values: Any) -> Any:
+    """Complex JAX array of *values*, converted on the host when they are concrete."""
+    return jnp.asarray(values if contains_tracer(values) else np.asarray(values, dtype=complex), dtype=jnp.complex128)
+
+
+def _concrete_coefficient(value: Any) -> np.ndarray | None:
+    """A concrete numeric scalar as a 0-d NumPy array (real stays real), else ``None``."""
+    if contains_tracer(value) or np.ndim(value) != 0:
+        return None
+    array = np.asarray(value)
+    return array if array.dtype.kind in "iufc" else None
+
+
+def _dia_parts(op: Any) -> tuple[tuple[int, ...], Any] | None:
+    """Offsets and diagonals, concrete or traced, of an unbatched sparse-DIA qarray, else ``None``."""
+    if isinstance(op, QArray) and op.layout is dq.dia and op.ndim == 2:
+        return tuple(int(offset) for offset in op.data.offsets), op.data.diags
+    return None
+
+
+def _sum_rows(rows: np.ndarray, values: Any, count: int) -> Any:
+    """Add ``values`` into ``count`` complex rows at host indices ``rows``; distinct rows need no scatter."""
+    values = jnp.asarray(values, dtype=jnp.complex128)
+    if np.unique(rows).size < rows.size:
+        return jnp.zeros((count, values.shape[-1]), dtype=jnp.complex128).at[rows].add(values)
+    order = np.argsort(rows)
+    if rows.size == count and np.array_equal(rows[order], np.arange(count)):
+        return values if np.array_equal(order, np.arange(count)) else values[order]
+    return jnp.zeros((count, values.shape[-1]), dtype=jnp.complex128).at[rows].set(values)
+
+
+def _kron_dia_traced(left: tuple[tuple[int, ...], Any],
+                     right: tuple[tuple[int, ...], Any]) -> tuple[tuple[int, ...], Any]:
+    """:func:`_kron_dia` for diagonals that may be traced."""
+    (left_offsets, left_diags), (right_offsets, right_diags) = left, right
+    offsets = (np.asarray(left_offsets)[:, None] * right_diags.shape[-1] + np.asarray(right_offsets)).ravel()
+    unique, inverse = np.unique(offsets, return_inverse=True)
+    product = jnp.kron(left_diags, right_diags)
+    return tuple(int(offset) for offset in unique), _sum_rows(inverse.ravel(), product, unique.size)
+
+
+def _matmul_dia_traced(left: tuple[tuple[int, ...], Any],
+                       right: tuple[tuple[int, ...], Any]) -> tuple[tuple[int, ...], Any]:
+    """Product of two sparse-DIA operators whose diagonals may be traced, on dynamiqs' output offsets.
+
+    Entry ``k`` of output diagonal ``p + q`` gathers ``left[p][k - q]·right[q][k]``
+    for every pair of input offsets in one vectorized step.
+    """
+    (left_offsets, left_diags), (right_offsets, right_diags) = left, right
+    n = left_diags.shape[-1]
+    pairs = [(row, column, lo + ro) for row, lo in enumerate(left_offsets)
+             for column, ro in enumerate(right_offsets) if abs(lo + ro) < n]
+    if not pairs:
+        return (), jnp.zeros((0, n), dtype=jnp.complex128)
+    rows, columns, offsets = (np.asarray(values) for values in zip(*pairs))
+    unique, inverse = np.unique(offsets, return_inverse=True)
+    shifted = np.arange(n) - np.asarray(right_offsets)[columns][:, None]
+    inside = (shifted >= 0) & (shifted < n)
+    products = jnp.where(inside, left_diags[rows[:, None], np.clip(shifted, 0, n - 1)] * right_diags[columns], 0.0)
+    diags = jnp.zeros((unique.size, n), dtype=jnp.complex128).at[inverse.ravel()].add(products)
+    return tuple(int(offset) for offset in unique), diags
+
+
+def _dense_linear_combination(terms: Sequence[tuple[Any, Any]], dims: tuple[int, ...]) -> QArray:
+    """Dense ``Σ cᵢ·Aᵢ`` of unbatched qarrays, summed on the host when every term is concrete."""
+    host_terms = []
+    for raw, op in terms:
+        coefficient, matrix = _concrete_coefficient(raw), _host_matrix(op)
+        if coefficient is None or matrix is None:
+            traced = sum(term.to_jax() if _is_unit(scale) else scale * term.to_jax() for scale, term in terms)
+            return dq.asqarray(traced, dims=dims)
+        host_terms.append(matrix if _is_unit(raw) else coefficient * matrix)
+    return dq.asqarray(jnp.asarray(sum(host_terms)), dims=dims)
+
+
+def _plain_operators(operators: Sequence[Any]) -> bool:
+    """True when every operator is an unbatched, unvectorized qarray on one Hilbert space shape."""
+    return all(isinstance(op, QArray) and op.ndim == 2 and not op.vectorized for op in operators)
+
+
+def _host_dia(op: Any) -> tuple[tuple[int, ...], np.ndarray] | None:
+    """Offsets and host diagonals of a concrete, unbatched sparse-DIA qarray, else ``None``."""
+    if isinstance(op, QArray) and op.layout is dq.dia and op.ndim == 2 and not contains_tracer(op.data.diags):
+        return tuple(int(offset) for offset in op.data.offsets), np.asarray(op.data.diags)
+    return None
+
+
+def _host_dense(op: Any) -> np.ndarray | None:
+    """Host matrix of a concrete, unbatched dense qarray, else ``None``."""
+    if isinstance(op, QArray) and op.layout is dq.dense and op.ndim == 2 and not contains_tracer(op.data):
+        return np.asarray(op.to_jax())
+    return None
+
+
+def _dia_to_dense(offsets: Sequence[int], diags: np.ndarray) -> np.ndarray:
+    """Dense host matrix of host sparse-DIA diagonals (column-aligned, as dynamiqs stores them)."""
+    n = diags.shape[-1]
+    dense = np.zeros((n, n), dtype=complex)
+    cols = np.arange(n)
+    for offset, row in zip(offsets, diags):
+        valid = (cols - offset >= 0) & (cols - offset < n)
+        dense[cols[valid] - offset, cols[valid]] += row[valid]
+    return dense
+
+
+def _host_matrix(op: Any) -> np.ndarray | None:
+    """Dense host matrix of a concrete, unbatched qarray, else ``None``."""
+    sparse = _host_dia(op)
+    return _dia_to_dense(*sparse) if sparse is not None else _host_dense(op)
+
+
+def _dense_to_dia(matrix: np.ndarray) -> tuple[tuple[int, ...], np.ndarray]:
+    """Offsets and column-aligned diagonals holding a host matrix's nonzero entries."""
+    rows, columns = np.nonzero(matrix)
+    offsets = np.unique(columns - rows) if rows.size else np.zeros(1, dtype=int)
+    n = matrix.shape[-1]
+    cols = np.arange(n)
+    diags = np.zeros((offsets.size, n), dtype=complex)
+    for row, offset in enumerate(offsets):
+        valid = (cols - offset >= 0) & (cols - offset < n)
+        diags[row, valid] = matrix[cols[valid] - offset, cols[valid]]
+    return tuple(int(offset) for offset in offsets), diags
+
+
+def _kron_dia(left: tuple[tuple[int, ...], np.ndarray],
+              right: tuple[tuple[int, ...], np.ndarray]) -> tuple[tuple[int, ...], np.ndarray]:
+    """Kronecker product of two host sparse-DIA operators, adding diagonals that share an offset."""
+    (left_offsets, left_diags), (right_offsets, right_diags) = left, right
+    offsets = (np.asarray(left_offsets)[:, None] * right_diags.shape[-1] + np.asarray(right_offsets)).ravel()
+    unique, inverse = np.unique(offsets, return_inverse=True)
+    diags = np.zeros((unique.size, left_diags.shape[-1] * right_diags.shape[-1]), dtype=complex)
+    np.add.at(diags, inverse, np.kron(left_diags, right_diags))
+    return tuple(int(offset) for offset in unique), diags
+
+
+def _layout_operator(n: int, offset: int, diagonal: np.ndarray) -> QArray:
+    """One-diagonal operator built on the host in the active dynamiqs layout."""
+    diags = np.asarray(diagonal, dtype=complex)[None, :]
+    if get_layout() is dq.dia:
+        return _dia_qarray((n,), (offset,), diags)
+    return dq.asqarray(jnp.asarray(_dia_to_dense((offset,), diags)), dims=(n,))
 
 
 def _signal_discontinuities(signal: Any) -> Any:
@@ -96,6 +304,73 @@ class _SignalCallable(eqx.Module):
 
     def __call__(self, t: float) -> Any:
         return jnp.asarray(evaluate_signal_program(self.signal, t, xp=jnp))
+
+
+class _SummedHamiltonian(eqx.Module):
+    """``H(t) = H₀ + Σ_k c_k(t)·A_k`` assembled as one qarray per call.
+
+    A sum of dynamiqs modulated terms scales, adds and validates one qarray
+    per term at every right-hand-side evaluation. Here the diagonals (or
+    dense blocks) of all terms are added into one array whose layout was
+    validated once, when the Hamiltonian was assembled.
+    """
+
+    treedef: Any = eqx.field(static=True)
+    rows: tuple[tuple[int, ...], ...] | None = eqx.field(static=True)
+    base: Any
+    terms: tuple[Any, ...]
+    signals: tuple[_SignalCallable, ...]
+
+    def __call__(self, t: float) -> Any:
+        data = self.base
+        for index, (term, signal) in enumerate(zip(self.terms, self.signals)):
+            scaled = signal(t) * term
+            if self.rows is None:
+                data = data + scaled
+            else:
+                data = data.at[np.asarray(self.rows[index], dtype=int)].add(scaled)
+        return jtu.tree_unflatten(self.treedef, [data])
+
+
+def _summed_hamiltonian(static_ops: Sequence[Any], static_coeffs: Sequence[Any], dyn_ops: Sequence[Any],
+                        dyn_signals: Sequence[Any]) -> Any:
+    """Return a time-callable sum of unbatched terms, or ``None`` when an operator or signal is batched."""
+    operators = [*static_ops, *dyn_ops]
+    if any(op.ndim != 2 for op in operators):
+        return None
+    signals = tuple(_SignalCallable(signal) for signal in dyn_signals)
+    if any(jax.eval_shape(signal, 0.0).shape for signal in signals):
+        return None
+    if all(op.layout is dq.dia for op in operators):
+        offsets = tuple(sorted({int(offset) for op in operators for offset in op.data.offsets}))
+        index = {offset: row for row, offset in enumerate(offsets)}
+        n = operators[0].shape[-1]
+        base = jnp.zeros((len(offsets), n), dtype=jnp.complex128)
+        for op, coeff in zip(static_ops, static_coeffs):
+            static_rows = np.asarray([index[int(o)] for o in op.data.offsets], dtype=int)
+            base = base.at[static_rows].add(coeff * op.data.diags)
+        rows: tuple[tuple[int, ...], ...] | None = tuple(
+            tuple(index[int(o)] for o in op.data.offsets) for op in dyn_ops
+        )
+        terms = tuple(jnp.asarray(op.data.diags, dtype=jnp.complex128) for op in dyn_ops)
+        template = _dia_qarray(operators[0].dims, offsets, base)
+    else:
+        n = operators[0].shape[-1]
+        base = jnp.zeros((n, n), dtype=jnp.complex128)
+        for op, coeff in zip(static_ops, static_coeffs):
+            base = base + coeff * op.to_jax()
+        rows = None
+        terms = tuple(jnp.asarray(op.to_jax(), dtype=jnp.complex128) for op in dyn_ops)
+        template = dq.asqarray(base, dims=operators[0].dims)
+    leaves, treedef = jtu.tree_flatten(template)
+    if len(leaves) != 1:
+        return None
+    hamiltonian = _SummedHamiltonian(treedef, rows, base, terms, signals)
+    edges = [edge for edge in map(_signal_discontinuities, dyn_signals) if edge is not None]
+    # dynamiqs keeps the callable as static pytree metadata; a plain function
+    # compares by identity, whereas the module would compare its arrays, which
+    # may be tracers of an earlier trace.
+    return dq.timecallable(lambda t: hamiltonian(t), discontinuity_ts=jnp.concatenate(edges) if edges else None)
 
 
 @dataclass(frozen=True)
@@ -130,6 +405,9 @@ class DynamiqsBackend(Backend):
         return jnp
 
     def to_array(self, op: Operator) -> Any:
+        host = _host_dia(op)
+        if host is not None:
+            return jnp.asarray(_dia_to_dense(*host))
         if hasattr(op, "to_jax"):
             return jnp.asarray(op.to_jax(), dtype=jnp.complex128)
         if hasattr(op, "full"):
@@ -181,16 +459,16 @@ class DynamiqsBackend(Backend):
         return dense_layout()
 
     def destroy(self, n: int) -> Operator:
-        return dq.destroy(n)
+        return _layout_operator(n, 1, np.sqrt(np.arange(n, dtype=float)))
 
     def create(self, n: int) -> Operator:
-        return dq.create(n)
+        return _layout_operator(n, -1, np.append(np.sqrt(np.arange(1, n, dtype=float)), 0.0))
 
     def number(self, n: int) -> Operator:
-        return dq.number(n)
+        return _layout_operator(n, 0, np.arange(n, dtype=float))
 
     def identity(self, n: int) -> Operator:
-        return dq.eye(n)
+        return _layout_operator(n, 0, np.ones(n))
 
     def diag(self, values: Any, dims: list[list[int]] | None = None) -> Operator:
         r"""Build a backend-native sparse-DIA diagonal operator from main-diagonal *values*.
@@ -214,7 +492,7 @@ class DynamiqsBackend(Backend):
         --------
         quchip.backend.protocol.Backend.diag
         """
-        v = jnp.asarray(values, dtype=jnp.complex128).reshape(-1)
+        v = (jnp if contains_tracer(values) else np).asarray(values, dtype=complex).reshape(-1)
         n = v.shape[0]
         dim_tuple = self._coerce_dims(dims, (n, n))
         if dim_tuple is None:
@@ -231,7 +509,7 @@ class DynamiqsBackend(Backend):
             data = data.to_jax()
         elif hasattr(data, "full"):
             data = data.full()
-        array = jnp.asarray(data, dtype=jnp.complex128)
+        array = _complex_payload(data)
         dims_tuple = self._coerce_dims(dims, array.shape)
         if dims_tuple is None:
             return dq.asqarray(array)
@@ -266,21 +544,16 @@ class DynamiqsBackend(Backend):
     def from_canonical_operator(self, canonical: Any) -> Operator:
         dims = tuple(canonical.dims)
         if canonical.layout == "dense":
-            return dq.asqarray(jnp.asarray(canonical.values, dtype=jnp.complex128), dims=dims)
+            return dq.asqarray(_complex_payload(canonical.values), dims=dims)
         if canonical.layout == "dia":
             from quchip.engine.bands import canonical_to_dense_array
-            from quchip.utils.jax_utils import contains_tracer
 
             if contains_tracer(canonical.offsets):
                 # Sparse structure must be static. Value payloads may remain
                 # traced because sparse-DIA diagonals are JAX leaves.
                 dense = canonical_to_dense_array(canonical)
                 return dq.asqarray(jnp.asarray(dense, dtype=jnp.complex128), dims=dims)
-            return _dia_qarray(
-                dims,
-                tuple(int(x) for x in canonical.offsets),
-                jnp.asarray(canonical.values, dtype=jnp.complex128),
-            )
+            return _dia_qarray(dims, tuple(int(x) for x in canonical.offsets), canonical.values)
         from quchip.engine.bands import canonical_to_coo
 
         rows, cols, values = canonical_to_coo(canonical)
@@ -347,10 +620,99 @@ class DynamiqsBackend(Backend):
         reduced = dq.ptrace(stacked_states, keep_arg, dims=tuple(dims))
         return jnp.asarray(reduced.to_jax(), dtype=jnp.complex128)
 
+    def matmul(self, a: Operator, b: Operator) -> Operator:
+        """Multiply operators, keeping a product of sparse-DIA factors sparse.
+
+        Concrete factors multiply on the host; traced sparse-DIA factors
+        multiply their diagonals directly.
+
+        Parameters
+        ----------
+        a, b : Operator
+            Left and right matrix factors with compatible dimensions.
+        """
+        if not _plain_operators((a, b)) or tuple(a.dims) != tuple(b.dims):
+            return super().matmul(a, b)
+        left, right = _host_matrix(a), _host_matrix(b)
+        if left is None or right is None:
+            left_dia, right_dia = _dia_parts(a), _dia_parts(b)
+            if left_dia is None or right_dia is None:
+                return super().matmul(a, b)
+            return _dia_qarray(tuple(a.dims), *_matmul_dia_traced(left_dia, right_dia))
+        product = left @ right
+        if a.layout is dq.dia and b.layout is dq.dia:
+            return _dia_qarray(tuple(a.dims), *_dense_to_dia(product))
+        return dq.asqarray(jnp.asarray(product), dims=tuple(a.dims))
+
+    def linear_combination(self, terms: Sequence[tuple[Any, Operator]]) -> Operator:
+        """Accumulate scalar multiples of operators into one qarray, on the host when every term is concrete.
+
+        Sparse-DIA terms sum their diagonals into a sparse-DIA result; a sum
+        that includes a dense term is dense, as in qarray arithmetic. Batched
+        operators or coefficients use qarray arithmetic.
+
+        Parameters
+        ----------
+        terms : sequence of (scalar, Operator)
+            At least one coefficient and operator pair on a common space.
+        """
+        operators = [op for _, op in terms]
+        dims = {tuple(op.dims) for op in operators if isinstance(op, QArray)}
+        if not terms or len(dims) != 1 or not _plain_operators(operators) or any(np.ndim(c) for c, _ in terms):
+            return super().linear_combination(terms)
+        maybe_parts = [_dia_parts(op) for op in operators]
+        parts = [part for part in maybe_parts if part is not None]
+        if len(parts) != len(maybe_parts):
+            return _dense_linear_combination(terms, dims.pop())
+        coefficients = [_concrete_coefficient(coefficient) for coefficient, _ in terms]
+        offsets = sorted({offset for term_offsets, _ in parts for offset in term_offsets})
+        index = {offset: row for row, offset in enumerate(offsets)}
+        shape = (len(offsets), parts[0][1].shape[-1])
+        if all(c is not None for c in coefficients) and not contains_tracer([diags for _, diags in parts]):
+            total = np.zeros(shape, dtype=complex)
+            for (raw, _), coefficient, (term_offsets, term_diags) in zip(terms, coefficients, parts):
+                rows = [index[offset] for offset in term_offsets]
+                total[rows] += np.asarray(term_diags) if _is_unit(raw) else coefficient * np.asarray(term_diags)
+        else:
+            positions = np.asarray([index[offset] for term_offsets, _ in parts for offset in term_offsets],
+                                   dtype=np.intp)
+            scaled = [diags if _is_unit(raw) else raw * diags for (raw, _), (_, diags) in zip(terms, parts)]
+            total = _sum_rows(positions, scaled[0] if len(scaled) == 1 else jnp.concatenate(scaled), shape[0])
+        return _dia_qarray(dims.pop(), tuple(offsets), total)
+
     def tensor(self, *operators: Operator) -> Operator:
         if len(operators) == 1:
             return operators[0]
-        return dq.tensor(*operators)
+        sparse = [_host_dia(op) for op in operators]
+        dense = [_host_dense(op) for op in operators]
+        if not all(s is not None or d is not None for s, d in zip(sparse, dense)):
+            traced = [_dia_parts(op) for op in operators]
+            traced_dia = [part for part in traced if part is not None]
+            if len(traced_dia) != len(traced):
+                if traced_dia and _plain_operators(operators):
+                    # A dense factor makes the product dense, as in qarray arithmetic.
+                    return dq.asqarray(reduce(jnp.kron, [op.to_jax() for op in operators]),
+                                       dims=tuple(dim for op in operators for dim in op.dims))
+                return dq.tensor(*operators)
+            product = traced_dia[0]
+            for factor in traced_dia[1:]:
+                product = _kron_dia_traced(product, factor)
+            return _dia_qarray(tuple(dim for op in operators for dim in op.dims), *product)
+        # Concrete factors: the same product dynamiqs forms, computed on the host.
+        dims = tuple(dim for op in operators for dim in op.dims)
+        host_dia = [factor for factor in sparse if factor is not None]
+        if len(host_dia) == len(sparse):
+            host_product = host_dia[0]
+            for host_factor in host_dia[1:]:
+                host_product = _kron_dia(host_product, host_factor)
+            return _dia_qarray(dims, *host_product)
+        matrices: list[np.ndarray] = []
+        for host_sparse, host_dense in zip(sparse, dense):
+            if host_dense is not None:
+                matrices.append(host_dense)
+            elif host_sparse is not None:
+                matrices.append(_dia_to_dense(*host_sparse))
+        return dq.asqarray(jnp.asarray(reduce(np.kron, matrices)), dims=dims)
 
     # ------------------------------------------------------------------
     # Embedding helpers
@@ -524,9 +886,18 @@ class DynamiqsBackend(Backend):
             raise ValueError("Stationary analysis requires a static resolved Hamiltonian.")
         hamiltonian = self.prepare_hamiltonian(engine_result).rhs
         collapse_ops = self._collapse_operators(engine_result)
+        dimension = math.prod(engine_result.dims)
+        # The dense D²×D² generator alone is a lower bound on the solve's memory.
+        require_memory(
+            16 * dimension**4,
+            task=f"The dense D²×D² stationary Liouvillian at Hilbert dimension D = {dimension}",
+            remedy="Reduce the device cutoffs.",
+        )
         return self.to_array(dq.slindbladian(hamiltonian, collapse_ops))
 
-    def steadystate(self, problem: Any, *, prepared: PreparedStationary | None = None) -> SteadyStateSolverResult:
+    def steadystate(
+        self, problem: Any, *, prepared: PreparedStationary | None = None, guess: State | None = None,
+    ) -> SteadyStateSolverResult:
         r"""Solve a static Lindblad generator by a trace-constrained JAX solve.
 
         Parameters
@@ -535,6 +906,9 @@ class DynamiqsBackend(Backend):
             Captured static model, observables, and stationary solver options.
         prepared : PreparedStationary or None, default None
             Matching prepared generator; ``None`` builds it.
+        guess : QArray or None, default None
+            Accepted for the backend protocol; the solve and its uniqueness
+            check always run, so the state stays differentiable.
 
         Returns
         -------
@@ -712,8 +1086,10 @@ class DynamiqsBackend(Backend):
             jnp.asarray(t.coefficient, dtype=jnp.complex128)
             for t in engine_result.static_terms
         ]
-        dyn_ops = [self.from_canonical_operator(t.operator) for t in engine_result.dynamic_terms]
-        dyn_mods = [t.time_dependence for t in engine_result.dynamic_terms]
+        groups = [[engine_result.dynamic_terms[slot] for slot in group]
+                  for group in _shared_operator_slots((engine_result,))]
+        dyn_ops = [self.from_canonical_operator(terms[0].operator) for terms in groups]
+        dyn_mods = [_summed_modulation([t.time_dependence for t in terms]) for terms in groups]
 
         solve_fn = self._cached_jit_solve(
             solver_name=solver_name,
@@ -910,9 +1286,14 @@ class DynamiqsBackend(Backend):
         static_coeffs = [term.coefficient for term in engine_result.static_terms]
         dyn_ops: list[Any] = []
         dyn_signals: list[Any] = []
+        slots: dict[int, int] = {}
         for operator, signal in self._scalar_dynamic_terms(engine_result):
-            dyn_ops.append(self.from_canonical_operator(operator))
-            dyn_signals.append(signal)
+            slot = slots.setdefault(id(operator), len(dyn_ops))
+            if slot == len(dyn_ops):
+                dyn_ops.append(self.from_canonical_operator(operator))
+                dyn_signals.append([])
+            dyn_signals[slot].append(signal)
+        dyn_signals = [signals[0] if len(signals) == 1 else Add(tuple(signals)) for signals in dyn_signals]
 
         rhs = self._assemble_modulated_rhs(static_ops, static_coeffs, dyn_ops, dyn_signals)
         if rhs is None:
@@ -920,8 +1301,8 @@ class DynamiqsBackend(Backend):
 
         return PreparedHamiltonian(rhs=rhs, metadata=dict(engine_result.metadata))
 
-    @staticmethod
     def _assemble_modulated_rhs(
+        self,
         static_ops: Sequence[Any],
         static_coeffs: Sequence[Any],
         dyn_ops: Sequence[Any],
@@ -934,16 +1315,23 @@ class DynamiqsBackend(Backend):
         ``dynamiqs.modulated``. Shared by :meth:`prepare_hamiltonian` and the
         cached-jit single-solve so the static/dynamic split lives in one place
         (the cached path passes traced operators/coefficients as jit arguments,
-        so this stays fully traceable).
+        so this stays fully traceable). The time-dependent terms form one sum:
+        dynamiqs' ``+`` re-broadcasts every earlier term, so adding N terms one
+        at a time nests their callables up to N deep and traces each signal
+        O(N) times.
         """
-        rhs = None
-        for op, coeff in zip(static_ops, static_coeffs):
-            term = coeff * op
-            rhs = term if rhs is None else rhs + term
-        for op, signal in zip(dyn_ops, dyn_signals):
-            dynamic = dq.modulated(_SignalCallable(signal), op, discontinuity_ts=_signal_discontinuities(signal))
-            rhs = dynamic if rhs is None else rhs + dynamic
-        return rhs
+        summed = _summed_hamiltonian(static_ops, static_coeffs, dyn_ops, dyn_signals) if dyn_ops else None
+        if summed is not None:
+            return summed
+        rhs = self.linear_combination(list(zip(static_coeffs, static_ops))) if static_ops else None
+        if not dyn_ops:
+            return rhs
+        dynamic = [
+            dq.modulated(_SignalCallable(signal), op, discontinuity_ts=_signal_discontinuities(signal))
+            for op, signal in zip(dyn_ops, dyn_signals)
+        ]
+        terms = dynamic if rhs is None else [dq.constant(rhs), *dynamic]
+        return terms[0] if len(terms) == 1 else SummedTimeQArray(terms)
 
     def prepare_batch(self, batch: Any) -> DeferredBatch:
         r"""Lower compatible problems into stable leaves for one vmapped solve.
@@ -1001,7 +1389,8 @@ class DynamiqsBackend(Backend):
 
         dynamic_operators: list[Any] = []
         dynamic_signals: list[Any] = []
-        for slot in range(len(engine_results[0].dynamic_terms)):
+        for group in _shared_operator_slots(engine_results):
+            slot = group[0]
             terms = tuple(result.dynamic_terms[slot] for result in engine_results)
             if all(term.operator is terms[0].operator for term in terms[1:]):
                 op = cached_native(terms[0].operator)
@@ -1009,7 +1398,7 @@ class DynamiqsBackend(Backend):
                 op = self._stack_qarray_batch(
                     [cached_native(term.operator) for term in terms]
                 )
-            slot_signals = batch.signals_for(slot)
+            slot_signals = tuple(map(_summed_modulation, zip(*(batch.signals_for(member) for member in group))))
             ref_td = slot_signals[0]
             if not isinstance(ref_td, ScalarModulation):
                 raise ValueError(f"dynamiqs prepare_batch only supports ScalarModulation (slot {slot}).")
@@ -1214,7 +1603,8 @@ class DynamiqsBackend(Backend):
         full_rows = (row_ab_offset[:, None] + spectator_offsets[None, :]).ravel().astype(int)
         full_cols = (col_ab_offset[:, None] + spectator_offsets[None, :]).ravel().astype(int)
         # Each source value fans out over n_spectators row/col pairs.
-        full_values = jnp.repeat(jnp.asarray(values, dtype=jnp.complex128), n_spectators)
+        xp = jnp if contains_tracer(values) else np
+        full_values = xp.repeat(xp.asarray(values, dtype=complex), n_spectators)
 
         return self._sparse_qarray_from_coo(full_rows, full_cols, full_values, tuple(dims))
 
@@ -1234,23 +1624,20 @@ class DynamiqsBackend(Backend):
         cols_np = np.asarray(cols, dtype=int)
         offsets = np.unique(cols_np - rows_np)
         n_diagonals = len(offsets)
-        values_jax = jnp.asarray(values, dtype=jnp.complex128)
+        # Integer index structure lives on NumPy; traced values stay in JAX, concrete ones on the host.
         if n_diagonals >= total_dim:
-            dense = jnp.zeros((total_dim, total_dim), dtype=jnp.complex128)
-            return dq.asqarray(
-                dense.at[rows_np, cols_np].add(values_jax),
-                dims=dims,
-            )
-        offset_to_idx = {int(offset): idx for idx, offset in enumerate(offsets.tolist())}
-
-        # Integer index structure lives on NumPy; values stay in JAX for traceability.
-        diag_indices = np.array(
-            [offset_to_idx[int(c - r)] for r, c in zip(rows_np, cols_np)], dtype=int,
-        )
-        diag_data = jnp.zeros((n_diagonals, total_dim), dtype=jnp.complex128)
-        diag_data = diag_data.at[diag_indices, cols_np].add(values_jax)
-
-        return _dia_qarray(dims, tuple(int(x) for x in offsets.tolist()), diag_data)
+            shape, index = (total_dim, total_dim), (rows_np, cols_np)
+        else:
+            shape, index = (n_diagonals, total_dim), (np.searchsorted(offsets, cols_np - rows_np), cols_np)
+        data: Any
+        if contains_tracer(values):
+            data = jnp.zeros(shape, dtype=jnp.complex128).at[index].add(jnp.asarray(values, dtype=jnp.complex128))
+        else:
+            data = np.zeros(shape, dtype=complex)
+            np.add.at(data, index, np.asarray(values, dtype=complex))
+        if n_diagonals >= total_dim:
+            return dq.asqarray(jnp.asarray(data), dims=dims)
+        return _dia_qarray(dims, tuple(int(x) for x in offsets.tolist()), data)
 
     # ------------------------------------------------------------------
     # Internal: options / method builders

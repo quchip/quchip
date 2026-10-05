@@ -13,9 +13,7 @@ from dataclasses import dataclass, field
 from math import prod
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-import jax.numpy as jnp
-
-
+from quchip.utils.jax_utils import concrete_array_module
 from quchip.utils.values import DeferredValue
 
 
@@ -74,7 +72,8 @@ class ReductionMap:
         operator : array-like or backend operator
             Full source-space operator.
         """
-        array = jnp.asarray(self._backend.to_array(operator))
+        array = self._backend.to_array(operator)
+        array = concrete_array_module(array).asarray(array)
         size = prod(self.source_dims)
         if array.shape != (size, size):
             raise ValueError(f"Source operator must have shape {(size, size)}; got {array.shape}.")
@@ -103,7 +102,8 @@ class ReductionMap:
         return self._map_state(state, self.embedding, self.target_dims, self.source_dims)
 
     def _map_state(self, state: Any, transform: Any, source: tuple[int, ...], target: tuple[int, ...]) -> Any:
-        array = jnp.asarray(self._backend.to_array(state))
+        array = self._backend.to_array(state)
+        array = concrete_array_module(array).asarray(array)
         size = prod(source)
         if array.shape == (size,):
             array = array[:, None]

@@ -58,6 +58,15 @@ def select_array_module(prefer_jax: bool) -> Any:
     return jnp if prefer_jax else np
 
 
+def concrete_array_module(*values: Any) -> Any:
+    """Return NumPy when every value is concrete and ``jax.numpy`` once any is traced.
+
+    Concrete arithmetic on the host compiles no XLA programs; each eager JAX
+    operation on a new shape compiles one.
+    """
+    return select_array_module(contains_tracer(values))
+
+
 def maybe_concrete_scalar(value: Any) -> float | None:
     """Return a Python ``float`` if *value* is a concrete, real-valued 0-d scalar, else ``None``.
 

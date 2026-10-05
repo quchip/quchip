@@ -72,13 +72,16 @@ def steadystate(
 
 
 def solve_steadystate_problem(
-    problem: SteadyStateProblem, *, prepared: PreparedStationary | None = None,
+    problem: SteadyStateProblem, *, prepared: PreparedStationary | None = None, guess: Any | None = None,
 ) -> SteadyStateResult:
-    """Solve an already assembled stationary problem and enforce uniqueness."""
+    """Solve an already assembled stationary problem and enforce uniqueness.
+
+    ``guess`` is a native stationary state of a related problem that the
+    backend may reuse when it is also stationary here.
+    """
     backend = problem.backend
-    backend_result = (
-        backend.steadystate(problem) if prepared is None else backend.steadystate(problem, prepared=prepared)
-    )
+    options = {"prepared": prepared, "guess": guess}
+    backend_result = backend.steadystate(problem, **{key: value for key, value in options.items() if value is not None})
     nullity = maybe_concrete_scalar(backend_result.nullity)
     if nullity is not None and int(nullity) != 1:
         raise ValueError(

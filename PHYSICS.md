@@ -298,6 +298,16 @@ requesting its filtered output raises before the solve. A concrete evaluation
 with `|H| > 1` also raises: filter sections are passive; use
 `network.amplifier(...)` for gain.
 
+`network.mode_reflection(...)` adds a two-sided passive reference section whose
+per-pass transfer `H(f)` squares to the reflection `S_r(f)` of a damped linear
+mode (section 10.5). A reflection plane therefore acquires `S_r(f)`, while a
+field crossing one leg, such as emission from the devices behind it, acquires
+`H(f)`. `H` is the continuous square root with a nonnegative real part at
+`reference_freq`; at that frequency it reproduces the emission phase
+`1 - i kappa_e / (2 Delta)` of a device detuned by `Delta` from the mode, to first
+order. Its parameters are tracked like those of `network.filter(...)`, and the
+section serializes.
+
 `network.amplifier(...)` adds a phase-preserving output-line reference section
 with power gain `G` and input-referred symmetrized added noise `n_add` in
 quanta. It amplifies side 1 to side 2 by `sqrt(G)` and is transparent in
@@ -477,6 +487,11 @@ A band of a scheduled drive or port coupling at frequency `f` is static when
 ```text
 Σ_d k_d omega_d = f
 ```
+
+Assembly evaluates `Σ_d k_d omega_d` by first adding the integer changes of
+devices that share a frame frequency. A band whose changes cancel among them is
+then exactly static, and drive bands with equal carriers share one term, rather
+than differing by floating-point residues of about 1e-14 GHz.
 
 For example, a two-photon cavity pump at 10.2 GHz imposes
 `2 omega_cavity = 10.2 GHz` and pins the cavity frame to 5.1 GHz. Network
@@ -732,9 +747,34 @@ S_out,in(f) = S_out,in + C_out (-i 2π f I - A)^(-1) B_in.
 
 The engine then applies the inbound and outbound factors to that response.
 
-Nonlinear, pumped, active, dynamic, or opaque operator models retain the
-stationary-Liouvillian route. This selection is structural and does not depend
-on the numerical value of a traced parameter.
+`VNA.sweep()` extends this form to pump-free models that conserve the total
+energy-level index `N` but are not harmonic, such as Duffing transmons,
+pure dephasing, or reduced chips with retained terms. The resolved static
+Hamiltonian must conserve `N` (an approximation such as `RWA()` that keeps only
+zero-total bands, declared retained terms, and no cascade-generated term), every
+port must lower `N` by one, every other channel must either lower `N` by one or
+conserve it, and every input must be vacuum. The vacuum is then stationary, and
+to first order in the probe the coherences `|1_j><0|` stay in the
+one-excitation block. The engine projects the lab-frame model onto the vacuum
+`|0>` and the states `|1_j>` that raise one device to its first excited level:
+
+```text
+Omega = H_1 - <0|H|0> I,     C_k = <0|L_k|1>,     c_k = <0|L_k|0>,
+A = -i Omega - sum_k (L_k^dagger L_k)_1 / 2 + sum_k [c_k^* (L_k)_1 - |c_k|^2 / 2],
+```
+
+where `X_1 = <1|X|1>` is the one-excitation block. A lowering channel has
+`(L^dagger L)_1 = C^dagger C` and `c = (L)_1 = 0`, which recovers the harmonic
+`A`. The response then follows from the same mode-space formula. It is exact for an
+infinitesimal probe, independent of anharmonicities, cross-Kerr terms and
+cutoffs, and its size is the number of devices. VNA diagnostics name the route
+`"vacuum_response"`. Finite-power and noisy measurements keep the harmonic
+condition above, because only a harmonic model responds linearly at finite
+amplitude.
+
+Nonlinear models outside these conditions, and pumped, active, dynamic, or
+opaque operator models, retain the stationary-Liouvillian route. This selection
+is structural and does not depend on the numerical value of a traced parameter.
 Active local terms also retain the general route: a weight-only RWA does not
 establish whether a local parametric term is off resonance in its authored frame.
 
@@ -1068,7 +1108,7 @@ One full diagonalization of the Hamiltonian retained by `chip.approximation`; `m
 zz(a, b) = E(1,1) − E(1,0) − E(0,1) + E(0,0)        (≡ Chip.dispersive_shift)
 ```
 
-The complete retained Hamiltonian and its pair exchange are read through the symmetrically (Löwdin-)orthonormalized subspace projection `S^(−1/2) (W E W†) S^(−1/2)` with `W` the overlap block and `S = W W†` — the des-Cloizeaux effective Hamiltonian, whose spectrum equals the labeled energies exactly. The energies are exact, but this basis is not the canonical SW rotation, so off-diagonal reads agree with `method="sw"` only through 2nd order. `method="exact"` validates the ground, touching-survivor single excitations and their pair excitations: each diagnostic label must have a distinct majority dressed eigenstate. The full retained overlap Gram matrix must also permit stable orthonormalization. These checks apply in eager, compiled and gradient-only execution. In that regime, near-degenerate dressed states straddle the bare labels and quantities assigned to a single label are not well defined. Use `method="sw"` or shift the operating point.
+The complete retained Hamiltonian and its pair exchange are read through the symmetrically (Löwdin-)orthonormalized subspace projection `S^(−1/2) (W E W†) S^(−1/2)` with `W` the overlap block and `S = W W†` — the des-Cloizeaux effective Hamiltonian, whose spectrum equals the labeled energies exactly. The energies are exact, but this basis is not the canonical SW rotation, so off-diagonal reads agree with `method="sw"` only through 2nd order. When `chip.approximation` keeps only bands of zero total weight, as `RWA()` does, the static model conserves the total energy-level index and the exact route diagonalizes each total-excitation sector separately. Its retained Hamiltonian, jump operators and coordinate map then have exact zeros between sectors rather than round-off that depends on near-degeneracies across sectors. This requires earlier retained terms to declare the same conservation and no cascade-generated network Hamiltonian; otherwise the route diagonalizes the full matrix. `method="exact"` validates the ground, touching-survivor single excitations and their pair excitations: each diagnostic label must have a distinct majority dressed eigenstate. The full retained overlap Gram matrix must also permit stable orthonormalization. These checks apply in eager, compiled and gradient-only execution. In that regime, near-degenerate dressed states straddle the bare labels and quantities assigned to a single label are not well defined. Use `method="sw"` or shift the operating point.
 
 ### 10.5 Collapse transforms and validity metrics
 
@@ -1091,13 +1131,43 @@ channels. It does not replace a collective jump by independent T1 channels.
 basis and frame compiler without a second band-removal approximation. A static
 collective jump must have one removable global phase in the selected frame;
 unequal band phases require a compatible common frame or the lab frame.
+A reduction of an excitation-conserving model records the total level change
+of each retained channel in `EffectiveTerms.excitation_changes`, and a projected
+surviving operator keeps the change of its authored operator. Ports follow the
+same rule: a port on a surviving mode keeps the change of its target's operator,
+which is built at compile time, and a transformed port operator declares the
+change of the port it replaces. Band decomposition treats every other total
+change as a structural zero, so this check gives the same answer for concrete
+values and under `jax.grad` or `jax.jit`.
 For an external default port on a
-declared harmonic Fock mode, the complete `c_eff` matrix becomes that port's operator on
-one unprojected Fock-space survivor; the port's rate, phase, scalar scattering,
-and exposure reference plane are retained. Custom or collective boundary
-operators, projected or multiple survivors, a nonlinear eliminated boundary
-target, and ports participating in a cascade-generated Hamiltonian are
-rejected rather than approximated or double-counted.
+declared harmonic Fock mode, the complete `c_eff` matrix becomes that port's
+joint operator on every survivor, in their authored coordinates; the port's
+rate, phase, scalar scattering and existing reference sections are retained.
+The eliminated mode's own reflection,
+
+```text
+S_r(f) = ((kappa_i - kappa_e)/2 - i Omega) / ((kappa_e + kappa_i)/2 - i Omega),
+Omega = 2π (f - f_mode),
+```
+
+is not part of `c_eff`. It is kept as a `network.mode_reflection(...)` section
+at the core end of the port's plane, so a reflection sweep obeys
+`S_full(f) ≈ S_r(f) S_reduced(f)`. The remaining difference is the frequency
+dependence of the Purcell coupling across the sweep, of order
+`(g/Delta)^2 kappa_e/Delta`.
+`kappa_e` is the port rate, and `kappa_i` is the eliminated mode's internal
+damping of `<a>`, read from its own channels: lowering channels add their
+rate, raising channels subtract it, and pure dephasing adds it. The
+section's internal-loss bath is vacuum. A port that an earlier elimination
+transformed already acts on every survivor and reaches a later eliminated mode
+only through that dressing. The later reduction transforms it like an inherited
+channel and gives it no section, so both readout modes of a chip can be
+eliminated in either order. Like an inherited channel, it drops its direct
+scattering through the later mode, of order `rate |<0|L|1>|^2 / Delta`. Custom
+or collective boundary operators, projected survivors, a mode with several
+ports, a plane that also carries other fields, a nonlinear eliminated boundary
+target, and ports participating in a cascade-generated Hamiltonian are rejected
+rather than approximated or double-counted.
 
 The result's `notes` record that the projection is exact for the *spectrum*
 but approximate for *dissipation*: the discarded `Q`-block dynamics also
@@ -1163,7 +1233,7 @@ Devices, couplings, and drives supply the domain-specific physics. The engine ha
 
 ## 13. JAX Traceability Boundaries
 
-Band decomposition, coefficient construction, observable recombination, and the backend-free Hamiltonian IR preserve JAX arrays.
+Band decomposition, coefficient construction, observable recombination, and the backend-free Hamiltonian IR preserve JAX arrays. A traced dense payload keeps every candidate band unless its structure is declared: sparse layouts declare their entries, and a matrix contribution can declare its total excitation changes (`PhysicsExpr.from_matrix(..., excitation_changes=...)`), as reductions of excitation-conserving models do.
 
 The following operations require concrete Python values:
 

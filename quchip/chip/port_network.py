@@ -391,9 +391,42 @@ _SERIALIZED_FACTORIES = frozenset(
         "attenuator",
         "delay",
         "amplifier",
+        "mode_reflection",
         "termination",
     }
 )
+
+#: Two-sided sections peeled from exposure legs instead of entering the Markovian core.
+_REFERENCE_KINDS = frozenset({"delay", "filter", "amplifier", "mode_reflection"})
+
+
+def _mode_reflection_transfer(
+    frequency: Any, *, freq: Any, external_rate: Any, internal_rate: Any = 0.0, reference_freq: Any = None,
+) -> Any:
+    """Return the per-pass amplitude transfer whose square is a linear mode's reflection.
+
+    With ``Ω = 2π(f − freq)``, the reflection is
+    ``S(f) = ((κ_i − κ_e)/2 − iΩ) / ((κ_e + κ_i)/2 − iΩ)``. The square root is
+    continuous in frequency; ``reference_freq`` selects the branch with a
+    nonnegative real part there.
+    """
+    values = (frequency, freq, external_rate, internal_rate, reference_freq)
+    xp = select_array_module(contains_tracer(values))
+
+    def root(at: Any) -> Any:
+        detuning = 2.0 * xp.pi * (xp.asarray(at) - freq)
+        numerator = (internal_rate - external_rate) / 2.0 - 1j * detuning
+        denominator = (external_rate + internal_rate) / 2.0 - 1j * detuning
+        # Each square root stays off its branch cut: an overcoupled mode
+        # (κ_e ≥ κ_i) has Re(−numerator) ≥ 0, an undercoupled one Re(numerator) > 0.
+        overcoupled = external_rate >= internal_rate
+        upper = xp.sqrt(xp.where(overcoupled, -numerator, numerator) + 0j)
+        return xp.where(overcoupled, 1j * upper, upper) / xp.sqrt(denominator + 0j)
+
+    transfer = root(frequency)
+    if reference_freq is None:
+        return transfer
+    return transfer * xp.where(xp.real(root(reference_freq)) < 0.0, -1.0, 1.0)
 
 
 #: ``(coefficient, boundary_input, upstream_output)`` for one structurally fed column.
@@ -887,6 +920,50 @@ class PortNetwork:
         parameters.update(noise_parameters(thermal_occupation))
         return self._reference_component(label, kind="filter", parameters=dict(parameters), transfer=transfer)
 
+    def mode_reflection(
+        self, label: str, *, freq: Any, external_rate: Any, internal_rate: Any = 0.0, reference_freq: Any = None,
+    ) -> SLHComponent:
+        """Add a two-sided reference section that reflects like a damped linear mode.
+
+        Each pass multiplies the field by ``H(f)``, with
+        ``H(f)² = ((κ_i − κ_e)/2 − iΩ) / ((κ_e + κ_i)/2 − iΩ)`` and
+        ``Ω = 2π(f − freq)``: the reflection of a mode coupled to the line at
+        rate ``κ_e`` with internal loss ``κ_i``. On a reflection line the
+        incident field passes once inbound and once outbound, so the plane
+        acquires that reflection. ``H`` is the continuous square root whose
+        real part is nonnegative at ``reference_freq``, or that tends to one far
+        below ``freq`` when ``reference_freq`` is ``None``. The branch fixes the
+        phase of fields that cross only one leg, such as emission from the
+        devices behind the section.
+
+        Like :meth:`filter`, the section stays outside the Markovian ``S``,
+        ``L``, and ``H`` and leaves every collapse operator unchanged.
+        Continuous-wave APIs evaluate ``H`` at each frequency; transient APIs
+        use its value at the relevant carrier. The internal-loss bath is
+        vacuum. :func:`~quchip.eliminate` inserts this section when it removes a
+        mode that couples directly to a port. Every parameter is tracked at
+        ``network.component.<label>.<name>`` and serializes.
+
+        Parameters
+        ----------
+        label : str
+            Unique component label.
+        freq : float or array-like
+            Mode frequency in GHz.
+        external_rate : float or array-like
+            Coupling rate ``κ_e`` to this line, in 1/ns.
+        internal_rate : float or array-like, default=0.0
+            Internal loss rate ``κ_i`` in 1/ns.
+        reference_freq : float or array-like or None, default=None
+            Frequency in GHz that selects the square-root branch.
+        """
+        parameters = {"freq": freq, "external_rate": external_rate, "internal_rate": internal_rate}
+        if reference_freq is not None:
+            parameters["reference_freq"] = reference_freq
+        return self._reference_component(
+            label, kind="mode_reflection", parameters=parameters, transfer=_mode_reflection_transfer,
+        )
+
     def amplifier(
         self, label: str, *, added_noise: Any, gain: Any = None, gain_db: Any = None,
     ) -> SLHComponent:
@@ -1294,7 +1371,7 @@ class PortNetwork:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize a static network graph and its quantum ports."""
-        filters = [component.label for component in self.components if component._transfer is not None]
+        filters = [component.label for component in self.components if component._kind == "filter"]
         if filters:
             raise TypeError(
                 f"PortNetwork filter components {sorted(filters)} use Python "
@@ -1534,6 +1611,63 @@ class PortNetwork:
                 (first, second, f"hidden.{new_label}.{first}") for first, second, _ in component._hidden_pairs
             ),
         )
+
+    def _exclusive_exposure(self, port_label: str) -> str:
+        """Return the external plane that alone carries one port's field.
+
+        The port must couple to exactly one channel, that channel must carry no
+        other port, and its scattering must neither mix with nor feed another
+        channel. Fields between the plane and the port then pass only through
+        single-path elements, which commute with a frequency-dependent factor.
+        """
+        compiled = self._compile()
+        rows = [index for index, channel in enumerate(compiled.channels)
+                if port_label in self._active_mapping_sources(channel.coupling)]
+        support = np.asarray(compiled.support, dtype=bool)
+        if len(rows) == 1:
+            (row,) = rows
+            channel = compiled.channels[row]
+            others = np.arange(support.shape[0]) != row
+            if (not channel.exposure._hidden
+                    and self._active_mapping_sources(channel.coupling) == (port_label,)
+                    and not np.any(support[row, others]) and not np.any(support[others, row])):
+                return channel.exposure.label
+        raise NotImplementedError(
+            f"Port {port_label!r} shares its external plane with other fields; eliminating its "
+            "mode would need the mode's frequency-dependent scattering inside the network. "
+            "Keep the port-coupled mode."
+        )
+
+    def _insert_reference_section(self, exposure_label: str, section: SLHComponent) -> None:
+        """Insert a two-sided reference section where an exposure's reference run meets the core.
+
+        Side 2 faces the external plane and side 1 the Markov boundary. Existing
+        reference sections of the run stay outside the new one. Every external
+        plane becomes explicit so that the channel order does not change.
+        """
+        planes = [exposure for exposure in self._effective_exposures() if not exposure._hidden]
+        index = next(i for i, exposure in enumerate(planes) if exposure.label == exposure_label)
+        exposure = planes[index]
+        boundary_input, boundary_output, _ = self._peel(exposure)
+        inner, outer = (section.label, "1"), (section.label, "2")
+        if exposure._input_key == boundary_input:
+            exposure = replace(exposure, _input_key=outer)
+        else:
+            feeder = self._connections.pop(boundary_input)
+            self._connections[outer] = feeder
+            self._used_outputs[feeder] = outer
+        self._connections[boundary_input] = inner
+        self._used_outputs[inner] = boundary_input
+        if exposure._output_key == boundary_output:
+            exposure = replace(exposure, _output_key=outer)
+        else:
+            sink = self._used_outputs.pop(boundary_output)
+            self._connections[sink] = outer
+            self._used_outputs[outer] = sink
+        self._connections[inner] = boundary_output
+        self._used_outputs[boundary_output] = inner
+        planes[index] = exposure
+        self._exposures = planes
 
     def _copy_with_port_replacements(
         self,
@@ -1817,7 +1951,7 @@ class PortNetwork:
 
     def _is_reference(self, label: str) -> bool:
         kind = self._components[label]._kind
-        if kind in {"delay", "filter", "amplifier"}:
+        if kind in _REFERENCE_KINDS:
             return True
         # A passive two-sided section downstream of a reference run belongs
         # to that same external run. Its directed vacuum/thermal dilation is
@@ -1830,7 +1964,7 @@ class PortNetwork:
                 return False
             label = previous[0]
             kind = self._components[label]._kind
-            if kind in {"delay", "filter", "amplifier"}:
+            if kind in _REFERENCE_KINDS:
                 return True
         return False
 

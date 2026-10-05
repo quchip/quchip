@@ -67,6 +67,15 @@ and `nsteps` caps the step count. quchip supplies pulse-aware stepping limits;
 an explicit `max_step` or `nsteps` overrides its corresponding limit.
 `result.stats["options"]` records the effective settings.
 
+QuTiP's `mesolve` assembles the Lindblad generator as a D²×D² superoperator,
+with one term per time-dependent Hamiltonian part. Operators whose entries
+are at most one quarter nonzero, such as the bands and jumps of a reduced
+model, are stored as CSR, so these terms stay sparse. Before assembly, quchip
+estimates the peak memory from the entries QuTiP keeps, which excludes
+products below its tidy-up tolerance, and raises `MemoryError` when the
+estimate exceeds the available memory. dynamiqs applies the generator without
+forming it.
+
 ## dynamiqs integration and gradients
 
 Pass a native method object to change the integrator or its tolerances, for
@@ -104,6 +113,11 @@ can reuse that compilation.
 across worker processes; dynamiqs vectorizes homogeneous batches. Numerical
 failure raises with the original point index and parameter values when available.
 A failed batch does not return partial results.
+
+A large QuTiP master equation splits each sparse product over up to four
+threads. `QUCHIP_NUM_THREADS` sets the count, and `OMP_NUM_THREADS` applies when
+it is unset. Batch worker processes use one thread unless `QUCHIP_NUM_THREADS`
+is set. Results do not depend on the thread count.
 
 ## Stationary states
 

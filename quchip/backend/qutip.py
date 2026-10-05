@@ -17,9 +17,12 @@ References
 
 from __future__ import annotations
 
+import cmath
 import math
+import multiprocessing
 import os
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, Callable, Sequence
@@ -31,6 +34,7 @@ from qutip.solver.mesolve import MESolver
 from qutip.solver.sesolve import SESolver
 from scipy import sparse
 
+from quchip.backend._memory import require_memory
 from quchip.backend._response import linear_response, stationary_condition_number
 from quchip.utils.values import DeferredValue
 from quchip.backend._dims import (
@@ -170,6 +174,95 @@ def _sample_coeff_array(signal: Any, sample_tlist: Any) -> np.ndarray:
 # across dense pulse knots and sparse idle knots. Non-windowed envelopes retain the cubic default.
 _WINDOWED_COEFFICIENT_ORDER = 1
 
+# QuTiP 5 assembles a Lindblad superoperator term by term and keeps one term per
+# time-dependent Hamiltonian part. With dense inputs, measured assembly peaks near
+# six dense D²×D² arrays plus four per time-dependent part. With CSR inputs each
+# term is added into a running sum whose output is sized for both operands before
+# trimming, so the previous sum, the new term and the new sum coexist: measured
+# peaks stay below three copies of the final storage.
+_DENSE_SUPEROPERATOR_PEAK_COPIES = 6
+_DENSE_SUPEROPERATOR_COPIES_PER_PART = 4
+_SPARSE_SUPEROPERATOR_PEAK_COPIES = 3
+
+
+def _operator_parts(operator: Any) -> list[Qobj]:
+    """Return the constant operators of a ``Qobj`` or ``QobjEvo``."""
+    if isinstance(operator, qutip.QobjEvo):
+        return [part[0] if isinstance(part, list) else part for part in operator.to_list()]
+    return [operator]
+
+
+def _pairs_reaching(magnitudes: np.ndarray, atol: float) -> int:
+    """Count ordered pairs of stored magnitudes whose product reaches ``atol``."""
+    ordered = np.sort(magnitudes)
+    if atol <= 0.0:
+        return int(ordered.size**2)
+    with np.errstate(divide="ignore"):
+        partners = np.searchsorted(ordered, atol / ordered)
+    return int(ordered.size**2 - partners.sum())
+
+
+def _superoperator_peak_bytes(hamiltonian: Any, collapse_ops: Sequence[Any]) -> int:
+    """Estimate QuTiP's peak memory while assembling a Lindblad superoperator.
+
+    The sparse estimate counts the entries QuTiP keeps. spre(H) and spost(H)
+    store nnz(H)·D entries each. A jump term c ⊗ c* keeps only pairs of entries
+    whose product reaches QuTiP's tidy-up tolerance, and the jump terms of all
+    operators share positions in the running sum, so their union is bounded by
+    the pairs of the elementwise largest magnitude. Each c†c keeps the entries
+    where |c|ᵀ|c| reaches the tolerance, and its two lifts store D copies.
+    """
+    hamiltonian_parts = _operator_parts(hamiltonian)
+    collapse_parts = [_operator_parts(op) for op in collapse_ops]
+    dimension = int(hamiltonian_parts[0].shape[0])
+    copies = _DENSE_SUPEROPERATOR_PEAK_COPIES + _DENSE_SUPEROPERATOR_COPIES_PER_PART * (len(hamiltonian_parts) - 1)
+    dense = copies * 16 * dimension**4
+    parts = [*hamiltonian_parts, *(part for group in collapse_parts for part in group)]
+    if any(isinstance(part.data, qutip.data.Dense) for part in parts):
+        return dense
+
+    def magnitude(group: list[Qobj]) -> Any:
+        matrix = abs(group[0].to("CSR").data_as("csr_matrix"))
+        for part in group[1:]:
+            matrix = matrix + abs(part.to("CSR").data_as("csr_matrix"))
+        return matrix.tocsr()
+
+    atol = float(qutip.settings.core["auto_tidyup_atol"]) if qutip.settings.core["auto_tidyup"] else 0.0
+    entries = 2 * dimension * sum(part.to("CSR").data_as("csr_matrix").nnz for part in hamiltonian_parts)
+    if collapse_parts:
+        magnitudes = [magnitude(group) for group in collapse_parts]
+        # Every part pair of a time-dependent jump keeps its own coefficient.
+        separate = sum(len(group) ** 2 * _pairs_reaching(matrix.data, atol)
+                       for group, matrix in zip(collapse_parts, magnitudes))
+        envelope = magnitudes[0]
+        for matrix in magnitudes[1:]:
+            envelope = envelope.maximum(matrix)
+        shared = _pairs_reaching(envelope.data, atol)
+        entries += separate if any(len(group) > 1 for group in collapse_parts) else min(separate, shared)
+        products = [(matrix.T @ matrix).tocsr() for matrix in magnitudes]
+        for product in products:
+            product.data[product.data < atol] = 0.0
+            product.eliminate_zeros()
+        entries += 2 * dimension * sum(products[1:], start=products[0]).nnz
+    entry_bytes = 16 + np.dtype(qutip.core.data.base.idxint_dtype).itemsize
+    return min(dense, _SPARSE_SUPEROPERATOR_PEAK_COPIES * entry_bytes * entries)
+
+
+def _require_superoperator_memory(hamiltonian: Any, collapse_ops: Sequence[Any], *, task: str, remedy: str) -> None:
+    """Raise before QuTiP assembles a Liouvillian that cannot fit in memory."""
+    dimension = int(_operator_parts(hamiltonian)[0].shape[0])
+    require_memory(
+        _superoperator_peak_bytes(hamiltonian, collapse_ops),
+        task=f"{task} at Hilbert dimension D = {dimension}",
+        remedy=remedy,
+    )
+
+
+# Dense canonical payloads with at most this fraction of nonzero entries are
+# stored as CSR. Below it CSR uses less memory than dense storage, including in
+# every superoperator term built from the operator.
+_CSR_MAX_FILL = 0.25
+
 # Cap diag at Hilbert D=64 for sesolve and Liouvillian D²=1024 (Hilbert D=32) for mesolve.
 # The mesolve setup scales roughly as D⁶ in time and D⁴ in memory.
 _MAX_STATIC_HILBERT_DIM = 64
@@ -199,34 +292,400 @@ def _envelope_coefficient(envelope: Any, sample_tlist: Any) -> Any:
 def _carrier_coefficient(freq: Any) -> Any:
     """Keep exp(i·freq·t) analytic, with angular freq in rad/ns.
     QuTiP evaluates the closure only at concrete times; this is not a JAX-traced path."""
+    rate = 1j * complex(freq)
+
     def _carrier(t: float, *args: Any, **kwargs: Any) -> complex:
-        return complex(np.exp(1j * freq * t))
+        return cmath.exp(rate * t)
 
     return qutip.coefficient(_carrier)
 
 
-def _band_coefficient(band: Any, sample_tlist: Any) -> Any:
-    """Multiply the slow-envelope coefficient by an analytic carrier, omitted at concrete zero frequency."""
-    env_coeff = _envelope_coefficient(band.envelope, sample_tlist)
-    freq = maybe_concrete_scalar(band.freq)
-    if freq is not None and freq == 0.0:
-        return env_coeff
-    return env_coeff * _carrier_coefficient(band.freq)
+def _summed_envelope_coefficient(envelopes: Sequence[Any], sample_tlist: Any) -> Any:
+    """Return one coefficient equal to the sum of the envelopes' own coefficients.
+
+    Linear interpolants of windowed envelopes add exactly on the union of
+    their grids, and cubic interpolants on one shared grid add their samples,
+    since interpolation is linear in the data. Envelopes without a concrete
+    grid keep their exact callables.
+    """
+    if sample_tlist is None or len(envelopes) == 1:
+        parts = [_envelope_coefficient(envelope, sample_tlist) for envelope in envelopes]
+    else:
+        parts = []
+        linear: list[tuple[np.ndarray, np.ndarray]] = []
+        cubic: list[tuple[np.ndarray, np.ndarray]] = []
+        for envelope in envelopes:
+            try:
+                grid = np.asarray(_augmented_sample_grid(envelope, sample_tlist), dtype=float)
+            except NotImplementedError:
+                parts.append(qutip.coefficient(_coeff_callable(envelope)))
+                continue
+            samples = _sample_coeff_array(envelope, grid)
+            (linear if _collect_window_bounds(envelope) else cubic).append((grid, samples))
+        if cubic and all(np.array_equal(grid, cubic[0][0]) for grid, _ in cubic):
+            parts.append(qutip.coefficient(sum(samples for _, samples in cubic), tlist=cubic[0][0]))
+        else:
+            parts.extend(qutip.coefficient(samples, tlist=grid) for grid, samples in cubic)
+        if linear:
+            union = np.unique(np.concatenate([grid for grid, _ in linear]))
+            total = np.zeros(union.shape, dtype=complex)
+            for grid, samples in linear:
+                nonzero = np.flatnonzero(samples)
+                if nonzero.size == 0:
+                    continue
+                # The interpolant vanishes beyond the nodes bracketing its nonzero samples.
+                lo = np.searchsorted(union, grid[max(nonzero[0] - 1, 0)])
+                hi = np.searchsorted(union, grid[min(nonzero[-1] + 1, grid.size - 1)], side="right")
+                nodes = union[lo:hi]
+                total[lo:hi] += np.interp(nodes, grid, samples.real) + 1j * np.interp(nodes, grid, samples.imag)
+            parts.append(qutip.coefficient(total, tlist=union, order=_WINDOWED_COEFFICIENT_ORDER))
+    total = parts[0]
+    for part in parts[1:]:
+        total = total + part
+    return total
 
 
-def _dynamic_term_entries(op: Qobj, signal: Any, sample_tlist: Any) -> list[list[Any]]:
-    """Return one QuTiP [operator, coefficient] entry per carrier band."""
-    return [[op, _band_coefficient(band, sample_tlist)] for band in decompose_carrier_bands(signal)]
+def _qobj_key(op: Qobj) -> tuple:
+    """Exact content key of an operator; equal operators stored differently may get different keys."""
+    payload: tuple[bytes, ...]
+    if isinstance(op.data, qutip.data.CSR):
+        matrix = op.data_as("csr_matrix")
+        payload = (matrix.indptr.tobytes(), matrix.indices.tobytes(), matrix.data.tobytes())
+    else:
+        payload = (np.ascontiguousarray(op.full()).tobytes(),)
+    return (repr(op.dims), type(op.data).__name__, *payload)
 
 
 def _assemble_qobjevo(static_rhs: Qobj | None, op_signal_pairs: Any, sample_tlist: Any) -> qutip.QobjEvo:
-    """Combine an optional static operator and dynamic entries into a QobjEvo."""
-    terms: list[Any] = []
-    if static_rhs is not None:
-        terms.append(static_rhs)
+    """Combine an optional static operator and dynamic entries into a QobjEvo.
+
+    Carrier bands acting through equal operators at one concrete frequency
+    share a coefficient, ``(Σ_k envelope_k(t))·exp(i·freq·t)``, so a solver
+    step applies each operator once per carrier frequency however many
+    pulses and crosstalk paths drive it.
+    """
+    terms: list[Any] = [] if static_rhs is None else [static_rhs]
+    groups: dict[tuple, tuple[Qobj, Any, list[Any]]] = {}
     for op, signal in op_signal_pairs:
-        terms.extend(_dynamic_term_entries(op, signal, sample_tlist))
+        key = _qobj_key(op)
+        for band in decompose_carrier_bands(signal):
+            freq = maybe_concrete_scalar(band.freq)
+            groups.setdefault((key, id(band) if freq is None else freq), (op, band.freq, []))[2].append(band.envelope)
+    for op, freq, envelopes in groups.values():
+        coefficient = _summed_envelope_coefficient(envelopes, sample_tlist)
+        if maybe_concrete_scalar(freq) != 0.0:
+            coefficient = coefficient * _carrier_coefficient(freq)
+        terms.append([op, coefficient])
     return qutip.QobjEvo(terms)
+
+
+def _canonical_key(op: Qobj) -> tuple:
+    """Content key of an operator, equal for equal matrices however they are stored."""
+    matrix = (op.data_as("csr_matrix") if isinstance(op.data, qutip.data.CSR) else sparse.csr_matrix(op.full())).copy()
+    matrix.sum_duplicates()
+    matrix.eliminate_zeros()
+    return (repr(op.dims), matrix.indptr.astype(np.int64).tobytes(), matrix.indices.astype(np.int64).tobytes(),
+            matrix.data.tobytes())
+
+
+# Times at which a Hamiltonian's paired coefficients must be conjugate before
+# its terms are lifted as Hermitian.
+_HERMITIAN_CHECK_TIMES = 129
+
+
+def _is_hermitian_sum(terms: Sequence[list], tlist: Any) -> bool:
+    """Whether ``Σ_k c_k(t)·A_k`` is Hermitian: each operator's adjoint carries the conjugate coefficient."""
+    classes: dict[tuple, tuple[Qobj, list[Any]]] = {}
+    for op, coefficient in terms:
+        classes.setdefault(_canonical_key(op), (op, []))[1].append(coefficient)
+    span = np.asarray(tlist, dtype=float)
+    times = np.linspace(span[0], span[-1], _HERMITIAN_CHECK_TIMES)
+    sums = {key: np.array([sum(c(t) for c in coefficients) for t in times])
+            for key, (_, coefficients) in classes.items()}
+    for key, (op, _) in classes.items():
+        partner = sums.get(_canonical_key(op.dag()))
+        values = sums[key]
+        if partner is None or not np.allclose(partner, values.conj(), rtol=1e-12,
+                                              atol=1e-12 * np.abs(values).max(initial=0.0)):
+            return False
+    return True
+
+
+def _lindblad_generator(hamiltonian: Any, collapse_ops: Sequence[Any], tlist: Any) -> tuple[Any, Qobj] | None:
+    """Lift a Hermitian time-dependent Hamiltonian and its dissipators with one part per coefficient.
+
+    QuTiP lifts ``ρH†`` separately, so a term ``c(t)·A`` becomes ``spre(A)``
+    with ``c`` and ``spost(A†)`` with ``c̄``, and the dissipators join as a
+    second constant part. For a Hermitian ``H(t)``, ``ρH† = ρH``: each term
+    lifts to the single part ``-i(spre(A) - spost(A))`` and the static
+    Hamiltonian shares one constant part with every dissipator, halving the
+    time-dependent sparse products per step. A quchip Hamiltonian is
+    Hermitian because every drive band carries its Hermitian partner; the
+    pairing is checked on the operators and their coefficients.
+
+    Returns the time-dependent generator and the constant part, or ``None``
+    to leave the input to QuTiP's construction.
+    """
+    if not isinstance(hamiltonian, qutip.QobjEvo) or not all(isinstance(op, Qobj) for op in collapse_ops):
+        return None
+    static, dynamic = [], []
+    for part in hamiltonian.to_list():
+        if isinstance(part, Qobj):
+            static.append(part)
+        elif isinstance(part, list) and len(part) == 2 and isinstance(part[0], Qobj) and callable(part[1]):
+            dynamic.append(part)
+        else:
+            return None
+    if not dynamic or not (static or collapse_ops) or not _is_hermitian_sum(dynamic, tlist):
+        return None
+    constant = qutip.liouvillian(sum(static[1:], start=static[0]) if static else None, list(collapse_ops))
+    generator = qutip.QobjEvo([[-1j * (qutip.spre(op) - qutip.spost(op)), coefficient] for op, coefficient in dynamic])
+    return generator, constant
+
+
+# Integrators that only apply the right-hand side to their state, so they can integrate a packed one.
+_PACKED_STATE_METHODS = frozenset({"adams", "bdf", "lsoda", "dop853", "vern7", "vern9", "tsit5"})
+# The packed right-hand side runs in Python; below this Hilbert dimension its call
+# overhead outweighs the halved sparse and vector work (break-even near 40).
+_PACKED_STATE_MIN_DIMENSION = 48
+# SciPy releases the GIL in sparse products, so a packed product with at least
+# this many stored entries splits its rows over threads; a smaller one finishes
+# before the hand-off pays.
+_THREADED_PRODUCT_MIN_NNZ = 200_000
+# Sparse products are bound by memory bandwidth and stop gaining near four threads.
+_MAX_PRODUCT_THREADS = 4
+# Scaling the inputs by the coefficients joins the threads when it writes at least
+# this many entries; a shorter pass finishes before a second hand-off pays.
+_THREADED_SCALING_MIN_ENTRIES = 500_000
+# Thread pools by (process id, size): a forked child starts its own pool.
+_product_pools: dict[tuple[int, int], ThreadPoolExecutor] = {}
+
+
+def _thread_setting(name: str) -> int | None:
+    value = os.environ.get(name, "").strip()
+    return int(value) if value.isdigit() and int(value) > 0 else None
+
+
+def _product_threads() -> int:
+    """Threads for a packed master-equation product.
+
+    ``QUCHIP_NUM_THREADS`` sets the count. Otherwise a child process, such as
+    a sweep worker, uses one thread because its siblings share the machine;
+    ``OMP_NUM_THREADS`` applies next, and the default is up to four of the
+    CPUs available to the process.
+    """
+    explicit = _thread_setting("QUCHIP_NUM_THREADS")
+    if explicit is not None:
+        return explicit
+    if multiprocessing.parent_process() is not None:
+        return 1
+    available = getattr(os, "process_cpu_count", os.cpu_count)() or 1
+    return _thread_setting("OMP_NUM_THREADS") or max(1, min(_MAX_PRODUCT_THREADS, available))
+
+
+def _row_blocks(matrix: sparse.csr_matrix, count: int) -> list[tuple[int, int, sparse.csr_matrix]]:
+    """Contiguous row blocks of a CSR matrix holding about equal numbers of stored entries."""
+    if count <= 1:
+        return [(0, matrix.shape[0], matrix)]
+    bounds = np.searchsorted(matrix.indptr, np.linspace(0, matrix.nnz, count + 1)).clip(0, matrix.shape[0])
+    bounds[0], bounds[-1] = 0, matrix.shape[0]
+    return [(int(lo), int(hi), matrix[lo:hi]) for lo, hi in zip(bounds[:-1], bounds[1:]) if hi > lo]
+
+
+def _share(pool: ThreadPoolExecutor, task: Callable[[Any], None], items: Sequence[Any]) -> None:
+    """Run ``task`` over ``items``: the first on this thread, the rest on ``pool``."""
+    pending = [pool.submit(task, item) for item in items[1:]]
+    task(items[0])
+    for future in pending:
+        future.result()
+
+
+def _product_pool(threads: int) -> ThreadPoolExecutor:
+    key = (os.getpid(), threads)
+    pool = _product_pools.get(key)
+    if pool is None:
+        pool = _product_pools[key] = ThreadPoolExecutor(threads, thread_name_prefix="quchip-product")
+    return pool
+
+
+class _HermitianPacking:
+    """Index maps between a column-stacked density matrix and its packed upper triangle."""
+
+    def __init__(self, dimension: int) -> None:
+        rows, cols = np.triu_indices(dimension)
+        order = np.lexsort((rows, cols))
+        rows, cols = rows[order], cols[order]
+        self.dimension, self.size = dimension, rows.size
+        self.upper = rows + cols * dimension
+        self.index = np.full((dimension, dimension), -1, dtype=np.int64)
+        self.index[rows, cols] = np.arange(rows.size)
+        lower_rows, lower_cols = np.tril_indices(dimension, -1)
+        self.lower = lower_rows + lower_cols * dimension
+        self.mirror = self.index[lower_cols, lower_rows]
+
+    def split(self, superoperator: Qobj) -> list[sparse.csr_matrix]:
+        """Rows (i ≤ j) of a superoperator as its parts acting on the packed ``x`` and on ``conj(x)``."""
+        data = superoperator.data
+        matrix = data.as_scipy() if hasattr(data, "as_scipy") else sparse.csr_matrix(data.to_array())
+        rows = sparse.csr_matrix(matrix)[self.upper].tocoo()
+        i, j = rows.col % self.dimension, rows.col // self.dimension
+        upper = i <= j
+        shape = (self.size, self.size)
+        return [
+            sparse.csr_matrix((rows.data[upper], (rows.row[upper], self.index[i[upper], j[upper]])), shape=shape),
+            sparse.csr_matrix((rows.data[~upper], (rows.row[~upper], self.index[j[~upper], i[~upper]])), shape=shape),
+        ]
+
+    def pack(self, vector: np.ndarray) -> np.ndarray:
+        return vector[self.upper]
+
+    def unpack(self, packed: np.ndarray) -> np.ndarray:
+        vector = np.empty(self.dimension**2, dtype=complex)
+        vector[self.upper] = packed
+        vector[self.lower] = np.conj(packed[self.mirror])
+        return vector
+
+
+class _PackedLindbladian(qutip.QobjEvo):
+    """Lindblad generator acting on the packed upper triangle of a Hermitian density matrix.
+
+    The rows (i ≤ j) of ``L·vec(ρ)`` read the lower triangle of ``ρ`` as the
+    conjugate of the upper one, so each part acts as ``A·x + B·conj(x)`` on the
+    packed state ``x``, and one stacked sparse product applies every part. A
+    large product splits into row blocks on threads (see ``_product_threads``);
+    each row sums in the same order, so the result does not depend on the split.
+    """
+
+    def __init__(self, constant: Qobj, dynamic: Sequence[list], packing: _HermitianPacking) -> None:
+        super().__init__(qutip.qeye(packing.size))
+        superoperators = (constant, *(op for op, _ in dynamic))
+        stacked = sparse.hstack([block for op in superoperators for block in packing.split(op)], format="csr")
+        threads = _product_threads() if stacked.nnz >= _THREADED_PRODUCT_MIN_NNZ else 1
+        self._blocks = _row_blocks(stacked, threads)
+        # The calling thread takes the first share of each step while the pool runs the rest.
+        self._pool = _product_pool(len(self._blocks) - 1) if len(self._blocks) > 1 else None
+        bounds = np.linspace(0, 2 * packing.size, len(self._blocks) + 1).astype(int)
+        threaded_scaling = 2 * packing.size * len(dynamic) >= _THREADED_SCALING_MIN_ENTRIES
+        self._chunks = list(zip(bounds[:-1], bounds[1:])) if threaded_scaling else [(0, 2 * packing.size)]
+        self._coefficients = [coefficient for _, coefficient in dynamic]
+        self._size = packing.size
+        self._inputs = np.empty(2 * len(superoperators) * packing.size, dtype=complex)
+
+    def _scale_inputs(self, factors: list[complex], chunk: tuple[int, int]) -> None:
+        """Write ``c_k·[x, conj(x)]`` over one chunk of every coefficient's input block."""
+        low, high = chunk
+        span = 2 * self._size
+        for k, factor in enumerate(factors, start=1):
+            np.multiply(self._inputs[low:high], factor, out=self._inputs[k * span + low:k * span + high])
+
+    def _apply(self, result: np.ndarray, added: np.ndarray | None, scale: complex,
+               block: tuple[int, int, sparse.csr_matrix]) -> None:
+        low, high, rows = block
+        product = rows @ self._inputs
+        if scale != 1:
+            product *= scale
+        if added is not None:
+            product += added[low:high]
+        result[low:high] = product
+
+    def matmul_data(self, t: Any, state: Any, out: Any = None, scale: complex = 1) -> Any:
+        size, inputs = self._size, self._inputs
+        x = (state.as_ndarray() if isinstance(state, qutip.data.Dense) else state.to_array()).reshape(-1)
+        inputs[:size] = x
+        np.conjugate(x, out=inputs[size:2 * size])
+        factors = [coefficient(t) for coefficient in self._coefficients]
+        added = None
+        if out is not None:
+            added = (out.as_ndarray() if isinstance(out, qutip.data.Dense) else out.to_array()).reshape(-1)
+        result = np.empty(size, dtype=complex)
+        if self._pool is None:
+            self._scale_inputs(factors, (0, 2 * size))
+            self._apply(result, added, scale, self._blocks[0])
+        else:
+            _share(self._pool, partial(self._scale_inputs, factors), self._chunks)
+            _share(self._pool, partial(self._apply, result, added, scale), self._blocks)
+        return qutip.data.Dense(result.reshape(-1, 1), copy=False)
+
+
+class _HermitianMESolver(MESolver):
+    """``MESolver`` integrating the packed upper triangle of a Hermitian density matrix.
+
+    A Hermiticity-preserving generator keeps ``ρ`` Hermitian, so the strictly
+    lower triangle carries no information: the integrator advances half the
+    entries and applies half the sparse rows. Saved states are unpacked, so
+    results, expectation values and options behave as for ``MESolver``.
+    """
+
+    def __init__(self, generator: Any, constant: Qobj, *, options: dict[str, Any]) -> None:
+        dynamic = generator.to_list()
+        self._packed = None
+        super().__init__(generator, [constant], options=options)
+        self._packing = _HermitianPacking(math.isqrt(constant.shape[0]))
+        self._packed = _PackedLindbladian(constant, dynamic, self._packing)
+        self._integrator = self._get_integrator()
+
+    def _get_integrator(self) -> Any:
+        if self._packed is None:
+            return super()._get_integrator()
+        return self.avail_integrators()[self._options["method"]](self._packed, self.options)
+
+    def _prepare_state(self, state: Qobj) -> Any:
+        vector = super()._prepare_state(state).to_array().reshape(-1)
+        return qutip.data.Dense(self._packing.pack(vector).reshape(-1, 1), copy=False)
+
+    def _restore_state(self, data: Any, *, copy: bool = True) -> Qobj:
+        vector = self._packing.unpack(data.to_array().reshape(-1))
+        return super()._restore_state(qutip.data.Dense(vector.reshape(-1, 1), copy=False), copy=False)
+
+
+def _packs_hermitian_state(state: Any, options: dict[str, Any]) -> bool:
+    """Whether a lifted master equation from ``state`` may integrate a packed Hermitian state."""
+    method = options.get("method", MESolver.solver_options["method"])
+    if not isinstance(method, str) or method not in _PACKED_STATE_METHODS:
+        return False
+    return state.shape[0] >= _PACKED_STATE_MIN_DIMENSION and (state.isket or (state.isoper and state.isherm))
+
+
+# A reused stationary state may leave a residual of at most this many machine
+# epsilons of the generator's scale, as a direct solve does.
+_STATIONARY_REUSE_EPS = 16
+
+
+def _annihilates(liouvillian: sparse.csr_matrix, state: Any) -> bool:
+    """Whether a superoperator maps ``state`` to zero to round-off."""
+    size = math.isqrt(liouvillian.shape[0])
+    if not isinstance(state, Qobj) or not state.isoper or state.shape != (size, size):
+        return False
+    vector = np.asarray(qutip.operator_to_vector(state).full(), dtype=complex).reshape(-1)
+    scale = float(abs(liouvillian).sum(axis=0).max()) * float(np.linalg.norm(vector))
+    return bool(np.linalg.norm(liouvillian @ vector) <= _STATIONARY_REUSE_EPS * np.finfo(float).eps * scale)
+
+
+def _direct_steady_state(liouvillian: sparse.csr_matrix, dims: Sequence[int]) -> Qobj | None:
+    """Solve as ``qutip.steadystate``'s default direct method does, without its option scope.
+
+    QuTiP adds ``w·vec(1)ᵀ`` to the generator's first row, with ``w`` the mean
+    magnitude of its non-negligible entries, solves for ``w·e₀`` and keeps the
+    Hermitian part. Its solve runs inside an option scope whose entry and exit
+    rebuild every data-layer dispatcher, which takes longer than the solve for
+    small systems. Returns ``None`` for a generator without entries.
+    """
+    atol = qutip.settings.core["atol"]
+    data = liouvillian.data
+    significant = (np.abs(data.real) > atol) | (np.abs(data.imag) > atol)
+    if not significant.any():
+        return None
+    weight = float(np.abs(data[significant]).mean())
+    size = liouvillian.shape[0]
+    n = math.isqrt(size)
+    trace = sparse.csr_matrix(
+        (np.full(n, weight, dtype=complex), (np.zeros(n, dtype=int), np.arange(0, size, n + 1))), shape=(size, size),
+    )
+    target = np.zeros(size, dtype=complex)
+    target[0] = weight
+    vector = sparse.linalg.spsolve((liouvillian + trace).tocsr(), target)
+    rho = vector.reshape(n, n, order="F")
+    return Qobj(0.5 * (rho + rho.conj().T), dims=[list(dims), list(dims)], isherm=True)
 
 
 # A loky reusable executor respawns its worker pool after a short idle window
@@ -611,6 +1070,10 @@ class QuTiPBackend(Backend):
             kwargs["sc_ops"] = [np.sqrt(eta) * op for eta, op in zip(etas, monitored)]
             if problem.solver == "smesolve":
                 kwargs["c_ops"] = loss + [np.sqrt(1 - eta) * op for eta, op in zip(etas, monitored)]
+                _require_superoperator_memory(
+                    rhs, [*kwargs["c_ops"], *kwargs["sc_ops"]], task="QuTiP smesolve's D²×D² Liouvillian",
+                    remedy="Reduce the device cutoffs.",
+                )
         native = getattr(qutip, problem.solver)(
             rhs, self.coerce_state(problem.initial_state, dims=problem.engine_result.dims), problem.tlist, **kwargs)
         return SolverResult(times=problem.tlist, solver=problem.solver, native=native)
@@ -636,7 +1099,23 @@ class QuTiPBackend(Backend):
         e_ops: list[Operator] | None = None,
         options: dict[str, Any] | None = None,
     ) -> SolverResult:
-        runner = MESolver(self._coerce_solver_rhs(H), c_ops, options=self._runner_options(options))
+        rhs = self._coerce_solver_rhs(H)
+        _require_superoperator_memory(
+            rhs, c_ops or [], task="QuTiP mesolve's D²×D² Liouvillian",
+            remedy="Use backend='dynamiqs', whose mesolve applies the Lindblad generator without "
+                   "forming it, or reduce the device cutoffs.",
+        )
+        options = self._runner_options(options)
+        lifted = None if options.get("matrix_form") else _lindblad_generator(rhs, c_ops or [], tlist)
+        if lifted is None:
+            runner = MESolver(rhs, c_ops, options=options)
+        else:
+            # A superoperator collapse term joins the generator as its constant part.
+            generator, constant = lifted
+            if _packs_hermitian_state(rho0, options):
+                runner = _HermitianMESolver(generator, constant, options=options)
+            else:
+                runner = MESolver(generator, [constant], options=options)
         result = runner.run(rho0, tlist, e_ops=e_ops)
         return self._wrap_result(result, solver="mesolve", extra_stats=self._solver_stats(runner))
 
@@ -646,6 +1125,10 @@ class QuTiPBackend(Backend):
             raise ValueError("Stationary analysis requires a static resolved Hamiltonian.")
         hamiltonian = self.prepare_hamiltonian(engine_result).rhs
         collapse_ops = self._collapse_operators(engine_result)
+        _require_superoperator_memory(
+            hamiltonian, collapse_ops, task="The D²×D² stationary Liouvillian",
+            remedy="Reduce the device cutoffs.",
+        )
         return qutip.liouvillian(hamiltonian, collapse_ops)
 
     @staticmethod
@@ -655,7 +1138,9 @@ class QuTiPBackend(Backend):
             return liouvillian.data.as_scipy().tocsr()
         return sparse.csr_matrix(liouvillian.data.to_array())
 
-    def steadystate(self, problem: Any, *, prepared: PreparedStationary | None = None) -> SteadyStateSolverResult:
+    def steadystate(
+        self, problem: Any, *, prepared: PreparedStationary | None = None, guess: State | None = None,
+    ) -> SteadyStateSolverResult:
         r"""Solve a static Lindblad generator with :func:`qutip.steadystate`.
 
         Parameters
@@ -664,6 +1149,10 @@ class QuTiPBackend(Backend):
             Captured static model, observables, and stationary solver options.
         prepared : PreparedStationary or None, default None
             Matching prepared generator; ``None`` builds it.
+        guess : Qobj or None, default None
+            Stationary state of a related generator. It is returned without a
+            solve when this generator annihilates it to round-off; the stats
+            record ``guess_reused``.
 
         Returns
         -------
@@ -690,14 +1179,16 @@ class QuTiPBackend(Backend):
             raise ValueError("diagnostic_max_dimension must be non-negative.")
         method = options.pop("method", "direct")
         solver = options.pop("solver", None)
-        state = qutip.steadystate(
-            liouvillian,
-            method=method,
-            solver=solver,
-            **options,
-        )
-
         sparse_liouvillian = self._scipy_liouvillian(liouvillian)
+        reused = guess is not None and _annihilates(sparse_liouvillian, guess)
+        if guess is not None and reused:
+            state = guess
+        else:
+            direct = method == "direct" and solver is None and not options
+            state = _direct_steady_state(sparse_liouvillian, problem.engine_result.dims) if direct else None
+            if state is None:
+                state = qutip.steadystate(liouvillian, method=method, solver=solver, **options)
+
         state_vector = np.asarray(qutip.operator_to_vector(state).full(), dtype=complex).reshape(-1)
         residual = float(np.linalg.norm(sparse_liouvillian @ state_vector))
         dimension = state.shape[0]
@@ -721,6 +1212,7 @@ class QuTiPBackend(Backend):
                 "solver": solver,
                 "uniqueness_checked": nullity is not None,
                 "diagnostic_max_dimension": diagnostic_max_dimension,
+                "guess_reused": reused,
             },
             residual=residual,
             nullity=nullity,
@@ -924,7 +1416,7 @@ class QuTiPBackend(Backend):
         Each dynamic coefficient is band-normalized: every carrier stays
         analytic while only its slow, carrier-free envelope is sampled
         (on *tlist*, locally densified around any window edge — see
-        :func:`_band_coefficient` / :func:`_augmented_sample_grid`). This
+        :func:`_assemble_qobjevo` / :func:`_augmented_sample_grid`). This
         avoids cubic-spline error from pre-sampling the full
         ``envelope·carrier`` product, including for resonant carriers in the
         lab frame.
@@ -967,7 +1459,7 @@ class QuTiPBackend(Backend):
         Each unique :class:`CanonicalOperator` is converted exactly once
         (shared across elements) and only the slow, carrier-free envelope
         is sampled on the user grid, locally densified around any window
-        edge (carriers stay analytic — see :func:`_band_coefficient`).
+        edge (carriers stay analytic — see :func:`_assemble_qobjevo`).
         Final ``QobjEvo`` assembly lives in :meth:`solve_batch` so larger
         concrete sweeps can build and solve each point inside loky workers.
 
@@ -1116,7 +1608,7 @@ class QuTiPBackend(Backend):
     def _resolve_envelope_sample_tlist(tlist: Any) -> Any:
         """Return the base sample grid for interpolating carrier-free slow envelopes; ``None`` otherwise.
 
-        Carriers are kept analytic (see :func:`_band_coefficient`), so no
+        Carriers are kept analytic (see :func:`_assemble_qobjevo`), so no
         dense per-carrier oversampling is needed — only the slow envelope
         is interpolated. This grid's *density* governs fidelity for a
         **non-windowed** envelope only: a too-coarse output tlist is
@@ -1268,10 +1760,18 @@ class QuTiPBackend(Backend):
 
     @staticmethod
     def _canonical_to_qobj(canonical: Any) -> Qobj:
-        """Reconstruct a ``Qobj`` from a ``CanonicalOperator`` (dense or sparse)."""
+        """Reconstruct a ``Qobj`` from a ``CanonicalOperator`` (dense or sparse).
+
+        A dense payload that is mostly exact zeros, such as a band of a captured
+        reduced-model matrix, is stored as CSR so the superoperators QuTiP builds
+        from it stay sparse.
+        """
         dims = [list(canonical.dims), list(canonical.dims)]
         if canonical.layout == "dense":
-            return Qobj(np.asarray(canonical.values, dtype=complex), dims=dims, dtype="Dense")
+            values = np.asarray(canonical.values, dtype=complex)
+            if np.count_nonzero(values) > _CSR_MAX_FILL * values.size:
+                return Qobj(values, dims=dims, dtype="Dense")
+            return Qobj(sparse.csr_matrix(values), dims=dims, dtype="CSR")
         return Qobj(QuTiPBackend._canonical_to_csr_matrix(canonical), dims=dims, dtype="CSR")
 
     @staticmethod

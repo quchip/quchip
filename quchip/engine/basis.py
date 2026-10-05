@@ -94,19 +94,22 @@ def _lowest_eigenpairs(matrix: Any, levels: int) -> tuple[Any, Any]:
 
     A traced matrix uses :func:`_differentiable_eigenpairs`, which supports
     forward- and reverse-mode differentiation through device parameters. A
-    constant matrix uses the plain eigensolve so
-    ``jax.ensure_compile_time_eval`` can finish inside ``jit``; a
-    custom-derivative call would always be staged.
+    constant matrix is solved with NumPy, so it is never staged inside
+    ``jit`` and compiles no device program; a custom-derivative call would
+    always be staged.
     """
     if contains_tracer(matrix):
         values, vectors = _differentiable_eigenpairs(matrix, levels)
+        xp: Any = jnp
     else:
-        values, vectors = _eigenpairs(matrix, levels)
+        values, vectors = np.linalg.eigh(np.asarray(matrix))
+        values, vectors = values[:levels], vectors[:, :levels]
+        xp = np
     # Fix each phase by its largest authored-basis component (first on ties).
     # The pivot is locally constant; derivatives include the phase adjustment.
-    pivots = vectors[jnp.argmax(jnp.abs(vectors), axis=0), jnp.arange(levels)]
-    phases = jnp.conj(pivots) / jnp.abs(pivots)
-    return values, vectors * phases
+    pivots = vectors[xp.argmax(xp.abs(vectors), axis=0), xp.arange(levels)]
+    phases = xp.conj(pivots) / xp.abs(pivots)
+    return jnp.asarray(values), jnp.asarray(vectors * phases)
 
 
 @dataclass(frozen=True)
@@ -182,13 +185,14 @@ class BasisRecord:
     def level_operator(self) -> Any:
         """Return the energy-level index operator in the resolved solver basis."""
         if self.kind == "eigen":
-            return jnp.diag(jnp.arange(self.resolved_dim, dtype=jnp.complex128))
+            return jnp.asarray(np.diag(np.arange(self.resolved_dim, dtype=complex)))
         return self.authored_level_operator()
 
     def authored_level_operator(self) -> Any:
         """Energy-level index in the authored basis, on the retained subspace."""
-        indices = jnp.arange(self.energy_vectors.shape[1], dtype=jnp.complex128)
-        return (self.energy_vectors * indices) @ self.energy_vectors.conj().T
+        vectors = self.energy_vectors if contains_tracer(self.energy_vectors) else np.asarray(self.energy_vectors)
+        indices = np.arange(vectors.shape[1], dtype=complex)
+        return jnp.asarray((vectors * indices) @ vectors.conj().T)
 
 
 def resolve_local_basis(
@@ -208,7 +212,7 @@ def resolve_local_basis(
         energies, energy_vectors = _lowest_eigenpairs(hamiltonian, native_dim)
         return BasisRecord(
             kind="native",
-            vectors=jnp.eye(native_dim, dtype=hamiltonian.dtype),
+            vectors=jnp.asarray(np.eye(native_dim, dtype=hamiltonian.dtype)),
             energies=energies,
             energy_vectors=energy_vectors,
             native_dim=native_dim,

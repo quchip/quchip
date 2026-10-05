@@ -185,3 +185,162 @@ class TestCoerceOperator:
         m = np.array([[0.0, 1.0 + 2.0j], [0.0, 0.0]])
         d = backend.dag(m)
         npt.assert_allclose(np.asarray(backend.to_array(d)), m.conj().T, atol=1e-14)
+
+
+class TestSuperoperatorMemory:
+    """QuTiP keeps structurally sparse operators sparse and refuses Liouvillians that cannot fit."""
+
+    def test_mostly_zero_dense_payloads_are_stored_sparse(self) -> None:
+        """Dense payloads at most a quarter nonzero become CSR without changing their values."""
+        from quchip.engine.ir import CanonicalOperator
+
+        def stored(values: np.ndarray) -> object:
+            canonical = CanonicalOperator.from_dense(values, dims=(4,), basis="fock", subsystem_labels=("0",))
+            return QuTiPBackend._canonical_to_qobj(canonical)
+
+        sparse_values = np.zeros((4, 4), dtype=complex)
+        sparse_values[0, 1] = 2.0
+        sparse, dense = stored(sparse_values), stored(np.ones((4, 4), dtype=complex))
+        assert type(sparse.data).__name__ == "CSR"
+        assert type(dense.data).__name__ == "Dense"
+        npt.assert_array_equal(sparse.full(), sparse_values)
+
+    def test_estimate_counts_dense_copies_and_sparse_entries(self) -> None:
+        """The peak estimate counts dense copies per Hamiltonian part and sparse entries otherwise."""
+        import qutip
+
+        from quchip.backend.qutip import _superoperator_peak_bytes
+
+        dense_h = qutip.Qobj(np.ones((5, 5)), dtype="Dense")
+        drives = [qutip.Qobj(np.eye(5, k=k), dtype="Dense") for k in (1, 2)]
+        evolving = qutip.QobjEvo([dense_h, [drives[0], lambda t: np.cos(t)], [drives[1], lambda t: np.sin(t)]])
+        assert _superoperator_peak_bytes(dense_h, [qutip.destroy(5)]) == 6 * 16 * 5**4
+        assert _superoperator_peak_bytes(evolving, [qutip.destroy(5)]) == (6 + 2 * 4) * 16 * 5**4
+        assert _superoperator_peak_bytes(qutip.num(30), [qutip.destroy(30)]) < 16 * 30**4
+
+    @pytest.mark.parametrize("tiny", [0.0, 1e-9], ids=["local-loss", "tiny-entries"])
+    def test_sparse_estimate_follows_the_entries_qutip_stores(self, tiny: float) -> None:
+        """The sparse estimate stays within a small factor above the assembled Liouvillian.
+
+        Local loss keeps c†c diagonal, and QuTiP drops products below its
+        tidy-up tolerance, so tiny entries store no pairs among themselves.
+        """
+        import qutip
+
+        from quchip.backend.qutip import _superoperator_peak_bytes
+
+        dims = (4, 4, 4)
+        modes = [
+            qutip.tensor(*[qutip.destroy(d) if index == k else qutip.qeye(d) for index, d in enumerate(dims)])
+            for k in range(len(dims))
+        ]
+        hamiltonian = sum(mode.dag() * mode for mode in modes) + 0.01 * (
+            modes[0].dag() * modes[1] + modes[1].dag() * modes[0]
+        )
+        noise = qutip.Qobj(np.random.default_rng(7).normal(size=(64, 64)), dims=modes[0].dims)
+        jumps = [(np.sqrt(0.01) * mode + tiny * noise).to("CSR") for mode in modes]
+
+        entry_bytes = 16 + np.dtype(qutip.core.data.base.idxint_dtype).itemsize
+        stored = qutip.liouvillian(hamiltonian, jumps).data_as("csr_matrix").nnz * entry_bytes
+        assert stored <= _superoperator_peak_bytes(hamiltonian.to("CSR"), jumps) <= 6 * stored
+
+    def test_mesolve_raises_before_building_a_liouvillian_that_cannot_fit(
+        self, backend: QuTiPBackend, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """mesolve raises MemoryError naming dynamiqs before assembling an oversized Liouvillian."""
+        import qutip
+
+        from quchip.backend import _memory
+
+        monkeypatch.setattr(_memory, "available_memory_bytes", lambda: 10**6)
+        hamiltonian = qutip.Qobj(np.ones((12, 12)), dtype="Dense")
+        with pytest.raises(MemoryError, match="backend='dynamiqs'"):
+            backend.mesolve(hamiltonian, qutip.basis(12, 0), [0.0, 1.0], c_ops=[qutip.destroy(12)])
+        assert _memory.available_memory_bytes() == 10**6
+
+    def test_mesolve_matches_qutip_for_driven_lossy_hamiltonians(self, backend: QuTiPBackend) -> None:
+        """A driven lossy mode evolves as under QuTiP's own Liouvillian, with or without the drive's partner."""
+        import qutip
+
+        mode = qutip.destroy(5)
+        drive = qutip.coefficient(lambda t: 0.3 * np.exp(-0.7j * t))
+        hermitian = qutip.QobjEvo([0.2 * mode.dag() * mode, [mode, drive], [mode.dag(), drive.conj()]])
+        one_sided = qutip.QobjEvo([0.2 * mode.dag() * mode, [mode.dag(), drive]])
+        mixed = 0.7 * qutip.ket2dm(qutip.basis(5, 0)) + 0.3 * qutip.ket2dm(qutip.basis(5, 2))
+        coherence = qutip.basis(5, 0) * qutip.basis(5, 1).dag()
+        for method in ("vern9", "adams"):
+            options = {"method": method, "rtol": 1e-10, "atol": 1e-12}
+            for hamiltonian in (hermitian, one_sided):
+                for state in (qutip.basis(5, 0), mixed, coherence):
+                    expected = qutip.mesolve(hamiltonian, state, [0.0, 5.0], c_ops=[0.1 * mode],
+                                             options=options).final_state
+                    result = backend.mesolve(hamiltonian, state, [0.0, 5.0], c_ops=[0.1 * mode], options=options)
+                    npt.assert_allclose(result.final_state.full(), expected.full(), atol=1e-9)
+
+    def test_packed_hermitian_mesolve_matches_the_full_liouvillian(self, backend: QuTiPBackend) -> None:
+        """Integrating the upper triangle of a Hermitian state reproduces every saved state and expectation."""
+        import qutip
+        from qutip.solver.mesolve import MESolver
+
+        from quchip.backend.qutip import _HermitianMESolver, _lindblad_generator
+
+        a, b = qutip.tensor(qutip.destroy(8), qutip.qeye(6)), qutip.tensor(qutip.qeye(8), qutip.destroy(6))
+        drive = qutip.coefficient(lambda t: 0.4 * np.exp(1.3j * t) * np.sin(0.5 * t))
+        hamiltonian = qutip.QobjEvo([0.3 * a.dag() * a + 0.05 * (a.dag() * b + b.dag() * a),
+                                     [a, drive], [a.dag(), drive.conj()]])
+        collapse = [0.2 * a, 0.1 * b, 0.05 * a.dag() * a]
+        tlist = np.linspace(0.0, 4.0, 9)
+        state = qutip.ket2dm((qutip.tensor(qutip.basis(8, 1), qutip.basis(6, 0))
+                              + 1j * qutip.tensor(qutip.basis(8, 0), qutip.basis(6, 2))).unit())
+        e_ops = [a.dag() * a, b.dag() * b, a + a.dag()]
+        options = {"method": "vern9", "rtol": 1e-11, "atol": 1e-13, "store_states": True}
+        generator, constant = _lindblad_generator(hamiltonian, collapse, tlist)
+        packed = _HermitianMESolver(generator, constant, options=options).run(state, tlist, e_ops=e_ops)
+        generator, constant = _lindblad_generator(hamiltonian, collapse, tlist)
+        full = MESolver(generator, [constant], options=options).run(state, tlist, e_ops=e_ops)
+        for ours, reference in zip(packed.states, full.states, strict=True):
+            assert ours.isherm
+            npt.assert_allclose(ours.full(), reference.full(), atol=1e-10)
+        npt.assert_allclose(np.asarray(packed.expect), np.asarray(full.expect), atol=1e-10)
+
+        for method in ("vern9", "adams"):
+            options = {"method": method, "rtol": 1e-10, "atol": 1e-12}
+            expected = qutip.mesolve(hamiltonian, state, tlist, c_ops=collapse, options=options).final_state
+            result = backend.mesolve(hamiltonian, state, tlist, c_ops=collapse, options=options)
+            npt.assert_allclose(result.final_state.full(), expected.full(), atol=1e-8)
+
+    def test_threaded_packed_product_reproduces_one_thread(
+        self, backend: QuTiPBackend, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Splitting the packed product's rows over threads leaves the solution bit-for-bit unchanged."""
+        import qutip
+
+        from quchip.backend import qutip as qutip_backend
+
+        a, b = qutip.tensor(qutip.destroy(8), qutip.qeye(6)), qutip.tensor(qutip.qeye(8), qutip.destroy(6))
+        drive = qutip.coefficient(lambda t: 0.4 * np.exp(1.3j * t) * np.sin(0.5 * t))
+        hamiltonian = qutip.QobjEvo([0.3 * a.dag() * a + 0.05 * (a.dag() * b + b.dag() * a),
+                                     [a, drive], [a.dag(), drive.conj()]])
+        collapse = [0.2 * a, 0.1 * b]
+        state = qutip.ket2dm(qutip.tensor(qutip.basis(8, 1), qutip.basis(6, 0)))
+        monkeypatch.setattr(qutip_backend, "_THREADED_PRODUCT_MIN_NNZ", 0)
+        final = {}
+        for threads in ("1", "3"):
+            monkeypatch.setenv("QUCHIP_NUM_THREADS", threads)
+            result = backend.mesolve(hamiltonian, state, [0.0, 3.0], c_ops=collapse, options={"method": "vern9"})
+            final[threads] = result.final_state.full()
+        assert np.array_equal(final["1"], final["3"])
+
+    def test_packed_product_threads_follow_settings_and_worker_processes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """QUCHIP_NUM_THREADS wins, then one thread in a child process, then OMP_NUM_THREADS."""
+        from quchip.backend import qutip as qutip_backend
+
+        monkeypatch.delenv("QUCHIP_NUM_THREADS", raising=False)
+        monkeypatch.setenv("OMP_NUM_THREADS", "2")
+        assert qutip_backend._product_threads() == 2
+        monkeypatch.setenv("QUCHIP_NUM_THREADS", "3")
+        assert qutip_backend._product_threads() == 3
+        monkeypatch.setattr(qutip_backend.multiprocessing, "parent_process", lambda: object())
+        assert qutip_backend._product_threads() == 3
+        monkeypatch.delenv("QUCHIP_NUM_THREADS")
+        assert qutip_backend._product_threads() == 1

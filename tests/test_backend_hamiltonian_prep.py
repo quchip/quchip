@@ -285,3 +285,42 @@ class TestEnvelopeSampleGrid:
             assert area_rel_err < 0.02, (
                 f"duration={duration}: pulse-area error {area_rel_err:.2e} exceeds the 0.02 bound"
             )
+
+
+def test_pulse_train_shares_one_qutip_coefficient_per_operator_and_carrier():
+    """Pulses and crosstalk through one operator at one carrier share a QobjEvo part with the per-band H(t)."""
+    from quchip import Capacitive, Gaussian, QuantumSequence
+    from quchip.backend.qutip import _envelope_coefficient
+    from quchip.engine.ir import decompose_carrier_bands
+
+    def lowered(pulses):
+        qubits = [DuffingTransmon(freq=f, anharmonicity=-0.25, levels=3, label=f"q{i}")
+                  for i, f in enumerate((5.0, 5.2))]
+        equipment = ControlEquipment([ChargeDrive(q, label=f"d{i}") for i, q in enumerate(qubits)])
+        equipment.set_crosstalk_matrix([[1.0, 0.1], [0.05, 1.0]], [[0.0, 0.3], [-0.2, 0.0]])
+        chip = Chip(qubits, [Capacitive(*qubits, g=0.01)], control_equipment=equipment,
+                    frame=5.1, approximation=RWA())
+        sequence = QuantumSequence(chip)
+        for k in range(pulses):
+            sequence.schedule("d0", envelope=Gaussian(duration=20.0, amplitude=0.02), freq=5.0,
+                              start_time=20.0 * k)
+            sequence.schedule("d1", envelope=Square(duration=13.0, amplitude=0.01), freq=5.0, phase=0.4,
+                              start_time=20.0 * k + 7.0)
+        tlist = np.array([0.0, 20.0 * pulses + 10.0])
+        result = sequence.build_problem(tlist=tlist).engine_result
+        return chip.backend, result, tlist, chip.backend.prepare_hamiltonian(result, tlist).rhs
+
+    backend, result, tlist, rhs = lowered(4)
+    grid = backend._resolve_envelope_sample_tlist(tlist)
+    static = backend._sum_terms(result.static_terms, backend._canonical_to_qobj).full()
+    bands = [(backend._canonical_to_qobj(term.operator).full(), _envelope_coefficient(band.envelope, grid),
+              complex(band.freq))
+             for term in result.dynamic_terms for band in decompose_carrier_bands(term.time_dependence.signal)]
+    edges = np.array([20.0 * k + d for k in range(4) for d in (0.0, 7.0, 20.0)])
+    times = np.concatenate([np.linspace(0.0, 90.0, 301), edges, np.nextafter(edges, -np.inf),
+                            np.nextafter(edges, np.inf)])
+    for t in times:
+        expected = static + sum(op * coefficient(t) * np.exp(1j * freq * t) for op, coefficient, freq in bands)
+        np.testing.assert_allclose(rhs(t).full(), expected, rtol=0.0, atol=1e-12)
+    assert len(bands) > len(rhs.to_list()) - 1
+    assert len(rhs.to_list()) == len(lowered(1)[3].to_list())

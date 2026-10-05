@@ -185,6 +185,28 @@ def test_stationary_matrix_matches_mode_space_matrix() -> None:
     np.testing.assert_allclose(general.matrix, linear.matrix, atol=2e-8)
 
 
+def test_stationary_sweep_solves_an_unpumped_operating_point_once(monkeypatch) -> None:
+    """Probe frequencies reuse a stationary operating point and match separate solves."""
+    from quchip.backend.qutip import QuTiPBackend
+
+    _, _, _, chip = _linear_resonator(kappa_in=0.04, kappa_out=0.02)
+    frequencies = np.array([5.99, 6.0, 6.01])
+    separate = [VNA(chip).sweep([frequency], options={"method": "direct"}).matrix for frequency in frequencies]
+    reused = []
+    steadystate = QuTiPBackend.steadystate
+
+    def recorded(self, *args, **kwargs):
+        result = steadystate(self, *args, **kwargs)
+        reused.append(result.stats["guess_reused"])
+        return result
+
+    monkeypatch.setattr(QuTiPBackend, "steadystate", recorded)
+    swept = VNA(chip).sweep(frequencies, options={"method": "direct"})
+
+    assert reused == [False, True, True]
+    np.testing.assert_allclose(swept.matrix, np.concatenate(separate), atol=1e-13)
+
+
 def test_hidden_dilation_channels_carry_probe_and_pump_fields() -> None:
     """Coherent sources sum conj(S) L over every channel, hidden vacuum outputs included."""
     resonator = Resonator(freq=6.0, levels=8, label="r")
@@ -870,10 +892,10 @@ def test_eight_resonator_cascade_matches_exact_series_product() -> None:
 
 
 def test_coupled_mode_response_matches_general_liouvillian_fallback() -> None:
-    """Mode-space scattering agrees with the general solver for a coupled linear chip."""
+    """Mode-space, one-excitation and general-solver scattering agree for a coupled linear chip."""
     frequencies = np.asarray([5.97, 6.0, 6.04])
 
-    def response(*, explicit_operator: bool):
+    def response(*, explicit_operator: bool, options: dict | None = None):
         first = Resonator(freq=6.0, levels=3, label="a")
         second = Resonator(freq=6.035, levels=3, label="b")
         operator = (
@@ -887,13 +909,16 @@ def test_coupled_mode_response_matches_general_liouvillian_fallback() -> None:
             [Capacitive(first, second, g=0.012)],
             port_network=_network(port),
         )
-        return VNA(chip, ports=[port]).sweep(frequencies)
+        return VNA(chip, ports=[port]).sweep(frequencies, options=options)
 
     linear = response(explicit_operator=False)
-    general = response(explicit_operator=True)
+    projected = response(explicit_operator=True)
+    general = response(explicit_operator=True, options={"method": "direct"})
 
     np.testing.assert_allclose(linear.s11, general.s11, atol=2e-10)
+    np.testing.assert_allclose(projected.s11, general.s11, atol=2e-10)
     assert {item["solver"] for item in linear.diagnostics} == {"linear_response"}
+    assert {item["solver"] for item in projected.diagnostics} == {"vacuum_response"}
     assert {item["solver"] for item in general.diagnostics} == {"stationary_resolvent"}
 
 
@@ -949,20 +974,23 @@ def test_reordered_saved_level_uses_its_physical_spectrum(backend, custom_space)
     result = VNA(chip, ports=["readout"]).sweep(frequencies)
     expected = 1 - 0.04 / (0.02 + 2j * np.pi * (frequencies - 5.98))
     np.testing.assert_allclose(result.s11, expected, atol=2e-10)
-    assert {item["solver"] for item in result.diagnostics} == {"stationary_resolvent"}
+    assert {item["solver"] for item in result.diagnostics} == {"vacuum_response"}
 
 
-def test_nonlinear_hamiltonian_retains_stationary_fallback() -> None:
-    """A structurally nonlinear mode remains on the general stationary solver."""
+def test_nonlinear_mode_weak_probe_uses_its_one_excitation_block() -> None:
+    """A Kerr mode's weak-probe reflection is the linear cavity's, from the one-excitation block."""
     cavity = KerrCavity(freq=6.0, kerr=0.02, levels=3, label="c")
     port = Port(cavity, rate=0.04, label="readout")
+    vna = VNA(Chip([cavity], port_network=_network(port)), ports=[port])
+    frequencies = np.asarray([5.99, 6.0, 6.01])
 
-    result = VNA(
-        Chip([cavity], port_network=_network(port)),
-        ports=[port],
-    ).sweep([6.0])
+    weak = vna.sweep(frequencies)
+    general = vna.sweep(frequencies, options={"method": "direct"})
 
-    assert {item["solver"] for item in result.diagnostics} == {"stationary_resolvent"}
+    np.testing.assert_allclose(weak.s11, 1 - 0.04 / (0.02 + 2j * np.pi * (frequencies - 6.0)), atol=1e-12)
+    np.testing.assert_allclose(general.s11, weak.s11, atol=2e-8)
+    assert {item["solver"] for item in weak.diagnostics} == {"vacuum_response"}
+    assert {item["solver"] for item in general.diagnostics} == {"stationary_resolvent"}
 
 
 def test_dynamiqs_linear_response_is_jittable_and_differentiable() -> None:

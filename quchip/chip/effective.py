@@ -4,15 +4,79 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from math import prod
-from typing import Any
+from typing import Any, Mapping
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
 from quchip.declarative.dissipation import CollapseChannel
-from quchip.declarative.expr import PhysicsExpr
+from quchip.declarative.expr import PhysicsExpr, declared_excitation_changes, materialize_expr
 from quchip.utils.jax_utils import contains_tracer
 from quchip.utils.values import copy_value, value_fingerprint
+
+
+def authored_excitation_changes(
+    operator: Any,
+    labels: tuple[str, ...],
+    backend: Any,
+    bases: Mapping[str, Any] | None,
+) -> frozenset[int] | None:
+    """Return the total energy-level changes an authored operator carries.
+
+    A declared matrix contribution returns its declaration. Otherwise the
+    operator is evaluated at compile time in the captured energy bases of
+    ``labels``, so a constant operator stays concrete inside ``jax.jit``.
+    Missing bases, traced bases, or parameter-dependent operators return
+    ``None``.
+
+    Parameters
+    ----------
+    operator : PhysicsExpr or backend operator
+        Operator on ``labels`` in their authored coordinates.
+    labels : tuple[str, ...]
+        Ordered device labels supporting ``operator``.
+    backend : Backend
+        Backend used to materialize ``operator``.
+    bases : mapping or None
+        Captured basis records keyed by device label.
+    """
+    from quchip.engine.bands import concrete_excitation_changes
+
+    declared = declared_excitation_changes(operator)
+    if declared is not None:
+        return declared
+    if bases is None or any(label not in bases for label in labels):
+        return None
+    records = [bases[label] for label in labels]
+    with jax.ensure_compile_time_eval(), backend.eager_operators():
+        matrix = backend.to_array(materialize_expr(operator, backend, local_bases=bases))
+        vectors = records[0].energy_vectors
+        for record in records[1:]:
+            vectors = jnp.kron(vectors, record.energy_vectors)
+        dims = tuple(int(record.energy_vectors.shape[1]) for record in records)
+        return concrete_excitation_changes(matrix, dims, vectors)
+
+
+def conserves_excitation_number(chip: Any, approximation: Any) -> bool:
+    """Return whether a chip's static model structurally conserves the total energy-level index.
+
+    Device Hamiltonians are diagonal in their energy bases. The approximation
+    must keep only bands of zero total weight, every retained term must declare
+    conservation, and no port pair may generate a cascade Hamiltonian.
+
+    Parameters
+    ----------
+    chip : Chip
+        Chip whose static model is checked.
+    approximation : Approximation
+        Approximation the static model is resolved with.
+    """
+    if not approximation.conserves_excitation_number():
+        return False
+    if any(terms.excitation_changes is None for terms in chip.effective_terms):
+        return False
+    return chip.port_network is None or not chip.port_network._active_generated_pairs()
 
 
 @dataclass(frozen=True, eq=False)
@@ -82,11 +146,17 @@ class OperatorProjection:
         overrides = {**dict(self.overrides), **dict.fromkeys(owner_keys, current)}
         return replace(self, overrides=tuple(overrides.items()))
 
-    def apply(self, operator: Any, labels: tuple[str, ...], owner_key: str | None = None) -> PhysicsExpr:
-        """Project a live local array without allocating its full-space identity embedding."""
+    def apply(self, operator: Any, labels: tuple[str, ...], owner_key: str | None = None, *,
+              excitation_changes: frozenset[int] | None = None) -> PhysicsExpr:
+        """Project a live local array without allocating its full-space identity embedding.
+
+        ``excitation_changes`` declares the source operator's total energy-level
+        changes. Pass it only when the captured map conserves the total level
+        index, so that the projected operator carries the same changes.
+        """
         for key, projection in self.overrides:
             if key == owner_key:
-                return projection.apply(operator, labels)
+                return projection.apply(operator, labels, excitation_changes=excitation_changes)
         support = tuple(self.source_labels.index(label) for label in labels)
         rest = tuple(index for index in range(len(self.source_dims)) if index not in support)
         local_size = prod(self.source_dims[index] for index in support)
@@ -101,7 +171,7 @@ class OperatorProjection:
         acted = jnp.einsum("ab,brj->arj", matrix, tensor)
         projected = jnp.einsum("ari,arj->ij", tensor.conj(), acted)
         return PhysicsExpr.from_matrix(projected, labels=self.target_labels, dims=self.target_dims,
-                                       name="projected_operator")
+                                       name="projected_operator", excitation_changes=excitation_changes)
 
     def fingerprint(self) -> Any:
         return value_fingerprint((self.source_labels, self.source_dims, self.target_labels,
@@ -153,6 +223,13 @@ class EffectiveTerms:
     notes : tuple[str, ...], default=()
         Approximations stated by the producer of these terms, reported by
         :meth:`physics_notes` after the notes derived from the terms.
+    excitation_changes : mapping of str to iterable of int, or None, default=None
+        Structure declared by the producer. A mapping states that the
+        Hamiltonian and ``projection`` conserve the total energy-level index
+        of the retained devices, and gives the total level changes, column
+        minus row, that each named channel can carry. Band decomposition then
+        treats every other change as zero, also for traced values. ``None``
+        declares no structure.
     """
 
     labels: tuple[str, ...]
@@ -162,6 +239,7 @@ class EffectiveTerms:
     label: str = "effective"
     projection: OperatorProjection | None = None
     notes: tuple[str, ...] = ()
+    excitation_changes: Mapping[str, frozenset[int]] | None = None
 
     def __post_init__(self) -> None:
         labels, dims = tuple(self.labels), tuple(self.dims)
@@ -204,6 +282,16 @@ class EffectiveTerms:
         notes = (self.notes,) if isinstance(self.notes, str) else tuple(self.notes)
         if any(not isinstance(note, str) or not note for note in notes):
             raise ValueError("EffectiveTerms notes must be nonempty strings.")
+        if self.excitation_changes is not None:
+            names = [channel.name for channel in channels]
+            unknown = set(self.excitation_changes) - set(names)
+            if unknown:
+                raise ValueError(f"Excitation changes name unknown effective channels {sorted(unknown)}.")
+            changes = {
+                name: frozenset(int(change) for change in self.excitation_changes[name])
+                for name in names if name in self.excitation_changes
+            }
+            object.__setattr__(self, "excitation_changes", changes)
         object.__setattr__(self, "notes", notes)
         object.__setattr__(self, "labels", labels)
         object.__setattr__(self, "dims", dims)
@@ -218,8 +306,23 @@ class EffectiveTerms:
         matrix : array-like or None, default=None
             Matrix in GHz. ``None`` uses :attr:`hamiltonian`.
         """
+        conserving = matrix is None and self.excitation_changes is not None
         return PhysicsExpr.from_matrix(
-            self.hamiltonian if matrix is None else matrix, labels=self.labels, dims=self.dims, name=self.label
+            self.hamiltonian if matrix is None else matrix, labels=self.labels, dims=self.dims, name=self.label,
+            excitation_changes=(0,) if conserving else None,
+        )
+
+    def channel_expression(self, channel: CollapseChannel) -> PhysicsExpr:
+        """Return one retained jump operator with its declared level changes.
+
+        Parameters
+        ----------
+        channel : CollapseChannel
+            One of :attr:`channels`.
+        """
+        changes = None if self.excitation_changes is None else self.excitation_changes.get(channel.name)
+        return PhysicsExpr.from_matrix(
+            channel.operator, labels=self.labels, dims=self.dims, name=self.label, excitation_changes=changes,
         )
 
     def physics_notes(self) -> list[str]:
@@ -234,6 +337,8 @@ class EffectiveTerms:
             notes.append("Retained Lindblad channels: " + ", ".join(c.name for c in self.channels) + ".")
         if self.projection is not None:
             notes.append("Operators of surviving components follow the captured coordinate map.")
+        if self.excitation_changes is not None:
+            notes.append("The retained terms and coordinate map conserve the total excitation number.")
         return notes + list(self.notes)
 
     def validate_for(self, chip: Any) -> None:
@@ -260,6 +365,9 @@ class EffectiveTerms:
                 self.hamiltonian,
                 tuple((c.name, c.operator, c.rate) for c in self.channels),
                 None if self.projection is None else self.projection.fingerprint(),
+                None if self.excitation_changes is None else tuple(
+                    (name, tuple(sorted(changes))) for name, changes in self.excitation_changes.items()
+                ),
             )
         )
 
@@ -280,6 +388,10 @@ class EffectiveTerms:
         )
         if self.notes:
             data["notes"] = list(self.notes)
+        if self.excitation_changes is not None:
+            data["excitation_changes"] = {
+                name: sorted(changes) for name, changes in self.excitation_changes.items()
+            }
         return data
 
     @classmethod
@@ -292,7 +404,7 @@ class EffectiveTerms:
             Payload produced by :meth:`to_dict`.
         """
         required = {"label", "labels", "dims", "hamiltonian", "channels", "projection"}
-        if not required <= set(data) <= required | {"notes"}:
+        if not required <= set(data) <= required | {"notes", "excitation_changes"}:
             raise ValueError("Invalid serialized EffectiveTerms fields.")
 
         def matrix(value: dict[str, Any]) -> Any:
@@ -306,4 +418,5 @@ class EffectiveTerms:
             data["label"],
             None if data["projection"] is None else OperatorProjection.from_dict(data["projection"]),
             tuple(data.get("notes", ())),
+            data.get("excitation_changes"),
         )

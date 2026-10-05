@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from quchip import Chip, DuffingTransmon, EffectiveTerms, CollapseChannel
+from quchip import RWA, Chip, DuffingTransmon, EffectiveTerms, CollapseChannel
 
 
 def _devices():
@@ -129,3 +129,24 @@ def test_effective_terms_notes_follow_the_derived_notes_and_survive_serializatio
         EffectiveTerms.from_dict({**data, "comment": "unknown"})
     with pytest.raises(ValueError, match="nonempty strings"):
         EffectiveTerms(("a",), (2,), np.zeros((2, 2)), notes=("",))
+
+
+@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
+def test_common_frame_keeps_a_band_with_cancelling_level_weights_static(backend):
+    """Level changes that cancel in a common frame give a static term, not a round-off carrier."""
+    devices = [DuffingTransmon(freq=5.1 + 0.1 * i, anharmonicity=-0.2, levels=4, label=label)
+               for i, label in enumerate(("a", "b", "c"))]
+    dims = (4, 4, 4)
+    # Column minus row level changes (3, -1, -2): summed one device at a time,
+    # 3*5.2 - 5.2 - 2*5.2 leaves 1.8e-15 GHz in floating point.
+    row, column = np.ravel_multi_index((0, 1, 2), dims), np.ravel_multi_index((3, 0, 0), dims)
+    hamiltonian = np.zeros((64, 64))
+    hamiltonian[row, column] = hamiltonian[column, row] = 0.01
+    chip = Chip(devices, frame=5.2, approximation=RWA(), backend=backend,
+                effective_terms=[EffectiveTerms(("a", "b", "c"), dims, hamiltonian, label="retained")])
+
+    resolved = chip.resolve()
+
+    assert not resolved.slh.H.dynamic_terms
+    static = np.asarray(resolved.hamiltonian().matrix(backend=chip.backend))
+    np.testing.assert_allclose(static[row, column], 0.01, atol=1e-15)

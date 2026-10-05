@@ -983,3 +983,54 @@ def test_connecting_a_network_invalidates_the_dressed_cache() -> None:
     assert chip.dress().assignment_overlaps[(1, 0)] == pytest.approx(0.5, abs=1e-6)
     with pytest.warns(UserWarning, match="assignment overlap 0.500"):
         chip.state({"a": 1, "b": 0})
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("internal_rate", [0.0, 0.01, 0.08], ids=["lossless", "overcoupled", "undercoupled"])
+def test_mode_reflection_section_is_a_continuous_passive_root_of_the_reflection(internal_rate: float) -> None:
+    """Each pass of a mode-reflection section squares to the mode's reflection without branch jumps."""
+    from quchip.chip.port_network import _mode_reflection_transfer
+
+    frequencies = np.linspace(5.8, 6.2, 801)
+    parameters = dict(freq=6.0, external_rate=0.05, internal_rate=internal_rate, reference_freq=5.0)
+    transfer = np.asarray(_mode_reflection_transfer(frequencies, **parameters))
+    reflection = 1 - 0.05 / ((0.05 + internal_rate) / 2 - 2j * np.pi * (frequencies - 6.0))
+
+    np.testing.assert_allclose(transfer**2, reflection, rtol=1e-12, atol=1e-15)
+    assert np.all(np.abs(transfer) <= 1 + 1e-12)
+    # A branch jump would change H by 2|H| >= 0.96 between neighbouring grid points.
+    assert np.max(np.abs(np.diff(transfer))) < 0.25
+    # Far below the mode the section reproduces the emission phase 1 - iκ/(2Δ), Δ = 2π(f - freq).
+    np.testing.assert_allclose(_mode_reflection_transfer(5.0, **parameters), 1 + 0.05j / (4 * np.pi), atol=1e-4)
+
+
+@pytest.mark.unit
+def test_mode_reflection_section_serializes_with_its_network() -> None:
+    """A network holding a mode-reflection section round-trips through to_dict."""
+    resonator = Resonator(freq=6.0, levels=2, label="r")
+    network = PortNetwork(label="line")
+    port = network.port("readout", target=resonator, rate=0.02)
+    section = network.mode_reflection("cavity", freq=6.5, external_rate=0.05, internal_rate=0.01, reference_freq=6.0)
+    network.link(port, section)
+    network.expose("feedline", at=section.port("2"))
+    chip = Chip([resonator], port_network=network)
+
+    restored = Chip.from_dict(json.loads(json.dumps(chip.to_dict())))
+
+    assert restored.port_network is not None
+    assert restored.port_network.to_dict() == chip.port_network.to_dict()
+    assert restored.parameters["network.component.cavity.internal_rate"] == 0.01
+
+
+@pytest.mark.unit
+def test_port_tones_keep_the_sign_of_their_bands() -> None:
+    """A port band k is static only for k·ω = f; drive bands keep their partner-free form."""
+    from quchip.engine.assembly import BandRecord
+    from quchip.engine.frames import _tones_from_records
+
+    record = BandRecord(("a", "b"), (-1, 2), None, "port")
+    (signed,) = _tones_from_records([record], 5.0, None, "probe", signed=True)
+    (unsigned,) = _tones_from_records([record], 5.0, None, "drive")
+
+    assert signed.coefficients == (("a", 1), ("b", -2)) and signed.freq == -5.0
+    assert unsigned.coefficients == (("a", -1), ("b", 2)) and unsigned.freq == 5.0

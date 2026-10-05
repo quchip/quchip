@@ -23,9 +23,9 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import Any, ClassVar
 
-import jax.numpy as jnp
 from jax.scipy.linalg import expm
 import numpy as np
+import scipy.linalg
 
 from quchip.chip.sw import (
     bare_index,
@@ -36,6 +36,7 @@ from quchip.chip.sw import (
     pathway_attribution,
     sylvester_generator,
 )
+from quchip.utils.jax_utils import concrete_array_module, contains_tracer
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,9 @@ class DeviceReductionContext:
         The Sylvester generator rotating the P/Q partition of ``h``.
     p_mask
         Boolean mask selecting the kept (P) block of the product basis.
+    sectors
+        Total excitation number of each product state when ``h`` conserves
+        it, else ``None``.
     """
 
     mode_label: str
@@ -73,6 +77,7 @@ class DeviceReductionContext:
     dims: tuple[int, ...]
     h: Any
     p_mask: Any
+    sectors: np.ndarray | None = None
 
     @cached_property
     def s(self) -> Any:
@@ -81,7 +86,8 @@ class DeviceReductionContext:
 
     @cached_property
     def sw_embedding(self) -> Any:
-        return expm(-self.s)[:, np.flatnonzero(self.p_mask)]
+        rotation = expm(-self.s) if contains_tracer(self.s) else scipy.linalg.expm(-self.s)
+        return rotation[:, np.flatnonzero(self.p_mask)]
 
     @cached_property
     def sw_hamiltonian(self) -> Any:
@@ -89,7 +95,8 @@ class DeviceReductionContext:
 
     @cached_property
     def exact(self) -> Any:
-        return exact_mode_subspace(self.h, self.labels, self.dims, self.mode_label, self.survivor_labels)
+        return exact_mode_subspace(self.h, self.labels, self.dims, self.mode_label, self.survivor_labels,
+                                   self.sectors)
 
 
 class ReductionMethod:
@@ -131,7 +138,7 @@ class ReductionMethod:
     def transform_operator(self, ctx: DeviceReductionContext, operator: Any) -> Any:
         """Carry a full operator into the kept mode-ground manifold."""
         embedding = self.embedding(ctx)
-        return embedding.conj().T @ jnp.asarray(operator) @ embedding
+        return embedding.conj().T @ concrete_array_module(embedding, operator).asarray(operator) @ embedding
 
     def residual_zz(self, ctx: DeviceReductionContext, pair_params: dict, a: str, b: str) -> Any | None:
         """Residual ZZ between survivor pair ``(a, b)``, or ``None`` if the route cannot resolve it."""
@@ -203,7 +210,8 @@ class ExactReduction(ReductionMethod):
         return exact_pair_parameters(ctx.exact, ctx.labels, ctx.dims, ctx.mode_label, ctx.survivor_labels)
 
     def residual_zz(self, ctx: DeviceReductionContext, pair_params: dict, a: str, b: str) -> Any | None:
-        return jnp.real(pair_params[("zz", a, b)])
+        zz = pair_params[("zz", a, b)]
+        return concrete_array_module(zz).real(zz)
 
     def pathways(self, ctx: DeviceReductionContext, pair_params: dict, a: str, b: str) -> list | None:
         return None

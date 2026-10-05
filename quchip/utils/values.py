@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Callable
+from typing import Any, Callable, TypeGuard, TypeVar
 from dataclasses import dataclass, field
 
 import jax
 import jax.tree_util as jtu
 import numpy as np
 from jax.core import Tracer
+
+try:
+    from jax.extend.core import get_opaque_trace_state
+except ImportError:  # JAX before 0.10 exports it only from jax.core.
+    from jax.core import get_opaque_trace_state
 
 
 def copy_value(value: Any, *, readonly: bool = False) -> Any:
@@ -46,9 +51,26 @@ def copy_value(value: Any, *, readonly: bool = False) -> Any:
     return capture(value)
 
 
-def value_fingerprint(value: Any) -> Any:
-    """Hash supported value contents; reject traced or opaque mutable payloads."""
+_T = TypeVar("_T")
+
+
+@dataclass(frozen=True)
+class TracedKey:
+    """Cache-key stand-in for a JAX tracer: its identity within the trace that owns it."""
+
+    ident: int
+
+
+def value_fingerprint(value: Any, *, traced: bool = False) -> Any:
+    """Hash supported value contents; reject opaque mutable payloads.
+
+    A tracer is rejected unless ``traced`` is true, when it keys by identity
+    (:class:`TracedKey`). Such keys are valid only inside the trace that owns
+    the tracer, so their cache entries must be scoped with :func:`scoped_entry`.
+    """
     if isinstance(value, Tracer):
+        if traced:
+            return TracedKey(id(value))
         raise ValueError("Traced values cannot key an eager calculation cache.")
     if value is None or isinstance(value, (str, bytes, bool, int, float, complex, type)):
         return value
@@ -58,18 +80,36 @@ def value_fingerprint(value: Any) -> Any:
             raise ValueError("Object arrays cannot key a calculation cache.")
         return array.shape, array.dtype.str, array.tobytes()
     if isinstance(value, dict):
-        return tuple((value_fingerprint(key), value_fingerprint(item)) for key, item in value.items())
+        return tuple((value_fingerprint(key, traced=traced), value_fingerprint(item, traced=traced))
+                     for key, item in value.items())
     if isinstance(value, (list, tuple)):
-        return type(value), tuple(value_fingerprint(item) for item in value)
+        return type(value), tuple(value_fingerprint(item, traced=traced) for item in value)
     leaves, tree = jtu.tree_flatten(value)
     if len(leaves) == 1 and leaves[0] is value:
         raise ValueError(f"Opaque {type(value).__name__} cannot key a calculation cache.")
 
     def structure(node: Any) -> Any:
         data = node.node_data()
-        return value_fingerprint(data), tuple(structure(child) for child in node.children())
+        return value_fingerprint(data, traced=traced), tuple(structure(child) for child in node.children())
 
-    return structure(tree), tuple(value_fingerprint(leaf) for leaf in leaves)
+    return structure(tree), tuple(value_fingerprint(leaf, traced=traced) for leaf in leaves)
+
+
+def scoped_entry(key: Any, value: _T, *, traced: bool) -> tuple[Any, Any, _T]:
+    """A cache entry ``(key, scope, value)``.
+
+    An entry whose value is traced, or whose key holds a :class:`TracedKey`,
+    records the current JAX trace and is reused only inside it, never in a
+    nested or later trace. Other entries are valid everywhere.
+    """
+    scoped = traced or any(isinstance(leaf, TracedKey) for leaf in jtu.tree_leaves(key))
+    return key, get_opaque_trace_state() if scoped else None, value
+
+
+def scoped_hit(entry: tuple[Any, Any, _T] | None, key: Any) -> TypeGuard[tuple[Any, Any, _T]]:
+    """Whether *entry* holds *key* and, when scoped, belongs to the current trace."""
+    return (entry is not None and entry[0] == key
+            and (entry[1] is None or entry[1] == get_opaque_trace_state()))
 
 
 @dataclass(eq=False)

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
+import jax
 import numpy as np
 
 from quchip.declarative.dissipation import CollapseChannel, normalize_dissipation
@@ -158,13 +159,18 @@ class Port:
 
     def _authored_operator(self, chip: "Chip") -> Any:
         labels = self.resolve_targets(chip)
-        if self.operator is None:
-            return chip[labels[0]].lowering_operator()
-        if isinstance(self.operator, str):
-            if len(labels) != 1:
-                raise ValueError("A named Port operator requires exactly one target.")
+        if self.operator is not None and not isinstance(self.operator, str):
+            return self.operator
+        if isinstance(self.operator, str) and len(labels) != 1:
+            raise ValueError("A named Port operator requires exactly one target.")
+        from quchip.backend import get_default_backend
+
+        # The target's own operator is a constant of its authored space; keep
+        # it concrete inside jax.jit so its excitation change stays known.
+        with jax.ensure_compile_time_eval(), get_default_backend().eager_operators():
+            if self.operator is None:
+                return chip[labels[0]].lowering_operator()
             return chip[labels[0]].local_operator(self.operator)
-        return self.operator
 
     def _collapse_channels_with_paths(
         self,

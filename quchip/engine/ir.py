@@ -1025,6 +1025,13 @@ class CanonicalOperator:
             component for component in (self.values, self.indices, self.offsets) if component is not None
         )
         xp = array_namespace(payload)
+        parts = (self.values, self.indices, self.indptr, self.offsets)
+        if is_jax_namespace(xp) and not contains_tracer(parts):
+            # A concrete JAX payload densifies on the host: each device scatter on a new shape compiles.
+            host_parts: dict[str, Any] = {name: None if part is None else np.asarray(part)
+                                          for name, part in zip(("values", "indices", "indptr", "offsets"), parts)}
+            host = replace(self, **host_parts)
+            return xp.asarray(host.to_dense())
 
         if self.layout == "dense":
             return xp.asarray(self.values, dtype=complex)
@@ -2097,6 +2104,8 @@ class LinearResponseProblem:
     """Passive-linear input-output request handed to a backend.
 
     ``hamiltonian`` is the number-conserving mode matrix in angular units,
+    or, for a weak probe of an excitation-conserving chip, its one-excitation
+    block, which may carry a non-Hermitian part from number-conserving channels;
     ``couplings`` stacks the channel rows of ``L = C a``, and ``scattering``
     is the complete instantaneous SLH matrix including hidden vacuum and loss
     channels. Frequencies remain ordinary GHz at the public boundary.
@@ -2110,7 +2119,8 @@ class LinearResponseProblem:
     frequencies : array_like
         Probe frequencies in GHz.
     mode_labels : tuple of str
-        Linear Fock modes in matrix order.
+        Linear Fock modes, or the devices whose first excited levels span the
+        one-excitation states, in matrix order.
     hamiltonian : array_like
         Number-conserving mode matrix in rad/ns.
     couplings : array_like

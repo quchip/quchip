@@ -102,3 +102,27 @@ def test_removed_coupling_preserves_its_projected_collective_channel(method, bac
     (actual,) = reduced.backend._collapse_operators(reduced.resolve(frame="lab"))
     actual = np.asarray(reduced.backend.to_array(actual))
     np.testing.assert_allclose(actual, expected, atol=1e-12)
+
+
+def test_traced_reduced_chip_keeps_the_concrete_drive_bands():
+    """Tracing a survivor coupling of an exactly reduced chip reproduces the concrete drive terms."""
+    from quchip import ChargeDrive, ControlEquipment, Gaussian, QuantumSequence
+
+    a = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=3, label="a")
+    b = DuffingTransmon(freq=5.2, anharmonicity=-0.3, levels=3, label="b")
+    bus = Resonator(freq=7.0, levels=3, label="bus")
+    couplings = [Capacitive(a, bus, g=0.05), Capacitive(b, bus, g=0.05), Capacitive(a, b, g=0.002, label="ab")]
+    full = Chip([a, b, bus], couplings, control_equipment=ControlEquipment([ChargeDrive(a, label="da")]),
+                frame=5.1, approximation=RWA(), backend="dynamiqs")
+    reduced = eliminate(full, "bus", method="exact").chip
+
+    def drive_operators(g):
+        sequence = QuantumSequence(reduced.with_params({"ab.g": g}))
+        sequence.schedule("da", envelope=Gaussian(duration=20.0, amplitude=0.02), freq=5.0)
+        result = sequence.build_problem(tlist=np.array([0.0, 20.0]), dissipation=False).engine_result
+        return jnp.stack([jnp.asarray(term.operator.to_dense()) for term in result.dynamic_terms])
+
+    concrete = np.asarray(drive_operators(0.002))
+    traced = np.asarray(jax.jit(drive_operators)(0.002))
+    assert traced.shape == concrete.shape
+    np.testing.assert_allclose(traced, concrete, atol=1e-12)

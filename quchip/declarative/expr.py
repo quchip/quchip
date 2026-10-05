@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from math import prod
+from numbers import Number
 from typing import Any, Mapping
 
 import jax.numpy as jnp
+import numpy as np
 
+from quchip.utils.jax_utils import concrete_array_module
 from quchip.utils.values import copy_value, value_fingerprint
 
 
@@ -81,6 +84,7 @@ class PhysicsExpr:
         labels: tuple[str, ...],
         dims: tuple[int, ...],
         name: str | None = None,
+        excitation_changes: Iterable[int] | None = None,
     ) -> "PhysicsExpr":
         """Create a named backend-neutral matrix contribution.
 
@@ -92,10 +96,16 @@ class PhysicsExpr:
             Matching ordered endpoint labels and positive dimensions.
         name : str or None
             Optional display name.
+        excitation_changes : iterable of int or None
+            Total energy-level changes, column minus row in the captured
+            energy bases, that the matrix can carry. Band decomposition treats
+            every other total change as a structural zero, also for traced
+            payloads. ``None`` declares no structure.
         """
         if len(labels) != len(dims):
             raise ValueError("Matrix labels and dimensions must have the same length.")
-        return cls("matrix", (copy_value(value, readonly=True), tuple(dims), name), tuple(labels))
+        changes = None if excitation_changes is None else frozenset(int(c) for c in excitation_changes)
+        return cls("matrix", (copy_value(value, readonly=True), tuple(dims), name, changes), tuple(labels))
 
     @classmethod
     def from_function(
@@ -773,6 +783,13 @@ def _matching_local_basis(
     return record
 
 
+def declared_excitation_changes(expr: Any) -> frozenset[int] | None:
+    """Return the total energy-level changes a matrix contribution declares, if any."""
+    if isinstance(expr, PhysicsExpr) and expr.kind == "matrix":
+        return expr.args[3]
+    return None
+
+
 def is_energy_diagonal(expr: Any, bases: Mapping[str, Any]) -> bool:
     """Whether authored algebra guarantees zero energy-change weight in captured bases."""
     from quchip.devices.spaces import ChargeSpace, FockSpace, PhaseGridSpace
@@ -811,6 +828,8 @@ def materialize_expr(
     if missing:
         raise UnboundParameterError("Missing numerical bindings: " + ", ".join(missing))
 
+    combine = getattr(backend, "linear_combination", None)
+
     def lower(node: PhysicsExpr) -> Any:
         if node.kind == "literal":
             return node.args[0]
@@ -823,7 +842,7 @@ def materialize_expr(
 
             return evaluate_signal_program(node.args[0], t, xp=backend.array_module)
         if node.kind == "matrix":
-            value, dims, _name = node.args
+            value, dims, *_ = node.args
             return backend.from_array(
                 value,
                 dims=[list(dims), list(dims)],
@@ -870,15 +889,21 @@ def materialize_expr(
             raise ValueError(f"Cannot embed a contribution with support {support}.")
         left = lower(node.args[0])
         right = lower(node.args[1])
-        if node.kind == "add":
-            return left + right
-        if node.kind == "sub":
-            return left - right
+        # A backend that combines operators itself can form concrete sums
+        # and scalings without device programs.
+        if node.kind in ("add", "sub"):
+            sign = 1 if node.kind == "add" else -1
+            if combine is not None and not (_is_scalar(left) or _is_scalar(right)):
+                return combine(((1, left), (sign, right)))
+            return left + right if sign == 1 else left - right
         if node.kind == "matmul":
             return backend.matmul(left, right)
         if node.kind == "tensor":
             return backend.tensor(left, right)
         if node.kind in ("scale", "mul"):
+            if combine is not None and _is_scalar(left) != _is_scalar(right):
+                scalar, operator = (left, right) if _is_scalar(left) else (right, left)
+                return combine(((scalar, operator),))
             return left * right
         if node.kind == "pow":
             exponent = node.args[1]
@@ -890,15 +915,24 @@ def materialize_expr(
     return lower(expr)
 
 
+def _is_scalar(value: Any) -> bool:
+    """Whether a lowered value is a number rather than an operator."""
+    return isinstance(value, Number) or getattr(value, "shape", None) == ()
+
+
 class _ArrayLowerer:
-    """Minimal operator algebra for backend-independent JAX materialization."""
+    """Minimal operator algebra for backend-independent JAX materialization.
+
+    Concrete operands combine on the host, so a constant operator compiles no
+    XLA programs; traced operands stay in JAX.
+    """
 
     array_module = jnp
 
     @staticmethod
     def from_array(value: Any, dims: Any = None) -> Any:
         del dims
-        return jnp.asarray(value, dtype=jnp.complex128)
+        return concrete_array_module(value).asarray(value, dtype=complex)
 
     @staticmethod
     def to_array(value: Any) -> Any:
@@ -910,23 +944,23 @@ class _ArrayLowerer:
 
     @staticmethod
     def destroy(dimension: int) -> Any:
-        return jnp.diag(jnp.sqrt(jnp.arange(1, dimension)), 1).astype(jnp.complex128)
+        return np.diag(np.sqrt(np.arange(1, dimension)), 1).astype(complex)
 
     @staticmethod
     def create(dimension: int) -> Any:
-        return _ARRAY_LOWERER.destroy(dimension).conj().T
+        return np.diag(np.sqrt(np.arange(1, dimension)), -1).astype(complex)
 
     @staticmethod
     def number(dimension: int) -> Any:
-        return jnp.diag(jnp.arange(dimension, dtype=jnp.complex128))
+        return np.diag(np.arange(dimension, dtype=complex))
 
     @staticmethod
     def identity(dimension: int) -> Any:
-        return jnp.eye(dimension, dtype=jnp.complex128)
+        return np.eye(dimension, dtype=complex)
 
     @staticmethod
     def dag(value: Any) -> Any:
-        return jnp.asarray(value).conj().T
+        return concrete_array_module(value).asarray(value).conj().T
 
     @staticmethod
     def matmul(left: Any, right: Any) -> Any:
@@ -934,22 +968,23 @@ class _ArrayLowerer:
 
     @staticmethod
     def tensor(left: Any, right: Any) -> Any:
-        return jnp.kron(left, right)
+        return concrete_array_module(left, right).kron(left, right)
 
     @staticmethod
     def embed(local: Any, target: int, dims: tuple[int, ...]) -> Any:
-        factors = [jnp.eye(dim, dtype=jnp.complex128) for dim in dims]
+        xp = concrete_array_module(local)
+        factors = [xp.eye(dim, dtype=complex) for dim in dims]
         factors[target] = local
         result = factors[0]
         for factor in factors[1:]:
-            result = jnp.kron(result, factor)
+            result = xp.kron(result, factor)
         return result
 
     @staticmethod
     def embed_two_body(local: Any, first: int, second: int, dims: tuple[int, ...]) -> Any:
         from quchip.backend._dims import _embed_array
 
-        return _embed_array(local, (first, second), dims, jnp)
+        return _embed_array(local, (first, second), dims, concrete_array_module(local))
 
 
 _ARRAY_LOWERER = _ArrayLowerer()
@@ -990,7 +1025,7 @@ def _latex(expr: PhysicsExpr, parent_precedence: int = 0) -> str:
         _signal, name = expr.args
         return rf"{name}\!\left(t\right)"
     if expr.kind == "matrix":
-        _value, _dims, name = expr.args
+        name = expr.args[2]
         if name is not None:
             return name
         return rf"\hat H_{{{','.join(expr.labels)}}}"

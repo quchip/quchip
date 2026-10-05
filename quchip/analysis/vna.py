@@ -17,7 +17,7 @@ from quchip.engine.input_output import (
     resolve_stationary_engine,
     same_frequency,
 )
-from quchip.engine.linear_response import try_build_linear_response_problem
+from quchip.engine.linear_response import try_build_weak_probe_problem
 from quchip.results.measurement import VNAMeasurement
 from quchip.engine.output_network import output_mixing
 from quchip.engine.reference import cw_transfer, has_amplifier, ReferenceFilter, ReferenceLoss
@@ -205,7 +205,8 @@ class VNA:
         with pump-tone axes. At each frequency, the passive-linear route
         uses one multi-right-hand-side mode-space solve. The stationary route solves
         one pumped operating point, then uses one shifted-Liouvillian factorization
-        for every input port.
+        for every input port. An operating point that stays stationary when the
+        probe frequency moves the port frames is reused rather than solved again.
 
         Parameters
         ----------
@@ -265,10 +266,16 @@ class VNA:
 
         blocks: list[tuple[Any, Any]] = []
         diagnostics: list[Mapping[str, Any]] = []
+        previous: tuple[Any, Any, _OperatingPoint] | None = None
         for tones, chip, frequency in iterator:
+            # The probe frequency only moves the selected planes' frames: an
+            # operating point that commutes with that shift stays stationary.
+            same_point = previous is not None and previous[0] is tones and previous[1] is chip
+            guess = previous[2].state.state if previous is not None and same_point else None
             operating = _operating_point(
-                chip, tones, frequency, labels, options
+                chip, tones, frequency, labels, options, guess=guess
             )
+            previous = (tones, chip, operating)
             blocks.append(_small_signal_matrix(operating, labels, frequency))
             diagnostics.append(operating.diagnostics)
 
@@ -658,9 +665,10 @@ class VNA:
         matrices: list[Any] = []
         diagnostics: list[Mapping[str, Any]] = []
         for chip in chips:
-            problem = try_build_linear_response_problem(chip, frequencies, plane_labels=labels)
-            if problem is None:
+            built = try_build_weak_probe_problem(chip, frequencies, plane_labels=labels)
+            if built is None:
                 return None
+            problem, route = built
             solved = chip.backend.linear_response(problem)
             indices = list(problem.plane_indices)
             transfer = (
@@ -670,7 +678,7 @@ class VNA:
             matrices.append(chip.backend.array_module.asarray(transfer * solved.responses))
             diagnostics.extend(
                 _LazyDiagnostics({
-                    "solver": "linear_response",
+                    "solver": route,
                     "mode_count": len(problem.mode_labels),
                     "residual": solved.residuals[index],
                     "condition_number": lambda index=index, condition=solved._condition_numbers: condition()[index],
@@ -757,19 +765,26 @@ def _operating_point(
     frequency: Any,
     labels: tuple[str, ...],
     options: dict | None,
+    *,
+    guess: Any | None = None,
 ) -> _OperatingPoint:
-    """Solve the pumped stationary state with every selected plane framed at ``frequency``."""
+    """Solve the pumped stationary state with every selected plane framed at ``frequency``.
+
+    ``guess`` is the operating state at another probe frequency; the backend
+    may reuse it when it remains stationary in these frames.
+    """
     engine = resolve_stationary_engine(
         chip,
         tuple((label, tone_frequency) for label, tone_frequency, _ in tones)
         + tuple((label, frequency) for label in labels),
     )
     operating_engine = add_port_inputs(engine, chip.backend, tones)
-    return _solve_engine(chip, operating_engine, tones, options)
+    return _solve_engine(chip, operating_engine, tones, options, guess=guess)
 
 
 def _solve_engine(
     chip: Any, engine: EngineResult, tones: tuple[tuple[str, Any, Any], ...], options: dict | None,
+    *, guess: Any | None = None,
 ) -> _OperatingPoint:
     problem = SteadyStateProblem(
         chip=chip,
@@ -780,7 +795,7 @@ def _solve_engine(
         options={} if options is None else options,
     )
     prepared = problem.backend.prepare_stationary(engine)
-    return _OperatingPoint(prepared, solve_steadystate_problem(problem, prepared=prepared), tones)
+    return _OperatingPoint(prepared, solve_steadystate_problem(problem, prepared=prepared, guess=guess), tones)
 
 
 def _stationary_output_backgrounds(
