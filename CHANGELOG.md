@@ -106,6 +106,11 @@ This file records notable user-visible changes to quchip.
 #### Documentation and examples
 
 - The NV-centre guide is removed.
+- The example notebooks and the guides are re-executed against the current
+  code. The transmon avoided crossing in example 01 now reports the RWA
+  splitting of 3.99 MHz, which agrees with second-order theory to 0.3%. The fluxonium
+  readout comparison uses `Exact()`, because counter-rotating terms contribute
+  strongly to its dispersive shift.
 
 ## [0.4.0] - 2026-09-29 <a id="quchip-0-4-0"></a>
 

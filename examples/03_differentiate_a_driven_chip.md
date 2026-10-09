@@ -405,7 +405,7 @@ print(
 Output:
 
 ```text
-RESULT experimental_statics={"fit_success":true,"holdout_median_absolute_error_mhz":0.880613406288866,"holdout_points":133,"holdout_rmse_mhz":6.967105516086398,"initial_E_C_E_J_E_L":[0.72,4.4,0.68],"iterations":17,"published_E_C_E_J_E_L":[0.8652719648666846,3.8217399868188027,0.8215798519627777],"recovered_E_C_E_J_E_L":[0.8704199128839761,3.8203629832283665,0.8208603168362608],"relative_parameter_error":[0.005949514402774777,-0.0003603080259738819,-0.0008757945132148889],"training_points":20}
+RESULT experimental_statics={"fit_success":true,"holdout_median_absolute_error_mhz":0.880613406288866,"holdout_points":133,"holdout_rmse_mhz":6.967105516086357,"initial_E_C_E_J_E_L":[0.72,4.4,0.68],"iterations":17,"published_E_C_E_J_E_L":[0.8652719648666846,3.8217399868188027,0.8215798519627777],"recovered_E_C_E_J_E_L":[0.8704199128839761,3.8203629832283665,0.8208603168362608],"relative_parameter_error":[0.005949514402774777,-0.0003603080259738819,-0.0008757945132148889],"training_points":20}
 ```
 
 <!-- executed-output:end -->
@@ -610,22 +610,6 @@ multi_jacobian = jax.jacrev(multi_residual)(shared_origin)
 multi_loss_gradient = jax.grad(multi_loss)(shared_origin)
 ```
 
-<!-- executed-output:start -->
-
-Output:
-
-```text
-/Users/fermious/quchip_public/.venv/lib/python3.11/site-packages/dynamiqs/qarrays/qarray.py:550: UserWarning: A sparse qarray has been converted to dense layout due to element-wise addition with a dense qarray.
-  return self + (-y)
-```
-
-```text
-/Users/fermious/quchip_public/.venv/lib/python3.11/site-packages/dynamiqs/qarrays/qarray.py:550: UserWarning: A sparse qarray has been converted to dense layout due to element-wise addition with a dense qarray.
-  return self + (-y)
-```
-
-<!-- executed-output:end -->
-
 Use the Jacobian to see which experiment constrains each parameter, and
 the loss gradient for an optimization step.
 
@@ -664,7 +648,7 @@ print(f"RESULT gradient={json.dumps(gradient_receipt, sort_keys=True, separators
 Output:
 
 ```text
-RESULT gradient={"backend":"dynamiqs","base_population":0.995519779566944,"figure":"../docs/images/differentiate_a_driven_chip.svg","first_order_only":true,"fixed_structure_during_trace":true,"gradient_per_reference_perturbation":{"pulse.0.amplitude":0.0015756853452387738,"pulse.0.freq":0.00337825563625915,"pulse.0.sigmas":-0.0015669210705104204},"multi_sequence_count":3,"multi_sequence_jacobian_shape":[3,3],"multi_sequence_loss_gradient":[-0.09312824584720562,0.04532470702716049,0.09312824584720582],"original_sequence_unchanged":true,"parameter_paths":["pulse.0.amplitude","pulse.0.sigmas","pulse.0.freq"],"solver":"sesolve"}
+RESULT gradient={"backend":"dynamiqs","base_population":0.9955197597010083,"figure":"../docs/images/differentiate_a_driven_chip.svg","first_order_only":true,"fixed_structure_during_trace":true,"gradient_per_reference_perturbation":{"pulse.0.amplitude":0.0015756847934132964,"pulse.0.freq":0.0033782484014230805,"pulse.0.sigmas":-0.0015669142083585888},"multi_sequence_count":3,"multi_sequence_jacobian_shape":[3,3],"multi_sequence_loss_gradient":[-0.09312829969383697,0.045324706488043695,0.093128299693837],"original_sequence_unchanged":true,"parameter_paths":["pulse.0.amplitude","pulse.0.sigmas","pulse.0.freq"],"solver":"sesolve"}
 ```
 
 <!-- executed-output:end -->

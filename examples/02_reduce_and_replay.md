@@ -291,7 +291,7 @@ print(f"RESULT reduction={json.dumps(reduction_receipt, sort_keys=True, separato
 Output:
 
 ```text
-RESULT reduction={"active_labels":["q0","q1"],"all_folds_valid":true,"eliminated_labels":["q3","q2"],"figure":"../docs/images/reduce_and_replay.svg","full_dimension":81,"maximum_g_over_delta":0.03432606492529982,"maximum_population_residual":2.920455689392476e-06,"minimum_block_gap_ghz":0.3495885714285709,"original_chip_unchanged":true,"peak_full_population":0.7479949561486001,"reduced_dimension":9,"reduction_method":"sw","residual_tolerance":0.0058774739885992825,"same_schedule":true}
+RESULT reduction={"active_labels":["q0","q1"],"all_folds_valid":true,"eliminated_labels":["q3","q2"],"figure":"../docs/images/reduce_and_replay.svg","full_dimension":81,"maximum_g_over_delta":0.03432606492529982,"maximum_population_residual":3.71427726397755e-06,"minimum_block_gap_ghz":0.3495885714285709,"original_chip_unchanged":true,"peak_full_population":0.7480171143273048,"reduced_dimension":9,"reduction_method":"sw","residual_tolerance":0.0058775348055535755,"same_schedule":true}
 ```
 
 <!-- executed-output:end -->
