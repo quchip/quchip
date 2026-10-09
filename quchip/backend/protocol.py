@@ -1,18 +1,17 @@
 """Backend protocol and backend-agnostic solver-result containers.
 
-quchip separates *physics description* from *solver conversion*: the engine
-(``quchip.engine``) emits structured IR (``EngineResult``,
-``SolveProblem`` and ``SolveBatch``) that
-carries ordinary-GHz frequencies and backend-free operator payloads
-(``CanonicalOperator``). Each concrete backend is free to translate that IR
-into whatever native form its solver likes best — this module only fixes the
-*contract* (see :class:`Backend`), not the storage.
+quchip keeps the *physics description* separate from the *solver conversion*.
+The engine (``quchip.engine``) emits structured IR (``EngineResult``,
+``SolveProblem`` and ``SolveBatch``). This IR carries ordinary-GHz frequencies
+and backend-free operator payloads (``CanonicalOperator``), which each backend
+translates into the native form best suited to its solver. This module sets
+only the *contract* (see :class:`Backend`), not the storage.
 
 Unit convention
 ---------------
-All frequencies crossing the backend boundary are **ordinary** (not angular)
-GHz, with time in ns. The single ``2π`` conversion lives at the engine
-boundary (``assembly.py``) — backends never rescale.
+All frequencies that cross the backend boundary are **ordinary** (not angular)
+GHz, with time in ns. The single ``2π`` conversion occurs at the engine
+boundary (``assembly.py``), and backends never rescale.
 
 Aliases
 -------
@@ -77,25 +76,24 @@ class Backend(ABC):
     A backend wraps a quantum-dynamics library (QuTiP, dynamiqs, ...) and
     exposes three orthogonal surfaces:
 
-    * **Operator algebra** — ``destroy``/``create``/``number``/``identity``,
-      ``tensor``, ``embed``, ``dag``, ``matmul``, eigensystem helpers.
-      Concrete operators support native Python arithmetic (``+ - * @``);
-      quchip never introduces ``scale``/``add`` wrappers.
-    * **State algebra** — ``basis``/``coherent``, ``overlap``, ``ptrace``,
-      ``expect``, ket ↔ density-matrix conversion.
-    * **IR lowering & solve dispatch** — ``prepare_hamiltonian`` /
-      ``prepare_batch`` convert engine IR into native RHS form;
-      ``sesolve`` / ``mesolve`` run the solver; ``solve_problem`` /
-      ``parallel_solve_problems`` / ``solve_batch`` drive the full
-      engine-to-result pipeline.
+    * **Operator algebra**: ``destroy``/``create``/``number``/``identity``,
+      ``tensor``, ``embed``, ``dag``, ``matmul``, and eigensystem helpers.
+      Concrete operators support native Python arithmetic (``+ - * @``), so
+      quchip never adds ``scale``/``add`` wrappers.
+    * **State algebra**: ``basis``/``coherent``, ``overlap``, ``ptrace``,
+      ``expect``, and ket ↔ density-matrix conversion.
+    * **IR lowering & solve dispatch**: ``prepare_hamiltonian`` /
+      ``prepare_batch`` convert engine IR into native RHS form, and ``sesolve``
+      / ``mesolve`` run the solver. ``solve_problem`` /
+      ``parallel_solve_problems`` / ``solve_batch`` drive the full pipeline
+      from engine to result.
 
-    Defaults provided here are NumPy-based and correct for any backend, so
-    concrete subclasses only override where they can do better (e.g. QuTiP
-    reuses ``Qobj.eigenstates``, dynamiqs reuses ``dq.expect``).
+    The NumPy-based defaults are correct for all backends. Subclasses override
+    them only where they can do better (e.g. QuTiP reuses ``Qobj.eigenstates``
+    and dynamiqs reuses ``dq.expect``).
 
-    Solver Hamiltonians use angular frequencies; public device parameters use
-    ordinary GHz.
-    For operator and circuit-QED conventions, see Blais et al.,
+    Solver Hamiltonians use angular frequencies, while public device parameters use
+    ordinary GHz. For operator and circuit-QED conventions, see Blais et al.,
     `Rev. Mod. Phys. 93, 025005 (2021) <https://doi.org/10.1103/RevModPhys.93.025005>`_.
     """
 
@@ -110,8 +108,8 @@ class Backend(ABC):
 
         Returns ``numpy`` for CPU-only backends and ``jax.numpy`` for
         JAX-traceable backends. Engine code that must stay differentiable
-        (signal evaluation, frame assembly) routes array ops through this
-        module so the dynamiqs backend preserves JAX traceability end-to-end.
+        (signal evaluation, frame assembly) routes array operations through
+        this module, so the dynamiqs backend stays JAX-traceable end to end.
         """
         ...
 
@@ -132,7 +130,7 @@ class Backend(ABC):
         Parameters
         ----------
         a, b : State
-            Kets in the same Hilbert space; the first is conjugated.
+            Kets in the same Hilbert space, where the first is conjugated.
         """
         a_arr = np.asarray(self.to_array(a), dtype=complex)
         b_arr = np.asarray(self.to_array(b), dtype=complex)
@@ -141,15 +139,15 @@ class Backend(ABC):
     def norm(self, state_or_op: State | Operator) -> Any:
         r"""Return the Frobenius / ℓ²-norm of a state or operator.
 
-        A concrete ``float`` for CPU-only backends; a JAX-traceable backend
-        may return a native 0-d array instead so a traced amplitude stays
-        differentiable — callers that need concreteness route through
-        :func:`~quchip.utils.jax_utils.maybe_concrete_scalar`.
+        A concrete ``float`` for CPU-only backends. A JAX-traceable backend can
+        return a native 0-d array instead, so a traced amplitude stays
+        differentiable. A caller that needs a concrete value passes the result
+        through :func:`~quchip.utils.jax_utils.maybe_concrete_scalar`.
 
         Parameters
         ----------
         state_or_op : State or Operator
-            Ket or matrix whose Euclidean/Frobenius norm is requested.
+            Ket or matrix whose Euclidean/Frobenius norm is required.
         """
         arr = np.asarray(self.to_array(state_or_op), dtype=complex)
         return float(np.linalg.norm(arr))
@@ -207,7 +205,7 @@ class Backend(ABC):
         Parameters
         ----------
         n : int
-            Positive Hilbert-space dimension; number states run from 0 to n - 1.
+            Positive Hilbert-space dimension. Number states go from 0 to n - 1.
 
         """
         data = np.zeros((n, n), dtype=complex)
@@ -221,7 +219,7 @@ class Backend(ABC):
         Parameters
         ----------
         n : int
-            Positive Hilbert-space dimension; number states run from 0 to n - 1.
+            Positive Hilbert-space dimension. Number states go from 0 to n - 1.
 
         """
         data = np.zeros((n, n), dtype=complex)
@@ -235,7 +233,7 @@ class Backend(ABC):
         Parameters
         ----------
         n : int
-            Positive Hilbert-space dimension; number states run from 0 to n - 1.
+            Positive Hilbert-space dimension. Number states go from 0 to n - 1.
 
         """
         return self._single_mode(np.diag(np.arange(n, dtype=complex)))
@@ -246,7 +244,7 @@ class Backend(ABC):
         Parameters
         ----------
         n : int
-            Positive Hilbert-space dimension; number states run from 0 to n - 1.
+            Positive Hilbert-space dimension. Number states go from 0 to n - 1.
 
         """
         return self._single_mode(np.eye(n, dtype=complex))
@@ -255,7 +253,7 @@ class Backend(ABC):
         r"""Construct a native operator from a dense matrix.
 
         *dims* accepts quchip's row/col layout (``[[row_dims], [col_dims]]``)
-        or a flat list; ``None`` means a single subsystem of size
+        or a flat list. ``None`` means a single subsystem of size
         ``data.shape[0]``.
 
         Parameters
@@ -277,17 +275,17 @@ class Backend(ABC):
     def diag(self, values: Any, dims: list[list[int]] | None = None) -> Operator:
         r"""Construct a backend-native diagonal operator from main-diagonal *values*.
 
-        Backends that distinguish layouts (e.g. dynamiqs sparse-DIA) should
-        return their sparse representation so element-wise composition with
-        other diagonal operators stays sparse. Default falls through to
-        :meth:`from_array` after building a dense ``np.diag``.
+        A backend with sparse layouts (for example, dynamiqs sparse-DIA) should
+        return its sparse representation so that element-wise composition with
+        other diagonal operators stays sparse. The default builds a dense
+        ``np.diag`` and then calls :meth:`from_array`.
 
         Parameters
         ----------
         values : array_like
             Main-diagonal entries, flattened in input order.
         dims : list or None, default None
-            Subsystem dimensions as in from_array; None uses one subsystem.
+            Subsystem dimensions as in from_array. None uses one subsystem.
         """
         from quchip.engine.ir import CanonicalOperator
 
@@ -323,7 +321,7 @@ class Backend(ABC):
         Parameters
         ----------
         canonical : CanonicalOperator
-            Backend-neutral matrix payload including its tensor dimensions and basis metadata.
+            Backend-neutral matrix payload with its tensor dimensions and basis metadata.
         """
         ...
 
@@ -334,14 +332,14 @@ class Backend(ABC):
     def coerce_operator(self, op: Operator) -> Operator:
         r"""Coerce an array-like local operator into backend-native form.
 
-        The operator-side mirror of :meth:`coerce_state`. Device-side
-        physical-coupling accessors (e.g.
+        Mirrors :meth:`coerce_state` for operators. Device-side accessors for
+        physical coupling (for example,
         :meth:`~quchip.devices.protocols.ChargeCoupled.charge_coupling_operator`)
-        return dense, trace-safe arrays rather than backend-native
-        operators; composition entry points (:meth:`tensor`, :meth:`dag`)
-        route their operands through this hook so both forms compose
-        freely. Backends whose native operators are already arrays
-        override with a trace-safe passthrough.
+        return dense, trace-safe arrays, not backend-native operators.
+        Composition entry points (:meth:`tensor`, :meth:`dag`) send their
+        operands through this hook, so both forms compose freely. A backend whose
+        native operators are already arrays overrides this method with a
+        trace-safe passthrough.
 
         Parameters
         ----------
@@ -374,9 +372,9 @@ class Backend(ABC):
     def linear_combination(self, terms: Sequence[tuple[Any, Operator]]) -> Operator:
         r"""Return ``Σᵢ cᵢ·Aᵢ``, adding the terms in order.
 
-        A backend may accumulate concrete terms in its native layout; this
-        default uses operator arithmetic. A coefficient of exactly ``1`` adds
-        its operator unscaled.
+        A backend can accumulate concrete terms in its native layout, whereas
+        this default uses operator arithmetic. A coefficient of exactly ``1``
+        adds its operator unscaled.
 
         Parameters
         ----------
@@ -434,14 +432,14 @@ class Backend(ABC):
         )
 
     def expect(self, op: Operator, state: State) -> complex:
-        r"""Return the expectation value ⟨state|op|state⟩ — accepts ket or density matrix.
+        r"""Return the expectation value ⟨state|op|state⟩ for a ket or a density matrix.
 
         Parameters
         ----------
         op : Operator
             Observable with the same tensor dimensions as state.
         state : State
-            Ket or density matrix. No normalization is performed.
+            Ket or density matrix, not normalized by the method.
         """
         op_arr = np.asarray(self.to_array(op), dtype=complex)
         state_arr = np.asarray(self.to_array(state), dtype=complex)
@@ -450,14 +448,14 @@ class Backend(ABC):
         return complex(np.einsum("ij,ji->", op_arr, state_arr))
 
     def ptrace(self, state: State, keep: int | list[int], dims: list[int]) -> State:
-        """Reduce a composite state onto subsystem(s) *keep* via partial trace.
+        """Reduce a composite state onto subsystem(s) *keep* with a partial trace.
 
         Parameters
         ----------
         state
             Composite ket or density matrix over the subsystems in *dims*.
         keep
-            Subsystem index (or indices) to retain; all others are traced out.
+            Subsystem index (or indices) to keep. All other subsystems are traced out.
         dims
             Subsystem dimensions of the full composite space, in order.
         """
@@ -478,28 +476,25 @@ class Backend(ABC):
         return self.from_array(rho.reshape(kept_dim, kept_dim))
 
     def permute_state(self, state: State, dims: Sequence[int], order: Sequence[int]) -> State:
-        r"""Reorder a composite state's subsystems.
+        r"""Reorder the subsystems of a composite state.
 
         ``dims`` are the subsystem levels in *state*'s current tensor order.
-        ``order`` follows ``numpy.transpose`` convention: ``order[i]`` is the
-        *current*-order subsystem index that becomes position ``i`` after
-        permuting (so ``order == list(range(len(dims)))`` is a no-op).
+        ``order`` follows the ``numpy.transpose`` convention, where
+        ``order[i]`` is the subsystem index in the *current* order that becomes
+        position ``i`` after the permutation, so
+        ``order == list(range(len(dims)))`` is a no-op.
 
-        Default: densify, reshape to one axis per subsystem, ``transpose``,
-        reshape back — correct for any backend. A ket reshapes/transposes
-        once; a density matrix applies the same subsystem permutation to
-        both the row and column index groups. Concrete backends may override
-        this with a native reorder (e.g. QuTiP's ``Qobj.permute``) that stays
-        sparse-friendly and keeps dims metadata.
+        Default, correct for all backends: densify, reshape to one axis per
+        subsystem, ``transpose``, and reshape back. A ket reshapes/transposes
+        once. A density matrix applies the same subsystem permutation to the
+        row index group and to the column index group. Concrete backends can
+        override this method with a native reorder (e.g. QuTiP's
+        ``Qobj.permute``), which stays sparse-friendly and keeps the dims
+        metadata.
 
-        Every array op routes through :attr:`array_module` (never bare
-        ``numpy``), so a traced state stays traced end-to-end under the
-        dynamiqs backend. ``dims``/``order`` are always concrete Python
-        ints (subsystem structure, never a physics parameter), so their
-        product is taken with :func:`math.prod` rather than
-        ``array_module.prod`` — routing a *shape* value through the array
-        module would turn it into a tracer under ``jit`` and make the
-        subsequent ``reshape`` fail.
+        Every array operation goes through :attr:`array_module` (never bare
+        ``numpy``), so a traced state stays traced end to end under the
+        dynamiqs backend.
 
         Parameters
         ----------
@@ -510,6 +505,11 @@ class Backend(ABC):
         order : sequence of int
             Permutation of subsystem indices, listing their positions in the new order.
         """
+        # `dims`/`order` are always concrete Python ints (subsystem structure,
+        # never a physics parameter), so their product is computed with
+        # `math.prod`, not with `array_module.prod`. If a shape value goes
+        # through the array module, it becomes a tracer under `jit`, and the
+        # next `reshape` fails.
         xp = self.array_module
         arr = xp.asarray(self.to_array(state), dtype=complex)
         dims = list(dims)
@@ -549,11 +549,12 @@ class Backend(ABC):
     # per-time tracers.
 
     def stack_states(self, states: Any) -> Any:
-        r"""Stack a trajectory's saved states into a single ``(T, …)`` array.
+        r"""Stack the saved states of a trajectory into a single ``(T, …)`` array.
 
-        Default densifies each state and ``np.stack``s along a new leading
-        time axis. Backends whose solver already returns a stacked native
-        state (dynamiqs) override this to a no-op pass-through.
+        The default densifies each state and applies ``np.stack`` along a new
+        leading time axis. A backend whose solver already returns a stacked
+        native state (dynamiqs) overrides this method with a no-op
+        pass-through.
 
         Parameters
         ----------
@@ -570,15 +571,15 @@ class Backend(ABC):
     def expect_over_time(self, op: Operator, stacked_states: Any) -> Any:
         r"""Return ⟨op⟩(t) for every save point, as one ``(T,)`` array in :attr:`array_module`.
 
-        Accepts a ket stack ``(T, n, 1)`` (returns ⟨ψ|op|ψ⟩) or a
-        density-matrix stack ``(T, n, n)`` (returns ``Tr(op·ρ)``). One einsum
-        replaces the per-point ``expect`` loop. Every intermediate stays in
+        Accepts a ket stack ``(T, n, 1)`` (returns ⟨ψ|op|ψ⟩) or a density-matrix
+        stack ``(T, n, n)`` (returns ``Tr(op·ρ)``). One einsum replaces the
+        per-point ``expect`` loop. Every intermediate stays in
         :attr:`array_module`, so the JAX backend keeps the trace differentiable.
 
         Parameters
         ----------
         op : Operator
-            Observable in the states' tensor-product basis.
+            Observable in the tensor-product basis of the states.
         stacked_states : array_like
             Backend-stacked kets or density matrices from stack_states.
         """
@@ -593,11 +594,11 @@ class Backend(ABC):
     def overlap_over_time(self, target: State, stacked_states: Any) -> Any:
         r"""Return ⟨target|ψ(t)⟩ for every save point, as one ``(T,)`` array.
 
-        For a ket stack this is the **phase-sensitive complex amplitude**
-        ⟨target|ψ(t)⟩ (never ``|·|²`` — phase-dependent gradients flow
-        through it). For a density-matrix stack there is no single phase, so
-        it returns the target-state population ⟨target|ρ(t)|target⟩. Stays in
-        :attr:`array_module` for JAX traceability.
+        For a ket stack, the result is the **phase-sensitive complex
+        amplitude** ⟨target|ψ(t)⟩ (never ``|·|²``), so phase-dependent
+        gradients flow through it. A density-matrix stack has no single phase,
+        so the method returns the target-state population ⟨target|ρ(t)|target⟩.
+        The calculation stays in :attr:`array_module` for JAX traceability.
 
         Parameters
         ----------
@@ -616,14 +617,15 @@ class Backend(ABC):
     def populations_over_time(self, stacked_states: Any) -> Any:
         r"""Return full-chip diagonal populations ``(T, ∏dims)`` (real) for every save point.
 
-        For a ket stack this is ``|ψ(t)|²`` along the level axis (the density
-        matrix is never built); for a DM stack it is the real diagonal. Stays
-        in :attr:`array_module` for JAX traceability.
+        For a ket stack, the result is ``|ψ(t)|²`` along the level axis (the
+        density matrix is never built). For a DM stack, it is the real
+        diagonal. The calculation stays in :attr:`array_module` for JAX
+        traceability.
 
         Parameters
         ----------
         stacked_states : array_like
-            Backend-stacked saved states; trailing dimensions encode ket or matrix entries.
+            Backend-stacked saved states. The trailing dimensions encode ket or matrix entries.
         """
         xp = self.array_module
         arr = xp.asarray(self.to_array(stacked_states), dtype=complex)
@@ -632,17 +634,16 @@ class Backend(ABC):
         return xp.real(xp.diagonal(arr, axis1=1, axis2=2))
 
     def ptrace_over_time(self, stacked_states: Any, keep: int | list[int], dims: list[int]) -> Any:
-        r"""Reduce onto subsystem(s) *keep* at every save point, returning a ``(T, k, k)`` DM stack.
+        r"""Reduce onto subsystem(s) *keep* at every save point, and return a ``(T, k, k)`` DM stack.
 
-        Reduces a ket or DM trajectory onto subsystem(s) *keep* without a
-        per-point Python loop.
+        Accepts a ket or DM trajectory and uses no per-point Python loop.
 
         Parameters
         ----------
         stacked_states : array_like
             Backend-stacked saved states from stack_states.
         keep : int or list of int
-            Subsystem positions to retain.
+            Subsystem positions to keep.
         dims : list of int
             Full tensor-product dimensions before tracing.
         """
@@ -666,16 +667,16 @@ class Backend(ABC):
     def embed(self, op: Operator, device_index: int, dims: Sequence[int]) -> Operator:
         """Embed a single-device operator at *device_index* into the full tensor space.
 
-        Validation is shared; the identity factors and tensor product
-        dispatch through the backend's own :meth:`identity` / :meth:`tensor`,
-        so each backend keeps its native-optimal layout.
+        Validation is shared, and the identity factors and tensor product go
+        through the backend's :meth:`identity` / :meth:`tensor`, so each
+        backend keeps its native-optimal layout.
 
         Parameters
         ----------
         op
             Single-device operator whose dimension matches ``dims[device_index]``.
         device_index
-            Position of *op* within the tensor product.
+            Position of *op* in the tensor product.
         dims
             Subsystem dimensions of the full space, in order.
         """
@@ -699,9 +700,9 @@ class Backend(ABC):
     ) -> Operator:
         r"""Embed a two-body operator on devices *index_a* ⊗ *index_b* into the full space.
 
-        Handles subsystem SWAP when ``index_a > index_b`` and identity-padding
-        for non-adjacent devices, without materializing the dense full matrix
-        when the backend supports sparse layouts.
+        Handles the subsystem SWAP when ``index_a > index_b`` and the
+        identity-padding for non-adjacent devices. Backends with sparse layouts
+        do not materialize the dense full matrix.
 
         Parameters
         ----------
@@ -753,7 +754,7 @@ class Backend(ABC):
         n : int
             Fock-space truncation.
         alpha : complex
-            Dimensionless coherent-state amplitude; its squared magnitude sets the untruncated mean occupation.
+            Dimensionless coherent-state amplitude. Its squared magnitude sets the untruncated mean occupation.
         """
         import math
 
@@ -765,7 +766,7 @@ class Backend(ABC):
         return self.from_array(coeffs.reshape(n, 1))
 
     def state_to_dm(self, state: State) -> State:
-        r"""Return a density matrix; pass through if *state* is already one.
+        r"""Return a density matrix, or pass *state* through if *state* is already one.
 
         Parameters
         ----------
@@ -789,7 +790,7 @@ class Backend(ABC):
         return arr.ndim == 1 or (arr.ndim == 2 and arr.shape[1] == 1)
 
     def as_density_matrix(self, state: State) -> State:
-        r"""Promote a ket to its density matrix; pass a density matrix through unchanged.
+        r"""Promote a ket to its density matrix, and pass a density matrix through unchanged.
 
         Parameters
         ----------
@@ -800,7 +801,7 @@ class Backend(ABC):
 
     @abstractmethod
     def tensor(self, *operators: Operator) -> Operator:
-        r"""Return the tensor product of operators, preserving subsystem dims metadata.
+        r"""Return the tensor product of operators, and keep the subsystem dims metadata.
 
         Parameters
         ----------
@@ -832,12 +833,12 @@ class Backend(ABC):
         psi0
             Initial ket.
         tlist
-            1D array of save times in ns.
+            Save times in ns.
         e_ops
-            Optional observables to accumulate ⟨ψ|Oᵢ|ψ⟩ along the trajectory.
+            Optional observables. The solver accumulates ⟨ψ|Oᵢ|ψ⟩ along the trajectory.
         options
-            Backend-specific options dict. See each backend's
-            ``resolve_solver_options`` for supported keys.
+            Backend-specific options dict. For the supported keys, see each
+            backend's ``resolve_solver_options``.
         """
         ...
 
@@ -861,17 +862,17 @@ class Backend(ABC):
         Parameters
         ----------
         H : object
-            Native Hamiltonian already scaled to angular frequency in rad/ns; do not multiply by 2*pi again.
+            Native Hamiltonian, already scaled to angular frequency in rad/ns. Do not multiply by 2*pi again.
         rho0 : State
-            Initial density matrix or a ket accepted by the concrete solver.
+            Initial density matrix, or a ket that the concrete solver accepts.
         tlist : array_like, shape (nt,)
             Save times in ns, strictly increasing.
         c_ops : list of Operator or None, default None
-            Collapse operators including square-root rates in 1/sqrt(ns); None supplies no dissipators.
+            Collapse operators including square-root rates in 1/sqrt(ns). None gives no dissipators.
         e_ops : list of Operator or None, default None
-            Observables in output order; None requests no expectation traces.
+            Observables in output order. None requests no expectation traces.
         options : dict or None, default None
-            Native integration options; see the concrete backend resolve_solver_options method.
+            Native integration options. See the concrete backend's resolve_solver_options method.
 
         Returns
         -------
@@ -887,10 +888,10 @@ class Backend(ABC):
         n_jobs: int = -1,
         progress: bool = True,
     ) -> list[SolverResult]:
-        r"""Solve multiple sesolve problems. Default: sequential dispatch.
+        r"""Solve multiple sesolve problems, sequentially by default.
 
         Backends that can vectorize (dynamiqs ``vmap``) or parallelize (QuTiP
-        via loky) override this method. Each problem dict carries the same
+        with loky) override this method. Each problem dict carries the same
         kwargs as :meth:`sesolve`.
 
         Parameters
@@ -898,9 +899,9 @@ class Backend(ABC):
         problems : list of dict
             One keyword-argument mapping per sesolve call.
         n_jobs : int, default -1
-            Worker count; -1 requests all CPUs. Ignored by the base sequential implementation.
+            Worker count, where -1 requests all CPUs. The base sequential implementation ignores it.
         progress : bool, default True
-            Request a progress display where supported.
+            Request a progress display if the backend supports it.
 
         Returns
         -------
@@ -916,16 +917,16 @@ class Backend(ABC):
         n_jobs: int = -1,
         progress: bool = True,
     ) -> list[SolverResult]:
-        r"""Solve multiple mesolve problems. Default: sequential dispatch.
+        r"""Solve multiple mesolve problems, sequentially by default.
 
         Parameters
         ----------
         problems : list of dict
             One keyword-argument mapping per mesolve call.
         n_jobs : int, default -1
-            Worker count; -1 requests all CPUs. Ignored by the base sequential implementation.
+            Worker count, where -1 requests all CPUs. The base sequential implementation ignores it.
         progress : bool, default True
-            Request a progress display where supported.
+            Request a progress display if the backend supports it.
 
         Returns
         -------
@@ -945,9 +946,9 @@ class Backend(ABC):
     ) -> "PreparedHamiltonian":
         r"""Convert a :class:`EngineResult` into a native solver RHS.
 
-        The engine passes frequencies already converted by ``2π`` (angular
-        rad/ns); backends must not rescale. Concrete backends override this
-        method to choose their native time-dependence representation.
+        The engine supplies frequencies already converted by ``2π`` (angular
+        rad/ns), so backends must not rescale. Concrete backends override this
+        method to select their native time-dependence representation.
 
         Parameters
         ----------
@@ -972,23 +973,23 @@ class Backend(ABC):
     ) -> dict[str, Any]:
         r"""Merge user options with backend-side defaults and metadata heuristics.
 
-        Default is a shallow copy; concrete backends use *metadata*
-        (e.g. ``spectral_bound_ghz``) to fill in integrator step budgets when
-        the user did not specify one.
+        The default is a shallow copy. Concrete backends use *metadata* (for
+        example, ``spectral_bound_ghz``) to fill in integrator step budgets the
+        user did not specify.
 
         Parameters
         ----------
         options : dict
-            User integration settings; copied before filling missing defaults.
+            User integration settings, copied before missing defaults are filled.
         metadata : dict
             Lowering hints, including ordinary-GHz spectral and carrier bounds when available.
         tlist : array_like
-            Save-time grid in ns used to estimate integration budgets.
+            Save-time grid in ns, used to estimate integration budgets.
 
         Returns
         -------
         dict
-            Resolved options; the input mapping is unchanged.
+            Resolved options. The input mapping is unchanged.
         """
         return dict(options)
 
@@ -1014,29 +1015,29 @@ class Backend(ABC):
     def coerce_state(self, state: State, dims: tuple[int, ...] | None = None) -> State:
         r"""Convert a foreign-native *state* into this backend's native form.
 
-        Called at the solve boundary so a per-call ``backend=`` override
-        (see :meth:`QuantumSequence.simulate`) accepts initial states that
-        were built under another backend — e.g. a QuTiP ``Qobj`` from
-        ``chip.state(...)`` handed to a dynamiqs gradient solve. Default:
-        pass through unchanged. ``dims`` are the chip's subsystem levels,
-        for backends whose state type carries tensor structure.
+        The solve boundary calls this method so that a per-call ``backend=``
+        override (see :meth:`QuantumSequence.simulate`) accepts initial states
+        built under another backend. For example, a QuTiP ``Qobj`` from
+        ``chip.state(...)`` given to a dynamiqs gradient solve. Default: pass
+        through unchanged. ``dims`` are the chip's subsystem levels, for
+        backends whose state type carries tensor structure.
 
         Parameters
         ----------
         state : State or array_like
             Ket or density matrix to convert to this backend.
         dims : tuple of int or None, default None
-            Target tensor dimensions. None leaves dimension inference to the backend.
+            Target tensor dimensions. None lets the backend infer the dimensions.
         """
         _ = dims
         return state
 
     def solve_problem(self, problem: "SolveProblem") -> SolverResult:
-        r"""Lower and solve a :class:`SolveProblem` — the single-element entry point.
+        r"""Lower and solve a :class:`SolveProblem` (the single-element entry point).
 
-        Delegates to :meth:`SolveProblem.solver_name`: ``sesolve`` only for a ket
-        with no collapse operators, ``mesolve`` otherwise, unless ``problem.solver``
-        forces a choice.
+        Delegates to :meth:`SolveProblem.solver_name`. It uses ``sesolve`` only
+        for a ket with no collapse operators and ``mesolve`` otherwise, unless
+        ``problem.solver`` forces a choice.
 
         Parameters
         ----------
@@ -1076,7 +1077,7 @@ class Backend(ABC):
         engine_result : EngineResult
             Captured static Hamiltonian and collapse channels.
         prepared : PreparedStationary or None, default None
-            Matching prepared generator; ``None`` builds it.
+            Matching prepared generator. ``None`` builds it.
 
         Returns
         -------
@@ -1099,12 +1100,12 @@ class Backend(ABC):
         problem : SteadyStateProblem
             Captured static model, observables, and stationary solver options.
         prepared : PreparedStationary or None, default None
-            Matching prepared generator; ``None`` builds it.
+            Matching prepared generator. ``None`` builds it.
         guess : State or None, default None
             Native stationary state of a related generator, such as the same
-            model in a neighbouring frame. A backend may return it, with
-            diagnostics evaluated on this problem's generator, when it is
-            stationary here to round-off, instead of solving.
+            model in a neighbouring frame. If this state is stationary here to
+            round-off, a backend can return it instead of solving. The
+            diagnostics are then evaluated on this problem's generator.
 
         Returns
         -------
@@ -1142,8 +1143,8 @@ class Backend(ABC):
         For each ordinary-GHz offset ``f``, form and factor the trace-constrained
         shifted Liouvillian once, then solve ``(L + i 2π f) X = source`` with
         ``Tr(X) = 0`` for every named source column. Return ``Tr(observable X)``
-        keyed by ``(source, observable)``. The engine supplies canonical operators;
-        the backend owns Liouvillian construction, factorization, and solves.
+        keyed by ``(source, observable)``. The engine supplies canonical operators.
+        The backend owns Liouvillian construction, factorization, and solves.
 
         Parameters
         ----------
@@ -1156,7 +1157,7 @@ class Backend(ABC):
         frequencies : array_like
             Offset frequencies in ordinary GHz.
         prepared : PreparedStationary or None, default None
-            Matching prepared generator; ``None`` builds it.
+            Matching prepared generator. ``None`` builds it.
 
         Returns
         -------
@@ -1176,22 +1177,22 @@ class Backend(ABC):
     ) -> dict[str, Any]:
         r"""Propagate an operator under a static Liouvillian and evaluate observables.
 
-        ``initial`` need not be a normalized density matrix. This supports
-        quantum-regression queries while keeping the propagation algorithm
-        and numerical Liouvillian backend-owned.
+        ``initial`` does not have to be a normalized density matrix. This
+        supports quantum-regression queries, and the backend keeps ownership of
+        the propagation algorithm and the numerical Liouvillian.
 
         Parameters
         ----------
         engine_result : EngineResult
             Captured static operating point.
         initial : CanonicalOperator
-            Initial operator; normalization and positivity are not required for regression queries.
+            Initial operator. Regression queries need neither normalization nor positivity.
         observables : tuple of (str, CanonicalOperator)
             Named operators evaluated after propagation.
         times : array_like
             Propagation delays in ns.
         prepared : PreparedStationary or None, default None
-            Matching prepared generator; ``None`` builds it.
+            Matching prepared generator. ``None`` builds it.
 
         Returns
         -------
@@ -1213,12 +1214,12 @@ class Backend(ABC):
         problems
             Problems that cannot be merged into one structural batch.
         progress
-            Display solver progress when supported.
+            Display solver progress if the backend supports it.
 
         Returns
         -------
         list[SolverResult] | None
-            Backend results in input order, or ``None`` to retain the engine's
+            Backend results in input order, or ``None`` to keep the engine's
             structural-group dispatch.
         """
         _ = problems, progress
@@ -1229,11 +1230,10 @@ class Backend(ABC):
 
         The return type declares the batching strategy:
         :class:`~quchip.backend.containers.EagerBatch` (one RHS per element),
-        :class:`~quchip.backend.containers.VmappedBatch` (one already-built
-        native RHS), or
-        :class:`~quchip.backend.containers.DeferredBatch` (backend-private
-        payload consumed by an overridden :meth:`solve_batch`).
-        Default: lowers each element independently via
+        :class:`~quchip.backend.containers.VmappedBatch` (one prebuilt native
+        RHS), or :class:`~quchip.backend.containers.DeferredBatch`
+        (backend-private payload for an overridden :meth:`solve_batch`).
+        Default: lowers each element independently with
         :meth:`prepare_hamiltonian` into an :class:`EagerBatch`.
 
         Parameters
@@ -1264,9 +1264,9 @@ class Backend(ABC):
     def solve_batch(self, batch: "SolveBatch", *, progress: bool = True) -> list[SolverResult]:
         r"""Lower and solve a :class:`SolveBatch`.
 
-        Default: prepares the batch then dispatches each element's RHS
-        through :meth:`batched_sesolve` / :meth:`batched_mesolve`. Native
-        backends override to avoid the per-element unpack.
+        Default: prepares the batch, then dispatches each element's RHS through
+        :meth:`batched_sesolve` / :meth:`batched_mesolve`. Native backends
+        override this method to avoid the per-element unpack.
 
         Parameters
         ----------

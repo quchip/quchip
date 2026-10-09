@@ -1,13 +1,13 @@
 """Backend-agnostic simulation output containers.
 
-Whatever backend produced the solver output (QuTiP, dynamiqs/JAX, …), users
-interact only with :class:`SimulationResult` and
-:class:`SimulationBatchResult`. Named expectation-value traces use
-:class:`ObservableTrace`; external-plane amplitude, quadrature, and photon
-flux use :class:`OutputFieldTrace`. Raw backend output is wrapped into a
-:class:`SimulationResult` via :func:`wrap_solver_result`. A partitioned
-solve (see :mod:`quchip.engine.partitioned`) combines its per-component
-results into a :class:`~quchip.results.partitioned.PartitionedSimulationResult`.
+Whatever backend produces the solver output (QuTiP, dynamiqs/JAX, …), users see
+only :class:`SimulationResult` and :class:`SimulationBatchResult`. Named
+expectation-value traces use :class:`ObservableTrace`. External-plane amplitude,
+quadrature, and photon flux use :class:`OutputFieldTrace`.
+:func:`wrap_solver_result` wraps raw backend output into a
+:class:`SimulationResult`. A partitioned solve (see
+:mod:`quchip.engine.partitioned`) combines its per-component results into a
+:class:`~quchip.results.partitioned.PartitionedSimulationResult`.
 """
 
 from quchip.results.partitioned import PartitionedSimulationResult

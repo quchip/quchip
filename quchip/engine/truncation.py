@@ -1,4 +1,4 @@
-"""Captured physical cutoff checks, sampled without retaining state histories."""
+"""Captured physical cutoff checks, sampled without storing state histories."""
 
 from dataclasses import dataclass, replace
 from typing import Any
@@ -31,7 +31,7 @@ class TruncationPlan:
 
 
 def capture_truncation(chip: Any, engine_result: Any) -> TruncationPlan:
-    """Capture boundary selections and bases, without allocating observable matrices."""
+    """Capture boundary selections and bases, but do not allocate observable matrices."""
     checks = []
     unavailable = []
     for device in chip.devices:
@@ -124,13 +124,13 @@ def with_truncation(problem: Any) -> Any:
     Parameters
     ----------
     problem : SolveProblem or SolveBatch
-        Captured request or parameter batch. Its existing time grid is preserved;
-        samples can miss excursions between save times and do not prove convergence.
+        Captured request or parameter batch. Its existing time grid is kept. Samples
+        can miss excursions between save times and do not prove convergence.
 
     Returns
     -------
     SolveProblem or SolveBatch
-        Request with additional diagnostic observables. No solve is performed.
+        Request with additional diagnostic observables. No solve occurs.
     """
     from quchip.engine.ir import SolveBatch
 
@@ -155,7 +155,7 @@ def boundary_traces(plan: TruncationPlan, values: Any, times: Any, backend: Any)
 
 
 def evaluate_boundaries(result: Any) -> tuple[TruncationPlan, tuple[Any, ...]]:
-    """Use sampled traces or derive them from a retained full history without rerunning."""
+    """Use sampled traces or derive them from a kept full history without a rerun."""
     plan = result._truncation
     if plan is None:
         raise RuntimeError("Truncation context is unavailable; build the calculation through quchip.")

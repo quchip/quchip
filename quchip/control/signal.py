@@ -8,14 +8,13 @@ destination drive maps physical I/Q quadratures into the Hamiltonian.
 
 Available transforms
 --------------------
-- :class:`Delay` — per-line time shift.
-- :class:`Gain` — per-line complex scaling (IQ imbalance, attenuation).
-- :class:`Crosstalk` — linear leakage from a source line onto a victim
-  line, parameterized by amplitude ``beta``, angle ``theta``, and
-  relative ``delay``. This is the standard single-parameter crosstalk
-  model used e.g. in Sheldon et al., PRA 93, 060302 (2016) for
-  two-qubit gate calibration, and in Sarovar et al., Quantum 4, 321
-  (2020) for crosstalk characterization.
+- :class:`Delay`: per-line time shift.
+- :class:`Gain`: per-line complex scaling (IQ imbalance, attenuation).
+- :class:`Crosstalk`: linear leakage from a source line onto a victim line,
+  parameterized by amplitude ``beta``, angle ``theta``, and relative ``delay``.
+  It is the standard single-parameter model, used by Sheldon et al., PRA 93,
+  060302 (2016) for two-qubit gate calibration. Sarovar et al., Quantum 4, 321
+  (2020) used it for crosstalk characterization.
 
 Examples
 --------
@@ -415,11 +414,11 @@ class Crosstalk(SignalTransform, serializable=True):
 
        \beta\, e^{i\theta}\, s_\mathrm{src}(t - \Delta t)
 
-    onto the victim line. :math:`s_\mathrm{src}` is the complete source
-    signal, including its carrier, phase, and both quadratures. Delaying it
-    therefore includes the carrier phase :math:`2\pi f\Delta t` without a
-    separate correction (Balewski et al., arXiv:2502.05362; Sheldon et al.,
-    PRA 93, 060302 (2016); Sarovar et al., Quantum 4, 321 (2020)).
+    onto the victim line. :math:`s_\mathrm{src}` is the complete source signal,
+    including its carrier, phase, and both quadratures, so delaying it includes
+    the carrier phase :math:`2\pi f\Delta t` without a separate correction. See
+    Balewski et al., arXiv:2502.05362; Sheldon et al., PRA 93, 060302 (2016);
+    Sarovar et al., Quantum 4, 321 (2020).
 
     Parameters
     ----------

@@ -1,14 +1,14 @@
-"""Track public attribute assignments for device and coupling cache invalidation.
+"""Track public attribute assignments to invalidate device and coupling caches.
 
-After construction, tracked assignments increment ``state_version``; private
-attributes and ``_untracked_names`` are excluded. This counter tracks writes,
+After construction, tracked assignments increment ``state_version``. Private
+attributes and ``_untracked_names`` are excluded. The counter tracks writes,
 not in-place edits to mutable attribute values.
 
-The outermost ``__init__`` enables tracking once. Classes that synthesize an
-initializer after ``__init_subclass__`` must apply :func:`_wrap_init_for_finish`
-themselves. JAX pytree unflattening bypasses initialization and installs the
-tracking state directly.
+The outermost ``__init__`` turns on tracking once.
 """
+# Classes that synthesize an initializer after `__init_subclass__` must apply
+# `_wrap_init_for_finish` themselves. JAX pytree unflattening bypasses
+# initialization and installs the tracking state directly.
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ def _wrap_init_for_finish(cls: type) -> None:
 
 
 class StateVersioned:
-    """Mixin: monotone ``state_version`` bumped on tracked public mutations."""
+    """Mixin: a monotone ``state_version`` that increments on tracked public mutations."""
 
     #: Public attribute names that must NOT bump ``_state_version`` when set.
     #: Subclasses (BaseDevice, BaseCoupling) extend this with their structural /
@@ -52,17 +52,16 @@ class StateVersioned:
     _tracking_enabled: bool = False
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
-        """Wrap *cls*'s own ``__init__`` so :meth:`_finish_init` fires exactly once."""
+        """Wrap *cls*'s own ``__init__`` so that :meth:`_finish_init` runs exactly once."""
         super().__init_subclass__(**kwargs)
         _wrap_init_for_finish(cls)
 
     def __setattr__(self, name: str, value: Any) -> None:
-        """Set *name*, then run the cache-invalidation hook and bump ``state_version`` for tracked writes.
-
-        The bump runs in a ``finally`` block so a raising :meth:`_on_attr_set`
-        hook cannot leave the mutated attribute paired with a stale
-        ``state_version``.
+        """Set *name*, then run the cache-invalidation hook and increment ``state_version`` for tracked writes.
         """
+        # The increment runs in a `finally` block, so if the `_on_attr_set` hook
+        # raises an error, the changed attribute cannot stay paired with a stale
+        # `state_version`.
         # ``object.__setattr__`` is used for the bump so it doesn't itself
         # retrigger the hook.
         object.__setattr__(self, name, value)
@@ -85,5 +84,5 @@ class StateVersioned:
 
     @property
     def state_version(self) -> int:
-        """Return the monotone counter bumped on every tracked public-parameter mutation."""
+        """Return the monotone counter that increments on each tracked mutation of a public parameter."""
         return self._state_version

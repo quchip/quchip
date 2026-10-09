@@ -1,17 +1,17 @@
 """Observable construction for :class:`~quchip.chip.chip.Chip`.
 
-These helpers turn an operator specification — a short name string
-(resolved off the device via :meth:`BaseDevice.local_operator`), a raw
-local-space operator, or a raw full-space NumPy array — into a
-backend-native operator embedded on the chip's tensor-product space.
+These helpers turn an operator specification into a backend-native operator
+embedded on the chip's tensor-product space. The specification is a short name
+string (resolved off the device through :meth:`BaseDevice.local_operator`), a
+raw local-space operator, or a raw full-space NumPy array.
 
 The chip forwards its public observable surface (:meth:`Chip.observable`,
-:meth:`Chip.e_ops`, :meth:`Chip.from_array`) here; users normally call
-the chip methods, not these functions directly. Module-level functions
-(taking ``chip`` as the first argument) mirror
-:mod:`quchip.chip.serialization`, since this group carries no per-chip
-state of its own.
+:meth:`Chip.e_ops`, :meth:`Chip.from_array`) here, and users usually call those
+chip methods instead.
 """
+# Module-level functions (with `chip` as the first argument) mirror
+# `quchip.chip.serialization`, because this group has no per-chip state of its
+# own.
 
 from __future__ import annotations
 
@@ -100,19 +100,17 @@ def from_array(chip: "Chip", data: Any, device: str | BaseDevice | None = None) 
 def observable(chip: "Chip", device: str | BaseDevice, op: str | Any) -> Any:
     """Embed a device operator onto the full chip Hilbert space.
 
-    Accepts either an operator name (``"X"``, ``"Y"``, ``"Z"``,
-    ``"n"``, ``"a"``, ``"a_dag"``, ``"I"``) or an already-built
-    local-space operator, and returns it embedded on the chip's
-    tensor-product space.
+    Accepts an operator name (``"X"``, ``"Y"``, ``"Z"``, ``"n"``, ``"a"``,
+    ``"a_dag"``, ``"I"``) or an already-built local-space operator. Returns the
+    operator embedded on the chip's tensor-product space.
 
-    This is for manual full-space operator construction and analysis —
-    the named-operator counterpart of :func:`from_array`, alongside
-    :meth:`~quchip.chip.analysis.ChipAnalysis.operator_in_dressed_basis`.
-    It is *not* a solver ``e_op``: :func:`e_ops` (``Chip.e_ops``) is the
-    solver surface, and it keeps operators *local* so the demodulation
-    pipeline can band-decompose and embed them correctly. Passing this
-    embedded operator into ``simulate(e_ops=...)`` would be misread as a
-    local device operator.
+    This function is for manual full-space operator construction and analysis.
+    It is the named-operator counterpart of :func:`from_array`, together with
+    :meth:`~quchip.chip.analysis.ChipAnalysis.operator_in_dressed_basis`. It is
+    *not* a solver ``e_op``. :func:`e_ops` (``Chip.e_ops``) is the solver
+    surface, and it keeps operators *local* so the demodulation pipeline can
+    band-decompose and embed them correctly. If you pass this embedded operator
+    to ``simulate(e_ops=...)``, it is misread as a local device operator.
     """
     idx, dev = chip._resolve_device_index(device)
     basis = chip.resolve().bases[dev.label]
@@ -132,12 +130,12 @@ def e_ops(
 ) -> dict[str | tuple[str, str], Any]:
     """Build a dict-form ``e_ops`` mapping for the solver pipeline.
 
-    Each keyword maps a device label to an operator specification: a
-    name string, a list of names, a raw local-space operator, or a
-    mixed list of strings and operators. Two-device correlators (e.g.
-    ``⟨Z₁⊗Z₂⟩``) are specified via *correlators* as device-label pairs →
-    operator pairs. Returns local-space operators (not embedded) — the
-    demodulation pipeline embeds as needed.
+    Each keyword maps a device label to an operator specification: a name
+    string, a list of names, a raw local-space operator, or a mixed list of
+    strings and operators. Specify two-device correlators (e.g. ``⟨Z₁⊗Z₂⟩``)
+    with *correlators* as device-label pairs → operator pairs. Returns
+    local-space operators (not embedded), which the demodulation pipeline
+    embeds as needed.
     """
     result: dict[str | tuple[str, str], Any] = {}
     for label, spec in specs.items():

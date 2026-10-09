@@ -1,11 +1,11 @@
-"""Closed-form dispersive-readout analysis — pointer states, SNR, assignment error.
+"""Closed-form dispersive-readout analysis: pointer states, SNR, assignment error.
 
-Maps the dispersive parameters of a qubit–resonator pair — the dispersive pull
-``chi`` and resonator linewidth ``kappa`` — plus a readout drive and an
-integration time to steady-state figures of merit, with no solver run and no
-resonator in the Hilbert space. Composes with
+Maps a qubit–resonator pair's dispersive parameters (the dispersive pull
+``chi`` and the resonator linewidth ``kappa``), a readout drive, and an
+integration time to steady-state figures of merit. It runs no solver and puts
+no resonator in the Hilbert space. This module composes with
 :func:`quchip.chip.transformations.eliminate`, which reports ``chi``/``kappa``
-per surviving qubit::
+for each surviving qubit::
 
     res = eliminate(chip, "readout_res")
     ro = analyze_dispersive_readout(
@@ -27,26 +27,25 @@ Physics (driven, damped linear resonator, steady state of
     p_err = ½·erfc(SNR/(2√2))            two equal Gaussians, optimal discriminant
     Γ_m   = κ·|α₁ − α₀|²/2               measurement-induced dephasing  [1/ns]
 
-χ convention: ``chi`` is the *full* pull ``χ_pull ≡ f_r(qubit |1⟩) − f_r(qubit
-|0⟩)`` in GHz — **2×** the σ_z-convention χ of ``H_disp = (ω_r + χσ_z)a†a``.
-In the small-χ limit ``Γ_m → 8·χ_σz²·n̄/κ`` with ``χ_σz = π·chi`` in rad/ns.
+χ convention: ``chi`` is the *full* pull
+``χ_pull ≡ f_r(qubit |1⟩) − f_r(qubit |0⟩)`` in GHz, which is **2×** the
+σ_z-convention χ of ``H_disp = (ω_r + χσ_z)a†a``. In the small-χ limit,
+``Γ_m → 8·χ_σz²·n̄/κ`` with ``χ_σz = π·chi`` in rad/ns.
 
-Unit convention: public inputs ``chi`` and ``delta_r`` are GHz (ordinary
-frequency), ``kappa`` is a rate in 1/ns, ``tau`` is in ns, ``eps`` is in
-rad/ns. The GHz→rad/ns conversions (2π) happen exactly once, at the public
-boundary of :func:`analyze_dispersive_readout` — local physics conversions of
-an analysis module, distinct from the engine's own Hamiltonian-assembly 2π
-boundary in engine assembly.
+Unit convention: the public inputs ``chi`` and ``delta_r`` are in GHz (ordinary
+frequency). ``kappa`` is a rate in 1/ns, ``tau`` is in ns, and ``eps`` is in
+rad/ns. The GHz→rad/ns conversions (2π) occur once, at the public boundary of
+:func:`analyze_dispersive_readout`.
 
-Everything is closed-form algebra in the array namespace of its inputs, so the
-result is JAX-traceable and differentiable end-to-end:
-``jax.grad`` of ``result.snr`` with respect to any chip parameter works when
-``chi``/``kappa`` come from a traced :func:`eliminate`.
+All calculations are closed-form algebra in the inputs' array namespace, so the
+result is JAX-traceable and differentiable end-to-end. ``jax.grad`` of
+``result.snr`` with respect to any chip parameter works when ``chi``/``kappa``
+come from a traced :func:`eliminate`.
 
-Approximations (declared explicitly): steady state only (no ring-up
-transient), linear resonator, 2nd-order dispersive coupling, no
-measurement-induced qubit T1. The optional strong-drive correction
-``chi_eff = chi/(1 + n̄₀/n_crit)`` is applied only when ``n_crit`` is given.
+Approximations (declared explicitly): steady state only (no ring-up transient),
+linear resonator, 2nd-order dispersive coupling, no measurement-induced qubit
+T1. The optional strong-drive correction ``chi_eff = chi/(1 + n̄₀/n_crit)``
+applies only when you give ``n_crit``.
 
 References
 ----------
@@ -59,6 +58,8 @@ Appl. Phys. Rev. 6, 021318 (2019), §V — dispersive readout, SNR, p_err.
 Blais et al., *Circuit quantum electrodynamics*, RMP 93, 025005 (2021) —
 general cQED readout theory, n_crit.
 """
+# The module-local GHz→rad/ns conversions are distinct from the engine's 2π
+# boundary for Hamiltonian assembly.
 
 from __future__ import annotations
 
@@ -90,12 +91,12 @@ def _erfc(x: Any, xp: Any) -> Any:
 class DispersiveReadoutResult:
     """Store steady-state dispersive-readout figures of merit.
 
-    All numeric fields stay in the array namespace of the inputs (JAX in, JAX
-    out), so the whole result traces under ``jax.jit``/``grad``. ``validity``
-    holds ``{"n_over_ncrit", "below_ncrit"}`` when ``n_crit`` was given —
-    ``below_ncrit`` is then a *traced* boolean under jit/grad; read it outside
-    the traced region or branch with ``jnp.where`` — and is empty otherwise.
-    ``chi`` here is χ_pull (``f_r|1 − f_r|0``, 2× the σ_z-convention χ).
+    All numeric fields stay in the inputs' array namespace (JAX in, JAX out),
+    so the full result traces under ``jax.jit``/``grad``. If ``n_crit`` was
+    given, ``validity`` holds ``{"n_over_ncrit", "below_ncrit"}``, and
+    otherwise is empty. Under jit/grad, ``below_ncrit`` is a *traced* boolean,
+    so read it outside the traced region or branch with ``jnp.where``. Here,
+    ``chi`` is χ_pull (``f_r|1 − f_r|0``, 2× the σ_z-convention χ).
 
     Attributes
     ----------
@@ -109,8 +110,8 @@ class DispersiveReadoutResult:
     snr
         ``|α₁ − α₀|·√(2κτ)``.
     assignment_error
-        ``½·erfc(SNR/(2√2))`` — optimal linear discriminant between two equal
-        Gaussians.
+        ``½·erfc(SNR/(2√2))``, the optimal linear discriminant between two
+        equal Gaussians.
     dephasing_rate
         Measurement-induced dephasing ``Γ_m = κ·|α₁ − α₀|²/2`` in 1/ns.
     chi_eff
@@ -118,7 +119,7 @@ class DispersiveReadoutResult:
     validity
         See above.
     notes
-        Explicitly dropped physics.
+        Physics that the analysis explicitly drops.
     """
 
     pointer_states: Any
@@ -134,7 +135,7 @@ class DispersiveReadoutResult:
     def summary(self) -> str:
         """Print and return a formatted summary.
 
-        Concrete values only — call it outside ``jax.jit``/``grad`` regions.
+        Concrete values only. Call it outside ``jax.jit``/``grad`` regions.
         """
         alphas = np.asarray(self.pointer_states)
         photons = np.asarray(self.photon_numbers)
@@ -165,38 +166,38 @@ def analyze_dispersive_readout(
     n_crit: Any = None,
     levels: int = 2,
 ) -> DispersiveReadoutResult:
-    """Compute closed-form steady-state readout figures of merit from ``(chi, kappa)``.
+    """Calculate closed-form steady-state readout figures of merit from ``(chi, kappa)``.
 
     Parameters
     ----------
     chi
-        Dispersive pull χ_pull ``= f_r(qubit |1⟩) − f_r(qubit |0⟩)`` in GHz —
-        2× the σ_z-convention χ. Take it from
+        Dispersive pull χ_pull ``= f_r(qubit |1⟩) − f_r(qubit |0⟩)`` in GHz, 2×
+        the σ_z-convention χ. Get it from
         ``eliminate(...).effective_params[qubit]["chi"]``.
     kappa
         Resonator linewidth (rate) in 1/ns, e.g. ``effective_params[...]["kappa"]``.
     tau
         Integration time in ns.
     n_photons
-        Target steady-state photon number with the qubit in |0⟩. Exactly one
-        of ``n_photons`` and ``eps`` must be given; the drive rate is then
+        Target steady-state photon number with the qubit in |0⟩. Give exactly
+        one of ``n_photons`` and ``eps``. With ``n_photons``, the drive rate is
         ``ε = √(n̄₀·((κ/2)² + δ₀²))``.
     eps
         Readout drive rate in rad/ns (power-user path; exactly one of
         ``n_photons`` and ``eps``).
     delta_r
         Detuning of the qubit-in-ground resonator from the drive,
-        ``delta_r = f_r|0 − f_drive`` in GHz — the literature's
-        ``Δ_r = ω_r − ω_d``. ``0.0`` drives on the qubit-in-ground resonance;
-        positive values place the drive *below* ``f_r|0``.
+        ``delta_r = f_r|0 − f_drive`` in GHz, i.e. ``Δ_r = ω_r − ω_d`` in the
+        literature. ``0.0`` drives on the qubit-in-ground resonance. Positive
+        values put the drive *below* ``f_r|0``.
     n_crit
-        Critical photon number ``Δ²/(4g²)``. When given, the strong-drive
-        collapse ``chi_eff = chi/(1 + n̄₀/n_crit)`` is applied and
+        Critical photon number ``Δ²/(4g²)``. If given, the function applies the
+        strong-drive collapse ``chi_eff = chi/(1 + n̄₀/n_crit)``, and
         ``validity`` reports ``n_over_ncrit``/``below_ncrit``.
     levels
-        Number of qubit levels to compute pointer states for (static Python
-        int — it fixes array shapes; 3 includes ``|f⟩``). The pull of level
-        ``j`` is the linear-dispersive ``chi·j``.
+        Number of qubit levels with pointer states. It is a static Python int
+        because it sets the array shapes. A value of 3 includes ``|f⟩``. Level
+        ``j`` has the linear-dispersive pull ``chi·j``.
 
     Returns
     -------
@@ -205,8 +206,9 @@ def analyze_dispersive_readout(
     Raises
     ------
     ValueError
-        If both or neither of ``n_photons`` and ``eps`` are given (a *static*
-        argument-presence check — never a traced-value comparison).
+        If you give both or neither of ``n_photons`` and ``eps``. This is a
+        *static* check of argument presence, never a comparison of traced
+        values.
 
     Examples
     --------
@@ -214,7 +216,7 @@ def analyze_dispersive_readout(
     >>> ro = analyze_dispersive_readout(chi=0.002, kappa=0.005, tau=500.0, n_photons=2.0)
     >>> snr, p_err = ro.snr, ro.assignment_error
 
-    ``chi`` and ``kappa`` are typically taken from
+    Usually, you get ``chi`` and ``kappa`` from
     ``eliminate(chip, "readout_res").effective_params[qubit]``.
     """
     if (n_photons is None) == (eps is None):

@@ -1,20 +1,18 @@
 """Declarative parameter sweeps for chip studies.
 
-Sweep axes compose as Cartesian products or zipped correlated scans.
-Spectrum sweeps dress the chip at each point and retain eigenvalues and
-bare→dressed label assignments.
+Sweep axes compose as Cartesian products or zipped correlated scans. Spectrum
+sweeps dress the chip at each point, keeping eigenvalues and bare→dressed label
+assignments.
 
-Sweep values are stored in their native physical units (GHz for
-frequencies, ns for times, mK for temperatures). :class:`Sweep`
-preserves JAX arrays verbatim so downstream code can differentiate
-through swept values when desired; everything else is promoted to
-``np.ndarray`` so ``len`` and indexing behave predictably.
+Sweep values keep their native physical units (GHz for frequencies, ns for
+times, mK for temperatures). :class:`Sweep` keeps JAX arrays verbatim, so
+downstream code can differentiate through swept values. :class:`Sweep` promotes
+all other values to ``np.ndarray``, so ``len`` and indexing behave predictably.
 
-The dressed-spectrum machinery here computes eigenvalues and overlaps
-of the lab-frame chip Hamiltonian; for a general reference on the
-dressed-state picture of coupled circuit qubits, see Blais, Grimsmo,
-Girvin & Wallraff, *Circuit quantum electrodynamics*, Rev. Mod. Phys.
-93, 025005 (2021).
+The dressed-spectrum machinery here computes the eigenvalues and overlaps of
+the lab-frame chip Hamiltonian. For a general reference on the dressed-state
+picture of coupled circuit qubits, see Blais, Grimsmo, Girvin & Wallraff,
+*Circuit quantum electrodynamics*, Rev. Mod. Phys. 93, 025005 (2021).
 """
 
 from __future__ import annotations
@@ -34,7 +32,7 @@ if TYPE_CHECKING:
 class ZippedSweep:
     """Pair sweep axes element by element.
 
-    Use :meth:`Sweep.zip` to validate lengths before constructing this bundle.
+    Use :meth:`Sweep.zip` to validate lengths before you construct this bundle.
 
     Parameters
     ----------
@@ -64,11 +62,11 @@ class Sweep:
     Parameters
     ----------
     values : array_like, shape (n,)
-        Values in the parameter's units. JAX arrays are preserved; other
-        inputs are converted to NumPy arrays. Scalar inputs are unsupported.
+        Values in the parameter's units. JAX arrays are kept and other inputs
+        are converted to NumPy arrays. Scalar inputs are unsupported.
     name : str or None, default None
-        Parameter path such as ``"q.freq"``; omission gives ``"unnamed"``.
-        Names must be unique when axes are combined.
+        Parameter path, e.g. ``"q.freq"``. Defaults to ``"unnamed"``. Names
+        must be unique when axes are combined.
 
     Attributes
     ----------
@@ -93,16 +91,16 @@ class Sweep:
     def zip(*sweeps: Sweep) -> ZippedSweep:
         """Pair axes for element-wise iteration.
 
-        At least two sweeps are required; all sweeps must have equal size.
-        A :class:`ValueError` is raised otherwise.
+        Requires at least two sweeps of equal size, and raises
+        :class:`ValueError` otherwise.
 
         Parameters
         ----------
         *sweeps
-            Two or more :class:`Sweep` axes to bundle element-wise. Their
-            ``name`` attributes must all be distinct — a :class:`ZippedSweep`
-            with repeated axis names raises :class:`ValueError` when it is
-            later enumerated (:meth:`expand`, :class:`SpectrumSweep`).
+            Two or more :class:`Sweep` axes. Their ``name`` attributes must all
+            be distinct. A :class:`ZippedSweep` with repeated axis names raises
+            :class:`ValueError` when it is enumerated later (:meth:`expand`,
+            :class:`SpectrumSweep`).
 
         Returns
         -------
@@ -130,7 +128,7 @@ class Sweep:
         -------
         list of dict
             Parameter mappings in C order (last axis fastest). No axes gives
-            one empty mapping; an empty axis gives no points.
+            one empty mapping, and an empty axis gives no points.
         """
         _shape, points = _iter_axis_points(axes)
         return [params for _coord, params in points]
@@ -198,11 +196,11 @@ class SpectrumSweepResult:
     Attributes
     ----------
     device_labels
-        Device labels of the underlying chip, ordered as the chip's
-        tensor-product order (:attr:`~quchip.chip.chip.Chip.devices`).
+        Device labels of the underlying chip, in the chip's tensor-product
+        order (:attr:`~quchip.chip.chip.Chip.devices`).
     bare_labels
-        Tuple of bare-state labels (one tuple of occupation numbers per
-        device) that the sweep tracks.
+        Bare-state labels tracked by the sweep (one tuple of occupation numbers
+        per device).
     eigenvalues
         ``(*grid_shape, n_evals)`` array of eigenvalues in GHz, one row
         per sweep point.
@@ -214,8 +212,8 @@ class SpectrumSweepResult:
         ``(*grid_shape, n_bare)`` overlap weights accompanying
         ``dressed_indices``.
     overlap_threshold
-        Minimum overlap below which an assignment is treated as
-        unreliable and returned as ``NaN``.
+        Minimum overlap below which an assignment is unreliable and returned as
+        ``NaN``.
     params
         Object array of parameter dicts, one per grid point.
     eigenvector_matrices
@@ -292,10 +290,10 @@ class SpectrumSweepResult:
         Parameters
         ----------
         device_states
-            Mapping from device (label or object) to occupation number,
-            resolved via :func:`~quchip.utils.labeling.bare_label_from_mapping`;
-            devices left unspecified default to Fock index 0. Mutually
-            exclusive with ``device_state_kwargs``.
+            Mapping from device (label or object) to occupation number, resolved
+            through :func:`~quchip.utils.labeling.bare_label_from_mapping`.
+            Unspecified devices default to Fock index 0. Do not use with
+            ``device_state_kwargs``.
         **device_state_kwargs
             Keyword form of ``device_states`` (device label as keyword).
 
@@ -303,11 +301,11 @@ class SpectrumSweepResult:
         -------
         numpy.ndarray
             Floating-point array of shape :attr:`shape` (the sweep grid,
-            excluding the bare-label axis). Floating dtype is required to
-            represent unreliable or missing assignments as ``NaN`` — a grid
-            point whose overlap with this bare label falls below
-            ``overlap_threshold``, or where no dressed state was assigned
-            to it at all.
+            excluding the bare-label axis). A floating dtype is needed to
+            represent unreliable or missing assignments as ``NaN``. An
+            unreliable assignment is a grid point whose overlap with this bare
+            label falls below ``overlap_threshold``. A missing assignment is a
+            grid point where no dressed state was assigned to this bare label.
 
         Examples
         --------
@@ -338,9 +336,8 @@ class SpectrumSweepResult:
         Parameters
         ----------
         device_states
-            Mapping from device (label or object) to occupation number; see
-            :meth:`dressed_index`. Mutually exclusive with
-            ``device_state_kwargs``.
+            Mapping from device (label or object) to occupation number. See
+            :meth:`dressed_index`. Do not use with ``device_state_kwargs``.
         **device_state_kwargs
             Keyword form of ``device_states`` (device label as keyword).
 
@@ -370,16 +367,16 @@ class SpectrumSweepResult:
     ) -> dict[tuple[int, ...], float]:
         """Return the largest bare-state probabilities of one dressed state.
 
-        Requires ``store_eigenstates=True`` when running the sweep.
+        Requires running the sweep with ``store_eigenstates=True``.
 
         Parameters
         ----------
         point : int, tuple of int, or None
-            Grid coordinate; an integer selects a one-dimensional sweep.
+            Grid coordinate. An integer selects a one-dimensional sweep.
             ``None`` is valid only for a result with no sweep axes.
         state : int, mapping, or None, default None
-            Dressed index, or device-object/label to bare-level mapping.
-            A mapping is resolved through the stored overlap assignment.
+            Dressed index, or a mapping from device object or label to bare
+            level. A mapping is resolved through the stored overlap assignment.
             Omitted devices have level zero.
         n_components : int, default 5
             Positive maximum number of components returned.
@@ -432,23 +429,24 @@ class SpectrumSweepResult:
 
 
 class SpectrumSweep:
-    """Compute dressed spectra over a parameter grid.
+    """Calculate dressed spectra over a parameter grid.
 
-    Each point uses a fresh :meth:`Chip.with_params` clone and independent
-    bare-state overlap assignment; labels are not transported along the path.
+    Each point uses a fresh :meth:`Chip.with_params` clone and an independent
+    bare-state overlap assignment, so labels are not transported along the
+    path.
 
     Parameters
     ----------
     chip : Chip
         Model to dress in the lab frame.
     axes : sequence of Sweep or ZippedSweep
-        Nonempty axes named by paths in ``chip.parameters``. Independent
-        axes form a Cartesian product; zipped axes advance together.
+        Nonempty axes named by paths in ``chip.parameters``. Independent axes
+        form a Cartesian product, and zipped axes advance together.
     evals_count : int or None, default None
         Number of lowest eigenvalues stored, from 1 to ``chip.total_dim``.
         ``None`` stores all. Dressing still computes the full eigensystem.
     store_eigenstates : bool, default False
-        Retain eigenvectors and backend states for component inspection.
+        Keep eigenvectors and backend states for component inspection.
     overlap_threshold : float, default 0.5
         Minimum squared overlap for a confident bare-state assignment.
         Use a value between 0 and 1. Unassigned labels yield ``NaN``.
@@ -481,7 +479,7 @@ class SpectrumSweep:
         Parameters
         ----------
         progress
-            Whether to display a ``tqdm`` progress bar.
+            If true, display a ``tqdm`` progress bar.
 
         Returns
         -------

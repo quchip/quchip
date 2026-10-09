@@ -20,8 +20,8 @@ python -m pip install 'quchip[viz]'       # Chip and control graphs
 python -m pip install 'quchip[scqubits]'  # scqubits interoperability
 ```
 
-Extras can be combined, for example `quchip[dynamiqs,viz]`.
-See {doc}`backend and solver options <../guides/choosing-a-backend>` for numerical settings.
+You can combine extras, for example `quchip[dynamiqs,viz]`. See
+{doc}`backend and solver options <../guides/choosing-a-backend>` for numerical settings.
 
 ## Check the installation
 
@@ -29,7 +29,7 @@ See {doc}`backend and solver options <../guides/choosing-a-backend>` for numeric
 python -c "import quchip; print(quchip.__version__)"
 ```
 
-quchip is a 0.x project. Pin the version for a reproducible calculation,
-for example `quchip==0.4.0`.
+quchip is a 0.x project, so pin the version for reproducible
+calculations, for example `quchip==0.4.0`.
 
 Next, {doc}`declare your first chip <../guides/defining-and-inspecting-a-chip>`.

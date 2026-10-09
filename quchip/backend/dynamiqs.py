@@ -1,17 +1,16 @@
-"""Dynamiqs backend — JAX-native solver for differentiable, vmappable simulation.
+"""Dynamiqs backend: JAX-native solver for differentiable, vmappable simulation.
 
 This backend wraps `dynamiqs <https://github.com/dynamiqs/dynamiqs>`_ (which
-builds on `JAX <https://github.com/google/jax>`_) to provide:
+builds on `JAX <https://github.com/google/jax>`_) to supply:
 
 * **Full JAX traceability.** Every operator, state, and signal program
   evaluates inside JAX, so gradients flow through frame resolution, carrier
   phases, envelope parameters, crosstalk mixing, and dissipator strengths.
-* **Native batched solves.** A typed :class:`~quchip.engine.ir.SolveBatch`
-  is stacked along a batch axis and integrated with native Dynamiqs integrators
-  under ``vmap`` in :meth:`solve_batch`.
-  Structurally heterogeneous batches fail loudly — no silent sequential
-  fallback — so the caller can regroup them via
-  :func:`quchip.engine.solve_many`.
+* **Native batched solves.** A typed :class:`~quchip.engine.ir.SolveBatch` is
+  stacked along a batch axis and integrated with native Dynamiqs integrators
+  under ``vmap`` in :meth:`solve_batch`. Structurally heterogeneous batches
+  fail loudly, with no silent sequential fallback, so the caller can regroup
+  them with :func:`quchip.engine.solve_many`.
 
 References
 ----------
@@ -423,14 +422,14 @@ class DynamiqsBackend(Backend):
         Parameters
         ----------
         state_or_op : QArray
-            Ket or bra for the Euclidean norm, or a positive-semidefinite matrix
-            for its real trace. General indefinite operators are outside this hook's
+            Ket or bra for the Euclidean norm, or a positive-semidefinite matrix for
+            its real trace. General indefinite operators are outside this hook's
             matrix convention.
 
         Returns
         -------
         jax.Array
-            Native scalar; traced inputs retain their gradients.
+            Native scalar. Traced inputs keep their gradients.
         """
         return dq.norm(state_or_op)
 
@@ -474,24 +473,24 @@ class DynamiqsBackend(Backend):
         r"""Build a backend-native sparse-DIA diagonal operator from main-diagonal *values*.
 
         Overrides the protocol default to keep the operator in sparse-DIA
-        layout even when *values* is a JAX tracer — the offsets ``(0,)`` are
-        concrete, so the sparse-DIA constructor accepts the traced
-        values directly. Without this override, dynamiqs's
-        ``from_canonical_operator`` densifies any traced DIA payload, which
-        forces a dense ``H₀`` for circuit-style devices and triggers the
-        sparse→dense warning during static-Hamiltonian assembly.
+        layout, even when *values* is a JAX tracer.
 
         Parameters
         ----------
         values : array_like
             Main-diagonal entries, flattened in input order.
         dims : list or None, default None
-            Subsystem dimensions as in from_array; None uses one subsystem.
+            Subsystem dimensions as in from_array. None uses one subsystem.
 
         See Also
         --------
         quchip.backend.protocol.Backend.diag
         """
+        # The offsets `(0,)` are concrete, so the sparse-DIA constructor accepts
+        # the traced values directly. Without this override, dynamiqs's
+        # `from_canonical_operator` densifies all traced DIA payloads, which
+        # forces a dense `H₀` for circuit-style devices and triggers the
+        # sparse→dense warning during static-Hamiltonian assembly.
         v = (jnp if contains_tracer(values) else np).asarray(values, dtype=complex).reshape(-1)
         n = v.shape[0]
         dim_tuple = self._coerce_dims(dims, (n, n))
@@ -623,7 +622,7 @@ class DynamiqsBackend(Backend):
     def matmul(self, a: Operator, b: Operator) -> Operator:
         """Multiply operators, keeping a product of sparse-DIA factors sparse.
 
-        Concrete factors multiply on the host; traced sparse-DIA factors
+        Concrete factors multiply on the host. Traced sparse-DIA factors
         multiply their diagonals directly.
 
         Parameters
@@ -647,7 +646,7 @@ class DynamiqsBackend(Backend):
     def linear_combination(self, terms: Sequence[tuple[Any, Operator]]) -> Operator:
         """Accumulate scalar multiples of operators into one qarray, on the host when every term is concrete.
 
-        Sparse-DIA terms sum their diagonals into a sparse-DIA result; a sum
+        Sparse-DIA terms sum their diagonals into a sparse-DIA result. A sum
         that includes a dense term is dense, as in qarray arithmetic. Batched
         operators or coefficients use qarray arithmetic.
 
@@ -782,13 +781,13 @@ class DynamiqsBackend(Backend):
             Supported keys: ``method`` (native deterministic dynamiqs method),
             ``gradient`` (native gradient configuration), ``max_steps`` (integer
             ceiling), ``progress_meter``, ``store_states``, and ``store_final_state``.
-            ``nsteps`` aliases ``max_steps``; ``progress_bar`` aliases
+            ``nsteps`` aliases ``max_steps``. ``progress_bar`` aliases
             ``progress_meter``. Do not supply an alias and its canonical key together.
             Set tolerances on the native ``method`` object. With an explicit method,
-            set its step limit there instead of also passing ``max_steps`` here.
-            Monte Carlo methods and unrecognized keys are rejected.
+            set its step limit there instead of also passing ``max_steps`` here. Monte
+            Carlo methods and unrecognized keys are rejected.
         metadata : dict
-            Lowering hints, including ordinary-GHz spectral/carrier bounds.
+            Lowering hints, which include ordinary-GHz spectral/carrier bounds.
         tlist : array_like
             Save-time grid in ns used to estimate integration budgets.
 
@@ -905,9 +904,9 @@ class DynamiqsBackend(Backend):
         problem : SteadyStateProblem
             Captured static model, observables, and stationary solver options.
         prepared : PreparedStationary or None, default None
-            Matching prepared generator; ``None`` builds it.
+            Matching prepared generator. ``None`` builds it.
         guess : QArray or None, default None
-            Accepted for the backend protocol; the solve and its uniqueness
+            Accepted for the backend protocol. The solve and its uniqueness
             check always run, so the state stays differentiable.
 
         Returns
@@ -923,7 +922,7 @@ class DynamiqsBackend(Backend):
         -----
         ``problem.options`` accepts only ``method="direct"`` and
         ``rank_tolerance`` (singular-value cutoff, default automatic). A nonunique
-        stationary kernel produces a NaN state; inspect the returned nullity.
+        stationary kernel gives a NaN state, so inspect the returned nullity.
         """
         options = dict(problem.options)
         method = options.pop("method", "direct")
@@ -1257,11 +1256,11 @@ class DynamiqsBackend(Backend):
     ) -> PreparedHamiltonian:
         r"""Convert a :class:`EngineResult` into a dynamiqs native RHS.
 
-        Static terms are summed as qarrays; dynamic terms with
-        ``ScalarModulation`` time-dependence are wrapped via
-        ``dynamiqs.modulated`` with a JAX-traceable :class:`_SignalCallable`.
-        ``tlist`` is passed through in metadata but not used for sampling —
-        dynamiqs evaluates callables on the integrator's adaptive grid.
+        Static terms are summed as qarrays. Dynamic terms with
+        ``ScalarModulation`` time-dependence are wrapped with
+        ``dynamiqs.modulated`` and a JAX-traceable :class:`_SignalCallable`.
+        ``tlist`` passes through in metadata but is not used for sampling,
+        because Dynamiqs evaluates callables on the integrator's adaptive grid.
 
         Parameters
         ----------
@@ -1336,13 +1335,9 @@ class DynamiqsBackend(Backend):
     def prepare_batch(self, batch: Any) -> DeferredBatch:
         r"""Lower compatible problems into stable leaves for one vmapped solve.
 
-        Shared operators (static + per-slot dynamic) are converted exactly
-        once via an id-keyed cache. For each dynamic slot, the per-element
-        :class:`ScalarModulation` signals are stacked leaf-by-leaf along a
-        leading batch axis (``jnp.stack`` on matching pytree leaves) and
-        retained as engine pytrees. RHS callables are built later inside the
-        cached JIT, so repeated objectives reuse compilation without caching
-        value-bearing Hamiltonians.
+        For each dynamic slot, the per-element :class:`ScalarModulation`
+        signals are stacked leaf-by-leaf along a leading batch axis
+        (``jnp.stack`` on matching pytree leaves).
 
         Raises
         ------
@@ -1364,6 +1359,11 @@ class DynamiqsBackend(Backend):
         --------
         quchip.backend.protocol.Backend.prepare_batch
         """
+        # Shared operators (static + per-slot dynamic) are converted exactly
+        # once with an id-keyed cache. The stacked ScalarModulation signals stay
+        # engine pytrees, and RHS callables are built later inside the cached
+        # JIT, so repeated objectives reuse compilation without caching
+        # value-bearing Hamiltonians.
         engine_results = tuple(problem.engine_result for problem in batch.problems)
         cached_native = self._make_op_cache()
         static_term_ids = engine_results[0]._static_term_ids
@@ -1428,10 +1428,10 @@ class DynamiqsBackend(Backend):
         )
 
     def solve_batch(self, batch: Any, *, progress: bool = True) -> list[SolverResult]:
-        r"""Solve a :class:`SolveBatch` via a single native dynamiqs vmap.
+        r"""Solve a :class:`SolveBatch` with a single native dynamiqs vmap.
 
-        Raises :class:`RuntimeError` when the batch is not structurally
-        homogeneous — no silent fallback. Callers with heterogeneous inputs
+        Raises :class:`RuntimeError`, with no silent fallback, when the batch
+        is not structurally homogeneous. Callers with heterogeneous inputs
         should regroup through :func:`quchip.engine.solve_many`.
 
         Parameters

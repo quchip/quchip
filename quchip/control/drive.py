@@ -1,15 +1,15 @@
 """Classical control lines and their quantum Hamiltonian couplings.
 
 A drive builds the complete scheduled analytic signal, then maps its physical
-I/Q quadratures to target-local quantum operators. Control equipment may alter
+I/Q quadratures to target-local quantum operators. Control equipment can change
 that signal before the Hamiltonian mapping. Projection, frames, approximation,
 embedding, unit conversion, and backend lowering remain engine responsibilities.
 
 Conventions:
 
-- Frequencies are GHz; times are ns.
-- Operators are returned in the device's authored local basis — embedding
-  into the full chip Hilbert space is the engine's job.
+- Frequencies are in GHz. Times are in ns.
+- Operators are returned in the device's authored local basis, and the engine
+  embeds them into the full chip Hilbert space.
 
 References
 ----------
@@ -95,18 +95,17 @@ def _synthesize_drive_init(cls: type["BaseDrive"]) -> Any:
 class BaseDrive(Registrable, registry_root=True, metaclass=KeywordOnlyDeclarativeMeta):
     """Base class for classical control lines attached to one quantum target.
 
-    Drives own their local Hamiltonian contribution and
-    are auto-labelled from their ``_type_prefix`` (e.g. ``charge_0``,
-    ``flux_0``) unless *label* is given. Subclasses are auto-registered
-    for serialization via the shared
-    :class:`~quchip.utils.registry.Registrable` mixin.
+    Drives own their local Hamiltonian contribution. Without *label*, drives
+    are auto-labelled from their ``_type_prefix`` (for example ``charge_0``,
+    ``flux_0``). Subclasses are auto-registered for serialization through the
+    shared :class:`~quchip.utils.registry.Registrable` mixin.
 
     Parameters
     ----------
     target : BaseDevice, BaseCoupling, str, or None
-        Target accepted by the concrete drive. A :class:`DeviceDrive` targets
-        a device; a :class:`CouplingDrive` targets a coupling. The target may
-        be connected later or resolved by label through :class:`Chip`.
+        Target accepted by the concrete drive. A :class:`DeviceDrive` targets a
+        device and a :class:`CouplingDrive` a coupling. The target can be
+        connected later or resolved by label through :class:`Chip`.
     label : str | None
         Optional explicit label; otherwise auto-generated.
     **params : Any
@@ -162,15 +161,17 @@ class BaseDrive(Registrable, registry_root=True, metaclass=KeywordOnlyDeclarativ
     def connect(self, target: Any) -> None:
         """Attach this device-drive implementation to *target*.
 
-        If previously attached, the drive is removed from the old device's
-        ``_connected_drives`` list. :class:`CouplingDrive` overrides this
-        handshake because couplings do not own connected-drive lists.
+        If the drive was attached before, it is detached from the old device.
+        :class:`CouplingDrive` overrides this handshake because couplings do
+        not own connected-drive lists.
 
         Parameters
         ----------
         target : BaseDevice
             Device attached to this control line.
         """
+        # A previously attached drive is removed from the old device's
+        # `_connected_drives` list.
         old_target = self._target
         if old_target is not None and not isinstance(old_target, str) and old_target is not target:
             old_target._connected_drives = [d for d in old_target._connected_drives if d is not self]
@@ -209,7 +210,7 @@ class BaseDrive(Registrable, registry_root=True, metaclass=KeywordOnlyDeclarativ
     def target_label(self) -> str | None:
         """Label of this drive's target, or ``None`` if unconnected.
 
-        Device-target drives alias :attr:`device_label`;
+        Device-target drives alias :attr:`device_label`.
         :class:`ParametricDrive` resolves its coupling target instead.
         """
         return self.device_label
@@ -287,7 +288,7 @@ class BaseDrive(Registrable, registry_root=True, metaclass=KeywordOnlyDeclarativ
         """Return human-readable declarations of this drive's approximations.
 
         Subclasses append their physical coupling details to the shared target
-        line. Aggregated by :meth:`Chip.physics_notes`.
+        line. :meth:`Chip.physics_notes` aggregates these notes.
         """
         target = self.target_label if self.target_label is not None else "<unconnected>"
         return [f"Target: '{target}'"]
@@ -377,7 +378,7 @@ class DeviceDrive(BaseDrive):
     Parameters
     ----------
     target : BaseDevice or str, optional
-        Device object or label; labels resolve when connected to a chip.
+        Device object or label. Labels resolve when the drive is connected to a chip.
     label : str, optional
         Drive label.
     """
@@ -430,10 +431,9 @@ class ChargeDrive(DeviceDrive):
 
        H_d(t) = \epsilon(t)\, i(\hat a - \hat a^\dagger)
 
-    with :math:`\epsilon(t)` the in-phase quadrature of the complete
-    delivered classical signal. This is the canonical transmon microwave drive
-    (Koch et al., PRA 76, 042319 (2007); Krantz et al., APR 6, 021318
-    (2019), Eq. 90).
+    with :math:`\epsilon(t)` the in-phase quadrature of the complete delivered
+    classical signal. It is the standard transmon microwave drive (Koch et al.,
+    PRA 76, 042319 (2007); Krantz et al., APR 6, 021318 (2019), Eq. 90).
 
     Examples
     --------
@@ -484,11 +484,10 @@ class ChargeDrive(DeviceDrive):
 class PhaseDrive(DeviceDrive):
     r"""Microwave phase drive coupling to :math:`\hat a + \hat a^\dagger`.
 
-    Same carrier machinery as :class:`ChargeDrive` but with an
-    in-phase (rather than quadrature) coupling. Useful when modelling
-    phase-noise channels or drives whose physical coupling is already
-    referenced to the field quadrature. See Krantz et al. 2019, Sec.
-    IV.A for the two conventions.
+    Same carrier machinery as :class:`ChargeDrive` but with an in-phase (rather
+    than quadrature) coupling. It is useful for modeling phase-noise channels
+    or drives whose physical coupling is already referenced to the field
+    quadrature. See Krantz et al. 2019, Sec. IV.A for the two conventions.
 
     Parameters
     ----------
@@ -530,10 +529,9 @@ class PhaseDrive(DeviceDrive):
 class FluxDrive(DeviceDrive):
     r"""Real-valued flux drive coupling to :math:`\hat n`.
 
-    The delivered signal's in-phase quadrature modulates the device frequency
-    through its flux-coupling operator
-    (Koch et al. 2007, Sec. II; Krantz et al. 2019, Sec. V.A on flux
-    tunability).
+    The in-phase quadrature of the delivered signal modulates the device
+    frequency through its flux-coupling operator (Koch et al. 2007, Sec. II;
+    Krantz et al. 2019, Sec. V.A on flux tunability).
 
     Examples
     --------
@@ -584,22 +582,22 @@ class FluxDrive(DeviceDrive):
 class ParametricDrive(CouplingDrive):
     """Control line pumping a modulable coupling's strength δ(t) in GHz.
 
-    Targets a coupling (object or label string; labels late-bind via
-    :meth:`Chip.connect`). The scheduled envelope is the *real amplitude*
-    ``A(t)``: with an explicit carrier the pump is
-    ``δ(t) = A(t)·cos(2π·freq·t - phase)``; with ``freq`` omitted the pump is
-    carrier-free, ``δ(t) = A(t)`` directly. Approximation belongs to the
+    Targets a coupling (object or label string). Labels late-bind through
+    :meth:`Chip.connect`. The scheduled envelope is the *real amplitude*
+    ``A(t)``. With an explicit carrier, the pump is
+    ``δ(t) = A(t)·cos(2π·freq·t - phase)``. If ``freq`` is omitted, the pump is
+    carrier-free and ``δ(t) = A(t)`` directly. Approximation belongs to the
     chip's selected engine strategy, not to the drive.
 
     Accepted couplings implement
-    :meth:`~quchip.declarative.models.CouplingModel.parametric_interaction`;
-    a static coupling raises ``TypeError`` naming the hook.
+    :meth:`~quchip.declarative.models.CouplingModel.parametric_interaction`. A
+    static coupling raises ``TypeError`` naming the hook.
 
     Parameters
     ----------
     target : BaseCoupling | str
-        Modulable coupling to pump, given as the coupling object or its
-        label. A string label late-binds to the coupling instance via
+        Modulable coupling to pump, given as the coupling object or its label.
+        A string label late-binds to the coupling instance through
         :meth:`Chip.connect`.
     label : str | None
         Optional explicit label; otherwise auto-generated from
@@ -625,7 +623,7 @@ class ParametricDrive(CouplingDrive):
         Parameters
         ----------
         coupling : BaseCoupling
-            Coupling implementing ``parametric_interaction``.
+            Coupling that implements ``parametric_interaction``.
         """
         _probe_modulable(coupling)
         self._target = coupling

@@ -1,10 +1,11 @@
 """Schedule-aware active-patch reduction: eliminate spectators, keep the driven patch.
 
 The activity analysis uses scheduled targets plus ``hops`` coupling-graph
-steps. It does not rank devices by amplitude, detuning, or an error bound.
-The result records per-step Schrieffer-Wolff validity, and
-:func:`_warn_on_poor_validity` emits a ``UserWarning`` for a poor fold.
+steps. It does not rank devices by amplitude, detuning, or an error bound. The
+result records per-step Schrieffer-Wolff validity, and a poor fold emits a
+``UserWarning``.
 """
+# `_warn_on_poor_validity` emits the warning for a poor fold.
 
 from __future__ import annotations
 
@@ -32,7 +33,7 @@ def coupling_adjacency(chip: "Chip") -> dict[str, set[str]]:
 
 
 def active_labels(sequence: "QuantumSequence", *, hops: int = 1) -> set[str]:
-    """Devices touched by the schedule, expanded ``hops`` coupling-graph steps."""
+    """Devices that the schedule touches, expanded ``hops`` coupling-graph steps."""
     chip = sequence._chip
     active: set[str] = set()
     for op in sequence.scheduled_ops:
@@ -55,7 +56,7 @@ def active_labels(sequence: "QuantumSequence", *, hops: int = 1) -> set[str]:
 
 
 def graph_distances(adjacency: dict[str, set[str]], sources: set[str]) -> dict[str, int]:
-    """BFS distance from ``sources``; labels unreachable from them are absent."""
+    """BFS distance from ``sources``, omitting unreachable labels."""
     distances = {label: 0 for label in sources}
     queue = deque(sources)
     while queue:
@@ -95,33 +96,33 @@ def _warn_on_poor_validity(step: "EliminationResult", target: str) -> None:
 
 @dataclass(frozen=True)
 class ActivePatchResult:
-    """A reduced patch chip, the re-bound sequence, and the reduction validity record.
+    """A reduced patch chip, the re-bound sequence, and the record of reduction validity.
 
     Attributes
     ----------
     chip
-        The patch chip: schedule-active devices plus whatever spectators
-        :func:`active_patch` could not eliminate (unreachable, or where
-        elimination itself declined — see :attr:`notes`).
+        The patch chip: schedule-active devices plus the spectators that
+        :func:`active_patch` did not eliminate. They are unreachable or
+        declined by elimination itself (see :attr:`notes`).
     sequence
         A :class:`~quchip.control.sequence.QuantumSequence` bound to
-        :attr:`chip`, replaying the source sequence's entries verbatim.
+        :attr:`chip`, which replays the source sequence's entries verbatim.
     active_labels
         Sorted schedule-active device labels (never eliminated).
     eliminated_labels
-        Device labels actually folded away, in elimination order
+        Device labels that were folded away, in elimination order
         (farthest-from-active first).
     steps
-        The :class:`~quchip.chip.transformations.result.EliminationResult`
-        from each successful :func:`~quchip.chip.transformations.eliminate`
-        call, verbatim and in :attr:`eliminated_labels` order — reshape
-        nothing here; read ``.validity``/``.effective_params`` off the
-        step objects through the convenience properties below.
+        The :class:`~quchip.chip.transformations.result.EliminationResult` from
+        each successful :func:`~quchip.chip.transformations.eliminate` call,
+        verbatim and in :attr:`eliminated_labels` order. Do not reshape them
+        here. Read ``.validity``/``.effective_params`` from the step objects
+        through the convenience properties below.
     notes
-        Every explicitly dropped or deferred piece of physics: unreachable
-        spectators left in place, control lines stripped as unused, and
-        (if elimination itself couldn't proceed past some spectator) why
-        the reduction stopped early — plus every step's own notes.
+        Every explicitly dropped or deferred piece of physics, including
+        unreachable spectators left in place, control lines stripped as unused,
+        and every step's notes. If elimination cannot continue past a
+        spectator, it also includes why the reduction stopped early.
     """
 
     chip: Any
@@ -133,12 +134,12 @@ class ActivePatchResult:
 
     @property
     def validity(self) -> dict[str, Any]:
-        """``{eliminated label: that step's .validity}`` — verbatim, per-coupling shape untouched."""
+        """``{eliminated label: that step's .validity}``, verbatim, with the per-coupling shape unchanged."""
         return {label: step.validity for label, step in zip(self.eliminated_labels, self.steps)}
 
     @property
     def effective_params(self) -> dict[str, Any]:
-        """``{eliminated label: that step's .effective_params}`` — verbatim, per-survivor shape untouched."""
+        """``{eliminated label: that step's .effective_params}``, verbatim, with the per-survivor shape unchanged."""
         return {label: step.effective_params for label, step in zip(self.eliminated_labels, self.steps)}
 
     @property
@@ -274,39 +275,35 @@ def _eliminate_spectators(
 def active_patch(sequence: "QuantumSequence", *, hops: int = 1, method: str = "sw") -> ActivePatchResult:
     """Reduce a chip to its schedule-active patch by eliminating spectators.
 
-    Spectators are eliminated one at a time via
-    :func:`~quchip.chip.transformations.eliminate`, farthest-from-active
-    first; every step's validity metrics ride on the result untouched.
-    Explicit opt-in — this approximates (Schrieffer-Wolff, or the exact
-    dressed-spectrum route under ``method="exact"``), unlike the exact
-    automatic partitioning :meth:`~quchip.control.sequence.QuantumSequence.simulate`
-    performs internally at solve time.
+    The spectators are eliminated one at a time through
+    :func:`~quchip.chip.transformations.eliminate`, farthest-from-active first. The
+    result keeps every step's validity metrics unchanged. The reduction is an
+    explicit opt-in, because it approximates (Schrieffer-Wolff, or the exact
+    dressed-spectrum route under ``method="exact"``), unlike the exact automatic
+    partitioning that :meth:`~quchip.control.sequence.QuantumSequence.simulate`
+    does internally at solve time.
 
-    The elimination order and reachability are recomputed from the
-    *current* reduced chip before every step, not just once up front: a
-    fold can only ever add a bridging edge between the eliminated mode's
-    neighbors, never remove one, so a label's distance from the active set
-    can shorten but never make a previously reachable label unreachable —
-    still, reading the graph fresh each time means a label that has
-    already been folded away is never re-considered, and the order always
-    reflects what ``eliminate`` will actually see. Bridging edges created
-    by earlier folds may be :class:`~quchip.chip.couplings.Capacitive`
-    edges carrying ``g`` or :class:`~quchip.chip.couplings.TunableCapacitive`
-    edges carrying ``g_0``. Both fold onward, so cycles among spectators
-    reduce all the way down. If ``eliminate`` still declines a step (its
-    typed :class:`NotImplementedError` signal for an unsupported
-    elimination, such as an unsupported accessible-field boundary), the reduction stops
-    there: everything eliminated so far stays folded, and the remaining
-    spectators — including the one that failed — are left on the patch
-    chip untouched, with the reason recorded in :attr:`notes`.
+    The elimination order and reachability are recalculated from the *current* reduced
+    chip before every step. A fold can only add a bridging edge between the eliminated
+    mode's neighbors, and never remove one. A label's distance from the active set can
+    therefore shrink, but a reachable label never becomes unreachable.
+
+    Bridging edges from earlier folds can be :class:`~quchip.chip.couplings.Capacitive`
+    edges that carry ``g`` or :class:`~quchip.chip.couplings.TunableCapacitive` edges
+    that carry ``g_0``. Both fold onward, so cycles among spectators reduce completely.
+    ``eliminate`` can still decline an unsupported step, such as an unsupported
+    accessible-field boundary, with its typed :class:`NotImplementedError`. The
+    reduction then stops there, and everything eliminated until then stays folded. The
+    remaining spectators, including the one that failed, stay unchanged on the patch
+    chip, and :attr:`notes` records the reason.
 
     Parameters
     ----------
     sequence
         The schedule to reduce around.
     hops
-        Coupling-graph hops the active set expands beyond the scheduled
-        targets (see :func:`active_labels`).
+        Coupling-graph hops by which the active set expands beyond the
+        scheduled targets (see :func:`active_labels`).
     method
         Forwarded to :func:`~quchip.chip.transformations.eliminate` for
         every device elimination.
@@ -315,6 +312,9 @@ def active_patch(sequence: "QuantumSequence", *, hops: int = 1, method: str = "s
     -------
     ActivePatchResult
     """
+    # Rereading the graph at each step ensures that a folded label is never
+    # considered again and that the order always shows what `eliminate` will
+    # see.
     chip = sequence._chip
     active = active_labels(sequence, hops=hops)
     spectators = [d.label for d in chip.devices if d.label not in active]

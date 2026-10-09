@@ -41,33 +41,34 @@ def _operator_from_json(value: list[list[list[float]]] | None) -> np.ndarray | N
 class EigenbasisDevice(BaseDevice):
     """Represent a frozen source spectrum and its energy-basis operators.
 
-    Source circuit parameters cannot be differentiated through this snapshot.
+    You cannot differentiate through this snapshot with respect to the source circuit parameters.
 
     Parameters
     ----------
     energies : array_like, shape (n,)
-        Energy-ordered levels in GHz, with ``n >= 2``. The first energy
-        is subtracted from every level.
+        Energy-ordered levels in GHz, with ``n >= 2``. The device subtracts the
+        first energy from every level.
     charge_operator, phase_operator : array_like, shape (n, n), or None
-        Operators in the same source eigenbasis. ``None`` leaves that drive
-        channel unavailable; supplied matrix elements retain source conventions.
+        Operators in the same source eigenbasis. ``None`` makes that drive
+        channel unavailable. The supplied matrix elements keep the source's
+        conventions.
     levels : int or None, default None
-        Number of retained energy levels. ``None`` retains all supplied levels.
+        Number of kept energy levels. ``None`` keeps all supplied levels.
     label : str or None, default None
-        Device label; omission generates ``eigenbasis_<index>``.
+        Device label. Defaults to a generated ``eigenbasis_<index>``.
     source_type : str or None, default None
         Provenance label, such as ``"scqubits.ZeroPi"``.
     collapse_model : {"fermi_golden", "ladder"}, default "fermi_golden"
-        Relaxation from transition matrix elements or an ideal ladder operator.
+        Relaxation from transition matrix elements or from an ideal ladder operator.
     coupling_channel : {"charge", "flux"} or None, default None
-        Operator for matrix-element relaxation; ``"flux"`` uses
+        Operator for matrix-element relaxation. ``"flux"`` uses
         ``phase_operator``. Required when ``T1`` is set with ``"fermi_golden"``.
     collapse_rate_threshold : float, default 1e-8
         Nonnegative cutoff on normalized downward-transition strengths.
     **noise : scalar or None
         ``T1`` and ``T2`` in ns, and dimensionless ``thermal_occupation``.
-        ``None`` leaves the corresponding channel absent. See
-        :class:`~quchip.devices.base.BaseDevice` for noise constraints.
+        ``None`` omits the related channel. See
+        :class:`~quchip.devices.base.BaseDevice` for the noise constraints.
 
     References
     ----------
@@ -131,19 +132,19 @@ class EigenbasisDevice(BaseDevice):
         super().__init__(levels=dimension, label=label, **noise)
 
     def dissipation(self, op: Any, p: Any) -> tuple[CollapseChannel, ...]:
-        """Return relaxation and dephasing channels for the stored spectrum.
+        """Return the relaxation and dephasing channels for the stored spectrum.
 
         Parameters
         ----------
         op : LocalOps
-            Local operator namespace; unused because stored matrices define the basis.
+            Local operator namespace, unused because the stored matrices define the basis.
         p : parameter namespace
             Bound noise parameters for this calculation.
 
         Returns
         -------
         tuple of CollapseChannel
-            Channels selected by ``collapse_model`` and the active noise parameters.
+            Channels that ``collapse_model`` and the active noise parameters select.
 
         See Also
         --------
@@ -215,13 +216,14 @@ class EigenbasisDevice(BaseDevice):
         Parameters
         ----------
         data : dict
-            Output of :meth:`to_dict`, including energies and optional operator
-            matrices encoded as separate real and imaginary nested lists.
+            Output of :meth:`to_dict`, including the energies and optional
+            operator matrices encoded as separate real and imaginary nested
+            lists.
 
         Returns
         -------
         EigenbasisDevice
-            Restored device with noise and reference-frequency metadata.
+            Restored device with the noise and reference-frequency metadata.
         """
         return cls(
             data["energies"],

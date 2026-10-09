@@ -20,12 +20,12 @@ class IQReceiver:
         Positive boxcar duration in ns. White detector and field noise scale
         as ``1 / integration_time``.
     transfer : callable or None, optional
-        Digital complex amplitude transfer function. It receives offset
-        frequencies in GHz, must be supported on the captured spectral grid,
-        and its value at zero also scales the mean field. It does not alter the
-        simulated chip or its physical noise sources.
+        Digital complex amplitude transfer function of offset frequency in GHz,
+        which must be supported on the captured spectral grid. Its value at
+        zero also scales the mean field. It does not change the simulated chip
+        or its physical noise sources.
     tolerance : float, default=0.02
-        Relative convergence and spectral-support tolerance. Must satisfy
+        Relative convergence and spectral-support tolerance, with
         ``0 < tolerance < 1``.
 
     Notes
@@ -58,11 +58,11 @@ def validate_samples(count: int, seed: Any, key: Any, values: Any) -> Any:
     Parameters
     ----------
     count : int
-        Number of draws; must be positive.
+        Positive number of draws.
     seed : int or None
         NumPy generator seed. Do not pass together with ``key``.
     key : jax.Array or None
-        Explicit JAX PRNG key required when sampling traced values.
+        Explicit JAX PRNG key, required to sample traced values.
     values : object
         Mean and covariance values used to infer the array namespace.
 
@@ -96,7 +96,7 @@ def gaussian_samples(mean: Any, covariance: Any, count: int, *, seed: Any = None
     count : int
         Number of draws.
     seed, key : optional
-        Use ``seed`` for NumPy or ``key`` for JAX; passing both is invalid.
+        Use ``seed`` for NumPy or ``key`` for JAX. Do not pass both.
 
     Returns
     -------
@@ -121,7 +121,7 @@ def noise_grid(frequencies: Any = None) -> np.ndarray:
     Parameters
     ----------
     frequencies : 1-D array_like or None, optional
-        Strictly increasing, finite, symmetric offsets containing zero. With
+        Strictly increasing, finite, symmetric offsets that contain zero. With
         ``None``, return the default grid spanning ``-0.1`` to ``+0.1`` GHz.
 
     Returns
@@ -148,7 +148,7 @@ def _engineering_iq(spectrum: Any, xp: Any) -> Any:
 
 def integrate_noise(values: Any, noise_frequencies: Any, noise_components: Any,
                     output_delays: Any, receiver: IQReceiver) -> tuple[Any, Any, Any]:
-    """Integrate normal spectra plus detector vacuum; return covariance, budget, DC gain.
+    """Integrate normal spectra and detector vacuum, and return covariance, budget, and DC gain.
 
     Captured IQ spectra and the receiver transfer use the engineering convention.
     """

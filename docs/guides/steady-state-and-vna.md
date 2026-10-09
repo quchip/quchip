@@ -6,10 +6,10 @@ in ns, temperatures in mK, and decay rates in `1/ns`. Run the cells in order.
 
 ## Couple the resonators to a bus
 
-The resonators lie at 6.4, 6.5, and 6.6 GHz. Each has its own internal loss;
-all three exchange photons with a 6.5 GHz bus connected to the measurement
-line. The bus has a 1 GHz external linewidth. The resonators' nominal loaded
-linewidths are 11–18 MHz.
+The resonators are at 6.4, 6.5, and 6.6 GHz, each with its own internal
+loss. All three exchange photons with a 6.5 GHz bus, which has a 1 GHz
+external linewidth and connects to the measurement line. The resonators'
+nominal loaded linewidths are 11–18 MHz.
 
 ```python
 import numpy as np
@@ -37,7 +37,7 @@ couplings = [Capacitive(bus, r, g=g, label=f"bus_r{i+1}")
 ```
 
 `internal_quality_factor` sets each resonator's intrinsic decay. We set the
-couplings from a nominal external Q, using the bus susceptibility at each
+couplings from a nominal external Q, with the bus susceptibility at each
 bare resonator frequency:
 
 ```{math}
@@ -46,16 +46,16 @@ bare resonator frequency:
 \qquad Q_{e,r}=\frac{2\pi f_r}{\kappa_{e,r}}.
 ```
 
-The simulation includes all three couplings, so the resonances shift and their
-linewidths change through the shared bus. RWA retains the photon-exchange
-terms. These are representative parameters.
+The simulation includes all three couplings, so the resonances shift and
+their linewidths change through the shared bus. RWA keeps the photon-exchange
+terms. The parameters are representative.
 
 ## Put the chip in the fridge
 
-A mixing-chamber circulator sends port 1 to the bus on port 2 and routes its
-reflection to port 3. Input attenuation is distributed across 4 K, the cold
-plate, and the mixing chamber. Two output isolators precede the 4 K HEMT.
-Both lines contain a 4–8 GHz bandpass filter.
+A mixing-chamber circulator sends port 1 to the bus on port 2 and the
+reflection to port 3. The input attenuation is distributed across 4 K, the
+cold plate, and the mixing chamber. Two output isolators precede the 4 K
+HEMT. Both lines contain a 4–8 GHz bandpass filter.
 
 ```python
 filter_b, filter_a = butter(4, [4.0, 8.0], btype="bandpass", analog=True)
@@ -87,25 +87,25 @@ room_amp = fridge.amplifier("amp_RT", gain_db=20, added_noise=925.22946424527)
 ```
 
 `loss_db` is the power loss in dB. `thermal_occupation` is the mean thermal
-population of a passive load in quanta. The values above correspond to
-4 K, 100 mK, and 20 mK at 6.5 GHz and stay fixed throughout this sweep.
-The isolators use the coldest load; `iso_loss` represents their combined
-insertion loss. The ideal circulator adds no noise of its own.
+population of a passive load in quanta. The values above correspond to 4 K,
+100 mK, and 20 mK at 6.5 GHz and stay fixed in this sweep. The isolators
+use the coldest load, and `iso_loss` represents their combined insertion
+loss. The ideal circulator adds no noise of its own.
 
-Amplifier `added_noise` is input-referred symmetrized noise in quanta.
-The HEMT and room amplifier values correspond, at 6.5 GHz, to a 2.5 K
-equivalent noise temperature and a 3 dB noise figure referenced to 290 K.
-These are fixed model inputs, independent of the amplifiers' physical stages.
+Amplifier `added_noise` is input-referred symmetrized noise in quanta. At 6.5
+GHz, the HEMT value corresponds to a 2.5 K equivalent noise temperature, and
+the room amplifier value to a 3 dB noise figure referenced to 290 K. These
+values are fixed model inputs, independent of the amplifiers' physical
+stages.
 
 The filters have half-power edges at 4 and 8 GHz. The output filter's
 `thermal_occupation` declares a matched absorptive load. The input filter
 sees a vacuum source, with thermal attenuators downstream. The resonators'
-intrinsic loss baths are also vacuum.
+intrinsic loss baths are vacuum too.
 
-Connect the input chain to circulator port 1, the bus to port 2, and the
-receiver chain to port 3. Name the external network ports `drive` for the source and `readout` for the
-receiver. Each port defines a reference plane: the location where its incoming
-and outgoing fields are specified.
+Connect the input chain to circulator port 1, the bus to port 2, and the receiver chain to port 3.
+Name the external network ports `drive` for the source and `readout` for the receiver. Each port
+defines a reference plane, where the port's incoming and outgoing fields are specified.
 
 ```python
 fridge.link(input_filter, att_4k, att_cp, att_mxc, circ.port(1))
@@ -240,8 +240,8 @@ line. The three resonators couple to the bus at the mixing chamber.
 ## Measure the source-to-receiver response
 
 Sweep the probe frequency between the exposed instrument ports. The chip has
-one coupling port, but the source and receiver are separate, so its reflection
-appears in S21.
+one coupling port but the source and receiver are separate, so the chip's
+reflection appears in S21.
 
 ```python
 frequencies = np.linspace(6.34, 6.66, 401)
@@ -287,16 +287,16 @@ the 60 dB input attenuation; isolator and cable loss give an approximately
 [PDF](../images/fridge_s21.pdf)
 ```
 
-`steady_state` includes the bus, resonators, losses, filters, and amplifier gain.
-It is the steady-state response of the whole setup. Added amplifier noise
-raises the fluctuation level without changing this curve.
+`steady_state` is the steady-state response of the full setup, including the bus,
+resonators, losses, filters, and amplifier gain. Added amplifier noise increases
+the fluctuation level but does not change this curve.
 
 ## Sample a VNA trace
 
-A sampled trace also needs the probe amplitude and receiver integration time.
-Use an amplitude of 20 `sqrt(photons/ns)` at the source, before the 60 dB input
-attenuation. `measure()` calculates the mean and noise spectra for this drive.
-`sample()` then draws one complex IQ value at every probe frequency.
+A sampled trace also needs the probe amplitude and the receiver integration
+time. Use an amplitude of 20 `sqrt(photons/ns)` at the source, before the 60 dB
+input attenuation. `measure()` computes the mean and noise spectra for this
+drive, and `sample()` then draws one complex IQ value at each probe frequency.
 
 ```python
 measurement = vna.measure(frequencies, amplitudes=20, input=drive, outputs=[readout])
@@ -305,9 +305,10 @@ long = measurement.sample(1, receiver=IQReceiver(integration_time=100_000_000), 
 np.testing.assert_allclose(measurement.ratio(readout), steady_state, atol=1e-10)
 ```
 
-The two samples use the same physical calculation. Increasing the integration
-time from 1 ms to 100 ms reduces the noise variance by about a factor of 100.
-The common random seed makes that change visible point by point.
+The two samples share one physical calculation. Increasing the
+integration time from 1 ms to 100 ms decreases the noise variance by
+approximately a factor of 100. The common random seed makes that change
+visible point by point.
 
 <details>
 <summary>Plot the sampled traces</summary>
@@ -347,8 +348,8 @@ shown on the steady-state curve's unwrapped branch. Longer integration reduces t
 in both magnitude and phase. [PDF](../images/fridge_measurement.pdf)
 ```
 
-The measurement also retains the output noise spectrum. Use `noise_spectrum()`
-to report its power density at the receiver in dBm/Hz. After choosing an
+The measurement also keeps the output noise spectrum. Use `noise_spectrum()`
+to report its power density at the receiver in dBm/Hz. Once you select an
 integration time, `statistics()` gives the IQ covariance and each source's
 contribution to it.
 
@@ -375,10 +376,10 @@ RESULT short_complex_ratio_rmse=0.175733
 RESULT long_complex_ratio_rmse=0.017573
 ```
 
-The same calculation gives the field and mean photon number inside each
-resonator. These include the input attenuation, filters, coupling through the
-bus, and thermal noise reaching the chip. They are independent of receiver
-integration time.
+The same calculation gives the field and the mean photon number in each
+resonator. These include the input attenuation, the filters, the coupling
+through the bus, and the thermal noise that reaches the chip, and are
+independent of the receiver integration time.
 
 ```python
 r2 = resonators[1]
@@ -387,9 +388,9 @@ photons = measurement.photon_number(r2)
 incoherent = photons - np.abs(alpha)**2
 ```
 
-For this passive harmonic model, the coherent field scales with source
-amplitude while the incoherent occupation stays fixed. At each frequency,
-the source amplitude for one stored photon on average is therefore:
+For this passive harmonic model, the coherent field scales with the
+source amplitude while the incoherent occupation stays fixed. At each
+frequency, the source amplitude for one stored photon on average is:
 
 ```python
 single_photon_amplitude = 20 * np.sqrt((1 - incoherent) / np.abs(alpha)**2)
@@ -406,42 +407,43 @@ Output:
 RESULT r2_single_photon_amplitude=144.04
 ```
 
-The amplitude is in `sqrt(photons/ns)` at the source. Each frequency gives a
-separate drive setting. This rescaling requires a nonzero coherent response
-and an incoherent occupation below one; nonlinear modes require solving at
-the new drive amplitude. `photon_number()` still reports their full mean
-occupation from the density-matrix calculation.
+The amplitude is in `sqrt(photons/ns)` at the source, and each frequency
+gives a separate drive setting. This rescaling requires a nonzero coherent
+response and an incoherent occupation below one. For nonlinear modes, solve
+again at the new drive amplitude. `photon_number()` still reports their full
+mean occupation from the density-matrix calculation.
 
 <details>
 <summary>Noise units and model limits</summary>
 
-`noise_spectrum()` reports normally ordered fluctuations, excluding the
-coherent carrier and detector vacuum. Its default unit is quanta; `W/Hz` and
-`dBm/Hz` use the absolute sideband frequency. The final array axis is the
+`noise_spectrum()` reports normally ordered fluctuations, without the
+coherent carrier and the detector vacuum. Its default unit is quanta. `W/Hz`
+and `dBm/Hz` use the absolute sideband frequency. The last array axis is the
 captured offset frequency.
 
 Each source in `statistics.noise_contributions()` contributes a 2×2 IQ
-covariance in photons/ns. The trace is the complex field variance. The sum
-includes detector vacuum. `device.correlations` contains interference between
-the input and the device field and may be negative.
+covariance in photons/ns, whose trace is the complex field variance. The sum
+includes the detector vacuum. `device.correlations` contains the interference
+between the input and the device field, and it can be negative.
 
 Passive `thermal_occupation` and amplifier `added_noise` are constant quanta
-across the modeled band. Frequency sweeps still evaluate filter transmission
-and the device response at each frequency. Linear `eta` and power `gain`
-may replace `loss_db` and `gain_db`.
+across the modeled band. Frequency sweeps still evaluate the filter
+transmission and the device response at each frequency. You can use linear
+`eta` and power `gain` instead of `loss_db` and `gain_db`.
 
-The default offset grid spans ±0.1 GHz down to 1 Hz. Supply
-`noise_frequencies=` if a narrower spectral feature needs more points.
-Integration checks test the stored grid's convergence and edge support;
-they cannot find an unsampled feature. Changing the physical setup requires
-another `measure()` call. Receiver time, digital filtering, calibration, and
-random draws use the captured arrays.
+The default offset grid spans ±0.1 GHz down to 1 Hz. If a narrower spectral
+feature needs more points, supply `noise_frequencies=`. Integration checks
+test the stored grid's convergence and edge support but cannot find an
+unsampled feature. After changing the physical setup, call `measure()`
+again. Receiver time, digital filtering, calibration, and random draws use
+the captured arrays.
 
 Stationary harmonic calculations use mode-space equations without a Fock
-cutoff. Nonlinear devices use the density-matrix solver. Sampling describes
-stationary Gaussian field moments. Colored thermal noise feeding the chip
-requires an explicit dynamical filter or bath model. This setup omits
-amplifier saturation, finite reverse isolation, and reverse amplifier noise.
+cutoff, and nonlinear devices use the density-matrix solver. Sampling
+describes stationary Gaussian field moments. Colored thermal noise into the
+chip needs an explicit dynamical filter or bath model. This setup does not
+include amplifier saturation, finite reverse isolation, or reverse amplifier
+noise.
 
 </details>
 
@@ -449,11 +451,12 @@ amplifier saturation, finite reverse isolation, and reverse amplifier noise.
 
 A Rabi calculation can stop after state preparation. To describe an omitted
 readout stage, supply the mean output field for each qubit state before the
-downstream output components. The fridge then determines the receiver gain
-and noise.
+downstream output components. The fridge then sets the receiver gain and
+noise.
 
-This two-level qubit undergoes one Rabi period. Its preparation is closed and
-uses `sesolve`; the readout model below does not change that evolution.
+This two-level qubit goes through one Rabi period. Its preparation is closed
+and uses `sesolve`, and the readout model below does not change that
+evolution.
 
 ```python
 from quchip import ChargeDrive, DuffingTransmon, IQReadout, QuantumSequence, Square
@@ -480,17 +483,19 @@ shots = measurement.sample(1000, readout=detector, seed=7)
 ```
 
 The supplied means are representative fields for outcomes 0 and 1, in
-$1/\sqrt{\mathrm{ns}}$, before the selected channel's downstream output components.
-These fields are defined at the output of the memoryless quantum network.
-They summarize the readout interaction; qubit populations alone cannot determine
-them. The detector includes downstream filter, cable and amplifier noise,
-plus heterodyne vacuum, integrated for 100 μs. `detector.contributions` gives
-the source covariance budget.
+$1/\sqrt{\mathrm{ns}}$, before the selected channel's downstream output
+components. They are defined at the output of the memoryless quantum network and
+summarize the readout interaction, so qubit populations alone cannot give them.
+The detector includes downstream filter, cable, and amplifier noise, plus
+heterodyne vacuum, integrated for 100 μs.
 
-Both panels use this detector. A midpoint threshold classifies the IQ shots;
-its overlap gives about 16% error for either outcome. The recorded Rabi curve
-therefore spans approximately 0.16–0.84 even though the quantum population
-spans 0–1. The qubit starts in |0⟩; this floor is a detection error.
+`detector.contributions` gives the source covariance budget.
+
+Both panels use this detector, and a midpoint threshold classifies the IQ
+shots. The overlap gives an error of approximately 16% for each outcome. So
+the recorded Rabi curve spans approximately 0.16–0.84, while the quantum
+population spans 0–1. The qubit starts in |0⟩, so this floor is a detection
+error.
 
 <details>
 <summary>Plot the Rabi counts and IQ record</summary>
@@ -550,18 +555,19 @@ IQ distributions. Colors mark physical outcomes; the threshold determines
 the recorded labels. [PDF](../images/terminal_rabi.pdf)
 ```
 
-`result.measure()` works with either kets or density matrices, using the local energy bases saved with the simulation. Pass several devices for joint outcomes or `t=` for an
-exact saved state. Final measurement works with `states="final"`; different
-measurement times represent separate terminated experiments.
+`result.measure()` works with kets or density matrices and uses the local energy bases that the
+simulation saved. Pass several devices for joint outcomes, or pass `t=` for an exact saved state.
+Final measurement works with `states="final"`. Different measurement times represent separate
+terminated experiments.
 
-If a simulation already includes the fridge, `result.iq_readout(...)` reuses
-the wiring saved with that simulation. `IQReadout.from_wiring(...)` resolves
-the current wiring without quantum evolution. Both assume coherent fields at
-the quantum-network output and vacuum in unspecified input channels.
-Thermal input fields and correlations with the
-devices require a field calculation or a detector calibration that includes them.
-Use a calibrated `IQReadout(means, iq_covariance)` directly in that case,
-without adding the same apparatus noise again.
+If a simulation already includes the fridge, `result.iq_readout(...)` reuses the
+wiring saved with it. `IQReadout.from_wiring(...)` resolves the current wiring
+without quantum evolution. Both assume coherent fields at the quantum-network
+output and vacuum in unspecified input channels. Thermal input fields and
+correlations with the devices need a field calculation or a detector calibration
+that includes them. In that case, use a calibrated
+`IQReadout(means, iq_covariance)` directly, and do not add the same apparatus
+noise again.
 
 For lifetime design, continue with [Purcell filtering and T1](slh-networks.md).
 For pulse shaping and cavity depletion, see [pulses, leakage, and readout](dynamics-pulses-and-readout.md#empty-the-resonator-after-readout).

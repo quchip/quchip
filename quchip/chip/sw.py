@@ -1,16 +1,13 @@
 """Schrieffer-Wolff reduction kernels (2nd order) on bare chip blocks.
 
-Numerical kernels follow their inputs: a concrete chip reduces with NumPy on
-the host, a traced one with ``jax.numpy``; a conditional host check reports
-coupled singularities. No traced physics is coerced to Python scalars. ``H``
-is the chip's bare Hamiltonian in the C-order product basis, ordinary GHz;
-block masks are static NumPy booleans (dims are static). The caller (the
-elimination handlers in ``quchip.chip.transformations``) owns cloning,
-folding, and control-plane concerns.
+Kernels follow their inputs: a concrete chip reduces with NumPy on the host,
+and a traced chip reduces with ``jax.numpy``. A conditional host check reports
+coupled singularities. No traced physics is coerced to Python scalars. ``H`` is
+the chip's bare Hamiltonian in the C-order product basis, in ordinary GHz.
 
-The partition eliminates one mode: P = the mode in its ground state, Q =
+The partition eliminates one mode: P is the mode in its ground state, and Q is
 everything else. The generator solves the Sylvester condition
-``[S, H₀] = -V_offdiag`` on the P↔Q blocks, giving the standard 2nd-order
+``[S, H₀] = -V_offdiag`` on the P↔Q blocks, which gives the standard 2nd-order
 effective Hamiltonian ``H_eff = P (H + ½[S, V]) P``.
 
 References: Bravyi, DiVincenzo & Loss, Ann. Phys. 326, 2793 (2011)
@@ -19,6 +16,10 @@ References: Bravyi, DiVincenzo & Loss, Ann. Phys. 326, 2793 (2011)
 (dispersive shift); Krantz et al., Appl. Phys. Rev. 6, 021318 (2019), §V
 (Purcell decay, dispersive readout).
 """
+# Block masks are static NumPy booleans (dims are static).
+#
+# The caller (the elimination handlers in `quchip.chip.transformations`) owns
+# cloning, folding, and control-plane concerns.
 
 from __future__ import annotations
 
@@ -49,9 +50,9 @@ def bare_hamiltonian(
 ) -> tuple[Any, list[str], tuple[int, ...]]:
     """Full bare Hamiltonian as a dense array in GHz, with labels and dims.
 
-    This analysis-only path applies the chip's approximation strategy while
-    leaving the authored Hamiltonian unchanged. It intentionally materializes
-    a dense matrix.
+    This path is for analysis only. It applies the chip's approximation
+    strategy, does not change the authored Hamiltonian, and intentionally
+    materializes a dense matrix.
     """
     from quchip.engine.assembly import _analysis_matrix_ghz
 
@@ -81,9 +82,9 @@ def bare_hamiltonian(
 def mode_blocks(dims: tuple[int, ...], labels: list[str], mode_label: str) -> tuple[Any, Any]:
     """``(p_mask, q_mask)`` boolean arrays over the product basis.
 
-    P is the eliminated mode in its ground state, Q everything else. The masks
-    are static NumPy arrays (dims are static), so they can index and slice
-    without touching the trace.
+    P is the eliminated mode in its ground state, and Q is everything else. The
+    masks are static NumPy arrays (dims are static), so they can index and
+    slice without affecting the trace.
     """
     mode_index = labels.index(mode_label)
     occupations = np.indices(dims).reshape(len(dims), -1)
@@ -109,24 +110,26 @@ def _reject_coupled_degeneracy(invalid: Any) -> None:
 
 
 def sylvester_generator(h: Any, p_mask: Any) -> tuple[Any, Any]:
-    """Generator ``S`` solving the P↔Q Sylvester condition, plus the block-gap diagnostic.
+    """Generator ``S`` that solves the P↔Q Sylvester condition, and the block-gap diagnostic.
 
-    ``E = diag(H)`` are the bare energies and ``V = H − diag(E)``;
-    ``S_ij = V_ij / (E_i − E_j)`` on the cross blocks only. The division is
-    double-``where`` guarded so an exactly degenerate cross pair with no
-    matrix element between it contributes zero — with a finite gradient, not
-    a ``NaN`` propagated backward through the unselected branch. A coupled
-    degeneracy raises. Traced execution uses a conditional error callback
-    and marks invalid outputs NaN, so an elided debug effect cannot return
-    a plausible generator. Valid vmapped calls can still dispatch the
-    predicate check to the host under JAX's conditional batching rule.
+    ``E = diag(H)`` are the bare energies and ``V = H − diag(E)``.
+    ``S_ij = V_ij / (E_i − E_j)`` on the cross blocks only. The division has a
+    double-``where`` guard, so an exactly degenerate cross pair with no matrix
+    element between it contributes zero with a finite gradient. It does not
+    propagate a ``NaN`` backward through the unselected branch. A coupled
+    degeneracy raises.
+
+    Traced execution uses a conditional error callback and marks invalid
+    outputs NaN, so an elided debug effect cannot return a plausible generator.
+    Valid vmapped calls can still dispatch the predicate check to the host
+    under JAX's conditional batching rule.
 
     Returns
     -------
     tuple
         ``(s, min_gap)``: the (anti-Hermitian) generator, and the smallest
-        ``|E_i − E_j|`` over cross entries carrying a nonzero ``V`` at
-        working precision — a traced scalar, diagnostics only
+        ``|E_i − E_j|`` over cross entries that carry a nonzero ``V`` at
+        working precision. The gap is a traced scalar for diagnostics only
         (``jnp.inf`` when no cross entry couples).
     """
     xp = concrete_array_module(h)
@@ -137,7 +140,7 @@ def sylvester_generator(h: Any, p_mask: Any) -> tuple[Any, Any]:
 
 
 def interaction_generator(energies: Any, interaction: Any) -> Any:
-    """First-order anti-Hermitian generator removing an interaction's off-diagonal part."""
+    """First-order anti-Hermitian generator that removes the off-diagonal part of an interaction."""
     xp = concrete_array_module(energies, interaction)
     denom = energies[:, None] - energies[None, :]
     v = interaction - xp.diag(xp.diagonal(interaction))
@@ -165,10 +168,10 @@ def h_effective_second_order(h: Any, s: Any, p_mask: Any) -> Any:
 
 
 def basis_row(p_index: Any, labels: list[str], dims: tuple[int, ...], excited_label: str | None = None) -> int:
-    """Row within the P-block ordering for the ground state, or one label's ``n=1`` occupation.
+    """Row in the P-block ordering for the ground state, or for the ``n=1`` occupation of one label.
 
     Shared basis bookkeeping between :func:`extract_pair_parameters` and any
-    caller reading out a matching row of a separately transformed P-block
+    caller that reads a matching row of a separately transformed P-block
     operator.
     """
     occupations = np.array(np.unravel_index(np.asarray(p_index), dims))
@@ -183,7 +186,7 @@ def basis_row(p_index: Any, labels: list[str], dims: tuple[int, ...], excited_la
 
 
 def bare_index(labels: list[str], dims: tuple[int, ...], excited_label: str | None = None) -> int:
-    """Full bare product-basis index for the ground state, or one label's ``n=1`` occupation."""
+    """Full bare product-basis index for the ground state, or for the ``n=1`` occupation of one label."""
     occ = [0] * len(dims)
     if excited_label is not None:
         occ[labels.index(excited_label)] = 1
@@ -197,10 +200,10 @@ def extract_pair_parameters(
     dims: tuple[int, ...],
     mode_label: str,
 ) -> dict:
-    """Read survivor parameters from the P-block matrix. Pure indexing, no physics choices.
+    """Read survivor parameters from the P-block matrix by pure indexing, with no physics choices.
 
     Returns ``{survivor: {"freq_after": E(1_s) − E(0)}}`` for every survivor,
-    plus ``("J", a, b): h_eff[<1_a|, |1_b>]`` for every survivor pair — the
+    and ``("J", a, b): h_eff[<1_a|, |1_b>]`` for every survivor pair, the
     effective exchange between the two single-excitation states.
     """
     xp = concrete_array_module(h_eff)
@@ -327,7 +330,7 @@ def _inverse_sqrt_hermitian(matrix: Any, iterations: int = 64) -> Any:
 
 @dataclass(frozen=True)
 class ExactSubspace:
-    """One orthonormal retained coordinate map and its exact Hamiltonian."""
+    """One orthonormal kept coordinate map and its exact Hamiltonian."""
 
     hamiltonian: Any
     embedding: Any
@@ -340,7 +343,7 @@ class ExactSubspace:
 
 
 def exact_subspace(eigenvalues: Any, eigenvectors: Any, kept_indices: Any, dressed_indices: Any) -> ExactSubspace:
-    """Use one Lowdin map for a complete retained Hamiltonian and every operator."""
+    """Use one Lowdin map for a complete kept Hamiltonian and every operator."""
     kept = np.array(kept_indices, dtype=int, copy=True)
     kept.flags.writeable = False
     xp = concrete_array_module(eigenvalues, eigenvectors, dressed_indices)
@@ -360,7 +363,7 @@ def exact_mode_subspace(h: Any, labels: list[str], dims: tuple[int, ...], mode_l
     """Diagonalize one model and validate its computational label assignment.
 
     With ``sectors``, the Hamiltonian conserves total excitation number and the
-    retained map keeps every sector separate.
+    kept map keeps every sector separate.
     """
     eigenvalues, eigenvectors, labeling = _exact_eigensystem(h, dims, sectors)
     p_mask, _ = mode_blocks(dims, labels, mode_label)
@@ -391,7 +394,7 @@ def exact_mode_subspace(h: Any, labels: list[str], dims: tuple[int, ...], mode_l
 
 def exact_pair_parameters(subspace: ExactSubspace, labels: list[str], dims: tuple[int, ...], mode_label: str,
                           survivor_labels: list[str]) -> dict:
-    """Report labeled energies and exchange entries from the complete retained model."""
+    """Report labeled energies and exchange entries from the complete kept model."""
     xp = concrete_array_module(subspace.energies)
     params = extract_pair_parameters(subspace.hamiltonian, subspace.kept_indices, labels, dims, mode_label)
     rows = {int(index): row for row, index in enumerate(subspace.kept_indices)}
@@ -411,13 +414,11 @@ def exact_pair_parameters(subspace: ExactSubspace, labels: list[str], dims: tupl
 def pathway_attribution(h: Any, s: Any, p_mask: Any, i_idx: int, j_idx: int) -> list[tuple[int, Any]]:
     """Virtual-state attribution for one ``H_eff`` matrix element.
 
-    The contribution of intermediate ``|k⟩`` to ``(½[S, V])_ij`` is
+    Intermediate ``|k⟩``'s contribution to ``(½[S, V])_ij`` is
     ``½ V_ik V_kj (1/(E_i − E_k) + 1/(E_j − E_k))``, evaluated directly from the supplied generator
-    and its commutator. Returns ``(k, amount)`` pairs
-    for the Q-block states carrying a nonzero path at working precision;
-    under tracing the nonzero filter cannot run, so every Q state is
-    returned (diagnostics remain complete either way — extra entries are
-    exact zeros).
+    and its commutator. Returns ``(k, amount)`` pairs for the Q-block states that carry a nonzero
+    path at working precision. Under tracing, the nonzero filter cannot run, so every Q state is
+    returned. Either way the diagnostics stay complete, because extra entries are exact zeros.
     """
     xp = concrete_array_module(h, s)
     v = h - xp.diag(xp.diagonal(h))

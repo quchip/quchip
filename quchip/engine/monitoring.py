@@ -21,12 +21,12 @@ def with_monitoring(problem: Any, efficiencies: Mapping[Any, Any], *, phases: Ma
     phases : mapping or None, default None
         Channel key or SLHChannel to homodyne phase in radians, relative to the
         captured integration frame. Omitted phases are zero. Channel coupling
-        phases are retained. This does not model downstream receiver processing.
+        phases are kept. This does not model downstream receiver processing.
 
     Returns
     -------
     SolveProblem or SolveBatch
-        Captured selection. Pure-state SSE requires all losses to be monitored
+        Captured selection. For pure-state SSE, all losses must be monitored
         with unit efficiency. Native SME owns inefficient state evolution.
 
     Notes
@@ -59,7 +59,7 @@ def with_monitoring(problem: Any, efficiencies: Mapping[Any, Any], *, phases: Ma
 
 
 def monitored_operators(problem: Any) -> tuple[list[Any], list[Any], list[Any]]:
-    """Lower physical couplings once; retain selected channel order and phases."""
+    """Lower physical couplings once, keeping selected channel order and phases."""
     backend = problem.backend
     xp = backend.array_module
     pure = problem.solver in ("ssesolve", "dssesolve")

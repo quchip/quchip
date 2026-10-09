@@ -1,8 +1,7 @@
 """Coupling base class and registry.
-
-Defined separately from concrete couplings to allow declarative models to
-subclass :class:`BaseCoupling` without a circular import.
 """
+# This module is separate from the concrete couplings, so declarative models can
+# subclass `BaseCoupling` without a circular import.
 
 from __future__ import annotations
 
@@ -24,33 +23,31 @@ if TYPE_CHECKING:
 class BaseCoupling(StateVersioned, Registrable, ABC, registry_root=True):
     """Abstract base for a two-body coupling between :class:`BaseDevice`s.
 
-    Subclasses own their local interaction Hamiltonian ``H_int`` acting on
-    ``H_a ⊗ H_b``. The engine embeds this local form into the full chip
-    tensor space; couplings never touch the engine directly.
+    Subclasses own their local interaction Hamiltonian ``H_int`` on
+    ``H_a ⊗ H_b``. The engine embeds this local form into the full chip tensor
+    space, and couplings never use the engine directly.
 
-    Subclasses auto-register via the shared
-    :class:`~quchip.utils.registry.Registrable` mixin — no manual
-    registration step is needed. Ensure the module defining the subclass is
-    imported so the registration runs.
+    Subclasses register automatically through the shared
+    :class:`~quchip.utils.registry.Registrable` mixin, without a manual
+    registration step. Import the module that defines the subclass so that the
+    registration runs.
 
     Parameters
     ----------
     device_a, device_b : BaseDevice or str
-        The two coupled devices, given as device objects or their label
-        strings. Label-string references are *late-bound*: the coupling
-        remembers the string, and :class:`Chip`
-        resolves it to the matching device instance at construction time.
-        Before that resolution the coupling cannot produce an interaction
-        Hamiltonian.
+        The two coupled devices. Label strings are *late-bound*: the coupling
+        keeps the string, and :class:`Chip` resolves it to the matching device
+        instance at construction time. Until then, the coupling cannot build an
+        interaction Hamiltonian.
     label : str, optional
-        Human-readable label. Auto-generated from ``_type_prefix`` when
-        omitted (e.g. ``"cap_0"`` for :class:`Capacitive`).
+        Human-readable label. If omitted, quchip derives it from
+        ``_type_prefix`` (e.g. ``"cap_0"`` for :class:`Capacitive`).
 
     Notes
     -----
-    All coupling parameters (``g``, any tunable envelope, etc.) must be
-    JAX-traceable so sweeps and gradient-based optimization work without
-    forcing concretization.
+    All coupling parameters (``g``, any tunable envelope, and others) must be
+    JAX-traceable, so sweeps and gradient-based optimization work without
+    forced concretization.
     """
 
     _type_prefix: ClassVar[str] = "coupling"
@@ -134,17 +131,17 @@ class BaseCoupling(StateVersioned, Registrable, ABC, registry_root=True):
 
     @property
     def device_a_label(self) -> str:
-        """Label of the first coupled device (works pre- and post-binding)."""
+        """Label of the first coupled device (works before and after binding)."""
         return resolve_label(self.device_a)
 
     @property
     def device_b_label(self) -> str:
-        """Label of the second coupled device (works pre- and post-binding)."""
+        """Label of the second coupled device (works before and after binding)."""
         return resolve_label(self.device_b)
 
     @property
     def is_resolved(self) -> bool:
-        """Whether both device references are bound to :class:`BaseDevice` instances."""
+        """True if both device references are bound to :class:`BaseDevice` instances."""
         return isinstance(self.device_a, BaseDevice) and isinstance(self.device_b, BaseDevice)
 
     def __repr__(self) -> str:
@@ -182,19 +179,19 @@ class BaseCoupling(StateVersioned, Registrable, ABC, registry_root=True):
     def coupling_strength_name(self) -> str:
         """Display name of the scalar :attr:`coupling_strength` parameter.
 
-        Default ``"g"`` (the conventional coupling-strength symbol, and the
-        actual attribute name on :class:`~quchip.chip.couplings.Coupling`).
-        :class:`~quchip.declarative.models.CouplingModel` overrides this to
-        the name of its first declared parameter field; a subclass with a
-        different primary-scalar convention overrides it directly.
+        The default is ``"g"``, the conventional coupling-strength symbol and
+        the attribute name on :class:`~quchip.chip.couplings.Coupling`.
+        :class:`~quchip.declarative.models.CouplingModel` overrides it with the
+        name of its first declared parameter field. A subclass with a different
+        primary-scalar convention overrides it directly.
         """
         return "g"
 
     def set_coupling_strength(self, value: Any) -> None:
         """Write the primary scalar named by :attr:`coupling_strength_name`.
 
-        Examples include ``g``, ``g_0``, and ``chi``. Override when the writable
-        attribute differs from that name.
+        Examples are ``g``, ``g_0``, and ``chi``. Override this method if the
+        writable attribute has a different name.
 
         Parameters
         ----------
@@ -206,8 +203,8 @@ class BaseCoupling(StateVersioned, Registrable, ABC, registry_root=True):
     def default_dressed_target(self) -> tuple[str, Any]:
         """Return this edge's component-owned inverse-design constraint.
 
-        The value is read directly from the declared coupling scalar.  No
-        chip-level observable is evaluated here.
+        The method reads the value directly from the declared coupling scalar
+        and does not evaluate a chip-level observable.
         """
         return self.default_fit_observable, self.coupling_strength
 
@@ -215,8 +212,8 @@ class BaseCoupling(StateVersioned, Registrable, ABC, registry_root=True):
     def interaction_hamiltonian(self) -> Operator:
         """Return the full ``H_int`` on the local ``H_a ⊗ H_b`` subspace.
 
-        Couplings author one complete interaction. The selected engine
-        approximation decides which resolved bands are retained.
+        Couplings author one complete interaction, and the selected engine
+        approximation determines which resolved bands are retained.
         """
         ...
 
@@ -227,11 +224,11 @@ class BaseCoupling(StateVersioned, Registrable, ABC, registry_root=True):
         ]
 
     def dropped_terms(self) -> list["DroppedTerm"]:
-        """Return advisory records for terms this coupling's model itself elides.
+        """Return advisory records for terms that this coupling's own model removes.
 
-        RWA band drops are reported generically during assembly; this hook is
-        for *other* approximations a coupling applies inside
-        :meth:`interaction_hamiltonian`. Default: nothing is dropped.
+        The assembly reports RWA band drops generically. This hook is for
+        *other* approximations that a coupling applies in
+        :meth:`interaction_hamiltonian`. By default, no terms are dropped.
         """
         return []
 
@@ -240,7 +237,7 @@ class BaseCoupling(StateVersioned, Registrable, ABC, registry_root=True):
         return ()
 
     def collapse_channels(self) -> tuple[CollapseChannel, ...]:
-        """Local Lindblad channels contributed by this coupling."""
+        """Return the local Lindblad channels that this coupling adds."""
         return ()
 
     def _collapse_channels_with_paths(

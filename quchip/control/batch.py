@@ -20,9 +20,9 @@ if TYPE_CHECKING:
 class BatchAxis:
     """One batchable axis over a scheduled entry or sequence-level field.
 
-    Created by :meth:`PulseHandle.vary`, :meth:`DelayHandle.vary`, or
-    :meth:`QuantumSequence.vary`, and consumed by
-    :meth:`QuantumSequence.build_batch`.
+    :meth:`PulseHandle.vary`, :meth:`DelayHandle.vary`, or
+    :meth:`QuantumSequence.vary` creates this axis.
+    :meth:`QuantumSequence.build_batch` consumes it.
 
     Attributes
     ----------
@@ -142,12 +142,12 @@ class PulseHandle(_BaseEntryHandle):
     """Reference to one scheduled pulse entry.
 
     Sweepable fields: ``freq``, ``phase``, ``start_time``, and declared
-    envelope parameters (e.g. ``amplitude``, ``duration``, ``sigmas``).
+    envelope parameters (for example ``amplitude``, ``duration``, ``sigmas``).
 
     Parameters
     ----------
     sequence : QuantumSequence
-        Sequence owning the scheduled pulse.
+        Sequence that owns the scheduled pulse.
     entry_index : int
         Pulse entry index in the sequence.
     """
@@ -177,7 +177,7 @@ class DelayHandle(_BaseEntryHandle):
     Parameters
     ----------
     sequence : QuantumSequence
-        Sequence owning the scheduled delay.
+        Sequence that owns the scheduled delay.
     entry_index : int
         Delay entry index in the sequence.
     """

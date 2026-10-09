@@ -1,9 +1,8 @@
 """Public package surface for quchip.
 
-Visualization helpers and optional third-party interop are loaded lazily
-through the module-level
-:func:`__getattr__` so that ``import quchip`` stays fast and does not
-force any optional dependency on the core install.
+The module-level :func:`__getattr__` loads the visualization helpers and the
+optional third-party interop lazily, so ``import quchip`` stays fast and the
+core install does not force an optional dependency.
 """
 
 from __future__ import annotations
@@ -333,31 +332,30 @@ __all__ = [
 def enable_compilation_cache(path: str | None = None, *, min_compile_time_secs: float = 0.01) -> str:
     """Enable JAX's on-disk persistent compilation cache (opt-in).
 
-    JAX compiles each traced kernel (the ``label_eigensystem`` scan, ``eigh`` /
-    ``diag`` / broadcast kernels, dynamiqs solver steps, ...) to XLA when it
-    is called for the first time in a process. Those compilations are
-    memoized in memory within a process, but every *new* process re-pays
-    them. This helper points JAX at a per-user on-disk cache so a later
-    process whose ``(shape, policy, jaxlib)`` fingerprint matches loads the
-    compiled executable instead of recompiling.
+    JAX compiles each traced kernel to XLA on its first call in a process.
+    Traced kernels include the ``label_eigensystem`` scan, ``eigh`` / ``diag``
+    / broadcast kernels, and dynamiqs solver steps. JAX memoizes these
+    compilations in memory, but each *new* process compiles them again. This
+    helper points JAX at a per-user on-disk cache, so a later process with a
+    matching ``(shape, policy, jaxlib)`` fingerprint loads the compiled
+    executable instead of recompiling.
 
-    Fully transparent to ``jit`` / ``grad`` / ``vmap`` — it only changes where
-    compiled artifacts are stored, never traced values or physics. It is opt-in:
-    the package never writes to the user's disk unless this is called
-    explicitly. JAX keys cache entries on the
-    ``jaxlib`` version, so a toolchain upgrade produces fresh entries rather
-    than loading a stale executable.
+    This helper is transparent to ``jit`` / ``grad`` / ``vmap``: it changes
+    only where compiled artifacts live, never traced values or physics. The
+    package never writes to the user's disk unless you call it explicitly. JAX
+    keys cache entries on the ``jaxlib`` version, so a toolchain upgrade makes
+    fresh entries instead of loading a stale executable.
 
     Parameters
     ----------
     path
         Cache directory. Defaults to ``$XDG_CACHE_HOME/quchip/jax`` (or
-        ``~/.cache/quchip/jax``) — a per-user path, never a shared/system one,
-        so the cache stays inside the user's trust boundary.
+        ``~/.cache/quchip/jax``). This per-user path is never a shared or
+        system path, so the cache stays in the user's trust boundary.
     min_compile_time_secs
-        Skip caching kernels that compile faster than this. The default
-        ``0.01`` captures quchip's sub-second kernels that JAX's ``~1s`` default
-        would otherwise never persist.
+        Do not cache kernels that compile faster than this time. The default
+        ``0.01`` captures quchip's sub-second kernels, which the JAX default of
+        ``~1s`` would never persist.
 
     Returns
     -------
@@ -381,10 +379,9 @@ def enable_compilation_cache(path: str | None = None, *, min_compile_time_secs: 
 def __getattr__(name: str):
     """Resolve lazy exports on first access.
 
-    Looked up in order: optional third-party interop, then visualization
-    helpers. Any attribute not present in either table raises the
-    standard :class:`AttributeError` so ``hasattr`` and ``dir``
-    behave correctly.
+    The lookup order is optional third-party interop, then visualization
+    helpers. An attribute that is not in either table raises the standard
+    :class:`AttributeError`, so ``hasattr`` and ``dir`` behave correctly.
     """
     for lazy in (_LAZY_INTEROP_EXPORTS, _LAZY_VIZ_EXPORTS):
         if name in lazy:
@@ -394,13 +391,12 @@ def __getattr__(name: str):
 
 
 def __dir__() -> list[str]:
-    """Include the lazy-export names alongside eagerly bound module attributes.
-
-    Without this, ``dir(quchip)`` would only show names already present
-    in ``globals()`` — a lazy export resolves fine through
-    :func:`__getattr__` (so ``hasattr``/direct access work) but would
-    never appear in ``dir()`` or tab-completion until first accessed.
+    """Include the lazy-export names with the eagerly bound module attributes.
     """
+    # Without this function, `dir(quchip)` shows only the names already in
+    # `globals()`. A lazy export resolves through `__getattr__`, so `hasattr`
+    # and direct access work, but it does not appear in `dir()` or
+    # tab-completion until first access.
     return sorted(set(globals()) | set(_LAZY_INTEROP_EXPORTS) | set(_LAZY_VIZ_EXPORTS))
 
 from quchip.engine.truncation import with_truncation

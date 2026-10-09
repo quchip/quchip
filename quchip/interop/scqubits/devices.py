@@ -1,18 +1,18 @@
 """Shipped scqubits <-> quchip device mappings.
 
 Each :class:`~quchip.interop.base.ModelMapping` here transcribes one scqubits
-circuit-QED object into the quchip device that carries the same spectrum, and
-(where the inversion is well-defined) back again. Import reads the source
-object's native parameters and hands them to the matching quchip constructor,
-which rebuilds the Hamiltonian from those parameters — so the imported device
-stays differentiable in them. Export reads the concrete device parameters,
-guards each against JAX tracers via :func:`maybe_concrete_scalar`, and
-reconstructs the scqubits object.
+circuit-QED object into the quchip device that carries the same spectrum. Where
+the inversion is well-defined, the mapping also goes back. Import reads the
+source object's native parameters and passes them to the matching quchip
+constructor. The constructor rebuilds the Hamiltonian from those parameters, so
+the imported device stays differentiable in them. Export reads the concrete
+device parameters, guards each against JAX tracers via
+:func:`maybe_concrete_scalar`, and reconstructs the scqubits object.
 
-Every mapping's docstring states its parameter translation; these are the
-reference examples for authoring further mappings. scqubits stores energies in
-its global unit, ``scqubits.get_units()`` (GHz by default); every energy is
-converted between that unit and quchip's GHz at this boundary.
+Each mapping's docstring states its parameter translation and serves as a
+reference example for new mappings. scqubits stores energies in its global
+unit, ``scqubits.get_units()`` (GHz by default). Every energy is converted
+between that unit and quchip's GHz at this boundary.
 """
 
 from __future__ import annotations
@@ -121,10 +121,10 @@ class TunableTransmonMapping(ModelMapping):
            \\sqrt{\\cos^2(\\pi\\Phi) + d^2 \\sin^2(\\pi\\Phi)},
 
     with ``d`` the junction asymmetry. Import evaluates :math:`E_J(\\Phi)` at
-    the object's ``flux`` and hands the resulting fixed-frequency transmon to
-    :class:`ChargeBasisTransmon`; the remaining parameters copy across exactly
-    as in :class:`TransmonMapping`. There is no export: a single frequency does
-    not determine ``(EJmax, d, flux)``.
+    the object's ``flux`` and passes the resulting fixed-frequency transmon to
+    :class:`ChargeBasisTransmon`. The other parameters copy across exactly as
+    in :class:`TransmonMapping`. There is no export, because a single frequency
+    does not set ``(EJmax, d, flux)``.
     """
 
     source = "scqubits.TunableTransmon"
@@ -155,7 +155,7 @@ class TunableTransmonMapping(ModelMapping):
 class FluxoniumMapping(ModelMapping):
     """Map ``scqubits.Fluxonium`` to and from :class:`~quchip.devices.fluxonium.Fluxonium`.
 
-    Parameter copy across the three circuit energies plus the external flux:
+    Parameter copy across the three circuit energies and the external flux:
 
     ==================  ======================
     scqubits            quchip
@@ -167,12 +167,12 @@ class FluxoniumMapping(ModelMapping):
     ``truncated_dim``   ``levels``
     ==================  ======================
 
-    The native discretizations differ — scqubits uses a harmonic-oscillator
-    basis of size ``cutoff``, quchip a finite-difference phase grid of ``num_basis``
-    points — so quchip keeps its own default grid rather than mirroring
-    ``cutoff``. Both represent the fluxonium Hamiltonian, but convergence of
-    each discretization must be checked for the chosen parameters.
-    Export uses scqubits' ``cutoff=110`` default.
+    The native discretizations differ: scqubits uses a harmonic-oscillator basis of
+    size ``cutoff``, whereas quchip uses a finite-difference phase grid of
+    ``num_basis`` points. Therefore quchip keeps its own default grid and does not
+    mirror ``cutoff``. Both represent the fluxonium Hamiltonian, but check each
+    discretization's convergence for the selected parameters. Export uses the
+    scqubits default ``cutoff=110``.
     """
 
     source = "scqubits.Fluxonium"
@@ -243,17 +243,18 @@ class KerrOscillatorMapping(ModelMapping):
 
     scqubits writes the Kerr oscillator as
     :math:`H = E_{\\rm osc}\\, a^\\dagger a - K\\, a^\\dagger a^\\dagger a a`,
-    whose eigenvalues are :math:`E_n = (E_{\\rm osc} + K)\\, n - K\\, n^2`.
-    quchip's :class:`KerrCavity` writes :math:`H = \\omega\\, \\hat n - K'\\,
-    \\hat n(\\hat n - 1)`, with eigenvalues
+    with the eigenvalues :math:`E_n = (E_{\\rm osc} + K)\\, n - K\\, n^2`. The
+    quchip :class:`KerrCavity` writes
+    :math:`H = \\omega\\, \\hat n - K'\\, \\hat n(\\hat n - 1)`, with the
+    eigenvalues
     :math:`E_n = \\omega\\, n - K'\\, n(n-1) = (\\omega + K')\\, n - K'\\, n^2`.
 
-    Matching term by term: the :math:`n^2` coefficient gives ``kerr = K``, and
-    the :math:`n` coefficient (with ``kerr = K`` already fixed) gives
-    ``freq = E_osc``. Both spectra sit at :math:`E_0 = 0`, so the translation
-    is the direct copy ``freq = E_osc``, ``kerr = K`` — no sign flip. Import
-    only: :class:`KerrCavity` requires ``kerr >= 0`` and models the ``K > 0``
-    (self-focusing) branch scqubits uses.
+    Match the terms one by one. The :math:`n^2` coefficient gives ``kerr = K``.
+    With ``kerr = K`` fixed, the :math:`n` coefficient gives ``freq = E_osc``.
+    Both spectra start at :math:`E_0 = 0`, so the translation is the direct
+    copy ``freq = E_osc``, ``kerr = K``, with no sign flip. Import only:
+    :class:`KerrCavity` requires ``kerr >= 0``, and it models the ``K > 0``
+    (self-focusing) branch that scqubits uses.
     """
 
     source = "scqubits.KerrOscillator"
@@ -274,8 +275,8 @@ class KerrOscillatorMapping(ModelMapping):
 class GenericQubitMapping(ModelMapping):
     """Map ``scqubits.GenericQubit`` to :class:`DuffingTransmon` (import-only).
 
-    The generic two-level system :math:`H = \\tfrac12 E\\, \\sigma_z` has level
-    splitting ``E``. It maps to a two-level :class:`DuffingTransmon` with
+    The generic two-level system :math:`H = \\tfrac12 E\\, \\sigma_z` has the
+    level splitting ``E``. It maps to a two-level :class:`DuffingTransmon` with
     ``freq = E``, ``anharmonicity = 0`` (irrelevant at two levels), and
     ``levels = 2``.
     """
@@ -297,16 +298,17 @@ class GenericQubitMapping(ModelMapping):
 class DuffingTransmonMapping(ModelMapping):
     """Map :class:`DuffingTransmon` to ``scqubits.Transmon`` (export-only).
 
-    A Duffing transmon is specified by ``(freq, anharmonicity)``; scqubits'
+    A Duffing transmon is specified by ``(freq, anharmonicity)``. The scqubits
     ``Transmon.find_EJ_EC`` inverts that pair to the ``(EJ, EC)`` that best
-    reproduce the same 0->1 splitting and anharmonicity, from which the
-    charge-basis transmon is built (``truncated_dim = device.levels``).
-    ``ncut`` (default 30, scqubits' own inversion default) is an export
-    option, passed identically to both ``find_EJ_EC`` and the reconstructed
-    ``Transmon`` so the two never disagree. :class:`DuffingTransmon` has no
-    offset-charge concept of its own to translate, so the reconstructed
-    transmon is built at the charge sweet spot ``ng=0``. Import-only in the
-    other direction is already covered by :class:`TransmonMapping`.
+    reproduce the same 0->1 splitting and anharmonicity. The export builds the
+    charge-basis transmon from these values
+    (``truncated_dim = device.levels``). ``ncut`` (default 30, the scqubits
+    inversion default) is an export option. The same ``ncut`` goes to
+    ``find_EJ_EC`` and to the reconstructed ``Transmon``, so the two always
+    agree. :class:`DuffingTransmon` has no offset-charge concept of its own to
+    translate, so the export builds the transmon at the charge sweet spot
+    ``ng=0``. The other direction is import only and already covered by
+    :class:`TransmonMapping`.
     """
 
     library = "scqubits"
@@ -329,27 +331,27 @@ class DuffingTransmonMapping(ModelMapping):
 class ZeroPiMapping(ModelMapping):
     """Map ``scqubits.ZeroPi`` to :class:`~quchip.interop.eigenbasis.EigenbasisDevice` (import-only).
 
-    ZeroPi is a two-mode circuit (:math:`\\phi`, :math:`\\theta`) diagonalized
-    on a joint phi-grid / charge-basis product space; quchip has no native
-    model for it, since none of its circuit devices carry a second coordinate.
-    Rather than reimplementing that two-mode Hamiltonian, this mapping takes
-    the frozen-snapshot path: diagonalize with scqubits once, then hand the
-    resulting energies and eigenbasis-projected operators to
-    :class:`~quchip.interop.eigenbasis.EigenbasisDevice`, which treats an
-    already-diagonal spectrum as its native basis (see that class's
-    docstring). The one ``obj.eigensys(...)`` call is reused for both
-    operators via scqubits' ``energy_esys=`` argument
-    (:meth:`~scqubits.core.qubit_base.QubitBaseClass.process_op`), so the
-    (comparatively expensive) sparse diagonalization runs exactly once.
+    ZeroPi is a two-mode circuit (:math:`\\phi`, :math:`\\theta`), which
+    scqubits diagonalizes on a joint phi-grid / charge-basis product space.
+    There is no native quchip model for it, because none of its circuit devices
+    carry a second coordinate. Instead of reimplementing that two-mode
+    Hamiltonian, this mapping takes the frozen-snapshot path and diagonalizes
+    with scqubits. It passes the resulting energies and eigenbasis-projected
+    operators to :class:`~quchip.interop.eigenbasis.EigenbasisDevice`. That
+    class uses an already-diagonal spectrum as its native basis (see its
+    docstring).
 
-    The snapshot reproduces ``obj``'s spectrum and charge/phase matrix
-    elements exactly, at the parameter point it was taken at, but it is a
-    frozen numeric table, not a parametric Hamiltonian model. Unlike the
-    parametric mappings above, the imported device is not differentiable with
-    respect to ZeroPi's circuit parameters (``EJ``, ``EL``, ``ECJ``, ``EC``,
-    ``ng``, ``flux``). This is the reference path for wrapping any other
-    scqubits (or third-party) type quchip has no native model for.
+    The snapshot reproduces the spectrum and charge/phase matrix elements of
+    ``obj`` exactly at its parameter point, but it is a frozen numeric table,
+    not a parametric Hamiltonian model. Unlike the parametric mappings above,
+    the imported device is not differentiable in the ZeroPi circuit parameters
+    (``EJ``, ``EL``, ``ECJ``, ``EC``, ``ng``, ``flux``). This path is the
+    reference for wrapping any other scqubits (or third-party) type that has no
+    native quchip model.
     """
+    # The one `obj.eigensys(...)` call is reused for both operators via the
+    # scqubits `energy_esys=` argument (`process_op`), so the expensive sparse
+    # diagonalization runs exactly once.
 
     source = "scqubits.ZeroPi"
     target = None

@@ -10,31 +10,28 @@ and :math:`\\omega` is the bare cavity frequency.
 Approximation
 -------------
 Strictly harmonic / non-interacting: no Kerr, no cross-Kerr, no drive
-backaction beyond what couplings/drives themselves introduce. This is
-the ideal cavity / transmission-line-resonator mode — suitable for
-readout cavities, filter modes, photonic oscillators, and cavity-QED
-benchmarks where anharmonicity is either absent or modelled
-separately. For Kerr / anharmonic cavities, use a device that owns an
-explicit ``(K/2) n(n-1)`` term (see ``examples/kerr_cat_qubit.py``).
+backaction other than what couplings/drives themselves introduce. It models the
+ideal cavity / transmission-line-resonator mode and applies to readout
+cavities, filter modes, photonic oscillators, and cavity-QED benchmarks, where
+anharmonicity is absent or modelled separately. For Kerr / anharmonic cavities,
+use a device that owns an explicit ``(K/2) n(n-1)`` term (see
+``examples/kerr_cat_qubit.py``).
 
 Optional dissipation
 --------------------
-Passing ``internal_quality_factor = Q`` adds a single unobserved photon-loss collapse
-operator ``sqrt(kappa) a`` with :math:`\\kappa = 2\\pi\\,f/Q`
+If you pass ``internal_quality_factor = Q``, the device adds a single unobserved
+photon-loss collapse operator ``sqrt(kappa) a`` with :math:`\\kappa = 2\\pi\\,f/Q`
 (energy-decay rate, 1/ns).
 
 **Quality-factor convention (physics, not a unit conversion).**
-``internal_quality_factor`` is defined against the *ordinary* frequency
-``freq`` (GHz) carried by this class. The resulting decay rate is
-:math:`\\kappa = 2\\pi\\,f/Q` (energy decay, 1/ns). The :math:`2\\pi`
-here is intrinsic to the physical definition of Q — not an
-ordinary→angular units conversion bolted on at the engine boundary.
-Concretely, ``Q/(2*pi)`` is the number of ordinary-frequency cycles per
-e-folding of energy, so energy decays as
+``internal_quality_factor`` is defined against this class's *ordinary*
+frequency ``freq`` (GHz), which gives the decay rate
+:math:`\\kappa = 2\\pi\\,f/Q` (energy decay, 1/ns). The :math:`2\\pi` here is
+intrinsic to the physical definition of Q, not an ordinary→angular units
+conversion at the engine boundary. ``Q/(2*pi)`` is the number of
+ordinary-frequency cycles per e-folding of energy, so energy decays as
 :math:`e^{-t/\\tau} = e^{-\\kappa t}` with
-:math:`\\kappa = \\omega/Q = 2\\pi f/Q`. For this reason the
-:math:`2\\pi` lives in the resonator's photon-loss noise channel and
-must not be moved to the units boundary in ``assembly.py``.
+:math:`\\kappa = \\omega/Q = 2\\pi f/Q`.
 
 Noise hooks inherited from :class:`~quchip.devices.base.BaseDevice`
 (``T1``, ``T2``, ``thermal_occupation``) produce the Lindblad
@@ -56,6 +53,9 @@ Example
 >>> r.freq, r.levels
 (7.2, 6)
 """
+# Because the 2π is intrinsic to the definition of Q, the `2\\pi` lives in the
+# resonator's photon-loss noise channel and must not be moved to the units
+# boundary in `assembly.py`.
 
 from __future__ import annotations
 
@@ -72,32 +72,32 @@ from quchip.devices.fock import FockDevice
 
 
 class Resonator(FockDevice):
-    """Linear microwave / photonic resonator — pure harmonic oscillator.
+    """Linear microwave / photonic resonator (pure harmonic oscillator).
 
     Parameters
     ----------
     freq : float
-        Bare cavity frequency ω in GHz. Must be positive. May be a JAX
-        tracer for sweeps / gradients.
+        Bare cavity frequency ω in GHz. Must be positive. Can be a JAX tracer
+        for sweeps / gradients.
     internal_quality_factor : float | None, optional
-        Internal Q referenced to the ordinary frequency ``freq`` in GHz.
-        When set, adds a photon-loss Lindblad channel
-        ``sqrt(2*pi*freq/Q) a`` with energy-decay rate
-        ``kappa = 2*pi*freq/Q`` in 1/ns. Must be positive. Like every
-        noise parameter, it may be set after construction or cleared with
-        ``None``; the next simulation reflects the current value.
+        Internal Q referenced to the ordinary frequency ``freq`` in GHz. When
+        set, it adds a photon-loss Lindblad channel ``sqrt(2*pi*freq/Q) a``
+        with energy-decay rate ``kappa = 2*pi*freq/Q`` in 1/ns. Must be
+        positive. Like every noise parameter, it can be set after construction
+        or cleared with ``None``, and the next simulation uses the current
+        value.
     levels : int, default 10
-        Fock-space truncation. Choose comfortably above the maximum
-        expected photon occupation.
+        Fock-space truncation. Choose it well above the maximum expected photon
+        occupation.
     label : str | None, default None
-        If omitted, auto-generated as ``resonator_{idx}`` via the shared
-        labeling counter.
+        If omitted, the label is ``resonator_{idx}`` with the shared labeling
+        counter.
     T1 : float or None, default None
-        Energy-relaxation time in ns; ``None`` disables T1 relaxation.
+        Energy-relaxation time in ns. ``None`` disables T1 relaxation.
     T2 : float or None, default None
-        Total 0-1 coherence time in ns; if both are set, ``T2 <= 2*T1``.
+        Total 0-1 coherence time in ns. If both are set, ``T2 <= 2*T1``.
     thermal_occupation : float or None, default None
-        Dimensionless mean bath occupation; ``None`` disables absorption.
+        Dimensionless mean bath occupation. ``None`` disables absorption.
 
     References
     ----------
@@ -151,19 +151,18 @@ class Resonator(FockDevice):
         return notes
 
     def intrinsic_decay_rate(self) -> Any | None:
-        """Combined lowering-channel rate: ``κ = 2π·freq/Q`` photon loss plus the thermal-emission rate.
+        """Return the combined lowering-channel rate: ``κ = 2π·freq/Q`` photon loss plus the thermal-emission rate.
 
         Both :attr:`internal_quality_factor` and ``T1``/``thermal_occupation`` build
-        independent lowering-operator collapse channels on this device (the
-        ``internal_photon_loss`` channel, a pure loss channel unaffected by
-        ``thermal_occupation``, and the inherited
-        thermal-emission channel — see
+        independent lowering-operator collapse channels on this device. The first is
+        the ``internal_photon_loss`` channel, a pure loss channel that
+        ``thermal_occupation`` does not affect. The second is the inherited
+        thermal-emission channel. See
         :meth:`~quchip.devices.base.BaseDevice.intrinsic_decay_rate` for its
-        ``(n̄+1)/T1`` / ``n̄+1`` formulas); this hook reports their summed
-        rate rather than either alone, so a caller reading one scalar decay
-        rate (e.g. an adiabatic-elimination Purcell fold) does not
-        under-count decay when both are set. ``None`` only when neither is
-        set.
+        ``(n̄+1)/T1`` / ``n̄+1`` formulas. This hook reports their summed rate, not
+        either rate alone. A caller that reads one scalar decay rate, e.g. an
+        adiabatic-elimination Purcell fold, then does not under-count decay when
+        both are set. ``None`` only when neither is set.
         """
         kappa = (
             None

@@ -1,26 +1,27 @@
 """Device-target elimination: adiabatic reduction of a far-detuned mode.
 
-A mode touching **one** survivor (leaf) contributes a retained Hamiltonian
-correction and inherited channels when the removed components dissipate.
-Surviving devices keep their authored parameters and local bases. A mode touching **two or more**
-survivors — bus / tunable-coupler (bridge) or several at once — additionally
-induces a mediated exchange ``J = g_a g_b / 2 · (1/Δ_a + 1/Δ_b)`` between every
-survivor pair, represented by its own edge. Authored direct couplings keep
-their parameters, channels and controls. For capacitive legs, a fixed eliminated mode emits a
-:class:`~quchip.chip.couplings.Capacitive`; a frequency-controlled mode (or an
-already-modulable direct edge) emits a
-:class:`~quchip.chip.couplings.TunableCapacitive`. Other interactions emit a
-first-transition exchange edge; the retained correction holds the remaining elements.
+A mode that touches **one** survivor (leaf) contributes a kept Hamiltonian correction, plus
+inherited channels when the removed components dissipate. Surviving devices keep their
+authored parameters and local bases. A mode can touch **two or more** survivors: a bus /
+tunable-coupler (bridge), or several survivors at the same time. Such a mode also induces a
+mediated exchange ``J = g_a g_b / 2 · (1/Δ_a + 1/Δ_b)`` between every survivor pair, which its
+own edge represents. Authored direct couplings keep their parameters, channels and controls.
+
+For capacitive legs, a fixed eliminated mode emits a :class:`~quchip.chip.couplings.Capacitive`.
+A frequency-controlled mode (or a direct edge that is already modulable) emits a
+:class:`~quchip.chip.couplings.TunableCapacitive`. Other interactions emit a first-transition
+exchange edge, and the kept correction holds the remaining elements.
 
 The reduction route (``method="sw"`` / ``method="exact"``) is a
-:class:`~quchip.chip.transformations.methods.ReductionMethod` strategy; the
-generic P/Q partitioning kernels live in :mod:`quchip.chip.sw`. This module
-owns the fold — reading a route's reduced parameters into a rebuilt chip and
-retargeting stranded control lines — and registers a device-kind
+:class:`~quchip.chip.transformations.methods.ReductionMethod` strategy. This
+module registers a device-kind
 :class:`~quchip.chip.transformations.dispatch.EliminationTarget` at import time,
 so :func:`~quchip.chip.transformations.dispatch.eliminate` dispatches any device
-label here without importing this module directly.
+label here and you need not import this module directly.
 """
+# The generic P/Q partitioning kernels are in `quchip.chip.sw`. This module owns
+# the fold, which reads a route's reduced parameters into a rebuilt chip and
+# retargets stranded control lines.
 
 from __future__ import annotations
 
@@ -117,11 +118,9 @@ def _real(value: Any) -> Any:
 
 
 def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
-    """Adiabatically eliminate a far-detuned device, folding its effect into the survivors.
+    """Adiabatically eliminate a far-detuned device and fold its effect into the survivors.
 
-    The registry guarantees ``target`` names a device on ``chip``, and
-    :func:`eliminate` has already validated ``method``. See
-    :func:`~quchip.chip.transformations.dispatch.eliminate` for the full
+    See :func:`~quchip.chip.transformations.dispatch.eliminate` for the full
     physics contract and the ``method`` semantics.
 
     Parameters
@@ -129,7 +128,7 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
     chip
         Source chip (never mutated).
     target
-        The device to eliminate — label string or object.
+        The device to eliminate, as a label string or object.
     method
         The reduction route (``"sw"`` or ``"exact"``), already validated.
 
@@ -137,6 +136,8 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
     -------
     EliminationResult
     """
+    # The registry guarantees that `target` names a device on `chip`, and
+    # `eliminate` already validated `method`.
     mode_label = resolve_label(target)
     touching = [c for c in chip.couplings if mode_label in (c.device_a_label, c.device_b_label)]
     survivors = []

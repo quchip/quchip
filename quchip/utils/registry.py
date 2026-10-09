@@ -1,13 +1,13 @@
 """Subclass registration and serialization dispatch.
 
-Declaring ``class BaseThing(Registrable, registry_root=True)`` creates a
+The declaration ``class BaseThing(Registrable, registry_root=True)`` makes a
 registry for that family. Concrete subclasses register under their qualified
-names; registry roots and abstract classes are excluded.
+names. The registry excludes registry roots and abstract classes.
 
 ``to_dict`` supplies the ``type`` tag. A registry root's ``from_dict`` finds
-the concrete class and forwards the payload and any extra arguments to it.
-Concrete classes implement ``from_dict`` or ``_from_dict_payload``; the
-default payload constructor is ``cls()``.
+the concrete class and passes it the payload and all extra arguments. Concrete
+classes implement ``from_dict`` or ``_from_dict_payload``. The default payload
+constructor is ``cls()``.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ def _is_abstract(cls: type) -> bool:
 
 
 class Registrable:
-    """Mixin owning a subclass registry and the shared (de)serialization contract."""
+    """Mixin that owns a subclass registry and the shared (de)serialization contract."""
 
     #: Per-root mapping ``fully-qualified-name -> concrete subclass``. Installed
     #: fresh on each registry root; inherited (shared) by every subclass below it.
@@ -47,12 +47,12 @@ class Registrable:
     _registry_root: ClassVar[type["Registrable"]]
 
     def __init_subclass__(cls, *, registry_root: bool = False, **kwargs: Any) -> None:
-        """Register *cls*, or seed a fresh registry when *registry_root* is set.
+        """Register *cls*, or start a new registry when *registry_root* is set.
 
-        ``registry_root=True`` installs a fresh :attr:`_registry` on *cls*
-        and excludes *cls* itself from it. Otherwise, concrete subclasses
-        register under their fully-qualified name (:meth:`_type_key`);
-        abstract subclasses are skipped.
+        ``registry_root=True`` installs a new :attr:`_registry` on *cls* and
+        excludes *cls* from that registry. Otherwise, concrete subclasses
+        register under their fully qualified name (:meth:`_type_key`). Abstract
+        subclasses are skipped.
         """
         super().__init_subclass__(**kwargs)
         if registry_root:
@@ -70,26 +70,26 @@ class Registrable:
         return f"{cls.__module__}.{cls.__qualname__}"
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize the type tag; subclasses extend with their own fields."""
+        """Serialize the type tag; subclasses add their own fields."""
         return {"type": type(self)._type_key()}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], *args: Any, **kwargs: Any) -> Any:
-        r"""Reconstruct from :meth:`to_dict` output.
+        r"""Reconstruct the object from the output of :meth:`to_dict`.
 
-        On the registry root, dispatch to the concrete subclass named by
-        ``data["type"]`` (forwarding ``*args`` / ``**kwargs``). On a concrete
-        subclass, defer to :meth:`_from_dict_payload`. Concrete subclasses
-        that carry payload override this method directly.
+        On the registry root, dispatch to the concrete subclass that
+        ``data["type"]`` names, and send ``*args`` / ``**kwargs`` to it. On a
+        concrete subclass, use :meth:`_from_dict_payload`. Concrete subclasses
+        that carry a payload override this method directly.
 
         Parameters
         ----------
         data : dict
-            Serialized declaration containing the fully qualified type key.
+            Serialized declaration that contains the fully qualified type key.
         *args : object
-            Additional positional reconstruction arguments, such as coupling endpoints.
+            Additional positional arguments for reconstruction, for example coupling endpoints.
         **kwargs : object
-            Keyword reconstruction arguments accepted by the registered class.
+            Keyword arguments for reconstruction that the registered class accepts.
         """
         if cls is cls._registry_root:
             type_key = str(data["type"])

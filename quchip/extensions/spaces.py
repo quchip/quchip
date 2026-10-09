@@ -42,7 +42,7 @@ class SpinHalf(DeviceModel):
     Parameters
     ----------
     freq : float
-        Transition frequency :math:`\omega` in GHz; positive.
+        Transition frequency :math:`\omega` in GHz. Must be positive.
     basis : {None, "native", "eigen"}, keyword-only
         Solver basis request. ``None`` uses the chip default.
     levels : int, default 2
@@ -50,11 +50,11 @@ class SpinHalf(DeviceModel):
     label : str or None, default None
         Device label.
     T1 : float or None, default None
-        Energy-relaxation time in ns; ``None`` disables T1 relaxation.
+        Energy-relaxation time in ns. ``None`` disables T1 relaxation.
     T2 : float or None, default None
-        Total 0-1 coherence time in ns; if both are set, ``T2 <= 2*T1``.
+        Total 0-1 coherence time in ns. If both are set, ``T2 <= 2*T1``.
     thermal_occupation : float or None, default None
-        Dimensionless mean bath occupation; ``None`` disables absorption.
+        Dimensionless mean bath occupation. ``None`` disables absorption.
     """
 
     _type_prefix = "spin_half"

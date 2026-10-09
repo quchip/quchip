@@ -13,8 +13,8 @@ from quchip.declarative.ops import LocalOps
 class FockDevice(DeviceModel):
     """Device with explicit conventional oscillator coupling operators.
 
-    Subclasses still own their Hamiltonian and approximation. This base only
-    declares the standard Fock-space operators used by charge, phase, and
+    Subclasses own their Hamiltonian and approximation. This base declares only
+    the standard Fock-space operators used by charge, phase, and
     frequency-modulating drives.
     Parameters
     ----------

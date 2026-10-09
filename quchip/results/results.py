@@ -1,10 +1,10 @@
 """Backend-agnostic wrapper around solver output.
 
-The engine wraps each backend's solver output here so callers use the same
+The engine wraps each backend's solver output here, so callers use the same
 state, expectation, partial-trace, population, and batch interfaces.
 
 Numerical population and overlap accessors return NumPy arrays for QuTiP and
-JAX arrays for Dynamiqs, including eager calls. Host conversion is explicit.
+JAX arrays for Dynamiqs, even for eager calls. Host conversion is explicit.
 """
 
 from __future__ import annotations
@@ -39,11 +39,10 @@ class ObservableTrace:
     ----------
     values
         Post-processed expectation values over time (e.g. demodulated,
-        phase-corrected, band-summed). This is what user code normally
-        wants.
+        phase-corrected, band-summed). User code usually reads these.
     raw
-        The same quantity before post-processing — useful for debugging
-        frame conventions, band decomposition, and demodulation.
+        The same quantity before post-processing. Use it to debug frame
+        conventions, band decomposition, and demodulation.
     """
 
     values: Any
@@ -54,12 +53,11 @@ class ObservableTrace:
 class OutputFieldTrace:
     """Complete transient field reported at one external reference plane.
 
-    ``amplitude`` is the complex mean field ``<b_out>`` and ``photon_flux``
-    is the normally ordered ``<b_out dagger b_out>`` in photons/ns.
-    ``raw_*`` retain the same moments at the Markov boundary, before propagation
-    through the outbound reference run.
-    Complex amplitudes use the physics ``e^{-iωt}`` convention. Conjugate
-    ``raw_amplitude`` to supply a boundary template to ``iq_readout()``.
+    ``amplitude`` is the complex mean field ``<b_out>``. ``photon_flux`` is the
+    normally ordered ``<b_out dagger b_out>`` in photons/ns. ``raw_*`` keep the
+    same moments at the Markov boundary, before propagation through the outbound
+    reference run. Complex amplitudes use the physics ``e^{-iωt}`` convention.
+    Conjugate ``raw_amplitude`` to give a boundary template to ``iq_readout()``.
 
     Attributes
     ----------
@@ -110,7 +108,7 @@ _NO_STATES_MSG = 'Full state history is unavailable; run with states="all" to re
 class SimulationResult:
     """Backend-agnostic container for the output of one solve.
 
-    Stored states follow the requested storage policy; ``times`` uses ns and
+    Stored states follow the requested storage policy. ``times`` uses ns, and
     ``dims`` follows chip order. Dict-form ``e_ops`` become
     :class:`ObservableTrace` entries in ``observable_traces``.
 
@@ -119,7 +117,7 @@ class SimulationResult:
     solver_result : SolverResult
         Backend output to wrap.
     backend : Backend
-        Backend owning native states and arrays.
+        Backend that owns the native states and arrays.
     dims : sequence of int
         Hilbert dimensions in chip order.
     device_info, observable_traces, output_traces, channels, bases : optional
@@ -173,10 +171,10 @@ class SimulationResult:
     def observable_traces(self) -> dict[Any, ObservableTrace | list[ObservableTrace]] | None:
         """Return the dict of named :class:`ObservableTrace` entries, or ``None``.
 
-        ``None`` when ``e_ops`` was not passed as a dict. Visualization and
-        analysis code that wants the full dict should read this property
-        rather than the private ``_expect_data`` attribute.
+        The value is ``None`` when ``e_ops`` was not a dict.
         """
+        # Visualization and analysis code that needs the full dict should read
+        # this property, not the private `_expect_data` attribute.
         return self._expect_data
 
     def _resolve_trace(self, key: Any, index: int | None = None) -> ObservableTrace:
@@ -211,10 +209,11 @@ class SimulationResult:
     def observable_at(self, t: Any, values: Any, *, method: str = "exact") -> Any:
         """Select saved observable values at scalar or array times.
 
-        Values have time on their last axis. The result has their leading
+        Values have time on their last axis, and the result has their leading
         axes followed by the query shape. ``nearest`` selects the earlier
-        sample on a tie; ``interpolate`` is linear, including complex values.
-        Out-of-interval queries raise. No solve or state interpolation occurs.
+        sample on a tie. ``interpolate`` is linear, including for complex
+        values. Out-of-interval queries raise an error. No solve or state
+        interpolation occurs.
 
         Parameters
         ----------
@@ -296,16 +295,15 @@ class SimulationResult:
     def jump_rate(self, key: Any) -> Any:
         """Return the cached jump rate ``<L†L>(t)`` for one resolved channel.
 
-        The rate is evaluated post-solve from stored states and has units of
-        ``1/ns``. ``key`` may be a resolved key from
-        :attr:`collapse_channels`, a network port, or a
-        ``"<device>.<channel>"`` label that identifies one channel. Address a
-        port composed into a network through its external network port.
+        The rate, in ``1/ns``, is evaluated after the solve from stored states.
+        ``key`` can be a resolved key from :attr:`collapse_channels`, a network
+        port, or a ``"<device>.<channel>"`` label that identifies one channel.
+        Address a port composed into a network through its external network
+        port.
 
         At an external network port, this rate equals ``raw_photon_flux`` only with
         vacuum input. Dephasing and thermal-absorption channels can also have
-        nonzero jump rates, so this quantity alone is not an excitation-loss
-        rate.
+        nonzero jump rates, so this quantity alone is not an excitation-loss rate.
 
         Parameters
         ----------
@@ -341,9 +339,9 @@ class SimulationResult:
     def collapse_integral(self, key: Any) -> Any:
         """Return the cumulative expected jump count for one channel.
 
-        This is the cumulative trapezoid integral of :meth:`jump_rate` on
-        the result grid. Its last entry is the expected number of jumps over
-        the whole solve.
+        The cumulative trapezoid integral of :meth:`jump_rate` on the result
+        grid. Its last entry is the expected number of jumps over the whole
+        solve.
 
         Parameters
         ----------
@@ -361,7 +359,7 @@ class SimulationResult:
 
     @property
     def states(self) -> Any:
-        """Return the retained native state history, or explain how to save it."""
+        """Return the kept native state history, or tell how to save it."""
         if self._states is None or len(self._states) == 0:
             raise RuntimeError(_NO_STATES_MSG)
         return self._states
@@ -400,10 +398,10 @@ class SimulationResult:
     def overlap(self, target: Any) -> Any:
         """Return the overlap with *target* at every stored time.
 
-        For ket trajectories returns ``|<target|psi(t)>|**2``; for density
-        matrices returns ``<target|rho(t)|target>``. Stays in the backend's
-        array module so the result is differentiable. One batched op over the
-        leading time axis — no per-point loop.
+        For ket trajectories, the method returns ``|<target|psi(t)>|**2``. For
+        density matrices, it returns ``<target|rho(t)|target>``. The result
+        stays in the backend's array module, so it is differentiable. One
+        batched op covers the leading time axis, with no per-point loop.
 
         Parameters
         ----------
@@ -419,9 +417,10 @@ class SimulationResult:
     def amplitude_array(self, target: Any) -> Any:
         """Return the phase-sensitive complex projection ``<target|psi(t)>`` for kets.
 
-        Density-matrix trajectories raise :class:`TypeError` — there is no
-        single phase-sensitive amplitude for a mixed state; use
-        :meth:`overlap` instead. One batched op, no per-point loop.
+        Density-matrix trajectories raise :class:`TypeError`, because a mixed
+        state has no single phase-sensitive amplitude. For a mixed state, use
+        :meth:`overlap`. The method uses one batched op, with no per-point
+        loop.
 
         Parameters
         ----------
@@ -449,12 +448,12 @@ class SimulationResult:
         raise ValueError(f"Device '{label}' not found in device_info. Available: {available}")
 
     def state(self, t: float | None = None, *, dm: bool = False) -> Any:
-        """Return a retained state, optionally promoted to a density matrix.
+        """Return a kept state, optionally promoted to a density matrix.
 
         Parameters
         ----------
         t : float or None, optional
-            Saved time in ns; ``None`` selects the final state.
+            Saved time in ns. ``None`` selects the final state.
         dm : bool, default=False
             Promote a ket to a density matrix.
         """
@@ -464,7 +463,7 @@ class SimulationResult:
         return s
 
     def state_at(self, t: Any, *, method: str = "exact") -> Any:
-        """Return a retained state at a scalar time; states are never interpolated.
+        """Return a kept state at a scalar time without state interpolation.
 
         Parameters
         ----------
@@ -491,7 +490,7 @@ class SimulationResult:
         return self._states[int(index)]
 
     def dm_at(self, t: float, *, method: str = "exact") -> Any:
-        """Return a density matrix at a retained time, promoting kets on demand.
+        """Return a density matrix at a kept time, and promote kets on demand.
 
         Parameters
         ----------
@@ -505,7 +504,7 @@ class SimulationResult:
 
     @property
     def final_state(self) -> Any:
-        """Return the last history entry or the separately retained final state."""
+        """Return the last history entry or the separately kept final state."""
         if self._states is not None and len(self._states) > 0:
             return self._states[-1]
         if self._final_state is not None:
@@ -516,16 +515,16 @@ class SimulationResult:
                    noise_frequencies: Any = None) -> Any:
         """Propagate conditional coherent boundary fields through captured output wiring.
 
-        means gives one noiseless complex field per outcome, in 1/sqrt(ns),
-        at the selected Markov boundary channel. A mapping supplies fields at
-        several boundary channels; unspecified fields are vacuum. The output
-        line adds its resolved gain, filter loss noise, and amplifier noise.
-        Supplied means, returned IQ, and receiver transfers follow the VNA
-        engineering convention. Conjugate ``output(...).raw_amplitude`` before
-        using its stationary value as a boundary template.
-        This stationary coherent-state readout model excludes quantum-device
-        correlations and occupied boundary inputs. Use calibrated IQReadout
-        distributions when those effects are included in a detector calibration.
+        means gives one noiseless complex field per outcome, in 1/sqrt(ns), at
+        the selected Markov boundary channel. A mapping gives fields at several
+        boundary channels. Unspecified fields are vacuum. The output line adds
+        its resolved gain, filter loss noise, and amplifier noise. The given
+        means, returned IQ, and receiver transfers follow the VNA engineering
+        convention. Conjugate ``output(...).raw_amplitude`` before you use its
+        stationary value as a boundary template. This stationary coherent-state
+        readout model excludes quantum-device correlations and occupied boundary
+        inputs. Use calibrated IQReadout distributions when those effects are
+        included in a detector calibration.
 
         Parameters
         ----------
@@ -538,7 +537,7 @@ class SimulationResult:
         receiver : IQReceiver
             Boxcar receiver and optional digital transfer.
         noise_frequencies : array_like or None, optional
-            Two-sided offsets in GHz; ``None`` uses the standard grid.
+            Two-sided offsets in GHz. ``None`` uses the standard grid.
         """
         if self._readout_wiring is None:
             raise RuntimeError("No captured output wiring is available for this result.")
@@ -546,20 +545,20 @@ class SimulationResult:
                                              receiver=receiver, noise_frequencies=noise_frequencies)
 
     def measure(self, *devices: Any, t: Any = None, basis: Any = "energy") -> Any:
-        """Measure retained states in local energy bases, without further evolution.
+        """Measure kept states in local energy bases, without further evolution.
 
-        Pass multiple devices for joint outcomes, t for an exact saved time,
-        or basis='solver'. Custom local unitary columns are expressed in the
-        captured energy basis of the stored integration frame: one matrix for
-        one device, or a device mapping. No phase-frame conversion is applied.
-        Samples at different times represent independently terminated experiments.
+        Pass multiple devices for joint outcomes, t for an exact saved time, or
+        basis='solver'. Custom local unitary columns are expressed in the captured
+        energy basis of the stored integration frame. Give one matrix for one
+        device, or a device mapping. No phase-frame conversion is applied. Samples
+        at different times represent independently terminated experiments.
 
         Parameters
         ----------
         *devices : device object or str
-            Measured devices; an empty selection measures all devices.
+            Measured devices. An empty selection measures all devices.
         t : scalar, array_like, or None, optional
-            Saved time or times in ns; ``None`` selects the final state.
+            Saved time or times in ns. ``None`` selects the final state.
         basis : {"energy", "solver"}, array_like, or mapping, default="energy"
             Captured local measurement basis.
         """
@@ -574,7 +573,7 @@ class SimulationResult:
         t : float
             Saved time in ns.
         device : device object or str
-            Device to retain.
+            Device to keep.
         """
         dev_idx, _ = self._resolve_device_idx(device)
         return self._backend.ptrace(self.state_at(t), dev_idx, self.dims)
@@ -587,12 +586,13 @@ class SimulationResult:
     def populations(self) -> dict[tuple[int, ...], Any]:
         """Return per-basis-state populations ``|<n1, n2, ...|psi(t)>|**2`` over time.
 
-        Keys index the solver's product basis, which need not be the local
-        energy basis. Each value is a native real array over ``self.times``.
-        Use :meth:`population` for isolated energy-level occupations.
+        Keys index the solver's product basis, which is not necessarily the
+        local energy basis. Each value is a native real array over
+        ``self.times``. Use :meth:`population` for isolated energy-level
+        occupations.
 
-        Requires ``states="all"``; density-matrix trajectories are handled
-        transparently by reading the diagonal of each timestep's DM.
+        This method requires ``states="all"``. For density-matrix trajectories,
+        it reads the DM diagonal at each timestep.
         """
         backend = self._backend
         basis_labels = self._basis_labels
@@ -702,7 +702,7 @@ class SimulationResult:
         Parameters
         ----------
         keys : list or None, optional
-            Observable keys; ``None`` plots every captured trace.
+            Observable keys. ``None`` plots every captured trace.
         ax : matplotlib.axes.Axes or None, optional
             Destination axes.
         **kwargs
@@ -738,12 +738,13 @@ class SimulationResult:
         return plot_wigner(self, index, trace_out=trace_out, ax=ax, **kwargs)
 
     def check_truncation(self, *, threshold: float = DEFAULT_TRUNCATION_THRESHOLD) -> dict[str, Any]:
-        """Report each device's maximum boundary population over available samples.
+        """Report the maximum boundary population of each device over available samples.
 
-        This warning heuristic can miss excursions between samples. Increase the
-        relevant cutoff and compare observables to establish convergence. Native
-        arrays remain differentiable; warning thresholds are evaluated only for
-        concrete results. Boundaries are declared by the captured component model.
+        This warning heuristic can miss excursions between samples. To confirm
+        convergence, increase the applicable cutoff and compare observables.
+        Native arrays stay differentiable. Warning thresholds are evaluated only
+        for concrete results. Boundaries are declared by the captured component
+        model.
 
         Parameters
         ----------
@@ -799,15 +800,14 @@ class SimulationResult:
 class SimulationBatchResult(BatchResult[SimulationResult]):
     """Ordered, immutable batch of :class:`SimulationResult` with stacked helpers.
 
-    Returned by :func:`~quchip.engine.solve_many` and by any sweep that
-    solves many problems in one call. The batch preserves iteration order
-    so that per-element results map one-to-one onto the inputs that
-    produced them.
+    Returned by :func:`~quchip.engine.solve_many` and by any sweep that solves
+    many problems in one call. The batch keeps the iteration order, so each
+    per-element result maps one-to-one onto the input that produced it.
 
     The ``final_*`` helpers stack along a new leading batch axis in the
-    backend's array module, and the grid-aware :meth:`expect` /
-    :meth:`population` accept ``reduce='last'`` for a final-value slice, so
-    a loss function that sums over the batch stays JAX-traceable end-to-end.
+    backend's array module. The grid-aware :meth:`expect` / :meth:`population`
+    accept ``reduce='last'`` for a final-value slice, so a loss function that
+    sums over the batch stays JAX-traceable end-to-end.
 
     Attributes
     ----------
@@ -820,20 +820,20 @@ class SimulationBatchResult(BatchResult[SimulationResult]):
     """
 
     def measure(self, *devices: Any, t: Any = None, basis: Any = "energy") -> Any:
-        """Measure retained states in local energy bases, without further evolution.
+        """Measure kept states in local energy bases, without further evolution.
 
-        Pass multiple devices for joint outcomes, t for an exact saved time,
-        or basis='solver'. Custom local unitary columns are expressed in the
-        captured energy basis of the stored integration frame: one matrix for
-        one device, or a device mapping. No phase-frame conversion is applied.
-        Samples at different times represent independently terminated experiments.
+        Pass multiple devices for joint outcomes, t for an exact saved time, or
+        basis='solver'. Custom local unitary columns are expressed in the captured
+        energy basis of the stored integration frame. Give one matrix for one
+        device, or a device mapping. No phase-frame conversion is applied. Samples
+        at different times represent independently terminated experiments.
 
         Parameters
         ----------
         *devices : device object or str
-            Measured devices; an empty selection measures all devices.
+            Measured devices. An empty selection measures all devices.
         t : scalar, array_like, or None, optional
-            Saved time or times in ns; ``None`` selects final states.
+            Saved time or times in ns. ``None`` selects final states.
         basis : {"energy", "solver"}, array_like, or mapping, default="energy"
             Captured local measurement basis.
         """
@@ -857,7 +857,7 @@ class SimulationBatchResult(BatchResult[SimulationResult]):
 
     @property
     def times(self) -> Any:
-        """Return shared native coordinates, or explain incompatible time grids."""
+        """Return shared native coordinates, or tell why time grids are incompatible."""
         return self._require_shared_times(self._results[0].times if self._results else None)
 
     def _trace_values(self, values: list[Any], reduce: str | None) -> Any:
@@ -934,7 +934,7 @@ class SimulationBatchResult(BatchResult[SimulationResult]):
         return self._trace_values([r.population(device, level) for r in self._results], reduce)
 
     def jump_rate(self, key: Any, *, reduce: str | None = None) -> Any:
-        """Return one channel's jump-rate traces on the natural sweep grid.
+        """Return the jump-rate traces of one channel on the natural sweep grid.
 
         ``reduce`` accepts ``None``, ``"last"``, ``"max"``, or ``"mean"``
         and acts on the time axis.
@@ -964,7 +964,7 @@ class SimulationBatchResult(BatchResult[SimulationResult]):
         return self.jump_rate(key, reduce=reduce)
 
     def collapse_integral(self, key: Any, *, reduce: str | None = None) -> Any:
-        """Return one channel's cumulative jump counts on the natural sweep grid.
+        """Return the cumulative jump counts of one channel on the natural sweep grid.
 
         ``reduce`` accepts ``None``, ``"last"``, ``"max"``, or ``"mean"``
         and acts on the time axis. ``reduce="last"`` returns the expected
@@ -998,7 +998,7 @@ class SimulationBatchResult(BatchResult[SimulationResult]):
         return self._stack(values)
 
     def final_overlap_magnitudes(self, targets: list[Any] | tuple[Any, ...]) -> Any:
-        """Return final target-state populations without requiring histories.
+        """Return final target-state populations without histories.
 
         Parameters
         ----------
@@ -1008,7 +1008,7 @@ class SimulationBatchResult(BatchResult[SimulationResult]):
         return self._final_projections(targets, amplitude=False)
 
     def final_amplitudes(self, targets: list[Any] | tuple[Any, ...]) -> Any:
-        """Return final complex ket amplitudes without requiring histories.
+        """Return final complex ket amplitudes without histories.
 
         Parameters
         ----------
@@ -1027,8 +1027,8 @@ def wrap_solver_result(solver_result: SolverResult, problem: SolveProblem, backe
 
     The engine-side :class:`~quchip.engine.ir.SolveProblem` carries the
     metadata needed to rebuild dict-form observables
-    (:func:`~quchip.engine.observables.build_observable_traces`)
-    and to label devices for partial-trace helpers.
+    (:func:`~quchip.engine.observables.build_observable_traces`) and to label
+    devices for partial-trace helpers.
 
     Parameters
     ----------
@@ -1093,7 +1093,7 @@ def wrap_solver_results_from_batch(
     batch: SolveBatch,
     backend: Backend,
 ) -> list[SimulationResult]:
-    """Wrap backend results using each batch point's resolved solve context."""
+    """Wrap backend results with each batch point's resolved solve context."""
     if len(solver_results) != batch.batch_size:
         raise RuntimeError(f"Backend returned {len(solver_results)} results for {batch.batch_size} batch points.")
     return [

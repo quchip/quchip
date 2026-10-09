@@ -1,11 +1,12 @@
 """Result and typing layer for :mod:`quchip.chip.transformations`.
 
-:class:`ChipTransform` is the structural protocol every transformation result
-satisfies; :class:`EliminationResult` is :func:`~quchip.chip.transformations.dispatch.eliminate`'s
-return type, and :class:`LazyEffectiveParams` is the deferred-``chi``
-dict it stores its per-survivor entries in. This module holds no dispatch
-logic. Reduction maps capture numerical coordinates independently of the source chip.
+:class:`ChipTransform` is the structural protocol that every transformation result satisfies.
+:class:`EliminationResult` is :func:`~quchip.chip.transformations.dispatch.eliminate`'s return
+type. :class:`LazyEffectiveParams` is the deferred-``chi`` dict in which the result stores its
+per-survivor entries. Reduction maps capture numerical coordinates independently of the source
+chip.
 """
+# This module holds no dispatch logic.
 
 from __future__ import annotations
 
@@ -35,14 +36,14 @@ class ReductionMap:
 
     Inputs are full numerical operators, kets or density matrices, including
     backend-native objects. Outputs use the captured backend and dimensions.
-    Projection does not renormalize: its lost norm or trace is the weight
-    outside the retained subspace. Lifting preserves norm and trace.
+    Projection does not renormalize, so the norm or trace it loses is the
+    weight outside the retained subspace. Lifting keeps norm and trace.
 
-    Exact mode maps use the retained Löwdin embedding; edge maps use the
-    full pair eigenbasis rotation. SW maps exponentiate the
-    first-order generator; their interpretation is perturbative, even though
-    the map is isometric. Jumps follow that map; the SW Hamiltonian retains
-    its separately stated second-order truncation.
+    Exact mode maps use the retained Löwdin embedding. Edge maps use the full
+    pair eigenbasis rotation. SW maps exponentiate the first-order generator.
+    Their interpretation is perturbative, but the map is isometric. Jumps
+    follow that map. The SW Hamiltonian keeps its separately stated
+    second-order truncation.
 
     Parameters
     ----------
@@ -129,31 +130,31 @@ class EliminationResult:
     effective_params
         Per-survivor ``lamb_shift``, ``freq_after``, ``chi`` (GHz), and
         ``purcell_rate``, ``kappa`` (1/ns). The Purcell rate summarizes the
-        first downward transition summed over the removed device's channels;
+        first downward transition, summed over the removed device's channels.
         ``kappa`` is its isolated 1-to-0 rate. These diagnostics do not replace
-        the retained jumps.
-        ``chi`` is the full conditional mode-frequency difference, twice
-        the sigma-Z half-pull convention. It is zero for a bus touching
-        multiple survivors; otherwise it is evaluated from the captured
-        source spectrum on demand and cached only when concrete.
+        the retained jumps. ``chi`` is the full conditional mode-frequency
+        difference, twice the sigma-Z half-pull convention. It is zero for a
+        bus that touches multiple survivors. Otherwise, it is evaluated from
+        the captured source spectrum on demand and cached only when concrete.
 
-        For two touching survivors, ``exchange`` holds one dict with
-        ``j_eff``, ``dJ_domega_c``, ``between``, ``coupling``, ``zz`` and
-        ``pathways``. For more survivors it is keyed by survivor pairs.
-        ``coupling`` names the emitted mediated edge. The flux-retargeting
-        derivative remains second-order even with exact reduction.
-        ``zz`` is available for the exact route; ``pathways`` for SW.
+        For two touching survivors, ``exchange`` holds one dict with ``j_eff``,
+        ``dJ_domega_c``, ``between``, ``coupling``, ``zz`` and ``pathways``.
+        For more survivors it is keyed by survivor pairs. ``coupling`` names
+        the emitted mediated edge. The flux-retargeting derivative remains
+        second-order even with exact reduction. ``zz`` is available for the
+        exact route and ``pathways`` for SW.
 
-        An effective-terms target reports, for each device the terms act on,
-        ``freq_after``, ``lamb_shift``, ``anharmonicity`` (with three or more
-        levels) and ``cross_kerr``, a mapping from each other such device to
-        the full-pull shift ``E11 - E10 - E01 + E00`` (GHz), all from the
-        exactly diagonalized isolated terms.
+        An effective-terms target reports ``freq_after``, ``lamb_shift``,
+        ``anharmonicity`` (with three or more levels) and ``cross_kerr`` for
+        each device that the terms act on. ``cross_kerr`` is a mapping from
+        each other such device to the full-pull shift ``E11 - E10 - E01 + E00``
+        (GHz). All values come from the exactly diagonalized isolated terms.
     validity
-        Per-coupling ``g_over_delta``, ``is_valid`` and ``min_block_gap``.
-        The validity flag uses ``g_over_delta < 0.1`` and remains a native
-        boolean under JAX tracing. It is a perturbative diagnostic; the exact
-        effective-terms route has none and leaves this mapping empty.
+        Per-coupling ``g_over_delta``, ``is_valid`` and ``min_block_gap``. The
+        validity flag uses ``g_over_delta < 0.1`` and remains a native boolean
+        under JAX tracing. It is a perturbative diagnostic. The exact
+        effective-terms route has no such diagnostic and leaves this mapping
+        empty.
     notes
         Approximation order, omitted physics and control retargeting.
     mapping
@@ -182,7 +183,7 @@ class EliminationResult:
 
 
 class LazyEffectiveParams(dict):
-    """Expose deferred values alongside ordinary diagnostic entries.
+    """Expose deferred values together with ordinary diagnostic entries.
 
     DeferredValue entries evaluate captured inputs and cache concrete results.
     Reading a value under JAX tracing leaves the stored evaluator intact.

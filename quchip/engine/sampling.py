@@ -119,10 +119,10 @@ def _problem_scales(problem: Any) -> tuple[float, list[tuple[float, Any]], list[
 
 
 def automatic_tlist(problems: list[Any], *, combine: bool = False) -> np.ndarray:
-    """Sample the union of features at the fastest required rate across points.
+    """Sample the union of features at the fastest necessary rate across points.
 
-    Matrix norm bounds cover coherent and dissipative evolution; local envelope
-    samples estimate amplitudes. These are sampling heuristics, not error bounds.
+    Matrix norm bounds cover coherent and dissipative evolution. Local envelope
+    samples estimate amplitudes. Both are sampling heuristics, not error bounds.
     """
     start, stop = map(float, _concrete(interval_bounds(problems[0].tlist)))
     features = [np.array([start, stop])]
@@ -162,7 +162,7 @@ def automatic_tlist(problems: list[Any], *, combine: bool = False) -> np.ndarray
 
 
 def sample_problems(problems: list[Any]) -> list[Any]:
-    """Give equal-duration points one adequate grid; preserve distinct intervals."""
+    """Give equal-duration points one adequate grid, and keep distinct intervals."""
     groups: dict[tuple[float, float], list[int]] = {}
     for index, problem in enumerate(problems):
         start, stop = interval_bounds(problem.tlist)

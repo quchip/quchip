@@ -1,8 +1,9 @@
-"""Tracer-detection and array-namespace dispatch helpers shared across quchip.
+"""Helpers for tracer detection and array-namespace dispatch that quchip modules share.
 
-JAX is a required dependency of quchip (see ``pyproject.toml``), so these
-helpers import it unconditionally.
+JAX is a required dependency of quchip (see ``pyproject.toml``).
 """
+# Because JAX is a required dependency, these helpers import JAX
+# unconditionally.
 
 from __future__ import annotations
 
@@ -15,14 +16,14 @@ import numpy as np
 
 
 def contains_tracer(pytree: Any) -> bool:
-    """Return ``True`` if *pytree* has any :class:`jax.core.Tracer` leaf.
+    """Return ``True`` if *pytree* has a :class:`jax.core.Tracer` leaf.
 
-    Uses :func:`jax.tree_util.tree_leaves` so nested tuples/lists/dicts
-    and custom registered pytrees are traversed correctly.
+    It uses :func:`jax.tree_util.tree_leaves`, so it traverses nested tuples,
+    lists, dicts, and custom registered pytrees correctly.
 
-    Covers all built-in JAX transforms: ``jit``, ``vmap``, ``grad``,
-    ``linearize``, ``pmap``, and their composition all produce
-    subclasses of :class:`jax.core.Tracer`.
+    It covers all built-in JAX transforms, because ``jit``, ``vmap``, ``grad``,
+    ``linearize``, ``pmap``, and their composition all make subclasses of
+    :class:`jax.core.Tracer`.
     """
     for leaf in tree_leaves(pytree):
         if isinstance(leaf, Tracer):
@@ -31,12 +32,13 @@ def contains_tracer(pytree: Any) -> bool:
 
 
 def array_namespace(array: Any) -> Any:
-    """Return the array's namespace (``jax.numpy`` or ``numpy``).
+    """Return the namespace of the array (``jax.numpy`` or ``numpy``).
 
-    Uses ``__array_namespace__`` when available, falling back to NumPy.
-    Single source of truth so dispatch logic stays consistent across
-    engine, control, and analysis layers.
+    It uses ``__array_namespace__`` when available and falls back to NumPy.
     """
+    # As the single source of truth for array-namespace dispatch,
+    # array_namespace keeps the dispatch logic the same in the engine, control,
+    # and analysis layers.
     namespace = getattr(array, "__array_namespace__", None)
     if callable(namespace):
         return namespace()
@@ -54,15 +56,15 @@ def is_jax_array(array: Any) -> bool:
 
 
 def select_array_module(prefer_jax: bool) -> Any:
-    """Return ``jax.numpy`` if *prefer_jax*, else NumPy."""
+    """Return ``jax.numpy`` if *prefer_jax* is true, else NumPy."""
     return jnp if prefer_jax else np
 
 
 def concrete_array_module(*values: Any) -> Any:
-    """Return NumPy when every value is concrete and ``jax.numpy`` once any is traced.
+    """Return NumPy when all values are concrete, and ``jax.numpy`` when a value is traced.
 
-    Concrete arithmetic on the host compiles no XLA programs; each eager JAX
-    operation on a new shape compiles one.
+    Concrete arithmetic on the host compiles no XLA programs, whereas each
+    eager JAX operation on a new shape compiles one.
     """
     return select_array_module(contains_tracer(values))
 
@@ -70,13 +72,14 @@ def concrete_array_module(*values: Any) -> Any:
 def maybe_concrete_scalar(value: Any) -> float | None:
     """Return a Python ``float`` if *value* is a concrete, real-valued 0-d scalar, else ``None``.
 
-    Used throughout device, drive, and envelope constructors to inspect a
-    parameter that *might* be a JAX tracer. Returns ``None`` — not a
-    ``float`` or a raised error — for a JAX tracer, a non-scalar, or a
-    complex or otherwise non-float-convertible payload. Callers therefore
-    treat complex-valued input the same as traced input: the concrete
-    validation check is skipped rather than run against a lossy cast.
+    It examines a parameter that can be a JAX tracer. For a tracer, a
+    non-scalar, or a complex or other payload that cannot convert to float, it
+    returns ``None`` instead of a ``float`` or an error. Callers therefore
+    treat complex-valued input like traced input, and skip the concrete
+    validation check rather than run it on a lossy cast.
     """
+    # Device, drive, and envelope constructors use maybe_concrete_scalar to
+    # examine parameters that can be JAX tracers.
     if value is None:
         return None
     try:

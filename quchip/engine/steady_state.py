@@ -60,7 +60,7 @@ def steadystate(
     frame: Any | None = None,
     approximation: Any | None = None,
 ) -> SteadyStateResult:
-    """Solve a chip's unique static Lindblad steady state."""
+    """Solve the unique static Lindblad steady state of a chip."""
     problem = build_steadystate_problem(
         chip,
         e_ops=e_ops,
@@ -76,8 +76,8 @@ def solve_steadystate_problem(
 ) -> SteadyStateResult:
     """Solve an already assembled stationary problem and enforce uniqueness.
 
-    ``guess`` is a native stationary state of a related problem that the
-    backend may reuse when it is also stationary here.
+    ``guess`` is a native stationary state of a related problem. The backend
+    can reuse it when it is also stationary here.
     """
     backend = problem.backend
     options = {"prepared": prepared, "guess": guess}

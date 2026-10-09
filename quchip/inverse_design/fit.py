@@ -1,9 +1,8 @@
 """Fit bare chip parameters to a numerical dressed specification.
 
 Devices and couplings declare how their input numbers map to dressed targets.
-The desired chip is read structurally, not diagonalized to discover those
-targets. Candidate chips are then evaluated in a bounded nonlinear
-least-squares solve.
+The fitter reads the desired chip structurally rather than diagonalizing it,
+and a bounded nonlinear least-squares solve evaluates the candidate chips.
 
 References
 ----------
@@ -21,13 +20,13 @@ Dispersive regime (cross-Kerr and dressed frequencies):
 JAX traceability
 ----------------
 
-Every bare parameter here (``device.freq``, ``device.anharmonicity``, a
-coupling's ``coupling_strength``) is a sweepable, differentiable
-quantity. A chip using a JAX-native backend supplies a traced
-dressed-observable residual and exact Jacobian; SciPy consumes their concrete
-values only at the bounded trust-region boundary. The optimizer itself is not
-JAX-traceable, while the output :class:`~quchip.chip.chip.Chip` remains fully
-traceable for every downstream operation.
+Every bare parameter here (``device.freq``, ``device.anharmonicity``, the
+``coupling_strength`` of a coupling) is a sweepable, differentiable quantity. A
+chip that uses a JAX-native backend supplies a traced dressed-observable
+residual and an exact Jacobian. SciPy uses their concrete values only at the
+bounded trust-region boundary. The optimizer itself is not JAX-traceable, but
+the output :class:`~quchip.chip.chip.Chip` stays fully traceable for every
+downstream operation.
 """
 
 from __future__ import annotations
@@ -449,57 +448,56 @@ def fit_a_dress(
     ``fit_a_dress(desired)`` reads component-owned target declarations without
     evaluating ``desired``. Common spectral devices interpret their declared
     frequencies and anharmonicities as dressed targets. A ``Capacitive`` edge
-    between two non-computational modes targets the dressed
-    ``exchange_rate``. Other ``Capacitive`` edges and ``CrossKerr`` couplings
-    target the full ``cross_kerr = E11 - E10 - E01 + E00``. The returned
-    :attr:`~quchip.inverse_design.types.FitADressResult.chip` is a fitted clone;
-    ``desired`` is never mutated.
+    between two non-computational modes targets the dressed ``exchange_rate``.
+    Other ``Capacitive`` edges and ``CrossKerr`` couplings target the full
+    ``cross_kerr = E11 - E10 - E01 + E00``. The returned
+    :attr:`~quchip.inverse_design.types.FitADressResult.chip` is a fitted clone,
+    and ``desired`` is never mutated.
 
-    ``constraints`` adds or replaces numerical observables, ``vary`` replaces
-    the component-owned free-parameter selection, and ``start`` replaces
+    ``constraints`` adds or replaces numerical observables. ``vary`` replaces
+    the component-owned selection of free parameters. ``start`` replaces the
     selected starting values.
 
     Parameters
     ----------
     chip
         Desired dressed-chip specification. Component declarations supply
-        numerical targets; no dressed analysis is run on this object. A chip
-        declared for simulation is not a specification: its bare coupling
-        strengths become ``cross_kerr`` or ``exchange_rate`` targets, which a
-        frequency-only ``vary`` cannot meet. State such targets explicitly with
-        ``constraints`` and read the unmet-target line of ``summary()``.
+        numerical targets, and no dressed analysis runs on this object. A chip
+        declared for simulation is not a specification. Its bare coupling
+        strengths become ``cross_kerr`` or ``exchange_rate`` targets, and a
+        frequency-only ``vary`` cannot meet them. State such targets explicitly
+        with ``constraints``, and read the unmet-target line of ``summary()``.
     constraints
         Additional ``{component_or_pair: {observable: value_or_none}}``
-        constraints. Supported canonical observables are ``"freq"``,
+        constraints. The supported canonical observables are ``"freq"``,
         ``"anharmonicity"``, ``"cross_kerr"``, ``"exchange_rate"``, and
-        ``"coupling_strength"``.  ``"zz"``/``"static_zz"``, ``"exchange"``,
-        and ``"g"`` are accepted aliases.  An explicit value replaces the
-        same component default; ``None`` removes it. Device pairs need not be
-        direct coupling edges.
+        ``"coupling_strength"``. The function also accepts the aliases
+        ``"zz"``/``"static_zz"``, ``"exchange"``, and ``"g"``. An explicit
+        value replaces the same component default. ``None`` removes it. Device
+        pairs do not have to be direct coupling edges.
     vary
-        Complete desired-chip allowlist of bare parameters that may move:
-        ``{component_or_label: name_collection}``. When omitted, each
-        component's conservative inverse-design policy is used. Components
-        absent from an explicit mapping are frozen.
+        Complete desired-chip allowlist of the bare parameters that can move:
+        ``{component_or_label: name_collection}``. If omitted, each component's
+        conservative inverse-design policy applies. Components that are absent
+        from an explicit mapping are frozen.
     start
         Optional ``{"<component>.<parameter>": value}`` replacements for the
-        selected optimizer starting values. A key not selected by ``vary``
-        raises instead of being silently ignored.
+        optimizer's selected starting values. A key that ``vary`` does not
+        select raises an error rather than being silently ignored.
     evaluator
-        ``"full"`` evaluates each target on the complete model.
-        ``"local"`` explicitly selects one-hop neighborhoods, omitting
-        effects of devices beyond the neighborhood. Target reports record
-        the selected evaluator. Unsupported local model contributions raise.
+        ``"full"`` evaluates each target on the complete model. ``"local"``
+        explicitly selects one-hop neighborhoods and omits effects of devices
+        outside them. Target reports record the selected evaluator. Unsupported
+        local model contributions raise.
     max_hilbert_dim
-        Maximum Hilbert-space dimension of each evaluated model. Exceeding
-        this ceiling raises before seeding or optimization; it never selects
-        a different approximation. Increase it to permit a larger model.
+        Maximum Hilbert-space dimension of each evaluated model. A larger model
+        raises before seeding or optimization, and no different approximation
+        is selected. Increase the value to permit a larger model.
     seed_strength_bounds
-        ``(lo, hi)`` magnitude bounds for the bare-coupling-strength
-        seed root solve (:func:`_estimate_bare_g`) used for
-        ``cross_kerr`` coupling targets. The target observable must be bracketed by the
-        values at these two endpoints, or seeding raises
-        :class:`ValueError` rather than silently returning a saturated
+        ``(lo, hi)`` magnitude bounds for the seed root solve of the bare coupling
+        strength (:func:`_estimate_bare_g`). This solve serves ``cross_kerr`` coupling
+        targets. The values at both endpoints must bracket the target observable, or
+        seeding raises :class:`ValueError` rather than silently returning a saturated
         endpoint.
     max_nfev
         Maximum number of residual evaluations for the SciPy
@@ -515,45 +513,43 @@ def fit_a_dress(
     Raises
     ------
     ValueError
-        A cross-Kerr seed is not bracketed within ``seed_strength_bounds``;
-        an automatic plan is underdetermined; ``vary`` contains unknown,
-        duplicate or invalid parameter selections; or a resource ceiling is exceeded.
+        Raised when ``seed_strength_bounds`` does not bracket a cross-Kerr seed, an
+        automatic plan is underdetermined, ``vary`` contains unknown, duplicate or
+        invalid parameter selections, or a resource ceiling is exceeded.
 
     Warns
     -----
     UserWarning
-        An explicit ``vary`` plan is underdetermined by target count or final
-        scaled-Jacobian rank. A nonconverged automatic fit also returns its
-        candidate with a warning when the final Jacobian lacks rank.
-        Converged rank-deficient automatic fits raise instead.
+        An explicit ``vary`` plan is underdetermined by the target count or by
+        the final scaled-Jacobian rank. A nonconverged automatic fit also
+        returns its candidate with a warning when the final Jacobian does not
+        have full rank. Converged rank-deficient automatic fits raise an error.
 
     Notes
     -----
-    Residuals are normalized by ``max(|target|, 1e-9)`` so every anchor
-    contributes on equal *relative*-error footing. A coupling's scalar
-    strength bounds are symmetric around zero — the sign of a
-    capacitive-type coupling is physical and must not be constrained.
+    The fitter normalizes residuals by ``max(|target|, 1e-9)``, so every anchor
+    contributes on an equal *relative*-error basis. A coupling's
+    scalar-strength bounds are symmetric around zero, because the sign of a
+    capacitive-type coupling is physical and the fitter must not constrain it.
     The solver's convergence tolerances (``ftol``/``xtol``/``gtol`` =
-    ``1e-11``) and its ``x_scale`` floor (``1e-3``, applied per parameter
-    as ``max(abs(x0), 1e-3)``) are fixed fitter policy, not exposed as
-    options.
+    ``1e-11``) are fixed fitter policy, not options. So is the ``x_scale``
+    floor (``1e-3``, applied per parameter as ``max(abs(x0), 1e-3)``).
 
-    **Identifiability.** The free-parameter-vs-residual count is necessary but
-    not sufficient. The fitter therefore computes the final SVD rank and
-    condition number from normalized residuals in the same scaled parameter
-    coordinates used by the solver. A custom
-    :class:`~quchip.declarative.models.DeviceModel`
-    whose ``tunable_param_names`` is discovered (the derived default, not an
-    explicit declaration) is not automatically fit-ready: an unbounded
-    parameter still needs a :meth:`~quchip.devices.base.BaseDevice.tunable_param_bounds`
-    rule before the optimizer can search it.
+    **Identifiability.** The count of free parameters against residuals is necessary but
+    not sufficient. The fitter therefore computes the final SVD rank and condition
+    number from normalized residuals, in the same scaled parameter coordinates that the
+    solver uses. A custom :class:`~quchip.declarative.models.DeviceModel` with a
+    discovered ``tunable_param_names`` (the derived default, not an explicit
+    declaration) is not automatically fit-ready. An unbounded parameter still needs a
+    :meth:`~quchip.devices.base.BaseDevice.tunable_param_bounds` rule before the
+    optimizer can search it.
 
-    **JAX traceability.** When the chip uses a JAX-native backend, the
-    complete parameter-to-residual map and its exact Jacobian are
-    JAX-traceable; SciPy receives their concrete values for bounded
-    trust-region control. The optimizer itself is not differentiated.
-    Other backends retain SciPy's numerical Jacobian. The returned chip
-    remains fully traceable and differentiable in either case.
+    **JAX traceability.** When the chip uses a JAX-native backend, the complete
+    map from parameters to residuals and its exact Jacobian are JAX-traceable.
+    SciPy receives their concrete values for bounded trust-region control. The
+    optimizer itself is not differentiated. Other backends keep SciPy's
+    numerical Jacobian. In both cases, the returned chip stays fully traceable
+    and differentiable.
     """
     if evaluator not in ("full", "local"):
         raise ValueError(f"Unknown evaluator {evaluator!r}; choose 'full' or 'local'.")

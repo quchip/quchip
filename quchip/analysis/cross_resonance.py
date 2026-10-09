@@ -1,10 +1,10 @@
 """Cross-resonance Hamiltonian tomography analysis.
 
-Fits target-qubit Bloch-vector trajectories from a CR pulse duration sweep
-and extracts the six effective Hamiltonian coefficients
-{IX, IY, IZ, ZX, ZY, ZZ} in GHz (the package units contract).
+Fits the target qubit's Bloch-vector trajectories from a CR pulse-duration
+sweep. Extracts the six effective Hamiltonian coefficients {IX, IY, IZ, ZX, ZY,
+ZZ} in GHz (the package's units contract).
 
-The CR effective Hamiltonian in the two-qubit subspace is written as:
+The CR effective Hamiltonian in the two-qubit subspace is:
 
     H_eff = (I ⊗ A + Z ⊗ B) / 2,   A, B ∈ span{X, Y, Z}
 
@@ -56,18 +56,17 @@ def bloch_model(
     td: float,
     bx: float, by: float, bz: float,
 ) -> np.ndarray:
-    r"""Model Bloch-vector evolution under a constant drive Hamiltonian with a single decay envelope.
+    r"""Model the Bloch-vector evolution under a constant drive Hamiltonian with a single decay envelope.
 
     The model assumes a drive Hamiltonian
 
         H = π (px X + py Y + pz Z)
 
     so the Bloch vector precesses at frequency
-    :math:`f = \sqrt{p_x^2 + p_y^2 + p_z^2}` Hz about axis
-    :math:`\hat{n} = (p_x, p_y, p_z)/f`, damped by a single exponential
-    envelope :math:`\exp(-t / t_d)` applied uniformly to all three Bloch
-    components. Separate :math:`T_1` and :math:`T_2` decay processes are
-    not modeled.
+    :math:`f = \sqrt{p_x^2 + p_y^2 + p_z^2}` Hz about the axis
+    :math:`\hat{n} = (p_x, p_y, p_z)/f`. A single exponential envelope
+    :math:`\exp(-t / t_d)` damps all three Bloch components equally, without
+    separate :math:`T_1` and :math:`T_2` decay processes.
 
     Parameters
     ----------
@@ -295,21 +294,22 @@ def _fit_covariance(result):
 class CRHamiltonianResult:
     """Store CR Hamiltonian coefficients in GHz and local uncertainty estimates.
 
-    Uncertainties use local, residual-scaled covariance, including when
-    per-point standard deviations supply weights. Unavailable estimates are
-    ``None``; convergence alone does not establish identifiability.
+    The uncertainties use a local, residual-scaled covariance, even when
+    per-point standard deviations supply weights. An unavailable estimate is
+    ``None``. Convergence alone does not establish identifiability.
 
-    All six quantities are *ordinary* frequency (not angular); multiply by
-    2π to convert to rad/ns.  The convention matches Sheldon et al.
-    (PRA 93, 060302(R), 2016):
+    All six quantities are *ordinary* frequency (not angular). Multiply by 2π
+    to convert to rad/ns. The convention agrees with Sheldon et al. (PRA 93,
+    060302(R), 2016):
 
         H_eff = (I ⊗ A + Z ⊗ B) / 2
 
     where A = ω_IX X + ω_IY Y + ω_IZ Z and B = ω_ZX X + ω_ZY Y + ω_ZZ Z.
 
-    ``params_ctrl0`` / ``params_ctrl1`` hold the raw per-control-state fit
-    output ``[px, py, pz, td, bx, by, bz]`` and are diagnostics only: they are
-    in the fit's internal units (px/py/pz in Hz, td in seconds), not converted.
+    ``params_ctrl0`` / ``params_ctrl1`` hold the raw fit output
+    ``[px, py, pz, td, bx, by, bz]`` for each control state. They are
+    diagnostics only and stay in the fit's internal units (px/py/pz in Hz, td
+    in seconds).
 
     Attributes
     ----------
@@ -377,7 +377,7 @@ class CRHamiltonianResult:
 
 @dataclass(frozen=True)
 class CRSusceptibilityResult:
-    r"""Store weak-drive CR coefficients per unit programmed drive amplitude.
+    r"""Store weak-drive CR coefficients per unit of programmed drive amplitude.
 
     For control-state-conditioned target-transition matrix elements
 
@@ -392,16 +392,16 @@ class CRSusceptibilityResult:
         H_\mathrm{eff} = \tfrac{1}{2}(IX\,I\!X + ZX\,Z\!X)
 
     gives ``IX_per_amplitude = m_0 + m_1`` and
-    ``ZX_per_amplitude = m_0 - m_1``. Values are backend-native complex
-    scalars and remain JAX-traceable.
+    ``ZX_per_amplitude = m_0 - m_1``. The values are backend-native complex
+    scalars and stay JAX-traceable.
 
     Attributes
     ----------
     m_control_0, m_control_1
-        Dressed target-transition matrix elements conditioned on the control
-        occupying ``|0>`` and ``|1>``.
+        Dressed target-transition matrix elements, conditioned on the control
+        in ``|0>`` and in ``|1>``.
     IX_per_amplitude, ZX_per_amplitude
-        Weak-drive Pauli coefficients per unit signal amplitude.
+        Weak-drive Pauli coefficients per unit of signal amplitude.
     control, target, drive
         Resolved labels.
     """
@@ -425,25 +425,24 @@ def analyze_cr_susceptibility(
     r"""Return the dressed weak-drive CR response of one directed edge.
 
     The analysis projects the physical control-line operator onto the target's
-    dressed ``0 -> 1`` transition twice: once with the control in ``|0>`` and
-    once in ``|1>``. No pulse, rotating-frame solve, or time evolution is
-    performed.
+    dressed ``0 -> 1`` transition twice, with the control in ``|0>`` and in
+    ``|1>``. It does no pulse, no rotating-frame solve, and no time evolution.
 
     Parameters
     ----------
     chip
         Coupled chip with attached control equipment.
     control, target
-        Directed CR control and target, supplied as device objects or labels.
+        Directed CR control and target, as device objects or labels.
     drive
-        Control line to project. When omitted, the unique wired device-target
-        line attached to ``control`` is selected.
+        Control line to project. If omitted, the function selects the unique
+        wired device-target line attached to ``control``.
 
     Returns
     -------
     CRSusceptibilityResult
-        Conditional matrix elements and the corresponding ``IX`` and ``ZX``
-        coefficients per unit programmed amplitude.
+        Conditional matrix elements and the related ``IX`` and ``ZX``
+        coefficients per unit of programmed amplitude.
 
     Raises
     ------
@@ -546,10 +545,10 @@ def analyze_cross_resonance(
 ) -> CRHamiltonianResult:
     """Extract CR effective Hamiltonian coefficients from Bloch tomography data.
 
-    Fits the target-qubit Bloch trajectory under a CR pulse to the
-    analytic model in :func:`bloch_model` — once with the control qubit in
-    |0⟩ and once with it in |1⟩ — and combines the two fits to isolate the
-    six coefficients {IX, IY, IZ, ZX, ZY, ZZ}.
+    Fits the target qubit's Bloch trajectory under a CR pulse to the analytic
+    model in :func:`bloch_model`, once with the control qubit in |0⟩ and once
+    in |1⟩. Combining the two fits isolates the six coefficients {IX, IY, IZ,
+    ZX, ZY, ZZ}.
 
     The decomposition is::
 
@@ -566,39 +565,39 @@ def analyze_cross_resonance(
     Parameters
     ----------
     durations : (N,) ndarray
-        CR pulse durations in **ns** (the package convention). Must be
-        monotone; need not be equally spaced. Converted once to seconds at
-        the function boundary for the fit.
+        CR pulse durations in **ns** (the package convention). They must be
+        monotone but need not be equally spaced. The function converts them to
+        seconds once, at its boundary, for the fit.
     ctrl0 : dict or 2D ndarray
-        Target-qubit Bloch trajectory with control in |0⟩, as a dict with
-        keys ``"x"``, ``"y"``, ``"z"`` or a 2D array shaped ``(3, N)`` or
-        ``(N, 3)`` (see :func:`_as_xyz`).
+        Target qubit's Bloch trajectory with the control in |0⟩. Give a dict
+        with keys ``"x"``, ``"y"``, ``"z"`` or a 2D array with shape ``(3, N)``
+        or ``(N, 3)`` (see :func:`_as_xyz`).
     ctrl1 : dict or 2D ndarray
-        Same with control in |1⟩.
+        Same, with the control in |1⟩.
     sigma_ctrl0 : dict with keys ``"x"``, ``"y"``, ``"z"`` (optional)
-        Per-point standard deviations for the control-|0⟩ data (used as
-        inverse weights in the least-squares fit).
+        Per-point standard deviations for the control-|0⟩ data, used as inverse
+        weights in the least-squares fit.
     sigma_ctrl1 : dict with keys ``"x"``, ``"y"``, ``"z"`` (optional)
         Same for the control-|1⟩ data.
     t_offset : float
-        Subtract this offset (in **ns**) from ``durations`` before fitting
-        (useful to exclude a pulse-ramp transient).
+        Subtract this offset (in **ns**) from ``durations`` before the fit,
+        e.g. to exclude a pulse-ramp transient.
 
     Returns
     -------
     CRHamiltonianResult
-        Six coefficients in **GHz** (package units contract; durations are
-        taken in ns and the Hz-valued fit internals are converted exactly
-        once at this boundary). Uncertainties are local, residual-scaled covariance
-        estimates, including when per-point standard deviations supply weights.
-        Unavailable one-sigma uncertainties are ``None``.
-        ``converged`` and ``message`` report the optimizer outcome separately
-        from fit quality and local uncertainty; nonconverged candidates remain inspectable.
+        Six coefficients in **GHz** (the package's units contract). The function converts
+        the Hz-valued fit internals exactly once, at this boundary. The uncertainties are
+        local, residual-scaled covariance estimates, even when per-point standard
+        deviations supply weights. An unavailable one-sigma uncertainty is ``None``.
+        ``converged`` and ``message`` report the optimizer outcome separately from the fit
+        quality and the local uncertainty, so you can still examine nonconverged
+        candidates.
 
     Raises
     ------
     RuntimeError
-        If no initial guess produces a finite candidate for either control state.
+        If no initial guess gives a finite candidate for one of the control states.
 
     Examples
     --------

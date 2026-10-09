@@ -1,27 +1,27 @@
-"""Exact subsystem partitioning — connected components of a chip's independence graph.
+"""Exact subsystem partitioning into connected components of a chip's independence graph.
 
-Two device labels share a component when *any* structural object couples
-them: a coupling edge, a non-separable bath whose target set contains both,
-or classical drive crosstalk between lines targeting them. All decisions are
-made from labels and object presence — never from parameter values, which
-may be JAX tracers.
+Two device labels share a component when *any* structural object couples them.
+Such an object is a coupling edge, a non-separable bath whose target set
+contains both, or classical drive crosstalk between their lines. All decisions
+use only labels and object presence, never parameter values, which can be JAX
+tracers.
 
-When splitting observables via split_e_ops, keys are resolved and validated
-while local observables and cross-component factors are grouped. Factor indices
-are assigned afterward, so collisions never depend on dict iteration order.
-A user key whose value is already a list keeps index=None in its LocalEop — the wrapper passes the
-user's own indices through unchanged, and any injected factor is appended
-after them. A scalar local value that collides with one or more factors gets
-re-indexed to 0, with each factor appended after it in encounter order. The
-key plan built here is always keyed by the *resolved* label (or label pair),
-matching how :meth:`PartitionedSimulationResult` normalizes lookups — never
-by the raw user key, which may be an object rather than its label.
+When observables are split across components, the user's own indices pass through unchanged, and
+any injected factor is appended after them. A scalar local value colliding with one or more
+factors is re-indexed to 0, with each factor appended after it in encounter order.
 
-The independence graph only recognizes line-mixing as ``Crosstalk`` entries:
-a user-authored :class:`~quchip.control.signal.SignalTransform` that mixes
-drive lines any other way is invisible to it and must be expressed as
-``Crosstalk`` for the corresponding devices to land in one component.
+The independence graph only recognizes line-mixing as ``Crosstalk`` entries. It
+does not see a user-authored :class:`~quchip.control.signal.SignalTransform`
+that mixes drive lines in another way. Such mixing must be expressed as
+``Crosstalk`` so the affected devices land in one component.
 """
+# When split_e_ops splits observables, keys are resolved and validated while
+# local observables and cross-component factors are grouped. Factor indices are
+# assigned afterward, so collisions never depend on dict iteration order. A user
+# key whose value is already a list keeps index=None in its LocalEop. The key
+# plan is always keyed by the resolved label (or label pair), matching how
+# `PartitionedSimulationResult` normalizes lookups. The key plan is never keyed
+# by the raw user key, which can be an object rather than its label.
 
 from __future__ import annotations
 
@@ -51,8 +51,8 @@ def _line_device_labels(chip: "Chip", line: Any) -> tuple[str, ...]:
 def independence_edges(chip: "Chip", resolved: Any | None = None) -> list[tuple[str, str]]:
     """Label pairs that must share one solve.
 
-    A clique over N labels is emitted as an (N-1)-edge star — identical
-    connected components, fewer edges.
+    A clique over N labels is emitted as an (N-1)-edge star, giving identical
+    connected components with fewer edges.
     """
     resolved = chip.resolve() if resolved is None else resolved
     edges: list[tuple[str, str]] = []
@@ -102,11 +102,11 @@ class PartitionResult:
     """Connected components of a chip's independence graph, as solve-ready sub-chips.
 
     ``chip_order`` is the parent chip's original device-label order (its
-    ``chip.devices`` order) — *not* the concatenation of ``components``'
-    labels, which follows connected-component discovery order instead and
-    can interleave differently whenever a chip's device order doesn't
-    already group each component's members together. Anything that
-    reconstructs a joint state from the per-component pieces (e.g.
+    ``chip.devices`` order). It is *not* the concatenation of the
+    ``components`` labels, which follows connected-component discovery order.
+    The two can interleave differently when the chip's device order does not
+    already group each component's members together. Anything that reconstructs
+    a joint state from the per-component pieces (for example
     :class:`~quchip.results.partitioned.PartitionedSimulationResult`) must
     permute into ``chip_order`` to match the joint solve.
     """
@@ -259,10 +259,11 @@ def partition_chip(
     """Split a chip into independent sub-chips along its independence graph.
 
     Exact: the joint solve of the original chip factorizes as the tensor
-    product of the component solves. Public results contain independent
-    models even with one component. Internal dispatch can reuse a trivial
-    component when it will immediately return to the joint solve.
+    product of the component solves. Public results contain independent models
+    even with one component.
     """
+    # Internal dispatch can reuse a trivial component when it will immediately
+    # return to the joint solve.
 
     labels = [d.label for d in chip.devices]
     chip_order = tuple(labels)
@@ -320,7 +321,7 @@ class CrossEop:
 
 
 def split_drive_ops(part: PartitionResult, chip: "Chip", drive_ops: list) -> list[list]:
-    """Route drive ops to their owning component (edge targets via an endpoint)."""
+    """Route drive ops to their owning component (edge targets through an endpoint)."""
     per: list[list] = [[] for _ in part.components]
     for op in drive_ops:
         label = op.target_label

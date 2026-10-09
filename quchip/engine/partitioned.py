@@ -1,8 +1,9 @@
 """Partition-aware dispatch for :func:`quchip.engine.simulate`.
 
-Chip-structural logic lives in :mod:`quchip.chip.partition`; this module
-only orchestrates: decide, split, run one pipeline per component, combine.
+This module only orchestrates: decide, split, run one pipeline for each
+component, combine.
 """
+# Chip-structural logic is in `quchip.chip.partition`.
 
 from __future__ import annotations
 
@@ -52,7 +53,7 @@ def maybe_simulate_partitioned(
     states: StateStorage | None = None,
     dissipation: bool = True,
 ) -> Any | None:
-    """Run per-component solves when the chip splits; ``None`` declines to the joint path."""
+    """Solve each component when the chip splits. ``None`` declines to the joint path."""
     if initial_state is not None and not isinstance(initial_state, Mapping):
         return None
     # Field inputs and outputs are defined at the complete network reference

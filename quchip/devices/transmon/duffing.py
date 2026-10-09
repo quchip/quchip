@@ -13,27 +13,26 @@ anharmonicity (conventionally negative for a transmon,
 
 Approximation & regime of validity
 ----------------------------------
-This is the Kerr / Duffing expansion of the transmon's cosine
-Josephson potential truncated at quartic order:
+The Kerr / Duffing expansion of the transmon's cosine Josephson potential
+truncated at quartic order:
 
 .. math:: H_{\\text{full}} = 4 E_C (\\hat{n} - n_g)^2 - E_J \\cos \\hat{\\phi}
 
 expanded to :math:`\\hat{\\phi}^4` after rotating-frame normal
 ordering. Validity conditions (Koch et al. 2007):
 
-* Transmon regime, :math:`E_J / E_C \\gtrsim 50` — charge-dispersion
-  of the lowest levels becomes exponentially small in
-  :math:`\\sqrt{8 E_J / E_C}`, so offset-charge noise is suppressed
-  and the qubit is well-approximated by a weakly anharmonic
-  oscillator.
-* Low-lying levels only — higher levels probe progressively more of
-  the cosine nonlinearity and deviate from the quartic truncation.
+* Transmon regime, :math:`E_J / E_C \\gtrsim 50`. The charge-dispersion of the
+  lowest levels becomes exponentially small in :math:`\\sqrt{8 E_J / E_C}`, so
+  offset-charge noise is suppressed and a weakly anharmonic oscillator is a
+  good approximation of the qubit.
+* Low-lying levels only. Higher levels probe more of the cosine nonlinearity
+  and deviate from the quartic truncation.
 * Anharmonicity :math:`\\alpha \\approx -E_C`, with
   :math:`\\omega_{01} \\approx \\sqrt{8 E_J E_C} - E_C`.
 
 Not captured: full charge-basis spectrum, higher-order nonlinearities
-(:math:`\\hat{\\phi}^6` and beyond), flux-tunability, two-qubit
-dispersive shifts beyond what couplings/drives provide.
+(:math:`\\hat{\\phi}^6` and beyond), flux-tunability, two-qubit dispersive
+shifts beyond what couplings/drives supply.
 
 References
 ----------
@@ -78,12 +77,10 @@ from quchip.devices.fock import FockDevice
 
 def duffing_expr(op: LocalOps, freq: Scalar, anharmonicity: Scalar) -> PhysicsExpr:
     """Shared Duffing local Hamiltonian ``H = omega n + (alpha/2) n (n - I)``.
-
-    Both :class:`DuffingTransmon` and
-    :class:`~quchip.devices.transmon.flux_tunable.FluxTunableTransmon` build
-    their static local Hamiltonian from this single expression, so the two
-    produce the identical declarative term.
     """
+    # Both `DuffingTransmon` and `FluxTunableTransmon` build their static local
+    # Hamiltonian from this single expression, so both produce the identical
+    # declarative term.
     n = op.n
     return freq * n + (0.5 * anharmonicity) * (n @ (n - op.I))
 
@@ -94,25 +91,25 @@ class DuffingTransmon(FockDevice):
     Parameters
     ----------
     freq : float
-        Bare ``0 -> 1`` transition frequency ω in GHz. Must be positive.
-        May be a JAX tracer for sweeps / gradients.
+        Bare ``0 -> 1`` transition frequency ω in GHz. Must be positive. Can be
+        a JAX tracer for sweeps / gradients.
     anharmonicity : float
-        Anharmonicity α in GHz. Typically negative for superconducting
-        transmons (e.g. ``-0.25`` GHz). May be a JAX tracer.
+        Anharmonicity α in GHz. Usually negative for superconducting transmons
+        (for example ``-0.25`` GHz). Can be a JAX tracer.
     levels : int, default 3
         Fock-space truncation. Three levels suffice for leakage-aware
-        single-qubit modelling; increase for higher-level physics
-        (e.g. iSWAP-family gates via the ``|02>-|11>`` crossing).
+        single-qubit modelling. Increase it for higher-level physics (for
+        example iSWAP-family gates through the ``|02>-|11>`` crossing).
     label : str | None, default None
-        If omitted, auto-generated as ``duffing_{idx}`` via the shared
+        If omitted, auto-generated as ``duffing_{idx}`` with the shared
         labeling counter.
     T1 : float or None, default None
-        Energy-relaxation time in ns; ``None`` disables T1 relaxation.
+        Energy-relaxation time in ns. ``None`` disables T1 relaxation.
     T2 : float or None, default None
-        Total 0-1 coherence time in ns, not a pure-dephasing time. If both
-        are set, it must satisfy ``T2 <= 2*T1``; ``None`` disables T2 noise.
+        Total 0-1 coherence time in ns, not a pure-dephasing time. If both are
+        set, it must satisfy ``T2 <= 2*T1``. ``None`` disables T2 noise.
     thermal_occupation : float or None, default None
-        Dimensionless mean bath occupation; ``None`` disables thermal
+        Dimensionless mean bath occupation. ``None`` disables thermal
         absorption.
 
     References

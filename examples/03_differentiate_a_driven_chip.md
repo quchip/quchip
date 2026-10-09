@@ -22,8 +22,8 @@ to fit measured spectroscopy.
 
 ## Gradients of spectral observables
 
-A scalar fitting objective has a gradient. A vector residual has a Jacobian. Both pass
-through the same public `Chip.with_params()` call.
+A scalar fitting objective has a gradient and a vector residual has a Jacobian, and
+both go through the same public `Chip.with_params()` call.
 
 The second observable uses the sigma-z convention
 $\chi_{\sigma_z}=\mathrm{dispersive\_shift}/2$. The scalar method returns the
@@ -47,9 +47,9 @@ chip = Chip(
 )
 ```
 
-Define a scalar fitting objective and vector residual. `jax.grad` gives the loss gradient;
-`jax.jacrev` gives the observable Jacobian. Sweep the coupling to compare the
-resolved curve with its local tangent.
+Define a scalar fitting objective and a vector residual. `jax.grad` gives the loss
+gradient, and `jax.jacrev` gives the observable's Jacobian. Sweep the coupling to compare
+the resolved curve with its local tangent.
 
 ```python
 names = ["q.freq", "q.anharmonicity", "qr.g"]
@@ -147,14 +147,14 @@ bends away from its tangent faster than $f_{01}$ over this range.
 
 ## Fit measured spectroscopy
 
-Stefanski *et al.* fitted a fluxonium spectrum to obtain $E_C$, $E_J$, and
-$E_L$. Their [paper](https://arxiv.org/abs/2411.13437) and
-[analysis repository](https://github.com/AndersenQubitLab/FPA-RO-experimental)
-publish the extracted frequencies and fitted parameters. Here we start away
-from those parameters and minimize a differentiable quchip loss.
+Stefanski *et al.* fitted a fluxonium spectrum to get $E_C$, $E_J$, and $E_L$.
+Their [paper](https://arxiv.org/abs/2411.13437) and [analysis
+repository](https://github.com/AndersenQubitLab/FPA-RO-experimental) publish
+the extracted frequencies and fitted parameters. Here we start away from those
+parameters and minimize a differentiable quchip loss.
 
-Every eighth measurement enters the fit. The intervening points remain held
-out, and the plotted model uses its own 351-point flux grid.
+Every eighth measurement goes into the fit, and the points between them
+are held out. The plotted model uses its own 351-point flux grid.
 
 <details>
 <summary>Load the published data and select fit points</summary>
@@ -253,8 +253,9 @@ def spectrum_prediction(coordinates, flux):
     return jax.vmap(lambda phi: fluxonium_f01(energies, phi))(flux)
 ```
 
-Fit a smooth robust loss with SciPy’s bounded optimizer. JAX supplies its
-gradient; the loss limits the influence of spectroscopy outliers.
+Fit a smooth robust loss, which limits the influence of spectroscopy
+outliers, with SciPy's bounded optimizer. JAX supplies the loss
+gradient.
 
 ```python
 def pseudo_huber(residual):
@@ -299,9 +300,9 @@ recovered_energies = np.asarray(
 )
 ```
 
-Evaluation starts from a new 351-point model grid. After that forward
-calculation, interpolation places the model at the held-out measurement
-coordinates for the residual check.
+The evaluation starts from a new 351-point model grid. After that
+forward calculation, interpolation puts the model at the held-out
+measurement coordinates for the residual check.
 
 ```python
 model_flux = jnp.linspace(0.5, 0.85, 351)
@@ -411,18 +412,20 @@ RESULT experimental_statics={"fit_success":true,"holdout_median_absolute_error_m
 
 </details>
 
-The recovered circuit energies are within $0.6\%$ of the authors' values. The
-few large spectroscopy residuals remain in the holdout RMSE; the median error
-is $0.88$ MHz. This section fits the isolated fluxonium spectrum. The paper's
-full fit also included the coupled readout resonator.
+The recovered circuit energies are within $0.6\%$ of the authors' values.
+The few large spectroscopy residuals stay in the holdout RMSE, and the
+median error is $0.88$ MHz. This section fits the isolated fluxonium
+spectrum, while the paper's full fit also included the coupled readout
+resonator.
 
 ## Differentiate a pulse response
 
-This section differentiates the final excited-state population with respect to
-pulse amplitude, Gaussian shape, and detuning.
+Differentiate the final excited-state population with respect to pulse
+amplitude, Gaussian shape, and detuning.
 
 The dynamiqs backend keeps these declared parameters differentiable through
-the time-domain solve. Install it with `pip install 'quchip[dynamiqs]'`.
+the time-domain solve. Install the backend with
+`pip install 'quchip[dynamiqs]'`.
 
 ```python
 from quchip import RWA, ChargeDrive, Chip, DuffingTransmon, Gaussian, QuantumSequence
@@ -460,10 +463,10 @@ original_parameters = dict(sequence.parameters)
 
 One unit in the perturbation vector means $1\%$ in pulse amplitude, $1\%$ in
 the Gaussian parameter $N_\sigma$, or $1$ MHz in pulse detuning. quchip defines
-$\sigma=\mathrm{duration}/(2N_\sigma)$, so increasing $N_\sigma$ by $1\%$
-narrows the physical Gaussian width by about $1\%$. The derivatives predict
-changes in final population on these three scales. `jax.value_and_grad` returns
-the population and its derivatives together.
+$\sigma=\mathrm{duration}/(2N_\sigma)$. So increasing $N_\sigma$ by $1\%$
+narrows the physical Gaussian width by approximately $1\%$. The derivatives
+predict changes in final population on these three scales. `jax.value_and_grad`
+returns the population and its derivatives together.
 
 ```python
 parameter_paths = ("pulse.0.amplitude", "pulse.0.sigmas", "pulse.0.freq")
@@ -495,8 +498,8 @@ population0, gradient = jax.jit(jax.value_and_grad(final_population))(origin)
 ```
 
 
-At this operating point, increasing amplitude or detuning raises the final
-population; narrowing the Gaussian lowers it.
+At this operating point, increasing amplitude or detuning raises the
+final population, and a narrower Gaussian lowers it.
 
 <details>
 <summary>Plotting code</summary>
@@ -532,8 +535,9 @@ Each bar predicts the population change for the perturbation named on its axis.
 <details>
 <summary>Advanced: share calibration parameters across three experiments</summary>
 
-Combine three pulse experiments with shared qubit frequency, amplitude scale,
-and carrier correction. Their durations and nominal detunings stay fixed.
+Combine three pulse experiments with a shared qubit frequency, amplitude
+scale, and carrier correction. Their durations and nominal detunings stay
+fixed.
 
 ```python
 experiment_settings = (
@@ -556,7 +560,7 @@ shared_origin = jnp.array([frequency0, 1.0, 0.0])
 multi_times = jnp.linspace(0.0, 60.0, 81)
 ```
 
-Rebind shared parameters across the three schedules and collect their final populations.
+Rebind the shared parameters across the three schedules and collect their final populations.
 
 ```python
 def experiment_outputs(shared):
@@ -599,7 +603,7 @@ def multi_loss(shared):
     return jnp.sum(experiment_weights * multi_residual(shared) ** 2)
 ```
 
-The Jacobian has one row per experiment and one column per shared parameter.
+The Jacobian has one row for each experiment and one column for each shared parameter.
 
 ```python
 multi_jacobian = jax.jacrev(multi_residual)(shared_origin)
@@ -622,8 +626,8 @@ Output:
 
 <!-- executed-output:end -->
 
-Use the Jacobian to see which experiment constrains each parameter, or the
-loss gradient to take an optimization step.
+Use the Jacobian to see which experiment constrains each parameter, and
+the loss gradient for an optimization step.
 
 <details>
 <summary>Numerical record</summary>
@@ -673,8 +677,8 @@ RESULT gradient={"backend":"dynamiqs","base_population":0.995519779566944,"figur
 
 The traced calculation keeps the device graph, Hilbert-space dimensions, and
 RWA band selection fixed. dynamiqs supports this automatic-differentiation
-path; QuTiP remains available for ordinary solves and sweeps but does not
-provide gradients. Eigenvector derivatives require care near degenerate
-subspaces. Gradients inherit the solver tolerances, local-basis
-truncation, frame, approximation, and loss scaling chosen for the forward
+path. QuTiP remains available for ordinary solves and sweeps but does not
+give gradients. Near degenerate subspaces, be careful with eigenvector
+derivatives. Gradients inherit the solver tolerances, local-basis
+truncation, frame, approximation, and loss scaling of the forward
 calculation.

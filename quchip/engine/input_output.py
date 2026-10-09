@@ -1,10 +1,10 @@
 """Backend-neutral input-output assembly for stationary port calculations.
 
-Accessible channels are the port-marked subset of
-:class:`~quchip.engine.ir.CollapseTerm`. This module derives coherent input Hamiltonians, output coupling
-operators, and stationary-frame checks from those resolved terms. Numerical
-Liouvillian construction and solution remain backend-owned.
+Accessible channels are the port-marked subset of :class:`~quchip.engine.ir.CollapseTerm`. This
+module derives coherent input Hamiltonians, output coupling operators, and stationary-frame checks
+from those resolved terms.
 """
+# Numerical Liouvillian construction and solution remain backend-owned.
 
 from __future__ import annotations
 

@@ -223,32 +223,30 @@ def plot_graph(
 ) -> str:
     """Write an interactive HTML chip topology and return its path.
 
-    The rendered graph is a standalone, offline-capable HTML file: devices
-    are drawn as dots and drives as diamonds, with couplings, control
-    wiring, and crosstalk distinguished by edge colour and dash pattern.
-    Node colours are auto-assigned per *class* (``DuffingTransmon``,
-    ``Resonator``, ``ChargeDrive``, ...) so new device/drive kinds are
-    visually distinct without user intervention.
+    The HTML file is standalone and works offline. Devices show as dots and
+    drives as diamonds. Edge colour and dash pattern identify couplings,
+    control wiring, and crosstalk. Node colours follow the *class*
+    (``DuffingTransmon``, ``Resonator``, ``ChargeDrive``, ...) automatically,
+    so new kinds of device and drive look different without user action.
 
     Layouts:
 
-    - ``"force_atlas"`` (default) — ``force_atlas_2based`` physics with
-      larger/heavier computational devices so the register sits centrally
-      and auxiliary couplers/drives orbit.
-    - ``"hierarchical"`` — pyvis ``hrepulsion`` on explicit levels
-      (computational devices → other devices/couplings → drives), useful
+    - ``"force_atlas"`` (default): ``force_atlas_2based`` physics with larger
+      and heavier computational devices, so the register sits at the center and
+      the auxiliary couplers and drives orbit it.
+    - ``"hierarchical"``: pyvis ``hrepulsion`` on explicit levels
+      (computational devices → other devices/couplings → drives). It is useful
       for chips with many auxiliary drives or cross-resonance lines.
 
-    *exclude* takes priority over *full*; passing ``full=False`` with no
-    *exclude* hides drives and crosstalk (chip-only view). Every coupling
-    is rendered as its own junction node splitting the device-device edge
-    (so an edge-pump control has a node to attach to); excluding
-    couplings also removes any edge-pump controls that would otherwise
-    dangle (see :func:`_collect_topology`).
+    *exclude* has priority over *full*. If you pass ``full=False`` and no
+    *exclude*, the plot hides drives and crosstalk (chip-only view). Each
+    coupling renders as its own junction node that splits the device-device
+    edge, so an edge-pump control has a node to attach to. Excluding couplings
+    also removes all edge-pump controls that would otherwise dangle.
 
-    ``values="bare"`` preserves the declaration view: device frequencies and
-    coupling strengths come directly from component parameters and require no
-    diagonalization. ``values="dressed"`` instead labels devices with dressed
+    ``values="bare"`` keeps the declaration view: device frequencies and
+    coupling strengths come directly from component parameters, without
+    diagonalization. ``values="dressed"`` labels devices with dressed
     :math:`f_{01}` and coupling junctions with the full-pull cross-Kerr
     :math:`K_{ab}`. ``values="both"`` shows both annotations. These modes do
     not change the topology.
@@ -258,24 +256,24 @@ def plot_graph(
     chip : Chip
         The chip to visualise.
     path : str
-        Destination ``.html`` path. Returned for convenience.
+        Destination ``.html`` path, also returned.
     full : bool
         If ``False``, hide drives and crosstalk unless *exclude* is given.
     exclude : set of str, optional
-        Any of ``{"coupling", "drive", "crosstalk"}`` to hide entirely.
+        The items of ``{"coupling", "drive", "crosstalk"}`` to hide fully.
     values : {"bare", "dressed", "both"}
-        Physical values shown on device and coupling nodes. Defaults to the
-        declared bare values.
+        Physical values that show on device and coupling nodes. The default is
+        the declared bare values.
     layout : str
         ``"force_atlas"`` or ``"hierarchical"``.
     height, width : str
-        CSS dimensions forwarded to ``pyvis.network.Network``.
+        CSS dimensions passed to ``pyvis.network.Network``.
 
     Returns
     -------
     str
-        *path*, unchanged — returned for convenience so the call can be
-        chained into whatever opens/serves the file.
+        *path*, unchanged, so you can chain the call into code that opens or
+        serves the file.
 
     Raises
     ------
@@ -284,6 +282,8 @@ def plot_graph(
     ValueError
         *layout* or *values* is not one of its supported choices.
     """
+    # The removal of dangling edge-pump controls is implemented in
+    # `_collect_topology`.
     try:
         from pyvis.network import Network
     except ImportError as exc:
@@ -380,27 +380,27 @@ def plot_energy_levels(
 ) -> Figure:
     """Plot dressed chip eigenenergies relative to the ground state.
 
-    Each level is rendered as a horizontal bar annotated with its dressed
-    represented-basis tuple label ``|n_1 n_2 ...>`` — the per-device
-    bare-basis assignment selected by the chip's dressing analysis (see
-    ``chip.analysis``). The y-axis is energy in GHz; the ground state is
+    Each level shows as a horizontal bar with its dressed represented-basis
+    tuple label ``|n_1 n_2 ...>``. This label is the per-device bare-basis
+    assignment that the chip's dressing analysis selects (see
+    ``chip.analysis``). The y-axis is energy in GHz, with the ground state
     shifted to zero.
 
     Parameters
     ----------
     chip : Chip
-        The chip whose dressed spectrum should be plotted.
+        Chip whose dressed spectrum is plotted.
     ax : matplotlib.axes.Axes, optional
-        Existing axes to draw onto. When ``None`` a new figure is created.
+        Existing axes to draw on. When ``None``, the function makes a new figure.
     max_states : int, optional
-        How many of the lowest-lying levels to show. Defaults to
+        Number of lowest levels to show. The default is
         ``min(12, total_levels)``.
 
     Returns
     -------
     Figure
-        The figure holding the energy-ladder axes (``ax.figure`` when
-        *ax* was given).
+        The figure that holds the energy-ladder axes (``ax.figure`` when *ax*
+        was given).
 
     Examples
     --------

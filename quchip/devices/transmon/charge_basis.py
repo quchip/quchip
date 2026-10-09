@@ -29,7 +29,7 @@ class ChargeBasisTransmon(DeviceModel):
     n_g : float, default 0.0
         Offset charge in Cooper-pair units.
     levels : int or None, default None
-        Number of projected eigenstates. Required when ``basis="eigen"``;
+        Number of projected eigenstates, required when ``basis="eigen"``.
         ``None`` uses the native dimension for the native basis.
     label : str or None, default None
         Device label.
@@ -37,11 +37,11 @@ class ChargeBasisTransmon(DeviceModel):
         Odd integer-charge basis size, at least 3.
     basis : {None, "native", "eigen"}, keyword-only
         Requested solver basis. ``None`` inherits the chip policy and uses
-        native basis for standalone resolution; ``native`` keeps the charge
-        basis, while ``eigen`` projects onto ``levels`` energy states.
+        native basis for standalone resolution. ``native`` keeps the charge
+        basis, and ``eigen`` projects onto ``levels`` energy states.
     collapse_model : {"fermi_golden", "ladder"}, default "fermi_golden"
-        Relaxation construction; Fermi-golden-rule relaxation needs
-        ``coupling_channel="charge"`` when ``T1`` is set.
+        Relaxation construction. When ``T1`` is set, Fermi-golden-rule
+        relaxation requires ``coupling_channel="charge"``.
     coupling_channel : {None, "charge"}, default None
         Physical operator for matrix-element relaxation. Only ``"charge"``
         is supported and selects the authored charge operator :math:`n`.
@@ -49,9 +49,9 @@ class ChargeBasisTransmon(DeviceModel):
         Non-negative dimensionless cutoff on squared matrix-element ratios
         relative to the selected ``0 -> 1`` transition.
     T1, T2 : float or None
-        Relaxation and dephasing times in ns; ``None`` disables each channel.
+        Relaxation and dephasing times in ns. ``None`` disables each channel.
     thermal_occupation : float or None
-        Mean thermal occupation (dimensionless); ``None`` disables thermal
+        Mean thermal occupation (dimensionless). ``None`` disables thermal
         absorption.
     noise : keyword arguments
         The concrete constructor accepts inherited noise fields as keyword

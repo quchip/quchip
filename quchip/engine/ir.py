@@ -3,29 +3,29 @@
 This module is the *contract* between the engine and its backends. It
 defines four families of immutable, JAX-pytree-friendly types:
 
-1. **Signal Program AST** — subclasses of :class:`SignalNode`
-   (:class:`Constant`, :class:`EnvelopeRef`, :class:`Window`,
-   :class:`Shift`, :class:`Scale`, :class:`PolarScale`, :class:`Add`,
-   :class:`Multiply`, :class:`Conjugate`, :class:`RealPart`,
-   :class:`Carrier`). A pure functional description of a time-dependent
-   scalar coefficient ``f(t) : ℝ → ℂ``. Every leaf that a user may sweep
-   (envelope parameters, amplitudes, phases, carrier frequencies) is a
-   pytree leaf so the whole program is differentiable through JAX.
+1. **Signal Program AST**: the subclasses of :class:`SignalNode`
+   (:class:`Constant`, :class:`EnvelopeRef`, :class:`Window`, :class:`Shift`,
+   :class:`Scale`, :class:`PolarScale`, :class:`Add`, :class:`Multiply`,
+   :class:`Conjugate`, :class:`RealPart`, :class:`Carrier`). They describe,
+   purely functionally, a time-dependent scalar coefficient ``f(t) : ℝ → ℂ``.
+   Every sweepable leaf (envelope parameters, amplitudes, phases, and carrier
+   frequencies) is a pytree leaf, so the whole program is differentiable
+   through JAX.
 
-2. :class:`CanonicalOperator` — backend-free operator storage in
-   dense / CSR / DIA layouts plus subsystem metadata. Backends convert
-   to and from this format.
+2. :class:`CanonicalOperator`: backend-free operator storage in dense / CSR /
+   DIA layouts plus subsystem metadata. Backends convert to and from this
+   format.
 
-3. Resolved open-system physics — :class:`ResolvedSLH` plus
-   solve-applied Hamiltonian terms in :class:`EngineResult`.
+3. Resolved open-system physics: :class:`ResolvedSLH` plus solve-applied
+   Hamiltonian terms in :class:`EngineResult`.
 
-4. Solve requests — :class:`SolveProblem` and :class:`SolveBatch`, the
-   frozen hand-offs to backends. ``backend`` selection is chip-owned
-   and is explicitly forbidden from ``options``.
+4. Solve requests: :class:`SolveProblem` and :class:`SolveBatch`, the frozen
+   hand-offs to backends. The chip owns the ``backend`` selection. Do not put
+   ``backend`` in ``options``.
 
-A note on 2π: every operator here has already been scaled by 2π during
-engine assembly. Carrier frequencies are stored in angular units
-(rad/ns). IR consumers (backends, analyses) must not re-apply 2π.
+A note on 2π: engine assembly scales every operator here by 2π. Carrier
+frequencies are stored in angular units (rad/ns). IR consumers (backends,
+analyses) must not re-apply 2π.
 """
 
 from __future__ import annotations
@@ -89,17 +89,16 @@ class SignalNode:
 
     A node describes a time-dependent scalar ``f(t) : ℝ → ℂ``. Subclasses:
 
-    * are ``@dataclass(frozen=True)``; **every dataclass field is a JAX
-      pytree child** (registration happens automatically on subclass
-      definition), so any field a user may sweep is differentiable;
-    * name the fields that hold child nodes (or tuples of child nodes)
-      in ``_signal_child_fields``, which powers generic traversal
-      (:meth:`signal_children`) and rewriting (:meth:`rebuild_children`);
-    * implement :meth:`evaluate` — the node's pointwise semantics;
-    * override :meth:`bands` when (and only when) the node interacts
-      with :class:`Carrier` leaves: the default treats any carrier-free
-      subtree as a single zero-frequency band, which is exact for every
-      envelope-like node.
+    * are ``@dataclass(frozen=True)``. **Every dataclass field is a JAX pytree
+      child**. Defining a subclass registers it automatically, so any sweepable
+      field is differentiable.
+    * name the fields that hold child nodes (or tuples of child nodes) in
+      ``_signal_child_fields``. This attribute supplies generic traversal
+      (:meth:`signal_children`) and rewriting (:meth:`rebuild_children`).
+    * implement :meth:`evaluate`, the pointwise semantics of the node.
+    * override :meth:`bands` when (and only when) the node interacts with
+      :class:`Carrier` leaves. The default treats any carrier-free subtree as a
+      single zero-frequency band, which is exact for every envelope-like node.
     """
 
     _signal_child_fields: ClassVar[tuple[str, ...]] = ()
@@ -130,8 +129,8 @@ class SignalNode:
     def rebuild_children(self, transform: Any) -> SignalNode:
         """Reconstruct this node with *transform* applied to each child.
 
-        Non-child fields are preserved; nodes without children pass
-        through untouched.
+        Non-child fields are preserved; nodes without children pass through
+        unchanged.
 
         Parameters
         ----------
@@ -168,10 +167,10 @@ class SignalNode:
     def bands(self) -> tuple[CarrierBand, ...]:
         """Rewrite this subtree into carrier-normalized bands.
 
-        Default: a carrier-free subtree is exactly one zero-frequency
-        band whose envelope is the subtree itself. Nodes whose subtrees
-        may contain :class:`Carrier` leaves must override this with
-        their carrier algebra (see :func:`decompose_carrier_bands`).
+        By default, a carrier-free subtree is exactly one zero-frequency band
+        whose envelope is the subtree itself. Nodes whose subtrees can contain
+        :class:`Carrier` leaves must override this with their carrier algebra
+        (see :func:`decompose_carrier_bands`).
         """
         if _contains_carrier(self):
             raise TypeError(
@@ -394,7 +393,7 @@ class RealPart(SignalNode):
         return xp.real(self.child.evaluate(t, xp=xp))
 
     def bands(self) -> tuple[CarrierBand, ...]:
-        """Return each band split into ``±freq`` halves via ``Re z = (z + z̄) / 2``."""
+        """Return each band split into ``±freq`` halves with ``Re z = (z + z̄) / 2``."""
         bands: list[CarrierBand] = []
         for b in self.child.bands():
             bands.append(CarrierBand(Scale(b.envelope, 0.5), b.freq))
@@ -451,12 +450,12 @@ class SignalPower(SignalNode):
 class Carrier(SignalNode):
     """Oscillating carrier ``exp(sign · i · freq · t)``.
 
-    ``freq`` is in angular units (rad/ns). The default ``sign = -1``
-    matches the convention used in rotating-frame decompositions
-    (Scully & Zubairy, *Quantum Optics*, §5), where a raising-type
-    band on a ``+Δ`` detuning rotates as ``exp(−iΔt)``. Both fields are
-    registered as pytree children (``freq`` may be traced; ``sign`` is
-    semantically a static ``±1`` — do not map over it).
+    ``freq`` is in angular units (rad/ns). The default ``sign = -1`` matches
+    the rotating-frame decomposition convention (Scully & Zubairy, *Quantum
+    Optics*, §5). In this convention, a raising-type band on a ``+Δ`` detuning
+    rotates as ``exp(−iΔt)``. Both fields are registered as pytree children.
+    ``freq`` can be traced, but ``sign`` is semantically a static ``±1``, so do
+    not map over it.
 
     Attributes
     ----------
@@ -535,10 +534,10 @@ def _as_time_coefficient(value: Any, *, owner: str) -> ScalarModulation:
 def signal_children(node: Any) -> tuple:
     """Return the :data:`SignalProgram` child nodes of *node*.
 
-    Dispatches to :meth:`SignalNode.signal_children`; a
+    Dispatches to :meth:`SignalNode.signal_children`. A
     :class:`ScalarModulation` wrapper contributes its ``signal``.
-    :attr:`EnvelopeRef.envelope` is an ``Envelope``, not a
-    ``SignalProgram`` child, and so is *not* returned here.
+    :attr:`EnvelopeRef.envelope` is an ``Envelope``, not a ``SignalProgram``
+    child, and so is *not* returned here.
     """
     if isinstance(node, ScalarModulation):
         return (node.signal,)
@@ -548,10 +547,10 @@ def signal_children(node: Any) -> tuple:
 
 
 def signal_window_bounds(signal: Any, shift: Any = 0.0) -> list[tuple[Any, Any]]:
-    """Return absolute window edges, retaining native values and batch axes.
+    """Return absolute window edges, and keep native values and batch axes.
 
-    Enclosing shifts move the clock of every descendant window. Collecting
-    structure requires no numerical decisions, so timing stays differentiable.
+    Enclosing shifts move every descendant window's clock. Collecting the
+    structure makes no numerical decisions, so timing stays differentiable.
     """
     if isinstance(signal, Shift):
         return signal_window_bounds(signal.child, shift + signal.delta_t)
@@ -640,13 +639,12 @@ def _cancel_opposing_carriers(signal: SignalProgram) -> SignalProgram | None:
 class CarrierBand:
     """One band of a carrier-normalized signal: ``envelope(t) · exp(i · freq · t)``.
 
-    :func:`decompose_carrier_bands` rewrites any :data:`SignalProgram`
-    into a sum of these bands, where ``envelope`` is guaranteed
-    carrier-free (no :class:`Carrier` leaves) and therefore slow, and
-    ``freq`` is the angular band frequency (rad/ns, sign folded in,
-    JAX-traceable). Backends use this to keep the fast oscillation
-    analytic while sampling only the slow envelope — exact regardless of
-    how resonant the carrier is, unlike pre-sampling the whole product.
+    :func:`decompose_carrier_bands` rewrites any :data:`SignalProgram` into a
+    sum of these bands. Each ``envelope`` is carrier-free (no :class:`Carrier`
+    leaves) and therefore slow. ``freq`` is the angular band frequency (rad/ns,
+    sign folded in, JAX-traceable). Backends use this to keep the fast
+    oscillation analytic and sample only the slow envelope. Unlike pre-sampling
+    the whole product, this is exact for every carrier, resonant or not.
     """
 
     envelope: SignalProgram
@@ -692,11 +690,11 @@ def _mul_envelope(a: SignalProgram, b: SignalProgram) -> SignalProgram:
 def decompose_carrier_bands(signal: SignalProgram) -> tuple[CarrierBand, ...]:
     """Rewrite *signal* into ``Σ_k envelope_k(t) · exp(i · freq_k · t)`` with carrier-free envelopes.
 
-    This is the scalar-coefficient analogue of the operator band
-    decomposition in :mod:`quchip.engine.bands`: every :class:`Carrier`
-    leaf is pulled out into a band frequency, leaving a slow, carrier-free
-    ``envelope`` per band. The rewrite is exact and follows the carrier
-    algebra, implemented node-locally in each :meth:`SignalNode.bands`:
+    It is the scalar-coefficient analogue of the operator band decomposition in
+    :mod:`quchip.engine.bands`. Every :class:`Carrier` leaf is pulled out into
+    a band frequency, leaving a slow, carrier-free ``envelope`` for each band.
+    The rewrite is exact and follows the carrier algebra, implemented
+    node-locally in each :meth:`SignalNode.bands`:
 
     * ``Carrier(freq, sign)`` → one band ``(1, sign·freq)``.
     * ``Conjugate`` → conjugate the envelope, flip the band frequency.
@@ -723,11 +721,10 @@ CanonicalLayout: TypeAlias = Literal["dense", "csr", "dia"]
 class CanonicalOperator:
     """Backend-free operator with explicit dense/CSR/DIA payload and subsystem metadata.
 
-    For ``dense`` the payload is the full 2D matrix; for ``csr`` it is the
-    1D nonzero value array paired with ``indices``/``indptr``; for ``dia``
-    it is a 2D ``(n_diags, n_cols)`` array paired with ``offsets``.
-    ``dims`` must multiply to ``shape[0]`` and ``subsystem_labels`` names
-    each subsystem.
+    For ``dense``, the payload is the full 2D matrix. For ``csr``, it is the 1D
+    nonzero value array paired with ``indices``/``indptr``. For ``dia``, it is
+    a 2D ``(n_diags, n_cols)`` array paired with ``offsets``. ``dims`` must
+    multiply to ``shape[0]`` and ``subsystem_labels`` names each subsystem.
 
     Attributes
     ----------
@@ -1015,10 +1012,10 @@ class CanonicalOperator:
     def to_dense(self) -> Any:
         """Materialize the payload as a dense ``shape``-sized matrix.
 
-        Vectorized and array-namespace-preserving (JAX-safe): a traced
-        JAX payload yields a JAX array via ``.at[].set`` / ``.add``, a
-        concrete NumPy payload yields a NumPy array. Callers that need a
-        guaranteed concrete NumPy matrix must wrap the result in
+        Vectorized and array-namespace-preserving (JAX-safe). A traced JAX
+        payload yields a JAX array through ``.at[].set`` / ``.add``. A concrete
+        NumPy payload yields a NumPy array. Callers that need a guaranteed
+        concrete NumPy matrix must wrap the result in
         ``np.asarray(..., dtype=complex)`` themselves.
         """
         payload = next(
@@ -1063,14 +1060,14 @@ class CanonicalOperator:
     def fingerprint(self) -> tuple:
         """Batching key: value-sensitive, with an automatic tracer-safe fallback.
 
-        Two crosstalk-rebuilt operators carrying the same coefficients
-        collapse to the same key so they batch into one solve slot.
-        Under ``jax.jit`` the payload is a tracer (possibly hidden inside
-        a backend qarray wrapper, e.g. a sparse-DIA dynamiqs ``QArray``);
-        :func:`contains_tracer` detects that and the key falls back to
-        layout + shape/dtype structure only, so ``tobytes()`` is never
-        called on a tracer and two equivalent traced operators in
-        different batch slots still produce identical keys.
+        Two crosstalk-rebuilt operators carrying the same coefficients collapse
+        to the same key so they batch into one solve slot. Under ``jax.jit``,
+        the payload is a tracer, possibly hidden inside a backend qarray
+        wrapper such as a sparse-DIA dynamiqs ``QArray``.
+        :func:`contains_tracer` detects this case, and the key falls back to
+        layout + shape/dtype structure only, so ``tobytes()`` is never called
+        on a tracer. Two equivalent traced operators in different batch slots
+        still produce identical keys.
         """
         if contains_tracer((self.values, self.indices, self.indptr, self.offsets)):
             return self._structural_fingerprint()
@@ -1123,11 +1120,10 @@ TermOrigin: TypeAlias = Literal[
 class StaticTerm:
     """Time-independent Hamiltonian contribution.
 
-    The ``operator`` payload has already been scaled by 2π during
-    engine assembly; backends must not re-apply it. ``coefficient``
-    multiplies ``operator`` and may be a concrete scalar or a JAX
-    tracer (sweeps over static couplings, detunings, etc.). ``origin``
-    is purely advisory metadata.
+    Engine assembly scales the ``operator`` payload by 2π, so backends must not
+    re-apply it. ``coefficient`` multiplies ``operator`` and can be a concrete
+    scalar or a JAX tracer (for example, sweeps over static couplings or
+    detunings). ``origin`` is purely advisory metadata.
 
     Attributes
     ----------
@@ -1151,11 +1147,11 @@ class StaticTerm:
 class DynamicTerm:
     """Time-dependent Hamiltonian contribution ``operator · f(t)``.
 
-    ``f(t)`` is wrapped in :class:`ScalarModulation`, which each backend
-    lowers into its native coefficient representation (QuTiP callback,
-    dynamiqs sampled array, etc.). The ``operator`` is 2π-scaled already
-    (see module docstring). ``tag`` is an optional human label; it does
-    not participate in physics.
+    ``f(t)`` is wrapped in :class:`ScalarModulation`, which each backend lowers
+    into its native coefficient representation (for example, a QuTiP callback
+    or a dynamiqs sampled array). The ``operator`` is 2π-scaled already (see
+    module docstring). ``tag`` is an optional human label that does not
+    participate in physics.
 
     Attributes
     ----------
@@ -1259,7 +1255,7 @@ class SLHChannel:
     key : str
         Unique resolved channel key.
     accessibility : {"exposed", "hidden"}
-        Whether the channel reaches the modeled experiment boundary.
+        If the channel reaches the modeled experiment boundary.
     collapse : CollapseTerm
         Component-authored channel record.
     coupling_operator : CanonicalOperator or None
@@ -1343,7 +1339,7 @@ class ResolvedSLH:
 
     @property
     def has_network_hamiltonian(self) -> bool:
-        """Whether connection resolution generated coherent Hamiltonian terms."""
+        """Return if connection resolution generated coherent Hamiltonian terms."""
         return any(term.origin == "network" for term in self.hamiltonian.static_terms)
 
     def __post_init__(self) -> None:
@@ -1442,7 +1438,7 @@ class ResolvedSLH:
         return self.scattering
 
     def feeds(self, output_index: int, input_index: int) -> bool:
-        """Return whether one input structurally reaches one output.
+        """Return if one input structurally reaches one output.
 
         Parameters
         ----------
@@ -1499,10 +1495,9 @@ class ResolvedSLH:
 class DroppedTerm:
     """Advisory record for a Hamiltonian term elided by an approximation.
 
-    Compare a dropped band's amplitude with its oscillation frequency to
-    assess RWA validity; the leading Bloch-Siegert correction scales as
-    amplitude²/frequency. Numeric fields use ordinary GHz and may be traced.
-    Static ``band_weights`` let assembly derive the frequency from the frame.
+    Compare a dropped band's amplitude with its oscillation frequency to assess
+    RWA validity. The leading Bloch-Siegert correction scales as
+    amplitude²/frequency. Numeric fields use ordinary GHz and can be traced.
 
     Parameters
     ----------
@@ -1510,22 +1505,23 @@ class DroppedTerm:
         Label of the owning component (coupling / drive / …) that
         dropped the term.
     operator : str
-        Human-readable operator string (e.g. ``"a_q0 · a_q1"``).
+        Human-readable operator string (for example ``"a_q0 · a_q1"``).
     reason : str
-        Short reason (e.g. ``"counter-rotating under RWA"``).
+        Short reason (for example ``"counter-rotating under RWA"``).
     band_weights : tuple[int, ...] | None
-        Excitation-change weights of the dropped band, one per endpoint
-        mode in the owner's declared order (e.g. ``(-1, -1)`` for
-        ``a·b``). ``None`` when not applicable.
+        Excitation-change weights of the dropped band, one per endpoint mode in
+        the owner's declared order (for example ``(-1, -1)`` for ``a·b``).
+        ``None`` when not applicable.
     amplitude : Any | None
-        Static prefactor of the dropped term in GHz (e.g. the coupling
-        ``g``); possibly traced. ``None`` when the prefactor is
-        time-dependent (drive envelopes) or unknown.
+        Static prefactor of the dropped term in GHz (for example the coupling
+        ``g``), possibly traced. ``None`` when the prefactor is time-dependent
+        (drive envelopes) or unknown.
     frequency : Any | None
-        Oscillation frequency of the dropped band in the assembly
-        frame, GHz, positive; possibly traced. ``None`` until resolved
-        (assembly fills it from the frame and ``band_weights``).
+        Positive oscillation frequency of the dropped band in the assembly
+        frame, in GHz, possibly traced. ``None`` until resolved (assembly fills
+        it from the frame and ``band_weights``).
     """
+    # Static `band_weights` let assembly derive the frequency from the frame.
 
     source: str
     operator: str
@@ -1537,7 +1533,7 @@ class DroppedTerm:
 
 @dataclass(frozen=True)
 class BoundCoherentInput:
-    """One solve-bound incident field, retained outside input-free SLH.
+    """One solve-bound incident field, kept outside input-free SLH.
 
     ``reference_beta`` is the signal scheduled at the authored external
     reference plane. ``beta`` is shifted by the total duration of the exposure's
@@ -1579,10 +1575,10 @@ class EngineResult:
         H(t) \\;=\\; \\sum_s c_s \\, O_s
                    \\;+\\; \\sum_d O_d \\, f_d(t)
 
-    ``slh`` is the input-free Markov model; ``applied_hamiltonian`` holds
+    ``slh`` is the input-free Markov model. ``applied_hamiltonian`` holds
     scheduled controls and solve-bound coherent drives. Operators already
-    include the 2π conversion. Backends may use ``metadata`` integration
-    hints but remain responsible for resolving finite-support dynamics.
+    include the 2π conversion. Backends can use ``metadata`` integration hints
+    but remain responsible for resolving finite-support dynamics.
     ``dropped_terms`` is advisory approximation metadata.
 
     Attributes
@@ -1598,7 +1594,7 @@ class EngineResult:
     metadata : dict
         Advisory solver hints, with frequencies in GHz and time scales in ns.
     dropped_terms : tuple of DroppedTerm
-        Terms removed by the selected approximation, retained for diagnostics.
+        Terms removed by the selected approximation, kept for diagnostics.
     bases : mapping
         Per-device authored-to-solver basis records.
     authored : object or None
@@ -1608,9 +1604,9 @@ class EngineResult:
     approximation : Approximation or None
         Approximation captured by this resolved snapshot.
     dynamical_supports : tuple of tuple of str
-        Device groups coupled by retained dynamical terms.
+        Device groups coupled by kept dynamical terms.
     dissipation : bool
-        Whether :attr:`collapse_terms` exposes the resolved dissipators.
+        If :attr:`collapse_terms` exposes the resolved dissipators.
     """
 
     slh: ResolvedSLH
@@ -1662,10 +1658,10 @@ class EngineResult:
     ) -> Any:
         """Dress this resolved Hamiltonian, optionally at one instant.
 
-        Unlike :meth:`Chip.dress <quchip.Chip.dress>`, this method analyzes
-        the selected frame and approximation stored in this snapshot. A
-        snapshot carrying dynamic Hamiltonian terms requires ``at_time``;
-        the result is an instantaneous eigensystem, not a Floquet analysis.
+        Unlike :meth:`Chip.dress <quchip.Chip.dress>`, this method analyzes the
+        selected frame and approximation stored in this snapshot. A snapshot
+        with dynamic Hamiltonian terms requires ``at_time``. The result is an
+        instantaneous eigensystem, not a Floquet analysis.
 
         Parameters
         ----------
@@ -1696,9 +1692,9 @@ class EngineResult:
         Parameters
         ----------
         static_terms : tuple of StaticTerm or None, optional
-            Replacement static terms; ``None`` preserves them.
+            Replacement static terms. ``None`` keeps them.
         dynamic_terms : tuple of DynamicTerm or None, optional
-            Replacement dynamic terms; ``None`` preserves them.
+            Replacement dynamic terms. ``None`` keeps them.
         """
         applied = replace(
             self.applied_hamiltonian,
@@ -1780,9 +1776,9 @@ class EngineResult:
     def hamiltonian(self) -> PhysicsExpr:
         """Return the exact canonical Hamiltonian as an inspectable expression.
 
-        This view is derived from the same terms backends receive. Matrix
-        leaves remain opaque, while each dynamic coefficient renders as a
-        named function of time.
+        This view derives from the same terms backends receive. Matrix leaves
+        remain opaque, while each dynamic coefficient renders as a named
+        function of time.
         """
         from quchip.declarative.expr import PhysicsExpr
 
@@ -1823,8 +1819,8 @@ class EngineResult:
     def dropped_terms_summary(self) -> str:
         """Format :attr:`dropped_terms` as a multi-line human-readable string.
 
-        Traced ``amplitude`` / ``frequency`` values print as ``traced``
-        rather than being concretized.
+        Traced ``amplitude`` / ``frequency`` values print as ``traced`` and are
+        not concretized.
         """
         if not self.dropped_terms:
             return "No dropped terms."
@@ -1880,8 +1876,8 @@ class HamiltonianTemplate:
     """Captured chip physics and pre-embedded bands for homogeneous drive sweeps.
 
     ``base_result`` owns invariant operators, channels, bases and diagnostics.
-    Reference operations and delivered keys guard the routing and pulse topology;
-    only signal-program leaves are rebuilt for each variant.
+    Reference operations and delivered keys guard the routing and pulse topology.
+    Only signal-program leaves are rebuilt for each variant.
     """
 
     base_result: EngineResult
@@ -1919,19 +1915,17 @@ class ResolvedFrame:
     Describes the rotating-frame transformation applied uniformly to
     the chip:
 
-    * ``frequencies[label]`` — the per-device integration-frame
-      frequency ``ω_frame`` in GHz. The static Hamiltonian gets the
-      counter-term ``−Σᵢ ω_frame,ᵢ nᵢ``.
-    * ``demod_freqs[label] = reference_freq − ω_frame`` — the
-      demodulation frequency used post-solve to rotate
-      expectations back into the user's control frame.
-      ``reference_freq`` is the device attribute (see
-      :attr:`~quchip.devices.base.BaseDevice.reference_freq`); it
-      merely defaults to the dressed drive frequency when not set
-      explicitly.
-    * ``mode`` — one of ``"lab"`` / ``"rotating"`` / ``"auto"`` /
-      ``"float"`` / ``"dict"``.
-    * ``plan`` — the :class:`~quchip.engine.frames.FramePlan` selected for
+    * ``frequencies[label]``: the per-device integration-frame frequency
+      ``ω_frame`` in GHz. The static Hamiltonian gets the counter-term
+      ``−Σᵢ ω_frame,ᵢ nᵢ``.
+    * ``demod_freqs[label] = reference_freq − ω_frame``: the demodulation
+      frequency used after the solve to rotate expectations back into the
+      user's control frame. ``reference_freq`` is the device attribute (see
+      :attr:`~quchip.devices.base.BaseDevice.reference_freq`). It defaults to
+      the dressed drive frequency when not set explicitly.
+    * ``mode``: one of ``"lab"`` / ``"rotating"`` / ``"auto"`` / ``"float"`` /
+      ``"dict"``.
+    * ``plan``: the :class:`~quchip.engine.frames.FramePlan` selected for
       ``"auto"``, or ``None`` for an explicit frame.
     """
 
@@ -1989,7 +1983,7 @@ class SolveProblem:
     solver : str or None
         Explicit solver selection.
     options : dict
-        Backend solver options; a ``"backend"`` key is rejected.
+        Backend solver options. A ``"backend"`` key is rejected.
     run_args : dict
         Native trajectory call keywords, separate from integrator options.
     monitoring : dict or None
@@ -1997,7 +1991,7 @@ class SolveProblem:
     truncation : object or None
         Captured boundary-population plan.
     states : {"all", "final", "none"} or None
-        None retains native stochastic defaults; deterministic requests resolve it to all.
+        None keeps native stochastic defaults. Deterministic requests resolve it to all.
     backend : Backend
         Captured backend owner.
     device_info : tuple
@@ -2022,20 +2016,20 @@ class SolveProblem:
 
     @property
     def stochastic(self) -> bool:
-        """Whether an explicitly selected native solver produces trajectories."""
+        """Return if an explicitly selected native solver produces trajectories."""
         return self.solver not in (None, "sesolve", "mesolve")
 
     @property
     def dissipation(self) -> bool:
-        """Whether this calculation includes the resolved dissipators."""
+        """Return if this calculation includes the resolved dissipators."""
         return self.engine_result.dissipation
 
     def solver_name(self, backend: Any) -> str:
         """Return the selected solver name.
 
-        An explicit ``solver`` takes precedence, but ``sesolve`` is rejected for a
-        density matrix. Otherwise select ``sesolve`` only for a ket with no collapse
-        terms; select ``mesolve`` for a density matrix or any problem with collapse terms.
+        An explicit ``solver`` takes precedence, but ``sesolve`` is rejected for a density
+        matrix. Otherwise, select ``sesolve`` only for a ket with no collapse terms, and
+        ``mesolve`` for a density matrix or any problem with collapse terms.
 
         Parameters
         ----------
@@ -2103,16 +2097,16 @@ def _capture_solve_input(value: Any) -> Any:
 class LinearResponseProblem:
     """Passive-linear input-output request handed to a backend.
 
-    ``hamiltonian`` is the number-conserving mode matrix in angular units,
-    or, for a weak probe of an excitation-conserving chip, its one-excitation
-    block, which may carry a non-Hermitian part from number-conserving channels;
-    ``couplings`` stacks the channel rows of ``L = C a``, and ``scattering``
-    is the complete instantaneous SLH matrix including hidden vacuum and loss
+    ``hamiltonian`` is the number-conserving mode matrix in angular units. For a
+    weak probe of an excitation-conserving chip, it is the chip's one-excitation
+    block, which can carry a non-Hermitian part from number-conserving channels.
+    ``couplings`` stacks the channel rows of ``L = C a``. ``scattering`` is the
+    complete instantaneous SLH matrix, including hidden vacuum and loss
     channels. Frequencies remain ordinary GHz at the public boundary.
     ``plane_indices`` selects the external channels used as matrix rows and
     columns. ``inbound_transfer`` and ``outbound_transfer`` contain the
     per-frequency reference factors for each external channel. Backends return
-    the undecorated Markov response; the engine applies both factors.
+    the undecorated Markov response, and the engine applies both factors.
 
     Attributes
     ----------
@@ -2250,7 +2244,7 @@ class SolveBatch:
 
     @property
     def has_shared_tlist(self) -> bool:
-        """Whether every point has the same captured time grid."""
+        """Return if every point has the same captured time grid."""
         return all(problem.tlist is self.problems[0].tlist for problem in self.problems)
 
     @property
@@ -2327,15 +2321,15 @@ class SolveBatch:
 class DriveOp:
     """Drive operation scheduled on a device or a modulable coupling.
 
-    ``freq`` is in GHz; ``None`` selects flux drive (or baseband edge
-    pump). ``start_time`` and ``phase_offset`` apply in the control
-    frame. ``drive_label`` resolves the drive in the chip's control
-    equipment (e.g. ``"charge_0"``). ``target_label`` resolves in the
-    chip's device or coupling label space.
+    ``freq`` is in GHz. ``None`` selects flux drive (or baseband edge pump).
+    ``start_time`` and ``phase_offset`` apply in the control frame.
+    ``drive_label`` resolves the drive in the chip's control equipment (for
+    example ``"charge_0"``). ``target_label`` resolves in the chip's device or
+    coupling label space.
 
-    The pulse window retains its absolute scheduled time. A solve may
-    select a partial interval; a window wholly outside that interval or
-    touching only an endpoint contributes no evolution.
+    The pulse window keeps its absolute scheduled time. A solve can select a
+    partial interval, and a window wholly outside it or touching only an
+    endpoint contributes no evolution.
     """
 
     target_label: str

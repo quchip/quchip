@@ -1,4 +1,4 @@
-"""scqubits interoperability — ``from_scqubits`` / ``to_scqubits`` dispatch.
+"""scqubits interoperability with ``from_scqubits`` and ``to_scqubits`` dispatch.
 
 Importing this subpackage registers the shipped scqubits device mappings (see
 :mod:`quchip.interop.scqubits.devices`) with the library-agnostic
@@ -32,23 +32,25 @@ def from_scqubits(obj: Any, **opts: Any) -> Any:
     Parameters
     ----------
     obj : scqubits object
-        A supported circuit, oscillator, or ``HilbertSpace``. Device mappings
-        are listed in :mod:`quchip.interop.scqubits.devices`. Its energies are
-        read in scqubits' current unit, ``scqubits.get_units()``, and
-        converted to GHz.
+        A supported circuit, oscillator, or ``HilbertSpace``.
+        :mod:`quchip.interop.scqubits.devices` lists the device mappings.
+        Energies are read in the current scqubits unit,
+        ``scqubits.get_units()``, and converted to GHz.
     **opts
-        Device imports accept ``levels`` (default: source ``truncated_dim``),
-        ``label`` (default: source ``id_str``), and target-device noise options
-        such as ``T1``, ``T2`` and ``thermal_occupation``. Matrix-element
-        relaxation may also require ``coupling_channel``; see the target class.
-        Composite imports accept ``frame`` (default ``"lab"``) and
-        ``approximation`` (default ``Exact()``); device options are not forwarded.
+        Device imports accept ``levels`` (default: source ``truncated_dim``) and
+        ``label`` (default: source ``id_str``). They also accept the target
+        device's noise options, such as ``T1``, ``T2`` and ``thermal_occupation``.
+        Matrix-element relaxation can also require ``coupling_channel`` (see the
+        target class). Composite imports accept ``frame`` (default ``"lab"``) and
+        ``approximation`` (default ``Exact()``), and do not forward device
+        options.
 
     Returns
     -------
     BaseDevice or Chip
-        Converted device, or a composite of frozen eigenbasis snapshots.
-        Snapshot source parameters are not differentiable through quchip.
+        Converted device, or a composite of frozen eigenbasis snapshots. A
+        snapshot is not differentiable through quchip with respect to its
+        source parameters.
 
     Raises
     ------
@@ -82,21 +84,22 @@ def to_scqubits(device_or_chip: Any, **opts: Any) -> Any:
     Parameters
     ----------
     device_or_chip : BaseDevice or Chip
-        Model with concrete parameters. A chip exports subsystems and supported
-        interactions; filtered couplings require ``Exact()`` before export.
+        Model with concrete parameters. A chip exports its subsystems and
+        supported interactions. Filtered couplings must use ``Exact()`` before
+        export.
     **opts
         Mapping-specific options. ``DuffingTransmon`` export accepts ``ncut``
-        (integer charge cutoff, default 30) for reconstructing circuit energies.
-        Other shipped device mappings currently ignore extra options.
-        Composite export accepts no keyword options.
+        (integer charge cutoff, default 30) to reconstruct the circuit energies.
+        Other shipped device mappings currently ignore extra options. Composite
+        export accepts no keyword options.
 
     Returns
     -------
     scqubits object
-        Corresponding device or ``HilbertSpace``, with energies in scqubits'
-        current unit, ``scqubits.get_units()``. Chip control equipment and
-        baths are omitted with a warning; port networks and effective terms
-        are unsupported. See :func:`~quchip.interop.scqubits.composite.export_chip`.
+        Related device or ``HilbertSpace``, with energies in the current scqubits
+        unit, ``scqubits.get_units()``. The export omits chip control equipment and
+        baths with a warning. Port networks and effective terms are unsupported.
+        See :func:`~quchip.interop.scqubits.composite.export_chip`.
 
     Raises
     ------
@@ -105,7 +108,7 @@ def to_scqubits(device_or_chip: Any, **opts: Any) -> Any:
     LookupError
         No export mapping exists for a device type.
     ValueError
-        Parameters are traced or approximation filtering would change the export.
+        Parameters are traced, or approximation filtering would change the export.
 
     References
     ----------

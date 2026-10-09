@@ -20,7 +20,7 @@ class SteadyStateResult:
     Attributes
     ----------
     state : backend state
-        Stationary density matrix in solver basis.
+        Stationary density matrix in the solver basis.
     residual : scalar
         Residual norm of the stationary equation.
     nullity : scalar
@@ -45,7 +45,7 @@ class SteadyStateResult:
 
     @property
     def condition_number(self) -> Any:
-        """Condition number of the trace-constrained generator, computed on request."""
+        """Condition number of the trace-constrained generator, calculated on request."""
         return None if self._condition_number is None else self._condition_number()
 
     @property
@@ -60,14 +60,14 @@ class SteadyStateResult:
 
     @property
     def hermiticity_error(self) -> Any:
-        """Frobenius norm of rho minus its adjoint, computed on request."""
+        """Frobenius norm of rho minus its adjoint, calculated on request."""
         xp = self._backend.array_module
         state = self._backend.to_array(self.state)
         return xp.linalg.norm(state - xp.conj(xp.swapaxes(state, -1, -2)))
 
     @property
     def minimum_eigenvalue(self) -> Any:
-        """Smallest eigenvalue of the Hermitian part, computed on request."""
+        """Smallest eigenvalue of the Hermitian part, calculated on request."""
         xp = self._backend.array_module
         state = self._backend.to_array(self.state)
         hermitian = 0.5 * (state + xp.conj(xp.swapaxes(state, -1, -2)))
@@ -113,7 +113,7 @@ class SteadyStateResult:
         Parameters
         ----------
         device : device object or str
-            Device to retain.
+            Device to keep.
         """
         label = resolve_label(device)
         for index, (candidate, _) in enumerate(self.device_info):

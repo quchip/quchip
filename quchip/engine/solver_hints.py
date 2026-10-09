@@ -2,13 +2,12 @@
 
 These helpers summarize an already-assembled
 :class:`~quchip.engine.ir.EngineResult` into advisory hints
-(``max_carrier_freq_ghz``, ``spectral_bound_ghz``) that backends may
-consult to pick a conservative solver step. They live outside
-``assembly`` because they assemble no terms and never cross the
-2π boundary: the only :data:`~quchip.utils.constants.TWO_PI` here divides
-an already-angular carrier back to ordinary GHz for the advisory dict.
-None of these values participate in physics — they are pure metadata.
+(``max_carrier_freq_ghz``, ``spectral_bound_ghz``). Backends can use them to
+pick a conservative solver step. None of these values participate in physics.
 """
+# The solver-hint helpers are outside `assembly` because they assemble no terms
+# and never cross the 2π boundary. The only `TWO_PI` here divides an
+# already-angular carrier back to ordinary GHz for the advisory dict.
 
 from __future__ import annotations
 

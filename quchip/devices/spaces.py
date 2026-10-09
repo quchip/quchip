@@ -67,7 +67,7 @@ class LocalSpace(ABC):
         name : str
             Supported local operator name.
         backend : backend protocol
-            Object providing native operator constructors.
+            Object that supplies native operator constructors.
         """
         return backend.from_array(
             self.matrix(name),
@@ -82,8 +82,8 @@ class FockSpace(LocalSpace):
     Parameters
     ----------
     levels : int
-        Hilbert-space dimension; must be at least 2. The ``a`` ladder is
-        truncated at ``levels - 1``.
+        Hilbert-space dimension, at least 2. The ``a`` ladder is truncated at
+        ``levels - 1``.
     """
 
     levels: int
@@ -153,8 +153,8 @@ class ChargeSpace(LocalSpace):
     Parameters
     ----------
     num_basis : int
-        Odd basis size, at least 3; charges run from
-        ``-(num_basis-1)//2`` to ``+(num_basis-1)//2``.
+        Odd basis size, at least 3, with charges from ``-(num_basis-1)//2`` to
+        ``+(num_basis-1)//2``.
     """
 
     num_basis: int
@@ -199,12 +199,12 @@ class ChargeSpace(LocalSpace):
 class PhaseGridSpace(LocalSpace):
     """Uniform endpoint-excluded phase grid with nonperiodic finite differences.
 
-    The centered-difference stencil does not wrap across the grid boundary;
-    values beyond either endpoint are treated as zero.
+    The centered-difference stencil does not wrap across the grid boundary.
+    Values beyond each endpoint are zero.
     Parameters
     ----------
     points : int
-        Number of endpoint-excluded grid points; at least 3.
+        Number of endpoint-excluded grid points, at least 3.
     extent : float
         Positive half-width of the grid, in dimensionless phase radians.
     """
@@ -264,7 +264,7 @@ class CustomSpace(LocalSpace):
     dimension : int
         Positive matrix dimension.
     operators : mapping[str, array or callable]
-        Operator providers. Each resulting matrix must have shape
+        Operator providers. Each resulting matrix needs shape
         ``(dimension, dimension)``.
     """
 
