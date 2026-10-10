@@ -81,6 +81,13 @@ This file records notable user-visible changes to quchip.
   assemble a superoperator whose estimated peak exceeds the available memory.
   Previously, the operating system killed them. The dynamiqs stationary Liouvillian
   uses the same check. ([#80](https://github.com/quchip/quchip/issues/80))
+- `eliminate()` reports `j_eff` and `dJ_domega_c` in the emitted edge's units,
+  accounting for complex or non-unit charge matrix elements. Previously,
+  taking the real exchange element could produce a zero or mis-scaled edge.
+  Retained terms still carry the full reduced Hamiltonian. `g_over_delta`
+  now uses resolved exchange rather than authored strength. Parallel device
+  couplings report their combined exchange.
+  ([#111](https://github.com/quchip/quchip/pull/111))
 
 #### Performance
 
