@@ -62,8 +62,10 @@ def conserves_excitation_number(chip: Any, approximation: Any) -> bool:
     """Return whether a chip's static model structurally conserves the total energy-level index.
 
     Device Hamiltonians are diagonal in their energy bases. The approximation
-    must keep only bands of zero total weight, every retained term must declare
-    conservation, and no port pair can generate a cascade Hamiltonian.
+    must keep only bands of zero total weight, and every retained term must
+    declare conservation. A port pair that generates the cascade Hamiltonian
+    ``Im(L2^dagger S2 L1)`` conserves the index when both port operators lower
+    it by one, as the ports of a shared feedline do.
 
     Parameters
     ----------
@@ -76,7 +78,21 @@ def conserves_excitation_number(chip: Any, approximation: Any) -> bool:
         return False
     if any(terms.excitation_changes is None for terms in chip.effective_terms):
         return False
-    return chip.port_network is None or not chip.port_network._active_generated_pairs()
+    pairs = () if chip.port_network is None else chip.port_network._active_generated_pairs()
+    if not pairs:
+        return True
+    from quchip.engine.assembly import _resolve_system
+
+    bases = _resolve_system(chip, chip.backend).bases
+    labels = dict.fromkeys(label for downstream, upstream, _ in pairs for label in (downstream, upstream))
+    return all(_port_lowers_level_index(chip, chip.port(label), bases) for label in labels)
+
+
+def _port_lowers_level_index(chip: Any, port: Any, bases: Mapping[str, Any]) -> bool:
+    """Return whether a port's operator lowers the total energy-level index by one and does nothing else."""
+    ((channel, _paths),) = port._collapse_channels_with_paths(chip)
+    changes = authored_excitation_changes(channel.operator, port.resolve_targets(chip), chip.backend, bases)
+    return changes is not None and changes <= {1}
 
 
 @dataclass(frozen=True, eq=False)

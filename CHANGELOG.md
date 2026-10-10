@@ -95,6 +95,10 @@ This file records notable user-visible changes to quchip.
   per-call option scope, which rebuilt every data-layer dispatcher.
   `steadystate_batch()` over 40 points runs 5.4 times faster, and
   `VNA.finite_power()` over 44 points runs 3.2 times faster.
+- Shared-feedline models use the compact weak-probe VNA route when each
+  participating port lowers total excitation by one. The cascade Hamiltonian
+  then conserves excitation, including after supported exact reductions.
+  ([#110](https://github.com/quchip/quchip/pull/110))
 
 #### Compatibility
 
