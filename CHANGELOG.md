@@ -28,14 +28,11 @@ This file records notable user-visible changes to quchip.
 - `PortNetwork.mode_reflection(...)` adds a serializable two-sided reference
   section that reflects like a damped linear mode.
   ([#76](https://github.com/quchip/quchip/issues/76))
-- `eliminate(chip, device, local=True)` reduces a device from a patch around it,
-  so its cost follows the patch and not the full product space. The patch holds
-  every device that the full-chip Schrieffer-Wolff generator reads. The retained
-  Hamiltonian, the channels and the map then equal those of the full-chip
-  reduction. `active_patch()` and `QuantumSequence.active_patch()` forward
-  `local`. Only `method="sw"` is local. Chips with baths, and port networks that
-  link a patch port to a port outside the patch, raise `NotImplementedError`.
-  ([#97](https://github.com/quchip/quchip/issues/97))
+- `eliminate(chip, device, local=True)` computes the SW reduction on a local
+  patch. It retains the full reduction's Hamiltonian, channels, and map.
+  `chi` describes only the patch. Both `active_patch()` entry points forward
+  `local`. Baths and networks that cross the patch boundary remain unsupported.
+  ([#112](https://github.com/quchip/quchip/pull/112))
 
 #### Fixes
 

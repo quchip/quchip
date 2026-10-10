@@ -148,10 +148,7 @@ def test_local_steps_reduce_a_ring_whose_full_space_does_not_fit_in_memory():
 
 
 class _LevelShift(CouplingModel):
-    """The diagonal edge (x - r y) n_a n_b, as the coefficient 1e13 (x - r y) times the matrix 1e-13 n_a n_b.
-
-    The coefficient vanishes when x / y equals r, the ratio of two seeded random numbers.
-    """
+    """A rescaled diagonal edge tests patch selection at tiny operator values and zero coupling."""
 
     x: Scalar = parameter(unit="GHz")
     y: Scalar = parameter(unit="GHz")
@@ -160,10 +157,11 @@ class _LevelShift(CouplingModel):
         dims = (a.space.dimension, b.space.dimension)
         numbers = np.kron(np.diag(np.arange(dims[0])), np.diag(np.arange(dims[1])))
         operator = as_operator_expr(1e-13 * numbers, labels=(a.label, b.label), dims=dims, name="n_a n_b")
-        return 1e13 * (p.x - 1.4769827368964097 * p.y) * operator
+        return 1e13 * (p.x - p.y) * operator
 
 
-def test_local_patch_holds_each_term_that_shifts_a_neighbour():
+@pytest.mark.parametrize("x", [0.05, 0.03], ids=["nonzero", "cancelled"])
+def test_local_patch_holds_each_term_that_shifts_a_neighbour(x):
     """d shifts a through n_a n_d, and the port pair on (a, b) and c through n_a n_b n_c, so both join m's patch."""
     m = Resonator(freq=7.0, levels=2, label="m")
     a = DuffingTransmon(freq=6.0, anharmonicity=-0.25, levels=3, label="a")
@@ -174,7 +172,7 @@ def test_local_patch_holds_each_term_that_shifts_a_neighbour():
     # With the π/2 shift, the series Hamiltonian is proportional to n_a n_b n_c.
     network.cascade(joint, network.phase_shift("cable", phase=np.pi / 2), single)
     network.expose("feed", input=joint.input, output=single.output)
-    couplings = [Capacitive(m, a, g=0.03, label="m_a"), _LevelShift(a, d, x=0.05, y=0.03, label="a_d"),
+    couplings = [Capacitive(m, a, g=0.03, label="m_a"), _LevelShift(a, d, x=x, y=0.03, label="a_d"),
                  Capacitive(d, e, g=0.02, label="d_e")]
     chip = Chip([m, a, b, c, d, e], couplings, port_network=network)
     local = eliminate(chip, "m", local=True)
