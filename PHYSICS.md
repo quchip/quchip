@@ -395,7 +395,19 @@ Each device authors its Hamiltonian and named operators in a `LocalSpace`. The b
 
 `Chip(..., basis="native")` keeps each device's authored local coordinate basis and dimension. `basis="eigen"` diagonalizes each device's exact authored local Hamiltonian. It then projects all Hamiltonians, coupling and drive operators, states, observables, and collapse operators into the retained local energy subspace. A device can override the chip-wide policy with its own `basis` and, where necessary, select the retained energy dimension with `projection_levels`.
 
-The engine projects a multi-device operator factor by factor when it is a sum of scalar multiples of single-device products. The support basis is a tensor product of local bases, so `V†(A ⊗ B)V = (V_a† A V_a) ⊗ (V_b† B V_b)`. Products on one device multiply in the authored basis before projection, because `V_a V_a†` is not the identity on a truncated energy subspace. Memory then scales with the square of each authored dimension, times the number of products. A product of sums multiplies the number of products. For each operator, the engine estimates the peak memory of this route and of the dense projection through the authored product space. It takes the route with the smaller estimate, and raises `MemoryError` when that estimate exceeds the available memory. Any other multi-device operator, such as an opaque two-device callable, takes the dense route after the same check.
+A multi-device operator can project factor by factor when it is a sum of
+scalar-weighted single-device products:
+
+```text
+V†(A ⊗ B)V = (V_a† A V_a) ⊗ (V_b† B V_b).
+```
+
+Products on one device multiply before projection. The truncated projector
+`V_a V_a†` is not the identity in the authored space. A product of sums can
+expand into many terms. The engine estimates memory for factored and dense
+projection, then selects the smaller route. Opaque multi-device operators use
+the dense route. Both routes check available memory before projection. These
+estimates cover concrete forward calculations, not reverse-mode storage.
 
 Resolution records each fixed authored-to-solver transformation in `EngineResult.bases`. Local energy ordering differs from whole-chip dressing: `Chip.dress()` diagonalizes the coupled static chip for analysis, whereas local-basis resolution defines the tensor factors that go through the engine and backends.
 

@@ -53,18 +53,14 @@ This file records notable user-visible changes to quchip.
   assemble a superoperator whose estimated peak exceeds the available memory.
   Previously, the operating system killed them. The dynamiqs stationary Liouvillian
   uses the same check. ([#80](https://github.com/quchip/quchip/issues/80))
-- Multi-device couplings, drives, ports and collapse operators on eigen-basis
-  devices now project factor by factor when they are sums of products of
-  single-device operators. `chip.freq()` on two capacitively coupled default
-  `Fluxonium` devices needed about 820 GB. On one machine, it now runs in 3 s
-  with a 14 MB allocation peak. Results agree with the dense projection to
-  float64 round-off. The engine estimates the peak memory of both projections
-  and uses the smaller one. Other operators keep the dense projection. Either
-  projection raises `MemoryError` before an estimated peak that cannot fit.
-  ([#96](https://github.com/quchip/quchip/issues/96))
 
 #### Performance
 
+- Multi-device operators can project factor by factor into local eigenbases,
+  avoiding the dense authored product space. Coupled default fluxoniums no
+  longer require that allocation. The engine selects the smaller estimated
+  projection route and checks available memory before allocation.
+  ([#107](https://github.com/quchip/quchip/pull/107))
 - `VNA.sweep()` solves weak-probe scattering of pump-free chips that conserve
   total excitation number in their one-excitation block, if every input is
   vacuum. These chips include Duffing transmons, pure dephasing, and reduced

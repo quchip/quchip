@@ -258,7 +258,7 @@ def _project_on_support(
         )
     labels = tuple(chip.devices[index].label for index in support or range(len(chip.devices)))
     records = [bases[label] for label in labels]
-    if all(record.kind == "native" for record in (records if support else bases.values())):
+    if all(record.kind == "native" for record in records):
         return materialize_expr(operator, backend, local_bases=bases)
     if not support:
         authored_dimension = prod(chip.authored_dims)
