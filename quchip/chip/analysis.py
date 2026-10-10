@@ -620,7 +620,10 @@ class ChipAnalysis:
     def _is_bare_label(self, label: tuple[int, ...]) -> bool:
         """Return whether ``label`` gives every device a resolved level."""
         dims = self._semantic_dims()
-        return len(label) == len(dims) and all(0 <= level < dim for level, dim in zip(label, dims))
+        return len(label) == len(dims) and all(
+            isinstance(level, (int, np.integer)) and not isinstance(level, (bool, np.bool_)) and 0 <= level < dim
+            for level, dim in zip(label, dims)
+        )
 
     def _sector_label(self, label: tuple[int, ...]) -> tuple[int, ...]:
         """Validate a bare label without enumerating the product basis."""

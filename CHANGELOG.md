@@ -99,20 +99,11 @@ This file records notable user-visible changes to quchip.
   participating port lowers total excitation by one. The cascade Hamiltonian
   then conserves excitation, including after supported exact reductions.
   ([#110](https://github.com/quchip/quchip/pull/110))
-- Dressed queries of a chip that conserves total excitation number now
-  diagonalize only the excitation sectors of their labels. The engine builds each
-  sector block from the terms' local operators, so it never forms the full
-  product space. `freq()`, `energy()`, `transition_frequency()`,
-  `dispersive_shift()`, `dressed_anharmonicity()`, `kerr_matrix()` and
-  `effective_hamiltonian()` take this route. `fit_a_dress()` compares
-  `max_hilbert_dim` with the largest sector it diagonalizes. The weak-probe route
-  of `VNA.sweep()` builds its vacuum and one-excitation blocks the same way. On
-  one machine, a ring of eight transmons, eight coupling resonators and eight
-  readouts has 429,981,696 product states. Its dressed frequencies take 1.2 s,
-  and a 51-point sweep of its eight readout ports takes 1.0 s. A fit of its 32
-  frequency and anharmonicity targets takes 23 s. Previously, the first two ran
-  out of memory and the fit raised.
-  ([#98](https://github.com/quchip/quchip/issues/98))
+- Labeled dressed queries of conserving chips assemble and diagonalize only
+  the required excitation sectors. Weak-probe VNA uses the same block
+  assembly. `fit_a_dress()` applies `max_hilbert_dim` to the largest matrix
+  it diagonalizes. Full spectra, dressed states, and `dress()` retain the
+  full-space route. ([#114](https://github.com/quchip/quchip/pull/114))
 
 #### Compatibility
 

@@ -799,8 +799,8 @@ where `X_1 = <1|X|1>` is the one-excitation block. A lowering channel has
 again. The response then follows from the same mode-space formula. It is exact for
 an infinitesimal probe, independent of anharmonicities, cross-Kerr terms and
 cutoffs, and its size is the number of devices. The engine builds both blocks
-from the local operators of the terms and channels, as for the sectors of §9. It
-never forms an operator on the full product space. VNA diagnostics name the
+from the terms' and channels' local operators, as for the sectors of §9.
+It does not embed each local operator into the full product space. VNA diagnostics name the
 route `"vacuum_response"`. Finite-power and noisy measurements keep the harmonic
 condition above, because only a harmonic model responds linearly at finite
 amplitude.
@@ -998,9 +998,12 @@ assigns labels within each block with the same overlap rule as the full
 eigensystem. `Chip.energy()`, `Chip.freq()`, `Chip.transition_frequency()`,
 `Chip.dispersive_shift()`, `Chip.dressed_anharmonicity()`, `Chip.kerr_matrix()`,
 `Chip.effective_subspace_hamiltonian()` and `effective_hamiltonian()` take this
-route. Frequencies and exchange need `N <= 1`, and anharmonicities, ZZ and
-dispersive shifts need `N <= 2`. A traced block uses one `eigh`, so derivatives
-stay exact. `Chip.dress()`, `Chip.dressed_spectrum()`, `Chip.state()` and
+route. Ground-conditioned first transitions and single-excitation exchange need
+`N <= 1`. Ground-conditioned anharmonicities, ZZ and dispersive shifts need
+`N <= 2`. Other conditioned transitions use the sectors of their specified labels.
+Large authored supports can still require large local matrices.
+Traced blocks use differentiable eigensolves.
+Derivatives require separated eigenvalues and a locally stable assignment. `Chip.dress()`, `Chip.dressed_spectrum()`, `Chip.state()` and
 dressed-basis operators still diagonalize the complete chip. Other chips keep
 that route for every query.
 

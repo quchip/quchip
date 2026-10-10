@@ -82,3 +82,9 @@ def test_projected_charge_basis_devices_index_resolved_dimensions():
     # des Cloizeaux keeps the selected dressed eigenvalues exactly.
     expected = sorted(chip.energy(q=i, r=j) for i in range(2) for j in range(2))
     assert np.allclose(np.sort(np.linalg.eigvalsh(h_eff)), expected)
+
+
+def test_effective_subspace_rejects_fractional_levels():
+    """Fractional bare levels raise ValueError before the sector lookup."""
+    with pytest.raises(ValueError, match="No dressed-state assignment"):
+        _two_qubit_chip().effective_subspace_hamiltonian([(0.5, 0.5)])
