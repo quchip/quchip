@@ -53,6 +53,14 @@ This file records notable user-visible changes to quchip.
   assemble a superoperator whose estimated peak exceeds the available memory.
   Previously, the operating system killed them. The dynamiqs stationary Liouvillian
   uses the same check. ([#80](https://github.com/quchip/quchip/issues/80))
+- `QuantumSequence.schedule()`, `charge()` and `phase()` accept `frame=`, the
+  device whose virtual-Z phase a carrier follows. `vz(device)` shifts every
+  later pulse in that frame, on any line. A cross-resonance tone on the
+  control's line names the target as its frame. Previously, `vz()` followed the
+  line's device, so a virtual Z on either qubit before a cross-resonance gate
+  changed its basis-state populations by up to 0.26. The frame defaults to the
+  driven device, so other schedules are unchanged.
+  ([#92](https://github.com/quchip/quchip/issues/92))
 
 #### Performance
 

@@ -2327,6 +2327,10 @@ class DriveOp:
     example ``"charge_0"``). ``target_label`` resolves in the chip's device or
     coupling label space.
 
+    ``frame`` names the device whose accumulated virtual-Z phase
+    ``phase_offset`` includes, or is ``None``. The phase is already in
+    ``phase_offset``, so the engine does not read ``frame``.
+
     The pulse window keeps its absolute scheduled time. A solve can select a
     partial interval, and a window wholly outside it or touching only an
     endpoint contributes no evolution.
@@ -2338,17 +2342,23 @@ class DriveOp:
     start_time: float = 0.0
     phase_offset: float = 0.0
     drive_label: str = ""
+    frame: str | None = None
 
 
 @dataclass(frozen=True)
 class CoherentOp:
-    """Coherent field operation scheduled on an external SLH exposure."""
+    """Coherent field operation scheduled on an external SLH exposure.
+
+    The fields follow :class:`DriveOp`. ``frame`` is ``None`` unless the
+    schedule names a device frame for this input.
+    """
 
     coherent_input: Any
     envelope: Envelope
     freq: float | None = None
     start_time: float = 0.0
     phase_offset: float = 0.0
+    frame: str | None = None
 
     @property
     def exposure(self) -> str:

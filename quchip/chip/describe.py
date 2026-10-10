@@ -200,6 +200,8 @@ def describe_sequence(seq: "QuantumSequence") -> str:
             else:
                 window = f"[{format_value(op.start_time)}, +{format_value(op.envelope.duration)}]"
             drive = f"{op.drive_label} → {op.target_label}"
+            if op.frame is not None and op.frame != op.target_label:
+                drive += f" (frame {op.frame})"
             freq = "baseband" if op.freq is None else f"{format_value(op.freq)} GHz"
             rows.append((window, drive, _envelope_text(op.envelope), freq))
         widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
