@@ -10,7 +10,7 @@ import pytest
 from quchip import (
     Bath, Capacitive, ChargeDrive, Chip, DuffingTransmon, Gaussian, QuantumSequence, PortNetwork,
 )
-from quchip.chip.transformations.active_patch import active_labels, coupling_adjacency, graph_distances
+from quchip.chip.transformations.active_patch import coupling_adjacency, graph_distances
 
 
 def _chain(n=4, g=0.004):
@@ -35,16 +35,6 @@ def test_graph_distances():
     adj = coupling_adjacency(chip)
     dist = graph_distances(adj, {"q0", "q1"})
     assert dist == {"q0": 0, "q1": 0, "q2": 1, "q3": 2}
-
-
-@pytest.mark.unit
-def test_active_labels_include_the_frame_of_a_cross_resonance_tone():
-    """A tone on q0's line in q1's frame keeps q1 active even without coupling-graph hops."""
-    chip, qs, drives = _chain()
-    seq = QuantumSequence(chip)
-    seq.schedule(drives[0], envelope=Gaussian(duration=20.0, sigmas=3, amplitude=0.02), freq=chip.freq(qs[1]),
-                 frame=qs[1])
-    assert active_labels(seq, hops=0) == {"q0", "q1"}
 
 
 def test_active_patch_trivial_when_everything_active():

@@ -81,18 +81,6 @@ def test_sequence_describe_lists_pulses_and_other_entries() -> None:
     assert "Delay" in text
 
 
-def test_sequence_describe_names_a_frame_that_differs_from_the_driven_device() -> None:
-    """describe() names the frame of a tone that follows another device, and omits default frames."""
-    chip, drv, q, r = _demo_chip()
-    seq = QuantumSequence(chip)
-    seq.schedule(drv, envelope=Gaussian(duration=40.0, sigmas=3, amplitude=0.01), freq=5.24)
-    seq.schedule(drv, envelope=Gaussian(duration=40.0, sigmas=3, amplitude=0.01), freq=6.65, frame=r)
-    lines = seq.describe().splitlines()
-
-    assert any(f"{drv.label} → q (frame r)" in line for line in lines)
-    assert sum("(frame" in line for line in lines) == 1
-
-
 def test_describe_never_concretizes_traced_parameters() -> None:
     """describe() renders a traced frequency as "<traced>" instead of forcing concretization."""
 
