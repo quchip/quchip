@@ -75,6 +75,9 @@ def test_parallel_mode_legs_match_their_combined_interaction(method, bridge):
     expected = eliminate(Chip(devices, combined), "r", method=method)
     np.testing.assert_allclose(bare_hamiltonian(result.chip)[0], bare_hamiltonian(expected.chip)[0], atol=1e-11)
     assert set(result.validity) == {coupling.label for coupling in parallel}
+    # Each parallel leg reports the combined element, 0.05 GHz, over the 2 GHz detuning.
+    assert [float(result.validity[label]["g_over_delta"]) for label in ("leg0", "leg1")] == pytest.approx(
+        [.025, .025], rel=1e-12)
     if bridge:
         assert float(result.effective_params["exchange"]["dJ_domega_c"]) == pytest.approx(
             float(expected.effective_params["exchange"]["dJ_domega_c"]), rel=1e-12)

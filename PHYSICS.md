@@ -1291,6 +1291,8 @@ The result's `notes` record that the projection is exact for the
 `validity` reports `g_over_delta` and `min_block_gap`. `g_over_delta` is
 the 2nd-order smallness `|<1_s|H|1_c>| / |Delta|`, the resolved exchange
 element over the bare detuning, and `is_valid` requires it below 0.1.
+Parallel couplings between the same two devices each report their
+combined element.
 `min_block_gap` is the smallest bare-energy gap that the Sylvester
 generator crossed. A small gap with a nonzero matrix element is
 the failure mode of the perturbative expansion, even when every `g/Delta`
