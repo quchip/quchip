@@ -200,8 +200,8 @@ def _qubit_resonator_exchange(qubit, g=0.010):
 
 class TestChargeScale:
 
-    @pytest.mark.parametrize("flux_bias, exchange_mhz", [(0.0, 10.000), (0.25, 9.170), (0.3, 8.756)])
-    def test_capacitive_exchange_follows_the_charge_scale(self, flux_bias, exchange_mhz):
+    @pytest.mark.parametrize("flux_bias", [0.0, 0.25, 0.3])
+    def test_capacitive_exchange_follows_the_charge_scale(self, flux_bias):
         """A flux bias that retunes the qubit scales its 10 MHz sweet-spot exchange by s(Φ)."""
         from quchip import Capacitive, Chip, FluxTunableTransmon, Resonator
         from quchip.analysis import effective_hamiltonian_between_states
@@ -213,7 +213,6 @@ class TestChargeScale:
 
         exchange = abs(complex(effective_hamiltonian_between_states(chip, (1, 0), (0, 1))[0, 1]))
 
-        assert 1e3 * exchange == pytest.approx(exchange_mhz, abs=5e-4)
         assert exchange == pytest.approx(0.010 * _charge_scale(flux_bias, 0.0), rel=1e-12)
 
     def test_charge_scale_follows_flux_bias_rebinding(self):

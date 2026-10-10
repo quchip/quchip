@@ -16,34 +16,20 @@ This file records notable user-visible changes to quchip.
   correction of order (g/Δ)²κ/Δ (8e-5). A mode with several ports, or a port
   whose plane also carries other fields, now raises, so keep such a mode in the
   model. ([#76](https://github.com/quchip/quchip/issues/76))
-- `Capacitive`, `TunableCapacitive` and `ModulatedCapacitive` couple each
-  device through its charge operator, which `ChargeDrive` also uses. A Fock
-  device such as `DuffingTransmon` or `Resonator` now couples through
-  i(a − a†) instead of a + a†. Between two Fock devices, the exchange terms and
-  the static spectra stay the same, and the counter-rotating terms a b and
-  a†b† change sign. So `RWA()` results do not change, but driven `Exact()`
-  results can. In a transmon-resonator test with g up to 0.1 GHz, populations
-  after a 10 ns π pulse changed by less than 4e-5. Between a Fock device and a
-  charge-basis or phase-grid device, the exchange elements change phase by
-  π/2. A custom device that declares `charge_coupling_operator()` now couples
-  through that operator. An `EigenbasisDevice` needs `charge_operator` for a
-  capacitive coupling. Printed expressions write complex coefficients with i.
-  ([#91](https://github.com/quchip/quchip/issues/91))
-- `FluxTunableTransmon` scales its charge operator by
-  s(Φ) = (E_J(Φ)/E_J,max)^(1/4) and its phase operator by 1/s(Φ). Before this
-  change, a flux bias retuned the qubit but kept its couplings at their
-  sweet-spot strength. An exchange of 10 MHz at Φ = 0 is now 9.170 MHz at
-  Φ = 0.25 and 8.756 MHz at Φ = 0.3. A charge-basis transmon with
-  E_J,max/E_C ≈ 120 gives 9.138 and 8.707 MHz. Capacitive `g` and charge-drive
-  amplitudes refer to Φ = 0, so chips at `flux_bias=0` do not change. Away
-  from Φ = 0, a `ChargeDrive` of the same amplitude gives a Rabi rate smaller
-  by s. A `PhaseDrive` gives a rate larger by 1/s. `ChargePhaseDrive` and the
-  observables and `Port` operators named `"charge"` or `"phase"` follow the
-  same factors. If you calibrated `g` at another bias, divide it by the s of
-  each flux-tunable endpoint at that bias. Divide a calibrated charge-drive
-  amplitude by the s of its target. s depends on `flux_bias` and `asymmetry`,
-  so `with_params()` and `jax.grad` follow it.
-  ([#91](https://github.com/quchip/quchip/issues/91))
+- Capacitive couplings use each device's declared charge operator, as charge
+  drives do. For ordinary Fock devices, this changes `a + a†` to `i(a − a†)`.
+  Exchange terms retain their sign; counter-rotating terms change sign.
+  Driven `Exact()` results and mixed-basis exchange phases can change.
+  `EigenbasisDevice` now requires `charge_operator` for capacitive coupling.
+  ([#108](https://github.com/quchip/quchip/pull/108))
+- `FluxTunableTransmon` scales charge by `s = (E_J(Φ)/E_J,max)^(1/4)` and phase
+  by `1/s`. Coupling strengths and charge-drive amplitudes now refer to the
+  sweet spot. To retain a calibration at another static bias, divide `g` by
+  each flux-tunable endpoint's `s`, and charge-drive amplitude by its target's
+  `s`. Phase-drive amplitudes require multiplication by `s`. Named charge and
+  phase observables and port operators use these scales. A `FluxDrive` pulse
+  still changes frequency only; it does not vary the charge scale in time.
+  ([#108](https://github.com/quchip/quchip/pull/108))
 
 #### New features
 
