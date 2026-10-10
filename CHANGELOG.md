@@ -40,6 +40,18 @@ This file records notable user-visible changes to quchip.
   `method="sw"` is local. Chips with baths, and port networks that link a patch
   port to a port outside the patch, raise `NotImplementedError`.
   ([#97](https://github.com/quchip/quchip/issues/97))
+- Local elimination keeps its patches local when it removes the transmons and
+  couplers of a ring. Each step stores each single-device part of its
+  correction on its own device, and each transformed channel on its own
+  support. Its map joins the ordered sequence of earlier patch maps that meet
+  its patch, and `Chip.partition()` keeps the devices of each sequence in one
+  part. A transported operator therefore grows along the maps, and the patches
+  do not. Each patch of the readouts-only reduction of the 24-mode ring now
+  holds only the removed device and its coupled neighbours, and the reduction
+  finishes. Chains of local steps on rings of 6 and 9 modes agree with the
+  full route within 1e-12. Loss can still spread over a ring along the maps,
+  so the order of the steps sets the cost of a noisy reduction.
+  ([#102](https://github.com/quchip/quchip/issues/102))
 
 #### Fixes
 
