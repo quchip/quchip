@@ -8,7 +8,7 @@ import pytest
 jax = pytest.importorskip("jax")
 jnp = jax.numpy
 
-from quchip import Chip, Resonator  # noqa: E402
+from quchip import Chip, PortNetwork, Resonator  # noqa: E402
 from quchip.chip.couplings import Capacitive  # noqa: E402
 from quchip.devices.transmon.duffing import DuffingTransmon  # noqa: E402
 from quchip.engine.basis import _differentiable_eigenpairs, _differentiable_eigenvector  # noqa: E402
@@ -121,9 +121,23 @@ def test_canonical_energy_vector_phase_and_derivative_agree():
     np.testing.assert_allclose(jax.jit(jax.grad(loss))(value), reference, atol=1e-8)
 
 
+def _cascaded_pair() -> Chip:
+    """Two uncoupled resonators on a feedline whose first port couples to both."""
+    a, b = Resonator(freq=6.0, levels=2, label="a"), Resonator(freq=6.2, levels=2, label="b")
+    lowering = np.diag([1.0], k=1)
+    joint = np.kron(lowering, np.eye(2)) + np.kron(np.eye(2), lowering)
+    network = PortNetwork(label="feed")
+    first, second = network.port("ab", target=(a, b), rate=0.01, operator=joint), network.port("b", target=b, rate=0.01)
+    network.cascade(first, second)
+    network.expose("feed", input=first, output=second)
+    return Chip([a, b], port_network=network, backend="dynamiqs")
+
+
 def test_traced_analysis_stays_inside_its_trace() -> None:
-    """A traced chip reuses its dressed analysis within one trace, never across nested or later traces."""
+    """Analysis computed inside a trace is reused within that trace only, for traced and concrete chips alike."""
     chip = _dispersive_chip()
+    single = Chip([DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")], backend="dynamiqs")
+    cascaded = _cascaded_pair()
 
     def shifted(freq):
         rebound = chip.with_params({"q.freq": freq})
@@ -132,12 +146,12 @@ def test_traced_analysis_stays_inside_its_trace() -> None:
             return total + rebound.freq("q"), None
 
         inner, _ = jax.lax.scan(body, 0.0, None, length=2)
-        return inner + rebound.freq("q") + rebound.freq("r") - rebound.freq("q")
+        return inner + rebound.freq("q") + rebound.freq("r") - rebound.freq("q") + single.freq("q") + cascaded.freq("a")
 
     value, slope = jax.jit(jax.value_and_grad(shifted))(5.0)
     again, _ = jax.jit(jax.value_and_grad(shifted))(5.1)
     eager = [chip.with_params({"q.freq": f}) for f in (5.0, 5.0 + 1e-5, 5.0 - 1e-5, 5.1)]
-    expected = [2 * c.freq("q") + c.freq("r") for c in eager]
+    expected = [2 * c.freq("q") + c.freq("r") + single.freq("q") + cascaded.freq("a") for c in eager]
     np.testing.assert_allclose(float(value), expected[0], rtol=1e-12)
     np.testing.assert_allclose(float(slope), (expected[1] - expected[2]) / 2e-5, rtol=1e-6)
     np.testing.assert_allclose(float(again), expected[3], rtol=1e-12)

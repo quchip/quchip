@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from quchip import Capacitive, Chip, CrossKerr, DuffingTransmon, KerrCavity, KerrMatrix, Resonator
+from quchip import Capacitive, Chip, CrossKerr, DuffingTransmon, Exact, KerrCavity, KerrMatrix, Resonator
 
 
 pytestmark = pytest.mark.unit
@@ -67,7 +67,8 @@ def test_two_level_device_has_nan_only_on_its_kerr_diagonal() -> None:
 def test_kerr_matrix_computes_one_labeled_eigensystem(monkeypatch) -> None:
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
     r = Resonator(freq=7.0, levels=3, label="r")
-    chip = Chip([q, r], [Capacitive(q, r, g=0.05)])
+    # Exact() keeps counter-rotating bands, so the matrix comes from one full-chip eigensystem.
+    chip = Chip([q, r], [Capacitive(q, r, g=0.05)], approximation=Exact())
     original = chip.analysis._compute_array_labeled
     calls = 0
 

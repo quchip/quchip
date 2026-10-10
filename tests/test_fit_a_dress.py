@@ -430,6 +430,8 @@ def test_fit_a_dress_requires_explicit_local_evaluation() -> None:
             Capacitive(q0, q1, g=0.001),
         ],
         frame="rotating",
+        # Exact() keeps counter-rotating bands, so the full fit diagonalizes all 81 product states.
+        approximation=Exact(),
     )
 
     with pytest.raises(ValueError, match="dimension.*81.*50"):
@@ -447,7 +449,7 @@ def test_fit_rejects_unknown_evaluator(evaluator):
 
 
 def test_fit_dimension_limit_cannot_overflow_for_many_devices():
-    chip = Chip([Resonator(freq=5.0, levels=2, label=f"r{i}") for i in range(64)])
+    chip = Chip([Resonator(freq=5.0, levels=2, label=f"r{i}") for i in range(64)], approximation=Exact())
     assert chip.total_dim == 2**64
     with pytest.raises(ValueError, match=str(2**64)):
         fit_a_dress(chip)

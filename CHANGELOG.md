@@ -99,6 +99,11 @@ This file records notable user-visible changes to quchip.
   participating port lowers total excitation by one. The cascade Hamiltonian
   then conserves excitation, including after supported exact reductions.
   ([#110](https://github.com/quchip/quchip/pull/110))
+- Labeled dressed queries of conserving chips assemble and diagonalize only
+  the required excitation sectors. Weak-probe VNA uses the same block
+  assembly. `fit_a_dress()` applies `max_hilbert_dim` to the largest matrix
+  it diagonalizes. Full spectra, dressed states, and `dress()` retain the
+  full-space route. ([#114](https://github.com/quchip/quchip/pull/114))
 
 #### Compatibility
 

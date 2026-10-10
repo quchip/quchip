@@ -798,8 +798,10 @@ where `X_1 = <1|X|1>` is the one-excitation block. A lowering channel has
 `(L^dagger L)_1 = C^dagger C` and `c = (L)_1 = 0`, which gives the harmonic `A`
 again. The response then follows from the same mode-space formula. It is exact for
 an infinitesimal probe, independent of anharmonicities, cross-Kerr terms and
-cutoffs, and its size is the number of devices. VNA diagnostics name the route
-`"vacuum_response"`. Finite-power and noisy measurements keep the harmonic
+cutoffs, and its size is the number of devices. The engine builds both blocks
+from the terms' and channels' local operators, as for the sectors of §9.
+It does not embed each local operator into the full product space. VNA diagnostics name the
+route `"vacuum_response"`. Finite-power and noisy measurements keep the harmonic
 condition above, because only a harmonic model responds linearly at finite
 amplitude.
 
@@ -985,7 +987,25 @@ Sources: [`quchip/chip/chip.py`](quchip/chip/chip.py), [`quchip/chip/analysis.py
 - assignment overlaps and labels below the requested overlap threshold
 - the dressed eigenvector matrix used by dressed-basis analysis
 
-`Chip.freq()` evaluates dressed `0 -> 1` frequencies through the traceable array-labeling cache, and `DressedResult` does not store them. Frequencies, states, Kerr shifts and drive matrix elements all use the chip's approximation, so `RWA(keep_bands=...)` applies here too. Choose `Exact()` to include counter-rotating bands and their Bloch–Siegert shifts.
+`Chip.freq()` evaluates dressed `0 -> 1` frequencies through a traceable labeled eigensystem, and `DressedResult` does not store them. Frequencies, states, Kerr shifts and drive matrix elements all use the chip's approximation, so `RWA(keep_bands=...)` applies here too. Choose `Exact()` to include counter-rotating bands and their Bloch–Siegert shifts.
+
+When the static model conserves the total energy-level index `N`, labeled queries
+diagonalize only the excitation sectors of their labels. The conditions are those
+of the exact route in §10.4. The sector of `N` holds the product states whose
+levels sum to `N`. Each term's local operator on its own support fills the sector
+block, and two states couple only when they agree outside that support. The engine
+assigns labels within each block with the same overlap rule as the full
+eigensystem. `Chip.energy()`, `Chip.freq()`, `Chip.transition_frequency()`,
+`Chip.dispersive_shift()`, `Chip.dressed_anharmonicity()`, `Chip.kerr_matrix()`,
+`Chip.effective_subspace_hamiltonian()` and `effective_hamiltonian()` take this
+route. Ground-conditioned first transitions and single-excitation exchange need
+`N <= 1`. Ground-conditioned anharmonicities, ZZ and dispersive shifts need
+`N <= 2`. Other conditioned transitions use the sectors of their specified labels.
+Large authored supports can still require large local matrices.
+Traced blocks use differentiable eigensolves.
+Derivatives require separated eigenvalues and a locally stable assignment. `Chip.dress()`, `Chip.dressed_spectrum()`, `Chip.state()` and
+dressed-basis operators still diagonalize the complete chip. Other chips keep
+that route for every query.
 
 `Chip.dress()` is always intrinsic static lab-frame analysis and is not part of
 the runtime frame transform. A resolved `EngineResult` also provides `dress()`,
@@ -1067,8 +1087,9 @@ This convention follows the effective-Hamiltonian decompositions of Magesan and 
 
 ### 9.3 Dressed Kerr matrix
 
-`Chip.kerr_matrix()` evaluates one labeled eigensystem and returns a symmetric
-matrix in `chip.devices` order. For distinct devices,
+`Chip.kerr_matrix()` reads one labeled dressed spectrum and returns a symmetric
+matrix in `chip.devices` order. A conserving chip supplies it from its sectors
+with `N <= 2` (§9). For distinct devices,
 
 ```text
 K[i,j] = E(1_i,1_j) - E(1_i) - E(1_j) + E(0),

@@ -30,7 +30,7 @@ from __future__ import annotations
 import itertools
 import warnings
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
 import jax.numpy as jnp
 import jax.tree_util as jtu
@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from quchip.chip.chip import Chip
     from quchip.control.drive import BaseDrive
     from quchip.engine.ir import EngineResult
+    from quchip.engine.sectors import SectorModel
 
 
 _STATE_OVERLAP_WARNING = 0.9
@@ -357,26 +358,38 @@ def kerr_entry(
     labeling: Labeling,
 ) -> Any:
     """Read one self- or cross-Kerr coefficient from a captured labeled spectrum."""
+
+    def energy(label: tuple[int, ...]) -> Any:
+        eigen_index = labeling.indices[np.ravel_multi_index(label, dims)]
+        values = jnp.asarray(eigenvalues) if contains_tracer(eigen_index) else eigenvalues
+        return values[eigen_index]
+
+    return _kerr_coefficient(index_a, index_b, dims, energy)
+
+
+def _kerr_coefficient(
+    index_a: int,
+    index_b: int,
+    dims: tuple[int, ...],
+    energy: Callable[[tuple[int, ...]], Any],
+) -> Any:
+    """Read one self- or cross-Kerr coefficient through a labeled dressed-energy lookup."""
     n_devices = len(dims)
     if not 0 <= index_a < n_devices or not 0 <= index_b < n_devices:
         raise IndexError(f"Kerr matrix indices must be in [0, {n_devices}), got {(index_a, index_b)}.")
 
-    def energy(*excitations: tuple[int, int]) -> Any:
+    def excited(*excitations: tuple[int, int]) -> Any:
         label = [0] * n_devices
         for index, level in excitations:
             label[index] = level
-        row = np.ravel_multi_index(tuple(label), dims)
-        eigen_index = labeling.indices[row]
-        values = jnp.asarray(eigenvalues) if contains_tracer(eigen_index) else eigenvalues
-        return values[eigen_index]
+        return energy(tuple(label))
 
-    e0 = energy()
+    e0 = excited()
     if index_a == index_b:
         if dims[index_a] < 3:
-            dtype = jnp.real(jnp.asarray(eigenvalues)).dtype
-            return jnp.asarray(jnp.nan, dtype=dtype)
-        return energy((index_a, 2)) - 2.0 * energy((index_a, 1)) + e0
-    return energy((index_a, 1), (index_b, 1)) - energy((index_a, 1)) - energy((index_b, 1)) + e0
+            return jnp.asarray(jnp.nan, dtype=jnp.real(jnp.asarray(e0)).dtype)
+        return excited((index_a, 2)) - 2.0 * excited((index_a, 1)) + e0
+    return excited((index_a, 1), (index_b, 1)) - excited((index_a, 1)) - excited((index_b, 1)) + e0
 
 
 class ChipAnalysis:
@@ -405,6 +418,7 @@ class ChipAnalysis:
         self._dressed_signature: tuple[Any, ...] | None = None
         # Cache entries are (key, trace scope, value); see quchip.utils.values.scoped_entry.
         self._array_cache: tuple[Any, Any, tuple[Any, Any, Any, Labeling]] | None = None
+        self._sector_cache: tuple[Any, Any, SectorModel | None] | None = None
         self._engine_result_cache: tuple[Any, Any, EngineResult] | None = None
         self._ground_cache: tuple[Any, Any, Any] | None = None
         self._bare_labels_cache: tuple[
@@ -581,6 +595,94 @@ class ChipAnalysis:
         traced = contains_tracer((eigenvalues, vectors, labeling.indices, labeling.overlaps))
         self._array_cache = scoped_entry(signature, result, traced=traced)
         return result
+
+    def _sector_model(self, *, _local_resolution: Any | None = None) -> SectorModel | None:
+        """Return the chip's excitation-sector model, or ``None`` when its static model may change ``N``.
+
+        Labeled dressed energies of a conserving chip come from the sector of
+        each label. Results cache like the full eigensystem.
+        """
+        from quchip.chip.effective import conserves_excitation_number
+        from quchip.engine.sectors import SectorModel
+
+        signature = self._analysis_signature()
+        if scoped_hit(self._sector_cache, signature):
+            return self._sector_cache[2]
+        chip = self._chip
+        model = (
+            SectorModel(chip, resolution=_local_resolution)
+            if conserves_excitation_number(chip, chip.approximation)
+            else None
+        )
+        self._sector_cache = scoped_entry(signature, model, traced=model is not None and model.traced)
+        return model
+
+    def _is_bare_label(self, label: tuple[int, ...]) -> bool:
+        """Return whether ``label`` gives every device a resolved level."""
+        dims = self._semantic_dims()
+        return len(label) == len(dims) and all(
+            isinstance(level, (int, np.integer)) and not isinstance(level, (bool, np.bool_)) and 0 <= level < dim
+            for level, dim in zip(label, dims)
+        )
+
+    def _sector_label(self, label: tuple[int, ...]) -> tuple[int, ...]:
+        """Validate a bare label without enumerating the product basis."""
+        if not self._is_bare_label(label):
+            available = list(itertools.islice(itertools.product(*(range(d) for d in self._semantic_dims())), 10))
+            raise KeyError(
+                f"State label {label} is not a valid bare product-basis label. Available (first 10): {available}"
+            )
+        return tuple(label)
+
+    def _labeled_lookup(
+        self, *, _local_resolution: Any | None = None,
+    ) -> Callable[[tuple[int, ...]], tuple[Any, Any, Any]]:
+        """Return a map from a bare label to its dressed energy in GHz, assignment overlap and margin.
+
+        A chip that conserves the total energy-level index diagonalizes only the
+        sector of each requested label. Other chips diagonalize their complete
+        static model once.
+        """
+        model = self._sector_model(_local_resolution=_local_resolution)
+        if model is not None:
+            def sector_entry(label: tuple[int, ...]) -> tuple[Any, Any, Any]:
+                label = self._sector_label(label)
+                system = model.eigensystem(sum(label))
+                row = system.space.row(label)
+                return system.energy(label), system.labeling.overlaps[row], system.labeling.margins[row]
+
+            return sector_entry
+        engine_result = self.engine_result(_local_resolution=_local_resolution)
+        eigenvalues, _, _, labeling = self._compute_array_labeled(engine_result)
+
+        def full_entry(label: tuple[int, ...]) -> tuple[Any, Any, Any]:
+            row = self._bare_label_index(label)
+            energy = self._eigenvalue_of_label(label, precomputed=(eigenvalues, labeling))
+            return energy, labeling.overlaps[row], labeling.margins[row]
+
+        return full_entry
+
+    def _energy_lookup(self) -> Callable[[tuple[int, ...]], Any]:
+        """Return a map from a bare label to its dressed energy in GHz."""
+        lookup = self._labeled_lookup()
+        return lambda label: lookup(label)[0]
+
+    def _dressed_dimension(self, total: int) -> int:
+        """Return the largest matrix that dressed queries up to total level index ``total`` diagonalize.
+
+        Parameters
+        ----------
+        total : int
+            Largest total energy-level index of the queried labels.
+        """
+        from quchip.chip.effective import conserves_excitation_number
+        from quchip.engine.sectors import sector_size
+
+        chip = self._chip
+        if not conserves_excitation_number(chip, chip.approximation):
+            return chip.total_dim
+        dims = self._semantic_dims()
+        return max(sector_size(dims, level_sum) for level_sum in range(total + 1))
 
     def _ground_ket(self, approximation: "Approximation") -> Any | None:
         """Return the all-ground-labeled lab-frame eigenstate for ``approximation``.
@@ -768,7 +870,7 @@ class ChipAnalysis:
         """
         resolved = normalize_device_state_mapping(self._chip, device_states, device_state_kwargs)
         label_t = self._label_from_plain_mapping(resolved)
-        return self._eigenvalue_of_label(label_t)
+        return self._energy_lookup()(label_t)
 
     def dressed_spectrum(self) -> Any:
         """Raw sorted eigenvalue array of the dressed Hamiltonian (GHz)."""
@@ -806,23 +908,16 @@ class ChipAnalysis:
             )
         return dressed.eigenstates[eigen_idx]
 
-    def _dressed_frequencies(
-        self,
-        engine_result: EngineResult | None = None,
-    ) -> dict[str, Any]:
+    def _dressed_frequencies(self, *, _local_resolution: Any | None = None) -> dict[str, Any]:
         """Per-device dressed 0 → 1 transition frequencies (GHz)."""
-        eigenvalues, _, _, labeling = self._compute_array_labeled(engine_result)
-        precomputed = (eigenvalues, labeling)
+        lookup = self._labeled_lookup(_local_resolution=_local_resolution)
         ground = (0,) * len(self._chip.devices)
-        ground_energy = self._eigenvalue_of_label(ground, precomputed=precomputed)
+        ground_energy = lookup(ground)[0]
         frequencies: dict[str, Any] = {}
         for index, device in enumerate(self._chip.devices):
             excited = list(ground)
             excited[index] = 1
-            frequencies[device.label] = (
-                self._eigenvalue_of_label(tuple(excited), precomputed=precomputed)
-                - ground_energy
-            )
+            frequencies[device.label] = lookup(tuple(excited))[0] - ground_energy
         return frequencies
 
     def dressed_index(
@@ -1135,14 +1230,7 @@ class ChipAnalysis:
         """
         index_a, _ = self._chip._resolve_device_index(device_a)
         index_b, _ = self._chip._resolve_device_index(device_b)
-        eigenvalues, _, _, kernel_labeling = self._compute_array_labeled()
-        return kerr_entry(
-            index_a,
-            index_b,
-            dims=self._semantic_dims(),
-            eigenvalues=eigenvalues,
-            labeling=kernel_labeling,
-        )
+        return _kerr_coefficient(index_a, index_b, self._semantic_dims(), self._energy_lookup())
 
     def kerr_matrix(self) -> KerrMatrix:
         """Return the dressed self-Kerr and cross-Kerr matrix in GHz.
@@ -1152,22 +1240,15 @@ class ChipAnalysis:
         resolved levels. Off-diagonal entries use the full-pull
         ``E11 - E10 - E01 + E00`` convention.
         """
-        eigenvalues, _, _, labeling = self._compute_array_labeled()
+        energy = self._energy_lookup()
+        dims = self._semantic_dims()
         n_devices = len(self._chip.devices)
-        dtype = jnp.real(jnp.asarray(eigenvalues)).dtype
+        dtype = jnp.real(jnp.asarray(energy((0,) * n_devices))).dtype
         values = jnp.zeros((n_devices, n_devices), dtype=dtype)
 
         for row in range(n_devices):
             for column in range(row, n_devices):
-                entry = jnp.real(
-                    kerr_entry(
-                        row,
-                        column,
-                        dims=self._semantic_dims(),
-                        eigenvalues=eigenvalues,
-                        labeling=labeling,
-                    )
-                )
+                entry = jnp.real(_kerr_coefficient(row, column, dims, energy))
                 values = values.at[row, column].set(entry)
                 values = values.at[column, row].set(entry)
 
@@ -1198,11 +1279,12 @@ class ChipAnalysis:
             Bare-state labels spanning the subspace, each a
             ``{device: energy_level}`` mapping or a full chip-ordered level tuple.
         """
-        dressed = self._ensure_dressed()
+        # Every label of a sector has an assignment, so the sector route needs no dressed view.
+        state_map = None if self._sector_model() is not None else self._ensure_dressed().state_map
         labels = []
         for state in states:
             label = state if isinstance(state, tuple) else self._state_label_from_mapping(state)
-            if label not in dressed.state_map:
+            if not (self._is_bare_label(label) if state_map is None else label in state_map):
                 raise ValueError(f"No dressed-state assignment found for bare label {label}")
             labels.append(label)
         from quchip.analysis.effective_hamiltonian import _h_eff_on_basis
@@ -1218,14 +1300,7 @@ class ChipAnalysis:
             Device label or object. All other devices are grounded.
         """
         index, _ = self._chip._resolve_device_index(device)
-        eigenvalues, _, _, kernel_labeling = self._compute_array_labeled()
-        return kerr_entry(
-            index,
-            index,
-            dims=self._semantic_dims(),
-            eigenvalues=eigenvalues,
-            labeling=kernel_labeling,
-        )
+        return _kerr_coefficient(index, index, self._semantic_dims(), self._energy_lookup())
 
     def transition_frequency(
         self,
@@ -1269,12 +1344,12 @@ class ChipAnalysis:
             dict(zip(self._device_labels(), upper_label))
         )
 
-        eigenvalues, _, _, kernel_labeling = self._compute_array_labeled()
-        precomputed = (eigenvalues, kernel_labeling)
+        lookup = self._labeled_lookup()
+        energies = []
         for label in (lower_tuple, upper_tuple):
-            bare_index = self._bare_label_index(label)
-            overlap = maybe_concrete_scalar(kernel_labeling.overlaps[bare_index])
-            margin = maybe_concrete_scalar(kernel_labeling.margins[bare_index])
+            energy, overlap, margin = lookup(label)
+            overlap = maybe_concrete_scalar(overlap)
+            margin = maybe_concrete_scalar(margin)
             if overlap is not None and margin is not None and (
                 overlap < 0.5 or margin <= 1e-8
             ):
@@ -1283,10 +1358,8 @@ class ChipAnalysis:
                     f"{label}: overlap={overlap:.6g}, margin={margin:.6g}. "
                     "Inspect chip.dress().assignment_overlaps or choose a better-resolved model."
                 )
-        return (
-            self._eigenvalue_of_label(upper_tuple, precomputed=precomputed)
-            - self._eigenvalue_of_label(lower_tuple, precomputed=precomputed)
-        )
+            energies.append(energy)
+        return energies[1] - energies[0]
 
     def freq(
         self,

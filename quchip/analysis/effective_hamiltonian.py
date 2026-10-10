@@ -278,6 +278,18 @@ def _h_eff_on_basis(chip: "Chip", basis: Sequence[tuple[int, ...]]) -> Any:
     states) — see :class:`EffectiveHamiltonianResult` for the construction.
     """
     analysis = chip._analysis
+    sectors = analysis._sector_model()
+    if sectors is not None:
+        # A conserving chip needs only the sectors that the requested states occupy.
+        labels = [tuple(state) for state in basis]
+        if not labels:
+            raise ValueError("Effective subspace must contain at least one state.")
+        invalid = [label for label in labels if not analysis._is_bare_label(label)]
+        if invalid:
+            raise ValueError(f"Effective subspace state {invalid[0]} is not a valid bare product-basis label.")
+        eigenvalues, evecs, kept, dressed_idx = sectors.labeled_subspace(labels)
+        return exact_subspace(eigenvalues, evecs, kept, dressed_idx).hamiltonian
+
     engine = analysis.engine_result()
     eigenvalues, evecs, _, labeling = analysis._compute_array_labeled(engine)
     evecs = analysis._semantic_amplitudes(evecs, engine)
@@ -324,10 +336,9 @@ def effective_hamiltonian(
     >>> result.h_eff.shape
     (4, 4)
     """
-    # effective_hamiltonian reuses the chip's dressed spectrum
-    # (`_compute_array_labeled`) instead of diagonalizing again, so one
-    # full-chip diagonalization supplies both this function and
-    # `dispersive_shift`.
+    # effective_hamiltonian reuses the chip's dressed spectrum instead of
+    # diagonalizing again, so one eigensystem per sector, or one full-chip
+    # eigensystem, supplies both this function and `dispersive_shift`.
     device_labels = tuple(dev.label for dev in chip.devices)
     basis = _normalize_subspace(chip, subspace)
     h_eff = _h_eff_on_basis(chip, basis)
