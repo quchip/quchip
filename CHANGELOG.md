@@ -16,6 +16,12 @@ This file records notable user-visible changes to quchip.
   correction of order (g/Δ)²κ/Δ (8e-5). A mode with several ports, or a port
   whose plane also carries other fields, now raises, so keep such a mode in the
   model. ([#76](https://github.com/quchip/quchip/issues/76))
+- `pulse.<i>.detuning` now names the carrier detuning. A custom envelope
+  parameter named `detuning` moves to `pulse.<i>.envelope.detuning`, like one
+  named `phase`. Code that rebinds or sweeps `pulse.<i>.detuning` for such an
+  envelope now adds a carrier offset and keeps the envelope's value. Use the
+  new path with `with_params()` and `QuantumSequence.vary()`.
+  ([#93](https://github.com/quchip/quchip/issues/93))
 
 #### New features
 
