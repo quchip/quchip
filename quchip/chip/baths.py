@@ -26,7 +26,7 @@ from quchip.declarative.ops import LocalOps
 from quchip.declarative.parameters import Parameter
 from quchip.devices.spaces import FockSpace
 from quchip.utils.constants import k_B
-from quchip.utils.jax_utils import maybe_concrete_scalar
+from quchip.utils.jax_utils import concrete_array_module, maybe_concrete_scalar
 from quchip.utils.labeling import auto_label, resolve_label
 from quchip.utils.values import copy_value
 
@@ -45,7 +45,7 @@ def _bose_occupation(temperature: Any, frequency: Any) -> Any:
 
 
 def _adjoint(operator: Any) -> Any:
-    return operator.dag() if hasattr(operator, "dag") else jnp.asarray(operator).conj().T
+    return operator.dag() if hasattr(operator, "dag") else concrete_array_module(operator).asarray(operator).conj().T
 
 
 class Bath:

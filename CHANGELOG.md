@@ -56,6 +56,11 @@ This file records notable user-visible changes to quchip.
 
 #### Performance
 
+- Multi-device operators can project factor by factor into local eigenbases,
+  avoiding the dense authored product space. Coupled default fluxoniums no
+  longer require that allocation. The engine selects the smaller estimated
+  projection route and checks available memory before allocation.
+  ([#107](https://github.com/quchip/quchip/pull/107))
 - `VNA.sweep()` solves weak-probe scattering of pump-free chips that conserve
   total excitation number in their one-excitation block, if every input is
   vacuum. These chips include Duffing transmons, pure dephasing, and reduced
