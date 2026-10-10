@@ -240,9 +240,10 @@ def _project_on_support(
 
     An empty ``support`` means the operator spans the full authored chip. A
     multi-device operator projects factor by factor when it is a sum of
-    scalar-weighted single-device products (see :func:`_project_products`).
-    Any other multi-device operator is projected on its dense native product
-    space after a memory check.
+    scalar-weighted single-device products that holds less memory than the
+    dense operator (see :func:`_project_products`). Any other multi-device
+    operator is projected on its dense native product space after a memory
+    check.
     """
     if len(support) == 1:
         local = materialize_expr(operator, backend, local_bases=bases)
@@ -272,6 +273,32 @@ def _project_on_support(
     return backend.from_array(projected, dims=[resolved_dims, resolved_dims])
 
 
+# Lowering an operator on the native product space and copying it into a dense
+# array keeps two dense N×N arrays alive: measured peaks reach two copies.
+_DENSE_PROJECTION_COPIES = 2
+
+
+def _product_count(node: Any, labels: tuple[str, ...]) -> int | None:
+    """Count the single-device products that :func:`_project_products` expands ``node`` into.
+
+    The count lowers no operator. Returns ``None`` when a term does not factor.
+    """
+    if not isinstance(node, PhysicsExpr) or not node.labels or not set(node.labels) <= set(labels):
+        return None
+    if len(node.labels) == 1:
+        return 1
+    if node.kind == "embed":
+        return _product_count(node.args[0], labels)
+    if node.kind == "scale":
+        return _product_count(node.args[1], labels)
+    if node.kind not in ("add", "sub", "tensor", "matmul"):
+        return None
+    left, right = _product_count(node.args[0], labels), _product_count(node.args[1], labels)
+    if left is None or right is None:
+        return None
+    return left + right if node.kind in ("add", "sub") else left * right
+
+
 def _project_products(
     operator: Any,
     labels: tuple[str, ...],
@@ -285,9 +312,16 @@ def _project_products(
     native dimension squared. Products on one device multiply in the native
     basis before projection, because ``V_a V_a†`` is not the identity on a
     truncated eigenbasis. A label absent from a product is the identity.
-    Returns ``None`` when a term does not factor.
+    Returns ``None`` when a term does not factor, or when the expanded products
+    would hold more memory than the dense projection.
     """
     if not isinstance(operator, PhysicsExpr) or operator.labels != labels:
+        return None
+    # Each product holds one native matrix per device. A product of sums multiplies
+    # the number of products, so a deep one can outgrow the dense operator.
+    products = _product_count(operator, labels)
+    native = [bases[label].native_dim for label in labels]
+    if products is None or products * sum(n**2 for n in native) > _DENSE_PROJECTION_COPIES * prod(native) ** 2:
         return None
     values = _bound_values(operator)
 
@@ -352,24 +386,19 @@ def _project_products(
     return total
 
 
-# Lowering an operator on the native product space and copying it into a dense
-# array keeps two dense N×N arrays alive: measured peaks reach two copies.
-_DENSE_PROJECTION_COPIES = 2
-
-
 def _project_dense(
     operator: Any,
     labels: tuple[str, ...],
     bases: Mapping[str, BasisRecord],
     backend: Backend,
 ) -> Any:
-    """Project an operator that does not factor through its dense native product space."""
+    """Project an operator through its dense native product space after a memory check."""
     records = [bases[label] for label in labels]
     dimension = prod(record.native_dim for record in records)
     require_memory(
         _DENSE_PROJECTION_COPIES * 16 * dimension**2,
         task=f"The dense projection of an operator on {', '.join(labels)} at native dimension N = {dimension}",
-        remedy="Author the operator as sums of products of single-device operators, or reduce the device cutoffs.",
+        remedy="Author the operator as a short sum of single-device products, or reduce the device cutoffs.",
     )
     matrix = backend.to_array(materialize_expr(operator, backend, local_bases=bases))
     xp = array_namespace(records[0].vectors)

@@ -58,8 +58,9 @@ This file records notable user-visible changes to quchip.
   single-device operators. `chip.freq()` on two capacitively coupled default
   `Fluxonium` devices needed about 820 GB. On one machine, it now runs in 3 s
   with a 14 MB allocation peak. Results agree with the dense projection to
-  float64 round-off. Other operators keep the dense projection, which now
-  raises `MemoryError` before an allocation that cannot fit.
+  float64 round-off. Other operators, and products of sums that would expand
+  past the dense operator, keep the dense projection. It now raises
+  `MemoryError` before an allocation that cannot fit.
   ([#96](https://github.com/quchip/quchip/issues/96))
 
 #### Performance

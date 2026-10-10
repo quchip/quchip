@@ -38,6 +38,18 @@ class _OpaqueCapacitive(CouplingModel):
         return charge_product
 
 
+class _PowerOfSum(CouplingModel):
+    """The power (φ_a + φ_b)^16, which expands into 65536 single-device products."""
+
+    g: Scalar = parameter(unit="GHz")
+
+    def interaction(self, a, b, p):
+        power = a.phi * b.I + a.I * b.phi
+        for _ in range(4):
+            power = power @ power
+        return p.g * power
+
+
 def _fluxonium_pair(**options) -> tuple[Fluxonium, Fluxonium]:
     return (
         Fluxonium(E_C=1.0, E_J=4.0, E_L=0.5, phi_ext=0.5, levels=5, label="fa", **options),
@@ -88,16 +100,18 @@ def test_default_fluxonium_pair_resolves_without_the_dense_native_product_space(
     assert peak < 100 * 16 * fa.num_basis**2
 
 
-def test_unfactored_coupling_checks_memory_before_the_dense_projection(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Only an operator that does not factor needs the dense native product space."""
+def test_dense_route_checks_memory_before_the_projection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Operators that do not factor, or that expand past the dense operator, take the memory-checked dense route."""
     fa, fb = _fluxonium_pair(num_basis=41)
     monkeypatch.setattr(_memory, "available_memory_bytes", lambda: 10**6)
 
     factorized = Chip([fa, fb], couplings=[Capacitive(fa, fb, g=0.5)], basis="eigen")
     assert factorized.resolve().dims == (5, 5)
-    opaque = Chip([fa, fb], couplings=[_OpaqueCapacitive(fa, fb, g=0.5)], basis="eigen")
-    with pytest.raises(MemoryError, match="dense projection of an operator on fa, fb at native dimension N = 1681"):
-        opaque.resolve()
+    # The 65536 products of (φ_a + φ_b)^16 would hold 3.5 GB, and the dense operator holds 45 MB.
+    for coupling in (_OpaqueCapacitive(fa, fb, g=0.5), _PowerOfSum(fa, fb, g=1e-6)):
+        chip = Chip([fa, fb], couplings=[coupling], basis="eigen")
+        with pytest.raises(MemoryError, match="dense projection of an operator on fa, fb at native dimension N = 1681"):
+            chip.resolve()
 
 
 @pytest.mark.validation
