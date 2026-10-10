@@ -578,18 +578,27 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
         while section_label in {component.label for component in network.components}:
             section_label = f"{mode_label}_reflection_{suffix}"
             suffix += 1
+        lowering = _kron(*(mode_lowering if label == mode_label else np.eye(dim)
+                           for label, dim in zip(labels, dims)))
+        frequency, weight = reduction.dressed_transition(ctx, lowering)
         section = network.mode_reflection(
             section_label,
-            freq=incoming_frequencies[mode_label],
-            external_rate=boundary_ports[0].rate_value(chip),
-            internal_rate=internal_rate,
+            freq=frequency,
+            external_rate=weight * boundary_ports[0].rate_value(chip),
+            internal_rate=weight * internal_rate,
             reference_freq=incoming_frequencies[touching_labels[0]],
         )
         network._insert_reference_section(reflection_plane, section)
+        frequency_error = ""
+        if method == "sw":
+            frequency_error = ("SW misses frequency shifts beyond second order, of order g⁴/Δ³ with one survivor "
+                               "and 2g_1g_2J/(Δ_1Δ_2) when a coupling J joins two survivors. ")
         notes.append(
             f"Kept the reflection of {mode_label!r} on plane {reflection_plane!r} as reference section "
-            f"{section_label!r}. The reduced scattering misses only the frequency dependence of the "
-            "Purcell coupling across a sweep, of order (g/Δ)²κ/Δ; the section's internal-loss bath is vacuum."
+            f"{section_label!r}, using its dressed transition and mode-weighted external and internal rates. "
+            "The section drops damping from survivor channels, of order (g/Δ)²γ_s. "
+            "Purcell dispersion leaves a scattering residual of order (g/Δ)²κ_e/Δ. "
+            f"{frequency_error}The section's internal-loss bath is vacuum."
         )
     source_factors = tuple(
         _array(source_bases[label].vectors).conj().T @ _array(source_bases[label].energy_vectors) for label in labels

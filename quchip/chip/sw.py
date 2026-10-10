@@ -359,13 +359,15 @@ def exact_subspace(eigenvalues: Any, eigenvectors: Any, kept_indices: Any, dress
 
 
 def exact_mode_subspace(h: Any, labels: list[str], dims: tuple[int, ...], mode_label: str,
-                        survivor_labels: list[str], sectors: np.ndarray | None = None) -> ExactSubspace:
+                        survivor_labels: list[str], sectors: np.ndarray | None = None, *,
+                        eigensystem: tuple[Any, Any, Labeling] | None = None) -> ExactSubspace:
     """Diagonalize one model and validate its computational label assignment.
 
     With ``sectors``, the Hamiltonian conserves total excitation number and the
     kept map keeps every sector separate.
+    Reuse ``eigensystem`` when the caller already diagonalized and labeled ``h``.
     """
-    eigenvalues, eigenvectors, labeling = _exact_eigensystem(h, dims, sectors)
+    eigenvalues, eigenvectors, labeling = _exact_eigensystem(h, dims, sectors) if eigensystem is None else eigensystem
     p_mask, _ = mode_blocks(dims, labels, mode_label)
     kept = np.flatnonzero(p_mask)
     ground = [0] * len(labels)
