@@ -54,9 +54,11 @@ This file records notable user-visible changes to quchip.
   Previously, the operating system killed them. The dynamiqs stationary Liouvillian
   uses the same check. ([#80](https://github.com/quchip/quchip/issues/80))
 - On the QuTiP backend, an envelope step at a time listed in `sampling_times()`
-  now stays sharp at any pulse start and line delay. Each listed time and window
-  edge gets a close knot on each side. The gap covers the rounding of every
-  shifted clock that places or evaluates the feature. The knots follow the
+  now stays sharp at any pulse start and line delay, up to float precision.
+  Each listed time and window edge gets a close knot on each side. The gap
+  covers the rounding of every shifted clock that places or evaluates the
+  feature. The transition therefore spans a few float spacings of the largest
+  clock time, about 2e-13 ns for a step near 100 ns. The knots follow the
   arithmetic of signal evaluation, so a float32 duration or start time also
   keeps the pulse ends and steps sharp. Previously only window edges had such
   knots, and a step became a linear ramp across one 25 ps interval. At a

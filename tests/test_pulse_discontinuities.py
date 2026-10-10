@@ -19,6 +19,13 @@ class _SteppedEnvelope(Envelope):
         return qnp.asarray([0.0, 10.0, self.duration])
 
 
+class _MarkedSteppedEnvelope(_SteppedEnvelope):
+    """The same shape, with the float64 neighbors of 10 ns also listed, as in #94."""
+
+    def sampling_times(self):
+        return qnp.asarray([0.0, np.nextafter(10.0, -np.inf), 10.0, np.nextafter(10.0, np.inf), self.duration])
+
+
 def _problem(backend, amplitude=5.0, width=0.1, start=150.17):
     from quchip.engine.ir import (
         CanonicalOperator, Constant, DynamicTerm, EngineResult, ResolvedSLH,
@@ -109,17 +116,19 @@ def test_qutip_square_pulse_has_no_interpolation_area_outside_support():
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize(("start", "delay"), [(2.3, 0.0), (37.3, 0.0), (0.0, -9.0)])
-def test_qutip_coefficient_keeps_pulse_edges_and_a_listed_step_sharp(start, delay):
+@pytest.mark.parametrize(("envelope_type", "start", "delay"), [
+    (_SteppedEnvelope, 2.3, 0.0), (_MarkedSteppedEnvelope, 37.3, 0.0), (_SteppedEnvelope, 0.0, -9.0),
+])
+def test_qutip_coefficient_keeps_pulse_edges_and_a_listed_step_sharp(envelope_type, start, delay):
     """The QuTiP coefficient equals the signal within 1 fs of the pulse edges and the listed step."""
     from quchip.backend.qutip import _envelope_coefficient
     from quchip.engine.ir import EnvelopeRef, Shift, Window, evaluate_signal_program
 
     # At a 2.3 ns start, the adjacent float below the shifted step maps back onto the step.
-    # At a 37.3 ns start, floats adjacent to the step in local time merge with it in absolute time.
+    # At a 37.3 ns start, the listed neighbors of the step merge with it in absolute time.
     # A -9 ns line delay moves the step to 1 ns, but the pulse's local clock still reads 10 ns.
-    # The float32 duration gives float32 feature times, and the pulse ends at a float32 sum.
-    envelope = _SteppedEnvelope(duration=np.float32(20.0))
+    # The float32 duration ends the pulse at a float32 sum. _SteppedEnvelope then lists float32 times.
+    envelope = envelope_type(duration=np.float32(20.0))
     signal = Shift(Shift(Window(EnvelopeRef(envelope), 0.0, envelope.duration), start), delay)
     coefficient = _envelope_coefficient(signal, [start + delay - 1.0, start + delay + 21.0])
     times = start + delay + np.add.outer([0.0, 10.0, 20.0], np.linspace(-1e-6, 1e-6, 21)).ravel()
