@@ -487,8 +487,10 @@ def fit_a_dress(
     evaluator
         ``"full"`` evaluates each target on the complete model. ``"local"``
         explicitly selects one-hop neighborhoods and omits effects of devices
-        outside them. Target reports record the selected evaluator. Unsupported
-        local model contributions raise.
+        outside them. A neighborhood keeps the ports whose targets it holds.
+        Target reports record the selected evaluator. Unsupported local model
+        contributions raise, e.g. a feedline that links a kept port to a
+        discarded one.
     max_hilbert_dim
         Maximum Hilbert-space dimension of each evaluated model. A larger model
         raises before seeding or optimization, and no different approximation

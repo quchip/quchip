@@ -28,6 +28,13 @@ This file records notable user-visible changes to quchip.
 - `PortNetwork.mode_reflection(...)` adds a serializable two-sided reference
   section that reflects like a damped linear mode.
   ([#76](https://github.com/quchip/quchip/issues/76))
+- `fit_a_dress(evaluator="local")` accepts chips with a `PortNetwork`. Each
+  local neighborhood keeps the ports whose targets it holds, together with
+  their field subgraphs. Independent readout ports add no Hamiltonian term, so
+  they do not change the fitted parameters. A field subgraph that links a kept
+  port to a discarded port still raises, e.g. a shared feedline. So does a port
+  that also targets a discarded device.
+  ([#100](https://github.com/quchip/quchip/issues/100))
 
 #### Fixes
 
