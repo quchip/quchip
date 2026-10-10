@@ -53,6 +53,19 @@ This file records notable user-visible changes to quchip.
   assemble a superoperator whose estimated peak exceeds the available memory.
   Previously, the operating system killed them. The dynamiqs stationary Liouvillian
   uses the same check. ([#80](https://github.com/quchip/quchip/issues/80))
+- `eliminate()` reports a removed coupler's exchange in the units of an edge
+  authored between the survivors, for any survivor type. The emitted edge
+  took the real part of the resolved exchange element, so a `Fluxonium`
+  partner got a zero edge and `j_eff = 0`. In the reported example, the edge
+  alone now gives the reduced chip's 1.629 MHz for that partner. With a
+  `ChargeBasisTransmon` partner, it gives 2.872 MHz instead of 3.314 MHz.
+  `j_eff` changes when a survivor's 0-1 charge element is not 1, and
+  `dJ_domega_c` changes when the coupler's element is not 1. `g_over_delta`
+  divides the resolved exchange element, not the authored `g`, by the bare
+  detuning. This also holds when an edge is the target. It reads 0.0500
+  instead of 0.0433 and 0.0314 instead of 0.0545 for these partners. Duffing
+  and resonator values do not change.
+  ([#90](https://github.com/quchip/quchip/issues/90))
 
 #### Performance
 
