@@ -1062,8 +1062,9 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
         if shared_line:
             note += (
                 " Either leg preserves the weak-probe response from the line input. "
-                "Near kept-port frequencies beyond the section, emitted or received fields err by up to "
-                "the reported kappa_over_delta."
+                "Near kept-port frequencies beyond the section, kappa_over_delta estimates the dispersive "
+                "field-error scale from incoming frequencies. Dressed shifts can exceed this scale; "
+                "is_valid is not an accuracy guarantee."
             )
         notes.append(note)
     source_factors = tuple(

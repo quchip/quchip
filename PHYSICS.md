@@ -1427,15 +1427,17 @@ Then it uses the inbound leg. Ports that an earlier reduction transformed
 do not count as kept readout ports.
 
 Either leg preserves the weak-probe response from the line input.
-Near kept-port frequencies beyond the section, emitted or received fields
-err by up to `kappa_e / (2π |f_k - f_R|)`.
+Near kept-port frequencies beyond the section, the dispersive scale for the
+emitted or received field error is `kappa_e / (2π |f_k - f_R|)`.
 Here, `kappa_e` is the section's dressed external rate.
 The frequencies `f_k` and `f_R` are the incoming target and removed-mode
-frequencies before this reduction. Beyond means downstream for the outbound
+frequencies before this reduction. Dressed shifts can increase the correction
+above this scale; it is not a certified error bound. Beyond means downstream for the outbound
 leg and upstream for the inbound leg.
 The section's `validity` entry reports `kappa_over_delta` using the smallest
 absolute detuning among those kept ports. It reports zero when none lie beyond.
-The entry sets `is_valid` when `kappa_over_delta < 0.1`.
+The entry sets `is_valid` when `kappa_over_delta < 0.1`; this is a dispersive
+diagnostic, not an accuracy guarantee.
 Reflection sections add no such entry.
 
 A port that an earlier elimination transformed already acts on every survivor

@@ -160,9 +160,10 @@ class EliminationResult:
         tracing. It is a perturbative diagnostic. The exact effective-terms
         route has no such diagnostic and leaves this mapping empty. A
         one-pass section on a shared feedline adds ``kappa_over_delta`` and
-        ``is_valid`` under its label. ``kappa_over_delta`` bounds the field
-        error of kept ports beyond the section, and ``is_valid`` uses
-        ``kappa_over_delta < 0.1``.
+        ``is_valid`` under its label. ``kappa_over_delta`` estimates the
+        dispersive field-error scale at incoming kept-port frequencies beyond
+        the section. Dressed shifts can exceed this scale. ``is_valid`` uses
+        ``kappa_over_delta < 0.1`` as a diagnostic, not an accuracy guarantee.
     notes
         Approximation order, omitted physics and control retargeting.
     mapping

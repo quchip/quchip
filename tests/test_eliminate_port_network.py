@@ -186,7 +186,13 @@ def test_feedline_readout_elimination_keeps_the_line_transmission(modes, options
     # Purcell dispersion for exact reduction; the fourth-order energy shift also limits SW.
     bound = (2 * (g / detuning)**2 * rate / (2 * np.pi * detuning) if options["method"] == "exact"
              else 2 * 8 * np.pi * g**4 / (rate * detuning**3))
-    kappa_over_delta = (rate / (2 * np.pi * min(abs(chip[label].freq - chip[modes[-1]].freq) for label in beyond))
+    last_edge = legs_by_mode[modes[-1]]
+    mode_freq = chip[modes[-1]].freq
+    last_detuning = mode_freq - chip[last_edge.device_a_label].freq
+    # The isolated RWA pair gives the removed mode's dressed lowering weight.
+    weight = ((1 + last_detuning / np.hypot(last_detuning, 2 * last_edge.g)) / 2
+              if options["method"] == "exact" else np.cos(last_edge.g / last_detuning)**2)
+    kappa_over_delta = (weight * rate / (2 * np.pi * min(abs(chip[label].freq - mode_freq) for label in beyond))
                         if beyond else 0.0)
     reduced_chip = chip
     for mode in modes:
@@ -197,9 +203,9 @@ def test_feedline_readout_elimination_keeps_the_line_transmission(modes, options
     # A section filters the outbound leg, unless kept readouts lie only downstream of it.
     plane = restored.resolve().slh.external_channels[0].reference
     assert ([element.label for element in plane.inbound], [element.label for element in plane.outbound]) == legs
-    # Emission from ports beyond the section errs by κ/(2π|Δf|), 0.016 for r3 when r2 goes.
+    # The diagnostic uses incoming detunings, so it is a scale rather than a strict field-error bound.
     section = result.validity[f"{modes[-1]}_transmission"]
-    assert section["kappa_over_delta"] == pytest.approx(kappa_over_delta, rel=2e-2, abs=1e-12)
+    assert section["kappa_over_delta"] == pytest.approx(kappa_over_delta, rel=1e-12, abs=1e-12)
     assert section["is_valid"]
     assert f"{modes[-1]}_transmission κ/Δ={float(section['kappa_over_delta']):.2g} ✓" in result.describe()
 
