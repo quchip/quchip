@@ -226,7 +226,7 @@ def _strip_dead_control_lines(chip: "Chip", sequence: "QuantumSequence", reachab
 
 
 def _eliminate_spectators(
-    chip: "Chip", active: set[str], reachable: list[str], method: str
+    chip: "Chip", active: set[str], reachable: list[str], method: str, local: bool = False
 ) -> tuple[Any, list[Any], list[str], list[str]]:
     """Fold ``reachable`` spectators into ``chip`` one at a time, farthest-from-active first.
 
@@ -256,7 +256,7 @@ def _eliminate_spectators(
         try:
             # Unsupported physical reductions leave the remaining spectators
             # in place. Invalid configuration raises ValueError and propagates.
-            step = eliminate(working, target, method=method)
+            step = eliminate(working, target, method=method, local=local)
         except NotImplementedError as exc:
             notes.append(
                 f"stopped eliminating spectators at '{target}' ({exc}); "
@@ -272,7 +272,9 @@ def _eliminate_spectators(
     return working, steps, eliminated, notes
 
 
-def active_patch(sequence: "QuantumSequence", *, hops: int = 1, method: str = "sw") -> ActivePatchResult:
+def active_patch(
+    sequence: "QuantumSequence", *, hops: int = 1, method: str = "sw", local: bool = False
+) -> ActivePatchResult:
     """Reduce a chip to its schedule-active patch by eliminating spectators.
 
     The spectators are eliminated one at a time through
@@ -307,6 +309,9 @@ def active_patch(sequence: "QuantumSequence", *, hops: int = 1, method: str = "s
     method
         Forwarded to :func:`~quchip.chip.transformations.eliminate` for
         every device elimination.
+    local
+        Forwarded to :func:`~quchip.chip.transformations.eliminate`. Each
+        step then reads only the patch around the eliminated device.
 
     Returns
     -------
@@ -321,7 +326,7 @@ def active_patch(sequence: "QuantumSequence", *, hops: int = 1, method: str = "s
     reachable, notes = _split_reachable_spectators(chip, spectators, active)
     working, strip_notes = _strip_dead_control_lines(chip, sequence, reachable)
     notes.extend(strip_notes)
-    working, steps, eliminated, elimination_notes = _eliminate_spectators(working, active, reachable, method)
+    working, steps, eliminated, elimination_notes = _eliminate_spectators(working, active, reachable, method, local)
     notes.extend(elimination_notes)
 
     if working is chip:

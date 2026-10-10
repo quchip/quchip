@@ -1399,7 +1399,7 @@ class QuantumSequence:
                 problem_batch, progress=progress,
             )
         return result
-    def active_patch(self, *, hops: int = 1, method: str = "sw") -> "ActivePatchResult":
+    def active_patch(self, *, hops: int = 1, method: str = "sw", local: bool = False) -> "ActivePatchResult":
         """Reduce the chip to this schedule's active patch (spectators eliminated).
 
         Convenience for :func:`quchip.chip.transformations.active_patch`;
@@ -1412,10 +1412,13 @@ class QuantumSequence:
             Coupling-graph expansion beyond scheduled targets.
         method : {"sw", "exact"}, default="sw"
             Reduction method forwarded to each elimination.
+        local : bool, default=False
+            Forwarded to each elimination. Each step then reads only the
+            patch around the eliminated device.
         """
         from quchip.chip.transformations import active_patch as _active_patch
 
-        return _active_patch(self, hops=hops, method=method)
+        return _active_patch(self, hops=hops, method=method, local=local)
 
     @staticmethod
     def _scoped_backend(backend: Any | None):
