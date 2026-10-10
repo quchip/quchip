@@ -989,8 +989,8 @@ class PortNetwork:
         ``S``, ``L``, and ``H``. Its internal-loss bath is vacuum.
         Continuous-wave APIs evaluate the transfer at each frequency.
         Transient APIs use its value at the applicable carrier.
-        Every parameter is tracked at ``network.component.<label>.<name>``
-        and serializes.
+        quchip tracks every parameter at ``network.component.<label>.<name>``,
+        and the section serializes.
 
         Parameters
         ----------

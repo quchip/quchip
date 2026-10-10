@@ -332,7 +332,7 @@ serializes.
 Side 1 to side 2 multiplies the field by the full `S_r(f)`, without a square root.
 Reverse propagation is transparent, so the section acts on one leg only.
 Its parameters are `freq` in GHz and `external_rate` and `internal_rate` in 1/ns.
-The internal-loss bath is vacuum. Parameters are tracked like those of
+The internal-loss bath is vacuum. quchip tracks these parameters like those of
 `network.filter(...)`, and the section serializes.
 
 `network.amplifier(...)` adds a phase-preserving reference section on the
