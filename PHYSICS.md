@@ -1319,12 +1319,16 @@ each term whose diagonal part depends on a core level. The patch therefore holds
 - the core and the full supports of the effective terms on it,
 - the far device of each coupling whose diagonal part depends on a core level, such as a `CrossKerr`
   edge,
+- the full support of each port pair whose series composition generates a Hamiltonian on a core
+  device,
 - the full support of every effective term that the patch touches, because effective terms hold
   retained coordinates.
 
 The far-device rule reads which diagonal entries can be nonzero. It evaluates each coupling with a
-generic value for every parameter, so a traced reduction reads the same patch as a concrete one. A
-coupling on a device with a traced energy basis counts as level-dependent.
+different generic value for each parameter, so a traced reduction reads the same patch as a concrete
+one. Equal values could cancel, as in `(x - y) n_a n_b`. A coupling on a device with a traced energy
+basis counts as level-dependent. A device without a neighbour has no generator. Its patch adds the
+first other device, which carries the projection onto the device's ground state.
 
 With this patch, the full-chip generator is the patch generator times the identity on the other
 devices. A coupling from the patch to other devices keeps the mode's level, so it adds nothing to

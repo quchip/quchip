@@ -146,12 +146,14 @@ def eliminate(chip: "Chip", target: Any, *, method: str = "sw", local: bool = Fa
         device. The patch holds the device and every device that shares a
         coupling, effective terms or a port with it. It also holds the far
         device of each coupling whose diagonal part depends on such a
-        neighbour's level, as for a ``CrossKerr`` edge, and the full support
-        of every effective term that it touches. The reduction never resolves
-        the full chip, and everything outside the patch stays unchanged. The
-        result equals the full-chip reduction, apart from ``chi``, which
-        describes the patch. Chips with baths, and port networks that link a
-        patch port to other ports, raise ``NotImplementedError``.
+        neighbour's level, as for a ``CrossKerr`` edge. It holds the full
+        support of each port pair whose series Hamiltonian acts on the device
+        or a neighbour, and of every effective term that it touches. The
+        reduction never resolves the full chip, and everything outside the
+        patch stays unchanged. The result equals the full-chip reduction,
+        apart from ``chi``, which describes the patch. Chips with baths, and
+        port networks that link a patch port to a port outside the patch,
+        raise ``NotImplementedError``.
 
     Returns
     -------

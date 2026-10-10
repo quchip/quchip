@@ -107,10 +107,16 @@ def _retained_port_labels(chip: "Chip") -> set[str]:
     }
 
 
-# A generic value for every coupling parameter. The patch then follows which
-# matrix entries can be nonzero, not their values, so traced and concrete
-# reductions read the same patch.
-_STRUCTURE_PROBE = 0.6180339887498949
+def _structure_probe(paths: tuple[str, ...]) -> dict[str, float]:
+    """Return a different generic value for each coupling parameter, drawn from a fixed seed.
+
+    A diagonal entry that depends on the parameters vanishes at such a point
+    only by coincidence. Equal values could cancel, as in ``(x - y) n_a n_b``.
+    The patch then follows which entries can be nonzero, not their values, so
+    traced and concrete reductions read the same patch.
+    """
+    values = np.random.default_rng(0).uniform(0.5, 1.5, len(paths))
+    return dict(zip(paths, values.tolist()))
 
 
 def _diagonal_depends_on(chip: "Chip", coupling: "BaseCoupling", label: str, bases: Any) -> bool:
@@ -125,7 +131,7 @@ def _diagonal_depends_on(chip: "Chip", coupling: "BaseCoupling", label: str, bas
     support = (chip.device_index(coupling.device_a_label), chip.device_index(coupling.device_b_label))
     backend = chip.backend
     operator = coupling.interaction_hamiltonian()
-    probe = dict.fromkeys(operator.parameter_paths(), _STRUCTURE_PROBE) if isinstance(operator, PhysicsExpr) else {}
+    probe = _structure_probe(tuple(operator.parameter_paths())) if isinstance(operator, PhysicsExpr) else {}
     with jax.ensure_compile_time_eval():
         local = materialize_expr(operator, backend, bindings=probe, local_bases=bases)
         matrix = _array(backend.to_array(_project_on_support(chip, local, support, bases, backend)))
@@ -150,9 +156,12 @@ def _local_patch(chip: "Chip", mode_label: str, bases: Any) -> tuple[str, ...]:
     terms or a port with it. The generator acts only on the core. The patch
     adds the full supports of the effective terms on the core, and the far
     device of every coupling whose energy-diagonal part depends on a core
-    level. With that, the patch generator equals the full-chip generator.
-    Effective terms are stored in retained coordinates, so every term that
-    the patch touches joins whole.
+    level. A port pair whose series composition generates a Hamiltonian on a
+    core device joins whole. With that, the patch generator equals the
+    full-chip generator. Effective terms are stored in retained coordinates,
+    so every term that the patch touches joins whole. A mode without a
+    neighbour adds the first other device, which carries the projection onto
+    the mode's ground state.
     """
     core = {mode_label}
     for coupling in chip.couplings:
@@ -166,9 +175,15 @@ def _local_patch(chip: "Chip", mode_label: str, bases: Any) -> tuple[str, ...]:
         if mode_label in targets:
             core.update(targets)
     patch = set(core)
+    if core == {mode_label}:
+        patch.update([device.label for device in chip.devices if device.label != mode_label][:1])
     for terms in chip.effective_terms:
         if not core.isdisjoint(terms.labels):
             patch.update(terms.labels)
+    if chip.port_network is not None:
+        for support in chip.port_network.dynamical_supports(chip):
+            if not core.isdisjoint(support):
+                patch.update(support)
     for coupling in chip.couplings:
         ends = (coupling.device_a_label, coupling.device_b_label)
         inner = [label for label in ends if label in core]
