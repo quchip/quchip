@@ -158,7 +158,11 @@ class EliminationResult:
         coupled devices by their bare detuning. The validity flag uses
         ``g_over_delta < 0.1`` and remains a native boolean under JAX
         tracing. It is a perturbative diagnostic. The exact effective-terms
-        route has no such diagnostic and leaves this mapping empty.
+        route has no such diagnostic and leaves this mapping empty. A
+        one-pass section on a shared feedline adds ``kappa_over_delta`` and
+        ``is_valid`` under its label. ``kappa_over_delta`` bounds the field
+        error of kept ports beyond the section, and ``is_valid`` uses
+        ``kappa_over_delta < 0.1``.
     notes
         Approximation order, omitted physics and control retargeting.
     mapping

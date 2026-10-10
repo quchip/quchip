@@ -191,6 +191,7 @@ def test_feedline_readout_elimination_keeps_the_line_transmission(modes, options
     section = result.validity[f"{modes[-1]}_transmission"]
     assert section["kappa_over_delta"] == pytest.approx(kappa_over_delta, rel=2e-2, abs=1e-12)
     assert section["is_valid"]
+    assert f"{modes[-1]}_transmission κ/Δ={float(section['kappa_over_delta']):.2g} ✓" in result.describe()
 
     frequencies = np.concatenate([pole + np.array([-1e-3, 0.0, 1e-3]) for pole in (6.5593, 6.6581, 6.7569)])
     full = np.asarray(VNA(chip).sweep(frequencies).matrix)[:, 0, 0]

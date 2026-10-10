@@ -1019,9 +1019,9 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
             )
             beyond = kept_upstream if inbound else kept_downstream
             targets = [target for port in chip.ports if port.label in beyond for target in port.resolve_targets(chip)]
-            xp = concrete_array_module(external_rate, tuple(incoming_frequencies.values()))
-            ratio = xp.asarray(0.0)
+            ratio: Any = 0.0
             if targets:
+                xp = concrete_array_module(external_rate, tuple(incoming_frequencies.values()))
                 detunings = xp.asarray([incoming_frequencies[target] - incoming_frequencies[mode_label]
                                         for target in targets])
                 ratio = external_rate / (2.0 * xp.pi * xp.min(xp.abs(detunings)))
