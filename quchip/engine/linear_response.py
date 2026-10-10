@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import jax
+import numpy as np
 
 from quchip.approximations import Approximation
 from quchip.chip.ports import Port
@@ -14,7 +15,8 @@ from quchip.devices.spaces import FockSpace
 from quchip.engine.assembly import _apply_2pi_scalar
 from quchip.engine.ir import LinearResponseProblem
 from quchip.engine.output_network import pad_mixing
-from quchip.engine.reference import cw_transfer
+from quchip.engine.reference import ReferencePlane, cw_transfer
+from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import maybe_concrete_scalar
 
 
@@ -87,70 +89,79 @@ def _build_vacuum_response_problem(
     stationary, and to first order in the probe the coherences ``|1_j><0|``
     evolve in the one-excitation block alone, whatever the anharmonicities,
     cross-Kerr terms or cutoffs. A conserving channel with ``L|0> = c|0>`` adds
-    ``c* L_1 - |c|²/2 - (L†L)_1 / 2`` to that block.
+    ``c* L_1 - |c|²/2 - (L†L)_1 / 2`` to that block. Every block comes from the
+    terms' local operators, so the full product space is never formed.
     """
     from quchip.chip.effective import authored_excitation_changes, conserves_excitation_number
+    from quchip.engine.sectors import SectorModel
 
-    if (chip.port_network is None or chip.dynamic_contributions()
+    network = chip.port_network
+    if (network is None or chip.dynamic_contributions()
             or not conserves_excitation_number(chip, chip.approximation)):
         raise _UnsupportedLinearModel
     backend = chip.backend
     labels = tuple(device.label for device in chip.devices)
-    resolved = chip.resolve(frame="lab")
-    bases = resolved.bases
-    for operator, rate, support, _source, _channel, _paths, owner in chip._collapse_contributions_with_owners(bases):
-        if maybe_concrete_scalar(_scalar_value(rate, backend)) == 0.0:
-            continue
-        operator_labels = tuple(labels[index] for index in support) if support else labels
-        changes = authored_excitation_changes(operator, operator_labels, backend, bases)
-        lowering = changes is not None and changes <= {1}
-        if not lowering and (changes != {0} or isinstance(owner, Port)):
-            raise _UnsupportedLinearModel
+    sectors = SectorModel(chip)
+    channels: list[list[tuple[Any, Any, tuple[int, ...]]]] = []
+    hidden_keys: list[str] = []
+    occurrences: dict[str, int] = {}
+    for operator, rate, support, source, name, _paths, owner in sectors.contributions:
+        if maybe_concrete_scalar(_scalar_value(rate, backend)) != 0.0:
+            operator_labels = tuple(labels[index] for index in support) if support else labels
+            changes = authored_excitation_changes(operator, operator_labels, backend, sectors.bases)
+            lowering = changes is not None and changes <= {1}
+            if not lowering and (changes != {0} or isinstance(owner, Port)):
+                raise _UnsupportedLinearModel
+        if not isinstance(owner, Port):
+            # Hidden channels keep the keys and order of the resolved SLH model.
+            channels.append([(1.0, sectors.channel_operator(operator, rate, support), support)])
+            key = f"hidden.{source}.{name}"
+            occurrences[key] = occurrences.get(key, 0) + 1
+            hidden_keys.append(key if occurrences[key] == 1 else f"{key}#{occurrences[key]}")
 
-    slh = resolved.slh
-    if slh.H.dynamic_terms or slh.output_network is not None:
+    compiled = sectors.network
+    if compiled.output_network is not None:
         raise _UnsupportedLinearModel
-    if any(channel.input_occupation is not None
-           and maybe_concrete_scalar(channel.input_occupation) != 0.0 for channel in slh.channels):
+    if any(field.input_occupation is not None and maybe_concrete_scalar(field.input_occupation) != 0.0
+           for field in network._field_channels(compiled)):
         raise _UnsupportedLinearModel
+    ports = sectors.port_couplings()
+    channels[:0] = [[(coefficient, *ports[source]) for source, coefficient in entry.coupling.items()]
+                    for entry in compiled.channels]
 
     xp = backend.array_module
-    records = [bases[label] for label in labels]
-    excited = tuple(index for index, record in enumerate(records) if record.resolved_dim > 1)
 
-    def product_state(raised: int | None) -> Any:
-        state = xp.ones((1,), dtype=complex)
-        for index, record in enumerate(records):
-            state = xp.kron(state, xp.asarray(record.energy_state(1 if index == raised else 0), dtype=complex))
-        return state
-
-    vacuum = product_state(None)
-    states = xp.stack([product_state(index) for index in excited], axis=1)
-    identity = xp.eye(len(excited), dtype=complex)
-    hamiltonian = sum(
-        (term.coefficient * xp.asarray(term.operator.to_dense(), dtype=complex) for term in slh.H.static_terms),
-        start=xp.zeros((vacuum.shape[0],) * 2, dtype=complex),
-    )
-    block = states.conj().T @ hamiltonian @ states - (vacuum.conj() @ hamiltonian @ vacuum) * identity
-    rows = []
-    for channel in slh.channels:
-        coupling = xp.asarray(channel.coupling.to_dense(), dtype=complex)
-        lifted = coupling @ states
-        row = vacuum.conj() @ lifted
-        shift = vacuum.conj() @ coupling @ vacuum
-        block = block + 1j * (
-            xp.conj(shift) * (states.conj().T @ lifted)
-            - 0.5 * xp.abs(shift) ** 2 * identity
-            - 0.5 * (lifted.conj().T @ lifted - xp.outer(row.conj(), row))
+    def channel_block(terms: list[tuple[Any, Any, tuple[int, ...]]], row_total: int, column_total: int) -> Any:
+        shape = (sectors.space(row_total).size, sectors.space(column_total).size)
+        return sum(
+            (xp.asarray(coefficient) * xp.asarray(sectors.block(matrix, support, row_total, column_total))
+             for coefficient, matrix, support in terms),
+            start=xp.zeros(shape, dtype=complex),
         )
-        rows.append(row)
 
-    keys = tuple(channel.key for channel in slh.channels)
-    external = tuple(channel.key for channel in slh.external_channels)
+    # The one-excitation states, in device order.
+    excited = np.argmax(sectors.space(1).levels, axis=1)
+    order = np.argsort(excited, kind="stable")
+    identity = xp.eye(order.size, dtype=complex)
+    block = TWO_PI * (xp.asarray(sectors.hamiltonian(1)) - xp.asarray(sectors.hamiltonian(0))[0, 0] * identity)
+    rows = []
+    for terms in channels:
+        shift = channel_block(terms, 0, 0)[0, 0]
+        kept = channel_block(terms, 1, 1)
+        block = block + 1j * (
+            xp.conj(shift) * kept - 0.5 * xp.abs(shift) ** 2 * identity - 0.5 * kept.conj().T @ kept
+        )
+        rows.append(channel_block(terms, 0, 1)[0])
+
+    keys = (*(entry.exposure.label for entry in compiled.channels), *hidden_keys)
+    external = tuple(entry.exposure.label for entry in compiled.channels if not entry.exposure._hidden)
     if any(label not in external for label in plane_labels):
         raise ValueError(f"Unknown linear-response exposure. Available exposures: {list(external)}")
     plane_indices = tuple(keys.index(label) for label in plane_labels)
     frequency_values = xp.asarray(frequencies, dtype=float)
+    references = [entry.reference for entry in compiled.channels] + [ReferencePlane()] * len(hidden_keys)
+    scattering = (pad_mixing(xp.asarray(compiled.scattering, dtype=complex), len(keys), xp)
+                  if compiled.channels else xp.eye(len(keys), dtype=complex))
 
     def transfer_columns(runs: list[Any]) -> Any:
         return xp.stack(
@@ -160,13 +171,13 @@ def _build_vacuum_response_problem(
 
     return LinearResponseProblem(
         frequencies=frequencies,
-        mode_labels=tuple(labels[index] for index in excited),
-        hamiltonian=block,
-        couplings=xp.stack(rows),
-        scattering=xp.asarray(slh.S, dtype=complex),
+        mode_labels=tuple(labels[index] for index in excited[order]),
+        hamiltonian=block[np.ix_(order, order)],
+        couplings=xp.stack(rows)[:, order],
+        scattering=scattering,
         plane_indices=plane_indices,
-        inbound_transfer=transfer_columns([channel.reference.inbound for channel in slh.channels]),
-        outbound_transfer=transfer_columns([channel.reference.outbound for channel in slh.channels]),
+        inbound_transfer=transfer_columns([reference.inbound for reference in references]),
+        outbound_transfer=transfer_columns([reference.outbound for reference in references]),
     )
 
 

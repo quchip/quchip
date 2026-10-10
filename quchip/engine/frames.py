@@ -317,7 +317,7 @@ def _compile_time(function: Any) -> Any:
 def resolve_reference_frequencies(chip: Any, *, local_resolution: Any = None) -> dict[str, Any]:
     """Resolve explicit overrides or dressed references in one chip context."""
     dressed = (
-        chip.analysis._dressed_frequencies(chip.analysis.engine_result(_local_resolution=local_resolution))
+        chip.analysis._dressed_frequencies(_local_resolution=local_resolution)
         if any(device.reference_freq is None for device in chip.devices)
         else {}
     )
