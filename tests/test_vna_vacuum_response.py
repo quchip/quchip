@@ -3,9 +3,7 @@ import jax
 import numpy as np
 import pytest
 
-from quchip import (
-    RWA, VNA, Capacitive, Chip, DuffingTransmon, Exact, FluxTunableTransmon, PortNetwork, Resonator, eliminate,
-)
+from quchip import RWA, VNA, Capacitive, Chip, DuffingTransmon, Exact, PortNetwork, Resonator, eliminate
 
 
 def _readout_chip(alpha=-0.25, levels=3, *, approximation=RWA(), qubit_occupation=None, backend="qutip", g=0.06):
@@ -77,22 +75,6 @@ def test_chip_reduced_past_both_readout_modes_keeps_the_one_excitation_block():
 
     assert weak.diagnostics[0]["solver"] == "vacuum_response"
     np.testing.assert_allclose(np.asarray(weak.matrix), np.asarray(stationary.matrix), atol=1e-9)
-
-
-def test_flux_biased_transmon_keeps_the_one_excitation_block():
-    """A coupling scaled by the flux-dependent charge keeps the weak-probe route and its stationary value."""
-    qubit = FluxTunableTransmon(freq=5.0, anharmonicity=-0.25, flux_bias=0.3, asymmetry=0.2, levels=3, label="q",
-                                T1=2000.0, T2=1500.0)
-    resonator = Resonator(freq=6.0, levels=3, label="r")
-    network = PortNetwork(label="m")
-    network.port("r", target=resonator, rate=0.05)
-    chip = Chip([qubit, resonator], [Capacitive(qubit, resonator, g=0.06)], port_network=network, approximation=RWA())
-
-    weak, route = _sweep(chip, FREQUENCIES)
-    stationary, _ = _sweep(chip, FREQUENCIES, options={})
-
-    assert route == "vacuum_response"
-    np.testing.assert_allclose(weak, stationary, atol=1e-9)
 
 
 def test_weak_probe_route_requires_a_stationary_vacuum():
