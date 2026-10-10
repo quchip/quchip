@@ -4,7 +4,25 @@ This file records notable user-visible changes to quchip.
 
 ## Unreleased
 
+## [0.5.0] - 2026-10-11
+
+### 0.5 series highlights
+
+The 0.5 series extends reduced models, weak-probe response, and pulse control:
+
+- Local Schrieffer–Wolff reductions retain Hamiltonians, channels, and operator
+  maps. Numerical omissions from joint corrections are reported.
+- Dressed queries use excitation sectors for conserving chips. Weak-probe VNA
+  uses those sectors with vacuum inputs, including supported shared feedlines.
+  Eliminated readouts retain dressed reflection or transmission sections.
+- Pulse frames and start-referenced carrier detuning preserve calibrated
+  rotation axes when pulses move or use cross-resonance control.
+- Flux-tunable transmons use bias-dependent charge and phase operators for
+  static couplings, drives, observables, and ports.
+
 ### Changes since 0.4.0
+
+[Full comparison](https://github.com/quchip/quchip/compare/v0.4.0...v0.5.0)
 
 #### Changes and migration
 
@@ -49,13 +67,15 @@ This file records notable user-visible changes to quchip.
   planning keeps each port band's sign, so VNA accepts the joint operator. A
   later elimination transforms that port again, so you can eliminate both
   readout modes of a chip in either order.
-  ([#77](https://github.com/quchip/quchip/issues/77))
+  ([#77](https://github.com/quchip/quchip/issues/77),
+  [#85](https://github.com/quchip/quchip/pull/85))
 - `PortNetwork.mode_reflection(...)` adds a serializable two-sided reference
   section that reflects like a damped linear mode.
-  ([#76](https://github.com/quchip/quchip/issues/76))
+  ([#76](https://github.com/quchip/quchip/issues/76),
+  [#85](https://github.com/quchip/quchip/pull/85))
 - `eliminate(chip, device, local=True)` computes the SW reduction on a local
-  patch. It retains the full reduction's Hamiltonian, channels, and map.
-  `chi` describes only the patch. Both `active_patch()` entry points forward
+  patch. It retains the full reduction's Hamiltonian, channels, and map, subject
+  to the numerical omissions below. `chi` describes only the patch. Both `active_patch()` entry points forward
   `local`. Baths and networks that cross the patch boundary remain unsupported.
   ([#112](https://github.com/quchip/quchip/pull/112))
 - Local elimination stores single-device corrections and transformed channels
@@ -85,24 +105,28 @@ This file records notable user-visible changes to quchip.
   excitation number, such as `RWA()`, now diagonalizes each excitation sector
   separately. Retained terms no longer carry ~1e-12 entries between sectors,
   which made the rotating-frame collapse-operator check fail at some parameter
-  values. ([#78](https://github.com/quchip/quchip/issues/78))
+  values. ([#78](https://github.com/quchip/quchip/issues/78),
+  [#85](https://github.com/quchip/quchip/pull/85))
 - Reduced chips resolve the same under `jax.jit` and `jax.grad` as eagerly.
   `EffectiveTerms.excitation_changes` declares each retained channel's total excitation change.
   Projected surviving operators keep their authored operator's change, so band decomposition no
   longer depends on traced values. Ports follow the same rule, both on surviving modes and those an
   elimination transformed. ([#78](https://github.com/quchip/quchip/issues/78),
-  [#79](https://github.com/quchip/quchip/issues/79))
+  [#79](https://github.com/quchip/quchip/issues/79),
+  [#85](https://github.com/quchip/quchip/pull/85))
 - A band whose level changes cancel among devices that share a frame frequency
   is now exactly static. Its frame frequency was summed one device at a time,
   so level changes such as (3, −1, −2) left carriers of approximately 1e-14
   GHz. An exactly reduced two-qubit readout chip in a 5.2 GHz frame resolved
   44 static couplings as time-dependent terms. It also split drive bands with
   equal carriers into separate terms.
-  ([#78](https://github.com/quchip/quchip/issues/78))
+  ([#78](https://github.com/quchip/quchip/issues/78),
+  [#85](https://github.com/quchip/quchip/pull/85))
 - QuTiP `mesolve`, `smesolve` and stationary solves raise `MemoryError` before they
   assemble a superoperator whose estimated peak exceeds the available memory.
   Previously, the operating system killed them. The dynamiqs stationary Liouvillian
-  uses the same check. ([#80](https://github.com/quchip/quchip/issues/80))
+  uses the same check. ([#80](https://github.com/quchip/quchip/issues/80),
+  [#85](https://github.com/quchip/quchip/pull/85))
 - `eliminate()` reports `j_eff` and `dJ_domega_c` in the emitted edge's units,
   accounting for complex or non-unit charge matrix elements. Previously,
   taking the real exchange element could produce a zero or mis-scaled edge.
@@ -136,37 +160,39 @@ This file records notable user-visible changes to quchip.
   sweep at Hilbert dimension 64 took 540 s. Now it takes 10 s, mostly for the
   frame's reference-frequency analysis. Dimension 400 runs in 10 s and no
   longer uses approximately 410 GB. Diagnostics name the route
-  `"vacuum_response"`. ([#81](https://github.com/quchip/quchip/issues/81))
+  `"vacuum_response"`. ([#81](https://github.com/quchip/quchip/issues/81),
+  [#85](https://github.com/quchip/quchip/pull/85))
 - The QuTiP backend stores dense operators with at most one quarter nonzero
   entries as CSR, so superoperator terms built from reduced-model bands and
   jumps stay sparse. A lossy `mesolve` of a reduced model at Hilbert dimension
   144 now peaks near 1.3 GB instead of an estimated 1.2 TB.
-  ([#80](https://github.com/quchip/quchip/issues/80))
+  ([#80](https://github.com/quchip/quchip/issues/80),
+  [#85](https://github.com/quchip/quchip/pull/85))
 - dynamiqs solves sum the time-dependent Hamiltonian into one array per step
   from operators assembled on the host. A traced chip reuses its resolution and
   dressed analysis within one trace. On one machine, a jitted reverse-mode
   gradient through an exact elimination and a dynamiqs pulse of a 576-state
   chip took 830 s per call and now takes 3.7 s. A batch of eight pulse phases
-  takes 4.1 s instead of 20 s.
+  takes 4.1 s instead of 20 s. ([#85](https://github.com/quchip/quchip/pull/85))
 - QuTiP `mesolve` of a Hermitian density matrix integrates its packed upper
   triangle with one sparse product per step. Drive carriers that act through
   the same operator share one coefficient. A lossy pulse on the same chip
   takes 200 s instead of 400 s. A coherent 16-pulse train takes 7.3 s
-  instead of 49 s.
+  instead of 49 s. ([#85](https://github.com/quchip/quchip/pull/85))
 - Large packed QuTiP master-equation products split their rows over up to four
   threads, which brings that lossy pulse to 145 s. `QUCHIP_NUM_THREADS`, or
   else `OMP_NUM_THREADS`, sets the count. Worker processes use one thread
   unless `QUCHIP_NUM_THREADS` is set. Each row sums in the same order, so
-  results do not depend on the thread count.
+  results do not depend on the thread count. ([#85](https://github.com/quchip/quchip/pull/85))
 - Static analysis of concrete chips sums, diagonalizes, reduces and labels
   operators with NumPy instead of compiling a JAX program for each array shape.
-  `fit_a_dress()` on the 576-state chip takes 3.1 s per fit instead of 15 s.
+  `fit_a_dress()` on the 576-state chip takes 3.1 s per fit instead of 15 s. ([#85](https://github.com/quchip/quchip/pull/85))
 - On the general stationary route, `VNA.sweep()` solves an operating point that
   stays stationary across probe frequencies once, not at every frequency. The
   QuTiP backend runs its default direct steady-state solve without QuTiP's
   per-call option scope, which rebuilt every data-layer dispatcher.
   `steadystate_batch()` over 40 points runs 5.4 times faster, and
-  `VNA.finite_power()` over 44 points runs 3.2 times faster.
+  `VNA.finite_power()` over 44 points runs 3.2 times faster. ([#85](https://github.com/quchip/quchip/pull/85))
 - Shared-feedline models use the compact weak-probe VNA route when each
   participating port lowers total excitation by one. The cascade Hamiltonian
   then conserves excitation, including after supported exact reductions.
@@ -182,16 +208,28 @@ This file records notable user-visible changes to quchip.
 - `Backend.steadystate()` takes an optional `guess`: a native stationary
   state of a related problem, which a backend can return if it is also
   stationary here. A backend that overrides `steadystate()` must accept the
-  keyword but can ignore it.
+  keyword but can ignore it. ([#85](https://github.com/quchip/quchip/pull/85))
 
 #### Documentation and examples
 
-- The NV-centre guide is removed.
+- The NV-centre guide is removed. API docs and guides use concise scientific
+  prose. ([#85](https://github.com/quchip/quchip/pull/85),
+  [#87](https://github.com/quchip/quchip/pull/87))
 - The example notebooks and the guides are re-executed against the current
   code. The transmon avoided crossing in example 01 now reports the RWA
   splitting of 3.99 MHz, which agrees with second-order theory to 0.3%. The fluxonium
   readout comparison uses `Exact()`, because counter-rotating terms contribute
   strongly to its dispersive shift.
+  ([#88](https://github.com/quchip/quchip/pull/88))
+
+#### Development
+
+- Source archives omit repository agent instructions.
+  ([#121](https://github.com/quchip/quchip/pull/121))
+- Release notes use a series overview and version-specific changes. PR
+  templates include an explicit AI-assistance disclosure.
+  ([#75](https://github.com/quchip/quchip/pull/75),
+  [#89](https://github.com/quchip/quchip/pull/89))
 
 ## [0.4.0] - 2026-09-29 <a id="quchip-0-4-0"></a>
 
