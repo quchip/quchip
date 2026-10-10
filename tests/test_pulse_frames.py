@@ -3,17 +3,42 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from quchip import (
     Capacitive,
     ChargeDrive,
     Chip,
     DuffingTransmon,
+    ParametricDrive,
+    PortNetwork,
     QuantumSequence,
     RWA,
+    Square,
     SquareWithGaussianEdges,
+    TunableCapacitive,
 )
 from quchip.analysis import analyze_cr_susceptibility
+from quchip.control.field import CoherentInput
+
+
+@pytest.mark.unit
+def test_coupling_drives_and_coherent_inputs_follow_only_a_named_frame():
+    """vz() shifts a coupling-drive or coherent-input carrier only when the schedule names a frame."""
+    q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
+    q1 = DuffingTransmon(freq=5.2, anharmonicity=-0.24, levels=3, label="q1")
+    coupling = TunableCapacitive(q0, q1, g_0=0.01, label="tc")
+    network = PortNetwork(label="line")
+    network.port("feed", target=q1, rate=0.001)
+    chip = Chip([q0, q1], couplings=[coupling], port_network=network)
+    chip.wire(ParametricDrive(coupling, label="pump"))
+    seq = QuantumSequence(chip)
+    seq.vz("q1", 0.5)
+    pulse = Square(duration=10.0, amplitude=0.01)
+    for line in ("pump", CoherentInput("feed")):
+        seq.schedule(line, envelope=pulse, freq=0.2)
+        seq.schedule(line, envelope=pulse, freq=0.2, frame="q1")
+    assert [(op.frame, op.phase_offset) for op in seq.scheduled_ops] == [(None, 0.0), ("q1", 0.5)] * 2
 
 
 def test_vz_before_a_cross_resonance_gate_keeps_basis_state_populations():
