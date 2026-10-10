@@ -53,6 +53,10 @@ This file records notable user-visible changes to quchip.
   assemble a superoperator whose estimated peak exceeds the available memory.
   Previously, the operating system killed them. The dynamiqs stationary Liouvillian
   uses the same check. ([#80](https://github.com/quchip/quchip/issues/80))
+- Carrier pulses accept `frame=` to select the device whose virtual-Z phase
+  they follow. For cross-resonance control, set the target qubit as the frame
+  of both the cross-resonance and cancellation tones. The default remains the
+  driven device. ([#105](https://github.com/quchip/quchip/pull/105))
 
 #### Performance
 

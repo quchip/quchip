@@ -9,9 +9,11 @@ cross-device barriers, then materializes the schedule into classical
 Conventions
 -----------
 - Times are in ns. Frequencies are in GHz (ordinary, not angular).
-- Virtual-Z shifts accumulate into later *microwave* pulses on the same device
-  (charge and phase drives), but not into baseband flux pulses. This matches
-  the lab-frame semantics of software-Z (McKay et al., PRA 96, 022330 (2017)).
+- Each carrier pulse follows the virtual-Z frame of one device. By default,
+  this is the device that its line drives. Virtual-Z shifts accumulate into
+  later carrier pulses in that frame on any line, but not into baseband flux
+  pulses. This matches the lab-frame semantics of software-Z (McKay et al.,
+  PRA 96, 022330 (2017)).
 - All sweep axes stay JAX-traceable. Pulse parameters, delays, and envelope
   fields go into ``SolveProblem`` without Python-side concretization.
 
@@ -100,6 +102,7 @@ class _PulseEntry:
     requested_start_time: float | None
     phase: float
     coherent_input: CoherentInput | None = None
+    frame: str | None = None
 
 
 @dataclass(frozen=True)
@@ -283,6 +286,20 @@ class QuantumSequence:
             f"Available control lines: {line_labels}."
         )
 
+    def _pulse_frame(self, frame: str | BaseDevice | None, freq: Any, default: str | None) -> str | None:
+        """Return the device whose virtual-Z phase a scheduled carrier follows."""
+        if frame is None:
+            return default
+        if freq is None:
+            raise ValueError("A frame requires a carrier: a pulse without freq has no carrier phase for vz() to shift.")
+        label = resolve_label(frame)
+        if label not in self._chip.device_map:
+            raise ValueError(
+                f"Frame '{label}' is not a device on this chip. "
+                f"Available devices: {list(self._chip.device_map.keys())}"
+            )
+        return label
+
     def _schedule_on_drive(
         self,
         drive: BaseDrive,
@@ -291,6 +308,7 @@ class QuantumSequence:
         freq: float | None,
         start_time: float | None = None,
         phase: float = 0.0,
+        frame: str | BaseDevice | None = None,
     ) -> PulseHandle:
         if drive._target is None:
             raise ValueError(
@@ -304,6 +322,7 @@ class QuantumSequence:
                     f"Coupling drive '{drive.label}' targets '{target_label}', which is not on this chip. "
                     f"Available couplings: {list(self._chip.coupling_map.keys())}"
                 )
+            default_frame = None
         else:
             target_label = drive.target_label
             assert target_label is not None
@@ -312,6 +331,7 @@ class QuantumSequence:
                     f"Drive is connected to device '{target_label}', which is not on this chip. "
                     f"Available devices: {list(self._chip.device_map.keys())}"
                 )
+            default_frame = target_label
         self._entries.append(
             _PulseEntry(
                 target_label=target_label,
@@ -320,6 +340,7 @@ class QuantumSequence:
                 freq=freq,
                 requested_start_time=start_time,
                 phase=phase,
+                frame=self._pulse_frame(frame, freq, default_frame),
             )
         )
         return PulseHandle(self, len(self._entries) - 1)
@@ -332,6 +353,7 @@ class QuantumSequence:
         freq: float | None,
         start_time: float | None = None,
         phase: float = 0.0,
+        frame: str | BaseDevice | None = None,
     ) -> PulseHandle:
         exposures = [channel.key for channel in self._chip.resolve().slh.external_channels]
         if coherent_input.exposure not in exposures:
@@ -348,6 +370,7 @@ class QuantumSequence:
                 requested_start_time=start_time,
                 phase=phase,
                 coherent_input=coherent_input,
+                frame=self._pulse_frame(frame, freq, None),
             )
         )
         return PulseHandle(self, len(self._entries) - 1)
@@ -360,6 +383,7 @@ class QuantumSequence:
         freq: float | None = None,
         start_time: float | None = None,
         phase: float = 0.0,
+        frame: str | BaseDevice | None = None,
     ) -> PulseHandle:
         """Schedule a pulse on *target*.
 
@@ -401,6 +425,13 @@ class QuantumSequence:
         phase : float
             Per-pulse phase offset, composed with any accumulated
             virtual-Z.
+        frame : str or BaseDevice, optional
+            Device whose virtual-Z frame the carrier follows. :meth:`vz` on
+            that device shifts this pulse's phase. Defaults to the device that
+            the drive line targets. Coupling-drive and coherent-input pulses
+            have no default frame. A cross-resonance tone on the control's line
+            names the target device, because its phase sets the axis of the
+            target's conditional rotation. A frame requires ``freq``.
         """
         if isinstance(target, CoherentInput):
             return self._schedule_on_coherent_input(
@@ -409,6 +440,7 @@ class QuantumSequence:
                 freq=freq,
                 start_time=start_time,
                 phase=phase,
+                frame=frame,
             )
         if isinstance(target, BaseDrive):
             drive = target
@@ -421,7 +453,9 @@ class QuantumSequence:
             else:
                 drive = self._find_drive_line(label)
 
-        return self._schedule_on_drive(drive, envelope=envelope, freq=freq, start_time=start_time, phase=phase)
+        return self._schedule_on_drive(
+            drive, envelope=envelope, freq=freq, start_time=start_time, phase=phase, frame=frame,
+        )
 
     def charge(
         self,
@@ -430,6 +464,7 @@ class QuantumSequence:
         envelope: Envelope,
         freq: float | None = None,
         phase: float = 0.0,
+        frame: str | BaseDevice | None = None,
     ) -> PulseHandle:
         """Schedule a charge-drive pulse.
 
@@ -443,13 +478,16 @@ class QuantumSequence:
             Carrier frequency in GHz; ``None`` uses ``chip.freq(target)``.
         phase : float, default=0.0
             Carrier phase in radians.
+        frame : str or BaseDevice or None, default=None
+            Device whose virtual-Z frame the carrier follows. ``None`` uses
+            *target*. See :meth:`schedule`.
         """
         label = resolve_label(target)
         self._validate_target(label)
         drive = self._find_drive_by_type(label, ChargeDrive)
         if freq is None:
             freq = self._chip.freq(label)
-        return self._schedule_on_drive(drive, envelope=envelope, freq=freq, phase=phase)
+        return self._schedule_on_drive(drive, envelope=envelope, freq=freq, phase=phase, frame=frame)
 
     def phase(
         self,
@@ -458,6 +496,7 @@ class QuantumSequence:
         envelope: Envelope,
         freq: float,
         phase: float = 0.0,
+        frame: str | BaseDevice | None = None,
     ) -> PulseHandle:
         """Schedule a phase-drive pulse.
 
@@ -471,11 +510,14 @@ class QuantumSequence:
             Carrier frequency in GHz.
         phase : float, default=0.0
             Carrier phase in radians.
+        frame : str or BaseDevice or None, default=None
+            Device whose virtual-Z frame the carrier follows. ``None`` uses
+            *target*. See :meth:`schedule`.
         """
         label = resolve_label(target)
         self._validate_target(label)
         drive = self._find_drive_by_type(label, PhaseDrive)
-        return self._schedule_on_drive(drive, envelope=envelope, freq=freq, phase=phase)
+        return self._schedule_on_drive(drive, envelope=envelope, freq=freq, phase=phase, frame=frame)
 
     def flux(
         self,
@@ -571,8 +613,10 @@ class QuantumSequence:
     def vz(self, target: str | BaseDevice, angle: float) -> None:
         """Apply a virtual-Z frame shift of *angle* rad on *target*.
 
-        The shift is free (no pulse is emitted) and accumulates into every
-        later microwave pulse on the device through its ``phase_offset``. This
+        The shift is free (no pulse is emitted). It accumulates into the
+        ``phase_offset`` of every later carrier pulse whose frame is *target*,
+        on any line. A pulse's frame defaults to the device that its line
+        drives, and ``schedule(..., frame=...)`` names another device. This
         matches the standard software-Z trick for transmons (McKay et al., PRA
         96, 022330 (2017)). Baseband flux pulses are not affected.
 
@@ -693,7 +737,7 @@ class QuantumSequence:
         ``overrides`` maps ``(entry_index, field) -> value``; only ``duration``
         (on a delay entry or pulse envelope) and ``start_time``/``freq``/``phase``
         (on a pulse) affect the replay. ``collect_ops`` gates operation building
-        and the per-device drive lookup needed for virtual-Z routing.
+        and the virtual-Z phase of each pulse's frame.
         """
         overrides = {} if overrides is None else dict(overrides)
         cursors: dict[tuple[str, str], Any] = {}
@@ -778,9 +822,9 @@ class QuantumSequence:
             if collect_ops:
                 freq = overrides.get((entry_index, "freq"), entry.freq)
                 phase = overrides.get((entry_index, "phase"), entry.phase)
-                phase_offset = phase
-                if freq is not None and entry.coherent_input is None:
-                    phase_offset = phase_offset + phases.get(entry.target_label, 0.0)
+                # A carrier follows its frame's virtual-Z phase. A baseband pulse has no carrier phase.
+                frame = None if freq is None else entry.frame
+                phase_offset = phase if frame is None else phase + phases[frame]
                 if entry.coherent_input is None:
                     drive_ops.append(
                         DriveOp(
@@ -790,6 +834,7 @@ class QuantumSequence:
                             start_time=start_time,
                             phase_offset=phase_offset,
                             drive_label=entry.drive_label,
+                            frame=frame,
                         )
                     )
                 else:
@@ -800,6 +845,7 @@ class QuantumSequence:
                             freq=freq,
                             start_time=start_time,
                             phase_offset=phase_offset,
+                            frame=frame,
                         )
                     )
             cursors[key] = start_time + envelope.duration
@@ -1539,7 +1585,8 @@ class QuantumSequence:
 
         One row per pulse shows the resolved time window, drive → device,
         envelope with its declared parameters, and carrier frequency, followed
-        by a count of delays, barriers, and virtual-Z entries. Returns a
+        by a count of delays, barriers, and virtual-Z entries. A pulse whose
+        frame differs from its device also names that frame. Returns a
         string: ``print(seq.describe())``.
         """
         from quchip.chip.describe import describe_sequence

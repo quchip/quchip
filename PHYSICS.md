@@ -622,6 +622,15 @@ carrier produce a drive modulation only after `QuantumSequence.schedule()`.
 owns the pulse start, carrier, and global phase. You can therefore place and
 phase-rotate the same shape without changing its physics definition.
 
+Each carrier pulse follows the phase reference of one device, its frame.
+`QuantumSequence.vz(device, θ)` emits no pulse. It adds θ to the phase of every
+later carrier pulse in that device's frame, on any line (McKay et al., PRA 96,
+022330 (2017)). The frame defaults to the device that the pulse's line drives.
+A cross-resonance tone runs on the control's line at the target's frequency.
+Its phase sets the axis of the target's conditional rotation, so the pulse
+names the target as its frame with `frame=`. Baseband pulses have no carrier
+and follow no frame.
+
 Local eigenbasis projection uses the static authored Hamiltonian at the
 solve's operating point. The engine projects component-owned
 time-dependent terms into that fixed basis. quchip does not construct an

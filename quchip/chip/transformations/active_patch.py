@@ -33,7 +33,11 @@ def coupling_adjacency(chip: "Chip") -> dict[str, set[str]]:
 
 
 def active_labels(sequence: "QuantumSequence", *, hops: int = 1) -> set[str]:
-    """Devices that the schedule touches, expanded ``hops`` coupling-graph steps."""
+    """Devices that the schedule touches, expanded ``hops`` coupling-graph steps.
+
+    A pulse touches its target and the device whose frame its carrier follows,
+    such as the target qubit of a cross-resonance tone.
+    """
     chip = sequence._chip
     active: set[str] = set()
     for op in sequence.scheduled_ops:
@@ -43,6 +47,8 @@ def active_labels(sequence: "QuantumSequence", *, hops: int = 1) -> set[str]:
             active.update((coupling.device_a_label, coupling.device_b_label))
         else:
             active.add(target)
+        if op.frame is not None:
+            active.add(op.frame)
     if not active:
         raise ValueError("The sequence has an empty schedule; there is no active patch to reduce to.")
     adjacency = coupling_adjacency(chip)
