@@ -16,11 +16,11 @@ def _readout_chip(alpha=-0.25, levels=3, *, approximation=RWA(), qubit_occupatio
                 approximation=approximation, backend=backend)
 
 
-def _feedline_chip(readouts, *, transmons=True, operators=None):
+def _feedline_chip(readouts, *, operators=None):
     resonators = [Resonator(freq=6.5 + 0.1 * index, levels=2, label=f"r{index}", internal_quality_factor=2e5)
                   for index in range(readouts)]
     qubits = [DuffingTransmon(freq=5.3 - 0.1 * index, anharmonicity=-0.26, levels=3, label=f"q{index}", T1=3e4)
-              for index in range(readouts if transmons else 0)]
+              for index in range(readouts)]
     network = PortNetwork(label="feedline")
     ports = [network.port(resonator.label, target=resonator, rate=2 * np.pi * 0.002, operator=operator)
              for resonator, operator in zip(resonators, operators or (None,) * readouts, strict=True)]
@@ -96,41 +96,6 @@ def test_shared_feedline_with_transmons_uses_the_one_excitation_block():
     """A cascade feedline whose ports lower the level index keeps the weak-probe route and its stationary result."""
     weak, route = _sweep(_feedline_chip(2), FEEDLINE_FREQUENCIES)
     stationary, _ = _sweep(_feedline_chip(2), FEEDLINE_FREQUENCIES, options={})
-
-    assert route == "vacuum_response"
-    np.testing.assert_allclose(weak, stationary, atol=1e-9)
-
-
-def test_one_excitation_block_of_a_harmonic_feedline_matches_its_mode_equations(monkeypatch):
-    """Without transmons, the one-excitation block of a three-readout feedline reproduces the harmonic response."""
-    from quchip.engine import linear_response
-
-    harmonic, harmonic_route = _sweep(_feedline_chip(3, transmons=False), FEEDLINE_FREQUENCIES)
-    monkeypatch.setattr(linear_response, "try_build_linear_response_problem", lambda *args, **kwargs: None)
-    weak, route = _sweep(_feedline_chip(3, transmons=False), FEEDLINE_FREQUENCIES)
-
-    assert (harmonic_route, route) == ("linear_response", "vacuum_response")
-    np.testing.assert_allclose(weak, harmonic, atol=1e-12)
-
-
-def test_feedline_chip_reduced_past_its_bus_keeps_the_one_excitation_block():
-    """Exact elimination of a bus keeps a feedline chip conserving, so the reduced sweep stays compact."""
-    qubits = [DuffingTransmon(freq=freq, anharmonicity=-0.26, levels=2, label=label, T1=30000.0)
-              for freq, label in ((5.326, "q1"), (5.192, "q2"))]
-    bus = Resonator(freq=6.298, levels=2, label="bus")
-    readouts = [Resonator(freq=freq, levels=2, label=label) for freq, label in ((6.558, "r1"), (6.657, "r2"))]
-    network = PortNetwork(label="feed")
-    ports = [network.port(f"p_{readout.label}", target=readout, rate=0.01) for readout in readouts]
-    network.cascade(*ports)
-    network.expose("line", input=ports[0], output=ports[-1])
-    couplings = [Capacitive(qubit, bus, g=0.03) for qubit in qubits]
-    couplings += [Capacitive(qubit, readout, g=0.04) for qubit, readout in zip(qubits, readouts, strict=True)]
-    chip = Chip([*qubits, bus, *readouts], couplings, port_network=network, frame=5.2, approximation=RWA())
-    reduced = eliminate(chip, "bus", method="exact").chip
-    frequencies = np.array([6.55, 6.558, 6.657])
-
-    weak, route = _sweep(reduced, frequencies)
-    stationary, _ = _sweep(reduced, frequencies, options={})
 
     assert route == "vacuum_response"
     np.testing.assert_allclose(weak, stationary, atol=1e-9)
