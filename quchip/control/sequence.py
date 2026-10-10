@@ -50,6 +50,7 @@ from quchip.control.batch import (
     DelayHandle,
     PulseHandle,
     ZippedBatchAxis,
+    _PULSE_FIELDS,
     _axis_metadata,
     _expand_axis_overrides,
 )
@@ -103,6 +104,7 @@ class _PulseEntry:
     phase: float
     coherent_input: CoherentInput | None = None
     frame: str | None = None
+    detuning: Any = None
 
 
 @dataclass(frozen=True)
@@ -300,6 +302,13 @@ class QuantumSequence:
             )
         return label
 
+    @staticmethod
+    def _pulse_detuning(detuning: Any, freq: Any) -> Any:
+        """Return a start-referenced carrier offset after checking that the pulse has a carrier."""
+        if detuning is not None and freq is None:
+            raise ValueError("A detuning requires a carrier: pass freq, the frame frequency, with detuning.")
+        return detuning
+
     def _schedule_on_drive(
         self,
         drive: BaseDrive,
@@ -309,6 +318,7 @@ class QuantumSequence:
         start_time: float | None = None,
         phase: float = 0.0,
         frame: str | BaseDevice | None = None,
+        detuning: float | None = None,
     ) -> PulseHandle:
         if drive._target is None:
             raise ValueError(
@@ -341,6 +351,7 @@ class QuantumSequence:
                 requested_start_time=start_time,
                 phase=phase,
                 frame=self._pulse_frame(frame, freq, default_frame),
+                detuning=self._pulse_detuning(detuning, freq),
             )
         )
         return PulseHandle(self, len(self._entries) - 1)
@@ -354,6 +365,7 @@ class QuantumSequence:
         start_time: float | None = None,
         phase: float = 0.0,
         frame: str | BaseDevice | None = None,
+        detuning: float | None = None,
     ) -> PulseHandle:
         exposures = [channel.key for channel in self._chip.resolve().slh.external_channels]
         if coherent_input.exposure not in exposures:
@@ -371,6 +383,7 @@ class QuantumSequence:
                 phase=phase,
                 coherent_input=coherent_input,
                 frame=self._pulse_frame(frame, freq, None),
+                detuning=self._pulse_detuning(detuning, freq),
             )
         )
         return PulseHandle(self, len(self._entries) - 1)
@@ -384,6 +397,7 @@ class QuantumSequence:
         start_time: float | None = None,
         phase: float = 0.0,
         frame: str | BaseDevice | None = None,
+        detuning: float | None = None,
     ) -> PulseHandle:
         """Schedule a pulse on *target*.
 
@@ -432,6 +446,16 @@ class QuantumSequence:
             have no default frame. A cross-resonance tone on the control's line
             names the target device, because its phase sets the axis of the
             target's conditional rotation. A frame requires ``freq``.
+        detuning : float, optional
+            Carrier offset ``δ`` in GHz, referenced to the pulse start ``t0``.
+            The pulse delivers ``E(t - t0) exp(i phase) exp(-2πi freq t)
+            exp(-2πi δ (t - t0))``. ``freq`` stays the frame frequency, so the
+            pulse is the same in that frame at every ``t0``. A carrier at
+            ``freq = f + δ`` without ``detuning`` is a fixed oscillator
+            instead, with phase ``phase - 2π δ t0`` relative to the frame at
+            ``f``. ``None`` adds no offset term. ``pulse.<index>.detuning``
+            rebinds, sweeps, and differentiates like ``freq``. A detuning
+            requires ``freq``.
         """
         if isinstance(target, CoherentInput):
             return self._schedule_on_coherent_input(
@@ -441,6 +465,7 @@ class QuantumSequence:
                 start_time=start_time,
                 phase=phase,
                 frame=frame,
+                detuning=detuning,
             )
         if isinstance(target, BaseDrive):
             drive = target
@@ -454,7 +479,7 @@ class QuantumSequence:
                 drive = self._find_drive_line(label)
 
         return self._schedule_on_drive(
-            drive, envelope=envelope, freq=freq, start_time=start_time, phase=phase, frame=frame,
+            drive, envelope=envelope, freq=freq, start_time=start_time, phase=phase, frame=frame, detuning=detuning,
         )
 
     def charge(
@@ -465,6 +490,7 @@ class QuantumSequence:
         freq: float | None = None,
         phase: float = 0.0,
         frame: str | BaseDevice | None = None,
+        detuning: float | None = None,
     ) -> PulseHandle:
         """Schedule a charge-drive pulse.
 
@@ -481,13 +507,18 @@ class QuantumSequence:
         frame : str or BaseDevice or None, default=None
             Device whose virtual-Z frame the carrier follows. ``None`` uses
             *target*. See :meth:`schedule`.
+        detuning : float or None, default=None
+            Carrier offset in GHz, referenced to the pulse start. See
+            :meth:`schedule`.
         """
         label = resolve_label(target)
         self._validate_target(label)
         drive = self._find_drive_by_type(label, ChargeDrive)
         if freq is None:
             freq = self._chip.freq(label)
-        return self._schedule_on_drive(drive, envelope=envelope, freq=freq, phase=phase, frame=frame)
+        return self._schedule_on_drive(
+            drive, envelope=envelope, freq=freq, phase=phase, frame=frame, detuning=detuning,
+        )
 
     def phase(
         self,
@@ -497,6 +528,7 @@ class QuantumSequence:
         freq: float,
         phase: float = 0.0,
         frame: str | BaseDevice | None = None,
+        detuning: float | None = None,
     ) -> PulseHandle:
         """Schedule a phase-drive pulse.
 
@@ -513,11 +545,16 @@ class QuantumSequence:
         frame : str or BaseDevice or None, default=None
             Device whose virtual-Z frame the carrier follows. ``None`` uses
             *target*. See :meth:`schedule`.
+        detuning : float or None, default=None
+            Carrier offset in GHz, referenced to the pulse start. See
+            :meth:`schedule`.
         """
         label = resolve_label(target)
         self._validate_target(label)
         drive = self._find_drive_by_type(label, PhaseDrive)
-        return self._schedule_on_drive(drive, envelope=envelope, freq=freq, phase=phase, frame=frame)
+        return self._schedule_on_drive(
+            drive, envelope=envelope, freq=freq, phase=phase, frame=frame, detuning=detuning,
+        )
 
     def flux(
         self,
@@ -735,9 +772,10 @@ class QuantumSequence:
         source of truth, and sequences carry only modest pulse counts.
 
         ``overrides`` maps ``(entry_index, field) -> value``; only ``duration``
-        (on a delay entry or pulse envelope) and ``start_time``/``freq``/``phase``
-        (on a pulse) affect the replay. ``collect_ops`` gates operation building
-        and the virtual-Z phase of each pulse's frame.
+        (on a delay entry or pulse envelope) and the pulse fields
+        ``start_time``/``freq``/``phase``/``detuning`` affect the replay.
+        ``collect_ops`` gates operation building and the virtual-Z phase of
+        each pulse's frame.
         """
         overrides = {} if overrides is None else dict(overrides)
         cursors: dict[tuple[str, str], Any] = {}
@@ -792,7 +830,7 @@ class QuantumSequence:
                 field.removeprefix("envelope."): value
                 for (idx, field), value in overrides.items()
                 if idx == entry_index
-                and (field.startswith("envelope.") or field not in {"freq", "phase", "start_time"})
+                and (field.startswith("envelope.") or field not in _PULSE_FIELDS)
             }
             envelope = (
                 entry.envelope.with_params(envelope_updates)
@@ -822,6 +860,7 @@ class QuantumSequence:
             if collect_ops:
                 freq = overrides.get((entry_index, "freq"), entry.freq)
                 phase = overrides.get((entry_index, "phase"), entry.phase)
+                detuning = self._pulse_detuning(overrides.get((entry_index, "detuning"), entry.detuning), freq)
                 # A carrier follows its frame's virtual-Z phase. A baseband pulse has no carrier phase.
                 frame = None if freq is None else entry.frame
                 phase_offset = phase if frame is None else phase + phases[frame]
@@ -835,6 +874,7 @@ class QuantumSequence:
                             phase_offset=phase_offset,
                             drive_label=entry.drive_label,
                             frame=frame,
+                            detuning=detuning,
                         )
                     )
                 else:
@@ -846,6 +886,7 @@ class QuantumSequence:
                             start_time=start_time,
                             phase_offset=phase_offset,
                             frame=frame,
+                            detuning=detuning,
                         )
                     )
             cursors[key] = start_time + envelope.duration
@@ -1497,6 +1538,7 @@ class QuantumSequence:
                 f"{prefix}.freq": entry.freq,
                 f"{prefix}.phase": entry.phase,
                 f"{prefix}.start_time": entry.requested_start_time,
+                f"{prefix}.detuning": entry.detuning,
             }
             collision = values.keys() & pulse_values.keys()
             if collision:
@@ -1506,7 +1548,7 @@ class QuantumSequence:
                 # Carrier phase and an envelope's own phase are distinct.
                 field = (
                     f"envelope.{name}"
-                    if name in {"freq", "phase", "start_time"}
+                    if name in _PULSE_FIELDS
                     else name
                 )
                 path = f"{prefix}.{field}"
@@ -1557,11 +1599,11 @@ class QuantumSequence:
                 raise KeyError(f"pulse.{index}")
             envelope_updates = {
                 field.removeprefix("envelope."): value
-                for field, value in updates.items() if field not in {"freq", "phase", "start_time"}
+                for field, value in updates.items() if field not in _PULSE_FIELDS
             }
             entry_updates = copy_value({
                 "requested_start_time" if field == "start_time" else field: value
-                for field, value in updates.items() if field in {"freq", "phase", "start_time"}
+                for field, value in updates.items() if field in _PULSE_FIELDS
             })
             if envelope_updates:
                 entry_updates["envelope"] = entry.envelope.with_params(envelope_updates)

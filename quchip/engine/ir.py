@@ -2329,7 +2329,9 @@ class DriveOp:
 
     ``frame`` names the device whose accumulated virtual-Z phase
     ``phase_offset`` includes, or is ``None``. The phase is already in
-    ``phase_offset``, so the engine does not read ``frame``.
+    ``phase_offset``, so the engine does not read ``frame``. ``detuning`` is a
+    carrier offset in GHz, referenced to ``start_time``, or ``None`` for no
+    offset.
 
     The pulse window keeps its absolute scheduled time. A solve can select a
     partial interval, and a window wholly outside it or touching only an
@@ -2343,6 +2345,7 @@ class DriveOp:
     phase_offset: float = 0.0
     drive_label: str = ""
     frame: str | None = None
+    detuning: float | None = None
 
 
 @dataclass(frozen=True)
@@ -2359,6 +2362,7 @@ class CoherentOp:
     start_time: float = 0.0
     phase_offset: float = 0.0
     frame: str | None = None
+    detuning: float | None = None
 
     @property
     def exposure(self) -> str:

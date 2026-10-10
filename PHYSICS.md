@@ -631,6 +631,19 @@ Its phase sets the axis of the target's conditional rotation, so the pulse
 names the target as its frame with `frame=`. Baseband pulses have no carrier
 and follow no frame.
 
+A pulse's `detuning` δ offsets its carrier from `freq`, referenced to the pulse
+start `t0`:
+
+```text
+s(t) = E(t - t0) exp(iφ) exp(-2πi f t) exp(-2πi δ (t - t0))
+```
+
+`freq` stays the frame frequency, so the pulse is the same in that frame at
+every start time. A carrier at `freq = f + δ` is a fixed oscillator instead.
+Relative to the frame at `f`, its phase at the pulse start is `φ - 2πδ t0`. Its
+rotation axis therefore turns when the pulse moves. Scheduling owns the offset,
+as it owns the carrier, so every envelope supports it.
+
 Local eigenbasis projection uses the static authored Hamiltonian at the
 solve's operating point. The engine projects component-owned
 time-dependent terms into that fixed basis. quchip does not construct an
