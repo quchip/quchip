@@ -8,14 +8,14 @@ This file records notable user-visible changes to quchip.
 
 #### Changes and migration
 
-- `eliminate()` of a port-coupled mode keeps the mode's reflection on the
-  port's plane as a `PortNetwork.mode_reflection(...)` reference section.
-  Before this change, the reduced boundary kept only the transformed port. So
-  VNA on the reduced chip missed the mode's reflection by approximately κ/Δ
-  (1e-2 in the reported example). Now it matches the full chip up to a
-  correction of order (g/Δ)²κ/Δ (8e-5). A mode with several ports, or a port
-  whose plane also carries other fields, now raises, so keep such a mode in the
-  model. ([#76](https://github.com/quchip/quchip/issues/76))
+- `eliminate()` keeps a port-coupled mode's reflection as a
+  `PortNetwork.mode_reflection(...)` reference section. It uses the dressed
+  transition and scales both rates by the dressed lowering weight. Residual
+  errors include Purcell dispersion, omitted survivor damping, and higher-order
+  energy shifts for SW. Several ports on the mode or shared fields on its
+  plane remain unsupported.
+  ([#76](https://github.com/quchip/quchip/issues/76),
+  [#115](https://github.com/quchip/quchip/pull/115))
 
 #### New features
 
