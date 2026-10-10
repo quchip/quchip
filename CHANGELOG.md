@@ -8,8 +8,8 @@ This file records notable user-visible changes to quchip.
 
 #### Changes and migration
 
-- `eliminate()` of a port-coupled mode keeps the mode's reflection on the
-  port's plane as a `PortNetwork.mode_reflection(...)` reference section.
+- For a port alone on its plane, `eliminate()` keeps the mode's reflection as a
+  `PortNetwork.mode_reflection(...)` reference section.
   The section uses the mode's dressed transition and scales both external
   and internal rates by its dressed lowering weight.
   Before this change, the reduced boundary kept only the transformed port. So
@@ -19,11 +19,16 @@ This file records notable user-visible changes to quchip.
   reported example). The SW route also misses frequency shifts beyond second
   order. They are of order g⁴/Δ³ with one survivor, and 2g₁g₂J/(Δ₁Δ₂) when a
   coupling J joins two survivors of the mode. A mode with several ports, or a
-  port whose plane also carries other fields, now raises. Keep such a mode in
-  the model. ([#76](https://github.com/quchip/quchip/issues/76))
+  plane carrying fields that do not pass its port in series, now raises.
+  Keep such a mode in the model. ([#76](https://github.com/quchip/quchip/issues/76))
 
 #### New features
 
+- `eliminate()` removes a readout whose port shares a feedline with other ports.
+  `PortNetwork.mode_transmission(...)` keeps its dressed transmission as a
+  one-pass reference section. The result reports the field error for kept ports
+  beyond the section as `kappa_over_delta`.
+  ([#101](https://github.com/quchip/quchip/issues/101))
 - You can eliminate port-coupled modes on chips with more than two devices. The
   transformed port acts jointly on every survivor. Stationary-tone frame
   planning keeps each port band's sign, so VNA accepts the joint operator. A
@@ -60,6 +65,10 @@ This file records notable user-visible changes to quchip.
 
 #### Fixes
 
+- A second elimination keeps the removed mode's internal loss in its section,
+  including loss that an earlier reduction carried to several devices.
+  Previously, S21 erred by up to 0.6 at that resonance.
+  ([#101](https://github.com/quchip/quchip/issues/101))
 - `eliminate(..., method="exact")` of a chip whose approximation conserves total
   excitation number, such as `RWA()`, now diagonalizes each excitation sector
   separately. Retained terms no longer carry ~1e-12 entries between sectors,

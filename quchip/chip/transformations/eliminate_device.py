@@ -51,6 +51,7 @@ from quchip.chip.effective import (
 from quchip.declarative.dissipation import CollapseChannel
 from quchip.chip.ports import Port
 from quchip.engine.bands import embed_on_support
+from quchip.engine.assembly import _analysis_matrix_ghz
 from quchip.chip.sw import (
     _WORKING_PRECISION,
     _exact_eigensystem,
@@ -488,6 +489,8 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
     carried_ports = [port for port in affected_ports if port.label in retained_ports]
     boundary_ports = [port for port in affected_ports if port.label not in retained_ports]
     reflection_plane: str | None = None
+    upstream_ports: tuple[str, ...] = ()
+    downstream_ports: tuple[str, ...] = ()
     if affected_ports:
         from quchip.engine.linear_response import is_linear_mode
 
@@ -508,16 +511,6 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
                 "Network-connected elimination does not yet lift a transformed port from a "
                 "projected survivor basis back into its authored local space."
             )
-        affected_labels = {port.label for port in affected_ports}
-        assert chip.port_network is not None
-        if any(
-            affected_labels.intersection((downstream, upstream))
-            for downstream, upstream, _coefficient in chip.port_network._active_generated_pairs()
-        ):
-            raise NotImplementedError(
-                "Cannot eliminate a port that participates in a cascade-generated Hamiltonian; "
-                "joint SLH adiabatic elimination is not implemented."
-            )
         unsupported = [
             port.label
             for port in boundary_ports
@@ -536,7 +529,7 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
             )
     if boundary_ports:
         assert chip.port_network is not None
-        reflection_plane = chip.port_network._exclusive_exposure(boundary_ports[0].label)
+        reflection_plane, upstream_ports, downstream_ports = chip.port_network._line_exposure(boundary_ports[0].label)
         non_fock = [
             label
             for label, _ in survivors
@@ -627,7 +620,7 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
         )
     numeric_mode = numeric[mode_label]
     numeric_touching = [c for c in numeric.couplings if mode_label in (c.device_a_label, c.device_b_label)]
-    h, labels, dims = bare_hamiltonian(numeric, approximation=approximation)
+    h, labels, dims = bare_hamiltonian(numeric, approximation=approximation, include_network=False)
     # A structurally conserving model has no matrix elements between
     # total-excitation sectors; removing their round-off keeps both routes,
     # and every captured map, inside the sectors.
@@ -861,7 +854,7 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
     # of this matrix; they must not determine which elements survive.
     retained_h = reduction.retained_hamiltonian(ctx)
     final_resolved = numeric_final.resolve(frame="lab", approximation=approximation)
-    final_matrix = _array(final_resolved.hamiltonian().matrix(backend=numeric_final.backend))
+    final_matrix = _array(_analysis_matrix_ghz(final_resolved, include_network=False))
     final_lift = _kron(*(final_resolved.bases[label].vectors for label in numeric_survivors))
     correction = lift @ retained_h @ lift.conj().T - final_lift @ final_matrix @ final_lift.conj().T
     inherited_channels = []
@@ -894,6 +887,25 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
     # pure dephasing +rate.
     internal_rate: Any = 0.0
 
+    def add_internal_loss(operator: Any, support_labels: tuple[str, ...], rate: Any, *, bases: Any = None) -> None:
+        nonlocal internal_rate
+        if mode_lowering is None or mode_label not in support_labels:
+            return
+        if bases is None:
+            jump = operator
+            support_dims = tuple(source_bases[label].resolved_dim for label in support_labels)
+        else:
+            transform = _kron(*(bases[label].energy_vectors for label in support_labels))
+            jump = _array(chip.backend.to_array(materialize_expr(operator, chip.backend)))
+            jump = transform.conj().T @ jump @ transform
+            support_dims = tuple(bases[label].resolved_dim for label in support_labels)
+        lowering = _kron(*(mode_lowering if label == mode_label else np.eye(dim)
+                           for label, dim in zip(support_labels, support_dims)))
+        number = jump.conj().T @ jump
+        adjoint = jump.conj().T @ lowering @ jump - 0.5 * (number @ lowering + lowering @ number)
+        row = bare_index(list(support_labels), support_dims, mode_label)
+        internal_rate = internal_rate - 2.0 * rate * _real(adjoint[0, row])
+
     def inherit_channel(channel: CollapseChannel, support_labels: tuple[str, ...], name: str) -> None:
         rate = materialize_expr(channel.rate, chip.backend)
         changes = None
@@ -903,10 +915,12 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
         if local:
             carry(chip.backend.to_array(materialize_expr(channel.operator, chip.backend)), support_labels,
                   tuple(chip[label].local_space().dimension for label in support_labels), rate, name, changes)
+            add_internal_loss(channel.operator, support_labels, rate, bases=chip_bases)
         if local and support_labels != (mode_label,):
             return
         in_energy, transformed = transform_operator(channel.operator, support_labels)
         if not local:
+            add_internal_loss(in_energy, support_labels, rate)
             inherited_channels.append(CollapseChannel(
                 lift @ transformed @ lift.conj().T,
                 rate, name,
@@ -914,18 +928,12 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
             if changes is not None:
                 channel_changes[name] = changes
         if support_labels == (mode_label,):
-            nonlocal internal_rate
             p_index = np.flatnonzero(ctx.p_mask)
             ground = basis_row(p_index, labels, dims)
             for survivor in touching_labels:
                 row = basis_row(p_index, labels, dims, survivor)
                 effective_params[survivor]["purcell_rate"] += rate * abs(transformed[ground, row]) ** 2
                 effective_params[survivor]["kappa"] += rate * abs(in_energy[0, 1]) ** 2
-            if mode_lowering is not None:
-                jump = in_energy
-                number = jump.conj().T @ jump
-                adjoint = jump.conj().T @ mode_lowering @ jump - 0.5 * (number @ mode_lowering + mode_lowering @ number)
-                internal_rate = internal_rate - 2.0 * rate * _real(adjoint[0, 1])
 
     mode_owner = chip[mode_label] if local else numeric_mode
     for operator, rate, support, owner_label, name, _paths, owner in contributions:
@@ -940,6 +948,8 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
             if terms.channels and not set(labels).isdisjoint(terms.labels):
                 declared = None if sectors is None else terms.excitation_changes
                 for channel in terms.channels:
+                    add_internal_loss(terms.channel_expression(channel), terms.labels,
+                                      materialize_expr(channel.rate, chip.backend), bases=chip_bases)
                     carry(channel.operator, terms.labels, terms.dims, channel.rate, f"{terms.label}.{channel.name}",
                           None if declared is None else declared.get(channel.name))
     projected_baths = []
@@ -985,37 +995,73 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
                          port_replacements=port_replacements,
                          effective_terms=effective_terms, baths=projected_baths)
     if boundary_ports:
-        # The transformed port carries the survivors' emission; the eliminated
-        # mode's own reflection, S_r(f), stays on the external plane.
+        # The transformed port carries survivor emission. The section keeps
+        # the removed mode's scattering on the external plane.
         network = final.port_network
         assert network is not None and reflection_plane is not None
-        section_label = f"{mode_label}_reflection"
+        shared_line = bool(upstream_ports or downstream_ports)
+        kept_upstream = tuple(label for label in upstream_ports if label not in retained_ports)
+        kept_downstream = tuple(label for label in downstream_ports if label not in retained_ports)
+        inbound = bool(kept_downstream) and not kept_upstream
+        section_kind = "transmission" if shared_line else "reflection"
+        section_label = f"{mode_label}_{section_kind}"
         suffix = 1
         while section_label in {component.label for component in network.components}:
-            section_label = f"{mode_label}_reflection_{suffix}"
+            section_label = f"{mode_label}_{section_kind}_{suffix}"
             suffix += 1
         lowering = _kron(*(mode_lowering if label == mode_label else np.eye(dim)
                            for label, dim in zip(labels, dims)))
         frequency, weight = reduction.dressed_transition(ctx, lowering)
-        section = network.mode_reflection(
-            section_label,
-            freq=frequency,
-            external_rate=weight * boundary_ports[0].rate_value(chip),
-            internal_rate=weight * internal_rate,
-            reference_freq=incoming_frequencies[touching_labels[0]],
-        )
-        network._insert_reference_section(reflection_plane, section)
+        external_rate = weight * boundary_ports[0].rate_value(chip)
+        if shared_line:
+            section = network.mode_transmission(
+                section_label, freq=frequency, external_rate=external_rate, internal_rate=weight * internal_rate,
+            )
+            beyond = kept_upstream if inbound else kept_downstream
+            targets = [target for port in chip.ports if port.label in beyond for target in port.resolve_targets(chip)]
+            xp = concrete_array_module(external_rate, tuple(incoming_frequencies.values()))
+            ratio = xp.asarray(0.0)
+            if targets:
+                detunings = xp.asarray([incoming_frequencies[target] - incoming_frequencies[mode_label]
+                                        for target in targets])
+                ratio = external_rate / (2.0 * xp.pi * xp.min(xp.abs(detunings)))
+            validity[section_label] = {"kappa_over_delta": ratio, "is_valid": ratio < 0.1}
+        else:
+            section = network.mode_reflection(
+                section_label, freq=frequency, external_rate=external_rate, internal_rate=weight * internal_rate,
+                reference_freq=incoming_frequencies[touching_labels[0]],
+            )
+        network._insert_reference_section(reflection_plane, section, reverse=inbound)
         frequency_error = ""
         if method == "sw":
             frequency_error = ("SW misses frequency shifts beyond second order, of order g⁴/Δ³ with one survivor "
                                "and 2g_1g_2J/(Δ_1Δ_2) when a coupling J joins two survivors. ")
-        notes.append(
-            f"Kept the reflection of {mode_label!r} on plane {reflection_plane!r} as reference section "
-            f"{section_label!r}, using its dressed transition and mode-weighted external and internal rates. "
-            "The section drops damping from survivor channels, of order (g/Δ)²γ_s. "
-            "Purcell dispersion leaves a scattering residual of order (g/Δ)²κ_e/Δ. "
-            f"{frequency_error}The section's internal-loss bath is vacuum."
-        )
+        if shared_line:
+            leg = "inbound" if inbound else "outbound"
+            if method == "sw":
+                frequency_error = (
+                    "SW misses frequency shifts beyond second order. With one survivor, their scale is g⁴/Δ³. "
+                    "A coupling J between two survivors adds shifts of order 2g_1g_2J/(Δ_1Δ_2). "
+                )
+            notes.append(
+                f"Kept the transmission of {mode_label!r} as reference section {section_label!r} "
+                f"on the {leg} leg of plane {reflection_plane!r}. "
+                "It uses the dressed transition and mode-weighted external and internal rates. "
+                "The section drops damping from survivor channels, of order (g/Δ)²γ_s. "
+                "Purcell dispersion leaves a scattering residual of order (g/Δ)²κ_e/Δ. "
+                f"{frequency_error}The section's internal-loss bath is vacuum. "
+                "The leg does not change the weak-probe response from the line input. "
+                "Near kept-port frequencies beyond the section, emitted or received fields err by up to "
+                "the reported kappa_over_delta."
+            )
+        else:
+            notes.append(
+                f"Kept the reflection of {mode_label!r} on plane {reflection_plane!r} as reference section "
+                f"{section_label!r}, using its dressed transition and mode-weighted external and internal rates. "
+                "The section drops damping from survivor channels, of order (g/Δ)²γ_s. "
+                "Purcell dispersion leaves a scattering residual of order (g/Δ)²κ_e/Δ. "
+                f"{frequency_error}The section's internal-loss bath is vacuum."
+            )
     source_factors = tuple(
         _array(source_bases[label].vectors).conj().T @ _array(source_bases[label].energy_vectors) for label in labels
     )

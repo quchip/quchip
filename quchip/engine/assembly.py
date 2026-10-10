@@ -1860,16 +1860,21 @@ def _build_static_analysis_result(
     )
 
 
-def _analysis_matrix_ghz(result: EngineResult) -> Any:
+def _analysis_matrix_ghz(result: EngineResult, *, include_network: bool = True) -> Any:
     """Return the resolved static solver Hamiltonian in ordinary GHz.
 
     This internal path reads canonical arrays directly so JAX tracers never
     cross through a non-JAX inspection backend. Time-dependent terms are not
-    part of a static dressed-state calculation.
+    part of a static dressed-state calculation. Set ``include_network=False``
+    when a reduction regenerates network terms from transformed ports.
     """
     if not result.static_terms:
         raise ValueError("EngineResult contains no static Hamiltonian terms.")
-    pairs = [(term.coefficient, term.operator.to_dense()) for term in result.static_terms]
+    pairs = [(term.coefficient, term.operator.to_dense()) for term in result.static_terms
+             if include_network or term.origin != "network"]
+    if not pairs:
+        matrix = result.static_terms[0].operator.to_dense()
+        return array_namespace(matrix).zeros_like(matrix)
     xp = array_namespace(pairs[0][1])
     if not contains_tracer(pairs):
         # Concrete terms combine on the host and return in their own namespace.

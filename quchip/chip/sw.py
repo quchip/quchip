@@ -47,12 +47,14 @@ def bare_hamiltonian(
     chip: "Chip",
     *,
     approximation: "Approximation | None" = None,
+    include_network: bool = True,
 ) -> tuple[Any, list[str], tuple[int, ...]]:
     """Full bare Hamiltonian as a dense array in GHz, with labels and dims.
 
     This path is for analysis only. It applies the chip's approximation
     strategy, does not change the authored Hamiltonian, and intentionally
-    materializes a dense matrix.
+    materializes a dense matrix. Set ``include_network=False`` to omit terms
+    that the network generates from its ports.
     """
     from quchip.engine.assembly import _analysis_matrix_ghz
 
@@ -60,7 +62,7 @@ def bare_hamiltonian(
     # Dressed-state analysis retains the complete authored Hamiltonian.
     # Reduction acts on the model selected for engine use.
     result = chip.resolve(frame="lab", approximation=approximation)
-    h = _analysis_matrix_ghz(result)
+    h = _analysis_matrix_ghz(result, include_network=include_network)
     records = [result.bases[device.label] for device in chip.devices]
     transforms = [record.energy_to_solver() for record in records]
     xp = concrete_array_module(h, transforms)
