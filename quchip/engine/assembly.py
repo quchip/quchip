@@ -36,7 +36,7 @@ from quchip.approximations import Approximation, RWA, require_approximation
 from quchip.backend import _backend_context
 from quchip.backend.protocol import Backend, Operator
 from quchip.control.drive import BaseDrive, CouplingDrive
-from quchip.chip.effective import EffectiveTerms, authored_excitation_changes
+from quchip.chip.effective import EffectiveTerms, retained_operator
 from quchip.control.signal import AnalyticSignal, SignalKey
 from quchip.declarative.expr import (
     PhysicsExpr,
@@ -212,18 +212,10 @@ def _retained_operator(chip: "Chip", operator: Any, support: tuple[int, ...], ba
                        bases: Mapping[str, BasisRecord] | None = None) -> tuple[Any, tuple[int, ...]]:
     """Apply a retained model's captured coordinates to a surviving physical operator."""
     labels = tuple(chip.devices[i].label for i in support)
-    for terms in chip.effective_terms:
-        projection = terms.projection
-        if projection is not None and set(labels) <= set(projection.target_labels):
-            changes = None if terms.excitation_changes is None else authored_excitation_changes(
-                operator, labels, backend, bases,
-            )
-            matrix = backend.to_array(materialize_expr(operator, backend))
-            return (projection.apply(matrix, labels, owner_key, excitation_changes=changes),
-                    tuple(chip.device_index(label) for label in projection.target_labels))
-        if projection is not None and set(labels) & set(projection.target_labels):
-            raise NotImplementedError("An operator spans a partial retained projection.")
-    return operator, support
+    projected = retained_operator(chip, operator, labels, backend, owner_key, bases=bases)
+    if projected is None:
+        return operator, support
+    return projected, tuple(chip.device_index(label) for label in projected.labels)
 
 
 def _project_on_support(

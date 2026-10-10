@@ -683,10 +683,8 @@ class Chip:
                             port,
                         )
                     )
-        projected_terms = [terms for terms in self.effective_terms if terms.projection is not None]
-        if projected_terms:
-            from quchip.chip.effective import authored_excitation_changes
-            from quchip.declarative.expr import materialize_expr
+        if any(terms.projection is not None for terms in self.effective_terms):
+            from quchip.chip.effective import retained_operator
 
             projected = []
             labels = tuple(device.label for device in self.devices)
@@ -695,20 +693,12 @@ class Chip:
                     isinstance(owner, Bath) and owner._retained is not None
                 ):
                     operator_labels = tuple(labels[index] for index in support) if support else labels
-                    for terms in projected_terms:
-                        projection = terms.projection
-                        assert projection is not None
-                        if set(operator_labels) <= set(projection.target_labels):
-                            changes = None if terms.excitation_changes is None else authored_excitation_changes(
-                                operator, operator_labels, backend, bases,
-                            )
-                            local = backend.to_array(materialize_expr(operator, backend, local_bases=bases))
-                            owner_key = f"port:{owner.label}" if isinstance(owner, Port) else None
-                            operator = projection.apply(local, operator_labels, owner_key, excitation_changes=changes)
-                            support = tuple(self._label_to_index[label] for label in projection.target_labels)
-                            break
-                        if set(operator_labels) & set(projection.target_labels):
-                            raise NotImplementedError("A collapse operator spans a partial retained projection.")
+                    owner_key = f"port:{owner.label}" if isinstance(owner, Port) else None
+                    retained = retained_operator(self, operator, operator_labels, backend, owner_key,
+                                                 bases=bases, local_bases=bases)
+                    if retained is not None:
+                        operator = retained
+                        support = tuple(self._label_to_index[label] for label in retained.labels)
                 projected.append((operator, rate, support, source, channel_name, paths, owner))
             return projected
         return out

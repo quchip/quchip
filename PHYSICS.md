@@ -1091,7 +1091,8 @@ with `H = omega*n - K*n*(n-1)` has `K[i,i] = -2*K`.
 Sources: [`quchip/chip/transformations/`](quchip/chip/transformations/), [`quchip/analysis/dispersive_readout.py`](quchip/analysis/dispersive_readout.py)
 
 `eliminate(chip, target, method="sw"|"exact")` performs model reduction dispatched on the target. A
-device target removes a far-detuned mode. Both routes keep their complete calculated Hamiltonian and
+device target removes a far-detuned mode. With `local=True`, it reads only a patch around the mode
+(§10.7). Both routes keep their complete calculated Hamiltonian and
 each transformed channel from the removed mode and couplings. `chip.effective_terms` carries the
 matrix correction beyond the reported Lamb shifts and mediated exchange, including higher-level
 corrections. Intrinsic survivor noise stays separate from inherited loss, and a common bus channel
@@ -1308,6 +1309,54 @@ The retained correction is the route's retained Hamiltonian minus the reduced ch
 `result.mapping` captures source and target labels, dimensions, backend and lab-frame solver coordinates. Its `embedding` maps retained coordinates into the source space. `project_operator(operator)` returns `B† O B`, `project_state(state)` returns `B† psi` or `B† rho B`, and `lift_state(state)` performs the reverse embedding. These methods accept full numerical matrices and backend-native objects, and return native objects on the captured backend. Projection keeps the lost norm or trace, so discarded population stays visible and no state is silently renormalized. Express rotating-frame trajectory states in lab coordinates before you use this map.
 
 Exact reduction uses the same Löwdin embedding as its Hamiltonian and removed-component channels. SW uses `B = exp(-S) P`, with the first-order generator that the reduction already uses. This map is isometric, but the dynamics stay perturbative, and the SW Hamiltonian stays truncated at second order. Jump operators use the same exponentiated first-order coordinate map, which keeps their interpretation common with states and observables. It does not make the reduced dynamics or dissipation exact. Maps capture numerical coordinates independently of later source edits.
+
+### 10.7 Local reduction (`local=True`)
+
+`eliminate(chip, device, local=True)` reduces a device from a patch around it and never resolves the
+full chip. The core is the device and every device that shares a coupling, effective terms or a port
+with it. The SW generator acts only on the core. Its denominators use `E = diag H`, so they also read
+each term whose diagonal part depends on a core level. The patch therefore holds:
+
+- the core and the full supports of the effective terms on it,
+- the far device of each coupling whose diagonal part depends on a core level, such as a `CrossKerr`
+  edge,
+- the full support of each port pair whose series composition generates a Hamiltonian on a core
+  device,
+- the full support of every effective term that the patch touches, because effective terms hold
+  retained coordinates.
+
+The far-device rule reads the structure of a coupling, not its values. It splits the coupling into
+operator products and drops their scalar coefficients, so no parameter values can cancel a product, as
+in `(x - y) n_a n_b`. A traced reduction therefore reads the same patch as a concrete one. A product
+leaves its far device out only when its diagonal is exactly equal at each level of the core device.
+The test has no tolerance, so a factor that moves between the coefficient and the operator does not
+change the patch. Round-off from a device basis change can only add a device to the patch. A product
+whose operator is a function of a parameter, and a coupling on a device with a traced energy basis,
+count as level-dependent. A device without a neighbour has no generator, so its patch holds the device
+alone. Its reduction leaves the device's ground-state energy and projected channels, which are
+multiples of the identity. The new `EffectiveTerms` hold them on the first other device without a map.
+
+With this patch, the full-chip generator is the patch generator times the identity on the other
+devices. A coupling from the patch to other devices keeps the mode's level, so it adds nothing to
+`P [S, V] P`. The retained Hamiltonian, the transformed channels and the captured map therefore equal
+those of the full-chip reduction. Every numerical step reads the patch as a sub-chip, so its cost
+follows the patch's product space. Devices, couplings, effective terms and ports outside the patch
+stay unchanged. The new `EffectiveTerms` act on the patch survivors only. `chi` comes from the patch
+spectrum, so it omits dressing by devices outside the patch.
+
+Each local reduction captures a map from its patch survivors into its patch. The map carries an
+operator that also acts outside the patch with the identity on the outside devices. Earlier maps
+that the patch absorbs become `parents` of the new `OperatorProjection`. Each parent acts first on
+its own devices, so a chain of local reductions never forms a full-space matrix. A full-chip
+reduction that follows several local ones keeps their maps as parents in the same way.
+`result.mapping` extends the patch map by the identity on the other devices, and it forms that
+matrix only when you read it.
+
+`local=True` implements `method="sw"` only. The exact route diagonalizes the whole chip, so its
+dressed states are not local. The local route does not transform baths yet, so a chip with baths
+raises `NotImplementedError`. A port network that links a patch port to a port outside the patch also
+raises, because cutting it would change the SLH dynamics. Coupling and effective-terms targets do not
+accept `local=True`. `active_patch()` and `QuantumSequence.active_patch()` forward `local`.
 
 ## 11. Parametric Edge Control
 

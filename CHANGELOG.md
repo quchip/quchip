@@ -28,6 +28,11 @@ This file records notable user-visible changes to quchip.
 - `PortNetwork.mode_reflection(...)` adds a serializable two-sided reference
   section that reflects like a damped linear mode.
   ([#76](https://github.com/quchip/quchip/issues/76))
+- `eliminate(chip, device, local=True)` computes the SW reduction on a local
+  patch. It retains the full reduction's Hamiltonian, channels, and map.
+  `chi` describes only the patch. Both `active_patch()` entry points forward
+  `local`. Baths and networks that cross the patch boundary remain unsupported.
+  ([#112](https://github.com/quchip/quchip/pull/112))
 
 #### Fixes
 
