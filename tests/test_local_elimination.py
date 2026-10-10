@@ -25,6 +25,7 @@ from quchip import (
     eliminate,
 )
 from quchip.chip.effective import OperatorProjection
+from quchip.declarative.expr import as_operator_expr
 from quchip.declarative.models import CouplingModel
 from quchip.declarative.parameters import Scalar, parameter
 
@@ -54,7 +55,7 @@ def _ring(n, *, noise=True, backend=None, ports=False):
 def _model(chip):
     """Return the lab-frame Hamiltonian, the summed rate-weighted L†L and the jump term on |psi><phi|.
 
-    With the L†L sum, the jump term on random states psi and phi fixes the dissipator.
+    psi and phi are random states.
     """
     resolved = chip.resolve(frame="lab")
     hamiltonian = np.asarray(resolved.hamiltonian().matrix())
@@ -147,13 +148,19 @@ def test_local_steps_reduce_a_ring_whose_full_space_does_not_fit_in_memory():
 
 
 class _LevelShift(CouplingModel):
-    """A diagonal edge whose coefficient vanishes when x / y equals the ratio of two seeded random numbers."""
+    """The diagonal edge (x - r y) n_a n_b, as the coefficient 1e13 (x - r y) times the matrix 1e-13 n_a n_b.
+
+    The coefficient vanishes when x / y equals r, the ratio of two seeded random numbers.
+    """
 
     x: Scalar = parameter(unit="GHz")
     y: Scalar = parameter(unit="GHz")
 
     def interaction(self, a, b, p):
-        return (p.x - 1.4769827368964097 * p.y) * a.n * b.n
+        dims = (a.space.dimension, b.space.dimension)
+        numbers = np.kron(np.diag(np.arange(dims[0])), np.diag(np.arange(dims[1])))
+        operator = as_operator_expr(1e-13 * numbers, labels=(a.label, b.label), dims=dims, name="n_a n_b")
+        return 1e13 * (p.x - 1.4769827368964097 * p.y) * operator
 
 
 def test_local_patch_holds_each_term_that_shifts_a_neighbour():

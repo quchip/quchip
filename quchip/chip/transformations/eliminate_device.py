@@ -48,7 +48,6 @@ from quchip.declarative.dissipation import CollapseChannel
 from quchip.chip.ports import Port
 from quchip.engine.bands import embed_on_support
 from quchip.chip.sw import (
-    _WORKING_PRECISION,
     _exact_eigensystem,
     bare_hamiltonian,
     bare_index,
@@ -141,7 +140,11 @@ def _diagonal_depends_on(chip: "Chip", coupling: "BaseCoupling", label: str, bas
     device, so it changes the Schrieffer-Wolff denominators. Each operator
     product of the coupling counts alone, without its scalar coefficient, so
     no parameter values can cancel it, as in ``(x - y) n_a n_b``. Traced and
-    concrete reductions therefore read the same patch. A product whose
+    concrete reductions therefore read the same patch. A product is
+    independent only when its diagonal is exactly equal at each level of
+    ``label``. The test has no tolerance, so the split of a factor between
+    coefficient and operator does not change it. Round-off from a device
+    basis change can only make a product dependent. A product whose
     operator holds a parameter, or a diagonal that stays traced through a
     traced device basis, counts as dependent.
     """
@@ -167,7 +170,7 @@ def _diagonal_depends_on(chip: "Chip", coupling: "BaseCoupling", label: str, bas
             diagonal = np.asarray(diagonal)
             if coupling.device_b_label == label:
                 diagonal = diagonal.T
-            if not np.all(np.isfinite(diagonal)) or np.max(np.abs(diagonal - diagonal[:1])) > _WORKING_PRECISION:
+            if not np.all(np.isfinite(diagonal)) or np.any(diagonal != diagonal[:1]):
                 return True
     return False
 

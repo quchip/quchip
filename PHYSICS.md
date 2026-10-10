@@ -1327,6 +1327,9 @@ each term whose diagonal part depends on a core level. The patch therefore holds
 The far-device rule reads the structure of a coupling, not its values. It splits the coupling into
 operator products and drops their scalar coefficients, so no parameter values can cancel a product, as
 in `(x - y) n_a n_b`. A traced reduction therefore reads the same patch as a concrete one. A product
+leaves its far device out only when its diagonal is exactly equal at each level of the core device.
+The test has no tolerance, so a factor that moves between the coefficient and the operator does not
+change the patch. Round-off from a device basis change can only add a device to the patch. A product
 whose operator is a function of a parameter, and a coupling on a device with a traced energy basis,
 count as level-dependent. A device without a neighbour has no generator, so its patch holds the device
 alone. Its reduction leaves the device's ground-state energy and projected channels, which are
