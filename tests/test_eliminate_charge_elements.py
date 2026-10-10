@@ -3,8 +3,11 @@
 import numpy as np
 import pytest
 
-from quchip import Capacitive, ChargeBasisTransmon, Chip, DuffingTransmon, Fluxonium, Resonator, eliminate
+from quchip import (
+    Capacitive, ChargeBasisTransmon, Chip, CustomSpace, DuffingTransmon, Exact, Fluxonium, Resonator, eliminate,
+)
 from quchip.chip.effective import EffectiveTerms
+from quchip.extensions import SpinHalf
 
 # |<0|n|1>| is about 1.15 for this charge-basis transmon. The fluxonium's
 # <0|n|1> is imaginary.
@@ -92,6 +95,28 @@ def test_flux_gain_is_the_coupler_frequency_derivative_of_the_edge_strength():
     # Second-order SW exchange through the single coupler excitation: the central
     # difference has truncation error (step/Δ)² ≈ 2e-9 and round-off near 1e-8.
     assert derivative == pytest.approx(float(exchange(0.)["dJ_domega_c"]), rel=1e-6)
+
+
+class LongitudinalSpin(SpinHalf):
+    """A spin whose charge operator is sigma_z, so it has no 0-1 charge element."""
+
+    def local_space(self):
+        operators = dict(super().local_space().operators)
+        operators["charge"] = operators["sigma_z"]
+        return CustomSpace(2, operators)
+
+
+def test_survivor_without_a_charge_transition_gets_a_zero_edge():
+    """A survivor whose charge operator cannot flip it receives a finite zero-strength edge."""
+    a = DuffingTransmon(freq=5., anharmonicity=-.25, levels=3, label="a")
+    spin = LongitudinalSpin(5.2, label="b")
+    bus = Resonator(freq=6.5, levels=3, label="bus")
+    chip = Chip([a, spin, bus], [Capacitive(a, bus, g=.06), Capacitive(spin, bus, g=.06)], approximation=Exact())
+    result = eliminate(chip, "bus")
+    exchange = result.effective_params["exchange"]
+    assert float(exchange["j_eff"]) == 0.
+    assert float(exchange["dJ_domega_c"]) == 0.
+    assert abs(_element(result.chip, "a", "b")) == pytest.approx(0., abs=1e-15)
 
 
 @pytest.mark.validation
