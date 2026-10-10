@@ -64,18 +64,19 @@ def test_chip_describe_reports_composition_with_units() -> None:
 
 
 def test_sequence_describe_lists_pulses_and_other_entries() -> None:
-    """describe() reports pulse count, timing windows (delay-shifted), and delay entries."""
-    chip, drv, q, _ = _demo_chip()
+    """describe() reports pulse count, timing windows (delay-shifted), a frame other than the target, and delays."""
+    chip, drv, q, r = _demo_chip()
     seq = QuantumSequence(chip)
     seq.schedule(drv, envelope=Gaussian(duration=80.0, sigmas=3, amplitude=0.015), freq=5.2)
     seq.delay(q, 10.0)
-    seq.schedule(drv, envelope=Gaussian(duration=40.0, sigmas=3, amplitude=0.0075), freq=5.1)
+    seq.schedule(drv, envelope=Gaussian(duration=40.0, sigmas=3, amplitude=0.0075), freq=5.1, frame=r)
     text = seq.describe()
 
     assert "2 pulses" in text
     assert "[0, 80]" in text
     assert "[90, 130]" in text  # delay shifts the second pulse
     assert f"{drv.label} → q" in text
+    assert text.count(f"{drv.label} → q (frame r)") == text.count("(frame") == 1  # the default frame is omitted
     assert "Gaussian(" in text
     assert "5.2 GHz" in text
     assert "Delay" in text
