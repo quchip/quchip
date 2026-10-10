@@ -92,10 +92,12 @@ def test_chip_reduced_past_both_readout_modes_keeps_the_one_excitation_block():
     np.testing.assert_allclose(np.asarray(weak.matrix), np.asarray(stationary.matrix), atol=1e-9)
 
 
-def test_shared_feedline_with_transmons_uses_the_one_excitation_block():
-    """A cascade feedline whose ports lower the level index keeps the weak-probe route and its stationary result."""
-    weak, route = _sweep(_feedline_chip(2), FEEDLINE_FREQUENCIES)
-    stationary, _ = _sweep(_feedline_chip(2), FEEDLINE_FREQUENCIES, options={})
+@pytest.mark.parametrize("reduced", [False, True])
+def test_shared_feedline_with_transmons_uses_the_one_excitation_block(reduced):
+    """A cascade feedline whose ports lower the level index keeps the weak-probe route, also after exact elimination."""
+    chip = eliminate(_feedline_chip(2), "q1", method="exact").chip if reduced else _feedline_chip(2)
+    weak, route = _sweep(chip, FEEDLINE_FREQUENCIES)
+    stationary, _ = _sweep(chip, FEEDLINE_FREQUENCIES, options={})
 
     assert route == "vacuum_response"
     np.testing.assert_allclose(weak, stationary, atol=1e-9)
