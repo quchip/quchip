@@ -16,12 +16,27 @@ def _readout_chip(alpha=-0.25, levels=3, *, approximation=RWA(), qubit_occupatio
                 approximation=approximation, backend=backend)
 
 
+def _feedline_chip(readouts, *, operators=None):
+    resonators = [Resonator(freq=6.5 + 0.1 * index, levels=2, label=f"r{index}", internal_quality_factor=2e5)
+                  for index in range(readouts)]
+    qubits = [DuffingTransmon(freq=5.3 - 0.1 * index, anharmonicity=-0.26, levels=3, label=f"q{index}", T1=3e4)
+              for index in range(readouts)]
+    network = PortNetwork(label="feedline")
+    ports = [network.port(resonator.label, target=resonator, rate=2 * np.pi * 0.002, operator=operator)
+             for resonator, operator in zip(resonators, operators or (None,) * readouts, strict=True)]
+    network.cascade(*ports)
+    network.expose("feed", input=ports[0], output=ports[-1])
+    couplings = [Capacitive(qubit, resonator, g=0.04) for qubit, resonator in zip(qubits, resonators)]
+    return Chip([*qubits, *resonators], couplings, port_network=network, frame=5.2, approximation=RWA())
+
+
 def _sweep(chip, frequencies, **options):
     result = VNA(chip).sweep(frequencies, **options)
     return np.asarray(result.matrix)[:, 0, 0], result.diagnostics[0]["solver"]
 
 
 FREQUENCIES = np.array([4.99, 5.0, 5.01, 5.99, 6.0, 6.01])
+FEEDLINE_FREQUENCIES = np.array([6.45, 6.5, 6.52, 6.6, 6.62, 6.7])
 
 
 def test_nonlinear_conserving_chip_uses_the_one_excitation_block_at_any_cutoff():
@@ -75,6 +90,31 @@ def test_chip_reduced_past_both_readout_modes_keeps_the_one_excitation_block():
 
     assert weak.diagnostics[0]["solver"] == "vacuum_response"
     np.testing.assert_allclose(np.asarray(weak.matrix), np.asarray(stationary.matrix), atol=1e-9)
+
+
+@pytest.mark.parametrize("reduced", [False, True])
+def test_shared_feedline_with_transmons_uses_the_one_excitation_block(reduced):
+    """A cascade feedline whose ports lower the level index keeps the weak-probe route, also after exact elimination."""
+    chip = eliminate(_feedline_chip(2), "q1", method="exact").chip if reduced else _feedline_chip(2)
+    weak, route = _sweep(chip, FEEDLINE_FREQUENCIES)
+    stationary, _ = _sweep(chip, FEEDLINE_FREQUENCIES, options={})
+
+    assert route == "vacuum_response"
+    np.testing.assert_allclose(weak, stationary, atol=1e-9)
+
+
+@pytest.mark.unit
+def test_feedline_port_that_does_not_lower_the_level_index_breaks_conservation():
+    """A cascade pair with a port coupled through sigma_x changes the level index, so the compact route declines."""
+    from quchip.chip.effective import conserves_excitation_number
+    from quchip.engine.linear_response import try_build_weak_probe_problem
+
+    lowering = _feedline_chip(2)
+    quadrature = _feedline_chip(2, operators=(None, "X"))
+
+    assert conserves_excitation_number(lowering, lowering.approximation)
+    assert not conserves_excitation_number(quadrature, quadrature.approximation)
+    assert try_build_weak_probe_problem(quadrature, FEEDLINE_FREQUENCIES, plane_labels=("feed",)) is None
 
 
 def test_weak_probe_route_requires_a_stationary_vacuum():
