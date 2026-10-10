@@ -392,12 +392,24 @@ _SERIALIZED_FACTORIES = frozenset(
         "delay",
         "amplifier",
         "mode_reflection",
+        "mode_transmission",
         "termination",
     }
 )
 
 #: Two-sided sections peeled from exposure legs instead of entering the Markovian core.
-_REFERENCE_KINDS = frozenset({"delay", "filter", "amplifier", "mode_reflection"})
+_REFERENCE_KINDS = frozenset({"delay", "filter", "amplifier", "mode_reflection", "mode_transmission"})
+
+
+def _mode_transmission_transfer(
+    frequency: Any, *, freq: Any, external_rate: Any, internal_rate: Any = 0.0,
+) -> Any:
+    """Return the one-pass amplitude transfer of a damped linear mode."""
+    xp = select_array_module(contains_tracer((frequency, freq, external_rate, internal_rate)))
+    detuning = 2.0 * xp.pi * (xp.asarray(frequency) - freq)
+    return ((internal_rate - external_rate) / 2.0 - 1j * detuning) / (
+        (external_rate + internal_rate) / 2.0 - 1j * detuning
+    )
 
 
 def _mode_reflection_transfer(
@@ -941,7 +953,8 @@ class PortNetwork:
         Continuous-wave APIs evaluate ``H`` at each frequency. Transient APIs
         use its value at the applicable carrier. The internal-loss bath is
         vacuum. :func:`~quchip.eliminate` inserts this section when it removes a
-        mode that couples directly to a port. Every parameter is tracked at
+        mode whose port is alone on its plane. A shared line gets
+        :meth:`mode_transmission`. Every parameter is tracked at
         ``network.component.<label>.<name>`` and serializes.
 
         Parameters
@@ -962,6 +975,43 @@ class PortNetwork:
             parameters["reference_freq"] = reference_freq
         return self._reference_component(
             label, kind="mode_reflection", parameters=parameters, transfer=_mode_reflection_transfer,
+        )
+
+    def mode_transmission(
+        self, label: str, *, freq: Any, external_rate: Any, internal_rate: Any = 0.0,
+    ) -> SLHComponent:
+        """Add a one-pass reference section for a damped linear mode.
+
+        Side 1 to side 2 multiplies the field by
+        ``S_r(f) = ((κ_i - κ_e)/2 - iΩ) / ((κ_e + κ_i)/2 - iΩ)``,
+        with ``Ω = 2π(f - freq)``. Reverse propagation is transparent.
+        The section acts on one leg and stays outside the Markovian
+        ``S``, ``L``, and ``H``. Its internal-loss bath is vacuum.
+        Continuous-wave APIs evaluate the transfer at each frequency.
+        Transient APIs use its value at the applicable carrier.
+        quchip tracks every parameter at ``network.component.<label>.<name>``,
+        and the section serializes.
+
+        Parameters
+        ----------
+        label : str
+            Unique component label.
+        freq : float or array-like
+            Mode frequency in GHz.
+        external_rate : float or array-like
+            Coupling rate ``κ_e`` to this line, in 1/ns.
+        internal_rate : float or array-like, default=0.0
+            Internal loss rate ``κ_i`` in 1/ns.
+
+        Returns
+        -------
+        SLHComponent
+            Two-sided component with forward transfer and transparent reverse propagation.
+        """
+        return self._reference_component(
+            label, kind="mode_transmission",
+            parameters={"freq": freq, "external_rate": external_rate, "internal_rate": internal_rate},
+            transfer=_mode_transmission_transfer,
         )
 
     def amplifier(
@@ -1612,13 +1662,12 @@ class PortNetwork:
             ),
         )
 
-    def _exclusive_exposure(self, port_label: str) -> str:
-        """Return the external plane that alone carries one port's field.
+    def _line_exposure(self, port_label: str) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+        """Return the plane and the ports upstream and downstream of a port.
 
-        The port must couple to exactly one channel, that channel must carry no
-        other port, and its scattering must neither mix with nor feed another
-        channel. Fields between the plane and the port then pass only through
-        single-path elements, which commute with a frequency-dependent factor.
+        The port must couple to one visible channel without channel mixing.
+        Every other port on that channel must pass it strictly in series.
+        Generated pairs determine the order without reading their coefficients.
         """
         compiled = self._compile()
         rows = [index for index, channel in enumerate(compiled.channels)
@@ -1629,27 +1678,47 @@ class PortNetwork:
             channel = compiled.channels[row]
             others = np.arange(support.shape[0]) != row
             if (not channel.exposure._hidden
-                    and self._active_mapping_sources(channel.coupling) == (port_label,)
                     and not np.any(support[row, others]) and not np.any(support[others, row])):
-                return channel.exposure.label
+                ports = self._active_mapping_sources(channel.coupling)
+                predecessors: dict[str, set[str]] = {label: set() for label in ports}
+                for downstream, upstream, _coefficient in compiled.generated_pairs:
+                    if downstream in predecessors and upstream in predecessors:
+                        predecessors[downstream].add(upstream)
+                for middle in ports:
+                    for downstream in ports:
+                        if middle in predecessors[downstream]:
+                            predecessors[downstream].update(predecessors[middle])
+                upstream_ports = predecessors[port_label]
+                downstream_ports = {label for label in ports if port_label in predecessors[label]}
+                if (not upstream_ports.intersection(downstream_ports)
+                        and upstream_ports | downstream_ports == set(ports) - {port_label}):
+                    ordered = sorted(ports, key=lambda label: len(predecessors[label]))
+                    return (channel.exposure.label,
+                            tuple(label for label in ordered if label in upstream_ports),
+                            tuple(label for label in ordered if label in downstream_ports))
         raise NotImplementedError(
             f"Port {port_label!r} shares its external plane with other fields; eliminating its "
             "mode would need the mode's frequency-dependent scattering inside the network. "
             "Keep the port-coupled mode."
         )
 
-    def _insert_reference_section(self, exposure_label: str, section: SLHComponent) -> None:
+    def _insert_reference_section(
+        self, exposure_label: str, section: SLHComponent, *, reverse: bool = False,
+    ) -> None:
         """Insert a two-sided reference section where an exposure's reference run meets the core.
 
         Side 2 faces the external plane and side 1 the Markov boundary. Existing
         reference sections of the run stay outside the new one. Every external
         plane becomes explicit so that the channel order does not change.
+        With ``reverse=True``, side 1 faces the plane instead.
         """
         planes = [exposure for exposure in self._effective_exposures() if not exposure._hidden]
         index = next(i for i, exposure in enumerate(planes) if exposure.label == exposure_label)
         exposure = planes[index]
         boundary_input, boundary_output, _ = self._peel(exposure)
         inner, outer = (section.label, "1"), (section.label, "2")
+        if reverse:
+            inner, outer = outer, inner
         if exposure._input_key == boundary_input:
             exposure = replace(exposure, _input_key=outer)
         else:
@@ -2015,6 +2084,10 @@ class PortNetwork:
                         )
                     if outbound:
                         run.append(self._reference_element(label))
+                elif self._components[label]._kind == "mode_transmission":
+                    forward = (name == "2") if outbound else (name == "1")
+                    if forward:
+                        run.append(self._reference_element(label))
                 elif self._components[label]._kind in {"attenuator", "isolator"}:
                     forward = (name == "2") if outbound else (name == "1")
                     run.append(self._reference_element(label, output_side="2" if forward else "1"))
@@ -2067,7 +2140,8 @@ class PortNetwork:
                 component = self._components[label]
                 sides = active_sides(label)
                 for side in sides:
-                    if (label, side) in traversals or (component._kind == "amplifier" and side == "1"):
+                    if ((label, side) in traversals
+                            or (component._kind in {"amplifier", "mode_transmission"} and side == "1")):
                         continue
                     if component._kind in {"isolator", "attenuator"}:
                         element = self._reference_element(label, output_side=side)

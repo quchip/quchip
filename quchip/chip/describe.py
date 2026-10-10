@@ -296,19 +296,20 @@ def _exchange_lines(chip: "Chip", entry: Any) -> list[str]:
 
 
 def _validity_line(validity: dict[str, Any]) -> str:
-    """One ``g/Δ`` verdict per eliminated coupling, plus the shared min block gap."""
+    """One verdict per eliminated coupling or line section, plus the shared min block gap."""
     parts = []
     min_gap = None
-    for coupling_label, v in validity.items():
-        g_over_delta = _concrete(v.get("g_over_delta"))
+    for label, v in validity.items():
+        symbol, key = ("κ/Δ", "kappa_over_delta") if "kappa_over_delta" in v else ("g/Δ", "g_over_delta")
+        ratio = _concrete(v.get(key))
         is_valid = _concrete(v.get("is_valid"))
         if min_gap is None and "min_block_gap" in v:
             min_gap = _concrete(v["min_block_gap"])
-        if g_over_delta is None or is_valid is None:
-            parts.append(f"{coupling_label} g/Δ=<traced>")
+        if ratio is None or is_valid is None:
+            parts.append(f"{label} {symbol}=<traced>")
         else:
             mark = "✓" if is_valid else "✗"
-            parts.append(f"{coupling_label} g/Δ={g_over_delta:.2g} {mark} (< 0.1)")
+            parts.append(f"{label} {symbol}={ratio:.2g} {mark} (< 0.1)")
     line = "validity: " + " · ".join(parts)
     if min_gap is not None:
         line += f" · min block gap {min_gap:.3g} GHz"

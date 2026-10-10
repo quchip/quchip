@@ -47,12 +47,14 @@ def bare_hamiltonian(
     chip: "Chip",
     *,
     approximation: "Approximation | None" = None,
+    include_network: bool = True,
 ) -> tuple[Any, list[str], tuple[int, ...]]:
     """Full bare Hamiltonian as a dense array in GHz, with labels and dims.
 
     This path is for analysis only. It applies the chip's approximation
     strategy, does not change the authored Hamiltonian, and intentionally
-    materializes a dense matrix.
+    materializes a dense matrix. Set ``include_network=False`` to omit terms
+    that the network generates from its ports.
     """
     from quchip.engine.assembly import _analysis_matrix_ghz
 
@@ -60,7 +62,7 @@ def bare_hamiltonian(
     # Dressed-state analysis retains the complete authored Hamiltonian.
     # Reduction acts on the model selected for engine use.
     result = chip.resolve(frame="lab", approximation=approximation)
-    h = _analysis_matrix_ghz(result)
+    h = _analysis_matrix_ghz(result, include_network=include_network)
     records = [result.bases[device.label] for device in chip.devices]
     transforms = [record.energy_to_solver() for record in records]
     xp = concrete_array_module(h, transforms)
@@ -359,13 +361,15 @@ def exact_subspace(eigenvalues: Any, eigenvectors: Any, kept_indices: Any, dress
 
 
 def exact_mode_subspace(h: Any, labels: list[str], dims: tuple[int, ...], mode_label: str,
-                        survivor_labels: list[str], sectors: np.ndarray | None = None) -> ExactSubspace:
+                        survivor_labels: list[str], sectors: np.ndarray | None = None, *,
+                        eigensystem: tuple[Any, Any, Labeling] | None = None) -> ExactSubspace:
     """Diagonalize one model and validate its computational label assignment.
 
     With ``sectors``, the Hamiltonian conserves total excitation number and the
     kept map keeps every sector separate.
+    Reuse ``eigensystem`` when the caller already diagonalized and labeled ``h``.
     """
-    eigenvalues, eigenvectors, labeling = _exact_eigensystem(h, dims, sectors)
+    eigenvalues, eigenvectors, labeling = _exact_eigensystem(h, dims, sectors) if eigensystem is None else eigensystem
     p_mask, _ = mode_blocks(dims, labels, mode_label)
     kept = np.flatnonzero(p_mask)
     ground = [0] * len(labels)

@@ -28,11 +28,13 @@ import numpy as np
 import scipy.linalg
 
 from quchip.chip.sw import (
+    _exact_eigensystem,
     bare_index,
     exact_mode_subspace,
     exact_pair_parameters,
     extract_pair_parameters,
     h_effective_second_order,
+    interaction_generator,
     pathway_attribution,
     sylvester_generator,
 )
@@ -94,9 +96,14 @@ class DeviceReductionContext:
         return h_effective_second_order(self.h, self.s, self.p_mask)
 
     @cached_property
+    def eigensystem(self) -> Any:
+        """Diagonalize and label the captured Hamiltonian once per reduction."""
+        return _exact_eigensystem(self.h, self.dims, self.sectors)
+
+    @cached_property
     def exact(self) -> Any:
         return exact_mode_subspace(self.h, self.labels, self.dims, self.mode_label, self.survivor_labels,
-                                   self.sectors)
+                                   self.sectors, eigensystem=self.eigensystem)
 
 
 class ReductionMethod:
@@ -143,6 +150,33 @@ class ReductionMethod:
         embedding = self.embedding(ctx)
         return embedding.conj().T @ concrete_array_module(embedding, operator).asarray(operator) @ embedding
 
+    def dressed_transition(self, ctx: DeviceReductionContext, lowering: Any) -> tuple[Any, Any]:
+        """Compute the eliminated mode's dressed transition and lowering weight.
+
+        The default reads the labeled exact eigensystem of ``ctx.h``.
+        A route can override it with its own approximation, as SW does.
+
+        Parameters
+        ----------
+        ctx
+            Captured reduction inputs in product energy coordinates.
+        lowering
+            Mode lowering operator embedded in the full product space.
+
+        Returns
+        -------
+        tuple
+            Transition frequency in GHz and dimensionless squared matrix element.
+        """
+        eigenvalues, eigenvectors, labeling = ctx.eigensystem
+        xp = concrete_array_module(eigenvalues, eigenvectors, labeling.indices, lowering)
+        rows = np.array([bare_index(ctx.labels, ctx.dims), bare_index(ctx.labels, ctx.dims, ctx.mode_label)])
+        indices = xp.asarray(labeling.indices)[rows]
+        energies = xp.asarray(eigenvalues)[indices]
+        states = xp.asarray(eigenvectors)[:, indices]
+        weight = xp.abs(states[:, 0].conj() @ xp.asarray(lowering) @ states[:, 1]) ** 2
+        return energies[1] - energies[0], weight
+
     def residual_zz(self, ctx: DeviceReductionContext, pair_params: dict, a: str, b: str) -> Any | None:
         """Residual ZZ between survivor pair ``(a, b)``, or ``None`` if the route cannot resolve it."""
         raise NotImplementedError
@@ -173,6 +207,21 @@ class SchriefferWolffMethod(ReductionMethod):
 
     def embedding(self, ctx: DeviceReductionContext) -> Any:
         return ctx.sw_embedding
+
+    def dressed_transition(self, ctx: DeviceReductionContext, lowering: Any) -> tuple[Any, Any]:
+        """Compute second-order energies and a unitary first-order transition weight."""
+        xp = concrete_array_module(ctx.h, lowering)
+        rows = np.array([bare_index(ctx.labels, ctx.dims), bare_index(ctx.labels, ctx.dims, ctx.mode_label)])
+        selected = np.isin(np.arange(ctx.h.shape[0]), rows)
+        energies = xp.real(xp.diagonal(ctx.h))
+        # Include every intermediate state coupled to either transition state, including Q-Q paths.
+        interaction = xp.where(selected[:, None] | selected[None, :], ctx.h, 0.0)
+        s = interaction_generator(energies, interaction)
+        corrected = energies[rows] + xp.real(xp.sum(s[rows, :] * ctx.h[:, rows].T, axis=1))
+        rotation = expm(-s) if contains_tracer(s) else scipy.linalg.expm(-s)
+        states = rotation[:, rows]
+        weight = xp.abs(states[:, 0].conj() @ xp.asarray(lowering) @ states[:, 1]) ** 2
+        return corrected[1] - corrected[0], weight
 
     def pair_parameters(self, ctx: DeviceReductionContext) -> dict:
         h_eff = self.retained_hamiltonian(ctx)

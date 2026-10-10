@@ -62,9 +62,23 @@ def test_eliminate_keeps_scattering_and_adds_the_mode_reflection_to_the_plane() 
     assert plane.inbound[:len(original.inbound)] == original.inbound
     assert plane.outbound == (section, *original.outbound)
     frequencies = np.array([5.5, 5.99, 6.0, 6.01, 6.5])
-    detuning = 2 * np.pi * (frequencies - 6.0)
-    reflection = 1 - 0.03 / (0.015 - 1j * detuning)
+    prefix = "network.component.r_reflection."
+    freq, rate = float(reduced.parameters[prefix + "freq"]), float(reduced.parameters[prefix + "external_rate"])
+    detuning = 2 * np.pi * (frequencies - freq)
+    reflection = 1 - rate / (rate / 2 - 1j * detuning)
     np.testing.assert_allclose(np.asarray(section(frequencies)) ** 2, reflection, rtol=1e-12)
+
+
+@pytest.mark.parametrize("method", ["sw", "exact"])
+def test_reflection_section_sits_at_the_dressed_mode_frequency(method) -> None:
+    """Without RWA, the section sits at the mode's dressed frequency, counter-rotating shifts included."""
+    chip, _ = _readout_chip(approximation=Exact())
+
+    reduced = eliminate(chip, "r", method=method).chip
+
+    # The bare frequency is 1.5 MHz low. SW misses the fourth-order shift g⁴/Δ³ = 2.6 kHz.
+    tolerance = 1e-9 if method == "exact" else 2 * 0.04**4
+    assert abs(reduced.parameters["network.component.r_reflection.freq"] - chip.freq("r")) < tolerance
 
 
 @pytest.mark.parametrize("approximation", [RWA(), Exact()])
@@ -130,23 +144,61 @@ def test_eliminate_rejects_port_connected_nonlinear_target() -> None:
         eliminate(chip, "q")
 
 
-def test_eliminate_rejects_port_that_generates_a_cascade_hamiltonian() -> None:
-    """A field reduction cannot double-count an active cascade Hamiltonian."""
-    qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=2, label="q")
-    resonator = Resonator(freq=6.0, levels=2, label="r")
-    network = PortNetwork(label="active_line")
-    readout = network.port("readout", target=resonator, rate=0.03)
-    downstream = network.port("downstream", target=qubit, rate=0.02)
-    network.cascade(readout, downstream)
-    network.expose("feedline", input=readout.input, output=downstream.output)
-    chip = Chip(
-        [qubit, resonator],
-        [Capacitive(qubit, resonator, g=0.04, label="qr")],
-        port_network=network,
-    )
+def _feedline_chip() -> Chip:
+    """Three qubits read out through resonators in series on one feedline."""
+    qubits = [DuffingTransmon(freq=freq, anharmonicity=-0.26, levels=2, label=f"q{index}")
+              for index, freq in enumerate((5.326, 5.192, 5.06), start=1)]
+    readouts = [Resonator(freq=freq, levels=2, label=f"r{index}", internal_quality_factor=1e4)
+                for index, freq in enumerate((6.558, 6.657, 6.756), start=1)]
+    network = PortNetwork(label="feed")
+    ports = [network.port(f"p{index}", target=readout, rate=0.01) for index, readout in enumerate(readouts, start=1)]
+    network.cascade(*ports)
+    network.expose("line", input=ports[0].input, output=ports[-1].output)
+    couplings = [Capacitive(qubit, readout, g=0.04) for qubit, readout in zip(qubits, readouts)]
+    return Chip([*qubits, *readouts], couplings, port_network=network, frame=5.2, approximation=RWA())
 
-    with pytest.raises(NotImplementedError, match="cascade-generated Hamiltonian"):
-        eliminate(chip, "r")
+
+# Across every dip, the exact route leaves Purcell dispersion, about 0.4 (g/Δ)²κ/(2πΔ) at the smallest removed Δ.
+# SW also misses the fourth-order shift g⁴/Δ³, which moves S21 at the dip by 8πκ_e g⁴/(κ²Δ³) ≤ 8π g⁴/(κ_eΔ³).
+@pytest.mark.parametrize(
+    ("modes", "options", "bound", "legs", "kappa_over_delta"),
+    [(("r2",), {"method": "exact"}, 2 * (0.04 / 1.465) ** 2 * 0.01 / (2 * np.pi * 1.465),
+      ([], ["r2_transmission"]), 0.01 / (2 * np.pi * 0.099)),
+     (("r2", "r1"), {"method": "exact"}, 2 * (0.04 / 1.232) ** 2 * 0.01 / (2 * np.pi * 1.232),
+      (["r1_transmission"], ["r2_transmission"]), 0.0),
+     (("r2", "r1"), {"method": "sw", "local": True}, 2 * 8 * np.pi * 0.04**4 / (0.01 * 1.232**3),
+      (["r1_transmission"], ["r2_transmission"]), 0.0)],
+    ids=["middle-readout", "middle-then-first-readout", "middle-then-first-readout-local"],
+)
+def test_feedline_readout_elimination_keeps_the_line_transmission(modes, options, bound, legs,
+                                                                  kappa_over_delta) -> None:
+    """Readouts removed from a shared feedline keep their transmission as one-pass sections."""
+    import json
+
+    from quchip import VNA
+
+    chip = _feedline_chip()
+    reduced_chip = chip
+    for mode in modes:
+        result = eliminate(reduced_chip, mode, **options)
+        reduced_chip = result.chip
+    restored = Chip.from_dict(json.loads(json.dumps(reduced_chip.to_dict())))
+
+    # A section filters the outbound leg, unless kept readouts lie only downstream of it.
+    plane = restored.resolve().slh.external_channels[0].reference
+    assert ([element.label for element in plane.inbound], [element.label for element in plane.outbound]) == legs
+    # Emission from ports beyond the section errs by κ/(2π|Δf|), 0.016 for r3 when r2 goes.
+    section = result.validity[f"{modes[-1]}_transmission"]
+    assert section["kappa_over_delta"] == pytest.approx(kappa_over_delta, rel=2e-2, abs=1e-12)
+    assert section["is_valid"]
+    assert f"{modes[-1]}_transmission κ/Δ={float(section['kappa_over_delta']):.2g} ✓" in result.describe()
+
+    frequencies = np.concatenate([pole + np.array([-1e-3, 0.0, 1e-3]) for pole in (6.5593, 6.6581, 6.7569)])
+    full = np.asarray(VNA(chip).sweep(frequencies).matrix)[:, 0, 0]
+    reduced = np.asarray(VNA(restored).sweep(frequencies).matrix)[:, 0, 0]
+    # Reducing the line's own Hamiltonian term with the chip moves the kept dips by 8e-3.
+    # A second removal that drops its readout's internal loss errs by 0.6 at that dip.
+    assert np.max(np.abs(full - reduced)) < bound
 
 
 def _bus_readout_chip(port_count: int = 1) -> Chip:
@@ -178,9 +230,9 @@ def test_field_elimination_transforms_the_port_onto_every_survivor(method) -> No
     np.testing.assert_allclose(0.05 * abs(lowering[0, excited_q1]) ** 2, 0.05 * 0.06**2, rtol=2e-2)
 
 
-def _issue_readout_chip(g: float = 0.06) -> Chip:
+def _issue_readout_chip(g: float = 0.06, *, internal_quality_factor: float | None = None) -> Chip:
     qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q", T1=20000.0)
-    resonator = Resonator(freq=6.0, levels=3, label="r")
+    resonator = Resonator(freq=6.0, levels=3, label="r", internal_quality_factor=internal_quality_factor)
     network = PortNetwork(label="m")
     network.port("r", target=resonator, rate=0.05)
     return Chip([qubit, resonator], [Capacitive(qubit, resonator, g=g)], port_network=network, approximation=RWA())
@@ -200,21 +252,40 @@ def test_reduced_boundary_reproduces_the_full_reflection(build, mode, method) ->
     full = np.asarray(VNA(chip).sweep(frequencies).matrix)[:, 0, 0]
     reduced = np.asarray(VNA(eliminate(chip, mode, method=method).chip).sweep(frequencies).matrix)[:, 0, 0]
 
-    # The dropped reflection |S_r - 1| is about κ/(2π|Δ|) = 8e-3. With it kept,
-    # the residual is the next order, measured at 2.8 (g/Δ)² κ/(2π|Δ|) = 8e-5.
+    # The dropped reflection |S_r - 1| is about κ/(2π|Δ|) = 8e-3. With the
+    # dressed section kept, the exact route leaves 1e-7 here. SW leaves 5e-5,
+    # 1.8 (g/Δ)² κ/(2π|Δ|), from its reduced qubit and port, not the section.
     next_order = 0.06**2 * 0.05 / (2 * np.pi)
     assert np.max(np.abs(full - reduced)) < 4 * next_order
 
 
-@pytest.mark.validation
-def test_reduced_boundary_residual_is_second_order_in_the_coupling() -> None:
-    """Halving g quarters the residual: it is Purcell dispersion, not a g-independent missing reflection."""
+@pytest.mark.parametrize("method", ["sw", "exact"])
+def test_reduced_boundary_reproduces_the_reflection_across_the_eliminated_resonance(method) -> None:
+    """VNA on the reduced chip matches the full chip across the eliminated mode's own dip."""
     from quchip import VNA
 
-    frequencies = np.linspace(4.8, 5.2, 5)
+    chip = _issue_readout_chip(internal_quality_factor=1e4)
+    frequencies = chip.freq("r") + np.linspace(-0.02, 0.02, 21)
+    full = np.asarray(VNA(chip).sweep(frequencies).matrix)[:, 0, 0]
+    reduced = np.asarray(VNA(eliminate(chip, "r", method=method).chip).sweep(frequencies).matrix)[:, 0, 0]
+
+    # Bare section values put the dip 3.6 MHz, half a linewidth, too low. With
+    # dressed values, the exact route leaves the Purcell dispersion, below
+    # (g/Δ)² κ/(2π|Δ|). SW also misses the fourth-order energy g⁴/Δ³, which
+    # moves |S| by about 8π g⁴/(κ|Δ|³) = 6.5e-3.
+    next_order = 0.06**2 * 0.05 / (2 * np.pi)
+    bound = 2 * next_order if method == "exact" else 2 * 8 * np.pi * 0.06**4 / 0.05
+    assert np.max(np.abs(full - reduced)) < bound
+
+
+@pytest.mark.validation
+def test_reduced_boundary_residual_is_second_order_in_the_coupling() -> None:
+    """Halving g quarters the residual across the eliminated dip, as Purcell dispersion predicts."""
+    from quchip import VNA
 
     def residual(g: float) -> float:
         chip = _issue_readout_chip(g)
+        frequencies = chip.freq("r") + np.linspace(-0.02, 0.02, 41)
         full = np.asarray(VNA(chip).sweep(frequencies).matrix)[:, 0, 0]
         reduced = np.asarray(VNA(eliminate(chip, "r", method="exact").chip).sweep(frequencies).matrix)[:, 0, 0]
         return float(np.max(np.abs(full - reduced)))
@@ -275,8 +346,8 @@ def test_second_readout_elimination_carries_the_earlier_transformed_port(method)
         assert reduced.port_network is not None
         assert {"r1_reflection", "r2_reflection"} <= {component.label for component in reduced.port_network.components}
         sweeps.append(np.asarray(VNA(reduced).sweep(frequencies).matrix))
-    # The orders differ only in higher-order dressing, measured at 5e-8, well
-    # below either reduction's residual against the full chip (about 3e-6).
+    # The orders differ by less than 1e-12, well below either reduction's
+    # residual against the full chip (2e-8 exact, 1e-7 SW).
     np.testing.assert_allclose(sweeps[0], sweeps[1], atol=2e-7)
 
 
@@ -308,8 +379,8 @@ def test_doubly_reduced_boundary_reproduces_the_full_two_port_response() -> None
     full = np.asarray(VNA(chip).sweep(frequencies).matrix)
     reduced = np.asarray(VNA(_eliminate_in_order(chip, ("r1", "r2"), "exact")).sweep(frequencies).matrix)
 
-    # Each reflection misses 2.8 (g/Δ)² κ/(2π|Δ|) of its own readout mode, as
-    # for a single elimination; transmission between the ports is far smaller.
+    # With dressed sections, each reflection misses less than 0.1 (g/Δ)² κ/(2π|Δ|)
+    # of its own readout mode. Transmission misses less than 0.1 of the smaller one.
     next_order = [0.04**2 / detuning**2 * 0.01 / (2 * np.pi * detuning) for detuning in (1.232, 1.465)]
     for index, bound in enumerate(next_order):
         assert np.max(np.abs(full[:, index, index] - reduced[:, index, index])) < 4 * bound

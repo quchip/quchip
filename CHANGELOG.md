@@ -8,17 +8,27 @@ This file records notable user-visible changes to quchip.
 
 #### Changes and migration
 
-- `eliminate()` of a port-coupled mode keeps the mode's reflection on the
-  port's plane as a `PortNetwork.mode_reflection(...)` reference section.
+- For a port alone on its plane, `eliminate()` keeps the mode's reflection as a
+  `PortNetwork.mode_reflection(...)` reference section.
+  The section uses the mode's dressed transition and scales both external
+  and internal rates by its dressed lowering weight.
   Before this change, the reduced boundary kept only the transformed port. So
   VNA on the reduced chip missed the mode's reflection by approximately κ/Δ
-  (1e-2 in the reported example). Now it matches the full chip up to a
-  correction of order (g/Δ)²κ/Δ (8e-5). A mode with several ports, or a port
-  whose plane also carries other fields, now raises, so keep such a mode in the
-  model. ([#76](https://github.com/quchip/quchip/issues/76))
+  (1e-2 in the reported example). Exact reduction now leaves a correction of
+  order (g/Δ)²κ/Δ, including across the eliminated resonance (3e-5 in the
+  reported example). The SW route also misses frequency shifts beyond second
+  order. They are of order g⁴/Δ³ with one survivor, and 2g₁g₂J/(Δ₁Δ₂) when a
+  coupling J joins two survivors of the mode. A mode with several ports, or a
+  plane carrying fields that do not pass its port in series, now raises.
+  Keep such a mode in the model. ([#76](https://github.com/quchip/quchip/issues/76))
 
 #### New features
 
+- `eliminate()` removes a readout whose port shares a feedline with other ports.
+  `PortNetwork.mode_transmission(...)` keeps its dressed transmission as a
+  one-pass reference section. The result reports the field error for kept ports
+  beyond the section as `kappa_over_delta`.
+  ([#101](https://github.com/quchip/quchip/issues/101))
 - You can eliminate port-coupled modes on chips with more than two devices. The
   transformed port acts jointly on every survivor. Stationary-tone frame
   planning keeps each port band's sign, so VNA accepts the joint operator. A
@@ -55,6 +65,10 @@ This file records notable user-visible changes to quchip.
 
 #### Fixes
 
+- A second elimination keeps the removed mode's internal loss in its section,
+  including loss that an earlier reduction carried to several devices.
+  Previously, S21 erred by up to 0.6 at that resonance.
+  ([#101](https://github.com/quchip/quchip/issues/101))
 - `eliminate(..., method="exact")` of a chip whose approximation conserves total
   excitation number, such as `RWA()`, now diagonalizes each excitation sector
   separately. Retained terms no longer carry ~1e-12 entries between sectors,
@@ -93,6 +107,10 @@ This file records notable user-visible changes to quchip.
   its two devices. Couplings of 0.03 and 0.02 GHz at a 2 GHz detuning both
   read 0.025, not 0.015 and 0.010.
   ([#90](https://github.com/quchip/quchip/issues/90))
+- `eliminate(..., method="exact")` also diagonalizes each excitation sector of a
+  chip whose readouts share a cascade feedline. Its retained terms then declare
+  conservation, so `VNA.sweep()` of the reduced chip keeps the weak-probe route.
+  ([#99](https://github.com/quchip/quchip/issues/99))
 
 #### Performance
 
@@ -135,6 +153,14 @@ This file records notable user-visible changes to quchip.
   per-call option scope, which rebuilt every data-layer dispatcher.
   `steadystate_batch()` over 40 points runs 5.4 times faster, and
   `VNA.finite_power()` over 44 points runs 3.2 times faster.
+- `VNA.sweep()` of a chip whose readouts share a cascade feedline now solves
+  weak-probe scattering in the one-excitation block. The cascade term conserves
+  total excitation number when both ports of each pair lower it by one.
+  Previously, any cascade term sent the sweep to the stationary solve. On one
+  machine, a 31-point sweep with two transmon readouts on one line (36 states)
+  takes 0.01 s instead of 0.97 s. With three readouts (216 states), it takes
+  0.02 s, and the stationary solve takes 205 s for two points.
+  ([#99](https://github.com/quchip/quchip/issues/99))
 
 #### Compatibility
 

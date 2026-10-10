@@ -275,7 +275,8 @@ no physical sides. Connect their input and output terminals directly or with `ne
 Network exposures define the order of the external channels, and their adjacent reference sections
 move the incident and reported reference planes. The compiler removes these sections from each leg
 before it forms the instantaneous `S`, `L`, and `H`. A section on a reflection line contributes once
-inbound and once outbound. A reference section that is not adjacent to an exposure raises.
+inbound and once outbound, unless it is a one-pass section.
+A reference section that is not adjacent to an exposure raises.
 
 `network.delay(...)` is a reference-plane shift, not retardation. It changes fields at exposure
 planes but adds no memory to the dynamical SLH core, which is Markovian throughout. Enter the
@@ -326,6 +327,13 @@ field that crosses one leg, such as emission from the devices behind it, gets
 phase `1 - i kappa_e / (2 Delta)` of a device detuned by `Delta` from the mode.
 Its parameters are tracked like those of `network.filter(...)`, and the section
 serializes.
+
+`network.mode_transmission(...)` adds a one-pass passive reference section.
+Side 1 to side 2 multiplies the field by the full `S_r(f)`, without a square root.
+Reverse propagation is transparent, so the section acts on one leg only.
+Its parameters are `freq` in GHz and `external_rate` and `internal_rate` in 1/ns.
+The internal-loss bath is vacuum. quchip tracks these parameters like those of
+`network.filter(...)`, and the section serializes.
 
 `network.amplifier(...)` adds a phase-preserving reference section on the
 output line with power gain `G` and input-referred symmetrized added noise
@@ -780,9 +788,10 @@ The engine then applies the inbound and outbound factors to that response.
 `VNA.sweep()` extends this form to pump-free models that conserve the total
 energy-level index `N` but are not harmonic, e.g. Duffing transmons, pure
 dephasing, or reduced chips with retained terms. The resolved static Hamiltonian
-must conserve `N` (an approximation such as `RWA()` that keeps only zero-total
-bands, declared retained terms, and no cascade-generated term). Every port must
-lower `N` by one. Every other channel must lower `N` by one or conserve it.
+must conserve `N`. The approximation must keep only zero-total bands, as `RWA()`
+does, and retained terms must declare conservation. Every port must lower `N` by
+one. A cascade-generated term `Im(L2^dagger S2 L1)`, as on a shared feedline,
+then also conserves `N`. Every other channel must lower `N` by one or conserve it.
 Every input must be vacuum. The vacuum is then stationary, and to first order in
 the probe the coherences `|1_j><0|` stay in the one-excitation block. The engine
 projects the lab-frame model onto the vacuum `|0>` and the states `|1_j>` that
@@ -1216,8 +1225,9 @@ When `chip.approximation` keeps only bands of zero total weight, as `RWA()` does
 conserves the total energy-level index. The exact route then diagonalizes each total-excitation
 sector separately, so its retained Hamiltonian, jump operators and coordinate map have exact zeros
 between sectors, with no round-off from near-degeneracies across sectors. This requires earlier
-retained terms to declare the same conservation and no cascade-generated network Hamiltonian to be
-present. Otherwise, the route diagonalizes the full matrix.
+retained terms to declare the same conservation. Each port pair that generates a cascade
+Hamiltonian, as on a shared feedline, must lower the index by one at both ports. Otherwise, the
+route diagonalizes the full matrix.
 
 `method="exact"` validates the ground, the single excitations of touching survivors, and their pair
 excitations. Each diagnostic label needs a distinct majority dressed eigenstate, and the full
@@ -1258,22 +1268,89 @@ concrete values and under `jax.grad` or `jax.jit`.
 
 Consider an external default port on a declared harmonic Fock mode. The complete
 `c_eff` matrix becomes that port's joint operator on every survivor, in their
-authored coordinates. The port's rate, phase, scalar scattering and existing
-reference sections are kept. The eliminated mode's own reflection,
+authored coordinates. The reduction keeps the port's rate, phase, scalar
+scattering and existing reference sections. For a port alone on its plane,
+it places a `network.mode_reflection(...)` section at the core end.
+This section keeps the eliminated mode's own reflection:
 
 ```text
-S_r(f) = ((kappa_i - kappa_e)/2 - i Omega) / ((kappa_e + kappa_i)/2 - i Omega),
-Omega = 2π (f - f_mode),
+S_r(f) = ((w kappa_i - w kappa_e)/2 - i Omega) / ((w kappa_e + w kappa_i)/2 - i Omega)
+Omega = 2π (f - f_tilde)
+f_tilde = E(1_tilde_m) - E(0_tilde)
+w = |<0_tilde|a|1_tilde_m>|^2
 ```
 
-is not part of `c_eff`. It is kept as a `network.mode_reflection(...)` section
-at the core end of the port's plane, so a reflection sweep obeys
-`S_full(f) ≈ S_r(f) S_reduced(f)`. The remaining difference is the frequency
-dependence of the Purcell coupling across the sweep, of order
-`(g/Delta)^2 kappa_e/Delta`. `kappa_e` is the port rate. `kappa_i` is the
-eliminated mode's internal damping of `<a>`, read from its own channels.
-Lowering channels add their rate, raising channels subtract it, and pure
-dephasing adds it. The section's internal-loss bath is vacuum.
+Here, `a` is the mode's lowering operator in the full product energy basis.
+The section uses the dressed transition and rates `w kappa_e` and `w kappa_i`.
+Both routes use the same static Hamiltonian that they reduce, under the
+source chip's approximation. The exact route reuses its labeled eigenvalues
+and eigenvectors for the transition and weight, without another diagonalization.
+The SW route computes complete second-order energies:
+
+```text
+eps(n) = h_nn + sum_{k != n} |h_kn|^2 / (h_nn - h_kk)
+f_tilde = eps(1_m) - eps(0)
+```
+
+The sum includes every intermediate state, including couplings within Q.
+It uses the guarded division of the SW generator, so a coupled degeneracy raises.
+For the weight, SW uses the ground and mode-excitation columns
+of `exp(-S2)`. The first-order generator `S2` includes only couplings touching
+either state. This exponential makes the first-order states orthonormal without
+diagonalization.
+
+`kappa_e` is the bare port rate. The mode's own channels supply `kappa_i`,
+its internal damping of `<a>`. This includes the mode's loss that an earlier
+elimination carried to several devices. The sum reads every channel whose
+support contains the mode, in energy coordinates:
+
+```text
+kappa_i = sum_L -2 rate_L Re <0|D†[L](a)|1_mode>
+```
+
+Here, `a` acts as the identity on the other support devices.
+A channel that commutes with `a` adds nothing. Lowering channels add their rate, raising
+channels subtract it, and pure dephasing adds it. The section drops damping
+from survivor and other channels, of order `(g/Delta)^2 gamma_s`.
+Its internal-loss bath is vacuum. The section keeps the bare frequency of
+the first touching survivor as `reference_freq` to select the square-root branch.
+
+A reflection sweep obeys `S_full(f) ≈ S_r(f) S_reduced(f)`.
+The exact route leaves the frequency dependence of the Purcell coupling,
+of order `(g/Delta)^2 kappa_e/Delta`, including across the eliminated resonance.
+With frequencies in GHz and rates in 1/ns, the scale is
+`(g/Delta)^2 kappa_e/(2π |Delta|)`.
+SW misses the energy shifts beyond second order. The estimates that follow
+assume RWA couplings `g_i` to survivors at detunings `Delta_i = f_mode - f_i`,
+with `|g_i|` much smaller than `|Delta_i|`. With one survivor, the leading
+frequency error is the fourth-order term `g^4/Delta^3`. Several survivors
+without a coupling loop also leave a fourth-order error. A coupling `J` between
+two survivors that both couple to the mode closes a loop. It adds the
+third-order term `2 g_1 g_2 J/(Delta_1 Delta_2)`. A frequency error `delta_f`
+changes the complex scattering amplitude by up to `8π delta_f/(w kappa_e)`
+near the dip.
+
+On a shared feedline, the reduction excludes network-generated Hamiltonian
+terms from both its input and its retained correction. The network regenerates
+these terms from the transformed ports. Reducing them with the chip Hamiltonian
+would shift kept resonances by treating only part of the directional coupling.
+A `network.mode_transmission(...)` section keeps the removed mode's full
+`S_r(f)` on one leg. The section uses the dressed frequency and rates above.
+It uses the outbound leg unless kept readout ports lie only downstream.
+Then it uses the inbound leg. Ports that an earlier reduction transformed
+do not count as kept readout ports.
+
+Either leg preserves the weak-probe response from the line input.
+Near kept-port frequencies beyond the section, emitted or received fields
+err by up to `kappa_e / (2π |f_k - f_R|)`.
+Here, `kappa_e` is the section's dressed external rate.
+The frequencies `f_k` and `f_R` are the incoming target and removed-mode
+frequencies before this reduction. Beyond means downstream for the outbound
+leg and upstream for the inbound leg.
+The section's `validity` entry reports `kappa_over_delta` using the smallest
+absolute detuning among those kept ports. It reports zero when none lie beyond.
+The entry sets `is_valid` when `kappa_over_delta < 0.1`.
+Reflection sections add no such entry.
 
 A port that an earlier elimination transformed already acts on every survivor
 and reaches a later eliminated mode only through that dressing. The later
@@ -1282,9 +1359,8 @@ you can eliminate both readout modes of a chip in either order. Like an
 inherited channel, it drops its direct scattering through the later mode, of
 order `rate |<0|L|1>|^2 / Delta`. Rather than approximate or double-count them,
 quchip rejects custom or collective boundary operators, projected survivors,
-and a mode with several ports. It also rejects a plane that also carries other
-fields, a nonlinear eliminated boundary target, and ports that participate in a
-cascade-generated Hamiltonian.
+and a mode with several ports. It also rejects a nonlinear eliminated boundary
+target and a plane carrying fields that do not pass the port in series.
 
 The result's `notes` record that the projection is exact for the
 *spectrum* but approximate for *dissipation*, because the discarded
