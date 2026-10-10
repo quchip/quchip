@@ -53,6 +53,12 @@ This file records notable user-visible changes to quchip.
   assemble a superoperator whose estimated peak exceeds the available memory.
   Previously, the operating system killed them. The dynamiqs stationary Liouvillian
   uses the same check. ([#80](https://github.com/quchip/quchip/issues/80))
+- QuTiP preserves envelope steps listed in `sampling_times()` after pulse
+  starts and line delays, within floating-point precision. Previously, these
+  steps could become interpolation ramps. Unlisted steps still require explicit
+  feature times. Pulse edges at zero no longer cause interpolation overflow
+  warnings when the solve starts before zero.
+  ([#104](https://github.com/quchip/quchip/pull/104))
 
 #### Performance
 

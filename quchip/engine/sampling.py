@@ -47,23 +47,39 @@ def _concrete(value: Any) -> np.ndarray:
     return array
 
 
-def signal_feature_times(signal: Any, shift: float = 0.0) -> list[np.ndarray]:
+def signal_features(signal: Any, offsets: tuple[float, ...] = (0.0,)) -> list[tuple[np.ndarray, tuple[float, ...]]]:
+    """Return each feature's local times and the clock offsets above it.
+
+    The offsets are the cumulative shifts from the caller's clock, starting at
+    zero. The last offset places the local times in absolute time. Each local
+    time is float64 and lies on the clock where signal evaluation compares it.
+    """
     if isinstance(signal, Shift):
-        return signal_feature_times(signal.child, shift + float(_concrete(signal.delta_t)))
+        if isinstance(signal.child, Window):
+            # Shift.evaluate adds the shift to the window edges in their own precision,
+            # such as float32, and compares the edges on the caller's clock.
+            window = signal.child
+            edges = _concrete([window.start + signal.delta_t, window.stop + signal.delta_t]).astype(float)
+            return [(edges, offsets), *signal_features(Shift(window.child, signal.delta_t), offsets)]
+        return signal_features(signal.child, offsets + (offsets[-1] + float(_concrete(signal.delta_t)),))
     if isinstance(signal, CoefficientRef):
         raise NotImplementedError("Pass an explicit tlist for a custom TimeCoefficient with opaque time dependence.")
     features = []
     if isinstance(signal, Window):
-        features.append(_concrete([signal.start, signal.stop]) + shift)
+        features.append((_concrete([signal.start, signal.stop]).astype(float), offsets))
     if isinstance(signal, EnvelopeRef):
         times = _concrete(signal.envelope.sampling_times())
         duration = float(_concrete(signal.envelope.duration))
         if times.ndim != 1 or np.any((times < 0) | (times > duration)):
             raise ValueError("Envelope sampling_times() must return local times between zero and duration.")
-        features.append(times + shift)
+        features.append((times.astype(float), offsets))
     for child in signal_children(signal):
-        features.extend(signal_feature_times(child, shift))
+        features.extend(signal_features(child, offsets))
     return features
+
+
+def signal_feature_times(signal: Any) -> list[np.ndarray]:
+    return [times + offsets[-1] for times, offsets in signal_features(signal)]
 
 
 def _problem_scales(problem: Any) -> tuple[float, list[tuple[float, Any]], list[np.ndarray]]:
