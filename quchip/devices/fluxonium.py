@@ -29,22 +29,22 @@ class Fluxonium(DeviceModel):
     phi_ext : float, default 0.0
         External reduced flux :math:`\Phi_{ext}/\Phi_0`.
     levels : int or None, default None
-        Number of eigenstates projected into the chip. Required when
-        ``basis="eigen"``; ``None`` uses the native dimension for the native
+        Number of eigenstates projected into the chip, required when
+        ``basis="eigen"``. ``None`` uses the native dimension for the native
         basis.
     label : str or None, default None
         Device label.
     num_basis : int, keyword-only, default 400
-        Odd-or-even phase-grid size; must be at least 3.
+        Odd-or-even phase-grid size, at least 3.
     phi_max : float, keyword-only, default 5*pi
         Positive half-width of the phase grid.
     basis : {None, "native", "eigen"}, keyword-only
-        Requested solver basis. ``None`` inherits the chip policy and uses
-        native basis for standalone resolution; ``native`` keeps the phase
-        grid, while ``eigen`` projects onto ``levels`` energy states.
+        Requested solver basis. ``None`` inherits the chip policy and uses the
+        native basis for standalone resolution. ``native`` keeps the phase
+        grid, and ``eigen`` projects onto ``levels`` energy states.
     collapse_model : {"fermi_golden", "ladder"}, default "fermi_golden"
-        Relaxation construction. The Fermi-golden-rule option requires a
-        ``coupling_channel`` when ``T1`` is set.
+        Relaxation construction. If ``T1`` is set, the Fermi-golden-rule option
+        requires a ``coupling_channel``.
     coupling_channel : {None, "charge", "flux"}, default None
         Physical operator used for matrix-element relaxation: ``"charge"``
         selects :math:`n`, and ``"flux"`` selects :math:`\varphi`.
@@ -52,13 +52,13 @@ class Fluxonium(DeviceModel):
         Non-negative dimensionless cutoff on squared matrix-element ratios
         relative to the selected ``0 -> 1`` transition.
     T1, T2 : float or None
-        Relaxation and dephasing times in ns; ``None`` disables each channel.
+        Relaxation and dephasing times in ns. ``None`` disables each channel.
     thermal_occupation : float or None
-        Mean thermal occupation (dimensionless); ``None`` disables thermal
+        Mean thermal occupation (dimensionless). ``None`` disables thermal
         absorption.
     noise : keyword arguments
-        The concrete constructor also accepts these inherited noise fields as
-        keyword arguments for compatibility with the declarative device API.
+        The constructor also accepts these inherited noise fields as keyword
+        arguments for compatibility with the declarative device API.
 
     References
     ----------

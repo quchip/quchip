@@ -1,7 +1,7 @@
 """Solve-time coherent field controls.
 
 Field inputs share the sequence scheduling grammar with classical drive lines,
-but remain independent of :class:`~quchip.control.drive.BaseDrive` and
+but they stay independent of :class:`~quchip.control.drive.BaseDrive` and
 :class:`~quchip.control.equipment.ControlEquipment`. Their target is an
 external SLH exposure rather than a device or coupling.
 """
@@ -21,7 +21,7 @@ class ControlEndpoint(Protocol):
 
     Existing :class:`~quchip.control.drive.BaseDrive` implementations satisfy
     this protocol without inheritance. A field endpoint supplies the same
-    label, target-label, and signal-building boundary while owning different
+    label, target-label, and signal-building boundary, but it owns different
     downstream physics.
     """
 
@@ -42,15 +42,15 @@ class CoherentInput:
     r"""Coherent incident field bound to one external network exposure.
 
     The scheduled analytic signal is interpreted directly as
-    ``beta(t) = A(t) exp(i theta) exp(-i 2*pi*f*t)`` in ``1/sqrt(ns)``.
-    Consequently ``abs(beta)**2`` is photon flux in photons/ns.
+    ``beta(t) = A(t) exp(i theta) exp(-i 2*pi*f*t)`` in ``1/sqrt(ns)``, so
+    ``abs(beta)**2`` is photon flux in photons/ns.
 
     Parameters
     ----------
     exposure : str or object
         External network exposure label.
     label : str, optional
-        Endpoint label; generated when omitted.
+        Endpoint label, generated if omitted.
     """
 
     exposure: str
@@ -78,7 +78,7 @@ class CoherentInput:
         pulse : object
             Scheduled pulse record.
         target : object, optional
-            Ignored; accepted to satisfy the control-endpoint protocol.
+            Ignored. Accepted to satisfy the control-endpoint protocol.
         """
         _ = target
         return AnalyticSignal.from_pulse(pulse)

@@ -1,14 +1,14 @@
 """Dressed-state analysis owned by :class:`quchip.chip.chip.Chip`.
 
-``ChipAnalysis`` diagonalizes the lab-frame static Hamiltonian, assigns
-bare-state labels to dressed eigenvectors by overlap maximization, and
-exposes derived quantities (dressed eigenenergies, transition
-frequencies, dispersive shifts, effective subspace Hamiltonians). All
-results cache against a structural signature and refresh automatically
-when any device or coupling parameter mutates.
+``ChipAnalysis`` diagonalizes the lab-frame static Hamiltonian and assigns
+bare-state labels to dressed eigenvectors by overlap maximization. It also
+exposes derived quantities: dressed eigenenergies, transition frequencies,
+dispersive shifts, and effective subspace Hamiltonians. All results cache
+against a structural signature and refresh automatically when a device or
+coupling parameter changes.
 
-Dressing is always computed in the lab frame — frame selection never
-alters dressed data.
+Dressing is always computed in the lab frame, so the frame selection never
+changes dressed data.
 
 References
 ----------
@@ -89,38 +89,38 @@ class DressedResult:
     eigenvalues : array-like
         Sorted dressed eigenvalues in GHz.
     eigenstates : array-like
-        Backend eigenstate objects in the same order as ``eigenvalues``.
-        Materialized lazily on first access from the underlying
-        :class:`~quchip.backend.containers.EigensystemData` — the dressing /
-        sweep hot path never touches them, so the per-column backend kets are
-        only built when a caller actually asks for states.
+        Backend eigenstate objects in the same order as ``eigenvalues``. They
+        are materialized lazily on first access from the underlying
+        :class:`~quchip.backend.containers.EigensystemData`. The dressing and
+        sweep hot path never touches them, so the backend builds per-column
+        kets only on request.
     state_map : dict[tuple[int, ...], int]
-        Assignment from bare product-basis label (one int per device) to
-        the dressed eigenstate index it overlaps most with.
+        Map from each bare product-basis label (one int per device) to the
+        dressed eigenstate index with the largest overlap.
     dressed_eigenvalues : dict[tuple[int, ...], Any]
-        Dressed eigenvalue for each assigned bare label — direct lookup
-        path for :meth:`Chip.energy`.
+        Dressed eigenvalue for each assigned bare label, the direct lookup path
+        for :meth:`Chip.energy`.
     assignment_overlaps : dict[tuple[int, ...], float]
-        ``|⟨bare|dressed⟩|²`` of each assignment; values below
+        ``|⟨bare|dressed⟩|²`` of each assignment. Values below
         ``overlap_threshold`` flag hybridization.
     hybridized_labels : tuple[tuple[int, ...], ...]
-        Bare labels whose assignment quality is below ``overlap_threshold``.
-        A non-empty tuple triggers a user warning at dress time.
+        Bare labels whose assignment quality is below ``overlap_threshold``. A
+        non-empty tuple triggers a user warning at dress time.
     bare_labels : tuple[tuple[int, ...], ...]
-        Product energy-level labels exposed by the chip's resolved local
-        dimensions, in chip order.
+        Labels of the product energy levels exposed by the chip's resolved
+        local dimensions, in chip order.
     bare_labels_by_dressed_index : dict[int, tuple[int, ...]]
-        Inverse of :attr:`state_map` — dressed index → assigned bare label.
+        Inverse of :attr:`state_map`: dressed index → assigned bare label.
     eigenvector_matrix : array-like or None
-        Columns = dressed eigenvectors in the resolved solver basis. Used
-        for :meth:`ChipAnalysis.operator_in_dressed_basis` and
+        Dressed eigenvectors as columns, in the resolved solver basis, used by
+        :meth:`ChipAnalysis.operator_in_dressed_basis` and
         :meth:`ChipAnalysis.state_components`.
     overlap_threshold : float
         Minimum overlap for a confident assignment.
     labeling : str
-        Algorithm id (currently only ``"DE"``), resolved to the
-        confidence-ordered row-greedy overlap-matching policy actually run
-        by :meth:`ChipAnalysis.dress` (:func:`~quchip.chip.dressing.assign_rowwise_greedy`).
+        Algorithm id (currently only ``"DE"``). It resolves to the confidence-ordered
+        row-greedy overlap-matching policy run by :meth:`ChipAnalysis.dress`
+        (:func:`~quchip.chip.dressing.assign_rowwise_greedy`).
     """
 
     eigenvalues: Any
@@ -289,8 +289,8 @@ def _is_eigenstate(state: State, result: "EngineResult", backend: Any) -> bool:
 class KerrMatrix:
     """Labeled dressed self-Kerr and cross-Kerr coefficients in GHz.
 
-    ``labels`` follows chip device order. ``values`` is a real symmetric
-    square array: diagonal entries are dressed anharmonicities and
+    ``labels`` follows chip device order, and ``values`` is a real symmetric
+    square array. Diagonal entries are dressed anharmonicities, and
     off-diagonal entries are full-pull cross-Kerr shifts.
 
     Parameters
@@ -382,21 +382,22 @@ def kerr_entry(
 class ChipAnalysis:
     """Dressed-state analysis, caching, and dressed-basis helpers.
 
-    Every :class:`~quchip.chip.chip.Chip` owns one ``ChipAnalysis`` as
-    ``chip._analysis``. The chip forwards common dressed quantities; the
-    namespace itself exposes the frozen static contract through
-    :meth:`engine_result` and keeps less-common analysis methods grouped.
+    Every :class:`~quchip.chip.chip.Chip` owns one ``ChipAnalysis``, and the
+    chip forwards common dressed quantities. The namespace exposes the frozen
+    static contract via :meth:`engine_result` and keeps less-common analysis
+    methods grouped.
 
-    Caching: :meth:`dress` keys its cache on a structural signature
-    covering backend identity and the ``state_version`` of every device
-    and coupling. Any mutation that bumps a version
-    invalidates the cache on next access.
+    Caching: :meth:`dress` keys its cache on a structural signature covering
+    the backend identity and the ``state_version`` of every device and
+    coupling. Any change that increments a version invalidates the cache on the
+    next access.
 
     Parameters
     ----------
     chip : Chip
         Chip whose static lab-frame Hamiltonian is analyzed under its approximation.
     """
+    # The chip stores its `ChipAnalysis` as `chip._analysis`.
 
     def __init__(self, chip: "Chip") -> None:
         self._chip = chip
@@ -668,39 +669,38 @@ class ChipAnalysis:
     ) -> DressedResult:
         """Diagonalize the lab-frame Hamiltonian and assign bare-state labels.
 
-        Dressing keeps network-generated Hamiltonian terms, so the assigned
-        eigenstates match the solver Hamiltonian; degenerate cascaded modes
-        therefore dress into superpositions. Assignment goes through the ``label_eigensystem`` kernel
-        (:mod:`quchip.chip.dressing`) with ``assign_rowwise_greedy`` —
-        confidence-ordered row-greedy matching as a pure ``lax.scan``,
-        ``O(D**2)`` in the Hilbert dimension versus the ``O(D**3)`` global
-        variant. It is identical to ``assign_global_greedy`` in the
-        dispersive / weak-hybridization regime and can differ only on
-        strongly-hybridized chips, where the assignment is already
-        approximate (those labels are flagged below). Bare labels whose
-        best match is below ``overlap_threshold`` are flagged
-        :attr:`DressedResult.hybridized_labels` and trigger a user warning.
+        Dressing keeps network-generated Hamiltonian terms, so the assigned eigenstates match the
+        solver Hamiltonian and degenerate cascaded modes dress into superpositions. The assignment
+        uses the ``label_eigensystem`` kernel (:mod:`quchip.chip.dressing`) with
+        ``assign_rowwise_greedy``, i.e. confidence-ordered row-greedy matching as a pure
+        ``lax.scan``. Its cost is ``O(D**2)`` in the Hilbert dimension, versus ``O(D**3)`` for the
+        global variant.
+
+        The result is identical to ``assign_global_greedy`` in the dispersive or weak-hybridization
+        regime. It can differ only on strongly hybridized chips, where the assignment is already
+        approximate and the labels are flagged. Bare labels whose best match is below
+        ``overlap_threshold`` are flagged in :attr:`DressedResult.hybridized_labels` and trigger a
+        user warning.
 
         :class:`DressedResult` is the eager, dict-materialized view.
-        Materialization concretizes the assignment indices and is **not
-        traceable** — call :meth:`energy`, :meth:`freq`,
-        :meth:`dispersive_shift`, or :meth:`state` from inside
-        ``jax.jit``/``grad``/``vmap``; those route through the array
-        kernel directly.
+        Materialization makes the assignment indices concrete and is **not
+        traceable**. In ``jax.jit``/``grad``/``vmap``, call :meth:`energy`,
+        :meth:`freq`, :meth:`dispersive_shift`, or :meth:`state`, which go
+        directly through the array kernel.
 
         Parameters
         ----------
         overlap_threshold : float
             Confidence cutoff for the greedy assignment.
         force : bool
-            Force recomputation even if the signature matches.
+            Force a new calculation even if the signature matches.
         labeling : str
             Currently only ``"DE"`` is implemented.
 
         Returns
         -------
         DressedResult
-            Cached result — mutate at the caller's own risk.
+            Cached result. Callers that modify it do so at their own risk.
         """
         if labeling != "DE":
             raise ValueError(f"Unsupported labeling {labeling!r}. Only 'DE' is implemented.")
@@ -753,16 +753,16 @@ class ChipAnalysis:
     ) -> Any:
         """Dressed eigenvalue (GHz) for the given bare-state label.
 
-        Unspecified devices default to energy level 0. Routes through the
-        :func:`quchip.chip.dressing.label_eigensystem` array kernel, so
-        this is safe inside ``jax.jit``/``grad``/``vmap`` — gradients
-        flow through ``eigenvalues[labeling.indices[bare_idx]]`` to any
-        traced chip parameters.
+        Unspecified devices default to level 0. The method goes through the
+        :func:`quchip.chip.dressing.label_eigensystem` array kernel, so it is
+        safe in ``jax.jit``/``grad``/``vmap``, and gradients flow through
+        ``eigenvalues[labeling.indices[bare_idx]]`` to all traced chip
+        parameters.
 
         Parameters
         ----------
         device_states : mapping or None, default=None
-            Bare product-state levels; unspecified devices use level zero.
+            Bare product-state levels. Unspecified devices use level zero.
         **device_state_kwargs : int
             Per-device energy levels keyed by label.
         """
@@ -836,7 +836,7 @@ class ChipAnalysis:
         Parameters
         ----------
         device_states : mapping or None, default=None
-            Bare product-state levels; unspecified devices use level zero.
+            Bare product-state levels. Unspecified devices use level zero.
         **device_state_kwargs : int
             Per-device energy levels keyed by label.
         """
@@ -849,7 +849,7 @@ class ChipAnalysis:
         Parameters
         ----------
         dressed_index : int
-            Index in ascending dressed-energy order.
+            Index in ascending order of dressed energy.
         """
         if isinstance(dressed_index, bool) or not isinstance(dressed_index, int):
             raise TypeError(f"dressed_index must be an integer, got {type(dressed_index).__name__}")
@@ -867,19 +867,18 @@ class ChipAnalysis:
     ) -> Operator:
         """Transform a local operator into the dressed eigenbasis.
 
-        Computes ``U† O_embedded U`` where ``U`` is the dressed
-        eigenvector matrix in solver coordinates, phase-fixed to the assigned
-        bare-state convention
-        used by :meth:`drive_matrix_elements`. Optional truncation keeps the
-        lowest ``truncate`` dressed levels.
+        Computes ``U† O_embedded U``, where ``U`` is the dressed eigenvector
+        matrix in solver coordinates, phase-fixed to the assigned bare-state
+        convention of :meth:`drive_matrix_elements`. Optional truncation keeps
+        the lowest ``truncate`` dressed levels.
 
         Parameters
         ----------
         device : str or BaseDevice
             Device whose local operator is embedded and transformed.
         op : str or Operator
-            Operator name resolved off the device (e.g. ``"n"``, ``"a"``)
-            or an already-built operator in the local solver basis.
+            Operator name resolved from the device (e.g. ``"n"``, ``"a"``), or
+            an operator already built in the local solver basis.
         truncate : int, optional
             Keep only the lowest ``truncate`` dressed levels of the result.
         """
@@ -924,29 +923,29 @@ class ChipAnalysis:
     ) -> LabelKeyedDict:
         """Return dressed matrix elements of wired drive operators.
 
-        The matrix convention is ``m_j^{fi} = <f~|D_j|i~>``: the final
-        dressed state is the row index and the initial dressed state is the
-        column index. Each dressed eigenvector is phase-fixed so that its
-        overlap with the assigned bare state is real and nonnegative. This
-        makes relative matrix elements between different conditioned
-        transitions independent of the backend's eigenvector phases. Passing
-        a device selects the dressed ground-to-first-excitation transition of
-        that device with every other device in its ground state. Passing
+        The matrix convention is ``m_j^{fi} = <f~|D_j|i~>``, with the final
+        dressed state as row index and the initial dressed state as column
+        index. Each dressed eigenvector is phase-fixed so that its overlap with
+        the assigned bare state is real and nonnegative. Relative matrix
+        elements between different conditioned transitions are therefore
+        independent of the backend's eigenvector phases.
+
+        Passing a device selects its dressed ground-to-first-excitation
+        transition, with every other device in its ground state. Passing
         ``(initial, final)`` mappings selects an arbitrary transition.
 
-        Each drive must expose exactly one local Hamiltonian channel. The
-        signal chain is not applied: this method returns the physical matrix
-        element of each control line's drive operator, which can then be
-        combined with declared signal-chain phasors. This is the weak-drive
-        projection used for effective driven-Hamiltonian coefficients; see
-        Magesan and Gambetta, Phys. Rev. A 101, 052308 (2020),
-        DOI 10.1103/PhysRevA.101.052308.
+        Each drive must expose exactly one local Hamiltonian channel. Without
+        applying the signal chain, the method returns the physical matrix
+        element of each control line's drive operator, for combination with
+        declared signal-chain phasors. This weak-drive projection gives
+        effective driven-Hamiltonian coefficients. See Magesan and Gambetta,
+        Phys. Rev. A 101, 052308 (2020), DOI 10.1103/PhysRevA.101.052308.
 
         Parameters
         ----------
         transition : str, BaseDevice, or tuple[mapping, mapping]
             Device shorthand, or ``(initial, final)`` bare-state mappings.
-            Unspecified devices in either mapping default to level zero.
+            Unspecified devices in each mapping default to level zero.
         drives : sequence[str or BaseDrive], optional
             Wired control lines to evaluate. ``None`` evaluates every line.
             Original or rebound drive objects resolve by label.
@@ -954,20 +953,21 @@ class ChipAnalysis:
         Returns
         -------
         LabelKeyedDict
-            Drive-label mapping of backend-native scalar matrix elements.
-            Values remain JAX-traceable on a JAX-capable backend; each entry
-            is addressable by the drive object or its label.
+            Mapping from drive label to backend-native scalar matrix elements,
+            addressable by drive object or label. On a JAX-capable backend, the
+            values stay JAX-traceable.
 
         Raises
         ------
         ValueError
-            If no control equipment is attached, a selected line is not a
-            device-target drive, or a drive exposes zero or multiple channels.
+            If no control equipment is attached, if a selected line is not a
+            device-target drive, or if a drive exposes zero or multiple
+            channels.
         KeyError
-            If a requested drive label is absent from the attached equipment.
+            If a requested drive label is not in the attached equipment.
         TypeError
-            If ``transition`` is neither a device reference nor a pair of
-            state mappings.
+            If ``transition`` is neither a device reference nor a pair of state
+            mappings.
 
         Examples
         --------
@@ -1080,13 +1080,13 @@ class ChipAnalysis:
     ) -> dict[tuple[int, ...], float]:
         """Leading bare-basis probabilities ``|⟨bare|dressed⟩|²`` of a dressed eigenstate.
 
-        ``state`` may be an ``int`` (direct dressed index) or a mapping
-        of ``{device: Fock}`` (dressed index resolved via label matching).
+        ``state`` can be an ``int`` (direct dressed index) or a mapping of
+        ``{device: Fock}`` (dressed index resolved through label matching).
 
         Parameters
         ----------
         state : int, mapping, or None, default=None
-            Dressed index or bare label; ``None`` uses keyword levels.
+            Dressed index or bare label. ``None`` uses keyword levels.
         n_components : int, default=5
             Maximum number of components returned.
         **device_state_kwargs : int
@@ -1117,13 +1117,13 @@ class ChipAnalysis:
         """Dressed cross-Kerr shift (GHz): ``E(1,1) − E(1,0) − E(0,1) + E(0,0)``.
 
         Equivalent to the static ZZ interaction strength between the two
-        devices with all others grounded. See Blais et al., RMP 93,
+        devices, with all other devices grounded. See Blais et al., RMP 93,
         025005 (2021), §IV.C.
 
         Parameters
         ----------
         device_a, device_b : str or BaseDevice
-            The two devices whose cross-Kerr shift is evaluated.
+            Devices whose cross-Kerr shift is evaluated.
 
         Examples
         --------
@@ -1148,8 +1148,8 @@ class ChipAnalysis:
         """Return the dressed self-Kerr and cross-Kerr matrix in GHz.
 
         Labels and axes follow chip device order. Diagonal entries are dressed
-        anharmonicities; an entry is ``NaN`` when that device has fewer than
-        three resolved levels. Off-diagonal entries use the full-pull
+        anharmonicities, and are ``NaN`` when that device has fewer than three
+        resolved levels. Off-diagonal entries use the full-pull
         ``E11 - E10 - E01 + E00`` convention.
         """
         eigenvalues, _, _, labeling = self._compute_array_labeled()
@@ -1182,21 +1182,20 @@ class ChipAnalysis:
     ) -> np.ndarray:
         """Effective Hamiltonian projected onto a labeled bare subspace.
 
-        Returns a Hermitian matrix in the user-chosen bare-state basis
-        whose eigenvalues are exactly the dressed eigenenergies of the
-        listed bare-label states. The truncated overlap block is Löwdin
-        (``S^{-1/2}``) orthonormalized — the same des-Cloizeaux
-        construction as :func:`quchip.analysis.effective_hamiltonian` —
-        so hybridization with states *outside* the subspace cannot leak
-        absolute dressed energies into the off-diagonal elements.
-        Bridges full-chip dressed physics to the kind of low-dimensional
-        effective model used in dispersive gate design and
-        state-transfer analysis.
+        Returns a Hermitian matrix in the user-selected bare-state basis whose
+        eigenvalues are exactly the dressed eigenenergies of the listed
+        bare-label states. The truncated overlap block is Löwdin (``S^{-1/2}``)
+        orthonormalized, the same des-Cloizeaux construction as
+        :func:`quchip.analysis.effective_hamiltonian`. Hybridization with
+        states *outside* the subspace therefore cannot leak absolute dressed
+        energies into the off-diagonal elements. The method connects full-chip
+        dressed physics to the low-dimensional effective models of dispersive
+        gate design and state-transfer analysis.
 
         Parameters
         ----------
         states : sequence of mapping or tuple[int, ...]
-            The bare-state labels spanning the subspace, each a
+            Bare-state labels spanning the subspace, each a
             ``{device: energy_level}`` mapping or a full chip-ordered level tuple.
         """
         dressed = self._ensure_dressed()
@@ -1211,12 +1210,12 @@ class ChipAnalysis:
         return np.asarray(_h_eff_on_basis(self._chip, labels), dtype=complex)
 
     def dressed_anharmonicity(self, device: str | BaseDevice) -> float:
-        """Return dressed anharmonicity in GHz.
+        """Return the dressed anharmonicity in GHz.
 
         Parameters
         ----------
         device : str or BaseDevice
-            Device label or object; all other devices are grounded.
+            Device label or object. All other devices are grounded.
         """
         index, _ = self._chip._resolve_device_index(device)
         eigenvalues, _, _, kernel_labeling = self._compute_array_labeled()
@@ -1303,7 +1302,7 @@ class ChipAnalysis:
             full ``{device_label: frequency}`` dict for every device.
         when : dict[str | BaseDevice, int], optional
             Spectator Fock indices held fixed while the transition is
-            evaluated; unlisted devices stay in their ground state.
+            evaluated. Unlisted devices stay in their ground state.
         """
         if target is None:
             return self._dressed_frequencies()
@@ -1312,19 +1311,20 @@ class ChipAnalysis:
     def frame_info(self) -> dict[str, Any]:
         """Per-device frame reference frequency ``ω_ref,i`` (GHz).
 
-        Resolves the chip's current frame spec through the same path the
-        engine uses (:func:`quchip.engine.frames.resolve_frame`) and
-        returns a flat ``{device_label: ω_ref,i}`` dict. These are the
-        concrete frequencies the assembler will subtract as
-        ``-Σ_i ω_ref,i n̂_i`` in :func:`assembly._build_static_h0`,
-        so it exposes what will be solved without running the solver.
+        Resolves the chip's current frame spec and returns a flat
+        ``{device_label: ω_ref,i}`` dict. The assembler subtracts these
+        concrete frequencies as ``-Σ_i ω_ref,i n̂_i``. The method thus shows
+        what the solver will solve without running it.
 
-        Values are returned as produced by the frame resolver: concrete
-        Python floats in ``"lab"``, ``"rotating"``, or scalar modes, and
-        potentially JAX tracers in ``dict`` mode when the user wired a
-        traced reference frequency through. Traced values are passed
-        through unchanged to preserve differentiability.
+        Values are returned as the frame resolver produces them. They are
+        concrete Python floats in ``"lab"``, ``"rotating"``, or scalar modes,
+        and can be JAX tracers in ``dict`` mode when the user wired a traced
+        reference frequency through. Traced values pass through unchanged to
+        preserve differentiability.
         """
+        # frame_info resolves the frame via the engine's own path
+        # (`quchip.engine.frames.resolve_frame`). The assembler performs the
+        # subtraction in `assembly._build_static_h0`.
         from quchip.engine.frames import resolve_frame
 
         resolved = resolve_frame(self._chip, self._chip.frame)
@@ -1338,20 +1338,18 @@ class ChipAnalysis:
     ) -> State:
         """Dressed eigenstate for local-energy product-state labels.
 
-        Validates the mapping (rejects ``bool``, non-int, and
-        out-of-range indices) and returns the assigned dressed
-        eigenvector. A ``str`` shorthand (e.g. ``"eg1"``) is parsed
-        through :func:`~quchip.chip.states.normalize_device_state_mapping`
-        when :meth:`Chip.set_state_order` has been called. Use
-        :meth:`Chip.bare_state` for arbitrary kets.
+        Validates the mapping (rejects ``bool``, non-int, and out-of-range
+        indices) and returns the assigned dressed eigenvector. After
+        :meth:`Chip.set_state_order`, a ``str`` shorthand (e.g. ``"eg1"``) is
+        parsed via :func:`~quchip.chip.states.normalize_device_state_mapping`.
+        Use :meth:`Chip.bare_state` for arbitrary kets.
 
-        If the requested label's assignment overlap is low, this method
-        warns and names :meth:`Chip.bare_state` as the product-state
-        alternative.
+        If the requested label's assignment overlap is low, the method warns
+        and names :meth:`Chip.bare_state` as the product-state alternative.
 
-        Safe inside ``jax.jit``/``grad``/``vmap``: under tracing the
-        eigenvector column is selected through the array kernel, so a
-        dressed initial state is differentiable end-to-end.
+        Safe in ``jax.jit``/``grad``/``vmap``. Under tracing, the method
+        selects the eigenvector column through the array kernel, so a dressed
+        initial state is differentiable end-to-end.
 
         Parameters
         ----------

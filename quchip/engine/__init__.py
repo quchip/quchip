@@ -1,10 +1,8 @@
 """Engine pipeline: ``Chip → ResolvedFrame → EngineResult → SolveProblem``.
 
 The engine is the physics-to-solver layer. It owns no solvers and no
-backend-specific types; it produces structured, backend-agnostic
-descriptions that each backend converts to its own optimal form.
-The single 2π boundary lives in :mod:`quchip.engine.assembly`
-and nowhere else.
+backend-specific types, and produces structured, backend-agnostic descriptions
+that each backend converts to its own optimal form.
 
 Responsibilities
 ----------------
@@ -13,14 +11,13 @@ Responsibilities
   (per-device frame frequencies, demodulation frequencies, and the
   frame mode).
 * :mod:`quchip.engine.assembly` assembles an
-  :class:`~quchip.engine.ir.EngineResult` with static terms,
-  dynamic terms, and their :class:`~quchip.engine.ir.ScalarModulation`
-  signal programs. Applies 2π, rotating-frame subtraction, RWA band
-  decomposition (Jaynes & Cummings 1963; Gambetta et al., *PRA* **74**,
-  042318 (2006)).
-* :mod:`quchip.engine.observables` decomposes
-  dict-form ``e_ops`` into solver-ready bands; post-solve, demodulate
-  expectations back into the lab/control frame.
+  :class:`~quchip.engine.ir.EngineResult` with static terms, dynamic terms, and
+  their :class:`~quchip.engine.ir.ScalarModulation` signal programs. It applies
+  2π, rotating-frame subtraction, RWA band decomposition (Jaynes & Cummings
+  1963; Gambetta et al., *PRA* **74**, 042318 (2006)).
+* :mod:`quchip.engine.observables` decomposes dict-form ``e_ops`` into
+  solver-ready bands and, after the solve, demodulates expectations back into
+  the lab/control frame.
 * :mod:`quchip.engine.problem` packages solve inputs
   (including collapse operators) into a frozen
   :class:`~quchip.engine.ir.SolveProblem` or
@@ -28,11 +25,12 @@ Responsibilities
 
 Public API
 ----------
-* :func:`simulate` — full pipeline + solve + wrap result.
-* :func:`build_problem` — assemble and package a ``SolveProblem``.
-* :func:`solve_problem` — dispatch a ``SolveProblem`` through the chip's backend.
-* :func:`solve_batch` / :func:`solve_many` — batched dispatch.
+* :func:`simulate`: full pipeline + solve + wrap result.
+* :func:`build_problem`: assemble and package a ``SolveProblem``.
+* :func:`solve_problem`: dispatch a ``SolveProblem`` through the chip's backend.
+* :func:`solve_batch` / :func:`solve_many`: batched dispatch.
 """
+# The single 2π boundary lives in `quchip.engine.assembly` and nowhere else.
 
 from __future__ import annotations
 
@@ -173,39 +171,38 @@ def build_problem(
 ) -> SolveProblem:
     """Resolve, assemble, and package a frozen :class:`SolveProblem`.
 
-    Returns an immutable request that can be passed to
-    :func:`solve_problem`, batched with :func:`solve_many`, or
-    serialized. No solver is invoked.
+    Returns an immutable request that can be passed to :func:`solve_problem`,
+    batched with :func:`solve_many`, or serialized. It calls no solver.
 
     Parameters
     ----------
     chip : Chip
         The chip whose Hamiltonian, frame, and backend are assembled.
     drive_ops : list of ControlOp
-        Scheduled classical-drive or coherent-field operations, typically produced by a
+        Scheduled classical-drive or coherent-field operations, usually produced by a
         :class:`~quchip.control.sequence.QuantumSequence`.
     tlist : array_like
         Solver time grid in ns.
     solver : str, optional
         Solver selection. ``None`` selects ``sesolve`` only for a ket with no
-        collapse terms; otherwise it selects ``mesolve``.
+        collapse terms, and ``mesolve`` otherwise.
     options : dict, optional
         Backend solver options. Must not contain a ``"backend"`` key
         (backend selection is chip-owned).
     run_args : dict or None, default None
         Native trajectory call keywords: QuTiP seeds, ntraj, heterodyne,
-        target_tol, timeout; Dynamiqs keys, method, gradient, etas.
-        Assembled physics and native options cannot be overridden here.
+        target_tol, timeout. Dynamiqs keys, method, gradient, etas. Assembled
+        physics and native options cannot be overridden here.
     e_ops : dict, optional
         Observables keyed by device label (or a 2-tuple of labels for a
-        two-body observable). An external-plane object may instead map to its
-        ``plane.output`` request; read the complete field afterward with
+        two-body observable). An external-plane object can instead map to its
+        ``plane.output`` request. Read the complete field afterward with
         ``result.output(plane)``.
     initial_state : optional
         Initial state. ``None`` uses the all-ground-labeled eigenstate of the
-        undriven static lab-frame Hamiltonian retained by the approximation, with
-        real, nonnegative overlap on the bare product, expressed in the solve
-        frame at ``tlist[0]``. See
+        undriven static lab-frame Hamiltonian that the approximation keeps. It
+        has real, nonnegative overlap on the bare product and is expressed in
+        the solve frame at ``tlist[0]``. See
         :meth:`~quchip.control.sequence.QuantumSequence.simulate` for accepted
         forms and approximation-specific cases.
     approximation : Approximation or None, optional
@@ -217,7 +214,7 @@ def build_problem(
         state history.
     dissipation : bool, default=True
         Include resolved Lindblad collapse channels. Set ``False`` for a
-        unitary solve while retaining the authored Hamiltonian.
+        unitary solve that keeps the authored Hamiltonian.
 
     Returns
     -------
@@ -227,9 +224,9 @@ def build_problem(
     Raises
     ------
     ValueError
-        If ``tlist`` is not one-dimensional, finite, strictly increasing,
-        and at least two points long. Shape checks also run under JAX
-        tracing; numerical values are checked when concrete.
+        If ``tlist`` is not one-dimensional, finite, strictly increasing, and
+        at least two points long. Shape checks also run under JAX tracing, and
+        numerical values are checked when concrete.
 
     Examples
     --------
@@ -300,68 +297,66 @@ def simulate(
 ) -> "SimulationResult":
     """Build a :class:`SolveProblem`, dispatch it, and wrap the solver output.
 
-    Parameters mirror :func:`build_problem`. ``solver`` is ``"sesolve"``
-    or ``"mesolve"``; ``None`` selects ``sesolve`` only for a ket with no
-    collapse terms, and otherwise selects ``mesolve``. ``e_ops`` is dict-form,
-    keyed by device label (or a 2-tuple of labels for two-body observables),
-    and favors object references via :func:`~quchip.utils.labeling.resolve_label`.
+    Parameters mirror :func:`build_problem`. ``solver`` is ``"sesolve"`` or
+    ``"mesolve"``. ``None`` selects ``sesolve`` only for a ket with no collapse
+    terms, and otherwise selects ``mesolve``. ``e_ops`` is dict-form, keyed by
+    device label (or a 2-tuple of labels for two-body observables). It favors
+    object references through :func:`~quchip.utils.labeling.resolve_label`.
 
     ``approximation`` selects the captured Hamiltonian approximation,
     ``states`` is ``"all"``, ``"final"``, or ``"none"``, and ``dissipation``
-    controls whether resolved collapse channels are included.
+    controls if resolved collapse channels are included.
 
     Parameters
     ----------
     chip : Chip
         The chip to simulate.
     drive_ops : list of ControlOp
-        Scheduled classical-drive or coherent-field operations, typically produced by a
+        Scheduled classical-drive or coherent-field operations, usually produced by a
         :class:`~quchip.control.sequence.QuantumSequence`.
     tlist : array_like
         Solver time grid in ns.
     solver : str, optional
         Solver selection. ``None`` selects ``sesolve`` only for a ket with no
-        collapse terms; otherwise it selects ``mesolve``.
+        collapse terms, and ``mesolve`` otherwise.
     options : dict, optional
         Backend solver options. Must not contain a ``"backend"`` key
         (backend selection is chip-owned).
     run_args : dict or None, default None
         Native trajectory call keywords: QuTiP seeds, ntraj, heterodyne,
-        target_tol, timeout; Dynamiqs keys, method, gradient, etas.
-        Assembled physics and native options cannot be overridden here.
+        target_tol, timeout. Dynamiqs keys, method, gradient, etas. Assembled
+        physics and native options cannot be overridden here.
     e_ops : dict, optional
         Observables keyed by device label (or a 2-tuple of labels for a
         two-body observable).
     initial_state : optional
         Initial state. ``None`` uses the default start described in
         :func:`build_problem`. A ``Mapping`` gives a product state from per-device
-        energy levels or authored local kets; configured string shorthand gives
+        energy levels or authored local kets. Configured string shorthand gives
         per-device energy levels. Both are built in the resolved local bases. QuTiP
         ``Qobj`` and dynamiqs ``QArray`` kets or density matrices use resolved
-        solver coordinates; their first dimension must match the retained
-        dimension. NumPy and JAX arrays, symbolic state expressions, and callables
-        are authored-space kets with the full authored dimension; they are
-        projected onto the retained local levels and warn if projection discards
+        solver coordinates. Their first dimension must match the kept dimension.
+        NumPy and JAX arrays, symbolic state expressions, and callables are
+        authored-space kets with the full authored dimension. quchip projects them
+        onto the kept local levels and gives a warning if the projection discards
         norm. Authored density-matrix arrays are rejected. Authored and solver
         coordinates coincide on devices with ``basis="native"``.
     approximation : Approximation or None, optional
-        Approximation strategy captured during assembly; ``None`` uses the
-        chip declaration.
+        Approximation strategy captured during assembly. ``None`` uses the chip
+        declaration.
     states : {"all", "final", "none"} or None, default=None
-        Retain all states, only the final state, or no states.
+        Keep all states, only the final state, or no states.
     dissipation : bool, default=True
         Include resolved collapse channels in the solve.
     partition : bool, default True
-        When the chip splits into independent sub-chips (see
-        :meth:`Chip.partition`), dispatch one solve per component and
-        combine them into a :class:`~quchip.results.partitioned.PartitionedSimulationResult`
-        instead of solving the full tensor-product space. Declines back
-        to the joint solve (returning a plain
-        :class:`~quchip.results.results.SimulationResult`) when the
-        partition is trivial or ``initial_state`` is a raw backend state
-        rather than ``None``/a ``Mapping``. Set ``False`` to force the
-        joint solve unconditionally. ``simulate_batch``/``solve_many``
-        always solve the full chip without partitioning.
+        When the chip splits into independent sub-chips (see :meth:`Chip.partition`),
+        dispatch one solve per component and combine the results into a
+        :class:`~quchip.results.partitioned.PartitionedSimulationResult` instead of solving
+        the full tensor-product space. If the partition is trivial, or ``initial_state`` is
+        a raw backend state and not ``None``/a ``Mapping``, use the joint solve, which
+        returns a plain :class:`~quchip.results.results.SimulationResult`. Set ``False`` to
+        force the joint solve unconditionally. ``simulate_batch``/``solve_many`` always
+        solve the full chip without partitioning.
 
     Returns
     -------
@@ -371,9 +366,9 @@ def simulate(
     Raises
     ------
     ValueError
-        If the native solver is unknown or ``tlist`` is not one-dimensional, finite, strictly increasing,
-        and at least two points long. Value-dependent grid checks require
-        concrete values; shape checks also run under tracing.
+        If the native solver is unknown or ``tlist`` is not one-dimensional, finite, strictly
+        increasing, and at least two points long. Value-dependent grid checks need concrete
+        values. Shape checks also run under tracing.
     RuntimeError
         If the backend solve fails.
 
@@ -496,8 +491,8 @@ def solve_many(
 ) -> "SimulationBatchResult":
     """Solve a native batch or an ordered collection of captured requests.
 
-    Lists may contain independent models, grids and backends. Compatible
-    requests share native execution; each result keeps its own captured context.
+    Lists can mix independent models, grids and backends. Compatible requests
+    share native execution, and each result keeps its own captured context.
     Mixed native array backends remain accessible through individual results.
 
     Parameters

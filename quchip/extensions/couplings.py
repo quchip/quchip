@@ -22,11 +22,11 @@ class ModulatedCapacitive(CouplingModel):
     device_a, device_b : device or str
         Coupled endpoints or their chip labels.
     static_strength : float
-        Static capacitive strength :math:`g_0` in GHz; may be signed.
+        Static capacitive strength :math:`g_0` in GHz. Can be signed.
     modulation_amplitude : float
-        Modulation amplitude :math:`\delta g` in GHz; may be signed.
+        Modulation amplitude :math:`\delta g` in GHz. Can be signed.
     modulation_frequency : float
-        Modulation frequency :math:`\nu_m` in GHz; positive.
+        Modulation frequency :math:`\nu_m` in GHz. Must be positive.
     modulation_phase : float, default 0.0
         Modulation phase in radians.
     label : str or None, default None
@@ -95,8 +95,8 @@ class CollectiveDecayCoupling(CouplingModel):
 
     Notes
     -----
-    The collapse operator is proportional to ``a + b``. This is a shared
-    bath channel, not two independent relaxation channels.
+    The collapse operator is proportional to ``a + b``, a shared bath channel,
+    not two independent relaxation channels.
     """
 
     _type_prefix = "collective_decay"

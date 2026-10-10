@@ -1,20 +1,19 @@
 """Runtime-checkable Protocols for physical-operator drive dispatch.
 
 Devices expose their *physical* charge / phase / flux operators in their
-authored local basis. Drives require these declarations so their matrix
-elements remain physically explicit; the engine then
-applies the device's resolved local-basis transformation with every other
-attached operator.
+authored local basis. Drives require these declarations so that their matrix
+elements stay physically explicit. The engine then applies the device's
+resolved local-basis transformation together with every other attached
+operator.
 
-These Protocols are :func:`typing.runtime_checkable` so that
-``isinstance(device, ChargeCoupled)`` works at runtime. A device
-conforms by defining the named method — no explicit subclassing
-required. This includes
+These Protocols are :func:`typing.runtime_checkable`, so
+``isinstance(device, ChargeCoupled)`` works at runtime. A device conforms when
+it defines the named method, without explicit subclassing. This includes
 :class:`~quchip.interop.eigenbasis.EigenbasisDevice` and external devices.
 
-The accessors follow the common operator extension contract: symbolic
-expressions are preferred, while matrices and pure JAX callables remain
-valid. The engine resolves every form through the same local-basis boundary.
+The accessors follow the common operator extension contract. Symbolic
+expressions are preferred, but matrices and pure JAX callables stay valid. The
+engine resolves every form through the same local-basis boundary.
 """
 
 from __future__ import annotations
@@ -71,8 +70,8 @@ class FrequencyControlled(Protocol):
 
     :func:`~quchip.chip.transformations.eliminate_device.reduce_device` uses
     ``isinstance(mode, FrequencyControlled)`` to decide whether an eliminated
-    mode's mediated-exchange fold should stay tunable — emitting a
-    :class:`~quchip.chip.couplings.TunableCapacitive` — rather than a fixed
+    mode's mediated-exchange fold should stay tunable. If so, it emits a
+    :class:`~quchip.chip.couplings.TunableCapacitive`, not a fixed
     :class:`~quchip.chip.couplings.Capacitive`.
     :class:`~quchip.devices.transmon.flux_tunable.FluxTunableTransmon`
     satisfies this Protocol structurally, with no explicit subclassing.

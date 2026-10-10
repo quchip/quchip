@@ -1,16 +1,16 @@
-"""Chip-level baths — shared / collective Lindblad dissipation.
+"""Chip-level baths for shared or collective Lindblad dissipation.
 
-A :class:`Bath` is **not** a device: it owns no Hilbert-space factor and no
-Hamiltonian term. It owns only collapse operators that couple a *set* of
-devices to a common environment.
-This is the layer for physics that lives *around* devices: a single chip
-temperature (every device thermalizes at it) or correlated/collective
-dissipation (collective decay, correlated dephasing) that per-device noise —
-independent by construction — cannot express.
+A :class:`Bath` is **not** a device. It owns no Hilbert-space factor and no
+Hamiltonian term, only collapse operators that couple a *set* of devices to a
+common environment. This layer is for physics *around* devices, e.g. a single
+chip temperature at which every device thermalizes. It also covers correlated
+or collective dissipation (collective decay, correlated dephasing), which
+per-device noise, independent by construction, cannot express.
 
-Rates are in 1/ns (the Lindblad convention; no 2π scaling — that boundary is
-Hamiltonian-only). The thermal Bose factor uses ``k_B`` in GHz/mK, so
-``n̄ = 1 / expm1(freq / (k_B * T))`` with ``freq`` in GHz and ``T`` in mK.
+Rates are in 1/ns (the Lindblad convention), with no 2π scaling, because that
+boundary applies only to the Hamiltonian. The thermal Bose factor uses ``k_B``
+in GHz/mK, so ``n̄ = 1 / expm1(freq / (k_B * T))`` with ``freq`` in GHz and
+``T`` in mK.
 """
 
 from __future__ import annotations
@@ -49,35 +49,36 @@ def _adjoint(operator: Any) -> Any:
 
 
 class Bath:
-    """A shared environment coupling a set of devices to a common bath.
+    """A shared environment that couples a set of devices to a common bath.
 
-    Attach at construction (``Chip(..., baths=[...])``) or at any time
-    after via :meth:`~quchip.chip.chip.Chip.add_bath` — the next
-    simulate/solve collects the bath's collapse operators automatically.
+    Attach the bath at construction (``Chip(..., baths=[...])``) or later with
+    :meth:`~quchip.chip.chip.Chip.add_bath`. The next simulate or solve call
+    collects the bath's collapse operators automatically.
 
     Parameters
     ----------
     recipe : str
-        Built-in collapse-channel model. One of ``"thermal"``,
-        ``"collective_decay"``, or ``"correlated_dephasing"``. The argument
-        name is retained for API and serialization compatibility.
+        Built-in collapse-channel model: ``"thermal"``, ``"collective_decay"``,
+        or ``"correlated_dephasing"``. The argument name stays the same for API
+        and serialization compatibility.
     targets : list[BaseDevice | str] | None
         Devices the bath couples to (objects or labels). ``None`` (default)
-        means *every* device in the chip — natural for a global thermal bath.
+        means *every* device in the chip, the natural choice for a global
+        thermal bath.
     temperature : float | None
-        Bath temperature in mK (required for ``"thermal"``). May be a JAX
-        tracer for sweeps / gradients.
+        Temperature in mK, required for ``"thermal"``. It can be a JAX tracer
+        for sweeps or gradients.
     rate : float | None
-        Bath–device coupling rate γ in 1/ns. For ``"thermal"`` it is the
-        environmental coupling rate (explicit — never silently borrowed from a
-        device ``T1``, so it cannot double-count device-level noise). For the
-        collective models it is the overall jump rate. ``None`` defaults to
-        ``1.0`` (user controls the absolute scale elsewhere).
+        Bath–device coupling rate γ in 1/ns. For ``"thermal"``, it is the
+        environmental coupling rate. It is explicit and never silently borrowed
+        from a device ``T1``, so it cannot double-count device-level noise. For
+        the collective models, it is the overall jump rate. ``None`` defaults
+        to ``1.0`` (the user controls the absolute scale elsewhere).
     correlated : bool
-        ``"thermal"`` only: ``False`` (default) emits independent per-device
-        channels sharing one temperature. ``True`` is unsupported and raises
+        ``"thermal"`` only. ``False`` (default) emits independent per-device channels that
+        share one temperature. ``True`` is not supported and raises
         :class:`NotImplementedError`. The collective models always emit a single correlated
-        operator regardless of this flag.
+        operator, independent of this flag.
     label : str | None
         Auto-generated ``"bath_{n}"`` when omitted.
 
@@ -124,14 +125,14 @@ class Bath:
     def __setattr__(self, name: str, value: Any) -> None:
         """Reject a concrete negative ``temperature`` or ``rate`` (construction and later writes).
 
-        Mirrors the concrete-only validation
+        Mirrors the concrete-only validation that
         :class:`~quchip.devices.base.BaseDevice` and
         :class:`~quchip.declarative.models.CouplingModel` run on their own
-        fields (checks apply to concrete scalars only; a traced value passes
-        unchecked). Without this, a negative Bose occupation or a
-        invalid Lindblad rate in :meth:`collapse_channels` is reachable
-        from a raw ``bath.temperature = -5`` or ``bath.rate = -1``.
+        fields, so a traced value passes unchecked.
         """
+        # Without this validation, a raw `bath.temperature = -5` or
+        # `bath.rate = -1` can cause a negative Bose occupation or an invalid
+        # Lindblad rate in `collapse_channels`.
         if name in ("temperature", "rate"):
             concrete = maybe_concrete_scalar(value)
             if concrete is not None and concrete < 0:
@@ -144,7 +145,7 @@ class Bath:
         Parameters
         ----------
         chip : Chip
-            Chip supplying labels when targets were omitted.
+            Chip that supplies labels when targets were omitted.
         """
         if self._targets is None or self._retained is not None:
             return [d.label for d in chip.devices]
@@ -155,7 +156,7 @@ class Bath:
         """Whether this bath factorizes into independent per-target channels.
 
         ``True`` for models that emit one collapse operator per target
-        (``"thermal"`` with independent channels); ``False`` for models that
+        (``"thermal"`` with independent channels). ``False`` for models that
         emit a single jump operator summed over targets (``"collective_decay"``,
         ``"correlated_dephasing"``). Partitioning treats a non-separable bath's
         target set as one inseparable block.
@@ -171,7 +172,7 @@ class Bath:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize the bath; ``targets`` are stored as label strings."""
+        """Serialize the bath, with ``targets`` stored as label strings."""
         targets = None if self._targets is None else [resolve_label(t) for t in self._targets]
         return {
             "type": f"{type(self).__module__}.{type(self).__qualname__}",
@@ -194,7 +195,7 @@ class Bath:
         Parameters
         ----------
         d : dict[str, Any]
-            Payload produced by :meth:`to_dict`; targets are label strings.
+            Payload produced by :meth:`to_dict`. Targets are label strings.
         """
         bath = cls(
             d["recipe"],
@@ -225,9 +226,9 @@ class Bath:
     def physics_notes(self) -> list[str]:
         """Return human-readable declarations of this bath's model and scope.
 
-        Mirrors :meth:`~quchip.chip.coupling_base.BaseCoupling.physics_notes`:
-        one entry naming the model and its targets, plus a model-specific
-        assumption a user of this bath should be aware of.
+        Mirrors :meth:`~quchip.chip.coupling_base.BaseCoupling.physics_notes`.
+        Returns one entry naming the model and its targets, plus a
+        model-specific assumption that users must know.
         """
         targets = "all devices" if self._targets is None else ", ".join(resolve_label(t) for t in self._targets)
         notes = [f"Bath model: '{self.recipe}'; targets: {targets}."]
@@ -251,12 +252,13 @@ class Bath:
     def copy(self) -> "Bath":
         """Independent copy of this bath (targets normalize to label strings).
 
-        Used by ``Chip.clone`` and ``eliminate`` so a transformed chip never
-        shares live ``Bath`` objects with its source — mutating one chip's
-        bath must not silently change another chip's physics. Parameter
-        values (temperature, rate) are carried by reference, so traced
-        values stay traced.
+        ``Chip.clone`` and ``eliminate`` use this method, so a transformed chip
+        never shares live ``Bath`` objects with its source. Parameter values
+        (temperature, rate) are carried by reference, so traced values stay
+        traced.
         """
+        # Changing one chip's bath must not silently change another chip's
+        # physics.
         result = Bath(self.recipe, None if self._targets is None else [resolve_label(t) for t in self._targets],
                       temperature=copy_value(self.temperature), rate=copy_value(self.rate), label=self.label)
         result._retained = copy_value(self._retained, readonly=True)
@@ -349,26 +351,24 @@ class Bath:
     ) -> tuple[CollapseChannel, ...]:
         """Return authored full-chip collapse channels.
 
-        ``"thermal"`` emits independent per-target relaxation/absorption
-        pairs sharing one bath temperature (:meth:`_bose`). The two
-        collective models instead each emit a single jump operator summed
-        over the resolved targets:
+        ``"thermal"`` emits independent per-target relaxation/absorption pairs
+        that share one bath temperature. The two collective models each emit a
+        single jump operator summed over the resolved targets:
 
-        - ``"collective_decay"``: ``L = sum_i a_i`` at rate ``gamma`` — an
-          equal-phase, equal-weight rank-one collective channel, *not*
-          general collective (super/subradiant) decay, which requires
-          per-pair phase and weight factors set by the target geometry
-          (Lehmberg, *Phys. Rev. A* **2**, 883 (1970), for the general
-          collective-radiative-decay construction).
-        - ``"correlated_dephasing"``: ``L = sum_i n_i`` at rate ``gamma`` —
-          maximally correlated common-mode dephasing (every target shares
-          the identical dephasing fluctuation), *not* general correlated
+        - ``"collective_decay"``: ``L = sum_i a_i`` at rate ``gamma``, an
+          equal-phase, equal-weight rank-one collective channel. It is *not*
+          general collective (super/subradiant) decay, which requires per-pair
+          phase and weight factors set by the target geometry (Lehmberg, *Phys.
+          Rev. A* **2**, 883 (1970), for the general collective-radiative-decay
+          construction).
+        - ``"correlated_dephasing"``: ``L = sum_i n_i`` at rate ``gamma``, i.e.
+          maximally correlated common-mode dephasing, where every target shares
+          the identical dephasing fluctuation. It is *not* general correlated
           dephasing with a target-dependent correlation structure (Breuer &
-          Petruccione, *The Theory of Open Quantum Systems*, Oxford, 2002,
-          Ch. 3, for the general Lindblad construction).
+          Petruccione, *The Theory of Open Quantum Systems*, Oxford, 2002, Ch.
+          3, for the general Lindblad construction).
 
-        Contributions remain backend-neutral; the engine projects and lowers
-        them with the same basis records used for Hamiltonian terms.
+        Contributions stay backend-neutral.
 
         Parameters
         ----------
@@ -377,6 +377,10 @@ class Bath:
         bases : mapping or None, default=None
             Captured basis records keyed by device label. ``None`` resolves them.
         """
+        # The thermal Bose occupation is computed in `_bose`.
+        #
+        # The engine projects and lowers them with the same basis records it
+        # uses for Hamiltonian terms.
         fields = {name: Parameter() for name in self._parameter_names}
         p = ParameterNamespace(f"bath.{self.label}", fields)
         gamma = 1.0 if self.rate is None else p.rate

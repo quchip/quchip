@@ -1,9 +1,8 @@
-"""Simulation-result plots: populations, snapshots, expectations, Wigner.
+"""Plots of simulation results: populations, snapshots, expectations, Wigner.
 
-These helpers consume a :class:`~quchip.results.results.SimulationResult`
-(which is backend-agnostic) and emit Matplotlib figures. None of them
-depend on a specific solver backend: partial-trace, ``expect``, and ket
-construction all go through :class:`~quchip.backend.protocol.Backend`.
+These helpers turn a backend-agnostic
+:class:`~quchip.results.results.SimulationResult` into Matplotlib figures,
+independent of the solver backend.
 
 References
 ----------
@@ -17,6 +16,7 @@ References
 - Leonhardt, *Essential Quantum Optics*, Cambridge University Press (2010)
   — modern continuous-variable treatment of the Wigner function.
 """
+# Partial-trace, `expect`, and ket construction all go through `Backend`.
 
 from __future__ import annotations
 
@@ -66,39 +66,39 @@ def plot_populations(
 ) -> Figure:
     """Plot basis-state populations over time.
 
-    The figure has time (ns) on the x-axis and population
-    ``p_n(t) = Tr(|n><n| rho(t))`` on the y-axis, one line per
-    represented-basis ket ``|n> = |n_1 n_2 ...>`` of the retained
-    subsystems. States whose peak population stays below *threshold* are
-    hidden; set *threshold* to ``0`` to show every state.
+    The x-axis is time (ns) and the y-axis is the population
+    ``p_n(t) = Tr(|n><n| rho(t))``. One line is drawn for each
+    represented-basis ket ``|n> = |n_1 n_2 ...>`` of the retained subsystems.
+    States whose peak population stays below *threshold* are hidden. Set
+    *threshold* to ``0`` to show all states.
 
     Parameters
     ----------
     result : SimulationResult
         Output of :func:`quchip.engine.simulate`.
     trace_out : device, label, or list thereof, optional
-        Subsystems to partial-trace over before computing populations.
-        Accepts either device objects or their string labels (UX favourability).
-        Requires ``states="all"`` on the solver call.
+        Subsystems to partial-trace over before computing populations. Accepts
+        device objects or their string labels. The solver call must use
+        ``states="all"``.
     computational : bool
-        When ``True``, restricts computational subsystems to their
+        When ``True``, restrict computational subsystems to their
         ``{|0>, |1>}`` subspace.
     ax : matplotlib.axes.Axes, optional
-        Existing axes to draw onto. When ``None`` a new figure is created.
+        Existing axes to draw on. When ``None``, a new figure is created.
     linewidth : float
-        Line width for every population trace.
+        Line width for all population traces.
     legend : bool
-        Whether to draw a legend of the visible states.
+        Draw a legend of the visible states.
     colors : dict, optional
-        Per-state colour overrides, keyed by the same basis-state tuples
-        used internally; unlisted states fall back to a ``tab20`` cycle.
+        Per-state colour overrides, keyed by the internal basis-state tuples.
+        States not in the dict use a ``tab20`` cycle.
     threshold : float
-        Populations whose time-max falls below this value are omitted.
+        Populations whose maximum over time is below this value are omitted.
 
     Returns
     -------
     Figure
-        The figure holding the population-trace axes (``ax.figure`` when
+        The figure that holds the population-trace axes (``ax.figure`` when
         *ax* was given).
 
     Raises
@@ -107,7 +107,7 @@ def plot_populations(
         *trace_out* is given but no states were stored (pass
         ``states="all"`` to the solver).
     ValueError
-        *trace_out* would remove every subsystem.
+        *trace_out* would remove all subsystems.
     """
     times, populations, _keep, _info = _reduce_result(result, trace_out, computational=computational)
 
@@ -156,18 +156,17 @@ def plot_state(
 
     Two modes are supported:
 
-    - ``"population"`` — a bar chart of diagonal elements ``p_n``.
-    - ``"dm"`` — side-by-side heatmaps of ``Re(rho)`` and ``Im(rho)``;
-      the colormap *cmap* is divergent, and *both* heatmaps share one
-      symmetric normalization (``vmin=-m, vmax=+m`` for
-      ``m = max(|Re(rho)|, |Im(rho)|)``) so their colours are directly
-      comparable — an entry that looks equally saturated in both panels
-      really is equal in magnitude.
+    - ``"population"``: a bar chart of diagonal elements ``p_n``.
+    - ``"dm"``: side-by-side heatmaps of ``Re(rho)`` and ``Im(rho)`` with the
+      divergent colormap *cmap*. *Both* heatmaps share one symmetric
+      normalization (``vmin=-m, vmax=+m`` for
+      ``m = max(|Re(rho)|, |Im(rho)|)``), so their colours compare directly.
+      Equal saturation in the two panels means equal magnitude.
 
-    When both computational and non-computational subsystems are present,
-    pass *trace_out* to focus on a target register and/or *computational*
-    ``= True`` to restrict to the ``{|0>, |1>}`` subspace on computational
-    devices (see Nielsen & Chuang, Ch. 2).
+    If computational and non-computational subsystems are both present, pass
+    *trace_out* to focus on a target register. Alternatively, set
+    *computational* ``= True`` to restrict computational devices to the
+    ``{|0>, |1>}`` subspace (see Nielsen & Chuang, Ch. 2).
 
     Parameters
     ----------
@@ -175,16 +174,16 @@ def plot_state(
         Output of :func:`quchip.engine.simulate`, with
         ``states="all"``.
     index : int
-        Stored-time index to plot. Supports Python-style negative
-        indexing (``-1`` is the last stored time); must satisfy
+        Stored-time index to plot. Python-style negative indexes are supported
+        (``-1`` is the last stored time). The index must satisfy
         ``-N <= index < N`` for ``N = len(result.times)``.
     trace_out : device, label, or list thereof, optional
         Subsystems to partial-trace over before plotting.
     computational : bool
-        When ``True``, restricts computational subsystems to their
+        When ``True``, restrict computational subsystems to their
         ``{|0>, |1>}`` subspace.
     mode : {"population", "dm"}
-        Which representation to draw.
+        The representation to draw.
     ax : matplotlib.axes.Axes, optional
         For ``mode="population"``: a single axes (or ``None`` for a new
         figure). For ``mode="dm"``: an iterable of exactly two axes
@@ -192,22 +191,22 @@ def plot_state(
     cmap : str
         Divergent colormap for ``mode="dm"`` heatmaps.
     color : str, optional
-        Bar colour override for ``mode="population"``. Defaults to a
-        per-state ``tab10`` cycle.
+        Bar colour override for ``mode="population"``. The default is a
+        ``tab10`` cycle per state.
 
     Returns
     -------
     Figure
-        The figure holding the plotted axes (``ax.figure`` when *ax*
-        was given).
+        The figure that holds the plotted axes (``ax.figure`` when *ax* was
+        given).
 
     Raises
     ------
     IndexError
         *index* is outside ``[-N, N)`` for ``N = len(result.times)``.
     ValueError
-        *mode* is not ``"population"`` or ``"dm"``, or *trace_out*
-        would remove every subsystem.
+        *mode* is not ``"population"`` or ``"dm"``, or *trace_out* would remove
+        all subsystems.
     RuntimeError
         No states were stored (pass ``states="all"``
         to the solver).
@@ -353,18 +352,19 @@ def plot_expectation(
 ) -> Figure:
     """Plot dict-form expectation values over time.
 
-    The x-axis is time (ns); the y-axis is
+    The x-axis is time (ns). The y-axis is
     :attr:`~quchip.results.results.SimulationResult.observable_traces`
-    ``[key].values`` — the *post-processed* recorded trace for each
-    observable ``O`` registered in the solver's ``e_ops`` dict. This is
-    not unconditionally ``Tr(O rho(t))``: depending on how the
-    observable was requested, ``.values`` may already include
-    demodulation, phase correction, or band summation (see
-    :class:`~quchip.results.results.ObservableTrace`; its ``.raw``
-    field holds the pre-processing quantity instead). When *real* is
-    ``True`` (the default) only ``Re`` of the trace is drawn; when
-    ``False`` both the real part (solid) and imaginary part (dashed,
-    lower alpha) are drawn in the same colour per key.
+    ``[key].values``, the *post-processed* recorded trace for each observable
+    ``O`` registered in the solver's ``e_ops`` dict, which is not always
+    ``Tr(O rho(t))``.
+
+    ``.values`` depends on how you requested the observable and can already
+    include demodulation, phase correction, or band summation (see
+    :class:`~quchip.results.results.ObservableTrace`). Its ``.raw`` field holds
+    the unprocessed quantity. When *real* is ``True`` (the default), only
+    ``Re`` of the trace is drawn. When *real* is ``False``, the real part
+    (solid) and the imaginary part (dashed, lower alpha) are drawn in the same
+    colour per key.
 
     Parameters
     ----------
@@ -372,28 +372,27 @@ def plot_expectation(
         Output of :func:`quchip.engine.simulate`, with ``e_ops`` passed
         as a dict.
     keys : list, optional
-        Each entry is either a bare key (``"cav"``) or a ``(key, index)``
-        tuple selecting one element of a list-valued observable, matched
-        against the registered ``observable_traces`` keys first — see
-        :func:`_collect_expectation_traces`. String and device/drive
-        keys are resolved with ``resolve_label`` so both are accepted
-        interchangeably. Defaults to every registered trace.
+        Each entry is a bare key (``"cav"``) or a ``(key, index)`` tuple that
+        selects one element of a list-valued observable. Entries are matched
+        against the registered ``observable_traces`` keys first (see
+        :func:`_collect_expectation_traces`). ``resolve_label`` resolves string
+        keys and device/drive keys, so the two forms are interchangeable. The
+        default is all registered traces.
     ax : matplotlib.axes.Axes, optional
-        Existing axes to draw onto. When ``None`` a new figure is created.
+        Existing axes to draw on. When ``None``, a new figure is created.
     linewidth : float
-        Line width for every trace.
+        Line width for all traces.
     legend : bool
-        Whether to draw a legend of the plotted keys.
+        Draw a legend of the plotted keys.
     real : bool
-        When ``True``, draw only the real part of each trace; when
-        ``False``, draw both the real (solid) and imaginary (dashed)
-        parts.
+        When ``True``, draw only the real part of each trace. When ``False``,
+        draw the real (solid) and imaginary (dashed) parts.
 
     Returns
     -------
     Figure
-        The figure holding the expectation-trace axes (``ax.figure``
-        when *ax* was given).
+        The figure that holds the expectation-trace axes (``ax.figure`` when
+        *ax* was given).
 
     Raises
     ------
@@ -459,26 +458,24 @@ def plot_wigner(
 ) -> Figure:
     """Plot the Wigner quasi-probability distribution of a stored state.
 
-    Axes are the phase-space quadratures ``x`` (position-like) and
-    ``p`` (momentum-like); the colourmap is divergent and symmetric about
-    zero so negative regions — the hallmark of non-classical states —
-    stand out directly.
+    The axes are the phase-space quadratures ``x`` (position-like) and ``p``
+    (momentum-like). The colourmap is divergent and symmetric about zero, so
+    negative regions, the hallmark of non-classical states, are easy to see.
 
-    When *xvec* is not supplied the plot window is auto-sized from the
-    mean photon number ``<n> = Tr(rho n_hat)`` of the reduced state
-    (computed directly from ``diag(rho)`` to avoid an O(d^2) matmul for
-    a diagonal-only observable), extending to at least ``+/-3``.
+    Without *xvec*, the plot window is sized from the reduced state's mean
+    photon number ``<n> = Tr(rho n_hat)`` and extends to at least ``+/-3``. The
+    mean photon number is computed directly from ``diag(rho)``.
 
-    Exactly one subsystem must remain after *trace_out* — a Wigner
-    function is a single-mode phase-space picture, and its basis indices
-    are interpreted directly as photon numbers ``n = 0, 1, 2, ...``.
-    This is checked; what is *not*, and cannot be, checked from result
-    metadata alone is the remaining precondition: the retained
-    subsystem's represented basis must actually *be* a photon-number
-    ladder (true for a bosonic mode such as ``Resonator``, false for a
-    device whose represented basis is not Fock, e.g. a charge- or
-    flux-basis qubit) — passing such a device silently produces a
-    Wigner-shaped plot with no such physical meaning.
+    Exactly one subsystem must remain after *trace_out*. A Wigner function is a
+    single-mode phase-space picture, and its basis indices are read directly as
+    photon numbers ``n = 0, 1, 2, ...``. The function checks this condition.
+
+    One more precondition cannot be seen from the result metadata, so the
+    function does *not* check it: the retained subsystem's represented basis
+    must *be* a photon-number ladder. This holds for a bosonic mode such as
+    ``Resonator``, but not for a device whose represented basis is not Fock,
+    for example a charge-basis or flux-basis qubit. If you pass such a device,
+    the function silently makes a Wigner-shaped plot without physical meaning.
 
     Parameters
     ----------
@@ -486,37 +483,37 @@ def plot_wigner(
         Output of :func:`quchip.engine.simulate`, with
         ``states="all"``.
     index : int
-        Stored-time index to plot. Supports Python-style negative
-        indexing (``-1``, the default, is the last stored time); must
-        satisfy ``-N <= index < N`` for ``N = len(result.times)``.
+        Stored-time index to plot. Python-style negative indexes are supported
+        (``-1``, the default, is the last stored time). The index must satisfy
+        ``-N <= index < N`` for ``N = len(result.times)``.
     trace_out : device, label, or list thereof, optional
-        Subsystems to partial-trace over before plotting. Required
-        whenever more than one subsystem is stored — see Raises.
+        Subsystems to partial-trace over before plotting. Required when more
+        than one subsystem is stored (see Raises).
     xvec, yvec : ndarray, optional
-        Phase-space grids for the ``x``/``p`` quadratures. Defaults to
-        an auto-sized, evenly spaced grid (see above); *yvec* defaults
-        to *xvec* when only *xvec* is given.
+        Phase-space grids for the ``x``/``p`` quadratures. The default is an
+        automatically sized, equally spaced grid (see above). If only *xvec* is
+        given, *yvec* defaults to *xvec*.
     ax : matplotlib.axes.Axes, optional
-        Existing axes to draw onto. When ``None`` a new figure is created.
+        Existing axes to draw on. When ``None``, a new figure is created.
     cmap : str
         Divergent colormap, symmetric about zero.
     colorbar : bool
-        Whether to attach a colorbar.
+        Attach a colorbar.
 
     Returns
     -------
     Figure
-        The figure holding the Wigner-function axes (``ax.figure`` when
-        *ax* was given).
+        The figure that holds the Wigner-function axes (``ax.figure`` when *ax*
+        was given).
 
     Raises
     ------
     IndexError
         *index* is outside ``[-N, N)`` for ``N = len(result.times)``.
     ValueError
-        More or fewer than one subsystem remains after *trace_out*; the
-        message lists the retained device labels and a *trace_out*
-        value that isolates a single one of them.
+        More or fewer than one subsystem remains after *trace_out*. The message
+        lists the retained device labels and a *trace_out* value that isolates
+        a single one of them.
     RuntimeError
         No states were stored (pass ``states="all"``
         to the solver).
@@ -527,6 +524,8 @@ def plot_wigner(
     - Cahill & Glauber, *Phys. Rev.* **177**, 1882 (1969).
     - Leonhardt, *Essential Quantum Optics* (2010), Ch. 3.
     """
+    # Computing the mean photon number from `diag(rho)` avoids an O(d^2) matmul
+    # for a diagonal observable.
     index = _normalize_time_index(result, index)
     reduced_state, keep_indices, device_info = _reduce_state(result, index, trace_out)
     if len(keep_indices) != 1:
@@ -580,26 +579,27 @@ def plot_sparameters(
     Parameters
     ----------
     result : SParameterResult
-        Result returned by :meth:`VNA.sweep`. Other result types are rejected.
+        Result that :meth:`VNA.sweep` returns. The function rejects other result types.
     pairs : list of (output, input), optional
-        Matrix entries to draw. When omitted, draw all four entries for exactly
-        two planes; otherwise draw the first input column, capped at six entries.
+        Matrix entries to draw. If omitted with exactly two planes, all four
+        entries are drawn. Otherwise, the first input column is drawn, up to six
+        entries.
     select : dict of str to int, optional
-        Indices on non-frequency sweep axes. Omitted axes use index 0, and those
-        defaults appear in the plot title. Frequency stays the x axis and cannot
-        be selected.
+        Indices on sweep axes other than frequency. Omitted axes use index 0,
+        and the plot title shows those defaults. Frequency stays the x axis, and
+        you cannot select it.
     kind : {"db_phase", "magnitude", "iq"}
         ``"db_phase"`` stacks ``20 log10|S|`` in dB above unwrapped phase in
         degrees. ``"magnitude"`` draws ``|S|``. ``"iq"`` draws ``Im S`` against
         ``Re S``.
     axes : matplotlib.axes.Axes or iterable of matplotlib.axes.Axes, optional
         Existing axes to draw on: two for ``"db_phase"`` and one for the other
-        kinds. When ``None``, create the required axes.
+        kinds. When ``None``, create the necessary axes.
 
     Returns
     -------
     Figure
-        The figure containing the plots.
+        The figure that contains the plots.
 
     Raises
     ------

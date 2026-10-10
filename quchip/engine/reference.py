@@ -26,7 +26,7 @@ class ReferenceDelay:
 
     @property
     def tracked_values(self) -> tuple[Any, ...]:
-        """Return the values that may carry JAX tracers."""
+        """Return the values that can carry JAX tracers."""
         return (self.duration,)
 
 
@@ -45,14 +45,15 @@ class ReferenceFilter:
 
     @property
     def tracked_values(self) -> tuple[Any, ...]:
-        """Return the values that may carry JAX tracers."""
+        """Return the values that can carry JAX tracers."""
         return (*self.parameters.values(), self.loss_occupation)
 
     def __call__(self, frequency: Any) -> Any:
         """Evaluate the complex transfer at ``frequency`` in GHz.
 
-        ``frequency`` may be scalar or array-valued. Reject a concrete result whose
-        magnitude exceeds one; do not concretize traced results for this check.
+        ``frequency`` can be scalar or array-valued. Reject a concrete result whose
+        magnitude is more than one. Do not concretize traced results for this
+        check.
         """
         value = self.transfer(frequency, **self.parameters)
         if not contains_tracer(value) and np.any(np.abs(np.asarray(value)) > 1.0 + 1e-12):
@@ -67,8 +68,8 @@ class ReferenceFilter:
 class ReferenceAmplifier:
     """A phase-preserving output-line amplifier.
 
-    ``gain`` is power gain ``G``. ``added_noise`` is input-referred
-    symmetrized noise ``n_add`` in quanta, with quantum floor
+    ``gain`` is the power gain ``G``. ``added_noise`` is the input-referred
+    symmetrized noise ``n_add`` in quanta, with the quantum floor
     ``(1 - 1/G) / 2``.
     """
 
@@ -92,7 +93,7 @@ class ReferenceAmplifier:
 
     @property
     def tracked_values(self) -> tuple[Any, ...]:
-        """Return the values that may carry JAX tracers."""
+        """Return the values that can carry JAX tracers."""
         return (self.gain, self.added_noise)
 
     @property
@@ -187,7 +188,7 @@ def noise_contributions(elements: tuple[ReferenceElement, ...], frequency: Any, 
     """Return the chain's output-referred normally ordered added noise density.
 
     At ``frequency`` in GHz, walk ``elements`` in propagation order. A filter
-    applies ``N <- |H(f)|^2 N``; an amplifier applies
+    applies ``N <- |H(f)|^2 N``. An amplifier applies
     ``N <- G N + G n_add + (G - 1) / 2``.
     """
     xp = _array_module(elements, frequency, xp)

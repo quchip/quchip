@@ -8,14 +8,14 @@ At resonance (omega_d = 2*omega_f), the rotating-frame Hamiltonian is::
 
     H_rot = eps2(t) * (a_dag^2 + a^2)
 
-The drive maps the delivered in-phase signal to ``a^2 + a_dag^2``. Setting the
-carrier frequency to ``2*omega_f`` makes the weight-two operator bands
-resonant in the corresponding rotating frame.
+The drive maps the delivered in-phase signal to ``a^2 + a_dag^2``. A carrier
+frequency of ``2*omega_f`` makes the weight-two operator bands resonant in the
+corresponding rotating frame.
 
-The real-field projection halves the scheduled amplitude: an
-envelope of amplitude ``A(t)`` scheduled on this drive contributes
-``A(t)/2 * (a_dag^2 + a^2)`` to ``H_rot``, not ``A(t) * (a_dag^2 + a^2)``.
-Scheduling ``amplitude = 2*eps2(t)`` realizes the ``eps2(t)`` coefficient
+The real-field projection halves the scheduled amplitude, so an envelope of
+amplitude ``A(t)`` scheduled on this drive contributes
+``A(t)/2 * (a_dag^2 + a^2)`` to ``H_rot``, not ``A(t) * (a_dag^2 + a^2)``. A
+schedule of ``amplitude = 2*eps2(t)`` realizes the ``eps2(t)`` coefficient
 shown in ``H_rot`` above.
 
 References
@@ -39,21 +39,21 @@ class TwoPhotonDrive(DeviceDrive):
 
     Coupling operator: ``a^2 + a_dag^2``
 
-    The drive should be scheduled at twice the cavity frequency
-    (``freq = 2 * cavity.freq``) so that in the rotating frame the
-    interaction is static: ``eps2(t) * (a_dag^2 + a^2)``.  This combination
-    of Kerr nonlinearity and two-photon drive creates and stabilises cat states.
+    Schedule the drive at twice the cavity frequency
+    (``freq = 2 * cavity.freq``) so the rotating-frame interaction is static:
+    ``eps2(t) * (a_dag^2 + a^2)``. Kerr nonlinearity combined with the
+    two-photon drive creates and stabilises cat states.
 
     The engine band-decomposes ``a^2 + a_dag^2`` into excitation weights
     Delta_n = +2 and Delta_n = -2 and combines them with the delivered
     signal's carrier.
 
-    The real-field projection contributes only half the
-    scheduled envelope amplitude to each band: the coefficient landing on
-    ``a_dag^2 + a^2`` in the rotating frame is ``A(t)/2``, where ``A(t)``
-    is the amplitude scheduled on this drive's envelope.  Schedule
-    ``amplitude=2*eps2(t)`` to realize the target two-photon drive
-    strength ``eps2(t)`` used above and in ``alpha^2 = eps2/K``.
+    The real-field projection contributes only half the scheduled envelope
+    amplitude to each band. The coefficient on ``a_dag^2 + a^2`` in the
+    rotating frame is ``A(t)/2``, where ``A(t)`` is the amplitude scheduled on
+    this drive's envelope. Schedule ``amplitude=2*eps2(t)`` to realize the
+    target two-photon drive strength ``eps2(t)`` used above and in
+    ``alpha^2 = eps2/K``.
 
     Parameters
     ----------
@@ -84,7 +84,7 @@ class TwoPhotonDrive(DeviceDrive):
         Parameters
         ----------
         device : BaseDevice
-            The cavity device being driven.
+            Cavity device that the drive acts on.
         signal : AnalyticSignal
             Delivered two-photon pump signal.
         """

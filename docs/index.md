@@ -11,7 +11,7 @@ controls, and losses, then calculate spectra, simulate pulses, or fit parameters
 
 ## Install
 
-Requires Python 3.11 or newer.
+Python 3.11 or newer is required.
 
 ```bash
 python -m pip install quchip
@@ -21,8 +21,8 @@ See {doc}`installation <get-started/installation>` for optional backends and int
 
 ## Your first calculation
 
-Couple a transmon to a resonator and read their dressed frequencies.
-Frequencies and couplings are in GHz; this model uses the rotating-wave approximation.
+Couple a transmon to a resonator and read their dressed frequencies. Frequencies and
+couplings are in GHz. This model uses the rotating-wave approximation.
 
 ```python
 from quchip import RWA, Capacitive, Chip, DuffingTransmon, Resonator
@@ -38,8 +38,8 @@ print(f"Resonator: {chip.freq(r):.6f} GHz")
 ```
 
 ```text
-Qubit: 4.998533 GHz
-Resonator: 7.001041 GHz
+Qubit: 4.998751 GHz
+Resonator: 7.001249 GHz
 ```
 
 The coupling shifts each frequency from its bare value. Continue with
@@ -57,10 +57,10 @@ Hamiltonian and change a parameter.
 </div>
 ```
 
-Browse all {doc}`guides <guides/index>` or look up the
-{doc}`API and physics conventions <reference/index>`.
-The {doc}`focused studies <studies/index>` investigate specific physical
-questions; the {doc}`cookbook <cookbook>` collects practical tips.
+Browse all {doc}`guides <guides/index>` or find the
+{doc}`API and physics conventions <reference/index>`. The
+{doc}`focused studies <studies/index>` examine specific physical
+questions, and the {doc}`cookbook <cookbook>` collects practical tips.
 
 ```{toctree}
 :maxdepth: 1

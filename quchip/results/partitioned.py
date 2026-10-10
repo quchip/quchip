@@ -1,9 +1,9 @@
 """Combined view over per-component solves of a partitioned chip.
 
-Holds the K component :class:`~quchip.results.results.SimulationResult`
-objects and answers observable queries locally. The joint state is never
-materialized unless explicitly requested — rebuilding it costs the full
-tensor-product space the partition avoided.
+Holds the K component :class:`~quchip.results.results.SimulationResult` objects
+and answers observable queries locally. The joint state is materialized only on
+explicit request, because rebuilding it costs the full tensor-product space
+that the partition avoided.
 """
 
 from __future__ import annotations
@@ -35,11 +35,11 @@ class PartitionedSimulationResult:
     def __init__(self, component_results: list, partition: Any, key_plan: dict) -> None:
         """Wrap the per-component solves produced by one partitioned run.
 
-        *component_results* must align with ``partition.components`` — the
-        result at index ``i`` is the solve of ``partition.components[i].chip``.
-        Callers that build this by hand (rather than via
-        :func:`~quchip.engine.partitioned.maybe_simulate_partitioned`) must
-        preserve that order.
+        *component_results* must align with ``partition.components``. The
+        result at index ``i`` solves ``partition.components[i].chip``. When you
+        build this object by hand instead of via
+        :func:`~quchip.engine.partitioned.maybe_simulate_partitioned`, keep
+        that order.
         """
         if len(component_results) != len(partition.components):
             raise ValueError(
@@ -58,7 +58,7 @@ class PartitionedSimulationResult:
 
     @property
     def dissipation(self) -> bool:
-        """Return the shared dissipation choice of this partitioned calculation."""
+        """Return the shared dissipation choice of this partitioned solve."""
         choices = {result.dissipation for result in self._results}
         if len(choices) != 1:
             raise ValueError("Component results have different dissipation choices.")
@@ -72,12 +72,12 @@ class PartitionedSimulationResult:
     def device_order(self) -> tuple[str, ...]:
         """Return the parent chip's original device-label order.
 
-        This is *not* the concatenation of each component's labels (which
-        follows connected-component discovery order and can interleave
-        differently whenever the chip's device order doesn't already group
-        each component's members together) — it is the order
-        :attr:`states` and :attr:`final_state` are permuted into so they
-        match the joint solve exactly.
+        This is *not* the concatenation of each component's labels, which
+        follows connected-component discovery order. That order can interleave
+        differently when the chip's device order does not already group each
+        component's members together. The result permutes :attr:`states` and
+        :attr:`final_state` into this order, so they match the joint solve
+        exactly.
         """
         return self._partition.chip_order
 
@@ -161,20 +161,20 @@ class PartitionedSimulationResult:
         return owners[0].iq_readout(output, **kwargs)
 
     def measure(self, *devices: Any, t: Any = None, basis: Any = "energy") -> Any:
-        """Measure retained states in local energy bases, without further evolution.
+        """Measure kept states in local energy bases, without further evolution.
 
-        Pass multiple devices for joint outcomes, t for an exact saved time,
-        or basis='solver'. Custom local unitary columns are expressed in the
-        captured energy basis of the stored integration frame: one matrix for
-        one device, or a device mapping. No phase-frame conversion is applied.
-        Samples at different times represent independently terminated experiments.
+        Pass multiple devices for joint outcomes, t for an exact saved time, or
+        basis='solver'. Write custom local unitary columns in the captured energy
+        basis of the stored integration frame. Give one matrix for one device, or
+        a device mapping. No phase-frame conversion is applied. Samples at
+        different times represent independently terminated experiments.
 
         Parameters
         ----------
         *devices : device object or str
-            Measured devices; an empty selection measures all devices.
+            Measured devices. An empty selection measures all devices.
         t : scalar, array_like, or None, optional
-            Saved time or times in ns; ``None`` selects the final state.
+            Saved time or times in ns. ``None`` selects the final state.
         basis : {"energy", "solver"}, array_like, or mapping, default="energy"
             Captured local measurement basis.
         """
@@ -196,9 +196,10 @@ class PartitionedSimulationResult:
     def check_truncation(self, threshold: float = 1e-3) -> dict[str, float]:
         """Run each component's truncation check and merge the per-device results.
 
-        Mirrors :meth:`~quchip.results.results.SimulationResult.check_truncation`'s
-        return shape (a ``dict`` keyed by device label) for duck-typing parity
-        between a joint and a partitioned result.
+        The return shape is the same as for
+        :meth:`~quchip.results.results.SimulationResult.check_truncation` (a
+        ``dict`` keyed by device label), which gives duck-typing parity between
+        joint and partitioned results.
 
         Parameters
         ----------
@@ -260,17 +261,17 @@ class PartitionedSimulationResult:
         """Reconstruct the joint-state trajectory (ket trajectories only), in :attr:`device_order`.
 
         Component states tensor together in connected-component discovery
-        order, which can interleave differently from the parent chip's own
-        device order; each reconstructed step is permuted
+        order, which can interleave differently from the parent chip's device
+        order. Each reconstructed step is permuted
         (:meth:`~quchip.backend.protocol.Backend.permute_state`) into
-        :attr:`device_order` so the result matches a joint solve of the
+        :attr:`device_order`, so the result matches a joint solve of the
         original chip exactly.
 
-        See also :attr:`final_state`, which — unlike this accessor —
-        intentionally also accepts density-matrix components: a tensor
-        product of component density matrices is itself a valid joint
-        state, whereas a per-step list of joint kets is only well-defined
-        when every component stayed pure.
+        See also :attr:`final_state`. Unlike this accessor, :attr:`final_state`
+        intentionally also accepts density-matrix components, because a tensor
+        product of component density matrices is itself a valid joint state. A
+        per-step list of joint kets is well-defined only when every component
+        stayed pure.
         """
         warnings.warn(_JOINT_WARNING, UserWarning, stacklevel=2)
         backend = self._results[0]._backend
@@ -284,18 +285,19 @@ class PartitionedSimulationResult:
 
     @property
     def final_state(self) -> Any:
-        """Reconstruct the joint final state, in :attr:`device_order` — a ket if
-        every component stayed pure, otherwise a density matrix.
+        """Reconstruct the joint final state in :attr:`device_order`, as a ket
+        if all components stayed pure, else a density matrix.
 
-        When components disagree, every component is first promoted to a
-        density matrix (:meth:`_promote_to_common_state_kind`) before
-        tensoring, giving a valid joint density matrix. Components tensor
-        together in connected-component discovery order, which can
-        interleave differently from the parent chip's own device order; the
-        result is permuted (:meth:`~quchip.backend.protocol.Backend.permute_state`)
-        into :attr:`device_order` so it matches a joint solve of the
-        original chip exactly.
+        When components disagree, it first promotes every component to a density
+        matrix and then tensors them into a valid joint density matrix. Components
+        tensor together in connected-component discovery order, which can
+        interleave differently from the parent chip's device order. The result is
+        permuted (:meth:`~quchip.backend.protocol.Backend.permute_state`) into
+        :attr:`device_order`, so it matches a joint solve of the original chip
+        exactly.
         """
+        # Promotion of the components to a common density-matrix state kind uses
+        # `_promote_to_common_state_kind`.
         return self._joint_state([r.final_state for r in self._results])
 
     def state_at(self, t: Any, *, method: str = "exact") -> Any:
@@ -333,14 +335,14 @@ class PartitionedSimulationResult:
         )
 
     def __getattr__(self, name: str) -> Any:
-        """Raise a directed failure for any accessor this class doesn't implement.
+        """Raise a directed failure for any accessor that this class does not implement.
 
-        ``PartitionedSimulationResult`` only aggregates the surface defined
+        ``PartitionedSimulationResult`` aggregates only the surface defined
         above (``expect``, ``population``, ``states``/``final_state``,
-        ``check_truncation``, ...) — it does not re-implement every
-        :class:`~quchip.results.results.SimulationResult` method. Reach the
-        missing member either per component (``result.components[i].<name>``)
-        or by re-running with ``partition=False`` for a full-fidelity joint
+        ``check_truncation``, ...). It does not re-implement every
+        :class:`~quchip.results.results.SimulationResult` method. Use a missing
+        member per component (``result.components[i].<name>``), or rerun with
+        ``partition=False`` for a full-fidelity joint
         :class:`~quchip.results.results.SimulationResult` that has it.
         """
         raise AttributeError(

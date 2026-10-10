@@ -1,4 +1,4 @@
-"""KerrCavity — Kerr-nonlinear resonator model.
+"""KerrCavity: Kerr-nonlinear resonator model.
 
 Hamiltonian:
 
@@ -13,17 +13,17 @@ is the Kerr nonlinearity (GHz, positive).  Eigenvalues are:
 
    E_n = \\omega n - K n(n-1)
 
-The Kerr term shifts higher Fock levels down by :math:`K` per pair of
-photons, creating the anharmonic energy ladder that stabilises cat states
-when combined with a two-photon parametric drive.
+The Kerr term shifts higher Fock levels down by :math:`K` per photon pair,
+which gives the anharmonic energy ladder. Together with a two-photon parametric
+drive, this ladder stabilises cat states.
 
 Approximation
 -------------
-This is an effective single-mode model after adiabatic elimination of the
-SNAIL or STS-SQUID that provides the nonlinearity.  The Kerr coefficient
-:math:`K` captures the leading-order nonlinearity; higher-order corrections
-are neglected.  The Hilbert space is truncated at ``levels`` Fock states —
-choose ``levels >= 4 * (eps2 / K) + 10`` to avoid truncation artefacts.
+This is an effective single-mode model after adiabatic elimination of the SNAIL
+or STS-SQUID that supplies the nonlinearity. The Kerr coefficient :math:`K`
+captures the leading-order nonlinearity, and higher-order corrections are
+ignored. The Hilbert space is truncated at ``levels`` Fock states. To prevent
+truncation artefacts, choose ``levels >= 4 * (eps2 / K) + 10``.
 
 References
 ----------
@@ -53,45 +53,44 @@ class KerrCavity(FockDevice):
 
        H = \\omega \\, \\hat{n} - K \\, \\hat{n}(\\hat{n} - I)
 
-    The nonlinearity :math:`K` shifts the photon-number eigenenergies,
-    making the cavity anharmonic.  Combined with a two-photon parametric
-    drive at :math:`2\\omega`, the steady state becomes a cat state with
-    amplitude :math:`\\alpha = \\sqrt{\\varepsilon_2 / K}`.
+    The nonlinearity :math:`K` shifts the photon-number eigenenergies and makes
+    the cavity anharmonic. With a two-photon parametric drive at
+    :math:`2\\omega`, the steady state becomes a cat state with amplitude
+    :math:`\\alpha = \\sqrt{\\varepsilon_2 / K}`.
 
     Parameters
     ----------
     freq : float
-        Cavity frequency :math:`\\omega` in GHz.  Must be positive.
-        May be a JAX tracer for sweeps / gradients.
+        Positive cavity frequency :math:`\\omega` in GHz. Can be a JAX tracer
+        for sweeps / gradients.
     kerr : float
-        Kerr nonlinearity :math:`K` in GHz.  Non-negative; positive
-        value shifts even-photon levels downward.  Typically 1–100 MHz
-        in superconducting circuits.
+        Non-negative Kerr nonlinearity :math:`K` in GHz. A positive value
+        shifts even-photon levels downward. Usually 1–100 MHz in
+        superconducting circuits.
     levels : int
-        Fock-space truncation dimension.  Choose at least
-        ``4 * (eps2 / K) + 10`` to avoid truncation artefacts.
-        Default 30.
+        Fock-space truncation dimension. To prevent truncation artefacts,
+        choose at least ``4 * (eps2 / K) + 10``. Default 30.
     label : str | None
-        Human-readable label.  ``None`` → auto-generated
+        Human-readable label. ``None`` gives an automatic label
         ``kerr_cavity_0``, ``kerr_cavity_1``, …
     T1 : float or None, default None
-        Energy-relaxation time in ns; ``None`` disables T1 relaxation.
+        Energy-relaxation time in ns. ``None`` disables T1 relaxation.
     T2 : float or None, default None
-        Total 0-1 coherence time in ns; if both are set, ``T2 <= 2*T1``.
+        Total 0-1 coherence time in ns. If both are set, ``T2 <= 2*T1``.
     thermal_occupation : float or None, default None
-        Dimensionless mean bath occupation; ``None`` disables absorption.
+        Dimensionless mean bath occupation. ``None`` disables absorption.
 
     Notes
     -----
-    This Hamiltonian is diagonal in the Fock basis and does not itself
-    define a computational subspace. Combined with a two-photon parametric
-    drive, the steady state can be engineered into a cat-code manifold
-    spanned by the even cat state :math:`|C^+_\\alpha\\rangle` and the odd
-    cat state :math:`|C^-_\\alpha\\rangle`. Bit-flip errors within that
-    manifold are exponentially suppressed, :math:`\\sim e^{-2|\\alpha|^2}`,
-    in the stabilized regime. This class's inherited Pauli surface
+    This Hamiltonian is diagonal in the Fock basis and does not itself define a
+    computational subspace. With a two-photon parametric drive, you can
+    engineer the steady state into a cat-code manifold spanned by the even and
+    odd cat states :math:`|C^+_\\alpha\\rangle` and
+    :math:`|C^-_\\alpha\\rangle`. Bit-flip errors in that manifold are
+    exponentially suppressed, :math:`\\sim e^{-2|\\alpha|^2}`, in the
+    stabilized regime. This class's inherited Pauli surface
     (:attr:`computational` is ``False``) addresses the bare Fock ``|0>``,
-    ``|1>`` subspace; see :meth:`physics_notes` for the caveat.
+    ``|1>`` subspace. See :meth:`physics_notes` for the caveat.
 
     References
     ----------

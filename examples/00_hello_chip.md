@@ -17,7 +17,7 @@ jupyter:
 
 # Pulses, leakage, and readout
 
-How does pulse duration affect leakage, and how does the qubit state appear in
+How does pulse duration change leakage, and how does the qubit state appear in
 resonator readout? Use one coupled model for both experiments. Frequencies are
 in GHz and times in ns.
 
@@ -48,9 +48,9 @@ _ = chip.wire(qubit_line, readout_line)
 
 ## Compare a short and a long qubit pulse
 
-Both Gaussians have the same nominal π area. The short pulse's spectral width
-is comparable to the separation between the dressed 0→1 and 1→2 transitions;
-the four-times-longer pulse is more selective.
+Both Gaussians have the same nominal π area. The short pulse's spectral
+width is comparable to the separation between the dressed 0→1 and 1→2
+transitions, so the four-times-longer pulse is more selective.
 
 ```python
 f01 = float(chip.freq(qubit))
@@ -68,8 +68,9 @@ def pi_gaussian(duration):
 drive_pulses = [pi_gaussian(duration) for duration in drive_durations]
 ```
 
-Schedule the short pulse, then vary its duration and amplitude together.
-Each batch member starts in dressed |0,0⟩ and uses the same time grid.
+Schedule the short pulse, then change its duration and amplitude
+together. Each batch member starts in dressed |0,0⟩ and uses the same
+time grid.
 
 ```python
 drive_sequence = QuantumSequence(chip)
@@ -156,21 +157,21 @@ for index, name in enumerate(("Short", "Long")):
 Output:
 
 ```text
-Short: final P1 = 32.6%; peak P2 = 56.4%
-Long: final P1 = 98.0%; peak P2 = 3.9%
+Short: final P1 = 32.7%; peak P2 = 56.3%
+Long: final P1 = 98.1%; peak P2 = 3.8%
 ```
 
 <!-- executed-output:end -->
 
 Equal pulse area does not guarantee equal inversion in a multilevel system.
-The smaller peak P2 explains why the longer pulse comes closer to the target.
+The smaller peak P2 shows why the longer pulse comes closer to the target.
 
 ## Read out the prepared qubit state
 
-Now drive the resonator. Its frequency depends on the qubit state; use a tone
-halfway between the dressed resonances for qubit states |0⟩ and |1⟩.
-Use the same RWA Hamiltonian as the simulation, and set `reference_freq`
-to the carrier to view the IQ response in the drive frame.
+Now drive the resonator, whose frequency depends on the qubit state. Use a
+tone halfway between the dressed resonances for qubit states |0⟩ and |1⟩,
+with the same RWA Hamiltonian as the simulation. To see the IQ response in
+the drive frame, set `reference_freq` to the carrier.
 
 ```python
 readout_dressed = chip.resolve(frame="lab").dress()
@@ -188,9 +189,9 @@ _ = readout_sequence.schedule(readout_line, envelope=readout_pulse, freq=readout
 ```
 
 Apply the same pulse to separately prepared dressed |0,0⟩ and |1,0⟩ states.
-These are fresh preparations, so the readout comparison does not inherit the
-leakage from the previous experiment. Follow the two IQ pointers during
-the 900 ns readout pulse.
+As these are new preparations, the readout comparison does not inherit the
+previous experiment's leakage. Follow the two IQ pointers during the 900 ns
+readout pulse.
 
 ```python
 readout_times = np.linspace(0, 900, 181)
@@ -268,8 +269,9 @@ the direction of motion. The cross marks zero field.
 [PDF](../images/hello_dispersive_readout_iq.pdf)
 ```
 
-The same drive produces distinguishable mean fields for the two qubit states.
-These are intracavity responses, not a single-shot fidelity estimate.
+The same drive produces distinguishable mean fields for the two qubit
+states, as intracavity responses rather than a single-shot fidelity
+estimate.
 
 <details>
 <summary>Numerical checks and record</summary>
@@ -299,8 +301,8 @@ print(f"RESULT readout={json.dumps(readout_receipt, sort_keys=True)}")
 Output:
 
 ```text
-RESULT drive={"final_p1": {"long": 0.9798521681976914, "short": 0.32629522511065323}, "peak_p2": {"long": 0.03870269369477974, "short": 0.5637970570726827}}
-RESULT readout={"conditional_resonator_frequencies_ghz": [6.801997782702374, 6.801428548310606], "final_iq_separation": 0.9021197297304233, "solver": "mesolve"}
+RESULT drive={"final_p1": {"long": 0.9808186959428491, "short": 0.3274130996871264}, "peak_p2": {"long": 0.03843070489891596, "short": 0.5631356326693838}}
+RESULT readout={"conditional_resonator_frequencies_ghz": [6.801997782702374, 6.801428548310606], "final_iq_separation": 0.9021929173380938, "solver": "mesolve"}
 ```
 
 <!-- executed-output:end -->
@@ -309,14 +311,14 @@ RESULT readout={"conditional_resonator_frequencies_ghz": [6.801997782702374, 6.8
 
 ## Empty the resonator after readout
 
-Turning off a readout pulse leaves photons to decay. A
-[CLEAR pulse](https://arxiv.org/abs/1503.01456) adds loading and depletion
-segments to bring the coherent field up and back down faster.
+When a readout pulse stops, photons remain and decay. A [CLEAR
+pulse](https://arxiv.org/abs/1503.01456) adds loading and depletion
+segments that build up and remove the coherent field faster.
 
 Use the filtered circuit from the [T1 guide](slh-networks.md): a 5 GHz
 transmon, a 7 GHz readout resonator, and a 7.02 GHz Purcell filter. The line
-couples to the filter. Both pulses use the same 7.004945 GHz carrier: a
-weak-drive estimate of the conditional response midpoint including the
+couples to the filter. Both pulses use the same 7.004945 GHz carrier, a
+weak-drive estimate of the conditional response midpoint that includes the
 lossy filter. Use that carrier as the IQ reference too.
 
 ```python
@@ -341,11 +343,11 @@ clear_chip = Chip(
 ```
 
 Both pulses start at 100 ns and use the same carrier and hold amplitude
-(in √photons/ns).
-The square pulse stops at 900 ns. CLEAR uses two loading segments, a hold,
-then two depletion segments ending at 1300 ns. A negative amplitude is a π
-phase reversal. These five coefficients are a weak-drive starting design
-for this circuit; changing the circuit or carrier requires retuning them.
+(in √photons/ns). The square pulse stops at 900 ns. CLEAR uses two loading
+segments, a hold, and then two depletion segments that end at 1300 ns. A
+negative amplitude is a π phase reversal. These five coefficients are a
+weak-drive starting design for this circuit, so retune them if you change
+the circuit or carrier.
 
 ```python
 hold_amplitude = 0.008
@@ -364,10 +366,10 @@ for start, duration, scale in zip(segment_edges[:-1], np.diff(segment_edges), se
     )
 ```
 
-Prepare dressed |0,0,0⟩ and |1,0,0⟩ states of the resolved RWA model and
-run each pulse on both preparations. Record occupations and the readout field
-αᵣ = ⟨aᵣ⟩. The explicit time grid resolves the fast qubit–resonator exchange.
-The `matrix_form` solver option requires [QuTiP 5.3+](https://qutip.readthedocs.io/en/qutip-5.3.x/apidoc/solver.html).
+Prepare dressed |0,0,0⟩ and |1,0,0⟩ states of the resolved RWA model, and run each pulse on both
+preparations. Record the occupations and the readout field αᵣ = ⟨aᵣ⟩. The explicit time grid
+resolves the fast qubit–resonator exchange. The `matrix_form` solver option requires [QuTiP
+5.3+](https://qutip.readthedocs.io/en/qutip-5.3.x/apidoc/solver.html).
 
 ```python
 clear_times = np.linspace(0, 1900, 9501)
@@ -444,7 +446,7 @@ The small qubit occupation includes hybridization with the resonator.
 [PDF](../images/clear_populations.pdf)
 ```
 
-The IQ paths show how the depletion segments steer the coherent readout field
+The IQ paths show how the depletion segments move the coherent readout field
 back toward zero for both qubit preparations.
 
 <details>
@@ -503,6 +505,6 @@ for level in (0, 1):
 
 </details>
 
-The excited preparation also carries its dressed qubit excitation, so zero
-mean field does not imply a vacuum state. For the signal at the instrument
+The excited preparation also keeps its dressed qubit excitation, so zero
+mean field does not mean a vacuum state. For the signal at the instrument
 ports, continue with [readout and fridge wiring](steady-state-and-vna.md).

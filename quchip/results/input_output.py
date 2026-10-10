@@ -39,13 +39,13 @@ class SParameterResult:
 
     Around a phase-sensitive operating point, the response is
     ``delta <b_out> = S delta beta + T conj(delta beta)``. ``matrix`` stores ``S``
-    and ``conjugate_matrix`` stores ``T``; both have shape ``(*shape, n_ports,
-    n_ports)`` and use ``[..., output, input]`` indexing in ``ports`` order.
-    ``s(output, input)`` and ``t(output, input)`` select individual entries.
+    and ``conjugate_matrix`` stores ``T``. Both have shape
+    ``(*shape, n_ports, n_ports)`` and use ``[..., output, input]`` indexing in
+    ``ports`` order. ``s(output, input)`` and ``t(output, input)`` select
+    individual entries.
 
-    The stationary route computes both matrices from one shifted-Liouvillian
-    factorization. The passive-linear route reports zero for ``T``.
-    ``numpy.asarray(result)`` returns ``matrix``.
+    The passive-linear route reports zero for ``T``. ``numpy.asarray(result)``
+    returns ``matrix``.
 
     Attributes
     ----------
@@ -54,7 +54,7 @@ class SParameterResult:
     ports : tuple of str
         Port labels in output/input matrix order.
     axes : tuple
-        Sweep-axis ``(name, values)`` pairs; ``shape`` is the sweep shape.
+        Sweep-axis ``(name, values)`` pairs. ``shape`` is the sweep shape.
     diagnostics : tuple of mapping
         Per-point solver diagnostics.
     matrix, conjugate_matrix : array_like
@@ -63,6 +63,8 @@ class SParameterResult:
     shape : tuple of int
         Sweep-grid shape preceding the matrix axes.
     """
+    # The stationary route computes both matrices from one shifted-Liouvillian
+    # factorization.
 
     frequencies: Any
     ports: tuple[str, ...]
@@ -137,11 +139,11 @@ class MeanFieldResponseResult:
     axes first, followed by ``"amplitude"`` and ``"frequency"`` when those
     arguments are arrays.
 
+    If no fixed pump leaves a coherent mean at that plane and carrier,
     ``ratio(plane)`` approaches the corresponding small-signal S-parameter as
-    ``beta`` tends to zero when no fixed pump leaves a coherent mean at that
-    plane and carrier, and is ``NaN`` where ``beta`` is zero. The result
-    contains one stationary mean-field branch; it does not encode sweep-rate
-    hysteresis or metastable branches.
+    ``beta`` goes to zero. ``ratio(plane)`` is ``NaN`` where ``beta`` is zero.
+    The result contains one stationary mean-field branch. It does not encode
+    sweep-rate hysteresis or metastable branches.
 
     Attributes
     ----------
@@ -152,7 +154,7 @@ class MeanFieldResponseResult:
     frequencies, amplitudes : scalar or array_like
         Probe values in GHz and ``1/sqrt(ns)``.
     axes : tuple
-        Sweep-axis ``(name, values)`` pairs; ``shape`` is their array shape.
+        Sweep-axis ``(name, values)`` pairs. ``shape`` is their array shape.
     diagnostics : tuple of mapping
         Per-point stationary-solver diagnostics.
     values : array_like
@@ -222,14 +224,13 @@ class MeanFieldResponseResult:
 class OutputSpectrumResult:
     """Stationary output-field fluctuation spectra and signal photon fluxes.
 
-    ``signal_fluctuation_spectrum`` is device-generated spectral excess,
-    including input-system interference for thermal fields. It may be negative.
+    ``signal_fluctuation_spectrum`` is device-generated spectral excess, with
+    input-system interference for thermal fields. It can be negative.
     ``added_noise_spectrum`` is directly propagated thermal and amplifier noise,
-    and ``total_fluctuation_spectrum`` is their sum. ``signal_photon_flux``
-    is the propagated device-field flux, split into
-    ``signal_coherent_flux`` and ``signal_incoherent_flux``. Added noise is
-    not included in these fluxes because converting a spectral density to
-    flux requires a detection bandwidth.
+    and ``total_fluctuation_spectrum`` is their sum. ``signal_photon_flux`` is
+    the propagated device-field flux, split into ``signal_coherent_flux`` and
+    ``signal_incoherent_flux``. These fluxes exclude added noise, because
+    converting a spectral density to flux requires a detection bandwidth.
 
     Attributes
     ----------
@@ -294,10 +295,10 @@ class OutputCorrelationResult:
 
     @property
     def port(self) -> str:
-        """Delayed output port, retained for single-port result code."""
+        """Delayed output port, kept for single-port result code."""
         return self.output_port
 
     @property
     def intensity(self) -> Any:
-        """Delayed output intensity, retained for single-port result code."""
+        """Delayed output intensity, kept for single-port result code."""
         return self.output_intensity

@@ -1,11 +1,11 @@
 """Human-readable text summaries — the ``describe()`` surface.
 
-This is a *view* layer: it renders what the user built (devices, couplings,
-control wiring, scheduled pulses) — or what a transform derived, e.g. an
-``eliminate()`` fold report — as a sectioned plain-text report. It never
-computes physics beyond ordinary arithmetic on already-derived quantities,
-and never concretizes a traced value for anything but display — tracers
-render as ``<traced>`` even on this debugging surface.
+This *view* layer renders what the user built (devices, couplings, control
+wiring, scheduled pulses) as a sectioned plain-text report, and what a
+transform derived, e.g. an ``eliminate()`` fold report. It never calculates
+physics beyond ordinary arithmetic on already-derived quantities, and never
+concretizes a traced value except for display. Tracers render as ``<traced>``
+even on this debugging surface.
 
 Units come from the declarative :func:`~quchip.declarative.parameters.parameter`
 metadata (``unit=``), so extension authors who declare units get correct
@@ -347,11 +347,12 @@ def _classify_notes(notes: list[str]) -> tuple[str | None, str | None, list[str]
 def describe_elimination(result: "EliminationResult") -> str:
     """Human-readable fold report for :func:`~quchip.chip.transformations.eliminate`.
 
-    Every fold stated explicitly, before -> after: per-survivor freq (and T1
-    when either side carries one), the emitted/upgraded exchange edge with
-    its Yan-formula tag, ZZ availability under ``method="sw"`` or the exact
-    residual under ``method="exact"``, any control-line retarget,
-    the per-coupling validity verdict, and the dropped-physics summary. See
+    The report states every fold explicitly, before -> after, with the
+    per-survivor freq (and T1 when either side has one). It shows the
+    emitted/upgraded exchange edge with its Yan-formula tag, and ZZ
+    availability under ``method="sw"`` or the exact residual under
+    ``method="exact"``. It also shows any control-line retarget, the
+    per-coupling validity verdict, and the dropped-physics summary. See
     :meth:`~quchip.chip.transformations.EliminationResult.describe`.
     """
     method, dropped, retarget, leftover = _classify_notes(result.notes)

@@ -1,9 +1,9 @@
 """Coupling models for two-body interactions between devices.
 
-Couplers own their local Hamiltonians. A coupling
-defines the interaction Hamiltonian on the two-device subspace
-``H_int ∈ L(H_a ⊗ H_b)``; the engine embeds it into the full chip space
-at assembly time. Coupling strengths are in GHz.
+Couplers own their local Hamiltonians. A coupling defines the interaction
+Hamiltonian ``H_int ∈ L(H_a ⊗ H_b)`` on the two-device subspace, and the engine
+embeds it into the full chip space at assembly time. Coupling strengths are in
+GHz.
 
 References
 ----------
@@ -57,26 +57,25 @@ class Capacitive(CouplingModel):
     - Full form:   ``H_int = g · (a + a†)(b + b†)``
     - Band-RWA form: ``H_int = g · (a†b + a b†)`` (derived, not authored)
 
-    The coupling authors only the full form; :class:`~quchip.RWA`
-    retaining the ``Δa + Δb == 0`` bands of it, which is exactly
-    ``g · (a†b + a b†)``. The RWA drops the counter-rotating terms ``a b``
-    and ``a† b†``, valid when ``ω_a + ω_b ≫ g`` — the sum-frequency
-    condition that makes those terms fast-rotating and hence negligible.
-    This is distinct from the dispersive condition ``|ω_a − ω_b| ≫ g``,
-    which instead governs whether the *retained* exchange term
-    ``g · (a†b + a b†)`` can be treated perturbatively (see
-    :class:`TunableCapacitive` / :func:`~quchip.chip.transformations.eliminate`
-    for the dispersive reduction). Approximation is selected on the chip or
-    for one solve, never on the coupling.
+    The coupling authors only the full form. :class:`~quchip.RWA` keeps its
+    ``Δa + Δb == 0`` bands, which are exactly ``g · (a†b + a b†)``, and drops
+    the counter-rotating terms ``a b`` and ``a† b†``. This is valid when
+    ``ω_a + ω_b ≫ g``, which makes those terms fast-rotating and negligible. It
+    differs from the dispersive condition ``|ω_a − ω_b| ≫ g``, which determines
+    whether the *retained* exchange term ``g · (a†b + a b†)`` can be treated
+    perturbatively (see :class:`TunableCapacitive` /
+    :func:`~quchip.chip.transformations.eliminate` for the dispersive
+    reduction). You select the approximation on the chip or for one solve,
+    never on the coupling.
 
     Parameters
     ----------
     device_a, device_b : BaseDevice or str
         The two coupled devices, given as objects or label strings.
-        Label-string references are late-bound via :class:`Chip`.
+        :class:`Chip` late-binds label-string references.
     g : float
-        Coupling strength in GHz. May be a traced JAX scalar for
-        sweeps / autodiff.
+        Coupling strength in GHz. Can be a traced JAX scalar for sweeps /
+        autodiff.
     label : str, optional
         Human-readable label; defaults to ``"cap_{n}"``.
 
@@ -167,17 +166,16 @@ class TunableCapacitive(CouplingModel):
         H_{\text{int}} \;=\; g_0\,\hat Q_a\hat Q_b
 
     where :math:`\hat Q` is each endpoint's physical charge-like coupling
-    operator (the position quadrature for a Fock model). The engine applies
-    any requested RWA after local-basis materialization. :math:`g_0` is the
-    static coupling strength in GHz; it may be
-    a JAX tracer and flows through :func:`jax.grad` without
-    concretization.
+    operator (the position quadrature for a Fock model). The engine applies any
+    requested RWA after local-basis materialization. :math:`g_0` is the static
+    coupling strength in GHz and can be a JAX tracer that flows through
+    :func:`jax.grad` without concretization.
 
-    Time-dependence is not a construction-time parameter: a
-    :class:`~quchip.control.drive.ParametricDrive` wired onto this
-    coupling schedules a pump δ(t) via
-    :meth:`~quchip.control.sequence.QuantumSequence.pump`, multiplying
-    the same operator structure the static term uses
+    Time dependence is not a construction-time parameter. A
+    :class:`~quchip.control.drive.ParametricDrive` wired onto this coupling
+    schedules a pump δ(t) via
+    :meth:`~quchip.control.sequence.QuantumSequence.pump`. The pump multiplies
+    the same operator structure as the static term
     (:meth:`parametric_interaction`).
 
     Parameters
@@ -185,19 +183,18 @@ class TunableCapacitive(CouplingModel):
     device_a, device_b : BaseDevice
         The two coupled devices.
     g_0 : float
-        Static (mean) coupling strength in GHz. May be a JAX tracer.
+        Static (mean) coupling strength in GHz. Can be a JAX tracer.
     label : str, optional
         Human-readable label; defaults to ``"tunable_cap_{n}"``.
 
     Notes
     -----
-    The pump multiplies :meth:`parametric_interaction`; frame and RWA logic
-    stay in the engine. A pump
-    tone at the qubits' difference frequency ``|ω_a − ω_b|`` activates the
-    parametric beam-splitter / iSWAP exchange, while a tone at the sum
-    frequency ``ω_a + ω_b`` instead activates two-mode-squeezing
-    (``a†b†``) terms. Either is expressed via the drive's ``freq``
-    argument, not a coupling-side carrier.
+    The pump multiplies :meth:`parametric_interaction`, and frame and RWA logic
+    stay in the engine. A pump tone at the qubits' difference frequency
+    ``|ω_a − ω_b|`` activates the parametric beam-splitter / iSWAP exchange. A
+    tone at the sum frequency ``ω_a + ω_b`` activates two-mode-squeezing
+    (``a†b†``) terms. Express either tone with the drive's ``freq`` argument,
+    not with a coupling-side carrier.
 
     References
     ----------
@@ -275,26 +272,25 @@ class TunableCapacitive(CouplingModel):
 class CrossKerr(CouplingModel):
     """Cross-Kerr (dispersive) coupling ``H_int = χ · n̂_a n̂_b``.
 
-    The effective diagonal interaction left when an exchange coupling is
-    reduced in the dispersive regime — the natural coupling for effective
-    readout chips (qubit + resonator + ``CrossKerr`` probed by an ordinary
-    charge line) and static-ZZ modelling. Diagonal in both endpoints, so the
-    RWA and full forms coincide and the term is frame-trivial.
+    This effective diagonal interaction remains when an exchange coupling is
+    reduced in the dispersive regime. It suits effective readout chips (qubit +
+    resonator + ``CrossKerr`` probed by an ordinary charge line) and static-ZZ
+    modelling. The term is diagonal in both endpoints, so its RWA and full
+    forms coincide and it is frame-trivial.
 
-    Declared approximation: this is a *uniform-pull* model —
-    one χ per edge, the same shift per endpoint excitation; per-level χ
-    differences, dispersive breakdown at the critical photon number, and
-    Purcell decay are not represented (fold Purcell into endpoint ``T1``
-    via ``eliminate()`` when it matters).
+    Declared approximation: this is a *uniform-pull* model with one χ per edge
+    and the same shift per endpoint excitation. It does not represent per-level
+    χ differences, dispersive breakdown at the critical photon number, or
+    Purcell decay. If Purcell decay matters, fold it into the endpoint ``T1``
+    with ``eliminate()``.
 
     Parameters
     ----------
     device_a, device_b : BaseDevice or str
         The two coupled devices, as objects or label strings.
     chi : float
-        Cross-Kerr shift in GHz per excitation pair, sign included
-        (convention: full pull ``E₁₁ − E₁₀ − E₀₁ + E₀₀``). May be a JAX
-        tracer.
+        Cross-Kerr shift in GHz per excitation pair, sign included (convention:
+        full pull ``E₁₁ − E₁₀ − E₀₁ + E₀₀``). Can be a JAX tracer.
     label : str, optional
         Defaults to ``"crosskerr_{n}"``.
     """
@@ -347,11 +343,11 @@ class CrossKerr(CouplingModel):
 class Coupling(_BaseCoupling):
     """Generic two-body coupling with a user-supplied interaction.
 
-    Use this escape hatch when no concrete coupling class models the
-    desired physics (inductive, longitudinal, cross-Kerr test forms,
-    synthetic spin-spin couplings, photonics-style beam-splitters, …).
-    The user supplies the operator structure; this class only provides
-    the ``g`` scaling, RWA pass-through, and bookkeeping.
+    Use this escape hatch when no concrete coupling class models the required
+    physics (inductive, longitudinal, cross-Kerr test forms, synthetic
+    spin-spin couplings, photonics-style beam-splitters, …). The user supplies
+    the operator structure, and this class supplies only the ``g`` scaling, RWA
+    pass-through, and bookkeeping.
 
     Two mutually exclusive modes:
 
@@ -449,7 +445,7 @@ class Coupling(_BaseCoupling):
         return notes
 
     def to_dict(self) -> dict[str, Any]:
-        """Reject serialization because callables cannot be made persistent."""
+        """Reject serialization because callables cannot be persisted."""
         raise NotImplementedError(
             "Generic Coupling carries user-defined callables and cannot be serialized. "
             "Use a concrete coupling subclass for persistent storage."

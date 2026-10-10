@@ -1,5 +1,5 @@
 > [!WARNING]
-> quchip is an alpha-stage 0.x project. Minor releases may change public APIs. Pin an exact version when reproducibility matters.
+> quchip is an alpha-stage 0.x project. Minor releases can change public APIs, so pin an exact version when reproducibility matters.
 
 <p align="center">
   <a href="https://quchip.org">
@@ -25,11 +25,11 @@
   <a href="https://docs.quchip.org"><img src="https://github.com/quchip/quchip/actions/workflows/docs.yml/badge.svg?branch=main" alt="Documentation build status"></a>
 </p>
 
-`quchip` is an open-source Python toolkit for modelling quantum devices.
-Its built-in models cover circuit QED; custom Hamiltonians, operators, and loss
-channels describe other systems.
+`quchip` is an open-source Python toolkit to model quantum devices. Its
+built-in models cover circuit QED, and custom Hamiltonians, operators, and
+loss channels describe other systems.
 
-A predictive chip model needs more than a Hamiltonian. Device physics, control-line transformations, frames, approximations, dissipation, and measured observables all need explicit places in the model. Gain, delay, and crosstalk remain properties of the control chain instead of being folded into Hamiltonian coefficients by hand.
+A predictive chip model needs more than a Hamiltonian. Device physics, control-line transformations, frames, approximations, dissipation, and measured observables each need an explicit place in it. Gain, delay, and crosstalk stay properties of the control chain instead of being folded into Hamiltonian coefficients by hand.
 
 Declare the chip once, then use the same model for dressed-state analysis, model reduction, control sequences, open-system simulation, parameter sweeps, and JAX gradients.
 
@@ -41,7 +41,7 @@ Declare the chip once, then use the same model for dressed-state analysis, model
 
 QuTiP is the default simulation backend. The optional dynamiqs backend is JAX-native and keeps declared device and control parameters differentiable through a solve. The [backend guide](https://docs.quchip.org/guides/choosing-a-backend.html) compares their numerical and workflow tradeoffs. The scqubits integration imports and exports selected device and composite models.
 
-`quchip` uses GHz for ordinary frequencies, ns for time, and mK for temperature. The implemented conventions and approximations are documented in the [physics guide](https://docs.quchip.org/physics).
+`quchip` uses GHz for ordinary frequencies, ns for time, and mK for temperature. The [physics guide](https://docs.quchip.org/physics) documents the implemented conventions and approximations.
 
 ## Install
 
@@ -51,7 +51,7 @@ QuTiP is the default simulation backend. The optional dynamiqs backend is JAX-na
 python -m pip install quchip
 ```
 
-Install optional support for dynamiqs, graph visualization, or scqubits as needed:
+Optionally, install support for dynamiqs, graph visualization, or scqubits:
 
 ```bash
 python -m pip install 'quchip[dynamiqs]'
@@ -103,9 +103,9 @@ fr1 = chip.freq(readout, when={qubit: 1})
 chi = (fr1 - fr0) / 2
 ```
 
-`unresolved_hamiltonian()` preserves the local device and coupling expressions you declared. `hamiltonian()` applies the chip's basis, frame, and approximation. Both return inspectable symbolic expressions; call `.matrix(t=...)` when a resolved expression is time-dependent and you need its numerical array.
+`unresolved_hamiltonian()` keeps the local device and coupling expressions you declared. `hamiltonian()` applies the chip's basis, frame, and approximation. Both return inspectable symbolic expressions. If a resolved expression is time-dependent and you need its numerical array, call `.matrix(t=...)`.
 
-The remaining calls read dressed transition frequencies and the resonator frequency conditioned on the qubit state. Their half-difference gives the dispersive shift $\chi$.
+The remaining calls read dressed transition frequencies and the resonator frequency conditioned on the qubit state. Half their difference gives the dispersive shift $\chi$.
 
 The [defining and inspecting a chip guide](https://docs.quchip.org/guides/defining-and-inspecting-a-chip) continues from this example with LaTeX output, term inspection, frame transformations, projections, and graph views.
 
@@ -139,19 +139,19 @@ The [dynamics guide](https://docs.quchip.org/guides/dynamics-pulses-and-readout)
 
 ## Focused studies
 
-- [Purcell filtering and T1](https://docs.quchip.org/guides/slh-networks): how much can a Purcell filter suppress qubit decay while preserving readout bandwidth?
+- [Purcell filtering and T1](https://docs.quchip.org/guides/slh-networks): how much can a Purcell filter suppress qubit decay while keeping the readout bandwidth?
 
 ## Project status and contributing
 
-Report bugs and model requests through [GitHub Issues](https://github.com/quchip/quchip/issues). Use [Discussions](https://github.com/quchip/quchip/discussions) for questions and open-ended proposals. Read the [contributing guide](https://github.com/quchip/quchip/blob/main/CONTRIBUTING.md) before making code or physics changes.
+Report bugs and model requests through [GitHub Issues](https://github.com/quchip/quchip/issues). Use [Discussions](https://github.com/quchip/quchip/discussions) for questions and open-ended proposals. Before making code or physics changes, read the [contributing guide](https://github.com/quchip/quchip/blob/main/CONTRIBUTING.md).
 
 ## Paper and citation
 
 The accompanying paper is [quchip: A Differentiable Toolkit for Modeling Quantum Devices](https://arxiv.org/abs/2607.17081) (arXiv:2607.17081).
 
-The [interactive walkthrough](https://quchip.org) follows one five-device model through declaration, crosstalk identification and correction, adiabatic reduction from 576 to 16 dimensions, and gradient-based recovery of four directed crosstalk parameters.
+The [interactive walkthrough](https://quchip.org) takes one five-device model through declaration, crosstalk identification and correction, adiabatic reduction from 576 to 16 dimensions, and gradient-based recovery of four directed crosstalk parameters.
 
-If you use quchip in your work, please cite:
+If you use quchip, cite:
 
 ```bibtex
 @misc{alyousef2026quchip,
@@ -166,7 +166,7 @@ If you use quchip in your work, please cite:
 }
 ```
 
-Citation metadata for the software is also available in [CITATION.cff](https://github.com/quchip/quchip/blob/main/CITATION.cff).
+Software citation metadata is also in [CITATION.cff](https://github.com/quchip/quchip/blob/main/CITATION.cff).
 
 ## License
 

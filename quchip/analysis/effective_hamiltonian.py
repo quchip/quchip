@@ -1,12 +1,13 @@
 """Static-ZZ pathways and des-Cloizeaux effective Hamiltonians.
 
-:func:`analyze_static_zz` reports exact dressed ZZ and a second-order
-Schrieffer-Wolff attribution to virtual transitions. The pathway estimates
-are diagnostics; the reported ZZ is computed from the dressed spectrum.
+:func:`analyze_static_zz` reports the exact dressed ZZ and a second-order
+Schrieffer-Wolff attribution to virtual transitions. The pathway estimates are
+diagnostics, and the reported ZZ comes from the dressed spectrum.
 
-:func:`effective_hamiltonian` returns a dense GHz matrix on a chosen
-computational subspace, with eigenvalues equal to its labeled dressed energies.
-Differentiation requires backend eigensolver support and a fixed assignment.
+:func:`effective_hamiltonian` returns a dense GHz matrix on a selected
+computational subspace, whose eigenvalues equal its labeled dressed energies.
+Differentiation requires backend support for the eigensolver and a fixed
+assignment.
 
 References: Bravyi, DiVincenzo & Loss, *Schrieffer-Wolff transformation for
 quantum many-body systems*, Ann. Phys. 326, 2793 (2011); Blais et al.,
@@ -63,27 +64,28 @@ def _bare_index_pair(dims: tuple[int, ...], idx_a: int, idx_b: int, level_a: int
 
 @dataclass(frozen=True)
 class StaticZZResult:
-    """Store exact static ZZ between two devices, plus its 2nd-order SW pathway attribution.
+    """Store the exact static ZZ between two devices and its 2nd-order SW pathway attribution.
 
     Attributes
     ----------
     zz
         ``E(1,1) - E(1,0) - E(0,1) + E(0,0)``, identical to
-        :meth:`~quchip.chip.chip.Chip.dispersive_shift(device_a, device_b)` —
-        exact, not perturbative.
+        :meth:`~quchip.chip.chip.Chip.dispersive_shift(device_a, device_b)`.
+        This value is exact, not perturbative.
     pathways
-        ``(bare_occupation, amount)`` pairs: the contribution of each virtual
-        intermediate state to the 2nd-order SW correction of the ``(1_a,
-        1_b)`` diagonal matrix element, ``amount = 1/2 * V_ik*V_ki*(1/(E_i -
-        E_k) + 1/(E_i - E_k))`` for ``i`` the ``(1_a, 1_b)`` bare index —
-        a decomposition of that one energy correction, not of ``zz`` itself
-        (which combines four dressed energies exactly). ``bare_occupation``
-        is a full chip-length Fock tuple, in device order.
+        ``(bare_occupation, amount)`` pairs. Each pair gives one virtual
+        intermediate state's contribution to the 2nd-order SW correction of the
+        ``(1_a, 1_b)`` diagonal matrix element. The contribution is
+        ``amount = 1/2 * V_ik*V_ki*(1/(E_i - E_k) + 1/(E_i - E_k))``, where
+        ``i`` is the ``(1_a, 1_b)`` bare index. This decomposes that one energy
+        correction, not ``zz`` itself, which combines four dressed energies
+        exactly. ``bare_occupation`` is a full chip-length Fock tuple, in
+        device order.
     device_a, device_b
         Resolved device labels.
     device_labels
-        Chip device labels in tensor-product order, for reading
-        ``pathways``' occupation tuples.
+        Chip device labels in tensor-product order, for reading the occupation
+        tuples of ``pathways``.
 
     Amounts stay in the array namespace of the chip's parameters (JAX in, JAX
     out) — traceable and differentiable, precision-filtered only on the
@@ -97,10 +99,10 @@ class StaticZZResult:
     device_labels: tuple[str, ...]
 
     def describe(self) -> str:
-        """Print and return the exact ZZ plus the leading virtual pathways.
+        """Print and return the exact ZZ and the leading virtual pathways.
 
-        Concrete values only — call outside ``jax.jit``/``grad`` regions;
-        traced amounts render as ``<traced>``.
+        Concrete values only. Call it outside ``jax.jit``/``grad`` regions.
+        Traced amounts show as ``<traced>``.
         """
         zz_value = maybe_concrete_scalar(self.zz)
         zz_text = f"{zz_value * 1e3:+.4g} MHz" if zz_value is not None else "<traced>"
@@ -121,17 +123,19 @@ class StaticZZResult:
 
 
 def analyze_static_zz(chip: "Chip", device_a: str | BaseDevice, device_b: str | BaseDevice) -> StaticZZResult:
-    """Compute exact static ZZ between two devices, plus its 2nd-order SW pathway attribution.
+    """Calculate the exact static ZZ between two devices and its 2nd-order SW pathway attribution.
 
-    ``zz`` is :meth:`~quchip.chip.chip.Chip.dispersive_shift`, unchanged —
-    the exact, all-orders residual coupling. ``pathways`` decomposes the
-    2nd-order SW correction to the ``(1_a, 1_b)`` diagonal energy into its
-    virtual-intermediate-state contributions
-    (:func:`~quchip.chip.sw.pathway_attribution`), read off a partition that
-    keeps only the four computational states of ``(a, b)`` (every other
-    device grounded) — the natural loss primitive for a calibration sweep
-    that holds ``zz`` near zero while some other exchange (e.g. a
-    :func:`~quchip.chip.transformations.eliminate`-mediated ``J``) stays on
+    ``zz`` is :meth:`~quchip.chip.chip.Chip.dispersive_shift`, unchanged: the
+    exact, all-orders residual coupling. ``pathways`` decomposes the 2nd-order
+    SW correction to the ``(1_a, 1_b)`` diagonal energy into virtual
+    intermediate-state contributions
+    (:func:`~quchip.chip.sw.pathway_attribution`). The pathways come from a
+    partition that keeps only the four computational states of ``(a, b)``, with
+    all other devices grounded.
+
+    This is the natural loss primitive for a calibration sweep that holds
+    ``zz`` near zero while a different exchange, e.g. a
+    :func:`~quchip.chip.transformations.eliminate`-mediated ``J``, stays on
     target.
 
     Parameters
@@ -139,7 +143,7 @@ def analyze_static_zz(chip: "Chip", device_a: str | BaseDevice, device_b: str | 
     chip : Chip
         Chip whose dressed spectrum and couplings define the static model.
     device_a, device_b : str or BaseDevice
-        The two devices whose static ZZ is analyzed.
+        The two devices to analyze.
 
     Returns
     -------
@@ -212,28 +216,30 @@ def _normalize_subspace(
 class EffectiveHamiltonianResult:
     """Store the des-Cloizeaux effective Hamiltonian on a labeled computational subspace.
 
-    ``h_eff`` is built as ``S^-1/2 (W E W^dagger) S^-1/2`` with ``W`` the
-    overlap block between the requested bare states and their assigned
-    dressed states, ``E`` the labeled dressed energies, and ``S = W W^dagger``
-    the (generally non-orthonormal) overlap Gram matrix — the symmetric
-    (Löwdin) orthonormalization shared with exact mode reductions.
+    The function builds ``h_eff`` as ``S^-1/2 (W E W^dagger) S^-1/2``. Here
+    ``W`` is the overlap block between the requested bare states and their
+    assigned dressed states, and ``E`` is the labeled dressed energies.
+    ``S = W W^dagger`` is the overlap Gram matrix, which in general is not
+    orthonormal. Exact mode reductions use the same symmetric (Löwdin)
+    orthonormalization.
+
     ``S^-1/2 W`` is unitary by construction, so ``h_eff`` is unitarily similar
-    to ``diag(E)``: its eigenvalues are exactly the labeled dressed energies,
-    to numerical precision, regardless of how strongly the kept states
-    hybridize with the rest of the chip. Off-diagonal entries carry the
-    effective couplings between kept states; the diagonal is not, in
-    general, individually equal to any one dressed energy once couplings mix
-    the kept states.
+    to ``diag(E)``. Its eigenvalues are therefore exactly the labeled dressed
+    energies, to numerical precision, for any hybridization strength between
+    the kept states and the rest of the chip. The off-diagonal entries hold the
+    effective couplings between kept states. When couplings mix the kept
+    states, a diagonal entry in general does not equal one specific dressed
+    energy.
 
     Attributes
     ----------
     h_eff
         Dense Hermitian matrix, GHz, ordered as :attr:`basis`.
     basis
-        Full chip-length bare-occupation tuples spanning the subspace, in
-        :attr:`h_eff` row/column order.
+        Full chip-length bare-occupation tuples that span the subspace, in the
+        row/column order of :attr:`h_eff`.
     device_labels
-        Chip device labels in tensor-product order, for reading
+        Chip device labels in tensor-product order, for reading the
         :attr:`basis` tuples.
     """
 
@@ -244,8 +250,8 @@ class EffectiveHamiltonianResult:
     def describe(self) -> str:
         """Print and return the matrix with labeled row/column kets.
 
-        Concrete values only — call outside ``jax.jit``/``grad`` regions;
-        a traced matrix renders as ``<traced>``.
+        Concrete values only. Call it outside ``jax.jit``/``grad`` regions. A
+        traced matrix shows as ``<traced>``.
         """
         lines = ["Effective Hamiltonian (GHz):"]
         for i, occupation in enumerate(self.basis):
@@ -288,24 +294,20 @@ def effective_hamiltonian(
     chip: "Chip",
     subspace: Mapping[str | BaseDevice, int] | Sequence[str | BaseDevice],
 ) -> EffectiveHamiltonianResult:
-    """Compute the des-Cloizeaux effective Hamiltonian on a user-chosen computational subspace.
+    """Calculate the des-Cloizeaux effective Hamiltonian on a user-selected computational subspace.
 
-    Reuses the chip's dressed spectrum
-    (:meth:`~quchip.chip.analysis.ChipAnalysis._compute_array_labeled`) rather
-    than re-diagonalizing: one full-chip diagonalization drives both this and
-    :meth:`~quchip.chip.chip.Chip.dispersive_shift`. See
-    :class:`EffectiveHamiltonianResult` for the construction and its exactness
-    guarantee.
+    See :class:`EffectiveHamiltonianResult` for the construction and its
+    exactness guarantee.
 
     Parameters
     ----------
     chip : Chip
         Chip whose dressed spectrum defines the effective subspace.
     subspace : mapping or sequence
-        ``{device: levels}`` keeps ``range(levels)`` of each named device
-        (spectators grounded); a bare sequence of devices keeps each one's
-        full qubit (Fock 0/1) subspace (spectators grounded). Both accept a
-        device label string or the object itself.
+        ``{device: levels}`` keeps ``range(levels)`` of each named device. A
+        bare sequence of devices keeps each device's full qubit (Fock 0/1)
+        subspace. In both forms spectators are grounded, and a device can be a
+        label string or the device object.
 
     Returns
     -------
@@ -322,6 +324,10 @@ def effective_hamiltonian(
     >>> result.h_eff.shape
     (4, 4)
     """
+    # effective_hamiltonian reuses the chip's dressed spectrum
+    # (`_compute_array_labeled`) instead of diagonalizing again, so one
+    # full-chip diagonalization supplies both this function and
+    # `dispersive_shift`.
     device_labels = tuple(dev.label for dev in chip.devices)
     basis = _normalize_subspace(chip, subspace)
     h_eff = _h_eff_on_basis(chip, basis)
@@ -331,33 +337,32 @@ def effective_hamiltonian(
 def effective_hamiltonian_between_states(
     chip: "Chip", state_a: tuple[int, ...], state_b: tuple[int, ...]
 ) -> Any:
-    r"""Compute the 2x2 Löwdin-orthonormalized effective Hamiltonian between two explicit bare states.
+    r"""Calculate the 2x2 Löwdin-orthonormalized effective Hamiltonian between two explicit bare states.
 
-    The same des-Cloizeaux construction :func:`effective_hamiltonian` uses
-    (see :class:`EffectiveHamiltonianResult`), specialized to exactly the
-    two-state subspace spanned by *state_a* and *state_b* — not the
-    four-state product subspace a ``["a", "b"]`` bare-sequence spec to
-    :func:`effective_hamiltonian` would build (each device's full qubit
-    subspace independently), which is a different projection. This is the
-    natural primitive for a static exchange rate between two
-    single-excitation bare states :math:`|1_a, 0_b\rangle` and
-    :math:`|0_a, 1_b\rangle`: the returned matrix's off-diagonal entry is
-    that exchange rate, in GHz.
+    This function uses the des-Cloizeaux construction of
+    :func:`effective_hamiltonian` (see :class:`EffectiveHamiltonianResult`),
+    but on exactly the two-state subspace that *state_a* and *state_b* span. It
+    does not use the four-state product subspace that a ``["a", "b"]``
+    bare-sequence spec to :func:`effective_hamiltonian` builds from each
+    device's full qubit subspace. It is the natural primitive for a static
+    exchange rate between the single-excitation bare states
+    :math:`|1_a, 0_b\rangle` and :math:`|0_a, 1_b\rangle`. The returned
+    matrix's off-diagonal entry is that exchange rate, in GHz.
 
     Parameters
     ----------
     chip : Chip
         Chip whose dressed spectrum defines the effective Hamiltonian.
     state_a, state_b : tuple[int, ...]
-        Full chip-length bare-occupation tuples (one entry per device, in
+        Full chip-length bare-occupation tuples (one entry for each device, in
         :attr:`~quchip.chip.chip.Chip.devices` order).
 
     Returns
     -------
     Any
-        ``(2, 2)`` Hermitian matrix, GHz, in the array namespace of the
-        chip's backend. Eigenvalues are exactly *state_a* and *state_b*'s
-        labeled dressed energies, to numerical precision.
+        ``(2, 2)`` Hermitian matrix, GHz, in the array namespace of the chip's
+        backend. Its eigenvalues are exactly the labeled dressed energies of
+        *state_a* and *state_b*, to numerical precision.
 
     Examples
     --------

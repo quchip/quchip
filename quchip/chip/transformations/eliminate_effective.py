@@ -2,8 +2,8 @@
 
 Every device and edge survives with its authored parameters. An exact rotation
 diagonalizes the selected terms together with the local Hamiltonians of the
-devices they act on. The retained matrix holds the resulting level-dependent
-shifts and the rotation's effect on every other interaction in the chip.
+devices they act on. The kept matrix holds the resulting level-dependent shifts
+and the effect of the rotation on every other interaction in the chip.
 """
 
 from __future__ import annotations
@@ -27,15 +27,15 @@ if TYPE_CHECKING:
 
 
 def reduce_effective_terms(chip: "Chip", target: Any, method: str) -> EliminationResult:
-    """Diagonalize one effective contribution exactly and retain its complete correction.
+    """Diagonalize one effective contribution exactly and keep its complete correction.
 
     The rotation uses only the selected terms and the isolated local
-    Hamiltonians of the devices they act on; dressed states take the bare
-    label of largest overlap. Its action on the full chip is retained,
-    including couplings and other effective terms, so dressed queries on the
-    reduced chip return the source spectrum at the chip's approximation.
-    Only ``method='exact'`` is implemented: a second-order expansion
-    is not reliable for a strong nonlinearity such as a junction cosine. Exact
+    Hamiltonians of the devices they act on. Dressed states take the bare label
+    of largest overlap. Its action on the full chip, including couplings and
+    other effective terms, is kept, so dressed queries on the reduced chip
+    return the source spectrum at the chip's approximation. Only
+    ``method='exact'`` is implemented, because a second-order expansion is not
+    reliable for a strong nonlinearity such as a junction cosine. Exact
     derivatives require a locally stable dressed assignment and nondegenerate
     eigenpairs.
     """

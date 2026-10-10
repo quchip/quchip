@@ -19,19 +19,19 @@ class ObservableReport:
         ``"cross_kerr"``, ``"exchange_rate"``, or
         ``"coupling_strength"``).
     label
-        Target locator — a device label for single-device observables,
-        a ``(label_a, label_b)`` tuple for pair observables, or a
-        coupling label for coupling-keyed observables.
+        Target locator: a device label for single-device observables, a
+        ``(label_a, label_b)`` tuple for pair observables, or a coupling label
+        for coupling-keyed observables.
     target
-        The value the optimizer tried to match (GHz).
+        Value the optimizer tried to match (GHz).
     initial
         Observable value at the seed chip, before optimization (GHz).
     final
         Observable value at the fitted chip, after optimization (GHz).
     evaluator
-        ``"full"`` if this target was evaluated on the whole chip or
-        ``"local"`` if it was evaluated on a one-hop subsystem (see
-        ``evaluator`` in :func:`fit_a_dress`).
+        ``"full"`` for evaluation on the whole chip or ``"local"`` for
+        evaluation on a one-hop subsystem (see ``evaluator`` in
+        :func:`fit_a_dress`).
     source
         ``"component default"`` or ``"explicit"``.
     """
@@ -70,7 +70,7 @@ class FitParameterReport:
     seed_source : str
         Origin of the starting value, as recorded by the fitter.
     sign_choice : str or None
-        Coupling-sign decision, or ``None`` when no decision was needed.
+        Coupling-sign decision, or ``None`` when no decision was necessary.
     """
 
     name: str
@@ -103,21 +103,20 @@ class FitADressResult:
     Attributes
     ----------
     chip
-        Fitted chip: a clone of the desired specification
-        with updated device and coupling parameters. The input chip is never
-        mutated. Exposing ``.chip`` makes this satisfy
+        Fitted chip: a clone of the desired specification with updated device
+        and coupling parameters. The fit never mutates the input chip. Because
+        the result exposes ``.chip``, it satisfies
         :class:`~quchip.chip.transformations.ChipTransform` structurally,
-        with no inheritance required.
+        without inheritance.
     loss
         Final objective (sum of squared, scale-normalized residuals).
     history
-        One-dimensional ``numpy`` array containing the normalized objective
-        at every distinct parameter vector passed to the residual function.
-        The first entry is the seed and the last is :attr:`loss`. With a
-        numerical Jacobian, the intermediate entries include finite-difference
-        probes as well as accepted solver iterates; use
-        ``numpy.minimum.accumulate(history)`` for a monotone best-so-far
-        convergence curve.
+        One-dimensional ``numpy`` array with the normalized objective at each
+        distinct parameter vector passed to the residual function. The first
+        entry is the seed and the last entry is :attr:`loss`. With a numerical
+        Jacobian, the intermediate entries include finite-difference probes and
+        accepted solver iterates. For a monotone best-so-far convergence curve,
+        use ``numpy.minimum.accumulate(history)``.
     initial_targets
         One :class:`ObservableReport` per target, evaluated on the
         optimizer's initial candidate.
@@ -125,34 +124,34 @@ class FitADressResult:
         One :class:`ObservableReport` per target, evaluated on the
         fitted chip.
     initial_params
-        ``{parameter_name: seed_value}`` — the starting point passed
-        to the optimizer.
+        ``{parameter_name: seed_value}``, the optimizer's starting point.
     final_params
-        ``{parameter_name: fitted_value}`` — the optimizer output.
-        Parameter names follow ``"<device>.freq"``,
-        ``"<device>.anharmonicity"``, and
-        ``"<coupling>.<coupling_strength_name>"`` — ``"<coupling>.g"`` for
-        :class:`~quchip.chip.couplings.Capacitive`, ``"<coupling>.g_0"``
-        for :class:`~quchip.chip.couplings.TunableCapacitive`,
-        ``"<coupling>.chi"`` for :class:`~quchip.chip.couplings.CrossKerr`.
+        ``{parameter_name: fitted_value}``, the optimizer output. Parameter
+        names follow ``"<device>.freq"``, ``"<device>.anharmonicity"``, and
+        ``"<coupling>.<coupling_strength_name>"``. The coupling names are
+        ``"<coupling>.g"`` for :class:`~quchip.chip.couplings.Capacitive`,
+        ``"<coupling>.g_0"`` for
+        :class:`~quchip.chip.couplings.TunableCapacitive`, ``"<coupling>.chi"``
+        for :class:`~quchip.chip.couplings.CrossKerr`.
     parameter_reports
-        One :class:`FitParameterReport` per varied bare parameter, including
-        its bounds, starting-point source, and any coupling-sign choice.
+        One :class:`FitParameterReport` per varied bare parameter, with its
+        bounds, the source of its starting point, and any coupling-sign choice.
     solver_info
-        ``scipy`` solver metadata (``method``, ``status``,
-        ``message``, ``nfev``, ``jacobian``), plus the identifiability
-        receipt recorded for every :func:`~quchip.inverse_design.fit.fit_a_dress`
-        call: ``n_free_parameters`` (length of ``final_params``),
-        ``n_target_residuals`` (length of ``final_targets``), and
-        ``underdetermined_by_count`` (``True`` when the former exceeds the
-        latter — a necessary, not sufficient, identifiability condition),
-        final scaled-Jacobian rank, condition number, singular values, and
-        any weak parameter directions. Rank uses normalized residuals in the
-        solver's scaled parameter coordinates. ``history_axis`` names the
-        sampling axis used by :attr:`history`, and ``n_recorded_evaluations``
-        gives its length. ``jacobian`` is ``"jax"``
-        when a JAX-native backend supplies the exact residual Jacobian and
-        ``"finite-difference"`` otherwise.
+        ``scipy`` solver metadata (``method``, ``status``, ``message``, ``nfev``,
+        ``jacobian``). It also holds the identifiability receipt that each
+        :func:`~quchip.inverse_design.fit.fit_a_dress` call records. The receipt
+        contains ``n_free_parameters`` (length of ``final_params``) and
+        ``n_target_residuals`` (length of ``final_targets``). Its
+        ``underdetermined_by_count`` is ``True`` when the former exceeds the
+        latter, a necessary but not sufficient identifiability condition. The
+        receipt also contains the final scaled-Jacobian rank, the condition
+        number, the singular values, and any weak parameter directions.
+
+        Rank uses normalized residuals in the solver's scaled parameter
+        coordinates. ``history_axis`` names the sampling axis used by
+        :attr:`history`, and ``n_recorded_evaluations`` gives its length.
+        ``jacobian`` is ``"jax"`` when a JAX-native backend supplies the exact
+        residual Jacobian and ``"finite-difference"`` otherwise.
     """
 
     chip: Chip
@@ -167,7 +166,7 @@ class FitADressResult:
 
     @property
     def converged(self) -> bool | None:
-        """Whether the optimizer converged, or None when status is unavailable."""
+        """Convergence flag of the optimizer, or None when the status is not available."""
         status = self.solver_info.get("status")
         return None if status is None else int(status) > 0
 
@@ -230,24 +229,23 @@ class FitADressResult:
     @overload
     def rebind(self, seed: BaseDevice | str, /, *more: BaseDevice | str) -> tuple[BaseDevice, ...]: ...
     def rebind(self, *seeds: BaseDevice | str) -> Any:
-        """Look up the fitted clones matching one or more seed devices.
+        """Find the fitted clones that match one or more seed devices.
 
-        Use ``fit.rebind(qb, tc, cr)`` to retrieve the fitted clones
-        corresponding to the seed devices.
+        For example, call ``fit.rebind(qb, tc, cr)``.
 
         Parameters
         ----------
         *seeds : BaseDevice or str
-            One or more devices (or their labels) from the *seed* chip
-            passed to :func:`~quchip.inverse_design.fit.fit_a_dress`. At
-            least one is required.
+            One or more devices (or their labels) from the *seed* chip passed
+            to :func:`~quchip.inverse_design.fit.fit_a_dress`. You must give at
+            least one.
 
         Returns
         -------
         BaseDevice or tuple[BaseDevice, ...]
-            The matching device(s) on :attr:`chip` (the fitted clone), in
-            input order. A single positional ``seed`` returns that device
-            directly; two or more return a tuple.
+            The matching device(s) on :attr:`chip` (the fitted clone), in input
+            order. A single positional ``seed`` returns that device directly,
+            and two or more seeds return a tuple.
 
         Raises
         ------

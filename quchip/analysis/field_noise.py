@@ -19,7 +19,7 @@ def propagate_noise(
     fields: tuple[FieldChannel, ...], scattering: Any, graph: Any, excess: Any,
     labels: tuple[str, ...], frequency: Any, offsets: Any, xp: Any, *, include_inputs: bool = True,
 ) -> tuple[dict[str, tuple[Any, Any]], Any]:
-    """Apply one physical source/transfer owner to either stationary solver's spectrum."""
+    """Apply one physical source/transfer owner to the spectrum of either stationary solver."""
     indices = {channel.key: i for i, channel in enumerate(fields)}
     selected = [indices[label] for label in labels]
     channels = [fields[i] for i in selected]
@@ -112,7 +112,7 @@ class ReadoutWiring:
 
     @classmethod
     def capture(cls, slh: Any, array_module: Any) -> ReadoutWiring:
-        """Retain the solved wiring independently of subsequent component edits."""
+        """Keep the solved wiring independently of later component edits."""
         return cls(tuple(FieldChannel(c.key, c.reference, c.input_occupation) for c in slh.channels),
                    tuple(c.key for c in slh.external_channels), slh.output_network, array_module)
 

@@ -4,10 +4,10 @@ Responsibilities
 ----------------
 * Resolve the chip frame.
 * Flatten ``e_ops`` into solver-ready bands with :func:`decompose_eops`.
-* Build an :class:`EngineResult` for each variant
-  and pack into a single :class:`SolveProblem`, or merge homogeneous
-  variants into a :class:`SolveBatch` (``N`` identical skeletons with
-  per-element :class:`ScalarModulation` signals).
+* Build an :class:`EngineResult` for each variant and pack it into a single
+  :class:`SolveProblem`, or merge homogeneous variants into a
+  :class:`SolveBatch` (``N`` identical skeletons with per-element
+  :class:`ScalarModulation` signals).
 
 Collapse operators enter the standard Lindblad master equation
 ``dρ/dt = −i[H, ρ] + Σₖ D[Lₖ]ρ``. Rates are stored in 1/ns.
@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 class SolveProblemContext:
     """Shared solve metadata reused across a homogeneous problem batch.
 
-    Built once by :func:`prepare_solve_problem_context` so sweep points can
+    Built once by :func:`prepare_solve_problem_context`, so sweep points can
     skip redundant observable normalization.
     """
 
@@ -102,17 +102,17 @@ def prepare_solve_problem_context(
     dissipation: bool = True,
     run_args: dict | None = None,
 ) -> SolveProblemContext:
-    """Resolve the frame and retain authored observables and state specifications.
+    """Resolve the frame and keep authored observables and state specifications.
 
     Observables and states are materialized only after assembly resolves every
-    local solver basis. The default ground state remains lazy, so callers that
-    provide an explicit state do not pay for unused state construction.
+    local solver basis. The default ground state stays lazy, so callers that
+    supply an explicit state do not pay for unused state construction.
 
     ``frame`` overrides the chip's declared frame. For ``"auto"``, the solve
-    window ``tlist[-1] - tlist[0]`` supplies the duration used for weights.
+    window ``tlist[-1] - tlist[0]`` gives the duration used for weights.
 
-    ``tlist`` defines the actual interval. Scheduled signals retain their
-    absolute times, including operations partly or wholly outside this interval.
+    ``tlist`` defines the actual interval. Scheduled signals keep their absolute
+    times, including operations partly or fully outside this interval.
     """
     if not isinstance(dissipation, bool):
         raise TypeError("dissipation must be a boolean calculation choice.")
@@ -235,13 +235,13 @@ def build_solve_batch_from_results(
 ) -> SolveBatch:
     """Package homogeneous :class:`EngineResult`s as one :class:`SolveBatch`.
 
-    All results must share the same static term objects, the same number
-    of dynamic terms, and matching operator payloads per slot (by identity
-    or by canonical fingerprint — crosstalk rebuilds equal-by-value
-    operators on every instantiation). ``initial_states=None`` gives every
-    point one shared default start; individual ``None`` entries reuse it.
-    The batch shares one static Hamiltonian, frame, and start time.
+    All results must share the same static term objects and the same number of
+    dynamic terms. Each slot's operator payloads must match, by identity or by
+    canonical fingerprint. ``initial_states=None`` gives every point one shared
+    default start. Individual ``None`` entries reuse that start. The batch
+    shares one static Hamiltonian, frame, and start time.
     """
+    # Crosstalk rebuilds equal-by-value operators on every instantiation.
     if not engine_results:
         raise ValueError("build_solve_batch_from_results requires at least one engine result")
 
@@ -307,8 +307,8 @@ def build_solve_problem(
     """Resolve, assemble, and package a frozen :class:`SolveProblem`.
 
     Equivalent to :func:`prepare_solve_problem_context` followed by
-    :func:`build_engine_result`. For many variants sharing one
-    chip configuration, prefer that two-step form with
+    :func:`build_engine_result`. For many variants that share one chip
+    configuration, use that two-step form with
     :func:`build_solve_batch_from_results`.
 
     ``frame`` overrides the chip's declared frame and follows the same
@@ -358,7 +358,7 @@ def build_solve_problem(
 
 def solve_problem_list(problems: list[SolveProblem], *, progress: bool = True,
                        parameters: tuple[dict[str, Any], ...] | None = None) -> Any:
-    """Dispatch each captured backend's requests and restore original point order."""
+    """Dispatch each captured backend's requests and restore the original point order."""
     from quchip.results.results import SimulationBatchResult
 
     problems = assign_point_noise(problems)
@@ -517,8 +517,8 @@ def _solve_backend_problems(
 def assign_point_noise(problems: list[SolveProblem], *, split_keys: bool = False) -> list[SolveProblem]:
     """Assign omitted QuTiP seeds in logical point order before grouping.
 
-    Explicit native seeds/keys are retained, including deliberately shared noise.
-    Dynamiqs keys remain a required native input.
+    Explicit native seeds/keys are kept, including intentionally shared noise.
+    Dynamiqs keys stay a necessary native input.
     """
     if split_keys and any("keys" in problem.run_args for problem in problems):
         import jax

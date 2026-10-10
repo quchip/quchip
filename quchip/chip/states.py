@@ -1,8 +1,8 @@
 """Bare states, dressed eigenstates, and normalized superpositions for chips.
 
-String shorthand such as ``"eg1"`` uses the device order and level symbols
-set by :func:`set_state_order`. Dressed-state selection uses the assigned
-eigenvector column and remains JAX-traceable on a fixed assignment.
+String shorthand such as ``"eg1"`` uses the device order and level symbols that
+:func:`set_state_order` sets. Dressed-state selection uses the assigned
+eigenvector column and stays JAX-traceable on a fixed assignment.
 """
 
 from __future__ import annotations
@@ -33,13 +33,13 @@ def set_state_order(
     *devices: "str | BaseDevice",
     levels: Mapping[str, int] | None = None,
 ) -> None:
-    """Declare the device order used to parse string-state shorthands.
+    """Declare the device order that parses string-state shorthands.
 
-    After this is called, :meth:`Chip.bare_state`, :meth:`Chip.state`, and
-    :meth:`Chip.superposition` accept single-string specifications where
-    each character is one level per device in *devices* order.
-    Level symbols default to ``g=0, e=1, f=2, h=3``; digits ``0..9``
-    are always accepted as energy-level indices.
+    After this call, :meth:`Chip.bare_state`, :meth:`Chip.state`, and
+    :meth:`Chip.superposition` accept single-string specifications. In these
+    strings, each character is one level per device, in *devices* order. Level
+    symbols default to ``g=0, e=1, f=2, h=3``. The digits ``0..9`` are always
+    accepted as energy-level indices.
 
     Every chip device must be named exactly once.
 
@@ -72,7 +72,7 @@ def set_state_order(
 
 
 def copy_state_configuration(source: "Chip", target: "Chip") -> None:
-    """Retain the relative string-state order and symbols on surviving devices."""
+    """Keep the relative string-state order and symbols on surviving devices."""
     if source._state_order is not None:
         target.set_state_order(
             *(label for label in source._state_order if label in target.device_map),
@@ -114,8 +114,9 @@ def normalize_device_state_mapping(
 ) -> dict[str, Any]:
     """Normalize a mapping or string state specification to device-label keys.
 
-    Parse strings using the chip's declared state order. Reject unsupported input
-    types and duplicate device specifications across the mapping and keywords.
+    Parse strings with the chip's declared state order. Reject unsupported
+    input types and duplicate device specifications across the mapping and
+    keywords.
     """
     mapping: Mapping[Any, Any] | None
     mapping = parse_state_string(chip, device_states) if isinstance(device_states, str) else device_states
@@ -135,13 +136,13 @@ def superposition(
 ) -> State:
     """Normalized bare-basis superposition of tensor-product states.
 
-    Each component is either a bare-state spec (dict keyed by device or
-    label, or a string when :func:`set_state_order` has been called) or
-    an ``(amplitude, spec)`` tuple for weighted mixing. Uniform weights
-    by default; results are normalized to unit norm.
+    Each component is a bare-state spec or an ``(amplitude, spec)`` tuple for
+    weighted mixing. A bare-state spec is a dict keyed by device or label, or a
+    string after you call :func:`set_state_order`. The weights are uniform by
+    default, and the result is normalized to unit norm.
 
-    Unlike :meth:`~quchip.Chip.state`, this stays in the bare product basis — no
-    dressed diagonalization — so the probe basis is explicit.
+    Unlike :meth:`~quchip.Chip.state`, this function stays in the bare product
+    basis and does no dressed diagonalization, so the probe basis is explicit.
 
     Examples
     --------
@@ -204,13 +205,13 @@ def bare_state(
 ) -> State:
     """Product state from per-device energy levels or authored local kets.
 
-    Each device may be specified as either an energy-level index (``int``)
-    or a ket vector in that device's authored local space. Devices not
-    mentioned default to the ground state (level 0). Unlike :meth:`~quchip.Chip.state`
-    this does **not** diagonalize the coupled system.
+    You can specify each device as an energy-level index (``int``) or as a ket vector
+    in that device's authored local space. Unmentioned devices default to the ground
+    state (level 0). Unlike :meth:`~quchip.Chip.state`, this function does **not**
+    diagonalize the coupled system.
 
-    Accepts a string shorthand (e.g. ``"eg1"``) when
-    :func:`set_state_order` has been called.
+    Accepts a string shorthand (for example ``"eg1"``) after you call
+    :func:`set_state_order`.
     """
     resolved = normalize_device_state_mapping(chip, device_states, device_state_kwargs)
     return _bare_state_from_bases(chip, resolved, chip.resolve().bases)
@@ -309,11 +310,11 @@ def _bare_state_from_bases(
 def default_initial_state(chip: "Chip", engine_result: Any, start_time: Any) -> State:
     """Return the default initial state for a solve.
 
-    Use the eigenstate of the undriven static lab-frame Hamiltonian retained by
-    ``engine_result.approximation`` that is assigned to the all-ground label.
-    Make its overlap with the bare product real and nonnegative, then express
-    it in the solve frame at ``start_time``. Return the bare product directly
-    when it is already an eigenstate.
+    Use the eigenstate assigned to the all-ground label, taken from the
+    undriven static lab-frame Hamiltonian that ``engine_result.approximation``
+    keeps. Make its overlap with the bare product real and nonnegative, then
+    express it in the solve frame at ``start_time``. If the bare product is
+    already an eigenstate, return the bare product directly.
     """
     from quchip.engine.assembly import _may_raise_ground
 

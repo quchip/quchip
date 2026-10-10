@@ -56,17 +56,18 @@ _T = TypeVar("_T")
 
 @dataclass(frozen=True)
 class TracedKey:
-    """Cache-key stand-in for a JAX tracer: its identity within the trace that owns it."""
+    """Cache-key stand-in for a JAX tracer: its identity in the trace that owns it."""
 
     ident: int
 
 
 def value_fingerprint(value: Any, *, traced: bool = False) -> Any:
-    """Hash supported value contents; reject opaque mutable payloads.
+    """Hash the contents of supported values; reject opaque mutable payloads.
 
-    A tracer is rejected unless ``traced`` is true, when it keys by identity
-    (:class:`TracedKey`). Such keys are valid only inside the trace that owns
-    the tracer, so their cache entries must be scoped with :func:`scoped_entry`.
+    It rejects a tracer unless ``traced`` is true. If ``traced`` is true, the
+    key is the tracer's identity (:class:`TracedKey`). Such keys are valid only
+    in the owning trace, so you must scope their cache entries with
+    :func:`scoped_entry`.
     """
     if isinstance(value, Tracer):
         if traced:
@@ -98,16 +99,17 @@ def value_fingerprint(value: Any, *, traced: bool = False) -> Any:
 def scoped_entry(key: Any, value: _T, *, traced: bool) -> tuple[Any, Any, _T]:
     """A cache entry ``(key, scope, value)``.
 
-    An entry whose value is traced, or whose key holds a :class:`TracedKey`,
-    records the current JAX trace and is reused only inside it, never in a
-    nested or later trace. Other entries are valid everywhere.
+    An entry with a traced value, or with a key that holds a
+    :class:`TracedKey`, records the current JAX trace. Such an entry belongs to
+    that trace, and quchip does not reuse it in a nested or later trace. Other
+    entries are valid everywhere.
     """
     scoped = traced or any(isinstance(leaf, TracedKey) for leaf in jtu.tree_leaves(key))
     return key, get_opaque_trace_state() if scoped else None, value
 
 
 def scoped_hit(entry: tuple[Any, Any, _T] | None, key: Any) -> TypeGuard[tuple[Any, Any, _T]]:
-    """Whether *entry* holds *key* and, when scoped, belongs to the current trace."""
+    """Return if *entry* holds *key* and, when scoped, belongs to the current trace."""
     return (entry is not None and entry[0] == key
             and (entry[1] is None or entry[1] == get_opaque_trace_state()))
 

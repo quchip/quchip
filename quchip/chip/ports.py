@@ -20,10 +20,10 @@ if TYPE_CHECKING:
 class Port:
     """One accessible Markovian channel with a dimensionless coupling operator.
 
-    ``rate``, ``external_quality_factor``, and ``phase`` may be traced or swept
-    between solves; each remains constant within a solve. Model shaped
-    emission with an explicit buffer or coupler device holding a static ``Port``
-    and a modulated Hamiltonian coupling.
+    ``rate``, ``external_quality_factor``, and ``phase`` can be traced or swept
+    between solves but remain constant within a solve. Model shaped emission
+    with an explicit buffer or coupler device holding a static ``Port`` and a
+    modulated Hamiltonian coupling.
 
     Parameters
     ----------
@@ -37,11 +37,11 @@ class Port:
         Dimensionless external quality factor for one target, giving the rate
         ``2*pi*freq/Q`` in 1/ns.
     operator : object or str or None, default=None
-        Dimensionless coupling operator; ``None`` uses the target's lowering operator.
+        Dimensionless coupling operator. ``None`` uses the target's lowering operator.
     phase : float or array-like, default=0.0
         Reference-plane phase in radians.
     label : str or None, default=None
-        Stable channel label; generated when omitted.
+        Stable channel label, generated if omitted.
     """
 
     _type_prefix = "port"
@@ -147,7 +147,7 @@ class Port:
         Parameters
         ----------
         chip : Chip
-            Chip providing the target frequency for a quality-factor rate.
+            Chip that supplies the target frequency for a quality-factor rate.
         """
         if self.rate is not None:
             return self.rate
@@ -217,7 +217,7 @@ class Port:
         setattr(self, name, value)
 
     def copy(self) -> "Port":
-        """Return an independent port retaining label-based targets."""
+        """Return an independent port that keeps label-based targets."""
         operator = self.operator.copy() if isinstance(self.operator, np.ndarray) else self.operator
         return Port(
             tuple(resolve_label(target) for target in self._targets),

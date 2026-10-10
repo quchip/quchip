@@ -1,16 +1,17 @@
 """Assemble an :class:`EngineResult` from chip physics, controls, and frame.
 
 Hamiltonians enter in ordinary GHz and are scaled by ``2π`` to rad/ns for
-``d|ψ⟩/dt = -i H |ψ⟩``. Carrier and observable-demodulation phases also convert
-frequencies to rad/ns; solver hints convert them back to GHz for display.
+``d|ψ⟩/dt = -i H |ψ⟩``. Carrier and observable-demodulation phases convert
+frequencies to rad/ns as well, and solver hints convert them back to GHz for
+display.
 
 Rotating frames subtract ``Σᵢ ω_frame,ᵢ nᵢ`` from the static Hamiltonian.
 Coupling and drive operators split into excitation-change bands with weight
 ``w = col - row`` and carriers ``exp(-i w·ω t)``.
-:class:`~quchip.approximations.Exact` retains every band.
-:class:`~quchip.approximations.RWA` retains total-excitation-conserving static
-bands and matches delivered-signal bands to operator bands. Time dependence
-is represented by :class:`~quchip.engine.ir.SignalProgram` expressions, which
+:class:`~quchip.approximations.Exact` keeps every band.
+:class:`~quchip.approximations.RWA` keeps total-excitation-conserving static
+bands and matches delivered-signal bands to operator bands. Time dependence is
+represented by :class:`~quchip.engine.ir.SignalProgram` expressions, which
 backends lower to native coefficients.
 
 References: Scully & Zubairy, *Quantum Optics* (1997), §5.1; Jaynes & Cummings,
@@ -614,9 +615,10 @@ class BandRecord:
     """One excitation-change band of an authored operator, with its charge vector.
 
     ``charges[i]`` is the photon-number change the band applies to
-    ``devices[i]``; ``amplitude`` is the band's largest concrete matrix element
-    or ``None`` when traced. Frame planning and assembly read the same records.
+    ``devices[i]``. ``amplitude`` is the band's largest concrete matrix element
+    or ``None`` when traced.
     """
+    # Frame planning and assembly read the same band records.
 
     devices: tuple[str, ...]
     charges: tuple[int, ...]
@@ -1041,7 +1043,7 @@ def drive_bands(
     backend: Backend,
     approximation: Approximation,
 ) -> list[tuple[BandRecord, Operator, int, int]]:
-    """Yield retained band records, embedded operators, term indices and original signal weights."""
+    """Yield kept band records, embedded operators, term indices and original signal weights."""
     probe = AnalyticSignal(program=Constant(1.0 + 0.0j))
     with _backend_context(backend):
         authored_terms = split_dynamic_hamiltonian(drive.hamiltonian(target, probe))
@@ -1542,14 +1544,13 @@ def compile_hamiltonian_template(
 ) -> HamiltonianTemplate:
     """Compile the invariant Hamiltonian skeleton (H₀, couplings, pre-embedded drive bands).
 
-    Everything that does not change across a homogeneous sweep lives in
-    the template: static Hamiltonian, static-coupling folds, invariant
-    dynamic couplings, and band-decomposed drive operators pre-embedded
-    and pre-scaled by 2π. Per-sweep instantiation
-    (:func:`instantiate_engine_result`) rebuilds only the
-    :class:`~quchip.engine.ir.SignalProgram` leaves, so envelope
-    parameters, drive frequencies, phases, and frame scalars can sweep
-    through JAX without retracing operator tensors.
+    The template holds everything invariant across a homogeneous sweep: the
+    static Hamiltonian, static-coupling folds, invariant dynamic couplings, and
+    band-decomposed drive operators pre-embedded and pre-scaled by 2π.
+    Per-sweep instantiation (:func:`instantiate_engine_result`) rebuilds only
+    the :class:`~quchip.engine.ir.SignalProgram` leaves. Envelope parameters,
+    drive frequencies, phases, and frame scalars can therefore sweep through
+    JAX without retracing operator tensors.
     """
     strategy = chip.approximation if approximation is None else require_approximation(approximation)
     if _base_result is not None:
@@ -1801,11 +1802,10 @@ def build_engine_result(
 ) -> EngineResult:
     """Compile the template and instantiate one engine-result variant.
 
-    Equivalent to
-    :func:`compile_hamiltonian_template` followed by
-    :func:`instantiate_engine_result` with the same
-    ``drive_ops``. Prefer the two-step form when solving many variants
-    that share the same chip topology.
+    Equivalent to :func:`compile_hamiltonian_template` followed by
+    :func:`instantiate_engine_result` with the same ``drive_ops``. Prefer the
+    two-step form when you solve many variants that share the same chip
+    topology.
 
     Parameters
     ----------

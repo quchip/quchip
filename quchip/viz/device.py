@@ -1,4 +1,4 @@
-"""Per-device spectrum and eigenstate plots."""
+"""Spectrum and eigenstate plots for each device."""
 
 from __future__ import annotations
 
@@ -23,30 +23,29 @@ def plot_energy_levels(
     color: str | None = None,
     linewidth: float = 2.0,
 ) -> Figure:
-    """Plot a single device's bare-Hamiltonian eigenenergies.
+    """Plot the bare-Hamiltonian eigenenergies of a single device.
 
-    Each eigenvalue of ``device.hamiltonian()`` is drawn as a horizontal
-    bar annotated with its index in the represented basis. The y-axis is
-    energy in GHz. For a ``DuffingTransmon`` the gaps reveal the
-    anharmonicity directly; for a ``Resonator`` they are exactly equal.
+    Each eigenvalue of ``device.hamiltonian()`` shows as a horizontal bar with
+    its index in the represented basis. The y-axis is energy in GHz. For a
+    ``DuffingTransmon``, the gaps show the anharmonicity directly. For a
+    ``Resonator``, the gaps are exactly equal.
 
     Parameters
     ----------
     device : BaseDevice
-        The device whose bare spectrum should be plotted.
+        Device whose bare spectrum is plotted.
     ax : matplotlib.axes.Axes, optional
-        Existing axes to draw onto. When ``None`` a new figure is created.
+        Existing axes to draw on. When ``None``, the function makes a new figure.
     color : str, optional
-        Line colour for every level. Defaults to the first ``tab10``
-        colour.
+        Line colour for all levels. The default is the first ``tab10`` colour.
     linewidth : float
         Width of each level bar.
 
     Returns
     -------
     Figure
-        The figure holding the energy-ladder axes (``ax.figure`` when
-        *ax* was given).
+        The figure that holds the energy-ladder axes (``ax.figure`` when *ax*
+        was given).
 
     Examples
     --------
@@ -77,26 +76,27 @@ def plot_wavefunction(
 ) -> Figure:
     """Plot the represented-basis probability weights of eigenstate *n*.
 
-    Shows the eigenvector probabilities in the device's authored local
+    Show the eigenvector probabilities in the device's authored local
     coordinates. Circuit models can have more native basis coordinates than
-    retained energy levels; the axis follows the actual eigenvector length.
+    retained energy levels. The axis follows the actual length of the
+    eigenvector.
 
     Parameters
     ----------
     device : BaseDevice
-        The device whose eigenstates are diagonalised.
+        Device whose eigenstates are diagonalised.
     n : int
         Eigenstate index (``0 <= n < device.levels``).
     ax : matplotlib.axes.Axes, optional
-        Existing axes to draw onto. When ``None`` a new figure is created.
+        Existing axes to draw on. When ``None``, the function makes a new figure.
     color : str, optional
-        Bar colour. Defaults to a per-index ``tab10`` cycle.
+        Bar colour. The default is a ``tab10`` cycle per index.
 
     Returns
     -------
     Figure
-        The figure holding the bar-chart axes (``ax.figure`` when *ax*
-        was given).
+        The figure that holds the bar-chart axes (``ax.figure`` when *ax* was
+        given).
 
     Raises
     ------

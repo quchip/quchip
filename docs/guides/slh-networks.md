@@ -17,7 +17,7 @@ Both circuits use the same bare qubit and readout parameters:
 
 The unfiltered circuit is qubit–readout–line. In the filtered circuit, a
 7.02 GHz resonator sits between the readout and the line. Its coupling J is
-chosen to retain approximately 1 MHz of external readout linewidth:
+chosen to keep approximately 1 MHz of external readout linewidth:
 
 ```{math}
 \kappa_{\rm eff}(\omega)\simeq
@@ -25,8 +25,8 @@ chosen to retain approximately 1 MHz of external readout linewidth:
 ```
 
 This broad-filter estimate suppresses escape near the qubit while keeping
-readout escape fast. The simulation also includes filter intrinsic loss.
-See [Sete et al.](https://arxiv.org/abs/1504.06030).
+readout escape fast, and the simulation also includes the filter's
+intrinsic loss. See [Sete et al.](https://arxiv.org/abs/1504.06030).
 
 ```python
 import numpy as np
@@ -153,8 +153,8 @@ by T₁ and Qᵢ; Z₀ represents the matched feedline bath.
 
 ## Prepare one excitation and let it decay
 
-Prepare the qubit-like eigenstate of the resolved RWA model. Each circuit uses
-the same time grid and records all local occupations.
+Prepare the resolved RWA model's qubit-like eigenstate. Each circuit uses the
+same time grid and records all local occupations.
 
 ```python
 times = np.r_[np.linspace(0, 100, 201), np.linspace(100, 120_000, 1201)[1:]]
@@ -223,9 +223,9 @@ The integrated loss budget explains the T1 improvement:
 | Filter intrinsic | — | <0.001% |
 | Feedline | 49.9% | 0.329% |
 
-These are fractions of the excitation lost by 120 µs; excitation still in the
-circuit is excluded. Filtering suppresses feedline loss, leaving the intrinsic
-qubit and readout losses as the limit.
+The table gives fractions of the excitation lost by 120 µs, excluding
+excitation still in the circuit. Filtering suppresses feedline loss, so the
+intrinsic qubit and readout losses become the limit.
 
 <details>
 <summary>Integrate the losses and check excitation balance</summary>
@@ -243,8 +243,9 @@ The balance applies to this vacuum, single-excitation decay model.
 
 ## Verify the lifetime and bandwidth
 
-Grid and local-level refinement change T1 and integrated channel losses by
-less than `1e-4`. The unfiltered T1 also agrees with the dispersive estimate.
+Refining the grid and local levels changes T1 and integrated channel losses
+by less than `1e-4`. The unfiltered T1 also agrees with the dispersive
+estimate.
 
 <details>
 <summary>Check the decay estimate, sampling, and local levels</summary>
@@ -283,7 +284,8 @@ for checked_chip, grid in ((filtered, fine_grid), (expanded, times)):
 </details>
 
 Start with one bare readout photon and fit the ring-down after the fast filter
-transient. This measures the total loaded linewidth, including intrinsic loss.
+transient, which measures the total loaded linewidth, including intrinsic
+loss.
 
 ```python
 ring_times = np.linspace(0, 1500, 751)
@@ -303,7 +305,7 @@ np.testing.assert_allclose(linewidths[1], linewidths[0], rtol=0.05)
 ```
 
 The loaded linewidth is **1.033 MHz without the filter** and **1.051 MHz with
-it**, within the 5% design tolerance of the broad-filter estimate.
-A `network.filter()` applies a transfer function to the signal path. It cannot
-provide this T1 protection; that requires a coupled resonator in the quantum
-model, which changes the decay channels.
+it**. These values are within the broad-filter estimate's 5% design tolerance.
+A `network.filter()` applies a transfer function to the signal path and cannot
+give this T1 protection. That protection needs a coupled resonator in the
+quantum model, which changes the decay channels.

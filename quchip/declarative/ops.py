@@ -1,6 +1,6 @@
 """Declarative operator-handle namespaces for the physics DSL.
 
-:class:`LocalOps` (aliased :class:`EndpointOps` at coupling call sites)
+:class:`LocalOps` (with the alias :class:`EndpointOps` at coupling call sites)
 exposes one Hilbert-space endpoint's operators as composable
 :class:`~quchip.declarative.expr.PhysicsExpr` nodes.
 """
@@ -18,10 +18,11 @@ from quchip.devices.spaces import ChargeSpace, FockSpace, LocalSpace, PhaseGridS
 class LocalOps:
     """Declarative operator namespace for one local Hilbert space endpoint.
 
-    Passed as ``op`` to :meth:`DeviceModel.local_hamiltonian` and as the two
-    endpoints ``a``, ``b`` to :meth:`CouplingModel.interaction`. Each property
-    returns a :class:`~quchip.declarative.expr.PhysicsExpr` that composes with
-    ``+``, ``-``, ``@`` (same endpoint), ``*`` (scalar or tensor product).
+    Quchip passes this namespace as ``op`` to
+    :meth:`DeviceModel.local_hamiltonian` and as the two endpoints ``a``, ``b``
+    to :meth:`CouplingModel.interaction`. Each property returns a
+    :class:`~quchip.declarative.expr.PhysicsExpr` that composes with ``+``,
+    ``-``, ``@`` (same endpoint), ``*`` (scalar or tensor product).
 
     Examples
     --------

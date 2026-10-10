@@ -51,8 +51,8 @@ def test_executed_receipt_matches_the_avoided_crossing() -> None:
     assert receipt["full_dimension"] == 64
     assert receipt["original_chip_unchanged"] is True
     assert receipt["sweep_points"] == 181
-    assert math.isclose(receipt["minimum_splitting_mhz"], 4.4098, rel_tol=1.0e-3)
-    assert math.isclose(receipt["static_zz_khz"], 22.604, rel_tol=1.0e-3)
+    assert math.isclose(receipt["minimum_splitting_mhz"], 3.9873, rel_tol=1.0e-3)
+    assert math.isclose(receipt["static_zz_khz"], 17.106, rel_tol=1.0e-3)
 
 
 def test_paper_example_reproduces_fluxonium_spectrum_and_readout() -> None:

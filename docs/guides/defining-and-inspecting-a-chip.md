@@ -46,8 +46,8 @@ qr : q ↔ r
 
 ## Read dressed observables
 
-The device constructors specify bare parameters. `chip` returns the
-frequencies and interactions of the coupled system.
+Device constructors specify bare parameters, and `chip` returns the
+coupled system's frequencies and interactions.
 
 ```python
 print(f"Qubit f01: {chip.freq(q):.6f} GHz")
@@ -69,7 +69,7 @@ these full pulls off-diagonal and dressed anharmonicities on the diagonal.
 
 ## Change a parameter
 
-`with_params()` returns a new chip; the source declaration stays available.
+`with_params()` returns a new chip, and the source declaration stays available.
 
 ```python
 shifted = chip.with_params({"q.freq": 5.1})
@@ -88,8 +88,8 @@ Changed bare / dressed: 5.100 / 5.098685 GHz
 ## Inspect the Hamiltonian
 
 `unresolved_hamiltonian()` shows the Hamiltonian you declared. `hamiltonian()` is the
-expression selected for simulation, after basis, frame, and RWA choices.
-Both render as equations when displayed in a notebook.
+expression selected for simulation, after basis, frame, and RWA choices. Both show as
+equations in a notebook.
 
 ```python
 declared = chip.unresolved_hamiltonian()
@@ -106,9 +106,10 @@ Output:
   [qr] coupling band (Δa=+1, Δb=+1) on q·r  (counter-rotating under RWA; amp 0.173205 GHz, freq 12 GHz)
 ```
 
-The dropped terms create or annihilate two excitations. Their oscillation
-frequencies are much larger than their matrix elements here. See the
-[physics reference](../physics.md) for frame and approximation conventions.
+The dropped terms create or annihilate two excitations, and their
+oscillation frequencies are much larger than their matrix elements here.
+See the [physics reference](../physics.md) for frame and approximation
+conventions.
 
 ## Fit a dressed target
 

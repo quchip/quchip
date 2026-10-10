@@ -17,23 +17,23 @@ class Qubit(FockDevice):
     Parameters
     ----------
     freq : float
-        Positive transition frequency in GHz; may be a JAX tracer.
+        Positive transition frequency in GHz. Can be a JAX tracer.
     levels : int, default 2
         Must equal two. Use a transmon model to include higher levels.
     label : str or None, default None
-        Device label; ``None`` selects an automatic label.
+        Device label. ``None`` selects an automatic label.
     T1 : float or None, default None
-        Energy-relaxation time in ns; ``None`` disables relaxation.
+        Energy-relaxation time in ns. ``None`` disables relaxation.
     T2 : float or None, default None
-        Total coherence time in ns; ``None`` disables pure dephasing.
-        With both times set, ``T2 <= 2*T1``. At zero thermal occupation,
-        the pure-dephasing rate is ``1/T2 - 1/(2*T1)``.
+        Total coherence time in ns. ``None`` disables pure dephasing. If both
+        times are set, ``T2 <= 2*T1``. At zero thermal occupation, the
+        pure-dephasing rate is ``1/T2 - 1/(2*T1)``.
     thermal_occupation : float or None, default None
-        Dimensionless bath occupation; ``None`` disables thermal absorption.
+        Dimensionless bath occupation. ``None`` disables thermal absorption.
 
     Notes
     -----
-    Relaxation and dephasing use the standard device channels. In two levels,
+    Relaxation and dephasing use the standard device channels. With two levels,
     ``n = |1><1|`` and ``a = |0><1|``. A frame at ``freq`` removes the free
     Hamiltonian. The model contains no leakage levels or circuit parameters.
     """
@@ -59,7 +59,7 @@ class Qubit(FockDevice):
         return p.freq * op.n
 
     def validate(self) -> None:
-        """Require exactly two levels at construction and grouped rebinding."""
+        """Check for exactly two levels at construction and grouped rebinding."""
         super().validate()
         if index(self.levels) != 2:
             raise ValueError("Qubit requires levels=2; use a transmon model for higher levels.")

@@ -52,7 +52,7 @@ def capture_modes(chip: Any, operating: Any, modes: tuple[str, ...]) -> tuple[An
 
 
 def capture_noise(operating: Any, backend: Any, labels: tuple[str, ...], frequency: Any, offsets: Any) -> Any:
-    """Compute joint physical IQ spectra and source budgets from one operating point."""
+    """Calculate joint physical IQ spectra and source budgets from one operating point."""
     xp = backend.array_module
     engine = operating.engine
     rho = xp.asarray(backend.to_array(operating.state.state))
@@ -100,7 +100,7 @@ def measure(
     vna: Any, frequencies: Any, amplitudes: Any, variations: tuple[Sweep | ZippedSweep, ...], *,
     input: Any, outputs: Any, noise_frequencies: Any, options: Any, progress: bool,
 ) -> VNAMeasurement:
-    """Acquire physical fields and correlations once per probe/sweep point."""
+    """Acquire physical fields and correlations once for each probe/sweep point."""
     from quchip.analysis.vna import _resolve_exposure
     if isinstance(outputs, str):
         raise TypeError("outputs must be a sequence of plane objects or labels, not a string.")

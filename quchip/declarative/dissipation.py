@@ -26,7 +26,7 @@ class CollapseChannel:
     Parameters
     ----------
     operator : expression or backend operator
-        Unscaled collapse operator :math:`L`; the engine applies the rate.
+        Unscaled collapse operator :math:`L`. The engine applies the rate.
     rate : float or expression
         Non-negative Lindblad rate in 1/ns.
     name : str

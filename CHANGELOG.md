@@ -8,22 +8,22 @@ This file records notable user-visible changes to quchip.
 
 #### Changes and migration
 
-- `eliminate()` of a port-coupled mode keeps the mode's own reflection on the
+- `eliminate()` of a port-coupled mode keeps the mode's reflection on the
   port's plane as a `PortNetwork.mode_reflection(...)` reference section.
-  Previously the reduced boundary kept only the transformed port, so VNA on the
-  reduced chip missed the mode's reflection by about κ/Δ (1e-2 in the reported
-  example); it now matches the full chip up to a correction of order
-  (g/Δ)²κ/Δ (8e-5). A mode with several ports, or a port whose plane also
-  carries other fields, now raises; keep such a mode in the model.
-  ([#76](https://github.com/quchip/quchip/issues/76))
+  Before this change, the reduced boundary kept only the transformed port. So
+  VNA on the reduced chip missed the mode's reflection by approximately κ/Δ
+  (1e-2 in the reported example). Now it matches the full chip up to a
+  correction of order (g/Δ)²κ/Δ (8e-5). A mode with several ports, or a port
+  whose plane also carries other fields, now raises, so keep such a mode in the
+  model. ([#76](https://github.com/quchip/quchip/issues/76))
 
 #### New features
 
-- Port-coupled modes can be eliminated on chips with more than two devices. The
-  transformed port acts jointly on every survivor, and stationary-tone frame
-  planning keeps the sign of each port band, so VNA accepts the joint operator.
-  A later elimination transforms that port again, so both readout modes of a
-  chip can be eliminated in either order.
+- You can eliminate port-coupled modes on chips with more than two devices. The
+  transformed port acts jointly on every survivor. Stationary-tone frame
+  planning keeps each port band's sign, so VNA accepts the joint operator. A
+  later elimination transforms that port again, so you can eliminate both
+  readout modes of a chip in either order.
   ([#77](https://github.com/quchip/quchip/issues/77))
 - `PortNetwork.mode_reflection(...)` adds a serializable two-sided reference
   section that reflects like a damped linear mode.
@@ -37,73 +37,80 @@ This file records notable user-visible changes to quchip.
   which made the rotating-frame collapse-operator check fail at some parameter
   values. ([#78](https://github.com/quchip/quchip/issues/78))
 - Reduced chips resolve the same under `jax.jit` and `jax.grad` as eagerly.
-  `EffectiveTerms.excitation_changes` declares each retained channel's total
-  excitation change, and projected surviving operators keep the change of their
-  authored operator, so band decomposition no longer depends on traced values.
-  Ports follow the same rule, both those on surviving modes and those an
-  elimination transformed. ([#78](https://github.com/quchip/quchip/issues/78), [#79](https://github.com/quchip/quchip/issues/79))
+  `EffectiveTerms.excitation_changes` declares each retained channel's total excitation change.
+  Projected surviving operators keep their authored operator's change, so band decomposition no
+  longer depends on traced values. Ports follow the same rule, both on surviving modes and those an
+  elimination transformed. ([#78](https://github.com/quchip/quchip/issues/78),
+  [#79](https://github.com/quchip/quchip/issues/79))
 - A band whose level changes cancel among devices that share a frame frequency
   is now exactly static. Its frame frequency was summed one device at a time,
-  so level changes such as (3, −1, −2) left carriers of about 1e-14 GHz. An
-  exactly reduced two-qubit readout chip in a 5.2 GHz frame resolved 44 static
-  couplings as time-dependent terms and split drive bands with equal carriers
-  into separate terms. ([#78](https://github.com/quchip/quchip/issues/78))
-- QuTiP `mesolve`, `smesolve` and stationary solves raise `MemoryError` before
-  assembling a superoperator whose estimated peak exceeds available memory,
-  instead of being killed by the operating system. The dynamiqs stationary
-  Liouvillian uses the same check. ([#80](https://github.com/quchip/quchip/issues/80))
+  so level changes such as (3, −1, −2) left carriers of approximately 1e-14
+  GHz. An exactly reduced two-qubit readout chip in a 5.2 GHz frame resolved
+  44 static couplings as time-dependent terms. It also split drive bands with
+  equal carriers into separate terms.
+  ([#78](https://github.com/quchip/quchip/issues/78))
+- QuTiP `mesolve`, `smesolve` and stationary solves raise `MemoryError` before they
+  assemble a superoperator whose estimated peak exceeds the available memory.
+  Previously, the operating system killed them. The dynamiqs stationary Liouvillian
+  uses the same check. ([#80](https://github.com/quchip/quchip/issues/80))
 
 #### Performance
 
 - `VNA.sweep()` solves weak-probe scattering of pump-free chips that conserve
-  total excitation number in their one-excitation block: Duffing transmons,
-  pure dephasing, and reduced chips with retained terms, as long as every input
-  is vacuum. Previously any such term fell back to a dense D²×D² stationary
-  solve. On one machine, the reported transmon-resonator sweep at Hilbert
-  dimension 64 took 540 s and now takes 10 s, mostly the frame's
-  reference-frequency analysis. Dimension 400 runs in 10 s instead of needing
-  about 410 GB. Diagnostics name the route `"vacuum_response"`.
-  ([#81](https://github.com/quchip/quchip/issues/81))
+  total excitation number in their one-excitation block, if every input is
+  vacuum. These chips include Duffing transmons, pure dephasing, and reduced
+  chips with retained terms. Previously, any such term fell back to a dense
+  D²×D² stationary solve. On one machine, the reported transmon-resonator
+  sweep at Hilbert dimension 64 took 540 s. Now it takes 10 s, mostly for the
+  frame's reference-frequency analysis. Dimension 400 runs in 10 s and no
+  longer uses approximately 410 GB. Diagnostics name the route
+  `"vacuum_response"`. ([#81](https://github.com/quchip/quchip/issues/81))
 - The QuTiP backend stores dense operators with at most one quarter nonzero
   entries as CSR, so superoperator terms built from reduced-model bands and
   jumps stay sparse. A lossy `mesolve` of a reduced model at Hilbert dimension
   144 now peaks near 1.3 GB instead of an estimated 1.2 TB.
   ([#80](https://github.com/quchip/quchip/issues/80))
 - dynamiqs solves sum the time-dependent Hamiltonian into one array per step
-  from operators assembled on the host, and a traced chip reuses its resolution
-  and dressed analysis within one trace. On one machine, a jitted reverse-mode
+  from operators assembled on the host. A traced chip reuses its resolution and
+  dressed analysis within one trace. On one machine, a jitted reverse-mode
   gradient through an exact elimination and a dynamiqs pulse of a 576-state
-  chip took 830 s per call and now takes 3.7 s; a batch of eight pulse phases
+  chip took 830 s per call and now takes 3.7 s. A batch of eight pulse phases
   takes 4.1 s instead of 20 s.
 - QuTiP `mesolve` of a Hermitian density matrix integrates its packed upper
-  triangle with one sparse product per step, and drive carriers acting through
-  the same operator share one coefficient. A lossy pulse on the same chip takes
-  200 s instead of 400 s, and a coherent 16-pulse train 7.3 s instead of 49 s.
+  triangle with one sparse product per step. Drive carriers that act through
+  the same operator share one coefficient. A lossy pulse on the same chip
+  takes 200 s instead of 400 s. A coherent 16-pulse train takes 7.3 s
+  instead of 49 s.
 - Large packed QuTiP master-equation products split their rows over up to four
   threads, which brings that lossy pulse to 145 s. `QUCHIP_NUM_THREADS`, or
-  else `OMP_NUM_THREADS`, sets the count; worker processes use one thread unless
-  `QUCHIP_NUM_THREADS` is set. Each row sums in the same order, so results do
-  not depend on the thread count.
+  else `OMP_NUM_THREADS`, sets the count. Worker processes use one thread
+  unless `QUCHIP_NUM_THREADS` is set. Each row sums in the same order, so
+  results do not depend on the thread count.
 - Static analysis of concrete chips sums, diagonalizes, reduces and labels
   operators with NumPy instead of compiling a JAX program for each array shape.
   `fit_a_dress()` on the 576-state chip takes 3.1 s per fit instead of 15 s.
 - On the general stationary route, `VNA.sweep()` solves an operating point that
-  stays stationary across probe frequencies once instead of at every frequency.
-  The QuTiP backend runs its default direct steady-state solve without QuTiP's
+  stays stationary across probe frequencies once, not at every frequency. The
+  QuTiP backend runs its default direct steady-state solve without QuTiP's
   per-call option scope, which rebuilt every data-layer dispatcher.
-  `steadystate_batch()` over 40 points runs 5.4 times faster and
-  `VNA.finite_power()` over 44 points 3.2 times faster.
+  `steadystate_batch()` over 40 points runs 5.4 times faster, and
+  `VNA.finite_power()` over 44 points runs 3.2 times faster.
 
 #### Compatibility
 
-- `Backend.steadystate()` takes an optional `guess`, a native stationary state
-  of a related problem that a backend may return when it is also stationary
-  here. A backend that overrides `steadystate()` must accept the keyword; it
-  may ignore it.
+- `Backend.steadystate()` takes an optional `guess`: a native stationary
+  state of a related problem, which a backend can return if it is also
+  stationary here. A backend that overrides `steadystate()` must accept the
+  keyword but can ignore it.
 
 #### Documentation and examples
 
 - The NV-centre guide is removed.
+- The example notebooks and the guides are re-executed against the current
+  code. The transmon avoided crossing in example 01 now reports the RWA
+  splitting of 3.99 MHz, which agrees with second-order theory to 0.3%. The fluxonium
+  readout comparison uses `Exact()`, because counter-rotating terms contribute
+  strongly to its dispersive shift.
 
 ## [0.4.0] - 2026-09-29 <a id="quchip-0-4-0"></a>
 

@@ -1,10 +1,10 @@
 """Declarative base classes for device and coupling physics models.
 
 :class:`DeviceModel` and :class:`CouplingModel` let a subclass declare its
-physics parameters as annotated class attributes via
-:func:`~quchip.declarative.parameters.parameter` and implement only the
-Hamiltonian expression; both synthesize their own ``__init__``, JAX pytree
-registration (for :class:`DeviceModel`), and post-construction sign
+physics parameters as annotated class attributes with
+:func:`~quchip.declarative.parameters.parameter`. The subclass implements only
+the Hamiltonian expression. Both classes synthesize their own ``__init__``, JAX
+pytree registration (for :class:`DeviceModel`), and post-construction sign
 validation from the declared fields.
 """
 
@@ -242,11 +242,11 @@ def _synthesize_coupling_init(cls: Any) -> Any:
 class DeviceModel(BaseDevice, metaclass=DeclarativeMeta):
     """Declarative base for physics device models.
 
-    Subclasses declare their parameters as annotated class attributes using
-    :func:`parameter` (e.g. ``freq: Scalar = parameter(positive=True)``) and
-    implement :meth:`local_hamiltonian`. The declared parameters become
-    positional-or-keyword ``__init__`` arguments and JAX pytree leaves so the
-    full instance is traceable / differentiable / sweepable end-to-end.
+    Subclasses declare their parameters as annotated class attributes with
+    :func:`parameter` (for example ``freq: Scalar = parameter(positive=True)``)
+    and implement :meth:`local_hamiltonian`. The declared parameters become
+    positional-or-keyword ``__init__`` arguments and JAX pytree leaves, so the
+    full instance is traceable, differentiable, and sweepable end-to-end.
 
     The :meth:`hamiltonian` adapter compiles the declarative expression
     returned by :meth:`local_hamiltonian` into an operator for the active
@@ -269,7 +269,7 @@ class DeviceModel(BaseDevice, metaclass=DeclarativeMeta):
     levels : int, keyword-only, default 2
         Native local-space dimension or truncation.
     label : str or None, keyword-only, default None
-        Stable device label; ``None`` selects an automatic label.
+        Stable device label. ``None`` selects an automatic label.
     **params : Any
         Declared model parameters and optional noise fields.
     """
@@ -449,11 +449,11 @@ class DeviceModel(BaseDevice, metaclass=DeclarativeMeta):
         Parameters
         ----------
         op : LocalOps
-            Operator namespace for this device's endpoint, exposing ``a``,
+            Operator namespace for this device's endpoint. It exposes ``a``,
             ``adag``, ``n``, ``I`` and the Pauli handles as composable
             :class:`~quchip.declarative.expr.PhysicsExpr` nodes.
         p : ParameterNamespace
-            Symbolic leaves for the parameters declared on this model.
+            Symbolic leaves for this model's declared parameters.
 
         Returns
         -------
@@ -533,7 +533,7 @@ class DeviceModel(BaseDevice, metaclass=DeclarativeMeta):
         return expression.with_bindings(_parameter_bindings(self))
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize common device state plus declared parameter values."""
+        """Serialize common device state and declared parameter values."""
         return _serialize_declared_params(self, super().to_dict())
 
     @classmethod
@@ -575,19 +575,18 @@ class DeviceModel(BaseDevice, metaclass=DeclarativeMeta):
 class CouplingModel(BaseCoupling, metaclass=DeclarativeMeta):
     """Declarative two-body coupling base.
 
-    Subclasses declare physics parameters via :func:`parameter` and
-    implement :meth:`interaction` (returning a
+    Subclasses declare physics parameters with :func:`parameter` and implement
+    :meth:`interaction`, which returns a
     :class:`~quchip.declarative.expr.PhysicsExpr` over the two endpoint
-    operators). The chip's approximation strategy is applied structurally
-    by the engine after the authored interaction is assembled.
-    Optional overrides:
+    operators. After the authored interaction is assembled, the engine applies
+    the chip's approximation strategy structurally. Optional overrides:
 
-    - :meth:`time_terms` — time-dependent Hamiltonian terms,
-      each pairing a local operator with a public time coefficient.
+    - :meth:`time_terms`: time-dependent Hamiltonian terms. Each term pairs a
+      local operator with a public time coefficient.
 
-    :attr:`coupling_strength` defaults to the *first declared parameter
-    field* (suited for the common case of one ``g``-like scalar). Override
-    the property in subclasses with a different convention.
+    :attr:`coupling_strength` defaults to the *first declared parameter field*
+    (the common case of one ``g``-like scalar). Subclasses with a different
+    convention override the property.
 
     .. note::
        Coupling instances are not registered as JAX pytrees and cannot be
@@ -650,16 +649,16 @@ class CouplingModel(BaseCoupling, metaclass=DeclarativeMeta):
         # Tracking auto-enables via the StateVersioned init wrapper post-construction.
 
     def __setattr__(self, name: str, value: Any) -> None:
-        """Give post-construction writes the same declared-sign validation as construction.
+        """Apply the same declared-sign validation to post-construction writes as to construction.
 
-        Mirrors :meth:`~quchip.devices.base.BaseDevice.__setattr__`: once
-        ``_tracking_enabled`` (from
-        :class:`~quchip.utils.state_versioning.StateVersioned`) goes live
-        after construction, every non-private write runs
+        Mirrors :meth:`~quchip.devices.base.BaseDevice.__setattr__`. After
+        construction, each non-private write runs
         :func:`~quchip.declarative.parameters.validate_sign` against the
-        declared field spec before the value lands. Concrete scalars only;
-        tracers pass.
+        declared field spec before the value is set. Only concrete scalars are
+        checked, and tracers pass.
         """
+        # Per-write validation starts after construction, when
+        # `_tracking_enabled` (from `StateVersioned`) becomes active.
         if getattr(self, "_tracking_enabled", False) and not name.startswith("_"):
             spec = type(self).__quchip_param_fields__.get(name)
             if spec is not None:
@@ -668,14 +667,14 @@ class CouplingModel(BaseCoupling, metaclass=DeclarativeMeta):
 
     @property
     def coupling_strength(self) -> Any:
-        """Primary scalar coupling strength, defaulting to the first parameter."""
+        """Primary scalar coupling strength. The default is the first parameter."""
         fields = type(self).__quchip_param_fields__
         first = next(iter(fields), None)
         return getattr(self, first) if first is not None else 0.0
 
     @property
     def coupling_strength_name(self) -> str:
-        """Display name of :attr:`coupling_strength`, defaulting to the first parameter field."""
+        """Display name of :attr:`coupling_strength`. The default is the first parameter field."""
         fields = type(self).__quchip_param_fields__
         first = next(iter(fields), None)
         return first if first is not None else "g"
@@ -683,8 +682,9 @@ class CouplingModel(BaseCoupling, metaclass=DeclarativeMeta):
     def __repr__(self) -> str:
         """Return a constructor-like summary: endpoints, declared params, label.
 
-        Default for extension authors; mirrors :meth:`DeviceModel.__repr__`.
-        Built-ins with richer summaries override it.
+        Default for extension authors that mirrors
+        :meth:`DeviceModel.__repr__`. Built-ins with richer summaries override
+        it.
         """
         parts = [f"'{self.device_a_label}' <-> '{self.device_b_label}'"]
         parts += [f"{name}={getattr(self, name)}" for name in type(self).__quchip_param_fields__]
@@ -700,8 +700,8 @@ class CouplingModel(BaseCoupling, metaclass=DeclarativeMeta):
         ----------
         a, b : EndpointOps
             Operator namespaces for the two coupled endpoints. Same-endpoint
-            operators compose with ``@``; cross-endpoint operators combine
-            with ``*`` (tensor product).
+            operators compose with ``@``. Cross-endpoint operators combine with
+            ``*`` (tensor product).
 
         p : ParameterNamespace
             Symbolic declared coupling parameters.
@@ -728,8 +728,8 @@ class CouplingModel(BaseCoupling, metaclass=DeclarativeMeta):
         Returns
         -------
         tuple of TimeDependentTerm
-            Local operators and their scalar time coefficients. The empty
-            tuple denotes a purely static coupling.
+            Local operators and their scalar time coefficients. An empty tuple
+            means a purely static coupling.
         """
         _ = (a, b, p)
         return ()
@@ -746,9 +746,10 @@ class CouplingModel(BaseCoupling, metaclass=DeclarativeMeta):
 
         Notes
         -----
-        The coupling-side mirror of the device drive-dispatch protocols: a
-        :class:`~quchip.control.drive.ParametricDrive` accepts any coupling
-        whose hook returns a :class:`~quchip.declarative.expr.PhysicsExpr`.
+        This hook is the coupling-side mirror of the device drive-dispatch
+        protocols. A :class:`~quchip.control.drive.ParametricDrive` accepts all
+        couplings whose hook returns a
+        :class:`~quchip.declarative.expr.PhysicsExpr`.
         """
         _ = (a, b, p)
         return None
@@ -896,7 +897,7 @@ class CouplingModel(BaseCoupling, metaclass=DeclarativeMeta):
         d : mapping
             Serialized coupling record.
         device_a, device_b : device or str
-            Endpoints supplied by the containing chip.
+            Endpoints that the containing chip supplies.
 
         Default implementation: forward declared parameters straight into
         ``__init__``. Subclasses with bespoke serialization (e.g. envelope
@@ -918,7 +919,7 @@ class CouplingModel(BaseCoupling, metaclass=DeclarativeMeta):
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize common coupling state plus declared parameter values."""
+        """Serialize common coupling state and declared parameter values."""
         return _serialize_declared_params(self, super().to_dict())
 
     def _time_terms(self) -> tuple[TimeDependentTerm, ...]:

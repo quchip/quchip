@@ -1,11 +1,11 @@
-"""Chip topology — the composite quantum system and its two-body couplings.
+"""Chip topology: the composite quantum system and its two-body couplings.
 
-A :class:`Chip` bundles devices, couplings, and (optionally) control
-equipment into a single composite system that the engine can assemble
-into a solver-ready problem. Dressed-state analysis lives in
-:mod:`quchip.chip.analysis` and is attached to every chip as
-``chip._analysis`` (exposed via the chip's public methods).
+A :class:`Chip` bundles devices, couplings, and (optionally) control equipment
+into one composite system, which the engine assembles into a solver-ready
+problem. Dressed-state analysis lives in :mod:`quchip.chip.analysis`.
 """
+# Every chip holds the dressed-state analysis as `chip._analysis` and exposes it
+# via the chip's public methods.
 
 from quchip.chip.analysis import DressedResult, KerrMatrix
 from quchip.chip.baths import Bath

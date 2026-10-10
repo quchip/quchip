@@ -1,7 +1,7 @@
 """Trace-safe numeric namespace for declarative model authors.
 
-Use this namespace inside model implementations (:meth:`value`,
-:meth:`local_hamiltonian`, :meth:`interaction`) so expressions stay
+Use this namespace in model implementations (:meth:`value`,
+:meth:`local_hamiltonian`, :meth:`interaction`) to keep expressions
 JAX-traceable.
 """
 

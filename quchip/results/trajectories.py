@@ -7,7 +7,7 @@ from quchip.results.results import SimulationResult, wrap_solver_result
 
 
 class TrajectoryResult(SimulationResult):
-    """Retain a native stochastic result without changing its storage or weights.
+    """Keep a native stochastic result with its storage and weights unchanged.
 
     Parameters
     ----------
@@ -19,13 +19,13 @@ class TrajectoryResult(SimulationResult):
     Attributes
     ----------
     native : object
-        Unmodified native result. Record conventions and event padding are native.
+        Unmodified native result, with native record conventions and event padding.
     times : array_like, shape (T,)
         Requested save times in ns.
     channel_labels : tuple of str
         Unique resolved channel keys in native jump-operator order.
     monitor_labels : tuple of str or None
-        Native record channel order for an explicit selection; None when unknown.
+        Native record channel order for an explicit selection, or None when unknown.
     """
 
     def __init__(self, native: Any, problem: Any):
@@ -107,12 +107,12 @@ class TrajectoryResult(SimulationResult):
         return self._view(None)
 
     def run(self, index: int) -> SimulationResult:
-        """Return analysis of one retained conditional trajectory.
+        """Return the analysis of one kept conditional trajectory.
 
         Parameters
         ----------
         index : int
-            Zero-based trajectory index. Native storage must retain this run.
+            Zero-based trajectory index of a run that native storage keeps.
         """
         return self._view(index)
 
@@ -124,12 +124,12 @@ class TrajectoryResult(SimulationResult):
         key : object or str
             Captured observable key.
         index : int or None, default None
-            Entry within a list-valued observable; trajectory selection uses run().
+            Entry in a list-valued observable. Trajectory selection uses run().
         """
         return self._view(None, states=False).expect(key, index)
 
     def check_truncation(self, *, threshold: float = 1e-3) -> dict[str, Any]:
-        """Report per-run cutoff maxima and their largest value across retained runs.
+        """Report per-run cutoff maxima and their largest value across kept runs.
 
         Parameters
         ----------
@@ -139,9 +139,10 @@ class TrajectoryResult(SimulationResult):
         Returns
         -------
         dict
-            ``runs`` contains each run's device maxima; ``maximum`` aggregates them.
-            Missing per-run states and diagnostic samples raise instead of checking
-            an ensemble mean. Unsaved or unsampled excursions remain unknown.
+            ``runs`` contains each run's device maxima, and ``maximum`` aggregates
+            them. Missing per-run states and diagnostic samples raise an error
+            rather than falling back to an ensemble mean. Unsaved or unsampled
+            excursions remain unknown.
         """
         count = len(self.native.trajectories) if hasattr(self.native, "trajectories") else len(self.native.keys)
         if not count:

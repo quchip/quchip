@@ -1,13 +1,12 @@
-"""Composite quantum system — :class:`Chip` bundles devices, couplings, and control.
+"""Composite quantum system: :class:`Chip` holds devices, couplings, and control.
 
-A chip owns the devices (which own their local Hamiltonians), the
-couplings between them (which own their two-body interaction
-Hamiltonians), and, optionally, the :class:`ControlEquipment` wiring
-classical control lines. The engine consumes a chip to produce a
-solver-ready problem.
+A chip owns the devices and the couplings between them. Each device owns its
+local Hamiltonian, and each coupling owns its two-body interaction Hamiltonian.
+The chip can also own the :class:`ControlEquipment` that wires the classical
+control lines. The engine turns a chip into a solver-ready problem.
 
-All public parameters — device frequencies, coupling strengths, drive
-amplitudes, crosstalk coefficients — remain JAX-traceable and sweepable so a
+All public parameters, including device frequencies, coupling strengths, drive
+amplitudes, and crosstalk coefficients, stay JAX-traceable and sweepable, so a
 single loss function can span any of them.
 """
 
@@ -164,36 +163,36 @@ class Chip:
     Parameters
     ----------
     devices : list[BaseDevice]
-        Ordered device list. Tensor-product position equals list index;
-        labels must be unique.
+        The tensor-product position equals the list index. Labels must be
+        unique.
     couplings : list[BaseCoupling], optional
-        Two-body couplings. Each coupling's referenced devices must be
-        in ``devices``.
+        Two-body couplings. Every device a coupling refers to must be in
+        ``devices``.
     control_equipment : ControlEquipment, optional
-        Aggregates drive lines and signal-chain transforms (crosstalk,
-        delays, gains). Can also be attached later via :meth:`wire` or
+        Holds the drive lines and the signal-chain transforms (crosstalk,
+        delays, gains). You can also attach it later with :meth:`wire` or
         :meth:`connect`.
     label : str, optional
         Human-readable chip label.
     frame : FrameSpec
         Initial frame specification:
 
-        - ``"lab"`` — all reference frequencies 0 GHz (default).
-        - ``"rotating"`` — per-device rotating frame at dressed drive
+        - ``"lab"``: all reference frequencies are 0 GHz (default).
+        - ``"rotating"``: a per-device rotating frame at the dressed drive
           frequencies.
-        - ``"auto"`` — per-device frequencies chosen from retained couplings,
-          cascade-generated network couplings, delivered drive tones, and
-          scattering-scaled coherent-input tones.
-        - scalar-like — one shared reference frequency for all devices.
-        - ``dict`` — per-device references keyed by label or device.
+        - ``"auto"``: per-device frequencies that quchip chooses from retained
+          couplings, cascade-generated network couplings, delivered drive
+          tones, and scattering-scaled coherent-input tones.
+        - scalar-like: one shared reference frequency for all devices.
+        - ``dict``: per-device references keyed by label or device.
     approximation : Approximation
-        Strategy for dressed analysis and solver assembly. Defaults to
-        :class:`~quchip.approximations.RWA`; use ``Exact()`` to retain every band.
+        Strategy for dressed analysis and solver assembly. The default is
+        :class:`~quchip.approximations.RWA`. To keep every band, use ``Exact()``.
     basis : {"native", "eigen"}
-        Chip-wide local solver-basis policy. ``"native"`` preserves each
-        device's authored coordinate basis; ``"eigen"`` transforms into its
-        retained local energy subspace. A device-level ``basis`` overrides
-        this policy.
+        Chip-wide policy for the local solver basis. ``"native"`` keeps each
+        device's authored coordinate basis. ``"eigen"`` transforms into each
+        device's retained local energy subspace. A device-level ``basis``
+        overrides this policy.
     backend : str or Backend, optional
         Chip-specific backend. ``None`` uses the process default.
     baths : list[Bath], optional
@@ -202,8 +201,8 @@ class Chip:
         Complete accessible field boundary. Attach at most one network.
 
     effective_terms : sequence[EffectiveTerms]
-        Captured contributions produced by a reduction. Their retained operator
-        bands are preserved while the engine applies the selected frame.
+        Captured contributions that a reduction made. The engine keeps their
+        retained operator bands when it applies the selected frame.
 
     Examples
     --------
@@ -327,27 +326,24 @@ class Chip:
     def unresolved_hamiltonian(self) -> PhysicsExpr:
         """Return the authored lab-frame static Hamiltonian.
 
-        Embeds every device Hamiltonian into the full tensor space and
-        adds each coupling's embedded interaction. Does **not** apply
-        the rotating-frame transform or any drive envelopes.
+        This method embeds every device Hamiltonian into the full tensor space
+        and adds each embedded coupling interaction. It does **not** apply the
+        rotating-frame transform or any drive envelopes.
 
-        This is the exact authored lab-frame Hamiltonian. RWA and frame
-        transformations are applied only inside the engine. At solve time,
-        the engine subtracts
-        ``2π Σ_i ω_ref,i n̂_i`` for each device, where ``ω_ref,i`` is the
-        frame reference resolved by
-        :func:`quchip.engine.frames.resolve_frame`. The 2π boundary
-        crossing and the subtraction both live in
-        :func:`quchip.engine.assembly._build_static_h0`. Use
-        :meth:`frame_info` to inspect which reference frequency each
-        device will use.
+        The result is exact, because only the engine applies the RWA and the
+        frame transformations. At solve time, the engine subtracts
+        ``2π Σ_i ω_ref,i n̂_i`` for each device, where ``ω_ref,i`` is the frame
+        reference resolved by :func:`quchip.engine.frames.resolve_frame`. To
+        see each device's reference frequency, use :meth:`frame_info`.
 
         Returns
         -------
         PhysicsExpr
-            Symbolic Hamiltonian on ``⨂_d H_d``. Call ``.matrix()`` for a
-            dense numerical view using current bindings.
+            Symbolic Hamiltonian on ``⨂_d H_d``. For a dense numerical view
+            with the current bindings, call ``.matrix()``.
         """
+        # The 2π boundary crossing and the subtraction are both in
+        # `quchip.engine.assembly._build_static_h0`.
         from quchip.declarative.parameters import component_fingerprint
 
         backend = self.backend
@@ -411,9 +407,9 @@ class Chip:
     ) -> EngineResult:
         """Return a frozen engine contract without mutating chip intent.
 
-        ``frame=None`` uses :attr:`frame`; an explicit frame resolves this
-        snapshot only. ``approximation=None`` likewise uses the chip default.
-        Neither override mutates chip intent.
+        ``frame=None`` uses :attr:`frame`. An explicit frame resolves only this
+        snapshot. ``approximation=None`` uses the chip default. Neither
+        override mutates chip intent.
 
         Parameters
         ----------
@@ -527,15 +523,15 @@ class Chip:
     # never requires modifying the engine.
 
     def dynamic_contributions(self) -> list[tuple[Operator, Any, tuple[int, ...], Any, str, str]]:
-        """Chip-owned time-dependent Hamiltonian contributions with their support.
+        """Return the time-dependent Hamiltonian contributions that the chip owns, with their support.
 
         Returns ``(local_op, time_dependence, support, owner, origin, tag)``
-        tuples: one support index for a device-local operator, two for a
-        coupling's two-body operator. Operators are lab-frame, ordinary
-        GHz — the engine applies the 2π boundary. Drive terms are *not*
-        included; they are schedule-owned and enter through engine assembly's
-        drive compilation.
+        tuples. A device-local operator has one support index, and a coupling's
+        two-body operator has two. Operators are in the lab frame and in
+        ordinary GHz, and the engine applies the 2π boundary. Drive terms are
+        *not* included, because the schedule owns them.
         """
+        # Drive terms enter through the engine assembly's drive compilation.
         backend = self.backend
         out: list[tuple[Operator, Any, tuple[int, ...], Any, str, str]] = []
         with _backend_context(backend):
@@ -567,24 +563,23 @@ class Chip:
         self,
         bases: Mapping[str, Any] | None = None,
     ) -> list[tuple[Operator, Any, tuple[int, ...], str, str, tuple[str, ...]]]:
-        """Every Lindblad collapse operator on the chip, with its support.
+        """Return every Lindblad collapse operator on the chip, with its support.
 
         Returns ``(operator, rate, support, source, channel, parameter_paths)``
-        tuples: one device index for a
-        device- or drive-line-local operator, two for a coupling's
-        two-body operator, and an empty tuple for an operator already
-        embedded in the full space (baths). Rates are in 1/ns,
-        Lindblad-ready — each component owns its rate physics, including
-        any intrinsic 2π (e.g. a resonator's κ = 2π·f/Q).
+        tuples. An operator local to a device or a drive line has one device
+        index, and a coupling's two-body operator has two. An operator already
+        embedded in the full space (baths) has an empty tuple. Rates are in
+        1/ns and are ready for the Lindblad equation. Each component owns its
+        rate physics, including any intrinsic 2π (for example, κ = 2π·f/Q for a
+        resonator).
 
-        Every returned operator is authored locally and transformed by the
-        engine into the same fixed local solver bases as the Hamiltonian.
-        This is the standard local-Lindblad
-        approximation (Breuer & Petruccione, *The Theory of Open Quantum
-        Systems*, Oxford, 2002, Ch. 3) rather than a dressed-basis
-        (polaron-frame) master equation, and applies chip-wide regardless of
-        which components carry noise — see the ``"chip"`` entry of
-        :meth:`physics_notes`.
+        Every returned operator is authored locally, and the engine transforms
+        it into the same fixed local solver bases as the Hamiltonian. This is
+        the standard local-Lindblad approximation (Breuer & Petruccione, *The
+        Theory of Open Quantum Systems*, Oxford, 2002, Ch. 3). It is not a
+        dressed-basis (polaron-frame) master equation. It applies to the full
+        chip, independent of which components have noise. See the ``"chip"``
+        entry of :meth:`physics_notes`.
 
         Parameters
         ----------
@@ -724,19 +719,19 @@ class Chip:
 
     @property
     def effective_terms(self) -> tuple[EffectiveTerms, ...]:
-        """Captured retained Hamiltonian and loss contributions."""
+        """Captured Hamiltonian and loss contributions that are retained."""
         for terms in self._effective_terms:
             terms.validate_for(self)
         return self._effective_terms
 
     @property
     def device_map(self) -> dict[str, BaseDevice]:
-        """Label → device mapping (the chip's own dict; do not mutate)."""
+        """Label → device mapping (the chip's own dict, do not mutate it)."""
         return self._device_map
 
     @property
     def coupling_map(self) -> dict[str, "BaseCoupling"]:
-        """Couplings by label, insertion-ordered (do not mutate)."""
+        """Couplings by label, in insertion order (do not mutate them)."""
         return self._coupling_map
 
     def coupling(self, coupling: "str | BaseCoupling") -> "BaseCoupling":
@@ -756,15 +751,16 @@ class Chip:
 
     @property
     def backend(self) -> Backend:
-        """Active backend: per-call override > chip-specific > process default.
+        """Active backend: per-call override, then chip-specific backend, then process default.
 
         The per-call override is the ``backend=`` argument of
         :meth:`~quchip.control.sequence.QuantumSequence.simulate` /
-        ``simulate_batch`` (scoped through
-        :func:`quchip.backend._backend_context`); it outranks even a
-        chip-constructed backend so one chip can serve, e.g., QuTiP sweeps
-        and dynamiqs gradient solves without global state flips.
+        ``simulate_batch``. The override has priority over a backend that the
+        chip constructor set. So one chip can run, e.g., QuTiP sweeps and
+        dynamiqs gradient solves without changing global state.
         """
+        # `quchip.backend._backend_context` sets the scope of the per-call
+        # backend override.
         from quchip.backend import _backend_override, get_default_backend
 
         override = _backend_override.get()
@@ -781,7 +777,7 @@ class Chip:
 
     @property
     def approximation(self) -> Approximation:
-        """Approximation for dressed analysis and default solver assembly."""
+        """Approximation for the dressed analysis and the default solver assembly."""
         return self._approximation
 
     @property
@@ -811,7 +807,7 @@ class Chip:
 
     @property
     def basis(self) -> Literal["native", "eigen"]:
-        """Chip-wide local solver-basis policy inherited by devices."""
+        """Chip-wide policy for the local solver basis that devices inherit."""
         return self._basis
 
     def resolve_basis(self, device: str | BaseDevice) -> Literal["native", "eigen"]:
@@ -832,7 +828,7 @@ class Chip:
 
     @property
     def baths(self) -> tuple[Bath, ...]:
-        """Chip-level baths (shared/collective dissipation), insertion order."""
+        """Chip-level baths (shared or collective dissipation), in insertion order."""
         return self._baths
 
     @property
@@ -890,18 +886,19 @@ class Chip:
         Parameters
         ----------
         bath : Bath
-            Shared or collective dissipation model targeting this chip.
+            Shared or collective dissipation model that targets this chip.
 
         Notes
         -----
-        Baths may be added at any time after construction — the next
-        simulate/solve collects the bath's collapse operators automatically,
-        no rebuild needed. The bath is validated immediately: a non-``Bath``
-        argument, a target label not on this chip, or a label colliding
-        with an already-attached bath fails here rather than cryptically at
-        solve time (or, for a label collision, silently overwriting an
-        entry on the :meth:`physics_notes` audit surface).
+        You can add baths at any time after construction. The next simulate or
+        solve call collects the bath's collapse operators without a chip
+        rebuild. The bath is validated immediately, so bad input fails here,
+        not at solve time with an unclear error. Bad input is a non-``Bath``
+        argument, a target label not on this chip, or a label that collides
+        with an attached bath.
         """
+        # Without the immediate bath validation, a label collision would
+        # silently overwrite an entry on the `physics_notes` audit surface.
         self._validate_bath(bath)
         if bath.label in {b.label for b in self._baths}:
             raise ValueError(
@@ -939,19 +936,18 @@ class Chip:
     ) -> None:
         """Replace this chip's entire noise description in one call.
 
-        Omitted device noise fields reset to ``None`` and omitted ``baths``
+        Omitted device noise fields reset to ``None``. An omitted ``baths``
         clears all baths. The complete target state is validated before any
-        write. Custom noise rates must be declared with
-        ``parameter(noise=True)`` and implemented by
-        :meth:`~quchip.devices.base.BaseDevice.dissipation` so they remain
-        sweepable, differentiable, and serializable.
-        Applied changes are printed; repeating the same call is a silent no-op.
+        write. Declare custom noise rates with ``parameter(noise=True)`` and
+        implement them in :meth:`~quchip.devices.base.BaseDevice.dissipation`,
+        so they stay sweepable, differentiable, and serializable. It prints the
+        applied changes, and a repeated identical call is a silent no-op.
 
         Parameters
         ----------
         config : mapping, optional
-            ``{device_or_label: {noise_param: value}}``. Devices may appear
-            as objects or labels, once each. Non-noise parameters are rejected.
+            ``{device_or_label: {noise_param: value}}``. Devices can appear as
+            objects or labels, once each. Non-noise parameters are rejected.
         baths : list[Bath], optional
             The chip's complete new bath list (validated like
             :meth:`add_bath`).
@@ -1020,7 +1016,7 @@ class Chip:
 
     @property
     def crosstalks(self) -> list[Crosstalk]:
-        """Convenience view — :class:`Crosstalk` entries from the signal chain."""
+        """Convenience view of the :class:`Crosstalk` entries from the signal chain."""
         if self._control_equipment is None:
             return []
         return self._control_equipment.crosstalks
@@ -1062,7 +1058,7 @@ class Chip:
         values: str = "bare",
         **kwargs: Any,
     ) -> str:
-        """Render chip topology through :mod:`quchip.viz.chip`.
+        """Render the chip topology through :mod:`quchip.viz.chip`.
 
         Parameters
         ----------
@@ -1094,7 +1090,7 @@ class Chip:
         Parameters
         ----------
         ax : object or None, default=None
-            Matplotlib axes; ``None`` creates axes.
+            Matplotlib axes. ``None`` creates axes.
         **kwargs : Any
             Additional renderer options.
         """
@@ -1107,20 +1103,20 @@ class Chip:
     # ------------------------------------------------------------------
 
     def set_frame(self, frame: FrameSpec) -> None:
-        """Set the frame used when assembling simulation inputs.
+        """Set the frame that the simulation inputs use.
 
         Supported values:
 
-        - ``"lab"`` — all reference frequencies are 0.0 GHz.
-        - ``"rotating"`` — per-device references use dressed drive frequencies.
-        - ``"auto"`` — per-device frequencies are planned from retained
+        - ``"lab"``: all reference frequencies are 0.0 GHz.
+        - ``"rotating"``: per-device references use the dressed drive frequencies.
+        - ``"auto"``: quchip plans per-device frequencies from retained
           couplings, cascade-generated network couplings, delivered drive
           tones, and scattering-scaled coherent-input tones.
-        - scalar-like — shared reference frequency for all devices.
-        - ``dict`` — per-device references keyed by label or device.
+        - scalar-like: a shared reference frequency for all devices.
+        - ``dict``: per-device references keyed by label or device.
 
-        Frame changes never alter dressed-state data — dressing is
-        always computed from the lab-frame static Hamiltonian.
+        Frame changes never change dressed-state data, because quchip always
+        calculates the dressing from the lab-frame static Hamiltonian.
 
         Parameters
         ----------
@@ -1152,13 +1148,13 @@ class Chip:
 
     @property
     def analysis(self) -> ChipAnalysis:
-        """Dressed-state analysis namespace — the chip's :class:`ChipAnalysis`.
+        """Dressed-state analysis namespace, i.e. the chip's :class:`ChipAnalysis`.
 
-        Canonical entry point for the full dressed-analysis surface
-        (power users, less-common methods). The common quantities are
-        also exposed as flat ``chip.*`` forwarders — :meth:`energy`,
-        :meth:`freq`, :meth:`dress`, :meth:`dispersive_shift`, … — which
-        delegate here; reach for ``chip.analysis`` for everything else.
+        Canonical entry point for the full dressed-analysis surface (for
+        advanced users and less common methods). Flat ``chip.*`` forwarders to
+        this namespace give the common quantities, e.g. :meth:`energy`,
+        :meth:`freq`, :meth:`dress`, :meth:`dispersive_shift`, … For all other
+        quantities, use ``chip.analysis``.
         """
         return self._analysis
 
@@ -1180,7 +1176,7 @@ class Chip:
         overlap_threshold : float, default=0.5
             Minimum bare-state overlap used for labels.
         force : bool, default=False
-            Recompute even when a valid result is cached.
+            Recalculate even when a valid result is cached.
         labeling : {"DE"}, default="DE"
             Confidence-ordered row-greedy overlap assignment.
         """
@@ -1195,7 +1191,7 @@ class Chip:
 
     @property
     def is_dressed(self) -> bool:
-        """Whether a valid dressed-state result is cached. See :attr:`ChipAnalysis.is_dressed`."""
+        """True if a valid dressed-state result is cached. See :attr:`ChipAnalysis.is_dressed`."""
         return self._analysis.is_dressed
 
     def energy(
@@ -1204,7 +1200,7 @@ class Chip:
         /,
         **device_state_kwargs: int,
     ) -> float:
-        """Return dressed eigenenergy in GHz for a bare-state label.
+        """Return the dressed eigenenergy in GHz for a bare-state label.
 
         Parameters
         ----------
@@ -1216,7 +1212,7 @@ class Chip:
         return self._analysis.energy(device_states, **device_state_kwargs)
 
     def dressed_spectrum(self) -> Any:
-        """Raw dressed eigenvalue array without Python scalar coercion. See :meth:`ChipAnalysis.dressed_spectrum`."""
+        """Return raw dressed eigenvalues without Python scalar coercion. See :meth:`ChipAnalysis.dressed_spectrum`."""
         return self._analysis.dressed_spectrum()
 
     def dressed_index(
@@ -1253,18 +1249,18 @@ class Chip:
         *,
         truncate: int | None = None,
     ) -> Operator:
-        """Embedded device operator transformed to the dressed eigenbasis.
+        """Return an embedded device operator transformed to the dressed eigenbasis.
 
         See :meth:`ChipAnalysis.operator_in_dressed_basis` for the owner contract.
 
         Parameters
         ----------
         device : str or BaseDevice
-            Device owning the local operator.
+            Device that owns the local operator.
         op : str or array-like
             Named or explicit local operator.
         truncate : int, optional
-            Retain only the lowest dressed states.
+            Keep only the lowest dressed states.
         """
         return self._analysis.operator_in_dressed_basis(device, op, truncate=truncate)
 
@@ -1276,11 +1272,11 @@ class Chip:
     ) -> LabelKeyedDict:
         """Return ``<final~|D_j|initial~>`` for wired drive lines.
 
-        The final dressed state is the row index and the initial dressed
-        state is the column index. In the weak-drive projection these matrix
-        elements set the effective driven-Hamiltonian coefficients. See
-        E. Magesan and J. M. Gambetta, Phys. Rev. A 101, 052308 (2020),
-        DOI 10.1103/PhysRevA.101.052308, and
+        Rows index the final dressed state and columns the initial dressed
+        state. In the weak-drive projection, these matrix elements set the
+        coefficients of the effective driven Hamiltonian. See E. Magesan and J.
+        M. Gambetta, Phys. Rev. A 101, 052308 (2020), DOI
+        10.1103/PhysRevA.101.052308, and
         :meth:`ChipAnalysis.drive_matrix_elements` for the owner contract.
 
         Parameters
@@ -1288,7 +1284,7 @@ class Chip:
         transition : str, BaseDevice, or pair of mappings
             Transition shorthand or explicit lower/upper bare labels.
         drives : sequence, optional
-            Drive labels or objects to include; defaults to all wired drives.
+            Drive labels or objects to include. The default is all wired drives.
 
         """
         return self._analysis.drive_matrix_elements(transition, drives=drives)
@@ -1319,7 +1315,7 @@ class Chip:
         )
 
     def dispersive_shift(self, device_a: str | BaseDevice, device_b: str | BaseDevice) -> float:
-        """Dressed cross-Kerr shift (GHz): ``E(1,1) − E(1,0) − E(0,1) + E(0,0)``.
+        """Return the dressed cross-Kerr shift (GHz): ``E(1,1) − E(1,0) − E(0,1) + E(0,0)``.
 
         Parameters
         ----------
@@ -1341,7 +1337,7 @@ class Chip:
         return self._analysis.kerr_matrix()
 
     def dressed_anharmonicity(self, device: str | BaseDevice) -> float:
-        """Dressed anharmonicity of one device with others grounded (GHz).
+        """Return the dressed anharmonicity of one device with the other devices grounded (GHz).
 
         See :meth:`ChipAnalysis.dressed_anharmonicity`.
 
@@ -1387,7 +1383,7 @@ class Chip:
             | tuple[Mapping[str | BaseDevice, int] | tuple[int, ...], ...]
         ),
     ) -> Any:
-        """Dressed effective Hamiltonian in a labeled bare subspace.
+        """Return the dressed effective Hamiltonian in a labeled bare subspace.
 
         See :meth:`ChipAnalysis.effective_subspace_hamiltonian`.
 
@@ -1417,12 +1413,12 @@ class Chip:
         target: str | BaseDevice | None = None,
         when: dict[str | BaseDevice, int] | None = None,
     ) -> dict[str, float] | float:
-        """Return dressed 0→1 frequencies in GHz, optionally conditioned on spectators.
+        """Return the dressed 0→1 frequencies in GHz, optionally conditioned on spectators.
 
         Parameters
         ----------
         target : str or BaseDevice, optional
-            Device label or object; omitted returns all frequencies.
+            Device label or object. If you omit it, the method returns all frequencies.
         when : mapping, optional
             Spectator device levels.
 
@@ -1434,31 +1430,34 @@ class Chip:
         return self._analysis.freq(target, when=when)
 
     def frame_info(self) -> dict[str, Any]:
-        """Per-device frame reference frequency ``ω_ref,i`` (GHz). See :meth:`ChipAnalysis.frame_info`."""
+        """Return the per-device frame reference frequency ``ω_ref,i`` (GHz). See :meth:`ChipAnalysis.frame_info`."""
         return self._analysis.frame_info()
 
     def physics_notes(self) -> dict[str, list[str]]:
-        """Aggregate :meth:`physics_notes` across every component.
+        """Collect :meth:`physics_notes` from every component.
 
-        Returns a dict keyed ``"chip"`` for the chip-level entry, and
-        ``"<kind>:<label>"`` — ``kind`` one of ``"device"``, ``"coupling"``,
-        ``"drive"``, ``"bath"``, ``"port"``, ``"network"``, ``"effective"`` —
-        for every component, mapping to that component's declared
-        approximations: Hilbert truncation, model regime, RWA status,
-        noise-channel selection, and any other
-        non-obvious assumption the component explicitly declares. Keys are
-        kind-qualified rather than bare labels because the label namespaces
-        are *not* globally disjoint — a device, coupling, drive, and bath may
-        share a label — and this is an audit surface, so one component's
-        entry silently overwriting another's is unacceptable. Drives are
-        enumerated from :attr:`control_equipment`'s wiring rather than
-        per-device ``connected_drives``, so an edge-target
-        :class:`~quchip.control.drive.ParametricDrive` (pumping a coupling,
-        not a device) is included too. The chip-level entry keyed ``"chip"``
-        states the local-Lindblad approximation every collapse operator this
-        chip assembles is built under (see :meth:`collapse_contributions`) —
-        present even with no baths, since it applies regardless. Intended for
-        inspection/audit rather than for runtime dispatch.
+        Returns a dict with the key ``"chip"`` for the chip-level entry. Each
+        component has the key ``"<kind>:<label>"``, where ``kind`` is one of
+        ``"device"``, ``"coupling"``, ``"drive"``, ``"bath"``, ``"port"``,
+        ``"network"``, ``"effective"``. Each key maps to that component's
+        declared approximations: Hilbert truncation, model regime, RWA status,
+        noise-channel selection, and any other non-obvious assumption it
+        explicitly declares.
+
+        Keys are kind-qualified, not bare labels, because the label namespaces
+        are *not* globally disjoint. A device, coupling, drive, and bath can
+        share a label, and on this audit surface one component's entry must not
+        silently overwrite another's. Drives are enumerated from the
+        :attr:`control_equipment` wiring, not from per-device
+        ``connected_drives``, so an edge-target
+        :class:`~quchip.control.drive.ParametricDrive` (that pumps a coupling,
+        not a device) is included.
+
+        The chip-level ``"chip"`` entry states the local-Lindblad
+        approximation, under which this chip builds every collapse operator
+        (see :meth:`collapse_contributions`). The entry is present even without
+        baths, because it always applies. The dict is for inspection and audit,
+        not for runtime dispatch.
         """
         notes: dict[str, list[str]] = {
             "chip": [
@@ -1508,7 +1507,7 @@ class Chip:
         return deserialize_chip(d)
 
     def clone(self) -> "Chip":
-        """Isolated structural clone suitable for sweep evaluation."""
+        """Return an isolated structural clone for sweep evaluation."""
         from quchip.chip.serialization import clone_chip
 
         return clone_chip(self)
@@ -1669,20 +1668,20 @@ class Chip:
         return cloned
 
     def partition(self) -> "PartitionResult":
-        """Split into independent sub-chips along the independence graph.
+        """Split the chip into independent sub-chips along the independence graph.
 
         Connectivity comes from multi-device operator support in the resolved
         Hamiltonian and Lindblad channels, including Hamiltonian terms
         generated by SLH composition. Passive field scattering alone does not
-        connect subsystems. Drive-crosstalk pairs remain together so their
-        signal transform is preserved by component solves.
+        connect subsystems. Drive-crosstalk pairs stay together, so component
+        solves keep their signal transform.
         """
         from quchip.chip.partition import partition_chip
 
         return partition_chip(self)
 
     def status(self) -> None:
-        """Print a lightweight diagnostic dashboard for the chip."""
+        """Print a short diagnostic dashboard for the chip."""
         label = self.label if self.label is not None else "(unlabeled)"
         print(f"Chip: {label}")
         print(f"- devices: {len(self._devices)}")
@@ -1732,17 +1731,17 @@ class Chip:
     def from_array(self, data: Any, device: str | BaseDevice | None = None) -> Any:
         """Build a backend operator from a raw NumPy array.
 
-        With *device*, the array is interpreted as a local operator on
-        that device's subspace and embedded into the full tensor-product
-        space. With ``device=None`` the array must already span the full
-        chip Hilbert space.
+        With *device*, the array is a local operator on that device's subspace
+        and is embedded into the full tensor-product space. With
+        ``device=None`` the array must already span the full chip Hilbert
+        space.
 
         Parameters
         ----------
         data : array-like
             Local or full-space operator array.
         device : str, BaseDevice, or None, default=None
-            Local operator owner; ``None`` treats ``data`` as full-space.
+            Owner of the local operator. ``None`` treats ``data`` as full-space.
         """
         from quchip.chip.observables import from_array
 
@@ -1751,16 +1750,14 @@ class Chip:
     def observable(self, device: str | BaseDevice, op: str | Any) -> Any:
         """Embed a device operator onto the full chip Hilbert space.
 
-        Accepts either an operator name (``"X"``, ``"Y"``, ``"Z"``,
-        ``"n"``, ``"a"``, ``"a_dag"``, ``"I"``) or an already-built
-        local-space operator, and returns it embedded on the chip's
-        tensor-product space.
+        Accepts a prebuilt local-space operator or one of the names ``"X"``,
+        ``"Y"``, ``"Z"``, ``"n"``, ``"a"``, ``"a_dag"``, and ``"I"``. Returns
+        the operator embedded on the chip's tensor-product space.
 
-        This is for manual full-space operator construction and
-        analysis; it is *not* a solver ``e_op``. For solver expectation
-        values use :meth:`e_ops`, which keeps operators *local* so the
-        demodulation pipeline can band-decompose and embed them
-        correctly.
+        Use it for manual construction and analysis of full-space operators,
+        not as a solver ``e_op``. For solver expectation values, use
+        :meth:`e_ops`, which keeps operators *local* so the demodulation
+        pipeline can band-decompose and embed them correctly.
 
         Parameters
         ----------
@@ -1784,13 +1781,12 @@ class Chip:
     ) -> dict[str | tuple[str, str], Any]:
         """Build a dict-form ``e_ops`` mapping for the solver pipeline.
 
-        Each keyword maps a device label to an operator specification:
-        a name string, a list of names, a raw local-space operator, or
-        a mixed list of strings and operators. Two-device correlators
-        (e.g. ``⟨Z₁⊗Z₂⟩``) are specified via *correlators* as
-        device-label pairs → operator pairs. Returns local-space
-        operators (not embedded) — the demodulation pipeline embeds as
-        needed.
+        Each keyword maps a device label to an operator specification: a name
+        string, a list of names, a raw local-space operator, or a mixed list of
+        strings and operators. Specify two-device correlators (for example
+        ``⟨Z₁⊗Z₂⟩``) with *correlators* as device-label pairs → operator pairs.
+        Returns local-space operators (not embedded), which the demodulation
+        pipeline embeds as needed.
 
         Parameters
         ----------
@@ -1825,13 +1821,13 @@ class Chip:
     ) -> None:
         """Declare the device order used to parse string-state shorthands.
 
-        After this is called, :meth:`bare_state`, :meth:`state`, and
-        :meth:`superposition` accept single-string specifications where
-        each character is one level per device in *devices* order.
-        Level symbols default to ``g=0, e=1, f=2, h=3``; digits ``0..9``
-        are always accepted as energy-level indices.
+        After this call, :meth:`bare_state`, :meth:`state`, and
+        :meth:`superposition` accept single-string specifications. Each
+        character gives one device's level, in *devices* order. The default
+        level symbols are ``g=0, e=1, f=2, h=3``. The methods always accept
+        digits ``0..9`` as energy-level indices.
 
-        Every chip device must be named exactly once.
+        Name every chip device exactly once.
 
         Parameters
         ----------
@@ -1858,15 +1854,15 @@ class Chip:
         self,
         *components: Mapping[str | BaseDevice, int] | str | tuple[Any, Any],
     ) -> State:
-        """Normalized bare-basis superposition of tensor-product states.
+        """Return a normalized bare-basis superposition of tensor-product states.
 
-        Each component is either a bare-state spec (dict keyed by device
-        or label, or a string when :meth:`set_state_order` has been
-        called) or an ``(amplitude, spec)`` tuple for weighted mixing.
-        Uniform weights by default; results are normalized to unit norm.
+        Each component is a bare-state spec or an ``(amplitude, spec)`` tuple
+        for weighted mixing. A bare-state spec is a dict keyed by device or
+        label, or a string if you called :meth:`set_state_order` before.
+        Weights default to uniform, and results are normalized to unit norm.
 
-        Unlike :meth:`state`, this stays in the bare product basis — no
-        dressed diagonalization — so the probe basis is explicit.
+        Unlike :meth:`state`, this method stays in the bare product basis and
+        does no dressed diagonalization, so the probe basis is explicit.
 
         Parameters
         ----------
@@ -1896,20 +1892,20 @@ class Chip:
         /,
         **device_state_kwargs: int,
     ) -> State:
-        """Dressed eigenstate assigned from the given product-state level labels.
+        """Return the dressed eigenstate assigned from the given product-state level labels.
 
-        Accepts a string shorthand (e.g. ``"eg1"``) when
-        :meth:`set_state_order` has been called.
+        Accepts a string shorthand (for example ``"eg1"``) if you called
+        :meth:`set_state_order` before.
 
-        If the requested label's assignment overlap is low, this method
-        warns and names :meth:`bare_state` as the product-state alternative.
+        If the requested label's assignment overlap is low, this method warns
+        and names :meth:`bare_state` as the product-state alternative.
 
-        Safe inside ``jax.jit``/``grad``/``vmap``: under tracing the
-        assigned eigenvector column is selected through the
-        :func:`~quchip.chip.dressing.label_eigensystem` array kernel, so
-        dressed initial states are differentiable end-to-end. The global
-        phase is gauge-dependent (``eigh`` column convention) —
-        populations and ``|overlap|`` figures of merit are unaffected.
+        This method is safe in ``jax.jit``/``grad``/``vmap``. Under tracing,
+        the :func:`~quchip.chip.dressing.label_eigensystem` array kernel
+        selects the assigned eigenvector column, so dressed initial states are
+        differentiable end-to-end. The global phase is gauge-dependent
+        (``eigh`` column convention), which does not change populations or
+        ``|overlap|`` figures of merit.
 
         Parameters
         ----------
@@ -1926,20 +1922,20 @@ class Chip:
         /,
         **device_state_kwargs: int | State,
     ) -> State:
-        """Product state from per-device energy levels or authored local kets.
+        """Return a product state from per-device energy levels or authored local kets.
 
-        Each device may be specified as either an energy-level index
-        (``int``) or a ket vector in that device's authored local space.
-        Devices not mentioned default to the ground state (level 0). Unlike :meth:`state`
-        this does **not** diagonalize the coupled system.
+        Specify each device as an energy-level index (``int``) or as a ket vector in that
+        device's authored local space. Unspecified devices use the ground state (level
+        0). Unlike :meth:`state`, this method does **not** diagonalize the coupled
+        system.
 
-        Accepts a string shorthand (e.g. ``"eg1"``) when
-        :meth:`set_state_order` has been called.
+        Accepts a string shorthand (for example ``"eg1"``) if you called
+        :meth:`set_state_order` before.
 
         Parameters
         ----------
         device_states : mapping, str, or None, default=None
-            Per-device levels or local kets; omitted devices use level zero.
+            Per-device levels or local kets. Omitted devices use level zero.
         **device_state_kwargs : int or State
             Per-device levels or local kets keyed by label.
         """
@@ -1958,9 +1954,9 @@ class Chip:
     ) -> ControlEquipment:
         """Attach or replace classical control wiring.
 
-        Preferred user-facing API for attaching control to a chip. If
-        *lines* is omitted, the existing connected lines are reused and
-        only the signal chain is replaced.
+        Preferred user-facing API to attach control to a chip. If you omit
+        *lines*, the method reuses the connected lines and replaces only the
+        signal chain.
 
         Parameters
         ----------
@@ -2010,11 +2006,11 @@ class Chip:
         return equipment
 
     def unwire(self, line: BaseDrive | str) -> BaseDrive:
-        """Remove one control line and every signal-chain transform referencing it.
+        """Remove one control line and every signal-chain transform that refers to it.
 
-        The inverse of :meth:`wire` for a single line. Accepts the drive
-        object or its label. Returns the removed drive so it can be rewired
-        later. Removing the last line detaches the equipment entirely
+        The inverse of :meth:`wire` for a single line. Accepts the drive object
+        or its label. Returns the removed drive, so you can rewire it later.
+        Removing the last line fully detaches the equipment
         (``control_equipment`` becomes ``None``).
 
         Parameters
@@ -2045,9 +2041,9 @@ class Chip:
     def connect(self, control_equipment: ControlEquipment) -> None:
         """Attach control equipment to this chip (low-level API).
 
-        Validates every drive target and rejects duplicate drive labels,
-        then reconnects each drive to this chip's canonical device or
-        coupling instance. User-facing code should prefer :meth:`wire`.
+        Validates every drive target, rejects duplicate drive labels, and
+        reconnects each drive to this chip's canonical device or coupling
+        instance. User-facing code should use :meth:`wire`.
 
         Parameters
         ----------
@@ -2096,16 +2092,16 @@ class Chip:
             drive.connect(self._device_map[drive.target_label])
 
     def disconnect(self) -> ControlEquipment:
-        """Detach control equipment entirely (low-level API).
+        """Fully detach the control equipment (low-level API).
 
-        The inverse of :meth:`connect`/:meth:`wire`: removes all lines and
-        the signal chain at once (``control_equipment`` becomes ``None``).
-        Returns the detached equipment so it can be reconnected later.
+        The inverse of :meth:`connect`/:meth:`wire`. Removes all lines and the
+        signal chain at once (``control_equipment`` becomes ``None``). Returns
+        the detached equipment, so you can reconnect it later.
 
         Returns
         -------
         ControlEquipment
-            The equipment that was attached before detachment.
+            The previously attached equipment.
         """
         if self._control_equipment is None:
             raise ValueError("chip.disconnect() requires connected control equipment; nothing is wired.")
@@ -2160,10 +2156,8 @@ class Chip:
     ) -> "SimulationBatchResult":
         """Solve a :class:`SolveBatch` or list of problems.
 
-        Chip-level validation only enforces what needs ``self`` (every input
-        was built for *this* chip); the input-shape dispatch and batching are
-        delegated to :func:`quchip.engine.solve_many`, which owns the single
-        SolveBatch / list dispatch.
+        Chip-level validation checks only what uses ``self`` (every input was
+        built for *this* chip).
 
         Parameters
         ----------
@@ -2172,6 +2166,8 @@ class Chip:
         progress : bool, default=True
             Show backend progress where supported.
         """
+        # `quchip.engine.solve_many` owns the single SolveBatch / list
+        # input-shape dispatch and the batching.
         from quchip.engine import solve_many
         from quchip.engine.ir import SolveBatch
 
@@ -2259,13 +2255,13 @@ class Chip:
     # ------------------------------------------------------------------
 
     def describe(self) -> str:
-        """Sectioned plain-text report of everything on the chip.
+        """Return a plain-text report of everything on the chip, in sections.
 
-        Devices with their declared parameters (units included), noise
-        settings, couplings, control wiring, and baths — the "what did I
-        just build?" view. Returns a string; ``print(chip.describe())``.
-        Traced parameters render as ``<traced>`` and are never
-        concretized.
+        The report shows devices with their declared parameters (units
+        included), noise settings, couplings, control wiring, and baths: the
+        "what did I just build?" view. Returns a string, so use
+        ``print(chip.describe())``. Traced parameters show as ``<traced>`` and
+        are never concretized.
         """
         from quchip.chip.describe import describe_chip
 

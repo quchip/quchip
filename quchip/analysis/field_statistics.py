@@ -7,18 +7,18 @@ from quchip.engine.ir import CanonicalOperator
 
 
 def canonical(values: Any, template: CanonicalOperator, *, tag: str) -> CanonicalOperator:
-    """Preserve the resolved operator's physical basis for a regression source."""
+    """Keep the resolved operator's physical basis for a regression source."""
     return CanonicalOperator.from_dense(values, dims=template.dims, basis=template.basis,
                                        subsystem_labels=template.subsystem_labels, tag=tag)
 
 
 def field_sources(engine: Any, rho: Any, xp: Any) -> tuple[Any, Any, Any]:
-    """Return centered L, output regression sources and direct thermal noise.
+    """Return centered L, output regression sources, and direct thermal noise.
 
-    With K=S†L, source i is (L_i-<L_i>)rho + sum_j S_ij n_j [K_j,rho].
-    The input-system correlations are essential: at thermal equilibrium a
-    matched cavity's output stays thermal, rather than adding fluorescence
-    on top of the same incoming bath a second time.
+    With K=S†L, source i is (L_i-<L_i>)rho + sum_j S_ij n_j [K_j,rho]. The
+    input-system correlations are necessary because, at thermal equilibrium, a
+    matched cavity's output stays thermal. Without them, the fluorescence would
+    add the same incoming bath a second time.
     """
     operators = xp.stack([xp.asarray(operator.to_dense()) for operator in engine.slh.L])
     means = xp.einsum("ijk,kj->i", operators, rho)
@@ -34,9 +34,9 @@ def quadrature_spectrum(
 ) -> Any:
     """Return the normally ordered IQ cross-spectrum.
 
-    Coordinates are (I_0,Q_0,I_1,Q_1,...), with b=I+iQ. Detector vacuum is
-    deliberately absent. The excess spectrum includes anomalous correlations
-    and can have negative eigenvalues for squeezed fields.
+    The coordinates are (I_0,Q_0,I_1,Q_1,...), with b=I+iQ. The detector vacuum
+    is intentionally absent. The excess spectrum includes anomalous
+    correlations, so it can have negative eigenvalues for squeezed fields.
     """
     xp = backend.array_module
     centered, emission, _ = field_sources(engine, rho, xp)
@@ -78,7 +78,7 @@ def quadrature_transfer(upper: Any, lower: Any, xp: Any) -> Any:
 
 
 def block_diagonal(blocks: Any, xp: Any) -> Any:
-    """Assemble per-output IQ blocks, preserving leading batch axes."""
+    """Assemble per-output IQ blocks, keeping the leading batch axes."""
     count, rows, columns = blocks.shape[-3:]
     return xp.einsum("ij,...iab->...iajb", xp.eye(count), blocks).reshape(
         (*blocks.shape[:-3], count * rows, count * columns))

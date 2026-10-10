@@ -1,7 +1,7 @@
 """Remove a selected edge through a captured change of coordinates.
 
-Both endpoint devices survive with their authored parameters. The retained
-matrix includes the selected interaction's level-dependent shifts and its
+Both endpoint devices survive with their authored parameters. The kept matrix
+includes the selected interaction's level-dependent shifts and its
 transformation of every other interaction in the chip.
 """
 
@@ -28,15 +28,15 @@ def reduce_coupling(chip: "Chip", target: Any, method: str) -> EliminationResult
     """Diagonalize an edge exactly or remove its exchange to second order.
 
     The pair rotation uses only its isolated devices and selected edge. Its
-    action on the full chip is retained, including parallel and spectator
-    interactions. ``method='sw'`` truncates the Hamiltonian at second order
-    in interactions; ``method='exact'`` applies a full unitary transformation.
-    The coordinate map preserves the full Hilbert space. Exact derivatives
-    require a locally stable dressed assignment and nondegenerate eigenpairs.
+    action on the full chip, including parallel and spectator interactions, is
+    kept. ``method='sw'`` truncates the Hamiltonian at second order in
+    interactions. ``method='exact'`` applies a full unitary transformation. The
+    coordinate map keeps the full Hilbert space. Exact derivatives require a
+    locally stable dressed assignment and nondegenerate eigenpairs.
 
-    Channels follow the captured operator projection while surviving components
+    Channels follow the captured operator projection, and surviving components
     continue to own their rates. SW channels use the exponentiated first-order
-    coordinate map; the Hamiltonian keeps its second-order truncation.
+    coordinate map. The Hamiltonian keeps its second-order truncation.
     Surviving control operators are not transformed yet.
     """
     if method not in {"sw", "exact"}:

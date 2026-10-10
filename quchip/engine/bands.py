@@ -1,10 +1,9 @@
 """Band decomposition by excitation-change weight.
 
-Given an operator ``O`` written in a number-basis product representation,
-this module splits it into the disjoint bands that connect Fock states
-differing by a fixed excitation change. Let ``|m⟩`` denote a number
-state on a single mode; the entry ``O_{nm} = ⟨n|O|m⟩`` contributes to
-the band with weight
+This module splits an operator ``O``, written in a number-basis product
+representation, into disjoint bands that connect Fock states with a fixed
+excitation difference. Let ``|m⟩`` denote a single-mode number state. The entry
+``O_{nm} = ⟨n|O|m⟩`` contributes to the band with weight
 
 .. math:: w \\;=\\; m - n \\;=\\; \\text{col} - \\text{row}.
 
@@ -13,23 +12,22 @@ the pair ``(Δa, Δb)``.
 
 Physics use
 -----------
-* Assembly attaches a carrier ``exp(−i w ω t)`` to each band when it
-  assembles a drive or coupling operator in a rotating frame, and drops
-  counter-rotating bands under the RWA (Jaynes & Cummings 1963; for the
-  structured cQED treatment see Gambetta et al., *PRA* **74**, 042318
-  (2006); for cross-resonance specifically, Rigetti & Devoret, *PRB*
-  **81**, 134507 (2010), and Magesan & Gambetta, *PRA* **101**, 052308
-  (2020)).
+* In a rotating frame, assembly attaches a carrier ``exp(−i w ω t)`` to each
+  band of a drive or coupling operator, and the RWA drops the counter-rotating
+  bands (Jaynes & Cummings 1963). For the structured cQED treatment, see
+  Gambetta et al., *PRA* **74**, 042318 (2006). For cross-resonance
+  specifically, see Rigetti & Devoret, *PRB* **81**, 134507 (2010), and Magesan
+  & Gambetta, *PRA* **101**, 052308 (2020).
 * Observable reconstruction uses the same weights to demodulate expectations
   back into the control frame.
 
 Implementation
 --------------
-The canonical entry points preserve sparse layouts (CSR / DIA) whenever
-their structural metadata is concrete. Differentiable values may remain
-JAX-traced because the declared indices and offsets keep the sparsity pattern
-statically known under ``jit``. Dense traced payloads retain every candidate
-band because they carry no equivalent structural declaration.
+The canonical entry points keep sparse layouts (CSR / DIA) when their
+structural metadata is concrete. Differentiable values can stay JAX-traced,
+because the declared indices and offsets keep the sparsity pattern statically
+known under ``jit``. Dense traced payloads keep every candidate band, because
+they carry no equivalent structural declaration.
 """
 
 from __future__ import annotations
@@ -97,9 +95,9 @@ def _concrete_parent_norm(values: Any) -> float | None:
 def canonical_to_dense_array(canonical: CanonicalOperator) -> Any:
     """Materialize *canonical* densely, preserving its array namespace (JAX-safe).
 
-    Alias for :meth:`CanonicalOperator.to_dense`, which owns the
-    vectorized, array-namespace-preserving densification logic.
+    Alias for :meth:`CanonicalOperator.to_dense`.
     """
+    # CanonicalOperator.to_dense owns the vectorized densification logic.
     return canonical.to_dense()
 
 
@@ -114,22 +112,27 @@ _DIAGONAL_PRUNE_THRESHOLD = 1e-15
 def prune_zero_diagonals(canonical: CanonicalOperator) -> CanonicalOperator:
     """Drop concretely all-zero stored diagonals from a DIA canonical operator.
 
-    Operator algebra that cancels terms exactly (e.g. assembly subtracting the
-    lab-frame coupling from ``H₀`` before re-adding it band-by-band as dynamic
-    terms) leaves the union of the operands' diagonal offsets in the sum, with
-    the cancelled diagonals stored as explicit zeros — dead payload the solver
-    applies at every integration step. Concrete (tracer-free) payloads
-    drop those diagonals here; traced payloads pass through untouched so the
-    stored structure stays statically known under ``jit``. Non-DIA layouts
-    pass through unchanged (CSR structure is the layout's own sparsity
-    declaration; dense has no structural metadata to prune). If every diagonal
-    is zero, the first one is kept so the operator stays constructible.
+    Operator algebra that cancels terms exactly keeps the union of the
+    operands' diagonal offsets, so the cancelled diagonals stay stored as
+    explicit zeros. The solver applies these dead zeros at every integration
+    step, and this function drops them from concrete (tracer-free) payloads.
+    Traced payloads pass through unchanged, so the stored structure stays
+    statically known under ``jit``.
 
-    Uses the absolute ``_DIAGONAL_PRUNE_THRESHOLD``, not the relative
-    ``_BAND_NORM_RTOL`` other band-drop sites use: this removes structure
-    that cancelled exactly to the roundoff floor, a fixed noise floor
-    rather than a fraction of the operator's own scale.
+    Non-DIA layouts pass through unchanged. CSR structure is the layout's
+    sparsity declaration, and dense has no structural metadata to prune. If
+    every diagonal is zero, the function keeps the first one, so the operator
+    stays constructible.
     """
+    # For example, assembly subtracts the lab-frame coupling from `H₀` and then
+    # adds it again band-by-band as dynamic terms, which leaves cancelled
+    # diagonals stored as explicit zeros.
+    #
+    # prune_zero_diagonals uses the absolute `_DIAGONAL_PRUNE_THRESHOLD`, not
+    # the relative `_BAND_NORM_RTOL` that other band-drop sites use.
+    # prune_zero_diagonals removes structure that cancelled exactly to the
+    # roundoff floor, which is a fixed noise floor, not a fraction of the
+    # operator's scale.
     if (
         canonical.layout != "dia"
         or contains_tracer(canonical.values)
@@ -217,11 +220,11 @@ def decompose_bands(
 ) -> dict[int, Any]:
     """Decompose a single-mode dense operator by weight ``w = col − row``.
 
-    Returns a dict keyed by integer weight ``w ∈ [−(dim−1), dim−1]``;
-    each value is a full ``dim×dim`` matrix containing only the entries
-    on that diagonal band (everything else is zero). Concrete arrays
-    drop zero-norm bands; JAX-traced arrays retain every band so the
-    set of keys is statically known across traces.
+    Returns a dict keyed by integer weight ``w ∈ [−(dim−1), dim−1]``. Each
+    value is a full ``dim×dim`` matrix that holds only the entries on that
+    diagonal band, with zeros elsewhere. Concrete arrays drop zero-norm bands.
+    JAX-traced arrays keep every band, so the set of keys is statically known
+    across traces.
     """
     if dim < 1:
         raise ValueError(f"dim must be positive, got {dim}")
@@ -246,19 +249,21 @@ def canonical_to_coo(canonical: CanonicalOperator) -> tuple[Any, Any, Any]:
     """Flatten a canonical payload to ``(rows, cols, values)`` COO arrays.
 
     Dispatches on layout. Concrete dense and DIA payloads drop only
-    exactly-zero entries (``value != 0``, no tolerance): whole-band drop
-    decisions downstream use the relative ``_BAND_NORM_RTOL``, which needs
-    every surviving entry -- an absolute per-entry cutoff here would strip
-    an operator whose entire physical scale sits below that cutoff before
-    the relative test ever sees a band. CSR is already explicitly sparse
-    and its stored ``nnz`` is preserved as-is (the layout itself is the
-    sparsity declaration, so dropping stored values would discard
-    structurally meaningful zeros). Traced payloads keep their
-    layout-native sparsity (CSR via indices/indptr, DIA via offsets)
-    so the COO size stays static under jit. The fanout-everything
-    fallback only fires when the layout's *structural* metadata itself
-    is traced (or for dense, which has no structural metadata at all).
+    exactly-zero entries (``value != 0``, no tolerance).
+
+    CSR is already explicitly sparse and keeps its stored ``nnz``. Traced
+    payloads keep their layout-native sparsity (CSR through indices/indptr, DIA
+    through offsets), so the COO size stays static under jit. The
+    fanout-everything fallback fires only when the layout's *structural*
+    metadata is traced, or for dense, which has no structural metadata.
     """
+    # Downstream band-drop decisions use the relative `_BAND_NORM_RTOL`, and
+    # that test must see every surviving entry. An absolute per-entry cutoff
+    # here would strip an operator whose full physical scale is below that
+    # cutoff, before the relative test sees a band.
+    #
+    # The CSR layout itself is the sparsity declaration, so dropping stored
+    # values would discard structurally meaningful zeros.
     if canonical.layout == "dense":
         if contains_tracer(canonical.values):
             return _all_entries_coo(canonical)
@@ -417,11 +422,10 @@ def decompose_canonical_bands(
     * Dense payloads, or sparse payloads with traced structure, take
       :func:`decompose_bands` and emit dense bands.
 
-    Subsystem metadata (``dims``, ``basis``, ``subsystem_labels``,
-    ``tag``) is copied onto every band so downstream engine operations can continue
-    to reason about which subsystem each band lives on. ``total_changes``
-    optionally declares the weights the operator can carry; other weights are
-    skipped as structural zeros.
+    Copies the subsystem metadata (``dims``, ``basis``, ``subsystem_labels``,
+    ``tag``) onto every band, so downstream engine operations can still find each
+    band's subsystem. ``total_changes`` optionally declares the weights the
+    operator can carry, and the function skips other weights as structural zeros.
     """
     if dim < 1:
         raise ValueError(f"dim must be positive, got {dim}")
@@ -443,12 +447,12 @@ def decompose_two_body_canonical_bands(
 ) -> dict[tuple[int, int], CanonicalOperator]:
     """Decompose a canonical two-body operator by ``(Δa, Δb)`` per-subsystem change.
 
-    *canonical* is in the product basis ``|i_a⟩ ⊗ |i_b⟩`` with mode
-    ``b`` as the fast index; ``dims`` is ``[d_a, d_b]``. Each band has
-    a definite excitation change on each mode, so the carrier attached
-    during assembly is ``exp(−i (Δa · ω_a + Δb · ω_b) t)`` — the standard
-    rotating-frame form for a bilinear coupling (see e.g. Magesan &
-    Gambetta, *PRA* **101**, 052308 (2020), Eq. (2)).
+    *canonical* is in the product basis ``|i_a⟩ ⊗ |i_b⟩``, with mode ``b`` as
+    the fast index. ``dims`` is ``[d_a, d_b]``. Each band has a definite
+    excitation change on each mode, so assembly attaches the carrier
+    ``exp(−i (Δa · ω_a + Δb · ω_b) t)``. This is the standard rotating-frame
+    form for a bilinear coupling (see e.g. Magesan & Gambetta, *PRA* **101**,
+    052308 (2020), Eq. (2)).
     """
     if len(dims) != 2:
         raise ValueError(f"dims must have exactly 2 entries, got {len(dims)}")
@@ -563,10 +567,10 @@ def local_mode_bands(
 ) -> list[tuple[int, Any]]:
     """Decompose *local_op* into ascending excitation-change bands.
 
-    Returns ``[(weight, band_op), ...]`` ordered by ascending weight,
-    where ``band_op`` is a backend operator on the local ``dim``-sized
-    space — *not* embedded into the full chip space and *without* the
-    ``2π`` factor. Callers layer their own embedding / scaling / wrapping.
+    Returns ``[(weight, band_op), ...]`` ordered by ascending weight. Each
+    ``band_op`` is a backend operator on the local ``dim``-sized space. It is
+    *not* embedded into the full chip space and is *without* the ``2π`` factor,
+    so callers add their own embedding / scaling / wrapping.
     """
     canonical = backend.to_canonical_operator(local_op).with_metadata(
         dims=(dim,),
@@ -595,9 +599,9 @@ def embed_single_mode_bands(
 ) -> list[tuple[int, Any]]:
     """Like :func:`local_mode_bands`, but each band is embedded into *dims*.
 
-    Returns ``[(weight, embedded_op), ...]`` where ``embedded_op`` acts on
-    the full chip Hilbert space. Still in the lab frame and ordinary GHz
-    (no ``2π``).
+    Returns ``[(weight, embedded_op), ...]``, where ``embedded_op`` acts on the
+    full chip Hilbert space, still in the lab frame and ordinary GHz (no
+    ``2π``).
     """
     return [
         (weight, backend.embed(band_op, device_index, dims))
@@ -614,13 +618,13 @@ def embed_single_mode_bands(
 def embed_on_support(backend: Any, op: Any, support: tuple[int, ...], dims: Any) -> Any:
     """Embed a component-local operator into the full space by support arity.
 
-    ``support`` names the device indices the operator acts on: an empty
-    tuple passes an already-embedded operator through, one index dispatches
-    to :meth:`Backend.embed`, two to :meth:`Backend.embed_two_body`. This is
-    the single arity dispatch the engine uses for chip component
-    contributions (:meth:`Chip.dynamic_contributions` /
-    :meth:`Chip.collapse_contributions`).
+    ``support`` names the device indices the operator acts on. An empty tuple
+    passes an already-embedded operator through. One index dispatches to
+    :meth:`Backend.embed`, and two dispatch to :meth:`Backend.embed_two_body`.
     """
+    # The engine uses this single arity dispatch for chip component
+    # contributions (`Chip.dynamic_contributions` /
+    # `Chip.collapse_contributions`).
     if len(support) == 0:
         return op
     if len(support) == 1:

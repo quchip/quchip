@@ -33,7 +33,7 @@ class TargetSpec:
     Attributes
     ----------
     kind
-        Observable kind — one of ``"freq"``, ``"anharmonicity"``,
+        Observable kind. One of ``"freq"``, ``"anharmonicity"``,
         ``"cross_kerr"``, ``"exchange_rate"``, ``"coupling_strength"``.
     label
         Device label, ``(label_a, label_b)`` tuple, or coupling label
@@ -41,7 +41,7 @@ class TargetSpec:
     target
         Desired value in GHz.
     source
-        Where the target came from: ``"component default"`` or ``"explicit"``.
+        Origin: ``"component default"`` or ``"explicit"``.
     """
 
     kind: str
@@ -75,9 +75,9 @@ def build_dressed_target_specs(
 ) -> tuple[TargetSpec, ...]:
     """Compile a desired chip's declared numbers into dressed constraints.
 
-    Compilation never calls a dressed-analysis method on ``chip``. Devices and couplings provide their
-    component-owned defaults; explicit constraints extend those defaults,
-    replace the same ``(kind, locator)`` entry, or remove it with ``None``.
+    Compilation never calls a dressed-analysis method on ``chip``. Devices and couplings supply
+    their component-owned defaults. Explicit constraints extend those defaults, replace the same
+    ``(kind, locator)`` entry, or remove it with ``None``.
 
     Parameters
     ----------
@@ -85,7 +85,7 @@ def build_dressed_target_specs(
         Numerical desired-chip specification.
     constraints
         Optional ``{component_or_pair: {observable: value_or_none}}`` mapping.
-        Pair locators need not correspond to a direct coupling edge.
+        Pair locators do not have to agree with a direct coupling edge.
     """
     keyed: dict[tuple[str, Any], TargetSpec] = {}
 

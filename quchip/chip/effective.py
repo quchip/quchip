@@ -63,7 +63,7 @@ def conserves_excitation_number(chip: Any, approximation: Any) -> bool:
 
     Device Hamiltonians are diagonal in their energy bases. The approximation
     must keep only bands of zero total weight, every retained term must declare
-    conservation, and no port pair may generate a cascade Hamiltonian.
+    conservation, and no port pair can generate a cascade Hamiltonian.
 
     Parameters
     ----------
@@ -198,13 +198,14 @@ class OperatorProjection:
 class EffectiveTerms:
     """Retained matrix terms in the named devices' authored coordinates.
 
-    ``hamiltonian`` is in GHz; channels carry unscaled operators and rates in
+    ``hamiltonian`` is in GHz. Channels carry unscaled operators and rates in
     1/ns. These terms already express the reduction's selected approximation,
     so assembly changes their frame without dropping further operator bands.
-    Values are captured at construction. Editing a surviving device changes
-    its authored terms; it does not recompute this captured correction.
-    ``projection`` carries the source coordinates of surviving operators;
-    channels already stored here are in retained coordinates and bypass it.
+    Values are captured at construction. If you edit a surviving device, its
+    authored terms change, but this captured correction is not recalculated.
+    ``projection`` carries the source coordinates of surviving operators.
+    Channels already stored here are in retained coordinates and bypass
+    ``projection``.
 
     Parameters
     ----------
@@ -225,11 +226,11 @@ class EffectiveTerms:
         :meth:`physics_notes` after the notes derived from the terms.
     excitation_changes : mapping of str to iterable of int, or None, default=None
         Structure declared by the producer. A mapping states that the
-        Hamiltonian and ``projection`` conserve the total energy-level index
-        of the retained devices, and gives the total level changes, column
-        minus row, that each named channel can carry. Band decomposition then
-        treats every other change as zero, also for traced values. ``None``
-        declares no structure.
+        Hamiltonian and ``projection`` conserve the retained devices' total
+        energy-level index. It also gives the total level changes, column minus
+        row, that each named channel can carry. Band decomposition then treats
+        every other change as zero, even for traced values. ``None`` declares
+        no structure.
     """
 
     labels: tuple[str, ...]
