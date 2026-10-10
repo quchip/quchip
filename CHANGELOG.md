@@ -53,10 +53,6 @@ This file records notable user-visible changes to quchip.
   assemble a superoperator whose estimated peak exceeds the available memory.
   Previously, the operating system killed them. The dynamiqs stationary Liouvillian
   uses the same check. ([#80](https://github.com/quchip/quchip/issues/80))
-- `eliminate(..., method="exact")` also diagonalizes each excitation sector of a
-  chip whose readouts share a cascade feedline. Its retained terms then declare
-  conservation, so `VNA.sweep()` of the reduced chip keeps the weak-probe route.
-  ([#99](https://github.com/quchip/quchip/issues/99))
 
 #### Performance
 
@@ -99,14 +95,10 @@ This file records notable user-visible changes to quchip.
   per-call option scope, which rebuilt every data-layer dispatcher.
   `steadystate_batch()` over 40 points runs 5.4 times faster, and
   `VNA.finite_power()` over 44 points runs 3.2 times faster.
-- `VNA.sweep()` of a chip whose readouts share a cascade feedline now solves
-  weak-probe scattering in the one-excitation block. The cascade term conserves
-  total excitation number when both ports of each pair lower it by one.
-  Previously, any cascade term sent the sweep to the stationary solve. On one
-  machine, a 31-point sweep with two transmon readouts on one line (36 states)
-  takes 0.01 s instead of 0.97 s. With three readouts (216 states), it takes
-  0.02 s, and the stationary solve takes 205 s for two points.
-  ([#99](https://github.com/quchip/quchip/issues/99))
+- Shared-feedline models use the compact weak-probe VNA route when each
+  participating port lowers total excitation by one. The cascade Hamiltonian
+  then conserves excitation, including after supported exact reductions.
+  ([#110](https://github.com/quchip/quchip/pull/110))
 
 #### Compatibility
 
