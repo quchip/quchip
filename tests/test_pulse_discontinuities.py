@@ -109,17 +109,19 @@ def test_qutip_square_pulse_has_no_interpolation_area_outside_support():
 
 
 @pytest.mark.unit
-def test_qutip_coefficient_keeps_a_listed_envelope_step_sharp():
+@pytest.mark.parametrize(("start", "delay"), [(2.3, 0.0), (0.0, -9.0)])
+def test_qutip_coefficient_keeps_a_listed_envelope_step_sharp(start, delay):
     """The QuTiP coefficient equals a stepped envelope 1 fs on each side of its listed step."""
     from quchip.backend.qutip import _envelope_coefficient
     from quchip.engine.ir import EnvelopeRef, Shift, Window
 
     # At a 2.3 ns start, the adjacent float below the shifted step maps back onto the step.
-    start = 2.3
-    signal = Shift(Window(EnvelopeRef(_SteppedEnvelope(duration=20.0)), 0.0, 20.0), start)
-    coefficient = _envelope_coefficient(signal, [0.0, start + 20.0])
-    assert coefficient(start + 10.0 - 1e-6) == pytest.approx(1.0, abs=1e-12)
-    assert coefficient(start + 10.0 + 1e-6) == pytest.approx(0.5, abs=1e-12)
+    # A -9 ns line delay moves the step to 1 ns, but the pulse's local clock still reads 10 ns.
+    pulse = Shift(Window(EnvelopeRef(_SteppedEnvelope(duration=20.0)), 0.0, 20.0), start)
+    coefficient = _envelope_coefficient(Shift(pulse, delay), [0.0, start + delay + 20.0])
+    step = start + delay + 10.0
+    assert coefficient(step - 1e-6) == pytest.approx(1.0, abs=1e-12)
+    assert coefficient(step + 1e-6) == pytest.approx(0.5, abs=1e-12)
 
 
 @pytest.mark.unit

@@ -107,11 +107,6 @@ _MIN_WINDOW_INTERIOR_SAMPLES = 41
 # Zero-valued margins expose each discontinuity; a sparse skeleton covers the remaining zero plateau.
 _WINDOW_EDGE_PADDING_NS = 1.0
 _CANONICAL_BASE_SKELETON_POINTS = 3
-# Gap between a feature time and the knot on each side, in float spacings of the feature
-# time. A pulse start or a line delay shifts the clock, and each shift rounds a knot's
-# local time by up to one spacing. At the adjacent float, the local time can then fall
-# on the wrong side of a step. Four spacings cover a start and a delay.
-_FEATURE_KNOT_GAP_SPACINGS = 4
 
 
 def _collect_window_bounds(signal: Any) -> list[tuple[float, float]]:
@@ -138,14 +133,19 @@ def _local_window_subgrid(start: float, stop: float) -> np.ndarray:
     return np.unique(np.concatenate([before, interior, after, [start, stop]]))
 
 
-def _bracketed_feature_times(times: np.ndarray) -> np.ndarray:
+def _bracketed_feature_times(local: np.ndarray, offsets: tuple[float, ...]) -> np.ndarray:
     """Return absolute feature times with a close knot on each side of each one.
 
     The two knots keep a discontinuity at a feature time sharp in a linear
-    interpolant, at any pulse start. Below 1 ns the gap uses the float spacing
-    of 1 ns, so a feature at t = 0 gets no subnormal neighbor.
+    interpolant, after any pulse start and line delay. The gap never drops below
+    two float spacings of 1 ns, so a feature at t = 0 gets no subnormal neighbor.
     """
-    gap = _FEATURE_KNOT_GAP_SPACINGS * np.maximum(np.spacing(np.abs(times)), np.spacing(1.0))
+    times = local + offsets[-1]
+    # With n shifts, placing a knot and evaluating the signal there round at most 2n + 1 times.
+    # Each rounding moves a time by at most one float spacing of twice the largest clock
+    # magnitude. A gap of 2n + 2 such spacings keeps each knot on its side of the feature.
+    clock = np.max(np.abs(times[:, None] - np.asarray(offsets)), axis=1)
+    gap = 2 * len(offsets) * np.spacing(np.maximum(2 * clock, 1.0))
     return np.concatenate([times - gap, times, times + gap])
 
 
@@ -161,12 +161,12 @@ def _augmented_sample_grid(envelope: Any, base_grid: Any) -> np.ndarray:
     if not bounds:
         return base
     lo, hi = base[0], base[-1]
-    from quchip.engine.sampling import signal_feature_times
+    from quchip.engine.sampling import signal_features
 
     pieces = [np.linspace(lo, hi, _CANONICAL_BASE_SKELETON_POINTS)]
     # Feature times include every window edge, so a pulse edge and an envelope
     # step listed in sampling_times() stay sharp, including at a grid endpoint.
-    pieces.extend(_bracketed_feature_times(features) for features in signal_feature_times(envelope))
+    pieces.extend(_bracketed_feature_times(local, offsets) for local, offsets in signal_features(envelope))
     for start, stop in bounds:
         clipped_start, clipped_stop = max(start, lo), min(stop, hi)
         if clipped_stop > clipped_start:
