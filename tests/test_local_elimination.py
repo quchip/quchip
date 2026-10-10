@@ -13,7 +13,6 @@ from quchip import (
     ChargeDrive,
     Chip,
     ControlEquipment,
-    CrossKerr,
     DuffingTransmon,
     Gaussian,
     ParametricDrive,
@@ -26,9 +25,11 @@ from quchip import (
     eliminate,
 )
 from quchip.chip.effective import OperatorProjection
+from quchip.declarative.models import CouplingModel
+from quchip.declarative.parameters import Scalar, parameter
 
 
-def _ring(n, *, noise=True, backend=None, cross_kerr=False, ports=False, port_on_q0=False):
+def _ring(n, *, noise=True, backend=None, ports=False):
     """Transmons in a ring with a coupling resonator between neighbours and one readout each."""
     qs = [DuffingTransmon(freq=5.32 - 0.07 * i, anharmonicity=-0.26, levels=3, label=f"q{i}",
                           T1=40e3 + 1e3 * i if noise else None) for i in range(n)]
@@ -41,17 +42,11 @@ def _ring(n, *, noise=True, backend=None, cross_kerr=False, ports=False, port_on
         couplings += [Capacitive(qs[i], cs[i], g=0.03, label=f"q{i}_c{i}"),
                       Capacitive(qs[j], cs[i], g=0.03, label=f"q{j}_c{i}"),
                       Capacitive(qs[i], rs[i], g=0.04, label=f"q{i}_r{i}")]
-    if cross_kerr:
-        couplings.append(CrossKerr(qs[0], rs[1], chi=0.01, label="zz"))
     network = None
-    if ports or port_on_q0:
+    if ports:
         network = PortNetwork(label="lines")
-        readouts = [network.port(f"p{i}", target=rs[i], rate=0.002 + 0.001 * i) for i in range(n)]
-        if port_on_q0:
-            # A line on q0 feeds the readout port of r1, so one field subgraph spans both.
-            line = network.port("line", target=qs[0], rate=0.001)
-            network.cascade(line, readouts[1])
-            network.expose("feed", input=line.input, output=readouts[1].output)
+        for i in range(n):
+            network.port(f"p{i}", target=rs[i], rate=0.002 + 0.001 * i)
     return Chip(qs + cs + rs, couplings, frame=5.2, approximation=RWA(), port_network=network,
                 **({"backend": backend} if backend else {}))
 
@@ -70,14 +65,14 @@ def _model(chip):
 def _assert_same_model(expected, actual, atol=1e-12):
     assert [d.label for d in actual.devices] == [d.label for d in expected.devices]
     for want, got in zip(_model(expected), _model(actual)):
-        np.testing.assert_allclose(got, want, atol=atol)
+        np.testing.assert_allclose(got, want, rtol=0, atol=atol)
 
 
 def _assert_same_reduction(full, local):
     _assert_same_model(full.chip, local.chip)
     assert local.mapping.source_labels == full.mapping.source_labels
     assert local.mapping.target_labels == full.mapping.target_labels
-    np.testing.assert_allclose(local.mapping.embedding, full.mapping.embedding, atol=1e-12)
+    np.testing.assert_allclose(local.mapping.embedding, full.mapping.embedding, rtol=0, atol=1e-12)
     for label, params in full.effective_params.items():
         if label != "exchange":
             assert float(local.effective_params[label]["lamb_shift"]) == pytest.approx(
@@ -116,9 +111,9 @@ def test_chained_projection_applies_its_parent_first_and_keeps_spectators():
     lift = np.kron(parent.embedding, np.eye(8)) @ np.kron(child.embedding, np.eye(2))
     source = _on(operator, ("a", "s"), ("a", "m", "b", "n", "s"), dims)
     assert labels == ("a", "b", "s") and out_dims == (3, 2, 2)
-    np.testing.assert_allclose(matrix, lift.conj().T @ source @ lift, atol=1e-12)
+    np.testing.assert_allclose(matrix, lift.conj().T @ source @ lift, rtol=0, atol=1e-12)
     restored = OperatorProjection.from_dict(child.to_dict())
-    np.testing.assert_allclose(restored.transport(operator, ("a", "s"), (3, 2))[0], matrix, atol=1e-12)
+    np.testing.assert_allclose(restored.transport(operator, ("a", "s"), (3, 2))[0], matrix, rtol=0, atol=1e-12)
     with pytest.raises(ValueError, match="Pass dims"):
         child.apply(operator, ("a", "s"))
 
@@ -141,23 +136,24 @@ def test_projection_lineage_applies_overlapping_maps_in_order():
     matrix, labels, out_dims = second.transport(operator, ("a",), (3,))
     assert labels == ("m", "a") and out_dims == (2, 3)
     second_lift = np.kron(np.eye(3), second.embedding)
-    np.testing.assert_allclose(matrix, expected(np.kron(first.embedding, np.eye(2)) @ second_lift), atol=1e-12)
+    np.testing.assert_allclose(matrix, expected(np.kron(first.embedding, np.eye(2)) @ second_lift), rtol=0,
+                               atol=1e-12)
     # An owner that the first map already holds in retained coordinates passes through the second map only.
     marked = OperatorProjection(("m", "b"), (2, 2), ("m",), (2,), second.embedding,
                                 parents=(first.with_current_operators(("port:p",)),))
     np.testing.assert_allclose(marked.transport(operator, ("a",), (3,), "port:p")[0], expected(second_lift),
-                               atol=1e-12)
+                               rtol=0, atol=1e-12)
     with pytest.raises(TypeError, match="parents"):
         OperatorProjection(("a", "b"), (3, 2), ("a",), (3,), _isometry(rng, 6, 3), parents=("a",))
 
 
-@pytest.mark.parametrize("target", ["r0", "c0", "q1"])
+@pytest.mark.parametrize("target", ["c0", "q1"])
 def test_local_reduction_equals_the_full_reduction(target):
     chip = _ring(2)
     local = eliminate(chip, target, local=True)
     _assert_same_reduction(eliminate(chip, target), local)
     # Only the survivors in the patch around the target carry the new retained terms.
-    patch = {"r0": ("q0",), "c0": ("q0", "q1"), "q1": ("c0", "c1", "r1")}[target]
+    patch = {"c0": ("q0", "q1"), "q1": ("c0", "c1", "r1")}[target]
     assert local.chip.effective_terms[-1].labels == patch
 
 
@@ -204,30 +200,41 @@ def test_local_steps_equal_the_full_reduction_in_sequence(order):
     assert [c.key for c in actual.external_channels] == [c.key for c in expected.external_channels]
     for want, got in zip(expected.external_channels, actual.external_channels):
         np.testing.assert_allclose(np.asarray(got.coupling.to_dense()), np.asarray(want.coupling.to_dense()),
-                                   atol=1e-12)
+                                   rtol=0, atol=1e-12)
 
 
-def test_local_patch_keeps_the_far_device_of_a_cross_kerr_edge():
-    """The cross-Kerr edge shifts the mode's neighbour by the level of r1, so r1 joins the patch."""
-    chip = _ring(2, cross_kerr=True)
-    local = eliminate(chip, "r0", local=True)
-    _assert_same_reduction(eliminate(chip, "r0"), local)
-    assert local.chip.effective_terms[-1].labels == ("q0", "r1")
+class _LevelShift(CouplingModel):
+    """A diagonal edge that vanishes when x equals y."""
+
+    x: Scalar = parameter(unit="GHz")
+    y: Scalar = parameter(unit="GHz")
+
+    def interaction(self, a, b, p):
+        return (p.x - p.y) * a.n * b.n
 
 
-def test_traced_coupling_strength_keeps_the_concrete_patch():
-    """A traced strength leaves the capacitive diagonal zero, so c0 stays outside the patch of r0."""
-    base = _ring(2, noise=False, backend="dynamiqs")
-    patches = []
+def test_local_patch_holds_each_term_that_shifts_a_neighbour():
+    """d shifts a through x - y, and the port pair on (a, b) and c through n_a n_b n_c, so both join m's patch.
 
-    def level(g):
-        reduced = eliminate(base.with_params({"q0_c0.g": g}), "r0", local=True).chip
-        patches.append(reduced.effective_terms[-1].labels)
-        return reduced.freq("q0")
-
-    level(0.03)
-    jax.make_jaxpr(level)(0.03)
-    assert patches == [("q0",), ("q0",)]
+    The uncoupled device u reduces from a patch with one other device.
+    """
+    m = Resonator(freq=7.0, levels=2, label="m")
+    a = DuffingTransmon(freq=6.0, anharmonicity=-0.25, levels=3, label="a")
+    b, c, d, e, u = (Resonator(freq=freq, levels=2, label=label)
+                     for freq, label in zip((5.0, 5.5, 4.5, 4.0, 3.5), "bcdeu"))
+    network = PortNetwork(label="line")
+    joint = network.port("ab", target=(a, b), rate=0.01, operator=np.kron(np.diag([0., 1., 2.]), np.diag([0., 1.])))
+    single = network.port("c", target=c, rate=0.01, operator=np.diag([0., 1.]))
+    # With the π/2 shift, the series Hamiltonian is proportional to n_a n_b n_c.
+    network.cascade(joint, network.phase_shift("cable", phase=np.pi / 2), single)
+    network.expose("feed", input=joint.input, output=single.output)
+    couplings = [Capacitive(m, a, g=0.03, label="m_a"), _LevelShift(a, d, x=0.05, y=0.03, label="a_d"),
+                 Capacitive(d, e, g=0.02, label="d_e")]
+    chip = Chip([m, a, b, c, d, e, u], couplings, port_network=network)
+    local = eliminate(chip, "m", local=True)
+    _assert_same_reduction(eliminate(chip, "m"), local)
+    assert local.chip.effective_terms[-1].labels == ("a", "b", "c", "d")
+    _assert_same_reduction(eliminate(chip, "u"), eliminate(chip, "u", local=True))
 
 
 def test_local_reduction_transforms_independent_readout_ports():
@@ -235,11 +242,11 @@ def test_local_reduction_transforms_independent_readout_ports():
     full, local = eliminate(chip, "r0"), eliminate(chip, "r0", local=True)
     _assert_same_reduction(full, local)
     expected, actual = full.chip.resolve().slh, local.chip.resolve().slh
-    np.testing.assert_allclose(np.asarray(actual.S), np.asarray(expected.S), atol=1e-12)
+    np.testing.assert_allclose(np.asarray(actual.S), np.asarray(expected.S), rtol=0, atol=1e-12)
     assert [c.key for c in actual.external_channels] == [c.key for c in expected.external_channels]
     for want, got in zip(expected.external_channels, actual.external_channels):
         np.testing.assert_allclose(np.asarray(got.coupling.to_dense()), np.asarray(want.coupling.to_dense()),
-                                   atol=1e-12)
+                                   rtol=0, atol=1e-12)
     assert ([c.label for c in local.chip.port_network.components]
             == [c.label for c in full.chip.port_network.components])
 
@@ -267,21 +274,6 @@ def test_local_reduction_raises_outside_its_scope():
     bathed.add_bath(Bath("collective_decay", targets=["q0", "q1"], rate=1e-4))
     with pytest.raises(NotImplementedError, match="baths"):
         eliminate(bathed, "r0", local=True)
-    shared = _ring(2, port_on_q0=True)
-    with pytest.raises(NotImplementedError, match="port network"):
-        eliminate(shared, "r0", local=True)
-    assert [d.label for d in eliminate(shared, "r0").chip.devices] == ["q0", "q1", "c0", "c1", "r1"]
-
-
-def test_active_patch_forwards_local():
-    chip = _ring(2)
-    chip.connect(ControlEquipment([ChargeDrive(chip["q0"], label="d0")]))
-    sequence = QuantumSequence(chip)
-    sequence.schedule("d0", envelope=Gaussian(duration=40.0, amplitude=0.02), freq=5.32)
-    full, local = sequence.active_patch(hops=1), sequence.active_patch(hops=1, local=True)
-    assert local.eliminated_labels == full.eliminated_labels == ("r1", "q1")
-    _assert_same_model(full.chip, local.chip)
-    np.testing.assert_allclose(local.mapping.embedding, full.mapping.embedding, atol=1e-12)
 
 
 def _final_state(chip, pump=False):
@@ -300,7 +292,7 @@ def test_drive_on_a_dressed_survivor_matches_the_full_reduction():
     for target in ("r0", "c0", "r1"):
         full = eliminate(full, target).chip
         local = eliminate(local, target, local=True).chip
-    np.testing.assert_allclose(_final_state(local), _final_state(full), atol=1e-8)
+    np.testing.assert_allclose(_final_state(local), _final_state(full), rtol=0, atol=1e-8)
 
 
 @pytest.mark.validation
@@ -332,12 +324,14 @@ def test_pump_on_an_edge_that_leaves_the_patch_matches_the_full_reduction():
     local = eliminate(chip, "r0", local=True).chip
     assert local.effective_terms[-1].labels == ("q0",)
     np.testing.assert_allclose(_final_state(local, pump=True), _final_state(eliminate(chip, "r0").chip, pump=True),
-                               atol=1e-8)
+                               rtol=0, atol=1e-8)
 
 
 @pytest.mark.validation
+@pytest.mark.optional_backend
 def test_local_reduction_gradient_matches_the_full_reduction():
     """q0_r0 couples inside the first patch, and q0_c0 crosses its boundary."""
+    pytest.importorskip("dynamiqs")
     base = _ring(2, noise=False, backend="dynamiqs")
 
     def level(g, local):

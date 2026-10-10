@@ -86,8 +86,11 @@ This file records notable user-visible changes to quchip.
   `dJ_domega_c` changes when the coupler's element is not 1. `g_over_delta`
   divides the resolved exchange element, not the authored `g`, by the bare
   detuning. This also holds when an edge is the target. It reads 0.0500
-  instead of 0.0433 and 0.0314 instead of 0.0545 for these partners. Duffing
-  and resonator values do not change.
+  instead of 0.0433 and 0.0314 instead of 0.0545 for these partners. For
+  Duffing and resonator devices, only the `g_over_delta` of parallel
+  couplings changes. Each parallel coupling reports the combined element of
+  its two devices. Couplings of 0.03 and 0.02 GHz at a 2 GHz detuning both
+  read 0.025, not 0.015 and 0.010.
   ([#90](https://github.com/quchip/quchip/issues/90))
 
 #### Performance

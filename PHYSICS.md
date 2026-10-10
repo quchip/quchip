@@ -1292,6 +1292,8 @@ The result's `notes` record that the projection is exact for the
 `validity` reports `g_over_delta` and `min_block_gap`. `g_over_delta` is
 the 2nd-order smallness `|<1_s|H|1_c>| / |Delta|`, the resolved exchange
 element over the bare detuning, and `is_valid` requires it below 0.1.
+Parallel couplings between the same two devices each report their
+combined element.
 `min_block_gap` is the smallest bare-energy gap that the Sylvester
 generator crossed. A small gap with a nonzero matrix element is
 the failure mode of the perturbative expansion, even when every `g/Delta`
@@ -1319,11 +1321,16 @@ read each term whose diagonal part depends on a core level. The patch therefore 
   edge,
 - the full support of each effective Hamiltonian that touches the core and whose diagonal part depends
   on a core level,
+- the full support of each port pair whose series composition generates a Hamiltonian on a core
+  device,
 - every device that the operators of the device's ports act on in retained coordinates.
 
-The level rule reads which diagonal entries can be nonzero. It evaluates each coupling with a generic
-value for every parameter, so a traced reduction reads the same couplings as a concrete one. A term on
-a device with a traced energy basis, and a traced effective Hamiltonian, count as level-dependent.
+The level rule reads which diagonal entries can be nonzero. It evaluates each coupling with a different
+generic value for each parameter, so a traced reduction reads the same couplings as a concrete one.
+Equal values could cancel, as in `(x - y) n_a n_b`. A term on a device with a traced energy basis, and
+a traced effective Hamiltonian, count as level-dependent. A device without a neighbour has no
+generator. Its patch adds the first other device, which carries the projection onto the device's
+ground state.
 
 The patch Hamiltonian includes each effective Hamiltonian on one patch device. It also includes each
 effective Hamiltonian that touches the core and acts only on the core, the far devices and the
