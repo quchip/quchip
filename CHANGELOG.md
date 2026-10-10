@@ -225,6 +225,7 @@ The 0.5 series extends reduced models, weak-probe response, and pulse control:
 #### Development
 
 - Source archives omit repository agent instructions.
+  ([#121](https://github.com/quchip/quchip/pull/121))
 - Release notes use a series overview and version-specific changes. PR
   templates include an explicit AI-assistance disclosure.
   ([#75](https://github.com/quchip/quchip/pull/75),
