@@ -39,8 +39,9 @@ This file records notable user-visible changes to quchip.
   from Φ = 0, a `ChargeDrive` of the same amplitude gives a Rabi rate smaller
   by s. A `PhaseDrive` gives a rate larger by 1/s. `ChargePhaseDrive` and the
   observables and `Port` operators named `"charge"` or `"phase"` follow the
-  same factors. If you calibrated `g` or a charge-drive amplitude at another
-  bias, divide it by s at that bias. s depends on `flux_bias` and `asymmetry`,
+  same factors. If you calibrated `g` at another bias, divide it by the s of
+  each flux-tunable endpoint at that bias. Divide a calibrated charge-drive
+  amplitude by the s of its target. s depends on `flux_bias` and `asymmetry`,
   so `with_params()` and `jax.grad` follow it.
   ([#91](https://github.com/quchip/quchip/issues/91))
 
