@@ -56,11 +56,13 @@ This file records notable user-visible changes to quchip.
 - On the QuTiP backend, an envelope step at a time listed in `sampling_times()`
   now stays sharp at any pulse start and line delay. Each listed time and window
   edge gets a close knot on each side. The gap covers the rounding of every
-  shifted clock that places or evaluates the feature. Previously only window
-  edges had such knots, and a step became a linear ramp across one 25 ps
-  interval. At a 37.3 ns start, a two-level envelope with adjacent floats listed
-  around its step had an infidelity of 1.6e-7 against two abutting squares.
-  Steps at unlisted times still become ramps.
+  shifted clock that places or evaluates the feature. The knots follow the
+  arithmetic of signal evaluation, so a float32 duration or start time also
+  keeps the pulse ends and steps sharp. Previously only window edges had such
+  knots, and a step became a linear ramp across one 25 ps interval. At a
+  37.3 ns start, a two-level envelope with adjacent floats listed around its
+  step had an infidelity of 1.6e-7 against two abutting squares. Steps at
+  unlisted times still become ramps.
   ([#94](https://github.com/quchip/quchip/issues/94))
 - A QuTiP solve whose `tlist` starts before 0 no longer emits overflow
   `RuntimeWarning`s for a pulse that starts at exactly t = 0. The pulse edge's
