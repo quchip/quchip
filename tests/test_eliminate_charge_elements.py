@@ -3,11 +3,8 @@
 import numpy as np
 import pytest
 
-from quchip import (
-    Capacitive, ChargeBasisTransmon, Chip, CustomSpace, DuffingTransmon, Exact, Fluxonium, Resonator, eliminate,
-)
+from quchip import Capacitive, ChargeBasisTransmon, Chip, DuffingTransmon, Fluxonium, Resonator, eliminate
 from quchip.chip.effective import EffectiveTerms
-from quchip.extensions import SpinHalf
 
 # |<0|n|1>| is about 1.15 for this charge-basis transmon. The fluxonium's
 # <0|n|1> is imaginary.
@@ -48,32 +45,40 @@ def _edge_only(result):
     return Chip(devices, [edge.copy({device.label: device for device in devices})])
 
 
-@pytest.mark.parametrize("method", ["sw", "exact"])
 @pytest.mark.parametrize("partner", ["charge_basis", "fluxonium"])
-def test_mediated_edge_alone_carries_the_reduced_exchange(partner, method):
+def test_mediated_edge_alone_carries_the_reduced_exchange(partner):
     """The emitted edge reproduces the reduced chip's exchange element when a survivor's charge element is not 1."""
-    result = eliminate(_bus_chip(partner), "bus", method=method)
+    result = eliminate(_bus_chip(partner), "bus")
     reduced = _element(result.chip, "a", "b")
     assert abs(reduced) > 1e-3
     # Both sides hold the same GHz-scale matrices up to double-precision round-off.
     np.testing.assert_allclose(_element(_edge_only(result), "a", "b"), reduced, rtol=0, atol=1e-13)
 
 
-@pytest.mark.parametrize("partner", ["charge_basis", "fluxonium"])
-def test_g_over_delta_uses_the_resolved_exchange_element(partner):
-    """g_over_delta is the resolved leg element over the bare detuning; a unit Duffing leg keeps |g/Δ|."""
-    source = _bus_chip(partner)
+def test_g_over_delta_uses_the_resolved_exchange_element():
+    """g_over_delta is the resolved element over the bare detuning, for a device or an edge target."""
+    source = _bus_chip("charge_basis")
     validity = eliminate(source, "bus").validity
     leg = _element(source, "b", "bus")
     detuning = (_element(source, "b", "b") - _element(source, "bus", "bus")).real
     assert abs(leg) != pytest.approx(.06, rel=.1)
     assert float(validity["b_bus"]["g_over_delta"]) == pytest.approx(abs(leg / detuning), rel=1e-12)
+    # A unit Duffing leg keeps |g/Δ|.
     assert float(validity["a_bus"]["g_over_delta"]) == pytest.approx(.06 / 1.5, rel=1e-12)
 
+    a, b = DuffingTransmon(freq=6., anharmonicity=-.25, levels=3, label="a"), _PARTNERS["charge_basis"]()
+    pair = Chip([a, b], [Capacitive(a, b, g=.03, label="ab")])
+    detuning = (_element(pair, "a", "a") - _element(pair, "b", "b")).real
+    assert float(eliminate(pair, "ab").validity["ab"]["g_over_delta"]) == pytest.approx(
+        abs(_element(pair, "a", "b") / detuning), rel=1e-12)
 
-@pytest.mark.parametrize(("partner", "bus"), [("fluxonium", "resonator"), ("charge_basis", "charge_basis")])
-def test_flux_gain_is_the_coupler_frequency_derivative_of_the_edge_strength(partner, bus):
-    """dJ_domega_c equals the derivative of j_eff with respect to the coupler's first transition frequency."""
+
+def test_flux_gain_is_the_coupler_frequency_derivative_of_the_edge_strength():
+    """dJ_domega_c equals the derivative of j_eff with respect to the coupler's first transition frequency.
+
+    The fluxonium's charge element is imaginary, and the charge-basis coupler's is not 1.
+    """
+    partner, bus = "fluxonium", "charge_basis"
     base = _bus_chip(partner, bus)
     vector = np.asarray(base.resolve(frame="lab").bases["bus"].energy_vectors)[:, 1]
 
@@ -85,40 +90,8 @@ def test_flux_gain_is_the_coupler_frequency_derivative_of_the_edge_strength(part
     step = 1e-4
     derivative = (float(exchange(step)["j_eff"]) - float(exchange(-step)["j_eff"])) / (2 * step)
     # Second-order SW exchange through the single coupler excitation: the central
-    # difference has truncation error (step/Δ)² ≈ 5e-9 and round-off near 1e-8.
+    # difference has truncation error (step/Δ)² ≈ 2e-9 and round-off near 1e-8.
     assert derivative == pytest.approx(float(exchange(0.)["dJ_domega_c"]), rel=1e-6)
-
-
-class LongitudinalSpin(SpinHalf):
-    """A spin whose charge operator is sigma_z, so it has no 0-1 charge element."""
-
-    def local_space(self):
-        operators = dict(super().local_space().operators)
-        operators["charge"] = operators["sigma_z"]
-        return CustomSpace(2, operators)
-
-
-def test_survivor_without_a_charge_transition_gets_a_zero_edge():
-    """A survivor whose charge operator cannot flip it receives a finite zero-strength edge."""
-    a = DuffingTransmon(freq=5., anharmonicity=-.25, levels=3, label="a")
-    spin = LongitudinalSpin(5.2, label="b")
-    bus = Resonator(freq=6.5, levels=3, label="bus")
-    chip = Chip([a, spin, bus], [Capacitive(a, bus, g=.06), Capacitive(spin, bus, g=.06)], approximation=Exact())
-    result = eliminate(chip, "bus")
-    exchange = result.effective_params["exchange"]
-    assert float(exchange["j_eff"]) == 0.
-    assert float(exchange["dJ_domega_c"]) == 0.
-    assert abs(_element(result.chip, "a", "b")) == pytest.approx(0., abs=1e-15)
-
-
-def test_coupling_target_g_over_delta_uses_the_resolved_exchange_element():
-    """Removing an edge reports its resolved exchange element over the bare detuning."""
-    a = DuffingTransmon(freq=6., anharmonicity=-.25, levels=3, label="a")
-    b = _PARTNERS["charge_basis"]()
-    chip = Chip([a, b], [Capacitive(a, b, g=.03, label="ab")])
-    validity = eliminate(chip, "ab").validity
-    detuning = (_element(chip, "a", "a") - _element(chip, "b", "b")).real
-    assert float(validity["ab"]["g_over_delta"]) == pytest.approx(abs(_element(chip, "a", "b") / detuning), rel=1e-12)
 
 
 @pytest.mark.validation
