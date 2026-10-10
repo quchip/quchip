@@ -35,12 +35,12 @@ def available_memory_bytes() -> int | None:
     return max(min(limits), 0)
 
 
-def require_memory(required: int, *, task: str, remedy: str) -> None:
+def require_memory(required: float, *, task: str, remedy: str) -> None:
     """Raise :class:`MemoryError` before an allocation that cannot fit.
 
     Parameters
     ----------
-    required : int
+    required : float
         Estimated peak allocation in bytes.
     task : str
         What would allocate it, for the error message.

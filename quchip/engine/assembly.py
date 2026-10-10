@@ -41,6 +41,7 @@ from quchip.chip.effective import EffectiveTerms, authored_excitation_changes
 from quchip.control.signal import AnalyticSignal, SignalKey
 from quchip.declarative.expr import (
     PhysicsExpr,
+    _ARRAY_LOWERER,
     _bound_values,
     as_operator_expr,
     declared_excitation_changes,
@@ -239,11 +240,12 @@ def _project_on_support(
     """Materialize and project a local operator into the resolved support basis.
 
     An empty ``support`` means the operator spans the full authored chip. A
-    multi-device operator projects factor by factor when it is a sum of
-    scalar-weighted single-device products that holds less memory than the
-    dense operator (see :func:`_project_products`). Any other multi-device
-    operator is projected on its dense native product space after a memory
-    check.
+    multi-device operator that is a sum of scalar-weighted single-device
+    products projects factor by factor (see :func:`_project_products`) when
+    that route needs less memory than the dense projection. Any other
+    multi-device operator is projected on its dense native product space.
+    Each route raises :class:`MemoryError` before an estimated peak that
+    cannot fit (see :func:`_projection_peaks`).
     """
     if len(support) == 1:
         local = materialize_expr(operator, backend, local_bases=bases)
@@ -266,70 +268,182 @@ def _project_on_support(
                 "A support-free operator must span the full authored chip space; "
                 f"expected {(authored_dimension, authored_dimension)}, got {shape}."
             )
-    projected = _project_products(operator, labels, bases, backend)
+    names = ", ".join(labels)
+    factored, dense = _projection_peaks(operator, labels, bases)
+    projected = None
+    if factored is not None and factored <= dense:
+        require_memory(
+            factored,
+            task=f"The factor-by-factor projection of an operator on {names}",
+            remedy="Author the operator with fewer products of sums, or reduce the device cutoffs.",
+        )
+        projected = _project_products(operator, labels, bases)
     if projected is None:
+        require_memory(
+            dense,
+            task=f"The dense projection of an operator on {names} at native dimension "
+                 f"N = {prod(record.native_dim for record in records)}",
+            remedy="Author the operator as a short sum of single-device products, or reduce the device cutoffs.",
+        )
         projected = _project_dense(operator, labels, bases, backend)
     resolved_dims = [record.resolved_dim for record in records]
     return backend.from_array(projected, dims=[resolved_dims, resolved_dims])
 
 
-# Lowering an operator on the native product space and copying it into a dense
-# array keeps two dense N×N arrays alive: measured peaks reach two copies.
-_DENSE_PROJECTION_COPIES = 2
+# Bytes of one complex128 matrix entry.
+_ENTRY_BYTES = 16
+# Bookkeeping bytes of one expanded product (its tuple, coefficient, dict and
+# list slot) and of one NumPy array header, measured with tracemalloc.
+_PRODUCT_BYTES = 512
+_ARRAY_BYTES = 128
+# Python objects and small temporaries of either route, about 0.1 MB in measurements.
+_BOOKKEEPING_BYTES = 2**20
 
 
-def _product_count(node: Any, labels: tuple[str, ...]) -> int | None:
-    """Count the single-device products that :func:`_project_products` expands ``node`` into.
+@dataclass(frozen=True)
+class _Memory:
+    """Bytes that lowering an expression node keeps in its value, and needs at most."""
 
-    The count lowers no operator. Returns ``None`` when a term does not factor.
+    held: float
+    peak: float
+
+
+def _in_order(children: Sequence[_Memory], new: float, held: float) -> _Memory:
+    """Memory of a node whose children lower in order and stay alive until it allocates ``new`` bytes."""
+    peak = live = 0.0
+    for child in children:
+        peak = max(peak, live + child.peak)
+        live += child.held
+    return _Memory(held, max(peak, live + new))
+
+
+def _dense_memory(node: Any, cache: dict[int, _Memory]) -> _Memory:
+    """Memory of lowering ``node`` to a dense array with ``_ARRAY_LOWERER``.
+
+    The cache keys nodes by identity, so a shared subexpression costs one visit.
+    """
+    if not isinstance(node, PhysicsExpr):
+        return _Memory(0.0, 0.0)
+    if id(node) not in cache:
+        held = _ENTRY_BYTES * float(node.shape[0]) ** 2 if node.labels else 0.0
+        if node.kind in ("add", "sub", "matmul", "tensor", "scale", "mul", "pow"):
+            # Arithmetic allocates its result only.
+            children, new = node.args, held
+        elif node.kind in ("function", "embed"):
+            # A callable or an embedding can also hold one temporary copy of its result.
+            children, new = node.args, 2 * held
+        else:
+            # A leaf builds its matrix with at most one temporary copy.
+            children, new = (), 2 * held
+        cache[id(node)] = _in_order([_dense_memory(arg, cache) for arg in children], new, held)
+    return cache[id(node)]
+
+
+def _split_memory(
+    node: Any,
+    labels: tuple[str, ...],
+    bases: Mapping[str, BasisRecord],
+    cache: dict[int, tuple[float, _Memory] | None],
+    dense: dict[int, _Memory],
+) -> tuple[float, _Memory] | None:
+    """Count the products that :func:`_project_products` splits ``node`` into, and estimate their memory.
+
+    Returns ``None`` when a term does not factor. Sums and scalar factors reuse
+    the matrices of their terms. A product allocates a dict for each pair of
+    terms, and a matrix for each device that both terms act on.
     """
     if not isinstance(node, PhysicsExpr) or not node.labels or not set(node.labels) <= set(labels):
         return None
+    if id(node) in cache:
+        return cache[id(node)]
+    split: tuple[float, _Memory] | None = None
     if len(node.labels) == 1:
-        return 1
-    if node.kind == "embed":
-        return _product_count(node.args[0], labels)
-    if node.kind == "scale":
-        return _product_count(node.args[1], labels)
-    if node.kind not in ("add", "sub", "tensor", "matmul"):
-        return None
-    left, right = _product_count(node.args[0], labels), _product_count(node.args[1], labels)
-    if left is None or right is None:
-        return None
-    return left + right if node.kind in ("add", "sub") else left * right
+        native = bases[node.labels[0]].native_dim
+        if node.shape == (native, native):
+            leaf = _dense_memory(node, dense)
+            split = 1.0, _in_order([leaf], _PRODUCT_BYTES + _ARRAY_BYTES, leaf.held + _PRODUCT_BYTES + _ARRAY_BYTES)
+    elif node.kind == "embed":
+        split = _split_memory(node.args[0], labels, bases, cache, dense)
+    elif node.kind == "scale":
+        operand = _split_memory(node.args[1], labels, bases, cache, dense)
+        if operand is not None:
+            products, memory = operand
+            scalar = _dense_memory(node.args[0], dense)
+            split = products, _in_order([scalar, memory], products * _PRODUCT_BYTES, memory.held)
+    elif node.kind in ("add", "sub", "tensor", "matmul"):
+        left = _split_memory(node.args[0], labels, bases, cache, dense)
+        right = _split_memory(node.args[1], labels, bases, cache, dense)
+        if left is not None and right is not None:
+            children = [left[1], right[1]]
+            held = left[1].held + right[1].held
+            if node.kind in ("add", "sub"):
+                products = left[0] + right[0]
+                split = products, _in_order(children, products * _PRODUCT_BYTES, held)
+            else:
+                products = left[0] * right[0]
+                shared = set(node.args[0].labels) & set(node.args[1].labels)
+                matrices = sum(_ENTRY_BYTES * bases[label].native_dim ** 2 + _ARRAY_BYTES for label in shared)
+                new = products * (_PRODUCT_BYTES + matrices)
+                split = products, _in_order(children, new, held + new)
+    cache[id(node)] = split
+    return split
 
 
-def _project_products(
+def _projection_peaks(
     operator: Any,
     labels: tuple[str, ...],
     bases: Mapping[str, BasisRecord],
-    backend: Backend,
+) -> tuple[float | None, float]:
+    """Estimate the peak bytes of the factor-by-factor and of the dense projection of ``operator``.
+
+    Both estimates follow the depth-first lowering of the expression, in which
+    a node keeps its lowered arguments until it combines them. The
+    factor-by-factor estimate is ``None`` when a term does not factor. The
+    estimates cover concrete values. Reverse-mode differentiation also keeps
+    intermediate values for the backward pass.
+    """
+    records = [bases[label] for label in labels]
+    native = float(prod(record.native_dim for record in records))
+    resolved = float(prod(record.resolved_dim for record in records))
+    dense_cache: dict[int, _Memory] = {}
+    # The projection holds the dense operator, the N×R transform, its adjoint,
+    # one N×R product and the R×R result.
+    dense = _BOOKKEEPING_BYTES + max(
+        _dense_memory(operator, dense_cache).peak,
+        _ENTRY_BYTES * (native**2 + 3 * native * resolved + resolved**2),
+    )
+    if not isinstance(operator, PhysicsExpr) or operator.labels != labels:
+        return None, dense
+    split = _split_memory(operator, labels, bases, {}, dense_cache)
+    if split is None:
+        return None, dense
+    # The sum holds the products, the running and the new total, one Kronecker
+    # product and its scaled copy, and the projection temporaries of each device.
+    local = sum(2 * record.native_dim * record.resolved_dim + record.resolved_dim**2 for record in records)
+    memory = split[1]
+    return _BOOKKEEPING_BYTES + max(memory.peak, memory.held + _ENTRY_BYTES * (4 * resolved**2 + local)), dense
+
+
+def _project_products(
+    operator: PhysicsExpr,
+    labels: tuple[str, ...],
+    bases: Mapping[str, BasisRecord],
 ) -> Any | None:
     """Project a sum of scalar-weighted single-device products factor by factor.
 
     The support transform is the Kronecker product of the local transforms, so
     ``V†(A ⊗ B)V = (V_a† A V_a) ⊗ (V_b† B V_b)``, and memory scales with each
-    native dimension squared. Products on one device multiply in the native
-    basis before projection, because ``V_a V_a†`` is not the identity on a
-    truncated eigenbasis. A label absent from a product is the identity.
-    Returns ``None`` when a term does not factor, or when the expanded products
-    would hold more memory than the dense projection.
+    native dimension squared, times the number of products. Products on one
+    device multiply in the native basis before projection, because
+    ``V_a V_a†`` is not the identity on a truncated eigenbasis. A label absent
+    from a product is the identity. Returns ``None`` when a term does not
+    factor.
     """
-    if not isinstance(operator, PhysicsExpr) or operator.labels != labels:
-        return None
-    # Each product holds one native matrix per device. A product of sums multiplies
-    # the number of products, so a deep one can outgrow the dense operator.
-    products = _product_count(operator, labels)
-    native = [bases[label].native_dim for label in labels]
-    if products is None or products * sum(n**2 for n in native) > _DENSE_PROJECTION_COPIES * prod(native) ** 2:
-        return None
     values = _bound_values(operator)
 
     def lower(node: PhysicsExpr) -> Any:
-        # Concrete values stay on the host, so they compile no JAX program per array shape.
-        value = materialize_expr(node, backend, bindings=values, local_bases=bases)
-        if node.labels:
-            value = backend.to_array(value)
+        # Concrete values stay in NumPy, so they compile no JAX program per array shape.
+        value = materialize_expr(node, _ARRAY_LOWERER, bindings=values, local_bases=bases)
         return concrete_array_module(value).asarray(value)
 
     def split(node: Any) -> list[tuple[Any, dict[str, Any]]] | None:
@@ -392,15 +506,16 @@ def _project_dense(
     bases: Mapping[str, BasisRecord],
     backend: Backend,
 ) -> Any:
-    """Project an operator through its dense native product space after a memory check."""
+    """Project an operator through its dense native product space.
+
+    Expressions lower to plain arrays, whose allocations follow the estimate of
+    :func:`_projection_peaks`.
+    """
+    if isinstance(operator, PhysicsExpr):
+        matrix = materialize_expr(operator, _ARRAY_LOWERER, local_bases=bases)
+    else:
+        matrix = backend.to_array(operator)
     records = [bases[label] for label in labels]
-    dimension = prod(record.native_dim for record in records)
-    require_memory(
-        _DENSE_PROJECTION_COPIES * 16 * dimension**2,
-        task=f"The dense projection of an operator on {', '.join(labels)} at native dimension N = {dimension}",
-        remedy="Author the operator as a short sum of single-device products, or reduce the device cutoffs.",
-    )
-    matrix = backend.to_array(materialize_expr(operator, backend, local_bases=bases))
     xp = array_namespace(records[0].vectors)
     transform = records[0].vectors
     for record in records[1:]:

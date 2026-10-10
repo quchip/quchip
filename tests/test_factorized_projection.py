@@ -39,12 +39,12 @@ class _OpaqueCapacitive(CouplingModel):
 
 
 class _PowerOfSum(CouplingModel):
-    """The power (φ_a + φ_b)^16, which expands into 65536 single-device products."""
+    """The power (cos φ_a + cos φ_b)^16, which expands into 65536 single-device products."""
 
     g: Scalar = parameter(unit="GHz")
 
     def interaction(self, a, b, p):
-        power = a.phi * b.I + a.I * b.phi
+        power = a.cos_phi * b.I + a.I * b.cos_phi
         for _ in range(4):
             power = power @ power
         return p.g * power
@@ -71,18 +71,21 @@ def _dense_projection(chip: Chip) -> np.ndarray:
     return transform.conj().T @ native @ transform
 
 
-def test_factorized_projection_equals_the_dense_native_projection() -> None:
-    """Sums, scalar factors and same-device products project as on the dense native product space."""
-    fa, fb = _fluxonium_pair(num_basis=41)
-    chip = Chip([fa, fb], couplings=[_MixedCoupling(fa, fb, g=0.05)], basis="eigen")
+def test_projection_equals_the_dense_native_projection() -> None:
+    """Both projection routes give the operator of the dense native product space."""
+    # At num_basis=15 the 65536 products of (cos φ_a + cos φ_b)^16 would hold 0.6 GB,
+    # and its dense lowering 7 MB, so the engine takes the dense route.
+    for num_basis, model, g in ((41, _MixedCoupling, 0.05), (15, _PowerOfSum, 1e-5)):
+        fa, fb = _fluxonium_pair(num_basis=num_basis)
+        chip = Chip([fa, fb], couplings=[model(fa, fb, g=g)], basis="eigen")
 
-    # The native spectrum spans about 100 GHz, so float64 round-off in either projection stays near 1e-14.
-    np.testing.assert_allclose(
-        np.asarray(chip.resolve(approximation=Exact()).hamiltonian().matrix()),
-        _dense_projection(chip),
-        rtol=0.0,
-        atol=1e-12,
-    )
+        # The native spectrum spans about 100 GHz, so float64 round-off in either projection stays near 1e-14.
+        np.testing.assert_allclose(
+            np.asarray(chip.resolve(approximation=Exact()).hamiltonian().matrix()),
+            _dense_projection(chip),
+            rtol=0.0,
+            atol=1e-12,
+        )
 
 
 def test_default_fluxonium_pair_resolves_without_the_dense_native_product_space() -> None:
@@ -100,33 +103,39 @@ def test_default_fluxonium_pair_resolves_without_the_dense_native_product_space(
     assert peak < 100 * 16 * fa.num_basis**2
 
 
-def test_dense_route_checks_memory_before_the_projection(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Operators that do not factor, or that expand past the dense operator, take the memory-checked dense route."""
+def test_projection_checks_the_memory_of_the_cheaper_route(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The route with the smaller estimated peak runs only when that peak fits in the available memory."""
     fa, fb = _fluxonium_pair(num_basis=41)
-    monkeypatch.setattr(_memory, "available_memory_bytes", lambda: 10**6)
+    monkeypatch.setattr(_memory, "available_memory_bytes", lambda: 10**7)
 
     factorized = Chip([fa, fb], couplings=[Capacitive(fa, fb, g=0.5)], basis="eigen")
     assert factorized.resolve().dims == (5, 5)
-    # The 65536 products of (φ_a + φ_b)^16 would hold 3.5 GB, and the dense operator holds 45 MB.
-    for coupling in (_OpaqueCapacitive(fa, fb, g=0.5), _PowerOfSum(fa, fb, g=1e-6)):
+    # The 65536 products of (cos φ_a + cos φ_b)^16 would hold 3.6 GB, and its dense lowering 0.3 GB.
+    for coupling in (_OpaqueCapacitive(fa, fb, g=0.5), _PowerOfSum(fa, fb, g=1e-5)):
         chip = Chip([fa, fb], couplings=[coupling], basis="eigen")
         with pytest.raises(MemoryError, match="dense projection of an operator on fa, fb at native dimension N = 1681"):
             chip.resolve()
+    # At the default num_basis=400 the products would hold 339 GB, and the dense lowering 2.9 TB.
+    fa, fb = _fluxonium_pair()
+    chip = Chip([fa, fb], couplings=[_PowerOfSum(fa, fb, g=1e-5)], basis="eigen")
+    with pytest.raises(MemoryError, match="factor-by-factor projection of an operator on fa, fb"):
+        chip.resolve()
 
 
 @pytest.mark.validation
 @pytest.mark.optional_backend
-def test_factorized_projection_derivatives_match_finite_differences() -> None:
-    """Derivatives through the coupling scale and the partner's eigenvectors match central differences."""
+def test_projection_derivatives_match_finite_differences() -> None:
+    """Derivatives through both projection routes and the partner's eigenvectors match central differences."""
     pytest.importorskip("dynamiqs")
     fa, fb = _fluxonium_pair(num_basis=31)
-    chip = Chip([fa, fb], couplings=[Capacitive(fa, fb, g=0.3, label="c")], basis="eigen", backend="dynamiqs")
+    couplings = [Capacitive(fa, fb, g=0.3, label="c"), _OpaqueCapacitive(fa, fb, g=0.2, label="o")]
+    chip = Chip([fa, fb], couplings=couplings, basis="eigen", backend="dynamiqs")
 
     def frequency(path, value):
         return chip.with_params({path: value}).freq("fa")
 
     step = 1e-4
-    for path, value in (("c.g", 0.3), ("fb.E_J", 5.0)):
+    for path, value in (("c.g", 0.3), ("o.g", 0.2), ("fb.E_J", 5.0)):
         reference = (float(frequency(path, value + step)) - float(frequency(path, value - step))) / (2 * step)
         # A central difference with step 1e-4 has a relative truncation error near 1e-7.
         assert float(jax.grad(lambda x: frequency(path, x))(value)) == pytest.approx(reference, rel=1e-5)
