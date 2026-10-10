@@ -28,6 +28,10 @@ This file records notable user-visible changes to quchip.
 - `PortNetwork.mode_reflection(...)` adds a serializable two-sided reference
   section that reflects like a damped linear mode.
   ([#76](https://github.com/quchip/quchip/issues/76))
+- Local fitting retains independent ports and their field subgraphs in each
+  neighborhood. It rejects cuts through shared feedlines, joint ports, or
+  unsupported boundary scattering, rather than discarding their interactions.
+  ([#109](https://github.com/quchip/quchip/pull/109))
 
 #### Fixes
 

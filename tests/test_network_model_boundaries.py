@@ -38,6 +38,16 @@ def test_full_fit_subsystem_preserves_network_hamiltonian_and_channels():
 def test_partial_fit_subsystem_refuses_to_discard_network():
     with pytest.raises(NotImplementedError, match="PortNetwork"):
         build_local_subsystem(_cascade_chip(), ("a",))
+    first = Resonator(freq=5.0, levels=2, label="a")
+    second = Resonator(freq=6.0, levels=2, label="b")
+    lowering = np.diag([1.0], 1)
+    network = PortNetwork(label="line")
+    network.port(
+        "joint", target=(first, second), rate=0.04,
+        operator=np.kron(lowering, np.eye(2)) + np.kron(np.eye(2), lowering),
+    )
+    with pytest.raises(NotImplementedError, match="port 'joint'"):
+        build_local_subsystem(Chip([first, second], port_network=network), ("a",))
 
 
 def test_scqubits_export_refuses_to_discard_network():
