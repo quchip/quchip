@@ -141,9 +141,9 @@ class EliminationResult:
         ``dJ_domega_c``, ``between``, ``coupling``, ``zz`` and ``pathways``.
         For more survivors it is keyed by survivor pairs. ``coupling`` names
         the emitted mediated edge. ``j_eff`` and ``dJ_domega_c`` are in the
-        units of that edge: with strength ``j_eff``, the edge reproduces the
-        mediated exchange element for any survivor charge operator. The
-        flux-retargeting derivative remains second-order even with exact
+        units of that edge. Its real strength carries the representable part
+        of the mediated exchange; the retained correction keeps the remainder.
+        The flux-retargeting derivative remains second-order even with exact
         reduction. ``zz`` is available for the exact route and ``pathways``
         for SW.
 

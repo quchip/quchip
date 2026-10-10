@@ -1193,7 +1193,8 @@ records its linearization in the same edge units, from the resolved leg elements
 dJ/domega_c = Re(L_a conj(L_b) / u_ab) (1/Delta_a^2 + 1/Delta_b^2) / 2
 ```
 
-This is the weight that the flux-drive retarget rule uses (§11). Capacitive legs give
+This is the weight that the flux-drive retarget rule uses (§11). It varies the coupler's
+first transition while holding the charge matrix elements fixed. Capacitive legs give
 `L_a conj(L_b) / u_ab = g_a g_b |<0|Q_c|1>|^2`, so a resonator or Duffing coupler gives
 `(g_a*g_b/2)(1/Delta_a^2 + 1/Delta_b^2)`. Per-element virtual-state attribution (`pathways`) is `(1/2) V_ik V_kj (1/(E_i−E_k) + 1/(E_j−E_k))` summed over intermediate `|k>`, with the same guarded denominator.
 

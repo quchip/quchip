@@ -53,22 +53,13 @@ This file records notable user-visible changes to quchip.
   assemble a superoperator whose estimated peak exceeds the available memory.
   Previously, the operating system killed them. The dynamiqs stationary Liouvillian
   uses the same check. ([#80](https://github.com/quchip/quchip/issues/80))
-- `eliminate()` reports a removed coupler's exchange in the units of an edge
-  authored between the survivors, for any survivor type. The emitted edge
-  took the real part of the resolved exchange element, so a `Fluxonium`
-  partner got a zero edge and `j_eff = 0`. In the reported example, the edge
-  alone now gives the reduced chip's 1.629 MHz for that partner. With a
-  `ChargeBasisTransmon` partner, it gives 2.872 MHz instead of 3.314 MHz.
-  `j_eff` changes when a survivor's 0-1 charge element is not 1, and
-  `dJ_domega_c` changes when the coupler's element is not 1. `g_over_delta`
-  divides the resolved exchange element, not the authored `g`, by the bare
-  detuning. This also holds when an edge is the target. It reads 0.0500
-  instead of 0.0433 and 0.0314 instead of 0.0545 for these partners. For
-  Duffing and resonator devices, only the `g_over_delta` of parallel
-  couplings changes. Each parallel coupling reports the combined element of
-  its two devices. Couplings of 0.03 and 0.02 GHz at a 2 GHz detuning both
-  read 0.025, not 0.015 and 0.010.
-  ([#90](https://github.com/quchip/quchip/issues/90))
+- `eliminate()` reports `j_eff` and `dJ_domega_c` in the emitted edge's units,
+  accounting for complex or non-unit charge matrix elements. Previously,
+  taking the real exchange element could produce a zero or mis-scaled edge.
+  Retained terms still carry the full reduced Hamiltonian. `g_over_delta`
+  now uses resolved exchange rather than authored strength. Parallel device
+  couplings report their combined exchange.
+  ([#111](https://github.com/quchip/quchip/pull/111))
 
 #### Performance
 
