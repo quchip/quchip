@@ -74,8 +74,8 @@ The 0.5 series extends reduced models, weak-probe response, and pulse control:
   ([#76](https://github.com/quchip/quchip/issues/76),
   [#85](https://github.com/quchip/quchip/pull/85))
 - `eliminate(chip, device, local=True)` computes the SW reduction on a local
-  patch. It retains the full reduction's Hamiltonian, channels, and map.
-  `chi` describes only the patch. Both `active_patch()` entry points forward
+  patch. It retains the full reduction's Hamiltonian, channels, and map, subject
+  to the numerical omissions below. `chi` describes only the patch. Both `active_patch()` entry points forward
   `local`. Baths and networks that cross the patch boundary remain unsupported.
   ([#112](https://github.com/quchip/quchip/pull/112))
 - Local elimination stores single-device corrections and transformed channels
@@ -213,7 +213,8 @@ The 0.5 series extends reduced models, weak-probe response, and pulse control:
 #### Documentation and examples
 
 - The NV-centre guide is removed. API docs and guides use concise scientific
-  prose. ([#87](https://github.com/quchip/quchip/pull/87))
+  prose. ([#85](https://github.com/quchip/quchip/pull/85),
+  [#87](https://github.com/quchip/quchip/pull/87))
 - The example notebooks and the guides are re-executed against the current
   code. The transmon avoided crossing in example 01 now reports the RWA
   splitting of 3.99 MHz, which agrees with second-order theory to 0.3%. The fluxonium
