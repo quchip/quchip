@@ -11,11 +11,43 @@ from quchip import (
     ChargeDrive,
     Chip,
     DuffingTransmon,
+    FluxDrive,
     Gaussian,
     GaussianDRAG,
     QuantumSequence,
     RWA,
+    Square,
 )
+from quchip.engine.ir import evaluate_signal_program
+
+
+@pytest.mark.unit
+def test_detuning_sweeps_from_its_default_and_needs_a_carrier():
+    """pulse.vary("detuning") from an undetuned pulse builds each rebound Hamiltonian. A baseband pulse rejects it."""
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+    chip = Chip([q], frame="rotating", approximation=RWA())
+    chip.wire(ChargeDrive(q, label="xy"), FluxDrive(q, label="z"))
+    seq = QuantumSequence(chip)
+    pulse = seq.charge("q", envelope=Square(duration=20.0, amplitude=0.01))
+    values, times = [0.0, 0.004], np.linspace(0.0, 20.0, 5)
+
+    def hamiltonian(problem, t):
+        return sum(np.asarray(term.operator.to_dense()) * evaluate_signal_program(term.time_dependence.signal, t)
+                   for term in problem.engine_result.dynamic_terms)
+
+    batch = seq.build_batch(pulse.vary("detuning", values), tlist=times)
+    for problem, value in zip(batch.problems, values):
+        rebound = seq.with_params({"pulse.0.detuning": value}).build_problem(times)
+        for t in times:
+            np.testing.assert_allclose(hamiltonian(problem, t), hamiltonian(rebound, t), rtol=1e-12, atol=1e-15)
+    # At t = 10 ns, the detuning turns the drive phase by 2π (0.004 GHz)(10 ns), about 0.25 rad.
+    assert not np.allclose(hamiltonian(batch.problems[0], 10.0), hamiltonian(batch.problems[1], 10.0))
+
+    seq.flux("q", envelope=Square(duration=10.0, amplitude=0.01))
+    with pytest.raises(ValueError, match="A detuning requires a carrier"):
+        seq.with_params({"pulse.1.detuning": 0.001}).scheduled_ops
+    with pytest.raises(ValueError, match="A detuning requires a carrier"):
+        seq.schedule("z", envelope=Square(duration=10.0, amplitude=0.01), detuning=0.001)
 
 
 def test_detuned_sx_pair_makes_an_x_at_every_gap():
