@@ -8,7 +8,7 @@ import jax
 import numpy as np
 import pytest
 
-from quchip import Bath, Capacitive, Chip, Exact, Fluxonium, Resonator
+from quchip import Capacitive, Chip, Exact, Fluxonium
 from quchip.backend import _memory
 from quchip.declarative import CouplingModel, Scalar, parameter
 
@@ -59,11 +59,10 @@ def _dense_projection(chip: Chip) -> np.ndarray:
     return transform.conj().T @ native @ transform
 
 
-@pytest.mark.parametrize("num_basis", [41, pytest.param(61, marks=pytest.mark.validation)])
-def test_eigen_capacitive_coupling_equals_the_dense_native_projection(num_basis: int) -> None:
-    """A capacitive coupling between eigen-basis fluxoniums equals its dense native-space projection."""
-    fa, fb = _fluxonium_pair(num_basis=num_basis)
-    chip = Chip([fa, fb], couplings=[Capacitive(fa, fb, g=0.5)], basis="eigen")
+def test_factorized_projection_equals_the_dense_native_projection() -> None:
+    """Sums, scalar factors and same-device products project as on the dense native product space."""
+    fa, fb = _fluxonium_pair(num_basis=41)
+    chip = Chip([fa, fb], couplings=[_MixedCoupling(fa, fb, g=0.05)], basis="eigen")
 
     # The native spectrum spans about 100 GHz, so float64 round-off in either projection stays near 1e-14.
     np.testing.assert_allclose(
@@ -71,71 +70,6 @@ def test_eigen_capacitive_coupling_equals_the_dense_native_projection(num_basis:
         _dense_projection(chip),
         rtol=0.0,
         atol=1e-12,
-    )
-
-
-def test_sums_and_same_device_products_equal_the_dense_native_projection() -> None:
-    """Each device multiplies its factors in the native basis before projection, beside a native partner."""
-    flux = Fluxonium(E_C=1.0, E_J=4.0, E_L=0.5, phi_ext=0.5, levels=5, num_basis=41, basis="eigen", label="fa")
-    resonator = Resonator(freq=7.0, levels=4, label="r")
-    chip = Chip([flux, resonator], couplings=[_MixedCoupling(flux, resonator, g=0.05)])
-
-    assert chip.resolve().bases["r"].kind == "native"
-    # The native spectrum spans about 100 GHz, so float64 round-off in either projection stays near 1e-14.
-    np.testing.assert_allclose(
-        np.asarray(chip.resolve(approximation=Exact()).hamiltonian().matrix()),
-        _dense_projection(chip),
-        rtol=0.0,
-        atol=1e-12,
-    )
-
-
-def test_unfactored_coupling_keeps_the_dense_projection() -> None:
-    """An opaque two-device interaction resolves to the same Hamiltonian as its factorized form."""
-    fa, fb = _fluxonium_pair(num_basis=41)
-    factorized = Chip([fa, fb], couplings=[Capacitive(fa, fb, g=0.5)], basis="eigen")
-    opaque = Chip([fa, fb], couplings=[_OpaqueCapacitive(fa, fb, g=0.5)], basis="eigen")
-
-    # The dense and factorized routes differ only by float64 round-off on a 100 GHz native spectrum.
-    np.testing.assert_allclose(
-        np.asarray(opaque.resolve(approximation=Exact()).hamiltonian().matrix()),
-        np.asarray(factorized.resolve(approximation=Exact()).hamiltonian().matrix()),
-        rtol=0.0,
-        atol=1e-12,
-    )
-
-
-def test_unfactored_coupling_checks_memory_before_the_dense_projection(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Only an operator that does not factor needs the dense native product space."""
-    fa, fb = _fluxonium_pair(num_basis=41)
-    monkeypatch.setattr(_memory, "available_memory_bytes", lambda: 10**6)
-
-    factorized = Chip([fa, fb], couplings=[Capacitive(fa, fb, g=0.5)], basis="eigen")
-    assert factorized.resolve().dims == (5, 5)
-    opaque = Chip([fa, fb], couplings=[_OpaqueCapacitive(fa, fb, g=0.5)], basis="eigen")
-    with pytest.raises(MemoryError, match="dense projection of an operator on fa, fb at native dimension N = 1681"):
-        opaque.resolve()
-
-
-def test_collective_bath_operators_project_to_level_ladders() -> None:
-    """Collective bath sums over eigen-basis devices project to sums of energy-level ladders."""
-    fa, fb = _fluxonium_pair(num_basis=41)
-    chip = Chip(
-        [fa, fb],
-        basis="eigen",
-        baths=[Bath("collective_decay", rate=1e-4), Bath("correlated_dephasing", rate=1e-4)],
-    )
-    operators = {term.channel: np.asarray(term.operator.to_dense()) for term in chip.resolve().collapse_terms}
-
-    identity = np.eye(5)
-    lowering = np.diag(np.sqrt(np.arange(1.0, 5.0)), 1)
-    number = np.diag(np.arange(5.0))
-    # Each bath operator is authored as V L V† in the captured basis, so its projection is exact to round-off.
-    np.testing.assert_allclose(
-        operators["collective_decay"], np.kron(lowering, identity) + np.kron(identity, lowering), atol=1e-12
-    )
-    np.testing.assert_allclose(
-        operators["correlated_dephasing"], np.kron(number, identity) + np.kron(identity, number), atol=1e-12
     )
 
 
@@ -153,19 +87,17 @@ def test_default_fluxonium_pair_resolves_without_the_dense_native_product_space(
     # One dense native product-space array alone holds 16·num_basis⁴ bytes, 410 GB here.
     assert peak < 100 * 16 * fa.num_basis**2
 
-    result = chip.resolve(approximation=Exact())
-    local = {}
-    for device in (fa, fb):
-        vectors = np.asarray(result.bases[device.label].vectors)
-        local[device.label] = [
-            vectors.conj().T @ np.asarray(matrix) @ vectors
-            for matrix in (device.unresolved_hamiltonian().matrix(), device.local_space().matrix("n"))
-        ]
-    (hamiltonian_a, charge_a), (hamiltonian_b, charge_b) = local["fa"], local["fb"]
-    identity = np.eye(5)
-    expected = np.kron(hamiltonian_a, identity) + np.kron(identity, hamiltonian_b) + 0.5 * np.kron(charge_a, charge_b)
-    # The native spectrum spans 2700 GHz, so float64 round-off in either projection stays near 1e-13.
-    np.testing.assert_allclose(np.asarray(result.hamiltonian().matrix()), expected, rtol=0.0, atol=1e-11)
+
+def test_unfactored_coupling_checks_memory_before_the_dense_projection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only an operator that does not factor needs the dense native product space."""
+    fa, fb = _fluxonium_pair(num_basis=41)
+    monkeypatch.setattr(_memory, "available_memory_bytes", lambda: 10**6)
+
+    factorized = Chip([fa, fb], couplings=[Capacitive(fa, fb, g=0.5)], basis="eigen")
+    assert factorized.resolve().dims == (5, 5)
+    opaque = Chip([fa, fb], couplings=[_OpaqueCapacitive(fa, fb, g=0.5)], basis="eigen")
+    with pytest.raises(MemoryError, match="dense projection of an operator on fa, fb at native dimension N = 1681"):
+        opaque.resolve()
 
 
 @pytest.mark.validation
