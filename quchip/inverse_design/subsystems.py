@@ -43,7 +43,9 @@ def build_local_subsystem(chip: Chip, labels: tuple[str, ...]) -> Chip:
         The chip has effective terms, or the network cannot be cut at the
         subsystem without changing its interactions. This happens when a port
         targets kept and discarded devices, or when a kept port's field
-        subgraph or boundary scattering reaches a discarded port.
+        subgraph or boundary scattering reaches a discarded port. Matrix-form
+        boundary scattering raises unless the subsystem keeps all or none of
+        its planes.
     """
     keep = set(labels)
     unknown = keep - chip.device_map.keys()

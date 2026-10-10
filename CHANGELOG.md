@@ -33,7 +33,8 @@ This file records notable user-visible changes to quchip.
   their field subgraphs. Independent readout ports add no Hamiltonian term, so
   they do not change the fitted parameters. A field subgraph that links a kept
   port to a discarded port still raises, e.g. a shared feedline. So does a port
-  that also targets a discarded device.
+  that also targets a discarded device. A matrix-form `scattering` raises when
+  a neighborhood keeps only some of its planes.
   ([#100](https://github.com/quchip/quchip/issues/100))
 
 #### Fixes
