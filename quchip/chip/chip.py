@@ -596,8 +596,12 @@ class Chip:
     def _collapse_contributions_with_owners(
         self,
         bases: Mapping[str, Any] | None = None,
+        owners: Sequence[Any] | None = None,
     ) -> list[tuple[Operator, Any, tuple[int, ...], str, str, tuple[str, ...], Any]]:
-        """Return collapse contributions with exact component ownership for assembly."""
+        """Return collapse contributions with exact component ownership for assembly.
+
+        ``owners`` limits the result to the channels of those components.
+        """
         backend = self.backend
         out: list[
             tuple[Operator, Any, tuple[int, ...], str, str, tuple[str, ...], Any]
@@ -683,6 +687,9 @@ class Chip:
                             port,
                         )
                     )
+        if owners is not None:
+            wanted = {id(owner) for owner in owners}
+            out = [contribution for contribution in out if id(contribution[-1]) in wanted]
         if any(terms.projection is not None for terms in self.effective_terms):
             from quchip.chip.effective import retained_operator
 

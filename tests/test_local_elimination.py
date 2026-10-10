@@ -124,13 +124,29 @@ def test_chained_projection_applies_its_parent_first_and_keeps_spectators():
 
 
 @pytest.mark.unit
-def test_projection_parents_must_map_disjoint_source_devices():
+def test_projection_lineage_applies_overlapping_maps_in_order():
+    """The second map reads m from the first map's targets, and a, which it does not read, is a spectator."""
     rng = np.random.default_rng(3)
-    parent = OperatorProjection(("a", "m"), (3, 2), ("a",), (3,), _isometry(rng, 6, 3))
-    with pytest.raises(ValueError, match="disjoint"):
-        OperatorProjection(("a", "b"), (3, 2), ("a",), (3,), _isometry(rng, 6, 3), parents=(parent, parent))
-    with pytest.raises(ValueError, match="matching dimensions"):
-        OperatorProjection(("a", "b"), (2, 2), ("a",), (2,), _isometry(rng, 4, 2), parents=(parent,))
+    dims = {"a": 3, "m": 2, "b": 2}
+    first = OperatorProjection(("a", "m"), (3, 2), ("a", "m"), (3, 2), _isometry(rng, 6, 6))
+    second = OperatorProjection(("m", "b"), (2, 2), ("m",), (2,), _isometry(rng, 4, 2), parents=(first,))
+    operator = rng.normal(size=(3, 3)) + 1j * rng.normal(size=(3, 3))
+    source = _on(operator, ("a",), ("a", "m", "b"), dims)
+
+    def expected(lift):
+        # The lift maps (a, m) after both maps into (a, m, b). The result lists the targets of the second map first.
+        matrix = (lift.conj().T @ source @ lift).reshape(3, 2, 3, 2)
+        return matrix.transpose(1, 0, 3, 2).reshape(6, 6)
+
+    matrix, labels, out_dims = second.transport(operator, ("a",), (3,))
+    assert labels == ("m", "a") and out_dims == (2, 3)
+    second_lift = np.kron(np.eye(3), second.embedding)
+    np.testing.assert_allclose(matrix, expected(np.kron(first.embedding, np.eye(2)) @ second_lift), atol=1e-12)
+    # An owner that the first map already holds in retained coordinates passes through the second map only.
+    marked = OperatorProjection(("m", "b"), (2, 2), ("m",), (2,), second.embedding,
+                                parents=(first.with_current_operators(("port:p",)),))
+    np.testing.assert_allclose(marked.transport(operator, ("a",), (3,), "port:p")[0], expected(second_lift),
+                               atol=1e-12)
     with pytest.raises(TypeError, match="parents"):
         OperatorProjection(("a", "b"), (3, 2), ("a",), (3,), _isometry(rng, 6, 3), parents=("a",))
 
@@ -154,6 +170,41 @@ def test_local_steps_reduce_a_ring_whose_full_space_does_not_fit_in_memory():
     assert len(order) == 19
     assert [device.label for device in chip.devices] == ["q0", "q1", "c0", "r0", "r1"]
     assert chip.total_dim == 72
+
+
+def _neighbours(chip, label):
+    """Return, in device order, the devices that share a coupling with ``label``."""
+    ends = {end for c in chip.couplings if label in (c.device_a_label, c.device_b_label)
+            for end in (c.device_a_label, c.device_b_label)}
+    return tuple(device.label for device in chip.devices if device.label in ends - {label})
+
+
+def test_readouts_only_reduction_of_the_ring_keeps_each_patch_local():
+    """Every step reads only the removed device and its coupled neighbours, so the patches never merge."""
+    chip = _ring(8, noise=False)
+    order = [f"q{i}" for i in range(0, 8, 2)] + [f"c{i}" for i in range(8)] + [f"q{i}" for i in range(1, 8, 2)]
+    for target in order:
+        neighbours = _neighbours(chip, target)
+        patch = tuple(device.label for device in chip.devices if device.label in (target, *neighbours))
+        chip = eliminate(chip, target, local=True).chip
+        head = chip.effective_terms[-1]
+        assert head.labels == neighbours and head.projection.source_labels == patch
+    assert [device.label for device in chip.devices] == [f"r{i}" for i in range(8)]
+    assert chip.total_dim == 256
+
+
+@pytest.mark.parametrize("order", [("q0", "q1", "c0", "c1"), ("c0", "c1", "q0", "q1"), ("q0", "q1", "r0")])
+def test_local_steps_equal_the_full_reduction_in_sequence(order):
+    """Later patches leave part of earlier loss and maps outside. After q0 and q1, the port of r0 widens r0's patch."""
+    full = local = _ring(2, ports=True)
+    for target in order:
+        full, local = eliminate(full, target).chip, eliminate(local, target, local=True).chip
+        _assert_same_model(full, local)
+    expected, actual = full.resolve().slh, local.resolve().slh
+    assert [c.key for c in actual.external_channels] == [c.key for c in expected.external_channels]
+    for want, got in zip(expected.external_channels, actual.external_channels):
+        np.testing.assert_allclose(np.asarray(got.coupling.to_dense()), np.asarray(want.coupling.to_dense()),
+                                   atol=1e-12)
 
 
 def test_local_patch_keeps_the_far_device_of_a_cross_kerr_edge():
@@ -253,9 +304,15 @@ def test_drive_on_a_dressed_survivor_matches_the_full_reduction():
 
 
 @pytest.mark.validation
-def test_local_reduction_equals_the_full_reduction_on_a_three_transmon_ring():
+def test_local_steps_equal_the_full_reduction_on_a_three_transmon_ring():
+    """The patch of q0 leaves q2 outside, but the loss of c1 still acts on q2 after the maps of c1 and q0."""
     chip = _ring(3)
-    _assert_same_reduction(eliminate(chip, "c0"), eliminate(chip, "c0", local=True))
+    full, local = eliminate(chip, "c0"), eliminate(chip, "c0", local=True)
+    _assert_same_reduction(full, local)
+    full, local = full.chip, local.chip
+    for target in ("c1", "q0"):
+        full, local = eliminate(full, target).chip, eliminate(local, target, local=True).chip
+        _assert_same_model(full, local)
 
 
 @pytest.mark.validation

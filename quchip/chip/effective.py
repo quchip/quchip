@@ -12,7 +12,7 @@ import numpy as np
 
 from quchip.declarative.dissipation import CollapseChannel
 from quchip.declarative.expr import PhysicsExpr, declared_excitation_changes, materialize_expr
-from quchip.utils.jax_utils import contains_tracer
+from quchip.utils.jax_utils import concrete_array_module, contains_tracer
 from quchip.utils.values import copy_value, value_fingerprint
 
 
@@ -84,11 +84,11 @@ class OperatorProjection:
     """Captured authored coordinates for operators of surviving components.
 
     The rectangular embedding maps target authored coordinates into the source
-    product space. ``parents`` are earlier maps whose targets are source
-    devices. Each parent acts first on its own devices, so a chain of local
-    reductions never forms a full-space embedding. Rates and local operators
-    remain owned by the components. This record carries only their change of
-    coordinates.
+    product space. ``parents`` are earlier maps in the order they apply. An
+    operator passes through each map whose source devices it acts on, and its
+    other devices keep their coordinates. A chain of local reductions therefore
+    never forms a full-space embedding. Rates and local operators remain owned
+    by the components. This record carries only their change of coordinates.
     """
 
     source_labels: tuple[str, ...]
@@ -124,16 +124,8 @@ class OperatorProjection:
             raise ValueError("Operator coordinate overrides must use the same target space.")
         object.__setattr__(self, "overrides", overrides)
         parents = tuple(self.parents)
-        source_dims = dict(zip(self.source_labels, self.source_dims))
-        claimed: set[str] = set()
-        for parent in parents:
-            if not isinstance(parent, OperatorProjection):
-                raise TypeError("OperatorProjection parents must be OperatorProjection values.")
-            if not claimed.isdisjoint(parent.target_labels):
-                raise ValueError("Parent projections must act on disjoint devices.")
-            claimed.update(parent.target_labels)
-            if any(source_dims.get(label) != dim for label, dim in zip(parent.target_labels, parent.target_dims)):
-                raise ValueError("A parent projection must map into source devices with matching dimensions.")
+        if any(not isinstance(parent, OperatorProjection) for parent in parents):
+            raise TypeError("OperatorProjection parents must be OperatorProjection values.")
         object.__setattr__(self, "parents", parents)
 
     @classmethod
@@ -143,13 +135,13 @@ class OperatorProjection:
 
         ``embedding`` maps the targets into the product space of all of
         ``chip``'s devices. With ``compose``, one earlier map over all of them
-        is multiplied in. Otherwise every earlier map becomes a parent and keeps
-        its own embedding.
+        is multiplied in. Otherwise the earlier maps become parents, in the
+        order they apply, and keep their own embeddings.
         """
         labels, dims = tuple(d.label for d in chip.devices), tuple(chip.authored_dims)
         previous = tuple(t.projection for t in chip.effective_terms if t.projection is not None)
         if not (compose and len(previous) == 1 and previous[0].target_labels == labels):
-            return cls(labels, dims, target_labels, target_dims, embedding, parents=previous)
+            return cls(labels, dims, target_labels, target_dims, embedding, parents=lineage(previous))
         parent = previous[0]
 
         def advance(previous: OperatorProjection) -> OperatorProjection:
@@ -171,21 +163,26 @@ class OperatorProjection:
         """Return the owners whose operators a map in this chain already holds in retained coordinates."""
         return frozenset(key for key, _ in self.overrides).union(*(p.override_keys() for p in self.parents))
 
+    def _steps(self) -> tuple[OperatorProjection, ...]:
+        """Return the maps of this lineage in the order they apply. Each applies its own embedding only."""
+        return (*(step for parent in self.parents for step in parent._steps()), self)
+
     def transport(self, operator: Any, labels: tuple[str, ...], dims: tuple[int, ...],
                   owner_key: str | None = None) -> tuple[Any, tuple[str, ...], tuple[int, ...]]:
-        """Carry a dense operator into the target coordinates, with every parent applied first.
+        """Carry a dense operator into the target coordinates through every map of the lineage.
 
         ``labels`` and ``dims`` give the operator's tensor order in authored
-        coordinates. Labels outside this chain are spectators. They keep their
-        coordinates and follow the targets in the returned order.
+        coordinates. Each map acts when the operator acts on one of its source
+        devices. Other labels are spectators. They keep their coordinates and
+        follow the map's targets in the returned order. An operator whose owner
+        a map holds in retained coordinates starts at that map's override.
         """
-        for key, projection in self.overrides:
-            if key == owner_key:
-                return projection.transport(operator, labels, dims)
-        labels, dims = tuple(labels), tuple(dims)
-        for parent in self.parents:
-            if not set(parent.target_labels).isdisjoint(labels):
-                operator, labels, dims = parent.transport(operator, labels, dims, owner_key)
+        operator, labels, dims, _acted = _walk(self._steps(), operator, tuple(labels), tuple(dims), owner_key)
+        return operator, labels, dims
+
+    def _embed(self, operator: Any, labels: tuple[str, ...],
+               dims: tuple[int, ...]) -> tuple[Any, tuple[str, ...], tuple[int, ...]]:
+        """Apply this map's own embedding. Labels outside its source keep their coordinates."""
         inside = tuple(index for index, label in enumerate(labels) if label in self.source_labels)
         outside = tuple(index for index in range(len(labels)) if index not in inside)
         support = tuple(self.source_labels.index(labels[index]) for index in inside)
@@ -195,23 +192,26 @@ class OperatorProjection:
         target_size = prod(self.target_dims)
         spectator_dims = tuple(dims[index] for index in outside)
         spectator_size = prod(spectator_dims)
-        matrix = jnp.asarray(operator)
+        xp = concrete_array_module(operator, self.embedding)
+        matrix = xp.asarray(operator)
         if (matrix.shape != (prod(dims), prod(dims))
                 or any(dims[index] != self.source_dims[source] for index, source in zip(inside, support))):
             raise ValueError("Operator dimensions do not match its captured source support.")
-        tensor = jnp.asarray(self.embedding).reshape(self.source_dims + (target_size,))
-        tensor = jnp.transpose(tensor, support + rest + (len(self.source_dims),))
+        tensor = xp.asarray(self.embedding).reshape(self.source_dims + (target_size,))
+        tensor = xp.transpose(tensor, support + rest + (len(self.source_dims),))
         tensor = tensor.reshape(local_size, rest_size, target_size)
+        # Greedy pairwise contraction makes each step a matrix product. NumPy
+        # otherwise limits intermediates to the largest operand and can fall
+        # back to one unoptimized loop.
+        path = ("greedy", 2**62) if xp is np else "greedy"
         if not outside:
-            acted = jnp.einsum("ab,brj->arj", matrix, tensor)
-            projected = jnp.einsum("ari,arj->ij", tensor.conj(), acted)
+            projected = xp.einsum("ari,ab,brj->ij", tensor.conj(), matrix, tensor, optimize=path)
             return projected, self.target_labels, self.target_dims
         # Spectators keep their coordinates: put them after the mapped devices.
         order = inside + outside
-        matrix = jnp.transpose(matrix.reshape(dims + dims), order + tuple(len(dims) + index for index in order))
+        matrix = xp.transpose(matrix.reshape(dims + dims), order + tuple(len(dims) + index for index in order))
         matrix = matrix.reshape(local_size, spectator_size, local_size, spectator_size)
-        acted = jnp.einsum("asbt,brj->asrjt", matrix, tensor)
-        projected = jnp.einsum("ari,asrjt->isjt", tensor.conj(), acted)
+        projected = xp.einsum("ari,asbt,brj->isjt", tensor.conj(), matrix, tensor, optimize=path)
         size = target_size * spectator_size
         return (projected.reshape(size, size), self.target_labels + tuple(labels[index] for index in outside),
                 self.target_dims + spectator_dims)
@@ -226,7 +226,8 @@ class OperatorProjection:
         ``dims`` is needed only for spectator labels outside this map.
         """
         if dims is None:
-            known = dict(zip(self.source_labels, self.source_dims))
+            known = {label: dim for projection in self._steps()
+                     for label, dim in zip(projection.source_labels, projection.source_dims)}
             if any(label not in known for label in labels):
                 raise ValueError("Pass dims for operator labels outside the captured source space.")
             dims = tuple(known[label] for label in labels)
@@ -263,27 +264,109 @@ class OperatorProjection:
                    tuple(cls.from_dict(p) for p in data.get("parents", ())))
 
 
+def lineage(projections: tuple[OperatorProjection, ...]) -> tuple[OperatorProjection, ...]:
+    """Return the maps of ``projections`` and of their parents, each without parents, in the order they apply."""
+    return tuple(replace(step, parents=()) if step.parents else step
+                 for projection in projections for step in projection._steps())
+
+
+def _entry(steps: tuple[OperatorProjection, ...],
+           owner_key: str | None) -> tuple[int, OperatorProjection | None]:
+    """Return where an owner's operator enters ``steps``, and the override it enters through.
+
+    An owner whose operator a map already holds in retained coordinates skips
+    that map and every earlier one. The latest such map decides.
+    """
+    start, override = 0, None
+    if owner_key is not None:
+        for index, step in enumerate(steps):
+            for key, candidate in step.overrides:
+                if key == owner_key:
+                    start, override = index + 1, candidate
+    return start, override
+
+
+def _walk(steps: tuple[OperatorProjection, ...], operator: Any, labels: tuple[str, ...], dims: tuple[int, ...],
+          owner_key: str | None) -> tuple[Any, tuple[str, ...], tuple[int, ...], bool]:
+    """Apply each map that the operator meets, in order, and report whether any map acted."""
+    start, override = _entry(steps, owner_key)
+    acted = False
+    for step in (() if override is None else override._steps()) + steps[start:]:
+        if not set(step.source_labels).isdisjoint(labels):
+            operator, labels, dims = step._embed(operator, labels, dims)
+            acted = True
+    return operator, labels, dims, acted
+
+
+def _reach(steps: tuple[OperatorProjection, ...], labels: tuple[str, ...],
+           owner_key: str | None) -> tuple[str, ...] | None:
+    """Return the devices that an operator on ``labels`` acts on after ``steps``, or ``None`` if no map acts."""
+    start, override = _entry(steps, owner_key)
+    acted = False
+    for step in (() if override is None else override._steps()) + steps[start:]:
+        if not set(step.source_labels).isdisjoint(labels):
+            labels = step.target_labels + tuple(label for label in labels if label not in step.source_labels)
+            acted = True
+    return labels if acted else None
+
+
+def _in_device_order(chip: Any, operator: Any, labels: tuple[str, ...],
+                     dims: tuple[int, ...]) -> tuple[Any, tuple[str, ...], tuple[int, ...]]:
+    order = tuple(sorted(range(len(labels)), key=lambda index: chip.device_index(labels[index])))
+    if order == tuple(range(len(labels))):
+        return operator, labels, dims
+    xp = concrete_array_module(operator)
+    matrix = xp.asarray(operator).reshape(dims + dims)
+    matrix = xp.transpose(matrix, order + tuple(len(dims) + index for index in order))
+    return (matrix.reshape(prod(dims), prod(dims)), tuple(labels[index] for index in order),
+            tuple(dims[index] for index in order))
+
+
+def _retained_owners(chip: Any, labels: tuple[str, ...], owner_key: str | None) -> tuple[list[Any], tuple[str, ...]]:
+    """Return the effective terms whose maps act on an operator on ``labels``, and the operator's final devices."""
+    owners = []
+    for terms in chip.effective_terms:
+        if terms.projection is not None:
+            reached = _reach(terms.projection._steps(), labels, owner_key)
+            if reached is not None:
+                owners.append(terms)
+                labels = reached
+    return owners, labels
+
+
+def retained_support(chip: Any, labels: tuple[str, ...], owner_key: str | None = None) -> tuple[str, ...]:
+    """Return, in device order, the devices that a surviving operator on ``labels`` acts on in retained coordinates.
+
+    Parameters
+    ----------
+    chip : Chip
+        Chip whose captured maps the operator follows.
+    labels : tuple[str, ...]
+        Devices the operator acts on in authored coordinates.
+    owner_key : str or None, default=None
+        Owner whose operator a map can already hold in retained coordinates.
+    """
+    _owners, reached = _retained_owners(chip, tuple(labels), owner_key)
+    return tuple(sorted(reached, key=chip.device_index))
+
+
 def transport_retained_operator(chip: Any, operator: Any, labels: tuple[str, ...], dims: tuple[int, ...],
                                 owner_key: str | None = None) -> tuple[Any, tuple[str, ...], tuple[int, ...]] | None:
-    """Carry a dense operator through every captured map that acts on its devices.
+    """Carry a dense operator through every captured map that it meets.
 
     Returns the operator, labels and dimensions in ``chip``'s device order, or
-    ``None`` when no captured map acts on ``labels``. The maps act on disjoint
-    devices, so their order does not matter.
+    ``None`` when no captured map acts on ``labels``. Each map applies in its
+    lineage order, and the maps of different effective terms in chip order.
     """
-    hits = [t.projection for t in chip.effective_terms
-            if t.projection is not None and not set(t.labels).isdisjoint(labels)]
-    if not hits:
+    acted = False
+    labels, dims = tuple(labels), tuple(dims)
+    for terms in chip.effective_terms:
+        if terms.projection is not None:
+            operator, labels, dims, moved = _walk(terms.projection._steps(), operator, labels, dims, owner_key)
+            acted = acted or moved
+    if not acted:
         return None
-    for projection in hits:
-        operator, labels, dims = projection.transport(operator, labels, dims, owner_key)
-    order = tuple(sorted(range(len(labels)), key=lambda index: chip.device_index(labels[index])))
-    if order != tuple(range(len(labels))):
-        matrix = jnp.asarray(operator).reshape(dims + dims)
-        operator = jnp.transpose(matrix, order + tuple(len(dims) + index for index in order))
-        operator = operator.reshape(prod(dims), prod(dims))
-        labels, dims = tuple(labels[index] for index in order), tuple(dims[index] for index in order)
-    return operator, labels, dims
+    return _in_device_order(chip, operator, labels, dims)
 
 
 def retained_operator(chip: Any, operator: Any, labels: tuple[str, ...], backend: Any,
@@ -292,15 +375,15 @@ def retained_operator(chip: Any, operator: Any, labels: tuple[str, ...], backend
     """Return a surviving component's operator in the retained coordinates of ``chip``.
 
     The operator acts on ``labels`` in their authored coordinates. The result
-    acts on the targets of every captured map it touches and on its other
+    acts on the targets of every captured map it meets and on its other
     devices, in device order. It is ``None`` when no captured map acts on the
     operator. The result keeps the operator's declared level changes when
     every map it crosses conserves the total level index.
     """
-    hits = [t for t in chip.effective_terms if t.projection is not None and not set(t.labels).isdisjoint(labels)]
-    if not hits:
+    owners, _reached = _retained_owners(chip, tuple(labels), owner_key)
+    if not owners:
         return None
-    changes = None if any(t.excitation_changes is None for t in hits) else authored_excitation_changes(
+    changes = None if any(t.excitation_changes is None for t in owners) else authored_excitation_changes(
         operator, labels, backend, bases,
     )
     matrix = backend.to_array(materialize_expr(operator, backend, local_bases=local_bases))
@@ -378,9 +461,10 @@ class EffectiveTerms:
             raise ValueError(f"Effective Hamiltonian must have shape {shape}.")
         if not contains_tracer(h):
             concrete = np.asarray(h)
-            if not np.all(np.isfinite(concrete)) or not np.allclose(
+            # A zero matrix, as in terms that hold only channels, needs no further check.
+            if np.any(concrete) and (not np.all(np.isfinite(concrete)) or not np.allclose(
                 concrete, concrete.conj().T, atol=1e-12, rtol=1e-12
-            ):
+            )):
                 raise ValueError("Effective Hamiltonian must be finite and Hermitian.")
         if any(not isinstance(channel, CollapseChannel) for channel in self.channels):
             raise TypeError("EffectiveTerms channels must be CollapseChannel values.")

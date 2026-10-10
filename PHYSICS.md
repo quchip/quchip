@@ -1310,35 +1310,56 @@ Exact reduction uses the same Löwdin embedding as its Hamiltonian and removed-c
 ### 10.7 Local reduction (`local=True`)
 
 `eliminate(chip, device, local=True)` reduces a device from a patch around it and never resolves the
-full chip. The core is the device and every device that shares a coupling, effective terms or a port
-with it. The SW generator acts only on the core. Its denominators use `E = diag H`, so they also read
-each term whose diagonal part depends on a core level. The patch therefore holds:
+full chip. The core is the device and every device that shares a coupling, an effective Hamiltonian or
+a port with it. The SW generator acts only on the core. Its denominators use `E = diag H`, so they also
+read each term whose diagonal part depends on a core level. The patch therefore holds:
 
-- the core and the full supports of the effective terms on it,
+- the core,
 - the far device of each coupling whose diagonal part depends on a core level, such as a `CrossKerr`
   edge,
-- the full support of every effective term that the patch touches, because effective terms hold
-  retained coordinates.
+- the full support of each effective Hamiltonian that touches the core and whose diagonal part depends
+  on a core level,
+- every device that the operators of the device's ports act on in retained coordinates.
 
-The far-device rule reads which diagonal entries can be nonzero. It evaluates each coupling with a
-generic value for every parameter, so a traced reduction reads the same patch as a concrete one. A
-coupling on a device with a traced energy basis counts as level-dependent.
+The level rule reads which diagonal entries can be nonzero. It evaluates each coupling with a generic
+value for every parameter, so a traced reduction reads the same couplings as a concrete one. A term on
+a device with a traced energy basis, and a traced effective Hamiltonian, count as level-dependent.
+
+The patch Hamiltonian includes each effective Hamiltonian on one patch device. It also includes each
+effective Hamiltonian that touches the core and acts only on the core, the far devices and the
+level-dependent supports. The reduction replaces these effective Hamiltonians. Every other effective
+Hamiltonian keeps its matrix. It keeps the mode's level, and its diagonal part does not change the
+denominators, so the second-order reduction leaves it unchanged.
 
 With this patch, the full-chip generator is the patch generator times the identity on the other
 devices. A coupling from the patch to other devices keeps the mode's level, so it adds nothing to
 `P [S, V] P`. The retained Hamiltonian, the transformed channels and the captured map therefore equal
 those of the full-chip reduction. Every numerical step reads the patch as a sub-chip, so its cost
-follows the patch's product space. Devices, couplings, effective terms and ports outside the patch
-stay unchanged. The new `EffectiveTerms` act on the patch survivors only. `chi` comes from the patch
-spectrum, so it omits dressing by devices outside the patch.
+follows the patch's product space and the supports of the channels that it carries. Devices and
+couplings outside the patch stay unchanged. `chi` comes from the patch spectrum, so it omits dressing
+by devices outside the patch.
 
-Each local reduction captures a map from its patch survivors into its patch. The map carries an
-operator that also acts outside the patch with the identity on the outside devices. Earlier maps
-that the patch absorbs become `parents` of the new `OperatorProjection`. Each parent acts first on
-its own devices, so a chain of local reductions never forms a full-space matrix. A full-chip
-reduction that follows several local ones keeps their maps as parents in the same way.
-`result.mapping` extends the patch map by the identity on the other devices, and it forms that
-matrix only when you read it.
+The correction is split in the energy coordinates of the patch survivors. The part on one survivor is
+the normalized partial trace onto it, minus the mean, and the first survivor's part also holds the
+mean. Each part is an `EffectiveTerms` on its own device. The rest has no single-device content, and it
+acts on all patch survivors. A concrete part whose entries stay below 1000 machine epsilons times the
+largest entry of the patch Hamiltonian is round-off, and the reduction drops it. A traced part is kept.
+A later patch therefore reads a single-device part only when it holds that device.
+
+The reduction transforms the channels of the removed device and couplings. It also carries every
+retained channel that acts on the patch through the new map. Devices outside the patch keep their
+coordinates, so each channel keeps its own support. Channels with the same support share one
+`EffectiveTerms`, and the rates stay separate from the operators.
+
+Each local reduction captures a map from its patch survivors into its patch. The chip stores the
+newest map, with every earlier map as a parent in the order they apply. An operator passes through
+each map whose source devices it acts on, and its other devices keep their coordinates. An operator
+that a map already holds in retained coordinates, such as a transformed port, starts after that map.
+A chain of local reductions therefore never forms a full-space matrix. Transported operators grow
+along the maps, and the patches do not. In a ring, the loss of an early step can spread over every
+device that later patches link. The order of the steps then sets the cost. A full-chip reduction that
+follows local ones keeps their maps as parents in the same way. `result.mapping` extends the patch map
+by the identity on the other devices, and it forms that matrix only when you read it.
 
 `local=True` implements `method="sw"` only. The exact route diagonalizes the whole chip, so its
 dressed states are not local. The local route does not transform baths yet, so a chip with baths
