@@ -780,9 +780,10 @@ The engine then applies the inbound and outbound factors to that response.
 `VNA.sweep()` extends this form to pump-free models that conserve the total
 energy-level index `N` but are not harmonic, e.g. Duffing transmons, pure
 dephasing, or reduced chips with retained terms. The resolved static Hamiltonian
-must conserve `N` (an approximation such as `RWA()` that keeps only zero-total
-bands, declared retained terms, and no cascade-generated term). Every port must
-lower `N` by one. Every other channel must lower `N` by one or conserve it.
+must conserve `N`. The approximation must keep only zero-total bands, as `RWA()`
+does, and retained terms must declare conservation. Every port must lower `N` by
+one. A cascade-generated term `Im(L2^dagger S2 L1)`, as on a shared feedline,
+then also conserves `N`. Every other channel must lower `N` by one or conserve it.
 Every input must be vacuum. The vacuum is then stationary, and to first order in
 the probe the coherences `|1_j><0|` stay in the one-excitation block. The engine
 projects the lab-frame model onto the vacuum `|0>` and the states `|1_j>` that
@@ -1203,8 +1204,9 @@ When `chip.approximation` keeps only bands of zero total weight, as `RWA()` does
 conserves the total energy-level index. The exact route then diagonalizes each total-excitation
 sector separately, so its retained Hamiltonian, jump operators and coordinate map have exact zeros
 between sectors, with no round-off from near-degeneracies across sectors. This requires earlier
-retained terms to declare the same conservation and no cascade-generated network Hamiltonian to be
-present. Otherwise, the route diagonalizes the full matrix.
+retained terms to declare the same conservation. Each port pair that generates a cascade
+Hamiltonian, as on a shared feedline, must lower the index by one at both ports. Otherwise, the
+route diagonalizes the full matrix.
 
 `method="exact"` validates the ground, the single excitations of touching survivors, and their pair
 excitations. Each diagnostic label needs a distinct majority dressed eigenstate, and the full
