@@ -395,6 +395,8 @@ Each device authors its Hamiltonian and named operators in a `LocalSpace`. The b
 
 `Chip(..., basis="native")` keeps each device's authored local coordinate basis and dimension. `basis="eigen"` diagonalizes each device's exact authored local Hamiltonian. It then projects all Hamiltonians, coupling and drive operators, states, observables, and collapse operators into the retained local energy subspace. A device can override the chip-wide policy with its own `basis` and, where necessary, select the retained energy dimension with `projection_levels`.
 
+The engine projects a multi-device operator factor by factor when it is a sum of scalar multiples of single-device products. The support basis is a tensor product of local bases, so `V†(A ⊗ B)V = (V_a† A V_a) ⊗ (V_b† B V_b)`. Products on one device multiply in the authored basis before projection, because `V_a V_a†` is not the identity on a truncated energy subspace. Memory then scales with the square of each authored dimension. The engine projects any other multi-device operator, such as an opaque two-device callable, through the dense authored product space. It first raises `MemoryError` if the estimated allocation exceeds the available memory.
+
 Resolution records each fixed authored-to-solver transformation in `EngineResult.bases`. Local energy ordering differs from whole-chip dressing: `Chip.dress()` diagonalizes the coupled static chip for analysis, whereas local-basis resolution defines the tensor factors that go through the engine and backends.
 
 Truncation diagnostics sample the component's declared boundary projector at the

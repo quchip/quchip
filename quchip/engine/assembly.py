@@ -34,12 +34,14 @@ import numpy as np
 
 from quchip.approximations import Approximation, RWA, require_approximation
 from quchip.backend import _backend_context
+from quchip.backend._memory import require_memory
 from quchip.backend.protocol import Backend, Operator
 from quchip.control.drive import BaseDrive, CouplingDrive
 from quchip.chip.effective import EffectiveTerms, authored_excitation_changes
 from quchip.control.signal import AnalyticSignal, SignalKey
 from quchip.declarative.expr import (
     PhysicsExpr,
+    _bound_values,
     as_operator_expr,
     declared_excitation_changes,
     is_energy_diagonal,
@@ -84,6 +86,7 @@ from quchip.engine.solver_hints import _solver_hint_metadata, _static_spectral_s
 from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import (
     array_namespace,
+    concrete_array_module,
     contains_tracer,
     maybe_concrete_scalar,
 )
@@ -233,9 +236,16 @@ def _project_on_support(
     bases: Mapping[str, BasisRecord],
     backend: Backend,
 ) -> Operator:
-    """Materialize and project a local operator into the resolved support basis."""
-    local = materialize_expr(operator, backend, local_bases=bases)
+    """Materialize and project a local operator into the resolved support basis.
+
+    An empty ``support`` means the operator spans the full authored chip. A
+    multi-device operator projects factor by factor when it is a sum of
+    scalar-weighted single-device products (see :func:`_project_products`).
+    Any other multi-device operator is projected on its dense native product
+    space after a memory check.
+    """
     if len(support) == 1:
+        local = materialize_expr(operator, backend, local_bases=bases)
         record = bases[chip.devices[support[0]].label]
         if record.kind == "native":
             return local
@@ -243,38 +253,130 @@ def _project_on_support(
             record.transform_operator(backend.to_array(local)),
             dims=[[record.resolved_dim], [record.resolved_dim]],
         )
-    if len(support) >= 2:
-        records = [bases[chip.devices[index].label] for index in support]
-        if all(record.kind == "native" for record in records):
-            return local
-        xp = array_namespace(records[0].vectors)
-        transform = records[0].vectors
-        for record in records[1:]:
-            transform = xp.kron(transform, record.vectors)
-        matrix = transform.conj().T @ backend.to_array(local) @ transform
-        resolved_dims = [record.resolved_dim for record in records]
-        return backend.from_array(
-            matrix,
-            dims=[resolved_dims, resolved_dims],
-        )
-
-    if all(record.kind == "native" for record in bases.values()):
-        return local
-    matrix = backend.to_array(local)
-    authored_dimension = prod(chip.authored_dims)
-    if matrix.shape != (authored_dimension, authored_dimension):
-        raise ValueError(
-            "A support-free operator must span the full authored chip space; "
-            f"expected {(authored_dimension, authored_dimension)}, got {matrix.shape}."
-        )
-    ordered = [bases[device.label] for device in chip.devices]
-    xp = array_namespace(ordered[0].vectors)
-    transform = ordered[0].vectors
-    for record in ordered[1:]:
-        transform = xp.kron(transform, record.vectors)
-    projected = transform.conj().T @ matrix @ transform
-    resolved_dims = [record.resolved_dim for record in ordered]
+    labels = tuple(chip.devices[index].label for index in support or range(len(chip.devices)))
+    records = [bases[label] for label in labels]
+    if all(record.kind == "native" for record in (records if support else bases.values())):
+        return materialize_expr(operator, backend, local_bases=bases)
+    if not support:
+        authored_dimension = prod(chip.authored_dims)
+        shape = getattr(operator, "shape", None)
+        if shape != (authored_dimension, authored_dimension):
+            raise ValueError(
+                "A support-free operator must span the full authored chip space; "
+                f"expected {(authored_dimension, authored_dimension)}, got {shape}."
+            )
+    projected = _project_products(operator, labels, bases, backend)
+    if projected is None:
+        projected = _project_dense(operator, labels, bases, backend)
+    resolved_dims = [record.resolved_dim for record in records]
     return backend.from_array(projected, dims=[resolved_dims, resolved_dims])
+
+
+def _project_products(
+    operator: Any,
+    labels: tuple[str, ...],
+    bases: Mapping[str, BasisRecord],
+    backend: Backend,
+) -> Any | None:
+    """Project a sum of scalar-weighted single-device products factor by factor.
+
+    The support transform is the Kronecker product of the local transforms, so
+    ``V†(A ⊗ B)V = (V_a† A V_a) ⊗ (V_b† B V_b)``, and memory scales with each
+    native dimension squared. Products on one device multiply in the native
+    basis before projection, because ``V_a V_a†`` is not the identity on a
+    truncated eigenbasis. A label absent from a product is the identity.
+    Returns ``None`` when a term does not factor.
+    """
+    if not isinstance(operator, PhysicsExpr) or operator.labels != labels:
+        return None
+    values = _bound_values(operator)
+
+    def lower(node: PhysicsExpr) -> Any:
+        # Concrete values stay on the host, so they compile no JAX program per array shape.
+        value = materialize_expr(node, backend, bindings=values, local_bases=bases)
+        if node.labels:
+            value = backend.to_array(value)
+        return concrete_array_module(value).asarray(value)
+
+    def split(node: Any) -> list[tuple[Any, dict[str, Any]]] | None:
+        if not isinstance(node, PhysicsExpr) or not node.labels or not set(node.labels) <= set(labels):
+            return None
+        if len(node.labels) == 1:
+            native = bases[node.labels[0]].native_dim
+            matrix = lower(node)
+            return [(1.0, {node.labels[0]: matrix})] if matrix.shape == (native, native) else None
+        if node.kind == "embed":
+            return split(node.args[0])
+        if node.kind == "scale":
+            scalar = lower(node.args[0])
+            terms = split(node.args[1])
+            if terms is None or scalar.ndim != 0:
+                return None
+            return [(scalar * coefficient, factors) for coefficient, factors in terms]
+        if node.kind not in ("add", "sub", "tensor", "matmul"):
+            return None
+        left, right = split(node.args[0]), split(node.args[1])
+        if left is None or right is None:
+            return None
+        if node.kind == "add":
+            return left + right
+        if node.kind == "sub":
+            return left + [(-coefficient, factors) for coefficient, factors in right]
+        products: list[tuple[Any, dict[str, Any]]] = []
+        for left_coefficient, left_factors in left:
+            for right_coefficient, right_factors in right:
+                factors = dict(left_factors)
+                for label, matrix in right_factors.items():
+                    factors[label] = factors[label] @ matrix if label in factors else matrix
+                products.append((left_coefficient * right_coefficient, factors))
+        return products
+
+    terms = split(operator)
+    if terms is None:
+        return None
+    xp = concrete_array_module(terms, [bases[label].vectors for label in labels])
+    total: Any = 0.0
+    for coefficient, factors in terms:
+        product = xp.ones((1, 1), dtype=complex)
+        for label in labels:
+            record = bases[label]
+            if label not in factors:
+                local = xp.eye(record.resolved_dim, dtype=complex)
+            elif record.kind == "native":
+                local = xp.asarray(factors[label])
+            else:
+                vectors = xp.asarray(record.vectors)
+                local = vectors.conj().T @ xp.asarray(factors[label]) @ vectors
+            product = xp.kron(product, local)
+        total = total + coefficient * product
+    return total
+
+
+# Lowering an operator on the native product space and copying it into a dense
+# array keeps two dense N×N arrays alive: measured peaks reach two copies.
+_DENSE_PROJECTION_COPIES = 2
+
+
+def _project_dense(
+    operator: Any,
+    labels: tuple[str, ...],
+    bases: Mapping[str, BasisRecord],
+    backend: Backend,
+) -> Any:
+    """Project an operator that does not factor through its dense native product space."""
+    records = [bases[label] for label in labels]
+    dimension = prod(record.native_dim for record in records)
+    require_memory(
+        _DENSE_PROJECTION_COPIES * 16 * dimension**2,
+        task=f"The dense projection of an operator on {', '.join(labels)} at native dimension N = {dimension}",
+        remedy="Author the operator as sums of products of single-device operators, or reduce the device cutoffs.",
+    )
+    matrix = backend.to_array(materialize_expr(operator, backend, local_bases=bases))
+    xp = array_namespace(records[0].vectors)
+    transform = records[0].vectors
+    for record in records[1:]:
+        transform = xp.kron(transform, record.vectors)
+    return transform.conj().T @ matrix @ transform
 
 
 def _build_static_h0(

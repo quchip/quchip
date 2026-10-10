@@ -53,6 +53,14 @@ This file records notable user-visible changes to quchip.
   assemble a superoperator whose estimated peak exceeds the available memory.
   Previously, the operating system killed them. The dynamiqs stationary Liouvillian
   uses the same check. ([#80](https://github.com/quchip/quchip/issues/80))
+- Multi-device couplings, drives, ports and collapse operators on eigen-basis
+  devices now project factor by factor when they are sums of products of
+  single-device operators. `chip.freq()` on two capacitively coupled default
+  `Fluxonium` devices needed about 820 GB. On one machine, it now runs in 3 s
+  with a 14 MB allocation peak. Results agree with the dense projection to
+  float64 round-off. Other operators keep the dense projection, which now
+  raises `MemoryError` before an allocation that cannot fit.
+  ([#96](https://github.com/quchip/quchip/issues/96))
 
 #### Performance
 
