@@ -1358,15 +1358,18 @@ retained channel that acts on the patch through the new map. Devices outside the
 coordinates, so each channel keeps its own support. Channels with the same support share one
 `EffectiveTerms`, and the rates stay separate from the operators.
 
-Each local reduction captures a map from its patch survivors into its patch. The chip stores the
-newest map, with every earlier map as a parent in the order they apply. An operator passes through
-each map whose source devices it acts on, and its other devices keep their coordinates. An operator
-that a map already holds in retained coordinates, such as a transformed port, starts after that map.
-A chain of local reductions therefore never forms a full-space matrix. Transported operators grow
-along the maps, and the patches do not. In a ring, the loss of an early step can spread over every
-device that later patches link. The order of the steps then sets the cost. A full-chip reduction that
-follows local ones keeps their maps as parents in the same way. `result.mapping` extends the patch map
-by the identity on the other devices, and it forms that matrix only when you read it.
+Each local reduction captures a map from its patch survivors into its patch. The chip stores the new
+map on the terms of the patch survivors. Each earlier map whose source devices meet the patch becomes a
+parent of the new map, in the order they apply. The other maps stay on their own terms. A map can mix
+the devices it acts on, so `Chip.partition()` keeps the devices of each map chain, with its maps, in
+one part. An operator passes through each map whose source devices it acts on, and its other devices
+keep their coordinates. An operator that a map already holds in retained coordinates, such as a
+transformed port, starts after that map. A chain of local reductions therefore never forms a full-space
+matrix. Transported operators grow along the maps, and the patches do not. In a ring, the loss of an
+early step can spread over every device that later patches link. The order of the steps then sets the
+cost. A full-chip reduction that follows local ones keeps their maps as parents in the same way.
+`result.mapping` extends the patch map by the identity on the other devices, and it forms that matrix
+only when you read it.
 
 `local=True` implements `method="sw"` only. The exact route diagonalizes the whole chip, so its
 dressed states are not local. The local route does not transform baths yet, so a chip with baths

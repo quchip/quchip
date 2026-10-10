@@ -44,6 +44,7 @@ from quchip.chip.effective import (
     authored_excitation_changes,
     conserves_excitation_number,
     lineage,
+    lineage_labels,
     retained_support,
     transport_retained_operator,
 )
@@ -291,6 +292,7 @@ _ROUND_OFF = 1e3 * float(np.finfo(float).eps)
 
 
 def _local_effective_terms(chip: "Chip", mode_label: str, taken: set[str], *, absorbed: tuple[EffectiveTerms, ...],
+                           joined: tuple[EffectiveTerms, ...],
                            patch: tuple[str, ...], survivors: tuple[str, ...], survivor_dims: tuple[int, ...],
                            correction: Any, energy_dims: tuple[int, ...], vectors: tuple[Any, ...],
                            scale: float | None, carried: list[Any], projection: OperatorProjection,
@@ -301,11 +303,12 @@ def _local_effective_terms(chip: "Chip", mode_label: str, taken: set[str], *, ab
     parts are stored on their own devices, and the rest on the patch
     survivors. A concrete part at round-off level is dropped. Each carried
     channel joins the terms of its support. The new map is stored once, on the
-    terms of the patch survivors, with every earlier map as a parent. Earlier
-    terms keep their Hamiltonians unless the patch absorbs them. They lose the
-    channels that this step carries and their maps.
+    terms of the patch survivors. Its parents are the maps of the ``joined``
+    terms, which reach the patch. Earlier terms keep their Hamiltonians unless
+    the patch absorbs them. They lose the channels that this step carries and
+    the maps that become parents. Maps of other regions stay in place.
     """
-    absorbed_ids = {id(terms) for terms in absorbed}
+    absorbed_ids, joined_ids = {id(terms) for terms in absorbed}, {id(terms) for terms in joined}
     taken = taken | {terms.label for terms in chip.effective_terms}
     head_label = _unique_label(f"retained_{mode_label}", taken)
     kept: list[EffectiveTerms] = []
@@ -313,13 +316,15 @@ def _local_effective_terms(chip: "Chip", mode_label: str, taken: set[str], *, ab
     for terms in chip.effective_terms:
         holds = id(terms) not in absorbed_ids and _holds_hamiltonian(terms)
         channels = () if not set(patch).isdisjoint(terms.labels) else terms.channels
-        if not holds and not channels:
+        own_map = None if id(terms) in joined_ids else terms.projection
+        if not holds and not channels and own_map is None:
             dropped_notes.extend(f"{terms.label}: {note}" for note in terms.notes)
             continue
-        if terms.projection is not None or len(channels) != len(terms.channels):
+        if own_map is not terms.projection or len(channels) != len(terms.channels):
             declared, names = terms.excitation_changes, {channel.name for channel in channels}
-            terms = replace(terms, channels=channels, projection=None, excitation_changes=None if declared is None
-                            else {name: changes for name, changes in declared.items() if name in names})
+            terms = replace(terms, channels=channels, projection=own_map, excitation_changes=None
+                            if declared is None else
+                            {name: changes for name, changes in declared.items() if name in names})
         kept.append(terms)
     xp = concrete_array_module(correction)
     tolerance = None if scale is None or contains_tracer(correction) else _ROUND_OFF * scale
@@ -863,13 +868,17 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
     channel_changes: dict[str, frozenset[int]] = {}
     source_lift = _kron(*(source_bases[label].energy_vectors for label in labels))
     step_embedding = source_lift @ reduction.embedding(ctx) @ lift.conj().T
-    previous_maps = tuple(t.projection for t in chip.effective_terms if t.projection is not None)
-    # A local map keeps every earlier map as a parent, in the order they apply.
-    # It carries each channel that acts on the patch. Devices outside the
-    # patch keep their coordinates, so the channel keeps its own support.
+    # A local map keeps each earlier map that reaches the patch as a parent,
+    # in the order they apply. Maps of other regions act on other devices, so
+    # they stay on their own effective terms and the partition keeps them with
+    # their devices. The map carries each channel that acts on the patch.
+    # Devices outside the patch keep their coordinates, so the channel keeps
+    # its own support.
+    joined = tuple(t for t in chip.effective_terms
+                   if t.projection is not None and not lineage_labels(t.projection).isdisjoint(labels))
+    parents = lineage(tuple(t.projection for t in joined if t.projection is not None))
     step = OperatorProjection(tuple(labels), tuple(numeric.authored_dims), tuple(numeric_survivors),
-                              tuple(numeric_final.authored_dims), step_embedding,
-                              parents=lineage(previous_maps)) if local else None
+                              tuple(numeric_final.authored_dims), step_embedding, parents=parents) if local else None
     carried: list[tuple[CollapseChannel, tuple[str, ...], tuple[int, ...], frozenset[int] | None]] = []
 
     def carry(operator: Any, support_labels: tuple[str, ...], support_dims: tuple[int, ...], rate: Any,
@@ -957,7 +966,8 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
     taken = {d.label for d in reduced_devices} | {c.label for c in kept_couplings}
     if local:
         effective_terms = _local_effective_terms(
-            chip, mode_label, taken, absorbed=absorbed, patch=tuple(labels), survivors=tuple(numeric_survivors),
+            chip, mode_label, taken, absorbed=absorbed, joined=joined, patch=tuple(labels),
+            survivors=tuple(numeric_survivors),
             survivor_dims=tuple(numeric_final.authored_dims),
             correction=lift.conj().T @ correction @ lift, energy_dims=tuple(dims[labels.index(label)]
                                                                             for label in numeric_survivors),

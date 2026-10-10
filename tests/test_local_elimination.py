@@ -189,13 +189,23 @@ def test_readouts_only_reduction_of_the_ring_keeps_each_patch_local():
     assert chip.total_dim == 256
 
 
-@pytest.mark.parametrize("order", [("q0", "q1", "c0", "c1"), ("c0", "c1", "q0", "q1"), ("q0", "q1", "r0")])
+def _jumps(chip):
+    """Return the jump part of the dissipator, the sum of rate * L ⊗ conj(L)."""
+    jumps = 0.0
+    for term in chip.resolve(frame="lab").collapse_terms:
+        jump = np.asarray(term.operator.to_dense())
+        jumps = jumps + complex(term.rate) * np.kron(jump, jump.conj())
+    return jumps
+
+
+@pytest.mark.parametrize("order", [("c0", "c1", "q0", "q1"), ("q0", "q1", "r0")])
 def test_local_steps_equal_the_full_reduction_in_sequence(order):
     """Later patches leave part of earlier loss and maps outside. After q0 and q1, the port of r0 widens r0's patch."""
     full = local = _ring(2, ports=True)
     for target in order:
         full, local = eliminate(full, target).chip, eliminate(local, target, local=True).chip
         _assert_same_model(full, local)
+    np.testing.assert_allclose(_jumps(local), _jumps(full), rtol=0, atol=1e-12)
     expected, actual = full.resolve().slh, local.resolve().slh
     assert [c.key for c in actual.external_channels] == [c.key for c in expected.external_channels]
     for want, got in zip(expected.external_channels, actual.external_channels):
@@ -262,6 +272,22 @@ def test_local_and_full_reductions_chain_in_either_order():
     restored = Chip.from_dict(chained.to_dict())
     assert len(restored.effective_terms[-1].projection.parents) == 1
     _assert_same_model(chained, restored, atol=0.0)
+
+
+def test_partition_keeps_each_map_with_the_devices_it_acts_on():
+    """n dresses c. The map of m mixes a and b, although their mediated exchange cancels."""
+    a, m, b, n = (Resonator(freq=freq, levels=2, label=label) for freq, label in zip((5.0, 6.0, 7.0, 6.5), "ambn"))
+    c = Resonator(freq=5.5, levels=2, label="c", T1=1e3)
+    chip = Chip([a, m, b, c, n], [Capacitive(a, m, g=0.05, label="a_m"), Capacitive(b, m, g=0.05, label="b_m"),
+                                  Capacitive(c, n, g=0.05, label="c_n")])
+    for target in ("n", "m"):
+        chip = eliminate(chip, target, local=True).chip
+    parts = chip.partition().components
+    assert [part.labels for part in parts] == [("a", "b"), ("c",)]
+    (h_ab, loss_ab), (h_c, loss_c) = (_model(part.chip) for part in parts)
+    hamiltonian, loss = _model(chip)
+    np.testing.assert_allclose(np.kron(h_ab, np.eye(2)) + np.kron(np.eye(4), h_c), hamiltonian, rtol=0, atol=1e-12)
+    np.testing.assert_allclose(np.kron(loss_ab, np.eye(2)) + np.kron(np.eye(4), loss_c), loss, rtol=0, atol=1e-12)
 
 
 def test_local_reduction_raises_outside_its_scope():

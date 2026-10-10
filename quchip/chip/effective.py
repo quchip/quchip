@@ -270,6 +270,11 @@ def lineage(projections: tuple[OperatorProjection, ...]) -> tuple[OperatorProjec
                  for projection in projections for step in projection._steps())
 
 
+def lineage_labels(projection: OperatorProjection) -> frozenset[str]:
+    """Return the source devices of every map in a projection's lineage."""
+    return frozenset(label for step in projection._steps() for label in step.source_labels)
+
+
 def _entry(steps: tuple[OperatorProjection, ...],
            owner_key: str | None) -> tuple[int, OperatorProjection | None]:
     """Return where an owner's operator enters ``steps``, and the override it enters through.

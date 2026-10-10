@@ -2,9 +2,10 @@
 
 Two device labels share a component when *any* structural object couples them.
 Such an object is a coupling edge, a non-separable bath whose target set
-contains both, or classical drive crosstalk between their lines. All decisions
-use only labels and object presence, never parameter values, which can be JAX
-tracers.
+contains both, classical drive crosstalk between their lines, or the captured
+maps of one effective contribution, which can mix the devices they act on. All
+decisions use only labels and object presence, never parameter values, which
+can be JAX tracers.
 
 When observables are split across components, the user's own indices pass through unchanged, and
 any injected factor is appended after them. A scalar local value colliding with one or more
@@ -28,6 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Iterable, Sequence
 
+from quchip.chip.effective import lineage_labels
 from quchip.utils.labeling import resolve_label
 
 if TYPE_CHECKING:
@@ -55,8 +57,15 @@ def independence_edges(chip: "Chip", resolved: Any | None = None) -> list[tuple[
     connected components with fewer edges.
     """
     resolved = chip.resolve() if resolved is None else resolved
+    supports = list(resolved.dynamical_supports)
+    # A captured map can mix the devices it acts on even when no term couples
+    # them, so its contribution and those devices stay in one solve.
+    for terms in chip.effective_terms:
+        if terms.projection is not None:
+            reach = set(terms.labels) | lineage_labels(terms.projection)
+            supports.append(tuple(device.label for device in chip.devices if device.label in reach))
     edges: list[tuple[str, str]] = []
-    for support in resolved.dynamical_supports:
+    for support in supports:
         edges.extend((support[0], other) for other in support[1:])
     equipment = chip.control_equipment
     if equipment is not None:
