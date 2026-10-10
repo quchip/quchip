@@ -50,8 +50,9 @@ class EigenbasisDevice(BaseDevice):
         first energy from every level.
     charge_operator, phase_operator : array_like, shape (n, n), or None
         Operators in the same source eigenbasis. ``None`` makes that drive
-        channel unavailable. The supplied matrix elements keep the source's
-        conventions.
+        channel unavailable. Capacitive couplings also use
+        ``charge_operator``, so they require it. The supplied matrix elements
+        keep the source's conventions.
     levels : int or None, default None
         Number of kept energy levels. ``None`` keeps all supplied levels.
     label : str or None, default None
@@ -178,7 +179,10 @@ class EigenbasisDevice(BaseDevice):
     def charge_coupling_operator(self) -> Any:
         """Return the supplied charge-like operator in the authored basis."""
         if self._charge_operator is None:
-            raise ValueError("This imported model did not supply charge_operator.")
+            raise ValueError(
+                "This imported model did not supply charge_operator, which charge drives and "
+                "capacitive couplings require."
+            )
         return self._charge_operator
 
     def phase_coupling_operator(self) -> Any:

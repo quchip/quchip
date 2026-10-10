@@ -118,13 +118,14 @@ def test_modulated_capacitive_rwa_keeps_only_exchange_bands() -> None:
     )
     lowering = np.asarray([[0.0, 1.0], [0.0, 0.0]])
     raising = lowering.T
+    charge = 1j * (lowering - raising)
 
     full = Chip([first, second], [coupling], frame="lab", approximation=Exact()).resolve()
     rotating_wave = Chip([first, second], [coupling], frame="lab", approximation=RWA()).resolve()
 
     np.testing.assert_allclose(
         _dynamic_hamiltonian(full, 0.0),
-        0.02 * np.kron(lowering + raising, lowering + raising),
+        0.02 * np.kron(charge, charge),
         atol=1e-12,
     )
     np.testing.assert_allclose(

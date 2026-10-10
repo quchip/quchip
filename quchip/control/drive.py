@@ -429,11 +429,14 @@ class ChargeDrive(DeviceDrive):
 
     .. math::
 
-       H_d(t) = \epsilon(t)\, i(\hat a - \hat a^\dagger)
+       H_d(t) = \epsilon(t)\, \hat Q
 
     with :math:`\epsilon(t)` the in-phase quadrature of the complete delivered
-    classical signal. It is the standard transmon microwave drive (Koch et al.,
-    PRA 76, 042319 (2007); Krantz et al., APR 6, 021318 (2019), Eq. 90).
+    classical signal. :math:`\hat Q` is the device's
+    ``charge_coupling_operator()``, which capacitive couplings also use. It is
+    :math:`i(\hat a - \hat a^\dagger)` on a Fock device. This is the standard
+    transmon microwave drive (Koch et al., PRA 76, 042319 (2007); Krantz et
+    al., APR 6, 021318 (2019), Eq. 90).
 
     Examples
     --------

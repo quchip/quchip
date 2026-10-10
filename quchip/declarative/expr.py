@@ -1016,7 +1016,9 @@ def _latex(expr: PhysicsExpr, parent_precedence: int = 0) -> str:
         return rf"\hat \ell_{{{expr.labels[0]}}}"
     if expr.kind == "literal":
         value = expr.args[0]
-        return f"{value:g}" if isinstance(value, (int, float, complex)) else str(value)
+        if isinstance(value, complex):
+            return _complex_latex(value)
+        return f"{value:g}" if isinstance(value, (int, float)) else str(value)
     if expr.kind == "parameter":
         path, symbol, _unit = expr.args
         scope = path.rsplit(".", 1)[0]
@@ -1077,6 +1079,17 @@ def _latex(expr: PhysicsExpr, parent_precedence: int = 0) -> str:
     else:
         raise TypeError(f"Unknown PhysicsExpr kind {expr.kind!r}.")
     return f"({text})" if precedence < parent_precedence else text
+
+
+def _complex_latex(value: complex) -> str:
+    """Render a complex literal with ``i`` as the imaginary unit."""
+    if value.imag == 0:
+        return f"{value.real:g}"
+    imaginary = {1.0: "i", -1.0: "-i"}.get(value.imag, f"{value.imag:g}i")
+    if value.real == 0:
+        return imaginary
+    sign = "" if imaginary.startswith("-") else "+"
+    return f"({value.real:g}{sign}{imaginary})"
 
 
 def _scoped_symbol(symbol: str, scope: str) -> str:

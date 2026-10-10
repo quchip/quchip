@@ -16,6 +16,20 @@ This file records notable user-visible changes to quchip.
   correction of order (g/Δ)²κ/Δ (8e-5). A mode with several ports, or a port
   whose plane also carries other fields, now raises, so keep such a mode in the
   model. ([#76](https://github.com/quchip/quchip/issues/76))
+- Capacitive couplings use each device's declared charge operator, as charge
+  drives do. For ordinary Fock devices, this changes `a + a†` to `i(a − a†)`.
+  Exchange terms retain their sign; counter-rotating terms change sign.
+  Driven `Exact()` results and mixed-basis exchange phases can change.
+  `EigenbasisDevice` now requires `charge_operator` for capacitive coupling.
+  ([#108](https://github.com/quchip/quchip/pull/108))
+- `FluxTunableTransmon` scales charge by `s = (E_J(Φ)/E_J,max)^(1/4)` and phase
+  by `1/s`. Coupling strengths and charge-drive amplitudes now refer to the
+  sweet spot. To retain a calibration at another static bias, divide `g` by
+  each flux-tunable endpoint's `s`, and charge-drive amplitude by its target's
+  `s`. Phase-drive amplitudes require multiplication by `s`. Named charge and
+  phase observables and port operators use these scales. A `FluxDrive` pulse
+  still changes frequency only; it does not vary the charge scale in time.
+  ([#108](https://github.com/quchip/quchip/pull/108))
 
 #### New features
 
@@ -53,6 +67,13 @@ This file records notable user-visible changes to quchip.
   assemble a superoperator whose estimated peak exceeds the available memory.
   Previously, the operating system killed them. The dynamiqs stationary Liouvillian
   uses the same check. ([#80](https://github.com/quchip/quchip/issues/80))
+- `eliminate()` reports `j_eff` and `dJ_domega_c` in the emitted edge's units,
+  accounting for complex or non-unit charge matrix elements. Previously,
+  taking the real exchange element could produce a zero or mis-scaled edge.
+  Retained terms still carry the full reduced Hamiltonian. `g_over_delta`
+  now uses resolved exchange rather than authored strength. Parallel device
+  couplings report their combined exchange.
+  ([#111](https://github.com/quchip/quchip/pull/111))
 
 #### Performance
 

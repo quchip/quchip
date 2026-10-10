@@ -59,8 +59,8 @@ class TestCapacitive:
         assert abs(complex(backend.dag(bra_00) * H_int * ket_11)) < 1e-12
 
     def test_interaction_full(self, backend: Backend) -> None:
-        """Full form: ⟨0,0|H_int|1,1⟩ ≠ 0 (counter-rotating ab term present)."""
-        # H_int^full = g*(a+a-dag)⊗(b+b-dag); <0,0|H_int|1,1> = g*<0|(a+a-dag)|1>*<0|(b+b-dag)|1> = g*1*1 = g
+        """Full form: ⟨0,0|H_int|1,1⟩ = -g (counter-rotating ab term present)."""
+        # H_int^full = g*i(a-a-dag)⊗i(b-b-dag); <0,0|H_int|1,1> = g*<0|i(a-a-dag)|1>*<0|i(b-b-dag)|1> = g*i*i = -g
         g = 0.02
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3)
         r = Resonator(freq=6.0, levels=5)
@@ -72,7 +72,7 @@ class TestCapacitive:
 
         element = complex(backend.dag(bra_00) * H_int * ket_11)
         assert abs(element) > 1e-15, "Counter-rotating term should be non-zero"
-        np.testing.assert_allclose(element.real, g, atol=1e-10)
+        np.testing.assert_allclose(element.real, -g, atol=1e-10)
 
 
 class TestCollapseOperators:

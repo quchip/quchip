@@ -17,7 +17,8 @@ def test_dressed_queries_follow_retained_hamiltonian(approximation):
     a = np.diag(np.sqrt([1.0, 2.0]), 1)
     h = np.diag((np.array([0, 5, 9.75])[:, None] + np.array([0, 6.8, 13.3])).ravel())
     exchange = np.kron(a.T, a) + np.kron(a, a.T)
-    counter = np.kron(a, a) + np.kron(a.T, a.T)
+    # The charge product i(a - a†) i(b - b†) carries -g on the counter-rotating terms.
+    counter = -(np.kron(a, a) + np.kron(a.T, a.T))
     if isinstance(approximation, Exact):
         h += 0.08 * (exchange + counter)
     else:

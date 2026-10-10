@@ -140,9 +140,12 @@ class EliminationResult:
         For two touching survivors, ``exchange`` holds one dict with ``j_eff``,
         ``dJ_domega_c``, ``between``, ``coupling``, ``zz`` and ``pathways``.
         For more survivors it is keyed by survivor pairs. ``coupling`` names
-        the emitted mediated edge. The flux-retargeting derivative remains
-        second-order even with exact reduction. ``zz`` is available for the
-        exact route and ``pathways`` for SW.
+        the emitted mediated edge. ``j_eff`` and ``dJ_domega_c`` are in the
+        units of that edge. Its real strength carries the representable part
+        of the mediated exchange; the retained correction keeps the remainder.
+        The flux-retargeting derivative remains second-order even with exact
+        reduction. ``zz`` is available for the exact route and ``pathways``
+        for SW.
 
         An effective-terms target reports ``freq_after``, ``lamb_shift``,
         ``anharmonicity`` (with three or more levels) and ``cross_kerr`` for
@@ -150,11 +153,12 @@ class EliminationResult:
         each other such device to the full-pull shift ``E11 - E10 - E01 + E00``
         (GHz). All values come from the exactly diagonalized isolated terms.
     validity
-        Per-coupling ``g_over_delta``, ``is_valid`` and ``min_block_gap``. The
-        validity flag uses ``g_over_delta < 0.1`` and remains a native boolean
-        under JAX tracing. It is a perturbative diagnostic. The exact
-        effective-terms route has no such diagnostic and leaves this mapping
-        empty.
+        Per-coupling ``g_over_delta``, ``is_valid`` and ``min_block_gap``.
+        ``g_over_delta`` divides the resolved exchange element between the
+        coupled devices by their bare detuning. The validity flag uses
+        ``g_over_delta < 0.1`` and remains a native boolean under JAX
+        tracing. It is a perturbative diagnostic. The exact effective-terms
+        route has no such diagnostic and leaves this mapping empty.
     notes
         Approximation order, omitted physics and control retargeting.
     mapping

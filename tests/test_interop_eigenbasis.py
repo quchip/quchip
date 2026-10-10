@@ -33,6 +33,15 @@ def test_missing_phase_operator_raises_with_guidance():
         _dev().phase_coupling_operator()
 
 
+def test_capacitive_coupling_without_charge_operator_raises_with_guidance():
+    """A capacitive coupling to a model imported without a charge operator raises ValueError."""
+    from quchip import Capacitive, Resonator
+
+    bare = EigenbasisDevice(np.array([0.0, 5.0, 9.8]), label="bare")
+    with pytest.raises(ValueError, match="capacitive couplings require"):
+        Capacitive(bare, Resonator(freq=7.0, levels=2, label="r"), g=0.02).interaction_hamiltonian()
+
+
 def test_roundtrip_serialization():
     """to_dict()/from_dict() round-trips the spectrum and charge operator unchanged."""
     d = _dev(label="zp", T1=50_000.0, coupling_channel="charge")

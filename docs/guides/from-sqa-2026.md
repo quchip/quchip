@@ -22,7 +22,7 @@ Output:
 
 ```text
 devices: ['q', 'r']
-declared H: \omega_{q}\,\hat n_{q} + 0.5\,\alpha_{q}\,\hat n_{q}\,(\hat n_{q} - \hat I_{q}) + \omega_{r}\,\hat n_{r} + g_{qr}\,(\hat a_{q} + \hat a^\dagger_{q})\,(\hat a_{r} + \hat a^\dagger_{r})
+declared H: \omega_{q}\,\hat n_{q} + 0.5\,\alpha_{q}\,\hat n_{q}\,(\hat n_{q} - \hat I_{q}) + \omega_{r}\,\hat n_{r} + g_{qr}\,i\,(\hat a_{q} - \hat a^\dagger_{q})\,i\,(\hat a_{r} - \hat a^\dagger_{r})
 ```
 
 [Continue with chip definition and inspection](defining-and-inspecting-a-chip.md).

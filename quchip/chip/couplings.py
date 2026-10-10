@@ -51,10 +51,13 @@ def _full(s: Any, a: EndpointOps, b: EndpointOps) -> PhysicsExpr:
 class Capacitive(CouplingModel):
     """Capacitive (charge-charge) coupling between two devices.
 
-    The capacitive interaction between two electromagnetic modes takes the
-    canonical dipole-dipole form in the raising/lowering basis:
+    The interaction is ``H_int = g · Q_a Q_b``, where ``Q`` is each endpoint's
+    charge operator. A device declares ``Q`` with
+    ``charge_coupling_operator()``, the operator that
+    :class:`~quchip.control.drive.ChargeDrive` also uses. Between Fock devices,
+    ``Q = i(a − a†)``:
 
-    - Full form:   ``H_int = g · (a + a†)(b + b†)``
+    - Full form:   ``H_int = g · i(a − a†) · i(b − b†) = g · (a†b + a b†) − g · (a b + a†b†)``
     - Band-RWA form: ``H_int = g · (a†b + a b†)`` (derived, not authored)
 
     The coupling authors only the full form. :class:`~quchip.RWA` keeps its
@@ -75,7 +78,12 @@ class Capacitive(CouplingModel):
         :class:`Chip` late-binds label-string references.
     g : float
         Coupling strength in GHz. Can be a traced JAX scalar for sweeps /
-        autodiff.
+        autodiff. The exchange matrix element is ``g`` times the endpoints'
+        ``0 -> 1`` charge elements. Their magnitude is 1 on a
+        :class:`~quchip.devices.transmon.duffing.DuffingTransmon` or
+        :class:`~quchip.devices.resonator.Resonator`, ``s(Φ)`` on a
+        :class:`~quchip.devices.transmon.flux_tunable.FluxTunableTransmon`,
+        and ``|<0|n|1>|`` on a charge-basis or phase-grid device.
     label : str, optional
         Human-readable label; defaults to ``"cap_{n}"``.
 
@@ -111,7 +119,7 @@ class Capacitive(CouplingModel):
         return super().default_dressed_target()
 
     def interaction(self, a: EndpointOps, b: EndpointOps, p: Any) -> PhysicsExpr:
-        """Return the full capacitive interaction ``g * (a + a†)(b + b†)``.
+        """Return the full capacitive interaction ``g * Q_a Q_b``.
 
         Parameters
         ----------
@@ -125,7 +133,7 @@ class Capacitive(CouplingModel):
     def physics_notes(self) -> list[str]:
         """Return the declared capacitive interaction."""
         notes = super().physics_notes()
-        notes.append("Interaction form: g · (a + a†)(b + b†)")
+        notes.append("Interaction form: g · Q_a Q_b with each device's charge operator Q")
         return notes
 
     def __repr__(self) -> str:
@@ -165,11 +173,11 @@ class TunableCapacitive(CouplingModel):
     .. math::
         H_{\text{int}} \;=\; g_0\,\hat Q_a\hat Q_b
 
-    where :math:`\hat Q` is each endpoint's physical charge-like coupling
-    operator (the position quadrature for a Fock model). The engine applies any
-    requested RWA after local-basis materialization. :math:`g_0` is the static
-    coupling strength in GHz and can be a JAX tracer that flows through
-    :func:`jax.grad` without concretization.
+    where :math:`\hat Q` is each endpoint's charge operator, as in
+    :class:`Capacitive` (:math:`i(\hat a - \hat a^\dagger)` for a Fock model).
+    The engine applies any requested RWA after local-basis materialization.
+    :math:`g_0` is the static coupling strength in GHz and can be a JAX tracer
+    that flows through :func:`jax.grad` without concretization.
 
     Time dependence is not a construction-time parameter. A
     :class:`~quchip.control.drive.ParametricDrive` wired onto this coupling
@@ -226,7 +234,7 @@ class TunableCapacitive(CouplingModel):
     g_0: Scalar = parameter(default=UNBOUND, unit="GHz", symbol="g_0")
 
     def interaction(self, a: EndpointOps, b: EndpointOps, p: Any) -> PhysicsExpr:
-        """Return the static ``g_0 · (a + a†)(b + b†)`` contribution.
+        """Return the static ``g_0 · Q_a Q_b`` contribution.
 
         Parameters
         ----------
@@ -253,7 +261,7 @@ class TunableCapacitive(CouplingModel):
     def physics_notes(self) -> list[str]:
         """Return the tunable-coupling and effective-model assumptions."""
         notes = super().physics_notes()
-        notes.append("Interaction form: g_0 · (a + a†)(b + b†)")
+        notes.append("Interaction form: g_0 · Q_a Q_b with each device's charge operator Q")
         notes.append(
             "Effective parametric model: the physical coupler mode is eliminated; coupler "
             "leakage and mediated shifts beyond exchange are not represented — use a physical "

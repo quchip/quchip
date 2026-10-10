@@ -76,7 +76,9 @@ configuration. Use `with_params()` for a partial change.
 
 For `FluxTunableTransmon`, sweep `flux_bias` to move along its calibrated
 frequency curve. Set `freq` and `flux_bias` together to change the calibration
-anchor. `to_dict()` and `from_dict()` save and restore model declarations.
+anchor. Its charge operator also follows `flux_bias`, so capacitive `g` and
+charge-drive amplitudes refer to zero flux, not to the anchor. `to_dict()` and
+`from_dict()` save and restore model declarations.
 
 ## Keep the pulse handle for sweeps
 
