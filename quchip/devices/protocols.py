@@ -29,6 +29,8 @@ class ChargeCoupled(Protocol):
 
     :class:`~quchip.control.drive.ChargeDrive` dispatches against this
     Protocol and emits drives using :meth:`charge_coupling_operator`.
+    Capacitive couplings use the same operator through
+    :attr:`~quchip.declarative.ops.LocalOps.charge`.
     """
 
     def charge_coupling_operator(self) -> Operator:

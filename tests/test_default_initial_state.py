@@ -167,7 +167,7 @@ def test_traced_default_start_matches_concrete_start():
 
 def _perturbative_leakage(g):
     """Return the g² and g⁴ Rayleigh–Schrödinger terms of 1 - |<00|G>|²."""
-    # V = g (a + a†)(b + b†) couples |00> only to |11>, at energy Σ; |11> couples
+    # V = g i(a - a†) i(b - b†) couples |00> only to |11>, at energy Σ; |11> couples
     # onward to |20>, |02> (element √2 g) and |22> (element 2g).
     total = _QUBIT + _RESONATOR
     energies = {"20": 2 * _QUBIT + _ANHARMONICITY, "02": 2 * _RESONATOR,
@@ -215,7 +215,7 @@ def test_default_ground_matches_independent_diagonalization_in_rotating_frame():
     hamiltonian = (
         np.kron(np.diag(_QUBIT * nq + 0.5 * _ANHARMONICITY * nq * (nq - 1)), np.eye(5))
         + np.kron(np.eye(4), np.diag(_RESONATOR * nr))
-        + g * np.kron(a + a.T, b + b.T)
+        + g * np.kron(1j * (a - a.T), 1j * (b - b.T))
     )
     _, vectors = np.linalg.eigh(hamiltonian)
     ground = vectors[:, 0]  # every bare energy is nonnegative and g << Σ, so |00>'s partner is lowest

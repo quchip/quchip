@@ -18,6 +18,10 @@ without changing the device.
   Landau–Zener physics. Time-dependent flux tuning during gates is applied
   through an external :class:`~quchip.control.drive.FluxDrive` whose
   real-baseband envelope carries δω(t) in GHz.
+* Harmonic charge scale: the charge and phase operators scale with the
+  zero-point amplitudes ``E_J^(1/4)`` and ``E_J^(-1/4)`` at fixed E_C.
+  Capacitive ``g`` and charge-drive amplitudes refer to Φ = 0 (see
+  :meth:`FluxTunableTransmon.charge_coupling_operator`).
 
 **SQUID dispersion**
 
@@ -40,7 +44,7 @@ swept parameter (no stale SQUID metadata).
 
 References
 ----------
-* Koch et al., PRA 76, 042319 (2007), §II.
+* Koch et al., PRA 76, 042319 (2007), §II and §III.
 * Krantz et al., APR 6, 021318 (2019), §II.B and §V.A.
 * Renger et al., *A superconducting qubit-resonator quantum processor with
   effective all-to-all connectivity* — flux-tunable qubits and MOVE/CZ gates.
@@ -68,11 +72,24 @@ from typing import Any, ClassVar, Mapping
 import jax.numpy as jnp
 
 from quchip.declarative.expr import PhysicsExpr
+from quchip.declarative.models import _parameter_bindings, _symbolic_parameters
 from quchip.declarative.ops import LocalOps
 from quchip.declarative.parameters import UNBOUND, Scalar, parameter
 from quchip.devices.fock import FockDevice
 from quchip.devices.transmon.duffing import duffing_expr
-from quchip.utils.jax_utils import maybe_concrete_scalar
+from quchip.utils.jax_utils import concrete_array_module, maybe_concrete_scalar
+
+
+def _josephson_ratio(flux: Any, asymmetry: Any, xp: Any = jnp) -> Any:
+    """Return the SQUID ratio ``E_J(Φ)/E_J,max = sqrt(cos²(πΦ) + d² sin²(πΦ))``."""
+    phi = xp.pi * xp.asarray(flux)
+    d = xp.asarray(asymmetry)
+    return xp.sqrt(xp.cos(phi) ** 2 + d ** 2 * xp.sin(phi) ** 2)
+
+
+def _charge_scale(flux_bias: Any, asymmetry: Any) -> Any:
+    """Return ``s(Φ) = (E_J(Φ)/E_J,max)^(1/4)``, the charge scale relative to Φ = 0."""
+    return _josephson_ratio(flux_bias, asymmetry, concrete_array_module(flux_bias, asymmetry)) ** 0.25
 
 
 def _check_anharmonicity(value: Any) -> None:
@@ -142,7 +159,8 @@ class FluxTunableTransmon(FockDevice):
         symmetric-SQUID degenerate point (``asymmetry == 0`` and ``flux_bias``
         a half-integer, see :meth:`validate`). Rebinding only this value keeps
         the inferred SQUID calibration and updates ``freq``, and rebinding it
-        with ``freq`` defines a new anchor. It is a JAX pytree leaf and can be
+        with ``freq`` defines a new anchor. It also sets the charge scale of
+        :meth:`charge_coupling_operator`. It is a JAX pytree leaf and can be
         differentiated or swept through the public chip API.
     asymmetry : float, default 0.0
         SQUID junction asymmetry d = (E_{J1}−E_{J2})/(E_{J1}+E_{J2}).
@@ -170,7 +188,7 @@ class FluxTunableTransmon(FockDevice):
     computational = True
     approximation = (
         "Duffing-approximated SQUID transmon; adiabatic flux (calibration-anchor, "
-        "no Landau-Zener)."
+        "no Landau-Zener); harmonic charge scale (E_J/E_J,max)^(1/4) at the static flux_bias."
     )
 
     freq: Scalar = parameter(default=UNBOUND, positive=True, unit="GHz", symbol=r"\omega")
@@ -254,6 +272,35 @@ class FluxTunableTransmon(FockDevice):
         """
         return duffing_expr(op, p.freq, p.anharmonicity)
 
+    def _symbolic_charge_scale(self) -> PhysicsExpr:
+        """Return ``s(Φ)`` as a scalar expression of ``flux_bias`` and ``asymmetry``."""
+        p = _symbolic_parameters(self)
+        return PhysicsExpr.from_function(_charge_scale, p.flux_bias, p.asymmetry, labels=(), dims=(), name="s")
+
+    def charge_coupling_operator(self) -> PhysicsExpr:
+        """Return the charge operator ``s(Φ) i(a − a†)``.
+
+        Notes
+        -----
+        At fixed E_C, the transmon charge zero-point amplitude scales as
+        ``E_J^(1/4)`` (Koch et al. 2007, §III). The factor
+        ``s(Φ) = (E_J(Φ)/E_J,max)^(1/4) = (cos²(πΦ) + d² sin²(πΦ))^(1/8)``
+        takes it relative to Φ = 0, so ``g`` of a capacitive coupling and a
+        charge-drive amplitude refer to the sweet spot. ``s`` depends on the
+        static ``flux_bias``. A ``FluxDrive`` pulse does not change it.
+        """
+        expression = self._symbolic_charge_scale() * super().charge_coupling_operator()
+        return expression.with_bindings(_parameter_bindings(self))
+
+    def phase_coupling_operator(self) -> PhysicsExpr:
+        """Return the phase operator ``(a + a†)/s(Φ)``.
+
+        The phase zero-point amplitude scales as ``E_J^(-1/4)``, the inverse of
+        the charge scale in :meth:`charge_coupling_operator`.
+        """
+        expression = super().phase_coupling_operator() / self._symbolic_charge_scale()
+        return expression.with_bindings(_parameter_bindings(self))
+
     # -- Derived-on-read SQUID parameters ----------------------------------
 
     @property
@@ -270,10 +317,7 @@ class FluxTunableTransmon(FockDevice):
         """
         E_C = self._E_C
         E_J_at_bias = (jnp.asarray(self.freq) + E_C) ** 2 / (8.0 * E_C)
-        phi = jnp.pi * jnp.asarray(self.flux_bias)
-        d = jnp.asarray(self.asymmetry)
-        dispersion_factor = jnp.sqrt(jnp.cos(phi) ** 2 + d ** 2 * jnp.sin(phi) ** 2)
-        return E_J_at_bias / dispersion_factor
+        return E_J_at_bias / _josephson_ratio(self.flux_bias, self.asymmetry)
 
     def frequency_at(self, flux: Any) -> Any:
         """SQUID dispersion ω(Φ/Φ₀) in GHz, using derived E_C and E_J_max.
@@ -283,9 +327,7 @@ class FluxTunableTransmon(FockDevice):
         flux : float
             Reduced flux Φ/Φ₀. JAX-traceable.
         """
-        phi = jnp.pi * jnp.asarray(flux)
-        d = jnp.asarray(self.asymmetry)
-        E_J = self._E_J_max * jnp.sqrt(jnp.cos(phi) ** 2 + d ** 2 * jnp.sin(phi) ** 2)
+        E_J = self._E_J_max * _josephson_ratio(flux, self.asymmetry)
         return jnp.sqrt(8.0 * self._E_C * E_J) - self._E_C
 
     def flux_for_frequency(self, target_freq: Any) -> Any:

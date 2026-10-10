@@ -180,6 +180,189 @@ class TestFluxTunableTransmon:
 
 
 # ===========================================================================
+# Flux-dependent charge scale
+# ===========================================================================
+
+
+def _charge_scale(flux, asymmetry):
+    """Return the closed-form scale ``(cos²(πΦ) + d² sin²(πΦ))^(1/8)``."""
+    return (np.cos(np.pi * flux) ** 2 + asymmetry**2 * np.sin(np.pi * flux) ** 2) ** 0.125
+
+
+def _qubit_resonator_exchange(qubit, g=0.010):
+    """Return ``|<1_q 0_r|H|0_q 1_r>|`` for a two-level resonator coupled capacitively to *qubit*."""
+    from quchip import Capacitive, Chip, Resonator
+
+    resonator = Resonator(freq=5.0, levels=2, label="r")
+    matrix = np.asarray(Chip([qubit, resonator], [Capacitive(qubit, resonator, g=g)]).hamiltonian().matrix())
+    return abs(matrix[2, 1])
+
+
+class TestChargeScale:
+
+    @pytest.mark.parametrize(
+        "asymmetry, flux_bias, exchange_mhz",
+        [(0.0, 0.0, 10.000), (0.0, 0.25, 9.170), (0.0, 0.3, 8.756), (0.3, 0.25, 9.269), (0.3, 0.3, 8.930)],
+    )
+    def test_capacitive_exchange_follows_the_charge_scale(self, asymmetry, flux_bias, exchange_mhz):
+        """A flux bias that retunes the qubit scales its 10 MHz sweet-spot exchange by s(Φ)."""
+        from quchip import Capacitive, Chip, FluxTunableTransmon, Resonator
+        from quchip.analysis import effective_hamiltonian_between_states
+
+        q = FluxTunableTransmon(freq=6.0, anharmonicity=-0.2, asymmetry=asymmetry, levels=3, label="q")
+        q.flux_bias = flux_bias
+        r = Resonator(freq=5.0, levels=3, label="r")
+        chip = Chip([q, r], [Capacitive(q, r, g=0.010)])
+
+        exchange = abs(complex(effective_hamiltonian_between_states(chip, (1, 0), (0, 1))[0, 1]))
+
+        assert 1e3 * exchange == pytest.approx(exchange_mhz, abs=5e-4)
+        assert exchange == pytest.approx(0.010 * _charge_scale(flux_bias, asymmetry), rel=1e-12)
+
+    @pytest.mark.parametrize("approximation", ["exact", "rwa"])
+    def test_sweet_spot_chip_matches_duffing_transmon(self, approximation):
+        """At zero flux bias the coupled Hamiltonian and drive elements equal those of a DuffingTransmon."""
+        from quchip import Capacitive, ChargeDrive, Chip, DuffingTransmon, Exact, FluxTunableTransmon, Resonator, RWA
+
+        strategy = Exact() if approximation == "exact" else RWA()
+
+        def chip_for(qubit):
+            readout = Resonator(freq=5.0, levels=3, label="r")
+            chip = Chip([qubit, readout], [Capacitive(qubit, readout, g=0.05, label="qr")], approximation=strategy)
+            chip.wire(ChargeDrive(qubit, label="xy"))
+            return chip
+
+        tunable = chip_for(FluxTunableTransmon(freq=6.0, anharmonicity=-0.2, asymmetry=0.3, levels=3, label="q"))
+        fixed = chip_for(DuffingTransmon(freq=6.0, anharmonicity=-0.2, levels=3, label="q"))
+
+        npt.assert_allclose(
+            np.asarray(tunable.hamiltonian().matrix()), np.asarray(fixed.hamiltonian().matrix()), atol=1e-12
+        )
+        assert tunable.drive_matrix_elements("q")["xy"] == pytest.approx(fixed.drive_matrix_elements("q")["xy"])
+
+    def test_charge_scale_follows_flux_bias_rebinding(self):
+        """A rebound flux bias rescales the exchange and the charge-drive element, and the source chip keeps both."""
+        from quchip import Capacitive, ChargeDrive, Chip, FluxTunableTransmon, Resonator
+
+        q = FluxTunableTransmon(freq=6.0, anharmonicity=-0.2, asymmetry=0.3, levels=3, label="q")
+        r = Resonator(freq=5.0, levels=2, label="r")
+        coupled = Chip([q, r], [Capacitive(q, r, g=0.010)])
+        driven = Chip([FluxTunableTransmon(freq=6.0, anharmonicity=-0.2, asymmetry=0.3, levels=3, label="q")])
+        driven.wire(ChargeDrive("q", label="xy"))
+        scale = _charge_scale(0.3, 0.3)
+
+        exchange = abs(np.asarray(coupled.with_params({"q.flux_bias": 0.3}).hamiltonian().matrix())[2, 1])
+        drive_element = abs(driven.with_params({"q.flux_bias": 0.3}).drive_matrix_elements("q")["xy"])
+
+        assert exchange == pytest.approx(0.010 * scale, rel=1e-12)
+        assert drive_element == pytest.approx(scale, rel=1e-12)
+        assert abs(np.asarray(coupled.hamiltonian().matrix())[2, 1]) == pytest.approx(0.010, rel=1e-12)
+        assert abs(driven.drive_matrix_elements("q")["xy"]) == pytest.approx(1.0, rel=1e-12)
+
+    @pytest.mark.optional_backend
+    def test_charge_scale_gradient_matches_its_analytic_derivative(self):
+        """jax.grad in flux_bias of the exchange and of a named charge port follows ds/dΦ."""
+        pytest.importorskip("dynamiqs")
+        import jax
+        import jax.numpy as jnp
+
+        from quchip import Capacitive, Chip, FluxTunableTransmon, Port, PortNetwork, Resonator
+        from quchip.backend.dynamiqs import DynamiqsBackend
+
+        asymmetry, g = 0.2, 0.010
+        q = FluxTunableTransmon(freq=6.0, anharmonicity=-0.2, asymmetry=asymmetry, levels=3, label="q")
+        r = Resonator(freq=5.0, levels=2, label="r")
+        chip = Chip([q, r], [Capacitive(q, r, g=g)], backend=DynamiqsBackend())
+        ported = FluxTunableTransmon(freq=6.0, anharmonicity=-0.2, asymmetry=asymmetry, levels=3, label="q")
+        port = Port(ported, rate=0.02, operator="charge", label="p")
+        port_chip = Chip([ported], port_network=PortNetwork.from_ports([port]), backend=DynamiqsBackend())
+
+        def exchange(flux_bias):
+            matrix = chip.with_params({"q.flux_bias": flux_bias}).hamiltonian().matrix(backend=chip.backend)
+            return jnp.real(matrix[2, 1])  # <1_q 0_r|H|0_q 1_r> = g s(Φ)
+
+        def port_element(flux_bias):
+            term = port_chip.with_params({"q.flux_bias": flux_bias}).resolve(frame="lab").port_terms[0]
+            return jnp.imag(term.operator.to_dense()[0, 1])  # <0|s i(a - a†)|1> = s(Φ)
+
+        def scale_derivative(flux):
+            x = np.cos(np.pi * flux) ** 2 + asymmetry**2 * np.sin(np.pi * flux) ** 2
+            return 0.125 * x**-0.875 * np.pi * np.sin(2.0 * np.pi * flux) * (asymmetry**2 - 1.0)
+
+        exchange_gradient = jax.jit(jax.grad(exchange))
+        port_gradient = jax.jit(jax.grad(port_element))
+        for flux in (0.0, 0.25, 0.3):
+            derivative = scale_derivative(flux)
+            assert float(exchange_gradient(flux)) == pytest.approx(g * derivative, rel=1e-10, abs=1e-15)
+            assert float(port_gradient(flux)) == pytest.approx(derivative, rel=1e-10, abs=1e-15)
+
+    @pytest.mark.validation
+    def test_charge_scale_converges_to_the_charge_basis_transmon(self):
+        """The exchange ratio J(Φ)/J(0) approaches the charge-basis result as (E_J,max/E_C)^(-1/2)."""
+        from quchip import ChargeBasisTransmon, FluxTunableTransmon
+
+        E_C = 0.2
+
+        def largest_deviation(ratio):
+            E_J_max = ratio * E_C
+
+            def charge_basis(flux):
+                return ChargeBasisTransmon(
+                    E_C=E_C, E_J=E_J_max * np.cos(np.pi * flux), levels=2, basis="eigen", num_basis=41, label="q"
+                )
+
+            def tunable(flux):
+                sweet_spot_freq = np.sqrt(8.0 * E_C * E_J_max) - E_C
+                q = FluxTunableTransmon(freq=sweet_spot_freq, anharmonicity=-E_C, levels=2, label="q")
+                q.flux_bias = flux
+                return q
+
+            reference = _qubit_resonator_exchange(charge_basis(0.0))
+            sweet_spot = _qubit_resonator_exchange(tunable(0.0))
+            return max(
+                abs(
+                    (_qubit_resonator_exchange(tunable(flux)) / sweet_spot)
+                    / (_qubit_resonator_exchange(charge_basis(flux)) / reference)
+                    - 1.0
+                )
+                for flux in (0.1, 0.2, 0.3)
+            )
+
+        deviations = [largest_deviation(ratio) for ratio in (60.0, 120.0, 240.0)]
+
+        # The anharmonic correction to the charge element has relative order sqrt(E_C/E_J) (Koch et al. 2007),
+        # so each doubling of E_J,max/E_C divides the remaining deviation by about sqrt(2).
+        assert deviations[0] / deviations[1] == pytest.approx(np.sqrt(2.0), rel=0.1)
+        assert deviations[1] / deviations[2] == pytest.approx(np.sqrt(2.0), rel=0.1)
+        assert deviations[2] < 0.1 / np.sqrt(240.0)
+
+    @pytest.mark.validation
+    @pytest.mark.optional_backend
+    def test_dispersive_shift_gradient_matches_finite_difference(self):
+        """jax.grad of the dressed dispersive shift in flux_bias matches a central difference."""
+        pytest.importorskip("dynamiqs")
+        import jax
+
+        from quchip import Capacitive, Chip, FluxTunableTransmon, Resonator
+        from quchip.backend.dynamiqs import DynamiqsBackend
+
+        q = FluxTunableTransmon(freq=6.0, anharmonicity=-0.2, asymmetry=0.2, levels=3, label="q")
+        r = Resonator(freq=5.0, levels=2, label="r")
+        chip = Chip([q, r], [Capacitive(q, r, g=0.010)], backend=DynamiqsBackend())
+
+        def shift(flux_bias):
+            rebound = chip.with_params({"q.flux_bias": flux_bias})
+            return rebound.freq("r", when={"q": 1}) - rebound.freq("r", when={"q": 0})
+
+        flux, step = 0.25, 1e-5
+        gradient = float(jax.grad(shift)(flux))
+        reference = (float(shift(flux + step)) - float(shift(flux - step))) / (2.0 * step)
+
+        # The central difference is accurate to about 3e-7 relative at this step.
+        assert gradient == pytest.approx(reference, rel=1e-5)
+
+
+# ===========================================================================
 # GaussianEdge envelope
 # ===========================================================================
 

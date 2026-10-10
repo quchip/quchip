@@ -33,7 +33,8 @@ def test_resolution_override_does_not_mutate_chip_default():
     assert exact.approximation == Exact()
     assert default.approximation == RWA()
     assert chip.approximation == RWA()
-    assert np.asarray(exact.hamiltonian().matrix(t=0.0))[0, 3] == pytest.approx(0.03)
+    # The charge operators i(a - a†) give the counter-rotating element -g.
+    assert np.asarray(exact.hamiltonian().matrix(t=0.0))[0, 3] == pytest.approx(-0.03)
     assert np.asarray(default.hamiltonian().matrix(t=0.0))[0, 3] == pytest.approx(0.0)
 
 
@@ -58,7 +59,7 @@ def test_rwa_explicit_bands_replace_the_default_selection_and_round_trip():
 
     matrix = np.asarray(chip.resolve().hamiltonian().matrix(t=0.0))
 
-    assert matrix[0, 3] == pytest.approx(0.03)
+    assert matrix[0, 3] == pytest.approx(-0.03)
     assert matrix[1, 2] == pytest.approx(0.0)
     assert Chip.from_dict(chip.to_dict()).approximation == strategy
 

@@ -289,7 +289,7 @@ class TestDroppedTerms:
             assert dt.source == "cap_q0_q1"
             assert "counter-rotating" in dt.reason.lower()
             # amplitude = the dropped band's largest matrix element — for the
-            # a†b† / ab bands of g·(a+a†)(b+b†) on 3-level ladders that is
+            # a†b† / ab bands of g·i(a-a†)·i(b-b†) on 3-level ladders that is
             # g·√2·√2 = 2g; frequency = the band's rotating-frame oscillation
             # |Δa·f_a + Δb·f_b| = f_a + f_b (dressed refs here, so approximate
             # to the hybridization shift).

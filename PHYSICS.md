@@ -57,21 +57,48 @@ Authored `LocalOps` operators, including `op.sigma_z` in a Hamiltonian declarati
 For `Capacitive`:
 
 ```text
-full: g * (a + a†)(b + b†)
+full: g * Q_a Q_b
+```
+
+`Q` is each endpoint's charge operator, the same operator that `ChargeDrive` uses. Between two Fock
+devices, `Q = i(a − a†)`:
+
+```text
+full: g * i(a − a†) * i(b − b†)
+    = g * (a†b + ab†) − g * (ab + a†b†)
 ```
 
 `interaction_hamiltonian()` always returns this full form, and you never author the RWA form `g * (a†b + ab†)` directly. The RWA form is what remains after the chip masks out, or the engine filters, the bands that change the total excitation.
 
-`a + a†` is the charge-like operator of a `FockSpace` endpoint. On a `ChargeSpace` or
-`PhaseGridSpace` endpoint (`ChargeBasisTransmon`, `Fluxonium`), the charge-like operator is `n`. So
-the same declaration authors `g * n_a n_b`, or `g * (a + a†) n_b` for a mixed pair
-(`EndpointOps.charge`, [`quchip/declarative/ops.py`](quchip/declarative/ops.py)). The two operators
-have different matrix elements. For a transmon, `<0|a + a†|1> = 1`, but
-`<0|n|1> ≈ (E_J/8E_C)^{1/4}/√2`. One numerical `g` is therefore not one physical coupling across
-bases. Match models across bases through dressed quantities (exchange, χ, ZZ), not through `g`.
+A device declares its charge operator with `charge_coupling_operator()`, and `EndpointOps.charge`
+([`quchip/declarative/ops.py`](quchip/declarative/ops.py)) returns it. On a device without that
+method, the local space sets the operator: `a + a†` on a `FockSpace`, and `n` on a `ChargeSpace` or
+`PhaseGridSpace`. The built-in devices declare these operators:
 
-`ChargeDrive` on a Fock device addresses the quadrature `i(a − a†)`, whereas the coupling charge
-operator is `a + a†`. Both operators are charge-like and differ by a phase convention (§2.3).
+| Device | Charge operator `Q` |
+| --- | --- |
+| `DuffingTransmon`, `Resonator`, `KerrCavity`, `Qubit` | `i(a − a†)` |
+| `FluxTunableTransmon` | `s(Φ) i(a − a†)` |
+| `ChargeBasisTransmon`, `Fluxonium` | `n` |
+| `EigenbasisDevice` | the supplied `charge_operator` |
+
+At fixed E_C, the charge zero-point amplitude of a transmon scales as `E_J^{1/4}` (Koch et al.,
+PRA 76, 042319 (2007), §III). The `FluxTunableTransmon` factor
+
+```text
+s(Φ) = (E_J(Φ)/E_J,max)^{1/4} = (cos²(πΦ) + d² sin²(πΦ))^{1/8}
+```
+
+takes it relative to Φ = 0, so `g` and the `ChargeDrive` amplitude refer to the sweet spot. A chip
+at `flux_bias = 0` therefore keeps its exchange, and the exchange decreases as `flux_bias` moves
+away from 0. The phase operator is `(a + a†)/s(Φ)`. `s` follows the static `flux_bias`. A
+`FluxDrive` pulse changes only the device frequency (§6.2), so `s` keeps its static value during
+the pulse.
+
+The charge operators have different matrix elements. `|<0|Q|1>|` is 1 on a `DuffingTransmon` or a
+`Resonator` and `s(Φ)` on a `FluxTunableTransmon`. On a `ChargeBasisTransmon`,
+`|<0|n|1>| ≈ (E_J/8E_C)^{1/4}/√2`. One numerical `g` is therefore not one physical coupling across
+bases. Match models across bases through dressed quantities (exchange, χ, ZZ), not through `g`.
 
 ### 2.3 Chip and sequence Hamiltonians
 
@@ -637,11 +664,11 @@ The chip owns one explicit approximation strategy. `Exact()` keeps every term in
 
 ### 6.1 Static operator bands
 
-For `Capacitive`:
+For `Capacitive` between two Fock devices:
 
 ```text
-full: g * (a + a†)(b + b†)
-     = g * (a†b + ab†) + g * (ab + a†b†)
+full: g * i(a − a†) * i(b − b†)
+    = g * (a†b + ab†) − g * (ab + a†b†)
 ```
 
 - `a†b + ab†` has total excitation weight zero and stays under `RWA()`

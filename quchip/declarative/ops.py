@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from quchip.declarative.expr import PhysicsExpr
+from quchip.declarative.expr import PhysicsExpr, as_operator_expr
 from quchip.devices.spaces import ChargeSpace, FockSpace, LocalSpace, PhaseGridSpace
 
 
@@ -40,7 +40,8 @@ class LocalOps:
     space : LocalSpace
         Authored local Hilbert space.
     device : device or None, default None
-        Owning device, required for derived energy-level operators.
+        Owning device. It is required for derived energy-level operators and
+        supplies a declared charge operator to :attr:`charge`.
     """
 
     label: str
@@ -113,7 +114,22 @@ class LocalOps:
 
     @property
     def charge(self) -> PhysicsExpr:
-        """Physical charge-like drive operator for this local representation."""
+        """Charge operator that couplings use for this endpoint.
+
+        A device that declares ``charge_coupling_operator()`` supplies the
+        operator, so its couplings and its ``ChargeDrive`` act through the
+        same charge. Without such a device, the local space sets the operator:
+        ``a + a†`` on a ``FockSpace``, ``n`` on a ``ChargeSpace`` or
+        ``PhaseGridSpace``, and the space's ``"charge"`` operator otherwise.
+        """
+        declared = getattr(self.device, "charge_coupling_operator", None)
+        if declared is not None:
+            return as_operator_expr(
+                declared(),
+                labels=(self.label,),
+                dims=(self.space.dimension,),
+                name=rf"\hat Q_{{{self.label}}}",
+            )
         if isinstance(self.space, FockSpace):
             return self.x
         if isinstance(self.space, (ChargeSpace, PhaseGridSpace)):

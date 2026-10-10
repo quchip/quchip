@@ -201,7 +201,7 @@ def _transmon_oscillator_chip() -> Chip:
     """A quchip transmon capacitively coupled to a resonator (non-RWA form).
 
     The coupling carries ``approximation=Exact()`` so the chip's own dressed spectrum uses
-    the full ``(a + a†)(b + b†)`` form — the same form export emits — making
+    the full ``g·Q_a Q_b`` form — the same form export emits — making
     the export oracle a clean, approximation-free comparison.
     """
     tmon = ChargeBasisTransmon(E_C=0.2, E_J=30.0, n_g=0.25, levels=4, num_basis=63, basis="eigen", label="tmon")
@@ -342,7 +342,7 @@ def test_export_drops_control_equipment_with_warning():
 def test_export_tunable_capacitive_matches_oracle():
     """A ``TunableCapacitive`` chip exports its effective dipole coupling faithfully.
 
-    Exported in its full ``g_0·(a + a†)(b + b†)`` form (same as ``Capacitive``);
+    Exported in its full ``g_0·Q_a Q_b`` form (same as ``Capacitive``);
     the chip carries ``approximation=Exact()`` so its own dressed spectrum uses that form too,
     making the export oracle approximation-free.
     """
