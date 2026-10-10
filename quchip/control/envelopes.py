@@ -161,8 +161,12 @@ class Envelope(Registrable, ABC, registry_root=True, metaclass=DeclarativeMeta):
         """Return local feature samples for automatic grids, overridable for narrow shapes.
 
         The default probes 65 evenly spaced points, and built-in envelopes
-        refine their characteristic widths. This guides sampling, not solver
-        accuracy.
+        refine their characteristic widths. The QuTiP backend also interpolates
+        the envelope linearly between knots that include these times, with a
+        close knot on each side of each time. List the time of each step, so
+        that the step stays sharp at any pulse start. QuTiP otherwise ramps a
+        step across one interpolation interval of up to 25 ps. The dynamiqs
+        backend evaluates the envelope directly.
         """
         return qnp.linspace(0.0, self.duration, 65)
 

@@ -107,6 +107,11 @@ _MIN_WINDOW_INTERIOR_SAMPLES = 41
 # Zero-valued margins expose each discontinuity; a sparse skeleton covers the remaining zero plateau.
 _WINDOW_EDGE_PADDING_NS = 1.0
 _CANONICAL_BASE_SKELETON_POINTS = 3
+# Gap between a feature time and the knot on each side, in float spacings of the feature
+# time. A pulse start or a line delay shifts the clock, and each shift rounds a knot's
+# local time by up to one spacing. At the adjacent float, the local time can then fall
+# on the wrong side of a step. Four spacings cover a start and a delay.
+_FEATURE_KNOT_GAP_SPACINGS = 4
 
 
 def _collect_window_bounds(signal: Any) -> list[tuple[float, float]]:
@@ -133,10 +138,24 @@ def _local_window_subgrid(start: float, stop: float) -> np.ndarray:
     return np.unique(np.concatenate([before, interior, after, [start, stop]]))
 
 
+def _bracketed_feature_times(times: np.ndarray) -> np.ndarray:
+    """Return absolute feature times with a close knot on each side of each one.
+
+    The two knots keep a discontinuity at a feature time sharp in a linear
+    interpolant, at any pulse start. Below 1 ns the gap uses the float spacing
+    of 1 ns, so a feature at t = 0 gets no subnormal neighbor.
+    """
+    gap = _FEATURE_KNOT_GAP_SPACINGS * np.maximum(np.spacing(np.abs(times)), np.spacing(1.0))
+    return np.concatenate([times - gap, times, times + gap])
+
+
 def _augmented_sample_grid(envelope: Any, base_grid: Any) -> np.ndarray:
-    """Use the base grid without windows; otherwise combine the solve-span skeleton,
-    feature times, adjacent edge floats and local subgrids. Window accuracy must
-    not depend on output-tlist density or idle-span length."""
+    """Return the base grid for an envelope without windows.
+
+    Otherwise, combine the solve-span skeleton, the bracketed feature times and
+    the local window subgrids. Window accuracy must not depend on output-tlist
+    density or idle-span length.
+    """
     bounds = _collect_window_bounds(envelope)
     base = np.asarray(base_grid, dtype=float)
     if not bounds:
@@ -145,20 +164,15 @@ def _augmented_sample_grid(envelope: Any, base_grid: Any) -> np.ndarray:
     from quchip.engine.sampling import signal_feature_times
 
     pieces = [np.linspace(lo, hi, _CANONICAL_BASE_SKELETON_POINTS)]
-    for features in signal_feature_times(envelope):
-        pieces.append(features[(features >= lo) & (features <= hi)])
+    # Feature times include every window edge, so a pulse edge and an envelope
+    # step listed in sampling_times() stay sharp, including at a grid endpoint.
+    pieces.extend(_bracketed_feature_times(features) for features in signal_feature_times(envelope))
     for start, stop in bounds:
         clipped_start, clipped_stop = max(start, lo), min(stop, hi)
-        if clipped_stop < clipped_start:
-            continue
-        # Adjacent floats preserve a discontinuity without giving it a
-        # finite interpolation ramp, including a pulse touching an endpoint.
-        edges = np.array([np.nextafter(start, -np.inf), start, stop, np.nextafter(stop, np.inf)])
-        pieces.append(edges[(edges >= lo) & (edges <= hi)])
         if clipped_stop > clipped_start:
-            subgrid = _local_window_subgrid(clipped_start, clipped_stop)
-            pieces.append(subgrid[(subgrid >= lo) & (subgrid <= hi)])
-    return np.unique(np.concatenate(pieces))
+            pieces.append(_local_window_subgrid(clipped_start, clipped_stop))
+    grid = np.unique(np.concatenate(pieces))
+    return grid[(grid >= lo) & (grid <= hi)]
 
 
 def _sample_coeff_array(signal: Any, sample_tlist: Any) -> np.ndarray:
