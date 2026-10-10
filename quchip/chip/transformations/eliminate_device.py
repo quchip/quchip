@@ -117,6 +117,37 @@ def _real(value: Any) -> Any:
     return concrete_array_module(value).real(value)
 
 
+def _unit_exchange_element(edge: CouplingModel, bases: Any, backend: Any) -> Any:
+    """Return the edge's ``<1_a 0_b|H|0_a 1_b>`` per unit strength, in its endpoints' energy coordinates.
+
+    A capacitive edge, ``strength * Q_a Q_b``, gives ``conj(<0|Q_a|1>) <0|Q_b|1>``.
+    Each factor comes from the charge operator that the edge's interaction
+    receives, one endpoint at a time, so no two-device product space is formed.
+    The factor is 1 for Duffing and resonator endpoints. The first-transition
+    exchange edge acts between the lowest energy levels and gives 1.
+    """
+    if isinstance(edge, _MediatedExchange):
+        return 1.0
+    elements = []
+    for ops in edge._endpoint_ops():
+        charge = _array(backend.to_array(materialize_expr(ops.charge, backend)))
+        vectors = bases[ops.label].energy_vectors
+        elements.append(vectors[:, 0].conj() @ charge @ vectors[:, 1])
+    return elements[0].conj() * elements[1]
+
+
+def _in_edge_units(element: Any, unit: Any) -> Any:
+    """Return the real edge strength that reproduces ``element`` from the edge's ``unit`` element.
+
+    A survivor whose charge operator has no ``0-1`` element gives a zero
+    ``unit``. The edge then carries no strength, and the retained correction
+    keeps the whole element. The inner guard keeps the gradient finite.
+    """
+    xp = concrete_array_module(element, unit)
+    nonzero = unit != 0.0
+    return xp.where(nonzero, xp.real(element / xp.where(nonzero, unit, 1.0)), 0.0)[()]
+
+
 def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
     """Adiabatically eliminate a far-detuned device and fold its effect into the survivors.
 
@@ -369,9 +400,14 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
             "chi": chi_value,
             "kappa": 0.0,
         })
+    # Resolved exchange element <1_s|H|1_mode> of each touching survivor, in
+    # the energy coordinates the route reads. It differs from the authored
+    # strength when a charge operator has a non-unit or complex 0-1 element.
+    mode_row = bare_index(labels, dims, mode_label)
+    leg_element = {label: ctx.h[bare_index(labels, dims, label), mode_row] for label in touching_labels}
     for survivor_label, coupling in survivors:
         delta = incoming_frequencies[survivor_label] - incoming_frequencies[mode_label]
-        g_over_delta = abs(coupling.coupling_strength / delta)
+        g_over_delta = abs(leg_element[survivor_label] / delta)
         validity[coupling.label] = {
             "g_over_delta": g_over_delta,
             "is_valid": g_over_delta < 0.1,
@@ -383,46 +419,46 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
         # The full matrix remains authoritative; an explicit mediated edge
         # supplies its exchange component and a target for converted flux drives.
         # Authored direct edges retain their parameters, channels and controls.
-        leg_g = {
-            label: sum(c.coupling_strength for endpoint, c in survivors if endpoint == label)
-            for label in touching_labels
-        }
         mode_freq = incoming_frequencies[mode_label]
         leg_delta = {lbl: incoming_frequencies[lbl] - mode_freq for lbl in touching_labels}
 
         capacitive_legs = all(isinstance(edge, (Capacitive, TunableCapacitive)) for _, edge in survivors)
+        edge_type: type[CouplingModel]
+        if not capacitive_legs:
+            edge_type, strength_name = _MediatedExchange, "g"
+        elif mode_is_frequency_controlled:
+            edge_type, strength_name = TunableCapacitive, "g_0"
+        else:
+            edge_type, strength_name = Capacitive, "g"
         pairs = list(combinations(touching_labels, 2))
         single_pair = len(pairs) == 1
         used_labels = set(survivor_labels) | {edge.label for edge in kept_couplings}
         for label_a, label_b in pairs:
-            before = ctx.h[bare_index(labels, dims, label_a), bare_index(labels, dims, label_b)]
-            mediated_strength = _real(pair_params[("J", label_a, label_b)] - before)
-            dj_domega_c = (
-                leg_g[label_a] * leg_g[label_b] / 2.0
-                * (1.0 / leg_delta[label_a] ** 2 + 1.0 / leg_delta[label_b] ** 2)
-            )
-            zz = reduction.residual_zz(ctx, pair_params, label_a, label_b)
-            pathways = reduction.pathways(ctx, pair_params, label_a, label_b)
-
             fresh_label = f"elim_{mode_label}" if single_pair else f"elim_{mode_label}_{label_a}_{label_b}"
             edge_label = fresh_label
             suffix = 1
             while edge_label in used_labels:
                 edge_label = f"{fresh_label}_{suffix}"
                 suffix += 1
-            mediated: CouplingModel
-            if not capacitive_legs:
-                mediated = _MediatedExchange(
-                    reduced[label_a], reduced[label_b], g=mediated_strength, label=edge_label,
-                )
-            elif mode_is_frequency_controlled:
-                mediated = TunableCapacitive(
-                    reduced[label_a], reduced[label_b], g_0=mediated_strength, label=edge_label,
-                )
-            else:
-                mediated = Capacitive(
-                    reduced[label_a], reduced[label_b], g=mediated_strength, label=edge_label,
-                )
+
+            # Strengths use the units of an edge authored between the
+            # survivors: each resolved element is divided by the emitted
+            # edge's own element per unit strength.
+            unit = _unit_exchange_element(
+                edge_type(reduced[label_a], reduced[label_b], **{strength_name: 1.0}, label=edge_label),
+                source_bases, chip.backend,
+            )
+            before = ctx.h[bare_index(labels, dims, label_a), bare_index(labels, dims, label_b)]
+            mediated_strength = _in_edge_units(pair_params[("J", label_a, label_b)] - before, unit)
+            dj_domega_c = (
+                _in_edge_units(leg_element[label_a] * leg_element[label_b].conj(), unit) / 2.0
+                * (1.0 / leg_delta[label_a] ** 2 + 1.0 / leg_delta[label_b] ** 2)
+            )
+            zz = reduction.residual_zz(ctx, pair_params, label_a, label_b)
+            pathways = reduction.pathways(ctx, pair_params, label_a, label_b)
+
+            mediated = edge_type(reduced[label_a], reduced[label_b], **{strength_name: mediated_strength},
+                                 label=edge_label)
             kept_couplings.append(mediated)
             used_labels.add(edge_label)
 
@@ -436,9 +472,10 @@ def reduce_device(chip: "Chip", target: Any, method: str) -> EliminationResult:
             }
 
         notes.append(
-            "Mediated exchange J = g_a*g_b/2*(1/Δ_a + 1/Δ_b) per survivor pair; mediated terms "
-            "beyond exchange (e.g. coupler-induced ZZ) are a higher-order correction under "
-            "method='sw' (available exactly as 'zz' under method='exact')."
+            "Mediated exchange J = g_a*conj(g_b)/2*(1/Δ_a + 1/Δ_b) per survivor pair, with resolved leg "
+            "elements g_s = <1_s|H|1_mode>. Each emitted edge carries J in its own units. Mediated terms "
+            "beyond exchange, e.g. coupler-induced ZZ, are a higher-order correction under method='sw'. "
+            "method='exact' reports them exactly as 'zz'."
         )
         effective_params["exchange"] = (
             next(iter(exchange_by_pair.values())) if single_pair else exchange_by_pair

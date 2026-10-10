@@ -119,7 +119,9 @@ def reduce_coupling(chip: "Chip", target: Any, method: str) -> EliminationResult
         for label, index in zip(pair_labels, indices)
     })
     delta = pair_e[indices[0]] - pair_e[indices[1]]
-    ratio = jnp.abs(coupling.coupling_strength / delta)
+    # The resolved exchange element, not the authored strength: a charge
+    # operator's 0-1 element can be complex or differ from one.
+    ratio = jnp.abs(pair_h[indices[0], indices[1]] / delta)
     validity: dict[str, Any] = LabelKeyedDict({coupling_label: {"g_over_delta": ratio, "is_valid": ratio < .1}})
     reattach_equipment(chip, final, equipment, survivor_lines, retarget_plan,
                        mode_label=coupling_label, result_kind=result_kind, edges={}, notes=notes)
