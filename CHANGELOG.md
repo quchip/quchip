@@ -53,24 +53,12 @@ This file records notable user-visible changes to quchip.
   assemble a superoperator whose estimated peak exceeds the available memory.
   Previously, the operating system killed them. The dynamiqs stationary Liouvillian
   uses the same check. ([#80](https://github.com/quchip/quchip/issues/80))
-- On the QuTiP backend, an envelope step at a time listed in `sampling_times()`
-  now stays sharp at any pulse start and line delay, up to float precision.
-  Each listed time and window edge gets a close knot on each side. The gap
-  covers the rounding of every shifted clock that places or evaluates the
-  feature. The transition therefore spans a few float spacings of the largest
-  clock time, about 2e-13 ns for a step near 100 ns. The knots follow the
-  arithmetic of signal evaluation, so a float32 duration or start time also
-  keeps the pulse ends and steps sharp. Previously only window edges had such
-  knots, and a step became a linear ramp across one 25 ps interval. At a
-  37.3 ns start, a two-level envelope with adjacent floats listed around its
-  step had an infidelity of 1.6e-7 against two abutting squares. Steps at
-  unlisted times still become ramps.
-  ([#94](https://github.com/quchip/quchip/issues/94))
-- A QuTiP solve whose `tlist` starts before 0 no longer emits overflow
-  `RuntimeWarning`s for a pulse that starts at exactly t = 0. The pulse edge's
-  lower knot was the subnormal float −4.9e-324 ns, and QuTiP divided by that
-  knot spacing. The solve results were already correct.
-  ([#95](https://github.com/quchip/quchip/issues/95))
+- QuTiP preserves envelope steps listed in `sampling_times()` after pulse
+  starts and line delays, within floating-point precision. Previously, these
+  steps could become interpolation ramps. Unlisted steps still require explicit
+  feature times. Pulse edges at zero no longer cause interpolation overflow
+  warnings when the solve starts before zero.
+  ([#104](https://github.com/quchip/quchip/pull/104))
 
 #### Performance
 
