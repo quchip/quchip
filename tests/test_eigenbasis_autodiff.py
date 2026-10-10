@@ -122,8 +122,9 @@ def test_canonical_energy_vector_phase_and_derivative_agree():
 
 
 def test_traced_analysis_stays_inside_its_trace() -> None:
-    """A traced chip reuses its dressed analysis within one trace, never across nested or later traces."""
+    """Analysis computed inside a trace is reused within that trace only, for traced and concrete chips alike."""
     chip = _dispersive_chip()
+    single = Chip([DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")], backend="dynamiqs")
 
     def shifted(freq):
         rebound = chip.with_params({"q.freq": freq})
@@ -132,12 +133,12 @@ def test_traced_analysis_stays_inside_its_trace() -> None:
             return total + rebound.freq("q"), None
 
         inner, _ = jax.lax.scan(body, 0.0, None, length=2)
-        return inner + rebound.freq("q") + rebound.freq("r") - rebound.freq("q")
+        return inner + rebound.freq("q") + rebound.freq("r") - rebound.freq("q") + single.freq("q")
 
     value, slope = jax.jit(jax.value_and_grad(shifted))(5.0)
     again, _ = jax.jit(jax.value_and_grad(shifted))(5.1)
     eager = [chip.with_params({"q.freq": f}) for f in (5.0, 5.0 + 1e-5, 5.0 - 1e-5, 5.1)]
-    expected = [2 * c.freq("q") + c.freq("r") for c in eager]
+    expected = [2 * c.freq("q") + c.freq("r") + single.freq("q") for c in eager]
     np.testing.assert_allclose(float(value), expected[0], rtol=1e-12)
     np.testing.assert_allclose(float(slope), (expected[1] - expected[2]) / 2e-5, rtol=1e-6)
     np.testing.assert_allclose(float(again), expected[3], rtol=1e-12)

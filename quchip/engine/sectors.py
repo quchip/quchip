@@ -32,6 +32,7 @@ from quchip.engine.assembly import (
 )
 from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import concrete_array_module, contains_tracer
+from quchip.utils.values import scoped_entry, scoped_hit
 
 if TYPE_CHECKING:
     from quchip.approximations import Approximation
@@ -176,14 +177,17 @@ class SectorModel:
         self._spaces: dict[int, SectorSpace] = {}
         self._pairs: dict[tuple[tuple[int, ...], int, int],
                           tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
-        self._eigensystems: dict[int, SectorEigensystem] = {}
+        self._eigensystems: dict[int, tuple[Any, Any, SectorEigensystem]] = {}
+        if self.network is not None and self.network.generated_pairs:
+            # Cascaded ports generate a Hamiltonian, so their couplings belong to the static model.
+            self.port_couplings()
 
     @property
     def traced(self) -> bool:
-        """Return whether the device energies or static terms hold JAX tracers."""
-        return contains_tracer((self.energies, tuple(operator for operator, _ in self.terms)))
+        """Return whether the device energies, static terms or cascaded port couplings hold JAX tracers."""
+        return contains_tracer((self.energies, tuple(operator for operator, _ in self.terms), self._ports))
 
-    @functools.cached_property
+    @property
     def contributions(self) -> tuple[tuple[Any, ...], ...]:
         """Collapse contributions of the chip, with retained coordinate maps applied."""
         return tuple(self.chip._collapse_contributions_with_owners(self.bases))
@@ -302,7 +306,8 @@ class SectorModel:
     def eigensystem(self, total: int) -> SectorEigensystem:
         """Diagonalize one sector and assign its bare labels.
 
-        Each sector is diagonalized once per model. A concrete block is
+        Each sector is diagonalized once per model, and a result that holds
+        tracers is reused only inside its trace. A concrete block is
         diagonalized on the host, and a traced block uses one ``eigh``.
 
         Parameters
@@ -310,18 +315,20 @@ class SectorModel:
         total : int
             Total energy-level index of the sector.
         """
-        if total not in self._eigensystems:
-            space = self.space(total)
-            eigenvalues, eigenvectors = _sector_eigh(self.hamiltonian(total), np.full(space.size, total))
-            labeling = label_eigensystem(eigenvectors, BareProductReference((space.size,)),
-                                         policy=assign_rowwise_greedy)
-            if not contains_tracer(eigenvalues):
-                # Concrete energies take the backend's array type, as those of the full eigensystem do.
-                eigenvalues = self.chip.backend.array_module.asarray(eigenvalues)
-            self._eigensystems[total] = SectorEigensystem(
-                space, eigenvalues, eigenvectors, dataclasses.replace(labeling, keys=space.labels),
-            )
-        return self._eigensystems[total]
+        entry = self._eigensystems.get(total)
+        if scoped_hit(entry, total):
+            return entry[2]
+        space = self.space(total)
+        eigenvalues, eigenvectors = _sector_eigh(self.hamiltonian(total), np.full(space.size, total))
+        labeling = label_eigensystem(eigenvectors, BareProductReference((space.size,)), policy=assign_rowwise_greedy)
+        if not contains_tracer(eigenvalues):
+            # Concrete energies take the backend's array type, as those of the full eigensystem do.
+            eigenvalues = self.chip.backend.array_module.asarray(eigenvalues)
+        system = SectorEigensystem(space, eigenvalues, eigenvectors, dataclasses.replace(labeling, keys=space.labels))
+        # Inside a trace, even a concrete block gives a traced labeling.
+        traced = contains_tracer((eigenvalues, eigenvectors, labeling.indices, labeling.overlaps, labeling.margins))
+        self._eigensystems[total] = scoped_entry(total, system, traced=traced)
+        return system
 
     def labeled_subspace(self, labels: Sequence[tuple[int, ...]]) -> tuple[Any, Any, list[int], Any]:
         """Return the eigenpairs of the sectors that ``labels`` occupy and the labels' positions.
