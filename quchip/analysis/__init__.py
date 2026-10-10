@@ -1,4 +1,4 @@
-"""quchip.analysis — physics analysis tools.
+"""quchip.analysis: physics analysis tools.
 
 Sub-modules
 -----------

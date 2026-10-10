@@ -39,29 +39,29 @@ def plot_sequence(
 ) -> Figure:
     """Plot a :class:`~quchip.control.sequence.QuantumSequence` as a lane chart.
 
-    Each row ("lane") is a ``(target_label, drive_label)`` channel; each
-    bar is one scheduled envelope, drawn from its ``start_time`` to
-    ``start_time + envelope.duration`` on the x-axis (ns), annotated with
-    the envelope class name and carrier frequency in GHz. Idle channels
-    that were created (``channel_cursors`` advanced) but never scheduled
-    show up as empty lanes.
+    Each row ("lane") is a ``(target_label, drive_label)`` channel. Each bar is
+    one scheduled envelope, spanning its ``start_time`` to
+    ``start_time + envelope.duration`` on the x-axis (ns) and annotated with
+    the envelope class name and the carrier frequency in GHz. Idle channels
+    that were created (``channel_cursors`` advanced) but never scheduled show
+    as empty lanes.
 
     Parameters
     ----------
     sequence : QuantumSequence
         The schedule to visualise.
     ax : matplotlib.axes.Axes, optional
-        Existing axes to draw onto. When ``None`` a new figure is created.
+        Existing axes to draw on. When ``None``, the function makes a new figure.
     lane_order : list of (target_label, drive_label), optional
-        Explicit ordering (top-to-bottom). Defaults to sorted lane keys.
+        Explicit order (top to bottom). The default is the sorted lane keys.
     color_by : {"device", "line"}
-        Group bars by target device or by drive line for colour mapping.
+        Group bars by target device or by drive line for the colour mapping.
 
     Returns
     -------
     Figure
-        The figure holding the lane-chart axes (``ax.figure`` when *ax*
-        was given).
+        The figure that holds the lane-chart axes (``ax.figure`` when *ax* was
+        given).
 
     Raises
     ------

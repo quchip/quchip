@@ -17,29 +17,29 @@ class FrequencyModulatedMode(FockDevice):
     r"""Harmonic mode with a prescribed sinusoidal frequency variation.
 
     The authored Hamiltonian is :math:`H_0=\omega_0 n` and the time term is
-    :math:`\delta\omega\cos(2\pi\nu_m t+\phi_m)n`; frequencies are ordinary
-    GHz and ``t`` is in ns.
+    :math:`\delta\omega\cos(2\pi\nu_m t+\phi_m)n`. Frequencies are ordinary GHz
+    and ``t`` is in ns.
 
     Parameters
     ----------
     frequency : float
-        Bare mode frequency :math:`\omega_0` in GHz; positive.
+        Bare mode frequency :math:`\omega_0` in GHz. Must be positive.
     modulation_amplitude : float
-        Frequency excursion :math:`\delta\omega` in GHz; may be signed.
+        Frequency excursion :math:`\delta\omega` in GHz. Can be signed.
     modulation_frequency : float
-        Modulation frequency :math:`\nu_m` in GHz; positive.
+        Modulation frequency :math:`\nu_m` in GHz. Must be positive.
     modulation_phase : float, default 0.0
         Phase :math:`\phi_m` in radians.
     levels : int, default 10
         Fock truncation dimension.
     label : str or None, default None
-        Device label; ``None`` selects an automatic label.
+        Device label. ``None`` selects an automatic label.
     T1 : float or None, default None
-        Energy-relaxation time in ns; ``None`` disables T1 relaxation.
+        Energy-relaxation time in ns. ``None`` disables T1 relaxation.
     T2 : float or None, default None
-        Total 0-1 coherence time in ns; if both are set, ``T2 <= 2*T1``.
+        Total 0-1 coherence time in ns. If both are set, ``T2 <= 2*T1``.
     thermal_occupation : float or None, default None
-        Dimensionless mean bath occupation; ``None`` disables absorption.
+        Dimensionless mean bath occupation. ``None`` disables absorption.
 
     References
     ----------

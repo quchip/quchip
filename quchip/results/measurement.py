@@ -144,14 +144,14 @@ class VNAMeasurementStatistics:
         output : port object or str
             First output plane.
         other : port object, str, or None, optional
-            Second output plane; ``None`` selects ``output``.
+            Second output plane. ``None`` selects ``output``.
         """
         i = 2 * _index(self.ports, output)
         j = i if other is None else 2 * _index(self.ports, other)
         return self.iq_covariance[..., i:i+2, j:j+2]
 
     def noise_contributions(self, output: Any) -> Mapping[str, Any]:
-        """Return integrated source covariance blocks, including detector vacuum.
+        """Return integrated source covariance blocks, with detector vacuum.
 
         Parameters
         ----------
@@ -162,10 +162,10 @@ class VNAMeasurementStatistics:
         return MappingProxyType({key: value[..., i:i+2, i:i+2] for key, value in self.contributions.items()})
 
     def sample(self, count: int, *, seed: int | None = None, key: Any = None) -> VNAMeasurementSamples:
-        """Draw joint Gaussian IQ samples without running a physical solver.
+        """Draw joint Gaussian IQ samples without a physical solver run.
 
         Use seed for NumPy draws or an explicit JAX random key. The covariance
-        includes anomalous/cross-output second moments, but does not specify
+        includes anomalous/cross-output second moments but does not specify
         higher-order non-Gaussian photon statistics.
 
         Parameters
@@ -175,7 +175,7 @@ class VNAMeasurementStatistics:
         seed : int or None, optional
             NumPy random seed.
         key : jax.Array or None, optional
-            JAX random key; mutually exclusive with ``seed``.
+            JAX random key. Do not use it together with ``seed``.
         """
         xp = array_namespace(self.values)
         mean = xp.stack((xp.real(self.values), xp.imag(self.values)), axis=-1)
@@ -190,7 +190,7 @@ class VNAMeasurementStatistics:
         Parameters
         ----------
         factors : mapping
-            Complex amplitude factor keyed by output plane; omitted outputs use one.
+            Complex amplitude factor keyed by output plane. Outputs that are not in the mapping use one.
         """
         xp = select_array_module(is_jax_array(self.values) or contains_tracer(tuple(factors.values())))
         normalized = {resolve_label(port): value for port, value in factors.items()}
@@ -208,12 +208,13 @@ class VNAMeasurementStatistics:
 
 @dataclass(frozen=True)
 class VNAMeasurement(MeanFieldResponseResult):
-    """Physical means and spectra captured before choosing a receiver.
+    """Physical means and spectra captured before you choose a receiver.
 
-    noise_components maps physical source labels to (white covariance,
-    excess spectral covariance). The latter has an offset-frequency axis
-    before its two IQ axes. Device-generated excess includes input-system
-    correlations and can be negative; it is not an independent random source.
+    noise_components maps physical source labels to (white covariance, excess
+    spectral covariance). The excess spectral covariance has an
+    offset-frequency axis before its two IQ axes. Device-generated excess
+    includes input-system correlations and can be negative. It is not an
+    independent random source.
 
     Attributes
     ----------
@@ -286,9 +287,9 @@ class VNAMeasurement(MeanFieldResponseResult):
     def mode_amplitude(self, mode: Any) -> Any:
         """Return captured <a> in the mode's stationary frame, in sqrt(photons).
 
-        Use ``mode_frequency(mode)`` for that frame's frequency in GHz.
-        This is the internal field with the full declared wiring included.
-        The returned array follows the measurement's sweep axes.
+        Use ``mode_frequency(mode)`` for that frame's frequency in GHz. The
+        value is the internal field with the full declared wiring included. The
+        returned array follows the measurement's sweep axes.
 
         Parameters
         ----------
@@ -298,11 +299,11 @@ class VNAMeasurement(MeanFieldResponseResult):
         return self.mode_amplitudes[..., self._mode_index(mode)]
 
     def photon_number(self, mode: Any) -> Any:
-        """Return captured <a†a>, including coherent and incoherent occupation.
+        """Return captured <a†a>, with coherent and incoherent occupation.
 
-        Available for authored Fock modes, including nonlinear modes. The
-        general solver retains the declared basis projection and truncation.
-        Receiver integration and calibration do not change this occupation.
+        Available for authored Fock modes and nonlinear modes. The general
+        solver keeps the declared basis projection and truncation. Receiver
+        integration and calibration do not change this occupation.
 
         Parameters
         ----------
@@ -312,7 +313,7 @@ class VNAMeasurement(MeanFieldResponseResult):
         return self.photon_numbers[..., self._mode_index(mode)]
 
     def mode_frequency(self, mode: Any) -> Any:
-        """Return the captured stationary frame frequency of a mode in GHz.
+        """Return a mode's captured stationary frame frequency in GHz.
 
         Parameters
         ----------
@@ -337,9 +338,10 @@ class VNAMeasurement(MeanFieldResponseResult):
         """Return physical output noise in quanta, W/Hz, or dBm/Hz.
 
         The final axis is ``noise_frequencies`` relative to each probe carrier.
-        This normally ordered spectrum excludes coherent signal and receiver
-        vacuum. Power units use hf times occupation at the absolute sideband
-        frequency and require positive physical frequencies. No solve is run.
+        This normally ordered spectrum does not include coherent signal and
+        receiver vacuum. Power units use hf times occupation at the absolute
+        sideband frequency and require positive physical frequencies. No solve
+        is run.
 
         Parameters
         ----------
@@ -389,6 +391,6 @@ class VNAMeasurement(MeanFieldResponseResult):
         seed : int or None, optional
             NumPy random seed.
         key : jax.Array or None, optional
-            JAX random key; mutually exclusive with ``seed``.
+            JAX random key. Do not use it together with ``seed``.
         """
         return self.statistics(receiver=receiver).sample(count, seed=seed, key=key)

@@ -24,7 +24,8 @@ class OutputNetwork:
 
     Steps are topologically ordered. Base maps reconstruct an unaffected
     terminal from the complete unitary boundary. Only downstream steps can
-    change; no reference step may feed a quantum coupling or a feedback loop.
+    change, and no reference step can feed a quantum coupling or a feedback
+    loop.
     """
 
     steps: tuple[OutputStep, ...]
@@ -34,7 +35,7 @@ class OutputNetwork:
 
     @property
     def colored(self) -> bool:
-        """Whether internal propagation gives the spectra frequency dependence."""
+        """Return whether internal propagation makes the spectra frequency-dependent."""
         return any(isinstance(step.reference, (ReferenceFilter, ReferenceDelay)) for step in self.steps)
 
     def evaluate(self, frequency: Any, xp: Any) -> tuple[Any, dict[str, Any]]:

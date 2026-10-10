@@ -15,7 +15,7 @@ class CosineEnvelope(Envelope):
     Parameters
     ----------
     duration : float
-        Pulse duration in ns; positive.
+        Pulse duration in ns. Must be positive.
     amplitude : float, default 1.0
         Peak real amplitude. The returned envelope is complex with zero
         quadrature.

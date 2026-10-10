@@ -1,10 +1,10 @@
-"""Retain a captured change of coordinates on a rebuilt chip.
+"""Keep a captured change of coordinates on a rebuilt chip.
 
 Coupling and effective-term reductions rotate the whole product space by a
-unitary derived from one isolated interaction. Devices and kept edges retain
-their authored terms. One :class:`~quchip.chip.effective.EffectiveTerms`
-contribution holds the rest of the rotated Hamiltonian, including earlier
-effective terms, and carries their channels and notes through the rotation.
+unitary from one isolated interaction. Devices and kept edges keep their
+authored terms. One :class:`~quchip.chip.effective.EffectiveTerms` contribution
+holds the remaining part of the rotated Hamiltonian, which includes earlier
+effective terms and carries their channels and notes through the rotation.
 """
 
 from __future__ import annotations
@@ -36,8 +36,8 @@ def isolated_hamiltonian(chip: Any, devices: Any, approximation: Any, *, couplin
                          effective_terms: Any = ()) -> tuple[Any, Any, tuple[int, ...]]:
     """Return ``devices`` with the selected interaction alone: matrix, local product energies and dims.
 
-    The diagonal holds the local product energies; the selected ``couplings``
-    or ``effective_terms`` supply everything else. Uses ``chip``'s basis and
+    The diagonal holds the local product energies. The selected ``couplings``
+    or ``effective_terms`` supply all other elements. Uses ``chip``'s basis and
     backend.
     """
     from quchip.chip.chip import Chip
@@ -82,17 +82,17 @@ def retain_coordinate_change(
     notes: tuple[str, ...],
     removed_owners: tuple[Any, ...] = (),
 ) -> tuple[Any, ReductionMap]:
-    """Rebuild ``chip`` and keep everything its authored terms miss in one contribution.
+    """Rebuild ``chip`` and keep in one contribution everything that its authored terms miss.
 
     ``rotation`` and ``retained_h`` use the source's local energy product basis
-    in ``labels`` order; ``retained_h`` is the source Hamiltonian in the rotated
-    coordinates. The rebuilt chip keeps ``devices`` and ``couplings`` with their
-    authored parameters, and ``retained_h`` minus their Hamiltonian, assembled
-    at ``approximation``, becomes one :class:`EffectiveTerms` named ``label``.
-    It absorbs the source's effective terms, so their channels follow the
-    rotation and their notes precede ``notes``; so do the channels of
-    ``removed_owners``. Returns the rebuilt chip and its captured
-    :class:`ReductionMap`.
+    in ``labels`` order. ``retained_h`` is the source Hamiltonian in the
+    rotated coordinates. The rebuilt chip keeps ``devices`` and ``couplings``
+    with their authored parameters. ``retained_h`` minus their Hamiltonian,
+    assembled at ``approximation``, becomes one :class:`EffectiveTerms` named
+    ``label``. This contribution absorbs the source's effective terms, so their
+    channels follow the rotation and their notes come before ``notes``. The
+    channels of ``removed_owners`` also follow the rotation. Returns the
+    rebuilt chip and its captured :class:`ReductionMap`.
     """
     labels, dims = tuple(labels), tuple(dims)
     final = rebuild_chip(chip, devices=devices, couplings=couplings, effective_terms=())

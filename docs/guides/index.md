@@ -1,6 +1,6 @@
 # Guides
 
-Learn the main quchip workflows through coupled models, pulse simulations,
+Learn the main quchip workflows: coupled models, pulse simulations,
 microwave measurements, reductions and fitting.
 
 New to quchip? Start with {doc}`your first chip <defining-and-inspecting-a-chip>`.

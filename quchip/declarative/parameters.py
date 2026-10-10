@@ -1,11 +1,10 @@
 """Declared-parameter metadata, synthesized ``__init__`` signatures, and validation.
 
-:func:`parameter` is the field-declaration surface concrete
-:class:`~quchip.declarative.models.DeviceModel`,
+Concrete :class:`~quchip.declarative.models.DeviceModel`,
 :class:`~quchip.declarative.models.CouplingModel`, and
-:class:`~quchip.control.envelopes.Envelope` subclasses use;
-this module resolves those declarations into synthesized constructors and
-runs their sign constraints, both at construction and on post-construction
+:class:`~quchip.control.envelopes.Envelope` subclasses use :func:`parameter` to
+declare fields. This module resolves those declarations into synthesized
+constructors and enforces their sign constraints at construction and on later
 writes.
 """
 
@@ -40,12 +39,12 @@ _DEFAULT_OMITTED = object()
 class Parameter:
     """Metadata for a declared parameter's validation and serialization.
 
-    Sign constraints apply to concrete scalars; traced values pass unchecked.
+    Sign constraints apply to concrete scalars. Traced values pass unchecked.
 
     Parameters
     ----------
     default : Any, default ``UNBOUND``
-        Constructor default; ``UNBOUND`` makes the field required.
+        Constructor default. ``UNBOUND`` makes the field required.
     positive, nonnegative : bool, default False
         Reject concrete values outside the selected sign constraint.
     serialize : bool, default True
@@ -74,11 +73,11 @@ class Setting:
     Parameters
     ----------
     default : Any, default ``UNBOUND``
-        Structural default; ``UNBOUND`` makes the setting required.
+        Structural default. ``UNBOUND`` makes the setting required.
     serialize : bool, default True
         Include the setting in serialized model data.
     kw_only : bool, default True
-        Must remain true because settings are structural choices.
+        Must stay true because settings are structural choices.
     """
 
     default: Any = UNBOUND
@@ -120,16 +119,17 @@ def parameter(
     """Declare a traceable numerical parameter on a model class.
 
     ``unit`` is display metadata for human-readable surfaces such as
-    :meth:`Chip.describe` — the package-wide units contract (GHz, ns, mK)
-    still governs the value itself. ``None`` means dimensionless or unknown.
-    Returns a :class:`Parameter` field descriptor that :func:`parameter_fields`
+    :meth:`Chip.describe`. The package-wide units contract (GHz, ns, mK) still
+    governs the value itself. ``None`` means dimensionless or unknown. Returns
+    a :class:`Parameter` field descriptor that :func:`parameter_fields`
     collects at class-definition time.
 
     Parameters
     ----------
     default : Any, optional
-        Declared default value. Omission makes the constructor argument required.
-        Use ``default=UNBOUND`` to defer its value until numerical materialization.
+        Declared default value. If omitted, the constructor argument is
+        required. Use ``default=UNBOUND`` to defer its value until numerical
+        materialization.
     positive : bool, optional
         Reject concrete values ``<= 0``. Traced values pass unchecked.
     nonnegative : bool, optional
@@ -137,12 +137,12 @@ def parameter(
     serialize : bool, optional
         Include the field in :meth:`to_dict` output.
     unit : str or None, optional
-        Display-only unit label (e.g. ``"GHz"``).
+        Display-only unit label (for example ``"GHz"``).
     symbol : str or None, optional
-        Mathematical symbol used when displaying authored physics. The field
-        name is used when omitted.
+        Mathematical symbol for displaying authored physics. If omitted, the
+        display uses the field name.
     noise : bool, optional
-        Whether :meth:`Chip.set_noise` may configure this field while its
+        If set, :meth:`Chip.set_noise` can configure this field while its
         current value is unset.
     kw_only : bool, optional
         Place the declared field after the ``*`` in synthesized constructors.
@@ -177,11 +177,11 @@ def setting(*, default: Any = UNBOUND, serialize: bool = True, kw_only: bool = T
     Parameters
     ----------
     default : Any, default ``UNBOUND``
-        Structural default; omission makes the setting required.
+        Structural default. If omitted, the setting is required.
     serialize : bool, default True
         Include the setting in serialized data.
     kw_only : bool, default True
-        Must remain true for structural settings.
+        Must stay true for structural settings.
     """
     if not kw_only:
         raise ValueError("Declarative settings are keyword-only.")
@@ -217,7 +217,7 @@ class KeywordOnlyDeclarativeMeta(DeclarativeMeta):
 
 
 def serializable_value(value: Any) -> Any:
-    """Prefer a concrete scalar for serialization while preserving tracers."""
+    """Prefer a concrete scalar for serialization, but keep tracers."""
     if value is UNBOUND:
         return None
     concrete = maybe_concrete_scalar(value)
@@ -294,12 +294,12 @@ def resolve_declared_params(
 ) -> dict[str, Any]:
     """Resolve declared parameters into a {name: value} dict.
 
-    Walks ``parameter_fields(cls)``: for each declared field, pops the
-    matching kwarg from *params* (or uses its default), runs the
-    concrete-only positivity check, and collects the result. Returns a dict
-    of validated parameter values, one entry per declared field. Raises
-    ``TypeError`` if a required field is missing or if *params* still
-    contains unrecognized keys after the loop.
+    Walks ``parameter_fields(cls)``. For each declared field, it pops the
+    matching kwarg from *params* (or uses its default), runs the concrete-only
+    positivity check, and collects the result. Returns a dict of validated
+    parameter values, one entry for each declared field. Raises ``TypeError``
+    if a required field is missing or if *params* still contains unrecognized
+    keys after the loop.
     """
     resolved_fields = parameter_fields(cls) if fields is None else fields
     values: dict[str, Any] = {}
@@ -346,25 +346,25 @@ def _declared_fields(cls: type, field_type: type[_Field]) -> dict[str, _Field]:
 
 
 def parameter_fields(cls: type) -> dict[str, Parameter]:
-    """Resolve declarative parameter fields for *cls*, walking the MRO.
+    """Resolve declarative parameter fields for *cls* through the MRO.
 
-    A field is included iff some class in the MRO annotates the name *and*
-    the resolved class attribute (``getattr(cls, name)``) is a
+    A field is included if and only if some class in the MRO annotates the name
+    and the resolved class attribute (``getattr(cls, name)``) is a
     :class:`Parameter` instance. A subclass that shadows an inherited
-    ``Parameter`` with a concrete value (e.g. ``freq: Scalar = 5.0``)
-    silently drops the field — by design, so subclasses can elide a
-    parent's parameter when they want a concrete override.
+    ``Parameter`` with a concrete value (for example ``freq: Scalar = 5.0``)
+    silently drops the field. By design, this lets subclasses remove a parent's
+    parameter when they want a concrete override.
     """
     return _declared_fields(cls, Parameter)
 
 
 def setting_fields(cls: type) -> dict[str, Setting]:
-    """Resolve structural setting fields for *cls*, walking the MRO."""
+    """Resolve structural setting fields for *cls* through the MRO."""
     return _declared_fields(cls, Setting)
 
 
 def authored_component_values(component: Any) -> dict[str, Any]:
-    """Declared numerical and structural values used by copying and cache keys."""
+    """Declared numerical and structural values used for copying and cache keys."""
     names = dict.fromkeys((
         *component.parameter_values(),
         *parameter_fields(type(component)),
@@ -383,9 +383,9 @@ def copy_authored_fields(source: Any, target: Any) -> None:
 
 
 def component_fingerprint(component: Any, *, traced: bool = False) -> Any:
-    """Track authored buffer edits as well as ordinary versioned assignments.
+    """Track authored buffer edits and ordinary versioned assignments.
 
-    ``traced=True`` keys traced values by identity; see :func:`~quchip.utils.values.scoped_entry`.
+    ``traced=True`` keys traced values by identity. See :func:`~quchip.utils.values.scoped_entry`.
     """
     from quchip.utils.values import value_fingerprint
 

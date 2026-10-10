@@ -1,8 +1,9 @@
 """Explicit local approximation for fitted observables.
 
 With ``evaluator="local"``, each target uses its device(s) and their directly
-coupled neighbors. More distant devices and their indirect effects are
-omitted. Hilbert-space limits do not select this approximation automatically.
+coupled neighbors. The approximation omits more distant devices and their
+indirect effects. Hilbert-space limits do not select this approximation
+automatically.
 """
 
 from __future__ import annotations
@@ -14,23 +15,24 @@ from quchip.utils.labeling import resolve_label
 
 
 def build_local_subsystem(chip: Chip, labels: tuple[str, ...]) -> Chip:
-    """Build a reduced ``Chip`` holding only the given device labels.
+    """Build a reduced ``Chip`` that holds only the given device labels.
 
-    Couplings are retained iff both endpoint labels are in ``labels``;
-    basis, frame, RWA, and backend settings are inherited from the parent.
-    Keeping all devices clones the full model. Partial extraction of a
-    PortNetwork model is unsupported because the network can induce interactions.
+    A coupling is kept only if both endpoint labels are in ``labels``. The
+    reduced chip inherits the basis, frame, RWA, and backend settings from the
+    parent. Keeping all devices clones the full model. Partial extraction of a
+    PortNetwork model is unsupported, because the network can induce
+    interactions.
 
     Parameters
     ----------
     chip : Chip
     labels : tuple[str, ...]
-        Device labels to keep.
+        Labels to keep.
 
     Returns
     -------
     Chip
-        Reduced chip holding only the kept devices and their mutual
+        Reduced chip that holds only the kept devices and their mutual
         couplings.
     """
     keep = set(labels)
@@ -74,12 +76,12 @@ def build_local_subsystem(chip: Chip, labels: tuple[str, ...]) -> Chip:
 
 
 def device_labels_for_local_eval(chip: Chip, label: Any) -> tuple[str, ...]:
-    """Return the seed device(s) plus every directly coupled neighbor.
+    """Return the seed device(s) and every directly coupled neighbor.
 
-    ``label`` may be a single device/label or a tuple of device/labels;
-    all entries are normalized through
-    :func:`~quchip.utils.labeling.resolve_label`. The returned tuple is
-    sorted for determinism.
+    ``label`` can be a single device/label or a tuple of device/labels. All
+    entries are normalized through
+    :func:`~quchip.utils.labeling.resolve_label`. The returned tuple is sorted
+    for determinism.
 
     Parameters
     ----------
@@ -90,8 +92,7 @@ def device_labels_for_local_eval(chip: Chip, label: Any) -> tuple[str, ...]:
     Returns
     -------
     tuple[str, ...]
-        Sorted device labels: the seed(s) plus every directly coupled
-        neighbor.
+        Sorted device labels: the seed(s) and every directly coupled neighbor.
 
     Examples
     --------

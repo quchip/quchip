@@ -1,12 +1,16 @@
 """Model reduction: ``eliminate()`` and its device, coupling and effective-term target registry.
 
-Public surface only; the extension seams (:func:`register_elimination_target`
-for a new target kind, :func:`register_reduction_method` for a new device
-reduction route) are documented on :mod:`quchip.chip.transformations.dispatch`
-and :mod:`quchip.chip.transformations.methods` respectively. Importing this
-package runs the shipped handlers' self-registration (below) — the same
-side-effect-import pattern as :mod:`quchip.chip.retarget`'s rule registry.
+Public surface only. The extension seams are
+:func:`register_elimination_target` for a new target kind and
+:func:`register_reduction_method` for a new device reduction route.
+:func:`register_elimination_target` is documented on
+:mod:`quchip.chip.transformations.dispatch`, and
+:func:`register_reduction_method` on
+:mod:`quchip.chip.transformations.methods`. Importing this package registers
+the shipped handlers (below).
 """
+# The shipped-handler registration uses the same side-effect-import pattern as
+# the `quchip.chip.retarget` rule registry.
 
 from __future__ import annotations
 

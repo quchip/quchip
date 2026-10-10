@@ -17,7 +17,7 @@ class ChargePhaseDrive(DeviceDrive):
     Parameters
     ----------
     target : device or None, default None
-        Optional target device; ``None`` allows attachment through the normal
+        Optional target device. ``None`` allows attachment through the normal
         drive connection API.
     label : str or None, default None
         Drive label.

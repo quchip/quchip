@@ -16,7 +16,7 @@ class CableLoss(SignalTransform, serializable=True):
     Parameters
     ----------
     line : str or object with a label
-        Control-line label to transform; resolved once at construction.
+        Control-line label to transform. Resolved once, at construction.
     loss_db : float
         Positive power-loss value in dB. The complex amplitude is multiplied
         by ``10**(-loss_db/20)``.

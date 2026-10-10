@@ -62,12 +62,12 @@ class _OperatingPoint:
 
 @dataclass(frozen=True)
 class PortTone:
-    """A fixed coherent input field entering through one declared port.
+    """A fixed coherent input field that enters through one declared port.
 
     Attributes
     ----------
     port : str
-        Resolved external network-port label.
+        Resolved label of the external network port.
     freq : scalar
         Carrier frequency in GHz.
     amplitude : scalar
@@ -91,7 +91,7 @@ class PortTone:
         values : array_like
             Values in sweep order.
         name : str or None, optional
-            Public result-axis name; defaults to ``"<port>.<field>"``.
+            Public name of the result axis. The default is ``"<port>.<field>"``.
 
         Returns
         -------
@@ -122,19 +122,19 @@ class VNA:
     """Small-signal scattering between selected instrument ports of one chip.
 
     ``VNA(chip)`` selects every exposed instrument port in the chip's ``PortNetwork``.
-    Pass exposed port objects or their labels as ``ports`` to select a subset;
-    a bare label string is rejected.
+    To select a subset, pass exposed port objects or their labels as ``ports``. A bare
+    label string is rejected.
 
-    S-parameters follow the engineering ``e^{+jωt}`` convention, where ``j = −i``.
-    Probe and pump amplitudes, returned fields, correlations, and IQ statistics use this
-    convention. Internal mode observables retain the physics convention.
+    S-parameters follow the engineering ``e^{+jωt}`` convention, where ``j = −i``. Probe
+    and pump amplitudes, returned fields, correlations, and IQ statistics use this
+    convention, while internal mode observables keep the physics convention.
 
     Parameters
     ----------
     chip : Chip
         Chip with a ``PortNetwork``.
     ports : sequence of port objects or str, optional
-        Selected external ports; ``None`` selects all external ports.
+        Selected external ports. ``None`` selects all external ports.
     """
 
     def __init__(self, chip: Any, *, ports: Sequence[Any] | None = None) -> None:
@@ -167,7 +167,7 @@ class VNA:
         Returns
         -------
         PortTone
-            Handle for varying pump frequency or amplitude.
+            Handle to vary the pump frequency or amplitude.
         """
         tone = PortTone(_resolve_exposure(self.chip, port), freq, amplitude, len(self._tones), self)
         self._tones.append(tone)
@@ -175,7 +175,7 @@ class VNA:
 
     @staticmethod
     def zip(*variations: Sweep) -> ZippedSweep:
-        """Pair sweep axes element by element instead of taking a product.
+        """Pair sweep axes element by element instead of a product.
 
         Parameters
         ----------
@@ -196,26 +196,26 @@ class VNA:
         options: dict | None = None,
         progress: bool = False,
     ) -> SParameterResult:
-        """Sweep the complete selected-port small-signal matrix around fixed pumps.
+        """Sweep the selected ports' complete small-signal matrix around fixed pumps.
 
         The result contains every ``S(output, input)`` between the selected ports.
-        Its ``matrix`` has shape ``(*sweep_axes, n_ports, n_ports)`` and is
-        indexed ``[..., output, input]``. Ordinary ``Sweep`` axes name paths in
-        ``chip.parameters`` and rebind the chip at each point; they may be mixed
-        with pump-tone axes. At each frequency, the passive-linear route
-        uses one multi-right-hand-side mode-space solve. The stationary route solves
-        one pumped operating point, then uses one shifted-Liouvillian factorization
-        for every input port. An operating point that stays stationary when the
-        probe frequency moves the port frames is reused rather than solved again.
+        Its ``matrix`` has shape ``(*sweep_axes, n_ports, n_ports)`` and is indexed
+        ``[..., output, input]``. Ordinary ``Sweep`` axes name paths in
+        ``chip.parameters``, rebind the chip at each point, and can mix with
+        pump-tone axes. At each frequency, the passive-linear route solves one
+        multi-right-hand-side mode-space system. The stationary route solves one
+        pumped operating point, then uses one shifted-Liouvillian factorization for
+        every input port. An operating point that stays stationary when the probe
+        frequency moves the port frames is reused.
 
         Parameters
         ----------
         frequencies : scalar or array_like
             Probe frequencies in GHz.
         *variations : Sweep or ZippedSweep
-            Chip and pump axes; Cartesian axes combine and zipped axes vary together.
+            Chip and pump axes. Cartesian axes combine and zipped axes vary together.
         options : dict or None, optional
-            Stationary solver options; ``None`` permits the passive-linear path.
+            Stationary solver options. ``None`` permits the passive-linear path.
         progress : bool, default=False
             Show a progress bar for stationary solves.
 
@@ -293,17 +293,17 @@ class VNA:
         """Solve the stationary mean output fields for a finite coherent probe.
 
         ``frequencies`` are in GHz. ``amplitudes`` are incident field amplitudes
-        ``beta`` in ``1/sqrt(ns)``; complex values encode phase. The probe enters
-        ``input`` beside any fixed pumps. When one port is selected, ``input``
-        defaults to that port; otherwise it is required. A fixed pump on the probe
-        input is rejected.
+        ``beta`` in ``1/sqrt(ns)``. Complex values encode phase. The probe enters
+        ``input`` beside any fixed pumps. ``input`` defaults to the selected port
+        when only one is selected, and is required otherwise. A fixed pump on the
+        probe input is rejected.
 
         At each grid point, the method solves the stationary Liouvillian in the probe
         frame. Chip and pump sweep axes precede ``"amplitude"`` and ``"frequency"``.
         Every selected port must resolve at the probe frequency. The returned
-        ``MeanFieldResponseResult`` reports ``<b_out>`` using the same reference-plane
-        and hidden-channel bookkeeping as ``sweep()``, and stores the incident
-        ``beta`` broadcast over the grid.
+        ``MeanFieldResponseResult`` reports ``<b_out>`` with the same reference-plane
+        and hidden-channel bookkeeping as ``sweep()``. It also stores the incident
+        ``beta``, broadcast over the grid.
 
         This method always uses the stationary Liouvillian route. It does not use the
         passive-linear mode-space shortcut or follow sweep-rate hysteresis and
@@ -316,7 +316,7 @@ class VNA:
         *variations : Sweep or ZippedSweep
             Chip and pump axes.
         input : port object or str, optional
-            Probe input; required when multiple ports are selected.
+            Probe input, required when multiple ports are selected.
         options : dict or None, optional
             Stationary solver options.
         progress : bool, default=False
@@ -376,16 +376,17 @@ class VNA:
         input: Any = None, outputs: Sequence[Any] | None = None, noise_frequencies: Any = None,
         options: dict | None = None, progress: bool = False,
     ) -> VNAMeasurement:
-        """Capture stationary means and joint physical noise before choosing a receiver.
+        """Capture stationary means and joint physical noise before you choose a receiver.
 
-        Frequencies are probe GHz, amplitudes are in 1/sqrt(ns). Optional
-        noise_frequencies are an increasing symmetric grid of offsets in GHz,
-        including zero. The default spans ±0.1 GHz with logarithmic spacing
-        down to 1 Hz. Choose a grid covering the model's noise features.
-        Returned data supports receiver integration and Gaussian sampling
-        without another solve; it is not a quantum-trajectory distribution.
-        Internal Fock-mode amplitudes and occupations are captured as well;
-        query them with mode_amplitude(device) and photon_number(device).
+        Frequencies are probe frequencies in GHz and amplitudes are in
+        1/sqrt(ns). Optional noise_frequencies are an increasing symmetric grid
+        of offsets in GHz, including zero. The default spans ±0.1 GHz with
+        logarithmic spacing down to 1 Hz. Choose a grid that covers the model's
+        noise features. The returned data supports receiver integration and
+        Gaussian sampling without another solve, but it is not a
+        quantum-trajectory distribution. The method also captures internal
+        Fock-mode amplitudes and occupations, which you query with
+        mode_amplitude(device) and photon_number(device).
 
         Parameters
         ----------
@@ -394,9 +395,9 @@ class VNA:
         *variations : Sweep or ZippedSweep
             Chip and pump axes.
         input : port object or str, optional
-            Probe input; required when multiple ports are selected.
+            Probe input, required when multiple ports are selected.
         outputs : sequence of port objects or str, optional
-            Captured outputs; ``None`` selects all selected ports.
+            Captured outputs. ``None`` selects all selected ports.
         noise_frequencies : array_like or None, optional
             Symmetric increasing offset grid in GHz, including zero.
         options : dict or None, optional
@@ -496,7 +497,7 @@ class VNA:
         delays : scalar or array_like
             Non-negative delays in ns.
         input : port object or str, optional
-            Cross-correlation input; defaults to ``output``.
+            Cross-correlation input. The default is ``output``.
         options : dict or None, optional
             Stationary solver options.
 
@@ -524,7 +525,7 @@ class VNA:
         delays : scalar or array_like
             Non-negative delays in ns.
         input : port object or str, optional
-            Cross-correlation input; defaults to ``output``.
+            Cross-correlation input. The default is ``output``.
         options : dict or None, optional
             Stationary solver options.
 

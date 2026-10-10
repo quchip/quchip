@@ -1,6 +1,6 @@
 """Control-equipment container: drive lines and signal chain.
 
-Signal transforms are owned here, not by individual drives.
+This container, not the individual drives, owns the signal transforms.
 """
 
 from __future__ import annotations
@@ -23,14 +23,14 @@ class CrosstalkMatrix(SignalTransform, serializable=True):
     Attributes
     ----------
     labels : tuple[str, ...]
-        Drive labels in wiring order (the order drives appear in
-        :attr:`ControlEquipment.lines`). Row / column ``i`` corresponds
-        to ``labels[i]``.
+        Drive labels in wiring order (the order in which drives appear in
+        :attr:`ControlEquipment.lines`). Row / column ``i`` corresponds to
+        ``labels[i]``.
     beta : Any
-        ``[n, n]`` amplitude matrix. ``beta[i, j]`` is the leakage
-        amplitude from source ``labels[j]`` onto victim ``labels[i]``
-        (column = source, row = victim). Diagonals represent
-        self-coupling and are conventionally ``1.0``.
+        ``[n, n]`` amplitude matrix. ``beta[i, j]`` is the leakage amplitude
+        from source ``labels[j]`` onto victim ``labels[i]`` (column = source,
+        row = victim). Diagonal entries are self-coupling, ``1.0`` by
+        convention.
     theta : Any
         ``[n, n]`` phase matrix (radians), same indexing as ``beta``.
     delay : Any
@@ -39,10 +39,11 @@ class CrosstalkMatrix(SignalTransform, serializable=True):
     Notes
     -----
     Every off-diagonal edge reads the same input signal map, so reciprocal
-    entries form one linear mixing stage without recursively leaking one
-    another's output. Matrix entries flow directly into the signal-program IR
-    (``PolarScale``/``Shift``), preserving end-to-end JAX traceability.
+    entries form one linear mixing stage and do not recursively leak each
+    other's output. Matrix entries keep end-to-end JAX traceability.
     """
+    # Matrix entries go directly into the signal-program IR
+    # (`PolarScale`/`Shift`), which is what keeps end-to-end JAX traceability.
 
     labels: tuple[str, ...] = setting()
     beta: Any = parameter()
@@ -53,7 +54,7 @@ class CrosstalkMatrix(SignalTransform, serializable=True):
         super().__init__(labels=tuple(labels), beta=beta, theta=theta, delay=delay)
 
     def validate(self) -> None:
-        """Require all crosstalk matrices to match the declared line order."""
+        """Check that all crosstalk matrices match the declared line order."""
         shape = (len(self.labels), len(self.labels))
         for name in ("beta", "theta", "delay"):
             matrix = getattr(self, name)
@@ -186,10 +187,10 @@ class ControlEquipment:
     def apply_signal_chain(self, signals: SignalMap) -> SignalMap:
         """Apply every signal-chain transform to *signals*, in order.
 
-        Each transform receives the previous transform's output, so
-        transforms compose sequentially: reordering :attr:`signal_chain`
-        changes the result (e.g. a :class:`Delay` applied before a
-        :class:`Gain` sees the undelayed signal).
+        Each transform receives the output of the previous one, so transforms
+        compose sequentially and the order of :attr:`signal_chain` affects the
+        result. For example, a :class:`Delay` applied before a :class:`Gain`
+        sees the undelayed signal.
 
         Parameters
         ----------
@@ -200,10 +201,10 @@ class ControlEquipment:
         Returns
         -------
         SignalMap
-            Transformed signal map. May contain keys absent from
-            *signals*: a :class:`Crosstalk` transform, for example,
-            adds an entry under the victim drive's label for every
-            source entry it leaks from.
+            Transformed signal map, which can contain keys absent from
+            *signals*. For example, a :class:`Crosstalk` transform adds an
+            entry under the victim drive's label for every source entry it
+            leaks from.
         """
         built = dict(signals)
         for transform in self._signal_chain:
@@ -226,13 +227,13 @@ class ControlEquipment:
 
         The matrix uses wiring order (``self.lines``) as the stable axis
         ordering. Column index = source drive, row index = victim drive.
-        Diagonal entries are ``beta=1``, ``theta=0``, ``delay=0`` by
-        convention (self-coupling). Off-diagonal entries aggregate every
-        :class:`Crosstalk` transform present in the signal chain; lines
-        with no corresponding transform contribute zeros.
+        Diagonal entries are ``beta=1``, ``theta=0``, ``delay=0`` by convention
+        (self-coupling). Off-diagonal entries aggregate every
+        :class:`Crosstalk` transform in the signal chain. Lines with no
+        corresponding transform contribute zeros.
 
-        Non-:class:`Crosstalk` transforms (``Gain``, ``Delay``) are
-        ignored here; this is strictly a view of the crosstalk edges.
+        Non-:class:`Crosstalk` transforms (``Gain``, ``Delay``) are ignored
+        here, because this is strictly a view of the crosstalk edges.
 
         Returns
         -------
@@ -279,8 +280,8 @@ class ControlEquipment:
 
         Removes every crosstalk transform currently in the signal chain and
         replaces them with one :class:`CrosstalkMatrix`. Other signal-chain
-        transforms (``Gain``, ``Delay``, and user-defined subclasses) are
-        preserved in order.
+        transforms (``Gain``, ``Delay``, and user-defined subclasses) stay in
+        their order.
 
         Parameters
         ----------
@@ -300,7 +301,7 @@ class ControlEquipment:
         Notes
         -----
         Traced JAX entries flow unchanged into :class:`CrosstalkMatrix` and
-        therefore into the signal-program IR. No concretization occurs.
+        therefore into the signal-program IR without concretization.
         """
         order = tuple(line.label for line in self._lines) if labels is None else tuple(labels)
         n = len(order)

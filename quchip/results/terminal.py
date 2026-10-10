@@ -35,11 +35,11 @@ def _probabilities(values: Any) -> Any:
 class IQReadout:
     """Calibrate one complex IQ distribution per ordered physical outcome.
 
-    means has shape (outcomes,); iq_covariance is (2,2) or (outcomes,2,2)
-    in the same signal units squared. These are complete conditional detector
-    distributions: do not add apparatus noise already included in calibration.
-    Covariances must be positive definite. Wiring-derived readouts use fields
-    in 1/sqrt(ns) and retain their integrated noise contributions.
+    means has shape (outcomes,). iq_covariance is (2,2) or (outcomes,2,2) in
+    the same signal units squared. They are complete conditional detector
+    distributions, so do not add apparatus noise that the calibration already
+    includes. Covariances must be positive definite. Wiring-derived readouts
+    use fields in 1/sqrt(ns) and keep their integrated noise contributions.
     Means and IQ covariances follow the VNA engineering convention.
 
     Attributes
@@ -82,8 +82,9 @@ class IQReadout:
         """Build an IQ detector from wiring and conditional coherent fields.
 
         Use the same boundary-field units and vacuum assumptions as
-        SimulationResult.iq_readout(). This captures the chip's current wiring;
-        the result method instead uses the wiring retained by that simulation.
+        SimulationResult.iq_readout(). This method captures the chip's current
+        wiring, whereas the result method uses the wiring that the simulation
+        kept.
 
         Parameters
         ----------
@@ -93,13 +94,13 @@ class IQReadout:
             Output reference plane.
         means : array_like or mapping
             Engineering-convention conditional Markov-boundary fields in
-            ``1/sqrt(ns)``; a mapping supplies multiple boundary channels.
+            ``1/sqrt(ns)``. A mapping gives multiple boundary channels.
         frequency : scalar
             Carrier frequency in GHz.
         receiver : IQReceiver
             Boxcar receiver and optional digital transfer.
         noise_frequencies : array_like or None, optional
-            Two-sided offsets in GHz; ``None`` uses the standard grid.
+            Two-sided offsets in GHz. ``None`` uses the standard grid.
         """
         from quchip.analysis.field_noise import ReadoutWiring
         wiring = ReadoutWiring.capture(chip.resolve().slh, chip.backend.array_module)
@@ -123,7 +124,7 @@ class IQReadout:
         return self._weights(probabilities) @ self.means
 
     def covariance(self, probabilities: Any) -> Any:
-        """Return mixture covariance, including conditional-mean separation.
+        """Return the mixture covariance, with conditional-mean separation.
 
         Parameters
         ----------
@@ -140,11 +141,11 @@ class IQReadout:
 
 @dataclass(frozen=True)
 class StateSamples:
-    """Independent measurement shots; indices select the ordered outcome tuples.
+    """Independent measurement shots, with indices that select the ordered outcome tuples.
 
-    physical_indices are Born draws. indices additionally includes assignment
-    errors, if requested. iq is present only for a conditional IQ readout.
-    Sweep axes follow the leading shot axis. No conditional state is returned.
+    physical_indices are Born draws. indices also includes assignment errors,
+    if requested. iq is present only for a conditional IQ readout. Sweep axes
+    follow the leading shot axis. No conditional state is returned.
 
     Attributes
     ----------
@@ -172,7 +173,7 @@ class StateSamples:
             object.__setattr__(self, name, copy_value(getattr(self, name), readonly=True))
 
     def counts(self) -> dict[tuple[int, ...], Any]:
-        """Count recorded outcomes along the shot axis, retaining sweep axes."""
+        """Count recorded outcomes along the shot axis, and keep sweep axes."""
         xp = _namespace(self.indices)
         return {outcome: xp.sum(self.indices == i, axis=0) for i, outcome in enumerate(self.outcomes)}
 
@@ -229,11 +230,12 @@ class StateMeasurement:
 
     def sample(self, count: int, *, seed: int | None = None, key: Any = None,
                assignment: Any = None, readout: IQReadout | None = None) -> StateSamples:
-        """Draw Born outcomes, optionally recording assignment errors or conditional IQ.
+        """Draw Born outcomes, and optionally record assignment errors or conditional IQ.
 
-        Assignment and IQ are separate detector models. IQ samples remain
-        unclassified; no threshold or assignment matrix is inferred from them.
-        Discrete labels are not differentiable. Use an explicit key under JAX.
+        Assignment and IQ are separate detector models. IQ samples stay
+        unclassified, and quchip does not infer a threshold or assignment
+        matrix from them. Discrete labels are not differentiable. Use an
+        explicit key under JAX.
 
         Parameters
         ----------
@@ -242,7 +244,7 @@ class StateMeasurement:
         seed : int or None, optional
             NumPy random seed.
         key : jax.Array or None, optional
-            JAX random key; mutually exclusive with ``seed``.
+            JAX random key. Do not use with ``seed``.
         assignment : array_like or None, optional
             Column-stochastic ``(recorded, physical)`` assignment matrix.
         readout : IQReadout or None, optional
@@ -282,7 +284,7 @@ class StateMeasurement:
 
 def measure_result(result: Any, devices: tuple[Any, ...], *, t: Any = None,
                    basis: Any = "energy") -> StateMeasurement:
-    """Project retained states using captured basis maps and existing result coordinates."""
+    """Project kept states with captured basis maps and existing result coordinates."""
     from quchip.results.results import SimulationBatchResult
     from quchip.results.partitioned import PartitionedSimulationResult
 

@@ -1,31 +1,31 @@
-"""Composite import — scqubits ``HilbertSpace`` -> quchip :class:`~quchip.chip.chip.Chip`.
+"""Composite import from scqubits ``HilbertSpace`` to quchip :class:`~quchip.chip.chip.Chip`.
 
-An scqubits ``HilbertSpace`` bundles a list of subsystems and a list of
-``InteractionTerm`` couplings between them. :func:`import_hilbertspace` imports
-each subsystem individually through the shipped device mappings
-(:mod:`quchip.interop.scqubits.devices`), preserving order and each subsystem's
-``id_str`` as the device label, then transcribes every ``InteractionTerm`` into
-a callable-form :class:`~quchip.chip.couplings.Coupling` whose operator matrices
-are the term's subsystem operators expressed in the *gauge of the imported
-device* they act on.
+An scqubits ``HilbertSpace`` bundles subsystems and the ``InteractionTerm``
+couplings between them. :func:`import_hilbertspace` imports each subsystem
+through the shipped device mappings (:mod:`quchip.interop.scqubits.devices`),
+keeping the order and using each subsystem's ``id_str`` as the device label. It
+then transcribes every ``InteractionTerm`` into a callable-form
+:class:`~quchip.chip.couplings.Coupling`. The coupling's operator matrices are
+the term's subsystem operators, expressed in the *gauge of the imported device*
+they act on.
 
 An imported ``HilbertSpace`` is a frozen snapshot of the source's truncated
 subsystem model. Each subsystem becomes an
-:class:`~quchip.interop.eigenbasis.EigenbasisDevice`, and interaction factors
-remain in that same source eigenbasis. This reproduces scqubits' truncation and
-gauge exactly without introducing a second projection path. Importing an
+:class:`~quchip.interop.eigenbasis.EigenbasisDevice`, and the interaction
+factors stay in that same source eigenbasis. This reproduces the scqubits
+truncation and gauge exactly, without a second projection path. Importing an
 individual supported device still reconstructs the live differentiable quchip
 model from its circuit parameters.
 
-Only pairwise ``InteractionTerm`` products of two operators are translated.
-Each term's operator matrices are a
-frozen snapshot at the source parameter point, so the coupling is not
-differentiable with respect to the source circuit parameters (the same
-frozen-snapshot contract :class:`~quchip.interop.eigenbasis.EigenbasisDevice`
-carries). ``InteractionTermStr`` string expressions and non-pairwise products
-raise :class:`NotImplementedError` rather than importing a partial model.
-Subsystem energies and interaction strengths are converted from scqubits'
-current unit, ``scqubits.get_units()``, to GHz on import and back on export.
+The import translates only pairwise ``InteractionTerm`` products of two
+operators. Each term's operator matrices are a frozen snapshot at the source
+parameter point, so the coupling is not differentiable with respect to the
+source circuit parameters. :class:`~quchip.interop.eigenbasis.EigenbasisDevice`
+carries the same frozen-snapshot contract. ``InteractionTermStr`` string
+expressions and non-pairwise products raise :class:`NotImplementedError`, and
+the import does not make a partial model. The import converts subsystem
+energies and interaction strengths from the current scqubits unit,
+``scqubits.get_units()``, to GHz, and the export converts them back.
 """
 
 from __future__ import annotations
@@ -173,18 +173,18 @@ def _coupling_from_term(
 def import_hilbertspace(hs: Any, **opts: Any) -> Chip:
     """Import an scqubits ``HilbertSpace`` into a quchip :class:`Chip`.
 
-    Each subsystem is frozen at its source truncation (order and ``id_str``
-    preserved); each ``InteractionTerm`` becomes a callable-form
+    Each subsystem is frozen at its source truncation, keeping its order and
+    ``id_str``. Each ``InteractionTerm`` becomes a callable-form
     :class:`~quchip.chip.couplings.Coupling` in the same eigenbasis gauge.
 
     Parameters
     ----------
     hs : scqubits.HilbertSpace
-        The composite system to import.
+        Composite system to import.
     **opts
-        ``frame`` and ``approximation`` are forwarded to :class:`Chip`.
-        Device-level options are not forwarded: every subsystem imports
-        at its own ``truncated_dim`` and native noise defaults.
+        ``frame`` and ``approximation`` are forwarded to :class:`Chip`, but
+        device-level options are not. Every subsystem imports at its own
+        ``truncated_dim`` and native noise defaults.
 
     Raises
     ------
@@ -332,61 +332,62 @@ def export_chip(chip: Chip, **opts: Any) -> Any:
     """Export a quchip :class:`Chip` to an scqubits ``HilbertSpace``.
 
     Each device exports through the shipped device mappings
-    (:mod:`quchip.interop.scqubits.devices`) in chip order, and every
+    (:mod:`quchip.interop.scqubits.devices`) in chip order. Every
     :class:`~quchip.chip.couplings.Coupling` factorizes into a scalar strength
-    and two device operators (see :func:`_coupling_product_factors`) added as
-    one ``InteractionTerm`` per edge. scqubits carries the *bare diagonal*
-    energies of each subsystem (gauge-invariant) plus these interaction
-    matrices, so the whole composite lives in one consistent gauge — quchip's —
-    and its dressed spectrum reproduces the chip's.
+    and two device operators. The export adds these as one ``InteractionTerm``
+    per edge. scqubits carries each subsystem's *bare diagonal* energies
+    (gauge-invariant) and these interaction matrices. The full composite is
+    therefore in one consistent gauge, quchip's, and its dressed spectrum
+    reproduces the chip's.
 
-    Couplings are exported in their complete operator form: scqubits
-    interaction terms are bare operator products and apply no approximation
-    strategy of their own. Exporting a chip whose ``RWA()`` strategy
-    filters a :class:`~quchip.chip.couplings.Capacitive`,
+    The export uses the complete operator form of each coupling. scqubits
+    interaction terms are bare operator products with no approximation strategy
+    of their own. So if a chip's ``RWA()`` strategy filters a
+    :class:`~quchip.chip.couplings.Capacitive`,
     :class:`~quchip.chip.couplings.TunableCapacitive`, or product-form
-    :class:`~quchip.chip.couplings.Coupling` therefore fails closed with
-    :class:`ValueError`: silently exporting the full form anyway would
-    reproduce different physics than the chip's own resolved dynamics.
-    :class:`~quchip.chip.couplings.CrossKerr` is exempt because
-    ``n̂_a n̂_b`` conserves excitation number and survives ``RWA()``
-    unchanged. Resolve or clone the chip with
-    :class:`~quchip.approximations.Exact` before export.
+    :class:`~quchip.chip.couplings.Coupling`, the export fails closed with
+    :class:`ValueError`. Silently exporting the full form would reproduce
+    different physics than the chip's resolved dynamics.
+    :class:`~quchip.chip.couplings.CrossKerr` is exempt because ``n̂_a n̂_b``
+    conserves the excitation number and stays unchanged under ``RWA()``.
+    Resolve or clone the chip with :class:`~quchip.approximations.Exact` before
+    export.
 
-    Chip-level control equipment and baths have no scqubits counterpart (it
-    models neither drives nor dissipation) and are dropped with a single
-    :class:`UserWarning` naming what was dropped.
+    Chip-level control equipment and baths have no scqubits counterpart,
+    because scqubits models neither drives nor dissipation. The export drops
+    them with one :class:`UserWarning` that names the dropped items.
 
     Parameters
     ----------
     chip : Chip
-        The composite system to export. Coupling strengths must be concrete —
-        a strength carrying a JAX tracer raises :class:`ValueError`.
+        The composite system to export. Coupling strengths must be concrete,
+        and a strength carrying a JAX tracer raises :class:`ValueError`.
 
     Raises
     ------
     NotImplementedError
-        The chip has a PortNetwork, retained effective terms, intrinsic
-        time-dependent Hamiltonians, or a coupling is neither
+        The chip has a PortNetwork, retained effective terms, or intrinsic
+        time-dependent Hamiltonians, or a coupling is not a
         :class:`~quchip.chip.couplings.Capacitive`,
         :class:`~quchip.chip.couplings.TunableCapacitive`,
-        :class:`~quchip.chip.couplings.CrossKerr`, nor a product-form
+        :class:`~quchip.chip.couplings.CrossKerr`, or product-form
         :class:`~quchip.chip.couplings.Coupling`.
     ValueError
         A coupling strength is a JAX tracer rather than a concrete value, or
-        a Capacitive/TunableCapacitive/product-form Coupling is filtered by
-        :class:`~quchip.approximations.RWA` (see above).
+        :class:`~quchip.approximations.RWA` filters a
+        Capacitive/TunableCapacitive/product-form Coupling (see above).
     LookupError
         A device has no registered scqubits export mapping.
     TypeError
-        An unexpected keyword option is passed (composite export takes none).
+        You pass an unexpected keyword option (composite export accepts none).
 
     Other Parameters
     ----------------
     **opts
-        No keyword options are accepted for composite export. Any supplied
-        key raises ``TypeError``.
+        Any supplied key raises ``TypeError``.
     """
+    # Each Coupling is factorized into a scalar strength and two device
+    # operators by `_coupling_product_factors`.
     import scqubits
 
     if opts:

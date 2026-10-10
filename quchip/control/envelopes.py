@@ -1,18 +1,17 @@
 """Pulse envelope models for quantum control.
 
-Envelopes define the local complex pulse shape ``E(t)`` that a drive
-line plays between ``t = 0`` and ``t = duration``. Subclasses are
-auto-registered for serialization *and* as JAX pytrees (via
-``__init_subclass__``), so envelope parameters — duration, amplitude,
-edge width, DRAG coefficient, anything stored on the instance — remain
-differentiable end-to-end.
+Envelopes define the local complex pulse shape ``E(t)`` that a drive line plays
+between ``t = 0`` and ``t = duration``. Subclasses are auto-registered for
+serialization *and* as JAX pytrees, so envelope parameters stay differentiable
+end-to-end. These include duration, amplitude, edge width, DRAG coefficient,
+and all other values stored on the instance.
 
 Conventions
 -----------
-- Times are ns; values are complex, with real and imaginary parts carrying
-  relative I/Q structure.
+- Times are in ns. Values are complex, and the real and imaginary parts carry
+  the relative I/Q structure.
 - Global phase belongs to scheduling, not to an envelope.
-- ``value(local_time)`` stays JAX-traceable; it must not concretize time or
+- ``value(local_time)`` stays JAX-traceable and must not concretize time or
   stored parameters.
 
 References
@@ -31,6 +30,7 @@ Examples
 >>> fg = SquareWithGaussianEdges(duration=40.0, amplitude=0.1)
 >>> lr = LinearRamp(duration=60.0, ramp_duration=50.0, amplitude=4.0)
 """
+# Envelope subclasses are auto-registered via `__init_subclass__`.
 
 from __future__ import annotations
 
@@ -69,14 +69,14 @@ class Envelope(Registrable, ABC, registry_root=True, metaclass=DeclarativeMeta):
     """Local complex pulse shape evaluated relative to its scheduled start.
 
     Concrete subclasses declare ``duration`` and shape parameters with
-    :func:`~quchip.declarative.parameters.parameter`; constructors are
-    synthesized from those declarations. Times are in ns and values are
-    complex I/Q amplitudes.
+    :func:`~quchip.declarative.parameters.parameter`. Constructors are
+    synthesized from those declarations. Times are in ns and values are complex
+    I/Q amplitudes.
 
     Parameters
     ----------
     **params : Any
-        Declared envelope fields; concrete subclasses define their names,
+        Declared envelope fields. Concrete subclasses define their names,
         defaults, units, and validation constraints.
     """
 
@@ -132,7 +132,7 @@ class Envelope(Registrable, ABC, registry_root=True, metaclass=DeclarativeMeta):
         Parameters
         ----------
         bindings : mapping[str, Any]
-            Declared field names and replacement values; unknown names raise
+            Declared field names and replacement values. Unknown names raise
             ``ValueError``.
         """
         from quchip.utils.values import copy_value
@@ -158,10 +158,11 @@ class Envelope(Registrable, ABC, registry_root=True, metaclass=DeclarativeMeta):
         ...
 
     def sampling_times(self) -> Any:
-        """Local feature samples for automatic grids; override for narrow shapes.
+        """Return local feature samples for automatic grids, overridable for narrow shapes.
 
-        The default probes 65 evenly spaced points. Built-in envelopes refine
-        their characteristic widths. This guides sampling, not solver accuracy.
+        The default probes 65 evenly spaced points, and built-in envelopes
+        refine their characteristic widths. This guides sampling, not solver
+        accuracy.
         """
         return qnp.linspace(0.0, self.duration, 65)
 
@@ -266,27 +267,26 @@ class Gaussian(Envelope):
 
     The ``sigmas`` parameter :math:`N_\sigma` is the number of standard
     deviations from the pulse center to its edge at ``t = 0`` or
-    ``t = duration``. Gaussian pulses minimize spectral leakage onto
-    higher transmon levels and are the starting point for DRAG
-    corrections (Motzoi et al., PRL 103, 110501 (2009)).
+    ``t = duration``. Gaussian pulses minimize spectral leakage onto higher
+    transmon levels and are the starting point for DRAG corrections (Motzoi et
+    al., PRL 103, 110501 (2009)).
 
     The scheduled window ``[0, duration]`` starts and ends at
-    ``amplitude * exp(-sigmas**2 / 2)``, not zero — about
-    ``0.011 * amplitude`` at the default ``sigmas=3``. The pulse turns
-    on and off with that jump; the Gaussian waveform itself is
-    unchanged.
+    ``amplitude * exp(-sigmas**2 / 2)``, not at zero. This is approximately
+    ``0.011 * amplitude`` at the default ``sigmas=3``. The pulse turns on and
+    off with that jump, and the Gaussian waveform itself is unchanged.
 
     Parameters
     ----------
     duration : float
-        Pulse duration in ns; positive.
+        Pulse duration in ns. Must be positive.
     sigmas : float, default 3
         Number of standard deviations from the pulse center to each window
-        edge, so ``sigma = duration/(2*sigmas)``; positive.
+        edge, so ``sigma = duration/(2*sigmas)``. Must be positive.
     amplitude : float, default 1.0
-        Peak in-phase envelope amplitude. Its physical unit is supplied by
-        the consuming drive (for example GHz for a Hamiltonian drive or
-        1/sqrt(ns) for an incident field).
+        Peak in-phase envelope amplitude. The consuming drive supplies its
+        physical unit (for example GHz for a Hamiltonian drive or 1/sqrt(ns)
+        for an incident field).
 
     References
     ----------
@@ -325,20 +325,20 @@ class GaussianDRAG(Envelope):
        E(t) = I(t) + i\,\beta\,\frac{dI}{dt}, \qquad
        I(t) = A\exp\!\left[-\frac{(t-\tau/2)^2}{2\sigma^2}\right].
 
-    ``beta`` is signed and measured in ns. Its sign therefore owns the
-    quadrature convention without an additional polarity flag.
+    ``beta`` is signed and measured in ns, so its sign owns the quadrature
+    convention without an additional polarity flag.
 
     Parameters
     ----------
     duration : float
-        Pulse duration in ns; positive.
+        Pulse duration in ns. Must be positive.
     sigmas : float, default 3
         Number of standard deviations from the pulse center to each window
-        edge, so ``sigma = duration/(2*sigmas)``; positive.
+        edge, so ``sigma = duration/(2*sigmas)``. Must be positive.
     amplitude : float, default 1.0
-        Peak in-phase envelope amplitude; physical units come from the drive.
+        Peak in-phase envelope amplitude, in units set by the drive.
     beta : float, default 0.0
-        Derivative-quadrature coefficient in ns; signed.
+        Signed derivative-quadrature coefficient in ns.
 
     References
     ----------
@@ -373,11 +373,11 @@ class GaussianEdge(Envelope):
     r"""Flat-top pulse with Gaussian ramp-up and ramp-down edges.
 
     Each edge is a Gaussian of width :math:`\sigma = \tau_e / (2 N_\sigma)`
-    where :math:`\tau_e` = ``edge_duration``; the plateau between edges
-    holds a constant amplitude :math:`A`. Total ``duration`` includes
-    both edges. Commonly used for two-qubit gates (Krantz et al. 2019,
-    Sec. IV.C) because the flat top sets the gate area while the
-    Gaussian edges suppress spectral leakage.
+    where :math:`\tau_e` = ``edge_duration``. The plateau between edges holds a
+    constant amplitude :math:`A`. Total ``duration`` includes both edges. This
+    pulse is common for two-qubit gates (Krantz et al. 2019, Sec. IV.C). The
+    flat top sets the gate area, and the Gaussian edges suppress spectral
+    leakage.
 
     Parameters
     ----------
@@ -430,22 +430,20 @@ class GaussianEdge(Envelope):
 class SquareWithGaussianEdges(Envelope):
     r"""Flat-top pulse with Gaussian ramp-up and ramp-down edges.
 
-    Each ramp has duration :math:`\tau_e = f_e \cdot \tau` with
-    :math:`f_e` = ``edge_frac``; the plateau between ramps holds
-    amplitude :math:`A`. Total ``duration`` includes both edges. The
-    Gaussian width is :math:`\sigma = \tau_e / (2 N_\sigma)` with
-    :math:`N_\sigma` = ``sigmas``.
+    Each ramp has duration :math:`\tau_e = f_e \cdot \tau` with :math:`f_e` =
+    ``edge_frac``. The plateau between ramps holds amplitude :math:`A`. Total
+    ``duration`` includes both edges. The Gaussian width is
+    :math:`\sigma = \tau_e / (2 N_\sigma)` with :math:`N_\sigma` = ``sigmas``.
 
-    This is the canonical shape used in Krantz et al. 2019
-    (Sec. IV.C) for two-qubit gates — the flat top sets the gate area
-    while the Gaussian edges suppress spectral leakage. Parametrizing
-    the ramp as a fraction of the total duration makes the shape
-    shape-invariant under changes of ``duration``.
+    Krantz et al. 2019 (Sec. IV.C) give this as the standard shape for
+    two-qubit gates. The flat top sets the gate area, and the Gaussian edges
+    suppress spectral leakage. The ramp is a fraction of the total duration, so
+    the shape is invariant under changes of ``duration``.
 
     Parameters
     ----------
     duration : float
-        Total pulse length in ns (includes both ramps).
+        Total pulse length in ns, including both ramps.
     amplitude : float
         Plateau amplitude :math:`A`.
     edge_frac : float
@@ -489,8 +487,8 @@ class LinearRamp(Envelope):
     r"""Linearly rising ramp that holds at peak amplitude.
 
     The envelope rises linearly from 0 to ``amplitude`` over the first
-    ``ramp_duration`` nanoseconds, then holds constant at ``amplitude``
-    for the remainder of the pulse.
+    ``ramp_duration`` nanoseconds, then holds at ``amplitude`` for the rest of
+    the pulse.
 
     .. math::
 
@@ -516,8 +514,8 @@ class LinearRamp(Envelope):
     long compared to ``1 / (2 * K)`` (the inverse gap at the bifurcation
     point).  See Grimm et al., Nature 584, 205 (2020).
 
-    The waveform is JAX-traceable: ``ramp_duration`` and ``amplitude``
-    may be JAX tracers so the ramp parameters are differentiable.
+    The waveform is JAX-traceable: ``ramp_duration`` and ``amplitude`` can be
+    JAX tracers, so the ramp parameters are differentiable.
 
     Examples
     --------
@@ -554,8 +552,8 @@ class LinearRamp(Envelope):
         Returns
         -------
         array
-            Complex-valued waveform: rises linearly over ``ramp_duration``,
-            holds constant at ``amplitude`` afterward.
+            Complex-valued waveform. It rises linearly over ``ramp_duration``
+            and then holds constant at ``amplitude``.
         """
         return qnp.asarray(
             self.amplitude * qnp.minimum(t / self.ramp_duration, 1.0),

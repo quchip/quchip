@@ -107,7 +107,7 @@ class CosineCoefficient(TimeCoefficient):
     Parameters
     ----------
     amplitude : float
-        Coefficient amplitude in GHz; may be signed.
+        Signed coefficient amplitude in GHz.
     frequency : float
         Ordinary modulation frequency in GHz; positive.
     phase : float, default 0.0

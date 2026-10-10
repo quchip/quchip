@@ -2,9 +2,9 @@
 
 This package is the library-agnostic foundation for converting circuit-QED
 models to and from quchip devices. Concrete mappings for specific libraries
-(e.g. scqubits) live in sibling modules and import both sides; this module
-never does.
+(for example scqubits) are in sibling modules and import both sides.
 """
+# This module never imports both sides.
 
 from __future__ import annotations
 

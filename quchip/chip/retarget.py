@@ -1,14 +1,13 @@
 """Retarget registry for control lines stranded by ``eliminate()``.
 
-A control line whose target has no image in the reduced model — its device
-was eliminated, or its coupling touched the eliminated mode — would
-otherwise force the user to unwire it. A per-(drive type, target type,
-result kind) registry lets a converter replace such a line with equivalent
-lines wired to the reduced chip instead, e.g. a
-:class:`~quchip.control.drive.FluxDrive` on an eliminated coupler becomes a
-:class:`~quchip.control.drive.ParametricDrive` pumping each emitted edge.
-Extending this registry never touches
-:func:`~quchip.chip.transformations.eliminate` itself; a target with no
+A control line's target has no image in the reduced model when its device was
+eliminated or its coupling touched the eliminated mode. Without this registry,
+the user must unwire such a line. A per-(drive type, target type, result kind)
+registry lets a converter replace the line with equivalent lines wired to the
+reduced chip. For example, a :class:`~quchip.control.drive.FluxDrive` on an
+eliminated coupler becomes a :class:`~quchip.control.drive.ParametricDrive`
+that pumps each emitted edge. Extensions of this registry never touch
+:func:`~quchip.chip.transformations.eliminate` itself. A target with no
 registered rule still raises the fail-fast unwire/keep error.
 """
 
@@ -23,7 +22,7 @@ from quchip.devices.base import BaseDevice
 
 @dataclass(frozen=True)
 class RetargetContext:
-    """Everything a converter may consult; built by ``eliminate()`` after the fold.
+    """Everything a converter can consult, built by ``eliminate()`` after the fold.
 
     Attributes
     ----------
@@ -35,18 +34,18 @@ class RetargetContext:
     mode_label
         Label of the eliminated device (or coupling, for ``"crosskerr"``).
     result_kind
-        Structure of what the reduction produced: ``"edge"`` when the
-        eliminated device mediated exchange between two or more survivors
-        (one effective edge per survivor pair), ``"leaf-fold"`` for a
-        single-survivor leaf, ``"crosskerr"`` for a coupling target.
+        Structure of what the reduction produced. The value is ``"edge"`` when
+        the eliminated device mediated exchange between two or more survivors
+        (one effective edge per survivor pair). The value is ``"leaf-fold"``
+        for a single-survivor leaf and ``"crosskerr"`` for a coupling target.
     edges
         For ``"edge"`` and ``"crosskerr"``: the per-pair reduction entries,
-        keyed ``(label_a, label_b)`` in emission order, each carrying at
-        least ``"coupling"`` (the edge's label on the reduced chip) and —
-        for ``"edge"`` — the exchange bookkeeping (``"j_eff"``,
-        ``"dJ_domega_c"``, ...). Always pair-keyed regardless of how many
-        pairs there are: one entry is simply the two-survivor case, not a
-        different shape. ``None`` for ``"leaf-fold"``.
+        keyed ``(label_a, label_b)`` in emission order. Each entry has at least
+        ``"coupling"`` (the edge's label on the reduced chip). For ``"edge"``,
+        each entry also has the exchange bookkeeping (``"j_eff"``,
+        ``"dJ_domega_c"``, ...). The entries are always pair-keyed for any
+        number of pairs, so one entry is the two-survivor case, not a different
+        shape. ``None`` for ``"leaf-fold"``.
     """
 
     chip: Any
@@ -63,14 +62,14 @@ class RetargetResult:
     Attributes
     ----------
     lines
-        Replacement control lines. Exactly one of them must keep the
-        original line's label, so existing ``Crosstalk``/``Delay`` entries
-        keyed by it — and replayed ``schedule()`` calls — stay valid; any
-        further lines carry derived labels.
+        Replacement control lines. Exactly one of them must keep the original
+        line's label, so existing ``Crosstalk``/``Delay`` entries keyed by that
+        label, and replayed ``schedule()`` calls, stay valid. All other lines
+        carry derived labels.
     transforms
-        Signal-chain transforms to append, in application order (the
-        equipment applies its chain front to back — a transform that feeds
-        a line must precede one that scales it).
+        Signal-chain transforms to append, in application order. The equipment
+        applies its chain front to back, so a transform that feeds a line must
+        come before a transform that scales it.
     note
         One fold-report line, appended to :attr:`EliminationResult.notes`.
     """
@@ -87,10 +86,11 @@ def register_retarget_rule(drive_type: type, target_type: type, result_kind: str
     """Register a converter for ``(drive type, eliminated-target type, result kind)``.
 
     Lookup (:func:`lookup_retarget_rule`) walks both types' MROs, so a rule
-    registered for a base type also covers its subclasses; ``result_kind``
-    matches exactly. This is the extension point for teaching
+    registered for a base type also covers its subclasses. ``result_kind``
+    matches exactly. Use this extension point to teach
     :func:`~quchip.chip.transformations.eliminate` to carry a new kind of
-    stranded control line without modifying it.
+    stranded control line without changing
+    :func:`~quchip.chip.transformations.eliminate`.
 
     Parameters
     ----------

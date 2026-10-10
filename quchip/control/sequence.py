@@ -8,14 +8,12 @@ cross-device barriers, then materializes the schedule into classical
 
 Conventions
 -----------
-- Times are ns, frequencies GHz (ordinary, not angular).
-- Virtual-Z shifts accumulate into later *microwave* pulses on the same
-  device (charge and phase drives); baseband flux pulses are unaffected,
-  matching the lab-frame semantics of software-Z (McKay et al., PRA
-  96, 022330 (2017)).
-- All sweep axes stay JAX-traceable: pulse parameters, delays, and
-  envelope fields flow into ``SolveProblem`` without Python-side
-  concretization.
+- Times are in ns. Frequencies are in GHz (ordinary, not angular).
+- Virtual-Z shifts accumulate into later *microwave* pulses on the same device
+  (charge and phase drives), but not into baseband flux pulses. This matches
+  the lab-frame semantics of software-Z (McKay et al., PRA 96, 022330 (2017)).
+- All sweep axes stay JAX-traceable. Pulse parameters, delays, and envelope
+  fields go into ``SolveProblem`` without Python-side concretization.
 
 Examples
 --------
@@ -148,37 +146,36 @@ def _cursor_max(values: Collection[Any]) -> Any:
 class QuantumSequence:
     """Declarative pulse sequence builder for a :class:`~quchip.chip.chip.Chip`.
 
-    Tracks per-``(device, drive)`` timing cursors and per-device
-    virtual-Z phase frames. Append pulses with :meth:`schedule` (or the
-    conveniences :meth:`charge`, :meth:`phase`, :meth:`flux`);
-    synchronize channels with :meth:`barrier` and :meth:`delay`. The
-    schedule is materialized lazily into
-    engine control-operation records by :meth:`build_problem`
-    and :meth:`build_batch`.
+    Tracks per-``(device, drive)`` timing cursors and per-device virtual-Z
+    phase frames. Append pulses with :meth:`schedule` (or the conveniences
+    :meth:`charge`, :meth:`phase`, :meth:`flux`). Synchronize channels with
+    :meth:`barrier` and :meth:`delay`. :meth:`build_problem` and
+    :meth:`build_batch` materialize the schedule lazily into engine
+    control-operation records.
 
-    Wherever a device/drive is expected, either the object itself or its
-    string label works, and examples should prefer object references.
+    Where a device/drive is expected, you can use the object or its string
+    label.
 
-    Simulation runs through one consistent verb — ``simulate`` — across
-    three tiers, from most ergonomic to most explicit:
+    Simulation uses one consistent verb, ``simulate``, across three tiers, from
+    most ergonomic to most explicit:
 
-    1. :meth:`simulate` / :meth:`simulate_batch` — schedule *and* solve in
-       one call (the example-facing path).
+    1. :meth:`simulate` / :meth:`simulate_batch`: schedule *and* solve in one
+       call (the example-facing path).
     2. :meth:`~quchip.chip.chip.Chip.solve` /
-       :meth:`~quchip.chip.chip.Chip.solve_many` — solve a
+       :meth:`~quchip.chip.chip.Chip.solve_many`: solve a
        :class:`~quchip.engine.ir.SolveProblem` / batch you already hold.
     3. The module-level :func:`~quchip.engine.simulate` /
-       :func:`~quchip.engine.solve_problem` / :func:`~quchip.engine.solve_many`
-       — the low-level "I already have ``drive_ops`` / a ``SolveProblem``"
-       tier.
+       :func:`~quchip.engine.solve_problem` /
+       :func:`~quchip.engine.solve_many`: the low-level "I already have
+       ``drive_ops`` / a ``SolveProblem``" tier.
 
     Parameters
     ----------
     chip : Chip
-        Chip this sequence schedules against. Supplies the device and
+        Chip that this sequence schedules against. It supplies the device and
         coupling maps used to resolve scheduling targets, the wired
-        :class:`~quchip.control.equipment.ControlEquipment` lines, and
-        the frame/backend settings used by :meth:`build_problem` and
+        :class:`~quchip.control.equipment.ControlEquipment` lines, and the
+        frame/backend settings used by :meth:`build_problem` and
         :meth:`simulate`.
 
     Examples
@@ -195,6 +192,7 @@ class QuantumSequence:
     >>> seq.vz(q, angle=0.5)
     >>> _ = seq.charge(q, envelope=Gaussian(duration=10.0, amplitude=0.03))
     """
+    # Examples should use object references.
 
     def __init__(self, chip: Chip) -> None:
         ambiguous = [
@@ -370,37 +368,36 @@ class QuantumSequence:
         target : str | ControlEndpoint | BaseDevice | BaseCoupling
             Accepted forms, resolved in this order:
 
-            * ``network.expose(...).input`` — scheduled at that external
+            * ``network.expose(...).input``: scheduled at that external
               reference plane without entering ``ControlEquipment``.
-            * :class:`BaseDrive` — scheduled directly on that drive.
-            * :class:`BaseDevice` — uses the device's first connected
-              drive; pass the drive object explicitly when a device
-              has multiple drives.
-            * :class:`~quchip.chip.coupling_base.BaseCoupling` — uses
-              the unique :class:`~quchip.control.drive.CouplingDrive`
-              targeting that coupling; pass the drive object explicitly
-              when a coupling has multiple control lines.
-            * ``str`` — a label, resolved in order: a device label; then,
-              only when absent from the device map, a coupling label
-              (the two label spaces are disjoint); then, only when
-              absent from both, a control-equipment line label,
-              scheduling directly on that line. This third fallback is
-              what lets a caller schedule by a drive's own label after
-              its device or coupling target has been eliminated — see
-              :func:`~quchip.chip.transformations.eliminate`'s retarget
-              registry, which preserves a converted line's label. A
-              control-line label that collides with a device/coupling
-              label is shadowed by the device/coupling resolution.
+            * :class:`BaseDrive`: scheduled directly on that drive.
+            * :class:`BaseDevice`: uses the device's first connected drive. If
+              a device has multiple drives, pass the drive object explicitly.
+            * :class:`~quchip.chip.coupling_base.BaseCoupling` — uses the
+              unique :class:`~quchip.control.drive.CouplingDrive` that targets
+              that coupling. If a coupling has multiple control lines, pass the
+              drive object explicitly.
+            * ``str``: a label, resolved in this order. First, a device label.
+              Then, only when the label is absent from the device map, a
+              coupling label (the two label spaces are disjoint). Then, only
+              when the label is absent from both, a control-equipment line
+              label, scheduled directly on that line. This third fallback lets
+              a caller schedule by a drive's label after its device or coupling
+              target is eliminated. See the retarget registry of
+              :func:`~quchip.chip.transformations.eliminate`, which keeps a
+              converted line's label. A control-line label that collides with a
+              device/coupling label is shadowed by the device/coupling
+              resolution.
 
         envelope : Envelope
             Pulse envelope.
         freq : float, optional
             Optional carrier frequency in GHz. Omitting it leaves the signal
-            carrier-free. Drive-specific conveniences may provide their own
+            carrier-free. Drive-specific conveniences can supply their own
             explicit default, such as :meth:`charge` using ``chip.freq(device)``.
         start_time : float, optional
-            Pulse start time in ns. Defaults to the current cursor;
-            earlier times are rejected.
+            Pulse start time in ns. Defaults to the current cursor; earlier
+            times are rejected.
         phase : float
             Per-pulse phase offset, composed with any accumulated
             virtual-Z.
@@ -537,15 +534,15 @@ class QuantumSequence:
     ) -> PulseHandle:
         """Schedule a flux-drive frequency-shift pulse to ``target_freq``.
 
-        This is not an inverse-SQUID flux calibration. It computes
+        This is not an inverse-SQUID flux calibration: it calculates
         ``δω = target_freq − chip.freq(device)`` and schedules a
         :class:`FluxDrive` pulse whose envelope amplitude is that frequency
         shift in GHz. The resulting Hamiltonian contribution is the linear
-        detuning term ``δω(t) n̂``. ``envelope`` should be passed with
-        ``amplitude=None`` (or any placeholder) — this method replaces the
-        amplitude with the computed δω.
+        detuning term ``δω(t) n̂``. Pass ``envelope`` with ``amplitude=None``
+        (or any placeholder). This method replaces the amplitude with the
+        calculated δω.
 
-        ``target_freq`` may be a JAX tracer (e.g. ``chip.freq(other_device)``).
+        ``target_freq`` can be a JAX tracer (for example ``chip.freq(other_device)``).
 
         Parameters
         ----------
@@ -554,9 +551,8 @@ class QuantumSequence:
         target_freq : float
             Target ``0 → 1`` frequency in GHz.
         envelope : Envelope
-            Envelope template with all timing parameters set. Its
-            ``amplitude`` attribute is replaced by the computed δω; any
-            value passed as ``amplitude`` is ignored.
+            Envelope template with all timing parameters set. Its ``amplitude``
+            is replaced by the calculated δω, so any passed value is ignored.
 
         Returns
         -------
@@ -575,11 +571,10 @@ class QuantumSequence:
     def vz(self, target: str | BaseDevice, angle: float) -> None:
         """Apply a virtual-Z frame shift of *angle* rad on *target*.
 
-        The shift is free (no pulse is emitted) and accumulates into
-        every subsequent microwave pulse on the device via its
-        ``phase_offset``. This is the standard software-Z trick for
-        transmons (McKay et al., PRA 96, 022330 (2017)). Baseband flux
-        pulses are unaffected.
+        The shift is free (no pulse is emitted) and accumulates into every
+        later microwave pulse on the device through its ``phase_offset``. This
+        matches the standard software-Z trick for transmons (McKay et al., PRA
+        96, 022330 (2017)). Baseband flux pulses are not affected.
 
         Parameters
         ----------
@@ -611,16 +606,16 @@ class QuantumSequence:
     def barrier(self, *labels: str | BaseDevice) -> None:
         """Synchronize channel cursors.
 
-        With no arguments, every ``(device, drive)`` cursor on the
-        chip is advanced to the current maximum. With explicit
-        device targets, only those devices' cursors are aligned. Use
-        this to guarantee that pulses scheduled after the barrier
-        start no earlier than any pulse scheduled before it.
+        With no arguments, every ``(device, drive)`` cursor on the chip is
+        advanced to the current maximum. With explicit device targets, only
+        those devices' cursors are aligned. This guarantees that pulses
+        scheduled after the barrier start no earlier than any pulse scheduled
+        before it.
 
         Parameters
         ----------
         *labels : str or BaseDevice
-            Devices to synchronize; omitted means all device-drive cursors.
+            Devices to synchronize. If omitted, all device-drive cursors are synchronized.
         """
         if not labels:
             self._entries.append(_BarrierEntry(device_labels=()))
@@ -841,38 +836,37 @@ class QuantumSequence:
         Parameters
         ----------
         tlist : array-like, optional
-            Grid passed to the numerical solver, in ns. Its first time is
-            the initial-state time; its last time ends the calculation.
+            Grid passed to the numerical solver, in ns. Its first time is the
+            initial-state time and its last time ends the calculation.
             Scheduled signals keep their absolute times in a partial interval.
         duration : float, optional
-            Interval from zero in ns, with automatic sampling. May extend
-            the schedule; cannot cut it short or be combined with ``tlist``.
-            Without either argument, use the scheduled duration.
+            Interval from zero in ns, with automatic sampling. It can extend
+            the schedule but cannot cut it short, and cannot be combined with
+            ``tlist``. Without either argument, the scheduled duration is used.
         solver : str, optional
-            Backend solver name. Defaults to the backend's own default
-            solver when omitted.
+            Backend solver name; defaults to the backend's own default solver.
         options : dict, optional
             Backend numerical options. Use ``states`` to select state retention.
         states : {"all", "final", "none"} or None, default None
             None saves all deterministic states and preserves native stochastic defaults.
-            Explicit values retain the full state history, only the final state, or neither.
-            Requested observable traces are retained independently.
+            Explicit values keep the full state history, only the final state, or neither.
+            Requested observable traces are kept independently.
         run_args : dict or None, default None
             Native trajectory call keywords: QuTiP seeds, ntraj, heterodyne,
             target_tol, timeout; Dynamiqs keys, method, gradient, etas.
             Assembled physics and native options cannot be overridden here.
         e_ops : dict, optional
-            Expectation operators keyed by device label (or a 2-tuple of
-            device labels for a two-body operator), mapping to a local
-            operator (or a pair of local operators). Decomposed into
-            per-band terms before reaching the solver.
+            Expectation operators keyed by device label (or a 2-tuple of device
+            labels for a two-body operator), mapped to a local operator (or a
+            pair of local operators). They are decomposed into per-band terms
+            before reaching the solver.
         initial_state : Any, optional
             Initial state; see :meth:`simulate` for accepted forms, coordinate
             conventions, and the meaning of ``None``.
         approximation : Approximation, optional
             Engine approximation override. ``None`` uses the chip default.
         frame : FrameSpec, optional
-            Integration-frame override. Defaults to the chip's declared frame.
+            Integration-frame override; defaults to the chip's declared frame.
             ``"auto"`` derives constraints from delivered scheduled signals and
             weights them over ``tlist[-1] - tlist[0]``.
         dissipation : bool, default=True
@@ -881,10 +875,9 @@ class QuantumSequence:
         Returns
         -------
         SolveProblem
-            Frozen problem — chip, compiled engine result,
-            initial state, ``tlist``, collapse operators, and
-            expectation operators — ready for
-            :meth:`~quchip.chip.chip.Chip.solve` or
+            Frozen problem (chip, compiled engine result, initial state,
+            ``tlist``, collapse operators, and expectation operators), ready
+            for :meth:`~quchip.chip.chip.Chip.solve` or
             :func:`~quchip.engine.solve_problem`.
         """
         actual_tlist = self._resolve_tlist(tlist, duration=duration)
@@ -984,15 +977,14 @@ class QuantumSequence:
         *axes : BatchAxis
             Two or more axes to zip, each created by this sequence
             (:meth:`vary`, :meth:`PulseHandle.vary`, or
-            :meth:`DelayHandle.vary`). Every axis must have the same
-            length.
+            :meth:`DelayHandle.vary`). All axes need the same length.
 
         Returns
         -------
         ZippedBatchAxis
             Combined axis that :meth:`build_batch` treats as a single
-            dimension: point ``i`` supplies point ``i`` from every
-            zipped axis simultaneously, rather than the outer product.
+            dimension: point ``i`` supplies point ``i`` from every zipped axis
+            together, not the outer product.
         """
         if not axes:
             raise ValueError("zip() requires at least one axis")
@@ -1260,8 +1252,8 @@ class QuantumSequence:
         Parameters
         ----------
         tlist : array-like, optional
-            Sample times in ns. Mutually exclusive with ``duration``. If
-            omitted, quchip builds an automatic grid through the schedule end.
+            Sample times in ns. Do not use with ``duration``. If omitted,
+            quchip builds an automatic grid through the schedule end.
         solver : str, optional
             Backend solver name, such as ``"mesolve"`` or ``"sesolve"``.
         options : dict, optional
@@ -1273,21 +1265,19 @@ class QuantumSequence:
         e_ops : dict, optional
             Named observables to evaluate.
         initial_state : object or mapping, optional
-            Initial state. ``None`` uses the eigenstate of the solve's undriven
-            static lab-frame Hamiltonian, as retained by its approximation, that is
-            assigned to the all-ground label. Its overlap with the bare product is
-            made real and nonnegative before it is expressed in the solve frame at
-            ``tlist[0]``. With ordinary couplings, this is the bare product under the
-            default RWA. When the solve uses the chip's approximation, it is the
-            same physical state as ``chip.state()`` before the frame transform.
-            Retained bands, effective terms, or network Hamiltonian terms that couple the vacuum can also dress an RWA
-            start. At a nonzero rotating-frame start time, the frame transform is
-            applied at ``tlist[0]``, so the state need not match the lab-frame vector
-            returned by ``chip.state()``. Mappings and configured string shorthand give product
-            states in the resolved local bases. QuTiP ``Qobj`` and dynamiqs ``QArray``
-            kets or density matrices use resolved solver coordinates; arrays, symbolic
-            expressions, and callables are authored-space kets projected onto retained
-            levels.
+            ``None`` uses the eigenstate of the solve's undriven static lab-frame Hamiltonian, as
+            kept by its approximation, that is assigned to the all-ground label. Its overlap with
+            the bare product is made real and nonnegative before it is expressed in the solve frame
+            at ``tlist[0]``. With ordinary couplings, this is the bare product under the default
+            RWA. When the solve uses the chip's approximation, it is the same physical state as
+            ``chip.state()`` before the frame transform. Kept bands, effective terms, or network
+            Hamiltonian terms that couple the vacuum can also dress an RWA start. At a nonzero
+            rotating-frame start time, the frame transform is applied at ``tlist[0]``, so the state
+            need not match the lab-frame vector returned by ``chip.state()``. Mappings and
+            configured string shorthand give product states in the resolved local bases. QuTiP
+            ``Qobj`` and dynamiqs ``QArray`` kets or density matrices use resolved solver
+            coordinates. Arrays, symbolic expressions, and callables are authored-space kets
+            projected onto kept levels.
         backend : object or {"qutip", "dynamiqs"}, optional
             Per-call backend override.
         partition : bool, default=True
@@ -1313,19 +1303,19 @@ class QuantumSequence:
         ------
         ValueError
             If ``tlist`` and ``duration`` are both supplied, timing is invalid,
-            or automatic sampling needs concrete timing.
+            or automatic sampling lacks the concrete timing it requires.
 
         Notes
         -----
         A per-call ``backend`` outranks the chip and process defaults, and
-        foreign-native initial states are coerced at the solve boundary.
-        Python evaluates an inline ``initial_state=chip.state(...)`` before
-        this scope opens, so constructing a traced state still requires a
-        JAX-capable surrounding backend.
+        foreign-native initial states are coerced at the solve boundary. Python
+        evaluates an inline ``initial_state=chip.state(...)`` before this scope
+        opens, so a traced state still requires a JAX-capable surrounding
+        backend.
 
         Partitioning returns a
-        :class:`~quchip.results.partitioned.PartitionedSimulationResult`.
-        It requires ``initial_state`` to be ``None`` or a mapping; string
+        :class:`~quchip.results.partitioned.PartitionedSimulationResult` and
+        requires ``initial_state`` to be ``None`` or a mapping; string
         shorthand and concrete states take the joint path.
         """
         from quchip.engine import simulate as _engine_simulate
@@ -1364,7 +1354,7 @@ class QuantumSequence:
         ----------
         *axes : BatchAxis or ZippedBatchAxis
             Cartesian sweep axes. A :class:`ZippedBatchAxis` pairs member axes
-            pointwise and therefore contributes one batch dimension.
+            pointwise and contributes one batch dimension.
         tlist, solver, options, run_args, e_ops, initial_state, backend
             As for :meth:`simulate`; one initial state is reused for every
             batch point unless it is a supported mapping.
@@ -1388,8 +1378,8 @@ class QuantumSequence:
         Raises
         ------
         ValueError
-            If an axis is invalid, timing is inconsistent, or a sweep changes
-            a structural quantity that cannot vary within one batch.
+            If an axis is invalid, timing is inconsistent, or a sweep changes a
+            structural quantity that cannot vary in one batch.
 
         """
         with self._scoped_backend(backend):
@@ -1547,10 +1537,10 @@ class QuantumSequence:
     def describe(self) -> str:
         """Plain-text timeline of the scheduled pulses.
 
-        One row per pulse — resolved time window, drive → device,
-        envelope with its declared parameters, carrier frequency — plus
-        a trailing count of delays, barriers, and virtual-Z entries.
-        Returns a string; ``print(seq.describe())``.
+        One row per pulse shows the resolved time window, drive → device,
+        envelope with its declared parameters, and carrier frequency, followed
+        by a count of delays, barriers, and virtual-Z entries. Returns a
+        string: ``print(seq.describe())``.
         """
         from quchip.chip.describe import describe_sequence
 

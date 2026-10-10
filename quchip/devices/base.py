@@ -1,19 +1,20 @@
 """Base class for finite local quantum devices.
 
-Devices own local Hamiltonians on an authored :class:`LocalSpace`; couplings
+Devices own local Hamiltonians on an authored :class:`LocalSpace`. Couplings
 and drives contribute separate terms. :meth:`unresolved_hamiltonian` returns
-the authored operator, while :meth:`hamiltonian` applies local basis and frame
-policies. Each model must state its approximations and physical references.
+the authored operator, and :meth:`hamiltonian` applies the local basis and
+frame policies. Each model must state its approximations and physical
+references.
 
 Drive channels use the device's physical lowering, raising, and number
 operators. ``sigma_x``, ``sigma_y``, and ``sigma_z`` act on the two lowest
 isolated energy states of the current local Hamiltonian.
 
-Numerical physics parameters may be JAX tracers; structural dimensions and
-settings stay fixed during tracing. Validation must avoid concretizing traced
-values; use :func:`quchip.utils.jax_utils.maybe_concrete_scalar` for concrete
-checks. :class:`~quchip.utils.state_versioning.StateVersioned` tracks attribute
-writes, and :class:`~quchip.utils.registry.Registrable` dispatches deserialization.
+Numerical physics parameters can be JAX tracers. Structural dimensions and settings
+stay fixed during tracing. Validation must not concretize traced values. Use
+:func:`quchip.utils.jax_utils.maybe_concrete_scalar` for concrete checks.
+:class:`~quchip.utils.state_versioning.StateVersioned` tracks attribute writes, and
+:class:`~quchip.utils.registry.Registrable` dispatches deserialization.
 
 Frequencies and energies ``E/h`` are in GHz, times in ns, and temperatures in
 mK. Engine assembly converts Hamiltonians to angular frequency.
@@ -138,36 +139,36 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
     Concrete subclasses must:
 
     1. Set ``_type_prefix`` (used for auto-labeling).
-    2. Expose a ``freq`` attribute — the bare ``0 -> 1`` transition
-       frequency in GHz. Any JAX-traceable scalar is fine.
+    2. Expose a ``freq`` attribute holding the bare ``0 -> 1`` transition
+       frequency in GHz, as any JAX-traceable scalar.
     3. Implement :meth:`unresolved_hamiltonian` on the authored local space.
 
-    Noise parameters (all optional; ``None`` means the channel is absent):
+    Noise parameters (all optional, ``None`` means the channel is absent):
 
-    * ``T1`` — relaxation time (ns); emission channel at rate ``1/T1``.
-    * ``T2`` — total 0-1 coherence time (ns, requires ``T2 <= 2*T1``);
-      adds pure dephasing at ``gamma_phi = 1/T2 - 1/(2*T1)``.
-    * ``thermal_occupation`` — unitless bath occupation ``n̄``; adds thermal
-      absorption and enhances emission.
+    * ``T1``: relaxation time (ns), giving an emission channel at rate ``1/T1``.
+    * ``T2``: total 0-1 coherence time (ns), with ``T2 <= 2*T1``. It adds pure
+      dephasing at ``gamma_phi = 1/T2 - 1/(2*T1)``.
+    * ``thermal_occupation``: unitless bath occupation ``n̄``. It adds thermal
+      absorption and increases emission.
 
-    They are ordinary attributes: set them at construction or at any time
-    after. A newly built calculation uses the current noise parameters;
-    existing calculations retain their captured values. Writes get the same
+    The noise parameters are ordinary attributes, settable at construction or
+    any time later. A newly built calculation uses the current values, and
+    existing calculations keep their captured values. Writes get the same
     validation as construction. Setting a parameter to ``None`` removes its
-    channel from subsequent calculations.
+    channel from later calculations.
 
-    Mutation tracking is enabled automatically once construction finishes
-    (see :class:`~quchip.utils.state_versioning.StateVersioned`); subclasses
-    do not call ``_finish_init`` themselves.
+    Mutation tracking starts automatically when construction finishes (see
+    :class:`~quchip.utils.state_versioning.StateVersioned`). Subclasses do not
+    call ``_finish_init``.
 
     Optional overrides:
 
-    * :meth:`dissipation` — append channels beyond ``T1``/``T2``.
-    * :meth:`to_dict` / :meth:`from_dict` — for extra parameters.
-    * :attr:`computational` — ``True`` if the device represents a
-      computational qubit (default ``False``).
+    * :meth:`dissipation`: append channels in addition to ``T1``/``T2``.
+    * :meth:`to_dict` / :meth:`from_dict`: for extra parameters.
+    * :attr:`computational`: ``True`` if the device represents a computational
+      qubit (default ``False``).
 
-    See module docstring for the full contract.
+    See the module docstring for the full contract.
     """
 
     _type_prefix: ClassVar[str] = "device"
@@ -244,14 +245,16 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
     def __setattr__(self, name: str, value: Any) -> None:
         """Give post-construction writes the same validation as the constructor.
 
-        Construction validates jointly while mutation tracking is still off
-        (``__init__`` / the declarative resolver); once tracking is live,
-        every public write runs :meth:`_validate_param_write` *before* the
-        attribute lands, so a rejected value never sticks. Checks apply to
-        concrete scalars only — traced writes flow through unchecked.
-        The JAX pytree ``_unflatten`` path uses
-        ``object.__setattr__`` and bypasses this hook entirely.
+        Construction validates jointly. After construction, every public write
+        is validated *before* the attribute lands. A rejected value therefore
+        never sticks. Checks apply only to concrete scalars, so traced writes
+        go through unchecked.
         """
+        # Joint construction validation runs while mutation tracking is still
+        # off (`__init__` / the declarative resolver). When tracking is live,
+        # every public write runs `_validate_param_write` before the attribute
+        # lands. The JAX pytree `_unflatten` path uses `object.__setattr__` and
+        # bypasses `__setattr__`.
         if name == "thermal_population":
             warn_renamed(name, "thermal_occupation")
             name = "thermal_occupation"
@@ -330,13 +333,12 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         """Return ``{name: current_value}`` for every bare parameter the
         device exposes for fitting / sweeping.
 
-        The default implementation walks :attr:`tunable_param_names` and
-        reads each attribute. Subclasses with derived bare parameters
-        (e.g. circuit-level devices whose ``freq`` is computed from
-        ``E_C``/``E_J``/``E_L``) should override the class attribute
-        rather than this method — overrides are the right hook only when
-        the *list* itself is not static (e.g. flux-tunable devices that
-        gain ``phi_ext`` only at certain operating points).
+        By default, it walks :attr:`tunable_param_names` and reads each
+        attribute. Subclasses with derived bare parameters, e.g. circuit-level
+        devices that calculate ``freq`` from ``E_C``/``E_J``/``E_L``, should
+        override the class attribute, not this method. Override this method
+        only when the *list* itself is not static, e.g. for flux-tunable
+        devices that gain ``phi_ext`` only at some operating points.
         """
         return {name: getattr(self, name) for name in self.tunable_param_names}
 
@@ -368,10 +370,10 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
 
         Notes
         -----
-        Default implementation uses :func:`setattr` so any direct
-        attribute (``freq``, ``anharmonicity``, ``E_C``, …) works
-        without ceremony. Subclasses with derived properties that need
-        to back-propagate to private state should override this.
+        The default implementation uses :func:`setattr`, so any direct
+        attribute (``freq``, ``anharmonicity``, ``E_C``, …) works. Subclasses
+        with derived properties that must back-propagate to private state
+        should override this method.
         """
         if name not in self.tunable_param_names:
             raise ValueError(
@@ -392,22 +394,22 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
 
         Notes
         -----
-        These bounds are consumed by the inverse-design optimizer to keep
-        searches physical. The default uses well-named conventions that
-        cover the common circuit-QED parameters:
+        The inverse-design optimizer uses these bounds to keep searches
+        physical. The default uses well-named conventions that cover the common
+        circuit-QED parameters:
 
         * ``freq``, ``E_C``, ``E_J``, ``E_L``: positive, ``[0.5·s, 1.5·s]``
           around a positive seed (``s``).
-        * ``anharmonicity``: sign-preserving — negative seeds bound in
-          ``(2·s, -ε)``, positive seeds in ``(ε, 2·s)``.
+        * ``anharmonicity``: sign-preserving. Negative seeds bound in
+          ``(2·s, -ε)``, and positive seeds bound in ``(ε, 2·s)``.
         * ``phi_ext``: in ``[-0.5, 0.5]`` (one full flux period symmetric
           around the integer-flux point).
 
-        Subclasses override for parameters with other physical
-        constraints. Raises :class:`ValueError` for unknown names rather
-        than silently optimizing over an unbounded axis, and for a *value*
-        that is not a concrete real scalar (bounds for a JAX tracer are
-        undefined — the optimizer needs a concrete numeric seed).
+        Subclasses override this method for parameters with other physical
+        constraints. Raises :class:`ValueError` for unknown names rather than
+        silently optimizing over an unbounded axis, and for a *value* that is
+        not a concrete real scalar. Bounds for a JAX tracer are undefined
+        because the optimizer needs a concrete numeric seed.
         """
         seed = maybe_concrete_scalar(value)
         if seed is None:
@@ -563,7 +565,7 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
     # -- Serialization ------------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
-        """JSON-safe serialization; subclasses extend with their own parameters."""
+        """Return a JSON-safe serialization. Subclasses extend it with their own parameters."""
         data = super().to_dict()
         data["levels"] = int(self.levels)
         data["label"] = self.label
@@ -628,8 +630,9 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
     def truncation_boundary(self) -> TruncationBoundary | None:
         """Return the authored-space cutoff used by sampled truncation checks.
 
-        Intrinsically finite models override this to return None. Custom spaces
-        with a numerical cutoff return a TruncationBoundary describing its indices.
+        Intrinsically finite models override this method to return None. Custom
+        spaces with a numerical cutoff return a TruncationBoundary describing its
+        indices.
         """
         return self.local_space().truncation_boundary()
 
@@ -645,18 +648,20 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
     def physics_notes(self) -> list[str]:
         """Return human-readable declarations of this device's approximations.
 
-        Each entry names a non-obvious assumption, approximation, or
-        truncation that a user of this device should be aware of — e.g.
-        "Hilbert truncation: 3 levels", a model regime (Duffing), or a
-        noise-channel selection (charge- vs flux-coupled T1).
+        Each entry names a non-obvious assumption, approximation, or truncation
+        of this device. Examples include "Hilbert truncation: 3 levels", a
+        model regime (Duffing), or a noise-channel selection (charge- vs
+        flux-coupled T1).
 
-        The baseline entry is :meth:`_truncation_note`, since every
+        The baseline entry is a truncation note, because every
         :class:`BaseDevice` has some form of Hilbert-space truncation. A
-        pure-dephasing note is added when ``T2`` is set, since the
-        number-operator dephasing model carries non-obvious assumptions.
-        Subclasses ``super().physics_notes()`` and append their own
-        model-specific notes; no registry / engine-side dispatch is needed.
+        pure-dephasing note is added when ``T2`` is set, because the
+        number-operator dephasing model has non-obvious assumptions. Subclasses
+        call ``super().physics_notes()`` and append their own model-specific
+        notes.
         """
+        # The baseline truncation note comes from `_truncation_note`. Physics
+        # notes need no registry / engine-side dispatch.
         notes = [self._truncation_note()]
         if self.T2 is not None:
             notes.append(
@@ -777,13 +782,13 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
 
         Notes
         -----
-        Recognized names: ``"X"`` / ``"Y"`` / ``"Z"`` (Pauli projections on
-        the computational ``|0>, |1>`` subspace), ``"n"`` (number), ``"a"``
+        Recognized names: ``"X"`` / ``"Y"`` / ``"Z"`` (Pauli projections on the
+        computational ``|0>, |1>`` subspace), ``"n"`` (number), ``"a"``
         (lowering), ``"a_dag"`` (raising), ``"I"`` (identity). The device owns
-        this vocabulary. ``"charge"``, ``"phase"`` and ``"flux"`` use
-        the corresponding physical coupling operator when declared.
-        Other names are looked up in :meth:`local_space`. A subclass may
-        override this method to supply additional derived operators.
+        this vocabulary. ``"charge"``, ``"phase"`` and ``"flux"`` use the
+        corresponding physical coupling operator when the device declares it.
+        Other names are found in :meth:`local_space`. A subclass can override
+        this method to supply more derived operators.
         """
         physical = {
             "charge": "charge_coupling_operator",
@@ -980,7 +985,7 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
 
     @property
     def computational(self) -> bool:
-        """Whether this device is a computational qubit. Override in subclasses."""
+        """Return True if this device is a computational qubit. Override in subclasses."""
         return False
 
     # -- Collapse operators ------------------------------------------------
@@ -1052,9 +1057,8 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
     def collapse_operators(self) -> list[Operator]:
         """Materialize the device's authored Lindblad collapse operators.
 
-        The built-in channels cover ``T1``, ``T2``, and
-        ``thermal_occupation``; subclasses append channels in
-        :meth:`dissipation`.
+        The built-in channels cover ``T1``, ``T2``, and ``thermal_occupation``.
+        Subclasses append channels in :meth:`dissipation`.
 
         References
         ----------
@@ -1091,14 +1095,14 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         Parameters
         ----------
         basis : BasisRecord or None, optional
-            Resolved basis for matrix-element channels; ``None`` resolves the
+            Resolved basis for matrix-element channels. ``None`` resolves the
             device's current basis policy.
         """
         return tuple(channel for channel, _paths in self._collapse_channels_with_paths(basis))
 
     @classmethod
     def noise_parameter_names(cls) -> tuple[str, ...]:
-        """Declared fields that :meth:`Chip.set_noise` may configure."""
+        """Declared fields that :meth:`Chip.set_noise` can configure."""
         from quchip.declarative.parameters import parameter_fields
 
         return tuple(
@@ -1106,36 +1110,38 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         )
 
     def intrinsic_decay_rate(self) -> Any | None:
-        """Total lowering-channel (downward) Lindblad rate, in 1/ns, or ``None`` with no decay channel.
+        """Return the total lowering-channel (downward) Lindblad rate in 1/ns, or ``None`` if there is no decay channel.
 
-        Reports the actual sum of squared amplitudes of the lowering-operator
-        collapse channel(s) :meth:`collapse_operators` builds from
-        the common thermal-emission construction exactly
-        rather than approximating it:
+        Reports the sum of squared amplitudes of the lowering-operator collapse
+        channel(s) that :meth:`collapse_operators` builds from the common
+        thermal-emission construction. It reproduces that construction exactly:
 
-        * ``T1`` set (``thermal_occupation`` set or not): ``(n̄+1)/T1`` —
-          the ``sqrt(gamma*(n̄+1))·a`` channel's rate, ``gamma = 1/T1``;
-          ``n̄`` defaults to ``0`` when ``thermal_occupation`` is unset, so
-          this reduces to plain ``1/T1``.
-        * ``T1`` unset, ``thermal_occupation`` set: ``n̄+1`` — the same
-          channel with ``gamma = 1`` (the unitless-bath-occupation branch).
-        * Neither set: ``None`` — no lowering channel.
+        * ``T1`` set (``thermal_occupation`` set or not): ``(n̄+1)/T1``, the
+          rate of the ``sqrt(gamma*(n̄+1))·a`` channel with ``gamma = 1/T1``.
+          ``n̄`` defaults to ``0`` when ``thermal_occupation`` is unset, so the
+          rate reduces to plain ``1/T1``.
+        * ``T1`` unset, ``thermal_occupation`` set: ``n̄+1``, the same channel
+          with ``gamma = 1`` (the unitless-bath-occupation branch).
+        * Neither set: ``None``, because there is no lowering channel.
 
-        Subclasses whose :meth:`collapse_operators` combine several
-        lowering-operator channels (e.g. :class:`~quchip.devices.resonator.Resonator`'s
-        Q-derived photon loss alongside ``T1``) override this to report the
-        summed rate, so a caller reading a single scalar decay rate (e.g.
-        :mod:`quchip.chip.transformations.eliminate_device`'s Purcell fold)
-        does not have to special-case per-device channel structure.
+        Subclasses whose :meth:`collapse_operators` combines several
+        lowering-operator channels override this method to report the summed rate. An
+        example is the Q-derived photon loss of
+        :class:`~quchip.devices.resonator.Resonator` together with ``T1``.
 
-        This is the *downward* rate only — the ``sqrt(gamma*n̄)·a†`` upward
-        (thermal-absorption) channel is not represented; a caller that needs
-        to know whether that channel is present reads ``thermal_occupation``
-        directly. Whether a channel exists, and which formula applies, is a
-        *static* decision (is ``T1``/``thermal_occupation`` set?), never a
-        traced-zero comparison on the resulting rate, which would concretize
-        a traced value and break differentiability.
+        The method reports only the *downward* rate, not the
+        ``sqrt(gamma*n̄)·a†`` upward (thermal-absorption) channel. A caller
+        that needs to know whether that channel is present reads
+        ``thermal_occupation`` directly.
         """
+        # A caller that reads a single scalar decay rate, e.g. the Purcell fold
+        # of `quchip.chip.transformations.eliminate_device`, then need not
+        # special-case each device's channel structure.
+        #
+        # A channel's existence and the applicable formula are a static decision
+        # (is `T1`/`thermal_occupation` set?). It is never a traced-zero
+        # comparison on the resulting rate, which would concretize a traced
+        # value and break differentiability.
         n_bar = self.thermal_occupation
         if self.T1 is not None:
             n_bar_eff = 0.0 if n_bar is None else n_bar
@@ -1212,7 +1218,7 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
     # -- Drive wiring ------------------------------------------------------
 
     def connect(self, drive: "BaseDrive") -> None:
-        """Register a drive as connected: idempotent on identity, replace-on-relabel.
+        """Register a drive as connected, idempotently on identity and replacing it on relabel.
 
         Parameters
         ----------

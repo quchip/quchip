@@ -1,14 +1,13 @@
 """Chip serialization, deserialization, and structural cloning.
 
-These helpers turn a :class:`~quchip.chip.chip.Chip` into a JSON-safe
-dict and back (via the device / coupling registries), and produce
-isolated structural clones suitable for sweep evaluation.
+These helpers turn a :class:`~quchip.chip.chip.Chip` into a JSON-safe dict and
+back (through the device / coupling registries). They also make isolated
+structural clones suitable for sweep evaluation.
 
-Cloning is structural, not numerical: devices are copied fresh,
-couplings are rebound to the cloned device instances, and control
-equipment — when attached — is cloned and reconnected. Clones keep the
-chip-specific backend selection so sweeps run on the same backend as
-the original.
+Cloning is structural, not numerical: devices are copied fresh, and couplings
+are rebound to the cloned device instances. If control equipment is attached,
+it is cloned and reconnected. Clones keep the chip-specific backend selection
+so sweeps run on the same backend as the original.
 """
 
 from __future__ import annotations
@@ -40,10 +39,9 @@ def serialize_chip(chip: "Chip") -> dict[str, Any]:
     """Serialize chip topology into a JSON-safe dictionary.
 
     Captures devices, couplings, baths, frame, approximation strategy, and, if
-    present — the control equipment wiring. The chip label (if any) is
-    included verbatim. Backend identity is *not* serialized;
-    deserialization uses the process default backend unless changed
-    afterwards.
+    present, the control equipment wiring. The chip label, if any, is included
+    verbatim. Backend identity is *not* serialized, so deserialization uses the
+    process default backend unless changed afterwards.
     """
     data: dict[str, Any] = {
         "format_version": 1,
@@ -72,10 +70,10 @@ def deserialize_chip(data: dict[str, Any]) -> "Chip":
     """Reconstruct a chip from :func:`serialize_chip` output.
 
     Device and coupling classes are resolved through their shared
-    :class:`~quchip.utils.registry.Registrable` registries (via
-    :meth:`BaseDevice.from_dict` / :meth:`BaseCoupling.from_dict`), which
-    are populated at subclass-definition time, so any extension module must
-    be imported before deserialization.
+    :class:`~quchip.utils.registry.Registrable` registries (through
+    :meth:`BaseDevice.from_dict` / :meth:`BaseCoupling.from_dict`). These
+    registries are populated at subclass-definition time, so import any
+    extension module before deserialization.
     """
     from quchip.chip.chip import Chip
 
@@ -156,10 +154,10 @@ def deserialize_chip(data: dict[str, Any]) -> "Chip":
 def clone_chip(chip: "Chip") -> "Chip":
     """Isolated structural clone suitable for sweep evaluation.
 
-    Devices are copied and decoupled from their original drive wiring;
-    couplings are rebound to the cloned device instances. Control
-    equipment, when present, is cloned and reconnected so the clone's
-    drives target the clone's devices — not the originals.
+    Devices are copied and decoupled from their original drive wiring.
+    Couplings are rebound to the cloned device instances. If control equipment
+    is present, it is cloned and reconnected, so the clone's drives target the
+    clone's devices and not the originals.
     """
     from quchip.chip.chip import Chip
 

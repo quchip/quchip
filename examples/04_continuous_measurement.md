@@ -17,24 +17,24 @@ jupyter:
 
 # What happens during a qubit measurement?
 
-A qubit starts in $|+\rangle=(|0\rangle+|1\rangle)/\sqrt{2}$. As we monitor
-$\sigma_z$, some trajectories approach a pole quickly; others wander or reverse
-direction before settling. Generate these individual histories and the density
-of an entire ensemble from the same dispersive-readout model.
+A qubit starts in $|+\rangle=(|0\rangle+|1\rangle)/\sqrt{2}$. When we monitor
+$\sigma_z$, some trajectories go quickly toward a pole, while others wander
+or reverse direction before they settle. Generate these individual histories
+and the ensemble density from the same dispersive-readout model.
 
 [Murch et al. (2013)](https://doi.org/10.1038/nature12539) tracked conditional
 superconducting-qubit states and checked them with tomography on repeated
-preparations. Here we simulate ideal detection and no intrinsic qubit decay.
-The figures illustrate that measurement dynamics; they do not fit the experiment's
+preparations. Here we simulate ideal detection and no intrinsic qubit decay. The
+figures show those measurement dynamics. They do not fit the experiment's
 finite-efficiency data or perform an experimental tomography validation.
 
 ## Set the measurement strength from the resonator
 
 The resonator has a 20 MHz linewidth and a full conditional frequency pull of
 $-4$ MHz. Drive halfway between its two conditional resonances, then compare
-the steady fields for the qubit in $|0\rangle$ and $|1\rangle$.
-Apply a 400 ns square readout pulse to the coupled qubit and resonator, once
-from each qubit basis state. The final cavity fields set the measurement rate.
+the steady fields for the qubit in $|0\rangle$ and $|1\rangle$. Apply a 400 ns
+square readout pulse to the coupled qubit and resonator, once from each qubit
+basis state. The final cavity fields set the measurement rate.
 
 ```python
 import numpy as np
@@ -80,28 +80,27 @@ Measurement dephasing: 0.00148714 /ns; steady photons: 0.153846
 
 <!-- executed-output:end -->
 
-We use the steady-field reduction
-$\Gamma_m=\kappa|\alpha_0-\alpha_1|^2/2$, represented by
-$L=\sqrt{\Gamma_m/2}\,\sigma_z$. Then
-$\mathcal D[L]\rho=(\Gamma_m/2)(\sigma_z\rho\sigma_z-\rho)$ and the
-unconditional coherence decays as $e^{-\Gamma_m t}$.
-Here `gamma` means $\Gamma_m$, in $\mathrm{ns}^{-1}$.
-The cavity settles on a scale $2/\kappa\approx16$ ns, much shorter than
-$1/\Gamma_m$. The reduced model starts with the field already settled and tracks
-out the deterministic Stark rotation. It omits the initial cavity transient.
+We use the steady-field reduction $\Gamma_m=\kappa|\alpha_0-\alpha_1|^2/2$,
+which $L=\sqrt{\Gamma_m/2}\,\sigma_z$ represents. Then
+$\mathcal D[L]\rho=(\Gamma_m/2)(\sigma_z\rho\sigma_z-\rho)$, and the
+unconditional coherence decays as $e^{-\Gamma_m t}$. Here `gamma` means
+$\Gamma_m$, in $\mathrm{ns}^{-1}$. The cavity settles on a scale
+$2/\kappa\approx16$ ns, much shorter than $1/\Gamma_m$. The reduced model starts
+with the field already settled and tracks out the deterministic Stark rotation,
+so it omits the initial cavity transient.
 
 ## Monitor the qubit
 
-Give the qubit its transition frequency and set the chip to its rotating frame.
-This removes free precession, leaving measurement backaction. `T1=None` omits
-relaxation; `T2=1/gamma` represents the measurement-induced dephasing, with no
-additional unobserved dephasing. The effective frequency includes the steady Stark shift.
+Give the qubit its transition frequency and set the chip to its rotating frame. This
+frame removes free precession, and only the measurement backaction stays. `T1=None` omits
+relaxation. `T2=1/gamma` represents the measurement-induced dephasing, with no additional
+unobserved dephasing. The effective frequency includes the steady Stark shift.
 
-The standard channel is $L=\sqrt{2\Gamma_m}\,n$, with
-$n=(I-\sigma_z)/2$. Its dissipator is the same as the Pauli form above.
-A homodyne phase of $\pi$ matches the Pauli trajectory's noise-sign convention;
-the identity offset only changes the record's baseline.
-We prepare the bare $|+\rangle$ because the plotted axes use that Pauli basis.
+The standard channel is $L=\sqrt{2\Gamma_m}\,n$, with $n=(I-\sigma_z)/2$. Its
+dissipator equals the Pauli form above. A homodyne phase of $\pi$ matches the
+Pauli trajectory's noise-sign convention, and the identity offset only changes
+the record's baseline. We prepare the bare $|+\rangle$ because the plotted
+axes use that Pauli basis.
 
 ```python
 from quchip import with_monitoring
@@ -147,21 +146,22 @@ Bloch data: (3000, 201, 3); final |z| > 0.95: 0.748
 
 <!-- executed-output:end -->
 
-`paths-plus-z.npz` saves the array with axes `(shot, saved time, x/y/z)`. States are not retained because
-these three observables contain the qubit information used here. `dt=0.05` ns
-sets the native integration step; the 5 ns save interval only sets the plot
-sampling. QuTiP runs the seeded trajectories across four worker processes; the
-loop above only extracts their observables.
-The 3,000-shot ensemble includes the four histories shown below.
+`paths-plus-z.npz` saves the array with axes `(shot, saved time, x/y/z)`. The file does not keep the
+states, because these three observables contain the qubit information used here. `dt=0.05` ns sets
+the native integration step, and the 5 ns save interval only sets the plot sampling. QuTiP runs the
+seeded trajectories across four worker processes, and the loop above only extracts their
+observables. The 3,000-shot ensemble includes the four histories shown below.
 
 ## Compare individual histories
 
-Each video below selects five paths ending near each pole. The selections expose
-different histories within the same ensemble; they are neither disjoint classes
-nor estimates of their prevalence. “Early return” means a path approached its
-eventual pole, then moved away. “Reversal” means it first approached the opposite
-pole. No external kick or relaxation is applied: a state near an eigenstate can
-reverse, while an exact $\sigma_z$ eigenstate is stationary under this measurement.
+Each video below selects five paths that end near each pole. The selections show
+different histories in the same ensemble, not disjoint classes or estimates of
+their prevalence.
+
+“Early return” means that a path approached its eventual pole, then moved away.
+“Reversal” means that the path first approached the opposite pole. We apply no
+external kick or relaxation. A state near an eigenstate can reverse, but an exact
+$\sigma_z$ eigenstate is stationary under this measurement.
 
 <details>
 <summary>Select and plot the histories</summary>
@@ -280,9 +280,9 @@ for kind, indices in selected.items():
   <a href="../_static/measurement_reversal.mp4">Play reversal</a>.
 </video>
 
-All paths start at $+x$. Red and blue indicate the final pole, including before
-the outcome becomes apparent. The Bloch vectors and moving dots follow the
-current time while each trace keeps its history.
+All paths start at $+x$. Red and blue show the final pole, even before the
+outcome becomes apparent. The Bloch vectors and moving dots follow the current
+time, and each trace keeps its history.
 
 <details>
 <summary>Final frames and PDFs</summary>
@@ -319,13 +319,13 @@ Reversal. [PDF](../images/measurement_reversal.pdf)
 and most-likely paths with both initial and final states specified. For their
 no-drive case and ideal efficiency, the analytic path from $z(0)=0$ to $z(T)=z_f$
 is $z_\mathrm{opt}(t)=\tanh[(t/T)\operatorname{arctanh}(z_f)]$ and
-$x_\mathrm{opt}(t)=\sqrt{1-z_\mathrm{opt}(t)^2}$.
-The paper's measurement time is $\tau=1/(2\Gamma_m)$ in our convention.
+$x_\mathrm{opt}(t)=\sqrt{1-z_\mathrm{opt}(t)^2}$. The paper's measurement time is
+$\tau=1/(2\Gamma_m)$ in our convention.
 
-Select $z(1000\,\mathrm{ns})=0.8\pm0.03$ from the already generated ensemble.
-The dashed curve is the analytic most-likely path. The solid curve is the mean
-of the selected paths, a different statistic. No optimizer or additional solve
-is needed for this no-drive result.
+Select $z(1000\,\mathrm{ns})=0.8\pm0.03$ from the existing ensemble. The
+dashed curve is the analytic most-likely path. The solid curve is the
+selected paths' mean, which is a different statistic. This no-drive result
+needs no optimizer or additional solve.
 
 ```python
 target, window = 0.8, 0.03
@@ -386,10 +386,10 @@ plt.show()
   <a href="../_static/measurement_density.mp4">Play the animation</a>.
 </video>
 
-The 160 bins show raw counts with no smoothing or interpolation. Each time
-column is divided by its own maximum to show where paths concentrate. Shades cannot compare absolute probabilities between
-columns or panels. The endpoint window gives a finite subensemble around the
-analytic path's exact boundary condition.
+The 160 bins show raw counts with no smoothing or interpolation. We divide each time column by its
+own maximum to show where paths concentrate. The shades cannot compare absolute probabilities
+between columns or panels. The endpoint window gives a finite subensemble around the analytic
+path's exact boundary condition.
 
 <details>
 <summary>Final frame and PDF</summary>
@@ -445,11 +445,12 @@ for name in (*history_figures, "density"):
 
 ## Check the ensemble
 
-Discarding the measurement record gives $\langle x\rangle=e^{-\Gamma_m t}$
-and $\langle z\rangle=0$. The final excited and ground populations average to
-one half. For observables bounded by $[-1,1]$, $1/\sqrt{N}$ bounds the standard
-error at any one time. Report the largest discrepancy alongside that scale;
-refine the integration timestep when studying finer trajectory features.
+If you discard the measurement record, you get
+$\langle x\rangle=e^{-\Gamma_m t}$ and $\langle z\rangle=0$. The final excited
+and ground populations average to one half. For observables bounded by
+$[-1,1]$, $1/\sqrt{N}$ bounds the standard error at any time. Report the
+largest discrepancy together with that scale. Refine the integration timestep
+when you study finer trajectory features.
 
 ```python
 mean = bloch.mean(axis=0)
@@ -469,10 +470,10 @@ Max Bloch-radius error: 6.03e-04
 
 <!-- executed-output:end -->
 
-`paths-plus-z.npz` contains the `(shot, time, 3)` Bloch array and the time,
-measurement-rate, photon-number and drive-amplitude values. The fixed seed and
-native method reproduce the ensemble within the same QuTiP version; parallel
-workers may return the shots in a different order.
+`paths-plus-z.npz` contains the `(shot, time, 3)` Bloch array and the values
+of time, measurement rate, photon number, and drive amplitude. The fixed seed
+and native method reproduce the ensemble with the same QuTiP version. Parallel
+workers can return the shots in a different order.
 
 For the experimental reconstruction and the path equations, see
 [Murch et al., Nature 502, 211 (2013)](https://arxiv.org/abs/1305.7270) and

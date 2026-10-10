@@ -119,11 +119,11 @@ class FramePlan:
     """Record the frequencies and constraints chosen by :func:`plan_frame`.
 
     ``frequencies`` maps every device to its frame frequency. ``clusters``
-    groups devices linked by accepted constraints, ``pins`` records the
-    reference frequencies used to determine free variables, and ``residuals``
-    lists rejected constraints that remain time dependent. ``tones`` contains
-    the accepted tone constraints that fixed driven clusters, including each
-    tone's source, charge coefficients, frequency, and weight.
+    groups devices linked by accepted constraints. ``pins`` records the
+    reference frequencies used to set free variables. ``residuals`` lists
+    rejected constraints that remain time dependent. ``tones`` contains the
+    accepted tone constraints that fixed driven clusters, including each tone's
+    source, charge coefficients, frequency, and weight.
 
     Attributes
     ----------
@@ -357,10 +357,11 @@ def plan_frame(
     approximation : Approximation
         Decides which coupling bands are retained.
     strict : bool
-        Apply stationary ordering when true. Require cascade constraints,
-        exchange coupling bands with nonzero charge vectors summing to zero,
-        and tones, in that order. Raise :class:`FrameConflict` when a tone
-        conflicts; only non-exchange coupling bands may remain as residuals.
+        Apply stationary ordering when true: the planner must satisfy, in
+        order, cascade constraints, exchange coupling bands with nonzero charge
+        vectors summing to zero, and tones. Raise :class:`FrameConflict` when a
+        tone conflicts. Only non-exchange coupling bands can remain as
+        residuals.
     solve_duration : float, optional
         Integration-window duration used for the static-coupling weight
         ``|h_band|² solve_duration``. If omitted or traced, static-coupling
@@ -368,7 +369,7 @@ def plan_frame(
     reference_frequencies : mapping, optional
         Per-device reference frequencies for pins; defaults to the devices'.
     local_resolution : optional
-        Resolved local bases from assembly, reused when already computed.
+        Resolved local bases from assembly, reused when already calculated.
 
     Returns
     -------
@@ -760,8 +761,8 @@ def _program_energy(program: Any, span: tuple[float, float] | None) -> float | N
 def planning_resolution(chip: "Chip") -> Any:
     """Resolve local solver bases during JAX compile-time evaluation.
 
-    Bases from constant device matrices stay concrete inside ``jit``. Bases
-    that depend on traced inputs remain traced.
+    Bases from constant device matrices stay concrete inside ``jit``, while
+    bases that depend on traced inputs remain traced.
     """
     from quchip.engine.assembly import _resolve_system
 
@@ -833,12 +834,11 @@ def resolve_frame(
     """Resolve *frame_spec* into a :class:`ResolvedFrame`.
 
     Dispatches on ``frame_spec`` shape (``str`` / scalar-like / dict / plan),
-    fills a per-device ``frequencies`` dict, and computes the
-    demodulation frequencies ``reference_freq − ω_frame``. See the
-    module docstring for the physical meaning of each mode. A bare ``"auto"``
-    spec plans from coupling and network constraints only. Operation-aware
-    callers pass a :class:`FramePlan` that also contains their tone
-    constraints.
+    fills a per-device ``frequencies`` dict, and calculates the demodulation
+    frequencies ``reference_freq − ω_frame``. See the module docstring for the
+    physical meaning of each mode. A bare ``"auto"`` spec plans from coupling
+    and network constraints only. Operation-aware callers pass a
+    :class:`FramePlan` that also contains their tone constraints.
 
     Missing references resolve from this chip's dressed transitions. Explicit
     references bypass that calculation; reading a device setting does no work.

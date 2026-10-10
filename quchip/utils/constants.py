@@ -1,6 +1,6 @@
 """Physical constants in quchip's GHz, ns, and mK units.
 
-Hamiltonians express ``E/h`` in GHz; engine assembly converts to angular
+Hamiltonians express ``E/h`` in GHz. Engine assembly converts to angular
 frequency with ``2π``. Time is in ns and temperature in mK.
 
 Values derive from SI defining constants and CODATA 2018, published by NIST

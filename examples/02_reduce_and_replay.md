@@ -18,13 +18,13 @@ jupyter:
 # Model reduction
 
 Can a smaller model reproduce the same pulse experiment? Drive the end of a
-four-transmon chain, keep its nearest neighbour, and compare the resulting
-reduced model with the full chip. Frequencies are in GHz and times in ns.
+four-transmon chain, keep its nearest neighbour, and compare the reduced
+model with the full chip. Frequencies are in GHz and times in ns.
 
 ## Declare the chain
 
-The neighbouring transmons are separated by 350 MHz and coupled at 12 MHz.
-The full model has 81 basis states.
+Neighbouring transmons are separated by 350 MHz and coupled at 12 MHz. The
+full model has 81 basis states.
 
 ```python
 import numpy as np
@@ -46,10 +46,10 @@ chip = Chip(qubits, couplings=couplings, frame="rotating", approximation=RWA())
 
 ## Schedule a pulse and keep its neighbourhood
 
-Drive `q0` with a 60 ns Gaussian. `active_patch(hops=1)` retains `q0` and `q1`,
+Drive `q0` with a 60 ns Gaussian. `active_patch(hops=1)` keeps `q0` and `q1`,
 eliminates `q3` then `q2`, and runs the existing schedule on the reduced chip.
-Here `hops=1` keeps devices within one coupling step of the driven qubit.
-The source chip and sequence remain unchanged.
+Here `hops=1` keeps devices within one coupling step of the driven qubit. The
+source chip and sequence do not change.
 
 ```python
 drive = ChargeDrive(qubits[0], label="q0-charge")
@@ -113,8 +113,9 @@ Hamiltonian corrections; labels show bare parameters.
 
 ## Simulate the same pulse in the reduced model
 
-`sequence.simulate()` runs the full chip; `patch.simulate()` runs the schedule
-on the reduced chip. Compare the excited-state population of the driven qubit.
+`sequence.simulate()` runs the full chip, and `patch.simulate()` runs the
+schedule on the reduced chip. Compare the driven qubit's excited-state
+population.
 
 ```python
 times = np.linspace(0.0, 80.0, 321)
@@ -179,10 +180,10 @@ absolute difference. Values below 10⁻¹⁰ are floored for display only.
 
 ## Inspect the elimination report
 
-Each entry in `patch.steps` is an `EliminationResult`. Its `describe()` report
-includes frequency shifts, inherited loss, coupling ratios, and approximation
-notes. The retained Hamiltonian corrections determine the reduced dynamics;
-the original device parameters stay unchanged.
+Each entry in `patch.steps` is an `EliminationResult`, whose `describe()`
+report includes frequency shifts, inherited loss, coupling ratios, and
+approximation notes. The kept Hamiltonian corrections set the reduced
+dynamics, and the original device parameters do not change.
 
 <details>
 <summary>Show the built-in reports</summary>
@@ -217,19 +218,20 @@ notes:
 
 </details>
 
-To remove a specific device directly, use `eliminate(chip, "q3", method="sw")`
-and inspect the returned `.chip` and `.describe()`. `method="exact"` uses the
-retained block of the diagonalized model instead of the second-order
-Schrieffer–Wolff approximation. Both use the declared finite Hilbert space.
-Eliminating a coupling retains both endpoints.
+To remove a specific device directly, use
+`eliminate(chip, "q3", method="sw")`, then inspect the returned `.chip` and
+`.describe()`. `method="exact"` uses the kept block of the diagonalized model
+instead of the second-order Schrieffer–Wolff approximation. Both methods use
+the declared finite Hilbert space. Eliminating a coupling keeps both
+endpoints.
 
 ## Check the reduction error
 
 A small coupling-to-detuning ratio is a diagnostic, not a guarantee of accurate
 dynamics. Here we also check the full/reduced population difference against
-`5(g/Δ)²`, using the retained–eliminated boundary. The factor of five allows
-for multilevel and finite-pulse effects. Change `hops` to retain more neighbours
-and repeat the comparison when changing the experiment.
+`5(g/Δ)²`, with the retained–eliminated boundary. The factor of five allows for
+multilevel and finite-pulse effects. When you change the experiment, increase
+`hops` to keep more neighbours and compare again.
 
 <details>
 <summary>Numerical checks and record</summary>
@@ -298,8 +300,8 @@ RESULT reduction={"active_labels":["q0","q1"],"all_folds_valid":true,"eliminated
 
 ## Other changes to the model
 
-Use `with_params()` to change numerical parameters; the
-[spectrum guide](statics-and-parameter-studies.md) demonstrates this during a sweep.
-`chip.partition()` separates independent components exactly, while an active
-patch approximates coupled spectators. Inspect `partition.notes` when shared
-Hamiltonian terms, loss, or drive crosstalk keep components on a joint solve.
+Use `with_params()` to change numerical parameters, as the [spectrum
+guide](statics-and-parameter-studies.md) does during a sweep. `chip.partition()`
+separates independent components exactly, but an active patch approximates
+coupled spectators. If shared Hamiltonian terms, loss, or drive crosstalk keep
+components in a joint solve, inspect `partition.notes`.

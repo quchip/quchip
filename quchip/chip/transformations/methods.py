@@ -1,21 +1,21 @@
 """Reduction-method registry for device elimination (extension seam).
 
 :func:`~quchip.chip.transformations.dispatch.eliminate`'s device path is
-method-agnostic up to a handful of decision points: how the surviving pair
-parameters are extracted, how the eliminated mode's jump operator is carried
-into the reduced frame, whether a residual ZZ and a pathway attribution are
-available, and what higher-order physics the reduction drops. This module
-factors those decision points into a :class:`ReductionMethod` strategy keyed
-in :data:`_REDUCTION_METHODS`. New routes, such as a higher-order
-Schrieffer-Wolff method or numeric fit, register with
-:func:`register_reduction_method`, following the rule registry in
-:mod:`quchip.chip.retarget`.
+method-agnostic except at a few decision points. They are how to extract the
+surviving pair parameters and how to carry the eliminated mode's jump operator
+into the reduced frame. They also include whether a residual ZZ and a pathway
+attribution are available, and what higher-order physics the reduction drops.
+This module puts those decision points into a :class:`ReductionMethod`
+strategy. New routes, such as a higher-order Schrieffer-Wolff method or numeric
+fit, register with :func:`register_reduction_method`, following the rule
+registry in :mod:`quchip.chip.retarget`.
 
-Dispatch keys on the *static* ``method`` string, never a traced value:
-the two shipped strategies, :class:`SchriefferWolffMethod`
-and :class:`ExactReduction`, are selected once by name and then operate on the
-:class:`DeviceReductionContext` the caller computed.
+Dispatch keys on the *static* ``method`` string, never on a traced value. The
+two shipped strategies, :class:`SchriefferWolffMethod` and
+:class:`ExactReduction`, are selected once by name and then operate on the
+:class:`DeviceReductionContext` that the caller computed.
 """
+# Reduction method strategies are keyed in `_REDUCTION_METHODS`.
 
 from __future__ import annotations
 
@@ -43,19 +43,19 @@ from quchip.utils.jax_utils import concrete_array_module, contains_tracer
 class DeviceReductionContext:
     """Method-agnostic inputs of one device elimination.
 
-    Computed once by the device path of
-    :func:`~quchip.chip.transformations.dispatch.eliminate` and handed to the
-    chosen :class:`ReductionMethod`. The perturbative generator is computed
-    only when a method requests it; exact reduction does not need it.
+    The device path of :func:`~quchip.chip.transformations.dispatch.eliminate`
+    computes this context once and passes it to the chosen
+    :class:`ReductionMethod`. The perturbative generator is computed only when
+    a method requests it, and exact reduction does not use it.
 
     Attributes
     ----------
     mode_label
         Its label.
     survivor_labels
-        The touching survivors in bare-label order — the same ordering the
-        retained Hamiltonian and pair diagnostics use, so every ``("J", a, b)``
-        lookup agrees regardless of coupling-scan order.
+        The touching survivors in bare-label order. The retained Hamiltonian
+        and the pair diagnostics use the same order, so every ``("J", a, b)``
+        lookup agrees for all coupling-scan orders.
     labels
         Device labels in the bare product-basis order.
     dims
@@ -81,7 +81,7 @@ class DeviceReductionContext:
 
     @cached_property
     def s(self) -> Any:
-        """Return the SW generator once per reduction when requested."""
+        """Return the SW generator, computed once per reduction on request."""
         return sylvester_generator(self.h, self.p_mask)[0]
 
     @cached_property
@@ -102,13 +102,14 @@ class DeviceReductionContext:
 class ReductionMethod:
     """Compute a retained Hamiltonian, embedding and reduction diagnostics.
 
-    A concrete strategy declares its :attr:`name` (the ``method`` string
-    :func:`eliminate` dispatches on) and implements the hooks below. Each
-    receives the :class:`DeviceReductionContext` the caller assembled. Each
-    hook uses the context's fixed product energy coordinates.
+    A concrete strategy declares its :attr:`name` (the ``method`` string that
+    :func:`eliminate` dispatches on) and implements the hooks below. Each hook
+    receives the :class:`DeviceReductionContext` the caller assembled and uses
+    its fixed product energy coordinates.
 
-    Every hook body runs on ``jax.grad``/``jit`` paths and must stay traceable:
-    no ``float()``/``int()``/``bool()`` or Python branching on a traced value.
+    Every hook body runs on ``jax.grad``/``jit`` paths and must stay traceable.
+    Do not use ``float()``/``int()``/``bool()`` or Python branching on a traced
+    value.
     """
 
     name: ClassVar[str]
@@ -128,10 +129,12 @@ class ReductionMethod:
     def pair_parameters(self, ctx: DeviceReductionContext) -> dict:
         """Reduced per-survivor and per-pair parameters.
 
-        Returns a mapping matching :func:`~quchip.chip.sw.extract_pair_parameters`
-        /:func:`~quchip.chip.sw.exact_pair_parameters`: ``{survivor: {"freq_after":
-        ...}}`` for each survivor, plus a ``("J", a, b)`` entry per survivor
-        pair (and, for a route that resolves it, a ``("zz", a, b)`` entry).
+        Returns a mapping that matches
+        :func:`~quchip.chip.sw.extract_pair_parameters`
+        /:func:`~quchip.chip.sw.exact_pair_parameters`, with
+        ``{survivor: {"freq_after": ...}}`` for each survivor and a ``("J", a, b)``
+        entry for each survivor pair. A route that resolves it also adds a
+        ``("zz", a, b)`` entry.
         """
         raise NotImplementedError
 
@@ -149,18 +152,18 @@ class ReductionMethod:
         raise NotImplementedError
 
     def dropped_suffix(self) -> str:
-        """Trailing clause of the ``"Dropped: ..."`` note — the physics this route omits."""
+        """Trailing clause of the ``"Dropped: ..."`` note: the physics this route omits."""
         raise NotImplementedError
 
 
 class SchriefferWolffMethod(ReductionMethod):
     """2nd-order Schrieffer-Wolff reduction (``method="sw"``).
 
-    Perturbative and differentiable: pair parameters come from the projected
-    2nd-order effective Hamiltonian, and the mediated exchange carries a
-    virtual-state pathway attribution. Residual ZZ is a higher-order
-    correction this route does not represent
-    (Bravyi, DiVincenzo & Loss, Ann. Phys. 326, 2793 (2011)).
+    This reduction is perturbative and differentiable, and the pair parameters
+    come from the projected 2nd-order effective Hamiltonian. The mediated
+    exchange carries a virtual-state pathway attribution. Residual ZZ is a
+    higher-order correction that this route does not represent (Bravyi,
+    DiVincenzo & Loss, Ann. Phys. 326, 2793 (2011)).
     """
 
     name: ClassVar[str] = "sw"
@@ -191,11 +194,11 @@ class SchriefferWolffMethod(ReductionMethod):
 class ExactReduction(ReductionMethod):
     """Exact-from-dressing reduction (``method="exact"``).
 
-    Reads reduced parameters from an exact diagonalization of the same
-    engine-consumed static model as the SW route: exact kept-block energies
-    (what residual ZZ needs) at the cost of a full diagonalization. It has no
-    perturbative generator, so no pathway attribution is available
-    (:func:`~quchip.chip.sw.exact_pair_parameters`).
+    This reduction reads reduced parameters from an exact diagonalization of
+    the same engine-consumed static model as the SW route. It gives exact
+    kept-block energies (which residual ZZ needs), but requires a full
+    diagonalization. It has no perturbative generator, so no pathway
+    attribution is available (:func:`~quchip.chip.sw.exact_pair_parameters`).
     """
 
     name: ClassVar[str] = "exact"

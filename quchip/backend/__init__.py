@@ -2,16 +2,13 @@
 
 quchip ships two backends:
 
-* :class:`QuTiPBackend` — CPU, ``qutip.Qobj`` operators, process-parallel
-  sweeps via loky. Default backend.
-* :class:`DynamiqsBackend` — JAX/dynamiqs, fully differentiable, native
-  ``vmap`` batched solves. Optional extra (``pip install quchip[dynamiqs]``).
+* :class:`QuTiPBackend`: CPU, ``qutip.Qobj`` operators, process-parallel sweeps
+  with loky. Default backend.
+* :class:`DynamiqsBackend`: JAX/dynamiqs, fully differentiable, native ``vmap``
+  batched solves. Optional extra (``pip install quchip[dynamiqs]``).
 
 The public entry points are :func:`get_default_backend` /
 :func:`set_default_backend` / :func:`reset_default_backend`.
-Engine internals use the thread-safe :func:`_backend_context` to scope a
-backend for the duration of a single assembly pass (every backend call the
-engine makes is reentrant because the override is a ``ContextVar``).
 
 Example
 -------
@@ -19,6 +16,9 @@ Example
 >>> backend = get_default_backend()  # QuTiPBackend by default
 >>> set_default_backend("dynamiqs")   # doctest: +SKIP
 """
+# Engine internals use the thread-safe `_backend_context` to scope a backend to
+# a single assembly pass. Every engine backend call is reentrant because the
+# override is a `ContextVar`.
 
 from __future__ import annotations
 
@@ -144,9 +144,9 @@ def _backend_context(backend: Backend) -> Iterator[None]:
 def get_default_backend() -> Backend:
     """Return the active default backend.
 
-    Returns (in order) the nearest :func:`_backend_context` override, the
-    user-set default from :func:`set_default_backend`, or a freshly
-    instantiated :class:`QuTiPBackend` (cached for subsequent calls).
+    Returns, in this order, the nearest :func:`_backend_context` override, the
+    user-set default from :func:`set_default_backend`, or a new
+    :class:`QuTiPBackend`, cached for later calls.
     """
     override = _backend_override.get()
     if override is not None:
@@ -159,14 +159,14 @@ def get_default_backend() -> Backend:
 
 
 def set_default_backend(backend: str | Backend) -> None:
-    """Set the default backend for subsequent calculations.
+    """Set the default backend for later calculations.
 
     Parameters
     ----------
     backend : {"qutip", "dynamiqs"} or Backend
         Backend name or instance. A chip-specific backend or a scoped
-        calculation override takes precedence. ``"dynamiqs"`` requires
-        the optional ``quchip[dynamiqs]`` dependencies.
+        calculation override takes precedence. ``"dynamiqs"`` requires the
+        optional ``quchip[dynamiqs]`` dependencies.
 
     Raises
     ------
@@ -180,7 +180,7 @@ def set_default_backend(backend: str | Backend) -> None:
 
 
 def reset_default_backend() -> None:
-    """Clear the cached default backend; the next :func:`get_default_backend` rebuilds it."""
+    """Clear the cached default backend. The next :func:`get_default_backend` rebuilds it."""
     global _default_backend
     _default_backend = None
 

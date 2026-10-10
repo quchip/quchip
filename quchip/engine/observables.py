@@ -1,32 +1,31 @@
-"""Band-decompose dict-form ``e_ops`` and demodulate expectations post-solve.
+"""Band-decompose dict-form ``e_ops`` and demodulate expectations after the solve.
 
-The simulation is performed in the resolved rotating frame;
-user-facing observables, however, live in the control frame (where
-matrix elements are labeled by detunings ``Δ = ω_drive − ω_frame``).
-This module performs the two operations that tie those frames together:
+The simulation runs in the resolved rotating frame, but user-facing observables
+are in the control frame, where detunings ``Δ = ω_drive − ω_frame`` label the
+matrix elements. This module performs the two operations that connect those
+frames:
 
-* **Pre-solve (:func:`decompose_eops`):** each user operator is split
-  into excitation-change bands ``w = col − row`` (single-mode) or
-  ``(Δa, Δb)`` (two-mode) via :mod:`quchip.engine.bands`. Each band is
-  embedded into the full product Hilbert space and carries
-  :class:`BandMeta` so the post-solve step knows which phase to apply.
+* **Pre-solve (:func:`decompose_eops`):** :mod:`quchip.engine.bands` splits
+  each user operator into excitation-change bands ``w = col − row``
+  (single-mode) or ``(Δa, Δb)`` (two-mode). Each band is embedded into the full
+  product Hilbert space and carries :class:`BandMeta`, so the post-solve step
+  knows which phase to apply.
 
-* **Post-solve (:func:`recombine_expect`):** each band expectation
-  ``⟨O_w⟩(t)`` is multiplied by ``exp(±i · 2π · ω_demod · w · t)``
-  (the sign selects demodulation vs. remodulation) and summed over
-  bands. Physically this is the inverse rotating-frame
-  transformation applied to each band — equivalent to moving the
-  observable from the simulation frame to the control frame.
+* **Post-solve (:func:`recombine_expect`):** each band expectation ``⟨O_w⟩(t)``
+  is multiplied by ``exp(±i · 2π · ω_demod · w · t)`` and summed over bands.
+  The sign selects demodulation or remodulation. Physically, this inverse
+  rotating-frame transformation moves each band from the simulation frame to
+  the control frame.
 
-An external-plane output request takes a parallel path: one request lowers
-both the resolved ``L`` and ``L dagger L`` moments before the solve. Afterward,
-quchip reconstructs ``S beta + L`` from the solve-bound input and propagates
-the complete field trace to the requested reference plane.
+An external-plane output request uses a parallel path. One request lowers both
+the resolved ``L`` and ``L dagger L`` moments before the solve. After the
+solve, quchip reconstructs ``S beta + L`` from the solve-bound input and
+propagates the complete field trace to the requested reference plane.
 
 Observable reconstruction reads per-device demodulation frequencies from
-:class:`~quchip.engine.ir.ResolvedFrame` and forms the demodulation
-phase ``exp(i · 2π · ω · w · t)``. This is the inverse of the
-rotating-frame shift applied to the Hamiltonian during assembly.
+:class:`~quchip.engine.ir.ResolvedFrame` and forms the demodulation phase
+``exp(i · 2π · ω · w · t)``, the inverse of the rotating-frame shift applied to
+the Hamiltonian during assembly.
 """
 
 from __future__ import annotations
@@ -56,10 +55,10 @@ DeviceLabels = str | tuple[str, str]
 class BandMeta:
     """Post-solve metadata for one flattened e_ops band.
 
-    ``key`` is the original dict key, ``weight`` is the excitation-change
-    weight (``int`` single-device, ``tuple[int, int]`` two-device),
-    ``device_labels`` drives phase lookup, and ``sub_index`` distinguishes
-    entries when the user passed a list of operators for the same key.
+    ``key`` is the original dict key. ``weight`` is the excitation-change
+    weight (``int`` single-device, ``tuple[int, int]`` two-device).
+    ``device_labels`` controls the phase lookup. ``sub_index`` identifies each
+    entry when the user passed a list of operators for the same key.
     """
 
     key: EOpKey
@@ -96,19 +95,20 @@ def decompose_eops(
 
     Supported key shapes:
 
-    * ``"device_label"`` (or a device object resolved to its label) with
-      a single local operator — the operator is split into single-mode
-      bands on that device.
-    * ``("label_a", "label_b")`` with a tuple ``(op_a, op_b)`` — each
-      operator is split into single-mode bands on its device and all
-      band pairs are tensored, producing two-body ``(w_a, w_b)`` bands.
-    * A string trace name with an ``OutputField`` value — the resolved first
-      and normally ordered second moments are reconstructed after the solve.
+    * ``"device_label"`` (or a device object resolved to its label) with a
+      single local operator. The operator is split into single-mode bands on
+      that device.
+    * ``("label_a", "label_b")`` with a tuple ``(op_a, op_b)``. Each operator
+      is split into single-mode bands on its device. All band pairs are
+      tensored to give two-body ``(w_a, w_b)`` bands.
+    * A string trace name with an ``OutputField`` value. The resolved first
+      moments and the normally ordered second moments are reconstructed after
+      the solve.
 
-    For each band, the returned :class:`BandMeta` records the original
-    key, the weight, and the sub-index (distinguishing entries when the
-    user passed a list of operators for the same key). The matching
-    ``ops`` list is ready for direct consumption by the backend solver.
+    For each band, the returned :class:`BandMeta` records the original key, the
+    weight, and the sub-index, which identifies each entry when the user passed
+    a list of operators for one key. The backend solver can use the matching
+    ``ops`` list directly.
     """
     if bases is None:
         bases = chip.resolve().bases
@@ -315,13 +315,13 @@ def recombine_expect(
         \\exp\\!\\big(\\pm i \\cdot 2\\pi \\cdot \\omega_{\\text{demod}}
                               \\cdot w \\cdot t \\big),
 
-    with the sign selected by *direction*: ``"demodulate"`` (``+1``)
-    moves the expectation from the simulation's rotating frame back to
-    the control frame; ``"remodulate"`` (``−1``) does the reverse.
+    with the sign selected by *direction*. ``"demodulate"`` (``+1``) moves the
+    expectation from the simulation's rotating frame back to the control frame.
+    ``"remodulate"`` (``−1``) does the reverse.
 
-    Returns two dicts: ``band_sum`` is the raw per-key sum over bands
-    (no phase correction) and ``phase_corrected`` is the physically
-    meaningful expectation in the control frame.
+    Returns two dicts. ``band_sum`` is the raw sum over bands for each key (no
+    phase correction). ``phase_corrected`` is the physically meaningful
+    expectation in the control frame.
     """
     if direction not in ("demodulate", "remodulate"):
         raise ValueError(f"direction must be 'demodulate' or 'remodulate', got {direction!r}")
@@ -400,11 +400,11 @@ def build_observable_traces(
 ]:
     """Wrap solver expectations into phase-corrected :class:`ObservableTrace` objects.
 
-    Pulls the flat per-band expectations out of *solver_result*, calls
+    Gets the flat per-band expectations from *solver_result* and calls
     :func:`recombine_expect` with the demodulation frequencies from
-    *resolved_frame*, and returns a dict keyed by the user's original
-    e_ops keys. Each value is an :class:`ObservableTrace` (or a list
-    when the user supplied multiple operators for the same key).
+    *resolved_frame*. Returns a dict keyed by the user's original e_ops keys.
+    Each value is an :class:`ObservableTrace`, or a list when the user supplied
+    multiple operators for the same key.
     """
     raw_expect = solver_result.expect
     if isinstance(raw_expect, dict):

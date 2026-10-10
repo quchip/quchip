@@ -1,15 +1,10 @@
 """Backend-agnostic solver-result and IR-lowering containers.
 
-These frozen/auto dataclasses are the *payloads* exchanged across the backend
-boundary. The engine emits them (or backends produce them) without committing
-to any solver's native storage: a :class:`SolverResult` holds native states but
-exposes a backend-free shape, a :class:`PreparedHamiltonian` / :class:`PreparedBatch`
-carries whatever RHS the backend's solver accepts opaquely, and an
-:class:`EigensystemData` defers per-column ket materialization so the dressing /
-sweep hot path never pays for allocations it does not use.
-
-Kept separate from :mod:`quchip.backend.protocol` (the :class:`Backend` ABC) so
-the contract and its payloads can evolve independently.
+These frozen/auto dataclasses are the *payloads* that cross the backend boundary. The
+engine or the backends produce them without committing to a solver's native storage.
+A :class:`SolverResult` holds native states but shows a backend-free shape. A
+:class:`PreparedHamiltonian` / :class:`PreparedBatch` opaquely carries any RHS the
+backend's solver accepts.
 
 References
 ----------
@@ -17,6 +12,11 @@ References
 * Guilmin et al. — *dynamiqs: an open-source Python library for GPU-accelerated
   and differentiable simulation of quantum systems* (2024)
 """
+# An `EigensystemData` defers per-column ket materialization, so the dressing /
+# sweep hot path never pays for allocations it does not use.
+#
+# This module is separate from `quchip.backend.protocol` (the `Backend` ABC), so
+# the contract and its payloads can change independently.
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ class BatchSolveError(RuntimeError):
     detail : str
         Underlying numerical or configuration failure.
     parameters : dict or None, default None
-        Parameter values at the failing point; None stores an empty mapping.
+        Parameter values at the failed point. None stores an empty mapping.
     """
 
     def __init__(self, index: int, detail: str, parameters: dict[str, Any] | None = None) -> None:
@@ -61,21 +61,22 @@ class SolverResult:
         1D array of save times (ns) matching the solver's ``tlist``.
     states
         Saved states, one per save time, in the backend's native state type
-        (``Qobj`` / ``QArray``). ``None`` if ``store_states`` was disabled.
+        (``Qobj`` / ``QArray``). ``None`` if ``store_states`` was off.
     expect
-        Expectation-value traces. ``list[list[float]]`` indexed by
-        ``e_ops``-then-time, or a ``dict`` when the engine supplied labelled
-        observables (keys are either strings or ``(drive_label, op)`` pairs).
+        Expectation-value traces as a ``list[list[float]]`` indexed by
+        ``e_ops`` and then by time. When the engine supplied labelled
+        observables, this is a ``dict`` keyed by strings or
+        ``(drive_label, op)`` pairs.
     final_state
         Final state (``states[-1]`` when states are stored). Useful for
-        multi-segment protocols without retaining full trajectories.
+        multi-segment protocols that do not keep full trajectories.
     stats
-        Solver-specific diagnostics (integrator step count, batch index,
-        etc.). Purely informational; no physics depends on it.
+        Solver-specific diagnostics (integrator step count, batch index, etc.).
+        No physics depends on them.
     solver
-        The dispatched native solver name.
+        Dispatched native solver name.
     native
-        Unmodified stochastic result, or None for a deterministic payload.
+        Unchanged stochastic result, or None for a deterministic payload.
     """
 
     times: Any
@@ -96,11 +97,11 @@ class SteadyStateSolverResult:
     state : State
         Stationary density matrix in the native backend basis.
     expect : list or None
-        Expectations in the requested observable order; None when not evaluated.
+        Expectations in the requested observable order. None when not evaluated.
     stats : dict
         Backend diagnostics, including whether uniqueness was checked.
     residual : scalar or None
-        Norm of the stationary Liouvillian residual, or None if not computed.
+        Norm of the stationary Liouvillian residual, or None if not calculated.
     nullity : int or None
         Estimated Liouvillian null-space dimension, or None when unchecked.
     """
@@ -151,10 +152,10 @@ class LinearResponseSolverResult:
 class PreparedHamiltonian:
     r"""Backend-native Hamiltonian produced by :meth:`Backend.prepare_hamiltonian`.
 
-    ``rhs`` is whatever the backend's solver accepts directly — a ``Qobj`` /
-    ``QobjEvo`` for QuTiP, a dynamiqs ``TimeQArray`` / sum of them for
-    dynamiqs. ``metadata`` passes engine-level hints (e.g.
-    ``spectral_bound_ghz`` for integrator step heuristics) through opaquely.
+    ``rhs`` is the object the backend's solver accepts directly: a ``Qobj`` /
+    ``QobjEvo`` for QuTiP, and a dynamiqs ``TimeQArray`` or a sum of them for
+    dynamiqs. ``metadata`` passes engine-level hints through opaquely, for
+    example ``spectral_bound_ghz`` for integrator step heuristics.
 
     Attributes
     ----------
@@ -216,14 +217,14 @@ class EagerBatch:
 class VmappedBatch:
     r"""Batched-solve payload with a single natively batched RHS.
 
-    ``rhs`` covers every element at once — the dynamiqs path, where the
-    per-element signals are stacked along a leading batch axis and the
-    solver runs one vmapped call.
+    ``rhs`` covers every element at once. On this dynamiqs path, the
+    per-element signals are stacked along a leading batch axis and the solver
+    runs one vmapped call.
 
     Attributes
     ----------
     rhs : object
-        Native right-hand side including the batch axis.
+        Native right-hand side, with the batch axis.
     batch_size : int
         Number of batch elements.
     metadata : dict
@@ -242,9 +243,9 @@ class VmappedBatch:
 class DeferredBatch:
     r"""Batched-solve payload whose RHS construction is deferred.
 
-    ``shared`` carries backend-private state; the producing backend must
+    ``shared`` carries backend-private state. The producing backend must
     override :meth:`Backend.solve_batch` to consume it. QuTiP assembles final
-    ``QobjEvo`` objects inside its workers; Dynamiqs assembles a vmapped RHS
+    ``QobjEvo`` objects inside its workers. Dynamiqs assembles a vmapped RHS
     inside its cached JIT.
 
     Attributes
@@ -276,15 +277,13 @@ class EigensystemData:
 
     ``eigenvalues`` is ascending. ``eigenvector_matrix`` stacks the
     eigenvectors as columns in the bare-product basis used for the
-    diagonalization. The per-column backend-native kets are exposed lazily
-    via the :attr:`eigenstates` property so the dressing / sweep hot path
-    (which reads only ``eigenvalues`` + ``eigenvector_matrix`` + labeling)
-    never pays for ``D`` backend-ket allocations and a second ``O(D**2)``
-    densification it does not use.
+    diagonalization. The :attr:`eigenstates` property gives the per-column
+    backend-native kets lazily.
 
-    Backends populate either ``_states_builder`` (a callable that materializes
-    the ket list on demand) or prime ``_states_cache`` directly (when the
-    diagonalizer already produced the kets, e.g. QuTiP's ``Qobj.eigenstates``).
+    Backends populate ``_states_builder``, a callable that materializes the ket
+    list on demand. Alternatively, backends prime ``_states_cache`` directly
+    when the diagonalizer already produced the kets, for example QuTiP's
+    ``Qobj.eigenstates``.
 
     Attributes
     ----------
@@ -293,6 +292,9 @@ class EigensystemData:
     eigenvector_matrix : array_like, shape (D, D)
         Eigenvectors as columns in the input operator basis.
     """
+    # The dressing / sweep hot path reads only `eigenvalues` +
+    # `eigenvector_matrix` + labeling, so it skips unused `D` backend-ket
+    # allocations and a second `O(D**2)` densification.
 
     eigenvalues: Any
     eigenvector_matrix: Any
@@ -303,11 +305,12 @@ class EigensystemData:
     def eigenstates(self) -> list[Any]:
         """Return per-column backend-native eigenstate kets (built on first access).
 
-        Memoizes only when the materialized kets are tracer-free: under
-        ``jit``/``grad``/``vmap`` the states carry tracers bound to the
-        current trace, so caching them would let a stale tracer escape into
-        a later trace. Concrete states are cached.
+        Memoizes only when the materialized kets are tracer-free. Concrete
+        states are cached.
         """
+        # Under `jit`/`grad`/`vmap`, the states carry tracers bound to the
+        # current trace, and caching them would let a stale tracer escape into a
+        # later trace.
         if self._states_cache is not None:
             return self._states_cache
         if self._states_builder is None:

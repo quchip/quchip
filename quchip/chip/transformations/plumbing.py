@@ -1,8 +1,7 @@
 """Control retargeting and graph reconstruction shared by transformations.
 
-Handlers identify removed targets and choose the reduced physics. These
-helpers preserve source settings and connect converted equipment to the
-rebuilt components.
+Handlers identify removed targets and choose the reduced physics. These helpers
+keep source settings and connect converted equipment to the rebuilt components.
 """
 
 from __future__ import annotations
@@ -33,8 +32,8 @@ def plan_stranded_lines(
     ``classify(line)`` returns ``None`` for a survivor or a ``StrandedLine``
     for a removed target. ``result_kind`` selects the rule (``edge``,
     ``leaf-fold`` or ``crosskerr``). Missing rules raise the target's message.
-    Return surviving lines and ``(line, rule)`` pairs in source order.
-    Rule application waits until the reduced model and emitted edges exist."""
+    Return surviving lines and ``(line, rule)`` pairs in source order. The
+    rules are applied only after the reduced model and the emitted edges exist."""
     survivor_lines: list[Any] = []
     retarget_plan: list[tuple[Any, Any]] = []
     if equipment is None:
@@ -54,8 +53,8 @@ def plan_stranded_lines(
 def inherited_notes(chip: Any) -> tuple[str, ...]:
     """Return the producer notes of ``chip``'s effective terms, prefixed by their labels.
 
-    A reduction folds every earlier effective contribution into its own, so
-    the approximations those contributions state still apply to the result."""
+    A reduction folds every earlier effective contribution into its own, so the
+    approximations those contributions state also apply to the result."""
     return tuple(f"{terms.label}: {note}" for terms in chip.effective_terms for note in terms.notes)
 
 
@@ -70,10 +69,10 @@ def rebuild_chip(
 ) -> Any:
     """Rebuild the retained graph with the source's calculation settings.
 
-    Preserve the backend, basis, approximation, label and surviving state
-    shorthand. Filter per-device frames to retained labels. Copy baths and
-    effective terms unless replacements are supplied. Removed port targets
-    require explicit replacements. Control equipment is attached separately."""
+    Keep the backend, basis, approximation, label and surviving state shorthand.
+    Filter per-device frames to retained labels. Copy baths and effective terms,
+    unless replacements are supplied. Removed port targets need explicit
+    replacements. Control equipment is attached separately."""
     from quchip.chip.chip import Chip
 
     device_list = list(devices)
@@ -130,8 +129,8 @@ def reattach_equipment(
 
     Rules receive the source, reduced chip, removed target and emitted edges
     through ``RetargetContext``. Their notes are appended to ``notes``.
-    Surviving lines and transforms are copied; converted operators are marked
-    as already using retained coordinates. Do nothing without equipment."""
+    Surviving lines and transforms are copied. Converted operators are marked
+    as already using retained coordinates. Without equipment, do nothing."""
     if equipment is None:
         return
     retargeted_lines: list[Any] = []

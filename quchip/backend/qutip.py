@@ -4,16 +4,17 @@ QuTiP stores operators as ``qutip.Qobj`` (sparse CSR by default, dense on
 request). This backend lowers engine IR into ``Qobj`` / ``QobjEvo`` form and
 dispatches the ``sesolve``/``mesolve`` drivers directly.
 
-Batched sweeps and heterogeneous problem lists are parallelized via the
-``loky`` reusable process pool. QuTiP solvers release the GIL only partially,
-so processes beat threads. Final ``QobjEvo`` assembly happens inside the
-workers so the main process never pays for it.
+The reusable ``loky`` process pool parallelizes batched sweeps and
+heterogeneous problem lists.
 
 References
 ----------
 * Johansson, Nation, Nori — *QuTiP 2*, Comput. Phys. Commun. 183, 1760 (2012)
 * Breuer & Petruccione — *The Theory of Open Quantum Systems* (OUP, 2002)
 """
+# QuTiP solvers release the GIL only partially, so processes are faster than
+# threads. The workers do the final `QobjEvo` assembly, so the main process
+# never pays for it.
 
 from __future__ import annotations
 
@@ -704,7 +705,7 @@ def _warmup_noop(_idx: Any = None) -> None:
 
 
 class QuTiPBackend(Backend):
-    """Concrete backend backed by QuTiP. ``Operator`` = ``State`` = ``qutip.Qobj``.
+    """Concrete backend that uses QuTiP. ``Operator`` = ``State`` = ``qutip.Qobj``.
 
     Example
     -------
@@ -756,7 +757,7 @@ class QuTiPBackend(Backend):
         Parameters
         ----------
         state_or_op : qutip.Qobj
-            Ket or bra for the Euclidean norm; matrix for the trace norm.
+            Ket or bra for the Euclidean norm, or matrix for the trace norm.
 
         Returns
         -------
@@ -946,22 +947,20 @@ class QuTiPBackend(Backend):
         Parameters
         ----------
         options : dict
-            Native QuTiP settings, including ``method``, ``atol``, ``rtol``,
-            ``nsteps`` (step ceiling), and ``max_step`` (ns). Unspecified step
-            controls use engine hints. Explicit settings take precedence.
-            See `QuTiP solver options
-            <https://qutip.readthedocs.io/en/stable/apidoc/solver.html>`_ for
-            method-specific keys. Use the simulation's ``states`` argument to
-            select saved-state storage.
+            Native QuTiP settings, e.g. ``method``, ``atol``, ``rtol``, ``nsteps`` (step
+            ceiling), and ``max_step`` (ns). Unspecified step controls use engine hints, and
+            explicit settings take priority. For method-specific keys, see
+            `QuTiP solver options <https://qutip.readthedocs.io/en/stable/apidoc/solver.html>`_.
+            Select the saved-state storage via the simulation's ``states`` argument.
         metadata : dict
             Lowering hints, including ordinary-GHz spectral/carrier bounds.
         tlist : array_like
-            Save-time grid in ns used to estimate integration budgets.
+            Save-time grid in ns, used to estimate integration budgets.
 
         Returns
         -------
         dict
-            Copied options with missing integration defaults filled.
+            Copied options, with the missing integration defaults filled.
         """
         resolved = dict(options)
         if "nsteps" not in resolved:
@@ -1148,11 +1147,11 @@ class QuTiPBackend(Backend):
         problem : SteadyStateProblem
             Captured static model, observables, and stationary solver options.
         prepared : PreparedStationary or None, default None
-            Matching prepared generator; ``None`` builds it.
+            Matching prepared generator. ``None`` builds it.
         guess : Qobj or None, default None
-            Stationary state of a related generator. It is returned without a
-            solve when this generator annihilates it to round-off; the stats
-            record ``guess_reused``.
+            Stationary state of a related generator. If this generator
+            annihilates the state to round-off, the method returns it without
+            solving and the stats record ``guess_reused``.
 
         Returns
         -------
@@ -1165,11 +1164,11 @@ class QuTiPBackend(Backend):
 
         Notes
         -----
-        ``problem.options`` accepts native QuTiP stationary-solver keywords,
-        including ``method`` (default ``"direct"``) and ``solver`` (default None).
-        quchip consumes ``rank_tolerance`` (singular-value cutoff, default automatic)
-        and ``diagnostic_max_dimension`` (default 16). Nullity is not computed above
-        that Hilbert dimension; ``None`` means unchecked, not a unique state.
+        ``problem.options`` accepts native QuTiP stationary-solver keywords, e.g.
+        ``method`` (default ``"direct"``) and ``solver`` (default None). quchip
+        consumes ``rank_tolerance`` (singular-value cutoff, default automatic) and
+        ``diagnostic_max_dimension`` (default 16). Above that Hilbert dimension, the
+        nullity is not computed, and ``None`` means unchecked, not a unique state.
         """
         liouvillian = self.prepare_stationary(problem.engine_result, prepared=prepared).liouvillian
         options = dict(problem.options)
@@ -1337,19 +1336,19 @@ class QuTiPBackend(Backend):
         *,
         progress: bool = True,
     ) -> list[SolverResult] | None:
-        r"""Solve large structurally heterogeneous problem lists through loky workers.
+        r"""Solve large, structurally heterogeneous problem lists through loky workers.
 
         Parameters
         ----------
         problems
             Problems that cannot be merged into one structural batch.
         progress
-            Display solver progress when supported.
+            Display solver progress if the backend supports it.
 
         Returns
         -------
         list[SolverResult] | None
-            Backend results in input order, or ``None`` to retain the engine's
+            Backend results in input order, or ``None`` to keep the engine's
             structural-group dispatch.
 
         See Also
@@ -1413,13 +1412,11 @@ class QuTiPBackend(Backend):
     ) -> PreparedHamiltonian:
         r"""Convert a :class:`EngineResult` into a ``Qobj`` or ``QobjEvo``.
 
-        Each dynamic coefficient is band-normalized: every carrier stays
-        analytic while only its slow, carrier-free envelope is sampled
-        (on *tlist*, locally densified around any window edge — see
-        :func:`_assemble_qobjevo` / :func:`_augmented_sample_grid`). This
-        avoids cubic-spline error from pre-sampling the full
-        ``envelope·carrier`` product, including for resonant carriers in the
-        lab frame.
+        Each dynamic coefficient is band-normalized. Every carrier stays
+        analytic, and only its slow, carrier-free envelope is sampled on
+        *tlist*, locally densified around each window edge. This avoids the
+        cubic-spline error of a pre-sampled full ``envelope·carrier`` product,
+        even for resonant carriers in the lab frame.
 
         Parameters
         ----------
@@ -1437,6 +1434,8 @@ class QuTiPBackend(Backend):
         --------
         quchip.backend.protocol.Backend.prepare_hamiltonian
         """
+        # The envelope sampling and edge densification are implemented in
+        # `_assemble_qobjevo` / `_augmented_sample_grid`.
         static_rhs = self._sum_terms(description.static_terms, self._canonical_to_qobj)
         metadata = dict(description.metadata)
 
@@ -1454,14 +1453,11 @@ class QuTiPBackend(Backend):
         return PreparedHamiltonian(rhs=rhs, metadata=metadata)
 
     def prepare_batch(self, batch: Any) -> DeferredBatch:
-        r"""Build a deferred-construction batch; per-element ``QobjEvo`` is built in workers.
+        r"""Build a deferred-construction batch whose workers build each element's ``QobjEvo``.
 
-        Each unique :class:`CanonicalOperator` is converted exactly once
-        (shared across elements) and only the slow, carrier-free envelope
-        is sampled on the user grid, locally densified around any window
-        edge (carriers stay analytic — see :func:`_assemble_qobjevo`).
-        Final ``QobjEvo`` assembly lives in :meth:`solve_batch` so larger
-        concrete sweeps can build and solve each point inside loky workers.
+        Only the slow, carrier-free envelope is sampled on the user grid,
+        locally densified around each window edge, and the carriers stay
+        analytic.
 
         Parameters
         ----------
@@ -1477,6 +1473,10 @@ class QuTiPBackend(Backend):
         --------
         quchip.backend.protocol.Backend.prepare_batch
         """
+        # Each unique `CanonicalOperator` is converted once and shared across
+        # elements. The envelope sampling is implemented in `_assemble_qobjevo`.
+        # The final `QobjEvo` assembly occurs in `solve_batch`, so loky workers
+        # can build and solve each point of larger concrete sweeps.
         cached_qobj = self._make_op_cache()
         engine_results = tuple(problem.engine_result for problem in batch.problems)
         static_cache: dict[tuple[int, ...], Qobj | None] = {}
@@ -1511,7 +1511,7 @@ class QuTiPBackend(Backend):
         )
 
     def solve_batch(self, batch: Any, *, progress: bool = True) -> list[SolverResult]:
-        r"""Solve a :class:`SolveBatch` with per-element ``QobjEvo`` built in loky workers.
+        r"""Solve a :class:`SolveBatch`, with the ``QobjEvo`` for each element built in loky workers.
 
         Parameters
         ----------
@@ -1644,7 +1644,7 @@ class QuTiPBackend(Backend):
         Parameters
         ----------
         n_jobs : int, default -1
-            Worker count; ``-1`` selects all CPUs.
+            Worker count. ``-1`` selects all CPUs.
         """
         try:
             executor = self._get_executor(n_jobs)

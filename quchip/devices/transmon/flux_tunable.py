@@ -1,7 +1,7 @@
 """Symmetric/asymmetric-SQUID flux-tunable transmon.
 
 ``freq`` is the calibrated local ``0 -> 1`` transition at ``flux_bias``.
-Together they anchor a SQUID dispersion. Moving ``flux_bias`` preserves that
+Together they anchor a SQUID dispersion. Moving ``flux_bias`` keeps that
 calibration and updates ``freq``, so the local Duffing Hamiltonian follows the
 new operating point. Supplying both ``freq`` and ``flux_bias`` defines a new
 anchor instead. :meth:`FluxTunableTransmon.frequency_at` and
@@ -12,7 +12,7 @@ without changing the device.
 
 * Transmon regime: E_J ≫ E_C (exponential charge-dispersion suppression).
 * Duffing truncation: the cosine Josephson potential is expanded to quartic
-  order; anharmonicity α ≈ −E_C.
+  order. The anharmonicity is α ≈ −E_C.
 * Adiabatic flux: the SQUID dispersion underlying :meth:`frequency_at` /
   :meth:`flux_for_frequency` is a static calibration-anchor relation with no
   Landau–Zener physics. Time-dependent flux tuning during gates is applied
@@ -29,17 +29,14 @@ without changing the device.
     \\omega(\\Phi) = \\sqrt{8\\, E_C\\, E_J(\\Phi)} - E_C
 
 where ``d = (E_{J1} − E_{J2}) / (E_{J1} + E_{J2})`` is the junction asymmetry
-and Φ/Φ₀ is the reduced flux.  The user supplies the calibrated local
-``freq`` and ``anharmonicity``; the Josephson parameters are derived
-internally:
+and Φ/Φ₀ is the reduced flux. The user supplies the calibrated local ``freq``
+and ``anharmonicity``, and the Josephson parameters are derived internally:
 
-    α = −E_C  →  E_C = |α|
-    (ω + E_C)² = 8 E_C E_J(flux_bias)  →  E_J_max via SQUID inversion
+    α = −E_C → E_C = |α| (ω + E_C)² = 8 E_C E_J(flux_bias) → E_J_max through
+    SQUID inversion
 
-The SQUID parameters :attr:`_E_C` / :attr:`_E_J_max` are *derived on read* from
-the current ``freq`` / ``anharmonicity`` / ``flux_bias`` / ``asymmetry`` — they
-carry no cached state, so :meth:`frequency_at` and :meth:`flux_for_frequency`
-always reflect a mutated or swept parameter (no stale SQUID metadata).
+:meth:`frequency_at` and :meth:`flux_for_frequency` always show a mutated or
+swept parameter (no stale SQUID metadata).
 
 References
 ----------
@@ -59,6 +56,9 @@ Examples
 >>> round(float(q.frequency_at(0.0)), 3)
 4.47
 """
+# The SQUID parameters `_E_C` / `_E_J_max` are derived on read from the current
+# `freq` / `anharmonicity` / `flux_bias` / `asymmetry` and carry no cached
+# state.
 
 from __future__ import annotations
 
@@ -125,26 +125,25 @@ def _check_flux_bias_dispersion(flux_bias: Any, asymmetry: Any) -> None:
 class FluxTunableTransmon(FockDevice):
     """SQUID-dispersion flux-tunable transmon.
 
-    The constructor takes the calibrated local physical parameters; SQUID
+    The constructor takes the calibrated local physical parameters. SQUID
     metadata is derived on read and is not part of the public interface.
 
     Parameters
     ----------
     freq : float
         Calibrated local ``0 -> 1`` transition frequency ω in GHz, at the
-        stored ``flux_bias``. Must be positive. May be a JAX tracer.
+        stored ``flux_bias``. Must be positive. Can be a JAX tracer.
     anharmonicity : float
-        Calibrated local anharmonicity α in GHz, at the stored
-        ``flux_bias``. Must be negative (α ≈ −E_C). May be a JAX tracer.
+        Calibrated local anharmonicity α in GHz, at the stored ``flux_bias``.
+        Must be negative (α ≈ −E_C). Can be a JAX tracer.
     flux_bias : float, default 0.0
         Current operating point Φ/Φ₀ and calibration-anchor coordinate. Any
-        real value; the SQUID inversion is undefined only at the
-        symmetric-SQUID degenerate point (``asymmetry == 0`` and
-        ``flux_bias`` a half-integer — see :meth:`validate`). Rebinding this
-        value alone preserves the inferred SQUID calibration and updates
-        ``freq``. Rebinding it together with ``freq`` defines a new anchor. It
-        is a JAX pytree leaf and can be differentiated or swept through the
-        public chip API.
+        real value. The SQUID inversion is undefined only at the
+        symmetric-SQUID degenerate point (``asymmetry == 0`` and ``flux_bias``
+        a half-integer, see :meth:`validate`). Rebinding only this value keeps
+        the inferred SQUID calibration and updates ``freq``, and rebinding it
+        with ``freq`` defines a new anchor. It is a JAX pytree leaf and can be
+        differentiated or swept through the public chip API.
     asymmetry : float, default 0.0
         SQUID junction asymmetry d = (E_{J1}−E_{J2})/(E_{J1}+E_{J2}).
         Must be in [0, 1).
@@ -153,11 +152,11 @@ class FluxTunableTransmon(FockDevice):
     label : str | None, default None
         Auto-generated as ``fluxtunable_{idx}`` when omitted.
     T1 : float or None, default None
-        Energy-relaxation time in ns; ``None`` disables T1 relaxation.
+        Energy-relaxation time in ns. ``None`` disables T1 relaxation.
     T2 : float or None, default None
-        Total 0-1 coherence time in ns; if both are set, ``T2 <= 2*T1``.
+        Total 0-1 coherence time in ns. If both are set, ``T2 <= 2*T1``.
     thermal_occupation : float or None, default None
-        Dimensionless mean bath occupation; ``None`` disables absorption.
+        Dimensionless mean bath occupation. ``None`` disables absorption.
     """
 
     _type_prefix: ClassVar[str] = "fluxtunable"
@@ -180,7 +179,7 @@ class FluxTunableTransmon(FockDevice):
     asymmetry: Scalar = parameter(default=0.0, symbol="d")
 
     def validate(self) -> None:
-        """Range checks on concrete scalars only; traced values pass unchecked."""
+        """Check the ranges of concrete scalars only. Traced values pass unchecked."""
         _check_anharmonicity(self.anharmonicity)
         _check_asymmetry(self.asymmetry)
         _check_flux_bias_dispersion(self.flux_bias, self.asymmetry)
@@ -217,7 +216,7 @@ class FluxTunableTransmon(FockDevice):
         Parameters
         ----------
         values : mapping[str, Any]
-            Parameter updates; flux-only updates retune ``freq``.
+            Parameter updates. Flux-only updates retune ``freq``.
         """
         updates = dict(values)
         if "flux_bias" in updates and "freq" not in updates:
@@ -308,12 +307,11 @@ class FluxTunableTransmon(FockDevice):
         Raises
         ------
         ValueError
-            If *target_freq* is concrete and lands outside the frequency
-            range :meth:`frequency_at` reaches over Φ/Φ₀ ∈ [0, 0.5) at the
-            current calibration anchor. A traced *target_freq* (or a traced
-            anchor) skips this check; the returned flux clips to the lobe
-            endpoint, so out-of-domain behavior is undefined for traced
-            inputs.
+            If *target_freq* is concrete and lands outside the frequency range
+            :meth:`frequency_at` reaches over Φ/Φ₀ ∈ [0, 0.5) at the current
+            calibration anchor. A traced *target_freq* (or a traced anchor)
+            skips this check and the returned flux clips to the lobe endpoint,
+            so out-of-domain behavior is undefined for traced inputs.
         """
         # Validate the concrete target against the attainable endpoint span
         # BEFORE forming S: squaring (omega + E_C) would otherwise map a

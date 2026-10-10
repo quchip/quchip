@@ -29,7 +29,7 @@ def _freeze_bands(value: Iterable[tuple[int, ...]] | None) -> frozenset[tuple[in
 
 
 class Approximation(ABC):
-    """Immutable engine strategy applied after authored physics is assembled."""
+    """Immutable engine strategy applied after the engine assembles the authored physics."""
 
     filters_terms: bool = False
 
@@ -39,7 +39,7 @@ class Approximation(ABC):
         Parameters
         ----------
         weights : tuple[int, ...]
-            Energy-basis weight ``column - row`` per endpoint; annihilation has
+            Energy-basis weight ``column - row`` per endpoint. Annihilation has
             weight ``+1`` and creation has weight ``-1``.
         """
         del weights
@@ -49,7 +49,7 @@ class Approximation(ABC):
         """Return whether every retained band conserves the total energy-level index.
 
         Elimination uses this structural guarantee to keep its exact reduction
-        and captured coordinate maps within total-excitation sectors.
+        and captured coordinate maps in total-excitation sectors.
         """
         return False
 
@@ -92,7 +92,7 @@ class Approximation(ABC):
 
 @dataclass(frozen=True)
 class Exact(Approximation):
-    """Retain every term in the authored finite-dimensional Hamiltonian."""
+    """Keep every term in the authored finite-dimensional Hamiltonian."""
 
 
 @dataclass(frozen=True, init=False)
@@ -104,8 +104,8 @@ class RWA(Approximation):
     Parameters
     ----------
     keep_bands : iterable of tuple[int, ...] or None, default None
-        Operator-band weights to retain. ``None`` keeps only bands whose
-        weights sum to zero. Supplied tuples must be non-empty and integral.
+        Operator-band weights to keep. ``None`` keeps only bands whose weights
+        sum to zero. Supplied tuples must be non-empty and integral.
 
     References
     ----------
@@ -120,12 +120,12 @@ class RWA(Approximation):
         object.__setattr__(self, "keep_bands", _freeze_bands(keep_bands))
 
     def keeps_operator_band(self, weights: tuple[int, ...]) -> bool:
-        """Return whether ``weights`` is retained by this RWA policy.
+        """Return whether this RWA policy keeps ``weights``.
 
         Parameters
         ----------
         weights : tuple[int, ...]
-            Energy-basis weight ``column - row`` per endpoint; annihilation has
+            Energy-basis weight ``column - row`` per endpoint. Annihilation has
             weight ``+1`` and creation has weight ``-1``.
         """
         if self.keep_bands is not None:

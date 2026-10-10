@@ -2,5 +2,5 @@
 :start-after: <!-- reader-content -->
 ```
 
-For measurements of a saved state without a simulated readout pulse, continue with
-[qubit readout through the fridge](steady-state-and-vna.md#read-a-prepared-qubit-through-the-same-line).
+To measure a saved state without a simulated readout pulse, continue with [qubit readout through the
+fridge](steady-state-and-vna.md#read-a-prepared-qubit-through-the-same-line).

@@ -1,23 +1,23 @@
-"""Device models — truncated-Hilbert-space quantum systems owned by a chip.
+"""Device models: truncated-Hilbert-space quantum systems that a chip owns.
 
-A device declares its **local** Hamiltonian; couplings and drives
-contribute their own local Hamiltonians. See :mod:`quchip.devices.base` for
-the full device protocol.
+A device declares its **local** Hamiltonian. Couplings and drives contribute
+their own local Hamiltonians. See :mod:`quchip.devices.base` for the full
+device protocol.
 
 Public models
 -------------
-* :class:`Qubit` — ideal two-level system, ``H = freq * |1><1|``.
-* :class:`Resonator` — linear harmonic mode, ``H = omega * n_hat``.
-* :class:`DuffingTransmon` — Duffing-anharmonic transmon qubit,
+* :class:`Qubit`: ideal two-level system, ``H = freq * |1><1|``.
+* :class:`Resonator`: linear harmonic mode, ``H = omega * n_hat``.
+* :class:`DuffingTransmon`: Duffing-anharmonic transmon qubit,
   ``H = omega * n + (alpha/2) * n * (n - I)``.
-* :class:`FluxTunableTransmon` — SQUID-dispersion flux-tunable transmon;
-  ``freq``/``anharmonicity`` are the calibrated local transition
-  parameters at the stored ``flux_bias``.
-* :class:`KerrCavity` — Kerr-nonlinear resonator,
+* :class:`FluxTunableTransmon`: SQUID-dispersion flux-tunable transmon.
+  ``freq``/``anharmonicity`` are the calibrated local transition parameters at
+  the stored ``flux_bias``.
+* :class:`KerrCavity`: Kerr-nonlinear resonator,
   ``H = omega * n_hat - K * n_hat * (n_hat - I)``.
-* :class:`Fluxonium` — circuit-level fluxonium in the phase basis.
-* :class:`ChargeBasisTransmon` — circuit-level transmon in the
-  integer charge basis.
+* :class:`Fluxonium`: circuit-level fluxonium in the phase basis.
+* :class:`ChargeBasisTransmon`: circuit-level transmon in the integer charge
+  basis.
 
 Coupling Protocols (for drive dispatch)
 ---------------------------------------

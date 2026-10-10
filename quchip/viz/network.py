@@ -100,14 +100,13 @@ def plot_port_network(
 ) -> Figure:
     """Draw a port network as a left-to-right schematic.
 
-    Chip ports and Markovian components appear inside the shaded ``Markov core``.
-    Reference sections (delays, filters, and amplifiers) and external planes appear
-    to its right. Cables created with ``link`` use double-headed edges; directional
-    connections use single arrows. A plane exposed with separate ``input=`` and
-    ``output=`` terminals is joined to each by its own arrow. Hidden vacuum and load channels appear as
-    dashed stubs when *show_hidden* is true. Annotations show component values,
-    including rates, ``eta``, durations, gain, and added noise; traced values
-    appear as ``<traced>``.
+    Chip ports and Markovian components show in the shaded ``Markov core``. Reference sections
+    (delays, filters, and amplifiers) and external planes show to its right. Cables made with
+    ``link`` use double-headed edges, and directional connections use single arrows. A plane with
+    separate ``input=`` and ``output=`` terminals has one arrow to each terminal. When *show_hidden*
+    is true, hidden vacuum and load channels show as dashed stubs. Annotations show component
+    values, including rates, ``eta``, durations, gain, and added noise. Traced values show as
+    ``<traced>``.
 
     Parameters
     ----------
@@ -121,7 +120,7 @@ def plot_port_network(
     Returns
     -------
     Figure
-        The figure containing the schematic (``ax.figure`` when *ax* is given).
+        The figure that contains the schematic (``ax.figure`` when *ax* is given).
 
     Raises
     ------

@@ -2,8 +2,9 @@
 
 :func:`label_eigensystem` supports greedy, global-greedy, and continuation
 assignments. :class:`BareProductReference` and :class:`EigenstateReference`
-provide vectors and labels; :func:`compute_overlaps` computes their overlaps.
-The assignment kernels are inspired by SuperGrad's ``compute_energy_map``.
+supply vectors and labels, and :func:`compute_overlaps` computes their
+overlaps. The assignment kernels are inspired by SuperGrad's
+``compute_energy_map``.
 """
 
 from __future__ import annotations
@@ -25,15 +26,15 @@ from quchip.utils.jax_utils import concrete_array_module, contains_tracer
 class Labeling:
     """A labeled assignment of dressed eigenstates to user-meaningful keys.
 
-    Array fields only — no embedded :class:`Reference` object — so the
-    dataclass is a clean pytree under :func:`jax.jit`, :func:`jax.vmap`,
+    The dataclass has only array fields and no embedded :class:`Reference`
+    object, so it is a clean pytree under :func:`jax.jit`, :func:`jax.vmap`,
     and :func:`jax.grad`.
 
     ``indices`` is the integer assignment (non-differentiable, conceptually
     ``stop_gradient``'d). ``overlaps`` and ``margins`` are differentiable.
     Energies indexed *via* ``indices`` flow gradients through the gathered
-    values: ``eigvals[labeling.indices[k]]`` is differentiable w.r.t.
-    parameters that affect ``eigvals``.
+    values, so ``eigvals[labeling.indices[k]]`` is differentiable with respect
+    to parameters that affect ``eigvals``.
     """
 
     keys: tuple[Any, ...]
@@ -47,12 +48,11 @@ class Labeling:
 class LabelingPath:
     """Stacked labelings along a parameter path.
 
-    Each array field carries a leading ``n_steps`` axis vs. :class:`Labeling`,
-    plus a ``swap_events`` array surfacing where labels actually changed
-    dressed-index between adjacent steps. A swap by itself is just a
-    reassignment; combine it with a margin collapse (``margins`` near
-    zero) at the same step to identify avoided crossings vs. routine
-    mode mixing.
+    Compared with :class:`Labeling`, each array field has a leading ``n_steps``
+    axis. A ``swap_events`` array shows where labels changed dressed-index
+    between adjacent steps. A swap alone is only a reassignment. To distinguish
+    avoided crossings from routine mode mixing, combine a swap with a margin
+    collapse (``margins`` near zero) at the same step.
     """
 
     keys: tuple[Any, ...]
@@ -79,8 +79,8 @@ class BareProductReference:
     """Bare product basis states in Kronecker order.
 
     Optional local vectors map each component's energy states into its solver
-    basis. None denotes an identity factor. The full product matrix is never
-    materialized; identity references reduce directly to ``|evecs|**2``.
+    basis, and None denotes an identity factor. The full product matrix is
+    never materialized; identity references reduce directly to ``|evecs|**2``.
     """
 
     dims: tuple[int, ...]
@@ -154,9 +154,10 @@ def assign_argmax(
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """One-shot ``argmax`` per row. Allows duplicate dressed-index assignments.
 
-    Returns ``(indices, chosen, margins)``. Cheap and ``jit``-clean — matches
-    SuperGrad's default greedy mode. Use when the chip is in a weak-coupling
-    regime where each bare label has a clearly-dominant dressed eigenstate.
+    Returns ``(indices, chosen, margins)``. This policy is cheap and
+    ``jit``-clean, and matches SuperGrad's default greedy mode. Use it in a
+    weak-coupling regime where each bare label has a clearly dominant dressed
+    eigenstate.
     """
     indices = jnp.argmax(overlaps, axis=1)
     chosen = jnp.take_along_axis(overlaps, indices[:, None], axis=1).squeeze(-1)
@@ -167,15 +168,15 @@ def assign_argmax(
 def assign_global_greedy(
     overlaps: jnp.ndarray,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    """Global descending-overlap greedy via ``lax.scan`` with masking.
+    """Global descending-overlap greedy with ``lax.scan`` and masking.
 
-    At each step, finds the ``(label, dressed_idx)`` pair with the highest
-    remaining overlap, assigns it, and masks out that label's row and that
-    column so neither is reused. This pure-JAX implementation assigns each
-    label and dressed index at most once.
+    At each step, the function assigns the ``(label, dressed_idx)`` pair with
+    the highest remaining overlap. It then masks out that label's row and that
+    column, so this pure-JAX implementation assigns each label and dressed
+    index at most once.
 
-    Margins are computed from the *unmasked* overlap matrix, so they
-    describe per-label confidence independent of assignment order.
+    Margins are computed from the *unmasked* overlap matrix, so they describe
+    per-label confidence independent of assignment order.
 
     Requires ``n_labels <= n_dressed``.
     """
@@ -219,30 +220,31 @@ def assign_rowwise_greedy(
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """Confidence-ordered row-greedy assignment — ``O(n_labels * n_dressed)``.
 
-    Labels (rows) are visited in descending row-max-overlap order; each takes its
-    highest-overlap *still-available* dressed index, then that column is masked so
-    the result is a permutation. Each scan step is a single masked-row ``argmax``
-    over ``n_dressed`` columns, so the whole assignment is ``O(n_labels *
-    n_dressed)`` — for a square ``D = L**k`` overlap matrix that is ``O(L**(2k))``
-    versus :func:`assign_global_greedy`'s ``O(L**(3k))`` (a full ``L**(2k)``-entry
-    ``argmax`` at each of ``L**k`` steps). This is the SuperGrad / scqubits
-    confidence-ordered greedy variant.
+    The function visits labels (rows) in descending row-max-overlap order. Each
+    label takes its highest-overlap *still-available* dressed index, and the
+    function masks that column, so the result is a permutation. Each scan step is
+    a single masked-row ``argmax`` over ``n_dressed`` columns, so the whole
+    assignment is ``O(n_labels * n_dressed)``. For a square ``D = L**k`` overlap
+    matrix, this is ``O(L**(2k))``. :func:`assign_global_greedy` is ``O(L**(3k))``
+    (a full ``L**(2k)``-entry ``argmax`` at each of ``L**k`` steps). This is the
+    SuperGrad / scqubits confidence-ordered greedy variant.
 
-    **Semantics vs. global-greedy.** Identical to :func:`assign_global_greedy` in
-    the near-permutation regime (dispersive / weak hybridization), where each bare
-    label has a clearly dominant dressed eigenstate. They can diverge on
-    strongly-hybridized overlap matrices: global-greedy always commits the single
-    largest *remaining* entry, whereas this visits rows in (original) row-max
-    order. In exactly that regime the assignment is intrinsically ambiguous and
-    ``Chip.dress`` already warns that bare labels are approximate.
-    Pass ``policy=assign_global_greedy`` to :func:`label_eigensystem` for
-    global-greedy ordering. Row-max ties are broken by ascending index
-    (``argsort``).
+    **Semantics vs. global-greedy.** This function is identical to
+    :func:`assign_global_greedy` in the near-permutation regime (dispersive / weak
+    hybridization), where each bare label has a clearly dominant dressed
+    eigenstate. The two can diverge on strongly-hybridized overlap matrices.
+    Global-greedy always commits the single largest *remaining* entry, whereas
+    this function visits rows in (original) row-max order. In exactly that regime
+    the assignment is intrinsically ambiguous, and ``Chip.dress`` already warns
+    that bare labels are approximate. For global-greedy ordering, pass
+    ``policy=assign_global_greedy`` to :func:`label_eigensystem`. Row-max ties are
+    broken by ascending index (``argsort``).
 
     Margins (``top1 - top2`` per label) come from the *unmasked* matrix via
-    ``top_k``, so they match :func:`assign_global_greedy`'s margins and avoid a
-    full per-row sort. Requires ``n_labels <= n_dressed``.
+    ``top_k``, so they match the margins of :func:`assign_global_greedy`.
+    Requires ``n_labels <= n_dressed``.
     """
+    # Computing margins via top_k avoids a full per-row sort.
     n_labels, n_dressed = overlaps.shape
     if n_labels > n_dressed:
         raise ValueError(
@@ -319,17 +321,16 @@ def label_eigensystem(
         Data-only object (:class:`BareProductReference` or
         :class:`EigenstateReference`) defining what label keys mean.
     policy : callable
-        Assignment function ``overlaps -> (indices, chosen, margins)``.
-        Default :func:`assign_rowwise_greedy` — the confidence-ordered
-        row-greedy policy that ``Chip.dress`` runs (its sole live caller
-        passes it explicitly).
+        Assignment function ``overlaps -> (indices, chosen, margins)``. Default
+        :func:`assign_rowwise_greedy`, the confidence-ordered row-greedy policy
+        that ``Chip.dress`` runs (its sole live caller passes it explicitly).
 
     Notes
     -----
-    Energies are looked up by the caller as ``evals[labeling.indices[k]]``.
-    ``policy`` is a static Python callable, resolved once at trace time, not
-    a traced argument — under ``jax.jit`` it must be closed over or passed as
-    a ``static_argnames`` entry, never as a dynamic (traced) argument.
+    The caller gets energies as ``evals[labeling.indices[k]]``. ``policy`` is a
+    static Python callable resolved once at trace time, not a traced argument.
+    Under ``jax.jit``, close over ``policy`` or pass it as a
+    ``static_argnames`` entry. Never pass it as a dynamic (traced) argument.
     """
     overlaps = compute_overlaps(reference, evecs)
     arrays = _labeling_arrays(overlaps, policy)
@@ -356,12 +357,11 @@ def track_path(
 ) -> LabelingPath:
     """Propagate a labeling along a parameter path of stacked eigensystems.
 
-    Step 0 is labeled against ``initial_reference``. For each subsequent
-    step, the reference becomes the *previous step's selected eigvecs*
-    (an :class:`EigenstateReference`). This continuation method accepts a
-    stacked eigvec tensor (typically the
-    output of ``vmap(eigh)`` over a parameter grid), so it composes with
-    any JAX-side parameter sweep.
+    Step 0 is labeled against ``initial_reference``. At each later step, the
+    reference becomes the *previous step's selected eigvecs* (an
+    :class:`EigenstateReference`). This continuation method accepts a stacked
+    eigvec tensor (usually the output of ``vmap(eigh)`` over a parameter grid),
+    so it composes with any JAX-side parameter sweep.
 
     Parameters
     ----------

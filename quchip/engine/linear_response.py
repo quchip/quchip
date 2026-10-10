@@ -23,7 +23,7 @@ class _UnsupportedLinearModel(Exception):
 
 
 def is_linear_mode(device: Any, backend: Any) -> bool:
-    """Whether the authored local Hamiltonian is a passive harmonic Fock mode."""
+    """Return if the authored local Hamiltonian is a passive harmonic Fock mode."""
     from quchip.approximations import Exact
 
     if not isinstance(device.local_space(), FockSpace) or device._time_terms():

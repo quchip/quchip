@@ -2,11 +2,10 @@
 
 A :class:`ModelMapping` subclass authors a one-directional or bidirectional
 conversion between a third-party circuit-QED object and a quchip device.
-Subclasses register themselves at class-definition time, keyed by the
-third-party type they import from and/or the ``(library, quchip type)`` pair
-they export to. Nothing in this module depends on any specific third-party
-library; concrete mappings (e.g. for scqubits) live in sibling modules that
-import both sides.
+Subclasses register at class-definition time, keyed by the third-party type
+they import from, the ``(library, quchip type)`` pair they export to, or both.
+Concrete mappings (e.g. for scqubits) live in sibling modules that import both
+sides.
 """
 
 from __future__ import annotations
@@ -28,10 +27,10 @@ class MyMapping(ModelMapping):
 def source_key(tp: type) -> str:
     """Return the registry key for third-party type *tp*.
 
-    The key is the type's top-level module name joined with its qualified
-    name, e.g. ``"scqubits.Transmon"``. Only the top-level module is used so
-    that a mapping registered against a package root matches classes
-    re-exported from submodules.
+    The key is the type's top-level module name joined with its qualified name,
+    e.g. ``"scqubits.Transmon"``. Only the top-level module is used, so a
+    mapping registered against a package root matches classes re-exported from
+    submodules.
 
     Parameters
     ----------
@@ -56,24 +55,23 @@ class ModelMapping:
         mapping imports from. ``None`` means the mapping supports export
         only.
     target : type or None
-        The quchip device type this mapping exports to. Required whenever
-        :meth:`export_model` is overridden; ``None`` means import-only.
+        quchip device type this mapping exports to. Required when
+        :meth:`export_model` is overridden. ``None`` means import-only.
     library : str or None
-        Name of the third-party library this mapping exports for. Defaults
-        to ``source.split(".")[0]`` when ``source`` is set; export-only
-        mappings must set it explicitly.
+        Name of the third-party library this mapping exports for. Defaults to
+        ``source.split(".")[0]`` when ``source`` is set. Export-only mappings
+        must set it explicitly.
 
     Subclassing registers the mapping automatically:
 
     * setting ``source`` registers it for :func:`import_object` under that
-      key; a second subclass reusing the same ``source`` raises
+      key. A second subclass that reuses the same ``source`` raises
       :class:`TypeError` at class-definition time.
     * overriding :meth:`export_model` registers it for :func:`export_object`
-      under ``(library, target)``; overriding without setting ``target``
-      raises :class:`TypeError`, overriding without a resolvable ``library``
-      (no ``source`` to default it from) raises :class:`TypeError`, and a
-      second subclass reusing the same ``(library, target)`` pair raises
-      :class:`TypeError` naming both classes.
+      under ``(library, target)``. An override without ``target``, or without a
+      resolvable ``library`` (no ``source`` to default it from), raises
+      :class:`TypeError`. A second subclass that reuses the same
+      ``(library, target)`` pair raises :class:`TypeError` naming both classes.
 
     The abstract base itself (``source is None`` and no ``export_model``
     override) registers nothing.
@@ -137,7 +135,7 @@ class ModelMapping:
         obj : object
             Third-party instance to convert.
         **opts
-            Mapping-specific keyword options; subclasses must document supported keys.
+            Mapping-specific keyword options. Subclasses must document supported keys.
 
         Returns
         -------
@@ -149,15 +147,15 @@ class ModelMapping:
     def export_model(self, device: Any, **opts: Any) -> Any:
         """Convert quchip *device* into a third-party object.
 
-        Override to support export; overriding requires setting ``target``.
-        The base implementation raises :class:`NotImplementedError`.
+        Override to support export, and also set ``target``. The base
+        implementation raises :class:`NotImplementedError`.
 
         Parameters
         ----------
         device : object
             quchip device to convert.
         **opts
-            Mapping-specific keyword options; subclasses must document supported keys.
+            Mapping-specific keyword options. Subclasses must document supported keys.
 
         Returns
         -------
@@ -168,7 +166,7 @@ class ModelMapping:
 
 
 def import_object(obj: Any, **opts: Any) -> Any:
-    """Import third-party *obj* into a quchip device via a registered mapping.
+    """Import third-party *obj* into a quchip device through a registered mapping.
 
     Walks ``type(obj).__mro__`` and dispatches to the first
     :class:`ModelMapping` registered under that class's :func:`source_key`.
@@ -176,17 +174,17 @@ def import_object(obj: Any, **opts: Any) -> Any:
     Raises
     ------
     LookupError
-        No mapping is registered for ``type(obj)`` or any of its base
-        classes. The message names the missing source key and shows the
-        skeleton for authoring a new :class:`ModelMapping`.
+        No mapping is registered for ``type(obj)`` or any of its base classes.
+        The message names the missing source key and shows a skeleton for
+        authoring a new :class:`ModelMapping`.
 
     Parameters
     ----------
     obj : object
         Third-party object whose type selects the registered mapping.
     **opts
-        Keywords forwarded unchanged to the mapping's conversion method.
-        See that method for supported keys and defaults.
+        Keywords forwarded unchanged to the mapping's conversion method, which
+        documents supported keys and defaults.
 
     Returns
     -------
@@ -222,8 +220,8 @@ def export_object(device: Any, library: str, **opts: Any) -> Any:
     library : str
         Registered target library, such as ``"scqubits"``.
     **opts
-        Keywords forwarded unchanged to the mapping's conversion method.
-        See that method for supported keys and defaults.
+        Keywords forwarded unchanged to the mapping's conversion method, which
+        documents supported keys and defaults.
 
     Returns
     -------
@@ -244,6 +242,6 @@ def export_object(device: Any, library: str, **opts: Any) -> Any:
 def registered_mappings() -> dict[str, type[ModelMapping]]:
     """Return a copy of the import registry, keyed by source key.
 
-    Mutating the returned dict does not affect registration state.
+    Changing the returned dict does not affect the registration state.
     """
     return dict(_IMPORT_REGISTRY)

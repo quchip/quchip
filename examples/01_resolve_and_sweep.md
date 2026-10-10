@@ -24,8 +24,9 @@ quchip uses GHz for frequencies and couplings.
 
 ## Declare the coupled model
 
-Sweep one transmon through the other. Their bus-mediated interaction produces
-an avoided crossing; use `RWA()` in a rotating frame for this study.
+Sweep one transmon through the other, where their bus-mediated interaction
+produces an avoided crossing. For this study, use `RWA()` in a rotating
+frame.
 
 ```python
 import json
@@ -68,9 +69,9 @@ chip = Chip(
 
 ## Sweep the avoided crossing
 
-`Sweep` names the public parameter path to vary. `SpectrumSweep` creates an
-isolated chip at each point, so the original declaration remains unchanged.
-Setting `overlap_threshold=0.0` keeps both intentionally hybridized
+`Sweep` names the public parameter path to change. `SpectrumSweep` builds
+an isolated chip at each point, so the original declaration does not
+change. `overlap_threshold=0.0` keeps both intentionally hybridized
 one-excitation labels available at the centre of the avoided crossing.
 
 ```python
@@ -186,18 +187,20 @@ splitting. The assignment weight exposes the hybridized region directly.
 ```
 
 The dashed lines are the bare declarations. Red follows the more $q_1$-like
-dressed transition, and black follows the more $q_2$-like transition. At the
-crossing, the branches remain separated by $2J\approx4.4$ MHz. Second-order
-dispersive perturbation theory gives $4.0$ MHz. The resolved spectrum includes
-the higher-order dressing retained by this truncated model. The lower panel
-shows why a bare-state label needs care at the crossing: its assignment weight
-falls to about one half as the two excitations hybridize.
+dressed transition, and black the more $q_2$-like one. At the crossing, the
+branch separation stays at $2J\approx4.4$ MHz, while second-order dispersive
+perturbation theory gives $4.0$ MHz. The resolved spectrum includes the
+higher-order dressing that this truncated model keeps.
+
+The lower panel shows why a bare-state label needs care at the crossing: its
+assignment weight decreases to approximately one half as the two excitations
+hybridize.
 
 ## Inspect the model after the sweep
 
 The declared frequencies are inputs. `chip.freq()` returns dressed
-$0\rightarrow1$ transitions, while `chip.static_zz()` returns the conditional
-two-qubit shift for this coupled model.
+$0\rightarrow1$ transitions, and `chip.static_zz()` returns the
+conditional two-qubit shift for this coupled model.
 
 ```python
 q1_line = ChargeDrive(q1, label="q1-charge")
@@ -243,12 +246,13 @@ Output:
 
 <!-- executed-output:end -->
 
-`kerr_matrix()` gathers the dressed anharmonicities on its diagonal and the
-full-pull cross-Kerr shifts off diagonal, in `chip.devices` order. The two
-assertions above check its entries against the scalar APIs.
+`kerr_matrix()` puts the dressed anharmonicities on its diagonal and the
+full-pull cross-Kerr shifts off the diagonal, in `chip.devices` order. The
+two assertions above check its entries against the scalar APIs.
 
-The resolved Hamiltonian applies the chip's basis, frame, and approximation
-strategy through the same public path used for simulation.
+The resolved Hamiltonian applies the chip's basis, frame, and
+approximation strategy through the same public path that simulation
+uses.
 
 ```python
 chip.hamiltonian()
@@ -264,7 +268,7 @@ Output:
 
 <!-- executed-output:end -->
 
-`chip.resolve().dropped_terms_summary()` audits the RWA without reconstructing
+`chip.resolve().dropped_terms_summary()` audits the RWA without rebuilding
 the Hamiltonian by hand:
 
 ```python
@@ -337,7 +341,7 @@ RESULT statics={"approximation":"RWA","dressed_frequencies_ghz":{"bus":6.5541414
 
 ## Change one design parameter
 
-`with_params()` changes one bare frequency while preserving the source chip.
+`with_params()` changes one bare frequency and keeps the source chip unchanged.
 
 ```python
 shifted_chip = chip.with_params({"q2.freq": 5.40})
@@ -363,9 +367,9 @@ Output:
 
 ## Independent and linked parameter studies
 
-`Sweep.expand()` shows the parameter dictionaries before any calculation runs.
-Independent axes form a Cartesian grid. `Sweep.zip()` pairs values when the
-parameters must move together.
+`Sweep.expand()` shows the parameter dictionaries before a calculation starts.
+Independent axes form a Cartesian grid. If the parameters must move together,
+`Sweep.zip()` pairs the values.
 
 ```python
 frequency_values = Sweep([5.28, 5.30, 5.32], name="q2.freq")
@@ -404,16 +408,16 @@ Output:
 
 <!-- executed-output:end -->
 
-Pass either axis list to `SpectrumSweep` when every point needs a dressed
-spectrum. Use `with_params()` directly when only a few points or a custom
-observable are needed.
+If each point needs a dressed spectrum, pass one of the two axis lists to
+`SpectrumSweep`. If you need only a few points or a custom observable,
+use `with_params()` directly.
 
 ## Check labels before interpreting branches
 
-Near an avoided crossing, a dressed eigenstate can be shared between several
-bare product states. `dressed_index()` tracks the assigned branch across the
-sweep, while `assignment_overlaps` records the squared overlap with the assigned bare state.
-For one chip, `state_components()` exposes the largest bare-basis weights.
+Near an avoided crossing, several bare product states can share a dressed eigenstate.
+`dressed_index()` tracks the assigned branch across the sweep, and `assignment_overlaps`
+records the squared overlap with the assigned bare state. For one chip, `state_components()`
+shows the largest bare-basis weights.
 
 ```python
 q1_components = chip.state_components({q1: 1}, n_components=4)
@@ -440,15 +444,16 @@ Output:
 
 <!-- executed-output:end -->
 
-At the crossing, each dressed branch contains roughly equal bare qubit
-weights. Lowering `overlap_threshold` retains these labels without improving
+At the crossing, each dressed branch contains approximately equal bare qubit
+weights. A lower `overlap_threshold` keeps these labels but does not improve
 their physical assignment.
 
 ## Check numerical resolution
 
-The sweep grid locates the minimum; device `levels` control Hilbert-space
-truncation. They are separate convergence questions. Here the 181-point grid
-and its every-other-point subset agree because both contain the symmetry point.
+The sweep grid resolves the minimum, while device `levels` control the
+Hilbert-space truncation, and these are separate convergence questions. Here
+the 181-point grid and its every-second-point subset agree, because both
+contain the symmetry point.
 
 ```python
 fine_minimum = float(np.min(splitting))
@@ -473,28 +478,26 @@ Output:
 
 <!-- executed-output:end -->
 
-Check local-level convergence separately for the reported transition, matrix
-element, or dispersive shift.
+Check the local-level convergence separately for the reported transition,
+matrix element, or dispersive shift.
 
 ## Paper example: experimental fluxonium spectroscopy
 
-Stefanski *et al.* measured a fluxonium and its readout resonator while
-sweeping external flux. Their paper,
-[*Improved fluxonium readout through dynamic flux
-pulsing*](https://arxiv.org/abs/2411.13437), reports the fitted circuit
-parameters and the operating points used for readout. The authors also publish
-their
-[analysis and modelling code](https://github.com/AndersenQubitLab/FPA-RO-experimental)
-and the [measurement archive](https://doi.org/10.4121/1092cb12-9198-4d43-8500-401c78a5dc15).
+Stefanski *et al.* measured a fluxonium and its readout resonator versus external flux.
+Their paper, [*Improved fluxonium readout through dynamic flux
+pulsing*](https://arxiv.org/abs/2411.13437), reports the fitted circuit parameters and the
+readout operating points. The authors also publish their [analysis and modelling
+code](https://github.com/AndersenQubitLab/FPA-RO-experimental) and the [measurement
+archive](https://doi.org/10.4121/1092cb12-9198-4d43-8500-401c78a5dc15).
 
-We first reproduce the qubit spectrum with one `Fluxonium`. The readout
-resonator is added afterward.
+We first reproduce the qubit spectrum with one `Fluxonium`, then add the
+readout resonator.
 
 ### Load the published measurements
 
-`processed_data_fx8.csv` contains measured qubit frequencies and the authors'
-fitted parameters. `res_fit_results.csv` contains the conditional resonator
-frequencies and their half-difference $\chi=(f_{r,1}-f_{r,0})/2$.
+`processed_data_fx8.csv` contains measured qubit frequencies and the
+authors' fitted parameters. `res_fit_results.csv` contains the conditional
+resonator frequencies and their half-difference $\chi=(f_{r,1}-f_{r,0})/2$.
 
 ```python
 import csv
@@ -550,11 +553,11 @@ Output:
 
 ### Reproduce the qubit spectrum
 
-Figure 2 of the paper covers $0.5\leq\Phi_{\mathrm{ext}}/\Phi_0\leq0.85$.
-The model curve uses 351 evenly spaced flux values, more than twice the
-measurement density. Residuals are evaluated by interpolating that independent
-curve at the measured coordinates. quchip receives the authors' fitted
-energies unchanged.
+Figure 2 of the paper covers $0.5\leq\Phi_{\mathrm{ext}}/\Phi_0\leq0.85$. The
+model curve uses 351 evenly spaced flux values, more than twice the
+measurement density. To evaluate the residuals, we interpolate that
+independent curve at the measured coordinates. quchip receives the authors'
+fitted energies unchanged.
 
 ```python
 paper_flux_all = np.asarray(
@@ -670,9 +673,9 @@ Output:
 
 <!-- executed-output:end -->
 
-The six residuals above 10 MHz remain in the plot and in the RMSE. The median
-and 95th percentile describe the rest of the curve without deleting those
-points.
+The six residuals above 10 MHz stay in the plot and in the RMSE. The median
+and 95th percentile describe the rest of the curve, and no points are
+deleted.
 
 ### Add the readout resonator
 
@@ -842,8 +845,8 @@ higher-level resonances in the dispersive shift.
 ```
 
 The paper operates at the sweet spot for idle and control, then pulses to
-$\Phi_{\mathrm{ext}}/\Phi_0=0.6567$ during readout. These two points give a
-compact numerical check against the values quoted in the text.
+$\Phi_{\mathrm{ext}}/\Phi_0=0.6567$ during readout. These two points give
+a compact numerical check against the values in the text.
 
 ```python
 sweet_spot = readout_observables(0.5)
@@ -931,6 +934,6 @@ RESULT paper_statics={"chi_median_absolute_error_mhz":0.17674709860890925,"chi_r
 
 </details>
 
-The paper's authors fitted the circuit parameters to these measurements.
-Treat this result as a cross-implementation check of their static model. A
-fabrication-level prediction would require independent circuit parameters.
+The authors fitted the circuit parameters to these measurements, so use
+this result as a cross-implementation check of their static model. A
+fabrication-level prediction needs independent circuit parameters.

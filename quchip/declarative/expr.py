@@ -17,7 +17,7 @@ from quchip.utils.values import copy_value, value_fingerprint
 
 
 class UnboundParameterError(ValueError):
-    """Numerical materialization was requested without every required value."""
+    """Numerical materialization started without all required values."""
 
 
 def is_opaque_callable(value: Any) -> bool:
@@ -35,9 +35,9 @@ class PhysicsExpr:
         Expression node kind, such as ``"op"``, ``"add"``, ``"parameter"``
         or ``"matrix"``.
     args : tuple, default ()
-        Node payload in the representation required by ``kind``.
+        Node payload in the representation that ``kind`` requires.
     labels : tuple[str, ...], default ()
-        Ordered endpoint labels supporting this expression.
+        Ordered endpoint labels for this expression's support.
     """
 
     kind: str
@@ -97,10 +97,10 @@ class PhysicsExpr:
         name : str or None
             Optional display name.
         excitation_changes : iterable of int or None
-            Total energy-level changes, column minus row in the captured
-            energy bases, that the matrix can carry. Band decomposition treats
-            every other total change as a structural zero, also for traced
-            payloads. ``None`` declares no structure.
+            Total energy-level changes that the matrix can carry (column minus
+            row in the captured energy bases). Band decomposition treats all
+            other total changes as structural zeros, even for traced payloads.
+            ``None`` declares no structure.
         """
         if len(labels) != len(dims):
             raise ValueError("Matrix labels and dimensions must have the same length.")
@@ -119,7 +119,7 @@ class PhysicsExpr:
         """Create an opaque matrix-valued contribution from a pure function.
 
         The function runs only during numerical materialization. Display keeps
-        its declared name and arguments, such as ``X(a, b)``, without exposing
+        its declared name and arguments, such as ``X(a, b)``, and does not show
         the implementation as symbolic algebra.
 
         Parameters
@@ -131,7 +131,7 @@ class PhysicsExpr:
         labels, dims : tuple
             Matching endpoint labels and dimensions.
         name : str or None
-            Display name; required for anonymous callables.
+            Display name, required for anonymous callables.
         """
         if len(labels) != len(dims):
             raise ValueError("Function labels and dimensions must have the same length.")
@@ -182,7 +182,7 @@ class PhysicsExpr:
         Parameters
         ----------
         function : callable
-            Callable returning a ket during materialization.
+            Callable that returns a ket during materialization.
         *arguments : Any
             Expression arguments passed to ``function``.
         labels, dims : tuple
@@ -227,7 +227,7 @@ class PhysicsExpr:
         return PhysicsExpr("embed", (self, tuple(labels), tuple(dims)), tuple(labels))
 
     def with_bindings(self, bindings: Mapping[str, Any]) -> "PhysicsExpr":
-        """Attach default values used only by direct numerical inspection.
+        """Attach default values that only direct numerical inspection uses.
 
         Parameters
         ----------
@@ -384,7 +384,7 @@ class PhysicsExpr:
         t : scalar or None, keyword-only
             Time for signal evaluation.
         backend : backend or None, keyword-only
-            Backend lowering object; ``None`` selects the default.
+            Backend lowering object. ``None`` selects the default.
         """
         if backend is None:
             from quchip.backend import get_default_backend
@@ -400,7 +400,7 @@ class PhysicsExpr:
 
 
 class ParameterNamespace:
-    """Attribute view exposing one owner's declared fields as symbolic leaves."""
+    """Attribute view that exposes one owner's declared fields as symbolic leaves."""
 
     __slots__ = ("_scope", "_fields")
 
@@ -462,14 +462,14 @@ def as_operator_expr(
     arguments : tuple, default ()
         Arguments for an opaque callable.
     owner : object or None, default None
-        Object whose fields bind a callable's positional argument names.
-        Mutually exclusive with explicit ``arguments``.
+        Object whose fields bind the positional argument names of a callable.
+        Do not combine with explicit ``arguments``.
     scope : str or None, default None
         Dotted-path prefix for owner-bound parameters, such as a device label.
         Required with ``owner`` when the callable has arguments.
     allowed : mapping or None, default None
-        Permitted owner-field names (mapping keys). ``None`` accepts any
-        named field present on the owner; values in this mapping are unused.
+        Permitted owner-field names, given as mapping keys whose values are not
+        used. ``None`` accepts all named owner fields.
     """
     expected = (prod(dims), prod(dims))
     if isinstance(value, PhysicsExpr):
@@ -523,14 +523,14 @@ def as_scalar_expr(
     arguments : tuple, default ()
         Arguments for an opaque callable.
     owner : object or None, default None
-        Object whose fields bind a callable's positional argument names.
-        Mutually exclusive with explicit ``arguments``.
+        Object whose fields bind the positional argument names of a callable.
+        Do not combine with explicit ``arguments``.
     scope : str or None, default None
         Dotted-path prefix for owner-bound parameters, such as a device label.
         Required with ``owner`` when the callable has arguments.
     allowed : mapping or None, default None
-        Permitted owner-field names (mapping keys). ``None`` accepts any
-        named field present on the owner; values in this mapping are unused.
+        Permitted owner-field names, given as mapping keys whose values are not
+        used. ``None`` accepts all named owner fields.
     """
     if isinstance(value, PhysicsExpr):
         if value.labels:
@@ -574,14 +574,14 @@ def as_state_expr(
     arguments : tuple, default ()
         Arguments for an opaque callable.
     owner : object or None, default None
-        Object whose fields bind a callable's positional argument names.
-        Mutually exclusive with explicit ``arguments``.
+        Object whose fields bind the positional argument names of a callable.
+        Do not combine with explicit ``arguments``.
     scope : str or None, default None
         Dotted-path prefix for owner-bound parameters, such as a device label.
         Required with ``owner`` when the callable has arguments.
     allowed : mapping or None, default None
-        Permitted owner-field names (mapping keys). ``None`` accepts any
-        named field present on the owner; values in this mapping are unused.
+        Permitted owner-field names, given as mapping keys whose values are not
+        used. ``None`` accepts all named owner fields.
     """
     expected = (prod(dims), 1)
     if isinstance(value, PhysicsExpr):
@@ -671,10 +671,10 @@ def _walk_expr(expr: PhysicsExpr) -> Iterator[PhysicsExpr]:
 def split_dynamic_hamiltonian(expr: PhysicsExpr) -> tuple[tuple[PhysicsExpr, PhysicsExpr], ...]:
     """Split a linear Hamiltonian sum into scalar-signal and operator factors.
 
-    Signal algebra may be nonlinear and may contain multiple signal leaves.
-    Linearity is required only in the quantum operator: each additive term
-    must contain one operator-valued factor multiplied by a scalar expression
-    that depends on at least one delivered signal.
+    Signal algebra can be nonlinear and can contain more than one signal leaf.
+    Only the quantum operator must be linear. Each additive term must be one
+    operator-valued factor times a scalar expression that depends on at least
+    one delivered signal.
     """
     if not isinstance(expr, PhysicsExpr) or not expr.labels:
         raise TypeError("A drive Hamiltonian must return an operator-valued PhysicsExpr.")
@@ -791,7 +791,7 @@ def declared_excitation_changes(expr: Any) -> frozenset[int] | None:
 
 
 def is_energy_diagonal(expr: Any, bases: Mapping[str, Any]) -> bool:
-    """Whether authored algebra guarantees zero energy-change weight in captured bases."""
+    """Return whether authored algebra guarantees zero energy-change weight in captured bases."""
     from quchip.devices.spaces import ChargeSpace, FockSpace, PhaseGridSpace
 
     if not isinstance(expr, PhysicsExpr):
@@ -820,7 +820,7 @@ def materialize_expr(
     t: Any | None = None,
     local_bases: Mapping[str, Any] | None = None,
 ) -> Any:
-    """Lower symbolic physics, passing an already-native contribution through."""
+    """Lower symbolic physics, and pass an already-native contribution through unchanged."""
     if not isinstance(expr, PhysicsExpr):
         return expr
     values = _bound_values(expr, bindings)

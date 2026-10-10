@@ -12,8 +12,8 @@ from quchip.utils.labeling import resolve_label
 class OutputField:
     r"""Request the mean field and photon flux at an exposed output.
 
-    Usually obtained as ``network.expose(...).output`` and supplied to
-    ``e_ops`` when building a simulation.
+    You usually get it as ``network.expose(...).output`` and give it to
+    ``e_ops`` when you build a simulation.
 
     Parameters
     ----------

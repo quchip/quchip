@@ -231,7 +231,7 @@ class NetworkPort:
     _network_token: object = field(repr=False, compare=False, kw_only=True)
 
     def __eq__(self, other: object) -> bool:
-        """Compare stable plane identity within one network."""
+        """Compare stable plane identity in one network."""
         return (
             isinstance(other, NetworkPort)
             and self._network_token is other._network_token
@@ -239,7 +239,7 @@ class NetworkPort:
         )
 
     def __hash__(self) -> int:
-        """Hash stable plane identity within one network."""
+        """Hash stable plane identity in one network."""
         return hash((id(self._network_token), self.label))
 
     @property
@@ -300,7 +300,7 @@ class IncludedNetwork:
     """Access one prefixed copy of a template network inside a host.
 
     ``component(name)`` returns a copied component. Template exposures made with
-    ``expose(..., at=...)`` are available through ``side(name)``; asymmetric
+    ``expose(..., at=...)`` are available through ``side(name)``. Asymmetric
     exposures use ``input(name)`` and ``output(name)``.
 
     Parameters
@@ -460,9 +460,9 @@ class PortNetwork:
     """Compose Markovian ports with instantaneous scalar scattering.
 
     The network acts on fields at one reference frequency. Scattering matrices
-    are dimensionless and must be unitary; loss and noise are represented by
-    explicit hidden channels or reference components. Feedback loops are
-    reduced algebraically, so this class does not model propagation retardation.
+    are dimensionless and must be unitary. Explicit hidden channels or reference
+    components represent loss and noise. The network reduces feedback loops
+    algebraically, so this class does not model propagation retardation.
 
     Parameters
     ----------
@@ -489,7 +489,7 @@ class PortNetwork:
             entries keyed by external labels. A callable is rejected because
             the network is instantaneous.
         label : str, optional
-            Network label; generated when omitted.
+            Network label, generated if omitted.
         """
         self.label = label if label is not None else auto_label(self._type_prefix)
         self._token = object()
@@ -526,8 +526,8 @@ class PortNetwork:
         Parameters
         ----------
         ports : sequence of Port
-            Quantum coupling channels to add. Each port may belong to only one
-            network; pass a copy to reuse it elsewhere.
+            Quantum coupling channels to add. Each port can belong to only one
+            network, so pass a copy to use it in another.
         scattering : array-like or mapping, optional
             Initial external scattering specification.
         label : str, optional
@@ -690,7 +690,7 @@ class PortNetwork:
             Unique component label.
         scattering : square array-like
             Dimensionless scattering matrix. Rows are outputs and columns are
-            inputs; concrete matrices must be unitary.
+            inputs, and concrete matrices must be unitary.
         terminals : sequence of str, optional
             Names for both input and output terminals. Defaults to ``("signal",)``
             for one channel and numeric names otherwise.
@@ -764,7 +764,7 @@ class PortNetwork:
 
         ``eta`` is the power from input ``k`` to output ``k``. With
         ``t = sqrt(eta)`` and ``r = sqrt(1 - eta)``, the scattering matrix is
-        ``[[t, r], [-r, t]]``. This component has no component ports; use
+        ``[[t, r], [-r, t]]``. This component has no component ports. Use
         ``input_terminal()``, ``output_terminal()``, or ``cascade()``.
 
         Parameters
@@ -783,7 +783,7 @@ class PortNetwork:
         """Add a directional two-input/two-output ideal 90-degree hybrid.
 
         The scattering matrix is ``[[1, 1j], [1j, 1]] / sqrt(2)``. This
-        component has no component ports; use ``input_terminal()``,
+        component has no component ports. Use ``input_terminal()``,
         ``output_terminal()``, or ``cascade()``.
 
         Parameters
@@ -834,7 +834,7 @@ class PortNetwork:
         loss_db : scalar or None, default=None
             Positive power loss in dB, mutually exclusive with ``eta``.
         thermal_occupation : scalar or None, default=None
-            Mean occupation of each hidden load in quanta; ``None`` means vacuum.
+            Mean occupation of each hidden load in quanta. ``None`` means vacuum.
         """
         power = {key: value for key, value in (("eta", eta), ("loss_db", loss_db)) if value is not None}
         transmission = attenuation_value(power)
@@ -890,21 +890,21 @@ class PortNetwork:
 
         Place the section with :meth:`link` or :meth:`connect`. The compiler peels it
         from an adjacent exposure leg, so it never enters the Markovian ``S``, ``L``,
-        or ``H``: it reshapes the propagating field and leaves every collapse
-        operator, including the radiative (Purcell) decay of coupled devices,
-        unchanged. Model a Purcell filter as a :class:`~quchip.Resonator` between
-        the readout mode and the port instead (see the Purcell filtering guide).
-        Continuous-wave APIs evaluate the transfer at each frequency;
-        transient APIs use its narrowband value at the relevant carrier. Concrete
-        evaluations with ``|H| > 1`` raise. Networks containing filters cannot be
-        serialized with :meth:`to_dict`; ``Chip.clone()`` and ``Chip.with_params()``
-        preserve the callable.
+        or ``H``. The section reshapes the propagating field but leaves every
+        collapse operator unchanged, including the radiative (Purcell) decay of
+        coupled devices. Model a Purcell filter as a :class:`~quchip.Resonator`
+        between the readout mode and the port instead (see the Purcell filtering
+        guide). Continuous-wave APIs evaluate the transfer at each frequency.
+        Transient APIs use its narrowband value at the applicable carrier. Concrete
+        evaluations with ``|H| > 1`` raise. You cannot serialize networks that
+        contain filters with :meth:`to_dict`. ``Chip.clone()`` and
+        ``Chip.with_params()`` preserve the callable.
 
         Declare ``thermal_occupation`` in quanta, constant across the modeled
-        band, for a matched absorptive realization emitting (1-|H|²)n.
-        A scalar transfer alone does not distinguish absorption from reflection.
+        band, for a matched absorptive realization that emits (1-|H|²)n. A
+        scalar transfer alone does not distinguish absorption from reflection.
         Colored thermal emission cannot feed a quantum coupling through a
-        reference section; use a dynamical filter/bath model for that case.
+        reference section. Use a dynamical filter/bath model for that case.
 
         Parameters
         ----------
@@ -913,7 +913,7 @@ class PortNetwork:
         transfer : callable
             Passive complex amplitude transfer versus frequency in GHz.
         thermal_occupation : scalar or None, default=None
-            Mean matched-load occupation in quanta; ``None`` means vacuum.
+            Mean matched-load occupation in quanta. ``None`` means vacuum.
         **parameters : Any
             Named transfer-function parameters tracked by the network.
         """
@@ -927,19 +927,19 @@ class PortNetwork:
 
         Each pass multiplies the field by ``H(f)``, with
         ``H(f)² = ((κ_i − κ_e)/2 − iΩ) / ((κ_e + κ_i)/2 − iΩ)`` and
-        ``Ω = 2π(f − freq)``: the reflection of a mode coupled to the line at
+        ``Ω = 2π(f − freq)``, the reflection of a mode coupled to the line at
         rate ``κ_e`` with internal loss ``κ_i``. On a reflection line the
         incident field passes once inbound and once outbound, so the plane
-        acquires that reflection. ``H`` is the continuous square root whose
-        real part is nonnegative at ``reference_freq``, or that tends to one far
-        below ``freq`` when ``reference_freq`` is ``None``. The branch fixes the
-        phase of fields that cross only one leg, such as emission from the
-        devices behind the section.
+        acquires that reflection. ``H`` is the continuous square root whose real
+        part is nonnegative at ``reference_freq``. When ``reference_freq`` is
+        ``None``, ``H`` is the root that tends to one far below ``freq``. The
+        branch fixes the phase of fields that cross only one leg, such as
+        emission from the devices behind the section.
 
         Like :meth:`filter`, the section stays outside the Markovian ``S``,
         ``L``, and ``H`` and leaves every collapse operator unchanged.
-        Continuous-wave APIs evaluate ``H`` at each frequency; transient APIs
-        use its value at the relevant carrier. The internal-loss bath is
+        Continuous-wave APIs evaluate ``H`` at each frequency. Transient APIs
+        use its value at the applicable carrier. The internal-loss bath is
         vacuum. :func:`~quchip.eliminate` inserts this section when it removes a
         mode that couples directly to a port. Every parameter is tracked at
         ``network.component.<label>.<name>`` and serializes.
@@ -972,17 +972,17 @@ class PortNetwork:
         ``gain`` is power gain ``G``. ``added_noise`` is input-referred
         symmetrized noise in quanta and must be at least ``(1 - 1/G) / 2``.
         Forward propagation from side 1 to side 2 multiplies field amplitudes by
-        ``sqrt(G)``; reverse propagation is transparent.
+        ``sqrt(G)``. Reverse propagation is transparent.
 
         Place side 1 toward the chip and side 2 toward the exposed output plane.
         The compiler rejects a section that would amplify an incident field into
         the chip or put the output plane on side 1. Both parameters are tracked at
         ``network.component.<label>.<name>`` and remain sweepable and
-        differentiable. Acyclic downstream splitters retain its shared output
-        noise. The section remains outside Markovian ``S``, ``L``, and
-        ``H`` and serializes normally.
+        differentiable. Acyclic downstream splitters keep its shared output noise.
+        The section remains outside Markovian ``S``, ``L``, and ``H`` and
+        serializes normally.
 
-        ``gain_db`` may replace linear ``gain``. Added quanta are constant
+        ``gain_db`` can replace linear ``gain``. Added quanta are constant
         across the modeled band and exclude the input's own noise.
 
         Parameters
@@ -992,7 +992,7 @@ class PortNetwork:
         added_noise : float or array-like
             Input-referred symmetrized added noise in quanta.
         gain, gain_db : float or array-like, optional
-            Power gain, specified linearly or in dB; supply at most one.
+            Power gain, specified linearly or in dB. Supply at most one.
         """
         parameters = {key: value for key, value in (
             ("gain", gain), ("gain_db", gain_db), ("added_noise", added_noise)) if value is not None}
@@ -1028,7 +1028,7 @@ class PortNetwork:
         label : str
             Unique component label.
         ports : int, default=3
-            Number of physical sides; must be at least three.
+            Number of physical sides, which must be at least three.
         """
         if ports < 3:
             raise ValueError(f"A circulator needs at least three sides, got {ports}.")
@@ -1041,16 +1041,16 @@ class PortNetwork:
     ) -> SLHComponent:
         """Add an ideal isolator routing side 1 to side 2.
 
-        The reverse field is dumped into ``hidden.<label>.load``. Its thermal
+        The reverse field is dumped into ``hidden.<label>.load``, whose thermal
         population travels back toward side 1. ``thermal_occupation`` is in
-        quanta, constant across the modeled band; the default is vacuum.
+        quanta, constant across the modeled band, and defaults to vacuum.
 
         Parameters
         ----------
         label : str
             Unique component label.
         thermal_occupation : scalar or None, default=None
-            Mean hidden-load occupation in quanta; ``None`` means vacuum.
+            Mean hidden-load occupation in quanta. ``None`` means vacuum.
         """
         component = self._permutation_component(
             label,
@@ -1068,14 +1068,14 @@ class PortNetwork:
         """Add a matched one-sided load with an optional thermal input state.
 
         ``thermal_occupation`` is the mean thermal population in quanta,
-        constant across the modeled band. The default is vacuum.
+        constant across the modeled band, and defaults to vacuum.
 
         Parameters
         ----------
         label : str
             Unique component label.
         thermal_occupation : scalar or None, default=None
-            Mean load occupation in quanta; ``None`` means vacuum.
+            Mean load occupation in quanta. ``None`` means vacuum.
         """
         component = self._permutation_component(
             label, ("1", "load"), (1, 0), kind="termination",
@@ -1179,9 +1179,9 @@ class PortNetwork:
     ) -> NetworkPort:
         """Name and return an external network port.
 
-        Pass ``at=`` to expose one component port. Use ``input=`` and
-        ``output=`` for separate input and output connections; ports and components then select
-        their sole or ``signal`` terminal unless explicit terminals are passed.
+        Pass ``at=`` to expose one component port. Use ``input=`` and ``output=`` for separate
+        input and output connections. Ports and components then select their sole or ``signal``
+        terminal unless explicit terminals are passed.
 
         Parameters
         ----------
@@ -1544,13 +1544,13 @@ class PortNetwork:
 
         Components and connections are copied with labels ``prefix/label``. Tracked
         parameters therefore use paths such as
-        ``network.component.prefix/label.name``. Filter callables are retained, and
-        the template remains unchanged so it can be included again under another
+        ``network.component.prefix/label.name``. Filter callables are kept. The
+        template remains unchanged, so you can include it again under another
         prefix.
 
         The template's exposures become interfaces rather than host planes. Exposures
-        made with ``expose(..., at=...)`` are available through ``side(name)``;
-        asymmetric exposures use ``input(name)`` and ``output(name)``. Wire the
+        made with ``expose(..., at=...)`` are available through ``side(name)``.
+        Asymmetric exposures use ``input(name)`` and ``output(name)``. Wire the
         returned interfaces with :meth:`link`, :meth:`cascade`, or :meth:`expose`.
 
         Parameters
@@ -1558,7 +1558,7 @@ class PortNetwork:
         template : PortNetwork
             A network without quantum ports or authored boundary scattering.
         prefix : str
-            A label prefix for the copied components, unique within this network.
+            A label prefix for the copied components, unique in this network.
 
         Returns
         -------
@@ -1750,8 +1750,8 @@ class PortNetwork:
     ) -> tuple[tuple[str, ...], ...]:
         """Return device groups coupled by cascade-generated Hamiltonian terms.
 
-        Static scattering alone is excluded: a unitary mixer changes field
-        coordinates but leaves the summed Lindbladian invariant. Each
+        Static scattering alone is excluded, because a unitary mixer changes
+        field coordinates but leaves the summed Lindbladian invariant. Each
         downstream/upstream coupling pair generated by SLH series composition
         contributes the union of its two quantum-port supports.
 

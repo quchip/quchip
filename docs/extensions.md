@@ -1,9 +1,9 @@
 # Extending quchip
 
 An extension declares local physics. quchip projects its operators into the
-resolved basis, embeds them in the chip Hilbert space, applies frames and RWA,
-and converts the result for the selected backend. Extension code returns
-quchip expressions and does not need to choose a numerical backend.
+resolved basis and embeds them in the chip Hilbert space. It then applies
+frames and RWA and converts the result for the selected backend. Extension
+code returns quchip expressions and need not choose a numerical backend.
 
 ## Choose an extension type
 
@@ -139,7 +139,7 @@ line = ChargeLikeDrive(mode, label="xy")
 ```
 
 `signal.i` and `signal.q` are the physical in-phase and quadrature components
-after gain, delay, filtering, distortion, and crosstalk. A drive may couple
+after gain, delay, filtering, distortion, and crosstalk. A drive can couple
 them to different observables or use nonlinear combinations:
 
 ```python
@@ -156,9 +156,9 @@ signal itself needs drive-specific physics. Carriers are optional for every
 drive. Approximation choices belong to the chip and engine, not the drive.
 
 Declare drive values with `parameter()` and structural choices with
-`setting()`. Constructors and serialization are synthesized. Define a
-scheduled waveform by subclassing `Envelope` and implementing `value(t)`;
-define an unscheduled scalar coefficient by subclassing `TimeCoefficient` and
+`setting()`. Constructors and serialization are synthesized. Define a scheduled
+waveform by subclassing `Envelope` and implementing `value(t)`. Define an
+unscheduled scalar coefficient by subclassing `TimeCoefficient` and
 implementing `value(t)`. Both implementations should use `quchip.qnp` to remain
 JAX-traceable.
 
@@ -181,12 +181,12 @@ $E(t) = I(t) + i\beta\,dI/dt$, with signed $\beta$ in ns. An IQ envelope is one
 complex control signal, not two drive lines.
 
 An envelope owns local shape and relative I/Q only. Pass global phase to
-`sequence.schedule(..., phase=...)`; timing and carrier belong to that
+`sequence.schedule(..., phase=...)`. Timing and carrier belong to that
 scheduled pulse as well.
 
-Control equipment transforms complete analytic signals before
-`hamiltonian()`. A delayed crosstalk copy therefore retains the source carrier,
-both quadratures, and the carrier phase accumulated during the delay.
+Control equipment transforms complete analytic signals before `hamiltonian()`.
+A delayed crosstalk copy therefore keeps the source carrier, both quadratures,
+and the carrier phase accumulated during the delay.
 
 ## Dissipation
 
@@ -227,39 +227,39 @@ dimension. See `quchip.extensions.SpinHalf` for a complete two-level example.
 Named ports and observables use the same vocabulary: an operator declared as
 `op["dipole"]` is available through `device.local_operator("dipole")` and
 `network.port(..., operator="dipole")`. The conventional names `"a"`, `"a_dag"`,
-`"n"`, `"X"`, `"Y"`, `"Z"`, and `"I"` retain their device-hook meanings.
+`"n"`, `"X"`, `"Y"`, `"Z"`, and `"I"` keep their device-hook meanings.
 
 Default T1 and thermal channels use `lowering_operator()` and
-`raising_operator()`; T2 uses `number_operator()`. Override those hooks to
+`raising_operator()`. T2 uses `number_operator()`. Override those hooks to
 select your model's transitions and dephasing operator, or declare the
-complete channels in `dissipation()`. Matrix-element normalization determines
-how a channel's rate relates to measured lifetimes. quchip does not infer
-selection rules or dipole strengths from energy levels. The energy-level
-index used by frames is separate from these physical operators.
+complete channels in `dissipation()`. Matrix-element normalization sets how a
+channel's rate relates to measured lifetimes. quchip does not infer selection
+rules or dipole strengths from energy levels. The energy-level index used by
+frames is separate from these physical operators.
 
 For an intrinsically finite model, override `truncation_boundary()` to return
-`None`. For a numerical cutoff, supply a `TruncationBoundary`; an undeclared
+`None`. For a numerical cutoff, supply a `TruncationBoundary`. An undeclared
 custom cutoff is reported unavailable.
 
-Units remain GHz, ns and mK for every model: enter 1 MHz as `0.001` GHz and
-1 microsecond as `1000` ns. Frames provide one reference frequency per device;
-multitone terms may retain explicit time dependence. Local spaces are finite.
+Units remain GHz, ns and mK for every model: enter 1 MHz as `0.001` GHz and 1
+microsecond as `1000` ns. Frames give one reference frequency per device.
+Multitone terms can keep explicit time dependence. Local spaces are finite.
 
-Subclass `ModelMapping` when a third-party object needs an explicit conversion.
-Set `source` for import, `target` and `library` for export, and implement only
-the directions the mapping supports. Importing `quchip.extensions` does not
-load optional scqubits modules.
+Subclass `ModelMapping` when a third-party object needs an explicit
+conversion. Set `source` for import, `target` and `library` for export, and
+implement only the directions the mapping supports. Importing
+`quchip.extensions` does not load optional scqubits modules.
 
 ## Control equipment
 
 Subclass `SignalTransform` for a classical hardware effect that acts on complete
 analytic signals. Implement `apply(signals)` and return a new signal map. Declare
-numeric fields with `parameter()` and structural fields with `setting()`.
-Opt into persistence with `serializable=True`; import the extension before loading
-a saved chip that uses it. Sweeps rebind parameters on independent transforms.
-Generated transform constructors use keyword arguments. Override `validate()`
-for relationships between fields; construction and binding call it after all
-candidate values have been assigned. Numerical validation must preserve tracing.
+numeric fields with `parameter()` and structural fields with `setting()`. Opt into
+persistence with `serializable=True`, and import the extension before loading a
+saved chip that uses it. Sweeps rebind parameters on independent transforms, whose
+generated constructors use keyword arguments. Override `validate()` for
+relationships between fields. Construction and binding call it after assigning all
+candidate values, and numerical validation must keep tracing.
 
 ```python
 from quchip.control import SignalTransform
@@ -300,5 +300,5 @@ Test only the properties the extension claims:
 7. the complete `Chip` or `QuantumSequence` path;
 8. both backends only when backend lowering changes.
 
-If the engine must branch on an extension's concrete class, the model needs a
-public physical capability instead.
+If the engine must branch on an extension's concrete class, the model
+needs a public physical capability instead.
