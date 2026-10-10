@@ -38,8 +38,8 @@ print(f"Resonator: {chip.freq(r):.6f} GHz")
 ```
 
 ```text
-Qubit: 4.998533 GHz
-Resonator: 7.001041 GHz
+Qubit: 4.998751 GHz
+Resonator: 7.001249 GHz
 ```
 
 The coupling shifts each frequency from its bare value. Continue with

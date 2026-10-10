@@ -157,8 +157,8 @@ for index, name in enumerate(("Short", "Long")):
 Output:
 
 ```text
-Short: final P1 = 32.6%; peak P2 = 56.4%
-Long: final P1 = 98.0%; peak P2 = 3.9%
+Short: final P1 = 32.7%; peak P2 = 56.3%
+Long: final P1 = 98.1%; peak P2 = 3.8%
 ```
 
 <!-- executed-output:end -->
@@ -301,8 +301,8 @@ print(f"RESULT readout={json.dumps(readout_receipt, sort_keys=True)}")
 Output:
 
 ```text
-RESULT drive={"final_p1": {"long": 0.9798521681976914, "short": 0.32629522511065323}, "peak_p2": {"long": 0.03870269369477974, "short": 0.5637970570726827}}
-RESULT readout={"conditional_resonator_frequencies_ghz": [6.801997782702374, 6.801428548310606], "final_iq_separation": 0.9021197297304233, "solver": "mesolve"}
+RESULT drive={"final_p1": {"long": 0.9808186959428491, "short": 0.3274130996871264}, "peak_p2": {"long": 0.03843070489891596, "short": 0.5631356326693838}}
+RESULT readout={"conditional_resonator_frequencies_ghz": [6.801997782702374, 6.801428548310606], "final_iq_separation": 0.9021929173380938, "solver": "mesolve"}
 ```
 
 <!-- executed-output:end -->

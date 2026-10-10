@@ -188,9 +188,10 @@ splitting. The assignment weight exposes the hybridized region directly.
 
 The dashed lines are the bare declarations. Red follows the more $q_1$-like
 dressed transition, and black the more $q_2$-like one. At the crossing, the
-branch separation stays at $2J\approx4.4$ MHz, while second-order dispersive
-perturbation theory gives $4.0$ MHz. The resolved spectrum includes the
-higher-order dressing that this truncated model keeps.
+branch separation is $2J\approx4.0$ MHz. Second-order dispersive perturbation
+theory gives $4.0$ MHz, and the two agree to 0.3%. The RWA drops the
+counter-rotating coupling bands. With `Exact()`, their Bloch–Siegert shift
+raises the splitting to approximately 4.4 MHz.
 
 The lower panel shows why a bare-state label needs care at the crossing: its
 assignment weight decreases to approximately one half as the two excitations
@@ -235,13 +236,13 @@ static_snapshot
 Output:
 
 ```text
-{'q1_f01_ghz': 5.297749744925113,
- 'q1_f12_ghz': 4.64911449272806,
+{'q1_f01_ghz': 5.297988973339862,
+ 'q1_f12_ghz': 4.649377172766265,
  'kerr_labels': ('q1', 'q2', 'bus'),
- 'kerr_matrix_ghz': array([[-6.48635252e-01,  2.26043091e-05, -1.37823836e-03],
-        [ 2.26043091e-05, -6.48041520e-01, -2.06691858e-03],
-        [-1.37823836e-03, -2.06691858e-03, -4.50706699e-06]]),
- 'q1_drive_matrix_element': -0.9989561107920195j}
+ 'kerr_matrix_ghz': array([[-6.48611801e-01,  1.71057586e-05, -1.35398353e-03],
+        [ 1.71057586e-05, -6.48003156e-01, -2.04352737e-03],
+        [-1.35398353e-03, -2.04352737e-03, -4.63804200e-06]]),
+ 'q1_drive_matrix_element': -0.9991667711850264j}
 ```
 
 <!-- executed-output:end -->
@@ -282,10 +283,10 @@ Output:
 
 ```text
 4 term(s) dropped:
-  [q1-bus] coupling band (Δa=-1, Δb=-1) on q1·bus  (counter-rotating under RWA; amp 0.15 GHz, freq 11.8519 GHz)
-  [q1-bus] coupling band (Δa=+1, Δb=+1) on q1·bus  (counter-rotating under RWA; amp 0.15 GHz, freq 11.8519 GHz)
-  [q2-bus] coupling band (Δa=-1, Δb=-1) on q2·bus  (counter-rotating under RWA; amp 0.15 GHz, freq 12.1314 GHz)
-  [q2-bus] coupling band (Δa=+1, Δb=+1) on q2·bus  (counter-rotating under RWA; amp 0.15 GHz, freq 12.1314 GHz)
+  [q1-bus] coupling band (Δa=-1, Δb=-1) on q1·bus  (counter-rotating under RWA; amp 0.15 GHz, freq 11.8525 GHz)
+  [q1-bus] coupling band (Δa=+1, Δb=+1) on q1·bus  (counter-rotating under RWA; amp 0.15 GHz, freq 11.8525 GHz)
+  [q2-bus] coupling band (Δa=-1, Δb=-1) on q2·bus  (counter-rotating under RWA; amp 0.15 GHz, freq 12.132 GHz)
+  [q2-bus] coupling band (Δa=+1, Δb=+1) on q2·bus  (counter-rotating under RWA; amp 0.15 GHz, freq 12.132 GHz)
 ```
 
 <!-- executed-output:end -->
@@ -301,7 +302,7 @@ relative_difference_to_second_order = (
 
 if minimum_index in (0, len(q2_frequencies) - 1):
     raise RuntimeError("The avoided-crossing minimum lies at the sweep boundary.")
-if not 4.3e-3 < minimum_splitting < 4.5e-3:
+if not 3.95e-3 < minimum_splitting < 4.05e-3:
     raise RuntimeError("The resolved splitting does not reproduce the slide-scale exchange rate.")
 if len(chip.resolve().dropped_terms) != 4:
     raise RuntimeError("The RWA ledger does not contain the four counter-rotating coupling bands.")
@@ -332,7 +333,7 @@ print(f"RESULT statics={json.dumps(statics_receipt, sort_keys=True, separators=(
 Output:
 
 ```text
-RESULT statics={"approximation":"RWA","dressed_frequencies_ghz":{"bus":6.55414143998032,"q1":5.297749744925113,"q2":5.577226664394395},"dropped_rwa_terms":4,"figure":"../docs/images/resolve_and_sweep.svg","full_dimension":64,"inferred_exchange_rate_mhz":2.204908100780223,"minimum_at_bare_q2_ghz":5.3,"minimum_splitting_mhz":4.409816201560446,"original_chip_unchanged":true,"relative_difference_to_second_order":0.09293271710857891,"second_order_splitting_scale_mhz":4.000000000000001,"static_zz_khz":22.604309073415152,"sweep_points":181}
+RESULT statics={"approximation":"RWA","dressed_frequencies_ghz":{"bus":6.554557999183757,"q1":5.297988973339862,"q2":5.577453027476459},"dropped_rwa_terms":4,"figure":"../docs/images/resolve_and_sweep.svg","full_dimension":64,"inferred_exchange_rate_mhz":1.9936406352263347,"minimum_at_bare_q2_ghz":5.3,"minimum_splitting_mhz":3.9872812704526694,"original_chip_unchanged":true,"relative_difference_to_second_order":0.0031898250172573274,"second_order_splitting_scale_mhz":4.000000000000001,"static_zz_khz":17.105758551849704,"sweep_points":181}
 ```
 
 <!-- executed-output:end -->
@@ -360,7 +361,7 @@ Output:
 ```text
 {'original_q2_freq': 5.58,
  'shifted_q2_freq': 5.4,
- 'shifted_dressed_q2_freq': 5.39765272276005}
+ 'shifted_dressed_q2_freq': 5.397877155337802}
 ```
 
 <!-- executed-output:end -->
@@ -435,11 +436,11 @@ Output:
 
 ```text
 {'tracked_grid_shape': (181,),
- 'lowest_q1_assignment_overlap': 0.49837736639905067,
- 'q1_like_state_components': {(1, 0, 0): 0.9982630319848723,
-  (0, 0, 1): 0.0016179267171988069,
-  (0, 1, 0): 6.181316921618551e-05,
-  (2, 0, 1): 3.98212745963501e-05}}
+ 'lowest_q1_assignment_overlap': 0.4984151979741138,
+ 'q1_like_state_components': {(1, 0, 0): 0.9983342366403108,
+  (0, 0, 1): 0.0016149966002939823,
+  (0, 1, 0): 5.076675939518521e-05,
+  (0, 0, 2): 4.930380657631324e-32}}
 ```
 
 <!-- executed-output:end -->
@@ -504,7 +505,7 @@ import csv
 import io
 from urllib.request import urlopen
 
-from quchip import CouplingModel, Fluxonium, Scalar, parameter
+from quchip import CouplingModel, Exact, Fluxonium, Scalar, parameter
 
 paper_data_root = (
     "https://raw.githubusercontent.com/AndersenQubitLab/"
@@ -665,9 +666,9 @@ Output:
 
 ```text
 {'measurement_points': 153,
- 'median_absolute_error_mhz': 1.5923938298039175,
- 'p95_absolute_error_mhz': 6.076768528398682,
- 'rmse_mhz': 7.573880277392135,
+ 'median_absolute_error_mhz': 1.5923938298776363,
+ 'p95_absolute_error_mhz': 6.0767685282924555,
+ 'rmse_mhz': 7.573880277392827,
  'points_above_10_mhz': 6}
 ```
 
@@ -703,7 +704,10 @@ class FluxoniumReadoutCoupling(CouplingModel):
 
 ```
 
-Use the published interaction with the fitted circuit parameters.
+Use the published interaction with the fitted circuit parameters. Keep every
+coupling band with `Exact()`. Counter-rotating terms contribute strongly to the
+fluxonium's dispersive shift, and under `RWA()` the $\chi$ RMSE against the
+data increases from 0.77 MHz to 1.42 MHz.
 
 ```python
 paper_q = Fluxonium(
@@ -731,6 +735,7 @@ paper_chip = Chip(
     [paper_edge],
     basis="eigen",
     frame="lab",
+    approximation=Exact(),
 )
 ```
 
@@ -879,16 +884,16 @@ Output:
 
 ```text
 {'sweet_spot': {'paper_f01_ghz': 0.377,
-  'quchip_f01_ghz': 0.37229583974984704,
+  'quchip_f01_ghz': 0.37229583974981484,
   'paper_fr0_ghz': 5.1739,
-  'quchip_fr0_ghz': 5.173631975636749,
+  'quchip_fr0_ghz': 5.173631975636752,
   'paper_chi_mhz': 0.92,
-  'quchip_chi_mhz': 1.141802995038077},
+  'quchip_chi_mhz': 1.141802995032748},
  'flux_pulsed_readout': {'paper_flux': 0.6567,
   'paper_f01_ghz': 3.47,
-  'quchip_f01_ghz': 3.4802282134309697,
+  'quchip_f01_ghz': 3.4802282134309794,
   'paper_chi_mhz': -1.09,
-  'quchip_chi_mhz': -1.135184138343126}}
+  'quchip_chi_mhz': -1.1351841383498429}}
 ```
 
 <!-- executed-output:end -->
@@ -927,7 +932,7 @@ print(
 Output:
 
 ```text
-RESULT paper_statics={"chi_median_absolute_error_mhz":0.17674709860890925,"chi_rmse_mhz":0.7651558998067052,"readout_frequency_rmse_mhz":1.0847642735011205,"readout_model_points":351,"readout_points":151,"spectrum_median_absolute_error_mhz":1.5923938298039175,"spectrum_model_points":351,"spectrum_p95_absolute_error_mhz":6.076768528398682,"spectrum_points":153}
+RESULT paper_statics={"chi_median_absolute_error_mhz":0.17674709860376137,"chi_rmse_mhz":0.7651558998064977,"readout_frequency_rmse_mhz":1.084764273500819,"readout_model_points":351,"readout_points":151,"spectrum_median_absolute_error_mhz":1.5923938298776363,"spectrum_model_points":351,"spectrum_p95_absolute_error_mhz":6.0767685282924555,"spectrum_points":153}
 ```
 
 <!-- executed-output:end -->

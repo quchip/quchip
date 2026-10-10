@@ -6,8 +6,13 @@ from the light SVG (glyphs are already outlines, so the PDF stays small), and
 ``<name>-dark.png`` beside any light ``<name>.png`` (the README pair). Colors
 outside the token map are reported so figures stay on the palette.
 
+``rsvg-convert`` output differs between runs, so the script renders a PDF or
+dark PNG only when its light SVG differs from ``HEAD``, is untracked, or has
+no rendered file yet. ``--force`` renders every one.
+
     python3 tools/theme_figures.py            # all figures
     python3 tools/theme_figures.py clear_iq   # one stem
+    python3 tools/theme_figures.py --force    # render every PDF and PNG
 """
 
 from __future__ import annotations
@@ -63,6 +68,18 @@ def theme_svg(source: Path) -> tuple[Path, set[str]]:
     return target, unknown
 
 
+def _matches_head(path: Path) -> bool:
+    """Return whether ``path`` is tracked and identical to its ``HEAD`` version."""
+    try:
+        tracked = subprocess.run(["git", "ls-files", "--error-unmatch", str(path)], cwd=ROOT, capture_output=True)
+        if tracked.returncode != 0:
+            return False
+        diff = subprocess.run(["git", "diff", "--quiet", "HEAD", "--", str(path)], cwd=ROOT)
+    except FileNotFoundError:
+        return False
+    return diff.returncode == 0
+
+
 def render_pdf(svg: Path) -> Path | None:
     if shutil.which("rsvg-convert") is None:
         return None
@@ -85,6 +102,7 @@ def render_png(svg: Path, reference_png: Path) -> Path | None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("stems", nargs="*", help="figure stems (default: every light SVG)")
+    parser.add_argument("--force", action="store_true", help="render PDFs and PNGs even when the SVG matches HEAD")
     args = parser.parse_args()
     sources = (
         [IMAGES / f"{stem}.svg" for stem in args.stems]
@@ -99,12 +117,19 @@ def main() -> int:
             continue
         target, unknown = theme_svg(source)
         line = f"{source.name} -> {target.name}"
-        pdf = render_pdf(source)
-        line += f" + {pdf.name}" if pdf else " (rsvg-convert missing: no PDF)"
+        unchanged = not args.force and _matches_head(source)
+        if unchanged and source.with_suffix(".pdf").exists():
+            line += " (SVG matches HEAD: PDF kept)"
+        else:
+            pdf = render_pdf(source)
+            line += f" + {pdf.name}" if pdf else " (rsvg-convert missing: no PDF)"
         light_png = source.with_suffix(".png")
         if light_png.exists():
-            png = render_png(target, light_png)
-            line += f" + {png.name}" if png else " (rsvg-convert missing: no dark PNG)"
+            if unchanged and target.with_suffix(".png").exists():
+                line += " (dark PNG kept)"
+            else:
+                png = render_png(target, light_png)
+                line += f" + {png.name}" if png else " (rsvg-convert missing: no dark PNG)"
         print(line)
         if unknown:
             print(f"  off-palette colors: {', '.join(sorted(unknown))}", file=sys.stderr)
