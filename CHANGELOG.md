@@ -28,6 +28,12 @@ This file records notable user-visible changes to quchip.
 - `PortNetwork.mode_reflection(...)` adds a serializable two-sided reference
   section that reflects like a damped linear mode.
   ([#76](https://github.com/quchip/quchip/issues/76))
+- `QuantumSequence.schedule()`, `charge()` and `phase()` accept `detuning=`, a
+  carrier offset in GHz referenced to the pulse start. The pulse is then the
+  same in its frame at every start time, so a detuned calibrated gate keeps its
+  rotation axis when it moves. `pulse.<i>.detuning` rebinds, sweeps and
+  differentiates like `freq`. A carrier at `freq = f + δ` stays a fixed
+  oscillator. ([#93](https://github.com/quchip/quchip/issues/93))
 
 #### Fixes
 

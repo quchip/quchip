@@ -95,13 +95,23 @@ class AnalyticSignal:
     def from_pulse(cls, pulse: Any) -> "AnalyticSignal":
         """Build the complete scheduled signal for one pulse record.
 
+        A ``detuning`` multiplies the envelope by ``exp(-2πi detuning τ)`` at
+        local time ``τ = t - start_time``. Its phase is therefore zero at the
+        pulse start, and the delivered carrier frequency is
+        ``freq + detuning``.
+
         Parameters
         ----------
         pulse : object
-            Scheduled pulse entry with envelope, timing, phase, and carrier.
+            Scheduled pulse entry with envelope, timing, phase, carrier, and an
+            optional ``detuning`` in GHz.
         """
+        detuning = getattr(pulse, "detuning", None)
+        shape: SignalProgram = EnvelopeRef(pulse.envelope)
+        if detuning is not None:
+            shape = Multiply((shape, Carrier(freq=TWO_PI * detuning, sign=-1)))
         local = Window(
-            child=EnvelopeRef(pulse.envelope),
+            child=shape,
             start=0.0,
             stop=pulse.envelope.duration,
         )
@@ -114,7 +124,8 @@ class AnalyticSignal:
             scheduled = Multiply(
                 (scheduled, Carrier(freq=TWO_PI * pulse.freq, sign=-1))
             )
-        return cls(program=scheduled, carrier=pulse.freq)
+        carrier = pulse.freq if detuning is None or pulse.freq is None else pulse.freq + detuning
+        return cls(program=scheduled, carrier=carrier)
 
     @property
     def i(self) -> PhysicsExpr:

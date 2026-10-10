@@ -138,11 +138,16 @@ class _BaseEntryHandle:
         raise NotImplementedError
 
 
+#: Pulse-record fields that rebind and sweep apart from envelope parameters.
+_PULSE_FIELDS = ("freq", "phase", "start_time", "detuning")
+
+
 class PulseHandle(_BaseEntryHandle):
     """Reference to one scheduled pulse entry.
 
-    Sweepable fields: ``freq``, ``phase``, ``start_time``, and declared
-    envelope parameters (for example ``amplitude``, ``duration``, ``sigmas``).
+    Sweepable fields: ``freq``, ``phase``, ``start_time``, ``detuning``, and
+    declared envelope parameters (for example ``amplitude``, ``duration``,
+    ``sigmas``).
 
     Parameters
     ----------
@@ -152,7 +157,7 @@ class PulseHandle(_BaseEntryHandle):
         Pulse entry index in the sequence.
     """
 
-    _reserved_fields = ("freq", "phase", "start_time")
+    _reserved_fields = _PULSE_FIELDS
 
     def _normalize_field(self, field: str) -> str:
         from quchip.control.sequence import _PulseEntry
