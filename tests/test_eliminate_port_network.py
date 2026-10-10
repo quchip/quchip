@@ -110,11 +110,11 @@ def test_exact_elimination_also_retains_the_network_boundary(approximation) -> N
 
 @pytest.mark.validation
 @pytest.mark.optional_backend
-def test_transformed_port_is_differentiable_in_coupling_strength() -> None:
-    """The effective external rate remains differentiable through SW reduction."""
+def test_transformed_boundary_is_differentiable_in_coupling_strength() -> None:
+    """SW port transfer, reflection frequency, and rate follow their analytic derivatives."""
     pytest.importorskip("dynamiqs")
 
-    def effective_rate(g: jax.Array) -> jax.Array:
+    def boundary_values(g: jax.Array) -> jax.Array:
         qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=3, label="q")
         resonator = Resonator(freq=6.0, levels=3, label="r")
         network = PortNetwork(label="line")
@@ -125,12 +125,18 @@ def test_transformed_port_is_differentiable_in_coupling_strength() -> None:
             port_network=network,
             backend="dynamiqs",
         )
-        coupling = eliminate(chip, "r").chip.resolve().slh.external_channels[0].coupling
-        return jnp.abs(coupling.to_dense()[0, 1]) ** 2
+        reduced = eliminate(chip, "r").chip
+        coupling = reduced.resolve().slh.external_channels[0].coupling
+        prefix = "network.component.r_reflection."
+        return jnp.array([jnp.abs(coupling.to_dense()[0, 1]) ** 2,
+                          reduced.parameters[prefix + "freq"],
+                          reduced.parameters[prefix + "external_rate"]])
 
-    gradient = jax.jit(jax.grad(effective_rate))(jnp.asarray(0.04))
-
-    np.testing.assert_allclose(gradient, 0.03 * np.sin(2.0 * 0.04), rtol=1e-5)
+    g, detuning, rate = 0.04, 6.0 - 5.0, 0.03
+    gradient = jax.jit(jax.jacrev(boundary_values))(jnp.asarray(g))
+    # SW gives sin²(g/Δ) port transfer, f_r + g²/Δ, and κ cos²(g/Δ).
+    rate_gradient = rate * np.sin(2 * g / detuning) / detuning
+    np.testing.assert_allclose(gradient, [rate_gradient, 2 * g / detuning, -rate_gradient], rtol=1e-5)
 
 
 def test_eliminate_rejects_port_connected_nonlinear_target() -> None:
