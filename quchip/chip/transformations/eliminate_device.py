@@ -25,8 +25,9 @@ label here and you need not import this module directly.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from functools import reduce
-from itertools import combinations
+from itertools import combinations, product
 from math import prod
 from typing import TYPE_CHECKING, Any
 
@@ -107,46 +108,68 @@ def _retained_port_labels(chip: "Chip") -> set[str]:
     }
 
 
-def _structure_probe(paths: tuple[str, ...]) -> dict[str, float]:
-    """Return a different generic value for each coupling parameter, drawn from a fixed seed.
+def _operator_terms(expr: PhysicsExpr) -> Iterator[PhysicsExpr]:
+    """Yield the operator products that ``expr`` sums, without their scalar coefficients."""
+    if expr.kind in ("add", "sub"):
+        for arg in expr.args:
+            yield from _operator_terms(arg)
+    elif expr.kind == "scale":
+        yield from _operator_terms(expr.args[1])
+    elif expr.kind in ("tensor", "matmul"):
+        for left, right in product(_operator_terms(expr.args[0]), _operator_terms(expr.args[1])):
+            yield PhysicsExpr(expr.kind, (left, right), expr.labels)
+    elif expr.kind == "embed":
+        for inner in _operator_terms(expr.args[0]):
+            yield PhysicsExpr("embed", (inner, *expr.args[1:]), expr.labels)
+    else:
+        yield expr
 
-    A diagonal entry that depends on the parameters vanishes at such a point
-    only by coincidence. Equal values could cancel, as in ``(x - y) n_a n_b``.
-    The patch then follows which entries can be nonzero, not their values, so
-    traced and concrete reductions read the same patch.
-    """
-    values = np.random.default_rng(0).uniform(0.5, 1.5, len(paths))
-    return dict(zip(paths, values.tolist()))
+
+def _holds_parameter(expr: PhysicsExpr) -> bool:
+    """Return whether a parameter enters ``expr`` other than through a device's energy levels."""
+    if expr.kind == "level":
+        return False
+    return expr.kind == "parameter" or any(
+        _holds_parameter(arg) for arg in expr.args if isinstance(arg, PhysicsExpr)
+    )
 
 
 def _diagonal_depends_on(chip: "Chip", coupling: "BaseCoupling", label: str, bases: Any) -> bool:
     """Return whether a coupling's energy-diagonal part can depend on the level of ``label``.
 
     Such a part shifts the energies of ``label`` by the state of the far
-    device, so it changes the Schrieffer-Wolff denominators. A diagonal that
-    stays traced, through a traced device basis, counts as dependent.
+    device, so it changes the Schrieffer-Wolff denominators. Each operator
+    product of the coupling counts alone, without its scalar coefficient, so
+    no parameter values can cancel it, as in ``(x - y) n_a n_b``. Traced and
+    concrete reductions therefore read the same patch. A product whose
+    operator holds a parameter, or a diagonal that stays traced through a
+    traced device basis, counts as dependent.
     """
     from quchip.engine.assembly import _project_on_support, _support_semantic_transform
 
     support = (chip.device_index(coupling.device_a_label), chip.device_index(coupling.device_b_label))
     backend = chip.backend
     operator = coupling.interaction_hamiltonian()
-    probe = _structure_probe(tuple(operator.parameter_paths())) if isinstance(operator, PhysicsExpr) else {}
-    with jax.ensure_compile_time_eval():
-        local = materialize_expr(operator, backend, bindings=probe, local_bases=bases)
-        matrix = _array(backend.to_array(_project_on_support(chip, local, support, bases, backend)))
-        transform = _support_semantic_transform(chip, support, bases)
-        if transform is not None:
-            matrix = transform.conj().T @ matrix @ transform
-        dims = tuple(bases[chip.devices[index].label].resolved_dim for index in support)
-        xp = concrete_array_module(matrix)
-        diagonal = xp.real(xp.diagonal(matrix)).reshape(dims)
-    if contains_tracer(diagonal):
+    terms = tuple(_operator_terms(operator)) if isinstance(operator, PhysicsExpr) else (operator,)
+    if any(isinstance(term, PhysicsExpr) and _holds_parameter(term) for term in terms):
         return True
-    diagonal = np.asarray(diagonal)
-    if coupling.device_b_label == label:
-        diagonal = diagonal.T
-    return bool(not np.all(np.isfinite(diagonal)) or np.max(np.abs(diagonal - diagonal[:1])) > _WORKING_PRECISION)
+    dims = tuple(bases[chip.devices[index].label].resolved_dim for index in support)
+    with jax.ensure_compile_time_eval():
+        transform = _support_semantic_transform(chip, support, bases)
+        for term in terms:
+            local = materialize_expr(term, backend, local_bases=bases)
+            matrix = _array(backend.to_array(_project_on_support(chip, local, support, bases, backend)))
+            if transform is not None:
+                matrix = transform.conj().T @ matrix @ transform
+            diagonal = concrete_array_module(matrix).diagonal(matrix).reshape(dims)
+            if contains_tracer(diagonal):
+                return True
+            diagonal = np.asarray(diagonal)
+            if coupling.device_b_label == label:
+                diagonal = diagonal.T
+            if not np.all(np.isfinite(diagonal)) or np.max(np.abs(diagonal - diagonal[:1])) > _WORKING_PRECISION:
+                return True
+    return False
 
 
 def _local_patch(chip: "Chip", mode_label: str, bases: Any) -> tuple[str, ...]:
@@ -160,8 +183,7 @@ def _local_patch(chip: "Chip", mode_label: str, bases: Any) -> tuple[str, ...]:
     core device joins whole. With that, the patch generator equals the
     full-chip generator. Effective terms are stored in retained coordinates,
     so every term that the patch touches joins whole. A mode without a
-    neighbour adds the first other device, which carries the projection onto
-    the mode's ground state.
+    neighbour has no generator, so its patch holds the mode alone.
     """
     core = {mode_label}
     for coupling in chip.couplings:
@@ -175,8 +197,6 @@ def _local_patch(chip: "Chip", mode_label: str, bases: Any) -> tuple[str, ...]:
         if mode_label in targets:
             core.update(targets)
     patch = set(core)
-    if core == {mode_label}:
-        patch.update([device.label for device in chip.devices if device.label != mode_label][:1])
     for terms in chip.effective_terms:
         if not core.isdisjoint(terms.labels):
             patch.update(terms.labels)
@@ -201,7 +221,13 @@ def _local_patch(chip: "Chip", mode_label: str, bases: Any) -> tuple[str, ...]:
 
 
 def _patch_chip(chip: "Chip", clone: "Chip", labels: tuple[str, ...]) -> "Chip":
-    """Build the patch as a chip with its internal couplings, effective terms and ports."""
+    """Build the patch as a chip with its internal couplings, effective terms and ports.
+
+    The patch of a mode without a neighbour has no survivor. The first other
+    device then joins without its couplings, effective terms or ports. The
+    generator is zero, so that device only carries the ground-state energy
+    and the projected channels of the mode, as multiples of the identity.
+    """
     from quchip.chip.partition import _build_component_chip
 
     network = None
@@ -215,7 +241,13 @@ def _patch_chip(chip: "Chip", clone: "Chip", labels: tuple[str, ...]) -> "Chip":
                 raise NotImplementedError(
                     f"Local elimination needs a port network that the patch {list(labels)} owns alone. {error}"
                 ) from error
-    return _build_component_chip(chip, clone, 0, list(labels), [], network)
+    if len(labels) > 1:
+        return _build_component_chip(chip, clone, 0, list(labels), [], network)
+    carrier = [device.label for device in chip.devices if device.label != labels[0]][:1]
+    group = [device.label for device in chip.devices if device.label in (*labels, *carrier)]
+    patch = _build_component_chip(chip, clone, 0, group, [], network)
+    patch._effective_terms = tuple(terms for terms in patch.effective_terms if terms.labels == labels)
+    return patch
 
 
 def _embed_patch_map(embedding: Any, labels: tuple[str, ...], dims: tuple[int, ...],
@@ -461,13 +493,17 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
     )
     # Every numerical step reads `numeric`: the whole chip, or the patch whose
     # generator equals the full-chip generator (PHYSICS.md §10.7).
-    numeric, chip_bases = chip, None
+    numeric, chip_bases, lone = chip, None, False
+    outside_terms: tuple[EffectiveTerms, ...] = ()
     if local:
         from quchip.engine.assembly import _resolve_system
 
         chip_bases = _resolve_system(chip, chip.backend).bases
         patch = _local_patch(chip, mode_label, chip_bases)
         numeric = _patch_chip(chip, reduced, patch)
+        # Effective terms outside the patch keep their own matrices and maps.
+        outside_terms = tuple(t for t in chip.effective_terms if not set(patch).issuperset(t.labels))
+        lone = len(patch) == 1
         notes.append(
             f"Reduced locally from the patch {list(patch)}. Devices, couplings and effective terms outside "
             "it are unchanged, and chi describes the patch alone."
@@ -754,7 +790,8 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
             copied._retained[label] = (frequency, *[step_embedding.conj().T @ op @ step_embedding
                                                    for op in matrices])
         projected_baths.append(copied)
-    projection = OperatorProjection.capture(
+    # A mode without a neighbour leaves only multiples of the identity, which need no map.
+    projection = None if lone else OperatorProjection.capture(
         numeric, tuple(numeric_survivors), tuple(numeric_final.authored_dims),
         step_embedding, compose=not local,
     ).with_current_operators(tuple(f"port:{label}" for label in port_replacements))
@@ -762,8 +799,6 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
     notes.append(f"Retained the full {order} Hamiltonian correction and each transformed channel "
                  "from the removed components; inherited decay remains collective and separate "
                  "from intrinsic survivor noise.")
-    # Effective terms outside the patch keep their own matrices and maps.
-    outside_terms = tuple(t for t in chip.effective_terms if not set(labels).issuperset(t.labels)) if local else ()
     terms_label = f"retained_{mode_label}"
     taken = {t.label for t in outside_terms} | {d.label for d in reduced_devices} | {c.label for c in kept_couplings}
     suffix = 1

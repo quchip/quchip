@@ -30,15 +30,11 @@ This file records notable user-visible changes to quchip.
   ([#76](https://github.com/quchip/quchip/issues/76))
 - `eliminate(chip, device, local=True)` reduces a device from a patch around it,
   so its cost follows the patch and not the full product space. The patch holds
-  the device, its neighbours, the supports of their effective terms and each
-  device whose level shifts a neighbour's energy. The Schrieffer-Wolff
-  generator then equals the full-chip generator. On rings of 6 and 9 modes, both
-  routes agree within 1e-12. On a 24-mode ring with 429,981,696 product states,
-  19 local steps leave five modes. Captured maps of local steps chain through
-  `OperatorProjection.parents`, so no step forms a full-space matrix.
-  `active_patch()` and `QuantumSequence.active_patch()` forward `local`. Only
-  `method="sw"` is local. Chips with baths, and port networks that link a patch
-  port to a port outside the patch, raise `NotImplementedError`.
+  every device that the full-chip Schrieffer-Wolff generator reads. The retained
+  Hamiltonian, the channels and the map then equal those of the full-chip
+  reduction. `active_patch()` and `QuantumSequence.active_patch()` forward
+  `local`. Only `method="sw"` is local. Chips with baths, and port networks that
+  link a patch port to a port outside the patch, raise `NotImplementedError`.
   ([#97](https://github.com/quchip/quchip/issues/97))
 
 #### Fixes

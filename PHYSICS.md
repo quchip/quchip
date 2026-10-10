@@ -1324,11 +1324,13 @@ each term whose diagonal part depends on a core level. The patch therefore holds
 - the full support of every effective term that the patch touches, because effective terms hold
   retained coordinates.
 
-The far-device rule reads which diagonal entries can be nonzero. It evaluates each coupling with a
-different generic value for each parameter, so a traced reduction reads the same patch as a concrete
-one. Equal values could cancel, as in `(x - y) n_a n_b`. A coupling on a device with a traced energy
-basis counts as level-dependent. A device without a neighbour has no generator. Its patch adds the
-first other device, which carries the projection onto the device's ground state.
+The far-device rule reads the structure of a coupling, not its values. It splits the coupling into
+operator products and drops their scalar coefficients, so no parameter values can cancel a product, as
+in `(x - y) n_a n_b`. A traced reduction therefore reads the same patch as a concrete one. A product
+whose operator is a function of a parameter, and a coupling on a device with a traced energy basis,
+count as level-dependent. A device without a neighbour has no generator, so its patch holds the device
+alone. Its reduction leaves the device's ground-state energy and projected channels, which are
+multiples of the identity. The new `EffectiveTerms` hold them on the first other device without a map.
 
 With this patch, the full-chip generator is the patch generator times the identity on the other
 devices. A coupling from the patch to other devices keeps the mode's level, so it adds nothing to

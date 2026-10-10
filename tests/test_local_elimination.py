@@ -52,14 +52,21 @@ def _ring(n, *, noise=True, backend=None, ports=False):
 
 
 def _model(chip):
-    """Return the lab-frame Hamiltonian and the summed rate-weighted L†L."""
+    """Return the lab-frame Hamiltonian, the summed rate-weighted L†L and the jump term on |psi><phi|.
+
+    With the L†L sum, the jump term on random states psi and phi fixes the dissipator.
+    """
     resolved = chip.resolve(frame="lab")
     hamiltonian = np.asarray(resolved.hamiltonian().matrix())
+    rng = np.random.default_rng(3)
+    psi, phi = rng.normal(size=(2, len(hamiltonian))) + 1j * rng.normal(size=(2, len(hamiltonian)))
     loss = np.zeros_like(hamiltonian)
+    jumps = np.zeros_like(hamiltonian)
     for term in resolved.collapse_terms:
         jump = np.asarray(term.operator.to_dense())
         loss = loss + complex(term.rate) * jump.conj().T @ jump
-    return hamiltonian, loss
+        jumps = jumps + complex(term.rate) * np.outer(jump @ psi, (jump @ phi).conj())
+    return hamiltonian, loss, jumps
 
 
 def _assert_same_model(expected, actual, atol=1e-12):
@@ -140,24 +147,20 @@ def test_local_steps_reduce_a_ring_whose_full_space_does_not_fit_in_memory():
 
 
 class _LevelShift(CouplingModel):
-    """A diagonal edge that vanishes when x equals y."""
+    """A diagonal edge whose coefficient vanishes when x / y equals the ratio of two seeded random numbers."""
 
     x: Scalar = parameter(unit="GHz")
     y: Scalar = parameter(unit="GHz")
 
     def interaction(self, a, b, p):
-        return (p.x - p.y) * a.n * b.n
+        return (p.x - 1.4769827368964097 * p.y) * a.n * b.n
 
 
 def test_local_patch_holds_each_term_that_shifts_a_neighbour():
-    """d shifts a through x - y, and the port pair on (a, b) and c through n_a n_b n_c, so both join m's patch.
-
-    The uncoupled device u reduces from a patch with one other device.
-    """
+    """d shifts a through n_a n_d, and the port pair on (a, b) and c through n_a n_b n_c, so both join m's patch."""
     m = Resonator(freq=7.0, levels=2, label="m")
     a = DuffingTransmon(freq=6.0, anharmonicity=-0.25, levels=3, label="a")
-    b, c, d, e, u = (Resonator(freq=freq, levels=2, label=label)
-                     for freq, label in zip((5.0, 5.5, 4.5, 4.0, 3.5), "bcdeu"))
+    b, c, d, e = (Resonator(freq=freq, levels=2, label=label) for freq, label in zip((5.0, 5.5, 4.5, 4.0), "bcde"))
     network = PortNetwork(label="line")
     joint = network.port("ab", target=(a, b), rate=0.01, operator=np.kron(np.diag([0., 1., 2.]), np.diag([0., 1.])))
     single = network.port("c", target=c, rate=0.01, operator=np.diag([0., 1.]))
@@ -166,11 +169,26 @@ def test_local_patch_holds_each_term_that_shifts_a_neighbour():
     network.expose("feed", input=joint.input, output=single.output)
     couplings = [Capacitive(m, a, g=0.03, label="m_a"), _LevelShift(a, d, x=0.05, y=0.03, label="a_d"),
                  Capacitive(d, e, g=0.02, label="d_e")]
-    chip = Chip([m, a, b, c, d, e, u], couplings, port_network=network)
+    chip = Chip([m, a, b, c, d, e], couplings, port_network=network)
     local = eliminate(chip, "m", local=True)
     _assert_same_reduction(eliminate(chip, "m"), local)
     assert local.chip.effective_terms[-1].labels == ("a", "b", "c", "d")
-    _assert_same_reduction(eliminate(chip, "u"), eliminate(chip, "u", local=True))
+
+
+@pytest.mark.parametrize("order", ["abumr", "uabmr"])
+def test_device_without_a_neighbour_reduces_alone_in_any_device_order(order):
+    """m has no neighbour. Its patch holds neither the port of a, cascaded into b, nor the retained terms of u."""
+    devices = {label: Resonator(freq=freq, levels=2, label=label, T1=1e3)
+               for label, freq in zip("abumr", (5.0, 5.5, 6.0, 7.0, 6.5))}
+    network = PortNetwork(label="line")
+    first = network.port("a", target=devices["a"], rate=0.01)
+    second = network.port("b", target=devices["b"], rate=0.01)
+    network.cascade(first, second)
+    network.expose("feed", input=first.input, output=second.output)
+    chip = Chip([devices[label] for label in order], [Capacitive(devices["u"], devices["r"], g=0.05, label="u_r")],
+                port_network=network)
+    chip = eliminate(chip, "r", local=True).chip
+    _assert_same_reduction(eliminate(chip, "m"), eliminate(chip, "m", local=True))
 
 
 def test_local_reduction_transforms_independent_readout_ports():
