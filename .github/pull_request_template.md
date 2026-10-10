@@ -16,4 +16,8 @@
 
 ## AI assistance
 
-<!-- State how AI assistance was used, or write "None". You remain accountable for every claim and change. -->
+<!-- Check one box. You remain accountable for every claim and change. -->
+
+- [ ] No AI tools were used for this contribution.
+- [ ] AI tools were used, as described below:
+  - <!-- Describe how AI tools were used. -->
