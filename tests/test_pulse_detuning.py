@@ -4,17 +4,16 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from scipy.special import erf
+from scipy.linalg import expm
 
 from quchip import (
-    Capacitive,
     ChargeDrive,
     Chip,
     DuffingTransmon,
     FluxDrive,
     Gaussian,
-    GaussianDRAG,
     QuantumSequence,
+    Qubit,
     RWA,
     Square,
 )
@@ -50,42 +49,42 @@ def test_detuning_sweeps_from_its_default_and_needs_a_carrier():
         seq.schedule("z", envelope=Square(duration=10.0, amplitude=0.01), detuning=0.001)
 
 
-def test_detuned_sx_pair_makes_an_x_at_every_gap():
-    """Two start-referenced detuned SX pulses make an X at any gap, and a fixed oscillator keeps its meaning."""
-    # The two-transmon chip of issue #93.
-    q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.33, levels=3, label="q0")
-    q1 = DuffingTransmon(freq=5.1, anharmonicity=-0.33, levels=3, label="q1")
-    chip = Chip([q0, q1], couplings=[Capacitive(q0, q1, g=0.003)], frame="rotating",
-                approximation=RWA(), backend="qutip")
-    chip.wire(ChargeDrive(q0, label="xy0"))
-    f0, element = float(chip.freq("q0")), complex(chip.drive_matrix_elements("q0")["xy0"])
-    # 20 ns DRAG SX with a 4.69 MHz detuning, calibrated by least squares (1 - F_avg = 1.2e-5).
-    duration, detuning, phase = 20.0, 4.68882e-3, -np.angle(element)
-    amplitude = 1.00432 * 0.25 / abs(element) / (duration / 6 * np.sqrt(2 * np.pi) * erf(3 / np.sqrt(2)))
-    sx = GaussianDRAG(duration=duration, sigmas=3, amplitude=amplitude, beta=-2.11643)
-    options = {"atol": 1e-10, "rtol": 1e-8}
+def test_detuned_pulse_pair_matches_analytic_evolution_at_every_gap():
+    """Start-referenced square pulses have the same analytic propagator at each start time."""
+    q = Qubit(freq=5.0, label="q")
+    chip = Chip([q], frame="rotating", approximation=RWA(), backend="qutip")
+    chip.wire(ChargeDrive(q, label="xy"))
+    duration, amplitude, detuning = 20.0, 0.017, 0.006
+    pulse = Square(duration=duration, amplitude=amplitude)
+    options = {"atol": 1e-11, "rtol": 1e-9}
 
-    def sx_pair(gap, carrier):
+    # In the qubit frame, H01 = iπ A exp(2πi δτ). Transforming with
+    # R(τ) = diag(1, exp(-2πi δτ)) gives Hc = π A i(a-a†) - 2π δ n.
+    # The propagator R(T) exp(-i Hc T) is exact for the declared two-level RWA.
+    number = np.diag([0.0, 1.0])
+    rotating = np.diag([1.0, np.exp(-2j * np.pi * detuning * duration)])
+    constant = np.pi * amplitude * np.array([[0, 1j], [-1j, 0]]) - 2 * np.pi * detuning * number
+    propagator = rotating @ expm(-1j * constant * duration)
+    reference = propagator @ propagator @ np.array([1.0, 0.0])
+
+    def final_state(gap, carrier):
         seq = QuantumSequence(chip)
         for start in (0.0, duration + gap):
             if carrier == "fixed":
-                seq.schedule("xy0", envelope=sx, freq=f0 + detuning, phase=phase, start_time=start)
-            elif carrier == "fixed by hand":
-                seq.schedule("xy0", envelope=sx, freq=f0, detuning=detuning,
-                             phase=phase - 2 * np.pi * detuning * start, start_time=start)
+                seq.schedule("xy", envelope=pulse, freq=q.freq + detuning, start_time=start)
             else:
-                if start > 0:
-                    seq.vz("q0", -2 * np.pi * detuning * duration)  # the calibration's post-pulse Z
-                seq.schedule("xy0", envelope=sx, freq=f0, detuning=detuning, phase=phase, start_time=start)
-        return seq.simulate(tlist=[0.0, 2 * duration + gap], options=options)
+                phase = -2 * np.pi * detuning * start if carrier == "fixed by hand" else 0.0
+                seq.schedule("xy", envelope=pulse, freq=q.freq, detuning=detuning,
+                             phase=phase, start_time=start)
+        result = seq.simulate(tlist=[0.0, 2 * duration + gap], states="final", options=options)
+        return result.final_state.full().ravel()
 
-    # population() reads the bare level. The dressed |10> holds (g/Δ)² of its weight in |01>.
-    leakage = (0.003 / 0.1) ** 2
-    populations = [float(sx_pair(gap, "start").population("q0", 1)[-1]) for gap in (0.0, 10.0, 25.0, 50.0)]
-    np.testing.assert_allclose(populations, 1 - leakage, atol=5e-5)
-    # A carrier at f0 + δ is the detuned pulse with phase φ - 2πδ t0 and no post-pulse Z.
-    np.testing.assert_allclose(sx_pair(50.0, "fixed").final_state.full(),
-                               sx_pair(50.0, "fixed by hand").final_state.full(), atol=1e-6)
+    # Idle evolution vanishes in this frame. The bound allows accumulated solver error.
+    for gap in (0.0, 13.0, 50.0):
+        np.testing.assert_allclose(final_state(gap, "start"), reference, atol=1e-7, rtol=0)
+    # A fixed oscillator has phase -2πδ t0 relative to a start-referenced pulse.
+    np.testing.assert_allclose(final_state(50.0, "fixed"), final_state(50.0, "fixed by hand"),
+                               atol=1e-7, rtol=0)
 
 
 @pytest.mark.validation

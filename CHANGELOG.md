@@ -21,7 +21,7 @@ This file records notable user-visible changes to quchip.
   named `phase`. Code that rebinds or sweeps `pulse.<i>.detuning` for such an
   envelope now adds a carrier offset and keeps the envelope's value. Use the
   new path with `with_params()` and `QuantumSequence.vary()`.
-  ([#93](https://github.com/quchip/quchip/issues/93))
+  ([#106](https://github.com/quchip/quchip/pull/106))
 
 #### New features
 
@@ -39,7 +39,7 @@ This file records notable user-visible changes to quchip.
   same in its frame at every start time, so a detuned calibrated gate keeps its
   rotation axis when it moves. `pulse.<i>.detuning` rebinds, sweeps and
   differentiates like `freq`. A carrier at `freq = f + δ` stays a fixed
-  oscillator. ([#93](https://github.com/quchip/quchip/issues/93))
+  oscillator. ([#106](https://github.com/quchip/quchip/pull/106))
 
 #### Fixes
 
