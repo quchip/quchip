@@ -55,7 +55,7 @@ This file records notable user-visible changes to quchip.
   declared loss channels and coherence recycling. Diagnostics report reference
   escape and stationarity rates. This is an approximate CW response when the
   reference decays, and does not simulate a finite acquisition.
-
+  ([#124](https://github.com/quchip/quchip/pull/124))
 - Dispersive readout accepts `kappa_detected` and `efficiency`. Total linewidth
   controls pointer states and dephasing. Observed loss controls detected SNR.
   Defaults preserve ideal collection. Invalid concrete input domains raise.
