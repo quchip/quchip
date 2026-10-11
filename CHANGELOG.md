@@ -50,6 +50,12 @@ This file records notable user-visible changes to quchip.
 
 #### New features
 
+- `VNA.sweep(..., when={q: 1})` computes weak-probe scattering from a frozen
+  dressed reference with zero or one excitation. The response includes all
+  declared loss channels and coherence recycling. Diagnostics report reference
+  escape and stationarity rates. This is an approximate CW response when the
+  reference decays, and does not simulate a finite acquisition.
+
 - Dispersive readout accepts `kappa_detected` and `efficiency`. Total linewidth
   controls pointer states and dephasing. Observed loss controls detected SNR.
   Defaults preserve ideal collection. Invalid concrete input domains raise.

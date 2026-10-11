@@ -970,8 +970,8 @@ The engine then applies the inbound and outbound factors to that response.
 `VNA.sweep()` extends this form to pump-free models that conserve the total
 energy-level index `N` but are not harmonic, e.g. Duffing transmons, pure
 dephasing, or reduced chips with retained terms. The resolved static Hamiltonian
-must conserve `N`. The approximation must keep only zero-total bands, as `RWA()`
-does, and retained terms must declare conservation. Every port must lower `N` by
+must conserve `N`, as proven by the sector engine (§9). This includes ordinary
+`RWA()` models and structurally conserving `Exact()` models. Every port must lower `N` by
 one. A cascade-generated term `Im(L2^dagger S2 L1)`, as on a shared feedline,
 then also conserves `N`. Every other channel must lower `N` by one or conserve it.
 Every input must be vacuum. The vacuum is then stationary, and to first order in
@@ -1024,6 +1024,66 @@ skipped rank or condition diagnostic is `None`, not a successful check.
 
 If frame and approximation resolution leave dynamic terms, the stationary
 APIs raise. Periodic/Floquet stationary states are not implemented.
+
+#### Conditional weak-probe response
+
+`VNA.sweep(frequencies, when={q: 1})` selects the dressed eigenstate assigned
+to that bare label. Unspecified devices have level zero. The first implementation
+accepts zero or one total excitation and requires an unambiguous reference.
+It uses the same conservation, channel and vacuum-input checks as the vacuum
+route. Fixed pumps and downstream output networks are unsupported.
+
+Let `rho_r = |r><r|` and `K_i = sum_k conj(S_ki) L_k`. The engine freezes
+`rho_r` in the probe source and solves the frequency-domain equations
+
+```text
+(-i omega - L) X_i = -[K_i^dagger, rho_r],
+S_ji(omega) = S_ji + Tr(L_j X_i).
+```
+
+These equations use the internal physics convention. The VNA boundary applies
+the reference-plane transfers and the existing engineering conversion.
+The result has no phase-conjugating response because the reference has a definite
+excitation number and the channels preserve this covariance.
+
+For a one-excitation reference, the source occupies `(N_ket,N_bra) = (2,1)`
+and `(1,0)`. The second block includes stimulated emission. Hamiltonian and
+number-conserving channels act within each block. Lowering jumps recycle
+coherence from `(2,1)` to `(1,0)`. Both blocks therefore form a closed response
+space. All internal and external loss channels contribute before projection,
+including off-diagonal damping between close modes. Number-conserving channels
+retain their recycling terms too. The sector engine supplies the complete
+blocks without building full product-space operators. Transmon and resonator
+level cutoffs must retain the EF and two-photon states that the question needs.
+
+This is the exact resolvent of the specified source within the declared model.
+It is an exact stationary susceptibility only when `L(rho_r) = 0`.
+Otherwise, `approximation="frozen_reference"` records that the reference
+population does not evolve in the source. Decay and recycling remain in the
+response generator. This approximation does not give an acquisition-time
+average after state preparation, a postselected trajectory, or IQ shot noise.
+Reference evolution must be slow over the relevant response memory time.
+
+Diagnostics report the reference overlap, sector dimensions, coherence count,
+relative solve residual, and the rates
+
+```text
+reference_escape_rate = sum_k (<L_k^dagger L_k>_r - |<L_k>_r|^2),
+reference_stationarity_residual = ||L(rho_r)||_F.
+```
+
+Both rates use `1/ns`. Their ratio to a response linewidth is a scale estimate,
+not a bound on the error of a reflection fit. Near dark modes can have longer
+memory times, and relative errors near a reflection zero are ill-conditioned.
+An explicit ground reference uses the existing vacuum response exactly.
+
+Backends solve the adjacent-sector blocks in descending excitation order.
+Blocks with at most 256 coherences use a direct solve. Larger blocks use a
+matrix-free GMRES solve with a diagonal preconditioner and checked residuals.
+`block_condition_number` gives the largest diagonal-block condition number
+when all blocks use direct solves. It is `None` for the iterative route.
+The engine guards memory before allocation. JAX derivatives hold within a
+fixed, unambiguous reference assignment and require converged response solves.
 
 ### 8.2 Captured noisy VNA measurements
 

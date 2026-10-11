@@ -148,6 +148,23 @@ class LinearResponseSolverResult:
         return self._condition_numbers()
 
 
+@dataclass(frozen=True)
+class CoherenceResponseSolverResult:
+    """Scattering and relative residuals from adjacent-sector response solves.
+
+    Attributes
+    ----------
+    responses : array_like
+        Scattering with shape (frequencies, outputs, inputs).
+    residuals : array_like
+        Maximum relative block residual for each frequency.
+    """
+
+    responses: Any
+    residuals: Any
+    _condition_numbers: DeferredValue = field(repr=False)
+
+
 @dataclass
 class PreparedHamiltonian:
     r"""Backend-native Hamiltonian produced by :meth:`Backend.prepare_hamiltonian`.

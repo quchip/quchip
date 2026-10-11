@@ -18,10 +18,11 @@ from quchip.engine.input_output import (
     same_frequency,
 )
 from quchip.engine.linear_response import try_build_weak_probe_problem
+from quchip.engine.conditional_response import build_conditional_response
 from quchip.results.measurement import VNAMeasurement
 from quchip.engine.output_network import output_mixing
 from quchip.engine.reference import cw_transfer, has_amplifier, ReferenceFilter, ReferenceLoss
-from quchip.engine.ir import CanonicalOperator, EngineResult, SteadyStateProblem
+from quchip.engine.ir import CanonicalOperator, EngineResult, LinearResponseProblem, SteadyStateProblem
 from quchip.engine.steady_state import solve_steadystate_problem
 from quchip.results.input_output import (
     MeanFieldResponseResult,
@@ -33,7 +34,7 @@ from quchip.results.input_output import (
 from quchip.results.steady_state import SteadyStateResult
 from quchip.sweep import Sweep, ZippedSweep, _axis_metadata, _iter_axis_points
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
-from quchip.utils.labeling import resolve_label
+from quchip.utils.labeling import bare_label_from_mapping, resolve_label
 from quchip.analysis.field_statistics import canonical as _canonical_matrix
 
 _TONE_PREFIX = "__vna_tone_"
@@ -193,6 +194,7 @@ class VNA:
         self,
         frequencies: Any,
         *variations: Sweep | ZippedSweep,
+        when: Mapping[Any, int] | None = None,
         options: dict | None = None,
         progress: bool = False,
     ) -> SParameterResult:
@@ -214,8 +216,15 @@ class VNA:
             Probe frequencies in GHz.
         *variations : Sweep or ZippedSweep
             Chip and pump axes. Cartesian axes combine and zipped axes vary together.
+        when : mapping of device objects or labels to int, optional
+            Frozen dressed-reference label. Unspecified devices have level zero.
+            Supports zero or one total excitation, static conserving models and
+            vacuum inputs. ``None`` uses the ordinary stationary response.
+            An excited reference is fixed in the probe source, while its response
+            includes all loss channels. It does not model an evolving preparation.
         options : dict or None, optional
             Stationary solver options. ``None`` permits the passive-linear path.
+            Explicit ``when`` requires ``None``.
         progress : bool, default=False
             Show a progress bar for stationary solves.
 
@@ -250,7 +259,23 @@ class VNA:
                 conjugate_matrix=xp.conj(xp.reshape(conjugate, block)),
             )
 
+        reference = None
+        if when is not None:
+            if not isinstance(when, Mapping):
+                raise TypeError("VNA when must be a mapping of device objects or labels to integer levels.")
+            reference = bare_label_from_mapping(tuple(d.label for d in self.chip.devices), when, {})
+            if any(isinstance(level, (bool, np.bool_)) or not isinstance(level, (int, np.integer)) or level < 0
+                   for level in reference) or sum(reference) > 1:
+                raise ValueError("Conditional VNA requires integer levels with zero or one total excitation.")
+            if self._tones:
+                raise ValueError("Conditional VNA does not support fixed pumps.")
+            if options is not None:
+                raise ValueError("Conditional VNA does not accept stationary solver options.")
         chip_points = [(self._tone_values(p), self._chip_at(p)) for _, p in variation_points]
+        if reference is not None:
+            conditional = self._conditional_sweep([chip for _, chip in chip_points], freq_values, labels, reference)
+            matrix = xp.concatenate(conditional[0])
+            return result(conditional[1], matrix, xp.zeros_like(matrix))
         if not self._tones and options is None:
             linear = self._linear_sweep([chip for _, chip in chip_points], freq_values, labels)
             if linear is not None:
@@ -686,6 +711,30 @@ class VNA:
                 })
                 for index in range(len(frequencies))
             )
+        return matrices, diagnostics
+
+    def _conditional_sweep(
+        self, chips: list[Any], frequencies: Any, labels: tuple[str, ...], reference: tuple[int, ...],
+    ) -> tuple[list[Any], list[Mapping[str, Any]]]:
+        """Solve a fixed-reference response at each parameter point."""
+        matrices: list[Any] = []
+        diagnostics: list[Mapping[str, Any]] = []
+        for chip in chips:
+            problem, metadata = build_conditional_response(chip, frequencies, labels, reference)
+            vacuum = isinstance(problem, LinearResponseProblem)
+            solved = chip.backend.linear_response(problem) if vacuum else chip.backend.coherence_response(problem)
+            indices = list(problem.plane_indices)
+            transfer = problem.outbound_transfer[:, indices, None] * problem.inbound_transfer[:, None, indices]
+            matrices.append(transfer * solved.responses)
+
+            def condition(index: int, value: Any = solved._condition_numbers) -> Any:
+                values = value()
+                return None if values is None else values[index]
+
+            diagnostics.extend(_LazyDiagnostics({
+                **metadata, "residual": solved.residuals[index],
+                "condition_number" if vacuum else "block_condition_number": partial(condition, index),
+            }) for index in range(len(frequencies)))
         return matrices, diagnostics
 
     def _chip_at(self, params: dict[str, Any]) -> Any:

@@ -36,7 +36,7 @@ from qutip.solver.sesolve import SESolver
 from scipy import sparse
 
 from quchip.backend._memory import require_memory
-from quchip.backend._response import linear_response, stationary_condition_number
+from quchip.backend._response import coherence_response, linear_response, stationary_condition_number
 from quchip.utils.values import DeferredValue
 from quchip.backend._dims import (
     default_solver_steps,
@@ -50,6 +50,7 @@ from quchip.backend.containers import (
     PreparedHamiltonian,
     PreparedStationary,
     LinearResponseSolverResult,
+    CoherenceResponseSolverResult,
     SolverResult,
     SteadyStateSolverResult,
 )
@@ -1241,6 +1242,9 @@ class QuTiPBackend(Backend):
 
     def linear_response(self, problem: Any) -> LinearResponseSolverResult:
         return linear_response(problem, xp=np)
+
+    def coherence_response(self, problem: Any) -> CoherenceResponseSolverResult:
+        return coherence_response(problem, xp=np)
 
     def stationary_resolvent(
         self,

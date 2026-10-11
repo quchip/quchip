@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 import jax
@@ -92,6 +93,67 @@ def _build_vacuum_response_problem(
     ``c* L_1 - |c|²/2 - (L†L)_1 / 2`` to that block. Every block comes from the
     terms' local operators, so the full product space is never formed.
     """
+    model = _sector_response_model(chip, plane_labels)
+    sectors, xp = model.sectors, chip.backend.array_module
+    labels = tuple(device.label for device in chip.devices)
+    excited = np.argmax(sectors.space(1).levels, axis=1)
+    order = np.argsort(excited, kind="stable")
+    identity = xp.eye(order.size, dtype=complex)
+    block = TWO_PI * (xp.asarray(sectors.hamiltonian(1)) - xp.asarray(sectors.hamiltonian(0))[0, 0] * identity)
+    rows = []
+    for index in range(len(model.channels)):
+        shift = model.channel_block(index, 0, 0)[0, 0]
+        kept = model.channel_block(index, 1, 1)
+        block = block + 1j * (
+            xp.conj(shift) * kept - 0.5 * xp.abs(shift) ** 2 * identity - 0.5 * kept.conj().T @ kept
+        )
+        rows.append(model.channel_block(index, 0, 1)[0])
+    inbound, outbound = model.transfers(frequencies)
+    return LinearResponseProblem(
+        frequencies=frequencies,
+        mode_labels=tuple(labels[index] for index in excited[order]),
+        hamiltonian=block[np.ix_(order, order)],
+        couplings=xp.stack(rows)[:, order],
+        scattering=model.scattering,
+        plane_indices=model.plane_indices,
+        inbound_transfer=inbound,
+        outbound_transfer=outbound,
+    )
+
+
+@dataclass(frozen=True)
+class _SectorResponseModel:
+    """Sector operators and the compiled vacuum-input boundary shared by weak probes."""
+
+    sectors: Any
+    channels: list[list[tuple[Any, Any, tuple[int, ...]]]]
+    scattering: Any
+    plane_indices: tuple[int, ...]
+    references: list[Any]
+    conserving_indices: tuple[int, ...]
+
+    def channel_block(self, index: int, row_total: int, column_total: int) -> Any:
+        xp = self.sectors.chip.backend.array_module
+        shape = (self.sectors.space(row_total).size, self.sectors.space(column_total).size)
+        return sum(
+            (xp.asarray(coefficient) * xp.asarray(self.sectors.block(matrix, support, row_total, column_total))
+             for coefficient, matrix, support in self.channels[index]),
+            start=xp.zeros(shape, dtype=complex),
+        )
+
+    def transfers(self, frequencies: Any) -> tuple[Any, Any]:
+        xp = self.sectors.chip.backend.array_module
+        values = xp.atleast_1d(xp.asarray(frequencies, dtype=float))
+
+        def columns(runs: list[Any]) -> Any:
+            return xp.stack([xp.broadcast_to(cw_transfer(run, values, xp), values.shape) for run in runs], axis=1)
+
+        return (columns([reference.inbound for reference in self.references]),
+                columns([reference.outbound for reference in self.references]))
+
+
+def _sector_response_model(chip: Any, plane_labels: tuple[str, ...]) -> _SectorResponseModel:
+    """Assemble every channel on its local support and require a conserving vacuum-input model."""
     from quchip.chip.effective import authored_excitation_changes
 
     network = chip.port_network
@@ -105,14 +167,17 @@ def _build_vacuum_response_problem(
     channels: list[list[tuple[Any, Any, tuple[int, ...]]]] = []
     hidden_keys: list[str] = []
     occurrences: dict[str, int] = {}
+    conserving_indices = []
     for operator, rate, support, source, name, _paths, owner in sectors.contributions:
+        operator_labels = tuple(labels[index] for index in support) if support else labels
+        changes = authored_excitation_changes(operator, operator_labels, backend, sectors.bases)
         if maybe_concrete_scalar(_scalar_value(rate, backend)) != 0.0:
-            operator_labels = tuple(labels[index] for index in support) if support else labels
-            changes = authored_excitation_changes(operator, operator_labels, backend, sectors.bases)
             lowering = changes is not None and changes <= {1}
             if not lowering and (changes != {0} or isinstance(owner, Port)):
                 raise _UnsupportedLinearModel
         if not isinstance(owner, Port):
+            if changes == {0}:
+                conserving_indices.append(len(channels))
             # Hidden channels keep the keys and order of the resolved SLH model.
             channels.append([(1.0, sectors.channel_operator(operator, rate, support), support)])
             key = f"hidden.{source}.{name}"
@@ -130,55 +195,17 @@ def _build_vacuum_response_problem(
                     for entry in compiled.channels]
 
     xp = backend.array_module
-
-    def channel_block(terms: list[tuple[Any, Any, tuple[int, ...]]], row_total: int, column_total: int) -> Any:
-        shape = (sectors.space(row_total).size, sectors.space(column_total).size)
-        return sum(
-            (xp.asarray(coefficient) * xp.asarray(sectors.block(matrix, support, row_total, column_total))
-             for coefficient, matrix, support in terms),
-            start=xp.zeros(shape, dtype=complex),
-        )
-
-    # The one-excitation states, in device order.
-    excited = np.argmax(sectors.space(1).levels, axis=1)
-    order = np.argsort(excited, kind="stable")
-    identity = xp.eye(order.size, dtype=complex)
-    block = TWO_PI * (xp.asarray(sectors.hamiltonian(1)) - xp.asarray(sectors.hamiltonian(0))[0, 0] * identity)
-    rows = []
-    for terms in channels:
-        shift = channel_block(terms, 0, 0)[0, 0]
-        kept = channel_block(terms, 1, 1)
-        block = block + 1j * (
-            xp.conj(shift) * kept - 0.5 * xp.abs(shift) ** 2 * identity - 0.5 * kept.conj().T @ kept
-        )
-        rows.append(channel_block(terms, 0, 1)[0])
-
     keys = (*(entry.exposure.label for entry in compiled.channels), *hidden_keys)
     external = tuple(entry.exposure.label for entry in compiled.channels if not entry.exposure._hidden)
     if any(label not in external for label in plane_labels):
         raise ValueError(f"Unknown linear-response exposure. Available exposures: {list(external)}")
     plane_indices = tuple(keys.index(label) for label in plane_labels)
-    frequency_values = xp.asarray(frequencies, dtype=float)
     references = [entry.reference for entry in compiled.channels] + [ReferencePlane()] * len(hidden_keys)
     scattering = (pad_mixing(xp.asarray(compiled.scattering, dtype=complex), len(keys), xp)
                   if compiled.channels else xp.eye(len(keys), dtype=complex))
 
-    def transfer_columns(runs: list[Any]) -> Any:
-        return xp.stack(
-            [xp.broadcast_to(cw_transfer(run, frequency_values, xp), frequency_values.shape) for run in runs],
-            axis=1,
-        )
-
-    return LinearResponseProblem(
-        frequencies=frequencies,
-        mode_labels=tuple(labels[index] for index in excited[order]),
-        hamiltonian=block[np.ix_(order, order)],
-        couplings=xp.stack(rows)[:, order],
-        scattering=scattering,
-        plane_indices=plane_indices,
-        inbound_transfer=transfer_columns([reference.inbound for reference in references]),
-        outbound_transfer=transfer_columns([reference.outbound for reference in references]),
-    )
+    return _SectorResponseModel(sectors, channels, scattering, plane_indices, references,
+                                tuple(len(compiled.channels) + i for i in conserving_indices))
 
 
 def _build_linear_response_problem(

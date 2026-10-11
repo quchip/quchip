@@ -2135,6 +2135,43 @@ class LinearResponseProblem:
 
 
 @dataclass(frozen=True)
+class CoherenceResponseProblem:
+    """Frequency response on adjacent excitation-sector coherences.
+
+    Attributes
+    ----------
+    frequencies : array_like
+        Probe frequencies in GHz.
+    hamiltonians : tuple of array_like
+        Sector Hamiltonians in rad/ns, ordered by excitation number from zero.
+    lowering : tuple of array_like
+        Channel blocks from N to N-1, shaped (channels, d[N-1], d[N]).
+        Entry zero is unused and has zero rows.
+    conserving : tuple of array_like
+        Number-conserving channel blocks, shaped (conserving_channels, d[N], d[N]).
+    sources : tuple of array_like
+        Negative probe commutators on (N,N-1), shaped (d[N], d[N-1], inputs).
+        Entry zero is unused and has zero columns.
+    scattering : array_like
+        Complete instantaneous SLH scattering matrix.
+    plane_indices : tuple of int
+        Selected external channels in input and output order.
+    inbound_transfer, outbound_transfer : array_like
+        Reference-plane transfer factors, shaped (frequencies, channels).
+    """
+
+    frequencies: Any
+    hamiltonians: tuple[Any, ...]
+    lowering: tuple[Any, ...]
+    conserving: tuple[Any, ...]
+    sources: tuple[Any, ...]
+    scattering: Any
+    plane_indices: tuple[int, ...]
+    inbound_transfer: Any
+    outbound_transfer: Any
+
+
+@dataclass(frozen=True)
 class SteadyStateProblem:
     """Immutable static Lindblad request handed from a chip to its backend.
 

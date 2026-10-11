@@ -48,6 +48,7 @@ from quchip.backend.containers import (
     PreparedHamiltonian,
     PreparedStationary,
     LinearResponseSolverResult,
+    CoherenceResponseSolverResult,
     SolverResult,
     SteadyStateSolverResult,
     VmappedBatch,
@@ -1128,6 +1129,16 @@ class Backend(ABC):
             Scattering response, internal amplitudes and numerical diagnostics.
         """
         raise NotImplementedError(f"{type(self).__name__} must implement linear_response()")
+
+    def coherence_response(self, problem: Any) -> CoherenceResponseSolverResult:
+        """Solve a frequency response on adjacent excitation-sector coherences.
+
+        Parameters
+        ----------
+        problem : CoherenceResponseProblem
+            Sector Hamiltonians, channels and frozen-reference probe sources.
+        """
+        raise NotImplementedError(f"{type(self).__name__} must implement coherence_response()")
 
     def stationary_resolvent(
         self,

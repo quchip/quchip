@@ -81,6 +81,33 @@ for the full fallback, or supply a valid structural operator declaration.
 `drive_matrix_elements()` also uses the sectors of its two selected states.
 Pulse simulations still use their existing state space.
 
+## Compare conditional readout responses
+
+For a chip with a port network, use a dressed reference label:
+
+```python
+from quchip import VNA
+
+vna = VNA(readout_chip)
+ground = vna.sweep(frequencies, when={"q": 0})
+excited = vna.sweep(frequencies, when={"q": 1})
+```
+
+Unspecified devices have level zero. This weak-probe calculation supports zero
+or one total excitation, static conserving models and vacuum inputs.
+It retains internal loss, port loss and the transmon's EF transition when the
+local cutoff includes it. Use enough resonator levels to retain two photons.
+
+An excited reference stays fixed in the probe source. Its response includes
+loss and coherence recycling, but it does not model population evolution during
+an acquisition. Inspect `diagnostics` for `reference_escape_rate` and
+`reference_stationarity_residual`, both in `1/ns`. They must be small on the
+response timescale. They do not provide a fit-error bound.
+
+This route rejects pumps, thermal inputs and stationary solver options.
+Use scheduled coherent inputs when the preparation, delay or acquisition
+window matters. `VNA.measure()` continues to describe stationary measurements.
+
 ## Change parameters without rebuilding the example
 
 ```python
