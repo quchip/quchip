@@ -4,7 +4,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from quchip.devices.spaces import TruncationBoundary
-from quchip.engine.bands import embed_single_mode_bands
+from quchip.engine.bands import local_mode_bands
 from quchip.engine.observables import BandMeta, recombine_expect
 from quchip.utils.values import copy_value
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
@@ -28,6 +28,7 @@ class TruncationPlan:
     operators: tuple[Any, ...] = ()
     metadata: tuple[BandMeta, ...] = ()
     sampled: bool = False
+    space: Any = None
 
 
 def capture_truncation(chip: Any, engine_result: Any) -> TruncationPlan:
@@ -53,8 +54,10 @@ def capture_truncation(chip: Any, engine_result: Any) -> TruncationPlan:
                 "Increase retained levels and compare observables.",
             ), basis, energy=True))
     return TruncationPlan(
-        tuple(checks), tuple(unavailable), tuple(engine_result.dims), tuple(d.label for d in chip.devices),
+        tuple(checks), tuple(unavailable), tuple(record.resolved_dim for record in engine_result.bases.values()),
+        tuple(d.label for d in chip.devices),
         copy_value(engine_result.resolved_frame.frequencies, readonly=True),
+        space=engine_result.excitation_space,
     )
 
 
@@ -106,14 +109,15 @@ def compile_truncation(plan: TruncationPlan, backend: Any) -> TruncationPlan:
         local = backend.from_array(matrix, dims=[[basis.resolved_dim], [basis.resolved_dim]])
         device_index = plan.labels.index(check.label)
         if maybe_concrete_scalar(plan.frame_frequencies[check.label]) == 0.0:
-            bands = [(0, backend.embed(local, device_index, plan.dims))]
+            bands = [(0, local)]
         else:
-            bands = embed_single_mode_bands(
-                backend, local, device_index=device_index, dim=basis.resolved_dim,
-                label=check.label, dims=plan.dims, semantic_to_solver=basis.energy_to_solver(),
+            bands = local_mode_bands(
+                backend, local, dim=basis.resolved_dim,
+                label=check.label, semantic_to_solver=basis.energy_to_solver(),
             )
         for weight, operator in bands:
-            operators.append(operator)
+            operators.append(backend.embed(operator, device_index, plan.dims) if plan.space is None
+                             else plan.space.embed(backend, operator, (device_index,)))
             metadata.append(BandMeta(key=str(index), weight=weight, device_labels=check.label))
     return replace(plan, operators=tuple(operators), metadata=tuple(metadata), sampled=True)
 

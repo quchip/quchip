@@ -101,6 +101,7 @@ def prepare_solve_problem_context(
     states: StateStorage | None = None,
     dissipation: bool = True,
     run_args: dict | None = None,
+    initial_states: list[Any] | None = None,
 ) -> SolveProblemContext:
     """Resolve the frame and keep authored observables and state specifications.
 
@@ -123,13 +124,38 @@ def prepare_solve_problem_context(
 
     if e_ops is not None and not isinstance(e_ops, dict):
         raise TypeError("e_ops must be dict or None")
-    base_result = resolve_for_operations(
-        chip,
-        drive_ops or [],
-        frame=frame,
-        approximation=approximation,
-        solve_window=(tlist_arr[0], tlist_arr[-1]),
-    )
+    from math import prod
+    from quchip.backend._memory import require_memory
+    from quchip.engine.assembly import _resolve_system, _prepare_engine_assembly
+    from quchip.engine.frames import plan_for_operations
+    from quchip.engine.pulse_space import plan_pulse_space
+    from quchip.approximations import require_approximation
+
+    strategy = chip.approximation if approximation is None else require_approximation(approximation)
+    resolution = _resolve_system(chip, backend)
+    space, reason = (None, "Trajectory solvers use the product space.")
+    if solver not in ("mcsolve", "ssesolve", "smesolve", "jssesolve", "dssesolve", "jsmesolve", "dsmesolve"):
+        space, reason = plan_pulse_space(chip, drive_ops or [], initial_states or [None], resolution,
+                                        strategy, dissipation)
+    if space is None:
+        require_memory(16 * 6 * prod(resolution.dims)**2, task="Full pulse operator assembly",
+                       remedy="Use a model and initial state with a smaller proven invariant space.")
+        base_result = resolve_for_operations(
+            chip, drive_ops or [], frame=frame, approximation=strategy,
+            solve_window=(tlist_arr[0], tlist_arr[-1]),
+        )
+    else:
+        spec = plan_for_operations(chip, chip.frame if frame is None else frame, drive_ops or [],
+                                   approximation=strategy, solve_window=(tlist_arr[0], tlist_arr[-1]),
+                                   _resolution=resolution)
+        resolution, resolved_frame = _prepare_engine_assembly(chip, spec, strategy, resolution=resolution)
+        base_result = build_engine_result(chip, [], resolved_frame=resolved_frame, approximation=strategy,
+                                          _local_resolution=replace(resolution, space=space))
+    base_result = replace(base_result, metadata={**base_result.metadata, "excitation_reduction": {
+        "exact": space is not None, "reason": reason,
+        "full_dimension": prod(resolution.dims), "dimension": prod(base_result.dims),
+        "totals": None if space is None else space.totals,
+    }})
     return SolveProblemContext(
         chip=chip,
         tlist=tlist if isinstance(tlist, tuple) and solver in ("jssesolve", "dssesolve") else tlist_arr,
@@ -257,11 +283,11 @@ def build_solve_batch_from_results(
         )
     # Materialize the shared default only when at least one point omits its state.
     ground = (
-        default_initial_state(context.chip, ref, context.tlist[0])
+        _initial_state(context.chip, None, ref, context.tlist[0])
         if any(state_spec is None for state_spec in initial_states) else None
     )
     states = tuple(
-        ground if state_spec is None else materialize_state_spec(context.chip, state_spec, result.bases)
+        ground if state_spec is None else _initial_state(context.chip, state_spec, result, context.tlist[0])
         for state_spec, result in zip(initial_states, engine_results)
     )
 
@@ -287,6 +313,22 @@ def build_solve_batch_from_results(
     if context.automatic_sampling:
         problems = sample_problems(problems)
     return SolveBatch(chip=context.chip, problems=tuple(problems))
+
+
+def _initial_state(chip, spec, result, start):
+    if result.excitation_space is not None:
+        from quchip.results.compact import materialize_compact
+        return materialize_compact(chip, spec, result.excitation_space)
+    from quchip.results.compact import CompactState, _compatible_values
+    if isinstance(spec, CompactState):
+        backend = chip.backend
+        values = _compatible_values(spec, tuple(d.label for d in chip.devices), result.dims, result.bases, backend)
+        native = backend.from_array(values, dims=[[spec.space.size],
+                                    [1] if spec.values.shape[-1] == 1 else [spec.space.size]])
+        spec = spec.space.lift(native, backend)
+    if spec is None:
+        return default_initial_state(chip, result, start)
+    return materialize_state_spec(chip, spec, result.bases)
 
 
 def build_solve_problem(
@@ -326,6 +368,7 @@ def build_solve_problem(
         frame=frame,
         states=states,
         dissipation=dissipation,
+        initial_states=[initial_state],
     )
     engine_result = build_engine_result(
         chip,
@@ -339,11 +382,7 @@ def build_solve_problem(
     problem = SolveProblem(
         chip=context.chip,
         engine_result=engine_result,
-        initial_state=(
-            default_initial_state(context.chip, engine_result, context.tlist[0])
-            if initial_state is None
-            else materialize_state_spec(context.chip, initial_state, engine_result.bases)
-        ),
+        initial_state=_initial_state(context.chip, initial_state, engine_result, context.tlist[0]),
         tlist=context.tlist,
         e_ops=e_ops_solver,
         e_ops_meta=e_ops_meta,

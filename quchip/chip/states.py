@@ -217,12 +217,18 @@ def bare_state(
     return _bare_state_from_bases(chip, resolved, chip.resolve().bases)
 
 
-def _bare_state_from_bases(
+def _bare_state_from_bases(chip: "Chip", resolved: Mapping[str, Any], bases: Mapping[str, Any]) -> State:
+    """Build a product state from the shared local state preparation."""
+    kets = _bare_local_kets(chip, resolved, bases)
+    return kets[0] if len(kets) == 1 else chip.backend.tensor_states(*kets)
+
+
+def _bare_local_kets(
     chip: "Chip",
     resolved: Mapping[str, Any],
     bases: Mapping[str, Any],
-) -> State:
-    """Build a solver ket from local level indices or authored local arrays."""
+) -> list[State]:
+    """Resolve each local ket without allocating its tensor product."""
     backend = chip.backend
     available = list(chip._device_map.keys())
     prepared = dict(resolved)
@@ -302,9 +308,7 @@ def _bare_state_from_bases(
         vector = basis.energy_state(level).reshape(basis.resolved_dim, 1)
         kets.append(backend.from_array(vector, dims=[[basis.resolved_dim], [1]]))
 
-    if len(kets) == 1:
-        return kets[0]
-    return backend.tensor_states(*kets)
+    return kets
 
 
 def default_initial_state(chip: "Chip", engine_result: Any, start_time: Any) -> State:

@@ -8,6 +8,10 @@ This file records notable user-visible changes to quchip.
 
 #### Changes and migration
 
+- Explicit `thermal_occupation=0` retains a zero-rate absorption channel, so
+  excitation support remains fixed when that declared parameter changes.
+  Omit `thermal_occupation` for a vacuum-only relaxation model.
+
 - Custom `RWA(keep_bands=...)` selections must contain every adjoint band.
   Add each tuple's negation to preserve Hermiticity. Asymmetric selections
   now raise instead of producing non-Hermitian Hamiltonians.
@@ -56,6 +60,13 @@ This file records notable user-visible changes to quchip.
   escape and stationarity rates. This is an approximate CW response when the
   reference decays, and does not simulate a finite acquisition.
   ([#124](https://github.com/quchip/quchip/pull/124))
+
+- Deterministic pulse simulations automatically use proven invariant
+  excitation spaces on QuTiP and dynamiqs. Local observables and saved-state
+  replay stay compact. `Chip.compact_state()` prepares bare or conserving
+  dressed states without full tensor allocation. Native state exports remain
+  available with memory checks. No excitation cutoff is applied.
+
 - Dispersive readout accepts `kappa_detected` and `efficiency`. Total linewidth
   controls pointer states and dephasing. Observed loss controls detected SNR.
   Defaults preserve ideal collection. Invalid concrete input domains raise.

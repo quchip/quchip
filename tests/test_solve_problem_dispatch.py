@@ -446,8 +446,9 @@ class TestSolverSelection:
         flat = replace(problem, initial_state=ket.reshape(-1), solver="sesolve")
         assert flat.solver_name(chip.backend) == "sesolve"
         assert solve_problem(flat).solver == "sesolve"
-        assert chip.backend.as_density_matrix(ket.reshape(-1)).shape == (4, 4)
-        mixed = replace(problem, initial_state=np.asarray(chip.backend.to_array(rho)))
+        assert chip.backend.as_density_matrix(ket.reshape(-1)).shape == (ket.size, ket.size)
+        mixed = build_problem(chip, [], np.linspace(0.0, 4.0, 5), initial_state=rho)
+        mixed = replace(mixed, initial_state=np.asarray(chip.backend.to_array(mixed.initial_state)))
         assert mixed.solver_name(chip.backend) == "mesolve"
         assert solve_problem(mixed).solver == "mesolve"
 
@@ -461,7 +462,7 @@ class TestSolverSelection:
         problem = build_problem(chip, [], np.linspace(0.0, 4.0, 5))
         flat = np.asarray(chip.backend.to_array(problem.initial_state)).reshape(-1)
         assert chip.backend.is_ket(flat)
-        assert np.asarray(chip.backend.to_array(chip.backend.as_density_matrix(flat))).shape == (3, 3)
+        assert np.asarray(chip.backend.to_array(chip.backend.as_density_matrix(flat))).shape == (flat.size, flat.size)
         result = solve_problem(replace(problem, initial_state=flat, solver="sesolve"))
         assert result.solver == "sesolve"
         npt.assert_allclose(np.asarray(result.population("q", 0)), 1.0, atol=1e-8)

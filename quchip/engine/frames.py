@@ -592,7 +592,8 @@ def frame_tones(
     tones: list[FrameTone] = []
     for delivered in _build_delivered_signals(chip, list(operations)).values():
         drive, target = delivered.drive, delivered.target
-        bands = drive_bands(chip, drive, target, resolution.bases, resolution.dims, chip.backend, approximation)
+        bands = drive_bands(chip, drive, target, resolution.bases, resolution.dims,
+                            chip.backend, approximation, embed=False)
         records = [record for record, _, _, _ in bands]
         source = f"{drive.label} → {target.label}" + (" (crosstalk)" if delivered.origin == "crosstalk" else "")
         tones += _signal_tones(delivered.signal.program, records, span, source)

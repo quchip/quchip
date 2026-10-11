@@ -113,6 +113,16 @@ class _SystemResolution:
     hamiltonians: tuple[Operator, ...]
     dims: tuple[int, ...]
     network: _CompiledNetwork | None
+    space: Any = None
+
+    @property
+    def operator_dims(self):
+        return self.dims if self.space is None else self.space.solver_dims
+
+    def embed(self, backend, operator, support):
+        if self.space is None:
+            return embed_on_support(backend, operator, support, self.dims)
+        return self.space.embed(backend, operator, support)
 
 
 def _support_semantic_transform(
@@ -236,6 +246,8 @@ def _project_on_support(
     labels = tuple(chip.devices[index].label for index in support or range(len(chip.devices)))
     records = [bases[label] for label in labels]
     if all(record.kind == "native" for record in records):
+        require_memory(16 * 4 * prod(record.native_dim for record in records)**2,
+                       task="Native operator materialization", remedy="Use factored local operators.")
         return materialize_expr(operator, backend, local_bases=bases)
     if not support:
         authored_dimension = prod(chip.authored_dims)
@@ -401,21 +413,8 @@ def _projection_peaks(
     return _BOOKKEEPING_BYTES + max(memory.peak, memory.held + _ENTRY_BYTES * (4 * resolved**2 + local)), dense
 
 
-def _project_products(
-    operator: PhysicsExpr,
-    labels: tuple[str, ...],
-    bases: Mapping[str, BasisRecord],
-) -> Any | None:
-    """Project a sum of scalar-weighted single-device products factor by factor.
-
-    The support transform is the Kronecker product of the local transforms, so
-    ``V†(A ⊗ B)V = (V_a† A V_a) ⊗ (V_b† B V_b)``, and memory scales with each
-    native dimension squared, times the number of products. Products on one
-    device multiply in the native basis before projection, because
-    ``V_a V_a†`` is not the identity on a truncated eigenbasis. A label absent
-    from a product is the identity. Returns ``None`` when a term does not
-    factor.
-    """
+def _local_products(operator: PhysicsExpr, labels: tuple[str, ...], bases: Mapping[str, BasisRecord]):
+    """Factor authored algebra before choosing product or compact coordinates."""
     values = _bound_values(operator)
 
     def lower(node: PhysicsExpr) -> Any:
@@ -456,7 +455,25 @@ def _project_products(
                 products.append((left_coefficient * right_coefficient, factors))
         return products
 
-    terms = split(operator)
+    return split(operator)
+
+
+def _project_products(
+    operator: PhysicsExpr,
+    labels: tuple[str, ...],
+    bases: Mapping[str, BasisRecord],
+) -> Any | None:
+    """Project a sum of scalar-weighted single-device products factor by factor.
+
+    The support transform is the Kronecker product of the local transforms, so
+    ``V†(A ⊗ B)V = (V_a† A V_a) ⊗ (V_b† B V_b)``, and memory scales with each
+    native dimension squared, times the number of products. Products on one
+    device multiply in the native basis before projection, because
+    ``V_a V_a†`` is not the identity on a truncated eigenbasis. A label absent
+    from a product is the identity. Returns ``None`` when a term does not
+    factor.
+    """
+    terms = _local_products(operator, labels, bases)
     if terms is None:
         return None
     xp = concrete_array_module(terms, [bases[label].vectors for label in labels])
@@ -518,8 +535,7 @@ def _build_static_h0(
     per-device frame reference. This function is one of the
     assembly paths where the 2π boundary is crossed.
     """
-    dims = resolution.dims
-    bare = [backend.embed(local, idx, dims) for idx, local in enumerate(resolution.hamiltonians)]
+    bare = [resolution.embed(backend, local, (idx,)) for idx, local in enumerate(resolution.hamiltonians)]
     bare += static_couplings
     if not bare:
         raise ValueError("A chip must contain at least one device.")
@@ -532,7 +548,7 @@ def _build_static_h0(
         with _backend_context(backend):
             record = resolution.bases[dev.label]
             level_operator = _resolved_frame_operator(record, backend)
-            n_emb = backend.embed(level_operator, idx, dims)
+            n_emb = resolution.embed(backend, level_operator, (idx,))
         terms.append((-(TWO_PI * omega_ref), n_emb))
     return backend.linear_combination(terms)
 
@@ -593,7 +609,10 @@ def _collect_collapse_terms(
             parameter_paths,
             owner,
         ) in chip._collapse_contributions_with_owners(resolution.bases):
-            local = _project_on_support(chip, operator, support, resolution.bases, backend)
+            compact = (None if resolution.space is None else
+                       resolution.space.authored(backend, operator, support))
+            local = (None if compact is not None else
+                     _project_on_support(chip, operator, support, resolution.bases, backend))
             resolved_rate = materialize_expr(rate, backend)
             retained_coordinates = isinstance(owner, EffectiveTerms) or any(
                 terms.projection is not None for terms in chip.effective_terms
@@ -607,18 +626,31 @@ def _collect_collapse_terms(
             if (retained_coordinates or len(check_support) > 1) and not _is_concrete_zero(resolved_rate):
                 frequencies = tuple(resolved_frame.frequencies[labels[index]] for index in check_support)
                 if not all(maybe_concrete_scalar(frequency) == 0.0 for frequency in frequencies):
-                    bands = _authored_bands(chip, operator, local, check_support, resolution.bases, backend)
+                    from quchip.chip.effective import authored_excitation_changes
+                    weights = authored_excitation_changes(operator, tuple(labels[i] for i in check_support),
+                                                          backend, resolution.bases)
+                    common = all(maybe_concrete_scalar(f) == maybe_concrete_scalar(frequencies[0])
+                                 and maybe_concrete_scalar(f) is not None for f in frequencies)
+                    frame_weights: tuple[tuple[int, ...], ...]
+                    if compact is not None and common and weights is not None and len(weights) <= 1:
+                        frame_weights = ((next(iter(weights), 0),),)
+                        frequencies = (frequencies[0],)
+                    else:
+                        if local is None:
+                            local = _project_on_support(chip, operator, support, resolution.bases, backend)
+                        frame_weights = tuple(_authored_bands(
+                            chip, operator, local, check_support, resolution.bases, backend))
                     kind = "Effective channel" if retained_coordinates else "Collapse channel"
-                    _common_band_frame_frequency(tuple(bands), frequencies,
+                    _common_band_frame_frequency(frame_weights, frequencies,
                                                  source=f"{kind} {source!r}/{channel!r}")
             if len(support) > 1 and not _is_concrete_zero(resolved_rate):
                 resolved_support = tuple(labels[index] for index in support)
                 if resolved_support not in supports:
                     supports.append(resolved_support)
-            embedded = embed_on_support(backend, local, support, resolution.dims)
+            embedded = compact if compact is not None else resolution.embed(backend, local, support)
             canonical = backend.to_canonical_operator(embedded).with_metadata(
-                dims=resolution.dims,
-                subsystem_labels=labels,
+                dims=resolution.operator_dims,
+                subsystem_labels=labels if resolution.space is None else ("excitation",),
                 tag=f"collapse:{source}:{channel}",
             )
             port = ports_by_id.get(id(owner))
@@ -1056,7 +1088,6 @@ def _resolve_coupling_terms(
     td_terms: list[tuple[Operator, ScalarModulation]] = []
     dropped: list[DroppedTerm] = []
     supports: list[tuple[str, ...]] = []
-    dims = resolution.dims
     for resolved in _resolved_interactions(chip, resolution, backend):
         contribution, support = resolved.contribution, resolved.support
         labels = contribution.labels
@@ -1067,7 +1098,7 @@ def _resolve_coupling_terms(
             continue
 
         if not filters_terms and all(maybe_concrete_scalar(freq) == 0.0 for freq in frequencies):
-            interactions.append(embed_on_support(backend, h_full, support, dims))
+            interactions.append(resolution.embed(backend, h_full, support))
             supports.append(labels)
             continue
 
@@ -1092,7 +1123,7 @@ def _resolve_coupling_terms(
             concrete_osc = maybe_concrete_scalar(osc_freq)
             if concrete_osc is not None and concrete_osc == 0.0:
                 continue
-            embedded = embed_on_support(backend, band_op, support, dims)
+            embedded = resolution.embed(backend, band_op, support)
             scaled = backend.linear_combination([(TWO_PI, embedded)])
             frame_corrections.append(backend.linear_combination([(-TWO_PI, embedded)]))
             td_terms.append((scaled, ScalarModulation(signal=Carrier(freq=TWO_PI * osc_freq, sign=-1))))
@@ -1101,14 +1132,30 @@ def _resolve_coupling_terms(
             warnings.warn(f"Coupling {contribution.label!r} vanishes entirely under RWA().", UserWarning, stacklevel=3)
         if filters_terms:
             if retained:
-                interactions.append(embed_on_support(
-                    backend, backend.linear_combination([(1, op) for op in retained]), support, dims))
+                interactions.append(resolution.embed(
+                    backend, backend.linear_combination([(1, op) for op in retained]), support))
         else:
-            interactions.append(embed_on_support(backend, h_full, support, dims))
+            interactions.append(resolution.embed(backend, h_full, support))
         if retained or not filters_terms:
             supports.append(labels)
 
     return interactions, frame_corrections, td_terms, dropped, supports
+
+
+def _component_authored_terms(chip, resolution, backend):
+    for local_op, coefficient, support, owner, origin, tag in chip.dynamic_contributions():
+        owner_labels = tuple(chip.devices[index].label for index in support)
+        owner_dims = tuple(chip.devices[index].local_space().dimension for index in support)
+        local_op = as_operator_expr(
+            local_op,
+            labels=owner_labels,
+            dims=owner_dims,
+            name=rf"\hat H_{{{owner.label}}}(t)",
+            owner=owner,
+            scope=owner.label,
+        )
+        local_op, support = _retained_operator(chip, local_op, support, backend, bases=resolution.bases)
+        yield local_op, coefficient, support, owner, origin, tag
 
 
 def _component_time_terms(
@@ -1124,19 +1171,8 @@ def _component_time_terms(
     dropped: list[DroppedTerm] = []
     supports: list[tuple[str, ...]] = []
 
-    for local_op, coefficient, support, owner, origin, tag in chip.dynamic_contributions():
+    for local_op, coefficient, support, owner, origin, tag in _component_authored_terms(chip, resolution, backend):
         modulation = _as_time_coefficient(coefficient, owner=type(owner).__name__)
-        owner_labels = tuple(chip.devices[index].label for index in support)
-        owner_dims = tuple(chip.devices[index].local_space().dimension for index in support)
-        local_op = as_operator_expr(
-            local_op,
-            labels=owner_labels,
-            dims=owner_dims,
-            name=rf"\hat H_{{{owner.label}}}(t)",
-            owner=owner,
-            scope=owner.label,
-        )
-        local_op, support = _retained_operator(chip, local_op, support, backend, bases=resolution.bases)
         owner_labels = tuple(chip.devices[index].label for index in support)
         projected = _project_on_support(chip, local_op, support, resolution.bases, backend)
         bands = _authored_bands(chip, local_op, projected, support, resolution.bases, backend, tag=tag)
@@ -1160,7 +1196,7 @@ def _component_time_terms(
                 continue
 
             band_op = backend.from_canonical_operator(band)
-            embedded = embed_on_support(backend, band_op, support, resolution.dims)
+            embedded = resolution.embed(backend, band_op, support)
             signal = modulation.signal
             concrete = maybe_concrete_scalar(oscillation)
             if concrete is None or concrete != 0.0:
@@ -1169,8 +1205,8 @@ def _component_time_terms(
                 _dynamic_term(
                     backend,
                     embedded,
-                    dims=resolution.dims,
-                    labels=labels,
+                    dims=resolution.operator_dims,
+                    labels=labels if resolution.space is None else ("excitation",),
                     tag=tag,
                     origin=cast(TermOrigin, origin),
                     time_dependence=ScalarModulation(signal=signal),
@@ -1297,6 +1333,40 @@ class _ResolvedDriveBand:
     tag: str
 
 
+def _drive_authored_terms(chip, drive, target, backend):
+    probe = AnalyticSignal(program=Constant(1.0 + 0.0j))
+    with _backend_context(backend):
+        terms = split_dynamic_hamiltonian(drive.hamiltonian(target, probe))
+    pair = ((target.device_a_label, target.device_b_label) if isinstance(drive, CouplingDrive)
+            else (target.label,))
+    dims = tuple(chip[label].local_space().dimension for label in pair)
+    for index, (_, operator) in enumerate(terms):
+        yield index, as_operator_expr(operator, labels=pair, dims=dims, owner=drive,
+                                      scope=f"drive.{drive.label}", name=rf"H_{{{drive.label},{index}}}")
+
+
+def drive_excitation_changes(chip, drive, target, bases, approximation):
+    from quchip.chip.effective import authored_excitation_changes
+    changes = set()
+    for _, authored in _drive_authored_terms(chip, drive, target, chip.backend):
+        support = tuple(chip.device_index(label) for label in authored.labels)
+        retained = any(term.projection is not None for term in chip.effective_terms)
+        if retained:
+            authored, support = _retained_operator(chip, authored, support, chip.backend,
+                                                   f"drive:{drive.label}", bases=bases)
+        if not retained and isinstance(drive, CouplingDrive) and approximation.conserves_excitation_number():
+            weights = {0}
+        else:
+            weights = authored_excitation_changes(authored, tuple(chip.devices[i].label for i in support),
+                                                   chip.backend, bases)
+            if weights is None:
+                return None
+            if len(support) == 1:
+                weights = {n for n in weights if _keeps_drive_band(drive, approximation, (n,))}
+        changes.update(weights)
+    return changes
+
+
 def drive_bands(
     chip: "Chip",
     drive: BaseDrive,
@@ -1305,19 +1375,15 @@ def drive_bands(
     dims: tuple[int, ...],
     backend: Backend,
     approximation: Approximation,
+    *, space: Any = None, embed: bool = True,
 ) -> list[tuple[BandRecord, Operator, int, int]]:
     """Yield kept band records, embedded operators, term indices and original signal weights."""
-    probe = AnalyticSignal(program=Constant(1.0 + 0.0j))
-    with _backend_context(backend):
-        authored_terms = split_dynamic_hamiltonian(drive.hamiltonian(target, probe))
     pair = ((target.device_a_label, target.device_b_label) if isinstance(drive, CouplingDrive)
             else (target.label,))
     support = tuple(chip.device_index(label) for label in pair)
     local_dims = tuple(chip[label].local_space().dimension for label in pair)
     bands: list[tuple[BandRecord, Operator, int, int]] = []
-    for term_index, (_scalar, operator) in enumerate(authored_terms):
-        authored = as_operator_expr(operator, labels=pair, dims=local_dims, owner=drive,
-                                    scope=f"drive.{drive.label}", name=rf"H_{{{drive.label},{term_index}}}")
+    for term_index, authored in _drive_authored_terms(chip, drive, target, backend):
         local = _project_on_support(chip, authored, support, bases, backend)
         for charges, band in _authored_bands(chip, authored, local, support, bases, backend).items():
             if not _keeps_drive_band(drive, approximation, charges):
@@ -1344,7 +1410,9 @@ def drive_bands(
             active_labels = tuple(chip.devices[i].label for i in active_support)
             for active_charges, active_band in transformed.items():
                 record = BandRecord(active_labels, active_charges, _concrete_amplitude(active_band.values), drive.label)
-                embedded = embed_on_support(backend, backend.from_canonical_operator(active_band), active_support, dims)
+                local_band = backend.from_canonical_operator(active_band)
+                embedded = (local_band if not embed else space.embed(backend, local_band, active_support)
+                            if space is not None else embed_on_support(backend, local_band, active_support, dims))
                 bands.append((record, embedded, term_index, source_weight))
     return bands
 
@@ -1359,6 +1427,7 @@ def _resolved_drive_bands(
     dims: tuple[int, ...],
     backend: Backend,
     approximation: Approximation,
+    space: Any = None,
 ) -> list[_ResolvedDriveBand]:
     """Attach frame carriers to the retained bands of one drive's authored Hamiltonian."""
     single = not isinstance(drive, CouplingDrive)
@@ -1367,7 +1436,7 @@ def _resolved_drive_bands(
     tag = "drive" if single else "edge_pump"
     resolved: list[_ResolvedDriveBand] = []
     for record, embedded, term_index, source_weight in drive_bands(
-        chip, drive, target, bases, dims, backend, approximation
+        chip, drive, target, bases, dims, backend, approximation, space=space
     ):
         carrier = _band_frame_frequency(record.charges, [frequencies.get(label, 0.0) for label in record.devices])
         resolved.append(
@@ -1408,6 +1477,7 @@ def _compile_drive_terms(
     dims: tuple[int, ...],
     subsystem_labels: tuple[str, ...],
     approximation: Approximation,
+    space: Any = None,
 ) -> tuple[CompiledDriveTerm, ...]:
     """Band-decompose each drive channel into pre-embedded, 2π-scaled drive terms.
 
@@ -1435,7 +1505,9 @@ def _compile_drive_terms(
         line = (drive.label, target.label)
         if line not in line_bands:
             line_bands[line] = [
-                (band, _apply_2pi_canonical(backend, band.operator, dims=dims, labels=subsystem_labels, tag=band.tag))
+                (band, _apply_2pi_canonical(
+                    backend, band.operator, dims=dims if space is None else space.solver_dims,
+                    labels=subsystem_labels if space is None else ("excitation",), tag=band.tag))
                 for band in _resolved_drive_bands(
                     chip,
                     drive,
@@ -1445,6 +1517,7 @@ def _compile_drive_terms(
                     dims=dims,
                     backend=backend,
                     approximation=approximation,
+                    space=space,
                 )
             ]
         for band, operator in line_bands[line]:
@@ -1742,7 +1815,7 @@ def _template_from_engine_result(
     if base_result.resolved_frame is not resolved_frame:
         raise ValueError("The base EngineResult and scheduled drives must use the same resolved frame.")
 
-    dims = base_result.dims
+    dims = base_result.dims if base_result.excitation_space is None else base_result.excitation_space.dims
     subsystem_labels = tuple(device.label for device in chip.devices)
     delivered = _build_delivered_signals(chip, drive_ops)
     drive_terms = _compile_drive_terms(
@@ -1754,6 +1827,7 @@ def _template_from_engine_result(
         dims=dims,
         subsystem_labels=subsystem_labels,
         approximation=base_result.approximation,
+        space=base_result.excitation_space,
     )
     coherent_terms = _compile_coherent_terms(base_result.slh, drive_ops)
     return HamiltonianTemplate(
@@ -1772,6 +1846,8 @@ def _resolved_dressing_context(
     """Freeze assembly-time basis references for ``EngineResult.dress()``."""
     from quchip.chip.dressing import BareProductReference
 
+    if resolution.space is not None:
+        return _ResolvedDressingContext(backend=chip.backend, reference=BareProductReference(resolution.operator_dims))
     return _ResolvedDressingContext(
         backend=chip.backend,
         reference=BareProductReference(dims=tuple(resolution.dims), local_vectors=tuple(
@@ -1812,8 +1888,8 @@ def compile_hamiltonian_template(
 
     backend = chip.backend
     resolution = _resolve_system(chip, backend) if _local_resolution is None else _local_resolution
-    dims = resolution.dims
-    subsystem_labels = tuple(d.label for d in chip.devices)
+    dims = resolution.operator_dims
+    subsystem_labels = tuple(d.label for d in chip.devices) if resolution.space is None else ("excitation",)
 
     (
         coupling_h0,
@@ -1931,6 +2007,7 @@ def compile_hamiltonian_template(
         bases=resolution.bases,
         authored=chip.unresolved_hamiltonian(),
         _dressing_context=_resolved_dressing_context(chip, resolution),
+        excitation_space=resolution.space,
         dynamical_supports=dynamical_supports,
     )
     return _template_from_engine_result(chip, drive_ops, base_result, resolved_frame)
@@ -2011,7 +2088,7 @@ def instantiate_engine_result(
     dynamic_terms = base_result.slh.H.dynamic_terms + applied_dynamic_terms
 
     static_bound = base_result.metadata.get("static_spectral_bound_ghz")
-    metadata: dict[str, Any] = {"frame": str(base_result.resolved_frame)}
+    metadata: dict[str, Any] = {**base_result.metadata, "frame": str(base_result.resolved_frame)}
     if static_bound is not None:
         metadata["static_spectral_bound_ghz"] = static_bound
     metadata.update(_solver_hint_metadata(static_bound, dynamic_terms))

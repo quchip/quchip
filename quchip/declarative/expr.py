@@ -932,6 +932,10 @@ class _ArrayLowerer:
     @staticmethod
     def from_array(value: Any, dims: Any = None) -> Any:
         del dims
+        if hasattr(value, "to_jax"):
+            value = value.to_jax()
+        elif hasattr(value, "full"):
+            value = value.full()
         return concrete_array_module(value).asarray(value, dtype=complex)
 
     @staticmethod

@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any
 from quchip.engine.ir import StateStorage
-from quchip.engine.sampling import AutomaticTimeGrid, interval_bounds
+from quchip.engine.sampling import AutomaticTimeGrid
 
 
 def _uses_field_boundary(drive_ops: list, e_ops: dict | None) -> bool:
@@ -63,10 +63,13 @@ def maybe_simulate_partitioned(
     if _uses_field_boundary(drive_ops, e_ops):
         return None
     from quchip.chip.partition import partition_chip
-    from quchip.engine.frames import resolve_for_operations
+    from quchip.engine.problem import prepare_solve_problem_context
 
-    resolved = resolve_for_operations(chip, drive_ops, approximation=approximation,
-                                      solve_window=interval_bounds(tlist))
+    context = prepare_solve_problem_context(
+        chip, tlist, drive_ops=drive_ops, approximation=approximation, initial_states=[initial_state],
+        solver=solver, options=options, run_args=run_args, e_ops=e_ops, states=states, dissipation=dissipation,
+    )
+    resolved = context._base_result
 
     part = partition_chip(
         chip,

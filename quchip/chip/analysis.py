@@ -244,6 +244,9 @@ def dress_engine_result(
         context.reference,
         policy=assign_rowwise_greedy,
     )
+    if result.excitation_space is not None:
+        from dataclasses import replace
+        kernel_labeling = replace(kernel_labeling, keys=tuple(map(tuple, result.excitation_space.levels.tolist())))
     return _materialize_dressed_result(
         eigenvalues,
         eigenvector_matrix,

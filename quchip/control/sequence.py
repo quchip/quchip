@@ -1234,6 +1234,7 @@ class QuantumSequence:
             approximation=approximation,
             states=states,
             dissipation=dissipation,
+            initial_states=[overrides.get((None, "initial_state"), initial_state) for _, overrides in expanded],
         )
         template = compile_hamiltonian_template(
             self._chip,
@@ -1364,7 +1365,8 @@ class QuantumSequence:
             configured string shorthand give product states in the resolved local bases. QuTiP
             ``Qobj`` and dynamiqs ``QArray`` kets or density matrices use resolved solver
             coordinates. Arrays, symbolic expressions, and callables are authored-space kets
-            projected onto kept levels.
+            projected onto kept levels. A ``CompactState`` reuses captured excitation
+            coordinates and requires the same local energy bases.
         backend : object or {"qutip", "dynamiqs"}, optional
             Per-call backend override.
         partition : bool, default=True

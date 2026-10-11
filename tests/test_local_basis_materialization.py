@@ -79,49 +79,30 @@ def test_charge_basis_device_exposes_unresolved_and_projected_hamiltonians() -> 
         np.asarray([0.0, 1.0]),
         initial_state=solver_state,
     )
+    space = solver_problem.engine_result.excitation_space
+    prepared = (
+        solver_problem.initial_state if space is None
+        else space.lift(solver_problem.initial_state, full_chip.backend)
+    )
     np.testing.assert_allclose(
-        full_chip.backend.to_array(solver_problem.initial_state),
+        full_chip.backend.to_array(prepared),
         full_chip.backend.to_array(solver_state),
         atol=1e-10,
     )
 
 
-def test_eager_bare_state_and_problem_share_one_resolved_chip(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Reuse the resolved chip contract when an eager state precedes a solve."""
-    import quchip.engine.assembly as assembly
-
-    device = ChargeBasisTransmon(
-        E_C=0.25,
-        E_J=12.0,
-        num_basis=9,
-        basis="eigen",
-        levels=3,
-        label="q",
-    )
+def test_eager_bare_state_and_problem_capture_equivalent_local_bases() -> None:
+    """An eager native state retains its meaning when the solve selects compact coordinates."""
+    device = ChargeBasisTransmon(E_C=0.25, E_J=12.0, num_basis=9, basis="eigen", levels=3, label="q")
     device.reference_freq = 5.0
     chip = Chip([device])
-    build_static_h0 = assembly._build_static_h0
-    calls = 0
-
-    def counted_build_static_h0(*args: object, **kwargs: object) -> object:
-        nonlocal calls
-        calls += 1
-        return build_static_h0(*args, **kwargs)
-
-    monkeypatch.setattr(assembly, "_build_static_h0", counted_build_static_h0)
-
     state = chip.bare_state(q=0)
-    problem = build_problem(
-        chip,
-        [],
-        np.asarray([0.0, 1.0]),
-        initial_state=state,
-    )
-
-    assert problem.engine_result.bases is chip.resolve().bases
-    assert calls == 1
+    problem = build_problem(chip, [], np.array([0., 1.]), initial_state=state)
+    np.testing.assert_allclose(problem.engine_result.bases["q"].vectors, chip.resolve().bases["q"].vectors)
+    result = chip.solve(problem)
+    np.testing.assert_allclose(chip.backend.to_array(result.state_at(0)), chip.backend.to_array(state), atol=1e-12)
+    device.E_J = 13.0
+    np.testing.assert_allclose(chip.backend.to_array(result.state_at(0)), chip.backend.to_array(state), atol=1e-12)
 
 
 def test_native_is_default_and_device_policy_overrides_the_chip() -> None:

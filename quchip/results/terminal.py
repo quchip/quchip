@@ -330,11 +330,22 @@ def measure_result(result: Any, devices: tuple[Any, ...], *, t: Any = None,
         return StateMeasurement(labels, outcomes, probabilities)
     backend = result._backend
     selected = [result._resolve_device_idx(label)[0] for label in labels]
-    state = result.state(t)
+    space = getattr(result, "_excitation_space", None)
+    if space is None:
+        state = result.state(t)
+        dims = tuple(result.dims)
+    else:
+        from quchip.backend._memory import require_memory
+        from math import prod
+        dims = tuple(result.dims[axis] for axis in selected)
+        require_memory(16 * 4 * prod(dims)**2, task="Joint measurement coordinates",
+                       remedy="Measure fewer devices at a time.")
+        raw = result._raw_final_state() if t is None else result._raw_state_at(t)
+        state = space.reduced(raw, backend, selected)
+        selected = list(range(len(labels)))
     array = backend.to_array(state)
     xp = _namespace(array, basis)
     ket = backend.is_ket(state)
-    dims = tuple(result.dims)
     tensor = xp.asarray(array).reshape(dims if ket else dims + dims)
     if isinstance(basis, str):
         if basis not in ("energy", "solver"):

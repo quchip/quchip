@@ -44,7 +44,7 @@ from quchip.results.results import ObservableTrace, OutputFieldTrace
 from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import array_namespace as _array_namespace
 from quchip.utils.labeling import resolve_label
-from quchip.engine.bands import embed_single_mode_bands, local_mode_bands
+from quchip.engine.bands import local_mode_bands
 
 EOpKey = str | tuple[str, str]
 BandWeight = int | tuple[int, int]
@@ -118,6 +118,7 @@ def decompose_eops(
     output_exposures: set[str] = set()
 
     dims = chip.dims
+    space = None if engine_result is None else engine_result.excitation_space
 
     for raw_key, val in e_ops_dict.items():
         key = _resolve_eop_key(raw_key)
@@ -163,15 +164,11 @@ def decompose_eops(
                 from quchip.chip.observables import prepare_local_op
 
                 op = prepare_local_op(dev, op, basis, backend)
-                for weight, embedded in embed_single_mode_bands(
-                    backend,
-                    op,
-                    device_index=dev_idx,
-                    dim=dev_dim,
-                    label=device_label,
-                    dims=dims,
-                    semantic_to_solver=basis.energy_to_solver(),
-                ) or [(0, backend.embed(op, dev_idx, dims))]:
+                bands = local_mode_bands(backend, op, dim=dev_dim, label=device_label,
+                                         semantic_to_solver=basis.energy_to_solver()) or [(0, op)]
+                for weight, band in bands:
+                    embedded = (backend.embed(band, dev_idx, dims) if space is None
+                                else space.embed(backend, band, (dev_idx,)))
                     flat_ops.append(embedded)
                     meta.append(
                         BandMeta(
@@ -218,7 +215,8 @@ def decompose_eops(
                     semantic_to_solver=basis_b.energy_to_solver(),
                 ) or [(0, op_b)]:
                     product = backend.tensor(band_a, band_b)
-                    embedded = backend.embed_two_body(product, idx_a, idx_b, dims)
+                    embedded = (backend.embed_two_body(product, idx_a, idx_b, dims) if space is None
+                                else space.embed(backend, product, (idx_a, idx_b)))
                     flat_ops.append(embedded)
                     meta.append(
                         BandMeta(

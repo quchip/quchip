@@ -127,6 +127,7 @@ from quchip.engine import (
 )
 from quchip.interop import EigenbasisDevice, ModelMapping
 from quchip.inverse_design import FitADressResult, FitParameterReport, ObservableReport, fit_a_dress
+from quchip.results.compact import CompactState
 from quchip.results import (
     ObservableTrace,
     PartitionedSimulationResult,
@@ -163,6 +164,7 @@ _LAZY_VIZ_EXPORTS = {
 from quchip.results.terminal import IQReadout, StateMeasurement, StateSamples
 
 __all__ = [
+    "CompactState",
     "with_truncation",
     "with_monitoring",
     "TrajectoryResult",

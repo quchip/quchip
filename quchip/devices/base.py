@@ -1007,10 +1007,7 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
                 CollapseChannel(operator("a", "lowering_operator"),
                                 base_rate * (occupation + 1.0), "thermal_emission")
             )
-            occupation_value = maybe_concrete_scalar(
-                0.0 if self.thermal_occupation is None else self.thermal_occupation
-            )
-            if occupation_value is None or occupation_value > 0:
+            if self.thermal_occupation is not None:
                 channels.append(
                     CollapseChannel(operator("adag", "raising_operator"),
                                     base_rate * occupation, "thermal_absorption")
@@ -1165,11 +1162,10 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         """Emission and absorption channels for one transition.
 
         Returns ``(lower_op, rate * (n_bar + 1))`` (relaxation / stimulated
-        emission) and, when the bath occupation is non-zero, additionally
+        emission) and, when a bath occupation is declared, additionally
         ``(raise_op, rate * n_bar)`` (thermal absorption).
-        ``n_bar is None`` is treated as zero occupation, yielding the down
-        channel only. The positivity gate reads a *concrete* scalar only, so
-        a traced ``n_bar`` keeps both channels. The math is
+        ``n_bar is None`` yields the down channel only. An explicit zero
+        keeps absorption support fixed during parameter rebinding. The math is
         pure :mod:`jax.numpy`, so the result type follows the supplied
         operators.
         """
@@ -1181,8 +1177,7 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
                 emission_name,
             )
         ]
-        n_bar_value = maybe_concrete_scalar(n_bar_eff)
-        if n_bar_value is None or n_bar_value > 0:
+        if n_bar is not None:
             terms.append(
                 CollapseChannel(
                     raise_op,

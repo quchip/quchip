@@ -124,6 +124,8 @@ class SimulationResult:
         Captured device, observable, output, channel, and basis metadata.
     dissipation : bool, default=True
         Whether collapse channels were included.
+    excitation_space : optional
+        Captured exact excitation coordinate map, or None for product coordinates.
     readout_wiring : optional
         Captured downstream readout wiring.
     """
@@ -141,7 +143,10 @@ class SimulationResult:
         bases: dict[str, Any] | None = None,
         dissipation: bool = True,
         readout_wiring: Any = None,
+        excitation_space: Any = None,
     ) -> None:
+        self._expanded_states: dict[int, tuple[Any, Any]] = {}
+        self._excitation_space = excitation_space
         self._readout_wiring = readout_wiring
         self._backend = backend
         self._truncation: Any = None
@@ -362,6 +367,14 @@ class SimulationResult:
         """Return the kept native state history, or tell how to save it."""
         if self._states is None or len(self._states) == 0:
             raise RuntimeError(_NO_STATES_MSG)
+        if self._excitation_space is not None:
+            from quchip.backend._memory import require_memory
+            from math import prod
+            ket = self._backend.is_ket(self._states[0])
+            require_memory(16 * len(self._states) * prod(self.dims)**(1 if ket else 2),
+                           task="Full pulse history export", remedy="Use compact_state() or local observables.")
+            lifted = [self._export_state(state) for state in self._states]
+            return lifted if isinstance(self._states, list) else self._backend.stack_states(lifted)
         return self._states
 
     def _stacked_states(self) -> Any:
@@ -375,7 +388,9 @@ class SimulationResult:
         """
         cached = getattr(self, "_stacked_cache", None)
         if cached is None:
-            cached = self._backend.stack_states(self.states)
+            if self._states is None or len(self._states) == 0:
+                raise RuntimeError(_NO_STATES_MSG)
+            cached = self._backend.stack_states(self._states)
             from quchip.utils.jax_utils import contains_tracer
 
             if not contains_tracer(cached):
@@ -384,7 +399,7 @@ class SimulationResult:
 
     def _is_ket_trajectory(self) -> bool:
         """Return whether the stored trajectory is kets (vs density matrices)."""
-        return self._backend.is_ket(self.states[0])
+        return self._backend.is_ket(self._stacked_states()[0])
 
     @property
     def _basis_labels(self) -> list[tuple[int, ...]]:
@@ -394,6 +409,57 @@ class SimulationResult:
             cached = list(itertools.product(*[range(d) for d in self.dims]))
             self._basis_labels_cache = cached
         return cached
+
+    def _export_state(self, state):
+        if self._excitation_space is None:
+            return state
+        from quchip.utils.jax_utils import contains_tracer
+        entry = self._expanded_states.get(id(state))
+        if entry is not None and entry[0] is state:
+            return entry[1]
+        lifted = self._excitation_space.lift(state, self._backend)
+        if not contains_tracer(lifted):
+            self._expanded_states[id(state)] = (state, lifted)
+        return lifted
+
+    def _target_state(self, target):
+        from quchip.results.compact import CompactState, _compatible_values
+        backend = self._backend
+        space = self._excitation_space
+        if isinstance(target, CompactState):
+            if target.values.shape[-1] != 1:
+                raise TypeError("Overlap targets must be kets.")
+            values = _compatible_values(
+                target, tuple(label for label, _ in self.device_info), self.dims, self._bases, backend,
+            )
+            if space is not None:
+                xp = backend.array_module
+                transform = xp.asarray([[int(tuple(a) == tuple(b)) for b in target.space.levels]
+                                        for a in space.levels], dtype=complex)
+                return backend.from_array(transform @ values, dims=[[space.size], [1]])
+            native = backend.from_array(values, dims=[[target.space.size], [1]])
+            return target.space.lift(native, backend)
+        native = backend.coerce_state(target, dims=tuple(self.dims))
+        return native if space is None else space.project(native, backend)
+
+    def compact_state(self, t: Any = None) -> Any:
+        """Return a reusable saved state without product-space expansion.
+
+        Parameters
+        ----------
+        t : scalar or None, optional
+            Saved time in ns. None selects the final state.
+
+        Returns
+        -------
+        CompactState
+            Captured excitation state accepted as initial_state by a later solve.
+        """
+        from quchip.results.compact import CompactState
+        if self._excitation_space is None:
+            raise ValueError("This result stores full product states; use state() to reuse them.")
+        state = self._raw_final_state() if t is None else self._raw_state_at(t)
+        return CompactState(self._backend.to_array(state), self._excitation_space)
 
     def overlap(self, target: Any) -> Any:
         """Return the overlap with *target* at every stored time.
@@ -406,11 +472,14 @@ class SimulationResult:
         Parameters
         ----------
         target : state_like
-            Target ket in the captured full Hilbert space.
+            Target ket in the captured full Hilbert space, or a compatible ``CompactState``.
         """
         backend = self._backend
-        target = backend.coerce_state(target, dims=tuple(self.dims))
-        projector = backend.matmul(target, backend.dag(target))
+        target = self._target_state(target)
+        vector = backend.to_array(target)
+        dims = self.dims if self._excitation_space is None else self._excitation_space.solver_dims
+        projector = backend.from_array(vector @ backend.array_module.conj(vector.T),
+                                       dims=[list(dims), list(dims)])
         series = backend.expect_over_time(projector, self._stacked_states())
         return backend.array_module.abs(series)
 
@@ -425,14 +494,14 @@ class SimulationResult:
         Parameters
         ----------
         target : state_like
-            Target ket in the captured full Hilbert space.
+            Target ket in the captured full Hilbert space, or a compatible ``CompactState``.
         """
         backend = self._backend
         if not self._is_ket_trajectory():
             raise TypeError(
                 "amplitude_array() requires ket trajectories; use overlap() for density matrices."
             )
-        target = backend.coerce_state(target, dims=tuple(self.dims))
+        target = self._target_state(target)
         return backend.array_module.asarray(
             backend.overlap_over_time(target, self._stacked_states())
         )
@@ -463,6 +532,19 @@ class SimulationResult:
         return s
 
     def state_at(self, t: Any, *, method: str = "exact") -> Any:
+        """Return a saved native state in captured product coordinates.
+
+        Parameters
+        ----------
+        t : scalar
+            Saved time in ns.
+        method : {"exact", "nearest"}, default="exact"
+            Time selection rule; states are never interpolated.
+        """
+        state = self._raw_state_at(t, method=method)
+        return self._export_state(state)
+
+    def _raw_state_at(self, t: Any, *, method: str = "exact") -> Any:
         """Return a kept state at a scalar time without state interpolation.
 
         Parameters
@@ -484,7 +566,7 @@ class SimulationResult:
         if self._states is None or len(self._states) == 0:
             if not contains_tracer(index) and int(index) != len(self.times) - 1:
                 raise RuntimeError(_NO_STATES_MSG)
-            return require_valid(self.final_state, index != len(self.times) - 1, _NO_STATES_MSG)
+            return require_valid(self._raw_final_state(), index != len(self.times) - 1, _NO_STATES_MSG)
         if contains_tracer(index):
             return self._stacked_states()[index]
         return self._states[int(index)]
@@ -504,7 +586,11 @@ class SimulationResult:
 
     @property
     def final_state(self) -> Any:
-        """Return the last history entry or the separately kept final state."""
+        """Return the last kept state in captured product coordinates."""
+        state = self._raw_final_state()
+        return self._export_state(state)
+
+    def _raw_final_state(self):
         if self._states is not None and len(self._states) > 0:
             return self._states[-1]
         if self._final_state is not None:
@@ -576,6 +662,8 @@ class SimulationResult:
             Device to keep.
         """
         dev_idx, _ = self._resolve_device_idx(device)
+        if self._excitation_space is not None:
+            return self._excitation_space.reduced(self._raw_state_at(t), self._backend, (dev_idx,))
         return self._backend.ptrace(self.state_at(t), dev_idx, self.dims)
 
     # ------------------------------------------------------------------
@@ -595,6 +683,15 @@ class SimulationResult:
         it reads the DM diagonal at each timestep.
         """
         backend = self._backend
+        if self._excitation_space is not None:
+            from math import prod
+            from quchip.backend._memory import require_memory
+            require_memory((256 + 8 * len(self.dims) + 16 * len(self.times)) * prod(self.dims),
+                           task="Full product population dictionary",
+                           remedy="Use population(device, level) instead.")
+            states = self._backend.stack_states(self.states)
+            values = backend.array_module.real(backend.populations_over_time(states))
+            return {label: values[:, i] for i, label in enumerate(self._basis_labels)}
         basis_labels = self._basis_labels
 
         # One batched diagonal read over the leading time axis -> (T, ∏dims),
@@ -621,6 +718,10 @@ class SimulationResult:
                 f"Level {level} out of range for device '{label}' with {dev_dim} levels (0..{dev_dim - 1})."
             )
 
+        if self._excitation_space is not None:
+            diags = backend.populations_over_time(self._stacked_states())
+            selected = self._excitation_space.levels[:, dev_idx] == level
+            return xp.real(diags @ xp.asarray(selected, dtype=float))
         basis = self._bases.get(label)
         if basis is not None and basis.energy_to_solver() is not None:
             vector = xp.asarray(basis.energy_state(level))
@@ -1073,7 +1174,8 @@ def wrap_solver_result(solver_result: SolverResult, problem: SolveProblem, backe
     result = SimulationResult(
         solver_result=solver_result,
         backend=backend,
-        dims=engine_result.dims,
+        dims=engine_result.dims if engine_result.excitation_space is None else engine_result.excitation_space.dims,
+        excitation_space=engine_result.excitation_space,
         device_info=problem.device_info,
         observable_traces=observable_traces,
         output_traces=output_traces,
@@ -1085,6 +1187,7 @@ def wrap_solver_result(solver_result: SolverResult, problem: SolveProblem, backe
     result._truncation = plan
     result._boundary_traces = samples
     result.stats["states"] = problem.states
+    result.stats["excitation_reduction"] = engine_result.metadata.get("excitation_reduction")
     return result
 
 

@@ -1590,7 +1590,10 @@ class EngineResult:
     coherent_inputs : tuple
         Captured coherent source bindings used to assemble those terms.
     dims : tuple of int
-        Solver Hilbert-space dimensions in chip device order.
+        Solver dimensions. Compact solves use one coordinate axis; physical
+        dimensions remain in excitation_space and in the public result.
+    excitation_space : object or None
+        Captured exact excitation coordinate map. None denotes product coordinates.
     metadata : dict
         Advisory solver hints, with frequencies in GHz and time scales in ns.
     dropped_terms : tuple of DroppedTerm
@@ -1621,6 +1624,7 @@ class EngineResult:
     approximation: Any = None
     dynamical_supports: tuple[tuple[str, ...], ...] = ()
     dissipation: bool = True
+    excitation_space: Any = field(default=None, repr=False, compare=False)
     _dressing_context: _ResolvedDressingContext | None = field(
         default=None,
         repr=False,
@@ -1661,7 +1665,9 @@ class EngineResult:
         Unlike :meth:`Chip.dress <quchip.Chip.dress>`, this method analyzes the
         selected frame and approximation stored in this snapshot. A snapshot
         with dynamic Hamiltonian terms requires ``at_time``. The result is an
-        instantaneous eigensystem, not a Floquet analysis.
+        instantaneous eigensystem, not a Floquet analysis. A compact pulse
+        snapshot analyzes only its retained invariant space. Its eigenstates
+        use those compact solver coordinates.
 
         Parameters
         ----------

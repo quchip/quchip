@@ -1926,6 +1926,27 @@ class Chip:
         """
         return self._analysis.state(device_states, **device_state_kwargs)
 
+    def compact_state(self, *components: Any, dressed: bool = False) -> Any:
+        """Prepare a reusable state without a full product-space allocation.
+
+        Parameters
+        ----------
+        *components : mapping, str, or (amplitude, specification) pairs
+            Bare product energy labels, using the same strings and mappings as
+            ``superposition``. Unmentioned devices have level zero. Components
+            are summed and normalized. No components prepares the vacuum.
+        dressed : bool, default=False
+            Use the static dressed eigenstate assigned to each label. This
+            requires proven static excitation conservation.
+
+        Returns
+        -------
+        CompactState
+            Captured state accepted as a pulse simulation's initial_state.
+        """
+        from quchip.results.compact import compact_state
+        return compact_state(self, *components, dressed=dressed)
+
     def bare_state(
         self,
         device_states: Mapping[str | BaseDevice, int | State] | str | None = None,

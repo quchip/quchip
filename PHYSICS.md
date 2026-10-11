@@ -619,6 +619,42 @@ H_rot = U† H_lab U - 2π Σ_i f_ref,i * n_i
 
 Because of that second term, the assembler subtracts `f_ref,i * n_i` from `H0`.
 
+Deterministic pulse solves use exact excitation spaces when the initial
+support and the complete generator prove them invariant. The planner closes
+that support under every retained Hamiltonian term, delivered drive, jump,
+and no-jump product. It checks local authored algebra before global embedding.
+Scalar zeros and small numerical entries do not prove conservation. Unknown
+support selects the full product route, with a memory check before assembly.
+The calculation never introduces an excitation cutoff automatically.
+
+For a Lindblad model, invariance requires `Q L_k P = 0` and
+`Q (-i H - sum_k L_k† L_k / 2) P = 0`, where `Q = I - P`.
+The implementation conservatively checks Hamiltonian, jump, and no-jump
+support separately. Downward jumps can add the vacuum to an initially
+one-excitation space. Coherences between those sectors remain quantum
+amplitudes or density-matrix entries. Complete collective channels remain
+summed before their dissipators are formed. Occupied input fields add raising
+support. Explicit zero thermal occupation retains that support for rebinding.
+
+`RWA()` alone does not establish pulse eligibility. A transverse microwave
+drive changes excitation number, including at zero envelope amplitude.
+Exchange and longitudinal flux modulation can preserve a small space.
+An `Exact()` model with conserving interactions can do the same.
+Counter-rotating pair terms can retain parity, usually a much larger space.
+Stochastic trajectory solvers retain their full product route. Native solvers
+require nonscalar spaces. A one-state closure therefore adds another physical
+sector and closes the generator again.
+
+`result.stats["excitation_reduction"]` records the dimension, totals, full
+dimension, and proof or fallback reason. `result.dims` keeps physical local
+dimensions. Local population, measurement, reduced-state, and channel queries
+operate on compact coordinates. Native `states`, `state()`, and `final_state`
+exports expand lazily and refuse allocations that cannot fit.
+`chip.compact_state(...)` and `result.compact_state(t=None)` provide reusable
+states without expansion. Their maps capture local energy bases. Replay
+requires the same bases. Explicit inputs retain the existing integration-frame
+convention; no hidden phase transformation is applied.
+
 When `initial_state=None`, the solver receives
 `psi_solve(t0) = U(t0)† psi_lab` at `t0 = tlist[0]`, where `psi_lab` is the
 lab-frame default that §9 describes. A nonzero rotating-frame start
