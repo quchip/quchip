@@ -22,6 +22,7 @@ from quchip import (
     RWA,
     Square,
     TunableCapacitive,
+    VNA,
     eliminate,
 )
 from quchip.chip.effective import OperatorProjection
@@ -68,6 +69,66 @@ def _model(chip):
         loss = loss + complex(term.rate) * jump.conj().T @ jump
         jumps = jumps + complex(term.rate) * np.outer(jump @ psi, (jump @ phi).conj())
     return hamiltonian, loss, jumps
+
+
+def _wire_readouts(chip, directions):
+    """Put the readouts on one or two counter-propagating lines with a reference delay."""
+    network = PortNetwork(label="feedline")
+    readouts = [device for device in chip.devices if device.label.startswith("r")]
+    for direction in range(directions):
+        ordered = readouts if direction == 0 else readouts[::-1]
+        ports = [network.port(f"p{direction}_{readout.label}", target=readout,
+                              rate=0.012 / directions, phase=0.2 * index)
+                 for index, readout in enumerate(ordered)]
+        cable = network.phase_shift(f"cable{direction}", phase=0.17)
+        delay = network.delay(f"delay{direction}", duration=0.125)
+        network.cascade(*ports, cable, delay.input_terminal("1"))
+        network.expose(f"feed{direction}", input=ports[0].input, output=delay.output_terminal("2"))
+    return Chip(chip.devices, chip.couplings, port_network=network, frame=chip.frame,
+                approximation=chip.approximation)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("directions", [1, 2])
+def test_shared_feedline_does_not_expand_the_generator_patch(directions):
+    """Line-only spectators cannot enter a generator computed without network Hamiltonians."""
+    from quchip.chip.transformations.eliminate_device import _local_patch
+    from quchip.engine.assembly import _resolve_system
+
+    independent = _ring(8, ports=True)
+    shared = _wire_readouts(independent, directions)
+    patches = [_local_patch(chip, "q0", _resolve_system(chip, chip.backend).bases)[0]
+               for chip in (independent, shared)]
+    assert patches[1] == patches[0] == ("q0", "c0", "c7", "r0")
+
+
+@pytest.mark.parametrize("directions", [1, 2])
+@pytest.mark.parametrize("sites", [2, pytest.param(3, marks=pytest.mark.validation)])
+def test_shared_feedline_local_reduction_matches_full_dynamics(sites, directions):
+    """Local maps retain the full Hamiltonian, dissipator and complex scattering on shared lines."""
+    independent = _ring(sites, ports=True)
+    source = full = local = _wire_readouts(independent, directions)
+    topology = source.port_network.to_dict()
+    order = ([f"q{i}" for i in range(0, sites, 2)] + [f"c{i}" for i in range(sites)]
+             + [f"q{i}" for i in range(1, sites, 2)])
+    for target in order:
+        independent = eliminate(independent, target, local=True).chip
+        full = eliminate(full, target).chip
+        local = eliminate(local, target, local=True).chip
+        reference = next(terms for terms in independent.effective_terms if terms.label == f"retained_{target}")
+        actual = next(terms for terms in local.effective_terms if terms.label == f"retained_{target}")
+        assert actual.projection.source_labels == reference.projection.source_labels
+        # Both routes use the same second-order SW generator; only product-space
+        # roundoff differs. Include recycling on an off-diagonal state at every step.
+        _assert_same_model(full, local)
+    np.testing.assert_allclose(_jumps(local), _jumps(full), rtol=0, atol=1e-12)
+    assert local.port_network.to_dict() == topology
+    frequencies = np.concatenate([float(full.freq(f"r{i}")) + np.linspace(-0.005, 0.005, 11)
+                                  for i in range(sites)])
+    # A 1e-12 GHz rounding error changes a resonant field by about 8π δf/κ,
+    # or 2e-9 for the readouts' 0.012/ns external linewidth.
+    np.testing.assert_allclose(VNA(local).sweep(frequencies).matrix, VNA(full).sweep(frequencies).matrix,
+                               rtol=0, atol=2e-9)
 
 
 def _assert_same_model(expected, actual, atol=1e-12):
@@ -235,7 +296,7 @@ def test_local_steps_equal_the_full_reduction_in_sequence(order):
 
 @pytest.mark.parametrize("x", [0.05, 0.03], ids=["nonzero", "cancelled"])
 def test_local_patch_holds_each_term_that_shifts_a_neighbour(x):
-    """d shifts a through n_a n_d, and the port pair on (a, b) and c through n_a n_b n_c, so both join m's patch."""
+    """The diagonal a-d edge enters the generator; the line's a-b-c term is regenerated from transformed ports."""
     m = Resonator(freq=7.0, levels=2, label="m")
     a = DuffingTransmon(freq=6.0, anharmonicity=-0.25, levels=3, label="a")
     b, c, d, e = (Resonator(freq=freq, levels=2, label=label) for freq, label in zip((5.0, 5.5, 4.5, 4.0), "bcde"))
@@ -250,7 +311,7 @@ def test_local_patch_holds_each_term_that_shifts_a_neighbour(x):
     chip = Chip([m, a, b, c, d, e], couplings, port_network=network)
     local = eliminate(chip, "m", local=True)
     _assert_same_reduction(eliminate(chip, "m"), local)
-    assert local.chip.effective_terms[-1].labels == ("a", "b", "c", "d")
+    assert local.chip.effective_terms[-1].labels == ("a", "d")
 
 
 @pytest.mark.parametrize("order", ["abumr", "uabmr"])

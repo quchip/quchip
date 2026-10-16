@@ -1777,11 +1777,15 @@ read each term whose diagonal part depends on a core level. The patch therefore 
 - the core,
 - the far device of each coupling whose diagonal part depends on a core level, such as a `CrossKerr`
   edge,
-- the full support of each port pair whose series composition generates a Hamiltonian on a core
-  device,
 - the full support of each effective Hamiltonian that touches the core and whose diagonal part depends
   on a core level,
 - every device that the operators of the device's ports act on in retained coordinates.
+
+Network-generated Hamiltonians are excluded from the reduction, as in section 10.5.
+Devices linked to the core only through a feedline therefore do not enter the patch.
+The numerical sub-chip holds independent copies of its local ports, with their operators and rates.
+The full chip keeps the field wiring and reference sections and regenerates its network terms from
+the transformed ports. A collective port still keeps its full operator support during transport.
 
 The far-device rule reads the structure of a coupling, not its values. It splits the coupling into
 operator products and drops their scalar coefficients, so no parameter values can cancel a product, as
@@ -1840,8 +1844,7 @@ only when you read it.
 `local=True` implements `method="sw"` only. The exact route uses the whole-chip
 eigensystem, resolved into excitation sectors when possible. Its dressed states
 are not local. The local route does not transform baths yet, so a chip with baths
-raises `NotImplementedError`. A port network that links a patch port to a port outside the patch also
-raises, because cutting it would change the SLH dynamics. Coupling and effective-terms targets do not
+raises `NotImplementedError`. Coupling and effective-terms targets do not
 accept `local=True`. `active_patch()` and `QuantumSequence.active_patch()` forward `local`.
 
 ## 11. Parametric Edge Control

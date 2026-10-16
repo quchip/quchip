@@ -237,6 +237,22 @@ def _bus_readout_chip(port_count: int = 1) -> Chip:
     )
 
 
+def test_local_feedline_section_keeps_spectator_frequency_corrections() -> None:
+    """A readout outside the generator patch still contributes its incoming gap to the section's diagnostic."""
+    from quchip import EffectiveTerms
+
+    source = _feedline_chip()
+    chip = Chip(source.devices, source.couplings, port_network=source.port_network.copy(), frame=source.frame,
+                approximation=source.approximation,
+                effective_terms=[EffectiveTerms(("r3",), (2,), np.diag([0.0, 0.07]), label="shift")])
+    full, local = eliminate(chip, "r2"), eliminate(chip, "r2", local=True)
+    key = "r2_transmission"
+    rate = local.chip.parameters[f"network.component.{key}.external_rate"]
+    expected = rate / (2 * np.pi * (chip["r3"].freq + 0.07 - chip["r2"].freq))
+    assert local.validity[key]["kappa_over_delta"] == pytest.approx(expected, rel=1e-12)
+    assert local.validity[key]["kappa_over_delta"] == pytest.approx(full.validity[key]["kappa_over_delta"], rel=1e-12)
+
+
 @pytest.mark.parametrize("method", ["sw", "exact"])
 def test_field_elimination_transforms_the_port_onto_every_survivor(method) -> None:
     """A port-coupled mode on a multi-device chip reduces to one joint port with the Purcell rate."""
