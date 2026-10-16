@@ -1,5 +1,6 @@
 """Frequency-domain response algebra for NumPy and JAX backends."""
 
+from functools import lru_cache, partial
 from typing import Any
 
 import numpy as np
@@ -82,11 +83,6 @@ def coherence_response(problem: Any, *, xp: Any) -> Any:
         xp.einsum("kab,kac->bc", channel.conj(), channel) + xp.einsum("kab,kac->bc", z.conj(), z)
     ) for h, channel, z in zip(H, lower, kept, strict=True))
 
-    def action(n: int, x: Any) -> Any:
-        return (drift[n] @ x + x @ drift[n - 1].conj().T
-                + sum((a @ x @ b.conj().T for a, b in zip(kept[n], kept[n - 1], strict=True)),
-                      start=xp.zeros_like(x)))
-
     def dense(n: int) -> Any:
         return (xp.kron(drift[n], xp.eye(sizes[n - 1]))
                 + xp.kron(xp.eye(sizes[n]), drift[n - 1].conj())
@@ -99,8 +95,45 @@ def coherence_response(problem: Any, *, xp: Any) -> Any:
     frequencies = xp.atleast_1d(xp.array(problem.frequencies, dtype=float, copy=True))
     indices = list(problem.plane_indices)
     scattering = xp.asarray(problem.scattering)[xp.ix_(xp.asarray(indices), xp.asarray(indices))]
-    responses, residuals = [], []
-    for frequency in frequencies:
+    solve = _solve_coherences if xp is np else _compiled_coherence_solver()
+    responses, residuals = solve(drift, lower, kept, sources, generators, frequencies, scattering,
+                                 xp.asarray(indices), **({"xp": np} if xp is np else {}))
+
+    def condition_numbers() -> Any:
+        # Report the largest diagonal-block condition, not a full-generator condition.
+        if len(direct_sectors) != len(active_sectors):
+            return None
+        rebuilt = {n: dense(n) for n in direct_sectors}
+        return xp.stack([xp.max(xp.stack([xp.linalg.cond(-2j * xp.pi * f * xp.eye(counts[n - 1]) - a)
+                                         for n, a in rebuilt.items()])) for f in frequencies])
+
+    return CoherenceResponseSolverResult(responses, residuals, DeferredValue(condition_numbers))
+
+
+@lru_cache(maxsize=1)
+def _compiled_coherence_solver() -> Any:
+    """Reuse one JAX executable family, with all model values passed as arguments."""
+    import jax
+    import jax.numpy as jnp
+
+    return jax.jit(partial(_solve_coherences, xp=jnp))
+
+
+def _solve_coherences(
+    drift: Any, lower: Any, kept: Any, sources: Any, generators: Any,
+    frequencies: Any, scattering: Any, indices: Any, *, xp: Any,
+) -> tuple[Any, Any]:
+    """Solve each frequency with bounded workspace and the same sector operators."""
+    sizes = tuple(a.shape[0] for a in drift)
+    counts = tuple(sizes[n] * sizes[n - 1] for n in range(1, len(sizes)))
+    active_sectors = tuple(n for n in range(1, len(sizes)) if counts[n - 1])
+
+    def action(n: int, x: Any) -> Any:
+        return (drift[n] @ x + x @ drift[n - 1].conj().T
+                + sum((a @ x @ b.conj().T for a, b in zip(kept[n], kept[n - 1], strict=True)),
+                      start=xp.zeros_like(x)))
+
+    def solve_frequency(frequency: Any) -> tuple[Any, Any]:
         shift = -2j * xp.pi * frequency
         response = scattering
         above = None
@@ -160,15 +193,13 @@ def coherence_response(problem: Any, *, xp: Any) -> Any:
             errors.append(maximum)
             response = response + xp.einsum("cab,bai->ci", lower[n][xp.asarray(indices)], solved)
             above = solved
-        responses.append(response)
-        residuals.append(xp.max(xp.stack(errors)))
+        return response, xp.max(xp.stack(errors))
 
-    def condition_numbers() -> Any:
-        # Report the largest diagonal-block condition, not a full-generator condition.
-        if len(direct_sectors) != len(active_sectors):
-            return None
-        rebuilt = {n: dense(n) for n in direct_sectors}
-        return xp.stack([xp.max(xp.stack([xp.linalg.cond(-2j * xp.pi * f * xp.eye(counts[n - 1]) - a)
-                                         for n, a in rebuilt.items()])) for f in frequencies])
+    if xp is np:
+        responses, residuals = zip(*(solve_frequency(f) for f in frequencies), strict=True)
+        return xp.stack(responses), xp.stack(residuals)
 
-    return CoherenceResponseSolverResult(xp.stack(responses), xp.stack(residuals), DeferredValue(condition_numbers))
+    from jax import lax
+
+    # Map sequentially: batching every Krylov basis would scale workspace with the sweep.
+    return lax.map(solve_frequency, frequencies)

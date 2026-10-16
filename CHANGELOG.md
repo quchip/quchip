@@ -110,6 +110,11 @@ This file records notable user-visible changes to quchip.
 
 #### Fixes
 
+- Conditional VNA sweeps on dynamiqs reuse a compiled frequency solve. This
+  avoids repeated JAX dispatch and GMRES compilation while retaining bounded
+  solver workspace, channel recycling, and convergence checks.
+  ([#147](https://github.com/quchip/quchip/issues/147))
+
 - `drive_matrix_elements()` carries drive operators through the captured maps
   of `eliminate()` and `active_patch()`, so reduced-chip queries include the
   same operator dressing as pulses.
