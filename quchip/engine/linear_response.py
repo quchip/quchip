@@ -18,7 +18,7 @@ from quchip.engine.ir import LinearResponseProblem
 from quchip.engine.output_network import pad_mixing
 from quchip.engine.reference import ReferencePlane, cw_transfer
 from quchip.utils.constants import TWO_PI
-from quchip.utils.jax_utils import maybe_concrete_scalar
+from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
 
 
 class _UnsupportedLinearModel(Exception):
@@ -154,7 +154,7 @@ class _SectorResponseModel:
 
 def _sector_response_model(chip: Any, plane_labels: tuple[str, ...]) -> _SectorResponseModel:
     """Assemble every channel on its local support and require a conserving vacuum-input model."""
-    from quchip.chip.effective import authored_excitation_changes
+    from quchip.chip.effective import _allows_excitation_weights, authored_excitation_weights
 
     network = chip.port_network
     if network is None or chip.dynamic_contributions():
@@ -168,15 +168,18 @@ def _sector_response_model(chip: Any, plane_labels: tuple[str, ...]) -> _SectorR
     hidden_keys: list[str] = []
     occurrences: dict[str, int] = {}
     conserving_indices = []
+    checks: list[Any] = []
     for operator, rate, support, source, name, _paths, owner in sectors.contributions:
         operator_labels = tuple(labels[index] for index in support) if support else labels
-        changes = authored_excitation_changes(operator, operator_labels, backend, sectors.bases)
+        weights = authored_excitation_weights(operator, operator_labels, backend, sectors.bases)
         if maybe_concrete_scalar(_scalar_value(rate, backend)) != 0.0:
-            lowering = changes is not None and changes <= {1}
-            if not lowering and (changes != {0} or isinstance(owner, Port)):
+            allowed = (1,) if isinstance(owner, Port) else (0, 1)
+            if not _allows_excitation_weights(weights, allowed, checks):
                 raise _UnsupportedLinearModel
         if not isinstance(owner, Port):
-            if changes == {0}:
+            # A traced channel keeps its diagonal blocks with fixed shapes.
+            # They vanish exactly whenever its checked weight is one.
+            if contains_tracer(weights) or _allows_excitation_weights(weights, (0,)):
                 conserving_indices.append(len(channels))
             # Hidden channels keep the keys and order of the resolved SLH model.
             channels.append([(1.0, sectors.channel_operator(operator, rate, support), support)])
@@ -195,6 +198,15 @@ def _sector_response_model(chip: Any, plane_labels: tuple[str, ...]) -> _SectorR
                     for entry in compiled.channels]
 
     xp = backend.array_module
+    if checks:
+        import equinox as eqx
+
+        scale = eqx.error_if(
+            xp.asarray(1.), ~xp.all(xp.asarray(checks)),
+            "Weak-probe excitation sectors require lowering ports and lowering or conserving loss channels.",
+        )
+        channels = [[(scale * coefficient, matrix, support) for coefficient, matrix, support in channel]
+                    for channel in channels]
     keys = (*(entry.exposure.label for entry in compiled.channels), *hidden_keys)
     external = tuple(entry.exposure.label for entry in compiled.channels if not entry.exposure._hidden)
     if any(label not in external for label in plane_labels):

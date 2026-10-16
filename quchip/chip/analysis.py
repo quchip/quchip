@@ -615,8 +615,10 @@ class ChipAnalysis:
         from quchip.engine.assembly import _resolve_system
 
         resolution = _resolve_system(chip, chip.backend) if _local_resolution is None else _local_resolution
-        model = (SectorModel(chip, resolution=resolution)
-                 if conserves_excitation_number(chip, chip.approximation, resolution=resolution) else None)
+        checks: list[Any] = []
+        model = (SectorModel(chip, resolution=resolution, _runtime_checks=tuple(checks))
+                 if conserves_excitation_number(chip, chip.approximation, resolution=resolution,
+                                                _runtime_checks=checks) else None)
         self._sector_cache = scoped_entry(signature, model, traced=model is not None and model.traced)
         return model
 

@@ -1649,8 +1649,13 @@ When authored algebra proves a diagonal local Hamiltonian, its energy basis is
 an explicitly sorted coordinate permutation. Collapse support follows the
 integer permutation when device energies are traced, including reordered levels.
 The common-frame check compares those integer weights during execution.
-It does not infer support from small traced matrix elements. Dynamic weights
-do not prove a fixed excitation space, so compact evolution keeps its fallback.
+It does not infer support from small traced matrix elements. Static sectors
+and weak-probe response enforce their conservation and lowering conditions on
+these weights during execution. This includes cascade-generated Hamiltonians.
+Compiled calculations reject orderings that violate those conditions, rather
+than reuse the earlier ordering's proof. Derivatives do not cross discrete
+energy-ordering changes. Dynamic weights do not prove a fixed pulse excitation
+space, so compact pulse evolution keeps its fallback.
 
 A surviving operator outside the SW generator's proven support keeps its authored
 coordinates. The projection records those unchanged tensor factors, including

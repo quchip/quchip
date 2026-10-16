@@ -51,6 +51,30 @@ def test_sw_spectator_port_accepts_traced_coupling():
     assert float(derivative) == 0.
 
 
+@pytest.mark.optional_backend
+def test_isolated_three_level_loss_keeps_spectator_under_compiled_local_elimination():
+    """Traced inherited weights do not become eager cache keys during isolated elimination."""
+    pytest.importorskip("dynamiqs")
+    spectator = Resonator(freq=5., levels=3, label="q")
+    removed = Resonator(freq=7., levels=3, label="m", T1=100.)
+    chip = Chip([spectator, removed], backend="dynamiqs")
+
+    def observables(frequencies):
+        reduced = eliminate(chip.with_params({"q.freq": frequencies[0], "m.freq": frequencies[1]}),
+                            "m", local=True).chip
+        resolved = reduced.resolve(frame="lab")
+        assert resolved.dims == (3,)
+        channel, = resolved.collapse_terms
+        energies = jnp.real(jnp.diag(resolved.hamiltonian().matrix()))
+        strength = jnp.sum(jnp.abs(channel.operator.to_dense()) ** 2)
+        return jnp.concatenate((energies, jnp.array([strength, channel.rate])))
+
+    frequencies = jnp.array([5., 7.])
+    value, derivative = jax.jit(lambda x: jax.jvp(observables, (x,), (jnp.ones(2),)))(frequencies)
+    np.testing.assert_allclose(value, [0., 10. * np.pi, 20. * np.pi, 0., .01], atol=1e-12)
+    np.testing.assert_allclose(derivative, [0., 2. * np.pi, 4. * np.pi, 0., 0.], atol=1e-12)
+
+
 @pytest.mark.validation
 @pytest.mark.optional_backend
 @pytest.mark.parametrize("method, local", [("sw", False), ("exact", False), ("sw", True)])

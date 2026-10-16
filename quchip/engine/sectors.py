@@ -161,14 +161,17 @@ class SectorModel:
         Chip whose static model conserves the total energy-level index.
     resolution : optional
         Resolved local bases to reuse instead of resolving the devices again.
+    _runtime_checks : tuple
+        Traced integer conservation conditions enforced on every Hamiltonian block.
     """
 
-    def __init__(self, chip: "Chip", *, resolution: Any = None) -> None:
+    def __init__(self, chip: "Chip", *, resolution: Any = None, _runtime_checks: tuple[Any, ...] = ()) -> None:
         resolution = _resolve_system(chip, chip.backend) if resolution is None else resolution
         self.chip = chip
         self.bases = resolution.bases
         self.dims = tuple(int(dimension) for dimension in resolution.dims)
         self.network = resolution.network
+        self._runtime_checks = _runtime_checks
         self.energies = tuple(self.bases[device.label].energies for device in chip.devices)
         self.terms = tuple(_resolved_energy_interactions(chip, resolution, chip.approximation))
         self._ports: dict[str, tuple[Any, tuple[int, ...]]] | None = None
@@ -183,7 +186,8 @@ class SectorModel:
     @property
     def traced(self) -> bool:
         """Return whether the device energies, static terms or cascaded port couplings hold JAX tracers."""
-        return contains_tracer((self.energies, tuple(operator for operator, _ in self.terms), self._ports))
+        return contains_tracer((self.energies, tuple(operator for operator, _ in self.terms), self._ports,
+                                self._runtime_checks))
 
     @property
     def contributions(self) -> tuple[tuple[Any, ...], ...]:
@@ -300,7 +304,15 @@ class SectorModel:
                 np.add.at(hamiltonian, (rows, columns), values)
             else:
                 hamiltonian = hamiltonian.at[rows, columns].add(values)
-        return hamiltonian if generated is None else hamiltonian + generated
+        hamiltonian = hamiltonian if generated is None else hamiltonian + generated
+        if self._runtime_checks:
+            import equinox as eqx
+
+            hamiltonian = eqx.error_if(
+                jnp.asarray(hamiltonian), ~jnp.all(jnp.asarray(self._runtime_checks)),
+                "Excitation sectors require conserving interactions and single-excitation lowering cascade ports.",
+            )
+        return hamiltonian
 
     def eigensystem(self, total: int) -> SectorEigensystem:
         """Diagonalize one sector and assign its bare labels.

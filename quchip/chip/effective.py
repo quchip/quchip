@@ -55,8 +55,9 @@ def authored_excitation_weights(operator: Any, labels: tuple[str, ...], backend:
                                bases: Mapping[str, Any] | None) -> tuple[Any, ...] | None:
     """Carry structural level changes, including a diagonal basis's traced integer permutation.
 
-    Dynamic weights validate common-frame channels but cannot prove a fixed
-    excitation space. No traced operator amplitudes determine the support.
+    Dynamic weights guard common-frame channels and static sector calculations.
+    They cannot prove a fixed pulse excitation space. No traced operator
+    amplitudes determine the support.
     """
     from quchip.engine.bands import concrete_excitation_changes
 
@@ -130,7 +131,23 @@ def authored_excitation_weights(operator: Any, labels: tuple[str, ...], backend:
     return changes(operator, labels)
 
 
-def conserves_excitation_number(chip: Any, approximation: Any, *, resolution: Any = None) -> bool:
+def _allows_excitation_weights(weights: tuple[Any, ...] | None, allowed: tuple[int, ...],
+                               runtime_checks: list[Any] | None = None) -> bool:
+    """Prove one allowed weight, or retain its exact integer check for guarded sector assembly."""
+    if weights is None:
+        return False
+    xp = concrete_array_module(weights)
+    valid = xp.any(xp.asarray([xp.all(xp.asarray(weights) == change) for change in allowed]))
+    if contains_tracer(valid):
+        if runtime_checks is None:
+            return False
+        runtime_checks.append(valid)
+        return True
+    return bool(valid)
+
+
+def conserves_excitation_number(chip: Any, approximation: Any, *, resolution: Any = None,
+                               _runtime_checks: list[Any] | None = None) -> bool:
     """Prove conservation of the total isolated energy-level index from retained operators.
 
     A zero-total band filter proves conservation of ordinary interactions.
@@ -147,6 +164,9 @@ def conserves_excitation_number(chip: Any, approximation: Any, *, resolution: An
         Approximation the static model is resolved with.
     resolution : optional
         Local basis resolution to reuse.
+    _runtime_checks : list or None
+        Collect traced integer conditions for sector assembly to enforce on
+        its Hamiltonian. Without this list, every proof must be concrete.
     """
     from quchip.engine.assembly import _interaction_contributions, _resolve_system
 
@@ -155,19 +175,20 @@ def conserves_excitation_number(chip: Any, approximation: Any, *, resolution: An
     for term in _interaction_contributions(chip):
         if not term.retained and approximation.filters_terms and approximation.conserves_excitation_number():
             continue
-        changes = authored_excitation_changes(term.expression(), term.labels, chip.backend, bases)
-        if changes is None or not changes <= {0}:
+        weights = authored_excitation_weights(term.expression(), term.labels, chip.backend, bases)
+        if not _allows_excitation_weights(weights, (0,), _runtime_checks):
             return False
     pairs = () if resolution.network is None else resolution.network.generated_pairs
     labels = dict.fromkeys(label for downstream, upstream, _ in pairs for label in (downstream, upstream))
-    return all(_port_lowers_level_index(chip, chip.port(label), bases) for label in labels)
+    return all(_port_lowers_level_index(chip, chip.port(label), bases, _runtime_checks) for label in labels)
 
 
-def _port_lowers_level_index(chip: Any, port: Any, bases: Mapping[str, Any]) -> bool:
+def _port_lowers_level_index(chip: Any, port: Any, bases: Mapping[str, Any],
+                            runtime_checks: list[Any] | None = None) -> bool:
     """Return whether a port's operator lowers the total energy-level index by one and does nothing else."""
     ((channel, _paths),) = port._collapse_channels_with_paths(chip)
-    changes = authored_excitation_changes(channel.operator, port.resolve_targets(chip), chip.backend, bases)
-    return changes is not None and changes <= {1}
+    weights = authored_excitation_weights(channel.operator, port.resolve_targets(chip), chip.backend, bases)
+    return _allows_excitation_weights(weights, (1,), runtime_checks)
 
 
 @dataclass(frozen=True, eq=False)
@@ -673,6 +694,8 @@ class EffectiveTerms:
             raise ValueError(f"Effective terms {self.label!r} require authored dimensions {self.dims}; got {actual}.")
 
     def fingerprint(self) -> Any:
+        if contains_tracer(self.excitation_changes):
+            raise ValueError("Traced values cannot key an eager calculation cache.")
         return value_fingerprint(
             (
                 self.label,

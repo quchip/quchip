@@ -12,7 +12,8 @@ def readout_chip(*, g=0.06, alpha=-0.25, levels=3, backend="qutip", T1=30000., T
     r = Resonator(freq=6., levels=levels, label="r", internal_quality_factor=60000.)
     network = PortNetwork()
     network.port("readout", target=r, rate=0.01)
-    return Chip([q, r], [Capacitive(q, r, g=g)], port_network=network, approximation=approximation, backend=backend)
+    return Chip([q, r], [Capacitive(q, r, g=g, label="qr")], port_network=network,
+                approximation=approximation, backend=backend)
 
 
 def full_response(chip, frequencies, when):
@@ -212,6 +213,128 @@ def test_conditional_response_jit_gradient_matches_finite_difference(monkeypatch
     np.testing.assert_allclose(derivative, difference, rtol=2e-6, atol=1e-7)
     qutip_value = VNA(readout_chip(g=g)).sweep(6.002, when={"q": 1}).matrix[0, 0]
     np.testing.assert_allclose(signal(g), [qutip_value.real, qutip_value.imag], atol=1e-10)
+
+
+@pytest.mark.optional_backend
+@pytest.mark.validation
+@pytest.mark.parametrize("path, point, loss", [("q.freq", 5., True), ("r.freq", 6., False), ("qr.g", .06, True)])
+@pytest.mark.parametrize("when", [None, {"q": 0}, {"q": 1}])
+def test_device_frequency_response_keeps_sectors_under_ad_and_jit(monkeypatch, path, point, loss, when):
+    """Device and coupling derivatives retain their sector route and complex response."""
+    pytest.importorskip("dynamiqs")
+    import jax
+    import jax.numpy as jnp
+    from quchip.backend.dynamiqs import DynamiqsBackend
+
+    chip = readout_chip(backend="dynamiqs", T1=30000. if loss else None, T2=40000. if loss else None)
+    probe = 6.002
+
+    def reject_stationary(*args, **kwargs):
+        pytest.fail("An eligible frequency derivative assembled a full stationary system.")
+
+    monkeypatch.setattr(DynamiqsBackend, "prepare_stationary", reject_stationary)
+
+    def signal(value):
+        result = VNA(chip.with_params({path: value})).sweep(probe, when=when)
+        expected_route = "conditional_response" if when == {"q": 1} else "vacuum_response"
+        assert result.diagnostics[0]["solver"] == expected_route
+        value = result.matrix[0, 0]
+        return jnp.array([value.real, value.imag])
+
+    step = 1e-6
+    difference = (signal(point + step) - signal(point - step)) / (2 * step)
+    reference = full_response(chip, [probe], when or {"q": 0})[0, 0, 0]
+    np.testing.assert_allclose(jax.jit(signal)(point), [reference.real, reference.imag], atol=1e-10)
+
+    def tangent(x):
+        return jax.jvp(signal, (x,), (1.,))[1]
+
+    np.testing.assert_allclose(tangent(point), difference, rtol=3e-5, atol=1e-7)
+    np.testing.assert_allclose(jax.jit(tangent)(point), difference, rtol=3e-5, atol=1e-7)
+    for component in range(2):
+        gradient = jax.grad(lambda x: signal(x)[component])
+        np.testing.assert_allclose(gradient(point), difference[component], rtol=3e-5, atol=1e-7)
+        np.testing.assert_allclose(jax.jit(gradient)(point), difference[component], rtol=3e-5, atol=1e-7)
+    assert np.linalg.norm(difference) > 1e-3
+
+
+@pytest.mark.optional_backend
+def test_cascaded_frequency_jvp_keeps_vacuum_and_conditional_sectors(monkeypatch):
+    """A shared feedline keeps its generated Hamiltonian and channel derivatives compact."""
+    pytest.importorskip("dynamiqs")
+    import jax
+    import jax.numpy as jnp
+    from quchip.backend.dynamiqs import DynamiqsBackend
+
+    q = DuffingTransmon(freq=5., anharmonicity=-.25, levels=3, label="q", T1=30000., T2=40000.)
+    r = Resonator(freq=6., levels=3, label="r")
+    b = Resonator(freq=6.01, levels=3, label="b")
+    network = PortNetwork()
+    first = network.port("r", target=r, rate=.01)
+    last = network.port("b", target=b, rate=.008, phase=.4)
+    network.cascade(first, last)
+    network.expose("feed", input=first, output=last)
+    chip = Chip([q, r, b], [Capacitive(q, r, g=.04), Capacitive(r, b, g=.002)],
+                port_network=network, backend="dynamiqs")
+
+    def reject_stationary(*args, **kwargs):
+        pytest.fail("A cascaded frequency derivative assembled a full stationary system.")
+
+    monkeypatch.setattr(DynamiqsBackend, "prepare_stationary", reject_stationary)
+
+    def signal(offset):
+        changed = chip.with_params({"q.freq": 5. + offset, "r.freq": 6. + offset})
+        values = []
+        for when, route in ((None, "vacuum_response"), ({"q": 1}, "conditional_response")):
+            result = VNA(changed).sweep(6.002, when=when)
+            assert result.diagnostics[0]["solver"] == route
+            values.append(result.matrix[0, 0])
+        return jnp.asarray(values)
+
+    value, derivative = jax.jit(lambda x: jax.jvp(signal, (x,), (1.,)))(0.)
+    step = 1e-6
+    expected = (signal(step) - signal(-step)) / (2 * step)
+    np.testing.assert_allclose(value, signal(0.), atol=1e-10)
+    np.testing.assert_allclose(derivative, expected, rtol=3e-5, atol=1e-6)
+    assert np.all(np.abs(derivative) > 1.)
+
+
+@pytest.mark.optional_backend
+@pytest.mark.parametrize("cascade", [False, True])
+def test_compiled_response_rejects_reordered_channel_weights(cascade):
+    """One compiled diagonal model cannot silently reuse a lowering proof after reordering."""
+    pytest.importorskip("dynamiqs")
+    import jax
+    from quchip.declarative import DeviceModel, Scalar, parameter
+
+    class Diagonal(DeviceModel):
+        freq: Scalar = parameter()
+
+        def local_hamiltonian(self, op, p):
+            return p.freq * op.n - 3. * (op.n @ op.n)
+
+    q = Diagonal(freq=10., levels=3, label="q")
+    r = Resonator(freq=6., levels=3, label="r")
+    network = PortNetwork()
+    first = network.port("q", target=q, rate=.01)
+    last = network.port("r", target=r, rate=.008)
+    if cascade:
+        network.cascade(first, last)
+        network.expose("feed", input=first, output=last)
+    chip = Chip([q, r], port_network=network, backend="dynamiqs")
+
+    def signal(frequency):
+        result = VNA(chip.with_params({"q.freq": frequency})).sweep(6.002, when={"q": 0})
+        assert result.diagnostics[0]["solver"] == "vacuum_response"
+        return result.matrix
+
+    compiled = jax.jit(signal)
+    np.testing.assert_allclose(compiled(10.), signal(10.), atol=1e-12)
+    for frequency in (5., -1.):
+        with pytest.raises(ValueError, match="conserv"):
+            signal(frequency)
+        with pytest.raises(jax.errors.JaxRuntimeError, match="excitation|lower"):
+            compiled(frequency).block_until_ready()
 
 
 @pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])
