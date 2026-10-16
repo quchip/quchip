@@ -117,7 +117,9 @@ This file records notable user-visible changes to quchip.
 
 - The dynamiqs backend supports dynamiqs 0.3.7, where `QArray` is abstract.
   Sparse operators use the public constructor's structure and retain JAX
-  gradients. Dynamiqs 0.3.6 remains supported.
+  gradients. Batched integration uses the public time-array conversion and
+  native save callbacks while retaining numerical failure reporting.
+  Dynamiqs 0.3.6 remains supported.
   ([#136](https://github.com/quchip/quchip/issues/136))
 
 - Local eigenvector derivatives retain resolved small-gap responses. Their

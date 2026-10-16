@@ -102,14 +102,20 @@ def _summed_modulation(modulations: Sequence[Any]) -> Any:
 def _dia_structure(dims: tuple[int, ...], offsets: tuple[int, ...]) -> Any:
     """Pytree structure of an unbatched sparse-DIA qarray whose one leaf is its diagonals.
 
-    Trace the public constructor once per structure, without allocating a dense
-    matrix or retaining numerical leaves. Dynamiqs selects its concrete class.
+    Construct a zero sparse template once per structure, including inside JIT.
+    Cache only its structure; dynamiqs selects the concrete class.
     """
     n = math.prod(dims)
-    template = jax.eval_shape(
-        lambda matrix: dq.asqarray(matrix, dims=dims, layout=dq.dia, offsets=offsets),
-        jax.ShapeDtypeStruct((n, n), jnp.complex128),
-    )
+
+    # Run the constructor's validation eagerly: nested JIT error callbacks can
+    # execute while their inactive branch is traced in compile-time evaluation.
+    with jax.ensure_compile_time_eval(), jax.disable_jit():
+        if offsets:
+            template = dq.sparsedia_from_dict(
+                {offset: jnp.zeros(n - abs(offset), dtype=jnp.complex128) for offset in offsets}, dims=dims,
+            )
+        else:
+            template = dq.zeros(*dims, layout=dq.dia)
     return jtu.tree_structure(template)
 
 
