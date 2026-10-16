@@ -99,19 +99,32 @@ def run(source: Path, repeat: int) -> dict[str, Any]:
             value = VNA(chip.with_params({"q0.freq": frequency})).sweep(frequencies, when={"q0": 1}).matrix
             return jnp.stack((value.real, value.imag))
 
-        derivative = jax.jit(jax.jacrev(signal))
-        timing = measure(lambda: derivative(5.), repeat)
         step = 1e-5
         plus = VNA(reference_chip.with_params({"q0.freq": 5. + step})).sweep(frequencies, when={"q0": 1}).matrix
         minus = VNA(reference_chip.with_params({"q0.freq": 5. - step})).sweep(frequencies, when={"q0": 1}).matrix
         difference = (np.asarray(plus) - np.asarray(minus)) / (2 * step)
         expected = np.stack((difference.real, difference.imag))
-        actual = np.asarray(derivative(5.))
-        np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=1e-7)
-        case = {"pairs": count, "frequencies": 5, "backend": "dynamiqs", "derivative": timing,
-                "max_derivative_error": float(np.max(np.abs(actual - expected)))}
+        scalar_expected = (np.sum(np.abs(plus)**2) - np.sum(np.abs(minus)**2)) / (2 * step)
+        compiled_signal = jax.jit(signal)
+        case = {"pairs": count, "frequencies": 5, "backend": "dynamiqs",
+                "compiled_sweep": measure(lambda: compiled_signal(5.), repeat)}
         report["cases"].append(case)
         print(json.dumps(case), flush=True)
+        derivatives = {
+            "jacrev": jax.jit(jax.jacrev(signal)),
+            "jacfwd": jax.jit(jax.jacfwd(signal)),
+            "jvp": jax.jit(lambda f: jax.jvp(signal, (f,), (1.,))[1]),
+            "scalar_reverse": jax.jit(jax.grad(lambda f: jnp.sum(signal(f)**2))),
+        }
+        for mode, derivative in derivatives.items():
+            timing = measure(lambda: derivative(5.), repeat)
+            actual = np.asarray(derivative(5.))
+            reference = scalar_expected if mode == "scalar_reverse" else expected
+            np.testing.assert_allclose(actual, reference, rtol=2e-5, atol=1e-7)
+            case = {"pairs": count, "frequencies": 5, "backend": "dynamiqs", "derivative_mode": mode,
+                    "derivative": timing, "max_derivative_error": float(np.max(np.abs(actual - reference)))}
+            report["cases"].append(case)
+            print(json.dumps(case), flush=True)
     return report
 
 
