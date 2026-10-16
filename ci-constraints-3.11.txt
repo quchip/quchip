@@ -35,7 +35,7 @@ dill==0.4.1
     #   multiprocess
     #   pathos
     #   scqubits
-dynamiqs==0.3.6
+dynamiqs==0.3.7
     # via quchip (pyproject.toml)
 equinox==0.13.8
     # via

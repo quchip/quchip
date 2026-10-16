@@ -110,6 +110,11 @@ This file records notable user-visible changes to quchip.
 
 #### Fixes
 
+- The dynamiqs backend supports dynamiqs 0.3.7, where `QArray` is abstract.
+  Sparse operators use the public constructor's structure and retain JAX
+  gradients. Dynamiqs 0.3.6 remains supported.
+  ([#136](https://github.com/quchip/quchip/issues/136))
+
 - Local eigenvector derivatives retain resolved small-gap responses. Their
   cutoff now uses matrix dimension and floating-point precision instead of
   `1e-9` of the spectral span. Degenerate eigenvector derivatives remain undefined.
