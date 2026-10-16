@@ -65,7 +65,7 @@ def test_isolated_three_level_loss_keeps_spectator_under_compiled_local_eliminat
         resolved = reduced.resolve(frame="lab")
         assert resolved.dims == (3,)
         channel, = resolved.collapse_terms
-        energies = jnp.real(jnp.diag(resolved.hamiltonian().matrix()))
+        energies = jnp.real(jnp.diag(resolved.hamiltonian().matrix(backend=reduced.backend)))
         strength = jnp.sum(jnp.abs(channel.operator.to_dense()) ** 2)
         return jnp.concatenate((energies, jnp.array([strength, channel.rate])))
 

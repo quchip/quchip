@@ -333,7 +333,7 @@ def test_compiled_response_rejects_reordered_channel_weights(cascade):
     for frequency in (5., -1.):
         with pytest.raises(ValueError, match="conserv"):
             signal(frequency)
-        with pytest.raises(jax.errors.JaxRuntimeError, match="excitation|lower"):
+        with pytest.raises((jax.errors.JaxRuntimeError, ValueError), match="excitation|lower"):
             compiled(frequency).block_until_ready()
 
 

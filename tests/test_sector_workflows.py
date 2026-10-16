@@ -34,9 +34,12 @@ def test_exact_exchange_uses_sectors_and_matches_independent_spectrum():
     assert chip.freq("q") == pytest.approx(expected, abs=1e-12)
 
 
-def test_exact_fit_uses_sector_dimension_and_recovers_bare_frequency():
+@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])
+def test_exact_fit_uses_sector_dimension_and_recovers_bare_frequency(backend):
     """An Exact exchange fit respects the sector limit and reproduces its dressed target."""
-    chip = pair()
+    if backend == "dynamiqs":
+        pytest.importorskip("dynamiqs")
+    chip = pair(backend=backend)
     target = 4.95
     result = fit_a_dress(chip, constraints={"q": {"freq": target, "anharmonicity": None},
                                           "r": {"freq": None, "anharmonicity": None},
@@ -152,13 +155,22 @@ def test_exact_vacuum_response_matches_stationary_response():
 
 @pytest.mark.optional_backend
 def test_fit_rechecks_dimension_when_tracing_cannot_prove_conservation():
-    """A traced energy basis cannot silently expand a fit beyond its requested dimension limit."""
+    """Opaque traced matrix support cannot expand a fit beyond its requested dimension limit."""
     pytest.importorskip("dynamiqs")
-    chip = pair(backend="dynamiqs")
+
+    class MatrixExchange(Exchange):
+        def interaction(self, a, b, p):
+            lowering = np.diag(np.sqrt(np.arange(1, 3)), 1)
+            return self.g * (np.kron(lowering.T, lowering) + np.kron(lowering, lowering.T))
+
+    q, r = pair().devices
+    chip = Chip([q, r], [MatrixExchange(q, r, g=.04, label="qr")], approximation=Exact(), backend="dynamiqs")
+    assert chip.analysis._dressed_dimension(1) == 2
     with pytest.raises(ValueError, match="dimension 9, exceeding max_hilbert_dim=2"):
         fit_a_dress(chip, constraints={"q": {"freq": 4.95, "anharmonicity": None},
-                                      "r": {"freq": None, "anharmonicity": None}},
-                     vary={"q": ["freq"]}, max_hilbert_dim=2)
+                                      "r": {"freq": None, "anharmonicity": None},
+                                      "qr": {"coupling_strength": None}},
+                     vary={"qr": ["g"]}, max_hilbert_dim=2)
 
 
 def test_opaque_traced_operator_requires_declared_changes():
