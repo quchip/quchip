@@ -259,7 +259,7 @@ def test_backend_operator_factories_match_dynamiqs(dynamiqs_backend, layout) -> 
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("offsets", [(), (-1, 0, 2)])
+@pytest.mark.parametrize("offsets", [(), (-1, 0, 2), (5,), (-5,)])
 @pytest.mark.parametrize("batched", [False, True])
 def test_sparse_operator_payloads_preserve_values_and_gradients(dynamiqs_backend, offsets, batched) -> None:
     """Empty and nonempty sparse operators retain their dimensions, batches and traced payloads."""
@@ -287,7 +287,13 @@ def test_sparse_operator_payloads_preserve_values_and_gradients(dynamiqs_backend
         assert operator.dims == dims
         return operator.to_jax()
 
-    # Construct first during tracing, then reuse the cached structure eagerly.
+    def constant_matrix(scale):
+        with jax.ensure_compile_time_eval():
+            operator = _dia_qarray(dims, offsets, diags)
+        return scale * operator.to_jax()
+
+    # Concrete operators also occur inside compile-time evaluation during reductions.
+    npt.assert_allclose(np.asarray(jax.jit(constant_matrix)(0.7)), 0.7 * expected, atol=1e-14)
     npt.assert_allclose(np.asarray(jax.jit(matrix)(0.7)), 0.7 * expected, atol=1e-14)
     npt.assert_allclose(np.asarray(_dia_qarray(dims, offsets, diags).to_jax()), expected, atol=1e-14)
     gradient = jax.grad(lambda scale: jnp.real(jnp.sum(matrix(scale))))(0.7)

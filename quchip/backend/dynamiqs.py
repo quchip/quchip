@@ -106,10 +106,15 @@ def _dia_structure(dims: tuple[int, ...], offsets: tuple[int, ...]) -> Any:
     matrix or retaining numerical leaves. Dynamiqs selects its concrete class.
     """
     n = math.prod(dims)
-    template = jax.eval_shape(
-        lambda matrix: dq.asqarray(matrix, dims=dims, layout=dq.dia, offsets=offsets),
-        jax.ShapeDtypeStruct((n, n), jnp.complex128),
-    )
+
+    def constructor():
+        if not offsets:
+            return dq.zeros(*dims, layout=dq.dia)
+        return dq.sparsedia_from_dict(
+            {offset: jnp.zeros(n - abs(offset), dtype=jnp.complex128) for offset in offsets}, dims=dims,
+        )
+
+    template = jax.eval_shape(constructor)
     return jtu.tree_structure(template)
 
 

@@ -38,16 +38,15 @@ def solve_with_status(H: Any, jumps: list[Any], state: Any, times: Any,
 
     try:
         from dynamiqs._checks import check_times
-        from dynamiqs.integrators._utils import astimeqarray
         from dynamiqs.integrators.apis.mesolve import _check_mesolve_args
         from dynamiqs.integrators.apis.sesolve import _check_sesolve_args
         from dynamiqs.integrators.core import diffrax_integrator, rouchon_integrator
         module = rouchon_integrator if type(method) in rouchon else diffrax_integrator
         constructor = getattr(module, f"{solver}_{type(method).__name__.lower()}_integrator_constructor")
     except (ImportError, AttributeError) as exc:
-        raise RuntimeError("Native batch status requires the Dynamiqs 0.3.6 integrator interface.") from exc
+        raise RuntimeError("Native batch status requires a compatible dynamiqs integrator interface.") from exc
 
-    H = astimeqarray(H)
+    H = H if isinstance(H, dq.TimeQArray) else dq.constant(H)
     observables = observables or None
     extra = {}
     if solver == "mesolve":
