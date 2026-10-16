@@ -170,10 +170,23 @@ def _solve_coherences(
                                          M=LinearOperator(shape, matvec=precondition, dtype=complex),
                                          rtol=1e-11, atol=0., restart=64, maxiter=100)
                     else:
+                        import equinox as eqx
+                        from jax import lax
                         from jax.scipy.sparse.linalg import gmres
 
-                        value, _ = gmres(matvec, flat[:, column], M=precondition,
-                                         tol=1e-11, atol=0., restart=64, maxiter=100)
+                        def solve(operator: Any, rhs: Any) -> Any:
+                            # Recompute GMRES's RHS-relative stopping scale for each
+                            # primal, tangent and transpose solve.
+                            value, _ = gmres(operator, rhs, M=precondition,
+                                             tol=1e-11, atol=0., restart=64, maxiter=100)
+                            relative = xp.linalg.norm(operator(value) - rhs) / xp.maximum(xp.linalg.norm(rhs), 1e-30)
+                            return eqx.error_if(
+                                value, ~xp.isfinite(relative) | (relative > 1e-7),
+                                "Conditional VNA response failed to converge; "
+                                "inspect losses, frequencies and model conditioning.",
+                            )
+
+                        value = lax.custom_linear_solve(matvec, flat[:, column], solve=solve, transpose_solve=solve)
                     columns.append(value)
                 solved = xp.stack(columns, axis=-1).reshape(rhs.shape)
             error = xp.stack([shift * solved[:, :, i] - action(n, solved[:, :, i]) - rhs[:, :, i]

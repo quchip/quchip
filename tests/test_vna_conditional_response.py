@@ -385,6 +385,29 @@ def test_conditional_response_rejects_nonfinite_source(monkeypatch, iterative):
         chip.backend.coherence_response(problem).responses.block_until_ready()
 
 
+@pytest.mark.optional_backend
+@pytest.mark.validation
+def test_iterative_response_derivative_preserves_objective_scaling(monkeypatch):
+    """Implicit derivative solves retain relative accuracy for small and large adjoint sources."""
+    pytest.importorskip("dynamiqs")
+    import jax
+    import jax.numpy as jnp
+    import quchip.backend._response as algebra
+
+    monkeypatch.setattr(algebra, "_COHERENCE_DENSE_LIMIT", 0)
+    frequencies = np.array([5.999, 6.002])
+
+    def power(g, backend="dynamiqs"):
+        response = VNA(readout_chip(g=g, backend=backend)).sweep(frequencies, when={"q": 1}).matrix
+        return jnp.sum(jnp.abs(response)**2)
+
+    gradient = jax.jit(jax.grad(lambda g, scale: scale * power(g)))
+    g, step = .06, 1e-5
+    reference = (power(g + step, "qutip") - power(g - step, "qutip")) / (2 * step)
+    for scale in (1e-12, 1., 1e12):
+        np.testing.assert_allclose(gradient(g, scale) / scale, reference, rtol=2e-6, atol=1e-7)
+
+
 def test_parameter_axes_ports_and_reference_delays_are_preserved():
     """Conditional parameter sweeps retain all ports and each selected reference-plane phase."""
     from quchip import Sweep

@@ -112,7 +112,8 @@ This file records notable user-visible changes to quchip.
 
 - Conditional VNA sweeps on dynamiqs reuse a compiled frequency solve. This
   avoids repeated JAX dispatch and GMRES compilation while retaining bounded
-  solver workspace, channel recycling, and convergence checks.
+  solver workspace, channel recycling, and convergence checks. Implicit
+  derivative solves apply the relative tolerance to their own right-hand side.
   ([#147](https://github.com/quchip/quchip/issues/147))
 
 - `drive_matrix_elements()` carries drive operators through the captured maps
