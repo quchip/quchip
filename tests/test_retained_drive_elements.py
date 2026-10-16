@@ -34,6 +34,7 @@ def _pulse_operator(chip):
 @pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])
 @pytest.mark.parametrize("reduction", ["sw", "exact", "active_patch"])
 def test_reduced_drive_query_matches_the_pulse_operator_and_mixing_angle(backend, reduction):
+    """Reduced drive queries and pulses share the SW or exact two-mode mixing amplitude."""
     if backend == "dynamiqs":
         pytest.importorskip("dynamiqs")
     source = _pair(backend=backend)
@@ -52,6 +53,7 @@ def test_reduced_drive_query_matches_the_pulse_operator_and_mixing_angle(backend
 @pytest.mark.parametrize("approximation", [RWA(), Exact()])
 @pytest.mark.parametrize("basis", ["native", "eigen"])
 def test_retained_drive_can_act_on_separated_survivors_with_a_conditioned_spectator(approximation, basis):
+    """Retained drive support preserves spectator conditioning in sector and full-space evaluations."""
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
     spectator = Resonator(freq=5.4, levels=2, label="s")
     bus = Resonator(freq=7.0, levels=3, label="bus")
@@ -81,6 +83,7 @@ def test_retained_drive_can_act_on_separated_survivors_with_a_conditioned_specta
 
 
 def test_local_retained_drive_query_avoids_the_large_product_space():
+    """A local reduction's drive amplitude remains accessible without the full 24-device product space."""
     devices = [DuffingTransmon(freq=5.0 + 0.03 * i, anharmonicity=-0.25, levels=3, label=f"q{i}")
                for i in range(24)]
     bus = Resonator(freq=7.0, levels=3, label="bus")
@@ -95,6 +98,7 @@ def test_local_retained_drive_query_avoids_the_large_product_space():
 @pytest.mark.validation
 @pytest.mark.parametrize("local", [False, True])
 def test_retained_drive_value_and_gradient_follow_the_sw_rotation(local):
+    """JIT drive values and coupling derivatives agree with the analytic SW rotation."""
     pytest.importorskip("dynamiqs")
     source = _pair(backend="dynamiqs")
 
