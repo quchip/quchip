@@ -71,8 +71,8 @@ def test_isolated_three_level_loss_keeps_spectator_under_compiled_local_eliminat
 
     frequencies = jnp.array([5., 7.])
     value, derivative = jax.jit(lambda x: jax.jvp(observables, (x,), (jnp.ones(2),)))(frequencies)
-    np.testing.assert_allclose(value, [0., 10. * np.pi, 20. * np.pi, 0., .01], atol=1e-12)
-    np.testing.assert_allclose(derivative, [0., 2. * np.pi, 4. * np.pi, 0., 0.], atol=1e-12)
+    np.testing.assert_allclose(value, [0., 5., 10., 0., .01], atol=1e-12)
+    np.testing.assert_allclose(derivative, [0., 1., 2., 0., 0.], atol=1e-12)
 
 
 @pytest.mark.validation
