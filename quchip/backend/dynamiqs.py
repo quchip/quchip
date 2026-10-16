@@ -107,7 +107,9 @@ def _dia_structure(dims: tuple[int, ...], offsets: tuple[int, ...]) -> Any:
     """
     n = math.prod(dims)
 
-    with jax.ensure_compile_time_eval():
+    # Run the constructor's validation eagerly: nested JIT error callbacks can
+    # execute while their inactive branch is traced in compile-time evaluation.
+    with jax.ensure_compile_time_eval(), jax.disable_jit():
         if offsets:
             template = dq.sparsedia_from_dict(
                 {offset: jnp.zeros(n - abs(offset), dtype=jnp.complex128) for offset in offsets}, dims=dims,
