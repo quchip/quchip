@@ -110,6 +110,11 @@ This file records notable user-visible changes to quchip.
 
 #### Fixes
 
+- `drive_matrix_elements()` carries drive operators through the captured maps
+  of `eliminate()` and `active_patch()`, so reduced-chip queries include the
+  same operator dressing as pulses.
+  ([#146](https://github.com/quchip/quchip/issues/146))
+
 - The dynamiqs backend supports dynamiqs 0.3.7, where `QArray` is abstract.
   Sparse operators use the public constructor's structure and retain JAX
   gradients. Dynamiqs 0.3.6 remains supported.

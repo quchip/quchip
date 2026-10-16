@@ -1160,7 +1160,7 @@ class ChipAnalysis:
                     AnalyticSignal(program=Constant(1.0 + 0.0j)),
                 )
             from quchip.declarative.expr import split_dynamic_hamiltonian
-            from quchip.chip.observables import prepare_local_op
+            from quchip.engine.assembly import _project_on_support, _retained_operator
 
             channels = split_dynamic_hamiltonian(authored)
             if len(channels) != 1:
@@ -1169,16 +1169,23 @@ class ChipAnalysis:
                     f"got {len(channels)}."
                 )
 
+            bases = sectors.bases if sectors is not None else engine.bases
+            authored, support = _retained_operator(
+                self._chip, channels[0][1], (device_index,), backend, f"drive:{drive.label}", bases=bases,
+            )
             if sectors is not None:
-                operator = sectors.local_operator(channels[0][1], (device_index,))
-                block = sectors.block(operator, (device_index,), sum(final_label), sum(initial_label))
+                operator = sectors.local_operator(authored, support)
+                block = sectors.block(operator, support, sum(final_label), sum(initial_label))
                 acted = xp.asarray(block) @ initial
             else:
-                local_operator = prepare_local_op(device, channels[0][1], engine.bases[device.label], backend)
+                local_operator = _project_on_support(self._chip, authored, support, bases, backend)
                 operator = xp.asarray(backend.to_array(local_operator), dtype=complex)
+                local_dims = tuple(engine.dims[index] for index in support)
+                operator = operator.reshape(local_dims + local_dims)
+                rank = len(support)
                 initial_tensor = initial.reshape(engine.dims)
-                acted = xp.tensordot(operator, initial_tensor, axes=((1,), (device_index,)))
-                acted = xp.moveaxis(acted, 0, device_index).reshape(-1)
+                acted = xp.tensordot(operator, initial_tensor, axes=(tuple(range(rank, 2 * rank)), support))
+                acted = xp.moveaxis(acted, tuple(range(rank)), support).reshape(-1)
             elements[drive.label] = xp.vdot(final, acted)
         return elements
 

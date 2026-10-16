@@ -1338,6 +1338,11 @@ bare state is real and nonnegative. This removes backend-dependent eigenvector s
 comparisons between conditioned transitions, e.g. the sum and difference for the weak-drive `IX` and
 `ZX` coefficients.
 
+On a reduced chip, the physical drive operator first passes through the same
+retained coordinate maps as a scheduled pulse. Its support can grow across
+surviving devices; the query still uses excitation sectors when the retained
+Hamiltonian conserves total excitation number.
+
 `drive_matrix_elements` evaluates the physical drive operators and does not apply the signal chain.
 `ControlEquipment.crosstalk_matrix()` represents declared control-line mixing separately. In this
 matrix, column `j` is the source line, row `l` is the victim line, and each entry has an amplitude,
