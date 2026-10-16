@@ -7,7 +7,7 @@ import pytest
 import jax
 import jax.numpy as jnp
 
-from quchip import Capacitive, Chip, DuffingTransmon, Exact, PortNetwork, Resonator, RWA, eliminate
+from quchip import Capacitive, Chip, CrossKerr, DuffingTransmon, Exact, PortNetwork, Resonator, RWA, eliminate
 
 
 def _readout_chip(*, phase_shift: float | None = None, approximation=RWA()) -> tuple[Chip, float]:
@@ -251,6 +251,67 @@ def test_local_feedline_section_keeps_spectator_frequency_corrections() -> None:
     expected = rate / (2 * np.pi * (chip["r3"].freq + 0.07 - chip["r2"].freq))
     assert local.validity[key]["kappa_over_delta"] == pytest.approx(expected, rel=1e-12)
     assert local.validity[key]["kappa_over_delta"] == pytest.approx(full.validity[key]["kappa_over_delta"], rel=1e-12)
+
+
+def _spectator_dressed_boundary(g=0.12, *, backend="qutip", shared=True, effective=False) -> Chip:
+    """A conserved boundary occupation shifts the spectator pair's virtual excitation energy."""
+    from quchip import EffectiveTerms
+
+    mode = Resonator(freq=7.0, levels=2, label="m")
+    first = Resonator(freq=4.0, levels=2, label="a")
+    second = Resonator(freq=5.0, levels=2, label="b")
+    network = PortNetwork(label="line")
+    port = network.port("pm", target=mode, rate=0.03)
+    if shared:
+        other = network.port("pb", target=second, rate=0.02)
+        network.cascade(port, other)
+        network.expose("feed", input=port.input, output=other.output)
+    couplings = [CrossKerr(mode, first, chi=0.7, label="ma")]
+    terms = []
+    if effective:
+        coordinate = np.array([[0.0, 1.0], [1.0, 0.0]])
+        terms = [EffectiveTerms(("a", "b"), (2, 2), g * np.kron(coordinate, coordinate), label="pair")]
+    else:
+        couplings.append(Capacitive(first, second, g=g, label="ab"))
+    return Chip([mode, first, second], couplings, port_network=network, approximation=Exact(),
+                backend=backend, effective_terms=terms)
+
+
+@pytest.mark.parametrize("shared", [False, True])
+@pytest.mark.parametrize("effective", [False, True])
+def test_local_section_includes_spectator_dressing(shared, effective) -> None:
+    """The section pole and weight include virtual states outside the elimination generator's support."""
+    chip = _spectator_dressed_boundary(shared=shared, effective=effective)
+    full, local = eliminate(chip, "m"), eliminate(chip, "m", local=True)
+    prefix = f"network.component.m_{'transmission' if shared else 'reflection'}."
+    # Each m occupation gives a two-state spectator rotation with gap E or E + chi.
+    gap, chi, g = 9.0, 0.7, 0.12
+    frequency = 7.0 + g**2 / gap - g**2 / (gap + chi)
+    weight = np.cos(g / gap - g / (gap + chi)) ** 2
+    expected = np.array([frequency, 0.03 * weight])
+    for result in (full, local):
+        actual = [result.chip.parameters[prefix + key] for key in ("freq", "external_rate")]
+        np.testing.assert_allclose(actual, expected, rtol=0, atol=2e-14)
+    projection = next(terms.projection for terms in local.chip.effective_terms if terms.projection is not None)
+    assert projection.source_labels == ("m", "a")
+
+
+@pytest.mark.validation
+@pytest.mark.optional_backend
+@pytest.mark.parametrize("g", [0.0, 0.12])
+def test_local_spectator_section_derivatives_match_analytic_rotation(g) -> None:
+    """A traced spectator coupling retains the pole and weight curvature, including at zero coupling."""
+    pytest.importorskip("dynamiqs")
+
+    def section_values(strength):
+        reduced = eliminate(_spectator_dressed_boundary(strength, backend="dynamiqs"), "m", local=True).chip
+        prefix = "network.component.m_transmission."
+        return jnp.array([reduced.parameters[prefix + key] for key in ("freq", "external_rate")])
+
+    difference = 1 / 9.0 - 1 / 9.7
+    actual = jax.jit(jax.jacfwd(jax.jacfwd(section_values)))(jnp.asarray(g))
+    expected = [2 * difference, -0.06 * difference**2 * np.cos(2 * g * difference)]
+    np.testing.assert_allclose(actual, expected, rtol=1e-9, atol=1e-13)
 
 
 @pytest.mark.parametrize("method", ["sw", "exact"])

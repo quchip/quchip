@@ -63,7 +63,11 @@ from quchip.chip.sw import (
     excitation_sectors,
 )
 from quchip.chip.transformations.dispatch import EliminationTarget, register_elimination_target
-from quchip.chip.transformations.methods import DeviceReductionContext, lookup_reduction_method
+from quchip.chip.transformations.methods import (
+    DeviceReductionContext,
+    _sw_dressed_transition,
+    lookup_reduction_method,
+)
 from quchip.chip.transformations.plumbing import (
     StrandedLine,
     inherited_notes,
@@ -275,6 +279,64 @@ def _bare_transition_frequencies(chip: "Chip", labels: tuple[str, ...], approxim
     return frequencies
 
 
+def _local_dressed_transition(chip: "Chip", mode_label: str, lowering: Any,
+                              approximation: Any) -> tuple[Any, Any]:
+    """Read the SW section from local terms on the states connected to vacuum and one mode excitation.
+
+    These states need not lie in the elimination generator's patch. Each
+    interaction supplies its possible local outcomes with all other levels
+    fixed. Selection uses dimensions and proved conservation, never parameter
+    values. All local terms supply the intermediate states' diagonal energies.
+    """
+    from quchip.backend._memory import require_memory
+    from quchip.engine.assembly import _resolve_system, _resolved_energy_interactions
+
+    resolution = _resolve_system(chip, chip.backend)
+    dims = resolution.dims
+    mode_axis = chip.device_index(mode_label)
+    terms = tuple(_resolved_energy_interactions(chip, resolution, approximation))
+    conserving = conserves_excitation_number(chip, approximation, resolution=resolution)
+    ground = (0,) * len(dims)
+    excited = tuple(int(index == mode_axis) for index in range(len(dims)))
+    states = dict.fromkeys((ground, excited))
+    for _operator, support in terms:
+        for reference in (ground, excited):
+            total = sum(reference[index] for index in support)
+            for local_levels in product(*(range(dims[index]) for index in support)):
+                if conserving and sum(local_levels) != total:
+                    continue
+                state = list(reference)
+                for index, level in zip(support, local_levels):
+                    state[index] = level
+                states[tuple(state)] = None
+    size = len(states)
+    require_memory(16 * 12 * size**2 + 8 * len(dims) * size,
+                   task=f"Local SW transition (dimension {size})",
+                   remedy="Use interactions on smaller local supports or reduce the model.")
+    levels = np.asarray(tuple(states), dtype=np.int64)
+    energies = tuple(resolution.bases[device.label].energies for device in chip.devices)
+    xp = concrete_array_module(energies, tuple(operator for operator, _ in terms), lowering)
+
+    def block(operator: Any, support: tuple[int, ...]) -> Any:
+        local_dims = tuple(dims[index] for index in support)
+        rows = np.ravel_multi_index(tuple(levels[:, support].T), local_dims)
+        outside = [index for index in range(len(dims)) if index not in support]
+        other = levels[:, outside]
+        equal = np.all(other[:, None, :] == other[None, :, :], axis=2)
+        return xp.asarray(operator)[rows[:, None], rows[None, :]] * equal
+
+    diagonal = xp.zeros(size)
+    for index, values in enumerate(energies):
+        diagonal = diagonal + xp.asarray(values)[levels[:, index]]
+    h = xp.diag(diagonal).astype(complex)
+    for operator, support in terms:
+        h = h + block(operator, support)
+    if conserving:
+        totals = levels.sum(axis=1)
+        h = xp.where(totals[:, None] == totals[None, :], h, 0.0)
+    return _sw_dressed_transition(h, block(lowering, (mode_axis,)), np.array([0, 1]))
+
+
 def _single_device_parts(matrix: Any, dims: tuple[int, ...]) -> tuple[Any, list[Any], Any]:
     """Split a product-space matrix into its mean, its traceless single-device parts and the rest.
 
@@ -478,8 +540,9 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
     method
         The reduction route (``"sw"`` or ``"exact"``), already validated.
     local
-        Read only the patch around the device. Every numerical step then runs
-        on the patch, and the rest of the chip stays unchanged.
+        Compute the generator on the patch around the device. A boundary
+        section also reads spectator transitions from local Hamiltonian terms,
+        without assembling the full product space.
 
     Returns
     -------
@@ -629,7 +692,7 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
     mode_is_frequency_controlled = isinstance(mode, FrequencyControlled) or any(
         isinstance(line, FluxDrive) for line, _ in retarget_plan
     )
-    # Every numerical step reads `numeric`: the whole chip, or the patch whose
+    # The retained model reads `numeric`: the whole chip, or the patch whose
     # generator equals the full-chip generator (PHYSICS.md §10.7).
     numeric, chip_bases, lone = chip, None, False
     absorbed: tuple[EffectiveTerms, ...] = ()
@@ -1037,9 +1100,12 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
         while section_label in {component.label for component in network.components}:
             section_label = f"{mode_label}_{section_kind}_{suffix}"
             suffix += 1
-        lowering = _kron(*(mode_lowering if label == mode_label else np.eye(dim)
-                           for label, dim in zip(labels, dims)))
-        frequency, weight = reduction.dressed_transition(ctx, lowering)
+        if local:
+            frequency, weight = _local_dressed_transition(chip, mode_label, mode_lowering, approximation)
+        else:
+            lowering = _kron(*(mode_lowering if label == mode_label else np.eye(dim)
+                               for label, dim in zip(labels, dims)))
+            frequency, weight = reduction.dressed_transition(ctx, lowering)
         external_rate = weight * boundary_ports[0].rate_value(chip)
         if shared_line:
             section = network.mode_transmission(

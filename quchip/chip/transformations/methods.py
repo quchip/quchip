@@ -41,6 +41,21 @@ from quchip.chip.sw import (
 from quchip.utils.jax_utils import concrete_array_module, contains_tracer
 
 
+def _sw_dressed_transition(h: Any, lowering: Any, rows: np.ndarray) -> tuple[Any, Any]:
+    """Read a second-order pole and unitary first-order weight on the supplied transition-state support."""
+    xp = concrete_array_module(h, lowering)
+    selected = np.isin(np.arange(h.shape[0]), rows)
+    energies = xp.real(xp.diagonal(h))
+    # Include every intermediate state coupled to either transition state, including Q-Q paths.
+    interaction = xp.where(selected[:, None] | selected[None, :], h, 0.0)
+    s = interaction_generator(energies, interaction)
+    corrected = energies[rows] + xp.real(xp.sum(s[rows, :] * h[:, rows].T, axis=1))
+    rotation = expm(-s) if contains_tracer(s) else scipy.linalg.expm(-s)
+    states = rotation[:, rows]
+    weight = xp.abs(states[:, 0].conj() @ xp.asarray(lowering) @ states[:, 1]) ** 2
+    return corrected[1] - corrected[0], weight
+
+
 @dataclass(frozen=True)
 class DeviceReductionContext:
     """Method-agnostic inputs of one device elimination.
@@ -210,18 +225,8 @@ class SchriefferWolffMethod(ReductionMethod):
 
     def dressed_transition(self, ctx: DeviceReductionContext, lowering: Any) -> tuple[Any, Any]:
         """Compute second-order energies and a unitary first-order transition weight."""
-        xp = concrete_array_module(ctx.h, lowering)
         rows = np.array([bare_index(ctx.labels, ctx.dims), bare_index(ctx.labels, ctx.dims, ctx.mode_label)])
-        selected = np.isin(np.arange(ctx.h.shape[0]), rows)
-        energies = xp.real(xp.diagonal(ctx.h))
-        # Include every intermediate state coupled to either transition state, including Q-Q paths.
-        interaction = xp.where(selected[:, None] | selected[None, :], ctx.h, 0.0)
-        s = interaction_generator(energies, interaction)
-        corrected = energies[rows] + xp.real(xp.sum(s[rows, :] * ctx.h[:, rows].T, axis=1))
-        rotation = expm(-s) if contains_tracer(s) else scipy.linalg.expm(-s)
-        states = rotation[:, rows]
-        weight = xp.abs(states[:, 0].conj() @ xp.asarray(lowering) @ states[:, 1]) ** 2
-        return corrected[1] - corrected[0], weight
+        return _sw_dressed_transition(ctx.h, lowering, rows)
 
     def pair_parameters(self, ctx: DeviceReductionContext) -> dict:
         h_eff = self.retained_hamiltonian(ctx)

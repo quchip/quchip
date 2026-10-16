@@ -102,6 +102,19 @@ def test_shared_feedline_does_not_expand_the_generator_patch(directions):
     assert patches[1] == patches[0] == ("q0", "c0", "c7", "r0")
 
 
+def test_local_boundary_section_on_a_large_rwa_ring_keeps_the_pair_transition():
+    """A boundary section on a 24-mode ring uses its local RWA pole and weight without a full-space matrix."""
+    chip = _wire_readouts(_ring(8, noise=False), 1)
+    reduced = eliminate(chip, "r0", local=True).chip
+    detuning, g = 6.56 - 5.32, 0.04
+    prefix = "network.component.r0_transmission."
+    np.testing.assert_allclose(reduced.parameters[prefix + "freq"], 6.56 + g**2 / detuning, atol=1e-13)
+    np.testing.assert_allclose(reduced.parameters[prefix + "external_rate"],
+                               0.012 * np.cos(g / detuning)**2, rtol=1e-12)
+    projection = next(terms.projection for terms in reduced.effective_terms if terms.projection is not None)
+    assert projection.source_labels == ("q0", "r0")
+
+
 @pytest.mark.parametrize("directions", [1, 2])
 @pytest.mark.parametrize("sites", [2, pytest.param(3, marks=pytest.mark.validation)])
 def test_shared_feedline_local_reduction_matches_full_dynamics(sites, directions):
