@@ -61,10 +61,21 @@ def solve_with_status(H: Any, jumps: list[Any], state: Any, times: Any,
         H=H, y0=state, ts=check_times(times, "tsave"), Es=observables,
         method=method, gradient=gradient, options=dq.Options(**options).initialise(), **extra,
     )
-    saveat = dx.SaveAt(subs=[
-        dx.SubSaveAt(ts=integrator.ts, fn=lambda t, y, args: integrator.save(y)),
-        dx.SubSaveAt(t1=True),
-    ])
+    # Newer dynamiqs passes time to save callbacks and restores native trees
+    # from its device-specific buffers. Keep preparation and restoration paired.
+    prepare_save = getattr(diffrax_integrator, "_saveat", None)
+    if prepare_save is not None:
+        saveat, restore = prepare_save(integrator.ts, integrator.save, integrator.y0)
+    else:
+        saveat = dx.SaveAt(subs=[
+            dx.SubSaveAt(ts=integrator.ts, fn=lambda t, y, args: integrator.save(y)),
+            dx.SubSaveAt(t1=True),
+        ])
+        restore = None
+    progress_meter = integrator.options.progress_meter
+    convert_progress = getattr(diffrax_integrator, "progress_meter_to_diffrax", None)
+    progress_meter = (convert_progress(progress_meter) if convert_progress is not None
+                      else progress_meter.to_diffrax())
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)  # Native complex-integration warning policy.
         solution = dx.diffeqsolve(
@@ -72,9 +83,10 @@ def solve_with_status(H: Any, jumps: list[Any], state: Any, times: Any,
             t0=integrator.t0, t1=integrator.t1, dt0=integrator.dt0, y0=integrator.y0,
             saveat=saveat, stepsize_controller=integrator.stepsize_controller,
             adjoint=integrator.adjoint, max_steps=integrator.max_steps,
-            progress_meter=integrator.options.progress_meter.to_diffrax(), throw=False,
+            progress_meter=progress_meter, throw=False,
         )
-    saved = integrator.postprocess_saved(*solution.ys)
+    saved_values = restore(solution.ys) if restore is not None else solution.ys
+    saved = integrator.postprocess_saved(*saved_values)
     return integrator.result(saved, infos=integrator.infos(solution.stats)), solution.result
 
 
