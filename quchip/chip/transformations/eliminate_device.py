@@ -41,8 +41,9 @@ from quchip.chip.couplings import Capacitive, TunableCapacitive
 from quchip.chip.effective import (
     EffectiveTerms,
     OperatorProjection,
+    _ExcitationChanges,
     _in_device_order,
-    authored_excitation_changes,
+    authored_excitation_weights,
     conserves_excitation_number,
     lineage,
     lineage_labels,
@@ -152,10 +153,15 @@ def _level_dependent(chip: "Chip", operator: Any, labels: tuple[str, ...], label
     backend = chip.backend
     with jax.ensure_compile_time_eval():
         local = materialize_expr(operator, backend, local_bases=bases)
-        matrix = _array(backend.to_array(_project_on_support(chip, local, support, bases, backend)))
-        transform = _support_semantic_transform(chip, support, bases)
-        if transform is not None:
-            matrix = transform.conj().T @ matrix @ transform
+        if all(bases[name]._authored_energy_ranks() is not None for name in labels):
+            # A coordinate permutation preserves whether this diagonal depends
+            # on a tensor factor, even when the ordering of energies is traced.
+            matrix = _array(backend.to_array(local))
+        else:
+            matrix = _array(backend.to_array(_project_on_support(chip, local, support, bases, backend)))
+            transform = _support_semantic_transform(chip, support, bases)
+            if transform is not None:
+                matrix = transform.conj().T @ matrix @ transform
         dims = tuple(bases[name].resolved_dim for name in labels)
         xp = concrete_array_module(matrix)
         diagonal = xp.diagonal(matrix).reshape(dims)
@@ -666,6 +672,13 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
     }
 
     source_bases = numeric.resolve(frame="lab").bases
+    # The SW generator has no support outside the same patch used by local
+    # reduction. Operators on those spectators commute with the rotation.
+    unchanged_labels: tuple[str, ...] = ()
+    if method == "sw" and not local:
+        generator_labels, _ = _local_patch(numeric, mode_label, source_bases)
+        unchanged_labels = tuple(label for label in labels if label not in generator_labels
+                                 and source_bases[label].native_dim == source_bases[label].resolved_dim)
 
     def transform_operator(operator: Any, support_labels: tuple[str, ...]) -> tuple[Any, Any]:
         local = _array(chip.backend.to_array(materialize_expr(operator, chip.backend)))
@@ -825,7 +838,7 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
         for port in affected_ports:
             port_operator: Any = lift @ transformed_ports[port.label] @ lift.conj().T
             source_operator, source_labels = port_sources[port.label]
-            port_changes = None if sectors is None else authored_excitation_changes(
+            port_changes = None if sectors is None else authored_excitation_weights(
                 source_operator, source_labels, chip.backend, source_bases if chip_bases is None else chip_bases,
             )
             if port_changes is not None:
@@ -870,7 +883,7 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
     final_lift = _kron(*(final_resolved.bases[label].vectors for label in numeric_survivors))
     correction = lift @ retained_h @ lift.conj().T - final_lift @ final_matrix @ final_lift.conj().T
     inherited_channels = []
-    channel_changes: dict[str, frozenset[int]] = {}
+    channel_changes: dict[str, _ExcitationChanges] = {}
     source_lift = _kron(*(source_bases[label].energy_vectors for label in labels))
     step_embedding = source_lift @ reduction.embedding(ctx) @ lift.conj().T
     # A local map keeps each earlier map that reaches the patch as a parent,
@@ -885,10 +898,10 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
     parents = lineage(tuple(t.projection for t in joined if t.projection is not None))
     step = OperatorProjection(tuple(labels), tuple(numeric.authored_dims), tuple(numeric_survivors),
                               tuple(numeric_final.authored_dims), step_embedding, parents=parents) if local else None
-    carried: list[tuple[CollapseChannel, tuple[str, ...], tuple[int, ...], frozenset[int] | None]] = []
+    carried: list[tuple[CollapseChannel, tuple[str, ...], tuple[int, ...], _ExcitationChanges | None]] = []
 
     def carry(operator: Any, support_labels: tuple[str, ...], support_dims: tuple[int, ...], rate: Any,
-              name: str, changes: frozenset[int] | None) -> None:
+              name: str, changes: _ExcitationChanges | None) -> None:
         assert step is not None
         matrix, carried_labels, carried_dims = _in_device_order(
             chip, *step._embed(_array(operator), support_labels, support_dims),
@@ -923,8 +936,8 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
         rate = materialize_expr(channel.rate, chip.backend)
         changes = None
         if sectors is not None:
-            changes = authored_excitation_changes(channel.operator, support_labels, chip.backend,
-                                                  source_bases if chip_bases is None else chip_bases)
+            changes = authored_excitation_weights(channel.operator, support_labels, chip.backend,
+                                                 source_bases if chip_bases is None else chip_bases)
         if local:
             carry(chip.backend.to_array(materialize_expr(channel.operator, chip.backend)), support_labels,
                   tuple(chip[label].local_space().dimension for label in support_labels), rate, name, changes)
@@ -981,6 +994,7 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
         projected_baths.append(copied)
     projection = None if lone and not joined else (step if step is not None else OperatorProjection.capture(
         numeric, tuple(numeric_survivors), tuple(numeric_final.authored_dims), step_embedding,
+        unchanged_labels=unchanged_labels,
     )).with_current_operators(tuple(f"port:{label}" for label in port_replacements))
     order = "second-order" if method == "sw" else "exact projected"
     notes.append(f"Retained the full {order} Hamiltonian correction and each transformed channel "

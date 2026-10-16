@@ -195,22 +195,58 @@ class BasisRecord:
         indices = np.arange(vectors.shape[1], dtype=complex)
         return jnp.asarray((vectors * indices) @ vectors.conj().T)
 
+    def _authored_energy_ranks(self) -> Any | None:
+        """Return integer energy ranks when authored algebra proves a diagonal Hamiltonian.
+
+        The permutation can depend on traced energies. Unknown structure and
+        truncated local spaces provide no proof of native entry support.
+        """
+        from quchip.declarative.expr import _authored_entry_support
+
+        if self.native_dim != self.resolved_dim:
+            return None
+        support = _authored_entry_support(self.authored_hamiltonian)
+        if support is None or np.any(support & ~np.eye(self.native_dim, dtype=bool)):
+            return None
+        xp = jnp if contains_tracer(self.energy_vectors) else np
+        permutation = xp.argmax(xp.abs(self.energy_vectors), axis=0)
+        return xp.argsort(permutation)
+
 
 def resolve_local_basis(
     hamiltonian: Any,
     *,
     basis: Literal["native", "eigen"] = "native",
     levels: int | None = None,
+    authored_hamiltonian: Any = None,
 ) -> BasisRecord:
     """Resolve one fixed local solver basis from a static authored Hamiltonian."""
+    from quchip.declarative.expr import PhysicsExpr, _authored_entry_support
+    from quchip.utils.values import copy_value
+
     shape = getattr(hamiltonian, "shape", None)
     if shape is None or len(shape) != 2 or shape[0] != shape[1]:
         raise ValueError(f"Local Hamiltonian must be square, got shape {shape}.")
     native_dim = shape[0]
+    support = _authored_entry_support(authored_hamiltonian)
+    diagonal = support is not None and not np.any(support & ~np.eye(native_dim, dtype=bool))
+    authored = (authored_hamiltonian if isinstance(authored_hamiltonian, PhysicsExpr)
+                else copy_value(authored_hamiltonian, readonly=True))
+
+    def eigenpairs(count):
+        if not diagonal:
+            return _lowest_eigenpairs(hamiltonian, count)
+        # The declaration proves coordinate eigenvectors. Sort their energies
+        # explicitly so ties and crossings keep a permutation of those axes.
+        xp = jnp if contains_tracer(hamiltonian) else np
+        energies = xp.real(xp.diagonal(hamiltonian))
+        order = (jnp.argsort(energies, stable=True) if xp is jnp else np.argsort(energies, kind="stable"))[:count]
+        return jnp.asarray(energies[order]), jnp.asarray(xp.eye(native_dim, dtype=complex)[:, order])
+
     if basis == "native":
         if levels is not None:
             raise ValueError("levels is only valid when basis='eigen'.")
-        energies, energy_vectors = _lowest_eigenpairs(hamiltonian, native_dim)
+        energies, energy_vectors = eigenpairs(native_dim)
         return BasisRecord(
             kind="native",
             vectors=jnp.asarray(np.eye(native_dim, dtype=hamiltonian.dtype)),
@@ -218,6 +254,7 @@ def resolve_local_basis(
             energy_vectors=energy_vectors,
             native_dim=native_dim,
             resolved_dim=native_dim,
+            authored_hamiltonian=authored,
         )
     if basis != "eigen":
         raise ValueError(f"basis must be 'native' or 'eigen', got {basis!r}.")
@@ -225,7 +262,7 @@ def resolve_local_basis(
         raise ValueError("levels is required when basis='eigen'.")
     if levels < 1 or levels > native_dim:
         raise ValueError(f"levels must be between 1 and {native_dim}, got {levels}.")
-    energies, vectors = _lowest_eigenpairs(hamiltonian, levels)
+    energies, vectors = eigenpairs(levels)
     return BasisRecord(
         kind="eigen",
         vectors=vectors,
@@ -233,6 +270,7 @@ def resolve_local_basis(
         energy_vectors=vectors,
         native_dim=native_dim,
         resolved_dim=levels,
+        authored_hamiltonian=authored,
     )
 
 
@@ -245,5 +283,6 @@ def resolve_device_basis(
     """Resolve a device from its exact authored static Hamiltonian."""
     from quchip.declarative.expr import materialize_array
 
-    matrix = materialize_array(device.unresolved_hamiltonian())
-    return resolve_local_basis(matrix, basis=basis, levels=levels)
+    authored = device.unresolved_hamiltonian()
+    matrix = materialize_array(authored)
+    return resolve_local_basis(matrix, basis=basis, levels=levels, authored_hamiltonian=authored)

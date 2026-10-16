@@ -44,6 +44,7 @@ class PhysicsExpr:
     args: tuple[Any, ...] = ()
     labels: tuple[str, ...] = ()
     _bindings: Mapping[str, Any] = field(default_factory=dict, compare=False, repr=False)
+    _excitation_weights: Any = field(default=None, compare=False, repr=False)
 
     @classmethod
     def parameter(
@@ -101,11 +102,17 @@ class PhysicsExpr:
             row in the captured energy bases). Band decomposition treats all
             other total changes as structural zeros, even for traced payloads.
             ``None`` declares no structure.
+            Traced integer weights can validate a common frame, but do not
+            prove a fixed excitation space.
         """
         if len(labels) != len(dims):
             raise ValueError("Matrix labels and dimensions must have the same length.")
-        changes = None if excitation_changes is None else frozenset(int(c) for c in excitation_changes)
-        return cls("matrix", (copy_value(value, readonly=True), tuple(dims), name, changes), tuple(labels))
+        from quchip.utils.jax_utils import contains_tracer
+
+        weights = None if excitation_changes is None else tuple(excitation_changes)
+        changes = None if weights is None or contains_tracer(weights) else frozenset(int(c) for c in weights)
+        return cls("matrix", (copy_value(value, readonly=True), tuple(dims), name, changes), tuple(labels),
+                   _excitation_weights=weights if contains_tracer(weights) else None)
 
     @classmethod
     def from_function(
@@ -247,6 +254,8 @@ class PhysicsExpr:
         values: list[Any] = []
         for node in _walk_expr(self):
             values.extend(node._bindings.values())
+            if node._excitation_weights is not None:
+                values.extend(node._excitation_weights)
             if node.kind in ("literal", "matrix", "state", "signal"):
                 values.append(node.args[0])
             if node.kind == "level" and not isinstance(node.args[0], PhysicsExpr):
@@ -790,6 +799,31 @@ def declared_excitation_changes(expr: Any) -> frozenset[int] | None:
     return None
 
 
+def _authored_entry_support(expr: Any) -> np.ndarray | None:
+    """Bound native matrix support from algebra, independently of scalar coefficients."""
+    from quchip.utils.jax_utils import contains_tracer
+    import jax
+
+    if isinstance(expr, PhysicsExpr):
+        if expr.kind == "scale":
+            return _authored_entry_support(expr.args[1])
+        if expr.kind in ("add", "sub", "matmul", "tensor"):
+            left, right = (_authored_entry_support(arg) for arg in expr.args)
+            if left is None or right is None:
+                return None
+            if expr.kind in ("add", "sub"):
+                return left | right
+            return left @ right if expr.kind == "matmul" else np.kron(left, right)
+        if expr.kind not in ("op", "matrix") or contains_tracer(expr.numeric_values()):
+            return None
+        with jax.ensure_compile_time_eval():
+            expr = materialize_array(expr)
+    if contains_tracer(expr):
+        return None
+    values = np.asarray(expr)
+    return values != 0 if values.ndim == 2 else None
+
+
 def is_energy_diagonal(expr: Any, bases: Mapping[str, Any]) -> bool:
     """Return whether authored algebra guarantees zero energy-change weight in captured bases."""
     from quchip.devices.spaces import ChargeSpace, FockSpace, PhaseGridSpace
@@ -871,7 +905,8 @@ def materialize_expr(
 
             record = _matching_local_basis(node, local_bases, values)
             if record is None:
-                record = resolve_local_basis(materialize_array(node.args[0], bindings=values))
+                record = resolve_local_basis(materialize_array(node.args[0], bindings=values),
+                                             authored_hamiltonian=node.args[0])
             if record.kind == "native" and record.energy_to_solver() is None:
                 return backend.number(record.native_dim)
             return backend.from_array(record.authored_level_operator(),

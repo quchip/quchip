@@ -159,13 +159,7 @@ def _resolve_system(chip: "Chip", backend: Backend) -> _SystemResolution:
         # A constant local model stays concrete even when another component is traced.
         with jax.ensure_compile_time_eval():
             matrix = materialize_array(authored)
-            record = resolve_local_basis(matrix, basis=policy, levels=levels)
-        from quchip.declarative.expr import PhysicsExpr
-        from quchip.utils.values import copy_value
-
-        record = replace(record, authored_hamiltonian=(
-            authored if isinstance(authored, PhysicsExpr) else copy_value(authored, readonly=True)
-        ))
+            record = resolve_local_basis(matrix, basis=policy, levels=levels, authored_hamiltonian=authored)
         bases[device.label] = record
         dims.append(record.resolved_dim)
         if record.kind == "native":
@@ -626,14 +620,13 @@ def _collect_collapse_terms(
             if (retained_coordinates or len(check_support) > 1) and not _is_concrete_zero(resolved_rate):
                 frequencies = tuple(resolved_frame.frequencies[labels[index]] for index in check_support)
                 if not all(maybe_concrete_scalar(frequency) == 0.0 for frequency in frequencies):
-                    from quchip.chip.effective import authored_excitation_changes
-                    weights = authored_excitation_changes(operator, tuple(labels[i] for i in check_support),
-                                                          backend, resolution.bases)
-                    common = all(maybe_concrete_scalar(f) == maybe_concrete_scalar(frequencies[0])
-                                 and maybe_concrete_scalar(f) is not None for f in frequencies)
-                    frame_weights: tuple[tuple[int, ...], ...]
-                    if compact is not None and common and weights is not None and len(weights) <= 1:
-                        frame_weights = ((next(iter(weights), 0),),)
+                    from quchip.chip.effective import authored_excitation_weights
+                    weights = authored_excitation_weights(operator, tuple(labels[i] for i in check_support),
+                                                         backend, resolution.bases)
+                    common = len(_frequency_groups(frequencies)) == 1
+                    frame_weights: tuple[tuple[Any, ...], ...]
+                    if common and weights is not None:
+                        frame_weights = tuple((weight,) for weight in weights)
                         frequencies = (frequencies[0],)
                     else:
                         if local is None:
@@ -641,8 +634,15 @@ def _collect_collapse_terms(
                         frame_weights = tuple(_authored_bands(
                             chip, operator, local, check_support, resolution.bases, backend))
                     kind = "Effective channel" if retained_coordinates else "Collapse channel"
-                    _common_band_frame_frequency(frame_weights, frequencies,
-                                                 source=f"{kind} {source!r}/{channel!r}")
+                    carrier = _common_band_frame_frequency(frame_weights, frequencies,
+                                                          source=f"{kind} {source!r}/{channel!r}")
+                    if contains_tracer(carrier):
+                        guard = jnp.where(jnp.isfinite(carrier), 1.0, jnp.nan)
+                        if compact is not None:
+                            compact = compact * guard
+                        else:
+                            assert local is not None
+                            local = local * guard
             if len(support) > 1 and not _is_concrete_zero(resolved_rate):
                 resolved_support = tuple(labels[index] for index in support)
                 if resolved_support not in supports:
@@ -695,13 +695,15 @@ def _concrete_port_resolution(
         if traced:
             concrete_records: dict[str, BasisRecord] = {}
             for device in chip.devices:
-                matrix = materialize_array(device.unresolved_hamiltonian())
+                authored = device.unresolved_hamiltonian()
+                matrix = materialize_array(authored)
                 policy = chip.resolve_basis(device)
                 levels = device.resolved_dimension(chip.basis) if policy == "eigen" else None
                 concrete_records[device.label] = resolve_local_basis(
                     matrix,
                     basis=policy,
                     levels=levels,
+                    authored_hamiltonian=authored,
                 )
             records = concrete_records
         operator = _project_on_support(
@@ -790,6 +792,13 @@ def _port_frame_frequency(
     frequencies = tuple(resolved_frame.frequencies[label] for label in labels)
     if all(maybe_concrete_scalar(frequency) == 0.0 for frequency in frequencies):
         return 0.0
+    if len(_frequency_groups(frequencies)) == 1:
+        from quchip.chip.effective import authored_excitation_weights
+
+        weights = authored_excitation_weights(port._authored_operator(chip), labels, backend, resolution.bases)
+        if weights is not None and contains_tracer(weights):
+            return _common_band_frame_frequency(tuple((weight,) for weight in weights), (frequencies[0],),
+                                                source=f"Port {port.label!r}")
     bands = _port_bands(chip, port, backend, resolution)
     if not bands:
         raise ValueError(f"Port {port.label!r} requires a nonzero coupling operator.")
@@ -802,7 +811,7 @@ def _common_band_frame_frequency(bands: tuple[Any, ...], frequencies: tuple[Any,
     if not bands:
         return 0.0
     groups = _frequency_groups(frequencies)
-    signatures: list[tuple[float, tuple[float, ...]]] = []
+    signatures: list[tuple[Any, tuple[Any, ...]]] = []
     traced_groups: list[tuple[tuple[int, ...], Any]] = []
     for group in groups:
         representative = frequencies[group[0]]
@@ -810,10 +819,10 @@ def _common_band_frame_frequency(bands: tuple[Any, ...], frequencies: tuple[Any,
         if concrete is None:
             traced_groups.append((group, representative))
     for band in bands:
-        constant = 0.0
-        traced_coefficients: list[float] = []
+        constant: Any = 0.0
+        traced_coefficients: list[Any] = []
         for group in groups:
-            coefficient = float(sum(band[index] for index in group))
+            coefficient = sum(band[index] for index in group)
             representative = frequencies[group[0]]
             concrete = maybe_concrete_scalar(representative)
             if concrete is None:
@@ -823,25 +832,29 @@ def _common_band_frame_frequency(bands: tuple[Any, ...], frequencies: tuple[Any,
         signatures.append((constant, tuple(traced_coefficients)))
 
     reference = signatures[0]
-    if any(
-        not np.isclose(constant, reference[0], atol=1e-10, rtol=1e-10)
-        or not np.allclose(coefficients, reference[1], atol=1e-10, rtol=1e-10)
+    xp = jnp if contains_tracer(signatures) else np
+    invalid = xp.any(xp.asarray([
+        ~xp.isclose(constant, reference[0], atol=1e-10, rtol=1e-10)
+        | ~xp.all(xp.isclose(xp.asarray(coefficients), xp.asarray(reference[1]), atol=1e-10, rtol=1e-10))
         for constant, coefficients in signatures[1:]
-    ):
-        raise ValueError(
-            f"{source} has operator bands with different phases in the selected frame. "
-            "Use a common frame compatible with the operator, or the lab frame; "
-            "time-dependent collapse operators are not supported."
-        )
+    ], dtype=bool))
+
+    def reject(flag):
+        if bool(flag):
+            raise ValueError(
+                f"{source} has operator bands with different phases in the selected frame. "
+                "Use a common frame compatible with the operator, or the lab frame; "
+                "time-dependent collapse operators are not supported."
+            )
+
+    if contains_tracer(invalid):
+        jax.lax.cond(invalid, lambda flag: jax.debug.callback(reject, flag), lambda flag: None, invalid)
+    else:
+        reject(invalid)
     frequency: Any = reference[0]
-    has_term = frequency != 0.0
     for coefficient, (_, representative) in zip(reference[1], traced_groups, strict=True):
-        if coefficient == 0.0:
-            continue
-        term = representative if coefficient == 1.0 else coefficient * representative
-        frequency = frequency + term if has_term else term
-        has_term = True
-    return frequency
+        frequency = frequency + coefficient * representative
+    return xp.where(invalid, xp.nan, frequency) if contains_tracer(invalid) else frequency
 
 
 def _dynamic_term(

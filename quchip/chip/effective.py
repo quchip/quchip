@@ -17,6 +17,8 @@ from quchip.declarative.expr import (
 from quchip.utils.jax_utils import concrete_array_module, contains_tracer
 from quchip.utils.values import copy_value, value_fingerprint
 
+_ExcitationChanges = frozenset[int] | tuple[Any, ...]
+
 
 def authored_excitation_changes(
     operator: Any,
@@ -43,22 +45,39 @@ def authored_excitation_changes(
     bases : mapping or None
         Captured basis records keyed by device label.
     """
+    weights = authored_excitation_weights(operator, labels, backend, bases)
+    if weights is None or contains_tracer(weights):
+        return None
+    return frozenset(int(weight) for weight in weights)
+
+
+def authored_excitation_weights(operator: Any, labels: tuple[str, ...], backend: Any,
+                               bases: Mapping[str, Any] | None) -> tuple[Any, ...] | None:
+    """Carry structural level changes, including a diagonal basis's traced integer permutation.
+
+    Dynamic weights validate common-frame channels but cannot prove a fixed
+    excitation space. No traced operator amplitudes determine the support.
+    """
     from quchip.engine.bands import concrete_excitation_changes
 
     declared = declared_excitation_changes(operator)
     if declared is not None:
-        return declared
+        return tuple(declared)
+    if isinstance(operator, PhysicsExpr) and operator._excitation_weights is not None:
+        return operator._excitation_weights
     if bases is None or any(label not in bases for label in labels):
         return None
     bindings = _bound_values(operator) if isinstance(operator, PhysicsExpr) else None
 
-    def changes(node: Any, support: tuple[str, ...]) -> frozenset[int] | None:
+    def changes(node: Any, support: tuple[str, ...]) -> tuple[Any, ...] | None:
         declared = declared_excitation_changes(node)
         if declared is not None:
-            return declared
+            return tuple(declared)
         if isinstance(node, PhysicsExpr):
+            if node._excitation_weights is not None:
+                return node._excitation_weights
             if not node.labels or is_energy_diagonal(node, bases):
-                return frozenset({0})
+                return (0,)
             if node.kind in ("scale", "embed"):
                 operand = node.args[1] if node.kind == "scale" else node.args[0]
                 return changes(operand, operand.labels)
@@ -67,8 +86,10 @@ def authored_excitation_changes(
                 if left is None or right is None:
                     return None
                 if node.kind in ("add", "sub"):
-                    return left | right
-                return frozenset(a + b for a in left for b in right)
+                    combined = (*left, *right)
+                else:
+                    combined = tuple(a + b for a in left for b in right)
+                return combined if contains_tracer(combined) else tuple(sorted(set(combined)))
             # An opaque parameter-dependent function has no fixed support proof.
             if node.parameter_paths():
                 return None
@@ -79,8 +100,11 @@ def authored_excitation_changes(
         elif contains_tracer(node):
             return None
         records = [bases[label] for label in support]
+        ranks = None
         if contains_tracer(tuple(record.energy_vectors for record in records)):
-            return None
+            ranks = [record._authored_energy_ranks() for record in records]
+            if any(rank is None for rank in ranks):
+                return None
         from quchip.backend._memory import require_memory
 
         dimension = prod(record.native_dim for record in records)
@@ -88,11 +112,20 @@ def authored_excitation_changes(
                        remedy="Use factored operators or declare their excitation_changes.")
         with jax.ensure_compile_time_eval(), backend.eager_operators():
             matrix = backend.to_array(materialize_expr(node, backend, bindings=bindings, local_bases=bases))
+            if ranks is not None:
+                if contains_tracer(matrix):
+                    return None
+                rows, columns = np.nonzero(np.asarray(matrix))
+                dims = tuple(record.native_dim for record in records)
+                row_levels, column_levels = np.unravel_index(rows, dims), np.unravel_index(columns, dims)
+                weights = sum(rank[col] - rank[row] for rank, row, col in zip(ranks, row_levels, column_levels))
+                return tuple(weights)
             vectors = records[0].energy_vectors
             for record in records[1:]:
                 vectors = jnp.kron(vectors, record.energy_vectors)
             dims = tuple(int(record.energy_vectors.shape[1]) for record in records)
-            return concrete_excitation_changes(matrix, dims, vectors)
+            result = concrete_excitation_changes(matrix, dims, vectors)
+            return None if result is None else tuple(result)
 
     return changes(operator, labels)
 
@@ -147,6 +180,8 @@ class OperatorProjection:
     other devices keep their coordinates. A chain of local reductions therefore
     never forms a full-space embedding. Rates and local operators remain owned
     by the components. This record carries only their change of coordinates.
+    ``unchanged_labels`` identifies tensor factors on which this map is the
+    identity, proved by the reduction's generator support.
     """
 
     source_labels: tuple[str, ...]
@@ -156,6 +191,7 @@ class OperatorProjection:
     embedding: Any
     overrides: tuple[tuple[str, OperatorProjection], ...] = ()
     parents: tuple[OperatorProjection, ...] = ()
+    unchanged_labels: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for name in ("source_labels", "source_dims", "target_labels", "target_dims"):
@@ -185,10 +221,17 @@ class OperatorProjection:
         if any(not isinstance(parent, OperatorProjection) for parent in parents):
             raise TypeError("OperatorProjection parents must be OperatorProjection values.")
         object.__setattr__(self, "parents", parents)
+        unchanged = tuple(self.unchanged_labels)
+        if not set(unchanged) <= set(self.target_labels):
+            raise ValueError("Unchanged operator coordinates must belong to the target space.")
+        if any(self.source_dims[self.source_labels.index(label)] != self.target_dims[self.target_labels.index(label)]
+               for label in unchanged):
+            raise ValueError("Unchanged operator coordinates must keep their dimensions.")
+        object.__setattr__(self, "unchanged_labels", unchanged)
 
     @classmethod
     def capture(cls, chip: Any, target_labels: tuple[str, ...], target_dims: tuple[int, ...],
-                embedding: Any) -> OperatorProjection:
+                embedding: Any, *, unchanged_labels: tuple[str, ...] = ()) -> OperatorProjection:
         """Compose a reduction with the source's already captured operator coordinates.
 
         ``embedding`` maps the targets into the product space of all of
@@ -199,12 +242,15 @@ class OperatorProjection:
         labels, dims = tuple(d.label for d in chip.devices), tuple(chip.authored_dims)
         previous = tuple(t.projection for t in chip.effective_terms if t.projection is not None)
         if not (len(previous) == 1 and previous[0].target_labels == labels):
-            return cls(labels, dims, target_labels, target_dims, embedding, parents=lineage(previous))
+            return cls(labels, dims, target_labels, target_dims, embedding, parents=lineage(previous),
+                       unchanged_labels=unchanged_labels)
         parent = previous[0]
 
         def advance(previous: OperatorProjection) -> OperatorProjection:
             return replace(previous, target_labels=target_labels, target_dims=target_dims,
-                           embedding=previous.embedding @ embedding, overrides=())
+                           embedding=previous.embedding @ embedding, overrides=(),
+                           unchanged_labels=tuple(label for label in previous.unchanged_labels
+                                                  if label in unchanged_labels))
 
         return replace(advance(parent), overrides=tuple((key, advance(p)) for key, p in parent.overrides))
 
@@ -296,7 +342,7 @@ class OperatorProjection:
     def fingerprint(self) -> Any:
         own = value_fingerprint((self.source_labels, self.source_dims, self.target_labels,
                                  self.target_dims, self.embedding,
-                                 tuple((key, p.fingerprint()) for key, p in self.overrides)))
+                                 tuple((key, p.fingerprint()) for key, p in self.overrides), self.unchanged_labels))
         # Parent keys are already fingerprints. Hashing them again would double
         # their nesting depth at every step of a chain.
         return own if not self.parents else (own, tuple(p.fingerprint() for p in self.parents))
@@ -309,17 +355,20 @@ class OperatorProjection:
                     overrides={key: p.to_dict() for key, p in self.overrides})
         if self.parents:
             data["parents"] = [p.to_dict() for p in self.parents]
+        if self.unchanged_labels:
+            data["unchanged_labels"] = list(self.unchanged_labels)
         return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> OperatorProjection:
         required = {"source_labels", "source_dims", "target_labels", "target_dims", "real", "imag", "overrides"}
-        if not required <= set(data) <= required | {"parents"}:
+        if not required <= set(data) <= required | {"parents", "unchanged_labels"}:
             raise ValueError("Invalid serialized OperatorProjection fields.")
         return cls(tuple(data["source_labels"]), tuple(data["source_dims"]), tuple(data["target_labels"]),
                    tuple(data["target_dims"]), np.asarray(data["real"]) + 1j * np.asarray(data["imag"]),
                    tuple((key, cls.from_dict(p)) for key, p in data["overrides"].items()),
-                   tuple(cls.from_dict(p) for p in data.get("parents", ())))
+                   tuple(cls.from_dict(p) for p in data.get("parents", ())),
+                   tuple(data.get("unchanged_labels", ())))
 
 
 def lineage(projections: tuple[OperatorProjection, ...]) -> tuple[OperatorProjection, ...]:
@@ -355,7 +404,7 @@ def _walk(steps: tuple[OperatorProjection, ...], operator: Any, labels: tuple[st
     start, override = _entry(steps, owner_key)
     acted = False
     for step in (() if override is None else override._steps()) + steps[start:]:
-        if not set(step.source_labels).isdisjoint(labels):
+        if not set(step.source_labels).difference(step.unchanged_labels).isdisjoint(labels):
             operator, labels, dims = step._embed(operator, labels, dims)
             acted = True
     return operator, labels, dims, acted
@@ -367,7 +416,7 @@ def _reach(steps: tuple[OperatorProjection, ...], labels: tuple[str, ...],
     start, override = _entry(steps, owner_key)
     acted = False
     for step in (() if override is None else override._steps()) + steps[start:]:
-        if not set(step.source_labels).isdisjoint(labels):
+        if not set(step.source_labels).difference(step.unchanged_labels).isdisjoint(labels):
             labels = step.target_labels + tuple(label for label in labels if label not in step.source_labels)
             acted = True
     return labels if acted else None
@@ -446,7 +495,7 @@ def retained_operator(chip: Any, operator: Any, labels: tuple[str, ...], backend
     owners, _reached = _retained_owners(chip, tuple(labels), owner_key)
     if not owners:
         return None
-    changes = None if any(t.excitation_changes is None for t in owners) else authored_excitation_changes(
+    weights = None if any(t.excitation_changes is None for t in owners) else authored_excitation_weights(
         operator, labels, backend, bases,
     )
     matrix = backend.to_array(materialize_expr(operator, backend, local_bases=local_bases))
@@ -455,7 +504,7 @@ def retained_operator(chip: Any, operator: Any, labels: tuple[str, ...], backend
     assert transported is not None
     matrix, labels, dims = transported
     return PhysicsExpr.from_matrix(matrix, labels=labels, dims=dims, name="projected_operator",
-                                   excitation_changes=changes)
+                                   excitation_changes=weights)
 
 
 @dataclass(frozen=True, eq=False)
@@ -504,7 +553,7 @@ class EffectiveTerms:
     label: str = "effective"
     projection: OperatorProjection | None = None
     notes: tuple[str, ...] = ()
-    excitation_changes: Mapping[str, frozenset[int]] | None = None
+    excitation_changes: Mapping[str, _ExcitationChanges] | None = None
 
     def __post_init__(self) -> None:
         labels, dims = tuple(self.labels), tuple(self.dims)
@@ -554,7 +603,8 @@ class EffectiveTerms:
             if unknown:
                 raise ValueError(f"Excitation changes name unknown effective channels {sorted(unknown)}.")
             changes = {
-                name: frozenset(int(change) for change in self.excitation_changes[name])
+                name: (tuple(self.excitation_changes[name]) if contains_tracer(self.excitation_changes[name])
+                       else frozenset(int(change) for change in self.excitation_changes[name]))
                 for name in names if name in self.excitation_changes
             }
             object.__setattr__(self, "excitation_changes", changes)
