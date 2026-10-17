@@ -159,11 +159,13 @@ This file records notable user-visible changes to quchip.
   escape and stationarity rates. This is an approximate CW response when the
   reference decays, and does not simulate a finite acquisition. QuTiP and
   dynamiqs both compute it, with JAX derivatives on fixed structure. On
-  dynamiqs, one compiled solve covers every frequency of a sweep, and each new
-  number of frequencies compiles once. Iterative blocks check the residual of
-  every response and derivative solve.
+  dynamiqs, eager sweeps of every length reuse one compiled solve for one
+  frequency, and a traced sweep compiles one loop over its frequencies.
+  Iterative blocks stop at convergence and check the residual of every
+  response and derivative solve.
   ([#124](https://github.com/quchip/quchip/pull/124),
-  [#154](https://github.com/quchip/quchip/pull/154))
+  [#154](https://github.com/quchip/quchip/pull/154),
+  [#176](https://github.com/quchip/quchip/pull/176))
 - Labeled dressed queries, `drive_matrix_elements()`, weak-probe VNA and
   `fit_a_dress()` diagonalize only the excitation sectors they need when the
   chip conserves total excitation number. The engine proves conservation from
