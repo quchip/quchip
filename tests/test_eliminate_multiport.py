@@ -329,7 +329,7 @@ def test_deserialized_pole_on_a_linear_chip_enters_the_vacuum_sweep():
     np.testing.assert_allclose(VNA(chip).sweep(frequencies).matrix, expected, atol=1e-11, rtol=0)
 
 
-def _two_readout_hanger(detuning=0., *, one_way=False, internal_quality_factor=None, baths=()):
+def _two_readout_hanger(detuning=0., *, one_way=False, internal_quality_factor=None, baths=(), backend="qutip"):
     """A kept readout r0 and a removed readout r1 on one line; only r1 couples to the qubit."""
     qubit = DuffingTransmon(freq=5.3, anharmonicity=-.26, levels=2, label="q")
     kept = Resonator(freq=6., levels=2, internal_quality_factor=internal_quality_factor, label="r0")
@@ -343,8 +343,8 @@ def _two_readout_hanger(detuning=0., *, one_way=False, internal_quality_factor=N
     network.cascade(*right)
     network.expose("right", input=right[0].input, output=right[-1].output)
     network.expose("left", input=left[0].input, output=left[-1].output)
-    chip = Chip([qubit, kept, removed], [Capacitive(qubit, removed, g=.04)], port_network=network, frame=6.,
-                approximation=RWA(), baths=list(baths))
+    chip = Chip([qubit, kept, removed], [Capacitive(qubit, removed, g=.04, label="c")], port_network=network,
+                frame=6., approximation=RWA(), baths=list(baths), backend=backend)
     chip.wire(ChargeDrive(kept, label="d"))
     return chip
 
@@ -394,9 +394,30 @@ def test_active_patch_warns_with_the_return_path_entry():
     assert patch.eliminated_labels == ("r1",)
 
 
+@pytest.mark.optional_backend
+@pytest.mark.validation
+@pytest.mark.parametrize("local", [False, True])
+def test_return_path_entry_traces_and_matches_finite_difference(local):
+    """The entry keeps its value under jit, and its coupling derivative matches a central difference."""
+    pytest.importorskip("dynamiqs")
+    import jax
+
+    chip = _two_readout_hanger(.005, backend="dynamiqs")
+
+    def value(g):
+        return eliminate(chip.with_params({"c.g": g}), "r1", local=local).validity["r1_response"][
+            "self_energy_over_width"]
+
+    np.testing.assert_allclose(jax.jit(value)(.04), value(.04), rtol=1e-12)
+    step = 1e-5
+    expected = (float(value(.04 + step)) - float(value(.04 - step)))/(2*step)
+    # The central difference converges as step**2 and is within 2e-8 relative at this step.
+    np.testing.assert_allclose(jax.grad(value)(.04), expected, rtol=1e-7)
+
+
 @pytest.mark.validation
 def test_return_path_entry_matches_the_driven_error_of_a_kept_readout():
-    """The entry is the relative error of the reduced steady amplitude of r0 under a weak resonant drive."""
+    """The entry matches the relative error of the reduced steady amplitude of r0 under a weak resonant drive."""
     def amplitude(chip):
         sequence = QuantumSequence(chip)
         sequence.schedule("d", envelope=Square(duration=3000., amplitude=2e-5), freq=6.)
