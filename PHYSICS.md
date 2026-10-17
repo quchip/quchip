@@ -1815,15 +1815,19 @@ Native monitoring records the Markov coupling `L` of each selected channel and
 applies no reference section, also at the carrier. A record of the line output
 through the section, or of a hidden channel that acted on the removed mode,
 therefore lacks the mode's response to the line field. For a weak input `beta`
-at `f`, the full chip gives `<L_e> = -kappa_e beta / D_r(f)` and
+at `f`, the single-pole response of the mode gives
+`<L_e> = -kappa_e beta / D_r(f)` and
 `<sqrt(kappa_i) a> = -sqrt(kappa_e kappa_i) beta / D_r(f)`, with
-`D_r(f) = (kappa_e + kappa_i)/2 + i 2π(f_r - f)`. Both stay finite as the
-dressing vanishes, while the reduced means vanish with it. A solve therefore
-rejects diffusive monitoring of these channels with a nonzero efficiency, as
-for a multiport response below. On a shared line, the rule also rejects the
-line record of kept emitters on the same line. Away from the removed
-frequency, the error of that record is of the order of `kappa_over_delta`.
-`OutputField` traces through the section keep the narrowband carrier
+`D_r(f) = (kappa_e + kappa_i)/2 + i 2π(f_r - f)`. This response is exact when
+the mode decouples from the survivors. Both means stay finite as the dressing
+vanishes, while the reduced means vanish with it. A solve therefore rejects
+diffusive monitoring of these channels with a nonzero efficiency, as for a
+multiport response below. On a shared line, the rule also rejects the line
+record of kept emitters on the same line. The isolated pole changes the mean
+field that reaches its port by `kappa_e / |D_r(f)|` of that field. This is
+`2 kappa_e / (kappa_e + kappa_i)` at `f_r`, and `kappa_over_delta` estimates it
+away from `f_r`. It is a mean-field correction, not a bound on the error of a
+record. `OutputField` traces through the section keep the narrowband carrier
 approximation above.
 
 A harmonic mode with several default lowering ports can instead retain one
