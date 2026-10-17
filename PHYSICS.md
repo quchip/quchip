@@ -1340,6 +1340,19 @@ Sources: [`quchip/chip/chip.py`](quchip/chip/chip.py), [`quchip/chip/analysis.py
 - assignment overlaps and labels below the requested overlap threshold
 - the dressed eigenvector matrix used by dressed-basis analysis
 
+Each dressed eigenvector `|psi_j>` has a fixed phase. quchip multiplies it by
+`conj(a)/|a|`, where `a = <b_k|psi_j>` is its amplitude on the bare product state
+`b_k` assigned to it, so this amplitude is real and nonnegative. The one-to-one
+assignment can give a vector a zero amplitude on its own label. When `|a|` is not
+above the square root of the floating-point epsilon, the anchor is the first
+amplitude within a relative `1e-6` of the vector's largest magnitude.
+`Chip.state()`, the eigenstates and eigenvector matrix of `DressedResult`,
+dressed-basis operators, drive matrix elements and the default initial state use
+this convention. Thus each nondegenerate dressed vector is the same on each
+backend, and its derivative is well defined while the eigenvalue gaps stay open and
+the assignment stays locally constant. A phase cannot fix a rotation, so an exactly
+degenerate eigenspace keeps the basis of the eigensolver.
+
 `Chip.freq()` evaluates dressed `0 -> 1` frequencies through a traceable labeled eigensystem, and `DressedResult` does not store them. Frequencies, states, Kerr shifts and drive matrix elements all use the chip's approximation, so `RWA(keep_bands=...)` applies here too. Choose `Exact()` to include counter-rotating bands and their Bloch–Siegert shifts.
 
 When the static model conserves the total energy-level index `N`, labeled queries
@@ -1396,11 +1409,10 @@ with the final dressed state as the matrix row and the initial dressed state as 
 column, so `Chip.drive_matrix_elements((initial, final))[j]` reads `[final, initial]` from
 `U† D_j U`. The device shorthand `chip.drive_matrix_elements(q)` selects the dressed transition from
 the all-ground state to the state labeled by one excitation in `q`. Explicit
-`(initial_mapping, final_mapping)` arguments select arbitrary transitions. Before evaluating the
-matrix element, quchip phase-fixes every dressed eigenvector so that its overlap with its assigned
-bare state is real and nonnegative. This removes backend-dependent eigenvector signs from
-comparisons between conditioned transitions, e.g. the sum and difference for the weak-drive `IX` and
-`ZX` coefficients.
+`(initial_mapping, final_mapping)` arguments select arbitrary transitions. The dressed
+eigenvectors follow the phase convention of §9, so each has a real, nonnegative overlap with its
+assigned bare state. This removes backend-dependent eigenvector signs from comparisons between
+conditioned transitions, e.g. the sum and difference for the weak-drive `IX` and `ZX` coefficients.
 
 On a reduced chip, the physical drive operator first passes through the same
 retained coordinate maps as a scheduled pulse. Its support can grow across

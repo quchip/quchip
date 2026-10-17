@@ -1913,9 +1913,10 @@ class Chip:
         This method is safe in ``jax.jit``/``grad``/``vmap``. Under tracing,
         the :func:`~quchip.chip.dressing.label_eigensystem` array kernel
         selects the assigned eigenvector column, so dressed initial states are
-        differentiable end-to-end. The global phase is gauge-dependent
-        (``eigh`` column convention), which does not change populations or
-        ``|overlap|`` figures of merit.
+        differentiable end-to-end. The state's amplitude on its assigned
+        product state is real and nonnegative (see
+        :func:`~quchip.chip.dressing.gauge_phases`), so the state vector, not
+        only its populations, is the same on each backend.
 
         Parameters
         ----------

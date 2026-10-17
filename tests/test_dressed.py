@@ -80,8 +80,49 @@ def test_dressed_analysis_uses_local_energy_labels(backend, basis) -> None:
 
         state = jax.jit(lambda ej: chip.with_params({"q.E_J": ej}).state(q=1))(12.0)
         np.testing.assert_allclose(
-            abs(chip.backend.to_array(state)), abs(chip.backend.to_array(chip.state(q=1))), atol=1e-12,
+            chip.backend.to_array(state), chip.backend.to_array(chip.state(q=1)), atol=1e-12,
         )
+
+
+@pytest.mark.optional_backend
+def test_dressed_states_follow_one_phase_convention_on_every_backend() -> None:
+    """Dressed vectors have a real, positive assigned bare amplitude, so the backends agree in sign."""
+    pytest.importorskip("dynamiqs")
+    import jax
+
+    def build(backend):
+        q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
+        q1 = DuffingTransmon(freq=5.3, anharmonicity=-0.25, levels=3, label="q1")
+        return Chip([q0, q1], [Capacitive(q0, q1, g=0.02, label="c")], backend=backend)
+
+    def vector(chip, state):
+        return np.ravel(np.asarray(chip.backend.to_array(state)))
+
+    chips = {backend: build(backend) for backend in ("qutip", "dynamiqs")}
+    dressed = {backend: chip.dress() for backend, chip in chips.items()}
+    for backend, result in dressed.items():
+        matrix = np.asarray(result.eigenvector_matrix)
+        kets = np.column_stack([vector(chips[backend], ket) for ket in result.eigenstates])
+        np.testing.assert_allclose(kets, matrix, atol=1e-12)
+        anchors = [matrix[np.ravel_multi_index(label, (3, 3)), result.state_map[label]] for label in result.bare_labels]
+        np.testing.assert_allclose(np.imag(anchors), 0.0, atol=1e-12)
+        assert min(np.real(anchors)) > 0.9
+    np.testing.assert_allclose(
+        np.asarray(dressed["dynamiqs"].eigenvector_matrix), np.asarray(dressed["qutip"].eigenvector_matrix),
+        atol=1e-10,
+    )
+    with warnings.catch_warnings():
+        # The 2-excitation states hybridize; the comparison still covers them.
+        warnings.filterwarnings("ignore", message="Dressed state label")
+        for label in dressed["qutip"].bare_labels:
+            states = [vector(chip, chip.state(q0=label[0], q1=label[1])) for chip in chips.values()]
+            np.testing.assert_allclose(states[1], states[0], atol=1e-10)
+    number = [chip.backend.to_array(chip.operator_in_dressed_basis("q0", "n")) for chip in chips.values()]
+    np.testing.assert_allclose(number[1], number[0], atol=1e-10)
+    traced = jax.jit(lambda g: chips["dynamiqs"].with_params({"c.g": g}).state(q0=1))(0.02)
+    np.testing.assert_allclose(
+        vector(chips["dynamiqs"], traced), vector(chips["qutip"], chips["qutip"].state(q0=1)), atol=1e-10,
+    )
 
 
 @pytest.fixture
