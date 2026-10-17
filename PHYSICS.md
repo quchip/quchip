@@ -967,7 +967,8 @@ every label whose levels sum to `N = sum_i n_i <= K`. It counts levels, not
 energy, so it is not an energy window. Set it with `Chip(..., space=...)` or
 `chip.with_space(...)`, and remove it with `chip.with_space(None)`. Clones,
 parameter rebinding, serialization, and fitted chips keep the policy. quchip
-never selects or changes a policy automatically.
+never selects or changes a chip's policy. Without a policy, `VNA.finite_power()`
+and `VNA.measure()` can truncate their own stationary solve and warn (§6.5).
 
 With the projector `P` on the retained labels, the truncated model is
 
@@ -1043,14 +1044,112 @@ resonator of the `ExcitationCutoff` docstring example, it is +2.261 MHz at
 `K = 3` and -1.136 MHz at `K = 4`, against -1.137 MHz without a cutoff.
 
 Workflows that need the full product space or a local neighborhood raise under
-an active cutoff. They are VNA and stationary port analysis, `steadystate()`,
-stochastic trajectory solvers, `eliminate()`, `eliminate_spectators()`, `active_patch()`,
-`fit_a_dress(evaluator="local")`, and `chip.partition()`. Each message names
-`chip.with_space(None)`. A cutoff with `K >= sum_i (d_i - 1)` keeps every label,
-so it is inactive and changes no calculation. The classes and spaces depend
+an active cutoff. They are `VNA.sweep()`, `VNA.output_spectrum()`, `VNA.g1()`,
+`VNA.g2()`, `steadystate()`, stochastic trajectory solvers, `eliminate()`,
+`eliminate_spectators()`, `active_patch()`, `fit_a_dress(evaluator="local")`,
+and `chip.partition()`. Each message names `chip.with_space(None)`.
+`VNA.finite_power()` and `VNA.measure()` solve the truncated model (§6.5). A
+cutoff with `K >= sum_i (d_i - 1)` keeps every label, so it is inactive and
+changes no calculation. The classes and spaces depend
 only on structural excitation changes, so they stay fixed under JAX tracing.
 Traced class blocks use differentiable eigensolves, with the derivative
 conditions of §9.
+
+### 6.5 Finite-probe stationary states on excitation sectors
+
+Sources: [`quchip/engine/sector_stationary.py`](quchip/engine/sector_stationary.py),
+[`quchip/backend/_sector_stationary.py`](quchip/backend/_sector_stationary.py),
+[`quchip/analysis/measurement.py`](quchip/analysis/measurement.py)
+
+`VNA.finite_power()` and `VNA.measure()` solve one stationary state at each
+grid point (§8.1, §8.2). For a chip that conserves the total excitation `N`, a
+weak probe reaches only `N = 0` and `N = 1`. A finite probe couples every `N`
+to `N ± 1`, so no finite set of sectors is closed. These methods then solve
+the truncated model of §6.4 on the labels with `N <= K`. It differs from the
+full model only by the probe elements from `N = K` to `N = K + 1`.
+
+This route applies when the static model conserves `N`, every port lowers `N`
+by one, and every other channel lowers `N` by one or conserves it. The inputs
+must be vacuum, and the chip must have no thermal device occupation, pump,
+output network or retained mode response. All values must be concrete. Other
+chips and calls under JAX tracing use the stationary engine. It solves the
+compact model directly under an explicit cutoff, and the full product space
+otherwise.
+
+In the probe frame, `H' = 2π (H - E_0 - f N)`. Port `k` receives the probe
+coefficient `c_k = S_k,in beta_in h_in(f)`, with the probe amplitude
+`beta_in` in the physics convention (§8.1). With lowering channels `L_k` and
+conserving channels `C_m`, the generator is
+
+```text
+G(X) = A X + X A† + sum_k L_k X L_k† + sum_m C_m X C_m† + [W - W†, X],
+A = -i H' - (1/2) sum_k L_k† L_k - (1/2) sum_m C_m† C_m,   W = sum_k conj(c_k) L_k.
+```
+
+The solver stores the blocks `X_NM` with `N, M <= K` and never forms the
+product space. It replaces the vacuum equation by `Tr X = 1` and writes
+`X = |0><0| + Δ`. The iteration then resolves only the probe's correction, so
+weak probes keep their relative accuracy. A product-space solve has an
+absolute round-off near `1e-15` on the vacuum population instead. At
+`|beta| = 1.1e-4`, this made its excess noise spectra differ by `1.3e-6`
+relative, and iterative refinement of its state reduced the difference to
+`1e-8`.
+
+Restarted GMRES solves for `Δ`. Its right preconditioner inverts the
+probe-free generator. The lowering jumps stay exact, and the conserving jumps
+keep their diagonals in the eigenbasis of each sector drift. Each real part is
+shifted to at most `-2 δ`, where `δ` is `1e-6` of the largest decay rate. The
+blocks are solved from the largest `N + M` downwards, because the jumps feed
+`X_NM` from `X_{N+1,M+1}`. A sector with more than 1024 labels, or with an
+ill-conditioned eigenbasis, uses the eigenbasis of the Hermitian part of its
+drift. A solve whose relative residual stays above `1e-8` raises. The Krylov
+storage is checked against the available memory first.
+
+A sector drift eigenvalue that decays more slowly than `δ` can mark a dark
+state. The solver then starts again from the maximally mixed state. If the two
+solutions differ by more than `1e-6`, the truncated model has more than one
+stationary state, and the call raises. Two resonant qubits on one channel
+`σ_1 + 2 σ_2` have the dark state `2|10> - |01>`. The probe reaches it only
+through `|11>`, so `K = 1` raises and `K = 2` has one stationary state.
+
+The noise spectra solve `(G + i 2π f) Y = B` with `Tr Y = 0` on the same
+blocks, with the sign of `stationary_resolvent()` (§8.2). Since
+`R_f(B†) = R_{-f}(B)†`, each output and offset needs one solve. Mode
+amplitudes and photon numbers evaluate the authored `a` and `n` on the
+retained labels.
+
+With `chip.with_space(ExcitationCutoff(max_total=K))`, `K` is the chip's, and
+the call does not check it. Without a cutoff, with `options=None` and more
+than 64 product states, the methods choose `K`. They start at `K = 2`, solve
+the whole grid, and solve it again at `K + 1`. At every grid point, they
+compare the output means, mode amplitudes and photon numbers. When
+`N <= K + 1` has at most 1024 labels, they also compare the noise spectra at
+every offset. For two values `a` and `b` of one quantity, the change is
+`|a - b| / (max(|a|, |b|) + 1e-3 m)`, where `m` is the largest value of that
+quantity on the grid. The floor gives an absolute tolerance of `1e-9 m`. If
+any change is above `1e-6`, `K` increases by one. The result is the solve at
+`K`, not at `K + 1`. One warning per call gives `K`, the retained dimension
+and the result of the check. If `K + 1` does not fit in memory, the check does
+not run, and the warning says so. If `K` reaches the largest total, the solve
+is exact and the call does not warn. Without a cutoff, `options={}` solves the
+full product space.
+
+This check measures the change from `K` to `K + 1`, not the error of the
+result. The weight on `N = K` alone does not measure the error, because a
+conserving jump can move population into a sector above the cutoff. Take a
+resonator with `0.05 / ns` port decay and a jump `a³ b†³` at the same rate into
+a slow mode `b`. At `K = 2`, `N = 2` holds a weight of `5e-4`. The resonant
+ratio is `-0.997` there and `-0.814` in the full space, because the jump fills
+`N = 3`. The automatic route keeps `K = 4`, at `7.8e-8 |beta|` from the full
+solve.
+
+Diagnostics report `excitation_cutoff`, `cutoff_choice` (`"explicit"` or
+`"automatic"`), `retained_dimension` and the weight on each total. They also
+report the GMRES iterations and relative residual, the trace, Hermiticity and
+positivity errors of the state, and the iterations, residual and `|Tr Y|` of
+the noise solves. An automatic choice adds `cutoff_check`. Under an explicit
+cutoff, the stationary engine reports `excitation_cutoff` and
+`retained_dimension` with its own diagnostics.
 
 ## 7. Counter-Rotating Terms
 
@@ -1151,7 +1250,8 @@ plane must resolve at the probe frequency. The ratio `<b_out,j>/beta` tends
 to the corresponding `S_ji` as `beta -> 0` if no fixed pump leaves a coherent
 mean at that plane and carrier. At finite `beta`, the ratio is a stationary
 mean-field response, not a small-signal S-parameter, and does not describe
-sweep-rate hysteresis or metastable branches.
+sweep-rate hysteresis or metastable branches. On a chip that conserves the
+total excitation, the solve can keep only the labels with `N <= K` (§6.5).
 
 For a pump-free passive-linear model, the same authored expressions also admit
 the mode-space form
@@ -1327,7 +1427,9 @@ Concrete acquisitions check stability. Traced paths keep the usual
 host-validation limitation. Thermal device collapse declarations, nonlinear or
 active terms, fixed pump configurations, branched output graphs, and explicit
 solver options keep the operator-space acquisition. Passing `options={}`
-requests that general route for cross-checks.
+requests that general route for cross-checks. On a large chip that conserves
+the total excitation, the operator-space acquisition solves on excitation
+sectors (§6.5), and `options={}` requests the full product space.
 
 Measurements also capture internal Fock-mode observables. `mode_amplitude(r)`
 returns `<a_r>` in the stationary frame that `mode_frequency(r)` reports, and

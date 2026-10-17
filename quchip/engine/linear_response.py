@@ -206,6 +206,7 @@ class _SectorResponseModel:
     plane_indices: tuple[int, ...]
     references: list[Any]
     conserving_indices: tuple[int, ...]
+    keys: tuple[str, ...] = ()
 
     def channel_block(self, index: int, row_total: int, column_total: int) -> Any:
         xp = self.sectors.chip.backend.array_module
@@ -280,7 +281,7 @@ def _sector_response_model(chip: Any, plane_labels: tuple[str, ...]) -> _SectorR
                   if compiled.channels else xp.eye(len(keys), dtype=complex))
 
     return _SectorResponseModel(sectors, channels, scattering, plane_indices, references,
-                                tuple(len(compiled.channels) + i for i in conserving_indices))
+                                tuple(len(compiled.channels) + i for i in conserving_indices), keys)
 
 
 def _build_linear_response_problem(

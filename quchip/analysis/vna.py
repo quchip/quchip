@@ -53,13 +53,17 @@ class _OperatingPoint:
 
     @property
     def diagnostics(self) -> Mapping[str, Any]:
-        return _LazyDiagnostics({
+        values = {
             "solver": "stationary_resolvent",
             "residual": self.state.residual,
             "trace_error": self.state.trace_error,
             "positivity_error": DeferredValue(partial(getattr, self.state, "positivity_error")),
             "condition_number": partial(getattr, self.state, "condition_number"),
-        })
+        }
+        space = self.engine.excitation_space
+        if space is not None:
+            values.update(excitation_cutoff=max(space.totals), retained_dimension=space.size)
+        return _LazyDiagnostics(values)
 
 
 @dataclass(frozen=True)
@@ -140,9 +144,6 @@ class VNA:
     """
 
     def __init__(self, chip: Any, *, ports: Sequence[Any] | None = None) -> None:
-        from quchip.cutoff import reject_cutoff
-
-        reject_cutoff(chip, "VNA")
         self.chip = chip
         if ports is None:
             if chip.port_network is None:
@@ -238,6 +239,9 @@ class VNA:
             Matrix with shape ``(*shape, n_ports, n_ports)`` and indexing
             ``[..., output, input]``.
         """
+        from quchip.cutoff import reject_cutoff
+
+        reject_cutoff(self.chip, "VNA.sweep()")
         freq_values, freq_is_axis = _axis_values(frequencies)
         self._validate_variations(variations, reserved=("frequency",) if freq_is_axis else ())
         variation_shape, variation_points = _iter_axis_points(variations)
@@ -340,9 +344,19 @@ class VNA:
         and hidden-channel bookkeeping as ``sweep()``. It also stores the incident
         ``beta``, broadcast over the grid.
 
-        This method always uses the stationary Liouvillian route. It does not use the
-        passive-linear mode-space shortcut or follow sweep-rate hysteresis and
-        metastable branches.
+        This method does not use the passive-linear mode-space shortcut or follow
+        sweep-rate hysteresis and metastable branches. A chip whose static model
+        conserves the total excitation ``N``, with ports that lower ``N``, other
+        channels that lower or conserve it, vacuum inputs, no thermal occupation,
+        no pumps and no output network, solves on excitation sectors. A finite
+        probe couples every ``N`` to ``N ± 1``, so this route keeps the product
+        states with ``N <= K``. With ``chip.with_space(ExcitationCutoff(max_total=K))``,
+        ``K`` is the chip's. Without a cutoff, a chip with more than 64 product
+        states starts at ``K = 2``, compares the result with ``K + 1`` at every grid
+        point, raises ``K`` until the change is below ``1e-6`` relative, and warns
+        which ``K`` it kept. This is a convergence check, not an error bound.
+        Without a cutoff, ``options`` other than ``None`` solve on the full
+        product space.
 
         Parameters
         ----------
@@ -353,7 +367,8 @@ class VNA:
         input : port object or str, optional
             Probe input, required when multiple ports are selected.
         options : dict or None, optional
-            Stationary solver options.
+            Stationary solver options. Without a cutoff, a dictionary selects the
+            full product space.
         progress : bool, default=False
             Show a progress bar.
 
@@ -423,6 +438,11 @@ class VNA:
         Fock-mode amplitudes and occupations, which you query with
         mode_amplitude(device) and photon_number(device).
 
+        An excitation-conserving chip solves on the product states with
+        ``N <= K``, as :meth:`finite_power` describes. Without a cutoff, the
+        automatic check also compares the noise spectra on the requested offset
+        grid when the ``K + 1`` space has at most 1024 states.
+
         Parameters
         ----------
         frequencies, amplitudes : scalar or array_like
@@ -436,7 +456,8 @@ class VNA:
         noise_frequencies : array_like or None, optional
             Symmetric increasing offset grid in GHz, including zero.
         options : dict or None, optional
-            Stationary solver options.
+            Stationary solver options. ``None`` permits the passive-linear
+            shortcut. Without a cutoff, a dictionary selects the full product space.
         progress : bool, default=False
             Show a progress bar.
 
@@ -471,6 +492,9 @@ class VNA:
         options : dict or None, optional
             Stationary solver options.
         """
+        from quchip.cutoff import reject_cutoff
+
+        reject_cutoff(self.chip, "VNA.output_spectrum()")
         output_port = _resolve_exposure(self.chip, output)
         frequency_values, _ = _axis_values(frequencies)
         operating = self._stationary_output(output_port, options)
@@ -580,6 +604,9 @@ class VNA:
         order: int,
         options: dict | None,
     ) -> OutputCorrelationResult:
+        from quchip.cutoff import reject_cutoff
+
+        reject_cutoff(self.chip, f"VNA.g{order}()")
         output_port = _resolve_exposure(self.chip, output)
         input_port = output_port if input is None else _resolve_exposure(self.chip, input)
         delay_values, _ = _axis_values(delays)

@@ -173,13 +173,17 @@ def _ported_pair():
 @pytest.mark.unit
 @pytest.mark.parametrize("workflow", [
     lambda chip: chip.steadystate(),
-    lambda chip: VNA(chip),
+    lambda chip: VNA(chip).sweep(7.0),
+    lambda chip: VNA(chip).output_spectrum("out", frequencies=0.0),
+    lambda chip: VNA(chip).g1("out", 0.0),
+    lambda chip: VNA(chip).g2("out", 0.0),
     lambda chip: eliminate(chip, "r"),
     lambda chip: chip.partition(),
     lambda chip: QuantumSequence(chip).active_patch(),
     lambda chip: QuantumSequence(chip).simulate(tlist=[0.0, 1.0], solver="mcsolve"),
     lambda chip: fit_a_dress(chip, constraints={"q": {"freq": 5.0}}, vary={"q": ["freq"]}, evaluator="local"),
-], ids=["steadystate", "vna", "eliminate", "partition", "active_patch", "mcsolve", "local_fit"])
+], ids=["steadystate", "vna_sweep", "vna_output_spectrum", "vna_g1", "vna_g2", "eliminate", "partition",
+        "active_patch", "mcsolve", "local_fit"])
 def test_workflows_without_cutoff_support_raise(workflow):
     """Each excluded workflow raises and names the full product space instead of ignoring the cutoff."""
     with pytest.raises(ValueError, match=r"with_space\(None\)"):
