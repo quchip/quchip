@@ -123,6 +123,21 @@ This file records notable user-visible changes to quchip.
 
 #### New features
 
+- `ExcitationCutoff(max_total=K)` keeps the product energy labels whose levels
+  sum to at most `K`. Set it with `Chip(..., space=...)` or `chip.with_space(...)`.
+  It is separate from `RWA()` and `Exact()`, and quchip never sets it. The
+  truncated model keeps `P H(t) P`, with every element between retained
+  sectors, and the projected jumps `P L P`. Labeled dressed queries,
+  `Chip.state()`, `Chip.compact_state()`, `fit_a_dress(evaluator="full")` and
+  deterministic pulse solves on QuTiP and dynamiqs use it, also under JAX
+  tracing. Under `Exact()`, the frequencies of a ring of 24 three-level devices
+  then need blocks of 301 and 2600 states at `K = 3`. Labels and supplied states
+  above the cutoff raise. `result.check_truncation()` reports the sampled
+  population in the sectors that connect above the cutoff, as a heuristic.
+  `Chip.dress()`, VNA, steady-state, stochastic, elimination, local-fit and
+  partition workflows raise for an active cutoff. Compare results at
+  increasing `K`, because convergence need not be monotone.
+  ([#180](https://github.com/quchip/quchip/pull/180))
 - `eliminate()` removes a readout with one port in each direction of a two-way
   hanger feedline. The reduced network keeps the readout's dressed pole at the
   original ports, so vacuum `VNA.sweep()` keeps the dip and the reflection into

@@ -9,6 +9,7 @@ Frequencies are in GHz, times in ns, temperatures in mK and decay rates in
 | You need | Use |
 |---|---|
 | Dressed frequencies or interactions | `chip.freq()`, `dispersive_shift()`, `static_zz()` |
+| Counter-rotating statics or pulses of a large chip | `chip.with_space(ExcitationCutoff(max_total=K))` |
 | A spectrum over a parameter grid | `SpectrumSweep` with `Sweep` |
 | A pulse or an idle interval | `QuantumSequence.simulate()` |
 | Related pulse experiments | `sequence.simulate_batch()` |
@@ -226,6 +227,47 @@ or fallback reason. Local queries keep the state compact. Existing native
 state exports expand only when requested and check memory first. A full
 population dictionary also requires product-space storage. Use `population`
 for individual device occupations on large models.
+
+## Truncate the total excitation
+
+Under `Exact()`, counter-rotating pair terms connect every excitation sector.
+Labeled queries and pulse solves of a large chip then need the full product
+space. `ExcitationCutoff(max_total=K)` keeps the product labels whose levels sum
+to at most `K`, and it keeps every matrix element between them. It is an
+explicit approximation of the model, separate from `RWA()` and `Exact()`.
+
+```python
+from quchip import Capacitive, Chip, DuffingTransmon, Exact, ExcitationCutoff, Resonator
+
+q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=4, label="q")
+r = Resonator(freq=7.0, levels=6, label="r")
+chip = Chip([q, r], [Capacitive(q, r, g=0.1)], approximation=Exact())
+for max_total in (2, 3, 4, 5):
+    limited = chip.with_space(ExcitationCutoff(max_total=max_total))
+    print(max_total, limited.freq(q), limited.dispersive_shift(q, r))
+```
+
+The dispersive shift is -1.109, +2.261, -1.136 and -1.136 MHz for these
+cutoffs, and -1.137 MHz without a cutoff. At `max_total=3`, the label
+`{q: 1, r: 1}` loses its counter-rotating partners at `N = 4`, while the vacuum
+keeps its partners at `N = 2`. Report a
+quantity only after it is stable at increasing `max_total`. Do this for
+frequencies, populations, phases and gradients, since their convergence need
+not be monotone. Check the local level truncation separately, with more
+`levels` at a fixed `max_total`.
+
+A label above the cutoff raises, and so does a supplied state with more than
+`1e-20` of its weight above the cutoff. quchip treats a smaller residue as
+basis-conversion round-off and drops it without renormalization. Pulse solves
+evolve the truncated model. Their default initial state is the truncated
+model's vacuum-assigned eigenvector. `result.check_truncation()[ExcitationCutoff(K)]`
+gives the maximum sampled population in the sectors that one step can move
+above the cutoff. This value is a warning heuristic, not an error bound.
+
+`chip.dress()`, VNA and stationary analyses, `steadystate()`, stochastic
+trajectory solvers, `eliminate()`, `active_patch()`,
+`fit_a_dress(evaluator="local")` and `chip.partition()` raise for a limited
+chip. Use `chip.with_space(None)` for them.
 
 ## Declare network noise
 

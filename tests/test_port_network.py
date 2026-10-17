@@ -10,7 +10,7 @@ import warnings
 import numpy as np
 import pytest
 
-from quchip import Chip, PortNetwork, QuantumSequence, Resonator
+from quchip import Chip, ExcitationCutoff, PortNetwork, QuantumSequence, Resonator
 from quchip.chip.couplings import Capacitive
 
 
@@ -967,13 +967,15 @@ def test_two_port_giant_atom_reproduces_kockum_rates_and_lamb_shift() -> None:
 
 
 def _engine(chip: Chip, route: str, initial_state: dict[str, int]) -> Any:
-    """Return a chip's engine on the product space or on a solve's compact space.
+    """Return a chip's engine on the product space, a solve's compact space, or the space of K = 1.
 
     The ``"compact"`` route is the exact space of a solve without dissipation
     from ``initial_state``.
     """
     if route == "product":
         engine = chip.resolve()
+    elif route == "cutoff":
+        engine = chip.with_space(ExcitationCutoff(1)).resolve()
     else:
         engine = QuantumSequence(chip).build_problem(
             np.linspace(0.0, 1.0, 2), initial_state=initial_state, dissipation=False).engine_result
@@ -1012,7 +1014,7 @@ def _cascade_exchange(rate: Any, route: str, *, backend: str = "qutip", giant_at
     return hamiltonian[_row(engine, (0, 1, *rest)), _row(engine, (1, 0, *rest))]
 
 
-@pytest.mark.parametrize("route", ["product", "compact"])
+@pytest.mark.parametrize("route", ["product", "compact", "cutoff"])
 @pytest.mark.parametrize(("rate", "giant_atom"), [(1e-9, False), (1e-14, True)], ids=["alone", "giant-atom"])
 def test_small_rate_cascade_keeps_its_exchange(route: str, rate: float, giant_atom: bool) -> None:
     """A small cascade keeps its exchange -i k / 2, also beside a 1/ns Lamb shift that cancels to round-off."""
@@ -1020,19 +1022,20 @@ def test_small_rate_cascade_keeps_its_exchange(route: str, rate: float, giant_at
 
 
 @pytest.mark.optional_backend
+@pytest.mark.parametrize("route", ["product", "cutoff"])
 @pytest.mark.parametrize(("rate", "giant_atom"), [(1e-9, False), (1e-14, True)], ids=["alone", "giant-atom"])
-def test_traced_small_rate_cascade_keeps_its_exchange(rate: float, giant_atom: bool) -> None:
+def test_traced_small_rate_cascade_keeps_its_exchange(route: str, rate: float, giant_atom: bool) -> None:
     """Tracing the rate gives the eager exchange element and its derivative -i / 2."""
     pytest.importorskip("dynamiqs")
     import jax
     import jax.numpy as jnp
 
     value, derivative = jax.jit(jax.value_and_grad(lambda rate: jnp.imag(_cascade_exchange(
-        rate, "product", backend="dynamiqs", giant_atom=giant_atom))))(rate)
+        rate, route, backend="dynamiqs", giant_atom=giant_atom))))(rate)
     assert (float(value) / rate, float(derivative)) == pytest.approx((-0.5, -0.5), rel=1e-12)
 
 
-@pytest.mark.parametrize("route", ["product", "compact"])
+@pytest.mark.parametrize("route", ["product", "compact", "cutoff"])
 @pytest.mark.parametrize("phase", [np.pi / 2, np.pi], ids=["half-pi", "pi"])
 def test_giant_atom_lamb_shift_keeps_only_a_physical_term(route: str, phase: float) -> None:
     """A three-level giant atom at 1/ns gets the shift sin(phi) a^dag a, and at phi = pi no network term."""

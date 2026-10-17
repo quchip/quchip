@@ -919,7 +919,7 @@ support selects the full product route, with a memory check before assembly.
 Dense compact operators that cannot fit in memory also select the full route.
 A batch proves one space from the initial states of all its points, or it uses
 the full route. The calculation never introduces an excitation cutoff
-automatically.
+automatically. §6.4 describes an explicit cutoff.
 
 For a Lindblad model, invariance requires `Q L_k P = 0` and
 `Q (-i H - sum_k L_k† L_k / 2) P = 0`, where `Q = I - P`.
@@ -955,6 +955,102 @@ exports expand lazily and refuse allocations that cannot fit.
 states without expansion. Their maps capture local energy bases. Replay
 requires the same bases. Explicit inputs retain the existing integration-frame
 convention (§4.2). quchip applies no hidden phase transformation.
+
+### 6.4 Excitation cutoffs
+
+Sources: [`quchip/cutoff.py`](quchip/cutoff.py), [`quchip/engine/sectors.py`](quchip/engine/sectors.py),
+[`quchip/engine/pulse_space.py`](quchip/engine/pulse_space.py)
+
+An approximation selects Hamiltonian terms. A space policy selects the product
+energy labels that a calculation keeps. `ExcitationCutoff(max_total=K)` keeps
+every label whose levels sum to `N = sum_i n_i <= K`. It counts levels, not
+energy, so it is not an energy window. Set it with `Chip(..., space=...)` or
+`chip.with_space(...)`, and remove it with `chip.with_space(None)`. Clones,
+parameter rebinding, serialization, and fitted chips keep the policy. quchip
+never selects or changes a policy automatically.
+
+With the projector `P` on the retained labels, the truncated model is
+
+```text
+H_K(t) = P H(t) P,    L_K = P L P,
+d rho/dt = -i [H_K(t), rho] + sum_k D[L_K,k] rho.
+```
+
+The cutoff removes labels and changes no matrix element between retained
+labels. Under `Exact()`, the counter-rotating elements between retained sectors
+stay. A network-generated Hamiltonian (§3.3.2) enters as `P H_gen P`. The
+engine forms each port pair's `(L_d† c L_u - h.c.) / 2i` on the pair's joint
+support before it projects. Two raising ports therefore keep their exchange
+`|01> <-> |10>` at `K = 1`, although it passes through `|11>`. For lowering
+ports, `P H_gen P` equals the composition of the projected ports. The
+dissipators use the projected jumps, so the truncated model preserves the
+trace. A label at `N = K` has no thermal excitation jump: the projection
+removes the jump and its no-jump term together.
+
+The static changes of `N` decide which retained totals mix. quchip connects the
+totals `0..K` by these steps without leaving `[0, K]`, and each connected class
+is one block of `P H_0 P`. `Exact()` capacitive pairs change `N` by `0` and
+`±2`, so they give the parity classes `{0, 2}` and `{1, 3}` at `K = 3`. Unknown
+changes give one class.
+
+Labeled static queries diagonalize the classes that hold their labels (§9).
+A label with `N > K` raises. `Chip.dress()` and the views built on it raise,
+because their results index the full product space. `chip.resolve()` and
+`chip.hamiltonian()` act on the retained labels, in the order of
+`resolve().excitation_space`. `fit_a_dress(evaluator="full")` fits the
+truncated model, and `max_hilbert_dim` bounds each class that a target
+diagonalizes.
+
+Deterministic `sesolve` and `mesolve` solves on QuTiP and dynamiqs evolve the
+truncated model. The planner of §6.3 closes the initial support inside
+`[0, K]`. Unknown support, and batch points that prove different spaces, use
+every retained label. The budget couples all devices, also devices without
+interactions. A limited chip's solve is therefore never partitioned, and
+`chip.partition()` raises.
+
+With `initial_state=None`, a solve starts from the eigenvector of the truncated
+static lab-frame model `P H_0 P` that is assigned to the bare vacuum, under the
+solve's approximation. Its vacuum overlap is real and nonnegative. Each
+retained label `|n>` then takes the frame phase `exp(i 2π t0 sum_i f_i n_i)`
+at the solve's start `t0`. This state belongs to the approximate model and
+changes with `K`. Supplied states must lie inside the cutoff. A label or
+`CompactState` with `N > K` raises, and so does a native state with more than
+`1e-20` of its weight on `N > K`. quchip treats a smaller residue as
+basis-conversion round-off. The solve drops it and does not renormalize the
+state.
+
+`result.stats["excitation_reduction"]` adds `cutoff`, `cutoff_dimension`, the
+number of retained labels, and `boundary`. The boundary holds the retained
+totals from which one Hamiltonian term, drive, jump, or no-jump product can
+reach `N > K`. `result.check_truncation()` adds the key `ExcitationCutoff(K)`.
+Its value is the maximum sampled population in the boundary totals, and a
+value above `threshold` warns. Unknown changes make this check unavailable,
+with a warning. The per-device level checks remain. The boundary population is
+a sampling heuristic, not an error bound. It ignores coupling strengths and
+detunings, and it can miss excursions between samples.
+
+To check convergence, compare frequencies, populations, phases, and gradients
+at increasing `K`. Check the local level truncation separately, with more
+`levels` at a fixed `K`. Convergence in `K` need not be monotone. Take two
+`Exact()` resonators at 5 and 6 GHz with three levels each and `g = 0.1` GHz.
+The 5 GHz mode's first frequency is 4.990098, 4.991007, and 4.989186 GHz at
+`K = 1, 2, 3`. At `K = 1`, no retained label pairs with the vacuum, so the
+value equals the RWA value. An observable that reads labels up to total `N`
+keeps one step of the largest static change `δ` from each label only for
+`K >= N + δ`. This bound is a minimum for one-step coverage, not a convergence
+criterion. A dispersive shift reads `N <= 2` and `δ = 2`. For the transmon and
+resonator of the `ExcitationCutoff` docstring example, it is +2.261 MHz at
+`K = 3` and -1.136 MHz at `K = 4`, against -1.137 MHz without a cutoff.
+
+Workflows that need the full product space or a local neighborhood raise under
+an active cutoff. They are VNA and stationary port analysis, `steadystate()`,
+stochastic trajectory solvers, `eliminate()`, `active_patch()`,
+`fit_a_dress(evaluator="local")`, and `chip.partition()`. Each message names
+`chip.with_space(None)`. A cutoff with `K >= sum_i (d_i - 1)` keeps every label,
+so it is inactive and changes no calculation. The classes and spaces depend
+only on structural excitation changes, so they stay fixed under JAX tracing.
+Traced class blocks use differentiable eigensolves, with the derivative
+conditions of §9.
 
 ## 7. Counter-Rotating Terms
 
@@ -1396,7 +1492,9 @@ precede local projection, sector enumeration and full-space static fallback.
 Traced blocks use differentiable eigensolves.
 Derivatives require separated eigenvalues and a locally stable assignment. `Chip.dress()`, `Chip.dressed_spectrum()` and
 dressed-basis operators still diagonalize the complete chip. Other chips keep
-that route for every query.
+that route for every query. Under an active `ExcitationCutoff` (§6.4), the same
+labeled queries and `Chip.state()` diagonalize the cutoff classes of their
+labels instead, with the same assignment and phase rules.
 
 `Chip.dress()` is always intrinsic static lab-frame analysis and is not part of
 the runtime frame transform. A resolved `EngineResult` also provides `dress()`,

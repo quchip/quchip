@@ -44,6 +44,7 @@ from scipy.optimize import brentq, least_squares
 from quchip.analysis.effective_hamiltonian import effective_hamiltonian_between_states
 from quchip.backend import _backend_context
 from quchip.chip import Chip
+from quchip.cutoff import active_cutoff, reject_cutoff
 from quchip.inverse_design.observables import (
     TargetSpec,
     build_dressed_target_specs,
@@ -105,6 +106,7 @@ def _estimate_bare_g(
         approximation=chip.approximation,
         basis=chip.basis,
         backend=chip.backend,
+        space=chip.space,
     )
 
     def obs_at_strength(strength: float) -> float:
@@ -265,6 +267,13 @@ def _target_model(candidate: Chip, spec: TargetSpec, evaluator: str, max_hilbert
         locator = (coupling.device_a_label, coupling.device_b_label)
     working = _working_chip(candidate, locator, evaluator)
     if spec.kind in _TARGET_LEVEL_SUMS:
+        policy = active_cutoff(working)
+        if policy is not None and _TARGET_LEVEL_SUMS[spec.kind] > policy.max_total:
+            raise ValueError(
+                f"The {spec.kind} target for {spec.label!r} reads labels with total excitation "
+                f"{_TARGET_LEVEL_SUMS[spec.kind]}, outside the excitation cutoff N <= {policy.max_total}. "
+                "Raise max_total."
+            )
         dimension = working.analysis._dressed_dimension(_TARGET_LEVEL_SUMS[spec.kind])
         if dimension > max_hilbert_dim:
             raise ValueError(
@@ -521,14 +530,19 @@ def fit_a_dress(
         discarded one. A ``PortNetwork`` with matrix-form ``scattering`` also
         raises when a neighborhood keeps only some of its planes. With the
         mapping form ``{(output, input): amplitude}``, each neighborhood keeps
-        the entries of its own planes.
+        the entries of its own planes. A chip with an active
+        :class:`~quchip.cutoff.ExcitationCutoff` raises, because a
+        neighborhood would spend the same budget on fewer devices.
     max_hilbert_dim
         Maximum dimension of each matrix that a target evaluation
         diagonalizes. A chip whose static model conserves the total
         excitation number diagonalizes only the excitation sectors that its
-        targets read. Other chips diagonalize the full product space. A larger
-        matrix raises before seeding or optimization. Each rebound or traced
-        target checks the limit again if its conservation proof changes.
+        targets read. Under an excitation cutoff, each target diagonalizes
+        the cutoff classes that its labels occupy, and every candidate keeps
+        the same cutoff. Other chips diagonalize the full product space. A
+        larger matrix raises before seeding or optimization. Each rebound or
+        traced target checks the limit again if its conservation proof
+        changes.
         No different approximation is selected. Increase the value to permit a larger model.
     seed_strength_bounds
         ``(lo, hi)`` magnitude bounds for the seed root solve of the bare coupling
@@ -590,6 +604,9 @@ def fit_a_dress(
     """
     if evaluator not in ("full", "local"):
         raise ValueError(f"Unknown evaluator {evaluator!r}; choose 'full' or 'local'.")
+    if evaluator == "local":
+        # A one-hop neighborhood would spend the global excitation budget on fewer devices.
+        reject_cutoff(chip, "fit_a_dress(evaluator='local')")
     if isinstance(max_hilbert_dim, bool) or not isinstance(max_hilbert_dim, Integral) or max_hilbert_dim < 1:
         raise ValueError("max_hilbert_dim must be a positive integer.")
     constraint_mapping = _coerce_mapping(constraints, "constraints") if constraints is not None else None

@@ -23,6 +23,7 @@ from jax.core import Tracer
 from quchip.backend import _backend_context
 from quchip.backend.protocol import Backend, Operator, State
 from quchip.approximations import Approximation, RWA, require_approximation
+from quchip.cutoff import ExcitationCutoff, active_cutoff, require_space
 from quchip.chip.analysis import ChipAnalysis, DressedResult, KerrMatrix
 from quchip.chip.baths import Bath
 from quchip.chip.effective import EffectiveTerms
@@ -203,6 +204,12 @@ class Chip:
     effective_terms : sequence[EffectiveTerms]
         Captured contributions that a reduction made. The engine keeps their
         retained operator bands when it applies the selected frame.
+    space : ExcitationCutoff or None, default=None
+        Retained product energy labels. ``None`` keeps the full product space,
+        with exact excitation reductions where quchip proves them.
+        :class:`~quchip.cutoff.ExcitationCutoff` keeps the labels with total
+        excitation ``N <= max_total`` for dressed analysis and deterministic
+        pulse solves. See :meth:`with_space`.
 
     Examples
     --------
@@ -226,6 +233,7 @@ class Chip:
         baths: list[Bath] | None = None,
         port_network: PortNetwork | None = None,
         effective_terms: Sequence[EffectiveTerms] = (),
+        space: ExcitationCutoff | None = None,
     ) -> None:
         duplicates = [lbl for lbl, count in Counter(d.label for d in devices).items() if count > 1]
         if duplicates:
@@ -285,6 +293,7 @@ class Chip:
         tuple(d.resolved_dimension(basis) for d in devices)
         self._frame_spec: FrameSpec = "lab"
         self._approximation = require_approximation(approximation)
+        self._space = require_space(space)
         if control_equipment is not None:
             drive_duplicates = [
                 lbl for lbl, n in Counter(d.label for d in control_equipment.lines).items() if n > 1
@@ -441,6 +450,7 @@ class Chip:
                 id(self.backend),
                 strategy,
                 self.basis,
+                self._space,
                 _frame_cache_value(frame_spec, traced=True),
                 tuple(component_fingerprint(device, traced=True) for device in self.devices),
                 tuple(
@@ -498,6 +508,16 @@ class Chip:
             return cache[2]
 
         local_resolution, resolved_frame = _prepare_engine_assembly(self, frame_spec, strategy, resolution=_resolution)
+        policy = active_cutoff(self)
+        if policy is not None:
+            from dataclasses import replace
+
+            from quchip.engine.pulse_space import PulseSpace
+
+            # The contract of a chip with an active cutoff lives on every label with N <= K.
+            space = PulseSpace.create(local_resolution.dims, tuple(device.label for device in self.devices),
+                                      range(policy.max_total + 1), local_resolution.bases)
+            local_resolution = replace(local_resolution, space=space)
         result = build_engine_result(
             self,
             [],
@@ -788,6 +808,39 @@ class Chip:
     def approximation(self) -> Approximation:
         """Approximation for the dressed analysis and the default solver assembly."""
         return self._approximation
+
+    @property
+    def space(self) -> ExcitationCutoff | None:
+        """Retained-space policy, or ``None`` for the full product space (see :meth:`with_space`)."""
+        return self._space
+
+    def with_space(self, space: ExcitationCutoff | None) -> "Chip":
+        """Return an isolated copy that keeps the product labels selected by ``space``.
+
+        The policy applies to dressed analysis, :meth:`resolve`, and
+        deterministic pulse solves. Workflows that do not support a cutoff
+        raise, e.g. VNA, steady-state, stochastic trajectory and elimination
+        calculations. The copy keeps the policy through cloning, parameter
+        rebinding and serialization. quchip never changes it automatically.
+
+        Parameters
+        ----------
+        space : ExcitationCutoff or None
+            Policy of the copy. ``None`` restores the full product space.
+
+        Examples
+        --------
+        >>> from quchip import Chip, DuffingTransmon, ExcitationCutoff
+        >>> q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=4, label="q")
+        >>> limited = Chip([q]).with_space(ExcitationCutoff(max_total=2))
+        >>> limited.space
+        ExcitationCutoff(max_total=2)
+        >>> limited.with_space(None).space is None
+        True
+        """
+        cloned = self.clone()
+        cloned._space = require_space(space)
+        return cloned
 
     @property
     def control_equipment(self) -> ControlEquipment | None:
@@ -1614,6 +1667,7 @@ class Chip:
                 ),
                 "frame": self._frame_spec,
                 "approximation": type(self._approximation).__name__,
+                "space": self._space,
                 "backend": type(self.backend).__name__,
             }
         )
@@ -1685,9 +1739,13 @@ class Chip:
         connect subsystems. Drive-crosstalk pairs stay together, so component
         solves keep their signal transform. The devices that a captured
         reduction map acts on also stay together, because the map can mix them.
+        An active excitation cutoff couples every device through its global
+        budget, so this method raises for it.
         """
         from quchip.chip.partition import partition_chip
+        from quchip.cutoff import reject_cutoff
 
+        reject_cutoff(self, "partition()")
         return partition_chip(self)
 
     def status(self) -> None:
@@ -1698,6 +1756,7 @@ class Chip:
         print(f"- couplings: {len(self._couplings)}")
         print(f"- frame: {self._frame_spec!r}")
         print(f"- approximation: {type(self._approximation).__name__}")
+        print(f"- space: {'full product' if self._space is None else self._space}")
         print(f"- dressed: {'yes' if self.is_dressed else 'no'}")
         print("- device list:")
         for dev, dim in zip(self._devices, self.dims):
@@ -2306,5 +2365,6 @@ class Chip:
             f"Chip(label={self.label!r}, devices={len(self._devices)}, "
             f"couplings={len(self._couplings)}, frame={self._frame_spec!r}, "
             f"approximation={type(self._approximation).__name__}, "
-            f"dressed={'yes' if self.is_dressed else 'no'})"
+            + ("" if self._space is None else f"space={self._space!r}, ")
+            + f"dressed={'yes' if self.is_dressed else 'no'})"
         )

@@ -61,6 +61,11 @@ if TYPE_CHECKING:
 
 
 _STATE_OVERLAP_WARNING = 0.9
+_CUTOFF_SPECTRUM_ERROR = (
+    "The full dressed spectrum (chip.dress() and the views built on it) is not available under an "
+    "excitation cutoff, and this chip keeps only N <= {max_total}. Use label queries such as chip.energy(), "
+    "chip.freq(), chip.state() or chip.compact_state(), or chip.with_space(None) for the full product space."
+)
 _DRESS_TRACING_ERROR = (
     "Dressing returns a concrete dict-keyed DressedResult and is not "
     "traceable under jax.jit/grad/vmap. Use Chip.energy(), Chip.freq(), "
@@ -503,6 +508,7 @@ class ChipAnalysis:
             f"{type(chip.backend).__module__}.{type(chip.backend).__qualname__}",
             chip.basis,
             chip.approximation,
+            chip.space,
             tuple(component_fingerprint(device, traced=True) for device in chip.devices),
             tuple(
                 (
@@ -530,6 +536,7 @@ class ChipAnalysis:
         """Return the resolved static lab-frame contract used by analysis."""
         from quchip.engine.assembly import _build_static_analysis_result
 
+        self._require_full_space()
         signature = self._analysis_signature()
         cache = self._engine_result_cache
         if scoped_hit(cache, signature):
@@ -620,6 +627,7 @@ class ChipAnalysis:
     ) -> tuple[Any, Any, Any, Labeling]:
         """Return the array eigensystem and labeling; traced results are reused only inside their trace."""
         chip = self._chip
+        self._require_full_space()
         signature = self._analysis_signature()
         if scoped_hit(self._array_cache, signature):
             return self._array_cache[2]
@@ -639,13 +647,24 @@ class ChipAnalysis:
         self._array_cache = scoped_entry(signature, result, traced=traced)
         return result
 
+    def _require_full_space(self) -> None:
+        """Raise when an active excitation cutoff excludes full product-space analysis."""
+        from quchip.cutoff import active_cutoff
+
+        policy = active_cutoff(self._chip)
+        if policy is not None:
+            raise ValueError(_CUTOFF_SPECTRUM_ERROR.format(max_total=policy.max_total))
+
     def _sector_model(self, *, _local_resolution: Any | None = None, _advise: bool = True) -> SectorModel | None:
-        """Return the chip's excitation-sector model, or ``None`` when its static model may change ``N``.
+        """Return the chip's block model, or ``None`` when it needs the full static eigensystem.
 
         Labeled dressed energies of a conserving chip come from the sector of
-        each label. Results cache like the full eigensystem.
+        each label. Under an active excitation cutoff, every chip uses the
+        cutoff classes of :class:`~quchip.engine.sectors.SectorModel`. Results
+        cache like the full eigensystem.
         """
         from quchip.chip.effective import conserves_excitation_number
+        from quchip.cutoff import active_cutoff
         from quchip.engine.sectors import SectorModel
 
         signature = self._analysis_signature()
@@ -657,7 +676,8 @@ class ChipAnalysis:
         resolution = _resolve_system(chip, chip.backend) if _local_resolution is None else _local_resolution
         advisories: list[str] = []
         model = (SectorModel(chip, resolution=resolution, advisories=advisories)
-                 if conserves_excitation_number(chip, chip.approximation, resolution=resolution) else None)
+                 if active_cutoff(chip) is not None
+                 or conserves_excitation_number(chip, chip.approximation, resolution=resolution) else None)
         self._sector_cache = scoped_entry(signature, (model, advisories), traced=model is not None and model.traced)
         return _reported((model, advisories), _advise)
 
@@ -670,11 +690,19 @@ class ChipAnalysis:
         )
 
     def _sector_label(self, label: tuple[int, ...]) -> tuple[int, ...]:
-        """Validate a bare label without enumerating the product basis."""
+        """Validate a bare label, and its total under an active cutoff, without enumerating the product basis."""
+        from quchip.cutoff import active_cutoff
+
         if not self._is_bare_label(label):
             available = list(itertools.islice(itertools.product(*(range(d) for d in self._semantic_dims())), 10))
             raise KeyError(
                 f"State label {label} is not a valid bare product-basis label. Available (first 10): {available}"
+            )
+        policy = active_cutoff(self._chip)
+        if policy is not None and sum(label) > policy.max_total:
+            raise ValueError(
+                f"State label {tuple(label)} has total excitation {sum(label)}, outside the excitation cutoff "
+                f"N <= {policy.max_total}. Raise max_total or use chip.with_space(None)."
             )
         return tuple(label)
 
@@ -725,7 +753,10 @@ class ChipAnalysis:
         if model is None:
             return self._chip.total_dim
         dims = model.dims
-        return max(sector_size(dims, level_sum) for level_sum in range(total + 1))
+        if model.classes is None:
+            return max(sector_size(dims, level_sum) for level_sum in range(total + 1))
+        return max(sum(sector_size(dims, level_sum) for level_sum in group)
+                   for group in model.classes if group[0] <= total)
 
     def _ground_ket(self, approximation: "Approximation") -> Any | None:
         """Return the all-ground-labeled lab-frame eigenstate for ``approximation``.
@@ -936,7 +967,8 @@ class ChipAnalysis:
     def _dressed_state(self, **device_states: int) -> Any:
         """Gather the assigned eigenvector column under tracing; eagerly use the dressed view.
 
-        A conserving chip takes the column from the sector of the label's total level.
+        A conserving chip, or a chip with an excitation cutoff, takes the column
+        from the block of the label's total level.
         """
         label_t = self._label_from_plain_mapping(device_states)
         model = self._sector_model()
@@ -971,7 +1003,11 @@ class ChipAnalysis:
         return dressed.eigenstates[eigen_idx]
 
     def _sector_state(self, model: SectorModel, label: tuple[int, ...]) -> Any:
-        """Return the dressed state of ``label`` from its excitation sector, in solver coordinates."""
+        """Return the dressed state of ``label`` from the block of its total, in solver coordinates.
+
+        Under an excitation cutoff, the ket is the assigned eigenvector of the
+        truncated static model and is zero on every label outside the cutoff.
+        """
         system = model.eigensystem(sum(label))
         row = system.space.row(label)
         overlap = maybe_concrete_scalar(system.labeling.overlaps[row])
@@ -984,7 +1020,9 @@ class ChipAnalysis:
                 UserWarning,
                 stacklevel=5,
             )
-        column = model.embed(sum(label), system.eigenvectors[:, system.labeling.indices[row]])
+        vectors = system.eigenvectors
+        xp = jnp if contains_tracer((vectors, system.labeling.indices)) else np
+        column = model.embed(system.space.totals, xp.asarray(vectors)[:, system.labeling.indices[row]])
         dims = list(model.dims)
         return self._chip.backend.from_array(column.reshape(-1, 1), dims=[dims, [1] * len(dims)])
 
@@ -1196,7 +1234,7 @@ class ChipAnalysis:
 
         def phase_fixed_state(label: tuple[int, ...]) -> Any:
             if sectors is not None:
-                system = sectors.eigensystem(sum(label))
+                system = sectors.eigensystem(sum(self._sector_label(label)))
                 return xp.asarray(system.eigenvectors)[:, system.labeling.indices[system.space.row(label)]]
             return U[:, labeling.indices[self._bare_label_index(label)]]
 
@@ -1238,7 +1276,8 @@ class ChipAnalysis:
             )
             if sectors is not None:
                 operator = sectors.local_operator(authored, support)
-                block = sectors.block(operator, support, sum(final_label), sum(initial_label))
+                block = sectors.block(operator, support, sectors.class_of(sum(final_label)),
+                                      sectors.class_of(sum(initial_label)))
                 acted = xp.asarray(block) @ initial
             else:
                 local_operator = _project_on_support(self._chip, authored, support, bases, backend)

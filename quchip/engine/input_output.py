@@ -29,6 +29,9 @@ def resolve_stationary_engine(
     port_frequencies: tuple[tuple[str, Any], ...],
 ) -> EngineResult:
     """Resolve port-tone frequencies into one static engine description."""
+    from quchip.cutoff import reject_cutoff
+
+    reject_cutoff(chip, "Stationary port analysis")
     reject_retained_mode_responses(chip)
     if not port_frequencies:
         raise ValueError("Stationary port analysis requires at least one tone frequency.")

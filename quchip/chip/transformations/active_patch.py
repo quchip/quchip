@@ -334,7 +334,10 @@ def active_patch(
     # Rereading the graph at each step ensures that a folded label is never
     # considered again and that the order always shows what `eliminate` will
     # see.
+    from quchip.cutoff import reject_cutoff
+
     chip = sequence._chip
+    reject_cutoff(chip, "active_patch()")
     active = active_labels(sequence, hops=hops)
     spectators = [d.label for d in chip.devices if d.label not in active]
     reachable, notes = _split_reachable_spectators(chip, spectators, active)

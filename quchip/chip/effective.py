@@ -103,14 +103,14 @@ def authored_excitation_changes(
     return changes(operator, labels)
 
 
-def conserves_excitation_number(chip: Any, approximation: Any, *, resolution: Any = None) -> bool:
-    """Prove conservation of the total isolated energy-level index from retained operators.
+def static_excitation_changes(chip: Any, approximation: Any, *, resolution: Any = None) -> frozenset[int] | None:
+    """Return the total energy-level changes of the retained static model, or ``None`` when unknown.
 
-    A zero-total band filter proves conservation of ordinary interactions.
-    Otherwise their authored algebra or exact local matrix support must prove
-    it. Retained terms bypass that filter. Unknown support is not a proof.
-    Generated port pairs additionally require single-excitation lowering at
-    both ends, as assumed by compact static network assembly.
+    The set is symmetric and holds ``0``. A zero-total band filter removes
+    every change of an ordinary interaction. Retained terms bypass that
+    filter. A generated port pair ``L_d^dagger L_u`` changes the total by
+    ``u - d`` for each change ``u`` of the upstream port and ``d`` of the
+    downstream port.
 
     Parameters
     ----------
@@ -125,15 +125,54 @@ def conserves_excitation_number(chip: Any, approximation: Any, *, resolution: An
 
     resolution = _resolve_system(chip, chip.backend) if resolution is None else resolution
     bases = resolution.bases
+    found = {0}
     for term in _interaction_contributions(chip):
         if not term.retained and approximation.filters_terms and approximation.conserves_excitation_number():
             continue
         changes = authored_excitation_changes(term.expression(), term.labels, chip.backend, bases)
-        if changes is None or not changes <= {0}:
-            return False
+        if changes is None:
+            return None
+        found.update(changes)
+    pairs = () if resolution.network is None else resolution.network.generated_pairs
+    weights: dict[str, frozenset[int]] = {}
+    for label in dict.fromkeys(label for downstream, upstream, _ in pairs for label in (downstream, upstream)):
+        port = chip.port(label)
+        ((channel, _paths),) = port._collapse_channels_with_paths(chip)
+        changes = authored_excitation_changes(channel.operator, port.resolve_targets(chip), chip.backend, bases)
+        if changes is None:
+            return None
+        weights[label] = changes
+    for downstream, upstream, _ in pairs:
+        found.update(up - down for up in weights[upstream] for down in weights[downstream])
+    return frozenset(found | {-change for change in found})
+
+
+def conserves_excitation_number(chip: Any, approximation: Any, *, resolution: Any = None) -> bool:
+    """Prove conservation of the total isolated energy-level index from retained operators.
+
+    A zero-total band filter proves conservation of ordinary interactions.
+    Otherwise their authored algebra or exact local matrix support must prove
+    it. Retained terms bypass that filter. Unknown support is not a proof.
+    Generated port pairs additionally require single-excitation lowering at
+    both ends.
+
+    Parameters
+    ----------
+    chip : Chip
+        Chip whose static model is checked.
+    approximation : Approximation
+        Approximation the static model is resolved with.
+    resolution : optional
+        Local basis resolution to reuse.
+    """
+    from quchip.engine.assembly import _resolve_system
+
+    resolution = _resolve_system(chip, chip.backend) if resolution is None else resolution
+    if static_excitation_changes(chip, approximation, resolution=resolution) != {0}:
+        return False
     pairs = () if resolution.network is None else resolution.network.generated_pairs
     labels = dict.fromkeys(label for downstream, upstream, _ in pairs for label in (downstream, upstream))
-    return all(_port_lowers_level_index(chip, chip.port(label), bases) for label in labels)
+    return all(_port_lowers_level_index(chip, chip.port(label), resolution.bases) for label in labels)
 
 
 def _port_lowers_level_index(chip: Any, port: Any, bases: Mapping[str, Any]) -> bool:

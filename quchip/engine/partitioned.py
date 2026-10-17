@@ -59,6 +59,11 @@ def maybe_simulate_partitioned(
     ``context`` is the joint solve's prepared context, whose resolved model
     decides the split.
     """
+    from quchip.cutoff import active_cutoff
+
+    # The global excitation budget couples devices that no term couples.
+    if active_cutoff(chip) is not None:
+        return None
     if initial_state is not None and not isinstance(initial_state, Mapping):
         return None
     # Field inputs and outputs are defined at the complete network reference
