@@ -6,7 +6,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quchip import RWA, Capacitive, Chip, Coupling, DuffingTransmon, Resonator
+from quchip import RWA, Capacitive, Chip, Coupling, DuffingTransmon, Exact, Resonator, eliminate
 from quchip.backend import get_default_backend
 from quchip.engine.approximations import apply_operator_band_filter
 from quchip.declarative.expr import materialize_expr
@@ -135,6 +135,40 @@ class TestCouplingChipIntegration:
         )
         H = chip.hamiltonian()
         assert tuple(H.shape) == (45, 45)  # 3 * 3 * 5
+
+    @pytest.mark.optional_backend
+    @pytest.mark.parametrize("form", ["product", "callable"])
+    def test_generic_coupling_reads_the_chip_backend(self, form):
+        """A generic coupling on a dynamiqs chip resolves, dresses and eliminates while QuTiP is the default."""
+        pytest.importorskip("dynamiqs")
+        received = set()
+
+        def exchange(dev_a, dev_b, bk):
+            received.add(type(bk).__name__)
+            hop = bk.tensor(bk.dag(dev_a.lowering_operator()), dev_b.lowering_operator())
+            return hop + bk.dag(hop)
+
+        def number(device):
+            return device.number_operator()
+
+        def chip_on(backend):
+            q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+            r = Resonator(freq=6.0, levels=3, label="r")
+            operators = {"interaction": exchange} if form == "callable" else {"op_a": number, "op_b": number}
+            return Chip([q, r], [Coupling(q, r, g=0.06, **operators)], approximation=Exact(), backend=backend)
+
+        def results(chip):
+            hamiltonian = np.asarray(chip.resolve(frame="lab").hamiltonian().matrix(backend=chip.backend))
+            excited = np.asarray(chip.backend.to_array(chip.state({"q": 1}))).ravel()
+            return hamiltonian, excited, float(eliminate(chip, "r").chip.freq("q"))
+
+        expected = results(chip_on("qutip"))
+        received.clear()
+        hamiltonian, excited, freq = results(chip_on("dynamiqs"))
+        assert received <= {"DynamiqsBackend"}
+        np.testing.assert_allclose(hamiltonian, expected[0], rtol=0, atol=1e-12)
+        assert abs(np.vdot(expected[1], excited)) == pytest.approx(1.0, abs=1e-12)
+        assert freq == pytest.approx(expected[2], abs=1e-12)
 
 
 # ---------------------------------------------------------------------------

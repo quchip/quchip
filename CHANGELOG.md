@@ -225,6 +225,13 @@ This file records notable user-visible changes to quchip.
 
 #### Fixes
 
+- Every calculation evaluates a generic `Coupling` with the chip's backend.
+  Previously, `resolve()`, `eliminate()`, `chip.state()` and `chip.freq()` used
+  the process default backend, so on a dynamiqs chip while QuTiP was the
+  default, the first three raised `TypeError`. The callable form now receives
+  the chip's backend.
+  ([#158](https://github.com/quchip/quchip/issues/158),
+  [#166](https://github.com/quchip/quchip/pull/166))
 - Pump-free `VNA.sweep()` computes models that are static in the lab frame but
   dynamic in the probe frame, e.g. capacitive couplings under `Exact()`.
   Previously, it raised. It solves one lab-frame stationary state per chip point
