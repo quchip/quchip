@@ -53,3 +53,21 @@ def test_executed_receipt_records_validity_and_forward_error() -> None:
     assert receipt["same_schedule"] is True
     assert receipt["maximum_population_residual"] < receipt["residual_tolerance"]
     assert math.isfinite(receipt["maximum_population_residual"])
+
+
+def _printed_value(output: str, label: str) -> float:
+    match = re.search(rf"^{re.escape(label)}: (\S+)$", output, re.MULTILINE)
+    assert match is not None
+    return float(match.group(1))
+
+
+def test_executed_outputs_record_feedline_and_excitation_space_checks() -> None:
+    """The feedline reduction stays within its dispersive scale, and the idle ring uses its exact space."""
+    output = _stream_output(nbformat.read(EXAMPLE_IPYNB, as_version=4))
+    # Purcell dispersion of the strongest pair sets the field-error scale (g/Δ)²κ/(2π|Δ|).
+    assert _printed_value(output, "Maximum complex S difference") < 10 * (0.105 / 2.0) ** 2 * 0.001 / 2.0
+    assert "Driven chain: 81 of 81 states" in output
+    assert f"Idle ring: 24 of {3**24} states" in output
+    # The exact 24-state solve agrees with the hopping propagator to round-off.
+    assert _printed_value(output, "Maximum population difference") < 1e-10
+    assert "Lossy ring: mesolve on 25 states" in output
