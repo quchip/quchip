@@ -18,7 +18,7 @@ from quchip.engine.ir import LinearResponseProblem
 from quchip.engine.output_network import pad_mixing
 from quchip.engine.reference import ReferencePlane, cw_transfer
 from quchip.utils.constants import TWO_PI
-from quchip.utils.jax_utils import maybe_concrete_scalar
+from quchip.utils.jax_utils import concrete_array_module, maybe_concrete_scalar
 
 
 class _UnsupportedLinearModel(Exception):
@@ -121,6 +121,24 @@ def _build_vacuum_response_problem(
     )
 
     return _with_mode_responses(problem, model, order)
+
+
+def vacuum_drift(chip: Any) -> tuple[tuple[str, ...], Any] | None:
+    """Return the mode labels and the drift ``-iH - C†C/2`` of the vacuum response, or ``None``.
+
+    The modes are the one-excitation states of the devices, followed by the
+    retained poles. ``None`` means that the chip has no vacuum one-excitation
+    model.
+    """
+    try:
+        problem = _build_vacuum_response_problem(chip, np.zeros(1), plane_labels=())
+    except _UnsupportedLinearModel:
+        return None
+    xp = concrete_array_module(problem.hamiltonian, problem.couplings)
+    couplings = xp.asarray(problem.couplings, dtype=complex)
+    # The same drift as the backends' linear response solve.
+    drift = -1j * xp.asarray(problem.hamiltonian, dtype=complex) - 0.5 * couplings.conj().T @ couplings
+    return problem.mode_labels, drift
 
 
 def _with_mode_responses(problem: LinearResponseProblem, model: Any, order: Any) -> LinearResponseProblem:
