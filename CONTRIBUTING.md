@@ -161,6 +161,8 @@ jupytext --to md --test-strict examples/<name>.ipynb
 
 The diff must be empty and the strict round trip must pass. Before you commit, inspect the executed notebook. Setup cells stay silent, stdout contains only intended receipts, and each intended figure appears once. Run the focused example test and the project checks above.
 
+Validation executes each example notebook again and compares its textual outputs with the committed ones. A change that alters a printed result must therefore re-execute the affected notebooks.
+
 ## Physics conventions
 
 Before you change Hamiltonians, frames, approximations, observables, dissipation, or solver assembly, read [PHYSICS.md](PHYSICS.md).
