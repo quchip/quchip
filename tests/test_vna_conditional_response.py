@@ -368,6 +368,14 @@ def test_matrix_free_response_matches_direct_solve(monkeypatch, backend):
     np.testing.assert_allclose(iterative.matrix, direct, rtol=1e-8, atol=1e-9)
     assert max(d["residual"] for d in iterative.diagnostics) < 1e-8
     assert iterative.diagnostics[0]["block_condition_number"] is None
+    if backend == "dynamiqs":
+        import jax
+
+        # Eager sweeps of each length and a traced sweep solve the same frequency blocks.
+        single = VNA(chip).sweep(f[1:], when={"q": 1}).matrix
+        traced = jax.jit(lambda offset: VNA(chip).sweep(f + offset, when={"q": 1}).matrix)(0.)
+        np.testing.assert_allclose(single, iterative.matrix[1:], rtol=0, atol=1e-12)
+        np.testing.assert_allclose(traced, iterative.matrix, rtol=0, atol=1e-12)
 
 
 @pytest.mark.optional_backend
