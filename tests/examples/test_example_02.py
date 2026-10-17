@@ -62,10 +62,13 @@ def _printed_value(output: str, label: str) -> float:
 
 
 def test_executed_outputs_record_feedline_and_excitation_space_checks() -> None:
-    """The feedline reduction stays within its dispersive scale, and the idle ring uses its exact space."""
+    """The feedline reduction stays within its dispersive scale, the idle ring uses its exact space, and K = 2 holds."""
     output = _stream_output(nbformat.read(EXAMPLE_IPYNB, as_version=4))
     # Purcell dispersion of the strongest pair sets the field-error scale (g/Δ)²κ/(2π|Δ|).
     assert _printed_value(output, "Maximum complex S difference") < 10 * (0.105 / 2.0) ** 2 * 0.001 / 2.0
+    assert _printed_value(output, "Return-path self-energy over width") < 0.1
+    # QuTiP's default relative tolerance of 1e-6 sets the floor of the cutoff comparison.
+    assert _printed_value(output, "Population error at K = 2 (15 states)") < 1e-5
     assert "Driven chain: 81 of 81 states" in output
     assert f"Idle ring: 24 of {3**24} states" in output
     # The exact 24-state solve agrees with the hopping propagator to round-off.

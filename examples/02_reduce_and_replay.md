@@ -19,9 +19,9 @@ jupyter:
 
 Can a smaller model reproduce the same pulse experiment? Drive the end of a
 four-transmon chain, keep its nearest neighbour, and compare the reduced
-model with the full chip. Later sections remove a readout from its feedline
-and solve a 24-transmon ring in an exact excitation space. Frequencies are in
-GHz and times in ns.
+model with the full chip. Later sections remove a readout from its feedline,
+solve a 24-transmon ring in an exact excitation space, and truncate the
+excitation number of the driven chain. Frequencies are in GHz and times in ns.
 
 ## Declare the chain
 
@@ -373,17 +373,42 @@ readout keeps one coupled response at its original position, so the line
 keeps its dip and its reflection into the opposite direction. Both
 transformed ports retain the qubits' directional Purcell decay.
 
-Time-domain dynamics omit this response, including its return path to other
-emitters on the line. Keep the readout mode for time-domain inputs, output
-fields, and measurement records on its feedline.
+Time-domain dynamics omit this response. A time-domain input, output field, or
+measurement record on this feedline therefore raises `NotImplementedError`.
+Keep the readout mode for them. Other time-domain results, such as the decay
+of an excited `rb`, miss the return path of the response: `ra` scatters part
+of the field that `rb` emits back into `rb`. `reduction.validity["ra_response"]`
+compares the self-energy of this path with the damping of each kept emitter,
+at the emitter's frequency. It is a diagnostic, not an error bound, and
+`is_valid` requires a value below 0.1.
+
+```python
+return_path = reduction.validity["ra_response"]
+
+print(f"Return-path self-energy over width: {return_path['self_energy_over_width']:.2g}")
+```
+
+<!-- executed-output:start -->
+
+Output:
+
+```text
+Return-path self-energy over width: 0.0042
+```
+
+<!-- executed-output:end -->
+
+Here `rb` lies about 115 MHz from the removed pole, so the return path is
+0.4% of its damping.
 
 A readout with one port keeps its scattering as a reference section at its
 dressed transition instead: `PortNetwork.mode_reflection(...)` when the port
 is alone on its plane, and `mode_transmission(...)` on a shared one-way
 feedline. The transformed ports act on every surviving device, so a later
 elimination can remove the next readout. A measurement record of that line,
-or of a loss channel on the removed readout, omits the section and also needs
-the readout mode.
+or of a loss channel on the removed readout, would omit the section, so it
+raises `NotImplementedError`. An output field applies the section at its
+carrier frequency, a narrowband approximation.
 
 This vacuum weak-probe calculation supports global SW, local SW, and global
 exact elimination. Inspect `reduction.notes` and `reduction.validity` before
@@ -394,14 +419,25 @@ the readout mode for pumped, finite-power, noisy, or excited-reference field
 calculations. Unsupported port layouts raise `NotImplementedError`.
 
 <details>
-<summary>Check the field error</summary>
+<summary>Check the field error and the return path</summary>
 
 Purcell dispersion leaves field errors of order $(g/\Delta)^2\kappa/(2\pi|\Delta|)$
 for the strongest qubit–readout pair. Allow one order of magnitude above it.
 
+The return path scales as $(\kappa/2)^2/(\Delta_p h_b)$. Here $\Delta_p$ is
+the angular detuning of `rb` from the dressed pole of `ra`, and $h_b$ is the
+amplitude damping of `rb`. The photon weight of the pole lowers it by about
+$(g/\Delta)^2$.
+
 ```python
 dispersive_scale = (0.105 / (7.0 - 5.0))**2 * 0.001 / (7.0 - 5.0)
 assert s_difference < 10 * dispersive_scale
+
+pole_detuning = 2 * np.pi * abs(float(readouts[1].freq) - float(hanger.freq(readouts[0])))
+rb_damping = (kappa_ext + 2 * np.pi * float(readouts[1].freq) / 200_000) / 2
+return_path_estimate = (kappa_ext / 2)**2 / (pole_detuning * rb_damping)
+assert return_path["is_valid"]
+assert abs(return_path["self_energy_over_width"] - return_path_estimate) < 2 * (0.105 / 2.0)**2 * return_path_estimate
 ```
 
 </details>
@@ -505,9 +541,10 @@ Lossy ring: mesolve on 25 states
 <!-- executed-output:end -->
 
 A transverse drive or thermal raising can require the full space, and
-stochastic solvers keep it. Labeled dressed queries, weak-probe VNA sweeps,
-and `fit_a_dress()` also diagonalize only the excitation sectors they need,
-as the [cookbook](../cookbook.md#fit-a-large-conserving-model) describes.
+stochastic solvers keep it. `chip.state()`, labeled dressed queries, the
+default initial state, weak-probe VNA sweeps, and `fit_a_dress()` also use
+only the excitation sectors they need, as the
+[cookbook](../cookbook.md#fit-a-large-conserving-model) describes.
 
 <details>
 <summary>Check the exact spaces</summary>
@@ -519,6 +556,62 @@ assert ring_result.stats["excitation_reduction"]["exact"]
 assert ring_result.stats["excitation_reduction"]["dimension"] == ring_size
 assert lossy_result.stats["excitation_reduction"]["dimension"] == ring_size + 1
 assert population_difference < 1e-10
+```
+
+</details>
+
+## Truncate the excitation number
+
+The charge drive on the chain changes the excitation number, so its solve
+needs the full product space. On a larger chip, that space may not fit in
+memory. `ExcitationCutoff(max_total=K)` keeps only the product states with at
+most `K` excitations. It changes the model, so compare results at increasing
+`K`. Here the full 81-state solve gives an exact reference:
+
+```python
+from quchip import ExcitationCutoff
+
+cutoff_errors = {}
+for max_total in (1, 2):
+    limited_chip = chip.with_space(ExcitationCutoff(max_total=max_total))
+    limited_sequence = QuantumSequence(limited_chip)
+    _ = limited_sequence.schedule(
+        "q0-charge", envelope=Gaussian(duration=60.0, sigmas=3.0, amplitude=0.04 / 3),
+        freq=chip.freq(qubits[0]),
+    )
+    limited_result = limited_sequence.simulate(tlist=times)
+    limited_population = np.asarray(limited_result.population("q0", level=1)).real
+    cutoff_errors[max_total] = np.max(np.abs(limited_population - full_population))
+    dimension = limited_result.stats["excitation_reduction"]["dimension"]
+    print(f"Population error at K = {max_total} ({dimension} states): {cutoff_errors[max_total]:.1e}")
+```
+
+<!-- executed-output:start -->
+
+Output:
+
+```text
+Population error at K = 1 (5 states): 8.9e-04
+Population error at K = 2 (15 states): 2.7e-06
+```
+
+<!-- executed-output:end -->
+
+`K = 1` removes the second excitation that the pulse adds. Almost all of it
+is in the second excited level of `q0`, which reaches a population of 5e-4.
+At `K = 2`, the difference is at the tolerance of the default solver, and
+tighter solver tolerances reduce it to 1e-8. `result.check_truncation()`
+reports the population next to the cutoff as a warning heuristic, not an
+error bound. The [cookbook](../cookbook.md#truncate-the-total-excitation)
+shows a static case where the error is not monotone in `K`.
+
+<details>
+<summary>Check the cutoff</summary>
+
+QuTiP's default relative tolerance of 1e-6 sets the floor of the comparison.
+
+```python
+assert cutoff_errors[2] < 1e-5
 ```
 
 </details>
