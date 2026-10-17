@@ -524,8 +524,9 @@ class EffectiveTerms:
         Labels of the retained multiport mode responses whose pole the
         time-domain field of each named channel omits. A reduction declares
         them for the channels that it carries from a removed mode with such a
-        response. A solve rejects diffusive monitoring of these channels while
-        the response stays on the port network.
+        response. A solve rejects diffusive monitoring of these channels with
+        a nonzero efficiency, also when the port network no longer holds the
+        response.
     """
 
     labels: tuple[str, ...]

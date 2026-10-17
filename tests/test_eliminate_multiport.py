@@ -178,9 +178,14 @@ def test_multiport_response_rejects_records_of_hidden_channels_on_the_removed_mo
     once = eliminate(chip, "r1", local=local).chip
     terms = next(terms for terms in once.effective_terms if terms.omitted_responses)
     assert terms.omitted_responses == {"internal_photon_loss": ("r1",)}
-    # The record survives serialization and a later reduction.
-    restored = Chip.from_dict(json.loads(json.dumps(once.to_dict())))
-    for reduced, removed in ((restored, ("r1",)), (eliminate(restored, "r0", local=local).chip, ("r0", "r1"))):
+    # The record survives serialization and a later reduction. It also stays
+    # with the channel when the network drops the pole, as the channel still lacks r1.
+    data = json.loads(json.dumps(once.to_dict()))
+    restored = Chip.from_dict(data)
+    data["port_network"]["mode_responses"] = []
+    stripped = Chip.from_dict(data)
+    for reduced, removed in ((restored, ("r1",)), (stripped, ("r1",)),
+                             (eliminate(restored, "r0", local=local).chip, ("r0", "r1"))):
         sequence = QuantumSequence(reduced)
         problem = replace(sequence.build_problem(np.linspace(0., 2., 3), e_ops=reduced.e_ops(q0="n")),
                           solver="smesolve", run_args={"ntraj": 2, "seeds": 1},

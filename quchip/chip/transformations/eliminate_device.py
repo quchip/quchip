@@ -1128,6 +1128,8 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
                 matrices = [op if moved is None else _array(moved[0]) for op, moved in zip(matrices, transported)]
             copied._retained[label] = (frequency, *[step_embedding.conj().T @ op @ step_embedding
                                                    for op in matrices], changes)
+        if coupled_response and mode_label in copied._retained:
+            copied._omitted_responses = tuple(sorted({*bath._omitted_responses, mode_label}))
         projected_baths.append(copied)
     projection = None if lone and not joined else (step if step is not None else OperatorProjection.capture(
         numeric, tuple(numeric_survivors), tuple(numeric_final.authored_dims), step_embedding,

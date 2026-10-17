@@ -64,20 +64,20 @@ def with_monitoring(problem: Any, efficiencies: Mapping[Any, Any], *, phases: Ma
 
 
 def _carried_without_poles(chip: Any) -> dict[tuple[str, str], tuple[str, ...]]:
-    """Return the hidden channels that act on a removed mode whose multiport response is retained.
+    """Return the hidden channels that act on a removed mode whose multiport response was retained.
 
     The keys are the channel's source and name, and the values are the labels
     of the responses. Effective terms declare the channels that reductions
-    carry, and baths keep their removed targets.
+    carry, and baths record their removed targets. The record stays with the
+    channel when the port network no longer holds the response, because the
+    channel still lacks the removed mode.
     """
-    live = {mode.label for mode in chip.port_network._mode_responses}
     carried: dict[tuple[str, str], tuple[str, ...]] = {}
     for terms in chip.effective_terms:
         for name, labels in terms.omitted_responses.items():
-            if live.intersection(labels):
-                carried[(terms.label, name)] = tuple(label for label in labels if label in live)
+            carried[(terms.label, name)] = labels
     for bath in chip.baths:
-        for label in sorted(live.intersection(bath._retained or ())):
+        for label in bath._omitted_responses:
             for name in bath._channel_names(label):
                 carried[(bath.label, name)] = (*carried.get((bath.label, name), ()), label)
     return carried
@@ -94,7 +94,7 @@ def monitored_operators(problem: Any) -> tuple[list[Any], list[Any], list[Any]]:
         selection = {i: (1.0, 0.0) for i in range(len(channels))} if pure else {}
     network = problem.chip.port_network
     responses = {} if network is None or not channels else network._responses_by_output()
-    carried = {} if network is None or not channels else _carried_without_poles(problem.chip)
+    carried = _carried_without_poles(problem.chip) if channels else {}
     unobserved, monitored, efficiencies = [], [], []
     for index, channel in enumerate(channels):
         operator = backend.from_canonical_operator(channel.coupling)

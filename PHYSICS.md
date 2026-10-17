@@ -1860,7 +1860,10 @@ those ports, and diffusive monitoring of such a channel with a nonzero
 efficiency. It also rejects that monitoring for a hidden channel that acted on
 the removed mode, such as its internal loss or a bath on it.
 `EffectiveTerms.omitted_responses` records the carried channels, and later
-reductions keep the record when they carry them again. Pure-state SSE monitors
+reductions keep the record when they carry them again. A bath records its
+removed targets in the same way. The record stays with the channel when the
+port network no longer holds the pole, because the channel still lacks the
+removed mode. Pure-state SSE monitors
 every channel, so it rejects every chip with such a channel. A traced
 efficiency counts as nonzero, also when its value is zero. The field and the
 record would contain only the adiabatic part of the removed mode, so they would
