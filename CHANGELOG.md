@@ -10,6 +10,17 @@ This file records notable user-visible changes to quchip.
 
 #### Changes and migration
 
+- `chip.state()`, `DressedResult.eigenstates` and
+  `DressedResult.eigenvector_matrix` give each dressed vector a real,
+  nonnegative amplitude on its assigned bare state. Previously, their signs
+  came from the eigensolver, so a state could differ in sign between QuTiP
+  and dynamiqs. Dressed-basis operators and drive matrix elements already
+  used this phase. When the assigned amplitude is zero, the vector's largest
+  amplitude now sets the phase of all these outputs. Energies, populations
+  and overlap magnitudes do not change. Code that transforms with the
+  eigenvector matrix directly can see off-diagonal entries change phase.
+  ([#163](https://github.com/quchip/quchip/issues/163),
+  [#170](https://github.com/quchip/quchip/pull/170))
 - `frame="auto"` ranks coupling bands whose integer weights sum to a nonzero
   value after tones, exchange bands and reference pins. Previously, under
   `Exact()`, a counter-rotating band could set a negative-frequency frame, or

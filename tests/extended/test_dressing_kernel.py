@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from quchip.chip.dressing import (
     BareProductReference,
@@ -17,6 +18,7 @@ from quchip.chip.dressing import (
     assign_argmax,
     assign_rowwise_greedy,
     compute_overlaps,
+    gauge_phases,
     label_eigensystem,
     track_path,
 )
@@ -163,6 +165,40 @@ class TestTraceability:
         ground_energies = jax.vmap(labeled_ground)(gs)
         assert ground_energies.shape == (5,)
         assert jnp.all(jnp.isfinite(ground_energies))
+
+
+class TestGaugePhases:
+    def test_zero_assigned_amplitude_takes_the_phase_of_the_largest_amplitude(self) -> None:
+        """A column with no amplitude on its assigned label takes the phase of its largest amplitude."""
+        root3 = np.sqrt(3.0)
+        U = np.array([[root3, root3, root3, 0.0], [-2, 1, 1, root3], [1, -2, 1, root3], [1, 1, -2, root3]]) / 3
+        _, evecs = np.linalg.eigh(U @ np.diag([1.0, 2.0, 3.0, 10.0]) @ U.T)
+        labeling = label_eigensystem(evecs, BareProductReference(dims=(4,)))
+        # Label 0 takes column 3, which has no amplitude on label 0.
+        assert np.asarray(labeling.indices).tolist() == [3, 0, 1, 2]
+        expected = U * np.array([-1.0, -1.0, -1.0, 1.0])
+        for theta in (0.0, 0.7):
+            # The reference is the identity basis, so the amplitudes are the vectors.
+            vectors = evecs * np.exp(1j * theta * np.arange(1, 5))
+            np.testing.assert_allclose(vectors * gauge_phases(vectors, labeling.indices), expected, atol=1e-12)
+            traced = jax.jit(gauge_phases)(jnp.asarray(vectors), jnp.asarray(labeling.indices))
+            np.testing.assert_allclose(vectors * np.asarray(traced), expected, atol=1e-12)
+
+    def test_gauge_fixed_eigenvector_derivative_matches_central_differences(self) -> None:
+        """A gauge-fixed eigenvector of a complex Hamiltonian has the derivative of its central differences."""
+        reference = BareProductReference(dims=(2,))
+        hop = jnp.array([[0.0, 0.0], [1.0, 0.0]], dtype=complex)
+
+        def lower_state(phi):
+            H = jnp.diag(jnp.array([0.0, 2.0], dtype=complex)) + jnp.exp(1j * phi) * hop + jnp.exp(-1j * phi) * hop.T
+            _, evecs = jnp.linalg.eigh(H)
+            labeling = label_eigensystem(evecs, reference)
+            return (evecs * gauge_phases(evecs, labeling.indices))[:, labeling.indices[0]]
+
+        phi, step = 0.3, 1e-6
+        _, tangent = jax.jvp(lower_state, (phi,), (1.0,))
+        central = (lower_state(phi + step) - lower_state(phi - step)) / (2 * step)
+        np.testing.assert_allclose(tangent, central, atol=1e-8)
 
 
 class TestTrackPath:
