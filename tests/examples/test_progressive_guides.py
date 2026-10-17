@@ -28,9 +28,10 @@ EXECUTED_BLOCK_RE = re.compile(
     r"```python\n(.*?)\n```(?:\n\nOutput:\n\n```text\n(.*?)\n```)?",
     re.DOTALL,
 )
+# An imaginary unit after a number stays in the template, so real and imaginary values stay distinct.
 NUMBER_RE = re.compile(
     r"(?<![A-Za-z_])[-+]?(?:(?:\d+\.\d*)|(?:\.\d+)|(?:\d+))"
-    r"(?:[eE][-+]?\d+)?(?![A-Za-z_])"
+    r"(?:[eE][-+]?\d+)?(?=j(?![A-Za-z_])|(?![A-Za-z_]))"
 )
 GUIDE_OUTPUT_RTOL = 1e-10
 # Two hertz for GHz-valued receipts, below the guide's displayed precision.
