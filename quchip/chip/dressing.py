@@ -304,15 +304,6 @@ def _labeling_arrays(
     return indices, chosen_overlaps, margins, duplicates
 
 
-def phase_anchor_floor(dtype: Any) -> float:
-    """Return the smallest anchor magnitude that fixes a dressed vector's phase.
-
-    It is the square root of the floating-point epsilon of ``dtype``, well above
-    the rounding noise of an exactly zero amplitude.
-    """
-    return float(np.sqrt(np.finfo(np.dtype(dtype)).eps))
-
-
 def gauge_phases(amplitudes: Any, indices: Any) -> Any:
     """Return the phase factor that makes each column's assigned reference amplitude real and nonnegative.
 
@@ -327,10 +318,13 @@ def gauge_phases(amplitudes: Any, indices: Any) -> Any:
     -----
     The anchor of a column is its amplitude on the label assigned to it. A
     one-to-one assignment can give a column whose assigned amplitude is zero.
-    When that amplitude is not above :func:`phase_anchor_floor`, and for an
-    unassigned column, the anchor is the first amplitude within a relative
+    When that amplitude is not above a floor, the square root of the
+    floating-point epsilon, and for an unassigned column, the anchor is the
+    first amplitude within a relative
     ``1e-6`` of the column's largest magnitude. The factor of a column is
-    ``conj(anchor) / |anchor|``. A phase cannot fix a rotation, so an exactly
+    ``conj(anchor) / |anchor|``. The rule is piecewise: the phase can jump
+    where the assigned amplitude crosses the floor or where the fallback
+    selects another amplitude. A phase cannot fix a rotation, so an exactly
     degenerate eigenspace keeps the basis of the eigensolver.
     """
     xp = concrete_array_module(amplitudes, indices)
@@ -349,7 +343,8 @@ def gauge_phases(amplitudes: Any, indices: Any) -> Any:
         rows = jnp.zeros(columns, dtype=int).at[indices].set(labels)
         assigned = jnp.zeros(columns, dtype=bool).at[indices].set(True)
     own = amplitudes[rows, span]
-    anchor = xp.where(assigned & (xp.abs(own) > phase_anchor_floor(magnitudes.dtype)), own, fallback)
+    floor = float(np.sqrt(np.finfo(magnitudes.dtype).eps))
+    anchor = xp.where(assigned & (xp.abs(own) > floor), own, fallback)
     return xp.conj(anchor) / xp.abs(anchor)
 
 

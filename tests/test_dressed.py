@@ -125,6 +125,38 @@ def test_dressed_states_follow_one_phase_convention_on_every_backend() -> None:
     )
 
 
+@pytest.mark.optional_backend
+def test_traced_default_ground_state_keeps_the_phase_of_a_fallback_anchor() -> None:
+    """The traced default ground state has the derivative of its fallback anchor's phase."""
+    pytest.importorskip("dynamiqs")
+    import jax
+    import jax.numpy as jnp
+
+    from quchip import EffectiveTerms, Exact
+
+    root3 = np.sqrt(3.0)
+    # The all-ground label takes the column of energy 10, which has no amplitude on it.
+    U = np.array([[root3, root3, root3, 0.0], [-2, 1, 1, root3], [1, -2, 1, root3], [1, 1, -2, root3]]) / 3
+    bare = np.diag([0.0, 0.3, 0.2, 0.5])
+
+    def ground(phi):
+        rotation = jnp.diag(jnp.exp(1j * phi * jnp.array([0.0, 1.0, 0.0, 0.0])))
+        H = rotation @ (U @ np.diag([1.0, 2.0, 3.0, 10.0]) @ U.T) @ rotation.conj().T
+        a = DuffingTransmon(freq=0.2, anharmonicity=0.0, levels=2, label="a")
+        b = DuffingTransmon(freq=0.3, anharmonicity=0.0, levels=2, label="b")
+        chip = Chip([a, b], effective_terms=[EffectiveTerms(("a", "b"), (2, 2), H - bare, label="mix")],
+                    approximation=Exact(), backend="dynamiqs")
+        return jnp.ravel(jnp.asarray(chip.analysis._ground_ket(Exact())))
+
+    eager = ground(0.3)
+    assert abs(eager[0]) < 1e-12
+    assert float(jnp.real(eager[1])) > 0.5
+    assert abs(float(jnp.imag(eager[1]))) < 1e-12
+    _, tangent = jax.jvp(ground, (0.3,), (1.0,))
+    central = (ground(0.3 + 1e-6) - ground(0.3 - 1e-6)) / 2e-6
+    np.testing.assert_allclose(tangent, central, atol=1e-8)
+
+
 @pytest.fixture
 def dispersive_system():
     """Build the shared transmon-resonator test system."""

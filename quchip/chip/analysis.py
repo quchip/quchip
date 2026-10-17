@@ -44,7 +44,6 @@ from quchip.chip.dressing import (
     assign_rowwise_greedy,
     gauge_phases,
     label_eigensystem,
-    phase_anchor_floor,
 )
 from quchip.chip.states import _bare_state_from_bases, normalize_device_state_mapping
 from quchip.devices.base import BaseDevice, _validate_level_pair
@@ -69,24 +68,6 @@ _DRESS_TRACING_ERROR = (
     "route through the array-only kernel in quchip.chip.dressing and stay "
     "differentiable."
 )
-
-
-def _phase_fixed_state(state: Any, anchor: Any, xp: Any) -> Any:
-    """Set one dressed vector's assigned bare overlap to a nonnegative real value.
-
-    An anchor at or below :func:`~quchip.chip.dressing.phase_anchor_floor`
-    leaves the vector unchanged, so the call keeps the fallback phase of
-    :func:`~quchip.chip.dressing.gauge_phases`.
-    """
-    magnitude = xp.abs(anchor)
-    threshold = phase_anchor_floor(magnitude.dtype)
-    safe_magnitude = xp.where(magnitude > threshold, magnitude, xp.asarray(1.0, dtype=magnitude.dtype))
-    phase = xp.where(
-        magnitude > threshold,
-        xp.conj(anchor) / safe_magnitude,
-        xp.asarray(1.0 + 0.0j, dtype=state.dtype),
-    )
-    return state * phase
 
 
 @dataclass
@@ -774,7 +755,10 @@ class ChipAnalysis:
                 # JAX's eigh derivative can be NaN at an unrelated exact tie.
                 matrix = jnp.asarray(_analysis_matrix_ghz(static))
                 column = _differentiable_eigenvector(matrix, values[index], values, vectors, column)
-            ket = _phase_fixed_state(column, xp.vdot(xp.asarray(backend.to_array(bare)).reshape(-1), column), xp)
+                # That derivative transports the phase. The gauge restores the derivative of the anchor's phase.
+                amplitudes = _reference_amplitudes(static._dressing_context.reference, column[:, None])
+                column = column * gauge_phases(amplitudes, jnp.zeros(1, dtype=int))[0]
+            ket = column
         self._ground_cache = scoped_entry(key, ket, traced=contains_tracer(ket))
         return ket
 
@@ -1168,10 +1152,7 @@ class ChipAnalysis:
         def phase_fixed_state(label: tuple[int, ...]) -> Any:
             if sectors is not None:
                 system = sectors.eigensystem(sum(label))
-                row = system.space.row(label)
-                column = system.labeling.indices[row]
-                state = xp.asarray(system.eigenvectors)[:, column]
-                return _phase_fixed_state(state, state[row], xp)
+                return xp.asarray(system.eigenvectors)[:, system.labeling.indices[system.space.row(label)]]
             return U[:, labeling.indices[self._bare_label_index(label)]]
 
         initial = phase_fixed_state(initial_label)

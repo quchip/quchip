@@ -1347,11 +1347,12 @@ assignment can give a vector a zero amplitude on its own label. When `|a|` is no
 above the square root of the floating-point epsilon, the anchor is the first
 amplitude within a relative `1e-6` of the vector's largest magnitude.
 `Chip.state()`, the eigenstates and eigenvector matrix of `DressedResult`,
-dressed-basis operators, drive matrix elements and the default initial state use
-this convention. Thus each nondegenerate dressed vector is the same on each
-backend, and its derivative is well defined while the eigenvalue gaps stay open and
-the assignment stays locally constant. A phase cannot fix a rotation, so an exactly
-degenerate eigenspace keeps the basis of the eigensolver.
+dressed-basis operators, drive matrix elements, sector eigenvectors and the default
+initial state use this convention. The convention is piecewise. Backend agreement
+and derivatives need resolved eigenvalue gaps, a locally constant assignment, and
+a stable anchor: an assigned amplitude that stays above the floor, or a fallback
+amplitude that stays the unique near-largest one. A phase cannot fix a rotation, so
+an exactly degenerate eigenspace keeps the basis of the eigensolver.
 
 `Chip.freq()` evaluates dressed `0 -> 1` frequencies through a traceable labeled eigensystem, and `DressedResult` does not store them. Frequencies, states, Kerr shifts and drive matrix elements all use the chip's approximation, so `RWA(keep_bands=...)` applies here too. Choose `Exact()` to include counter-rotating bands and their Bloch–Siegert shifts.
 

@@ -116,10 +116,8 @@ def compact_state(chip, *components, dressed=False):
             system = model.eigensystem(sum(levels))
             row = system.space.row(levels)
             eigenvector = xp.asarray(system.eigenvectors)[:, system.labeling.indices[row]]
-            overlap = eigenvector[row]
-            phase = xp.where(xp.abs(overlap) > 0, overlap / xp.where(xp.abs(overlap) > 0, xp.abs(overlap), 1), 1)
             indices = np.asarray([space.rows[label] for label in system.space.labels])
-            contribution = xp.asarray(np.eye(space.size)[:, indices]) @ (eigenvector / phase)
+            contribution = xp.asarray(np.eye(space.size)[:, indices]) @ eigenvector
         vector = vector + amplitude * contribution
     norm = xp.linalg.norm(vector)
     if maybe_concrete_scalar(norm) == 0:
