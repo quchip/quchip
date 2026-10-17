@@ -301,8 +301,8 @@ print(f"RESULT readout={json.dumps(readout_receipt, sort_keys=True)}")
 Output:
 
 ```text
-RESULT drive={"final_p1": {"long": 0.9808186959428491, "short": 0.3274130996871264}, "peak_p2": {"long": 0.03843070489891596, "short": 0.5631356326693838}}
-RESULT readout={"conditional_resonator_frequencies_ghz": [6.801997782702374, 6.801428548310606], "final_iq_separation": 0.9021929173380938, "solver": "mesolve"}
+RESULT drive={"final_p1": {"long": 0.9808186959428326, "short": 0.3274130996870313}, "peak_p2": {"long": 0.038430704898919095, "short": 0.5631356326693644}}
+RESULT readout={"conditional_resonator_frequencies_ghz": [6.801997782702374, 6.801428548310606], "final_iq_separation": 0.9021929173550125, "solver": "mesolve"}
 ```
 
 <!-- executed-output:end -->
@@ -341,6 +341,47 @@ clear_chip = Chip(
     port_network=clear_network, frame=clear_carrier, approximation=RWA(),
 )
 ```
+
+Check the carrier against the weak-probe reflection at the filter port.
+`VNA.sweep(..., when=...)` holds the qubit in a dressed reference state, and
+each response has a dip at its readout resonance.
+
+```python
+from quchip import VNA
+
+probe_frequencies = np.linspace(7.003, 7.007, 4001)
+reflection = VNA(clear_chip)
+responses = [reflection.sweep(probe_frequencies, when={clear_q: level}) for level in (0, 1)]
+dips = [probe_frequencies[np.argmin(np.abs(response.s11))] for response in responses]
+closed = [float(clear_chip.freq(clear_r, when={clear_q: level})) for level in (0, 1)]
+escape_rate = float(responses[1].diagnostics[0]["reference_escape_rate"])
+
+print(f"Reflection dips: {dips[0]:.6f} GHz for |0⟩, {dips[1]:.6f} GHz for |1⟩")
+print(f"Carrier minus dip midpoint: {1e6 * (clear_carrier - np.mean(dips)):.1f} kHz")
+print(f"Closed-model midpoint minus dip midpoint: {1e3 * (np.mean(closed) - np.mean(dips)):.2f} MHz")
+print(f"Excited-reference escape rate: {escape_rate:.3g} /ns")
+```
+
+<!-- executed-output:start -->
+
+Output:
+
+```text
+Reflection dips: 7.005432 GHz for |0⟩, 7.004445 GHz for |1⟩
+Carrier minus dip midpoint: 6.8 kHz
+Closed-model midpoint minus dip midpoint: -3.18 MHz
+Excited-reference escape rate: 1.73e-05 /ns
+```
+
+<!-- executed-output:end -->
+
+The carrier lies 7 kHz above the dip midpoint, under 1% of the 1 MHz
+readout linewidth. `chip.freq()` diagonalizes the closed Hamiltonian, which
+treats the filter as a lossless mode. That mode puts the readout midpoint
+3.2 MHz below the dips. The filter's 230 MHz linewidth is much larger than
+its 20 MHz detuning from the readout, so the driven response keeps little of
+that pull. The excited reference escapes at the filtered qubit decay rate,
+1/(57.9 µs), which is slow on the readout timescale.
 
 Both pulses start at 100 ns and use the same carrier and hold amplitude
 (in √photons/ns). The square pulse stops at 900 ns. CLEAR uses two loading
