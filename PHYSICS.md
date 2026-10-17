@@ -1044,7 +1044,7 @@ resonator of the `ExcitationCutoff` docstring example, it is +2.261 MHz at
 
 Workflows that need the full product space or a local neighborhood raise under
 an active cutoff. They are VNA and stationary port analysis, `steadystate()`,
-stochastic trajectory solvers, `eliminate()`, `active_patch()`,
+stochastic trajectory solvers, `eliminate()`, `eliminate_spectators()`, `active_patch()`,
 `fit_a_dress(evaluator="local")`, and `chip.partition()`. Each message names
 `chip.with_space(None)`. A cutoff with `K >= sum_i (d_i - 1)` keeps every label,
 so it is inactive and changes no calculation. The classes and spaces depend
@@ -2170,7 +2170,7 @@ keep their coordinates. An operator that a map already holds in retained coordin
 transformed port, starts after that map. A chain of local reductions therefore never forms a full-space
 matrix. Transported operators grow along the maps, and the patches do not. In a ring, the loss of an
 early step can spread over every device that later patches link. The order of the steps then sets the
-cost. A full-chip reduction that follows local ones keeps their maps as parents in the same way.
+cost (§10.8). A full-chip reduction that follows local ones keeps their maps as parents in the same way.
 `result.mapping` extends the patch map by the identity on the other devices, and it forms that matrix
 only when you read it.
 
@@ -2179,6 +2179,70 @@ eigensystem, resolved into excitation sectors when possible. Its dressed states
 are not local. The local route does not transform baths yet, so a chip with baths
 raises `NotImplementedError`. Coupling and effective-terms targets do not
 accept `local=True`. `active_patch()` and `QuantumSequence.active_patch()` forward `local`.
+
+### 10.8 Order of a chain of eliminations
+
+`eliminate()` removes one device per call. Each step keeps second order in its own couplings, so the
+order of a chain sets two results: how far the operators of kept devices spread along the captured
+maps (§10.7), and which fourth-order terms the chain keeps.
+
+Operator size. A local step moves each operator support that meets its patch onto the patch
+survivors. Take a ring of six transmons with four levels and a coupling resonator between neighbours.
+If every coupler goes first, an operator on one transmon spreads over all six, which is 4,096 states.
+If each arc goes from one end, the operator stays on the kept transmons and at most one more device.
+
+Dropped exchange shift. Take a spectator `v`, a kept device `k` and a spectator `u` that couples to
+both. Through `u`, the two exchange with `J ≈ (g_ku g_uv / 2)(1/Δ_ku + 1/Δ_vu)`. If `u` goes first, its
+step makes `J` an explicit `k`–`v` coupling, and the step of `v` folds it. The chain then keeps the
+shift `J²/Δ_kv` of `k`. If `v` goes first, its step folds `v` against `u` alone, and the chain drops
+this shift. The shift is fourth order in the couplings. For legs of similar size, dispersive
+couplings to `u` and `|J/Δ_kv| ≪ 1`, it can be much larger than the fourth-order terms that every
+order drops. Unequal legs, cancellations and other resonances can remove this difference. The
+`g_over_delta` check of each fold does not show this omission.
+
+Near-degenerate spectators. Each step also adds exchange between its patch survivors. If two
+spectators `a` and `b` are close in frequency, an explicit `a`–`b` exchange can make the later fold
+of the pair poor. While `a` and `b` still couple to the device between them, no step folds them
+against each other.
+
+`eliminate_spectators(chip, keep)` and `active_patch()` choose each step by these rules:
+
+1. A spectator `v` waits while a spectator neighbour `u` has a kept neighbour `k` with
+   `|E_v - E_k| < |E_v - E_u| / 2`.
+2. A spectator `v` waits while its step would give two spectator neighbours `a` and `b` an exchange
+   `x_ab + x_av x_vb (1/(E_a - E_v) + 1/(E_b - E_v)) / 2` of magnitude `0.1 |E'_a - E'_b|` or more.
+   `E'_a = E_a + |x_av|² / (E_a - E_v)` is the transition of `a` after the step, which can bring the
+   pair closer. `v` also waits when `E_a = E_v`. The pair does not stop the step when `x_ab` is
+   nonzero and `|x_ab|` alone already reaches `0.1 |E_a - E_b|`.
+3. Among the spectators that do not wait, a device whose neighbours are all kept goes last. Then the
+   step with the smallest widest support of a kept device's operator goes first, then the smallest
+   sum of these supports, the smallest patch and chip order.
+
+`E` is the diagonal transition energy `E(1) - E(0)` of each device on the current chip. It includes
+the shifts of earlier steps, as the SW denominators do. `x` is the current single-excitation exchange
+element. Both are read at the chip's approximation, as the fold reads them. They hold only the
+number-conserving terms, so without RWA the rules omit the counter-rotating virtual paths.
+Neighbours share a coupling, an effective Hamiltonian or a port. A model of the patch rules of §10.7
+gives the neighbours, patches and supports. It starts on the source chip, and each step links its
+patch survivors. When a patch holds an interaction whose diagonal depends on the level of a device,
+the SW denominators of the step read that level. The correction then couples it on the diagonal with
+the levels of the devices next to the removed one, and later patches that hold these devices hold
+all the survivors. The model reads no reduced coordinates, so `local=True` and `local=False` give the
+same order. If every spectator waits, rule 3 chooses among all of them, and the result's notes name the
+step and what the chain omits. The order is a cost-and-accuracy heuristic for dispersive chips, and
+it does not bound the error. The divisor 2 and the limit 0.1 come from tests on rings, and the
+limit equals the `g_over_delta` limit of a fold.
+
+Take a ring of eight transmons at `5.32 - 0.07 i` GHz with coupling resonators at `f_c + 0.02 i` GHz,
+and keep `q2 q3 q5 q6`. The default order keeps each operator of a kept transmon within 256 states.
+For `(g, f_c)` = (0.03, 6.30), (0.075, 7.20) and (0.05, 6.00) GHz, its largest f01 error is 2.8, 22.8
+and 56.9 kHz. Each arc walked from one end gives 7.4, 98.1 and 98.9 kHz. The ZZ of neighbouring kept
+transmons has the same error with both orders, to within 2%.
+
+Each local step adds a note with the widest operator support of any device. It warns when one dense
+copy of that operator needs 256 MiB or more. Pass `order=` to set the steps yourself. The default
+order compares values, so it raises an error when `jax.jit` or `jax.grad` traces device parameters.
+Pass `order=` with the `eliminated_labels` of a call without tracing.
 
 ## 11. Parametric Edge Control
 

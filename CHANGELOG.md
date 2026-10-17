@@ -10,6 +10,15 @@ This file records notable user-visible changes to quchip.
 
 #### Changes and migration
 
+- `active_patch()` eliminates spectators in the default order of
+  `eliminate_spectators()`. Previously, it took the spectator farthest from the
+  active devices first, then label order. On rings of transmons and coupling
+  resonators, that order spread a drive over 768 states and dropped the
+  near-resonant exchange shifts of kept transmons. The reduced chip, its notes
+  and `eliminated_labels` can change. To keep a previous order, pass its
+  `eliminated_labels` as `order=`.
+  ([#151](https://github.com/quchip/quchip/issues/151),
+  [#183](https://github.com/quchip/quchip/pull/183))
 - `chip.state()`, `DressedResult.eigenstates` and
   `DressedResult.eigenvector_matrix` give each dressed vector a real,
   nonnegative amplitude on its assigned bare state. Previously, their signs
@@ -123,6 +132,20 @@ This file records notable user-visible changes to quchip.
 
 #### New features
 
+- `eliminate_spectators(chip, keep)` reduces a chip to the kept devices, one
+  `eliminate()` step at a time, and returns every step. Its default order keeps
+  the operators of kept devices small under `local=True`. A spectator waits
+  while a spectator neighbour links it to a kept device near it in frequency,
+  so the chain keeps their fourth-order exchange shift. It also waits while its
+  step would couple two near-degenerate spectators beyond the fold limit
+  `g/Δ = 0.1`. On a ring of eight transmons with four kept, the drives stay
+  within 256 states. The largest f01 error is 22.8 kHz, against 98.1 kHz when
+  each arc goes from one end. `order=` sets the steps, and the default order
+  raises under JAX tracing of device parameters. Each `eliminate(...,
+  local=True)` step reports its widest operator support in `notes` and warns
+  when one dense copy needs 256 MiB or more. `active_patch()` accepts `order=`.
+  ([#151](https://github.com/quchip/quchip/issues/151),
+  [#183](https://github.com/quchip/quchip/pull/183))
 - `ExcitationCutoff(max_total=K)` keeps the product energy labels whose levels
   sum to at most `K`. Set it with `Chip(..., space=...)` or `chip.with_space(...)`.
   It is separate from `RWA()` and `Exact()`, and quchip never sets it. The
