@@ -14,6 +14,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 from dataclasses import dataclass
+from math import prod
 from typing import TYPE_CHECKING, Any, Sequence
 
 import jax.numpy as jnp
@@ -374,6 +375,32 @@ class SectorModel:
         traced = contains_tracer((eigenvalues, eigenvectors, labeling.indices, labeling.overlaps, labeling.margins))
         self._eigensystems[total] = scoped_entry(total, system, traced=traced)
         return system
+
+    def embed(self, total: int, vector: Any) -> Any:
+        """Return a vector of one sector as a product-space vector in solver coordinates.
+
+        Parameters
+        ----------
+        total : int
+            Total energy-level index of the sector.
+        vector : array_like
+            Amplitudes in the sector's product energy basis.
+        """
+        space = self.space(total)
+        rows = np.ravel_multi_index(tuple(space.levels.T), self.dims)
+        transforms = [self.bases[device.label].energy_to_solver() for device in self.chip.devices]
+        xp = concrete_array_module(vector, transforms)
+        product: Any
+        if xp is np:
+            product = np.zeros(prod(self.dims), dtype=complex)
+            product[rows] = vector
+        else:
+            product = jnp.zeros(prod(self.dims), dtype=complex).at[rows].set(vector)
+        tensor = product.reshape(self.dims)
+        for axis, transform in enumerate(transforms):
+            if transform is not None:
+                tensor = xp.moveaxis(xp.tensordot(xp.asarray(transform), tensor, axes=([1], [axis])), 0, axis)
+        return tensor.reshape(-1)
 
     def labeled_subspace(self, labels: Sequence[tuple[int, ...]]) -> tuple[Any, Any, list[int], Any]:
         """Return the eigenpairs of the sectors that ``labels`` occupy and the labels' positions.

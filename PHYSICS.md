@@ -1364,18 +1364,22 @@ block, and two states couple only when they agree outside that support. The engi
 assigns labels within each block with the same overlap rule as the full
 eigensystem. `Chip.energy()`, `Chip.freq()`, `Chip.transition_frequency()`,
 `Chip.dispersive_shift()`, `Chip.dressed_anharmonicity()`, `Chip.kerr_matrix()`,
-`Chip.drive_matrix_elements()`, `Chip.effective_subspace_hamiltonian()` and `effective_hamiltonian()` take this
-route. Ground-conditioned first transitions and single-excitation exchange need
+`Chip.drive_matrix_elements()`, `Chip.state()`, `Chip.effective_subspace_hamiltonian()` and
+`effective_hamiltonian()` take this route. `Chip.state()` maps the sector eigenvector into
+solver coordinates with the local energy eigenvectors. Ground-conditioned first transitions and single-excitation exchange need
 `N <= 1`. Ground-conditioned anharmonicities, ZZ and dispersive shifts need
 `N <= 2`. Other conditioned transitions use the sectors of their specified labels.
 Drive matrix elements connect the initial and final sectors with the local
 operator's rectangular block. The assigned bare-state overlap fixes each
 state's phase, as in full-space analysis. This static query does not change
-pulse simulation.
+pulse simulation. The sector assignment keeps each label in its own sector. It
+agrees with the full-space assignment when the assigned overlaps are nonzero
+and the eigenvalue gaps are resolved. At an exact degeneracy between sectors,
+the sector state is an eigenstate of both `H` and `N`.
 Large authored supports can still require large local matrices. Memory checks
 precede local projection, sector enumeration and full-space static fallback.
 Traced blocks use differentiable eigensolves.
-Derivatives require separated eigenvalues and a locally stable assignment. `Chip.dress()`, `Chip.dressed_spectrum()`, `Chip.state()` and
+Derivatives require separated eigenvalues and a locally stable assignment. `Chip.dress()`, `Chip.dressed_spectrum()` and
 dressed-basis operators still diagonalize the complete chip. Other chips keep
 that route for every query.
 
@@ -1390,7 +1394,12 @@ When `initial_state=None`, a solve uses the eigenstate assigned to the
 all-ground label of the undriven static lab-frame Hamiltonian that its
 approximation keeps. The state is phase-fixed to have a real, nonnegative
 overlap on the bare product before the runtime frame transform (§4.2). With
-ordinary couplings, the default RWA leaves the bare product unchanged. When
+ordinary couplings, the default RWA leaves the bare product unchanged. When the
+static model of the solve's approximation conserves `N`, the bare product is
+the only state with `N = 0`. The solve then starts from it with no static
+model or eigensystem. Other models first apply the static Hamiltonian to the
+bare product, and they diagonalize it only when the bare product is not an
+eigenstate. When
 the solve uses the chip's approximation, it starts from the same physical
 state as `chip.state()` for the all-ground label before the frame transform.
 Retained bands, effective terms, or network Hamiltonian terms that couple the
