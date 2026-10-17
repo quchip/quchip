@@ -196,7 +196,7 @@ def test_multiport_response_rejects_records_of_hidden_channels_on_the_removed_mo
         assert affected
         for key in hidden:
             if key in affected:
-                with pytest.raises(NotImplementedError, match="retained multiport mode responses"):
+                with pytest.raises(NotImplementedError, match="lacks the kept responses of removed modes"):
                     solve_problem(with_monitoring(problem, {key: 1.}))
                 # A concrete zero efficiency records nothing.
                 assert np.all(np.isfinite(np.real(solve_problem(with_monitoring(problem, {key: 0.})).expect("q0"))))

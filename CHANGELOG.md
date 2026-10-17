@@ -284,6 +284,17 @@ This file records notable user-visible changes to quchip.
   SME records of other channels, and population observables still run.
   ([#159](https://github.com/quchip/quchip/issues/159),
   [#172](https://github.com/quchip/quchip/pull/172))
+- After `eliminate()` removes a readout with a one-port reflection or
+  transmission section, diffusive monitoring with a nonzero efficiency raises
+  `NotImplementedError` for the line output through the section and for a
+  hidden channel that acted on the readout, such as its internal loss or a
+  bath on it. Native monitoring applies no reference section, so these
+  records missed the readout's response, e.g. a mean of the internal-loss
+  field almost 800 times too small under a weak resonant input. The
+  transformed port, the carried channels and the baths record the readout.
+  `OutputField` traces, other records and unconditional solves still run.
+  ([#175](https://github.com/quchip/quchip/issues/175),
+  [#178](https://github.com/quchip/quchip/pull/178))
 - Pump-free `VNA.sweep()` computes models that are static in the lab frame but
   dynamic in the probe frame, e.g. capacitive couplings under `Exact()`.
   Previously, it raised. It solves one lab-frame stationary state per chip point

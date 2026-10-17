@@ -1941,20 +1941,30 @@ class PortNetwork:
                 fed.append((chip.port(source), gain * mapping[source]))
         return fed
 
-    def _responses_by_output(self, *, _compiled: _CompiledNetwork | None = None) -> dict[str, tuple[str, ...]]:
+    def _responses_by_output(
+        self, *, recorded: bool = False, _compiled: _CompiledNetwork | None = None,
+    ) -> dict[str, tuple[str, ...]]:
         """Return the retained mode responses whose ports emit into each output channel.
 
         The keys are the exposure labels of the affected channels. A channel
         whose coupling has no active weight on a response port is absent.
+        With ``recorded``, a port also counts the removed modes that it
+        records, whose kept response its Markov field lacks.
         """
-        if not self._mode_responses:
+        owners: dict[str, set[str]] = {}
+        for mode in self._mode_responses:
+            for label in mode.ports:
+                owners.setdefault(label, set()).add(mode.label)
+        for port in self._ports if recorded else ():
+            if port._omitted_responses:
+                owners.setdefault(port.label, set()).update(port._omitted_responses)
+        if not owners:
             return {}
         compiled = self._compile() if _compiled is None else _compiled
-        owners = {label: mode.label for mode in self._mode_responses for label in mode.ports}
         reached: dict[str, tuple[str, ...]] = {}
         for channel in compiled.channels:
-            labels = sorted({owners[source] for source in self._active_mapping_sources(channel.coupling)
-                             if source in owners})
+            labels = sorted({label for source in self._active_mapping_sources(channel.coupling)
+                             for label in owners.get(source, ())})
             if labels:
                 reached[channel.exposure.label] = tuple(labels)
         return reached
