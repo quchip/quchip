@@ -122,9 +122,14 @@ This file records notable user-visible changes to quchip.
   excited-reference field calculations raise, and so do time-domain coherent
   inputs at the pole's ports. Elimination raises `NotImplementedError` for two
   ports of one mode on one directional line. It also raises for a multiport
-  mode in a model that does not conserve excitation number.
+  mode in a model that does not conserve excitation number. The result's
+  `validity` reports `self_energy_over_width` for each kept pole. It compares
+  the return path through the omitted pole with the damping of each kept mode
+  on the other ports, and `describe()` shows it.
   ([#131](https://github.com/quchip/quchip/issues/131),
-  [#140](https://github.com/quchip/quchip/pull/140))
+  [#140](https://github.com/quchip/quchip/pull/140),
+  [#174](https://github.com/quchip/quchip/issues/174),
+  [#177](https://github.com/quchip/quchip/pull/177))
 - Deterministic pulse simulations on QuTiP and dynamiqs evolve in an invariant
   excitation space when quchip can prove one. The proof covers the initial state
   and every retained Hamiltonian, control, collapse operator and no-jump
