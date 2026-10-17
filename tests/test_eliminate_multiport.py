@@ -12,7 +12,7 @@ from quchip import (
 )
 
 
-def _hanger(count=2, *, g=0.04, backend="qutip", approximation=None, effective_terms=()):
+def _hanger(count=2, *, g=0.04, backend="qutip", approximation=None, effective_terms=(), probe=False):
     qubits = [DuffingTransmon(freq=5.32 - .07*i, anharmonicity=-.26, levels=3 if count == 3 else 2, label=f"q{i}")
               for i in range(count)]
     readouts = [Resonator(freq=6.56 + .05*i, levels=2, internal_quality_factor=2e5, label=f"r{i}")
@@ -27,6 +27,10 @@ def _hanger(count=2, *, g=0.04, backend="qutip", approximation=None, effective_t
         network.cascade(*left)
     network.expose("right", input=right[0].input, output=right[-1].output)
     network.expose("left", input=left[0].input, output=left[-1].output)
+    if probe:
+        # A second line on r0 alone, which no retained response reaches.
+        port = network.port("r0_probe", target=readouts[0], rate=2*np.pi*.0005)
+        network.expose("probe", input=port.input, output=port.output)
     return Chip(qubits + readouts, [Capacitive(q, r, g=g) for q, r in zip(qubits, readouts)],
                 port_network=network, frame=5.2, approximation=RWA() if approximation is None else approximation,
                 backend=backend, effective_terms=effective_terms)
@@ -126,6 +130,34 @@ def test_multiport_response_rejects_unsupported_field_routes(operation):
             sequence.schedule(reduced.port_network.external_port("left").input,
                               envelope=Square(duration=2., amplitude=.01), freq=6.61)
             sequence.build_problem(np.linspace(0., 2., 5))
+
+
+def test_multiport_response_rejects_time_domain_fields_and_records_on_its_line():
+    """Output fields and monitored records that carry the pole's emission raise; other observables run."""
+    from dataclasses import replace
+
+    from quchip import with_monitoring
+    from quchip.engine import solve_problem
+    from quchip.observables import OutputField
+
+    reduced = eliminate(_hanger(probe=True), "r1").chip
+    sequence = QuantumSequence(reduced)
+    tlist = np.linspace(0., 2., 3)
+    for plane in ("right", "left"):
+        with pytest.raises(NotImplementedError, match=rf"Output field '{plane}' .*\['r1'\]"):
+            sequence.build_problem(tlist, e_ops={plane: OutputField(plane)})
+    sequence.build_problem(tlist, e_ops={"probe": OutputField("probe")})
+    base = sequence.build_problem(tlist, e_ops=reduced.e_ops(r0="n"), initial_state={"r0": 1})
+    options = {"dt": 0.01, "progress_bar": ""}
+    sse = replace(base, solver="ssesolve", run_args={"ntraj": 2, "seeds": 1}, options=options)
+    sme = replace(sse, solver="smesolve")
+    # Pure-state SSE monitors every channel, the affected lines included.
+    for problem in (sse, with_monitoring(sme, {"right": .5})):
+        with pytest.raises(NotImplementedError, match=r"Monitored channel 'right' .*\['r1'\]"):
+            solve_problem(problem)
+    for selection in ({"probe": 1.}, {"right": 0., "probe": 1.}):
+        result = solve_problem(with_monitoring(sme, selection))
+        assert np.all(np.isfinite(np.real(result.expect("r0"))))
 
 
 def test_multiport_elimination_order_and_vacuum_reference_agree():

@@ -1161,8 +1161,9 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
             "The pole omits survivor damping and correlations with the discarded internal-loss bath. "
             "Dissipation remains dispersive."
             + (" SW keeps second-order energies only." if method == "sw" else "")
-            + " Pumped, finite-power, noisy and excited-reference field responses, and time-domain "
-            "coherent inputs at its ports, require the full boundary mode."
+            + " Pumped, finite-power, noisy and excited-reference field responses, time-domain "
+            "coherent inputs at its ports, and time-domain output fields and measurement records "
+            "that carry its emission require the full boundary mode."
         )
     if len(boundary_ports) == 1 and not coupled_response:
         # The transformed port carries survivor emission. The section keeps

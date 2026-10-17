@@ -28,6 +28,9 @@ def with_monitoring(problem: Any, efficiencies: Mapping[Any, Any], *, phases: Ma
     SolveProblem or SolveBatch
         Captured selection. For pure-state SSE, all losses must be monitored
         with unit efficiency. Native SME owns inefficient state evolution.
+        After an elimination, a solve rejects a positive efficiency on a
+        channel that carries the emission of a retained multiport mode
+        response, because time-domain dynamics omit its pole.
 
     Notes
     -----
@@ -67,6 +70,8 @@ def monitored_operators(problem: Any) -> tuple[list[Any], list[Any], list[Any]]:
     selection = problem.monitoring
     if selection is None:
         selection = {i: (1.0, 0.0) for i in range(len(channels))} if pure else {}
+    network = problem.chip.port_network
+    responses = {} if network is None or not channels else network._responses_by_output()
     unobserved, monitored, efficiencies = [], [], []
     for index, channel in enumerate(channels):
         operator = backend.from_canonical_operator(channel.coupling)
@@ -78,6 +83,12 @@ def monitored_operators(problem: Any) -> tuple[list[Any], list[Any], list[Any]]:
         eta, phase = selection[index]
         if pure and maybe_concrete_scalar(eta) != 1.0:
             raise ValueError("Pure-state SSE requires concrete unit monitor efficiencies; use SME.")
+        if channel.key in responses and maybe_concrete_scalar(eta) != 0.0:
+            raise NotImplementedError(
+                f"Monitored channel {channel.key!r} carries the emission of retained multiport mode responses "
+                f"{list(responses[channel.key])}. Time-domain dynamics omit their poles, so the record and the "
+                "conditional state miss their field. Keep the boundary mode, or monitor only other channels with SME."
+            )
         monitored.append(xp.exp(-1j * xp.asarray(phase)) * operator)
         efficiencies.append(eta)
     return unobserved, monitored, efficiencies
