@@ -756,7 +756,7 @@ class ChipAnalysis:
                 matrix = jnp.asarray(_analysis_matrix_ghz(static))
                 column = _differentiable_eigenvector(matrix, values[index], values, vectors, column)
                 # That derivative transports the phase. The gauge restores the derivative of the anchor's phase.
-                amplitudes = _reference_amplitudes(static._dressing_context.reference, column[:, None])
+                amplitudes = self._semantic_amplitudes(column[:, None], static)
                 column = column * gauge_phases(amplitudes, jnp.zeros(1, dtype=int))[0]
             ket = column
         self._ground_cache = scoped_entry(key, ket, traced=contains_tracer(ket))

@@ -335,6 +335,8 @@ def gauge_phases(amplitudes: Any, indices: Any) -> Any:
     peak = xp.max(magnitudes, axis=0)
     fallback = amplitudes[xp.argmax(magnitudes >= (1.0 - 1e-6) * peak, axis=0), span]
     labels = xp.arange(len(indices))
+    rows: Any
+    assigned: Any
     if xp is np:
         rows, assigned = np.zeros(columns, dtype=int), np.zeros(columns, dtype=bool)
         rows[np.asarray(indices)] = labels
