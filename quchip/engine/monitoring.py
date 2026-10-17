@@ -64,7 +64,7 @@ def with_monitoring(problem: Any, efficiencies: Mapping[Any, Any], *, phases: Ma
 
 
 def _carried_without_poles(chip: Any) -> dict[tuple[str, str], tuple[str, ...]]:
-    """Return the hidden channels that act on a removed mode whose multiport response was retained.
+    """Return the hidden channels that act on a removed mode whose pole or section was kept.
 
     The keys are the channel's source and name, and the values are the labels
     of the responses. Effective terms declare the channels that reductions
@@ -93,7 +93,7 @@ def monitored_operators(problem: Any) -> tuple[list[Any], list[Any], list[Any]]:
     if selection is None:
         selection = {i: (1.0, 0.0) for i in range(len(channels))} if pure else {}
     network = problem.chip.port_network
-    responses = {} if network is None or not channels else network._responses_by_output()
+    responses = {} if network is None or not channels else network._responses_by_output(recorded=True)
     carried = _carried_without_poles(problem.chip) if channels else {}
     unobserved, monitored, efficiencies = [], [], []
     for index, channel in enumerate(channels):
@@ -109,9 +109,9 @@ def monitored_operators(problem: Any) -> tuple[list[Any], list[Any], list[Any]]:
         missed = responses.get(channel.key) or carried.get((channel.collapse.source, channel.collapse.channel))
         if missed and maybe_concrete_scalar(eta) != 0.0:
             raise NotImplementedError(
-                f"Monitored channel {channel.key!r} carries the emission of retained multiport mode responses "
-                f"{list(missed)}. Time-domain dynamics omit their poles, so the record and the "
-                "conditional state miss their field. Keep the boundary mode, or monitor only other channels with SME."
+                f"Monitored channel {channel.key!r} lacks the kept responses of removed modes {list(missed)}. "
+                "Time-domain dynamics omit their poles and sections, so the record and the conditional state "
+                "miss their field. Keep the boundary mode, or monitor only other channels with SME."
             )
         monitored.append(xp.exp(-1j * xp.asarray(phase)) * operator)
         efficiencies.append(eta)

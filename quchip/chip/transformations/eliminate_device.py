@@ -960,13 +960,17 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
                     port_operator, labels=tuple(numeric_survivors), dims=survivor_dims,
                     name="transformed_port", excitation_changes=port_changes,
                 )
-            port_replacements[port.label] = Port(
+            replacement = Port(
                 port_targets,
                 rate=port.rate_value(chip),
                 operator=port_operator,
                 phase=port.phase,
                 label=port.label,
             )
+            # The transformed field of a boundary port lacks the response that the reduction keeps.
+            replacement._omitted_responses = (tuple(sorted({*port._omitted_responses, mode_label}))
+                                              if port.label not in retained_ports else port._omitted_responses)
+            port_replacements[port.label] = replacement
         notes.append(
             f"Transformed port(s) {sorted(port_replacements)} through the {method} reduction; "
             "the PortNetwork scattering and existing reference sections are retained."
@@ -1017,8 +1021,8 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
 
     def omitted_by(support_labels: tuple[str, ...], omitted: tuple[str, ...]) -> tuple[str, ...]:
         # A channel on the removed mode keeps only its adiabatic part, so its
-        # time-domain field lacks the retained pole.
-        return tuple(sorted({*omitted, mode_label})) if coupled_response and mode_label in support_labels else omitted
+        # time-domain field lacks the kept pole or section.
+        return tuple(sorted({*omitted, mode_label})) if boundary_ports and mode_label in support_labels else omitted
 
     def carry(operator: Any, support_labels: tuple[str, ...], support_dims: tuple[int, ...], rate: Any,
               name: str, changes: frozenset[int] | None, omitted: tuple[str, ...]) -> None:
@@ -1128,7 +1132,7 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
                 matrices = [op if moved is None else _array(moved[0]) for op, moved in zip(matrices, transported)]
             copied._retained[label] = (frequency, *[step_embedding.conj().T @ op @ step_embedding
                                                    for op in matrices], changes)
-        if coupled_response and mode_label in copied._retained:
+        if boundary_ports and mode_label in copied._retained:
             copied._omitted_responses = tuple(sorted({*bath._omitted_responses, mode_label}))
         projected_baths.append(copied)
     projection = None if lone and not joined else (step if step is not None else OperatorProjection.capture(
@@ -1238,7 +1242,8 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
         if method == "sw":
             note += ("SW misses frequency shifts beyond second order, of order g⁴/Δ³ with one survivor "
                      "and 2g_1g_2J/(Δ_1Δ_2) when a coupling J joins two survivors. ")
-        note += "The section's internal-loss bath is vacuum."
+        note += ("The section's internal-loss bath is vacuum. Monitored records of the line through it and of "
+                 "channels on the mode lack its response and require the full boundary mode.")
         if shared_line:
             note += (
                 " Either leg preserves the weak-probe response from the line input. "

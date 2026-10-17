@@ -1811,6 +1811,21 @@ The entry sets `is_valid` when `kappa_over_delta < 0.1`. This is a dispersive
 diagnostic, not an accuracy guarantee.
 Reflection sections add no such entry.
 
+Native monitoring records the Markov coupling `L` of each selected channel and
+applies no reference section, also at the carrier. A record of the line output
+through the section, or of a hidden channel that acted on the removed mode,
+therefore lacks the mode's response to the line field. For a weak input `beta`
+at `f`, the full chip gives `<L_e> = -kappa_e beta / D_r(f)` and
+`<sqrt(kappa_i) a> = -sqrt(kappa_e kappa_i) beta / D_r(f)`, with
+`D_r(f) = (kappa_e + kappa_i)/2 + i 2π(f_r - f)`. Both stay finite as the
+dressing vanishes, while the reduced means vanish with it. A solve therefore
+rejects diffusive monitoring of these channels with a nonzero efficiency, as
+for a multiport response below. On a shared line, the rule also rejects the
+line record of kept emitters on the same line. Away from the removed
+frequency, the error of that record is of the order of `kappa_over_delta`.
+`OutputField` traces through the section keep the narrowband carrier
+approximation above.
+
 A harmonic mode with several default lowering ports can instead retain one
 coupled response at the original port locations. Each port must lie on a
 distinct directional line accepted by the series check above. For the pole's
@@ -1861,11 +1876,11 @@ efficiency. It also rejects that monitoring for a hidden channel that acted on
 the removed mode, such as its internal loss or a bath on it.
 `EffectiveTerms.omitted_responses` records the carried channels, and later
 reductions keep the record when they carry them again. A bath records its
-removed targets in the same way. The record stays with the channel when the
-port network no longer holds the pole, because the channel still lacks the
-removed mode. Pure-state SSE monitors
-every channel, so it rejects every chip with such a channel. A traced
-efficiency counts as nonzero, also when its value is zero. The field and the
+removed targets, and a transformed port records its removed mode, in the same
+way. The record stays with the channel when the port network no longer holds
+the pole or the section, because the channel still lacks the removed mode.
+Pure-state SSE monitors every channel, so it rejects every chip with such a
+channel. A traced efficiency counts as nonzero, also when its value is zero. The field and the
 record would contain only the adiabatic part of the removed mode, so they would
 miss the pole near its frequency. For those observables, keep the boundary
 mode.
