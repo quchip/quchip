@@ -373,11 +373,17 @@ readout keeps one coupled response at its original position, so the line
 keeps its dip and its reflection into the opposite direction. Both
 transformed ports retain the qubits' directional Purcell decay.
 
+Time-domain dynamics omit this response, including its return path to other
+emitters on the line. Keep the readout mode for time-domain inputs, output
+fields, and measurement records on its feedline.
+
 A readout with one port keeps its scattering as a reference section at its
 dressed transition instead: `PortNetwork.mode_reflection(...)` when the port
 is alone on its plane, and `mode_transmission(...)` on a shared one-way
 feedline. The transformed ports act on every surviving device, so a later
-elimination can remove the next readout.
+elimination can remove the next readout. A measurement record of that line,
+or of a loss channel on the removed readout, omits the section and also needs
+the readout mode.
 
 This vacuum weak-probe calculation supports global SW, local SW, and global
 exact elimination. Inspect `reduction.notes` and `reduction.validity` before
@@ -385,8 +391,7 @@ you use the reduced model. The retained response keeps the dispersive limits
 described in the [physics
 reference](../physics.md#105-collapse-transforms-and-validity-metrics). Keep
 the readout mode for pumped, finite-power, noisy, or excited-reference field
-calculations, and for time-domain coherent inputs on its feedline. Unsupported
-port layouts raise `NotImplementedError`.
+calculations. Unsupported port layouts raise `NotImplementedError`.
 
 <details>
 <summary>Check the field error</summary>
