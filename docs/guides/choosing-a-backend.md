@@ -29,9 +29,12 @@ intentional Hamiltonian-only calculation.
 Both backends evolve a deterministic solve in an invariant excitation space
 when quchip can prove one from the initial state and the retained operators.
 Results keep physical dimensions. `result.stats["excitation_reduction"]`
-reports the dimensions and the proof or the fallback reason. The
-[model reduction guide](chip-transformations.md#use-an-exact-excitation-space)
-solves a 24-transmon ring this way.
+reports the dimensions and the proof or the fallback reason. Under
+`ExcitationCutoff(max_total=K)`, both backends evolve only the states with at
+most `K` excitations, an explicit approximation that the same record reports.
+The [model reduction guide](chip-transformations.md#use-an-exact-excitation-space)
+solves a 24-transmon ring in its exact space and compares a cutoff with the
+full solve.
 
 ## Time grid, stepping, and saved states
 

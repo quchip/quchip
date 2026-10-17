@@ -485,16 +485,19 @@ This file records notable user-visible changes to quchip.
 #### Documentation and examples
 
 - The model reduction guide removes a readout from a two-way hanger feedline,
-  moved from the Purcell study, and describes its time-domain limits, one-port
-  reference sections and `eliminate(..., local=True)`. An idle ring of 24 three-level transmons
+  moved from the Purcell study. It describes the time-domain limits, the
+  return-path validity entry, one-port reference sections and
+  `eliminate(..., local=True)`. An idle ring of 24 three-level transmons
   evolves in 24 of its 3²⁴ states and matches an independent hopping
-  propagator.
+  propagator. On the driven chain, `ExcitationCutoff(max_total=2)` matches the
+  full solve to the solver tolerance.
   ([#164](https://github.com/quchip/quchip/pull/164))
 - The pulses guide checks the CLEAR carrier against the conditional
   weak-probe reflection, `VNA.sweep(..., when=...)`. The cookbook adds pulse
   `detuning=` and `frame=`, and its conditional readout snippet uses a
-  declared chip. The backends guide describes exact excitation spaces, and
-  the gradients guide states the level-order check for traced devices. The
+  declared chip. The backends guide describes exact excitation spaces and the
+  excitation cutoff, and the gradients guide states the level-order check for
+  traced devices. The first-chip guide describes the fit history fields. The
   README gives χ_Z with ground-positive Z.
   ([#164](https://github.com/quchip/quchip/pull/164))
 - `PHYSICS.md` §10.4 identifies the Löwdin map of
