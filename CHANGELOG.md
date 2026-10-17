@@ -384,8 +384,8 @@ This file records notable user-visible changes to quchip.
 #### Documentation and examples
 
 - The model reduction guide removes a readout from a two-way hanger feedline,
-  moved from the Purcell study, and describes one-port reference sections and
-  `eliminate(..., local=True)`. An idle ring of 24 three-level transmons
+  moved from the Purcell study, and describes its time-domain limits, one-port
+  reference sections and `eliminate(..., local=True)`. An idle ring of 24 three-level transmons
   evolves in 24 of its 3²⁴ states and matches an independent hopping
   propagator.
   ([#164](https://github.com/quchip/quchip/pull/164))
