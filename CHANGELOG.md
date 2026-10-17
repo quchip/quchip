@@ -232,6 +232,12 @@ This file records notable user-visible changes to quchip.
   the chip's backend.
   ([#158](https://github.com/quchip/quchip/issues/158),
   [#166](https://github.com/quchip/quchip/pull/166))
+- The sequence of `active_patch()` keeps the timing of the source schedule.
+  Previously, a delay on the line of a removed device no longer reached a
+  later barrier, so later pulses of the patch sequence started earlier, and a
+  `vz()` on a removed device made `simulate()` raise `KeyError`.
+  ([#162](https://github.com/quchip/quchip/issues/162),
+  [#167](https://github.com/quchip/quchip/pull/167))
 - Pump-free `VNA.sweep()` computes models that are static in the lab frame but
   dynamic in the probe frame, e.g. capacitive couplings under `Exact()`.
   Previously, it raised. It solves one lab-frame stationary state per chip point

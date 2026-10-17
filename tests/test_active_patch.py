@@ -98,6 +98,37 @@ def test_active_patch_matches_full_solve_in_dispersive_regime():
     assert np.max(np.abs(z_full - z_patch)) < tol
 
 
+def test_active_patch_sequence_keeps_the_timing_and_frames_of_removed_devices():
+    """A patch sequence replays delays, barriers and virtual-Z entries on removed devices with the source timing."""
+
+    def schedule(with_vz):
+        chip, qs, drives = _chain()
+        seq = QuantumSequence(chip)
+        pulse = Gaussian(duration=20.0, sigmas=3, amplitude=0.02)
+        if with_vz:
+            seq.vz(qs[3], np.pi / 2)
+        seq.schedule(drives[0], envelope=pulse, freq=chip.freq(qs[0]))
+        seq.delay(qs[3], duration=100.0)  # advances the cursor of d3, which the patch strips
+        seq.barrier()
+        if with_vz:
+            seq.vz(qs[3], np.pi / 2)
+        seq.schedule(drives[0], envelope=pulse, freq=chip.freq(qs[0]))
+        return seq, seq.active_patch(hops=1)
+
+    seq, patch = schedule(with_vz=True)
+    assert set(patch.eliminated_labels) == {"q2", "q3"}
+    assert [op.start_time for op in patch.sequence.scheduled_ops] == [op.start_time for op in seq.scheduled_ops]
+    assert [op.start_time for op in seq.scheduled_ops] == [0.0, 100.0]
+    assert patch.sequence.total_duration == seq.total_duration
+    pulse_paths = {path for path in seq.parameters if path.startswith("pulse.")}
+    assert pulse_paths and {path for path in patch.sequence.parameters if path.startswith("pulse.")} == pulse_paths
+
+    tlist = np.linspace(0.0, 120.0, 7)
+    with_vz = patch.simulate(tlist=tlist).final_state
+    without_vz = schedule(with_vz=False)[1].simulate(tlist=tlist).final_state
+    np.testing.assert_allclose(np.asarray(with_vz.full()), np.asarray(without_vz.full()), rtol=0, atol=1e-12)
+
+
 def test_active_patch_warns_on_poor_sw_validity():
     """active_patch warns, without raising, when a fold's Schrieffer-Wolff validity comes back poor."""
     # g=0.05 at a 0.02 GHz detuning is near-resonant (g/Delta >> 0.1), so the fold triggers is_valid=False.
