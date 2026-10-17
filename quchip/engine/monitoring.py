@@ -30,7 +30,9 @@ def with_monitoring(problem: Any, efficiencies: Mapping[Any, Any], *, phases: Ma
         with unit efficiency. Native SME owns inefficient state evolution.
         After an elimination, a solve rejects a positive efficiency on a
         channel that carries the emission of a retained multiport mode
-        response, because time-domain dynamics omit its pole.
+        response, because time-domain dynamics omit its pole. This includes
+        a hidden channel that acted on the removed mode. A traced efficiency
+        counts as positive.
 
     Notes
     -----
@@ -61,6 +63,26 @@ def with_monitoring(problem: Any, efficiencies: Mapping[Any, Any], *, phases: Ma
     return replace(problem, monitoring=selected)
 
 
+def _carried_without_poles(chip: Any) -> dict[tuple[str, str], tuple[str, ...]]:
+    """Return the hidden channels that act on a removed mode whose multiport response is retained.
+
+    The keys are the channel's source and name, and the values are the labels
+    of the responses. Effective terms declare the channels that reductions
+    carry, and baths keep their removed targets.
+    """
+    live = {mode.label for mode in chip.port_network._mode_responses}
+    carried: dict[tuple[str, str], tuple[str, ...]] = {}
+    for terms in chip.effective_terms:
+        for name, labels in terms.omitted_responses.items():
+            if live.intersection(labels):
+                carried[(terms.label, name)] = tuple(label for label in labels if label in live)
+    for bath in chip.baths:
+        for label in sorted(live.intersection(bath._retained or ())):
+            for name in bath._channel_names(label):
+                carried[(bath.label, name)] = (*carried.get((bath.label, name), ()), label)
+    return carried
+
+
 def monitored_operators(problem: Any) -> tuple[list[Any], list[Any], list[Any]]:
     """Lower physical couplings once, keeping selected channel order and phases."""
     backend = problem.backend
@@ -72,6 +94,7 @@ def monitored_operators(problem: Any) -> tuple[list[Any], list[Any], list[Any]]:
         selection = {i: (1.0, 0.0) for i in range(len(channels))} if pure else {}
     network = problem.chip.port_network
     responses = {} if network is None or not channels else network._responses_by_output()
+    carried = {} if network is None or not channels else _carried_without_poles(problem.chip)
     unobserved, monitored, efficiencies = [], [], []
     for index, channel in enumerate(channels):
         operator = backend.from_canonical_operator(channel.coupling)
@@ -83,10 +106,11 @@ def monitored_operators(problem: Any) -> tuple[list[Any], list[Any], list[Any]]:
         eta, phase = selection[index]
         if pure and maybe_concrete_scalar(eta) != 1.0:
             raise ValueError("Pure-state SSE requires concrete unit monitor efficiencies; use SME.")
-        if channel.key in responses and maybe_concrete_scalar(eta) != 0.0:
+        missed = responses.get(channel.key) or carried.get((channel.collapse.source, channel.collapse.channel))
+        if missed and maybe_concrete_scalar(eta) != 0.0:
             raise NotImplementedError(
                 f"Monitored channel {channel.key!r} carries the emission of retained multiport mode responses "
-                f"{list(responses[channel.key])}. Time-domain dynamics omit their poles, so the record and the "
+                f"{list(missed)}. Time-domain dynamics omit their poles, so the record and the "
                 "conditional state miss their field. Keep the boundary mode, or monitor only other channels with SME."
             )
         monitored.append(xp.exp(-1j * xp.asarray(phase)) * operator)

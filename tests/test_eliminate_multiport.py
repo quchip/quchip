@@ -160,6 +160,42 @@ def test_multiport_response_rejects_time_domain_fields_and_records_on_its_line()
         assert np.all(np.isfinite(np.real(result.expect("r0"))))
 
 
+@pytest.mark.parametrize("local", [False, True])
+def test_multiport_response_rejects_records_of_hidden_channels_on_the_removed_mode(local):
+    """A hidden channel on a removed readout lacks its pole, also after a later reduction carries it."""
+    from dataclasses import replace
+
+    from quchip import Bath, with_monitoring
+    from quchip.engine import solve_problem
+
+    base = _hanger(probe=True)
+    # The q0-r1 coupling makes the later local reduction of r0 carry the channel of r1.
+    chip = Chip(list(base.devices), [*base.couplings, Capacitive(base["q0"], base["r1"], g=.02)],
+                port_network=base.port_network, frame=5.2, approximation=RWA())
+    if not local:
+        # Local reduction does not transform baths.
+        chip.add_bath(Bath("thermal", targets=["r1", "q0"], temperature=20., rate=1e-4, label="fridge"))
+    once = eliminate(chip, "r1", local=local).chip
+    terms = next(terms for terms in once.effective_terms if terms.omitted_responses)
+    assert terms.omitted_responses == {"internal_photon_loss": ("r1",)}
+    assert EffectiveTerms.from_dict(terms.to_dict()).omitted_responses == terms.omitted_responses
+    for reduced, removed in ((once, ("r1",)), (eliminate(once, "r0", local=local).chip, ("r0", "r1"))):
+        sequence = QuantumSequence(reduced)
+        problem = replace(sequence.build_problem(np.linspace(0., 2., 3), e_ops=reduced.e_ops(q0="n")),
+                          solver="smesolve", run_args={"ntraj": 2, "seeds": 1},
+                          options={"dt": 0.01, "progress_bar": ""})
+        hidden = [channel.key for channel in problem.engine_result.slh.channels if channel.accessibility == "hidden"]
+        # A channel named after a removed readout acts on that readout.
+        affected = [key for key in hidden if any(label in key for label in removed)]
+        assert affected
+        for key in hidden:
+            if key in affected:
+                with pytest.raises(NotImplementedError, match="retained multiport mode responses"):
+                    solve_problem(with_monitoring(problem, {key: 1.}))
+            else:
+                assert np.all(np.isfinite(np.real(solve_problem(with_monitoring(problem, {key: 1.})).expect("q0"))))
+
+
 def test_multiport_elimination_order_and_vacuum_reference_agree():
     """Repeated elimination preserves the same coupled response in either order and for an explicit vacuum."""
     chip = _hanger()

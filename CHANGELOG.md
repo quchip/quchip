@@ -229,7 +229,10 @@ This file records notable user-visible changes to quchip.
   `simulate()` raises `NotImplementedError` for an `OutputField` whose
   channel carries emission from the response's ports, and for diffusive
   monitoring of such a channel with a nonzero efficiency, including
-  pure-state SSE. Previously, these outputs omitted the response with no
+  pure-state SSE. Monitoring a hidden channel that acted on the removed
+  readout, such as its internal loss or a bath on it, also raises.
+  `EffectiveTerms.omitted_responses` records these channels through later
+  reductions. Previously, these outputs omitted the response with no
   error, e.g. a steady output amplitude 160 times too large at the response
   frequency. Keep the boundary mode for these outputs. Other outputs, SME
   records of other channels, and population observables still run.

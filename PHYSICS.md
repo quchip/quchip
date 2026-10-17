@@ -1857,17 +1857,22 @@ Pumped, finite-power, noisy, excited-reference, and general stationary field
 routes reject it. A time-domain solve also rejects a coherent input that
 reaches the pole's ports, an `OutputField` whose channel carries emission from
 those ports, and diffusive monitoring of such a channel with a nonzero
-efficiency. Pure-state SSE monitors every channel, so it rejects every chip
-with such a channel. The field and the record would contain only the adiabatic
-part of the removed mode, so they would miss the pole near its frequency. The
-record of a hidden channel that the reduction carries from the removed mode,
-such as its internal loss, misses the pole in the same way. For those
-observables, keep the boundary mode.
+efficiency. It also rejects that monitoring for a hidden channel that acted on
+the removed mode, such as its internal loss or a bath on it.
+`EffectiveTerms.omitted_responses` records the carried channels, and later
+reductions keep the record when they carry them again. Pure-state SSE monitors
+every channel, so it rejects every chip with such a channel. A traced
+efficiency counts as nonzero, also when its value is zero. The field and the
+record would contain only the adiabatic part of the removed mode, so they would
+miss the pole near its frequency. For those observables, keep the boundary
+mode.
 
 Other outputs, SME records of other channels, and unconditional solves keep
 their formula. Their accuracy depends on the reduced dynamics, because the pole
-can act back on kept emitters through a two-way line. Small population errors
-can also hide larger phase errors.
+can act back on kept emitters through a two-way line. A channel that reaches
+the removed mode only through dressing, such as the relaxation of a coupled
+survivor, also misses part of the pole, in proportion to that dressing. Small
+population errors can also hide larger phase errors.
 
 A port that an earlier elimination transformed already acts on every survivor
 and reaches a later eliminated mode only through that dressing. The later
