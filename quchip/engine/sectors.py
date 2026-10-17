@@ -356,6 +356,7 @@ class SectorModel:
         rows = np.ravel_multi_index(tuple(space.levels.T), self.dims)
         transforms = [self.bases[device.label].energy_to_solver() for device in self.chip.devices]
         xp = concrete_array_module(vector, transforms)
+        product: Any
         if xp is np:
             product = np.zeros(prod(self.dims), dtype=complex)
             product[rows] = vector
