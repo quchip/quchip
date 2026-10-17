@@ -146,6 +146,17 @@ This file records notable user-visible changes to quchip.
   when one dense copy needs 256 MiB or more. `active_patch()` accepts `order=`.
   ([#151](https://github.com/quchip/quchip/issues/151),
   [#183](https://github.com/quchip/quchip/pull/183))
+- `eliminate_spectators()` and `active_patch()` estimate the shift that each
+  Schrieffer-Wolff step omits from a kept device when a device that stays on
+  the chip links a removed spectator to it. An example is the coupler that
+  `active_patch(hops=1)` keeps next to a driven transmon. `omitted_shifts`
+  holds the estimate in GHz, and a note names each term. For a transmon with a
+  kept coupler and a spectator 40 MHz away, the estimate is -39.9 kHz and the
+  f01 error is +39.7 kHz. Outside the dispersive regime, and next to a direct
+  exchange, the estimate is `None`. `method="exact"` with `local=False` keeps
+  the shift.
+  ([#184](https://github.com/quchip/quchip/issues/184),
+  [#183](https://github.com/quchip/quchip/pull/183))
 - `ExcitationCutoff(max_total=K)` keeps the product energy labels whose levels
   sum to at most `K`. Set it with `Chip(..., space=...)` or `chip.with_space(...)`.
   It is separate from `RWA()` and `Exact()`, and quchip never sets it. The

@@ -242,6 +242,74 @@ def test_a_step_that_breaks_a_wait_is_recorded():
         "wait. The chain omits the fourth-order 'k2'-'v1' exchange shift through 'v2'."]
 
 
+def _kept_coupler(f_v=5.04, scale=1.0, *, direct=0.0, second=False):
+    """A driven transmon k, a coupler u next to it, and a spectator v near k that couples to u."""
+    k = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="k")
+    v = DuffingTransmon(freq=f_v, anharmonicity=-0.25, levels=3, label="v")
+    mediators = [Resonator(freq=7.0, levels=2, label="u")]
+    if second:
+        mediators.append(Resonator(freq=7.4, levels=2, label="u2"))
+    couplings = [Capacitive(k, m, g=0.05 * scale) for m in mediators] + [
+        Capacitive(m, v, g=0.05 * scale) for m in mediators]
+    if direct:
+        couplings.append(Capacitive(k, v, g=direct))
+    chip = Chip([k, *mediators, v], couplings, approximation=RWA())
+    chip.wire(ChargeDrive(target=k, label="dk"))
+    sequence = QuantumSequence(chip)
+    sequence.schedule("dk", envelope=Square(duration=20.0, amplitude=0.01), freq=float(chip.freq("k")))
+    return chip, sequence
+
+
+@pytest.mark.parametrize("f_v", [5.04, 4.96, 5.015])
+@pytest.mark.parametrize("scale", [1.0, 0.5])
+def test_a_patch_reports_the_shift_that_a_kept_coupler_leaves_out(f_v, scale):
+    """hops=1 keeps u, so the step of v folds it against u alone and drops J²/Δ_kv from k.
+
+    With v at 5.015 GHz, |J/Δ_kv| is 0.084, just below the limit of the estimate.
+    """
+    chip, sequence = _kept_coupler(f_v, scale)
+    patch = sequence.active_patch(hops=1)
+    error = float(patch.chip.freq("k")) - float(chip.freq("k"))
+    assert patch.eliminated_labels == ("v",)
+    assert np.sign(patch.omitted_shifts["k"]) == np.sign(5.0 - f_v)
+    assert -patch.omitted_shifts["k"] == pytest.approx(error, rel=0.02)
+    if (f_v, scale) == (5.04, 1.0):
+        assert [note for note in patch.notes if note.startswith("Eliminating ")] == [
+            "Eliminating 'v' omits an estimated -39.9 kHz from the transition of the kept 'k', the fourth-order "
+            "exchange shift through 'u'. method='exact' with local=False keeps it."]
+    assert sequence.active_patch(hops=0).omitted_shifts == {}
+    exact = sequence.active_patch(hops=1, method="exact")
+    assert exact.omitted_shifts == {}
+    assert float(exact.chip.freq("k")) == pytest.approx(float(chip.freq("k")), abs=1e-9)
+
+
+def test_the_paths_of_two_kept_couplers_add_before_squaring():
+    chip, sequence = _kept_coupler(second=True)
+    patch = sequence.active_patch(hops=1)
+    error = float(patch.chip.freq("k")) - float(chip.freq("k"))
+    paths = [0.05**2 / 2 * (1 / (5.0 - f_u) + 1 / (5.04 - f_u)) for f_u in (7.0, 7.4)]
+    assert -patch.omitted_shifts["k"] == pytest.approx(error, rel=0.1)
+    assert abs(-sum(path**2 for path in paths) / (5.0 - 5.04) - error) > 0.3 * abs(error)
+
+
+@pytest.mark.parametrize("f_v, scale, direct, reason", [
+    (5.0, 1.0, 0.0, "two of these transitions are degenerate"),
+    (5.04, 1.0, 0.002, "'k' and 'v' also exchange directly"),
+    (5.005, 1.0, 0.0, "|J/Δ| = 0.25 between 'k' and 'v' is not small, so the two are near resonance"),
+    (5.04, 6.0, 0.0, "the leg through 'u' has g/Δ = 0.15, which is not small"),
+])
+def test_the_shift_estimate_is_unavailable_outside_the_dispersive_regime(f_v, scale, direct, reason):
+    """Near resonance, the estimate is 6% too large at |J/Δ_kv| = 0.25 and diverges as v reaches k."""
+    chip, _ = _kept_coupler(f_v, scale, direct=direct)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*poor Schrieffer-Wolff validity")
+        result = eliminate_spectators(chip, ["k"], order=["v"])
+    assert result.omitted_shifts == {"k": None}
+    assert [note for note in result.notes if note.startswith("Eliminating ")] == [
+        f"Eliminating 'v' can omit a fourth-order exchange shift of the kept 'k' through 'u'. It is not "
+        f"estimated, because {reason}. method='exact' with local=False keeps it."]
+
+
 def _reduced_frequency(base, f_v, order=None):
     return eliminate_spectators(base.with_params({"v.freq": f_v}), ["k"], order=order, local=True).chip.freq("k")
 
@@ -260,6 +328,10 @@ def test_an_explicit_order_differentiates_like_the_default_order():
     base = _kuv(backend="dynamiqs")
     order = eliminate_spectators(base, ["k"], local=True).eliminated_labels
     gradient = jax.grad(lambda f_v: _reduced_frequency(base, f_v, order))(5.1)
+    traced = []
+    jax.grad(lambda f_v: traced.append(eliminate_spectators(base.with_params({"v.freq": f_v}), ["k"], order=order,
+                                                            local=True)) or traced[-1].chip.freq("k"))(5.1)
+    assert traced[0].omitted_shifts is None
     step = 1e-4
     expected = (float(_reduced_frequency(base, 5.1 + step)) - float(_reduced_frequency(base, 5.1 - step))) / (2 * step)
     assert abs(expected) > 1e-4
@@ -322,3 +394,10 @@ def test_the_default_order_is_at_least_as_accurate_as_the_walked_order(n, keep, 
     assert f01 <= walked_f01
     assert zz <= 1.05 * walked_zz
     assert _largest_fold(default) < 0.1
+    # The estimate of the omitted shifts accounts for the f01 difference of the two orders.
+    for q in labels:
+        shifts = [result.omitted_shifts.get(q, 0.0) for result in (default, walked)]
+        assert None not in shifts
+        gap = float(walked.chip.freq(q)) - float(default.chip.freq(q))
+        if abs(gap) > 5e-6:
+            assert shifts[0] - shifts[1] == pytest.approx(gap, rel=0.1)

@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+
+import numpy as np
 
 from quchip.chip.partition import _line_device_labels
 from quchip.utils.jax_utils import contains_tracer
@@ -156,6 +158,16 @@ class SpectatorEliminationResult(_EliminationChain):
         spectators left in place, each step that breaks the precedence of the
         default order, and every step's notes. If elimination cannot continue
         past a spectator, it also includes why the reduction stopped early.
+    omitted_shifts
+        For each kept device that a Schrieffer-Wolff step reaches through a
+        device that stays on the chip, the estimated shift of its transition
+        that the chain omits, in GHz: the sum over steps of
+        ``|J|^2 / (E_k - E_v)`` (PHYSICS.md §10.8). The reduced transition is
+        off by about minus this value. A value is ``None`` when the estimate
+        does not apply, and :attr:`notes` says why. The attribute is ``None``
+        when traced device parameters prevent the estimate. An empty dict
+        means that no step found such a path, not that the chain omits
+        nothing: the estimate reads number-conserving exchange elements only.
     """
 
     chip: Any
@@ -163,6 +175,7 @@ class SpectatorEliminationResult(_EliminationChain):
     eliminated_labels: tuple[str, ...]
     steps: tuple
     notes: tuple[str, ...]
+    omitted_shifts: dict[str, float | None] | None = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -196,6 +209,16 @@ class ActivePatchResult(_EliminationChain):
         each step that breaks the precedence of the default order, and every
         step's notes. If elimination cannot continue past a spectator, it also
         includes why the reduction stopped early.
+    omitted_shifts
+        For each active device that a Schrieffer-Wolff step reaches through a
+        device that stays on the chip, the estimated shift of its transition
+        that the chain omits, in GHz: the sum over steps of
+        ``|J|^2 / (E_k - E_v)`` (PHYSICS.md §10.8). The reduced transition is
+        off by about minus this value. A value is ``None`` when the estimate
+        does not apply, and :attr:`notes` says why. The attribute is ``None``
+        when traced device parameters prevent the estimate. An empty dict
+        means that no step found such a path, not that the chain omits
+        nothing: the estimate reads number-conserving exchange elements only.
     """
 
     chip: Any
@@ -204,6 +227,7 @@ class ActivePatchResult(_EliminationChain):
     eliminated_labels: tuple[str, ...]
     steps: tuple
     notes: tuple[str, ...]
+    omitted_shifts: dict[str, float | None] | None = field(default_factory=dict)
 
     def simulate(self, **kwargs: Any) -> Any:
         """Solve the patch sequence.
@@ -273,27 +297,41 @@ def _one_excitation_reader(chip: "Chip", method: str) -> Any:
 
 
 def _eliminate_chain(chip: "Chip", model: "EliminationOrder | None", doomed: list[str], method: str,
-                     local: bool, caller: str) -> tuple[Any, list[Any], list[str], list[str]]:
+                     local: bool, caller: str, kept: set[str]
+                     ) -> tuple[Any, list[Any], list[str], list[str], dict[str, float | None] | None]:
     """Fold ``doomed`` into ``chip`` one at a time, in the default order of ``model`` or in the given order.
 
     Stops early, without raising, if ``eliminate`` declines a step;
-    everything folded before that stays folded.
+    everything folded before that stays folded. Each Schrieffer-Wolff step
+    adds the shift that it omits from the ``kept`` devices to the estimate
+    (PHYSICS.md §10.8).
 
-    Returns ``(working_chip, steps, eliminated_labels, notes)``.
+    Returns ``(working_chip, steps, eliminated_labels, notes, omitted)``.
+    ``omitted`` is ``None`` when traced values prevent the estimate.
     """
     from quchip.chip.transformations import eliminate
+    from quchip.chip.transformations.elimination_order import omitted_shifts
 
     working = chip
     steps: list[Any] = []
     eliminated: list[str] = []
     notes: list[str] = []
+    omitted: dict[str, float | None] | None = {}
     pending = list(doomed)
     while pending:
         note = None
+        estimate = method == "sw" and omitted is not None
+        labels = tuple(device.label for device in working.devices)
+        gaps, raw = _one_excitation_reader(working, method)(labels) if model is not None or estimate else ({}, {})
+
+        def read(needed: tuple[str, ...], gaps: dict = gaps, raw: dict = raw) -> tuple[dict, dict]:
+            return ({label: gaps[label] for label in needed},
+                    {pair: value for pair, value in raw.items() if set(pair) <= set(needed)})
+
         if model is None:
             target = pending[0]
         else:
-            target, note = model.choose(_one_excitation_reader(working, method), caller)
+            target, note = model.choose(read, caller)
         try:
             # Unsupported physical reductions leave the remaining spectators
             # in place. Invalid configuration raises ValueError and propagates.
@@ -307,6 +345,28 @@ def _eliminate_chain(chip: "Chip", model: "EliminationOrder | None", doomed: lis
         _warn_on_poor_validity(step, target, caller)
         if note is not None:
             notes.append(note)
+        if estimate and contains_tracer((gaps, raw)):
+            omitted = None
+            notes.append("Omitted exchange shifts are not estimated, because device parameters are traced.")
+        elif estimate:
+            assert omitted is not None  # estimate implies it; keeps mypy's Optional narrow
+            position = {label: index for index, label in enumerate(labels)}.__getitem__
+            energies = {label: float(np.real(np.asarray(value))) for label, value in gaps.items()}
+            elements = {pair: complex(np.asarray(value)) for pair, value in raw.items()}
+            for label, (shift, mediators, reason) in omitted_shifts(target, kept, energies, elements,
+                                                                    position).items():
+                names = ", ".join(map(repr, mediators))
+                if shift is None:
+                    omitted[label] = None
+                    notes.append(f"Eliminating {target!r} can omit a fourth-order exchange shift of the kept "
+                                 f"{label!r} through {names}. It is not estimated, because {reason}. "
+                                 "method='exact' with local=False keeps it.")
+                    continue
+                total = omitted.get(label, 0.0)
+                omitted[label] = None if total is None else total + shift
+                notes.append(f"Eliminating {target!r} omits an estimated {1e6 * shift:+.1f} kHz from the transition "
+                             f"of the kept {label!r}, the fourth-order exchange shift through {names}. "
+                             "method='exact' with local=False keeps it.")
         steps.append(step)
         eliminated.append(target)
         notes.extend(step.notes)
@@ -314,7 +374,7 @@ def _eliminate_chain(chip: "Chip", model: "EliminationOrder | None", doomed: lis
         pending.remove(target)
         if model is not None:
             model.remove(target)
-    return working, steps, eliminated, notes
+    return working, steps, eliminated, notes, omitted
 
 
 def eliminate_spectators(
@@ -333,7 +393,8 @@ def eliminate_spectators(
     widest operator of a kept device smallest goes first. A step that must
     break the wait is recorded in :attr:`~SpectatorEliminationResult.notes`.
     The order is a heuristic for dispersive chips and does not bound the
-    error.
+    error. Each Schrieffer-Wolff step also estimates the shift that it omits
+    from a kept device, in :attr:`~SpectatorEliminationResult.omitted_shifts`.
 
     Spectators that share no coupling, effective Hamiltonian or port path
     with the kept devices stay on the reduced chip, for the exact partitioner
@@ -386,8 +447,8 @@ def eliminate_spectators(
     if not kept:
         raise ValueError("eliminate_spectators(): keep names no device.")
     model, doomed, notes = _plan(chip, kept, order, "eliminate_spectators()")
-    working, steps, eliminated, chain_notes = _eliminate_chain(chip, model, doomed, method, local,
-                                                               "eliminate_spectators()")
+    working, steps, eliminated, chain_notes, omitted = _eliminate_chain(chip, model, doomed, method, local,
+                                                                        "eliminate_spectators()", kept)
     notes.extend(chain_notes)
     if working is chip:
         working = chip.clone()
@@ -397,6 +458,7 @@ def eliminate_spectators(
         eliminated_labels=tuple(eliminated),
         steps=tuple(steps),
         notes=tuple(notes),
+        omitted_shifts=omitted,
     )
 
 
@@ -441,7 +503,10 @@ def active_patch(
     The spectators are eliminated one at a time through
     :func:`~quchip.chip.transformations.eliminate`, in the default order of
     :func:`eliminate_spectators` with the active devices kept. The result keeps
-    every step's validity metrics unchanged. The reduction is an explicit
+    every step's validity metrics unchanged. A kept device next to an active
+    device, such as a coupler with ``hops=1``, can link a removed spectator to
+    the active device. The step then omits their exchange shift, and
+    :attr:`~ActivePatchResult.omitted_shifts` estimates it. The reduction is an explicit
     opt-in, because it approximates (Schrieffer-Wolff, or the exact
     dressed-spectrum route under ``method="exact"``), unlike the exact
     automatic partitioning that
@@ -488,8 +553,8 @@ def active_patch(
     model, doomed, notes = _plan(chip, active, order, "active_patch()")
     working, strip_notes = _strip_dead_control_lines(chip, sequence, doomed)
     notes.extend(strip_notes)
-    working, steps, eliminated, elimination_notes = _eliminate_chain(working, model, doomed, method, local,
-                                                                     "active_patch()")
+    working, steps, eliminated, elimination_notes, omitted = _eliminate_chain(working, model, doomed, method,
+                                                                              local, "active_patch()", active)
     notes.extend(elimination_notes)
 
     if working is chip:
@@ -502,4 +567,5 @@ def active_patch(
         eliminated_labels=tuple(eliminated),
         steps=tuple(steps),
         notes=tuple(notes),
+        omitted_shifts=omitted,
     )

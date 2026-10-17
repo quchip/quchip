@@ -10,6 +10,7 @@ and does not bound the error.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from itertools import combinations
 from math import prod
 from typing import TYPE_CHECKING, Any, Callable
@@ -246,3 +247,66 @@ class EliminationOrder:
         for member in dependent:
             self._reach[member] |= survivors - {member}
         self.remaining.discard(label)
+
+
+def omitted_shifts(target: str, kept: Iterable[str], energies: dict[str, float],
+                   elements: dict[tuple[str, str], complex],
+                   position: Callable[[str], int]) -> dict[str, tuple[float | None, tuple[str, ...], str | None]]:
+    """Estimate the shift of each kept device that a Schrieffer-Wolff step of ``target`` omits.
+
+    A device ``u`` that stays on the chip and has exchange elements with both
+    ``target`` (``v``) and a kept device ``k`` mediates the exchange
+    ``J = sum_u x_ku x_uv (1/(E_k - E_u) + 1/(E_v - E_u)) / 2`` between them.
+    The step folds ``v`` against ``u`` alone, so the chain omits the leading
+    enhanced fourth-order shift ``|J|^2 / (E_k - E_v)`` of ``k``
+    (PHYSICS.md §10.8). ``energies`` holds the current diagonal transition
+    energies of every device on the chip and ``elements`` the exchange
+    elements of device pairs in chip order, as concrete values in GHz.
+
+    The estimate needs dispersive legs and ``|J / (E_k - E_v)|`` below the
+    fold limit 0.1. Near resonance, ``k`` and ``v`` hybridize, and the
+    omitted effect is not a dispersive shift. The elements hold the
+    number-conserving terms only, so without RWA the estimate omits the
+    counter-rotating virtual paths.
+
+    Returns ``{k: (shift, mediators, reason)}`` for each kept device with a
+    mediator. ``shift`` is ``None``, and ``reason`` says why, when ``k`` and
+    ``v`` also exchange directly, when two of the transitions are
+    degenerate, or when the estimate is outside this regime.
+    """
+
+    def element(a: str, b: str) -> complex:
+        if position(a) < position(b):
+            return complex(elements.get((a, b), 0.0))
+        return complex(elements.get((b, a), 0.0)).conjugate()
+
+    found: dict[str, tuple[float | None, tuple[str, ...], str | None]] = {}
+    for k in sorted(set(kept) & set(energies) - {target}, key=position):
+        mediators = tuple(u for u in sorted(energies, key=position) if u not in (k, target)
+                          and element(k, u) != 0 and element(u, target) != 0)
+        if not mediators:
+            continue
+        if element(k, target) != 0:
+            found[k] = (None, mediators, f"{k!r} and {target!r} also exchange directly")
+            continue
+        levels = [energies[k], energies[target]]
+        if levels[0] == levels[1] or any(energies[u] in levels for u in mediators):
+            found[k] = (None, mediators, "two of these transitions are degenerate")
+            continue
+        legs = {u: max(abs(element(k, u) / (energies[k] - energies[u])),
+                       abs(element(u, target) / (energies[target] - energies[u]))) for u in mediators}
+        strongest = max(legs, key=legs.__getitem__)
+        if legs[strongest] >= _FOLD_LIMIT:
+            found[k] = (None, mediators, f"the leg through {strongest!r} has g/Δ = {legs[strongest]:.2f}, "
+                                         "which is not small")
+            continue
+        exchange = sum(element(k, u) * element(u, target)
+                       * (1 / (energies[k] - energies[u]) + 1 / (energies[target] - energies[u])) / 2
+                       for u in mediators)
+        detuning = energies[k] - energies[target]
+        if abs(exchange) >= _FOLD_LIMIT * abs(detuning):
+            found[k] = (None, mediators, f"|J/Δ| = {abs(exchange / detuning):.2f} between {k!r} and {target!r} "
+                                         "is not small, so the two are near resonance")
+            continue
+        found[k] = (abs(exchange) ** 2 / detuning, mediators, None)
+    return found

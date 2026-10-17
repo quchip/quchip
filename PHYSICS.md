@@ -2242,6 +2242,28 @@ For `(g, f_c)` = (0.03, 6.30), (0.075, 7.20) and (0.05, 6.00) GHz, its largest f
 and 56.9 kHz. Each arc walked from one end gives 7.4, 98.1 and 98.9 kHz. The ZZ of neighbouring kept
 transmons has the same error with both orders, to within 2%.
 
+Omitted shifts. A device that stays on the chip can still link a removed spectator `v` to a kept
+device `k`. This happens when every spectator waits, when `order=` removes `v` first, and when the
+mediator is kept, as with the coupler next to a driven transmon in `active_patch(hops=1)`. No order
+recovers the shift then. Each SW step therefore estimates the shift that it omits from each kept
+device, `δf_k = |Σ_u J_kv^(u)|² / (E_k - E_v)`, from the current elements. The paths of all
+mediators `u` add before squaring. `omitted_shifts` holds the sum over steps, and the notes give each
+term. This term makes the reduced transition of `k` differ by about `-δf_k`. For a transmon at 5.00
+GHz with a kept coupler at 7.00 GHz and a spectator at 5.04 GHz, and `g = 0.05` GHz on both legs, the
+estimate is -39.9 kHz and the f01 error is +39.7 kHz. For the ring transitions above whose f01
+differs by more than 5 kHz between the default order and another order, the difference of the
+estimates agrees with that difference within 10%. The estimate needs dispersive legs and `|J/Δ_kv|`
+below the fold limit 0.1. With `v` 5 MHz from `k` in the example (`|J/Δ_kv|` = 0.25), it is already 6%
+too large, and near resonance `k` and `v` hybridize, so the omitted effect is not a dispersive shift.
+Outside this regime, and when two of the transitions are degenerate, the estimate is `None`. It is
+also `None` when `k` and `v` exchange directly, because it omits the interference of the direct and
+mediated paths. The estimate gets no validity flag beyond this regime check, because `|J/Δ_kv|`
+measures mixing, not an acceptable frequency error. It reads the number-conserving elements, as the
+rules do, so on a chip without RWA it omits the counter-rotating virtual paths. An empty
+`omitted_shifts` means that no step found such a path. `method="exact"` with `local=False` keeps
+these shifts when it reduces the original chip, because it diagonalizes the whole chip, so it reports
+no estimate. It cannot restore a shift that an earlier SW step dropped.
+
 Each local step adds a note with the widest operator support of any device. It warns when one dense
 copy of that operator needs 256 MiB or more. Pass `order=` to set the steps yourself. The default
 order compares values, so it raises an error when `jax.jit` or `jax.grad` traces device parameters.
