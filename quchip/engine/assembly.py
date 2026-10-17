@@ -694,6 +694,43 @@ def _collect_collapse_terms(
     return tuple(terms), tuple(supports)
 
 
+def _compact_network_hamiltonian(chip: "Chip", resolution: _SystemResolution, backend: Backend) -> Any | None:
+    """Return the Hamiltonian of cascaded port pairs on a compact space, in angular units.
+
+    Products of port operators that are already restricted to the space drop
+    each intermediate state outside it. This function forms every product on
+    its ports' joint support first, so the result is ``P H_gen P``. It returns
+    ``None`` for the product space or a network without generated pairs, and a
+    zero matrix when every local term is below the round-off threshold.
+    """
+    from quchip.chip.ports import Port
+    from quchip.engine.sectors import generated_products
+
+    pairs = () if resolution.network is None else resolution.network.generated_pairs
+    if resolution.space is None or not pairs:
+        return None
+    wanted = {label for downstream, upstream, _ in pairs for label in (downstream, upstream)}
+    ports: dict[str, tuple[Any, tuple[int, ...]]] = {}
+    with _backend_context(backend):
+        for operator, rate, support, *_, owner in chip._collapse_contributions_with_owners(resolution.bases):
+            if not isinstance(owner, Port) or owner.label not in wanted:
+                continue
+            local = backend.to_array(_project_on_support(chip, operator, support, resolution.bases, backend))
+            resolved_rate = materialize_expr(rate, backend)
+            xp = concrete_array_module(local, resolved_rate, owner.phase)
+            scale = xp.sqrt(xp.asarray(resolved_rate))
+            if owner.phase is not None:
+                scale = xp.exp(1j * xp.asarray(owner.phase)) * scale
+            ports[owner.label] = (scale * xp.asarray(local), support)
+    total = None
+    for term, joint in generated_products(ports, pairs, resolution.dims):
+        local_dims = [resolution.dims[index] for index in joint]
+        embedded = backend.to_array(resolution.space.embed(
+            backend, backend.from_array(term, dims=[local_dims, local_dims]), joint))
+        total = embedded if total is None else total + embedded
+    return np.zeros((resolution.space.size,) * 2, dtype=complex) if total is None else total
+
+
 def _concrete_port_resolution(
     chip: "Chip",
     port: Any,
@@ -2147,7 +2184,8 @@ def compile_hamiltonian_template(
         collapse_terms=collapse_terms,
     )
     if chip.port_network is not None:
-        slh = chip.port_network.resolve(slh, _compiled=resolution.network)
+        slh = chip.port_network.resolve(slh, _compiled=resolution.network,
+                                        _generated=_compact_network_hamiltonian(chip, resolution, backend))
     channel_supports = list(collapse_supports)
     for bath in chip.baths:
         targets = tuple(bath.resolve_targets(chip))

@@ -370,7 +370,15 @@ effective channel coefficient with magnitude squared `2γ(1 + cos φ)`. It also
 adds `+γ sin φ · a†a` to `H`. Here `γ` is angular, in rad/ns, so the Lamb
 shift is `+γ sin φ / 2π` GHz. If you enter the propagation phase as
 `φ = 2π f τ = ωτ`, with `f` in GHz and `τ` in ns, the result matches the
-`Δ = γ sin φ` convention of [Kockum et al.][kockum].
+`Δ = γ sin φ` convention of [Kockum et al.][kockum]. quchip treats a concrete
+element of a generated Hamiltonian as cancellation residue when it is below
+`64 n ε` times the summed magnitude of the port products that form it. Here `n`
+is the matrix dimension and `ε` the double-precision epsilon. quchip drops a
+generated term only when all of its elements are residue, e.g. the Lamb shift
+at `φ = π`. Each element has its own threshold, so a small rate keeps its term,
+also next to the cancelled term of a large rate. The policy also drops a
+genuine shift below the threshold, e.g. `γ sin φ` at `φ = 1e-15`. A traced
+evaluation keeps every term.
 
 `port.side` and `component.port(k)` each select one physical connector and pair
 the input and output terminals of that side. `network.link(...)` cables
@@ -921,6 +929,13 @@ one-excitation space. Coherences between those sectors remain quantum
 amplitudes or density-matrix entries. Complete collective channels remain
 summed before their dissipators are formed. Occupied input fields add raising
 support. Explicit zero thermal occupation retains that support for rebinding.
+
+Cascaded ports add the Hamiltonian that they generate (§3.3.2) as `P H_gen P`.
+quchip forms the product of each port pair on the joint support of the two
+ports and then gathers it onto the space. A product of port operators that are
+already restricted to the space drops each intermediate state outside it. For
+example, two cascaded resonators without dissipation keep only the
+one-excitation sector, and their exchange passes through the vacuum.
 
 `RWA()` alone does not establish pulse eligibility. A transverse microwave
 drive changes excitation number, including at zero envelope amplitude.

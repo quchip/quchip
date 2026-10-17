@@ -108,6 +108,58 @@ def _level_pairs(dims: Sequence[int], support: tuple[int, ...], row_levels: np.n
     return pair_rows, pair_columns, local_rows[pair_rows], local_columns[pair_columns]
 
 
+def generated_products(ports: dict[str, tuple[Any, tuple[int, ...]]], pairs: Sequence[tuple[str, str, Any]],
+                       dims: Sequence[int]) -> tuple[tuple[Any, tuple[int, ...]], ...]:
+    """Return the Hamiltonian of cascaded port pairs as local terms on joint supports.
+
+    Each pair contributes ``(L_down^dagger c L_up - h.c.) / 2i``, in the units
+    of the port couplings' product. The product is formed on the joint support
+    of the two ports, so every intermediate level of those devices is kept.
+    Gathering a term onto any set of product labels therefore gives
+    ``P H_gen P`` exactly. A support whose elements are all below the
+    round-off threshold of their products contributes no term.
+
+    Parameters
+    ----------
+    ports : dict
+        Each port's coupling matrix and support, keyed by port label. All
+        couplings use the same local coordinates.
+    pairs : sequence of tuple
+        ``(downstream, upstream, coefficient)`` of each generated pair.
+    dims : sequence of int
+        Level count of each device.
+    """
+    from quchip.chip.port_network import _cascade_hamiltonian
+
+    everything = tuple(range(len(dims)))
+    products: dict[tuple[int, ...], list[tuple[Any, Any, Any]]] = {}
+    for downstream, upstream, coefficient in pairs:
+        (left, left_support), (right, right_support) = ports[downstream], ports[upstream]
+        left_support, right_support = left_support or everything, right_support or everything
+        joint = tuple(sorted({*left_support, *right_support}))
+        products.setdefault(joint, []).append(
+            (_widen(left, left_support, joint, dims), _widen(right, right_support, joint, dims), coefficient))
+    terms = ((_cascade_hamiltonian(group), joint) for joint, group in products.items())
+    return tuple((term, joint) for term, joint in terms if term is not None)
+
+
+def _widen(matrix: Any, support: tuple[int, ...], joint: tuple[int, ...], dims: Sequence[int]) -> Any:
+    """Return a matrix on ``support`` as a matrix on the larger support ``joint``."""
+    from quchip.backend._memory import require_memory
+
+    extra = tuple(index for index in joint if index not in support)
+    order = (*support, *extra)
+    local = [int(dims[index]) for index in order]
+    size = prod(local)
+    require_memory(16 * 4 * size**2, task=f"Cascaded port product on devices {list(joint)}",
+                   remedy="Use ports on fewer devices or reduce the device cutoffs.")
+    xp = concrete_array_module(matrix)
+    widened = xp.kron(xp.asarray(matrix), xp.eye(prod(local[len(support):]), dtype=complex))
+    permutation = [order.index(index) for index in joint]
+    tensor = xp.transpose(widened.reshape(local + local), permutation + [len(order) + axis for axis in permutation])
+    return tensor.reshape(size, size)
+
+
 @dataclass(frozen=True, eq=False)
 class SectorSpace:
     """Product energy states whose levels sum to one total.

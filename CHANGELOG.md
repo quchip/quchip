@@ -295,6 +295,13 @@ This file records notable user-visible changes to quchip.
   `OutputField` traces, other records and unconditional solves still run.
   ([#175](https://github.com/quchip/quchip/issues/175),
   [#178](https://github.com/quchip/quchip/pull/178))
+- Cascaded ports keep the Hamiltonian that they generate in two more cases.
+  Previously, a compact pulse solve with `dissipation=False` dropped it, so a
+  photon stayed in the first of two cascaded resonators instead of moving to
+  the second. A small port rate, e.g. 1e-9/ns, also dropped it, because an
+  absolute tolerance treated the term as zero. Now an element counts as zero
+  only below a round-off threshold set by the port products that form it.
+  ([#179](https://github.com/quchip/quchip/pull/179))
 - Pump-free `VNA.sweep()` computes models that are static in the lab frame but
   dynamic in the probe frame, e.g. capacitive couplings under `Exact()`.
   Previously, it raised. It solves one lab-frame stationary state per chip point

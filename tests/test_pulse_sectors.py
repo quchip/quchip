@@ -12,6 +12,26 @@ def pair(*, loss=False, backend=None):
     return Chip([a, b], couplings=[Capacitive(a, b, g=0.02)], approximation=RWA(), frame="rotating", backend=backend)
 
 
+def test_cascade_without_dissipation_keeps_its_exchange():
+    """Without dissipation, the one-excitation space of a cascade excludes the vacuum that its exchange passes."""
+    from quchip import PortNetwork
+
+    r1, r2 = Resonator(freq=6.0, levels=3, label="r1"), Resonator(freq=6.0, levels=3, label="r2")
+    network = PortNetwork(label="line")
+    rate = 2 * np.pi * 0.01
+    first, second = network.port("p1", target=r1, rate=rate), network.port("p2", target=r2, rate=rate)
+    network.cascade(first, second)
+    network.expose("out", input=first.input, output=second.output)
+    sequence = QuantumSequence(Chip([r1, r2], port_network=network))
+    times = np.linspace(0.0, 40.0, 81)
+    problem = sequence.build_problem(times, initial_state={"r1": 1}, dissipation=False)
+    assert problem.engine_result.excitation_space.size == 2
+    result = sequence.simulate(tlist=times, initial_state={"r1": 1}, dissipation=False,
+                               options={"atol": 1e-12, "rtol": 1e-10})
+    # H_gen = (L_2^dag L_1 - h.c.) / 2i exchanges one photon at sqrt(k1 k2) / 2.
+    np.testing.assert_allclose(result.population("r2", 1), np.sin(rate * times / 2) ** 2, atol=1e-6)
+
+
 def test_exchange_uses_exact_space_and_exports_original_coordinates():
     """A one-excitation exchange evolves two amplitudes and retains tensor export semantics."""
     chip = pair()
