@@ -217,6 +217,12 @@ class QuantumSequence:
         # floors, and virtual-Z phase frames are reconstructed on demand by
         # ``_replay`` — there is no live cursor state to drift from the replay.
         self._entries: list[_PulseEntry | _DelayEntry | _BarrierEntry | _FrameShiftEntry] = []
+        # Control lines and devices of the chip that the entries were written
+        # for, which this chip lacks, e.g. those that an active patch removed.
+        # Replay keeps their cursors and frames, so delays, barriers and
+        # virtual-Z entries on them keep their timing and have no other effect.
+        self._removed_lines: tuple[tuple[str, str], ...] = ()
+        self._removed_devices: tuple[str, ...] = ()
 
     def _device_drives(self, device_label: str) -> list[BaseDrive]:
         self._chip.device_map[device_label]
@@ -778,17 +784,12 @@ class QuantumSequence:
         each pulse's frame.
         """
         overrides = {} if overrides is None else dict(overrides)
-        cursors: dict[tuple[str, str], Any] = {}
-        equipment = self._chip.control_equipment
-        if equipment is not None:
-            for line in equipment.lines:
-                assert line.target_label is not None
-                cursors[(line.target_label, line.label)] = 0.0
+        cursors: dict[tuple[str, str], Any] = dict.fromkeys(self._line_keys(), 0.0)
         for entry in self._entries:
             if isinstance(entry, _PulseEntry) and entry.coherent_input is not None:
                 cursors[(entry.target_label, entry.drive_label)] = 0.0
         floors: dict[str, Any] = {}
-        phases: dict[str, Any] = {dev.label: 0.0 for dev in self._chip.devices}
+        phases: dict[str, Any] = dict.fromkeys(self._device_labels(), 0.0)
         drive_ops: list[ControlOp] = []
 
         for entry_index, entry in enumerate(self._entries):
@@ -1533,11 +1534,32 @@ class QuantumSequence:
         """Return an independently editable model and pulse schedule."""
         return self._copy_with_chip(self._chip.clone())
 
+    def _line_keys(self) -> tuple[tuple[str, str], ...]:
+        """Return the ``(target, line)`` cursor keys that replay starts at zero."""
+        keys = list(self._removed_lines)
+        equipment = self._chip.control_equipment
+        for line in () if equipment is None else equipment.lines:
+            assert line.target_label is not None
+            keys.append((line.target_label, line.label))
+        return tuple(keys)
+
+    def _device_labels(self) -> tuple[str, ...]:
+        """Return the device labels whose virtual-Z frames replay tracks."""
+        return (*self._removed_devices, *(device.label for device in self._chip.devices))
+
     def _copy_with_chip(self, chip: Chip) -> "QuantumSequence":
-        """Copy authored schedule entries onto an already independent chip."""
+        """Copy authored schedule entries onto an already independent chip.
+
+        Lines and devices that ``chip`` lacks keep their timing and frames in
+        the replay of the copy.
+        """
         cloned = copy.copy(self)
         cloned._chip = chip
         cloned._entries = copy.deepcopy(self._entries)
+        equipment = chip.control_equipment
+        kept_lines = set() if equipment is None else {(line.target_label, line.label) for line in equipment.lines}
+        cloned._removed_lines = tuple(key for key in self._line_keys() if key not in kept_lines)
+        cloned._removed_devices = tuple(label for label in self._device_labels() if label not in chip.device_map)
         return cloned
 
     @property
