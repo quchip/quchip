@@ -104,6 +104,7 @@ def retain_coordinate_change(
     correction = lift @ retained_h @ lift.conj().T - final_lift @ remaining_h @ final_lift.conj().T
 
     channels = []
+    responses: dict[str, tuple[str, ...]] = {}
     contributions = chip._collapse_contributions_with_owners(source.bases)
     for operator, rate, support, owner_label, name, _paths, owner in contributions:
         if not (isinstance(owner, EffectiveTerms) or any(owner is removed for removed in removed_owners)):
@@ -115,10 +116,12 @@ def retain_coordinate_change(
         transformed = rotation.conj().T @ embedded @ rotation
         channels.append(CollapseChannel(lift @ transformed @ lift.conj().T,
                                         materialize_expr(rate, chip.backend), f"{owner_label}.{name}"))
+        if isinstance(owner, EffectiveTerms) and name in owner.omitted_responses:
+            responses[f"{owner_label}.{name}"] = owner.omitted_responses[name]
 
     projection = OperatorProjection.capture(chip, labels, retained_dims, lift @ rotation @ lift.conj().T)
     terms = EffectiveTerms(labels, retained_dims, correction, tuple(channels), label=label,
-                           projection=projection, notes=(*inherited_notes(chip), *notes))
+                           projection=projection, notes=(*inherited_notes(chip), *notes), omitted_responses=responses)
     terms.validate_for(final)
     final._effective_terms = (terms,)
     source_to_solver = reduce(jnp.kron, (source.bases[name].vectors.conj().T

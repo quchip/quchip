@@ -1941,6 +1941,24 @@ class PortNetwork:
                 fed.append((chip.port(source), gain * mapping[source]))
         return fed
 
+    def _responses_by_output(self, *, _compiled: _CompiledNetwork | None = None) -> dict[str, tuple[str, ...]]:
+        """Return the retained mode responses whose ports emit into each output channel.
+
+        The keys are the exposure labels of the affected channels. A channel
+        whose coupling has no active weight on a response port is absent.
+        """
+        if not self._mode_responses:
+            return {}
+        compiled = self._compile() if _compiled is None else _compiled
+        owners = {label: mode.label for mode in self._mode_responses for label in mode.ports}
+        reached: dict[str, tuple[str, ...]] = {}
+        for channel in compiled.channels:
+            labels = sorted({owners[source] for source in self._active_mapping_sources(channel.coupling)
+                             if source in owners})
+            if labels:
+                reached[channel.exposure.label] = tuple(labels)
+        return reached
+
     @staticmethod
     def _active_pairs(
         pairs: Sequence[tuple[str, str, Any]],

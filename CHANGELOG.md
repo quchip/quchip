@@ -263,6 +263,20 @@ This file records notable user-visible changes to quchip.
   which drops the parts of the generated Hamiltonian that change the total
   level.
   ([#171](https://github.com/quchip/quchip/pull/171))
+- After `eliminate()` keeps a removed readout's response on its line,
+  `simulate()` raises `NotImplementedError` for an `OutputField` whose channel
+  carries emission from the response's ports, and for diffusive monitoring of
+  such a channel with a nonzero efficiency, including pure-state SSE.
+  Monitoring a hidden channel that acted on the removed readout, such as its
+  internal loss or a bath on it, also raises.
+  `EffectiveTerms.omitted_responses` and the baths record these channels. The
+  record survives serialization and later reductions, and stays when the port
+  network drops the response. Previously, these outputs omitted the response
+  with no error, e.g. a steady output amplitude 160 times too large at the
+  response frequency. Keep the boundary mode for these outputs. Other outputs,
+  SME records of other channels, and population observables still run.
+  ([#159](https://github.com/quchip/quchip/issues/159),
+  [#172](https://github.com/quchip/quchip/pull/172))
 - Pump-free `VNA.sweep()` computes models that are static in the lab frame but
   dynamic in the probe frame, e.g. capacitive couplings under `Exact()`.
   Previously, it raised. It solves one lab-frame stationary state per chip point

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from math import prod
 from typing import Any, Mapping
 
@@ -528,6 +528,13 @@ class EffectiveTerms:
         row, that each named channel can carry. Band decomposition then treats
         every other change as zero, even for traced values. ``None`` declares
         no structure.
+    omitted_responses : mapping of str to iterable of str, default={}
+        Labels of the retained multiport mode responses whose pole the
+        time-domain field of each named channel omits. A reduction declares
+        them for the channels that it carries from a removed mode with such a
+        response. A solve rejects diffusive monitoring of these channels with
+        a nonzero efficiency, also when the port network no longer holds the
+        response.
     """
 
     labels: tuple[str, ...]
@@ -538,6 +545,7 @@ class EffectiveTerms:
     projection: OperatorProjection | None = None
     notes: tuple[str, ...] = ()
     excitation_changes: Mapping[str, frozenset[int]] | None = None
+    omitted_responses: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         labels, dims = tuple(self.labels), tuple(self.dims)
@@ -591,6 +599,14 @@ class EffectiveTerms:
                 for name in names if name in self.excitation_changes
             }
             object.__setattr__(self, "excitation_changes", changes)
+        unknown = set(self.omitted_responses) - {channel.name for channel in channels}
+        if unknown:
+            raise ValueError(f"Omitted responses name unknown effective channels {sorted(unknown)}.")
+        omitted = {channel.name: tuple(sorted(set(self.omitted_responses[channel.name])))
+                   for channel in channels if self.omitted_responses.get(channel.name)}
+        if any(not isinstance(label, str) or not label for labels in omitted.values() for label in labels):
+            raise ValueError("Omitted response labels must be nonempty strings.")
+        object.__setattr__(self, "omitted_responses", omitted)
         object.__setattr__(self, "notes", notes)
         object.__setattr__(self, "labels", labels)
         object.__setattr__(self, "dims", dims)
@@ -691,6 +707,8 @@ class EffectiveTerms:
             data["excitation_changes"] = {
                 name: sorted(changes) for name, changes in self.excitation_changes.items()
             }
+        if self.omitted_responses:
+            data["omitted_responses"] = {name: list(labels) for name, labels in self.omitted_responses.items()}
         return data
 
     @classmethod
@@ -703,7 +721,7 @@ class EffectiveTerms:
             Payload produced by :meth:`to_dict`.
         """
         required = {"label", "labels", "dims", "hamiltonian", "channels", "projection"}
-        if not required <= set(data) <= required | {"notes", "excitation_changes"}:
+        if not required <= set(data) <= required | {"notes", "excitation_changes", "omitted_responses"}:
             raise ValueError("Invalid serialized EffectiveTerms fields.")
 
         def matrix(value: dict[str, Any]) -> Any:
@@ -718,4 +736,5 @@ class EffectiveTerms:
             None if data["projection"] is None else OperatorProjection.from_dict(data["projection"]),
             tuple(data.get("notes", ())),
             data.get("excitation_changes"),
+            data.get("omitted_responses", {}),
         )

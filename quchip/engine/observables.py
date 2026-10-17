@@ -136,6 +136,13 @@ def decompose_eops(
                     "Output observables require a resolved transient solve; "
                     "pass them to QuantumSequence.simulate(..., e_ops=...)."
                 )
+            responses = {} if chip.port_network is None else chip.port_network._responses_by_output()
+            if val.exposure in responses:
+                raise NotImplementedError(
+                    f"Output field {val.exposure!r} carries the emission of retained multiport mode responses "
+                    f"{list(responses[val.exposure])}. Time-domain dynamics omit their poles. "
+                    "Keep the boundary mode for time-domain output fields."
+                )
             _append_output_eops(
                 flat_ops,
                 meta,
