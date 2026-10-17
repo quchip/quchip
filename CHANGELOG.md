@@ -320,6 +320,15 @@ This file records notable user-visible changes to quchip.
 
 #### Performance
 
+- On a chip whose static model conserves the total energy-level index,
+  `chip.state()` diagonalizes only the sector of its label, and the default
+  initial state of a solve is the bare product with no static model. The
+  full eigensystem's memory check now runs before its decomposition, not
+  before the static model build. For example, on a reduced 15,552-state
+  chain, `chip.state({})` and the default initial state no longer stop with
+  `MemoryError` on an 8 GB machine.
+  ([#153](https://github.com/quchip/quchip/issues/153),
+  [#171](https://github.com/quchip/quchip/pull/171))
 - Multi-device operators project factor by factor into the retained local
   eigenbases instead of through the dense native product space. Two coupled
   default `Fluxonium` devices previously needed an estimated 820 GB. Their

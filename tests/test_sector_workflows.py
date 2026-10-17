@@ -151,7 +151,7 @@ def test_undeclared_retained_matrix_is_checked_without_a_tolerance():
 
 
 def test_sector_and_full_fallback_refuse_impossible_allocations(monkeypatch):
-    """Static requests reject both an oversized sector and an oversized full fallback before assembly."""
+    """Static requests reject an oversized sector before assembly and an oversized full eigensystem before solving."""
     from quchip import Capacitive
     from quchip.backend import _memory
 
@@ -162,9 +162,82 @@ def test_sector_and_full_fallback_refuse_impossible_allocations(monkeypatch):
         model.eigensystem(2)
     q, r = chip.devices
     full = Chip([q, r], [Capacitive(q, r, g=0.04)], approximation=Exact())
-    monkeypatch.setattr(_memory, "available_memory_bytes", lambda: 1000)
+    # The sparse static model of the 9 states fits in 4 kB, and its eigensystem needs 7.8 kB.
+    monkeypatch.setattr(_memory, "available_memory_bytes", lambda: 4000)
     with pytest.raises(MemoryError, match="Full static eigensystem"):
         full.freq(q)
+
+
+@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])
+def test_conserving_chip_state_reads_its_sector_and_matches_the_full_eigensystem(backend):
+    """A sector state in solver coordinates equals the assigned column of the full eigensystem."""
+    if backend == "dynamiqs":
+        pytest.importorskip("dynamiqs")
+    import warnings
+
+    from quchip import Capacitive, RWA
+    from quchip.devices.transmon.charge_basis import ChargeBasisTransmon
+
+    # The charge-basis device makes the energy-to-solver map nontrivial.
+    q = ChargeBasisTransmon(E_C=0.25, E_J=12.0, n_g=0.0, num_basis=7, basis="native", label="q")
+    r = DuffingTransmon(freq=5.1, anharmonicity=-0.22, levels=3, label="r")
+    chip = Chip([q, r], [Capacitive(q, r, g=0.03)], approximation=RWA(), backend=backend)
+    assert chip.analysis._sector_model() is not None
+    dressed = chip.dress()
+    matrix = np.asarray(dressed.eigenvector_matrix)
+    labels = [label for label in dressed.bare_labels if sum(label) <= 2]
+    assert len(labels) == 6
+    with warnings.catch_warnings():
+        # The 2-excitation states hybridize; the comparison still covers them.
+        warnings.filterwarnings("ignore", message="Dressed state label")
+        for label in labels:
+            state = np.ravel(np.asarray(chip.backend.to_array(chip.state(q=label[0], r=label[1]))))
+            np.testing.assert_allclose(state, matrix[:, dressed.state_map[label]], atol=1e-10)
+
+
+def test_reduced_chip_state_and_default_initial_state_need_no_full_eigensystem(monkeypatch):
+    """A conserving reduced chip prepares its states from sectors within a budget that refuses a full eigensystem."""
+    from quchip import Capacitive, QuantumSequence, RWA, Resonator, Square, eliminate
+    from quchip.backend import _memory
+
+    q = DuffingTransmon(freq=5.3, anharmonicity=-0.26, levels=3, label="q")
+    modes = [Resonator(freq=6.0 + 0.1 * i, levels=3, label=f"m{i}") for i in range(5)]
+    readout = Resonator(freq=6.9, levels=3, label="readout")
+    couplings = [Capacitive(q, modes[0], g=0.03), Capacitive(q, readout, g=0.05)]
+    couplings += [Capacitive(a, b, g=0.02) for a, b in zip(modes, modes[1:])]
+    source = Chip([q, *modes, readout], couplings, approximation=RWA())
+    source.wire(ChargeDrive(q, label="xy"))
+    chip = eliminate(source, "readout", local=True).chip
+    sequence = QuantumSequence(chip)
+    sequence.schedule("xy", envelope=Square(duration=1, amplitude=0.01), freq=5.3)
+    # The full eigensystem of the 729 states needs 51 MB. The sectors and the sparse solve need less than 1 MB.
+    monkeypatch.setattr(_memory, "available_memory_bytes", lambda: 10**7)
+    with pytest.raises(MemoryError, match="Full static eigensystem"):
+        chip.dress()
+    problem = sequence.build_problem([0, 1])
+    assert problem.engine_result.excitation_space is None
+    np.testing.assert_array_equal(
+        chip.backend.to_array(problem.initial_state), chip.backend.to_array(chip.bare_state({})),
+    )
+    state = np.ravel(np.asarray(chip.backend.to_array(chip.state(q=1))))
+    assert abs(state[3**5]) > 0.99
+
+
+@pytest.mark.optional_backend
+def test_traced_sector_state_matches_the_eager_state_and_central_differences():
+    """A traced sector state equals the eager state, and its derivative matches central differences."""
+    pytest.importorskip("dynamiqs")
+    chip = pair(backend="dynamiqs")
+
+    def state(g):
+        bound = chip.with_params({"qr.g": g})
+        return jnp.ravel(bound.backend.to_array(bound.state(q=1)))
+
+    np.testing.assert_allclose(jax.jit(state)(0.04), state(0.04), atol=1e-12)
+    _, tangent = jax.jvp(jax.jit(state), (0.04,), (1.0,))
+    central = (state(0.04 + 1e-6) - state(0.04 - 1e-6)) / 2e-6
+    np.testing.assert_allclose(tangent, central, atol=1e-8)
+    assert float(jnp.max(jnp.abs(tangent))) > 0.1
 
 
 @pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])

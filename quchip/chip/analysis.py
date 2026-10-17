@@ -279,12 +279,16 @@ def _labeled_eigensystem(engine_result: "EngineResult", backend: Any) -> tuple[A
     traced Hamiltonians stay traced. Each eigenvector follows the phase
     convention of :func:`~quchip.chip.dressing.gauge_phases`.
     """
+    from quchip.backend._memory import require_memory
     from quchip.engine.assembly import _analysis_matrix_ghz
 
     context = engine_result._dressing_context
     if context is None:
         raise RuntimeError("Resolved analysis is missing its captured dressing reference.")
     dims = list(engine_result.dims)
+    dimension = int(np.prod(dims))
+    require_memory(16 * 6 * dimension**2, task=f"Full static eigensystem (dimension {dimension})",
+                   remedy="Use a conserving model with labeled sector queries or reduce the model.")
     eigensystem = backend.eigensystem_data(
         backend.from_array(_analysis_matrix_ghz(engine_result), dims=[dims, dims])
     )
@@ -721,11 +725,14 @@ class ChipAnalysis:
 
         The ket uses solver coordinates and has real, nonnegative overlap on
         the bare product. ``None`` means the bare product is already an
-        eigenstate. Results cache against the analysis signature and
+        eigenstate. A static model that conserves the total energy-level index
+        returns ``None`` with no static model, because the bare product is the
+        only state with total level 0. Results cache against the analysis signature and
         ``approximation``; traced ones only inside their trace. A traced ket is differentiated by first-order
         perturbation theory over the same eigensystem, masking gaps at the
         tolerance of :func:`~quchip.engine.basis._differentiable_eigenpairs`.
         """
+        from quchip.chip.effective import conserves_excitation_number
         from quchip.engine.assembly import _analysis_matrix_ghz, _build_static_analysis_result
         from quchip.engine.basis import _differentiable_eigenvector
 
@@ -737,6 +744,13 @@ class ChipAnalysis:
         # Reuse dressed analysis only when it describes the solve's approximation.
         # The solve's own snapshot reports the advisories of that approximation.
         same_approximation = approximation == chip.approximation
+        conserving = (
+            self._sector_model(_advise=False) is not None if same_approximation
+            else conserves_excitation_number(chip, approximation)
+        )
+        if conserving:
+            self._ground_cache = scoped_entry(key, None, traced=False)
+            return None
         static = (
             self.engine_result(_advise=False) if same_approximation
             else _build_static_analysis_result(chip, approximation=approximation, _advisories=[])
@@ -913,8 +927,14 @@ class ChipAnalysis:
         return self._ensure_dressed().eigenvalues
 
     def _dressed_state(self, **device_states: int) -> Any:
-        """Gather the assigned eigenvector column under tracing; eagerly use the dressed view."""
+        """Gather the assigned eigenvector column under tracing; eagerly use the dressed view.
+
+        A conserving chip takes the column from the sector of the label's total level.
+        """
         label_t = self._label_from_plain_mapping(device_states)
+        model = self._sector_model()
+        if model is not None:
+            return self._sector_state(model, self._sector_label(label_t))
         engine = self.engine_result()
         _, eigenvector_matrix, _, kernel_labeling = self._compute_array_labeled(engine)
         if contains_tracer((eigenvector_matrix, kernel_labeling.indices)):
@@ -942,6 +962,24 @@ class ChipAnalysis:
                 stacklevel=4,
             )
         return dressed.eigenstates[eigen_idx]
+
+    def _sector_state(self, model: SectorModel, label: tuple[int, ...]) -> Any:
+        """Return the dressed state of ``label`` from its excitation sector, in solver coordinates."""
+        system = model.eigensystem(sum(label))
+        row = system.space.row(label)
+        overlap = maybe_concrete_scalar(system.labeling.overlaps[row])
+        if overlap is not None and overlap < _STATE_OVERLAP_WARNING:
+            # Hops: _sector_state -> _dressed_state -> ChipAnalysis.state -> Chip.state -> caller.
+            warnings.warn(
+                f"Dressed state label {label} has assignment overlap {overlap:.3f} "
+                f"(< {_STATE_OVERLAP_WARNING:.3f}); chip.state() returns the assigned dressed "
+                "eigenstate. Use chip.bare_state(...) for the product state.",
+                UserWarning,
+                stacklevel=5,
+            )
+        column = model.embed(sum(label), system.eigenvectors[:, system.labeling.indices[row]])
+        dims = list(model.dims)
+        return self._chip.backend.from_array(column.reshape(-1, 1), dims=[dims, [1] * len(dims)])
 
     def _dressed_frequencies(self, *, _local_resolution: Any | None = None, _advise: bool = True) -> dict[str, Any]:
         """Per-device dressed 0 → 1 transition frequencies (GHz)."""
