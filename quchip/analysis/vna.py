@@ -140,6 +140,9 @@ class VNA:
     """
 
     def __init__(self, chip: Any, *, ports: Sequence[Any] | None = None) -> None:
+        from quchip.cutoff import reject_cutoff
+
+        reject_cutoff(chip, "VNA")
         self.chip = chip
         if ports is None:
             if chip.port_network is None:

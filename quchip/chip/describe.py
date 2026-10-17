@@ -79,6 +79,12 @@ def describe_chip(chip: "Chip") -> str:
         plan = plan_frame(chip, (), approximation=chip.approximation, strict=False)
         lines += [f"           {line}" for line in _format_frame_plan(plan)]
     lines.append(f"Approx.  : {type(chip.approximation).__name__}")
+    if chip.space is not None:
+        from quchip.engine.sectors import sector_size
+
+        retained = sum(sector_size(chip.dims, total) for total in range(chip.space.max_total + 1))
+        kept = "every product label" if not chip.space.binds(chip.dims) else f"{retained} product labels"
+        lines.append(f"Space    : N <= {chip.space.max_total} (ExcitationCutoff), {kept}")
     lines.append(f"Dressed  : {'cached' if chip.is_dressed else 'not computed'}")
     dims = chip.dims
     if dims:
@@ -304,12 +310,17 @@ def _validity_line(validity: dict[str, Any]) -> str:
     parts = []
     min_gap = None
     for label, v in validity.items():
-        symbol, key = ("κ/Δ", "kappa_over_delta") if "kappa_over_delta" in v else ("g/Δ", "g_over_delta")
+        if "self_energy_over_width" in v:
+            symbol, key = "|Σ|/h", "self_energy_over_width"
+        else:
+            symbol, key = ("κ/Δ", "kappa_over_delta") if "kappa_over_delta" in v else ("g/Δ", "g_over_delta")
         ratio = _concrete(v.get(key))
         is_valid = _concrete(v.get("is_valid"))
         if min_gap is None and "min_block_gap" in v:
             min_gap = _concrete(v["min_block_gap"])
-        if ratio is None or is_valid is None:
+        if v.get(key) is None:
+            parts.append(f"{label} {symbol}=unavailable")
+        elif ratio is None or is_valid is None:
             parts.append(f"{label} {symbol}=<traced>")
         else:
             mark = "✓" if is_valid else "✗"

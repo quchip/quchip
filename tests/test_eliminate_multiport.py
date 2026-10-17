@@ -7,12 +7,12 @@ import numpy as np
 import pytest
 
 from quchip import (
-    Capacitive, Chip, DuffingTransmon, EffectiveTerms, Exact, PhysicsExpr, PortNetwork, QuantumSequence, Resonator,
-    RWA, Square, VNA, eliminate,
+    Bath, Capacitive, ChargeDrive, Chip, DuffingTransmon, EffectiveTerms, Exact, PhysicsExpr, PortNetwork,
+    QuantumSequence, Resonator, RWA, Square, VNA, eliminate,
 )
 
 
-def _hanger(count=2, *, g=0.04, backend="qutip", approximation=None, effective_terms=()):
+def _hanger(count=2, *, g=0.04, backend="qutip", approximation=None, effective_terms=(), probe=False):
     qubits = [DuffingTransmon(freq=5.32 - .07*i, anharmonicity=-.26, levels=3 if count == 3 else 2, label=f"q{i}")
               for i in range(count)]
     readouts = [Resonator(freq=6.56 + .05*i, levels=2, internal_quality_factor=2e5, label=f"r{i}")
@@ -27,6 +27,10 @@ def _hanger(count=2, *, g=0.04, backend="qutip", approximation=None, effective_t
         network.cascade(*left)
     network.expose("right", input=right[0].input, output=right[-1].output)
     network.expose("left", input=left[0].input, output=left[-1].output)
+    if probe:
+        # A second line on r0 alone, which no retained response reaches.
+        port = network.port("r0_probe", target=readouts[0], rate=2*np.pi*.0005)
+        network.expose("probe", input=port.input, output=port.output)
     return Chip(qubits + readouts, [Capacitive(q, r, g=g) for q, r in zip(qubits, readouts)],
                 port_network=network, frame=5.2, approximation=RWA() if approximation is None else approximation,
                 backend=backend, effective_terms=effective_terms)
@@ -126,6 +130,78 @@ def test_multiport_response_rejects_unsupported_field_routes(operation):
             sequence.schedule(reduced.port_network.external_port("left").input,
                               envelope=Square(duration=2., amplitude=.01), freq=6.61)
             sequence.build_problem(np.linspace(0., 2., 5))
+
+
+def test_multiport_response_rejects_time_domain_fields_and_records_on_its_line():
+    """Output fields and monitored records that carry the pole's emission raise; other observables run."""
+    from dataclasses import replace
+
+    from quchip import with_monitoring
+    from quchip.engine import solve_problem
+    from quchip.observables import OutputField
+
+    reduced = eliminate(_hanger(probe=True), "r1").chip
+    sequence = QuantumSequence(reduced)
+    tlist = np.linspace(0., 2., 3)
+    for plane in ("right", "left"):
+        with pytest.raises(NotImplementedError, match=rf"Output field '{plane}' .*\['r1'\]"):
+            sequence.build_problem(tlist, e_ops={plane: OutputField(plane)})
+    sequence.build_problem(tlist, e_ops={"probe": OutputField("probe")})
+    base = sequence.build_problem(tlist, e_ops=reduced.e_ops(r0="n"), initial_state={"r0": 1})
+    options = {"dt": 0.01, "progress_bar": ""}
+    sse = replace(base, solver="ssesolve", run_args={"ntraj": 2, "seeds": 1}, options=options)
+    sme = replace(sse, solver="smesolve")
+    # Pure-state SSE monitors every channel, the affected lines included.
+    for problem in (sse, with_monitoring(sme, {"right": .5})):
+        with pytest.raises(NotImplementedError, match=r"Monitored channel 'right' .*\['r1'\]"):
+            solve_problem(problem)
+    for selection in ({"probe": 1.}, {"right": 0., "probe": 1.}):
+        result = solve_problem(with_monitoring(sme, selection))
+        assert np.all(np.isfinite(np.real(result.expect("r0"))))
+
+
+@pytest.mark.parametrize("local", [False, True])
+def test_multiport_response_rejects_records_of_hidden_channels_on_the_removed_mode(local):
+    """A hidden channel on a removed readout lacks its pole, also after a later reduction carries it."""
+    from dataclasses import replace
+
+    from quchip import Bath, with_monitoring
+    from quchip.engine import solve_problem
+
+    base = _hanger(probe=True)
+    # The q0-r1 coupling makes the later local reduction of r0 carry the channel of r1.
+    chip = Chip(list(base.devices), [*base.couplings, Capacitive(base["q0"], base["r1"], g=.02)],
+                port_network=base.port_network, frame=5.2, approximation=RWA())
+    if not local:
+        # Local reduction does not transform baths.
+        chip.add_bath(Bath("thermal", targets=["r1", "q0"], temperature=20., rate=1e-4, label="fridge"))
+    once = eliminate(chip, "r1", local=local).chip
+    terms = next(terms for terms in once.effective_terms if terms.omitted_responses)
+    assert terms.omitted_responses == {"internal_photon_loss": ("r1",)}
+    # The record survives serialization and a later reduction. It also stays
+    # with the channel when the network drops the pole, as the channel still lacks r1.
+    data = json.loads(json.dumps(once.to_dict()))
+    restored = Chip.from_dict(data)
+    data["port_network"]["mode_responses"] = []
+    stripped = Chip.from_dict(data)
+    for reduced, removed in ((restored, ("r1",)), (stripped, ("r1",)),
+                             (eliminate(restored, "r0", local=local).chip, ("r0", "r1"))):
+        sequence = QuantumSequence(reduced)
+        problem = replace(sequence.build_problem(np.linspace(0., 2., 3), e_ops=reduced.e_ops(q0="n")),
+                          solver="smesolve", run_args={"ntraj": 2, "seeds": 1},
+                          options={"dt": 0.01, "progress_bar": ""})
+        hidden = [channel.key for channel in problem.engine_result.slh.channels if channel.accessibility == "hidden"]
+        # A channel named after a removed readout acts on that readout.
+        affected = [key for key in hidden if any(label in key for label in removed)]
+        assert affected
+        for key in hidden:
+            if key in affected:
+                with pytest.raises(NotImplementedError, match="lacks the kept responses of removed modes"):
+                    solve_problem(with_monitoring(problem, {key: 1.}))
+                # A concrete zero efficiency records nothing.
+                assert np.all(np.isfinite(np.real(solve_problem(with_monitoring(problem, {key: 0.})).expect("q0"))))
+            else:
+                assert np.all(np.isfinite(np.real(solve_problem(with_monitoring(problem, {key: 1.})).expect("q0"))))
 
 
 def test_multiport_elimination_order_and_vacuum_reference_agree():
@@ -327,3 +403,106 @@ def test_deserialized_pole_on_a_linear_chip_enters_the_vacuum_sweep():
         for f in frequencies]).conj()
     # One ulp of a pole's angular frequency moves S by 4*eps*omega/kappa, about 4e-12 at resonance.
     np.testing.assert_allclose(VNA(chip).sweep(frequencies).matrix, expected, atol=1e-11, rtol=0)
+
+
+def _two_readout_hanger(detuning=0., *, one_way=False, internal_quality_factor=None, baths=(), backend="qutip"):
+    """A kept readout r0 and a removed readout r1 on one line; only r1 couples to the qubit."""
+    qubit = DuffingTransmon(freq=5.3, anharmonicity=-.26, levels=2, label="q")
+    kept = Resonator(freq=6., levels=2, internal_quality_factor=internal_quality_factor, label="r0")
+    removed = Resonator(freq=6. + detuning, levels=2, label="r1")
+    network = PortNetwork(label="line")
+    right = [network.port("r0_right", target=kept, rate=.006), network.port("r1_right", target=removed, rate=.006)]
+    left = [network.port("r1_left", target=removed, rate=.006)]
+    if not one_way:
+        left.append(network.port("r0_left", target=kept, rate=.006))
+        network.cascade(*left)
+    network.cascade(*right)
+    network.expose("right", input=right[0].input, output=right[-1].output)
+    network.expose("left", input=left[0].input, output=left[-1].output)
+    chip = Chip([qubit, kept, removed], [Capacitive(qubit, removed, g=.04, label="c")], port_network=network,
+                frame=6., approximation=RWA(), baths=list(baths), backend=backend)
+    chip.wire(ChargeDrive(kept, label="d"))
+    return chip
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("local", [False, True])
+def test_retained_pole_reports_the_return_path_of_a_kept_readout(local):
+    """The entry divides the self-energy through the pole by the damping of the kept readout."""
+    for detuning, value, is_valid in ((0., .3844, False), (.005, .1298, False), (.02, .0428, True)):
+        reduction = eliminate(_two_readout_hanger(detuning), "r1", local=local)
+        pole, = reduction.chip.port_network._mode_responses
+        # Equal rates at the four ports give |A_kp A_pk| = w kappa², h_k = kappa and D_p(f_k) = h_p + i2π(f_p - f_k).
+        half_width = .006*pole.weight + pole.internal_rate/2
+        expected = .006*pole.weight / abs(half_width + 2j*np.pi*(pole.freq - 6.))
+        entry = reduction.validity["r1_response"]
+        np.testing.assert_allclose(entry["self_energy_over_width"], expected, rtol=1e-12)
+        np.testing.assert_allclose(expected, value, atol=1e-4)
+        assert bool(entry["is_valid"]) is is_valid
+    assert "r1_response |Σ|/h=0.043 ✓" in reduction.describe()
+
+
+@pytest.mark.unit
+def test_return_path_entry_follows_direction_loss_and_model_support():
+    """A one-way path gives zero, kept loss lowers the value, and a thermal bath makes it unavailable."""
+    lossless = eliminate(_two_readout_hanger(), "r1").validity["r1_response"]["self_energy_over_width"]
+    one_way = eliminate(_two_readout_hanger(one_way=True), "r1").validity["r1_response"]
+    assert one_way["self_energy_over_width"] == 0. and bool(one_way["is_valid"])
+    # An internal rate of 0.006 /ns raises the amplitude damping of r0 from 0.006 /ns to 0.009 /ns.
+    lossy = eliminate(_two_readout_hanger(internal_quality_factor=2*np.pi*6./.006), "r1").validity["r1_response"]
+    np.testing.assert_allclose(lossy["self_energy_over_width"], lossless*2/3, rtol=1e-12)
+    bath = Bath("thermal", targets=["r0"], temperature=50., rate=1e-4)
+    reduction = eliminate(_two_readout_hanger(baths=(bath,)), "r1")
+    assert reduction.validity["r1_response"] == {"self_energy_over_width": None, "is_valid": None}
+    assert "r1_response |Σ|/h=unavailable" in reduction.describe()
+
+
+@pytest.mark.unit
+def test_active_patch_warns_with_the_return_path_entry():
+    """Folding a spectator readout names its poor return-path entry, not a coupling ratio."""
+    chip = _two_readout_hanger()
+    qubit = next(device for device in chip.devices if device.label == "q")
+    chip.wire(ChargeDrive(qubit, label="dq"))
+    sequence = QuantumSequence(chip)
+    sequence.schedule("dq", envelope=Square(duration=20., amplitude=.01), freq=5.3)
+    with pytest.warns(UserWarning, match="'r1_response' with self_energy_over_width="):
+        patch = sequence.active_patch(hops=0)
+    assert patch.eliminated_labels == ("r1",)
+
+
+@pytest.mark.optional_backend
+@pytest.mark.validation
+@pytest.mark.parametrize("local", [False, True])
+def test_return_path_entry_traces_and_matches_finite_difference(local):
+    """The entry keeps its value under jit, and its coupling derivative matches a central difference."""
+    pytest.importorskip("dynamiqs")
+    import jax
+
+    chip = _two_readout_hanger(.005, backend="dynamiqs")
+
+    def value(g):
+        return eliminate(chip.with_params({"c.g": g}), "r1", local=local).validity["r1_response"][
+            "self_energy_over_width"]
+
+    np.testing.assert_allclose(jax.jit(value)(.04), value(.04), rtol=1e-12)
+    step = 1e-5
+    expected = (float(value(.04 + step)) - float(value(.04 - step)))/(2*step)
+    # The central difference converges as step**2 and is within 2e-8 relative at this step.
+    np.testing.assert_allclose(jax.grad(value)(.04), expected, rtol=1e-7)
+
+
+@pytest.mark.validation
+def test_return_path_entry_matches_the_driven_error_of_a_kept_readout():
+    """The entry matches the relative error of the reduced steady amplitude of r0 under a weak resonant drive."""
+    def amplitude(chip):
+        sequence = QuantumSequence(chip)
+        sequence.schedule("d", envelope=Square(duration=3000., amplitude=2e-5), freq=6.)
+        result = sequence.simulate(tlist=np.linspace(0., 3000., 3), e_ops=chip.e_ops(r0="a"))
+        return complex(np.asarray(result.expect("r0"))[-1])
+
+    for detuning in (0., .005, .02):
+        full = _two_readout_hanger(detuning)
+        reduction = eliminate(full, "r1")
+        error = abs(amplitude(reduction.chip) - amplitude(full)) / abs(amplitude(full))
+        # The pole replaces the dressed readout and its qubit, which moves the error by 0.3% at 0 MHz.
+        np.testing.assert_allclose(reduction.validity["r1_response"]["self_energy_over_width"], error, rtol=5e-3)

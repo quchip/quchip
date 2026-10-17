@@ -12,6 +12,26 @@ def pair(*, loss=False, backend=None):
     return Chip([a, b], couplings=[Capacitive(a, b, g=0.02)], approximation=RWA(), frame="rotating", backend=backend)
 
 
+def test_cascade_without_dissipation_keeps_its_exchange():
+    """Without dissipation, the one-excitation space of a cascade excludes the vacuum that its exchange passes."""
+    from quchip import PortNetwork
+
+    r1, r2 = Resonator(freq=6.0, levels=3, label="r1"), Resonator(freq=6.0, levels=3, label="r2")
+    network = PortNetwork(label="line")
+    rate = 2 * np.pi * 0.01
+    first, second = network.port("p1", target=r1, rate=rate), network.port("p2", target=r2, rate=rate)
+    network.cascade(first, second)
+    network.expose("out", input=first.input, output=second.output)
+    sequence = QuantumSequence(Chip([r1, r2], port_network=network))
+    times = np.linspace(0.0, 40.0, 81)
+    problem = sequence.build_problem(times, initial_state={"r1": 1}, dissipation=False)
+    assert problem.engine_result.excitation_space.size == 2
+    result = sequence.simulate(tlist=times, initial_state={"r1": 1}, dissipation=False,
+                               options={"atol": 1e-12, "rtol": 1e-10})
+    # H_gen = (L_2^dag L_1 - h.c.) / 2i exchanges one photon at sqrt(k1 k2) / 2.
+    np.testing.assert_allclose(result.population("r2", 1), np.sin(rate * times / 2) ** 2, atol=1e-6)
+
+
 def test_exchange_uses_exact_space_and_exports_original_coordinates():
     """A one-excitation exchange evolves two amplitudes and retains tensor export semantics."""
     chip = pair()
@@ -214,7 +234,8 @@ def test_passive_cascade_matches_full_model(monkeypatch):
     kwargs = dict(tlist=np.linspace(0, 10, 31), initial_state={"a": 1}, options={"atol": 1e-11, "rtol": 1e-10})
     actual = seq.simulate(**kwargs)
     assert actual.stats["excitation_reduction"]["totals"] == (0, 1)
-    monkeypatch.setattr("quchip.engine.pulse_space.plan_pulse_space", lambda *a: (None, "test full reference"))
+    monkeypatch.setattr("quchip.engine.pulse_space.plan_pulse_space",
+                        lambda *a, **k: (None, "test full reference", None))
     reference = seq.simulate(**kwargs)
     # Both routes integrate the same equations at rtol 1e-10, so 2e-7 bounds their difference.
     np.testing.assert_allclose(
@@ -362,7 +383,8 @@ def test_flux_controls_intrinsic_terms_and_frames_match_full_solver(kind, monkey
     )
     actual = seq.simulate(**kwargs)
     assert actual.stats["excitation_reduction"]["dimension"] == 2
-    monkeypatch.setattr("quchip.engine.pulse_space.plan_pulse_space", lambda *a: (None, "full test reference"))
+    monkeypatch.setattr("quchip.engine.pulse_space.plan_pulse_space",
+                        lambda *a, **k: (None, "full test reference", None))
     reference = seq.simulate(**kwargs)
     # Both solves use identical waveform lowering. Errors come only from integration at rtol 1e-10.
     np.testing.assert_allclose(actual.expect("q"), reference.expect("q"), atol=2e-7)
@@ -388,7 +410,8 @@ def test_native_energy_maps_preserve_local_queries_and_exports(monkeypatch):
     )
     actual = seq.simulate(**kwargs)
     assert actual.stats["excitation_reduction"]["dimension"] == 2
-    monkeypatch.setattr("quchip.engine.pulse_space.plan_pulse_space", lambda *a: (None, "full test reference"))
+    monkeypatch.setattr("quchip.engine.pulse_space.plan_pulse_space",
+                        lambda *a, **k: (None, "full test reference", None))
     reference = seq.simulate(**kwargs)
     # Both solves integrate at rtol 1e-10. Errors come only from integration.
     np.testing.assert_allclose(actual.population("q", 1), reference.population("q", 1), atol=2e-7)
@@ -404,6 +427,32 @@ def test_native_energy_maps_preserve_local_queries_and_exports(monkeypatch):
     )
 
 
+def test_pulse_space_operator_is_the_block_matrix_of_its_sectors():
+    """A pulse-space operator equals the blocks of the same operator between its sectors."""
+    from quchip import ChargeBasisTransmon
+    from quchip.engine.assembly import _energy_operator, _resolve_system
+    from quchip.engine.pulse_space import PulseSpace
+    from quchip.engine.sectors import SectorModel
+
+    q = ChargeBasisTransmon(E_C=0.25, E_J=12, n_g=0.0, num_basis=7, basis="native", label="q")
+    r = Resonator(freq=5.3, levels=3, label="r")
+    chip = Chip([q, r], [Capacitive(q, r, g=0.03)], approximation=RWA())
+    resolution = _resolve_system(chip, chip.backend)
+    totals = (0, 1, 2)
+    space = PulseSpace.create(tuple(resolution.dims), ("q", "r"), totals, resolution.bases)
+    model = SectorModel(chip, resolution=resolution)
+    rng = np.random.default_rng(1)
+    for support, dims in (((0,), [7]), ((0, 1), [7, 3])):
+        size = int(np.prod(dims))
+        local = rng.normal(size=(size, size)) + 1j * rng.normal(size=(size, size))
+        operator = chip.backend.from_array(local, dims=[dims, dims])
+        pulse = np.asarray(chip.backend.to_array(space.embed(chip.backend, operator, support)))
+        labels = tuple(chip.devices[index].label for index in support)
+        energy = _energy_operator(operator, labels, resolution.bases, chip.backend)
+        blocks = np.block([[model.block(energy, support, row, column) for column in totals] for row in totals])
+        np.testing.assert_array_equal(pulse, blocks)
+
+
 def test_counter_rotating_explicit_state_uses_parity_not_low_excitation_cutoff(monkeypatch):
     """Exact pair terms reach every odd sector, including three excitations from one."""
     from quchip import Exact
@@ -414,7 +463,8 @@ def test_counter_rotating_explicit_state_uses_parity_not_low_excitation_cutoff(m
     actual = seq.simulate(tlist=np.linspace(0, 3, 31), initial_state={"a": 1}, dissipation=False)
     assert actual.stats["excitation_reduction"]["totals"] == (1, 3)
     assert np.max(actual.population("b", 2)) > 1e-5
-    monkeypatch.setattr("quchip.engine.pulse_space.plan_pulse_space", lambda *a: (None, "full test reference"))
+    monkeypatch.setattr("quchip.engine.pulse_space.plan_pulse_space",
+                        lambda *a, **k: (None, "full test reference", None))
     reference = seq.simulate(tlist=np.linspace(0, 3, 31), initial_state={"a": 1}, dissipation=False)
     # QuTiP diagonalizes both static generators, so only round-off separates the routes.
     np.testing.assert_allclose(
@@ -464,7 +514,8 @@ def test_per_point_batch_proves_one_space_from_all_initial_states(monkeypatch):
     batch = sequence.build_batch(axis, dissipation=False, options=options)
     assert [problem.engine_result.excitation_space.totals for problem in batch] == [(1, 2), (1, 2)]
     actual = chip.solve_many(batch, progress=False)
-    monkeypatch.setattr("quchip.engine.pulse_space.plan_pulse_space", lambda *a: (None, "full test reference"))
+    monkeypatch.setattr("quchip.engine.pulse_space.plan_pulse_space",
+                        lambda *a, **k: (None, "full test reference", None))
     reference = chip.solve_many(sequence.build_batch(axis, dissipation=False, options=options), progress=False)
     for compact, full in zip(actual, reference):
         # Automatic grids can differ, but each pulse ends at the same time. Both routes integrate
@@ -567,7 +618,8 @@ def test_compact_replay_and_overlap_reject_changed_energy_bases(full, monkeypatc
     original, changed = model(12), model(13)
     state = original.compact_state({"q": 1})
     if full:
-        monkeypatch.setattr("quchip.engine.pulse_space.plan_pulse_space", lambda *a: (None, "full test reference"))
+        monkeypatch.setattr("quchip.engine.pulse_space.plan_pulse_space",
+                            lambda *a, **k: (None, "full test reference", None))
     result = QuantumSequence(original).simulate(tlist=[0, 0.01], initial_state=state, dissipation=False)
     np.testing.assert_allclose(result.overlap(state)[0], 1, atol=1e-10)
     with pytest.raises(ValueError, match="energy bases changed"):

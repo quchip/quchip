@@ -116,6 +116,8 @@ class Bath:
                 "(independent channels sharing one temperature)."
             )
         self._retained: dict[str, tuple[Any, Any, Any, Any]] | None = None
+        # Removed targets whose retained multiport response the channels omit.
+        self._omitted_responses: tuple[str, ...] = ()
         self.recipe = recipe
         self._targets = targets
         self.temperature = temperature
@@ -174,6 +176,7 @@ class Bath:
     def to_dict(self) -> dict[str, Any]:
         """Serialize the bath, with ``targets`` stored as label strings."""
         targets = None if self._targets is None else [resolve_label(t) for t in self._targets]
+        omitted = {"omitted_responses": list(self._omitted_responses)} if self._omitted_responses else {}
         return {
             "type": f"{type(self).__module__}.{type(self).__qualname__}",
             "retained": None if self._retained is None else {
@@ -186,6 +189,7 @@ class Bath:
             "temperature": self.temperature,
             "rate": self.rate,
             "label": self.label,
+            **omitted,
         }
 
     @classmethod
@@ -222,6 +226,10 @@ class Bath:
                     raise ValueError("Retained bath frequencies must be finite and nonnegative.")
                 # Concrete operators give their level changes from their entries.
                 bath._retained[label] = (frequency, matrices[0], matrices[1], None)
+        omitted = d.get("omitted_responses", ())
+        if not set(omitted) <= set(bath._retained or ()):
+            raise ValueError("Omitted bath responses must name retained bath targets.")
+        bath._omitted_responses = tuple(sorted(set(omitted)))
         return bath
 
     def physics_notes(self) -> list[str]:
@@ -263,6 +271,7 @@ class Bath:
         result = Bath(self.recipe, None if self._targets is None else [resolve_label(t) for t in self._targets],
                       temperature=copy_value(self.temperature), rate=copy_value(self.rate), label=self.label)
         result._retained = copy_value(self._retained, readonly=True)
+        result._omitted_responses = self._omitted_responses
         return result
 
     def parameter_values(self) -> dict[str, Any]:
@@ -393,11 +402,12 @@ class Bath:
                     _bose_occupation, p.temperature, PhysicsExpr.literal(frequency),
                     labels=(), dims=(), name="n_bar",
                 )
+                emission, absorption = self._channel_names(label)
                 terms.extend((
-                    CollapseChannel(lowering, gamma * (n_bar + 1), f"thermal_emission:{label}"),
+                    CollapseChannel(lowering, gamma * (n_bar + 1), emission),
                     CollapseChannel(PhysicsExpr.from_function(
                         _adjoint, lowering, labels=lowering.labels, dims=chip.authored_dims, name="raising",
-                    ), gamma * n_bar, f"thermal_absorption:{label}"),
+                    ), gamma * n_bar, absorption),
                 ))
             else:
                 operator = lowering if self.recipe == "collective_decay" else number
@@ -405,6 +415,12 @@ class Bath:
         if summed is not None:
             terms.append(CollapseChannel(summed, gamma, self.recipe))
         return tuple(terms)
+
+    def _channel_names(self, label: str) -> tuple[str, ...]:
+        """Return the names of the channels that act on target *label*."""
+        if self.recipe == "thermal":
+            return f"thermal_emission:{label}", f"thermal_absorption:{label}"
+        return (self.recipe,)
 
     def _target_operators(self, chip: "Chip", bases: Mapping[str, Any] | None = None) -> Any:
         """Yield each bath target before summing collective amplitudes or applying rates."""

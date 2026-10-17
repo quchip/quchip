@@ -44,6 +44,7 @@ from scipy.optimize import brentq, least_squares
 from quchip.analysis.effective_hamiltonian import effective_hamiltonian_between_states
 from quchip.backend import _backend_context
 from quchip.chip import Chip
+from quchip.cutoff import active_cutoff, reject_cutoff
 from quchip.inverse_design.observables import (
     TargetSpec,
     build_dressed_target_specs,
@@ -105,6 +106,7 @@ def _estimate_bare_g(
         approximation=chip.approximation,
         basis=chip.basis,
         backend=chip.backend,
+        space=chip.space,
     )
 
     def obs_at_strength(strength: float) -> float:
@@ -265,6 +267,13 @@ def _target_model(candidate: Chip, spec: TargetSpec, evaluator: str, max_hilbert
         locator = (coupling.device_a_label, coupling.device_b_label)
     working = _working_chip(candidate, locator, evaluator)
     if spec.kind in _TARGET_LEVEL_SUMS:
+        policy = active_cutoff(working)
+        if policy is not None and _TARGET_LEVEL_SUMS[spec.kind] > policy.max_total:
+            raise ValueError(
+                f"The {spec.kind} target for {spec.label!r} reads labels with total excitation "
+                f"{_TARGET_LEVEL_SUMS[spec.kind]}, outside the excitation cutoff N <= {policy.max_total}. "
+                "Raise max_total."
+            )
         dimension = working.analysis._dressed_dimension(_TARGET_LEVEL_SUMS[spec.kind])
         if dimension > max_hilbert_dim:
             raise ValueError(
@@ -521,14 +530,19 @@ def fit_a_dress(
         discarded one. A ``PortNetwork`` with matrix-form ``scattering`` also
         raises when a neighborhood keeps only some of its planes. With the
         mapping form ``{(output, input): amplitude}``, each neighborhood keeps
-        the entries of its own planes.
+        the entries of its own planes. A chip with an active
+        :class:`~quchip.cutoff.ExcitationCutoff` raises, because a
+        neighborhood would spend the same budget on fewer devices.
     max_hilbert_dim
         Maximum dimension of each matrix that a target evaluation
         diagonalizes. A chip whose static model conserves the total
         excitation number diagonalizes only the excitation sectors that its
-        targets read. Other chips diagonalize the full product space. A larger
-        matrix raises before seeding or optimization. Each rebound or traced
-        target checks the limit again if its conservation proof changes.
+        targets read. Under an excitation cutoff, each target diagonalizes
+        the cutoff classes that its labels occupy, and every candidate keeps
+        the same cutoff. Other chips diagonalize the full product space. A
+        larger matrix raises before seeding or optimization. Each rebound or
+        traced target checks the limit again if its conservation proof
+        changes.
         No different approximation is selected. Increase the value to permit a larger model.
     seed_strength_bounds
         ``(lo, hi)`` magnitude bounds for the seed root solve of the bare coupling
@@ -590,6 +604,9 @@ def fit_a_dress(
     """
     if evaluator not in ("full", "local"):
         raise ValueError(f"Unknown evaluator {evaluator!r}; choose 'full' or 'local'.")
+    if evaluator == "local":
+        # A one-hop neighborhood would spend the global excitation budget on fewer devices.
+        reject_cutoff(chip, "fit_a_dress(evaluator='local')")
     if isinstance(max_hilbert_dim, bool) or not isinstance(max_hilbert_dim, Integral) or max_hilbert_dim < 1:
         raise ValueError("max_hilbert_dim must be a positive integer.")
     constraint_mapping = _coerce_mapping(constraints, "constraints") if constraints is not None else None
@@ -700,16 +717,17 @@ def fit_a_dress(
     untracked_residuals = residuals
     r0 = untracked_residuals(x0)
     history: list[float] = [float(r0 @ r0)]
-    last_history_point = np.asarray(x0, dtype=float).copy()
+    history_points: list[np.ndarray] = [np.asarray(x0, dtype=float).copy()]
+    history_values: list[np.ndarray] = [np.array(r0, dtype=float)]
 
     def tracked_residuals(x: np.ndarray) -> np.ndarray:
-        """Evaluate residuals and retain one loss per distinct parameter vector."""
-        nonlocal last_history_point
+        """Evaluate residuals and retain one record per distinct parameter vector."""
         values = untracked_residuals(x)
         point = np.asarray(x, dtype=float)
-        if not np.array_equal(point, last_history_point):
+        if not np.array_equal(point, history_points[-1]):
             history.append(float(values @ values))
-            last_history_point = point.copy()
+            history_points.append(point.copy())
+            history_values.append(np.array(values, dtype=float))
         return values
 
     result = least_squares(
@@ -725,8 +743,11 @@ def fit_a_dress(
         max_nfev=max_nfev,
     )
     final_loss = float(2.0 * result.cost)
-    if not np.array_equal(last_history_point, np.asarray(result.x, dtype=float)):
+    final_values = untracked_residuals(result.x)
+    if not np.array_equal(history_points[-1], np.asarray(result.x, dtype=float)):
         history.append(final_loss)
+        history_points.append(np.asarray(result.x, dtype=float).copy())
+        history_values.append(np.array(final_values, dtype=float))
     else:
         history[-1] = final_loss
 
@@ -751,7 +772,7 @@ def fit_a_dress(
 
     # Reconstruct observed values at start/end by inverting the residual scaling.
     initial_vec = r0 * scales + targets_arr
-    final_vec = untracked_residuals(result.x) * scales + targets_arr
+    final_vec = final_values * scales + targets_arr
     initial_reports = tuple(
         ObservableReport(
             spec.kind,
@@ -800,6 +821,8 @@ def fit_a_dress(
         chip=fitted_chip,
         loss=final_loss,
         history=np.asarray(history, dtype=float),
+        history_params=tuple(dict(zip(names, point, strict=True)) for point in history_points),
+        history_residuals=np.asarray(history_values) * scales,
         initial_targets=initial_reports,
         final_targets=final_reports,
         initial_params=dict(zip(names, x0, strict=True)),

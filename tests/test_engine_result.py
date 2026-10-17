@@ -253,7 +253,7 @@ class TestSolveProblem:
             )
 
 class TestDroppedTerms:
-    """Surface RWA-dropped terms on EngineResult (issue #59)."""
+    """Surface RWA-dropped terms on EngineResult."""
 
     @pytest.mark.parametrize("approximation", [RWA(), Exact()])
     def test_capacitive_reports_drops_for_selected_approximation(self, approximation):

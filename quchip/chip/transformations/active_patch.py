@@ -75,10 +75,11 @@ def graph_distances(adjacency: dict[str, set[str]], sources: set[str]) -> dict[s
 
 
 def _warn_on_poor_validity(step: "EliminationResult", target: str) -> None:
-    """Warn (never raise) when a fold's Schrieffer-Wolff validity is poor.
+    """Warn (never raise) when a validity entry of a fold is poor.
 
-    The reduction proceeds regardless, but a poor ``g/Δ`` indicates low
-    approximation quality for that fold. ``is_valid`` may be a *traced* JAX
+    The reduction proceeds regardless, but a poor ``g/Δ``, or a poor ratio of
+    a kept section or response, indicates low approximation quality for that
+    fold. ``is_valid`` may be a *traced* JAX
     boolean when ``eliminate`` runs under ``jit``/``grad``
     (:class:`~quchip.chip.transformations.result.EliminationResult`'s
     ``validity`` docstring) — branching a Python ``if`` on a tracer would
@@ -90,10 +91,14 @@ def _warn_on_poor_validity(step: "EliminationResult", target: str) -> None:
         if is_valid is None or contains_tracer(is_valid):
             continue
         if not is_valid:
-            g_over_delta = entry.get("g_over_delta")
+            if "g_over_delta" in entry:
+                problem = (f"folds coupling '{coupling_label}' with poor Schrieffer-Wolff validity "
+                           f"(g/Δ={entry['g_over_delta']!r}, needs < 0.1)")
+            else:
+                name = next(key for key in entry if key != "is_valid")
+                problem = f"leaves '{coupling_label}' with {name}={entry[name]!r}, which needs < 0.1"
             warnings.warn(
-                f"active_patch: eliminating '{target}' folds coupling '{coupling_label}' with "
-                f"poor Schrieffer-Wolff validity (g/Δ={g_over_delta!r}, needs < 0.1); proceeding "
+                f"active_patch: eliminating '{target}' {problem}; proceeding "
                 "anyway — inspect this step's effective_params and validity before use.",
                 UserWarning,
                 stacklevel=2,
@@ -113,6 +118,8 @@ class ActivePatchResult:
     sequence
         A :class:`~quchip.control.sequence.QuantumSequence` bound to
         :attr:`chip`, which replays the source sequence's entries verbatim.
+        Delays, barriers and virtual-Z entries on removed devices and
+        stripped lines keep the source timing and have no other effect.
     active_labels
         Sorted schedule-active device labels (never eliminated).
     eliminated_labels
@@ -327,7 +334,10 @@ def active_patch(
     # Rereading the graph at each step ensures that a folded label is never
     # considered again and that the order always shows what `eliminate` will
     # see.
+    from quchip.cutoff import reject_cutoff
+
     chip = sequence._chip
+    reject_cutoff(chip, "active_patch()")
     active = active_labels(sequence, hops=hops)
     spectators = [d.label for d in chip.devices if d.label not in active]
     reachable, notes = _split_reachable_spectators(chip, spectators, active)

@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 import jax
 import numpy as np
 
+from quchip.backend import _backend_context
 from quchip.utils.jax_utils import concrete_array_module, contains_tracer
 from quchip.utils.values import DeferredValue
 from quchip.chip.couplings import Capacitive, TunableCapacitive
@@ -132,6 +133,36 @@ def _line_has_coupled_response(chip: "Chip", labels: tuple[str, ...], retained_p
     return any(len(ports) > 1 and not line.isdisjoint(ports) for ports in groups)
 
 
+def _response_validity(chip: "Chip", mode_label: str, ports: set[str]) -> dict[str, Any]:
+    """Compare the return path through a retained pole with the damping of the kept targets of other ports.
+
+    In the vacuum drift ``A`` of the reduced chip, the omitted pole ``p``
+    changes ``D_k = h_k + i2π(f_k - f)`` of a kept mode ``k`` by
+    ``-A_kp A_pk / D_p``. The value is the largest ratio of this self-energy
+    to ``h_k = -Re A_kk`` at ``2π f_k = -Im A_kk``. It is ``None`` when the
+    chip has no vacuum one-excitation model.
+    """
+    from quchip.engine.linear_response import vacuum_drift
+
+    model = vacuum_drift(chip)
+    if model is None:
+        return {"self_energy_over_width": None, "is_valid": None}
+    labels, drift = model
+    xp = concrete_array_module(drift)
+    pole = labels.index(mode_label)
+    targets = {target for port in chip.ports if port.label not in ports for target in port.resolve_targets(chip)}
+    ratios = []
+    for k, label in enumerate(labels):
+        if label not in targets:
+            continue
+        coupling = xp.abs(drift[k, pole] * drift[pole, k])
+        denominator = xp.abs(1j * xp.imag(drift[k, k]) - drift[pole, pole]) * -xp.real(drift[k, k])
+        safe = xp.where(denominator > 0, denominator, 1.)
+        ratios.append(xp.where(coupling > 0, xp.where(denominator > 0, coupling / safe, xp.inf), 0.))
+    ratio: Any = xp.max(xp.stack(ratios)) if ratios else 0.0
+    return {"self_energy_over_width": ratio, "is_valid": ratio < 0.1}
+
+
 def _operator_terms(expr: PhysicsExpr) -> Iterator[PhysicsExpr]:
     """Yield the operator products that ``expr`` sums, without their scalar coefficients."""
     if expr.kind in ("add", "sub"):
@@ -172,7 +203,7 @@ def _level_dependent(chip: "Chip", operator: Any, labels: tuple[str, ...], label
     with jax.ensure_compile_time_eval():
         local = materialize_expr(operator, backend, local_bases=bases)
         matrix = _array(backend.to_array(_project_on_support(chip, local, support, bases, backend)))
-        transform = _support_semantic_transform(chip, support, bases)
+        transform = _support_semantic_transform(labels, bases)
         if transform is not None:
             matrix = transform.conj().T @ matrix @ transform
         dims = tuple(bases[name].resolved_dim for name in labels)
@@ -186,7 +217,8 @@ def _level_dependent(chip: "Chip", operator: Any, labels: tuple[str, ...], label
 
 def _coupling_level_dependent(chip: "Chip", coupling: "BaseCoupling", label: str, bases: Any) -> bool:
     """Check each operator product without scalar coefficients, including cancelled couplings."""
-    operator = coupling.interaction_hamiltonian()
+    with _backend_context(chip.backend):
+        operator = coupling.interaction_hamiltonian()
     terms = tuple(_operator_terms(operator)) if isinstance(operator, PhysicsExpr) else (operator,)
     labels = (coupling.device_a_label, coupling.device_b_label)
     return any((isinstance(term, PhysicsExpr) and _holds_parameter(term))
@@ -270,7 +302,7 @@ def _patch_chip(chip: "Chip", clone: "Chip", labels: tuple[str, ...],
     patch = _build_component_chip(chip, clone, 0, group, [], network)
     patch._effective_terms = tuple(
         replace(terms, channels=(), projection=None,
-                excitation_changes=None if terms.excitation_changes is None else {})
+                excitation_changes=None if terms.excitation_changes is None else {}, omitted_responses={})
         for terms in absorbed
     )
     return patch
@@ -429,7 +461,9 @@ def _local_effective_terms(chip: "Chip", mode_label: str, taken: set[str], *, ab
             declared, names = terms.excitation_changes, {channel.name for channel in channels}
             terms = replace(terms, channels=channels, projection=own_map, excitation_changes=None
                             if declared is None else
-                            {name: changes for name, changes in declared.items() if name in names})
+                            {name: changes for name, changes in declared.items() if name in names},
+                            omitted_responses={name: responses for name, responses
+                                               in terms.omitted_responses.items() if name in names})
         kept.append(terms)
     xp = concrete_array_module(correction)
     tolerance = None if scale is None or contains_tracer(correction) else float(np.spacing(scale))
@@ -461,22 +495,24 @@ def _local_effective_terms(chip: "Chip", mode_label: str, taken: set[str], *, ab
         t.excitation_changes is not None for t in chip.effective_terms if t.projection is not None
     )
     groups: dict[tuple[str, ...], list[Any]] = {}
-    for channel, labels, dims, changes in carried:
-        groups.setdefault(labels, []).append((channel, dims, changes))
+    for channel, labels, dims, changes, omitted in carried:
+        groups.setdefault(labels, []).append((channel, dims, changes, omitted))
     own = groups.pop(survivors, [])
     for labels, members in groups.items():
         dims = members[0][1]
         added.append(EffectiveTerms(
-            labels, dims, np.zeros((prod(dims),) * 2, dtype=complex), tuple(channel for channel, _, _ in members),
+            labels, dims, np.zeros((prod(dims),) * 2, dtype=complex), tuple(channel for channel, *_ in members),
             label=_unique_label(f"retained_{mode_label}_{'_'.join(labels)}", taken),
-            excitation_changes={channel.name: changes for channel, _, changes in members if changes is not None}
+            excitation_changes={channel.name: changes for channel, _, changes, _ in members if changes is not None}
             if lineage_conserves else None,
+            omitted_responses={channel.name: omitted for channel, _, _, omitted in members if omitted},
         ))
     head = EffectiveTerms(
-        survivors, survivor_dims, remainder, tuple(channel for channel, _, _ in own), label=head_label,
+        survivors, survivor_dims, remainder, tuple(channel for channel, *_ in own), label=head_label,
         projection=projection, notes=(*dropped_notes, *notes),
-        excitation_changes={channel.name: changes for channel, _, changes in own if changes is not None}
+        excitation_changes={channel.name: changes for channel, _, changes, _ in own if changes is not None}
         if lineage_conserves else None,
+        omitted_responses={channel.name: omitted for channel, _, _, omitted in own if omitted},
     )
     return (*kept, *added, head)
 
@@ -956,13 +992,17 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
                     port_operator, labels=tuple(numeric_survivors), dims=survivor_dims,
                     name="transformed_port", excitation_changes=port_changes,
                 )
-            port_replacements[port.label] = Port(
+            replacement = Port(
                 port_targets,
                 rate=port.rate_value(chip),
                 operator=port_operator,
                 phase=port.phase,
                 label=port.label,
             )
+            # The transformed field of a boundary port lacks the response that the reduction keeps.
+            replacement._omitted_responses = (tuple(sorted({*port._omitted_responses, mode_label}))
+                                              if port.label not in retained_ports else port._omitted_responses)
+            port_replacements[port.label] = replacement
         notes.append(
             f"Transformed port(s) {sorted(port_replacements)} through the {method} reduction; "
             "the PortNetwork scattering and existing reference sections are retained."
@@ -1007,15 +1047,23 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
     parents = lineage(tuple(t.projection for t in joined if t.projection is not None))
     step = OperatorProjection(tuple(labels), tuple(numeric.authored_dims), tuple(numeric_survivors),
                               tuple(numeric_final.authored_dims), step_embedding, parents=parents) if local else None
-    carried: list[tuple[CollapseChannel, tuple[str, ...], tuple[int, ...], frozenset[int] | None]] = []
+    carried: list[tuple[CollapseChannel, tuple[str, ...], tuple[int, ...], frozenset[int] | None,
+                        tuple[str, ...]]] = []
+    channel_responses: dict[str, tuple[str, ...]] = {}
+
+    def omitted_by(support_labels: tuple[str, ...], omitted: tuple[str, ...]) -> tuple[str, ...]:
+        # A channel on the removed mode keeps only its adiabatic part, so its
+        # time-domain field lacks the kept pole or section.
+        return tuple(sorted({*omitted, mode_label})) if boundary_ports and mode_label in support_labels else omitted
 
     def carry(operator: Any, support_labels: tuple[str, ...], support_dims: tuple[int, ...], rate: Any,
-              name: str, changes: frozenset[int] | None) -> None:
+              name: str, changes: frozenset[int] | None, omitted: tuple[str, ...]) -> None:
         assert step is not None
         matrix, carried_labels, carried_dims = _in_device_order(
             chip, *step._embed(_array(operator), support_labels, support_dims),
         )
-        carried.append((CollapseChannel(matrix, rate, name), carried_labels, carried_dims, changes))
+        carried.append((CollapseChannel(matrix, rate, name), carried_labels, carried_dims, changes,
+                        omitted_by(support_labels, omitted)))
 
     # Internal loss of the eliminated mode as the damping of <a> near vacuum,
     # -2 Re <0|D†[L](a)|1> per channel: lowering counts +rate, raising -rate,
@@ -1041,7 +1089,8 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
         row = bare_index(list(support_labels), support_dims, mode_label)
         internal_rate = internal_rate - 2.0 * rate * _real(adjoint[0, row])
 
-    def inherit_channel(channel: CollapseChannel, support_labels: tuple[str, ...], name: str) -> None:
+    def inherit_channel(channel: CollapseChannel, support_labels: tuple[str, ...], name: str,
+                        omitted: tuple[str, ...]) -> None:
         rate = materialize_expr(channel.rate, chip.backend)
         changes = None
         if sectors is not None:
@@ -1049,7 +1098,8 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
                                                   source_bases if chip_bases is None else chip_bases)
         if local:
             carry(chip.backend.to_array(materialize_expr(channel.operator, chip.backend)), support_labels,
-                  tuple(chip[label].local_space().dimension for label in support_labels), rate, name, changes)
+                  tuple(chip[label].local_space().dimension for label in support_labels), rate, name, changes,
+                  omitted)
             add_internal_loss(channel.operator, support_labels, rate, bases=chip_bases)
         if local and support_labels != (mode_label,):
             return
@@ -1062,6 +1112,9 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
             ))
             if changes is not None:
                 channel_changes[name] = changes
+            responses = omitted_by(support_labels, omitted)
+            if responses:
+                channel_responses[name] = responses
         if support_labels == (mode_label,):
             p_index = np.flatnonzero(ctx.p_mask)
             ground = basis_row(p_index, labels, dims)
@@ -1076,7 +1129,8 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
             support_labels = (tuple(contribution_labels[index] for index in support) if support
                               else contribution_labels)
             inherit_channel(CollapseChannel(operator, rate, name), support_labels,
-                            name if owner is mode_owner else f"{owner_label}.{name}")
+                            name if owner is mode_owner else f"{owner_label}.{name}",
+                            owner.omitted_responses.get(name, ()) if isinstance(owner, EffectiveTerms) else ())
     if local:
         # Retained channels are stored in the coordinates before this step.
         for terms in chip.effective_terms:
@@ -1086,7 +1140,8 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
                     add_internal_loss(terms.channel_expression(channel), terms.labels,
                                       materialize_expr(channel.rate, chip.backend), bases=chip_bases)
                     carry(channel.operator, terms.labels, terms.dims, channel.rate, f"{terms.label}.{channel.name}",
-                          None if declared is None else declared.get(channel.name))
+                          None if declared is None else declared.get(channel.name),
+                          terms.omitted_responses.get(channel.name, ()))
     projected_baths = []
     for bath in chip.baths:
         copied = bath.copy()
@@ -1109,6 +1164,8 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
                 matrices = [op if moved is None else _array(moved[0]) for op, moved in zip(matrices, transported)]
             copied._retained[label] = (frequency, *[step_embedding.conj().T @ op @ step_embedding
                                                    for op in matrices], changes)
+        if boundary_ports and mode_label in copied._retained:
+            copied._omitted_responses = tuple(sorted({*bath._omitted_responses, mode_label}))
         projected_baths.append(copied)
     projection = None if lone and not joined else (step if step is not None else OperatorProjection.capture(
         numeric, tuple(numeric_survivors), tuple(numeric_final.authored_dims), step_embedding,
@@ -1134,7 +1191,8 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
         terms = EffectiveTerms(tuple(numeric_survivors), tuple(numeric_final.authored_dims), correction,
                                tuple(inherited_channels), label=_unique_label(f"retained_{mode_label}", taken),
                                projection=projection, notes=(*inherited_notes(numeric), *notes),
-                               excitation_changes=None if sectors is None else channel_changes)
+                               excitation_changes=None if sectors is None else channel_changes,
+                               omitted_responses=channel_responses)
         effective_terms = (terms,)
     final = rebuild_chip(chip, devices=reduced_devices, couplings=kept_couplings,
                          port_replacements=port_replacements,
@@ -1161,9 +1219,12 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
             "The pole omits survivor damping and correlations with the discarded internal-loss bath. "
             "Dissipation remains dispersive."
             + (" SW keeps second-order energies only." if method == "sw" else "")
-            + " Pumped, finite-power, noisy and excited-reference field responses, and time-domain "
-            "coherent inputs at its ports, require the full boundary mode."
+            + " Pumped, finite-power, noisy and excited-reference field responses, time-domain "
+            "coherent inputs at its ports, and time-domain output fields and measurement records "
+            "that carry its emission require the full boundary mode."
         )
+        validity[f"{mode_label}_response"] = _response_validity(
+            final, mode_label, {port.label for port in boundary_ports})
     if len(boundary_ports) == 1 and not coupled_response:
         # The transformed port carries survivor emission. The section keeps
         # the removed mode's scattering on the external plane.
@@ -1215,7 +1276,8 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
         if method == "sw":
             note += ("SW misses frequency shifts beyond second order, of order g⁴/Δ³ with one survivor "
                      "and 2g_1g_2J/(Δ_1Δ_2) when a coupling J joins two survivors. ")
-        note += "The section's internal-loss bath is vacuum."
+        note += ("The section's internal-loss bath is vacuum. Monitored records of the line through it and of "
+                 "channels on the mode lack its response and require the full boundary mode.")
         if shared_line:
             note += (
                 " Either leg preserves the weak-probe response from the line input. "

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from math import prod
 from typing import Any, Mapping
 
@@ -103,14 +103,14 @@ def authored_excitation_changes(
     return changes(operator, labels)
 
 
-def conserves_excitation_number(chip: Any, approximation: Any, *, resolution: Any = None) -> bool:
-    """Prove conservation of the total isolated energy-level index from retained operators.
+def static_excitation_changes(chip: Any, approximation: Any, *, resolution: Any = None) -> frozenset[int] | None:
+    """Return the total energy-level changes of the retained static model, or ``None`` when unknown.
 
-    A zero-total band filter proves conservation of ordinary interactions.
-    Otherwise their authored algebra or exact local matrix support must prove
-    it. Retained terms bypass that filter. Unknown support is not a proof.
-    Generated port pairs additionally require single-excitation lowering at
-    both ends, as assumed by compact static network assembly.
+    The set is symmetric and holds ``0``. A zero-total band filter removes
+    every change of an ordinary interaction. Retained terms bypass that
+    filter. A generated port pair ``L_d^dagger L_u`` changes the total by
+    ``u - d`` for each change ``u`` of the upstream port and ``d`` of the
+    downstream port.
 
     Parameters
     ----------
@@ -125,21 +125,68 @@ def conserves_excitation_number(chip: Any, approximation: Any, *, resolution: An
 
     resolution = _resolve_system(chip, chip.backend) if resolution is None else resolution
     bases = resolution.bases
+    found = {0}
     for term in _interaction_contributions(chip):
         if not term.retained and approximation.filters_terms and approximation.conserves_excitation_number():
             continue
         changes = authored_excitation_changes(term.expression(), term.labels, chip.backend, bases)
-        if changes is None or not changes <= {0}:
-            return False
+        if changes is None:
+            return None
+        found.update(changes)
+    pairs = () if resolution.network is None else resolution.network.generated_pairs
+    weights: dict[str, frozenset[int]] = {}
+    for label in dict.fromkeys(label for downstream, upstream, _ in pairs for label in (downstream, upstream)):
+        port = chip.port(label)
+        ((channel, _paths),) = port._collapse_channels_with_paths(chip)
+        changes = authored_excitation_changes(channel.operator, port.resolve_targets(chip), chip.backend, bases)
+        if changes is None:
+            return None
+        weights[label] = changes
+    for downstream, upstream, _ in pairs:
+        found.update(up - down for up in weights[upstream] for down in weights[downstream])
+    return frozenset(found | {-change for change in found})
+
+
+def conserves_excitation_number(chip: Any, approximation: Any, *, resolution: Any = None) -> bool:
+    """Prove conservation of the total isolated energy-level index from retained operators.
+
+    A zero-total band filter proves conservation of ordinary interactions.
+    Otherwise their authored algebra or exact local matrix support must prove
+    it. Retained terms bypass that filter. Unknown support is not a proof.
+    Generated port pairs additionally require single-excitation lowering at
+    both ends.
+
+    Parameters
+    ----------
+    chip : Chip
+        Chip whose static model is checked.
+    approximation : Approximation
+        Approximation the static model is resolved with.
+    resolution : optional
+        Local basis resolution to reuse.
+    """
+    from quchip.engine.assembly import _resolve_system
+
+    resolution = _resolve_system(chip, chip.backend) if resolution is None else resolution
+    if static_excitation_changes(chip, approximation, resolution=resolution) != {0}:
+        return False
     pairs = () if resolution.network is None else resolution.network.generated_pairs
     labels = dict.fromkeys(label for downstream, upstream, _ in pairs for label in (downstream, upstream))
-    return all(_port_lowers_level_index(chip, chip.port(label), bases) for label in labels)
+    return all(_port_lowers_level_index(chip, chip.port(label), resolution.bases) for label in labels)
 
 
 def _port_lowers_level_index(chip: Any, port: Any, bases: Mapping[str, Any]) -> bool:
-    """Return whether a port's operator lowers the total energy-level index by one and does nothing else."""
+    """Return whether a port's operator lowers the total energy-level index by one and does nothing else.
+
+    The check reads the operator in the chip's retained coordinates, as assembly does.
+    """
     ((channel, _paths),) = port._collapse_channels_with_paths(chip)
-    changes = authored_excitation_changes(channel.operator, port.resolve_targets(chip), chip.backend, bases)
+    operator, labels = channel.operator, tuple(port.resolve_targets(chip))
+    retained = retained_operator(chip, operator, labels, chip.backend, f"port:{port.label}", bases=bases,
+                                 local_bases=bases)
+    if retained is not None:
+        operator, labels = retained, retained.labels
+    changes = authored_excitation_changes(operator, labels, chip.backend, bases)
     return changes is not None and changes <= {1}
 
 
@@ -520,6 +567,13 @@ class EffectiveTerms:
         row, that each named channel can carry. Band decomposition then treats
         every other change as zero, even for traced values. ``None`` declares
         no structure.
+    omitted_responses : mapping of str to iterable of str, default={}
+        Labels of the removed modes whose kept response, a multiport pole or
+        a one-port section, the time-domain field of each named channel omits.
+        A reduction declares them for the channels that it carries from such a
+        mode. A solve rejects diffusive monitoring of these channels with
+        a nonzero efficiency, also when the port network no longer holds the
+        response.
     """
 
     labels: tuple[str, ...]
@@ -530,6 +584,7 @@ class EffectiveTerms:
     projection: OperatorProjection | None = None
     notes: tuple[str, ...] = ()
     excitation_changes: Mapping[str, frozenset[int]] | None = None
+    omitted_responses: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         labels, dims = tuple(self.labels), tuple(self.dims)
@@ -583,6 +638,14 @@ class EffectiveTerms:
                 for name in names if name in self.excitation_changes
             }
             object.__setattr__(self, "excitation_changes", changes)
+        unknown = set(self.omitted_responses) - {channel.name for channel in channels}
+        if unknown:
+            raise ValueError(f"Omitted responses name unknown effective channels {sorted(unknown)}.")
+        omitted = {channel.name: tuple(sorted(set(self.omitted_responses[channel.name])))
+                   for channel in channels if self.omitted_responses.get(channel.name)}
+        if any(not isinstance(label, str) or not label for labels in omitted.values() for label in labels):
+            raise ValueError("Omitted response labels must be nonempty strings.")
+        object.__setattr__(self, "omitted_responses", omitted)
         object.__setattr__(self, "notes", notes)
         object.__setattr__(self, "labels", labels)
         object.__setattr__(self, "dims", dims)
@@ -683,6 +746,8 @@ class EffectiveTerms:
             data["excitation_changes"] = {
                 name: sorted(changes) for name, changes in self.excitation_changes.items()
             }
+        if self.omitted_responses:
+            data["omitted_responses"] = {name: list(labels) for name, labels in self.omitted_responses.items()}
         return data
 
     @classmethod
@@ -695,7 +760,7 @@ class EffectiveTerms:
             Payload produced by :meth:`to_dict`.
         """
         required = {"label", "labels", "dims", "hamiltonian", "channels", "projection"}
-        if not required <= set(data) <= required | {"notes", "excitation_changes"}:
+        if not required <= set(data) <= required | {"notes", "excitation_changes", "omitted_responses"}:
             raise ValueError("Invalid serialized EffectiveTerms fields.")
 
         def matrix(value: dict[str, Any]) -> Any:
@@ -710,4 +775,5 @@ class EffectiveTerms:
             None if data["projection"] is None else OperatorProjection.from_dict(data["projection"]),
             tuple(data.get("notes", ())),
             data.get("excitation_changes"),
+            data.get("omitted_responses", {}),
         )

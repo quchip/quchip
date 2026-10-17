@@ -71,7 +71,7 @@ class TestCoRotatingReadout:
         )
 
     def test_states_equal_expect_in_rotating_frame(self) -> None:
-        """result.expect == Tr(O·ρ) over the same result.states (issue #101)."""
+        """result.expect == Tr(O·ρ) over the same result.states."""
         q = DuffingTransmon(freq=5.01, anharmonicity=self.ALPHA, levels=self.LEVELS, label="q")
         chip = Chip([q], couplings=[])
         q.reference_freq = 5.00
