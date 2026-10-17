@@ -113,6 +113,8 @@ class ActivePatchResult:
     sequence
         A :class:`~quchip.control.sequence.QuantumSequence` bound to
         :attr:`chip`, which replays the source sequence's entries verbatim.
+        Delays, barriers and virtual-Z entries on removed devices and
+        stripped lines keep the source timing and have no other effect.
     active_labels
         Sorted schedule-active device labels (never eliminated).
     eliminated_labels
