@@ -128,22 +128,14 @@ class _SystemResolution:
         return self.space.embed(backend, operator, support)
 
 
-def _support_semantic_transform(
-    chip: "Chip",
-    support: tuple[int, ...],
-    bases: Mapping[str, BasisRecord],
-) -> Any | None:
-    transforms = [
-        bases[chip.devices[index].label].energy_to_solver()
-        for index in support
-    ]
+def _support_semantic_transform(labels: Sequence[str], bases: Mapping[str, BasisRecord]) -> Any | None:
+    """Return the energy-to-solver map of the devices ``labels`` in tensor order, or None for the identity."""
+    transforms = [bases[label].energy_to_solver() for label in labels]
     if all(transform is None for transform in transforms):
         return None
     resolved = [
-        jnp.eye(bases[chip.devices[index].label].resolved_dim, dtype=jnp.complex128)
-        if transform is None
-        else transform
-        for index, transform in zip(support, transforms, strict=True)
+        jnp.eye(bases[label].resolved_dim, dtype=jnp.complex128) if transform is None else transform
+        for label, transform in zip(labels, transforms, strict=True)
     ]
     product_transform = resolved[0]
     for transform in resolved[1:]:
@@ -737,7 +729,7 @@ def _concrete_port_resolution(
             backend,
         )
         payload = backend.to_array(operator)
-        transform = _support_semantic_transform(chip, support, records)
+        transform = _support_semantic_transform(labels, records)
         # A port transformed inside jit or grad keeps a traced payload. Its
         # band decomposition then keeps every candidate the declared
         # excitation changes allow, so it is not pruned here.
@@ -932,7 +924,7 @@ def _authored_bands(
     canonical = backend.to_canonical_operator(operator).with_metadata(dims=dims, subsystem_labels=labels, tag=tag)
     if is_energy_diagonal(authored, bases):
         return {(0,) * len(support): canonical}
-    transform = _support_semantic_transform(chip, support, bases)
+    transform = _support_semantic_transform(labels, bases)
     changes = declared_excitation_changes(authored)
     if len(support) == 1:
         return {(weight,): band for weight, band in decompose_canonical_bands(
@@ -981,11 +973,10 @@ def _resolved_interactions(chip: "Chip", resolution: _SystemResolution, backend:
         yield _ResolvedInteraction(contribution, support, authored, operator)
 
 
-def _energy_operator(chip: "Chip", operator: Any, support: tuple[int, ...],
-                     bases: Mapping[str, BasisRecord], backend: Backend) -> Any:
-    """Express a projected support-local operator in isolated energy coordinates."""
+def _energy_operator(operator: Any, labels: Sequence[str], bases: Mapping[str, BasisRecord], backend: Backend) -> Any:
+    """Express a projected operator on the devices ``labels``, in tensor order, in isolated energy coordinates."""
     matrix = backend.to_array(operator)
-    transform = _support_semantic_transform(chip, support or tuple(range(len(chip.devices))), bases)
+    transform = _support_semantic_transform(labels, bases)
     if transform is not None:
         xp = concrete_array_module(matrix, transform)
         transform = xp.asarray(transform)
@@ -1003,7 +994,7 @@ def _resolved_energy_interactions(chip: "Chip", resolution: _SystemResolution, a
     """
     for resolved in _resolved_interactions(chip, resolution, chip.backend, effective_terms):
         contribution, support = resolved.contribution, resolved.support
-        operator = _energy_operator(chip, resolved.operator, support, resolution.bases, chip.backend)
+        operator = _energy_operator(resolved.operator, contribution.labels, resolution.bases, chip.backend)
         if approximation.filters_terms and not contribution.retained:
             dims = tuple(resolution.dims[index] for index in support)
             dimension = prod(dims)
@@ -1243,7 +1234,7 @@ def _resolve_coupling_terms(
         if filters_terms:
             # Sparse payloads stay sparse unless a basis transform moves them to energy coordinates.
             energy_canonical = backend.to_canonical_operator(h_full)
-            transform = _support_semantic_transform(chip, support, resolution.bases)
+            transform = _support_semantic_transform(labels, resolution.bases)
             if transform is not None:
                 energy_canonical = _sandwich_canonical(energy_canonical, transform.conj().T, transform)
             band_diagnostics = _band_diagnostics(

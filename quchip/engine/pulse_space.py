@@ -59,27 +59,14 @@ class PulseSpace:
 
     def embed(self, backend, operator, support):
         """Gather a resolved local operator without a product-space allocation."""
+        from quchip.engine.assembly import _energy_operator
+        from quchip.engine.sectors import _level_pairs
+
         support = tuple(support) or tuple(range(len(self.dims)))
-        matrix = backend.to_array(operator)
+        matrix = _energy_operator(operator, tuple(self.labels[axis] for axis in support), self.bases, backend)
         xp = concrete_array_module(matrix)
-        transform = None
-        for axis in support:
-            record = self.bases[self.labels[axis]]
-            vectors = record.energy_to_solver()
-            vectors = xp.eye(self.dims[axis]) if vectors is None else xp.asarray(vectors)
-            transform = vectors if transform is None else xp.kron(transform, vectors)
-        matrix = xp.conj(transform.T) @ xp.asarray(matrix) @ transform
-        outside = [i for i in range(len(self.dims)) if i not in support]
-        groups = {}
-        for row, levels in enumerate(self.levels):
-            groups.setdefault(tuple(levels[outside]), []).append(row)
-        rows, columns = [], []
-        for group in groups.values():
-            rows.extend(np.repeat(group, len(group)))
-            columns.extend(np.tile(group, len(group)))
-        rows, columns = np.asarray(rows, dtype=int), np.asarray(columns, dtype=int)
-        local = np.ravel_multi_index(tuple(self.levels[:, support].T), tuple(self.dims[i] for i in support))
-        values = matrix[local[rows], local[columns]]
+        rows, columns, local_rows, local_columns = _level_pairs(self.dims, support, self.levels, self.levels)
+        values = matrix[local_rows, local_columns]
         result = xp.zeros((self.size, self.size), dtype=complex)
         if xp is np:
             result[rows, columns] = values

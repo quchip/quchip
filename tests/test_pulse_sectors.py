@@ -404,6 +404,32 @@ def test_native_energy_maps_preserve_local_queries_and_exports(monkeypatch):
     )
 
 
+def test_pulse_space_operator_is_the_block_matrix_of_its_sectors():
+    """A pulse-space operator equals the blocks of the same operator between its sectors."""
+    from quchip import ChargeBasisTransmon
+    from quchip.engine.assembly import _energy_operator, _resolve_system
+    from quchip.engine.pulse_space import PulseSpace
+    from quchip.engine.sectors import SectorModel
+
+    q = ChargeBasisTransmon(E_C=0.25, E_J=12, n_g=0.0, num_basis=7, basis="native", label="q")
+    r = Resonator(freq=5.3, levels=3, label="r")
+    chip = Chip([q, r], [Capacitive(q, r, g=0.03)], approximation=RWA())
+    resolution = _resolve_system(chip, chip.backend)
+    totals = (0, 1, 2)
+    space = PulseSpace.create(tuple(resolution.dims), ("q", "r"), totals, resolution.bases)
+    model = SectorModel(chip, resolution=resolution)
+    rng = np.random.default_rng(1)
+    for support, dims in (((0,), [7]), ((0, 1), [7, 3])):
+        size = int(np.prod(dims))
+        local = rng.normal(size=(size, size)) + 1j * rng.normal(size=(size, size))
+        operator = chip.backend.from_array(local, dims=[dims, dims])
+        pulse = np.asarray(chip.backend.to_array(space.embed(chip.backend, operator, support)))
+        labels = tuple(chip.devices[index].label for index in support)
+        energy = _energy_operator(operator, labels, resolution.bases, chip.backend)
+        blocks = np.block([[model.block(energy, support, row, column) for column in totals] for row in totals])
+        np.testing.assert_array_equal(pulse, blocks)
+
+
 def test_counter_rotating_explicit_state_uses_parity_not_low_excitation_cutoff(monkeypatch):
     """Exact pair terms reach every odd sector, including three excitations from one."""
     from quchip import Exact
