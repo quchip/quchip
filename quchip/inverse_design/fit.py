@@ -700,16 +700,17 @@ def fit_a_dress(
     untracked_residuals = residuals
     r0 = untracked_residuals(x0)
     history: list[float] = [float(r0 @ r0)]
-    last_history_point = np.asarray(x0, dtype=float).copy()
+    history_points: list[np.ndarray] = [np.asarray(x0, dtype=float).copy()]
+    history_values: list[np.ndarray] = [np.array(r0, dtype=float)]
 
     def tracked_residuals(x: np.ndarray) -> np.ndarray:
-        """Evaluate residuals and retain one loss per distinct parameter vector."""
-        nonlocal last_history_point
+        """Evaluate residuals and retain one record per distinct parameter vector."""
         values = untracked_residuals(x)
         point = np.asarray(x, dtype=float)
-        if not np.array_equal(point, last_history_point):
+        if not np.array_equal(point, history_points[-1]):
             history.append(float(values @ values))
-            last_history_point = point.copy()
+            history_points.append(point.copy())
+            history_values.append(np.array(values, dtype=float))
         return values
 
     result = least_squares(
@@ -725,8 +726,11 @@ def fit_a_dress(
         max_nfev=max_nfev,
     )
     final_loss = float(2.0 * result.cost)
-    if not np.array_equal(last_history_point, np.asarray(result.x, dtype=float)):
+    final_values = untracked_residuals(result.x)
+    if not np.array_equal(history_points[-1], np.asarray(result.x, dtype=float)):
         history.append(final_loss)
+        history_points.append(np.asarray(result.x, dtype=float).copy())
+        history_values.append(np.array(final_values, dtype=float))
     else:
         history[-1] = final_loss
 
@@ -751,7 +755,7 @@ def fit_a_dress(
 
     # Reconstruct observed values at start/end by inverting the residual scaling.
     initial_vec = r0 * scales + targets_arr
-    final_vec = untracked_residuals(result.x) * scales + targets_arr
+    final_vec = final_values * scales + targets_arr
     initial_reports = tuple(
         ObservableReport(
             spec.kind,
@@ -800,6 +804,8 @@ def fit_a_dress(
         chip=fitted_chip,
         loss=final_loss,
         history=np.asarray(history, dtype=float),
+        history_params=tuple(dict(zip(names, point, strict=True)) for point in history_points),
+        history_residuals=np.asarray(history_values) * scales,
         initial_targets=initial_reports,
         final_targets=final_reports,
         initial_params=dict(zip(names, x0, strict=True)),

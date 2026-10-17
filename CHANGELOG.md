@@ -222,6 +222,13 @@ This file records notable user-visible changes to quchip.
   cross-resonance and cancellation tones. The default remains the driven
   device. ([#92](https://github.com/quchip/quchip/issues/92),
   [#105](https://github.com/quchip/quchip/pull/105))
+- `FitADressResult.history_params` and `FitADressResult.history_residuals`
+  give the parameter vector and the target residuals in GHz at each `history`
+  entry. Previously, the path of a fit needed one rerun with `max_nfev` per
+  point. With a numerical Jacobian, they include the finite-difference
+  probes, as `history` does.
+  ([#152](https://github.com/quchip/quchip/issues/152),
+  [#168](https://github.com/quchip/quchip/pull/168))
 
 #### Fixes
 
