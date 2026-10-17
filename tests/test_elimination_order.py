@@ -185,6 +185,24 @@ def test_a_spectator_waits_while_its_step_would_couple_two_near_degenerate_spect
     assert _largest_fold(other) > 0.1
 
 
+def test_the_waits_read_the_exchange_that_the_approximation_keeps():
+    """Without the exchange band, removing q gives c1 and c2 no exchange to screen, so q can go first."""
+    k1 = DuffingTransmon(freq=4.0, anharmonicity=-0.25, levels=3, label="k1")
+    c1 = Resonator(freq=7.20, levels=2, label="c1")
+    q = DuffingTransmon(freq=5.2, anharmonicity=-0.25, levels=3, label="q")
+    c2 = Resonator(freq=7.22, levels=2, label="c2")
+    k2 = DuffingTransmon(freq=6.4, anharmonicity=-0.25, levels=3, label="k2")
+    couplings = [Capacitive(k1, c1, g=0.075), Capacitive(c1, q, g=0.075), Capacitive(q, c2, g=0.075),
+                 Capacitive(c2, k2, g=0.04)]
+    orders = {}
+    for name, approximation in (("rwa", RWA()), ("counter-rotating", RWA(keep_bands={(1, 1), (-1, -1)}))):
+        chip = Chip([k1, c1, q, c2, k2], couplings, frame=5.2, approximation=approximation)
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="RWA\\(\\) drops band")
+            orders[name] = eliminate_spectators(chip, ["k1", "k2"], local=True).eliminated_labels
+    assert orders == {"rwa": ("c1", "q", "c2"), "counter-rotating": ("q", "c1", "c2")}
+
+
 @pytest.mark.parametrize("case", ["cross-Kerr chain", "six-transmon ring"])
 def test_the_order_model_follows_the_supports_of_the_local_chain(case):
     """Removing v makes the shift of a depend on the level of b, so the later step of x reaches b."""

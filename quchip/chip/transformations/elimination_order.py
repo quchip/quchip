@@ -47,8 +47,10 @@ class EliminationOrder:
     effective terms of the step do, and moves each kept device's operator
     support onto the patch survivors. When the step reads a level-dependent
     interaction, its correction can depend on levels on the diagonal, and
-    the model adds this dependence (:meth:`remove`). The model reads no
-    reduced chip, so ``local=True`` and ``local=False`` get the same order.
+    the model assumes this dependence (:meth:`remove`). This conservative
+    rule can make a patch larger than the local route's, and a larger patch
+    can change later choices. The model reads no reduced chip, so
+    ``local=True`` and ``local=False`` get the same order.
 
     Parameters
     ----------
@@ -142,11 +144,13 @@ class EliminationOrder:
         neighbour ``k`` with ``|E_v - E_k| < |E_v - E_u| / 2``, so that the
         chain keeps the ``k``-``v`` exchange shift. It also waits while its
         step would give two spectator neighbours ``a`` and ``b`` an exchange
-        ``x_ab + x_av x_vb (1/(E_a - E_v) + 1/(E_b - E_v)) / 2`` of at least
-        ``0.1 |E'_a - E'_b|``, the fold limit, so that no later fold of the
-        pair becomes poor. ``E'_a = E_a + |x_av|^2 / (E_a - E_v)`` is the
-        transition of ``a`` after the step. The pair does not stop the step
-        when ``x_ab`` alone is nonzero and already reaches the limit. ``read``
+        ``x_ab + x_av x_vb (1/(E_a - E_v) + 1/(E_b - E_v)) / 2`` that is
+        nonzero and at least ``0.1 |E'_a - E'_b|``, the fold limit. This
+        screens the predicted fold of the pair; it does not make every later
+        fold valid. ``E'_a = E_a + |x_av|^2 / (E_a - E_v)`` is the estimated
+        transition of ``a`` after the step. ``v`` also waits when ``E_a`` or
+        ``E_b`` equals ``E_v``. The pair does not stop the step when ``x_ab``
+        alone is nonzero and already reaches the limit. ``read``
         returns the current diagonal transition energies ``E`` and the
         exchange elements ``x`` of the labels it receives, in GHz. Among the
         spectators that do not wait, or all of
@@ -219,9 +223,9 @@ class EliminationOrder:
         When a neighbour ``s`` of ``label`` or ``label`` itself has an
         interaction whose diagonal depends on the level of a device ``t``, the
         denominators of the ``s``-``label`` processes read that level. The
-        correction on the survivors then depends on the levels of ``s`` and
-        ``t`` on its diagonal, so later patches that hold ``s`` or ``t`` hold
-        every survivor.
+        correction on the survivors can then depend on the levels of ``s``
+        and ``t`` on its diagonal, so later patches that hold ``s`` or ``t``
+        hold every survivor.
         """
         patch = self.patch(label)
         survivors = patch - {label}

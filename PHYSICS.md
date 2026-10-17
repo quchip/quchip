@@ -2209,11 +2209,12 @@ against each other.
 
 1. A spectator `v` waits while a spectator neighbour `u` has a kept neighbour `k` with
    `|E_v - E_k| < |E_v - E_u| / 2`.
-2. A spectator `v` waits while its step would give two spectator neighbours `a` and `b` an exchange
-   `x_ab + x_av x_vb (1/(E_a - E_v) + 1/(E_b - E_v)) / 2` of magnitude `0.1 |E'_a - E'_b|` or more.
-   `E'_a = E_a + |x_av|² / (E_a - E_v)` is the transition of `a` after the step, which can bring the
-   pair closer. `v` also waits when `E_a = E_v`. The pair does not stop the step when `x_ab` is
-   nonzero and `|x_ab|` alone already reaches `0.1 |E_a - E_b|`.
+2. A spectator `v` waits while its step would give two spectator neighbours `a` and `b` a nonzero
+   exchange `x_ab + x_av x_vb (1/(E_a - E_v) + 1/(E_b - E_v)) / 2` of magnitude `0.1 |E'_a - E'_b|` or
+   more. `E'_a = E_a + |x_av|² / (E_a - E_v)` is the estimated transition of `a` after the step, which
+   can bring the pair closer. `v` also waits when `E_a` or `E_b` equals `E_v`. The pair does not stop
+   the step when `x_ab` is nonzero and `|x_ab|` alone already reaches `0.1 |E_a - E_b|`. This rule
+   screens the predicted fold of the pair. It does not make every later fold valid.
 3. Among the spectators that do not wait, a device whose neighbours are all kept goes last. Then the
    step with the smallest widest support of a kept device's operator goes first, then the smallest
    sum of these supports, the smallest patch and chip order.
@@ -2225,10 +2226,12 @@ number-conserving terms, so without RWA the rules omit the counter-rotating virt
 Neighbours share a coupling, an effective Hamiltonian or a port. A model of the patch rules of §10.7
 gives the neighbours, patches and supports. It starts on the source chip, and each step links its
 patch survivors. When a patch holds an interaction whose diagonal depends on the level of a device,
-the SW denominators of the step read that level. The correction then couples it on the diagonal with
-the levels of the devices next to the removed one, and later patches that hold these devices hold
-all the survivors. The model reads no reduced coordinates, so `local=True` and `local=False` give the
-same order. If every spectator waits, rule 3 chooses among all of them, and the result's notes name the
+the SW denominators of the step read that level. The correction can then couple it on the diagonal
+with the levels of the devices next to the removed one, and the model lets later patches that hold
+these devices hold all the survivors. This conservative rule can make a patch larger than the local
+route's, and a larger patch can change later choices. On the chips of the tests, the model equals
+the local route at every step. The model reads no reduced coordinates, so `local=True` and
+`local=False` give the same order. If every spectator waits, rule 3 chooses among all of them, and the result's notes name the
 step and what the chain omits. The order is a cost-and-accuracy heuristic for dispersive chips, and
 it does not bound the error. The divisor 2 and the limit 0.1 come from tests on rings, and the
 limit equals the `g_over_delta` limit of a fold.
