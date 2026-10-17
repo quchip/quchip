@@ -19,7 +19,13 @@ from typing import TYPE_CHECKING, Any, Sequence
 import jax.numpy as jnp
 import numpy as np
 
-from quchip.chip.dressing import BareProductReference, Labeling, assign_rowwise_greedy, label_eigensystem
+from quchip.chip.dressing import (
+    BareProductReference,
+    Labeling,
+    assign_rowwise_greedy,
+    gauge_phases,
+    label_eigensystem,
+)
 from quchip.chip.ports import Port
 from quchip.chip.sw import _sector_eigh
 from quchip.declarative.expr import materialize_expr
@@ -122,7 +128,9 @@ class SectorEigensystem:
     eigenvalues : array_like
         Ascending eigenvalues in GHz.
     eigenvectors : array_like
-        Eigenvectors as columns in the sector's product energy basis.
+        Eigenvectors as columns in the sector's product energy basis. Each
+        column has a real, nonnegative amplitude on its assigned label, as
+        :func:`~quchip.chip.dressing.gauge_phases` sets.
     labeling : Labeling
         Assignment of each bare label in ``space`` to one eigenvector.
     """
@@ -322,6 +330,8 @@ class SectorModel:
         space = self.space(total)
         eigenvalues, eigenvectors = _sector_eigh(self.hamiltonian(total), np.full(space.size, total))
         labeling = label_eigensystem(eigenvectors, BareProductReference((space.size,)), policy=assign_rowwise_greedy)
+        # The reference is the sector's product energy basis, so the amplitudes are the vectors.
+        eigenvectors = eigenvectors * gauge_phases(eigenvectors, labeling.indices)
         if not contains_tracer(eigenvalues):
             # Concrete energies take the backend's array type, as those of the full eigensystem do.
             eigenvalues = self.chip.backend.array_module.asarray(eigenvalues)

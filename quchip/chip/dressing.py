@@ -304,6 +304,52 @@ def _labeling_arrays(
     return indices, chosen_overlaps, margins, duplicates
 
 
+def gauge_phases(amplitudes: Any, indices: Any) -> Any:
+    """Return the phase factor that makes each column's assigned reference amplitude real and nonnegative.
+
+    Parameters
+    ----------
+    amplitudes : array_like
+        ``(n_labels, n_dressed)`` amplitudes ``<ref_k|psi_j>`` of the dressed columns.
+    indices : array_like
+        Column assigned to each reference label.
+
+    Notes
+    -----
+    The anchor of a column is its amplitude on the label assigned to it. A
+    one-to-one assignment can give a column whose assigned amplitude is zero.
+    When that amplitude is not above a floor, the square root of the
+    floating-point epsilon, and for an unassigned column, the anchor is the
+    first amplitude within a relative
+    ``1e-6`` of the column's largest magnitude. The factor of a column is
+    ``conj(anchor) / |anchor|``. The rule is piecewise: the phase can jump
+    where the assigned amplitude crosses the floor or where the fallback
+    selects another amplitude. A phase cannot fix a rotation, so an exactly
+    degenerate eigenspace keeps the basis of the eigensolver.
+    """
+    xp = concrete_array_module(amplitudes, indices)
+    amplitudes = xp.asarray(amplitudes)
+    columns = amplitudes.shape[-1]
+    span = xp.arange(columns)
+    magnitudes = xp.abs(amplitudes)
+    peak = xp.max(magnitudes, axis=0)
+    fallback = amplitudes[xp.argmax(magnitudes >= (1.0 - 1e-6) * peak, axis=0), span]
+    labels = xp.arange(len(indices))
+    rows: Any
+    assigned: Any
+    if xp is np:
+        rows, assigned = np.zeros(columns, dtype=int), np.zeros(columns, dtype=bool)
+        rows[np.asarray(indices)] = labels
+        assigned[np.asarray(indices)] = True
+    else:
+        rows = jnp.zeros(columns, dtype=int).at[indices].set(labels)
+        assigned = jnp.zeros(columns, dtype=bool).at[indices].set(True)
+    own = amplitudes[rows, span]
+    floor = float(np.sqrt(np.finfo(magnitudes.dtype).eps))
+    anchor = xp.where(assigned & (xp.abs(own) > floor), own, fallback)
+    return xp.conj(anchor) / xp.abs(anchor)
+
+
 def label_eigensystem(
     evecs: jnp.ndarray,
     reference: Any,

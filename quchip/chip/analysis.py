@@ -32,6 +32,7 @@ import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
+import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
@@ -41,12 +42,13 @@ from quchip.chip.dressing import (
     Labeling,
     _reference_amplitudes,
     assign_rowwise_greedy,
+    gauge_phases,
     label_eigensystem,
 )
 from quchip.chip.states import _bare_state_from_bases, normalize_device_state_mapping
 from quchip.devices.base import BaseDevice, _validate_level_pair
 from quchip.utils.constants import TWO_PI
-from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
+from quchip.utils.jax_utils import concrete_array_module, contains_tracer, maybe_concrete_scalar
 from quchip.utils.values import TracedKey, scoped_entry, scoped_hit
 from quchip.utils.labeling import LabelKeyedDict, bare_label_from_mapping, resolve_label, top_components
 
@@ -68,19 +70,6 @@ _DRESS_TRACING_ERROR = (
 )
 
 
-def _phase_fixed_state(state: Any, anchor: Any, xp: Any) -> Any:
-    """Set one dressed vector's assigned bare overlap to a nonnegative real value."""
-    magnitude = xp.abs(anchor)
-    threshold = xp.finfo(magnitude.dtype).eps
-    safe_magnitude = xp.where(magnitude > threshold, magnitude, xp.asarray(1.0, dtype=magnitude.dtype))
-    phase = xp.where(
-        magnitude > threshold,
-        xp.conj(anchor) / safe_magnitude,
-        xp.asarray(1.0 + 0.0j, dtype=state.dtype),
-    )
-    return state * phase
-
-
 @dataclass
 class DressedResult:
     """Store a frozen snapshot of a dressed-state diagonalization.
@@ -90,8 +79,9 @@ class DressedResult:
     eigenvalues : array-like
         Sorted dressed eigenvalues in GHz.
     eigenstates : array-like
-        Backend eigenstate objects in the same order as ``eigenvalues``. They
-        are materialized lazily on first access from the underlying
+        Backend eigenstate objects in the same order as ``eigenvalues``, with
+        the phases of ``eigenvector_matrix``. They are materialized lazily on
+        first access from the underlying
         :class:`~quchip.backend.containers.EigensystemData`. The dressing and
         sweep hot path never touches them, so the backend builds per-column
         kets only on request.
@@ -115,7 +105,9 @@ class DressedResult:
     eigenvector_matrix : array-like or None
         Dressed eigenvectors as columns, in the resolved solver basis, used by
         :meth:`ChipAnalysis.operator_in_dressed_basis` and
-        :meth:`ChipAnalysis.state_components`.
+        :meth:`ChipAnalysis.state_components`. Each column has a real,
+        nonnegative amplitude on its assigned bare state
+        (:func:`~quchip.chip.dressing.gauge_phases`).
     overlap_threshold : float
         Minimum overlap for a confident assignment.
     labeling : str
@@ -237,13 +229,14 @@ def dress_engine_result(
         dims=[list(result.dims), list(result.dims)],
     )
     eigensystem = backend.eigensystem_data(native_hamiltonian)
-    eigenvalues = eigensystem.eigenvalues
-    eigenvector_matrix = eigensystem.eigenvector_matrix
     kernel_labeling = label_eigensystem(
-        eigenvector_matrix,
+        eigensystem.eigenvector_matrix,
         context.reference,
         policy=assign_rowwise_greedy,
     )
+    eigensystem = _gauge_fixed_eigensystem(eigensystem, context.reference, kernel_labeling)
+    eigenvalues = eigensystem.eigenvalues
+    eigenvector_matrix = eigensystem.eigenvector_matrix
     if result.excitation_space is not None:
         from dataclasses import replace
         kernel_labeling = replace(kernel_labeling, keys=tuple(map(tuple, result.excitation_space.levels.tolist())))
@@ -258,11 +251,33 @@ def dress_engine_result(
     )
 
 
+def _gauge_fixed_eigensystem(eigensystem: EigensystemData, reference: Any, labeling: Labeling) -> EigensystemData:
+    """Rephase each eigenvector so that its assigned bare amplitude is real and nonnegative.
+
+    The kets of the backend take the same phases, so a degenerate eigenspace
+    keeps the eigensolver's basis.
+    """
+    raw = eigensystem.eigenvector_matrix
+    phases = gauge_phases(_reference_amplitudes(reference, raw), labeling.indices)
+    xp = concrete_array_module(raw, phases)
+    vectors = xp.asarray(raw) * phases
+    if isinstance(raw, jax.Array) and xp is np:
+        vectors = jnp.asarray(vectors)
+    factors = [complex(factor) for factor in phases] if xp is np else list(phases)
+
+    def build_states() -> list[Any]:
+        return [state * factor for state, factor in zip(eigensystem.eigenstates, factors, strict=True)]
+
+    return EigensystemData(eigenvalues=eigensystem.eigenvalues, eigenvector_matrix=vectors,
+                           _states_builder=build_states)
+
+
 def _labeled_eigensystem(engine_result: "EngineResult", backend: Any) -> tuple[Any, Any, Any, Labeling]:
     """Diagonalize a static analysis result and assign its bare product labels.
 
     Returns ``(eigenvalues, eigenvector_matrix, eigensystem, labeling)``;
-    traced Hamiltonians stay traced.
+    traced Hamiltonians stay traced. Each eigenvector follows the phase
+    convention of :func:`~quchip.chip.dressing.gauge_phases`.
     """
     from quchip.engine.assembly import _analysis_matrix_ghz
 
@@ -274,6 +289,7 @@ def _labeled_eigensystem(engine_result: "EngineResult", backend: Any) -> tuple[A
         backend.from_array(_analysis_matrix_ghz(engine_result), dims=[dims, dims])
     )
     labeling = label_eigensystem(eigensystem.eigenvector_matrix, context.reference, policy=assign_rowwise_greedy)
+    eigensystem = _gauge_fixed_eigensystem(eigensystem, context.reference, labeling)
     return eigensystem.eigenvalues, eigensystem.eigenvector_matrix, eigensystem, labeling
 
 
@@ -739,7 +755,10 @@ class ChipAnalysis:
                 # JAX's eigh derivative can be NaN at an unrelated exact tie.
                 matrix = jnp.asarray(_analysis_matrix_ghz(static))
                 column = _differentiable_eigenvector(matrix, values[index], values, vectors, column)
-            ket = _phase_fixed_state(column, xp.vdot(xp.asarray(backend.to_array(bare)).reshape(-1), column), xp)
+                # That derivative transports the phase. The gauge restores the derivative of the anchor's phase.
+                amplitudes = self._semantic_amplitudes(column[:, None], static)
+                column = column * gauge_phases(amplitudes, jnp.zeros(1, dtype=int))[0]
+            ket = column
         self._ground_cache = scoped_entry(key, ket, traced=contains_tracer(ket))
         return ket
 
@@ -894,8 +913,7 @@ class ChipAnalysis:
         return self._ensure_dressed().eigenvalues
 
     def _dressed_state(self, **device_states: int) -> Any:
-        """Gather the assigned eigenvector column under tracing; eagerly use the dressed view.
-        Global eigenvector phase remains gauge-dependent; populations and overlap magnitudes do not."""
+        """Gather the assigned eigenvector column under tracing; eagerly use the dressed view."""
         label_t = self._label_from_plain_mapping(device_states)
         engine = self.engine_result()
         _, eigenvector_matrix, _, kernel_labeling = self._compute_array_labeled(engine)
@@ -980,9 +998,9 @@ class ChipAnalysis:
         """Transform a local operator into the dressed eigenbasis.
 
         Computes ``U† O_embedded U``, where ``U`` is the dressed eigenvector
-        matrix in solver coordinates, phase-fixed to the assigned bare-state
-        convention of :meth:`drive_matrix_elements`. Optional truncation keeps
-        the lowest ``truncate`` dressed levels.
+        matrix in solver coordinates. Each column has a real, nonnegative
+        amplitude on its assigned bare state, as in :meth:`state`. Optional
+        truncation keeps the lowest ``truncate`` dressed levels.
 
         Parameters
         ----------
@@ -1003,14 +1021,7 @@ class ChipAnalysis:
         idx, dev = chip._resolve_device_index(device)
         engine = self.engine_result()
         xp = backend.array_module
-        raw_eigenvectors = xp.asarray(dressed.eigenvector_matrix, dtype=complex)
-        amplitudes = xp.asarray(self._semantic_amplitudes(raw_eigenvectors, engine))
-        bare_indices = [
-            self._bare_label_index(dressed.bare_labels_by_dressed_index[index])
-            for index in range(raw_eigenvectors.shape[1])
-        ]
-        anchors = amplitudes[bare_indices, xp.arange(raw_eigenvectors.shape[1])]
-        U = _phase_fixed_state(raw_eigenvectors, anchors, xp)
+        U = xp.asarray(dressed.eigenvector_matrix, dtype=complex)
         local_op = (
             prepare_local_op(dev, op, engine.bases[dev.label], backend)
             if isinstance(op, str) else materialize_expr(op, backend)
@@ -1137,18 +1148,12 @@ class ChipAnalysis:
             engine = self.engine_result()
             _, eigenvectors, _, labeling = self._compute_array_labeled(engine)
             U = xp.asarray(eigenvectors, dtype=complex)
-            amplitudes = xp.asarray(self._semantic_amplitudes(U, engine))
 
         def phase_fixed_state(label: tuple[int, ...]) -> Any:
             if sectors is not None:
                 system = sectors.eigensystem(sum(label))
-                row = system.space.row(label)
-                column = system.labeling.indices[row]
-                state = xp.asarray(system.eigenvectors)[:, column]
-                return _phase_fixed_state(state, state[row], xp)
-            bare_index = self._bare_label_index(label)
-            state = U[:, labeling.indices[bare_index]]
-            return _phase_fixed_state(state, amplitudes[bare_index, labeling.indices[bare_index]], xp)
+                return xp.asarray(system.eigenvectors)[:, system.labeling.indices[system.space.row(label)]]
+            return U[:, labeling.indices[self._bare_label_index(label)]]
 
         initial = phase_fixed_state(initial_label)
         final = phase_fixed_state(final_label)
@@ -1459,7 +1464,9 @@ class ChipAnalysis:
 
         Safe in ``jax.jit``/``grad``/``vmap``. Under tracing, the method
         selects the eigenvector column through the array kernel, so a dressed
-        initial state is differentiable end-to-end.
+        initial state is differentiable end-to-end. The state's amplitude on
+        its assigned product state is real and nonnegative
+        (:func:`~quchip.chip.dressing.gauge_phases`).
 
         Parameters
         ----------
