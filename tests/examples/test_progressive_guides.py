@@ -161,7 +161,7 @@ def test_guide_outputs_match_a_fresh_execution(guide: str, guide_workspace) -> N
     [pytest.param(stem, marks=pytest.mark.optional_backend) if stem in DYNAMIQS_NOTEBOOKS else stem
      for stem in DEFAULT_PAIRS],
 )
-@pytest.mark.validation
+@pytest.mark.release
 def test_notebook_outputs_match_a_fresh_execution(stem: str, guide_workspace) -> None:
     """Each example notebook executes again and reproduces the textual outputs that its guide shows."""
     if stem in DYNAMIQS_NOTEBOOKS:

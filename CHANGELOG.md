@@ -422,8 +422,9 @@ This file records notable user-visible changes to quchip.
 
 #### Development
 
-- Validation executes each example notebook again and compares its textual
-  outputs with the committed notebook.
+- An opt-in `release` test suite executes each example notebook again and
+  compares its textual outputs with the committed notebook. Run it before a
+  release with `python -m pytest -m release`.
   ([#164](https://github.com/quchip/quchip/pull/164))
 - `CONTRIBUTING.md` documents the release-note format, and the pull request
   template uses checkboxes for AI assistance.
