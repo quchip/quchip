@@ -48,10 +48,10 @@ def scqubits_mhz():
     scqubits.set_units(previous)
 
 
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Assign a daily suite and retain the independent location markers."""
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Assign one suite to each test, retain the location markers, and run release checks only on request."""
     for item in items:
-        suites = {name for name in ("unit", "e2e", "validation") if item.get_closest_marker(name)}
+        suites = {name for name in ("unit", "e2e", "validation", "release") if item.get_closest_marker(name)}
         if len(suites) > 1:
             raise pytest.UsageError(f"Conflicting test suites for {item.nodeid}: {sorted(suites)}")
         if not suites:
@@ -75,3 +75,10 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             continue
 
         item.add_marker(pytest.mark.core)
+
+    # Release checks run only when a marker expression names them, as in `-m release`.
+    if "release" not in config.getoption("markexpr"):
+        release_items = [item for item in items if item.get_closest_marker("release")]
+        if release_items:
+            config.hook.pytest_deselected(items=release_items)
+            items[:] = [item for item in items if not item.get_closest_marker("release")]
