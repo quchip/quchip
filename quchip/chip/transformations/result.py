@@ -164,6 +164,14 @@ class EliminationResult:
         dispersive field-error scale at incoming kept-port frequencies beyond
         the section. Dressed shifts can exceed this scale. ``is_valid`` uses
         ``kappa_over_delta < 0.1`` as a diagnostic, not an accuracy guarantee.
+        A kept coupled response adds ``self_energy_over_width`` and
+        ``is_valid`` under ``"<mode>_response"``. For each kept target of the
+        other ports, the value divides the self-energy of the return path
+        through the omitted pole, at the target's frequency, by the target's
+        amplitude damping. The entry reports the largest value, and
+        ``is_valid`` uses ``self_energy_over_width < 0.1``. Both are ``None``
+        when the reduced chip has no vacuum one-excitation model, for example
+        with a thermal bath.
     notes
         Approximation order, omitted physics and control retargeting.
     mapping

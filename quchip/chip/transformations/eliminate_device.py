@@ -133,6 +133,36 @@ def _line_has_coupled_response(chip: "Chip", labels: tuple[str, ...], retained_p
     return any(len(ports) > 1 and not line.isdisjoint(ports) for ports in groups)
 
 
+def _response_validity(chip: "Chip", mode_label: str, ports: set[str]) -> dict[str, Any]:
+    """Compare the return path through a retained pole with the damping of the kept targets of other ports.
+
+    In the vacuum drift ``A`` of the reduced chip, the omitted pole ``p``
+    changes ``D_k = h_k + i2π(f_k - f)`` of a kept mode ``k`` by
+    ``-A_kp A_pk / D_p``. The value is the largest ratio of this self-energy
+    to ``h_k = -Re A_kk`` at ``2π f_k = -Im A_kk``. It is ``None`` when the
+    chip has no vacuum one-excitation model.
+    """
+    from quchip.engine.linear_response import vacuum_drift
+
+    model = vacuum_drift(chip)
+    if model is None:
+        return {"self_energy_over_width": None, "is_valid": None}
+    labels, drift = model
+    xp = concrete_array_module(drift)
+    pole = labels.index(mode_label)
+    targets = {target for port in chip.ports if port.label not in ports for target in port.resolve_targets(chip)}
+    ratios = []
+    for k, label in enumerate(labels):
+        if label not in targets:
+            continue
+        coupling = xp.abs(drift[k, pole] * drift[pole, k])
+        denominator = xp.abs(1j * xp.imag(drift[k, k]) - drift[pole, pole]) * -xp.real(drift[k, k])
+        safe = xp.where(denominator > 0, denominator, 1.)
+        ratios.append(xp.where(coupling > 0, xp.where(denominator > 0, coupling / safe, xp.inf), 0.))
+    ratio: Any = xp.max(xp.stack(ratios)) if ratios else 0.0
+    return {"self_energy_over_width": ratio, "is_valid": ratio < 0.1}
+
+
 def _operator_terms(expr: PhysicsExpr) -> Iterator[PhysicsExpr]:
     """Yield the operator products that ``expr`` sums, without their scalar coefficients."""
     if expr.kind in ("add", "sub"):
@@ -1189,6 +1219,8 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
             "coherent inputs at its ports, and time-domain output fields and measurement records "
             "that carry its emission require the full boundary mode."
         )
+        validity[f"{mode_label}_response"] = _response_validity(
+            final, mode_label, {port.label for port in boundary_ports})
     if len(boundary_ports) == 1 and not coupled_response:
         # The transformed port carries survivor emission. The section keeps
         # the removed mode's scattering on the external plane.

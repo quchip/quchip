@@ -1874,6 +1874,32 @@ The weak-probe composition restores those network paths in the frequency solve.
 It omits survivor damping of the pole and correlations with the discarded
 internal-loss bath. The second-order SW energy error stated above also remains.
 This does not make the dissipative reduction exact.
+A kept mode on the same line also loses its return path through the pole.
+Write the vacuum one-excitation drift of the reduced chip as
+`A = -iH - C†C/2`, with `D_j(f) = h_j + i 2π(f_j - f)`. Here
+`h_j = -Re A_jj` is the amplitude damping and `2π f_j = -Im A_jj` is the
+diagonal frequency, not in general a normal-mode frequency. The omitted pole
+`p` has `D_p = d` from above. It changes `D_k` of a kept mode `k` by the
+self-energy `-A_kp A_pk / D_p(f)`. The result's `validity` entry
+`"<mode>_response"` reports
+
+```text
+self_energy_over_width = max_k |A_kp A_pk| / (|D_p(f_k)| h_k)
+```
+
+over the devices that the other ports target, and sets `is_valid` when the
+value is below 0.1. The entry excludes a device that reaches the line only
+through the transformed ports. Its error is the dispersive error that
+`g_over_delta` reports. A one-way path has `A_kp = 0` or `A_pk = 0` and gives
+zero. Zero does not exclude indirect feedback through other kept modes or
+earlier poles. For a two-way hanger with rate `kappa` at each of the four
+ports and no internal loss, the value is
+`w kappa / |w kappa + i 2π(f_tilde - f_k)|`, which approaches one for
+degenerate modes. The entry evaluates the ratio at `f_k`. Between `f_k` and
+`f_tilde`, `|D_p D_k|` has a smaller minimum, so the ratio is a resonance
+diagnostic, not a bound over frequency. The entry is `None` when the reduced
+chip has no vacuum one-excitation model, for example with a thermal bath.
+
 The coupled pole supports a conserving model's vacuum `VNA.sweep()` only.
 Pumped, finite-power, noisy, excited-reference, and general stationary field
 routes reject it. A time-domain solve also rejects a coherent input that
