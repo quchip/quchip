@@ -1916,7 +1916,9 @@ class Chip:
         differentiable end-to-end. The state's amplitude on its assigned
         product state is real and nonnegative (see
         :func:`~quchip.chip.dressing.gauge_phases`), so a nondegenerate state
-        vector, not only its populations, is the same on each backend.
+        vector, not only its populations, is the same on each backend. On a
+        chip whose static model conserves the total energy-level index, the
+        method diagonalizes only the sector of the label.
 
         Parameters
         ----------

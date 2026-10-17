@@ -2331,9 +2331,6 @@ def _build_static_analysis_result(
     _advisories: list[str] | None = None,
 ) -> EngineResult:
     """Resolve the chip in the lab frame and retain only its static model."""
-    dimension = chip.total_dim if _local_resolution is None else prod(_local_resolution.dims)
-    require_memory(16 * 6 * dimension**2, task=f"Full static eigensystem (dimension {dimension})",
-                   remedy="Use a conserving model with labeled sector queries or reduce the model.")
     labels = [device.label for device in chip.devices]
     frame = ResolvedFrame(
         frequencies={label: 0.0 for label in labels},

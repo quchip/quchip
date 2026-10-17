@@ -236,6 +236,13 @@ This file records notable user-visible changes to quchip.
 
 #### Fixes
 
+- The conservation check of the total energy-level index reads each
+  cascaded port in the chip's retained coordinates, as assembly does.
+  Previously, it read the authored port. A retained map that mixes the
+  port's levels could then put the chip on the excitation-sector route,
+  which drops the parts of the generated Hamiltonian that change the total
+  level.
+  ([#171](https://github.com/quchip/quchip/pull/171))
 - Pump-free `VNA.sweep()` computes models that are static in the lab frame but
   dynamic in the probe frame, e.g. capacitive couplings under `Exact()`.
   Previously, it raised. It solves one lab-frame stationary state per chip point
@@ -320,6 +327,15 @@ This file records notable user-visible changes to quchip.
 
 #### Performance
 
+- On a chip whose static model conserves the total energy-level index,
+  `chip.state()` diagonalizes only the sector of its label, and the default
+  initial state of a solve is the bare product with no static model. The
+  full eigensystem's memory check now runs before its decomposition, not
+  before the static model build. For example, on a reduced 15,552-state
+  chain, `chip.state({})` and the default initial state no longer stop with
+  `MemoryError` on an 8 GB machine.
+  ([#153](https://github.com/quchip/quchip/issues/153),
+  [#171](https://github.com/quchip/quchip/pull/171))
 - Multi-device operators project factor by factor into the retained local
   eigenbases instead of through the dense native product space. Two coupled
   default `Fluxonium` devices previously needed an estimated 820 GB. Their
