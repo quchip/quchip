@@ -6,6 +6,7 @@ from typing import Any
 import numpy as np
 
 from quchip.backend.containers import LinearResponseSolverResult
+from quchip.utils.jax_utils import contains_tracer
 from quchip.utils.values import DeferredValue
 
 # Relative residual that each conditional-response block and JAX derivative solve must reach.
@@ -101,9 +102,17 @@ def coherence_response(problem: Any, *, xp: Any) -> Any:
     generators = {n: dense(n) for n in direct_sectors}
     frequencies = xp.atleast_1d(xp.array(problem.frequencies, dtype=float, copy=True))
     indices = list(problem.plane_indices)
-    scattering = xp.asarray(problem.scattering)[xp.ix_(xp.asarray(indices), xp.asarray(indices))]
-    solve = partial(_solve_coherences, xp=np) if xp is np else _compiled_coherence_solver()
-    responses, residuals = solve(drift, lower, kept, sources, generators, frequencies, scattering, xp.asarray(indices))
+    plane = xp.asarray(indices)
+    scattering = xp.asarray(problem.scattering)[xp.ix_(plane, plane)]
+    operators = (drift, lower, kept, sources, generators)
+    if xp is not np and contains_tracer((operators, frequencies, scattering)):
+        # A traced sweep keeps one loop, so the program of the caller does not grow with the sweep.
+        responses, residuals = _compiled_sweep_solve()(operators, frequencies, scattering, plane)
+    else:
+        # Eager sweeps of every length reuse one executable for each frequency.
+        solve = partial(_solve_frequency, xp=np) if xp is np else _compiled_frequency_solve()
+        solved = [solve(*operators, frequency, scattering, plane) for frequency in np.asarray(frequencies)]
+        responses, residuals = (xp.stack(values) for values in zip(*solved, strict=True))
 
     def condition_numbers() -> Any:
         # Report the largest diagonal-block condition, not a full-generator condition.
@@ -117,19 +126,34 @@ def coherence_response(problem: Any, *, xp: Any) -> Any:
 
 
 @lru_cache(maxsize=1)
-def _compiled_coherence_solver() -> Any:
-    """Reuse one JAX executable family, with all model values passed as arguments."""
+def _compiled_frequency_solve() -> Any:
+    """Reuse one JAX executable for each frequency, with all model values passed as arguments."""
     import jax
     import jax.numpy as jnp
 
-    return jax.jit(partial(_solve_coherences, xp=jnp))
+    return jax.jit(partial(_solve_frequency, xp=jnp))
 
 
-def _solve_coherences(
+@lru_cache(maxsize=1)
+def _compiled_sweep_solve() -> Any:
+    """Map the frequency solve over a traced sweep inside one compiled loop."""
+    import jax
+    from jax import lax
+
+    solve = _compiled_frequency_solve()
+
+    def sweep(operators: Any, frequencies: Any, scattering: Any, indices: Any) -> tuple[Any, Any]:
+        # Map sequentially: batching every Krylov basis would scale workspace with the sweep.
+        return lax.map(lambda frequency: solve(*operators, frequency, scattering, indices), frequencies)
+
+    return jax.jit(sweep)
+
+
+def _solve_frequency(
     drift: Any, lower: Any, kept: Any, sources: Any, generators: Any,
-    frequencies: Any, scattering: Any, indices: Any, *, xp: Any,
+    frequency: Any, scattering: Any, indices: Any, *, xp: Any,
 ) -> tuple[Any, Any]:
-    """Solve each frequency with bounded workspace and the same sector operators."""
+    """Solve one frequency with bounded workspace, from the highest sector downwards."""
     sizes = tuple(a.shape[0] for a in drift)
     counts = tuple(sizes[n] * sizes[n - 1] for n in range(1, len(sizes)))
     active_sectors = tuple(n for n in range(1, len(sizes)) if counts[n - 1])
@@ -139,84 +163,75 @@ def _solve_coherences(
                 + sum((a @ x @ b.conj().T for a, b in zip(kept[n], kept[n - 1], strict=True)),
                       start=xp.zeros_like(x)))
 
-    def solve_frequency(frequency: Any) -> tuple[Any, Any]:
-        shift = -2j * xp.pi * frequency
-        response = scattering
-        above = None
-        errors = []
-        for n in reversed(active_sectors):
-            rhs = sources[n]
-            if above is not None:
-                # Jump recycling from (N+1,N) into (N,N-1).
-                rhs = rhs + xp.einsum("kab,bci,kdc->adi", lower[n + 1], above, lower[n].conj(), optimize=True)
-            flat = rhs.reshape(counts[n - 1], len(indices))
-            if n in generators:
-                matrix = shift * xp.eye(counts[n - 1]) - generators[n]
-                solved = xp.linalg.solve(matrix, flat).reshape(rhs.shape)
-            else:
-                diagonal = (shift - xp.diag(drift[n])[:, None] - xp.diag(drift[n - 1]).conj()[None, :]
-                            - xp.einsum("ka,kb->ab", xp.diagonal(kept[n], axis1=-2, axis2=-1),
-                                        xp.diagonal(kept[n - 1], axis1=-2, axis2=-1).conj()))
-                diagonal = xp.where(xp.abs(diagonal) > 1e-14, diagonal, 1.)
+    shift = -2j * xp.pi * frequency
+    response = scattering
+    above = None
+    errors = []
+    for n in reversed(active_sectors):
+        rhs = sources[n]
+        if above is not None:
+            # Jump recycling from (N+1,N) into (N,N-1).
+            rhs = rhs + xp.einsum("kab,bci,kdc->adi", lower[n + 1], above, lower[n].conj(), optimize=True)
+        flat = rhs.reshape(counts[n - 1], len(indices))
+        if n in generators:
+            matrix = shift * xp.eye(counts[n - 1]) - generators[n]
+            solved = xp.linalg.solve(matrix, flat).reshape(rhs.shape)
+        else:
+            diagonal = (shift - xp.diag(drift[n])[:, None] - xp.diag(drift[n - 1]).conj()[None, :]
+                        - xp.einsum("ka,kb->ab", xp.diagonal(kept[n], axis1=-2, axis2=-1),
+                                    xp.diagonal(kept[n - 1], axis1=-2, axis2=-1).conj()))
+            diagonal = xp.where(xp.abs(diagonal) > 1e-14, diagonal, 1.)
 
-                def matvec(value: Any) -> Any:
-                    x = value.reshape(sizes[n], sizes[n - 1])
-                    return (shift * x - action(n, x)).reshape(-1)
+            def matvec(value: Any) -> Any:
+                x = value.reshape(sizes[n], sizes[n - 1])
+                return (shift * x - action(n, x)).reshape(-1)
 
-                def precondition(value: Any) -> Any:
-                    return value / diagonal.reshape(-1)
+            def precondition(value: Any) -> Any:
+                return value / diagonal.reshape(-1)
 
-                columns = []
-                for column in range(len(indices)):
-                    if xp is np:
-                        from scipy.sparse.linalg import LinearOperator, gmres
+            columns = []
+            for column in range(len(indices)):
+                if xp is np:
+                    from scipy.sparse.linalg import LinearOperator, gmres
 
-                        shape = (counts[n - 1],) * 2
-                        value, _ = gmres(LinearOperator(shape, matvec=matvec, dtype=complex), flat[:, column],
-                                         M=LinearOperator(shape, matvec=precondition, dtype=complex),
-                                         rtol=1e-11, atol=0., restart=64, maxiter=100)
-                    else:
-                        import equinox as eqx
-                        from jax import lax
-                        from jax.scipy.sparse.linalg import gmres
+                    shape = (counts[n - 1],) * 2
+                    value, _ = gmres(LinearOperator(shape, matvec=matvec, dtype=complex), flat[:, column],
+                                     M=LinearOperator(shape, matvec=precondition, dtype=complex),
+                                     rtol=1e-11, atol=0., restart=64, maxiter=100)
+                else:
+                    import equinox as eqx
+                    from jax import lax
+                    from jax.scipy.sparse.linalg import gmres
 
-                        def solve(operator: Any, source: Any) -> Any:
-                            # Recompute GMRES's source-relative stopping scale for each
-                            # primal, tangent and transpose solve.
-                            value, _ = gmres(operator, source, M=precondition,
-                                             tol=1e-11, atol=0., restart=64, maxiter=100)
-                            relative = (xp.linalg.norm(operator(value) - source)
-                                        / xp.maximum(xp.linalg.norm(source), 1e-30))
-                            return eqx.error_if(
-                                value, ~xp.isfinite(relative) | (relative > _RESIDUAL_LIMIT), _CONVERGENCE_MESSAGE,
-                            )
+                    def solve(operator: Any, source: Any) -> Any:
+                        # Recompute GMRES's source-relative stopping scale for each
+                        # primal, tangent and transpose solve. The incremental method
+                        # checks it at each Krylov step, as SciPy does.
+                        value, _ = gmres(operator, source, M=precondition, tol=1e-11, atol=0.,
+                                         restart=64, maxiter=100, solve_method="incremental")
+                        relative = (xp.linalg.norm(operator(value) - source)
+                                    / xp.maximum(xp.linalg.norm(source), 1e-30))
+                        return eqx.error_if(
+                            value, ~xp.isfinite(relative) | (relative > _RESIDUAL_LIMIT), _CONVERGENCE_MESSAGE,
+                        )
 
-                        value = lax.custom_linear_solve(matvec, flat[:, column], solve=solve, transpose_solve=solve)
-                    columns.append(value)
-                solved = xp.stack(columns, axis=-1).reshape(rhs.shape)
-            error = xp.stack([shift * solved[:, :, i] - action(n, solved[:, :, i]) - rhs[:, :, i]
-                              for i in range(len(indices))])
-            norms = xp.linalg.norm(flat, axis=0)
-            relative = xp.linalg.norm(error.reshape(len(indices), -1), axis=1) / xp.maximum(norms, 1e-30)
-            maximum = xp.max(relative)
-            invalid = ~xp.isfinite(maximum) | (maximum > _RESIDUAL_LIMIT)
-            if xp is np:
-                if invalid:
-                    raise ValueError(_CONVERGENCE_MESSAGE)
-            else:
-                import equinox as eqx
+                    value = lax.custom_linear_solve(matvec, flat[:, column], solve=solve, transpose_solve=solve)
+                columns.append(value)
+            solved = xp.stack(columns, axis=-1).reshape(rhs.shape)
+        error = xp.stack([shift * solved[:, :, i] - action(n, solved[:, :, i]) - rhs[:, :, i]
+                          for i in range(len(indices))])
+        norms = xp.linalg.norm(flat, axis=0)
+        relative = xp.linalg.norm(error.reshape(len(indices), -1), axis=1) / xp.maximum(norms, 1e-30)
+        maximum = xp.max(relative)
+        invalid = ~xp.isfinite(maximum) | (maximum > _RESIDUAL_LIMIT)
+        if xp is np:
+            if invalid:
+                raise ValueError(_CONVERGENCE_MESSAGE)
+        else:
+            import equinox as eqx
 
-                solved = eqx.error_if(solved, invalid, _CONVERGENCE_MESSAGE)
-            errors.append(maximum)
-            response = response + xp.einsum("cab,bai->ci", lower[n][xp.asarray(indices)], solved)
-            above = solved
-        return response, xp.max(xp.stack(errors))
-
-    if xp is np:
-        responses, residuals = zip(*(solve_frequency(f) for f in frequencies), strict=True)
-        return xp.stack(responses), xp.stack(residuals)
-
-    from jax import lax
-
-    # Map sequentially: batching every Krylov basis would scale workspace with the sweep.
-    return lax.map(solve_frequency, frequencies)
+            solved = eqx.error_if(solved, invalid, _CONVERGENCE_MESSAGE)
+        errors.append(maximum)
+        response = response + xp.einsum("cab,bai->ci", lower[n][xp.asarray(indices)], solved)
+        above = solved
+    return response, xp.max(xp.stack(errors))
