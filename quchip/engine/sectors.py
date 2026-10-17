@@ -68,6 +68,39 @@ def sector_size(dims: Sequence[int], total: int) -> int:
     return counts[total]
 
 
+def _level_pairs(dims: Sequence[int], support: tuple[int, ...], row_levels: np.ndarray,
+                 column_levels: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return the rows and columns that an operator on ``support`` connects.
+
+    Two product states connect when their levels agree outside the support.
+    The result holds the rows, the columns, and the matching row and column
+    indices of the local matrix. An empty support denotes the whole chip.
+    """
+    if len(row_levels) == 0 or len(column_levels) == 0:
+        empty = np.zeros(0, dtype=np.int64)
+        return empty, empty, empty, empty
+    inside = list(support) if support else list(range(len(dims)))
+    outside = [index for index in range(len(dims)) if index not in inside]
+    local_dims = tuple(dims[index] for index in inside)
+    local_rows = np.ravel_multi_index(tuple(row_levels[:, inside].T), local_dims)
+    local_columns = np.ravel_multi_index(tuple(column_levels[:, inside].T), local_dims)
+    if outside:
+        stacked = np.concatenate((row_levels[:, outside], column_levels[:, outside]))
+        groups = np.unique(stacked, axis=0, return_inverse=True)[1].reshape(-1)
+        row_groups, column_groups = groups[:len(row_levels)], groups[len(row_levels):]
+    else:
+        row_groups = np.zeros(len(row_levels), dtype=np.int64)
+        column_groups = np.zeros(len(column_levels), dtype=np.int64)
+    order = np.argsort(column_groups, kind="stable")
+    sorted_groups = column_groups[order]
+    start = np.searchsorted(sorted_groups, row_groups, side="left")
+    counts = np.searchsorted(sorted_groups, row_groups, side="right") - start
+    pair_rows = np.repeat(np.arange(len(row_levels)), counts)
+    offsets = np.arange(pair_rows.size) - np.repeat(np.cumsum(counts) - counts, counts)
+    pair_columns = order[np.repeat(start, counts) + offsets]
+    return pair_rows, pair_columns, local_rows[pair_rows], local_columns[pair_columns]
+
+
 @dataclass(frozen=True, eq=False)
 class SectorSpace:
     """Product energy states whose levels sum to one total.
@@ -223,7 +256,8 @@ class SectorModel:
         """
         chip, backend = self.chip, self.chip.backend
         projected = _project_on_support(chip, operator, support, self.bases, backend)
-        return _energy_operator(chip, projected, support, self.bases, backend)
+        labels = tuple(chip.devices[index].label for index in support or range(len(chip.devices)))
+        return _energy_operator(projected, labels, self.bases, backend)
 
     def channel_operator(self, operator: Any, rate: Any, support: tuple[int, ...], phase: Any = None) -> Any:
         """Return a channel coupling ``exp(i phase) sqrt(rate) A`` in its support's energy basis.
@@ -405,29 +439,6 @@ class SectorModel:
         """
         key = (support, row_total, column_total)
         if key not in self._pairs:
-            rows, columns = self.space(row_total), self.space(column_total)
-            inside = list(support) if support else list(range(len(self.dims)))
-            outside = [index for index in range(len(self.dims)) if index not in inside]
-            local_dims = tuple(self.dims[index] for index in inside)
-            if rows.size == 0 or columns.size == 0:
-                empty = np.zeros(0, dtype=np.int64)
-                self._pairs[key] = (empty, empty, empty, empty)
-                return self._pairs[key]
-            local_rows = np.ravel_multi_index(tuple(rows.levels[:, inside].T), local_dims)
-            local_columns = np.ravel_multi_index(tuple(columns.levels[:, inside].T), local_dims)
-            if outside:
-                stacked = np.concatenate((rows.levels[:, outside], columns.levels[:, outside]))
-                groups = np.unique(stacked, axis=0, return_inverse=True)[1].reshape(-1)
-                row_groups, column_groups = groups[:rows.size], groups[rows.size:]
-            else:
-                row_groups = np.zeros(rows.size, dtype=np.int64)
-                column_groups = np.zeros(columns.size, dtype=np.int64)
-            order = np.argsort(column_groups, kind="stable")
-            sorted_groups = column_groups[order]
-            start = np.searchsorted(sorted_groups, row_groups, side="left")
-            counts = np.searchsorted(sorted_groups, row_groups, side="right") - start
-            pair_rows = np.repeat(np.arange(rows.size), counts)
-            offsets = np.arange(pair_rows.size) - np.repeat(np.cumsum(counts) - counts, counts)
-            pair_columns = order[np.repeat(start, counts) + offsets]
-            self._pairs[key] = (pair_rows, pair_columns, local_rows[pair_rows], local_columns[pair_columns])
+            self._pairs[key] = _level_pairs(self.dims, support, self.space(row_total).levels,
+                                            self.space(column_total).levels)
         return self._pairs[key]

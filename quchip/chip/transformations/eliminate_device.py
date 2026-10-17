@@ -173,7 +173,7 @@ def _level_dependent(chip: "Chip", operator: Any, labels: tuple[str, ...], label
     with jax.ensure_compile_time_eval():
         local = materialize_expr(operator, backend, local_bases=bases)
         matrix = _array(backend.to_array(_project_on_support(chip, local, support, bases, backend)))
-        transform = _support_semantic_transform(chip, support, bases)
+        transform = _support_semantic_transform(labels, bases)
         if transform is not None:
             matrix = transform.conj().T @ matrix @ transform
         dims = tuple(bases[name].resolved_dim for name in labels)
