@@ -14,6 +14,7 @@ Frequencies are in GHz, times in ns, temperatures in mK and decay rates in
 | Related pulse experiments | `sequence.simulate_batch()` |
 | Steady-state populations or fields | `chip.steadystate()` |
 | Small-signal S parameters | `VNA.sweep()` |
+| Readout responses for each qubit state | `VNA.sweep(..., when={q: 1})` |
 | A driven response with receiver noise | `VNA.measure()` |
 | Outcomes from a saved quantum state | `result.measure()` |
 | Bare parameters that meet dressed targets | `fit_a_dress()` |
@@ -96,12 +97,14 @@ frame in which the model is stationary.
 
 ## Compare conditional readout responses
 
-For a chip with a port network, use a dressed reference label:
+For a chip with a port network, such as `clear_chip` in the
+{doc}`pulses guide <guides/dynamics-pulses-and-readout>`, use a dressed
+reference label:
 
 ```python
 from quchip import VNA
 
-vna = VNA(readout_chip)
+vna = VNA(clear_chip)
 ground = vna.sweep(frequencies, when={"q": 0})
 excited = vna.sweep(frequencies, when={"q": 1})
 ```
@@ -171,6 +174,47 @@ and an explicit `start_time` for overlap.
 A scheduled carrier stays fixed when device parameters change. Use the pulse's
 `freq` parameter to retune it. For independently built experiments, pass their
 `build_problem()` results to `solve_many()`.
+
+## Detune a pulse or choose its phase frame
+
+```python
+detuned = sequence.schedule(
+    xy, envelope=Gaussian(duration=20.0, amplitude=0.02, sigmas=3.0),
+    freq=chip.freq(q), detuning=0.002,
+)
+```
+
+`detuning` is a carrier offset in GHz, referenced to the pulse start. The
+pulse then has the same form in the frame at `freq` for every start time, so a
+detuned calibrated gate keeps its rotation axis when it moves. A carrier at
+`freq = f + δ` is a fixed oscillator instead. `pulse.<i>.detuning` rebinds,
+sweeps and differentiates like `freq`, also on a pulse scheduled without one.
+
+`sequence.vz(device, angle)` shifts the phase of later carrier pulses in the
+frame of `device`, on any line. A pulse follows the frame of the device that
+its line drives, unless `frame=` names another device. A cross-resonance tone
+drives the control qubit at the target frequency, and its phase sets the axis
+of the target rotation. Put it in the target's frame:
+
+```python
+from quchip import SquareWithGaussianEdges
+
+control = DuffingTransmon(freq=5.0, anharmonicity=-0.33, levels=3, label="control")
+target = DuffingTransmon(freq=5.1, anharmonicity=-0.33, levels=3, label="target")
+pair = Chip([control, target], [Capacitive(control, target, g=0.003, label="ct")])
+cr = ChargeDrive(control, label="cr")
+pair.wire(cr)
+
+cr_sequence = QuantumSequence(pair)
+cr_sequence.schedule(
+    cr, envelope=SquareWithGaussianEdges(duration=160.0, amplitude=0.01, edge_frac=0.375),
+    freq=pair.freq(target), frame=target,
+)
+```
+
+A cancellation tone on the target's own line follows the target's frame by
+default. `vz(target, ...)` then shifts both tones, and `vz(control, ...)`
+shifts neither.
 
 ## Choose what to save
 

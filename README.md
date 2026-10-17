@@ -100,14 +100,14 @@ f01 = chip.freq(qubit)
 f12 = chip.transition_frequency(qubit, 1, 2)
 fr0 = chip.freq(readout, when={qubit: 0})
 fr1 = chip.freq(readout, when={qubit: 1})
-chi = (fr1 - fr0) / 2
+chi_z = (fr0 - fr1) / 2
 ```
 
 `unresolved_hamiltonian()` keeps the local device and coupling expressions you declared. `hamiltonian()` applies the chip's basis, frame, and approximation. Both return inspectable symbolic expressions. If a resolved expression is time-dependent and you need its numerical array, call `.matrix(t=...)`.
 
-The remaining calls read dressed transition frequencies and the resonator frequency conditioned on the qubit state. Half their difference gives the dispersive shift $\chi$.
+The remaining calls read dressed transition frequencies and the resonator frequency conditioned on the qubit state. With quchip's $Z=|0\rangle\langle0|-|1\rangle\langle1|$, half the ground-minus-excited difference is the coefficient $\chi_Z$ of $Z\,n_r$.
 
-The [defining and inspecting a chip guide](https://docs.quchip.org/guides/defining-and-inspecting-a-chip) continues from this example with LaTeX output, term inspection, frame transformations, projections, and graph views.
+[Your first chip](https://docs.quchip.org/guides/defining-and-inspecting-a-chip) inspects a similar model's Hamiltonian and dropped terms, changes a parameter, and fits bare parameters to dressed targets.
 
 ## Add dynamics and readout
 
@@ -131,7 +131,7 @@ The [dynamics guide](https://docs.quchip.org/guides/dynamics-pulses-and-readout)
 - [Spectra and parameter sweeps](https://docs.quchip.org/guides/statics-and-parameter-studies): follow an avoided crossing and compare a fluxonium model with measured spectroscopy.
 - [Pulses, leakage, and readout](https://docs.quchip.org/guides/dynamics-pulses-and-readout): compare pulse selectivity, conditional resonator response, and cavity depletion.
 - [Readout and fridge wiring](https://docs.quchip.org/guides/steady-state-and-vna): calculate VNA traces and qubit readout with receiver noise.
-- [Model reduction](https://docs.quchip.org/guides/chip-transformations): compare a reduced model with the full pulse simulation.
+- [Model reduction](https://docs.quchip.org/guides/chip-transformations): compare a reduced model with the full pulse simulation, remove a readout from its feedline, and solve in an exact excitation space.
 - [Gradients and parameter fitting](https://docs.quchip.org/guides/differentiability): differentiate spectra and pulse responses, and fit measured circuit parameters.
 - [Extending quchip](https://docs.quchip.org/extensions): define custom models, controls, dissipation and interoperability mappings.
 - [Cookbook](https://docs.quchip.org/cookbook): practical API choices, tips and common pitfalls.

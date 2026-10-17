@@ -74,7 +74,7 @@ def _render_output(output: dict[str, Any]) -> str | None:
     return _fenced_text(plain) if plain.strip() else None
 
 
-def _render_cell_outputs(cell: dict[str, Any]) -> str:
+def render_cell_outputs(cell: dict[str, Any]) -> str:
     rendered = [part for output in cell.get("outputs", ()) if (part := _render_output(output))]
     if not rendered:
         return ""
@@ -116,7 +116,7 @@ def synchronized_markdown(markdown_path: Path, notebook_path: Path) -> str:
                     f"{markdown_path}: plotted output after code block {index} must be "
                     "saved by that cell and shown with a figure directive"
                 )
-        additions.append((match.end(), _render_cell_outputs(cell)))
+        additions.append((match.end(), render_cell_outputs(cell)))
 
     for offset, addition in reversed(additions):
         source = source[:offset] + addition + source[offset:]

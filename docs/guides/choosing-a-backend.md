@@ -26,6 +26,13 @@ Leave `solver` unset for this selection, because an explicit `solver="sesolve"`
 rejects collapse channels and density matrices. Use `dissipation=False` for an
 intentional Hamiltonian-only calculation.
 
+Both backends evolve a deterministic solve in an invariant excitation space
+when quchip can prove one from the initial state and the retained operators.
+Results keep physical dimensions. `result.stats["excitation_reduction"]`
+reports the dimensions and the proof or the fallback reason. The
+[model reduction guide](chip-transformations.md#use-an-exact-excitation-space)
+solves a 24-transmon ring this way.
+
 ## Time grid, stepping, and saved states
 
 Omit `tlist` for a pulse-aware grid. Use `duration` to include an idle interval.
@@ -230,10 +237,11 @@ including repeated sets. Legacy uint32 keys have a trailing dimension of two.
 `solve_many([problem, ...])` keeps each point's explicit keys. Solving a built
 batch point alone replays its assigned noise and skips quantum partitioning.
 
-Validated native contracts use QuTiP 5.2.3 and Dynamiqs 0.3.6; CI also checks QuTiP
-5.3.0. Dynamiqs diffusive SSE supports outer JIT with a static tuple time grid. Its
-fixed-noise Euler pathwise derivative is checked against a central finite
-difference, which is not an unbiased ensemble-gradient claim for jump events.
+Validated native contracts use QuTiP 5.2.3 and Dynamiqs 0.3.6. CI runs QuTiP 5.3.0
+with Dynamiqs 0.3.6 and 0.3.7. Dynamiqs diffusive SSE supports outer JIT with a
+static tuple time grid. Its fixed-noise Euler pathwise derivative is checked
+against a central finite difference, which is not an unbiased ensemble-gradient
+claim for jump events.
 Dynamiqs SME supports eager execution. Outer vmap with shared concrete efficiencies
 and times, and the lack of full SME JIT, were last checked on Dynamiqs 0.3.4.
 Different efficiencies use separate `solve_many` groups. Its public tuple-time and

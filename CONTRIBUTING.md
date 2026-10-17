@@ -50,6 +50,15 @@ python -m pytest -m validation --durations=20
 python -m pytest
 ```
 
+The `release` suite executes each example notebook again and compares its
+textual outputs with the committed ones. It takes several minutes, and
+neither CI nor `python -m pytest` runs it. Run it before a release, as
+[Releases](#releases) describes:
+
+```bash
+python -m pytest -m release --durations=10
+```
+
 Validation runs in one pytest process, even in pre-merge CI. Measure
 changes with this sequential command, because parallel wall time does not
 show that a suite is cheaper. Five minutes is the target, not a measured CI
@@ -58,10 +67,10 @@ independent numerical references, failure paths, and statistical sample
 sizes.
 
 Each collected test belongs to exactly one of these suites. Mark small test modules with
-`pytestmark = pytest.mark.unit` and expensive functions with `@pytest.mark.validation`. For an
-expensive parameter value, use `pytest.param(value, marks=pytest.mark.validation)`. Unmarked tests
-go into `e2e`, so new tests run in PR CI by default. Conflicting suite markers cause collection to
-fail. Keep meaningful cheap checks. Select validation candidates by cost and coverage overlap, but
+`pytestmark = pytest.mark.unit`, expensive functions with `@pytest.mark.validation`, and checks
+that run only before a release with `@pytest.mark.release`. For an expensive parameter value, use
+`pytest.param(value, marks=pytest.mark.validation)`. Unmarked tests go into `e2e`, so new tests
+run in PR CI by default. Conflicting suite markers cause collection to fail. Keep meaningful cheap checks. Select validation candidates by cost and coverage overlap, but
 keep representative numerical oracles in E2E. Coverage overlap alone does not show that two tests
 check the same assertion.
 
@@ -161,6 +170,8 @@ jupytext --to md --test-strict examples/<name>.ipynb
 
 The diff must be empty and the strict round trip must pass. Before you commit, inspect the executed notebook. Setup cells stay silent, stdout contains only intended receipts, and each intended figure appears once. Run the focused example test and the project checks above.
 
+Re-execute each notebook whose printed results your change alters. Before each release, the `release` suite executes every notebook again and compares its textual outputs with the committed ones.
+
 ## Physics conventions
 
 Before you change Hamiltonians, frames, approximations, observables, dissipation, or solver assembly, read [PHYSICS.md](PHYSICS.md).
@@ -209,6 +220,10 @@ Changes and migration. Fixes describe the affected case and the correction, and
 flag numerical consequences. Deprecations identify the replacement and the
 planned removal release. Keep migration steps in the release entry, unless a
 longer guide is necessary.
+
+Before you mark the release PR ready for review, run `python -m pytest -m release`.
+If a notebook fails, find the change that moved its output and confirm that it
+is intended. Then re-execute and commit the notebook.
 
 Before you tag, review the full change set since the previous published tag.
 Move `Unreleased` into the dated entry, and run

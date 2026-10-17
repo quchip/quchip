@@ -24,7 +24,8 @@ New to quchip? Start with {doc}`your first chip <defining-and-inspecting-a-chip>
 ## Model reduction and fitting
 
 - {doc}`Model reduction <chip-transformations>`:
-  compare a reduced model with the full pulse simulation.
+  compare a reduced model with the full pulse simulation, remove a readout
+  from its feedline, and solve in an exact excitation space.
 - {doc}`Gradients and parameter fitting <differentiability>`:
   differentiate observables and fit shared model parameters.
 

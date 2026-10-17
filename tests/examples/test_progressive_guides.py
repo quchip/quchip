@@ -13,8 +13,12 @@ from pathlib import Path
 
 import jupytext
 import matplotlib
+import nbformat
 import numpy as np
 import pytest
+from nbconvert.preprocessors import ExecutePreprocessor
+
+from tools.sync_example_outputs import DEFAULT_PAIRS, render_cell_outputs
 
 
 matplotlib.use("Agg")
@@ -31,6 +35,7 @@ NUMBER_RE = re.compile(
 GUIDE_OUTPUT_RTOL = 1e-10
 # Two hertz for GHz-valued receipts, below the guide's displayed precision.
 GUIDE_OUTPUT_ATOL = 2e-9
+DYNAMIQS_NOTEBOOKS = {"03_differentiate_a_driven_chip"}
 
 
 @pytest.fixture
@@ -148,6 +153,31 @@ def test_guide_outputs_match_a_fresh_execution(guide: str, guide_workspace) -> N
                 with contextlib.redirect_stdout(captured):
                     exec(compile(code, f"{path}#cell-{index}", "exec"), namespace)
             _assert_output_matches(captured.getvalue(), expected)
+
+
+@pytest.mark.examples
+@pytest.mark.parametrize(
+    "stem",
+    [pytest.param(stem, marks=pytest.mark.optional_backend) if stem in DYNAMIQS_NOTEBOOKS else stem
+     for stem in DEFAULT_PAIRS],
+)
+@pytest.mark.release
+def test_notebook_outputs_match_a_fresh_execution(stem: str, guide_workspace) -> None:
+    """Each example notebook executes again and reproduces the textual outputs that its guide shows."""
+    if stem in DYNAMIQS_NOTEBOOKS:
+        pytest.importorskip("dynamiqs")
+    path = ROOT / "examples" / f"{stem}.ipynb"
+    committed = nbformat.read(path, as_version=4)
+    fresh = nbformat.read(path, as_version=4)
+    # The same execution as the documented `jupyter nbconvert --execute` command.
+    ExecutePreprocessor(timeout=900, kernel_name="python3").preprocess(
+        fresh, {"metadata": {"path": str(guide_workspace / "examples")}},
+    )
+
+    committed_cells = [cell for cell in committed.cells if cell.cell_type == "code"]
+    fresh_cells = [cell for cell in fresh.cells if cell.cell_type == "code"]
+    for committed_cell, fresh_cell in zip(committed_cells, fresh_cells, strict=True):
+        _assert_output_matches(render_cell_outputs(fresh_cell), render_cell_outputs(committed_cell))
 
 
 @pytest.mark.examples
