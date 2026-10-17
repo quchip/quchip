@@ -137,9 +137,17 @@ def conserves_excitation_number(chip: Any, approximation: Any, *, resolution: An
 
 
 def _port_lowers_level_index(chip: Any, port: Any, bases: Mapping[str, Any]) -> bool:
-    """Return whether a port's operator lowers the total energy-level index by one and does nothing else."""
+    """Return whether a port's operator lowers the total energy-level index by one and does nothing else.
+
+    The check reads the operator in the chip's retained coordinates, as assembly does.
+    """
     ((channel, _paths),) = port._collapse_channels_with_paths(chip)
-    changes = authored_excitation_changes(channel.operator, port.resolve_targets(chip), chip.backend, bases)
+    operator, labels = channel.operator, tuple(port.resolve_targets(chip))
+    retained = retained_operator(chip, operator, labels, chip.backend, f"port:{port.label}", bases=bases,
+                                 local_bases=bases)
+    if retained is not None:
+        operator, labels = retained, retained.labels
+    changes = authored_excitation_changes(operator, labels, chip.backend, bases)
     return changes is not None and changes <= {1}
 
 

@@ -221,6 +221,7 @@ def dress_engine_result(
         )
     context = result._dressing_context
     backend = context.backend
+    _require_eigensystem_memory(result.dims)
     hamiltonian = result.hamiltonian().matrix(t=at_time, backend=backend)
     if contains_tracer((hamiltonian, context.reference.local_vectors)):
         raise RuntimeError(_DRESS_TRACING_ERROR)
@@ -272,6 +273,15 @@ def _gauge_fixed_eigensystem(eigensystem: EigensystemData, reference: Any, label
                            _states_builder=build_states)
 
 
+def _require_eigensystem_memory(dims: Sequence[int]) -> None:
+    """Raise :class:`MemoryError` before a full static eigensystem that cannot fit."""
+    from quchip.backend._memory import require_memory
+
+    dimension = int(np.prod(dims))
+    require_memory(16 * 6 * dimension**2, task=f"Full static eigensystem (dimension {dimension})",
+                   remedy="Use a conserving model with labeled sector queries or reduce the model.")
+
+
 def _labeled_eigensystem(engine_result: "EngineResult", backend: Any) -> tuple[Any, Any, Any, Labeling]:
     """Diagonalize a static analysis result and assign its bare product labels.
 
@@ -279,16 +289,13 @@ def _labeled_eigensystem(engine_result: "EngineResult", backend: Any) -> tuple[A
     traced Hamiltonians stay traced. Each eigenvector follows the phase
     convention of :func:`~quchip.chip.dressing.gauge_phases`.
     """
-    from quchip.backend._memory import require_memory
     from quchip.engine.assembly import _analysis_matrix_ghz
 
     context = engine_result._dressing_context
     if context is None:
         raise RuntimeError("Resolved analysis is missing its captured dressing reference.")
     dims = list(engine_result.dims)
-    dimension = int(np.prod(dims))
-    require_memory(16 * 6 * dimension**2, task=f"Full static eigensystem (dimension {dimension})",
-                   remedy="Use a conserving model with labeled sector queries or reduce the model.")
+    _require_eigensystem_memory(dims)
     eigensystem = backend.eigensystem_data(
         backend.from_array(_analysis_matrix_ghz(engine_result), dims=[dims, dims])
     )

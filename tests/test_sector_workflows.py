@@ -150,6 +150,29 @@ def test_undeclared_retained_matrix_is_checked_without_a_tolerance():
             assert chip.freq(q) == pytest.approx(5.01, abs=1e-12)
 
 
+def test_projected_cascade_port_is_not_declared_conserving():
+    """A retained map that mixes a cascaded port's levels defeats the proof, so the default state is dressed."""
+    from quchip import EffectiveTerms, PortNetwork, QuantumSequence
+    from quchip.chip.effective import OperatorProjection
+
+    a = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=2, label="a")
+    b = DuffingTransmon(freq=5.2, anharmonicity=-0.25, levels=2, label="b")
+    network = PortNetwork(label="line")
+    upstream, downstream = network.port("a_out", target=a, rate=1.0), network.port("b_out", target=b, rate=1.0)
+    network.cascade(upstream, downstream)
+    network.expose("line", input=upstream.input, output=downstream.output)
+    hadamard = np.array([[1.0, 1.0], [1.0, -1.0]]) / np.sqrt(2)
+    rotated = EffectiveTerms(("a",), (2,), np.zeros((2, 2)), label="rotated",
+                             projection=OperatorProjection(("a",), (2,), ("a",), (2,), hadamard))
+    chip = Chip([a, b], port_network=network, effective_terms=[rotated], approximation=Exact())
+    # Both authored ports lower one level, but the projected upstream port also keeps and raises levels.
+    assert not conserves_excitation_number(chip, chip.approximation)
+    default = QuantumSequence(chip).build_problem([0.0, 1.0]).initial_state
+    default = np.ravel(np.asarray(chip.backend.to_array(default)))
+    np.testing.assert_allclose(default, np.ravel(np.asarray(chip.backend.to_array(chip.state({})))), atol=1e-12)
+    assert abs(default[0]) < 1 - 1e-6
+
+
 def test_sector_and_full_fallback_refuse_impossible_allocations(monkeypatch):
     """Static requests reject an oversized sector before assembly and an oversized full eigensystem before solving."""
     from quchip import Capacitive
