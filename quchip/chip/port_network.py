@@ -442,6 +442,32 @@ def _mode_reflection_transfer(
     return transfer * xp.where(xp.real(root(reference_freq)) < 0.0, -1.0, 1.0)
 
 
+def _cascade_hamiltonian(products: Sequence[tuple[Any, Any, Any]]) -> Any | None:
+    """Return ``sum (L_d^dagger c L_u - h.c.) / 2i`` over ``(L_d, L_u, c)`` matrices on one space.
+
+    A concrete result is ``None`` when each element is below ``64 n ε`` times
+    the magnitude of the products that form it. This conservative threshold
+    removes cancellation residue, e.g. the Lamb shift ``γ sin(π)`` of a giant
+    atom, and also a genuine term that small. Each element has its own
+    threshold, so the cancellation of one pair does not hide the small rate of
+    another pair. A traced result keeps every term.
+    """
+    traced = contains_tracer(products)
+    xp = select_array_module(traced)
+    values: Any = 0.0
+    scale: Any = 0.0
+    for left, right, coefficient in products:
+        left, right = xp.asarray(left), xp.asarray(right)
+        product = xp.conj(xp.swapaxes(left, -1, -2)) @ (xp.asarray(coefficient) * right)
+        values = values + (product - xp.conj(xp.swapaxes(product, -1, -2))) / (2j)
+        if not traced:
+            size = np.abs(coefficient) * (np.swapaxes(np.abs(left), -1, -2) @ np.abs(right))
+            scale = scale + (size + np.swapaxes(size, -1, -2)) / 2
+    if not traced and np.all(np.abs(values) <= 64 * np.finfo(float).eps * values.shape[-1] * scale):
+        return None
+    return values
+
+
 #: ``(coefficient, boundary_input, upstream_output)`` for one structurally fed column.
 _Feeder = tuple[Any, "TerminalKey | None", "TerminalKey | None"]
 
@@ -1335,7 +1361,7 @@ class PortNetwork:
         )
 
     def resolve(
-        self, base: "ResolvedSLH", *, _compiled: _CompiledNetwork | None = None,
+        self, base: "ResolvedSLH", *, _compiled: _CompiledNetwork | None = None, _generated: Any = None,
     ) -> "ResolvedSLH":
         """Compose this boundary onto an input-free SLH value.
 
@@ -1405,7 +1431,9 @@ class PortNetwork:
                 )
             )
 
-        generated = self._materialize_generated_hamiltonian(compiled.generated_pairs, operators)
+        # A compact caller supplies the generated Hamiltonian, formed on each pair's joint support before
+        # projection, because composing projected ports drops exchanges through labels outside its space.
+        generated = self._materialize_generated_hamiltonian(compiled.generated_pairs, operators, _generated)
         static_terms = base.H.static_terms
         if generated is not None:
             static_terms = (*static_terms, StaticTerm(operator=generated, origin="network"))
@@ -1940,6 +1968,34 @@ class PortNetwork:
             for source in self._active_mapping_sources(mapping):
                 fed.append((chip.port(source), gain * mapping[source]))
         return fed
+
+    def _responses_by_output(
+        self, *, recorded: bool = False, _compiled: _CompiledNetwork | None = None,
+    ) -> dict[str, tuple[str, ...]]:
+        """Return the retained mode responses whose ports emit into each output channel.
+
+        The keys are the exposure labels of the affected channels. A channel
+        whose coupling has no active weight on a response port is absent.
+        With ``recorded``, a port also counts the removed modes that it
+        records, whose kept response its Markov field lacks.
+        """
+        owners: dict[str, set[str]] = {}
+        for mode in self._mode_responses:
+            for label in mode.ports:
+                owners.setdefault(label, set()).add(mode.label)
+        for port in self._ports if recorded else ():
+            if port._omitted_responses:
+                owners.setdefault(port.label, set()).update(port._omitted_responses)
+        if not owners:
+            return {}
+        compiled = self._compile() if _compiled is None else _compiled
+        reached: dict[str, tuple[str, ...]] = {}
+        for channel in compiled.channels:
+            labels = sorted({label for source in self._active_mapping_sources(channel.coupling)
+                             for label in owners.get(source, ())})
+            if labels:
+                reached[channel.exposure.label] = tuple(labels)
+        return reached
 
     @staticmethod
     def _active_pairs(
@@ -2588,21 +2644,22 @@ class PortNetwork:
         self,
         pairs: Sequence[tuple[str, str, Any]],
         operators: dict[str, Any],
+        values: Any = None,
     ) -> Any | None:
         from quchip.engine.ir import CanonicalOperator
 
         if not pairs:
             return None
         first = next(iter(operators.values()))
-        prefer_jax = contains_tracer((pairs, tuple(operator.values for operator in operators.values())))
-        xp = select_array_module(prefer_jax)
-        values = xp.zeros(first.shape, dtype=complex)
-        for downstream, upstream, coefficient in pairs:
-            left = xp.asarray(operators[downstream].to_dense())
-            right = xp.asarray(operators[upstream].to_dense())
-            product = xp.conj(xp.swapaxes(left, -1, -2)) @ (xp.asarray(coefficient) * right)
-            values = values + (product - xp.conj(xp.swapaxes(product, -1, -2))) / (2j)
-        if not contains_tracer(values) and np.allclose(np.asarray(values), 0.0):
+        if values is None:
+            values = _cascade_hamiltonian([
+                (operators[downstream].to_dense(), operators[upstream].to_dense(), coefficient)
+                for downstream, upstream, coefficient in pairs
+            ])
+        elif not contains_tracer(values) and not np.any(np.asarray(values)):
+            # The compact caller already dropped each local term below the round-off threshold.
+            values = None
+        if values is None:
             return None
         return CanonicalOperator.from_dense(
             values,

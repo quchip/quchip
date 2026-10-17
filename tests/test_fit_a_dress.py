@@ -14,6 +14,7 @@ from quchip import (
     CrossKerr,
     DuffingTransmon,
     Resonator,
+    RWA,
     TunableCapacitive,
     fit_a_dress,
 )
@@ -470,6 +471,31 @@ def test_fit_retains_nonconverged_candidate_and_explains_status():
     unknown = replace(fit, solver_info={})
     assert unknown.converged is None
     assert unknown.message is None
+
+
+@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])
+def test_fit_history_records_the_parameters_and_residuals_of_each_point(backend):
+    """Each history entry keeps its parameter vector and target residuals."""
+    if backend == "dynamiqs":
+        pytest.importorskip("dynamiqs")
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+    r = Resonator(freq=5.6, levels=3, label="r")
+    desired = Chip([q, r], [Capacitive(q, r, g=0.1, label="qr")], approximation=RWA(), backend=backend)
+    plan = {"constraints": {"qr": {"cross_kerr": None}}, "vary": {"q": ("freq", "anharmonicity"), "r": ("freq",)}}
+    fit = fit_a_dress(desired, **plan)
+
+    assert fit.history_residuals.shape == (len(fit.history), len(fit.final_targets))
+    assert len(fit.history_params) == len(fit.history)
+    assert fit.history_params[0] == fit.initial_params
+    assert fit.history_params[-1] == fit.final_params
+    np.testing.assert_allclose(fit.history_residuals[-1], [report.residual for report in fit.final_targets],
+                               rtol=0, atol=1e-15)
+    scales = np.maximum(np.abs([report.target for report in fit.final_targets]), 1e-9)
+    np.testing.assert_allclose(np.sum((fit.history_residuals / scales) ** 2, axis=1), fit.history, rtol=1e-12, atol=0)
+    if backend == "dynamiqs":
+        assert fit.solver_info["jacobian"] == "jax"
+        # An exact Jacobian adds no probes, so each entry is a solver iterate.
+        assert fit.history_params[1] == fit_a_dress(desired, **plan, max_nfev=2).final_params
 
 
 def test_fit_rebind_returns_fitted_clones_for_seed_devices() -> None:

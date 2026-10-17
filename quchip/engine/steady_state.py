@@ -25,6 +25,9 @@ def build_steadystate_problem(
     approximation: Any | None = None,
 ) -> SteadyStateProblem:
     """Resolve a chip into one static Lindblad steady-state request."""
+    from quchip.cutoff import reject_cutoff
+
+    reject_cutoff(chip, "steadystate()")
     if e_ops is not None and not isinstance(e_ops, dict):
         raise TypeError("e_ops must be dict or None")
     engine_result = chip.resolve(frame=frame, approximation=approximation)

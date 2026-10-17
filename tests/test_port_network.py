@@ -10,7 +10,7 @@ import warnings
 import numpy as np
 import pytest
 
-from quchip import Chip, PortNetwork, QuantumSequence, Resonator
+from quchip import Chip, ExcitationCutoff, PortNetwork, QuantumSequence, Resonator
 from quchip.chip.couplings import Capacitive
 
 
@@ -964,6 +964,93 @@ def test_two_port_giant_atom_reproduces_kockum_rates_and_lamb_shift() -> None:
         assert bool(generated) is not bool(np.isclose(np.sin(phi), 0.0))  # a vanishing cross term is dropped
         shift = sum(term.operator.to_dense()[1, 1].real for term in generated)
         np.testing.assert_allclose(shift, gamma * np.sin(phi), atol=1e-12)
+
+
+def _engine(chip: Chip, route: str, initial_state: dict[str, int]) -> Any:
+    """Return a chip's engine on the product space, a solve's compact space, or the space of K = 1.
+
+    The ``"compact"`` route is the exact space of a solve without dissipation
+    from ``initial_state``.
+    """
+    if route == "product":
+        engine = chip.resolve()
+    elif route == "cutoff":
+        engine = chip.with_space(ExcitationCutoff(1)).resolve()
+    else:
+        engine = QuantumSequence(chip).build_problem(
+            np.linspace(0.0, 1.0, 2), initial_state=initial_state, dissipation=False).engine_result
+    assert (engine.excitation_space is None) is (route == "product")
+    return engine
+
+
+def _row(engine: Any, label: tuple[int, ...]) -> int:
+    """Return the row of a product energy label in an engine's coordinates."""
+    if engine.excitation_space is None:
+        return int(np.ravel_multi_index(label, engine.dims))
+    return engine.excitation_space.rows[label]
+
+
+def _cascade_exchange(rate: Any, route: str, *, backend: str = "qutip", giant_atom: bool = False) -> Any:
+    """Return <r1 = 0, r2 = 1|H|r1 = 1, r2 = 0> of two cascaded two-level resonators, in rad/ns.
+
+    ``giant_atom`` adds a third mode with two 1/ns ports a phase pi apart on a
+    second line. Its Lamb shift cancels to round-off.
+    """
+    r1, r2 = Resonator(freq=6.0, levels=2, label="r1"), Resonator(freq=6.0, levels=2, label="r2")
+    network = PortNetwork(label="line")
+    first, second = network.port("p1", target=r1, rate=rate), network.port("p2", target=r2, rate=rate)
+    network.cascade(first, second)
+    network.expose("out", input=first.input, output=second.output)
+    devices = [r1, r2]
+    if giant_atom:
+        atom = Resonator(freq=5.0, levels=2, label="q")
+        near, far = network.port("near", target=atom, rate=1.0), network.port("far", target=atom, rate=1.0)
+        network.cascade(near, network.phase_shift("phi", phase=np.pi), far)
+        network.expose("feedline", input=near.input, output=far.output)
+        devices.append(atom)
+    engine = _engine(Chip(devices, port_network=network, backend=backend), route, {"r1": 1})
+    hamiltonian = sum(term.coefficient * term.operator.to_dense() for term in engine.static_terms)
+    rest = (0,) * (len(devices) - 2)
+    return hamiltonian[_row(engine, (0, 1, *rest)), _row(engine, (1, 0, *rest))]
+
+
+@pytest.mark.parametrize("route", ["product", "compact", "cutoff"])
+@pytest.mark.parametrize(("rate", "giant_atom"), [(1e-9, False), (1e-14, True)], ids=["alone", "giant-atom"])
+def test_small_rate_cascade_keeps_its_exchange(route: str, rate: float, giant_atom: bool) -> None:
+    """A small cascade keeps its exchange -i k / 2, also beside a 1/ns Lamb shift that cancels to round-off."""
+    assert complex(_cascade_exchange(rate, route, giant_atom=giant_atom)) / rate == pytest.approx(-0.5j, rel=1e-12)
+
+
+@pytest.mark.optional_backend
+@pytest.mark.parametrize("route", ["product", "cutoff"])
+@pytest.mark.parametrize(("rate", "giant_atom"), [(1e-9, False), (1e-14, True)], ids=["alone", "giant-atom"])
+def test_traced_small_rate_cascade_keeps_its_exchange(route: str, rate: float, giant_atom: bool) -> None:
+    """Tracing the rate gives the eager exchange element and its derivative -i / 2."""
+    pytest.importorskip("dynamiqs")
+    import jax
+    import jax.numpy as jnp
+
+    value, derivative = jax.jit(jax.value_and_grad(lambda rate: jnp.imag(_cascade_exchange(
+        rate, route, backend="dynamiqs", giant_atom=giant_atom))))(rate)
+    assert (float(value) / rate, float(derivative)) == pytest.approx((-0.5, -0.5), rel=1e-12)
+
+
+@pytest.mark.parametrize("route", ["product", "compact", "cutoff"])
+@pytest.mark.parametrize("phase", [np.pi / 2, np.pi], ids=["half-pi", "pi"])
+def test_giant_atom_lamb_shift_keeps_only_a_physical_term(route: str, phase: float) -> None:
+    """A three-level giant atom at 1/ns gets the shift sin(phi) a^dag a, and at phi = pi no network term."""
+    atom = Resonator(freq=5.0, levels=3, label="q")
+    network = PortNetwork(label="wg")
+    near, far = network.port("near", target=atom, rate=1.0), network.port("far", target=atom, rate=1.0)
+    network.cascade(near, network.phase_shift("phi", phase=phase), far)
+    network.expose("feedline", input=near.input, output=far.output)
+    engine = _engine(Chip([atom], port_network=network), route, {"q": 1})
+    generated = [term.operator.to_dense() for term in engine.slh.H.static_terms if term.origin == "network"]
+    if phase == np.pi:
+        assert not generated
+    else:
+        row = _row(engine, (1,))
+        assert sum(term[row, row] for term in generated) == pytest.approx(1.0, rel=1e-12)
 
 
 def test_connecting_a_network_invalidates_the_dressed_cache() -> None:

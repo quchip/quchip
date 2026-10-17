@@ -129,16 +129,26 @@ def prepare_solve_problem_context(
     from quchip.engine.assembly import _resolve_system, _prepare_engine_assembly
     from quchip.engine.frames import plan_for_operations
     from quchip.engine.pulse_space import plan_pulse_space
+    from quchip.engine.sectors import sector_size
     from quchip.approximations import require_approximation
+    from quchip.cutoff import active_cutoff
 
     strategy = chip.approximation if approximation is None else require_approximation(approximation)
     resolution = _resolve_system(chip, backend)
-    space, reason = (None, "Trajectory solvers use the product space.")
-    if _product_space:
+    policy = active_cutoff(chip)
+    deterministic = solver in (None, "sesolve", "mesolve")
+    if policy is not None and not deterministic:
+        raise ValueError(
+            f"Stochastic trajectory solvers do not support an excitation cutoff, and this chip keeps only "
+            f"N <= {policy.max_total}. Use sesolve or mesolve, or chip.with_space(None) for the full product space."
+        )
+    space, reason, boundary = (None, "Trajectory solvers use the product space.", None)
+    if _product_space and policy is None:
         reason = "Batch points prove different exact spaces."
-    elif solver in (None, "sesolve", "mesolve"):
-        space, reason = plan_pulse_space(chip, drive_ops or [], initial_states or [None], resolution,
-                                        strategy, dissipation)
+    elif deterministic:
+        # Under a cutoff, batch points that prove different spaces all keep every label with N <= K.
+        space, reason, boundary = plan_pulse_space(chip, drive_ops or [], initial_states or [None], resolution,
+                                                   strategy, dissipation, whole=_product_space)
     if space is None:
         base_result = resolve_for_operations(
             chip, drive_ops or [], frame=frame, approximation=strategy,
@@ -155,6 +165,10 @@ def prepare_solve_problem_context(
         "exact": space is not None, "reason": reason,
         "full_dimension": prod(resolution.dims), "dimension": prod(base_result.dims),
         "totals": None if space is None else space.totals,
+        "cutoff": None if policy is None else policy.max_total,
+        "cutoff_dimension": None if policy is None else sum(
+            sector_size(resolution.dims, total) for total in range(policy.max_total + 1)),
+        "boundary": boundary,
     }})
     return SolveProblemContext(
         chip=chip,
@@ -318,7 +332,11 @@ def build_solve_batch_from_results(
 
 def _initial_state(chip, spec, result, start):
     if result.excitation_space is not None:
-        from quchip.results.compact import materialize_compact
+        from quchip.cutoff import active_cutoff
+        from quchip.results.compact import materialize_compact, truncated_vacuum
+
+        if spec is None and active_cutoff(chip) is not None:
+            return truncated_vacuum(chip, result, start)
         return materialize_compact(chip, spec, result.excitation_space)
     from quchip.results.compact import CompactState, _compatible_values
     if isinstance(spec, CompactState):

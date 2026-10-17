@@ -25,6 +25,7 @@ from __future__ import annotations
 import itertools
 import warnings
 from dataclasses import dataclass, replace
+from functools import partial
 from math import prod
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence, cast
 
@@ -128,22 +129,14 @@ class _SystemResolution:
         return self.space.embed(backend, operator, support)
 
 
-def _support_semantic_transform(
-    chip: "Chip",
-    support: tuple[int, ...],
-    bases: Mapping[str, BasisRecord],
-) -> Any | None:
-    transforms = [
-        bases[chip.devices[index].label].energy_to_solver()
-        for index in support
-    ]
+def _support_semantic_transform(labels: Sequence[str], bases: Mapping[str, BasisRecord]) -> Any | None:
+    """Return the energy-to-solver map of the devices ``labels`` in tensor order, or None for the identity."""
+    transforms = [bases[label].energy_to_solver() for label in labels]
     if all(transform is None for transform in transforms):
         return None
     resolved = [
-        jnp.eye(bases[chip.devices[index].label].resolved_dim, dtype=jnp.complex128)
-        if transform is None
-        else transform
-        for index, transform in zip(support, transforms, strict=True)
+        jnp.eye(bases[label].resolved_dim, dtype=jnp.complex128) if transform is None else transform
+        for label, transform in zip(labels, transforms, strict=True)
     ]
     product_transform = resolved[0]
     for transform in resolved[1:]:
@@ -701,6 +694,43 @@ def _collect_collapse_terms(
     return tuple(terms), tuple(supports)
 
 
+def _compact_network_hamiltonian(chip: "Chip", resolution: _SystemResolution, backend: Backend) -> Any | None:
+    """Return the Hamiltonian of cascaded port pairs on a compact space, in angular units.
+
+    Products of port operators that are already restricted to the space drop
+    each intermediate state outside it. This function forms every product on
+    its ports' joint support first, so the result is ``P H_gen P``. It returns
+    ``None`` for the product space or a network without generated pairs, and a
+    zero matrix when every local term is below the round-off threshold.
+    """
+    from quchip.chip.ports import Port
+    from quchip.engine.sectors import generated_products
+
+    pairs = () if resolution.network is None else resolution.network.generated_pairs
+    if resolution.space is None or not pairs:
+        return None
+    wanted = {label for downstream, upstream, _ in pairs for label in (downstream, upstream)}
+    ports: dict[str, tuple[Any, tuple[int, ...]]] = {}
+    with _backend_context(backend):
+        for operator, rate, support, *_, owner in chip._collapse_contributions_with_owners(resolution.bases):
+            if not isinstance(owner, Port) or owner.label not in wanted:
+                continue
+            local = backend.to_array(_project_on_support(chip, operator, support, resolution.bases, backend))
+            resolved_rate = materialize_expr(rate, backend)
+            xp = concrete_array_module(local, resolved_rate, owner.phase)
+            scale = xp.sqrt(xp.asarray(resolved_rate))
+            if owner.phase is not None:
+                scale = xp.exp(1j * xp.asarray(owner.phase)) * scale
+            ports[owner.label] = (scale * xp.asarray(local), support)
+    total = None
+    for term, joint in generated_products(ports, pairs, resolution.dims):
+        local_dims = [resolution.dims[index] for index in joint]
+        embedded = backend.to_array(resolution.space.embed(
+            backend, backend.from_array(term, dims=[local_dims, local_dims]), joint))
+        total = embedded if total is None else total + embedded
+    return np.zeros((resolution.space.size,) * 2, dtype=complex) if total is None else total
+
+
 def _concrete_port_resolution(
     chip: "Chip",
     port: Any,
@@ -737,7 +767,7 @@ def _concrete_port_resolution(
             backend,
         )
         payload = backend.to_array(operator)
-        transform = _support_semantic_transform(chip, support, records)
+        transform = _support_semantic_transform(labels, records)
         # A port transformed inside jit or grad keeps a traced payload. Its
         # band decomposition then keeps every candidate the declared
         # excitation changes allow, so it is not pruned here.
@@ -932,7 +962,7 @@ def _authored_bands(
     canonical = backend.to_canonical_operator(operator).with_metadata(dims=dims, subsystem_labels=labels, tag=tag)
     if is_energy_diagonal(authored, bases):
         return {(0,) * len(support): canonical}
-    transform = _support_semantic_transform(chip, support, bases)
+    transform = _support_semantic_transform(labels, bases)
     changes = declared_excitation_changes(authored)
     if len(support) == 1:
         return {(weight,): band for weight, band in decompose_canonical_bands(
@@ -955,10 +985,16 @@ class _Interaction:
         return self.retained or not approximation.filters_terms or approximation.keeps_operator_band(weights)
 
 
+def _authored_interaction(coupling: Any, backend: Backend) -> Any:
+    """Read a coupling's authored operator with the chip's backend as the default."""
+    with _backend_context(backend):
+        return coupling.interaction_hamiltonian()
+
+
 def _interaction_contributions(chip: "Chip", effective_terms: Sequence[EffectiveTerms] | None = None):
     for coupling in chip.couplings:
         yield _Interaction(coupling.label, (coupling.device_a_label, coupling.device_b_label),
-                           coupling.interaction_hamiltonian)
+                           partial(_authored_interaction, coupling, chip.backend))
     for terms in chip.effective_terms if effective_terms is None else effective_terms:
         yield _Interaction(terms.label, terms.labels, terms.expression, retained=True)
 
@@ -981,11 +1017,10 @@ def _resolved_interactions(chip: "Chip", resolution: _SystemResolution, backend:
         yield _ResolvedInteraction(contribution, support, authored, operator)
 
 
-def _energy_operator(chip: "Chip", operator: Any, support: tuple[int, ...],
-                     bases: Mapping[str, BasisRecord], backend: Backend) -> Any:
-    """Express a projected support-local operator in isolated energy coordinates."""
+def _energy_operator(operator: Any, labels: Sequence[str], bases: Mapping[str, BasisRecord], backend: Backend) -> Any:
+    """Express a projected operator on the devices ``labels``, in tensor order, in isolated energy coordinates."""
     matrix = backend.to_array(operator)
-    transform = _support_semantic_transform(chip, support or tuple(range(len(chip.devices))), bases)
+    transform = _support_semantic_transform(labels, bases)
     if transform is not None:
         xp = concrete_array_module(matrix, transform)
         transform = xp.asarray(transform)
@@ -1003,7 +1038,7 @@ def _resolved_energy_interactions(chip: "Chip", resolution: _SystemResolution, a
     """
     for resolved in _resolved_interactions(chip, resolution, chip.backend, effective_terms):
         contribution, support = resolved.contribution, resolved.support
-        operator = _energy_operator(chip, resolved.operator, support, resolution.bases, chip.backend)
+        operator = _energy_operator(resolved.operator, contribution.labels, resolution.bases, chip.backend)
         if approximation.filters_terms and not contribution.retained:
             dims = tuple(resolution.dims[index] for index in support)
             dimension = prod(dims)
@@ -1243,7 +1278,7 @@ def _resolve_coupling_terms(
         if filters_terms:
             # Sparse payloads stay sparse unless a basis transform moves them to energy coordinates.
             energy_canonical = backend.to_canonical_operator(h_full)
-            transform = _support_semantic_transform(chip, support, resolution.bases)
+            transform = _support_semantic_transform(labels, resolution.bases)
             if transform is not None:
                 energy_canonical = _sandwich_canonical(energy_canonical, transform.conj().T, transform)
             band_diagnostics = _band_diagnostics(
@@ -2149,7 +2184,8 @@ def compile_hamiltonian_template(
         collapse_terms=collapse_terms,
     )
     if chip.port_network is not None:
-        slh = chip.port_network.resolve(slh, _compiled=resolution.network)
+        slh = chip.port_network.resolve(slh, _compiled=resolution.network,
+                                        _generated=_compact_network_hamiltonian(chip, resolution, backend))
     channel_supports = list(collapse_supports)
     for bath in chip.baths:
         targets = tuple(bath.resolve_targets(chip))
@@ -2331,9 +2367,6 @@ def _build_static_analysis_result(
     _advisories: list[str] | None = None,
 ) -> EngineResult:
     """Resolve the chip in the lab frame and retain only its static model."""
-    dimension = chip.total_dim if _local_resolution is None else prod(_local_resolution.dims)
-    require_memory(16 * 6 * dimension**2, task=f"Full static eigensystem (dimension {dimension})",
-                   remedy="Use a conserving model with labeled sector queries or reduce the model.")
     labels = [device.label for device in chip.devices]
     frame = ResolvedFrame(
         frequencies={label: 0.0 for label in labels},

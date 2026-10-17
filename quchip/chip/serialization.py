@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from quchip.approximations import Approximation
+from quchip.cutoff import ExcitationCutoff
 from quchip.chip.coupling_base import BaseCoupling
 from quchip.chip.effective import EffectiveTerms
 from quchip.chip.states import copy_state_configuration
@@ -38,8 +39,8 @@ def _serialize_frame(raw_frame: Any) -> str | float | dict[str, float]:
 def serialize_chip(chip: "Chip") -> dict[str, Any]:
     """Serialize chip topology into a JSON-safe dictionary.
 
-    Captures devices, couplings, baths, frame, approximation strategy, and, if
-    present, the control equipment wiring. The chip label, if any, is included
+    Captures devices, couplings, baths, frame, approximation strategy, space
+    policy, and, if present, the control equipment wiring. The chip label, if any, is included
     verbatim. Backend identity is *not* serialized, so deserialization uses the
     process default backend unless changed afterwards.
     """
@@ -52,6 +53,8 @@ def serialize_chip(chip: "Chip") -> dict[str, Any]:
         "devices": [device.to_dict() for device in chip.devices],
         "couplings": [coupling.to_dict() for coupling in chip.couplings],
     }
+    if chip.space is not None:
+        data["space"] = chip.space.to_dict()
     if chip._state_order is not None:
         data["state_order"] = list(chip._state_order)
         data["level_symbols"] = dict(chip._level_symbols)
@@ -93,6 +96,7 @@ def deserialize_chip(data: dict[str, Any]) -> "Chip":
         "state_order",
         "level_symbols",
         "effective_terms",
+        "space",
     }
     unknown = set(data) - allowed
     if unknown:
@@ -143,6 +147,7 @@ def deserialize_chip(data: dict[str, Any]) -> "Chip":
         baths=baths or None,
         effective_terms=[EffectiveTerms.from_dict(item) for item in data.get("effective_terms", [])],
         port_network=port_network,
+        space=None if data.get("space") is None else ExcitationCutoff.from_dict(data["space"]),
     )
     if control_equipment is not None:
         chip.connect(control_equipment)
@@ -176,6 +181,7 @@ def clone_chip(chip: "Chip") -> "Chip":
         baths=[bath.copy() for bath in chip.baths] or None,
         effective_terms=chip.effective_terms,
         port_network=None if chip.port_network is None else chip.port_network.copy(),
+        space=chip.space,
     )
     if chip.control_equipment is not None:
         cloned.connect(chip.control_equipment.copy(device_map, cloned.coupling_map))

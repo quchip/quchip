@@ -39,6 +39,7 @@ from quchip.analysis import (  # noqa: E402
     effective_hamiltonian,
 )
 from quchip.approximations import Approximation, Exact, RWA  # noqa: E402
+from quchip.cutoff import ExcitationCutoff  # noqa: E402
 from quchip.backend import get_default_backend, set_default_backend  # noqa: E402
 from quchip.chip.effective import EffectiveTerms
 from quchip.chip import (
@@ -177,6 +178,8 @@ __all__ = [
     "Approximation",
     "Exact",
     "RWA",
+    # Retained-space policies
+    "ExcitationCutoff",
     # Declarative extension API
     "CollapseChannel",
     "EffectiveTerms",

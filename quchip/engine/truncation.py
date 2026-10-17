@@ -3,6 +3,8 @@
 from dataclasses import dataclass, replace
 from typing import Any
 
+import numpy as np
+
 from quchip.devices.spaces import TruncationBoundary
 from quchip.engine.bands import local_mode_bands
 from quchip.engine.observables import BandMeta, recombine_expect
@@ -29,6 +31,8 @@ class TruncationPlan:
     metadata: tuple[BandMeta, ...] = ()
     sampled: bool = False
     space: Any = None
+    # Excitation cutoff K and the compact rows of the retained totals that a generator change can move above K.
+    excitation: tuple[int, tuple[int, ...]] | None = None
 
 
 def capture_truncation(chip: Any, engine_result: Any) -> TruncationPlan:
@@ -53,11 +57,23 @@ def capture_truncation(chip: Any, engine_result: Any) -> TruncationPlan:
                 (basis.resolved_dim - 1,), "retained energy boundary",
                 "Increase retained levels and compare observables.",
             ), basis, energy=True))
+    reduction = engine_result.metadata.get("excitation_reduction") or {}
+    cutoff, excitation = reduction.get("cutoff"), None
+    if cutoff is not None:
+        boundary = reduction.get("boundary")
+        if boundary is None:
+            unavailable.append(f"Excitation cutoff N <= {cutoff}: the generator's excitation changes are unknown, "
+                               "so the sectors that connect above the cutoff are unknown.")
+        else:
+            space = engine_result.excitation_space
+            rows = tuple(int(row) for row in np.flatnonzero(np.isin(space.levels.sum(axis=1), boundary)))
+            excitation = (cutoff, rows)
     return TruncationPlan(
         tuple(checks), tuple(unavailable), tuple(record.resolved_dim for record in engine_result.bases.values()),
         tuple(d.label for d in chip.devices),
         copy_value(engine_result.resolved_frame.frequencies, readonly=True),
         space=engine_result.excitation_space,
+        excitation=excitation,
     )
 
 
@@ -119,6 +135,13 @@ def compile_truncation(plan: TruncationPlan, backend: Any) -> TruncationPlan:
             operators.append(backend.embed(operator, device_index, plan.dims) if plan.space is None
                              else plan.space.embed(backend, operator, (device_index,)))
             metadata.append(BandMeta(key=str(index), weight=weight, device_labels=check.label))
+    if plan.excitation is not None:
+        # The projector is diagonal in product energy labels, so every frame leaves it unchanged.
+        diagonal = np.zeros(plan.space.size)
+        diagonal[list(plan.excitation[1])] = 1.0
+        operators.append(backend.from_array(xp.diag(xp.asarray(diagonal, dtype=complex)),
+                                            dims=[[plan.space.size], [plan.space.size]]))
+        metadata.append(BandMeta(key="excitation", weight=0, device_labels=plan.labels[0]))
     return replace(plan, operators=tuple(operators), metadata=tuple(metadata), sampled=True)
 
 
@@ -148,14 +171,19 @@ def with_truncation(problem: Any) -> Any:
 
 
 def boundary_traces(plan: TruncationPlan, values: Any, times: Any, backend: Any) -> tuple[Any, ...]:
-    """Reconstruct boundary populations in the physical frame, independent of readout LO."""
+    """Reconstruct boundary populations in the physical frame, independent of readout LO.
+
+    The traces follow ``plan.checks``. An excitation cutoff with known
+    boundary sectors adds their population as the last trace.
+    """
     _, traces = recombine_expect(
         flat_expect=values, meta_list=list(plan.metadata), tlist=times,
         frame_freqs={label: -frequency for label, frequency in plan.frame_frequencies.items()},
         direction="demodulate",
     )
     xp = backend.array_module
-    return tuple(xp.real(traces.get(str(index), xp.zeros_like(times))) for index in range(len(plan.checks)))
+    keys = [str(index) for index in range(len(plan.checks))] + (["excitation"] if plan.excitation else [])
+    return tuple(xp.real(traces.get(key, xp.zeros_like(times))) for key in keys)
 
 
 def evaluate_boundaries(result: Any) -> tuple[TruncationPlan, tuple[Any, ...]]:
@@ -165,7 +193,7 @@ def evaluate_boundaries(result: Any) -> tuple[TruncationPlan, tuple[Any, ...]]:
         raise RuntimeError("Truncation context is unavailable; build the calculation through quchip.")
     if result._boundary_traces is not None:
         return plan, result._boundary_traces
-    if not plan.checks:
+    if not plan.checks and plan.excitation is None:
         return plan, ()
     if result._states is None and result._final_state is None:
         raise RuntimeError('Boundary samples unavailable; prepare with_truncation(problem) or retain states="all".')
