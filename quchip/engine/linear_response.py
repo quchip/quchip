@@ -9,6 +9,7 @@ import jax
 import numpy as np
 
 from quchip.approximations import Approximation
+from quchip.backend import _backend_context
 from quchip.chip.ports import Port
 from quchip.declarative.expr import PhysicsExpr, _bound_values, _walk_expr, materialize_expr
 from quchip.devices.base import BaseDevice
@@ -32,9 +33,10 @@ def is_linear_mode(device: Any, backend: Any) -> bool:
     if not isinstance(device.local_space(), FockSpace) or device._time_terms():
         return False
     try:
+        with _backend_context(backend):
+            authored = device.unresolved_hamiltonian()
         _add_hamiltonian_expr(backend.array_module.zeros((1, 1), dtype=complex),
-                              device.unresolved_hamiltonian(), Exact(),
-                              {device.label: 0}, backend, local=True)
+                              authored, Exact(), {device.label: 0}, backend, local=True)
     except _UnsupportedLinearModel:
         return False
     return True
@@ -48,7 +50,8 @@ def try_build_linear_response_problem(
 ) -> LinearResponseProblem | None:
     """Return a compact passive-linear problem, or ``None`` for fallback."""
     try:
-        return _build_linear_response_problem(chip, frequencies, plane_labels=plane_labels)
+        with _backend_context(chip.backend):
+            return _build_linear_response_problem(chip, frequencies, plane_labels=plane_labels)
     except _UnsupportedLinearModel:
         return None
 
@@ -71,7 +74,8 @@ def try_build_weak_probe_problem(
     if problem is not None:
         return problem, "linear_response"
     try:
-        return _build_vacuum_response_problem(chip, frequencies, plane_labels=plane_labels), "vacuum_response"
+        with _backend_context(chip.backend):
+            return _build_vacuum_response_problem(chip, frequencies, plane_labels=plane_labels), "vacuum_response"
     except _UnsupportedLinearModel:
         return None
 

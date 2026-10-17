@@ -25,6 +25,7 @@ from __future__ import annotations
 import itertools
 import warnings
 from dataclasses import dataclass, replace
+from functools import partial
 from math import prod
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence, cast
 
@@ -955,10 +956,16 @@ class _Interaction:
         return self.retained or not approximation.filters_terms or approximation.keeps_operator_band(weights)
 
 
+def _authored_interaction(coupling: Any, backend: Backend) -> Any:
+    """Read a coupling's authored operator with the chip's backend as the default."""
+    with _backend_context(backend):
+        return coupling.interaction_hamiltonian()
+
+
 def _interaction_contributions(chip: "Chip", effective_terms: Sequence[EffectiveTerms] | None = None):
     for coupling in chip.couplings:
         yield _Interaction(coupling.label, (coupling.device_a_label, coupling.device_b_label),
-                           coupling.interaction_hamiltonian)
+                           partial(_authored_interaction, coupling, chip.backend))
     for terms in chip.effective_terms if effective_terms is None else effective_terms:
         yield _Interaction(terms.label, terms.labels, terms.expression, retained=True)
 

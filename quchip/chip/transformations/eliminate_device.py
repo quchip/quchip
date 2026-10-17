@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 import jax
 import numpy as np
 
+from quchip.backend import _backend_context
 from quchip.utils.jax_utils import concrete_array_module, contains_tracer
 from quchip.utils.values import DeferredValue
 from quchip.chip.couplings import Capacitive, TunableCapacitive
@@ -186,7 +187,8 @@ def _level_dependent(chip: "Chip", operator: Any, labels: tuple[str, ...], label
 
 def _coupling_level_dependent(chip: "Chip", coupling: "BaseCoupling", label: str, bases: Any) -> bool:
     """Check each operator product without scalar coefficients, including cancelled couplings."""
-    operator = coupling.interaction_hamiltonian()
+    with _backend_context(chip.backend):
+        operator = coupling.interaction_hamiltonian()
     terms = tuple(_operator_terms(operator)) if isinstance(operator, PhysicsExpr) else (operator,)
     labels = (coupling.device_a_label, coupling.device_b_label)
     return any((isinstance(term, PhysicsExpr) and _holds_parameter(term))
