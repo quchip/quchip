@@ -178,8 +178,9 @@ def test_multiport_response_rejects_records_of_hidden_channels_on_the_removed_mo
     once = eliminate(chip, "r1", local=local).chip
     terms = next(terms for terms in once.effective_terms if terms.omitted_responses)
     assert terms.omitted_responses == {"internal_photon_loss": ("r1",)}
-    assert EffectiveTerms.from_dict(terms.to_dict()).omitted_responses == terms.omitted_responses
-    for reduced, removed in ((once, ("r1",)), (eliminate(once, "r0", local=local).chip, ("r0", "r1"))):
+    # The record survives serialization and a later reduction.
+    restored = Chip.from_dict(json.loads(json.dumps(once.to_dict())))
+    for reduced, removed in ((restored, ("r1",)), (eliminate(restored, "r0", local=local).chip, ("r0", "r1"))):
         sequence = QuantumSequence(reduced)
         problem = replace(sequence.build_problem(np.linspace(0., 2., 3), e_ops=reduced.e_ops(q0="n")),
                           solver="smesolve", run_args={"ntraj": 2, "seeds": 1},
@@ -192,6 +193,8 @@ def test_multiport_response_rejects_records_of_hidden_channels_on_the_removed_mo
             if key in affected:
                 with pytest.raises(NotImplementedError, match="retained multiport mode responses"):
                     solve_problem(with_monitoring(problem, {key: 1.}))
+                # A concrete zero efficiency records nothing.
+                assert np.all(np.isfinite(np.real(solve_problem(with_monitoring(problem, {key: 0.})).expect("q0"))))
             else:
                 assert np.all(np.isfinite(np.real(solve_problem(with_monitoring(problem, {key: 1.})).expect("q0"))))
 
