@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 import jax.numpy as jnp
 from jax.scipy.linalg import expm
 
-from quchip.chip.sw import bare_hamiltonian, interaction_generator
+from quchip.chip.sw import bare_hamiltonian, degeneracy_error, interaction_generator
 from quchip.chip.transformations.coordinate_change import (
     embed_on_labels, isolated_hamiltonian, labeled_eigenvectors, product_energies, retain_coordinate_change,
 )
@@ -83,7 +83,7 @@ def reduce_coupling(chip: "Chip", target: Any, method: str) -> EliminationResult
         pair_after = pair_rotation.conj().T @ pair_h @ pair_rotation
         retained_h = rotation.conj().T @ h @ rotation
     else:
-        pair_s = interaction_generator(pair_e, pair_h)
+        pair_s = interaction_generator(pair_e, pair_h, error=degeneracy_error(pair_labels, pair_dims))
         s = embed_on_labels(chip.backend, labels, dims, pair_s, pair_labels)
         rotation = expm(-s)
         energies = product_energies(source.bases, labels)

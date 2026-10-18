@@ -25,6 +25,7 @@ from quchip.chip.transformations.dispatch import (
     eliminate,
     register_elimination_target,
 )
+from quchip.chip.sw import EliminationError
 from quchip.chip.transformations.methods import register_reduction_method
 from quchip.chip.transformations.result import ChipTransform, EliminationResult, ReductionMap
 
@@ -39,6 +40,7 @@ __all__ = [
     "ActivePatchResult",
     "active_patch",
     "ChipTransform",
+    "EliminationError",
     "EliminationResult",
     "ReductionMap",
     "eliminate",

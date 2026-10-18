@@ -17,6 +17,7 @@ from quchip.chip.retarget import register_retarget_rule
 from quchip.chip.transformations import (
     ActivePatchResult,
     ChipTransform,
+    EliminationError,
     EliminationResult,
     ReductionMap,
     SpectatorEliminationResult,
@@ -42,6 +43,7 @@ __all__ = [
     "CrossKerr",
     "TunableCapacitive",
     "ChipTransform",
+    "EliminationError",
     "EliminationResult",
     "ReductionMap",
     "eliminate",

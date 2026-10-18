@@ -10,6 +10,16 @@ This file records notable user-visible changes to quchip.
 
 #### Changes and migration
 
+- `eliminate(..., method="sw")` keys the exchange `pathways` by occupation
+  tuples in the source chip's device order, as `analyze_static_zz()` does.
+  Previously, the keys were flat product indices, such as `1` and `17` for
+  `(0, 0, 1)` and `(1, 1, 1)` on a chip with dims `(3, 3, 4)`. The pathways of
+  both calls now list every nonzero contribution, so they sum to the
+  second-order part of their element. Previously, contributions with
+  `|V_ik V_kj| <= 1e-12` GHz² were left out, so a weak coupling across a small
+  gap could list no pathway for a shift of `-1e-9` GHz.
+  ([#199](https://github.com/quchip/quchip/issues/199),
+  [#208](https://github.com/quchip/quchip/pull/208))
 - A level label such as `{"q0": 1}` or `"eg"` names its dressed state
   everywhere. An `initial_state` label starts a solve in the dressed state of
   the label, under the solve's approximation and excitation cutoff, placed in
@@ -198,6 +208,32 @@ This file records notable user-visible changes to quchip.
 
 #### New features
 
+- `VNA(chip).resonances()` returns the poles of the weak-probe response on
+  the routes of `VNA.sweep()`: for each pole, its lab-frame frequency, its
+  response linewidth `κ = −2 Re λ`, its composition over the modes, the
+  dominant label and the residue of each S entry. `scattering(frequencies)`
+  rebuilds the swept response from the poles, and `dark` marks poles whose
+  residues are negligible at the selected ports. Ill-conditioned poles that are too
+  close to resolve, as near an exceptional point, raise.
+  Frequencies and linewidths have JAX derivatives.
+  ([#192](https://github.com/quchip/quchip/issues/192),
+  [#208](https://github.com/quchip/quchip/pull/208))
+- The exact route of `eliminate()` reports the margins of its labeling checks
+  under `validity["<mode>_labeling"]`: the largest dressed weight of each
+  diagnostic label, the runner-up and the margin to `0.5 + 1e-6`, and the
+  smallest eigenvalue and orthonormalization residual of the kept overlap
+  matrix. A failed check of either route raises `EliminationError`, a
+  `ValueError` that carries the route, the check, and the label with its
+  weight, the residual, or the two degenerate levels with their coupling. Its
+  message is the previous message followed by these values, also inside
+  `jax.jit`.
+  ([#198](https://github.com/quchip/quchip/issues/198),
+  [#208](https://github.com/quchip/quchip/pull/208))
+- `EliminationResult.pathways(final, initial)` attributes any element of an
+  SW-retained Hamiltonian to virtual states, including dispersive and Lamb
+  shifts. It takes level mappings such as `{"qa": 1}`.
+  ([#199](https://github.com/quchip/quchip/issues/199),
+  [#208](https://github.com/quchip/quchip/pull/208))
 - `sequence.subspace_propagator(devices, levels=(0, 1))` returns the
   propagator of a sequence on the dressed states of the selected levels, as a
   `PropagatorResult`. One batch starts each label in its dressed state, and
