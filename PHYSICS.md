@@ -3410,19 +3410,21 @@ later gives the field of the same pulse with its phase turned by `-2π f_c τ`,
 moved by `τ`. The phase condition therefore also covers the start time. The
 gate set proves it on the structure of each delivered coefficient. It lowers
 each carrier pulse again with a stand-in for its phase. The stand-in has no
-arithmetic, conversion, or truth value, so the lowering can only store it. It
-must reach each delivered tree only as the angle of a polar scale, and the
-tree must equal the first lowering everywhere else. Such a polar scale
-carries phase harmonic 1. A sum takes the union of its children's harmonics,
-a product adds them, a conjugate negates them, a real or imaginary part takes
-both signs, and an integer power adds them that many times. A term passes
-when its only harmonic is its charge `q`, which holds for every phase,
+arithmetic, comparison, hash, conversion, or truth value, so the lowering can
+only store it. It must reach each delivered tree only as the angle of a polar
+scale, and the tree must equal the first lowering everywhere else. Such a
+polar scale carries phase harmonic 1. A sum takes the union of its children's
+harmonics, a product adds them, a conjugate negates them, a real or imaginary
+part takes both signs, and an integer power adds them that many times. A term
+passes when its only harmonic is its charge `q`, which holds for every phase,
 amplitude, and envelope. A lowering that computes with the phase fails the
 term, even when the result is the same field: `E(t) cos φ` written as a scale
-factor fails, and `Re(e^{iφ} E(t))` is checked. The signal bands of a term do
-not settle this. At zero delivered frequency, `f_c + δ = 0`, both sidebands
-of a pulse fall on one band, and a flux pulse then changes its amplitude, not
-its phase, when the phase turns.
+factor fails, and `Re(e^{iφ} E(t))` is checked. A lowering that tests the
+phase value also fails, for example one that changes the field only at `φ =
+0`. It fails at every phase, before a placement reaches that value. The signal
+bands of a term do not settle this. At zero delivered frequency, `f_c + δ =
+0`, both sidebands of a pulse fall on one band, and a flux pulse then changes
+its amplitude, not its phase, when the phase turns.
 
 A chip without the RWA fails the first condition. A piece that fails is solved
 again at each new placement, and the report states the reason. A custom signal

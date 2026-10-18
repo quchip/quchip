@@ -37,8 +37,8 @@ by ``τ``, so condition 4 also covers the start time.
 
 The gate set proves condition 4 on the structure of each delivered
 coefficient. It lowers a carrier pulse a second time with a stand-in for its
-phase that has no arithmetic, conversion, or truth value, so the lowering can
-only store it. The stand-in must reach each delivered tree only as the angle
+phase that has no arithmetic, comparison, hash, conversion, or truth value, so
+the lowering can only store it. The stand-in must reach each delivered tree only as the angle
 of a polar scale, and the tree must equal the first lowering everywhere else.
 Such a polar scale carries phase harmonic 1, and the node types combine
 harmonics: a sum takes their union, a product adds them, a conjugate negates
@@ -160,10 +160,17 @@ class Delivered:
 
 
 class _Phase:
-    """A stand-in for a pulse phase. It has no arithmetic, conversion, or truth value, so a lowering can only
-    store it."""
+    """A stand-in for a pulse phase. It has no arithmetic, comparison, hash, conversion, or truth value, so a
+    lowering can only store it."""
 
     __slots__ = ()
+    __hash__ = None  # type: ignore[assignment]
+
+    def __eq__(self, other: object) -> bool:
+        raise TypeError("the phase stand-in of a gate-set check has no value to compare")
+
+    def __ne__(self, other: object) -> bool:
+        raise TypeError("the phase stand-in of a gate-set check has no value to compare")
 
     def __bool__(self) -> bool:
         raise TypeError("the phase stand-in of a gate-set check has no truth value")

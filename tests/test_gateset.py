@@ -277,6 +277,33 @@ def test_covariance_check_is_structural():
         covariant, reason, _, _ = covariance(charge, [lower_pulse(wired, charge[0])], [0])
         assert covariant is passes and (passes or "cannot show that a charge-" in reason)
 
+    # A transform that doubles the field when the pulse phase is 0 makes the field depend on the phase value, not
+    # only on a turn. The check fails already at phase 0.3, where nothing doubles.
+    class PhaseBranch(SignalTransform):
+        linear_time_invariant = True
+
+        def apply(self, signals):
+            return {key: type(s)(program=ir.Scale(s.program, 2.0 if s.program.children[0].theta == 0 else 1.0),
+                                 carrier=s.carrier, phase_reference=s.phase_reference)
+                    for key, s in signals.items()}
+
+    single = DuffingTransmon(freq=5.0, anharmonicity=-0.33, levels=3, label="q")
+    branching = Chip([single])
+    branching.wire(ChargeDrive(single, label="xy"), signal_chain=[PhaseBranch()])
+
+    def branch_pulse(phase):
+        pulse = QuantumSequence(branching)
+        pulse.schedule("xy", envelope=Gaussian(duration=20.0, amplitude=0.02), freq=5.0, phase=phase)
+        return pulse
+
+    # Conjugation by exp(iθN) keeps every |U_ij|, so no placement maps the gate at 0.3 to the gate at 0.
+    magnitudes = [np.abs(np.asarray(branch_pulse(phase).propagator(frame="lab", dissipation=False).matrix))
+                  for phase in (0.3, 0.0)]
+    assert np.abs(magnitudes[0] - magnitudes[1]).max() > 0.1
+    turned = list(branch_pulse(0.3).scheduled_ops)
+    covariant, reason, _, _ = covariance(turned, [lower_pulse(branching, turned[0])], [0])
+    assert not covariant and "cannot show that a charge-" in reason
+
     # Harmonics come from structure, not from values: |s|^2 + (|s|^2 - 1) Re s has harmonics -1, 0, 1 at every
     # amplitude, although at unit amplitude it does not change with the phase; |s|^2 alone has only 0.
     def nonlinear(theta, amplitude):
