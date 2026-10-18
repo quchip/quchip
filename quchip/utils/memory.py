@@ -11,6 +11,8 @@ from __future__ import annotations
 from math import prod
 from pathlib import Path
 
+import psutil
+
 # Bytes of one complex double and of one 64-bit index.
 COMPLEX_BYTES = 16
 INDEX_BYTES = 8
@@ -18,6 +20,8 @@ INDEX_BYTES = 8
 # the eigenvectors, the returned eigenvectors, and the complex and real
 # workspace of LAPACK's divide-and-conquer driver.
 _EIGENSYSTEM_COPIES = 6
+# The cgroup v2 files of this process's container, when it has one.
+_CGROUP = Path("/sys/fs/cgroup")
 
 
 def dense_bytes(*shape: int, copies: int = 1, itemsize: int = COMPLEX_BYTES) -> int:
@@ -75,30 +79,20 @@ def krylov_bytes(size: int, vectors: int) -> int:
 def available_memory_bytes() -> int | None:
     """Return the memory this process can still allocate, or ``None`` when unknown.
 
-    Linux reports ``MemAvailable`` and any cgroup v2 limit, whichever is
-    smaller; other platforms use ``psutil`` when it is installed.
+    The value is the available system memory that ``psutil`` reports. Under a
+    cgroup v2 memory limit, as in many Linux containers, the value is the
+    remaining limit when that is smaller.
     """
-    limits: list[int] = []
     try:
-        for line in Path("/proc/meminfo").read_text().splitlines():
-            if line.startswith("MemAvailable:"):
-                limits.append(int(line.split()[1]) * 1024)
-                break
-    except (OSError, ValueError, IndexError):
-        pass
-    cgroup = Path("/sys/fs/cgroup")
+        limits = [int(psutil.virtual_memory().available)]
+    except (OSError, psutil.Error):
+        return None
     try:
-        maximum = (cgroup / "memory.max").read_text().strip()
+        maximum = (_CGROUP / "memory.max").read_text().strip()
         if maximum != "max":
-            limits.append(int(maximum) - int((cgroup / "memory.current").read_text()))
+            limits.append(int(maximum) - int((_CGROUP / "memory.current").read_text()))
     except (OSError, ValueError):
         pass
-    if not limits:
-        try:
-            import psutil
-        except ImportError:
-            return None
-        limits.append(int(psutil.virtual_memory().available))
     return max(min(limits), 0)
 
 
