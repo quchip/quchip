@@ -520,7 +520,8 @@ def assert_same_output(sector, product, offsets, delays, *, port="feed", rtol):
     return spectra
 
 
-@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])
+@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=[pytest.mark.optional_backend,
+                                                                              pytest.mark.validation])])
 def test_output_statistics_on_every_sector_match_the_product_space(monkeypatch, backend):
     """With N <= 6, the sector spectrum, fluxes, g1, g2 and state agree with the product space on both backends."""
     if backend == "dynamiqs":

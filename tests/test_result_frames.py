@@ -20,7 +20,8 @@ from quchip.declarative import DeviceModel, parameter
 from quchip.declarative.parameters import Scalar
 from quchip.engine.frames import FrameMap
 
-BACKENDS = ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)]
+# The dynamiqs runs compile each tight solve, so they run with validation, and QuTiP keeps the E2E check.
+BACKENDS = ["qutip", pytest.param("dynamiqs", marks=[pytest.mark.optional_backend, pytest.mark.validation])]
 
 
 class TiltedMode(DeviceModel):
