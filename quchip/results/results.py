@@ -1144,7 +1144,7 @@ def wrap_solver_result(solver_result: SolverResult, problem: SolveProblem, backe
             resolved_frame=problem.resolved_frame,
             engine_result=engine_result,
         )
-    from quchip.analysis.field_noise import ReadoutWiring
+    from quchip.results.terminal import ReadoutWiring
 
     result = SimulationResult(
         solver_result=solver_result,

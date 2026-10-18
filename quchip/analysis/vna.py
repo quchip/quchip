@@ -36,7 +36,7 @@ from quchip.results.steady_state import SteadyStateResult
 from quchip.sweep import Sweep, ZippedSweep, _axis_metadata, _iter_axis_points
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
 from quchip.utils.labeling import bare_label_from_mapping, resolve_label
-from quchip.analysis.field_statistics import canonical as _canonical_matrix
+from quchip.engine.field_statistics import canonical as _canonical_matrix
 
 _TONE_PREFIX = "__vna_tone_"
 
@@ -518,7 +518,7 @@ class VNA:
         components, _ = capture_noise(operating, self.chip.backend, (output_port,), carrier,
                                       xp.asarray(frequency_values))
 
-        from quchip.analysis.field_statistics import normal_spectrum
+        from quchip.engine.field_statistics import normal_spectrum
 
         def source_spectrum(pair: tuple[Any, Any]) -> Any:
             white, excess = pair

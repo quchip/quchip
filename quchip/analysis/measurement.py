@@ -9,8 +9,7 @@ from typing import Any
 
 import numpy as np
 
-from quchip.analysis.field_statistics import proper_spectrum, quadrature_spectrum
-from quchip.analysis.field_noise import propagate_noise
+from quchip.engine.field_statistics import propagate_noise, proper_spectrum, quadrature_spectrum
 from quchip.backend._memory import fits_memory
 from quchip.cutoff import active_cutoff
 from quchip.engine.sector_stationary import try_sector_probe_model

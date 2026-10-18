@@ -174,7 +174,7 @@ class SectorProbeModel:
                             offsets: Any) -> tuple[np.ndarray, dict[str, Any]]:
         """Return the normally ordered excess IQ spectrum of the selected ports.
 
-        It follows :func:`quchip.analysis.field_statistics.quadrature_spectrum`
+        It follows :func:`quchip.engine.field_statistics.quadrature_spectrum`
         for vacuum inputs. The source of output ``p`` is ``(L_p - <L_p>) rho``.
         A resolvent at ``-f`` gives the adjoint source at ``f``, so each output
         needs one solve per offset.

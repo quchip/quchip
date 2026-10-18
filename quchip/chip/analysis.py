@@ -1413,9 +1413,45 @@ class ChipAnalysis:
             if not (self._is_bare_label(label) if state_map is None else label in state_map):
                 raise ValueError(f"No dressed-state assignment found for bare label {label}")
             labels.append(label)
-        from quchip.analysis.effective_hamiltonian import _h_eff_on_basis
+        return np.asarray(self.effective_hamiltonian_on_basis(labels), dtype=complex)
 
-        return np.asarray(_h_eff_on_basis(self._chip, labels), dtype=complex)
+    def effective_hamiltonian_on_basis(self, basis: Sequence[tuple[int, ...]]) -> Any:
+        """Return the Löwdin-orthonormalized effective Hamiltonian on explicit bare states.
+
+        This is the shared core of :func:`quchip.analysis.effective_hamiltonian`,
+        :func:`quchip.analysis.effective_hamiltonian_between_states` and
+        :meth:`effective_subspace_hamiltonian`. See
+        :class:`quchip.analysis.EffectiveHamiltonianResult` for the construction.
+
+        Parameters
+        ----------
+        basis : sequence of tuple of int
+            Chip-ordered bare-level tuples that span the subspace.
+        """
+        from quchip.chip.sw import exact_subspace
+
+        sectors = self._sector_model()
+        if sectors is not None:
+            # A conserving chip needs only the sectors that the requested states occupy.
+            labels = [tuple(state) for state in basis]
+            if not labels:
+                raise ValueError("Effective subspace must contain at least one state.")
+            invalid = [label for label in labels if not self._is_bare_label(label)]
+            if invalid:
+                raise ValueError(f"Effective subspace state {invalid[0]} is not a valid bare product-basis label.")
+            eigenvalues, evecs, kept, dressed_idx = sectors.labeled_subspace(labels)
+            return exact_subspace(eigenvalues, evecs, kept, dressed_idx).hamiltonian
+
+        engine = self.engine_result()
+        eigenvalues, evecs, _, labeling = self._compute_array_labeled(engine)
+        evecs = self._semantic_amplitudes(evecs, engine)
+
+        bare_idx_list = [int(np.ravel_multi_index(state, engine.dims)) for state in basis]
+        if not bare_idx_list:
+            raise ValueError("Effective subspace must contain at least one state.")
+        dressed_idx = jnp.stack([labeling.indices[i] for i in bare_idx_list])
+
+        return exact_subspace(eigenvalues, evecs, bare_idx_list, dressed_idx).hamiltonian
 
     def dressed_anharmonicity(self, device: str | BaseDevice) -> float:
         """Return the dressed anharmonicity in GHz.
