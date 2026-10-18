@@ -6,15 +6,15 @@ unknown support never supplies an exact reduction.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import cached_property
 from math import prod
 from typing import Any
 
 import numpy as np
-from scipy import sparse
 
-from quchip.backend._memory import fits_memory, require_memory
+from quchip.utils.memory import dense_bytes, level_table_bytes, require_memory
 from quchip.utils.jax_utils import concrete_array_module, contains_tracer
 
 
@@ -24,11 +24,6 @@ _CUTOFF_RESIDUE = 1e-20
 
 
 _OPERATOR_REMEDY = "Reduce the model, the initial excitation support, or an excitation cutoff's max_total."
-
-
-def _dense_bytes(size, matrices):
-    """Bytes of ``matrices`` dense complex operators on ``size`` states."""
-    return 16 * matrices * size**2
 
 
 def _require_inside(cutoff, outside, total, source):
@@ -52,12 +47,13 @@ class PulseSpace:
 
     @classmethod
     def create(cls, dims, labels, totals, bases):
-        from quchip.engine.sectors import _sector_levels, sector_size
+        from quchip.engine.excitation import sector_levels, sector_size
 
         totals = tuple(sorted(set(totals)))
         size = sum(sector_size(dims, total) for total in totals)
-        require_memory(8 * len(dims) * size, task=f"Exact pulse space (dimension {size})", remedy=_OPERATOR_REMEDY)
-        levels = np.concatenate([_sector_levels(tuple(dims), n) for n in totals])
+        require_memory(level_table_bytes(size, len(dims)), task=f"Exact pulse space (dimension {size})",
+                       remedy=_OPERATOR_REMEDY)
+        levels = np.concatenate([sector_levels(tuple(dims), n) for n in totals])
         levels.flags.writeable = False
         return cls(tuple(dims), tuple(labels), totals, levels, dict(bases))
 
@@ -86,19 +82,9 @@ class PulseSpace:
     def embed(self, backend, operator, support):
         """Gather a resolved local operator without a product-space allocation.
 
-        A NumPy backend receives a CSR operator, and other backends a dense one.
+        The backend chooses the storage of the result.
         """
-        rows, columns, values = self.entries(backend, operator, support)
-        if backend.array_module is np:
-            return self._sparse(backend, rows, columns, values)
-        self._require_dense(2)
-        xp = concrete_array_module(values)
-        result = xp.zeros((self.size, self.size), dtype=complex)
-        if xp is np:
-            result[rows, columns] = values
-        else:
-            result = result.at[rows, columns].set(values)
-        return backend.from_array(result, dims=[[self.size], [self.size]])
+        return backend.compact_operator(*self.entries(backend, operator, support), self.size)
 
     def authored(self, backend, operator, support):
         """Lower a factored authored sum directly into energy coordinates."""
@@ -111,63 +97,31 @@ class PulseSpace:
         terms = _local_products(operator, labels, self.bases)
         if terms is None:
             return None
-        if backend.array_module is np:
-            return self._sparse(backend, *self._authored_entries(terms))
-        # The product below holds the result, the running term, a gathered factor and their product.
-        self._require_dense(4)
-        xp = concrete_array_module(terms, tuple(self.bases[label].energy_vectors for label in labels))
-        result = xp.zeros((self.size, self.size), dtype=complex)
-        for coefficient, factors in terms:
-            value = xp.ones((self.size, self.size), dtype=complex) * coefficient
-            for axis, label in enumerate(self.labels):
-                levels = self.levels[:, axis]
-                if label not in factors:
-                    value = value * (levels[:, None] == levels[None, :])
-                else:
-                    vectors = xp.asarray(self.bases[label].energy_vectors)
-                    local = xp.conj(vectors.T) @ xp.asarray(factors[label]) @ vectors
-                    value = value * local[levels[:, None], levels[None, :]]
-            result = result + value
-        return backend.from_array(result, dims=[[self.size], [self.size]])
+        return backend.compact_operator(*self._authored_entries(terms, labels), self.size)
 
-    def _authored_entries(self, terms):
+    def _authored_entries(self, terms, labels):
         """Return the rows, columns and values of a sum of local products, with repeated entries."""
         from quchip.engine.sectors import _level_pairs
 
-        rows, columns, values = [np.zeros(0, dtype=int)], [np.zeros(0, dtype=int)], [np.zeros(0, dtype=complex)]
+        xp = concrete_array_module(terms, tuple(self.bases[label].energy_vectors for label in labels))
+        rows, columns, values = [np.zeros(0, dtype=int)], [np.zeros(0, dtype=int)], [xp.zeros(0, dtype=complex)]
         for coefficient, factors in terms:
             axes = tuple(sorted(self.labels.index(label) for label in factors))
             if not axes:
                 diagonal = np.arange(self.size)
                 rows.append(diagonal)
                 columns.append(diagonal)
-                values.append(np.full(self.size, coefficient, dtype=complex))
+                values.append(xp.full(self.size, coefficient, dtype=complex))
                 continue
-            local = np.ones((1, 1), dtype=complex)
+            local = xp.ones((1, 1), dtype=complex)
             for axis in axes:
-                vectors = np.asarray(self.bases[self.labels[axis]].energy_vectors)
-                local = np.kron(local, vectors.conj().T @ np.asarray(factors[self.labels[axis]]) @ vectors)
+                vectors = xp.asarray(self.bases[self.labels[axis]].energy_vectors)
+                local = xp.kron(local, xp.conj(vectors.T) @ xp.asarray(factors[self.labels[axis]]) @ vectors)
             pair_rows, pair_columns, local_rows, local_columns = _level_pairs(self.dims, axes, self.levels, self.levels)
             rows.append(pair_rows)
             columns.append(pair_columns)
             values.append(coefficient * local[local_rows, local_columns])
-        return np.concatenate(rows), np.concatenate(columns), np.concatenate(values)
-
-    def _require_dense(self, matrices):
-        """Raise before ``matrices`` dense operators on this space exceed the available memory."""
-        require_memory(_dense_bytes(self.size, matrices), task=f"A dense compact operator (dimension {self.size})",
-                       remedy=_OPERATOR_REMEDY)
-
-    def _sparse(self, backend, rows, columns, values):
-        """Return the CSR operator with these entries, summing repeated ones and dropping zeros."""
-        from quchip.engine.ir import CanonicalOperator
-
-        matrix = sparse.csr_matrix((np.asarray(values, dtype=complex), (rows, columns)), shape=(self.size, self.size))
-        matrix.eliminate_zeros()
-        return backend.from_canonical_operator(CanonicalOperator.from_csr(
-            matrix.data, matrix.indices, matrix.indptr, shape=matrix.shape, dims=(self.size,), basis="fock",
-            subsystem_labels=("0",),
-        ))
+        return np.concatenate(rows), np.concatenate(columns), xp.concatenate(values)
 
     def lift(self, state, backend):
         """Expand a state into captured solver coordinates, after a memory check."""
@@ -175,14 +129,14 @@ class PulseSpace:
         dimension = prod(self.dims)
         ket = matrix.shape[-1] == 1
         require_memory(
-            16 * 4 * (dimension if ket else dimension**2),
+            dense_bytes(*((dimension,) if ket else (dimension, dimension)), copies=4),
             task="Full pulse state export",
             remedy="Use compact_state(), population(), or reduced_state() instead.",
         )
         xp = backend.array_module
         # Build only the isometry columns present in the compact space.
         require_memory(
-            16 * 3 * dimension * self.size,
+            dense_bytes(dimension, self.size, copies=3),
             task="Pulse state coordinate map",
             remedy="Use compact_state() or reduced_state() instead.",
         )
@@ -243,17 +197,14 @@ class PulseSpace:
 
 
 def initial_totals(chip, state, resolution, cutoff=None):
-    """Return the excitation totals that an initial state occupies, or ``None`` when unknown.
+    """Return the excitation totals that a given initial state occupies, or ``None`` when unknown.
 
+    The planner places labels and an omitted state, which are dressed states.
     With ``cutoff``, a state with more than round-off weight on totals above
     it raises, and only totals up to the cutoff are returned.
     """
-    from collections.abc import Mapping
-    from quchip.chip.states import normalize_device_state_mapping, materialize_state_spec
-    from quchip.results.compact import CompactState
+    from quchip.engine.states import CompactState, materialize_state_spec
 
-    if state is None:
-        return {0}
     if isinstance(state, CompactState):
         if state.space.labels != tuple(d.label for d in chip.devices) or state.space.dims != resolution.dims:
             raise ValueError("Compact state devices and dimensions do not match this chip.")
@@ -263,37 +214,6 @@ def initial_totals(chip, state, resolution, cutoff=None):
                 f"N <= {cutoff}. Prepare it for this chip with chip.compact_state()."
             )
         return set(state.space.totals)
-    if isinstance(state, (Mapping, str)):
-        prepared = normalize_device_state_mapping(chip, state, {})
-        if all(isinstance(n, int) and not isinstance(n, bool) for n in prepared.values()):
-            for label, n in prepared.items():
-                if label not in resolution.bases or not 0 <= n < resolution.bases[label].resolved_dim:
-                    raise ValueError(f"Invalid initial level {n!r} for {label!r}.")
-            total = sum(prepared.values())
-            if cutoff is not None and total > cutoff:
-                raise ValueError(
-                    f"The initial label has total excitation {total}, outside the excitation cutoff N <= {cutoff}."
-                )
-            return {total}
-        from quchip.chip.states import _bare_local_kets
-
-        kets = _bare_local_kets(chip, prepared, resolution.bases)
-        totals = {0}
-        weights = np.ones(1)
-        for device, ket in zip(chip.devices, kets):
-            vector = chip.backend.to_array(ket).reshape(-1)
-            transform = resolution.bases[device.label].energy_to_solver()
-            if contains_tracer((vector, transform)):
-                return None
-            if transform is not None:
-                vector = np.asarray(transform).conj().T @ np.asarray(vector)
-            local = np.flatnonzero(np.asarray(vector) != 0)
-            totals = {n + int(level) for n in totals for level in local}
-            weights = np.convolve(weights, np.abs(np.asarray(vector)) ** 2)
-        if cutoff is not None:
-            _require_inside(cutoff, float(np.sum(weights[cutoff + 1:])), float(np.sum(weights)), "initial state")
-            totals = {n for n in totals if n <= cutoff}
-        return totals
     if contains_tracer(state):
         return None
     # Native state support is known only for concrete captured arrays.
@@ -338,24 +258,21 @@ def plan_pulse_space(chip, operations, states, resolution, approximation, dissip
     that a generator change can move above ``K``, or is ``None`` when the
     changes are unknown or no cutoff is active.
     """
-    from quchip.chip.effective import (
-        authored_excitation_changes, conserves_excitation_number, static_excitation_changes,
-    )
     from quchip.chip.ports import Port
     from quchip.cutoff import active_cutoff
-    from quchip.engine.assembly import (
-        _interaction_contributions,
-        _build_delivered_signals,
-        drive_excitation_changes,
-        _component_authored_terms,
+    from quchip.engine.assembly import _build_delivered_signals, _component_authored_terms
+    from quchip.engine.excitation import (
+        authored_excitation_changes, drive_excitation_changes, excitation_structure, keeps_zero_total_only, sector_size,
     )
     from quchip.engine.ir import CoherentOp
-    from quchip.engine.sectors import excitation_classes, sector_size
+    from quchip.engine.states import label_levels
 
     bases, dims = resolution.bases, resolution.dims
     labels = tuple(d.label for d in chip.devices)
     policy = active_cutoff(chip)
     cutoff = None if policy is None else policy.max_total
+
+    structure = excitation_structure(chip, approximation, resolution=resolution)
 
     def fallback(reason):
         if cutoff is None:
@@ -364,17 +281,21 @@ def plan_pulse_space(chip, operations, states, resolution, approximation, dissip
         return space, f"{reason} The solve keeps every label with N <= {cutoff}.", None
 
     occupied = set()
-    if any(state is None for state in states):
-        if cutoff is not None:
-            # The default state is the vacuum-assigned eigenvector of the truncated static model.
-            changes = static_excitation_changes(chip, approximation, resolution=resolution)
-            occupied.update(next(group for group in excitation_classes(changes, cutoff) if 0 in group))
-        elif not conserves_excitation_number(chip, approximation, resolution=resolution):
-            return None, "The default dressed state has no proven finite excitation support.", None
-        else:
-            occupied.add(0)
     for state in states:
-        if state is None:
+        if state is None or isinstance(state, (Mapping, str)):
+            # A label is the dressed state that the static model assigns to it.
+            total = 0 if state is None else sum(label_levels(chip, state, dims))
+            if cutoff is not None:
+                if total > cutoff:
+                    raise ValueError(
+                        f"The initial label has total excitation {total}, outside the excitation cutoff N <= {cutoff}."
+                    )
+                # Under a cutoff, the dressed state spans the totals of its class.
+                occupied.update(next(group for group in structure.classes(cutoff) if total in group))
+            elif not structure.conserves:
+                return None, "The dressed initial state has no proven finite excitation support.", None
+            else:
+                occupied.add(total)
             continue
         totals = initial_totals(chip, state, resolution, cutoff)
         if totals is None and cutoff is not None:
@@ -386,10 +307,7 @@ def plan_pulse_space(chip, operations, states, resolution, approximation, dissip
             return None, "Initial excitation support is unknown.", None
         occupied.update(totals)
     changes = {0}
-    for term in _interaction_contributions(chip):
-        if not term.retained and approximation.filters_terms and approximation.conserves_excitation_number():
-            continue
-        support = authored_excitation_changes(term.expression(), term.labels, chip.backend, bases)
+    for support in structure.interaction_changes():
         if support is None:
             return fallback("Static interaction support is unknown.")
         changes.update(support)
@@ -397,7 +315,7 @@ def plan_pulse_space(chip, operations, states, resolution, approximation, dissip
     for operator, _coefficient, support, _owner, _origin, _tag in _component_authored_terms(
         chip, resolution, chip.backend
     ):
-        if len(support) == 2 and approximation.filters_terms and approximation.conserves_excitation_number():
+        if len(support) == 2 and keeps_zero_total_only(approximation):
             continue
         support_changes = authored_excitation_changes(operator, tuple(labels[i] for i in support), chip.backend, bases)
         if support_changes is None:
@@ -460,7 +378,7 @@ def plan_pulse_space(chip, operations, states, resolution, approximation, dissip
         return PulseSpace.create(dims, labels, occupied, bases), reason, boundary
     if size == prod(dims):
         return None, "The proven generator closure reaches the full product space.", None
-    if chip.backend.array_module is not np and not fits_memory(_dense_bytes(size, 8)):
-        return None, f"Dense compact operators on {size} states do not fit in available memory.", None
+    if not chip.backend.compact_operators_fit(size, 8):
+        return None, f"The backend's compact operators on {size} states do not fit in available memory.", None
     reason = "The initial support and complete generator close exactly."
     return PulseSpace.create(dims, labels, occupied, bases), reason, None

@@ -42,7 +42,7 @@ The authored view does not:
 
 `BaseDevice.hamiltonian()` resolves the isolated device physics through the engine, with the device's basis policy and the lab frame. For another local frame, pass `frame=` to `device.resolve()`. These queries do not change when you attach the device to a chip. For the coupled system, use `chip.hamiltonian()` or `chip.freq(device)`.
 
-Local level labels refer to the energy order of the isolated Hamiltonian. `chip.bare_state(q=1)` prepares that local excited state, and `result.population(q, 1)` measures its occupation, summed over the other devices. A result keeps the energy vectors that quchip used to build its calculation. The frame generator is the same energy-level index operator in each solver basis.
+Local level labels refer to the energy order of the isolated Hamiltonian. `chip.bare_state(q=1)` prepares that local excited state, and `result.population(q, 1)` measures its occupation, summed over the other devices. A level label such as `{"q": 1}` names the dressed state of the coupled chip (§9). A result keeps the energy vectors that quchip used to build its calculation. The frame generator is the same energy-level index operator in each solver basis.
 
 Numerical device Pauli operators act on the lowest two isolated energy states and vanish on higher
 levels: `Z = |0><0| - |1><1|`, `X = |0><1| + |1><0|`, and `Y = -i|0><1| + i|1><0|`. quchip does not
@@ -627,10 +627,34 @@ H_rot = U† H_lab U - 2π Σ_i f_ref,i * n_i
 
 Because of that second term, the assembler subtracts `f_ref,i * n_i` from `H0`.
 
-When `initial_state=None`, the solver receives
-`psi_solve(t0) = U(t0)† psi_lab` at `t0 = tlist[0]`, where `psi_lab` is the
-lab-frame default that §9 describes. A nonzero rotating-frame start
-therefore need not equal the lab-frame vector that `chip.state()` returns.
+A label `initial_state`, or an omitted one, is the dressed state `|d_k>` of
+§9. The solver receives it at `t0 = tlist[0]` as its label target below,
+`psi_solve(t0) = target_k(t0)`, so its label amplitude starts at 1. A ket
+`initial_state` is an integration-frame vector at `t0` and is not moved. A
+nonzero rotating-frame start therefore need not equal the lab-frame vector
+that `chip.state()` returns.
+
+Each result records its integration frame as `result.frame`, a
+`ResolvedFrame` with the frequencies `f_ref,i`. `state()`, `state_at()`,
+`dm_at()` and `reduced_state()` take `frame="lab"`, which applies `U(t)` to
+the stored state. A ket target of `overlap()`, `amplitude_array()`,
+`final_overlap_magnitudes()` and `final_amplitudes()` is a fixed vector of the
+integration frame, so a target such as `|+>` is written in that frame. With
+`frame="lab"`, the ket is a fixed lab-frame vector instead, such as a dressed
+state from `chip.state()`. A label target such as `{"q0": 0, "q1": 1}` is the
+dressed eigenstate `|d_k>` of label `k` (§9), which turns with its label:
+
+```text
+target_k(t) = U(t)† |d_k> exp(-i 2π t Σ_i f_ref,i k_i)
+```
+
+An idle dressed state then reads 1 in every frame. Its amplitude turns at
+`Σ_i f_ref,i k_i - E_k`, the detuning of the label's frame energy from its
+dressed energy `E_k`. A bare product `|k>` is a frame eigenstate, so
+`U(t)† |k> exp(-i 2π t Σ_i f_ref,i k_i) = |k>`, and the ket target
+`chip.bare_state(...)` gives the bare overlap in every frame.
+`QuantumSequence.subspace_propagator()` collects these label amplitudes into a
+propagator and converts it to the dressed or lab frame (§9.4).
 
 ### 4.3 What `"rotating"` means in practice
 
@@ -906,6 +930,55 @@ The transverse components follow the ordinary sideband selection above.
 Arbitrary nonlinear signal programs retain their authored waveform when the
 engine cannot infer a first-order carrier partner.
 
+### 6.2.1 Rotation angle of a resonant pulse
+
+Sources: [`quchip/control/envelopes.py`](quchip/control/envelopes.py), [`quchip/chip/analysis.py`](quchip/chip/analysis.py)
+
+Take a dressed transition `i -> f` with the drive matrix element
+`m = <f~|D|i~>` of §9.1, and a carrier at the transition frequency. In the
+frame of the transition, `RWA()` keeps
+
+```text
+H~/ħ = π (s(t) m σ+ + s(t)* m* σ-),    σ+ = |f~><i~|
+```
+
+where `s(t)` is the complex envelope, with the phase of `schedule()`. When the
+phase of `s` stays constant, the pulse rotates the transition by
+
+```text
+θ = 2π |m| |∫ s dt|
+```
+
+about the axis `(cos α, sin α, 0)`, with `α = arg(s m)` and `|i~>` at `+z`.
+On the `0 -> 1` transition of an isolated Duffing transmon, the charge drive
+has `m = -i`, so a real π pulse gives `iY` and an envelope phase of `π/2`
+gives `-iX`. Dressing changes `m` slightly, and other transitions have other
+elements, such as `m = -i√2` for `1 -> 2`. When the phase changes during the
+pulse, as for DRAG with a nonzero `beta`, time ordering first contributes at
+second Magnus order, and the area alone does not set the gate. Detuning,
+leakage to other levels, and the counter-rotating terms of `Exact()` also
+change the rotation.
+
+`Envelope.area()` returns `∫_0^τ E(t) dt` at the envelope's amplitude `A`.
+The built-in envelopes use closed forms:
+
+| Envelope | Area |
+|---|---|
+| `Square` | `A τ` |
+| `LinearRamp` | `A (τ - τ_r/2)` |
+| `Gaussian` | `A σ √(2π) erf(N_σ/√2)`, with `σ = τ/(2 N_σ)` |
+| `GaussianDRAG` | the `Gaussian` area, because the derivative quadrature integrates to zero |
+| `GaussianEdge`, `SquareWithGaussianEdges` | `A (τ - 2τ_e) + A σ √(2π) erf(√2 N_σ)`, with `σ = τ_e/(2 N_σ)` |
+
+Other envelopes use 16-point Gauss-Legendre quadrature between consecutive
+sampling times, with `0` and `τ` added. The quadrature is traceable, and its
+accuracy depends on how well the sampling times resolve the envelope.
+
+`Chip.rotation_amplitude(transition, line, envelope, angle=π)` returns
+`A = θ / (2π |m| |a|)`, where `a` is the area at unit amplitude. It takes the
+amplitude at the device, so a line with signal-chain transforms or crosstalk
+raises. The result is a starting point for a calibration.
+
 ### 6.3 Exact excitation spaces in pulse solves
 
 Source: [`quchip/engine/pulse_space.py`](quchip/engine/pulse_space.py)
@@ -916,6 +989,10 @@ that support under every retained Hamiltonian term, delivered drive, jump,
 and no-jump product. It checks local authored algebra before global embedding.
 Scalar zeros and small numerical entries do not prove conservation. Unknown
 support selects the full product route, with a memory check before assembly.
+A ket traced by `jax.jit` has unknown support. `chip.bare_state()` stays a
+constant when it depends on no traced value, but a level of a device that
+solves in its native basis follows that device's traced parameters. A label
+or `chip.compact_state(...)` keeps its support in every case.
 Dense compact operators that cannot fit in memory also select the full route.
 A batch proves one space from the initial states of all its points, or it uses
 the full route. The calculation never introduces an excitation cutoff
@@ -952,9 +1029,12 @@ dimensions. Local population, measurement, reduced-state, and channel queries
 operate on compact coordinates. Native `states`, `state()`, and `final_state`
 exports expand lazily and refuse allocations that cannot fit.
 `chip.compact_state(...)` and `result.compact_state(t=None)` provide reusable
-states without expansion. Their maps capture local energy bases. Replay
-requires the same bases. Explicit inputs retain the existing integration-frame
-convention (§4.2). quchip applies no hidden phase transformation.
+states without expansion. `chip.compact_state(...)` gives the dressed states of
+its labels, and `dressed=False` their bare products, whose devices can also
+take local kets. Their maps capture local
+energy bases. Replay requires the same bases. Explicit inputs retain the
+existing integration-frame convention (§4.2). quchip applies no hidden phase
+transformation.
 
 ### 6.4 Excitation cutoffs
 
@@ -967,8 +1047,8 @@ every label whose levels sum to `N = sum_i n_i <= K`. It counts levels, not
 energy, so it is not an energy window. Set it with `Chip(..., space=...)` or
 `chip.with_space(...)`, and remove it with `chip.with_space(None)`. Clones,
 parameter rebinding, serialization, and fitted chips keep the policy. quchip
-never selects or changes a chip's policy. Without a policy, `VNA.finite_power()`
-and `VNA.measure()` can truncate their own stationary solve and warn (§6.5).
+never selects or changes a chip's policy. Without a policy, the stationary VNA
+workflows can truncate their own solve and warn (§6.5).
 
 With the projector `P` on the retained labels, the truncated model is
 
@@ -1009,12 +1089,11 @@ every retained label. The budget couples all devices, also devices without
 interactions. A limited chip's solve is therefore never partitioned, and
 `chip.partition()` raises.
 
-With `initial_state=None`, a solve starts from the eigenvector of the truncated
-static lab-frame model `P H_0 P` that is assigned to the bare vacuum, under the
-solve's approximation. Its vacuum overlap is real and nonnegative. Each
-retained label `|n>` then takes the frame phase `exp(i 2π t0 sum_i f_i n_i)`
-at the solve's start `t0`. This state belongs to the approximate model and
-changes with `K`. Supplied states must lie inside the cutoff. A label or
+A label `initial_state`, or an omitted one, starts from the eigenvector of the
+truncated static lab-frame model `P H_0 P` that is assigned to the label, under
+the solve's approximation. Its overlap with the label's bare product is real
+and nonnegative, and the solve places it at `t0` as §4.2 describes. This
+state belongs to the approximate model and changes with `K`. Supplied states must lie inside the cutoff. A label or
 `CompactState` with `N > K` raises, and so does a native state with more than
 `1e-20` of its weight on `N > K`. quchip treats a smaller residue as
 basis-conversion round-off. The solve drops it and does not renormalize the
@@ -1046,41 +1125,47 @@ resonator of the `ExcitationCutoff` docstring example, it is +2.261 MHz at
 `K = 3` and -1.136 MHz at `K = 4`, against -1.137 MHz without a cutoff.
 
 Workflows that need the full product space or a local neighborhood raise under
-an active cutoff. They are `VNA.sweep()`, `VNA.output_spectrum()`, `VNA.g1()`,
-`VNA.g2()`, `steadystate()`, stochastic trajectory solvers, `eliminate()`,
-`eliminate_spectators()`, `active_patch()`, `fit_a_dress(evaluator="local")`,
-and `chip.partition()`. Each message names `chip.with_space(None)`.
-`VNA.finite_power()` and `VNA.measure()` solve the truncated model (§6.5). A
+an active cutoff. They are `VNA.sweep()`, stochastic trajectory solvers,
+`eliminate()`, `eliminate_spectators()`, `active_patch()`,
+`fit_a_dress(evaluator="local")`, and `chip.partition()`. Each message names
+`chip.with_space(None)`. `steadystate()`, `VNA.finite_power()`,
+`VNA.measure()`, `VNA.output_spectrum()`, `VNA.g1()` and `VNA.g2()` solve the
+truncated model (§6.5). A
 cutoff with `K >= sum_i (d_i - 1)` keeps every label, so it is inactive and
 changes no calculation. The classes and spaces depend
 only on structural excitation changes, so they stay fixed under JAX tracing.
 Traced class blocks use differentiable eigensolves, with the derivative
 conditions of §9.
 
-### 6.5 Finite-probe stationary states on excitation sectors
+### 6.5 Stationary states on excitation sectors
 
 Sources: [`quchip/engine/sector_stationary.py`](quchip/engine/sector_stationary.py),
 [`quchip/backend/_sector_stationary.py`](quchip/backend/_sector_stationary.py),
-[`quchip/analysis/measurement.py`](quchip/analysis/measurement.py)
+[`quchip/analysis/measurement.py`](quchip/analysis/measurement.py),
+[`quchip/analysis/vna.py`](quchip/analysis/vna.py)
 
-`VNA.finite_power()` and `VNA.measure()` solve one stationary state at each
-grid point (§8.1, §8.2). For a chip that conserves the total excitation `N`, a
-weak probe reaches only `N = 0` and `N = 1`. A finite probe couples every `N`
-to `N ± 1`, so no finite set of sectors is closed. These methods then solve
-the truncated model of §6.4 on the labels with `N <= K`. It differs from the
-full model only by the probe elements from `N = K` to `N = K + 1`.
+`steadystate()`, `VNA.finite_power()`, `VNA.measure()`,
+`VNA.output_spectrum()`, `VNA.g1()` and `VNA.g2()` solve one stationary state
+at each grid point (§8.1, §8.2). For a chip that conserves the total
+excitation `N`, a weak probe reaches only `N = 0` and `N = 1`. A finite probe
+or pump couples every `N` to `N ± 1`, so no finite set of sectors is closed.
+These methods then solve the truncated model of §6.4 on the labels with
+`N <= K`. It differs from the full model only by the drive elements from
+`N = K` to `N = K + 1`.
 
 This route applies when the static model conserves `N`, every port lowers `N`
 by one, and every other channel lowers `N` by one or conserves it. The inputs
-must be vacuum, and the chip must have no thermal device occupation, pump,
-output network or retained mode response. All values must be concrete. Other
-chips and calls under JAX tracing use the stationary engine. It solves the
-compact model directly under an explicit cutoff, and the full product space
-otherwise.
+must be vacuum apart from coherent tones at one frequency, and the chip must
+have no thermal device occupation, output network or retained mode response.
+In `finite_power()` and `measure()`, a pump must have the probe frequency. All
+values must be concrete. Other chips and calls under JAX tracing use the
+stationary engine. It solves the compact model directly under an explicit
+cutoff, and the full product space otherwise.
 
-In the probe frame, `H' = 2π (H - E_0 - f N)`. Port `k` receives the probe
-coefficient `c_k = S_k,in beta_in h_in(f)`, with the probe amplitude
-`beta_in` in the physics convention (§8.1). With lowering channels `L_k` and
+In the frame of the tones, `H' = 2π (H - E_0 - f N)`. Port `k` receives the
+coefficient `c_k = sum_i S_k,i beta_i h_i(f)` from the inputs `i`, with each
+amplitude `beta_i` in the physics convention (§8.1) and `h_i` its inbound
+transfer. With lowering channels `L_k` and
 conserving channels `C_m`, the generator is
 
 ```text
@@ -1112,8 +1197,20 @@ stationary state is unique. Each state then has a lowering jump, so the
 support of every stationary state holds the vacuum, and two stationary states
 with orthogonal supports cannot exist. This holds for any Hamiltonian, probe
 and conserving channels. The solver compares the smallest eigenvalue of
-`sum_k L_k† L_k` in each sector with `δ`. Above 1024 labels, it uses the
-Gershgorin bound. If a sector fails this test, a dark state is possible, and
+`sum_k L_k† L_k` in each sector with `δ`. Above 1024 labels, it uses a lower
+bound of that eigenvalue: the larger of the Gershgorin bound and the smallest
+diagonal entry of the channels on one device. A channel on one device lowers
+only its own level, so its `L† L` is diagonal in energy coordinates, and the
+other channels add a positive semidefinite part. The Gershgorin bound alone
+is negative on a cascaded feedline, whose port channels couple the labels of
+different devices. Without a drive the vacuum is stationary, so when this test
+passes, `steadystate()` solves nothing and returns the vacuum on the labels
+with `N <= 1`. The frame map `U(t)` keeps `|0><0|`, so the vacuum is also the
+stationary state of a frame in which the resolved Hamiltonian is not static,
+where the backend's solve raises. When the test fails, `steadystate()` solves
+the backend's stationary Liouvillian. The `steady_state` of the output statistics reports `nullity=1`
+when the test passes and `None` when it fails. If a sector fails this test, a
+dark state is possible, and
 the solver starts again from a fixed generic full-rank state. The equations do
 not fix the weight on a second stationary state, so the two starts usually end
 with different weights on it. A start such as the maximally mixed state can
@@ -1133,27 +1230,47 @@ stationary state. At `K = 2`, the dark state empties at a rate of order
 
 The noise spectra solve `(G + i 2π f) Y = B` with `Tr Y = 0` on the same
 blocks, with the sign of `stationary_resolvent()` (§8.2). Since
-`R_f(B†) = R_{-f}(B)†`, each output and offset needs one solve. Mode
+`R_f(B†) = R_{-f}(B)†`, the adjoint source at `f` needs the resolvent at
+`-f`. Each output therefore solves at every offset and at its negative. Only
+an exact negative reuses a point, so the default grid of `measure()`, which is
+exactly symmetric, needs no extra solves. Mode
 amplitudes and photon numbers evaluate the authored `a` and `n` on the
 retained labels. Every mode is solved in the probe frame, so
 `mode_frequencies` holds the probe frequency, as for the harmonic route. A
 channel that couples modes at different frequencies is then static.
 
+`output_spectrum()` sends these spectra through the outbound reference of its
+port, as `measure()` does. Its fluxes read the output field
+`b = h(f) (b_bg I + L)`, where `b_bg = sum_i S_k,i beta_i h_i(f)` is the
+coherent field that the inputs carry to the port and `h` is the outbound
+transfer. `g1()` and `g2()` evolve `b_in rho` and `b_in rho b_in†` with the
+generator `G`, without the trace constraint, by Krylov exponentials on the
+sorted delays. They read `b_out†` and `b_out† b_out`. As on the product space,
+they raise for an amplifier or a thermal field.
+
 With `chip.with_space(ExcitationCutoff(max_total=K))`, `K` is the chip's, and
 the call does not check it. Without a cutoff, with `options=None` and more
 than 64 product states, the methods choose `K`. They start at `K = 2`, solve
-the whole grid, and solve it again at `K + 1`. At every grid point, they
-compare the output means, mode amplitudes and photon numbers. When
-`N <= K + 1` has at most 1024 labels, they also compare the noise spectra at
-every offset. For two values `a` and `b` of one quantity, the change is
+the whole grid, and solve it again at `K + 1`. At every grid point,
+`finite_power()` and `measure()` compare the output means, mode amplitudes
+and photon numbers. When `N <= K + 1` has at most 1024 labels, `measure()`
+also compares the noise spectra at every offset. `output_spectrum()` compares
+its spectra at every offset and its fluxes, and `g1()` and `g2()` compare the
+raw correlations at every delay and
+the two intensities. `steadystate()` needs no `K`, because the vacuum is
+exact. For two values `a` and `b` of one quantity, the change is
 `|a - b| / (max(|a|, |b|) + 1e-3 m)`, where `m` is the largest value of that
-quantity on the grid. The floor gives an absolute tolerance of `1e-9 m`. If
-any change is above `1e-6`, `K` increases by one. The result is the solve at
+quantity on the grid. The floor gives an absolute tolerance of `1e-9 m`. In
+`finite_power()` and `measure()`, one value holds all ports at one grid point,
+and `|.|` is the Euclidean norm, or the Frobenius norm of the IQ matrix at one
+noise offset. This is a joint criterion, so a port whose values are much
+smaller than those of the others is not checked to its own size. If any
+change is above `1e-6`, `K` increases by one. The result is the solve at
 `K`, not at `K + 1`. One warning per call gives `K`, the retained dimension
 and the result of the check. If `K + 1` does not fit in memory, the check does
 not run, and the warning says so. If `K` reaches the largest total, the solve
-is exact and the call does not warn. Without a cutoff, `options={}` solves the
-full product space.
+is exact and the call does not warn. `options={}` solves the backend's
+stationary Liouvillian, on the full product space when there is no cutoff.
 
 This check measures the change from `K` to `K + 1`, not the error of the
 result. The weight on `N = K` alone does not measure the error, because a
@@ -1170,7 +1287,34 @@ report the GMRES iterations and relative residual, the trace, Hermiticity and
 positivity errors of the state, and the iterations, residual and `|Tr Y|` of
 the noise solves. An automatic choice adds `cutoff_check`. Under an explicit
 cutoff, the stationary engine reports `excitation_cutoff` and
-`retained_dimension` with its own diagnostics.
+`retained_dimension` with its own diagnostics. Every result also records its
+route (§6.6).
+
+### 6.6 Solve routes
+
+Source: [`quchip/engine/routes.py`](quchip/engine/routes.py)
+
+One planner chooses how each stationary calculation solves. Each result
+records the choice as a `SolveRoute` under `diagnostics["route"]`, and
+`diagnostics["solver"]` holds its name. The record gives the `reason` for the
+route, the `dimension` that it solves on, the array library of the solve
+(`arrays`, `"numpy"` or `"jax"`), and `peak_bytes`, the estimated peak memory,
+which is calculated on request.
+
+| Route | Solves | Workflows |
+|---|---|---|
+| `linear_response` | mode equations of a passive harmonic chip | `VNA.sweep()`, `VNA.measure()` |
+| `vacuum_response` | vacuum and one-excitation states under a weak probe | `VNA.sweep()` |
+| `conditional_response` | adjacent-sector coherences of a frozen dressed reference | `VNA.sweep(when=...)` |
+| `sector_stationary` | labels with `N <= K` (§6.5) | `steadystate()` and the stationary VNA workflows |
+| `stationary_resolvent` | backend's stationary Liouvillian on the product space or on the labels of a cutoff | every stationary workflow |
+
+The sector route solves with SciPy on the host for both backends. On
+dynamiqs, it therefore does not use JAX arrays, and its reason says so. Traced
+values use the backend's Liouvillian. Static dressed queries diagonalize the
+sector of their label when the static model conserves `N` or the chip has an
+excitation cutoff, and the full static model otherwise. `chip.describe()`
+reports this choice.
 
 ## 7. Counter-Rotating Terms
 
@@ -1581,8 +1725,8 @@ assignment can give a vector a zero amplitude on its own label. When `|a|` is no
 above the square root of the floating-point epsilon, the anchor is the first
 amplitude within a relative `1e-6` of the vector's largest magnitude.
 `Chip.state()`, the eigenstates and eigenvector matrix of `DressedResult`,
-dressed-basis operators, drive matrix elements, sector eigenvectors and the default
-initial state use this convention. The convention is piecewise. Backend agreement
+dressed-basis operators, drive matrix elements, sector eigenvectors and label
+initial states use this convention. The convention is piecewise. Backend agreement
 and derivatives need resolved eigenvalue gaps, a locally constant assignment, and
 a stable anchor: an assigned amplitude that stays above the floor, or a fallback
 amplitude that stays the unique near-largest one. A phase cannot fix a rotation, so
@@ -1626,20 +1770,43 @@ snapshot has dynamic Hamiltonian terms, `dress(at_time=...)` is required, and
 it evaluates their signal programs at that instant. The result is an
 instantaneous eigensystem, not Floquet or cycle-averaged analysis.
 
-When `initial_state=None`, a solve uses the eigenstate assigned to the
-all-ground label of the undriven static lab-frame Hamiltonian that its
-approximation keeps. The state is phase-fixed to have a real, nonnegative
-overlap on the bare product before the runtime frame transform (§4.2). With
-ordinary couplings, the default RWA leaves the bare product unchanged. When the
-static model of the solve's approximation conserves `N`, the bare product is
-the only state with `N = 0`. The solve then starts from it with no static
-model or eigensystem. Other models first apply the static Hamiltonian to the
-bare product, and they diagonalize it only when the bare product is not an
-eigenstate. When
-the solve uses the chip's approximation, it starts from the same physical
-state as `chip.state()` for the all-ground label before the frame transform.
-Retained bands, effective terms, or network Hamiltonian terms that couple the
-vacuum can dress an RWA default.
+A level label such as `{"q0": 1}` or `"eg"` names the dressed eigenstate
+`|d_k>` assigned to label `k` wherever quchip takes one: in `Chip.state()`, as
+the `initial_state` of a solve, as a target of `overlap()` and
+`amplitude_array()` (§4.2), and in `Chip.superposition()` and
+`Chip.compact_state()`. `Chip.bare_state()` gives the bare product state, and
+its `(amplitude, label)` pairs give bare superpositions. Operators stay local.
+`population(q, k)` is the projector on level `k` of device `q`, so on a
+dressed state it reads less than the overlap with the state's label.
+
+A label `initial_state`, or an omitted one, uses the eigenstate of the
+undriven static lab-frame Hamiltonian that the solve's approximation keeps,
+or of `P H_0 P` under an excitation cutoff, with the phase convention above.
+The solve places it at `t0 = tlist[0]` as the label target of §4.2:
+
+```text
+psi_solve(t0) = U(t0)† |d_k> exp(-i 2π t0 Σ_i f_ref,i k_i)
+```
+
+An omitted state is the all-ground label, so it equals `{}`. The labels of an
+uncoupled chip start in their bare products in every frame. An
+`initial_state` label takes integer levels, and `Chip.bare_state(...)` gives a
+product of local kets. When the solve uses the chip's approximation and
+cutoff, a label at `t0 = 0` starts from the same vector as `chip.state()`. A
+ket such as `chip.state()` or `chip.superposition()` is an integration-frame
+vector at `t0` and is not moved, so at `t0 != 0` it can differ from its label
+by the frame phases of its components. At an exact degeneracy the label names
+whichever eigenvector the eigensolver returns, as above.
+
+With ordinary couplings, the default RWA leaves the all-ground bare product
+unchanged. When the static model of the solve's approximation conserves `N`,
+the bare product is the only state with `N = 0`. The solve then starts from
+it with no static model or eigensystem. Other models first apply the static
+Hamiltonian to the bare product, and they diagonalize it only when the bare
+product is not an eigenstate. Retained bands, effective terms, or network
+Hamiltonian terms that couple the vacuum can dress an RWA default. An excited
+label diagonalizes the sector or cutoff class of its total when the model
+conserves `N` or has a cutoff, and the full static model otherwise.
 
 ### 9.1 Dressed drive matrix elements
 
@@ -1728,6 +1895,55 @@ resolved levels has `NaN` on the diagonal, but its defined off-diagonal
 entries stay available. Every entry comes from the complete dressed chip,
 not from a matching authored edge. For example, an isolated `KerrCavity`
 with `H = omega*n - K*n*(n-1)` has `K[i,i] = -2*K`.
+
+### 9.4 Subspace propagators
+
+Sources: [`quchip/results/propagator.py`](quchip/results/propagator.py), [`quchip/control/sequence.py`](quchip/control/sequence.py)
+
+`QuantumSequence.subspace_propagator(devices, levels=(0, 1))` takes the labels
+that give each selected device one of `levels` and every other device level
+0. One batch starts each label `j` in its dressed state at `t0 = tlist[0]`
+(§9) and projects the final states at `T = tlist[-1]` on the label targets of
+§4.2:
+
+```text
+A_ij = <target_i(T)|psi_j(T)> = exp(i 2π T F_i) <d_i|U_lab(T, t0)|d_j> exp(-i 2π t0 F_j)
+```
+
+with `F_k = Σ_d f_ref,d k_d`. Every other device starts and ends in level 0.
+A frame gives label `k` the energy `E_k = E_0 + Σ_d f_d k_d`, and the record
+holds
+
+```text
+M_ij = exp(i 2π T E_i) <d_i|U_lab(T, t0)|d_j> exp(-i 2π t0 E_j)
+```
+
+The frames are:
+
+- `"dressed"`, the default: `f_d = E(1_d) - E(0)` and `E_0 = E(0)`, from the
+  static model with the approximation and excitation cutoff of the solve. An
+  idle label with at most one excitation keeps amplitude 1, and an idle pair
+  of qubits gives `diag(1, 1, 1, exp(-i 2π ζ (T - t0)))`, with the static ZZ
+  `ζ` of §9.3.
+- `"lab"`: `f_d = 0` and `E_0 = 0`.
+- `"integration"`: `E_k = F_k`, so `M = A`, the amplitudes of
+  `amplitude_array()`.
+
+Energies from another approximation would add a phase that grows with time.
+For example, the Bloch-Siegert shift of `Exact()` is absent from an `RWA()`
+solve. The frame factors are phases, so `|M_ij|` and the leakage
+`L_j = 1 - Σ_i |M_ij|²` do not depend on the frame. `fidelity(V)` returns the
+average gate fidelity over pure states in the labels,
+
+```text
+F = (Tr(M† M) + |Tr(V† M)|²) / (d (d + 1))
+```
+
+for a unitary target `V` of dimension `d`. Leakage lowers `Tr(M† M)`, so it
+lowers `F`. The solves leave out declared collapse channels with a warning, and
+`omitted_channels` names them, so `M` is the propagator of the Hamiltonian.
+On dynamiqs, the matrix and the fidelity are differentiable in chip and pulse
+parameters (§13).
 
 ## 10. Adiabatic Elimination and Dispersive Readout
 
@@ -2563,6 +2779,32 @@ Native measurement records describe selected L in the integration frame, without
 adding coherent incident beta or downstream receiver noise. Native weighted jump
 averages include deterministic no-click paths. Truncation checks are explicit
 and cover available samples, with final-only coverage identified separately.
+
+`TrajectoryResult.records()` gives the diffusive currents of both backends in
+one layout, with shape `(runs, channels, intervals)`. QuTiP heterodyne adds a
+quadrature axis before the intervals. A channel with collapse operator `L`,
+which includes the square root of its rate, efficiency `eta` and phase `phase`
+records
+
+```text
+I = 2 Re<c> + xi,    c = sqrt(eta) exp(-i phase) L
+```
+
+in 1/sqrt(ns). The homodyne noise `xi` has variance `1/Δt`. QuTiP heterodyne
+records `2 Re<c> + xi_X` and `2 Im<c> + xi_Y`, and each noise has variance
+`2/Δt`. QuTiP samples the signal at the start or the
+end of each interval, or takes the mean of both, as `store_measurement`
+selects. Dynamiqs divides the increment of the integrated record by `Δt`, so
+its signal is the mean over the interval. For a decaying coherent field with
+`L = a`, `eta = 1` and `<a>(0) = 1`, the interval `[0, 1]` ns gives the
+signals 2, 1.21306, 1.60653 and 1.57388 for the start, end, middle and mean.
+
+`clicks()` gives the click times and channels of each run with its sampling
+weight `w_r`. An ensemble mean is `Σ_r w_r x_r`, plus the no-click run with
+`no_click_weight` when QuTiP `improved_sampling` or Dynamiqs smart sampling
+solves that run apart. `full` marks a run that filled its Dynamiqs `nmaxclick`
+buffer, whose evolution can stop early. `run_expect(key)` gives the
+expectation of each run without weights.
 See [the solver guide](docs/guides/choosing-a-backend.md) and
 [Wiseman and Milburn, chapter 4](https://doi.org/10.1017/CBO9780511813948).
 

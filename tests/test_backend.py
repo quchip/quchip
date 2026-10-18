@@ -270,7 +270,7 @@ class TestSuperoperatorMemory:
         """mesolve raises MemoryError naming dynamiqs before assembling an oversized Liouvillian."""
         import qutip
 
-        from quchip.backend import _memory
+        from quchip.utils import memory as _memory
 
         monkeypatch.setattr(_memory, "available_memory_bytes", lambda: 10**6)
         hamiltonian = qutip.Qobj(np.ones((12, 12)), dtype="Dense")

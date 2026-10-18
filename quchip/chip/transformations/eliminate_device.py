@@ -45,8 +45,6 @@ from quchip.chip.effective import (
     OperatorProjection,
     _in_device_order,
     _retained_owners,
-    authored_excitation_changes,
-    conserves_excitation_number,
     lineage,
     lineage_labels,
     retained_support,
@@ -63,8 +61,8 @@ from quchip.chip.sw import (
     basis_row,
     mode_blocks,
     cross_block_gap,
-    excitation_sectors,
 )
+from quchip.engine.excitation import authored_excitation_changes, excitation_sectors, excitation_structure
 from quchip.chip.transformations.dispatch import EliminationTarget, register_elimination_target
 from quchip.chip.transformations.methods import (
     DeviceReductionContext,
@@ -393,12 +391,12 @@ def _local_dressed_transition(chip: "Chip", resolution: Any, mode_label: str, lo
     fixed. Selection uses dimensions and proved conservation, never parameter
     values. All local terms supply the intermediate states' diagonal energies.
     """
-    from quchip.backend._memory import require_memory
+    from quchip.utils.memory import dense_bytes, level_table_bytes, require_memory
 
     dims = resolution.dims
     mode_axis = chip.device_index(mode_label)
     terms = tuple(_hamiltonian_interactions(chip, resolution, approximation))
-    conserving = conserves_excitation_number(chip, approximation, resolution=resolution)
+    conserving = excitation_structure(chip, approximation, resolution=resolution).conserves
     ground = (0,) * len(dims)
     excited = tuple(int(index == mode_axis) for index in range(len(dims)))
     states = dict.fromkeys((ground, excited))
@@ -413,7 +411,7 @@ def _local_dressed_transition(chip: "Chip", resolution: Any, mode_label: str, lo
                     state[index] = level
                 states[tuple(state)] = None
     size = len(states)
-    require_memory(16 * 12 * size**2 + 8 * len(dims) * size,
+    require_memory(dense_bytes(size, size, copies=12) + level_table_bytes(size, len(dims)),
                    task=f"Local SW transition (dimension {size})",
                    remedy="Use interactions on smaller local supports or reduce the model.")
     levels = np.asarray(tuple(states), dtype=np.int64)
@@ -822,13 +820,13 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
     # A structurally conserving model has no matrix elements between
     # total-excitation sectors; removing their round-off keeps both routes,
     # and every captured map, inside the sectors.
-    sectors = excitation_sectors(dims) if conserves_excitation_number(numeric, approximation) else None
+    sectors = excitation_sectors(dims) if excitation_structure(numeric, approximation).conserves else None
     if sectors is not None:
         h = concrete_array_module(h).where(sectors[:, None] == sectors[None, :], h, 0.0)
     conserving = sectors is not None
     if local and conserving and boundary_ports:
         # A retained pole serves the vacuum response of the whole reduced chip.
-        conserving = conserves_excitation_number(chip, approximation)
+        conserving = excitation_structure(chip, approximation).conserves
     if len(boundary_ports) > 1 and not conserving:
         raise NotImplementedError(
             f"Eliminating {mode_label!r} with ports {[port.label for port in boundary_ports]} requires an "
@@ -1253,11 +1251,11 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
                                for label, dim in zip(labels, dims)))
             frequency, weight = reduction.dressed_transition(ctx, lowering)
     if coupled_response:
-        from quchip.chip.port_network import _ModeResponse
+        from quchip.engine.slh import ModeResponse
 
         network = final.port_network
         assert network is not None
-        network._mode_responses += (_ModeResponse(
+        network._mode_responses += (ModeResponse(
             mode_label, tuple(port.label for port in boundary_ports), frequency, weight, weight * internal_rate,
         ),)
         notes.append(

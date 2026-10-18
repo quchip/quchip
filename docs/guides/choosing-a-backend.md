@@ -149,6 +149,11 @@ stationary = chip.steadystate(options={"method": "direct", "solver": "spsolve"})
 available. dynamiqs uses a differentiable constrained direct solve. A non-unique
 state raises outside tracing and becomes `NaN` inside `jax.jit`.
 
+Solver options always select this backend solve. Without them, an undriven chip
+that conserves the total excitation and has more than 64 product states
+returns its vacuum when the lowering channels prove it unique.
+`result.diagnostics["route"]` names the route and the reason for it.
+
 Inspect `residual`, `trace_error`, and `positivity_error`. By default, dense
 QuTiP nullity and condition-number diagnostics are calculated only up to
 Hilbert dimension 16. Adjust `diagnostic_max_dimension` as needed.
@@ -195,6 +200,16 @@ QuTiP `runs_expect` has axes `(observable, run, time)`, and Dynamiqs `expects`
 has axes `(run, observable, time)`. Native saved states keep their library's
 layout. Access conditional states and observables through a run view.
 
+`result.records()`, `result.clicks()` and `result.run_expect(key)` read these
+native fields in one layout on both backends. `records().values` has shape
+`(runs, channels, intervals)`, and a QuTiP heterodyne solve adds a quadrature
+axis of length 2 before the intervals. `records().sampling` names the native
+signal sample of each interval: `"start"`, `"middle"` or `"end"` in QuTiP, as
+`store_measurement` selects, and `"mean"` in Dynamiqs. `clicks()` gives the
+click times and channels of each run with its sampling weight, and the weight
+of a no-click run that the native sampling solves apart. `run_expect(key)` has
+shape `(runs, time)`, and row `i` equals `result.run(i).expect(key)`.
+
 ```python
 from quchip import with_monitoring
 
@@ -223,8 +238,8 @@ native record does not add its known offset `beta`. The physical outgoing field
 `b_out = beta + L` and downstream receiver processing need explicit analysis. An
 identity offset authored inside a monitored operator is kept.
 
-Records keep native normalization and intervals. QuTiP's selected start/end
-sampling and Dynamiqs interval-averaged currents are not interchangeable. Refine
+Records keep native normalization and intervals. QuTiP's selected start, middle
+or end sampling and Dynamiqs interval-averaged currents are not interchangeable. Refine
 the native timestep to check discretization and norm/positivity errors. Native
 advanced jump-sampling averages include the no-click contribution, so an
 unweighted mean of the kept jump paths does not reproduce them.
@@ -233,7 +248,7 @@ Dynamiqs 0.3.6 `Event` can exhaust `nmaxclick` before the evolution completes. T
 raw result remains accessible, but quchip analysis views reject the incomplete
 evolution. Increase the buffer and rerun. Fixed-step click buffers can truncate
 records without truncating the state evolution. Check saturation before
-interpreting event counts.
+interpreting event counts. `clicks().full` marks the runs that filled the buffer.
 
 Parameter batches assign noise before grouping. Omitted QuTiP seeds are independent
 and captured in each built point, while explicit seeds are kept for correlated

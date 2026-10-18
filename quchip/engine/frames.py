@@ -32,7 +32,6 @@ import jax
 import numpy as np
 
 from quchip.approximations import require_approximation
-from quchip.control.signal import AnalyticSignal
 from quchip.engine.ir import (
     CoherentOp,
     ResolvedFrame,
@@ -41,7 +40,7 @@ from quchip.engine.ir import (
     evaluate_signal_program,
 )
 from quchip.utils.constants import TWO_PI
-from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
+from quchip.utils.jax_utils import array_namespace, contains_tracer, maybe_concrete_scalar
 from quchip.utils.labeling import resolve_label
 
 
@@ -597,6 +596,7 @@ def frame_tones(
     window is ``[0, last pulse end]``. Traced values leave the corresponding
     weight unknown.
     """
+    from quchip.control.signal import AnalyticSignal
     from quchip.engine.assembly import _build_delivered_signals, drive_bands
 
     span = _window(operations, solve_window)
@@ -915,3 +915,152 @@ def resolve_frame(
         mode=mode,
         plan=plan,
     )
+
+
+@dataclass(frozen=True)
+class FrameMap:
+    """Map states and observables between the lab frame and an integration frame.
+
+    The integration frame removes ``Σᵢ fᵢ nᵢ`` from the Hamiltonian, where
+    ``fᵢ`` is the frame frequency of device i in GHz and ``nᵢ`` its
+    energy-level index. With ``U(t) = exp(−i 2π t Σᵢ fᵢ nᵢ)`` at absolute
+    time t in ns, a lab-frame ket ψ is ``U(t)† ψ`` in the integration frame,
+    and a density matrix or an observable X is ``U(t)† X U(t)``. ``U(t)`` is
+    diagonal in energy coordinates. In a solver basis that differs from them,
+    each device applies its energy-to-solver map. A Hamiltonian also gains
+    ``−2π Σᵢ fᵢ nᵢ``; assembly adds that term.
+
+    Attributes
+    ----------
+    frequencies : tuple
+        Frame frequency of each device, in GHz.
+    energies : array_like, shape (N,)
+        Frame energy ``Σᵢ fᵢ nᵢ`` of each coordinate, in GHz.
+    dims : tuple of int
+        Tensor factors of the coordinates.
+    transforms : tuple
+        Energy-to-solver map of each factor, or None where the factor uses energy coordinates.
+    """
+
+    frequencies: tuple[Any, ...]
+    energies: Any
+    dims: tuple[int, ...]
+    transforms: tuple[Any, ...]
+
+    @classmethod
+    def create(cls, frame: ResolvedFrame, labels: Sequence[str], bases: Mapping[str, Any], xp: Any, *,
+               space: Any = None) -> "FrameMap":
+        """Return the map of product solver coordinates, or of the energy rows of an excitation space.
+
+        Parameters
+        ----------
+        frame : ResolvedFrame
+            Integration frame of the solve.
+        labels : sequence of str
+            Device labels in tensor order.
+        bases : mapping
+            Resolved basis record of each device.
+        xp : module
+            Array module of the states.
+        space : PulseSpace or None, optional
+            Excitation space whose rows are energy levels. None selects product solver coordinates.
+        """
+        frequencies = tuple(frame.frequencies.get(label, 0.0) for label in labels)
+        xp = jax.numpy if contains_tracer(frequencies) else xp
+        if space is not None:
+            energies = xp.zeros(space.size)
+            for axis, frequency in enumerate(frequencies):
+                energies = energies + xp.asarray(frequency) * space.levels[:, axis]
+            return cls(frequencies, energies, (space.size,), (None,))
+        energies = xp.zeros(1)
+        transforms = []
+        for label, frequency in zip(labels, frequencies):
+            record = bases[label]
+            energies = (energies[:, None] + xp.asarray(frequency) * xp.arange(record.resolved_dim)).reshape(-1)
+            # At zero frequency U(t) is the identity on the device, so its basis change cancels.
+            transforms.append(None if maybe_concrete_scalar(frequency) == 0.0 else record.energy_to_solver())
+        return cls(frequencies, energies, tuple(bases[label].resolved_dim for label in labels), tuple(transforms))
+
+    def label_energy(self, levels: Sequence[int]) -> Any:
+        """Return the frame energy ``Σᵢ fᵢ kᵢ`` of a product label k, in GHz.
+
+        Parameters
+        ----------
+        levels : sequence of int
+            Energy level of each device.
+        """
+        return sum(frequency * level for frequency, level in zip(self.frequencies, levels))
+
+    def phases(self, t: Any) -> Any:
+        """Return the diagonal ``exp(i 2π t E)`` of ``U(t)†``, with shape ``(N,)`` or ``(T, N)``.
+
+        Parameters
+        ----------
+        t : scalar or array_like, shape (T,)
+            Absolute time or times in ns.
+        """
+        xp = array_namespace(self.energies) if not contains_tracer(t) else jax.numpy
+        return xp.exp(1j * TWO_PI * xp.asarray(t)[..., None] * self.energies)
+
+    def kets(self, values: Any, t: Any, *, to_lab: bool = False) -> Any:
+        """Map kets on the last axis from the lab frame into the integration frame, or back.
+
+        A ket of shape ``(N,)`` and a time array of shape ``(T,)`` give one ket per time.
+
+        Parameters
+        ----------
+        values : array_like, shape (..., N)
+            Kets in the coordinates of this map.
+        t : scalar or array_like
+            Absolute time or times in ns.
+        to_lab : bool, default=False
+            Map from the integration frame into the lab frame.
+        """
+        if maybe_concrete_scalar(t) == 0.0:
+            return values
+        phases = self.phases(t)
+        if to_lab:
+            phases = array_namespace(phases).conj(phases)
+        return self._change(phases * self._change(values, to_energy=True), to_energy=False)
+
+    def operators(self, values: Any, t: Any, *, to_lab: bool = False) -> Any:
+        """Map density matrices or observables on the last two axes: ``U† X U``, or ``U X U†`` back.
+
+        Parameters
+        ----------
+        values : array_like, shape (..., N, N)
+            Operators in the coordinates of this map.
+        t : scalar or array_like
+            Absolute time or times in ns.
+        to_lab : bool, default=False
+            Map from the integration frame into the lab frame.
+        """
+        if maybe_concrete_scalar(t) == 0.0:
+            return values
+        phases = self.phases(t)
+        xp = array_namespace(phases)
+        if to_lab:
+            phases = xp.conj(phases)
+        energy = self._change(values, to_energy=True, operator=True)
+        energy = energy * phases[..., :, None] * xp.conj(phases)[..., None, :]
+        return self._change(energy, to_energy=False, operator=True)
+
+    def _change(self, values: Any, *, to_energy: bool, operator: bool = False) -> Any:
+        """Change the trailing coordinate axes between solver and energy coordinates."""
+        if all(transform is None for transform in self.transforms):
+            return values
+        xp = jax.numpy if contains_tracer((values, self.transforms)) else array_namespace(values)
+        count = len(self.dims)
+        lead = values.shape[: values.ndim - (2 if operator else 1)]
+        tensor = values.reshape((*lead, *self.dims, *(self.dims if operator else ())))
+        for axis, transform in enumerate(self.transforms):
+            if transform is None:
+                continue
+            local = xp.asarray(transform)
+            local = xp.conj(local.T) if to_energy else local
+            sides = [(len(lead) + axis, local)]
+            if operator:
+                sides.append((len(lead) + count + axis, xp.conj(local)))
+            for position, matrix in sides:
+                tensor = xp.moveaxis(xp.tensordot(matrix, tensor, axes=([1], [position])), 0, position)
+        return tensor.reshape(values.shape)

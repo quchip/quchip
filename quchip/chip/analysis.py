@@ -32,23 +32,24 @@ import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
-import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
 
-from quchip.backend import EigensystemData, Operator, State, _backend_context
-from quchip.chip.dressing import (
+from quchip.backend import Operator, State, _backend_context
+from quchip.engine.dressing import (
+    DRESS_TRACING_ERROR,
+    DressedResult,
     Labeling,
-    _reference_amplitudes,
-    assign_rowwise_greedy,
+    reference_amplitudes,
     gauge_phases,
-    label_eigensystem,
+    labeled_eigensystem,
+    materialize_dressed_result,
+    warn_weak_assignment,
 )
-from quchip.chip.states import _bare_state_from_bases, normalize_device_state_mapping
+from quchip.chip.states import normalize_device_state_mapping
 from quchip.devices.base import BaseDevice, _validate_level_pair
-from quchip.utils.constants import TWO_PI
-from quchip.utils.jax_utils import concrete_array_module, contains_tracer, maybe_concrete_scalar
+from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
 from quchip.utils.values import TracedKey, scoped_entry, scoped_hit
 from quchip.utils.labeling import LabelKeyedDict, bare_label_from_mapping, resolve_label, top_components
 
@@ -56,271 +57,16 @@ if TYPE_CHECKING:
     from quchip.approximations import Approximation
     from quchip.chip.chip import Chip
     from quchip.control.drive import BaseDrive
+    from quchip.engine.excitation import ExcitationStructure
     from quchip.engine.ir import EngineResult
     from quchip.engine.sectors import SectorModel
 
 
-_STATE_OVERLAP_WARNING = 0.9
 _CUTOFF_SPECTRUM_ERROR = (
     "The full dressed spectrum (chip.dress() and the views built on it) is not available under an "
     "excitation cutoff, and this chip keeps only N <= {max_total}. Use label queries such as chip.energy(), "
     "chip.freq(), chip.state() or chip.compact_state(), or chip.with_space(None) for the full product space."
 )
-_DRESS_TRACING_ERROR = (
-    "Dressing returns a concrete dict-keyed DressedResult and is not "
-    "traceable under jax.jit/grad/vmap. Use Chip.energy(), Chip.freq(), "
-    "Chip.dispersive_shift(), or Chip.state() inside transforms — they "
-    "route through the array-only kernel in quchip.chip.dressing and stay "
-    "differentiable."
-)
-
-
-@dataclass
-class DressedResult:
-    """Store a frozen snapshot of a dressed-state diagonalization.
-
-    Attributes
-    ----------
-    eigenvalues : array-like
-        Sorted dressed eigenvalues in GHz.
-    eigenstates : array-like
-        Backend eigenstate objects in the same order as ``eigenvalues``, with
-        the phases of ``eigenvector_matrix``. They are materialized lazily on
-        first access from the underlying
-        :class:`~quchip.backend.containers.EigensystemData`. The dressing and
-        sweep hot path never touches them, so the backend builds per-column
-        kets only on request.
-    state_map : dict[tuple[int, ...], int]
-        Map from each bare product-basis label (one int per device) to the
-        dressed eigenstate index with the largest overlap.
-    dressed_eigenvalues : dict[tuple[int, ...], Any]
-        Dressed eigenvalue for each assigned bare label, the direct lookup path
-        for :meth:`Chip.energy`.
-    assignment_overlaps : dict[tuple[int, ...], float]
-        ``|⟨bare|dressed⟩|²`` of each assignment. Values below
-        ``overlap_threshold`` flag hybridization.
-    hybridized_labels : tuple[tuple[int, ...], ...]
-        Bare labels whose assignment quality is below ``overlap_threshold``. A
-        non-empty tuple triggers a user warning at dress time.
-    bare_labels : tuple[tuple[int, ...], ...]
-        Labels of the product energy levels exposed by the chip's resolved
-        local dimensions, in chip order.
-    bare_labels_by_dressed_index : dict[int, tuple[int, ...]]
-        Inverse of :attr:`state_map`: dressed index → assigned bare label.
-    eigenvector_matrix : array-like or None
-        Dressed eigenvectors as columns, in the resolved solver basis, used by
-        :meth:`ChipAnalysis.operator_in_dressed_basis` and
-        :meth:`ChipAnalysis.state_components`. Each column has a real,
-        nonnegative amplitude on its assigned bare state
-        (:func:`~quchip.chip.dressing.gauge_phases`).
-    overlap_threshold : float
-        Minimum overlap for a confident assignment.
-    labeling : str
-        Algorithm id (currently only ``"DE"``). It resolves to the confidence-ordered
-        row-greedy overlap-matching policy run by :meth:`ChipAnalysis.dress`
-        (:func:`~quchip.chip.dressing.assign_rowwise_greedy`).
-    """
-
-    eigenvalues: Any
-    state_map: dict[tuple[int, ...], int]
-    dressed_eigenvalues: dict[tuple[int, ...], Any]
-    assignment_overlaps: dict[tuple[int, ...], float]
-    hybridized_labels: tuple[tuple[int, ...], ...]
-    bare_labels: tuple[tuple[int, ...], ...]
-    bare_labels_by_dressed_index: dict[int, tuple[int, ...]]
-    eigenvector_matrix: Any = None
-    overlap_threshold: float = 0.5
-    labeling: str = "DE"
-    _eigensystem: EigensystemData | None = None
-
-    @property
-    def eigenstates(self) -> Any:
-        """Backend eigenstate kets, materialized lazily from the eigensystem."""
-        if self._eigensystem is None:
-            raise RuntimeError(
-                "DressedResult was constructed without an EigensystemData; "
-                "eigenstates are unavailable."
-            )
-        return self._eigensystem.eigenstates
-
-
-def _materialize_dressed_result(
-    eigenvalues: Any,
-    eigenvector_matrix: Any,
-    eigensystem: EigensystemData,
-    kernel_labeling: Labeling,
-    *,
-    overlap_threshold: float,
-    labeling: str,
-    warning_stacklevel: int,
-) -> DressedResult:
-    """Build the eager label-keyed result shared by chip and resolved dressing."""
-    if contains_tracer((kernel_labeling.indices, kernel_labeling.overlaps)):
-        raise RuntimeError(_DRESS_TRACING_ERROR)
-
-    bare_labels = kernel_labeling.keys
-    indices_np = np.asarray(kernel_labeling.indices)
-    overlaps_np = np.asarray(kernel_labeling.overlaps)
-    state_map: dict[tuple[int, ...], int] = {}
-    bare_labels_by_dressed_index: dict[int, tuple[int, ...]] = {}
-    assignment_overlaps: dict[tuple[int, ...], float] = {}
-    dressed_eigenvalues: dict[tuple[int, ...], Any] = {}
-    for k, bare_label in enumerate(bare_labels):
-        index = int(indices_np[k])
-        state_map[bare_label] = index
-        bare_labels_by_dressed_index[index] = bare_label
-        assignment_overlaps[bare_label] = float(overlaps_np[k])
-        dressed_eigenvalues[bare_label] = eigenvalues[index]
-
-    hybridized_labels = tuple(
-        bare_label
-        for bare_label in bare_labels
-        if assignment_overlaps[bare_label] < overlap_threshold
-    )
-    if hybridized_labels:
-        # Fixed text, so the default warning filter shows it once per call
-        # site instead of once per sweep point.
-        warnings.warn(
-            "Strong hybridization detected during dressed-state assignment; "
-            f"bare labels with overlap below {overlap_threshold} are approximate. "
-            "Inspect DressedResult.hybridized_labels and "
-            "DressedResult.assignment_overlaps for the affected states.",
-            UserWarning,
-            stacklevel=warning_stacklevel,
-        )
-
-    return DressedResult(
-        eigenvalues=eigenvalues,
-        state_map=state_map,
-        dressed_eigenvalues=dressed_eigenvalues,
-        assignment_overlaps=assignment_overlaps,
-        hybridized_labels=hybridized_labels,
-        bare_labels=bare_labels,
-        bare_labels_by_dressed_index=bare_labels_by_dressed_index,
-        eigenvector_matrix=eigenvector_matrix,
-        overlap_threshold=float(overlap_threshold),
-        labeling=labeling,
-        _eigensystem=eigensystem,
-    )
-
-
-def dress_engine_result(
-    result: "EngineResult",
-    *,
-    at_time: Any | None = None,
-    overlap_threshold: float = 0.5,
-    labeling: str = "DE",
-) -> DressedResult:
-    """Materialize the instantaneous dressed eigensystem of an engine snapshot."""
-    if labeling != "DE":
-        raise ValueError(f"Unsupported labeling {labeling!r}. Only 'DE' is implemented.")
-    if result._dressing_context is None:
-        raise RuntimeError(
-            "EngineResult has no resolved dressing context; obtain it from Chip.resolve() "
-            "or a built solve problem."
-        )
-    if result.dynamic_terms and at_time is None:
-        raise ValueError(
-            "A dynamic EngineResult requires dress(at_time=...); this is an "
-            "instantaneous eigensystem, not a Floquet analysis."
-        )
-    context = result._dressing_context
-    backend = context.backend
-    _require_eigensystem_memory(result.dims)
-    hamiltonian = result.hamiltonian().matrix(t=at_time, backend=backend)
-    if contains_tracer((hamiltonian, context.reference.local_vectors)):
-        raise RuntimeError(_DRESS_TRACING_ERROR)
-    native_hamiltonian = backend.from_array(
-        hamiltonian,
-        dims=[list(result.dims), list(result.dims)],
-    )
-    eigensystem = backend.eigensystem_data(native_hamiltonian)
-    kernel_labeling = label_eigensystem(
-        eigensystem.eigenvector_matrix,
-        context.reference,
-        policy=assign_rowwise_greedy,
-    )
-    eigensystem = _gauge_fixed_eigensystem(eigensystem, context.reference, kernel_labeling)
-    eigenvalues = eigensystem.eigenvalues
-    eigenvector_matrix = eigensystem.eigenvector_matrix
-    if result.excitation_space is not None:
-        from dataclasses import replace
-        kernel_labeling = replace(kernel_labeling, keys=tuple(map(tuple, result.excitation_space.levels.tolist())))
-    return _materialize_dressed_result(
-        eigenvalues,
-        eigenvector_matrix,
-        eigensystem,
-        kernel_labeling,
-        overlap_threshold=float(overlap_threshold),
-        labeling=labeling,
-        warning_stacklevel=4,
-    )
-
-
-def _gauge_fixed_eigensystem(eigensystem: EigensystemData, reference: Any, labeling: Labeling) -> EigensystemData:
-    """Rephase each eigenvector so that its assigned bare amplitude is real and nonnegative.
-
-    The kets of the backend take the same phases, so a degenerate eigenspace
-    keeps the eigensolver's basis.
-    """
-    raw = eigensystem.eigenvector_matrix
-    phases = gauge_phases(_reference_amplitudes(reference, raw), labeling.indices)
-    xp = concrete_array_module(raw, phases)
-    vectors = xp.asarray(raw) * phases
-    if isinstance(raw, jax.Array) and xp is np:
-        vectors = jnp.asarray(vectors)
-    factors = [complex(factor) for factor in phases] if xp is np else list(phases)
-
-    def build_states() -> list[Any]:
-        return [state * factor for state, factor in zip(eigensystem.eigenstates, factors, strict=True)]
-
-    return EigensystemData(eigenvalues=eigensystem.eigenvalues, eigenvector_matrix=vectors,
-                           _states_builder=build_states)
-
-
-def _require_eigensystem_memory(dims: Sequence[int]) -> None:
-    """Raise :class:`MemoryError` before a full static eigensystem that cannot fit."""
-    from quchip.backend._memory import require_memory
-
-    dimension = int(np.prod(dims))
-    require_memory(16 * 6 * dimension**2, task=f"Full static eigensystem (dimension {dimension})",
-                   remedy="Use a conserving model with labeled sector queries or reduce the model.")
-
-
-def _labeled_eigensystem(engine_result: "EngineResult", backend: Any) -> tuple[Any, Any, Any, Labeling]:
-    """Diagonalize a static analysis result and assign its bare product labels.
-
-    Returns ``(eigenvalues, eigenvector_matrix, eigensystem, labeling)``;
-    traced Hamiltonians stay traced. Each eigenvector follows the phase
-    convention of :func:`~quchip.chip.dressing.gauge_phases`.
-    """
-    from quchip.engine.assembly import _analysis_matrix_ghz
-
-    context = engine_result._dressing_context
-    if context is None:
-        raise RuntimeError("Resolved analysis is missing its captured dressing reference.")
-    dims = list(engine_result.dims)
-    _require_eigensystem_memory(dims)
-    eigensystem = backend.eigensystem_data(
-        backend.from_array(_analysis_matrix_ghz(engine_result), dims=[dims, dims])
-    )
-    labeling = label_eigensystem(eigensystem.eigenvector_matrix, context.reference, policy=assign_rowwise_greedy)
-    eigensystem = _gauge_fixed_eigensystem(eigensystem, context.reference, labeling)
-    return eigensystem.eigenvalues, eigensystem.eigenvector_matrix, eigensystem, labeling
-
-
-def _is_eigenstate(state: State, result: "EngineResult", backend: Any) -> bool:
-    """Return whether a concrete static result maps ``state`` onto a multiple of itself.
-
-    The residual tolerance is ``1e-12`` times the Hamiltonian's angular
-    spectral span.
-    """
-    operators = [term.coefficient * backend.from_canonical_operator(term.operator) for term in result.static_terms]
-    image = sum(operators[1:], start=operators[0]) @ state
-    residual = float(backend.norm(image - backend.overlap(state, image) * state))
-    return residual <= 1e-12 * TWO_PI * result.metadata["spectral_bound_ghz"]
-
-
 @dataclass(frozen=True)
 class KerrMatrix:
     """Labeled dressed self-Kerr and cross-Kerr coefficients in GHz.
@@ -465,7 +211,7 @@ class ChipAnalysis:
         self._array_cache: tuple[Any, Any, tuple[Any, Any, Any, Labeling]] | None = None
         self._sector_cache: tuple[Any, Any, tuple[SectorModel | None, list[str]]] | None = None
         self._engine_result_cache: tuple[Any, Any, tuple[EngineResult, list[str]]] | None = None
-        self._ground_cache: tuple[Any, Any, Any] | None = None
+        self._label_cache: tuple[Any, Any, Any] | None = None
         self._bare_labels_cache: tuple[
             tuple[tuple[int, ...], ...], dict[tuple[int, ...], int]
         ] | None = None
@@ -556,7 +302,7 @@ class ChipAnalysis:
         context = engine_result._dressing_context
         if context is None:
             raise RuntimeError("Resolved analysis is missing its captured dressing reference.")
-        return _reference_amplitudes(context.reference, eigenvectors)
+        return reference_amplitudes(context.reference, eigenvectors)
 
     def _canonical_bare_labels(self) -> tuple[tuple[int, ...], ...]:
         """Product energy-level labels in chip order."""
@@ -637,7 +383,7 @@ class ChipAnalysis:
         elif not scoped_hit(self._engine_result_cache, signature):
             self._engine_result_cache = scoped_entry(
                 signature, (engine_result, []), traced=engine_result._contains_tracer())
-        result = _labeled_eigensystem(engine_result, chip.backend)
+        result = labeled_eigensystem(engine_result, chip.backend)
         # The 3rd slot carries the EigensystemData (lazy eigenstates) rather than
         # a materialized ket list — nothing on the hot path reads it. The cache
         # tracer-check covers only slots (0, 1, 3); touching slot 2 would force
@@ -663,21 +409,23 @@ class ChipAnalysis:
         cutoff classes of :class:`~quchip.engine.sectors.SectorModel`. Results
         cache like the full eigensystem.
         """
-        from quchip.chip.effective import conserves_excitation_number
-        from quchip.cutoff import active_cutoff
+        from quchip.engine.assembly import _resolve_system
+        from quchip.engine.excitation import excitation_structure, round_off_advisory
+        from quchip.engine.routes import static_route
         from quchip.engine.sectors import SectorModel
 
         signature = self._analysis_signature()
         if scoped_hit(self._sector_cache, signature):
             return _reported(self._sector_cache[2], _advise)
         chip = self._chip
-        from quchip.engine.assembly import _resolve_system
-
         resolution = _resolve_system(chip, chip.backend) if _local_resolution is None else _local_resolution
         advisories: list[str] = []
-        model = (SectorModel(chip, resolution=resolution, advisories=advisories)
-                 if active_cutoff(chip) is not None
-                 or conserves_excitation_number(chip, chip.approximation, resolution=resolution) else None)
+        structure = excitation_structure(chip, chip.approximation, resolution=resolution)
+        model = None
+        if static_route(chip, structure).name == "sector_eigensystem":
+            model = SectorModel(chip, resolution=resolution, advisories=advisories)
+        elif (advisory := round_off_advisory(structure)) is not None:
+            advisories.append(advisory)
         self._sector_cache = scoped_entry(signature, (model, advisories), traced=model is not None and model.traced)
         return _reported((model, advisories), _advise)
 
@@ -747,72 +495,92 @@ class ChipAnalysis:
         total : int
             Largest total energy-level index of the queried labels.
         """
-        from quchip.engine.sectors import sector_size
-
         model = self._sector_model()
-        if model is None:
-            return self._chip.total_dim
-        dims = model.dims
-        if model.classes is None:
-            return max(sector_size(dims, level_sum) for level_sum in range(total + 1))
-        return max(sum(sector_size(dims, level_sum) for level_sum in group)
-                   for group in model.classes if group[0] <= total)
+        return self._chip.total_dim if model is None else model.structure.largest_block(total)
 
     def _ground_ket(self, approximation: "Approximation") -> Any | None:
-        """Return the all-ground-labeled lab-frame eigenstate for ``approximation``.
+        """Return the all-ground-labeled lab-frame eigenstate for ``approximation``, as :meth:`_label_ket` does."""
+        return self._label_ket((0,) * len(self._chip.devices), approximation)
+
+    def _label_ket(self, label: tuple[int, ...], approximation: "Approximation") -> Any | None:
+        """Return the lab-frame eigenstate assigned to ``label`` for ``approximation``.
 
         The ket uses solver coordinates and has real, nonnegative overlap on
-        the bare product. ``None`` means the bare product is already an
-        eigenstate. A static model that conserves the total energy-level index
-        returns ``None`` with no static model, because the bare product is the
-        only state with total level 0. Results cache against the analysis signature and
-        ``approximation``; traced ones only inside their trace. A traced ket is differentiated by first-order
+        the bare product of ``label``. A block model takes the ket from the
+        block of the label's total. Without a cutoff, such a model conserves
+        the total energy-level index, so the all-ground label needs no
+        eigensystem: its bare product is the only state with total level 0,
+        and ``None`` means that bare product. Results cache against
+        the analysis signature, ``approximation`` and ``label``; traced ones only
+        inside their trace. A traced ket is differentiated by first-order
         perturbation theory over the same eigensystem, masking gaps at the
         tolerance of :func:`~quchip.engine.basis._differentiable_eigenpairs`.
         """
-        from quchip.chip.effective import conserves_excitation_number
+        from quchip.cutoff import active_cutoff
         from quchip.engine.assembly import _analysis_matrix_ghz, _build_static_analysis_result
         from quchip.engine.basis import _differentiable_eigenvector
+        from quchip.engine.excitation import excitation_structure
+        from quchip.engine.states import block_model
 
-        key = (self._analysis_signature(), approximation)
-        if scoped_hit(self._ground_cache, key):
-            return self._ground_cache[2]
+        key = (self._analysis_signature(), approximation, label)
+        if scoped_hit(self._label_cache, key):
+            return self._label_cache[2]
         chip = self._chip
         backend = chip.backend
         # Reuse dressed analysis only when it describes the solve's approximation.
         # The solve's own snapshot reports the advisories of that approximation.
         same_approximation = approximation == chip.approximation
-        conserving = (
-            self._sector_model(_advise=False) is not None if same_approximation
-            else conserves_excitation_number(chip, approximation)
-        )
-        if conserving:
-            self._ground_cache = scoped_entry(key, None, traced=False)
+        model = None
+        if any(label) or active_cutoff(chip) is not None:
+            model = block_model(chip, approximation)
+        elif (self._sector_model(_advise=False) is not None if same_approximation
+              else excitation_structure(chip, approximation).conserves):
+            self._label_cache = scoped_entry(key, None, traced=False)
             return None
+        if model is not None:
+            ket = backend.to_array(self._sector_state(model, label)).reshape(-1)
+            self._label_cache = scoped_entry(key, ket, traced=contains_tracer(ket))
+            return ket
         static = (
             self.engine_result(_advise=False) if same_approximation
             else _build_static_analysis_result(chip, approximation=approximation, _advisories=[])
         )
-        bare = _bare_state_from_bases(chip, {}, static.bases)
-        traced = static._contains_tracer()
-        ket = None
-        if traced or not _is_eigenstate(bare, static, backend):
-            values, vectors, _, labeling = (
-                self._compute_array_labeled(static) if same_approximation else _labeled_eigensystem(static, backend)
-            )
-            xp = backend.array_module
-            index = labeling.indices[0]  # Label 0 is the all-ground product.
-            column = xp.asarray(vectors)[:, index]
-            if traced:
-                # JAX's eigh derivative can be NaN at an unrelated exact tie.
-                matrix = jnp.asarray(_analysis_matrix_ghz(static))
-                column = _differentiable_eigenvector(matrix, values[index], values, vectors, column)
-                # That derivative transports the phase. The gauge restores the derivative of the anchor's phase.
-                amplitudes = self._semantic_amplitudes(column[:, None], static)
-                column = column * gauge_phases(amplitudes, jnp.zeros(1, dtype=int))[0]
-            ket = column
-        self._ground_cache = scoped_entry(key, ket, traced=contains_tracer(ket))
-        return ket
+        # A residual test cannot prove that a bare product is an eigenstate near a degeneracy, so the label
+        # always takes its assigned eigenvector, as chip.state() does.
+        values, vectors, _, labeling = (
+            self._compute_array_labeled(static) if same_approximation else labeled_eigensystem(static, backend)
+        )
+        xp = backend.array_module
+        position = self._bare_label_index(label)
+        index = labeling.indices[position]
+        warn_weak_assignment(label, labeling.overlaps[position])
+        column = xp.asarray(vectors)[:, index]
+        if static._contains_tracer():
+            # JAX's eigh derivative can be NaN at an unrelated exact tie.
+            matrix = jnp.asarray(_analysis_matrix_ghz(static))
+            column = _differentiable_eigenvector(matrix, values[index], values, vectors, column)
+            # That derivative transports the phase. The gauge restores the derivative of the anchor's phase.
+            # Rolling the rows puts the label's own amplitude first, where the gauge anchors.
+            amplitudes = jnp.roll(self._semantic_amplitudes(column[:, None], static), -position, axis=0)
+            column = column * gauge_phases(amplitudes, jnp.zeros(1, dtype=int))[0]
+        self._label_cache = scoped_entry(key, column, traced=contains_tracer(column))
+        return column
+
+    def _label_energy(self, label: tuple[int, ...], approximation: "Approximation") -> Any:
+        """Return the energy in GHz of the eigenstate that :meth:`_label_ket` assigns to ``label``."""
+        from quchip.engine.assembly import _build_static_analysis_result
+        from quchip.engine.states import block_model
+
+        chip = self._chip
+        model = block_model(chip, approximation)
+        if model is not None:
+            return model.eigensystem(sum(label)).energy(tuple(label))
+        if approximation == chip.approximation:
+            values, _, _, labeling = self._compute_array_labeled(self.engine_result(_advise=False))
+        else:
+            static = _build_static_analysis_result(chip, approximation=approximation, _advisories=[])
+            values, _, _, labeling = labeled_eigensystem(static, chip.backend)
+        return self._eigenvalue_of_label(label, precomputed=(values, labeling))
 
     def _bare_label_index(self, label: tuple[int, ...]) -> int:
         """Position of ``label`` in canonical bare-label order (Python int)."""
@@ -861,7 +629,7 @@ class ChipAnalysis:
 
         Dressing keeps network-generated Hamiltonian terms, so the assigned eigenstates match the
         solver Hamiltonian and degenerate cascaded modes dress into superpositions. The assignment
-        uses the ``label_eigensystem`` kernel (:mod:`quchip.chip.dressing`) with
+        uses the ``label_eigensystem`` kernel (:mod:`quchip.engine.dressing`) with
         ``assign_rowwise_greedy``, i.e. confidence-ordered row-greedy matching as a pure
         ``lax.scan``. Its cost is ``O(D**2)`` in the Hilbert dimension, versus ``O(D**3)`` for the
         global variant.
@@ -907,7 +675,7 @@ class ChipAnalysis:
 
         eigenvalues, eigenvector_matrix, eigensystem, kernel_labeling = self._compute_array_labeled()
 
-        result = _materialize_dressed_result(
+        result = materialize_dressed_result(
             eigenvalues,
             eigenvector_matrix,
             eigensystem,
@@ -924,7 +692,7 @@ class ChipAnalysis:
         """Materialize the cached dict view only from concrete labeling."""
         _, _, _, kernel_labeling = self._compute_array_labeled()
         if not self._array_labeled_concrete(kernel_labeling):
-            raise RuntimeError(_DRESS_TRACING_ERROR)
+            raise RuntimeError(DRESS_TRACING_ERROR)
         if self._dressed_result is None or self._dressed_signature != self._analysis_signature():
             self.dress()
         assert self._dressed_result is not None
@@ -944,7 +712,7 @@ class ChipAnalysis:
         """Dressed eigenvalue (GHz) for the given bare-state label.
 
         Unspecified devices default to level 0. The method goes through the
-        :func:`quchip.chip.dressing.label_eigensystem` array kernel, so it is
+        :func:`quchip.engine.dressing.label_eigensystem` array kernel, so it is
         safe in ``jax.jit``/``grad``/``vmap``, and gradients flow through
         ``eigenvalues[labeling.indices[bare_idx]]`` to all traced chip
         parameters.
@@ -990,16 +758,7 @@ class ChipAnalysis:
             raise KeyError(
                 f"State label {label_t} not found in state map. Available (first 10): {available}"
             ) from None
-        overlap = dressed.assignment_overlaps[label_t]
-        if overlap < _STATE_OVERLAP_WARNING:
-            # Hops: _dressed_state -> ChipAnalysis.state -> Chip.state -> caller.
-            warnings.warn(
-                f"Dressed state label {label_t} has assignment overlap {overlap:.3f} "
-                f"(< {_STATE_OVERLAP_WARNING:.3f}); chip.state() returns the assigned dressed "
-                "eigenstate. Use chip.bare_state(...) for the product state.",
-                UserWarning,
-                stacklevel=4,
-            )
+        warn_weak_assignment(label_t, dressed.assignment_overlaps[label_t])
         return dressed.eigenstates[eigen_idx]
 
     def _sector_state(self, model: SectorModel, label: tuple[int, ...]) -> Any:
@@ -1010,16 +769,7 @@ class ChipAnalysis:
         """
         system = model.eigensystem(sum(label))
         row = system.space.row(label)
-        overlap = maybe_concrete_scalar(system.labeling.overlaps[row])
-        if overlap is not None and overlap < _STATE_OVERLAP_WARNING:
-            # Hops: _sector_state -> _dressed_state -> ChipAnalysis.state -> Chip.state -> caller.
-            warnings.warn(
-                f"Dressed state label {label} has assignment overlap {overlap:.3f} "
-                f"(< {_STATE_OVERLAP_WARNING:.3f}); chip.state() returns the assigned dressed "
-                "eigenstate. Use chip.bare_state(...) for the product state.",
-                UserWarning,
-                stacklevel=5,
-            )
+        warn_weak_assignment(label, system.labeling.overlaps[row])
         vectors = system.eigenvectors
         xp = jnp if contains_tracer((vectors, system.labeling.indices)) else np
         column = model.embed(system.space.totals, xp.asarray(vectors)[:, system.labeling.indices[row]])
@@ -1098,7 +848,7 @@ class ChipAnalysis:
         chip = self._chip
         backend = chip.backend
         dressed = self._ensure_dressed()
-        from quchip.chip.observables import prepare_local_op
+        from quchip.engine.observables import prepare_local_op
         from quchip.declarative.expr import materialize_expr
 
         idx, dev = chip._resolve_device_index(device)
@@ -1291,6 +1041,64 @@ class ChipAnalysis:
             elements[drive.label] = xp.vdot(final, acted)
         return elements
 
+    def rotation_amplitude(
+        self,
+        transition: str | BaseDevice | tuple[Mapping[str | BaseDevice, int], Mapping[str | BaseDevice, int]],
+        line: str | "BaseDrive",
+        envelope: Any,
+        angle: Any = np.pi,
+    ) -> Any:
+        """Return a first-guess amplitude that rotates a dressed transition by ``angle``.
+
+        On resonance under ``RWA()``, in the two-level limit, a pulse whose
+        envelope keeps one phase rotates the transition by
+        ``θ = 2π |m| |A a|``, where m is the dressed matrix element of the
+        line from :meth:`drive_matrix_elements` and ``A a`` the
+        :meth:`~quchip.control.envelopes.Envelope.area` of the envelope at
+        amplitude A. The method returns ``A = θ / (2π |m| |a|)``. Leakage to
+        other levels, detuning, counter-rotating terms under ``Exact()``, and
+        a phase that changes during the pulse all change the rotation, so the
+        value is a starting point for a calibration, not a calibrated gate.
+
+        Parameters
+        ----------
+        transition : str, BaseDevice, or tuple[mapping, mapping]
+            Transition as for :meth:`drive_matrix_elements`.
+        line : str or BaseDrive
+            Wired device-target line that plays the pulse.
+        envelope : Envelope
+            Pulse shape with an ``amplitude`` field. The field's present value is ignored.
+        angle : scalar, default=pi
+            Rotation angle in rad.
+
+        Raises
+        ------
+        ValueError
+            If a signal-chain transform or crosstalk acts on the line, or if the
+            matrix element or the area per unit amplitude is zero.
+        TypeError
+            If the envelope has no ``amplitude`` field.
+        """
+        label = resolve_label(line)
+        equipment = self._chip.control_equipment
+        acting = [] if equipment is None else [
+            type(transform).__name__ for transform in equipment.signal_chain if label in transform.referenced_lines()
+        ]
+        if acting:
+            raise ValueError(
+                f"Line '{label}' has the signal-chain transforms {acting}. rotation_amplitude() takes the "
+                "amplitude at the device, so it supports only a line without transforms."
+            )
+        if "amplitude" not in envelope.parameter_values():
+            raise TypeError(f"{type(envelope).__name__} has no amplitude field to scale.")
+        element = self.drive_matrix_elements(transition, drives=[label])[label]
+        unit = envelope.with_params({"amplitude": 1.0}).area()
+        xp = jnp if contains_tracer((element, unit, angle)) else np
+        strength = 2.0 * np.pi * xp.abs(element) * xp.abs(unit)
+        if maybe_concrete_scalar(strength) == 0.0:
+            raise ValueError(f"Line '{label}' cannot drive this transition: |m| |area| is zero.")
+        return angle / strength
+
     def state_components(
         self,
         state: int | Mapping[str | BaseDevice, int] | None = None,
@@ -1358,6 +1166,37 @@ class ChipAnalysis:
         index_b, _ = self._chip._resolve_device_index(device_b)
         return _kerr_coefficient(index_a, index_b, self._semantic_dims(), self._energy_lookup())
 
+    def excitation_structure(self) -> ExcitationStructure:
+        """Return the excitation-number structure of the chip's static model.
+
+        The record states whether the static model conserves the total
+        excitation number ``N``, the isolated energy-level index summed over
+        devices. It gives the changes of ``N`` of each coupling, retained term,
+        generated port pair, port, drive and collapse channel under the chip's
+        approximation, and the largest entry of each term that breaks
+        conservation. :meth:`~quchip.engine.excitation.ExcitationStructure.largest_block`
+        gives the largest matrix that dressed queries diagonalize. Each call
+        reads the chip as it is, and the record keeps no reference to it.
+
+        Returns
+        -------
+        ExcitationStructure
+            Complete record for the chip's approximation.
+
+        Examples
+        --------
+        >>> from quchip import DuffingTransmon, Capacitive, Chip, RWA
+        >>> q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
+        >>> q1 = DuffingTransmon(freq=5.2, anharmonicity=-0.22, levels=3, label="q1")
+        >>> chip = Chip([q0, q1], couplings=[Capacitive(q0, q1, g=0.02)], approximation=RWA())
+        >>> structure = chip.excitation_structure()
+        >>> structure.conserves, structure.largest_block(2)
+        (True, 3)
+        """
+        from quchip.engine.excitation import excitation_structure
+
+        return excitation_structure(self._chip, self._chip.approximation, complete=True)
+
     def kerr_matrix(self) -> KerrMatrix:
         """Return the dressed self-Kerr and cross-Kerr matrix in GHz.
 
@@ -1413,9 +1252,45 @@ class ChipAnalysis:
             if not (self._is_bare_label(label) if state_map is None else label in state_map):
                 raise ValueError(f"No dressed-state assignment found for bare label {label}")
             labels.append(label)
-        from quchip.analysis.effective_hamiltonian import _h_eff_on_basis
+        return np.asarray(self.effective_hamiltonian_on_basis(labels), dtype=complex)
 
-        return np.asarray(_h_eff_on_basis(self._chip, labels), dtype=complex)
+    def effective_hamiltonian_on_basis(self, basis: Sequence[tuple[int, ...]]) -> Any:
+        """Return the Löwdin-orthonormalized effective Hamiltonian on explicit bare states.
+
+        This is the shared core of :func:`quchip.analysis.effective_hamiltonian`,
+        :func:`quchip.analysis.effective_hamiltonian_between_states` and
+        :meth:`effective_subspace_hamiltonian`. See
+        :class:`quchip.analysis.EffectiveHamiltonianResult` for the construction.
+
+        Parameters
+        ----------
+        basis : sequence of tuple of int
+            Chip-ordered bare-level tuples that span the subspace.
+        """
+        from quchip.chip.sw import exact_subspace
+
+        sectors = self._sector_model()
+        if sectors is not None:
+            # A conserving chip needs only the sectors that the requested states occupy.
+            labels = [tuple(state) for state in basis]
+            if not labels:
+                raise ValueError("Effective subspace must contain at least one state.")
+            invalid = [label for label in labels if not self._is_bare_label(label)]
+            if invalid:
+                raise ValueError(f"Effective subspace state {invalid[0]} is not a valid bare product-basis label.")
+            eigenvalues, evecs, kept, dressed_idx = sectors.labeled_subspace(labels)
+            return exact_subspace(eigenvalues, evecs, kept, dressed_idx).hamiltonian
+
+        engine = self.engine_result()
+        eigenvalues, evecs, _, labeling = self._compute_array_labeled(engine)
+        evecs = self._semantic_amplitudes(evecs, engine)
+
+        bare_idx_list = [int(np.ravel_multi_index(state, engine.dims)) for state in basis]
+        if not bare_idx_list:
+            raise ValueError("Effective subspace must contain at least one state.")
+        dressed_idx = jnp.stack([labeling.indices[i] for i in bare_idx_list])
+
+        return exact_subspace(eigenvalues, evecs, bare_idx_list, dressed_idx).hamiltonian
 
     def dressed_anharmonicity(self, device: str | BaseDevice) -> float:
         """Return the dressed anharmonicity in GHz.
@@ -1550,7 +1425,7 @@ class ChipAnalysis:
         selects the eigenvector column through the array kernel, so a dressed
         initial state is differentiable end-to-end. The state's amplitude on
         its assigned product state is real and nonnegative
-        (:func:`~quchip.chip.dressing.gauge_phases`).
+        (:func:`~quchip.engine.dressing.gauge_phases`).
 
         Parameters
         ----------

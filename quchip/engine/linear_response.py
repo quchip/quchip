@@ -23,7 +23,10 @@ from quchip.utils.jax_utils import concrete_array_module, maybe_concrete_scalar
 
 
 class _UnsupportedLinearModel(Exception):
-    """Signal that a valid chip requires the general stationary solver."""
+    """Signal that a valid chip requires the general stationary solver.
+
+    The message, when there is one, says which part of the model the route does not support.
+    """
 
 
 def is_linear_mode(device: Any, backend: Any) -> bool:
@@ -229,15 +232,21 @@ class _SectorResponseModel:
 
 
 def _sector_response_model(chip: Any, plane_labels: tuple[str, ...]) -> _SectorResponseModel:
-    """Assemble every channel on its local support and require a conserving vacuum-input model."""
-    from quchip.chip.effective import authored_excitation_changes
+    """Assemble every channel on its local support and require a conserving vacuum-input model.
+
+    A chip without a port network keeps only its device channels, and then
+    ``plane_labels`` must be empty.
+    """
+    from quchip.engine.excitation import authored_excitation_changes, lowers_by_one
 
     network = chip.port_network
-    if network is None or chip.dynamic_contributions():
-        raise _UnsupportedLinearModel
+    if network is None and plane_labels:
+        raise _UnsupportedLinearModel("The chip has no port network.")
+    if chip.dynamic_contributions():
+        raise _UnsupportedLinearModel("The chip has time-dependent contributions.")
     sectors = chip.analysis._sector_model()
     if sectors is None:
-        raise _UnsupportedLinearModel
+        raise _UnsupportedLinearModel("The static model does not conserve the total excitation N.")
     backend = chip.backend
     labels = tuple(device.label for device in chip.devices)
     channels: list[list[tuple[Any, Any, tuple[int, ...]]]] = []
@@ -248,9 +257,10 @@ def _sector_response_model(chip: Any, plane_labels: tuple[str, ...]) -> _SectorR
         operator_labels = tuple(labels[index] for index in support) if support else labels
         changes = authored_excitation_changes(operator, operator_labels, backend, sectors.bases)
         if maybe_concrete_scalar(_scalar_value(rate, backend)) != 0.0:
-            lowering = changes is not None and changes <= {1}
-            if not lowering and (changes != {0} or isinstance(owner, Port)):
-                raise _UnsupportedLinearModel
+            if not lowers_by_one(changes) and (changes != {0} or isinstance(owner, Port)):
+                raise _UnsupportedLinearModel(
+                    f"Channel {name!r} of {source!r} does not lower N by one" + (
+                        "." if isinstance(owner, Port) else " or conserve it."))
         if not isinstance(owner, Port):
             if changes == {0}:
                 conserving_indices.append(len(channels))
@@ -261,27 +271,30 @@ def _sector_response_model(chip: Any, plane_labels: tuple[str, ...]) -> _SectorR
             hidden_keys.append(key if occurrences[key] == 1 else f"{key}#{occurrences[key]}")
 
     compiled = sectors.network
-    if compiled.output_network is not None:
-        raise _UnsupportedLinearModel
-    if any(field.input_occupation is not None and maybe_concrete_scalar(field.input_occupation) != 0.0
-           for field in network._field_channels(compiled)):
-        raise _UnsupportedLinearModel
-    ports = sectors.port_couplings()
-    channels[:0] = [[(coefficient, *ports[source]) for source, coefficient in entry.coupling.items()]
-                    for entry in compiled.channels]
+    entries = () if compiled is None else compiled.channels
+    if compiled is not None and compiled.output_network is not None:
+        raise _UnsupportedLinearModel("An output network mixes the outputs.")
+    if network is not None and any(
+            field.input_occupation is not None and maybe_concrete_scalar(field.input_occupation) != 0.0
+            for field in network._field_channels(compiled)):
+        raise _UnsupportedLinearModel("An input carries thermal noise.")
+    if entries:
+        ports = sectors.port_couplings()
+        channels[:0] = [[(coefficient, *ports[source]) for source, coefficient in entry.coupling.items()]
+                        for entry in entries]
 
     xp = backend.array_module
-    keys = (*(entry.exposure.label for entry in compiled.channels), *hidden_keys)
-    external = tuple(entry.exposure.label for entry in compiled.channels if not entry.exposure._hidden)
+    keys = (*(entry.exposure.label for entry in entries), *hidden_keys)
+    external = tuple(entry.exposure.label for entry in entries if not entry.exposure._hidden)
     if any(label not in external for label in plane_labels):
         raise ValueError(f"Unknown linear-response exposure. Available exposures: {list(external)}")
     plane_indices = tuple(keys.index(label) for label in plane_labels)
-    references = [entry.reference for entry in compiled.channels] + [ReferencePlane()] * len(hidden_keys)
+    references = [entry.reference for entry in entries] + [ReferencePlane()] * len(hidden_keys)
     scattering = (pad_mixing(xp.asarray(compiled.scattering, dtype=complex), len(keys), xp)
-                  if compiled.channels else xp.eye(len(keys), dtype=complex))
+                  if entries else xp.eye(len(keys), dtype=complex))
 
     return _SectorResponseModel(sectors, channels, scattering, plane_indices, references,
-                                tuple(len(compiled.channels) + i for i in conserving_indices), keys)
+                                tuple(len(entries) + i for i in conserving_indices), keys)
 
 
 def _build_linear_response_problem(

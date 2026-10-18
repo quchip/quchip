@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import itertools
 import warnings
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from functools import partial
 from math import prod
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence, cast
@@ -36,7 +36,7 @@ from scipy import sparse
 
 from quchip.approximations import Approximation, RWA, require_approximation
 from quchip.backend import _backend_context
-from quchip.backend._memory import require_memory
+from quchip.utils.memory import INDEX_BYTES, dense_bytes, require_memory
 from quchip.backend.protocol import Backend, Operator
 from quchip.control.drive import BaseDrive, CouplingDrive
 from quchip.chip.effective import EffectiveTerms, retained_operator
@@ -105,7 +105,7 @@ from quchip.engine.bands import (
 
 if TYPE_CHECKING:
     from quchip.chip.chip import Chip
-    from quchip.chip.port_network import _CompiledNetwork
+    from quchip.engine.slh import CompiledNetwork
     from quchip.engine.ir import ControlOp
 
 
@@ -117,8 +117,11 @@ class _SystemResolution:
     bases: dict[str, BasisRecord]
     hamiltonians: tuple[Operator, ...]
     dims: tuple[int, ...]
-    network: _CompiledNetwork | None
+    network: CompiledNetwork | None
     space: Any = None
+    # Excitation records keyed by approximation. They do not depend on the
+    # solver space, so a copy with another space shares them.
+    excitation: dict[Any, Any] = field(default_factory=dict, repr=False, compare=False)
 
     @property
     def operator_dims(self):
@@ -641,7 +644,7 @@ def _collect_collapse_terms(
             if (retained_coordinates or len(check_support) > 1) and not _is_concrete_zero(resolved_rate):
                 frequencies = tuple(resolved_frame.frequencies[labels[index]] for index in check_support)
                 if not all(maybe_concrete_scalar(frequency) == 0.0 for frequency in frequencies):
-                    from quchip.chip.effective import authored_excitation_changes
+                    from quchip.engine.excitation import authored_excitation_changes
                     weights = authored_excitation_changes(operator, tuple(labels[i] for i in check_support),
                                                           backend, resolution.bases)
                     common = all(maybe_concrete_scalar(f) == maybe_concrete_scalar(frequencies[0])
@@ -1055,7 +1058,9 @@ def _resolved_energy_interactions(chip: "Chip", resolution: _SystemResolution, a
         if approximation.filters_terms and not contribution.retained:
             dims = tuple(resolution.dims[index] for index in support)
             dimension = prod(dims)
-            require_memory((16 + 24 * len(dims)) * dimension**2,
+            # The filtered operator, and the weight table with its sorted copy and inverse.
+            require_memory(dense_bytes(dimension, dimension)
+                           + dense_bytes(dimension**2, len(dims), copies=3, itemsize=INDEX_BYTES),
                            task=f"Static band mask on {contribution.labels}",
                            remedy="Use interactions on smaller local supports.")
             levels = np.indices(dims).reshape(len(dims), -1).T
@@ -1539,28 +1544,6 @@ def _drive_authored_terms(chip, drive, target, backend):
     for index, (_, operator) in enumerate(terms):
         yield index, as_operator_expr(operator, labels=pair, dims=dims, owner=drive,
                                       scope=f"drive.{drive.label}", name=rf"H_{{{drive.label},{index}}}")
-
-
-def drive_excitation_changes(chip, drive, target, bases, approximation):
-    from quchip.chip.effective import authored_excitation_changes
-    changes = set()
-    for _, authored in _drive_authored_terms(chip, drive, target, chip.backend):
-        support = tuple(chip.device_index(label) for label in authored.labels)
-        retained = any(term.projection is not None for term in chip.effective_terms)
-        if retained:
-            authored, support = _retained_operator(chip, authored, support, chip.backend,
-                                                   f"drive:{drive.label}", bases=bases)
-        if not retained and isinstance(drive, CouplingDrive) and approximation.conserves_excitation_number():
-            weights = {0}
-        else:
-            weights = authored_excitation_changes(authored, tuple(chip.devices[i].label for i in support),
-                                                   chip.backend, bases)
-            if weights is None:
-                return None
-            if len(support) == 1:
-                weights = {n for n in weights if _keeps_drive_band(drive, approximation, (n,))}
-        changes.update(weights)
-    return changes
 
 
 def drive_bands(
@@ -2064,7 +2047,7 @@ def _resolved_dressing_context(
     resolution: _SystemResolution,
 ) -> _ResolvedDressingContext:
     """Freeze assembly-time basis references for ``EngineResult.dress()``."""
-    from quchip.chip.dressing import BareProductReference
+    from quchip.engine.dressing import BareProductReference
 
     if resolution.space is not None:
         return _ResolvedDressingContext(backend=chip.backend, reference=BareProductReference(resolution.operator_dims))

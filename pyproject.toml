@@ -21,6 +21,7 @@ dependencies = [
     "matplotlib",
     "tqdm",
     "loky",
+    "psutil",
     "jax",
 ]
 

@@ -5,7 +5,11 @@ import warnings
 import numpy as np
 import pytest
 
+from scipy import sparse
+
 import quchip.analysis.measurement as measurement
+import quchip.analysis.vna as vna_analysis
+import quchip.engine.routes as routes
 import quchip.backend._sector_stationary as sector_solver
 from quchip import (RWA, VNA, Bath, Capacitive, ChargeBasisTransmon, Chip, DuffingTransmon, ExcitationCutoff,
                     PortNetwork, Resonator)
@@ -14,8 +18,11 @@ from quchip.declarative import CollapseChannel, CouplingModel, Scalar, parameter
 OFFSETS = np.array([-0.02, -1e-3, -1e-5, 0.0, 1e-5, 1e-3, 0.02])
 
 
-def feedline(*, dephasing=True, thermal_occupation=None, space=None, backend="qutip"):
-    """Return a qubit and two resonators on a cascaded feedline, with 27 product states and N <= 6."""
+def feedline(*, dephasing=True, thermal_occupation=None, space=None, backend="qutip", drive=False):
+    """Return a qubit and two resonators on a cascaded feedline, with 27 product states and N <= 6.
+
+    ``drive=True`` adds a port ``"xy"`` on the qubit.
+    """
     q = DuffingTransmon(freq=5.3, anharmonicity=-0.26, levels=3, label="q", T1=2e3, T2=1.5e3 if dephasing else None)
     r0 = Resonator(freq=6.5, levels=3, label="r0", internal_quality_factor=1e5, thermal_occupation=thermal_occupation)
     r1 = Resonator(freq=6.6, levels=3, label="r1", internal_quality_factor=1e5)
@@ -23,6 +30,8 @@ def feedline(*, dephasing=True, thermal_occupation=None, space=None, backend="qu
     ports = [network.port(r.label, target=r, rate=2 * np.pi * 0.004) for r in (r0, r1)]
     network.cascade(*ports)
     network.expose("feed", input=ports[0], output=ports[-1])
+    if drive:
+        network.expose("xy", at=network.port("q", target=q, rate=2e-3))
     return Chip([q, r0, r1], [Capacitive(q, r0, g=0.06), Capacitive(r0, r1, g=0.01)], port_network=network,
                 approximation=RWA(), space=space, backend=backend)
 
@@ -43,7 +52,7 @@ def dark_pair(max_total=None):
                 space=None if max_total is None else ExcitationCutoff(max_total=max_total))
 
 
-def readout_pairs(count):
+def readout_pairs(count, backend="qutip"):
     """Return ``count`` transmon-resonator pairs on one cascaded feedline, with ``9**count`` product states."""
     qubits = [DuffingTransmon(freq=5.3 - 0.1 * i, anharmonicity=-0.26, levels=3, label=f"q{i}", T1=3e4)
               for i in range(count)]
@@ -54,7 +63,7 @@ def readout_pairs(count):
     network.cascade(*ports)
     network.expose("feed", input=ports[0], output=ports[-1])
     couplings = [Capacitive(q, r, g=0.04) for q, r in zip(qubits, resonators, strict=True)]
-    return Chip(qubits + resonators, couplings, port_network=network, frame=5.2, approximation=RWA())
+    return Chip(qubits + resonators, couplings, port_network=network, frame=5.2, approximation=RWA(), backend=backend)
 
 
 class Shelving(CouplingModel):
@@ -101,8 +110,8 @@ def cutoff_warnings(caught):
 def test_complete_space_matches_the_product_space(monkeypatch):
     """With N <= 6, the sector route gives the product-space means, mode values and IQ spectra, and does not warn."""
     # A cutoff that keeps every state is no cutoff, so the automatic route starts at the largest total instead.
-    monkeypatch.setattr(measurement, "_AUTOMATIC_CUTOFF_STATES", 0)
-    monkeypatch.setattr(measurement, "_FIRST_CUTOFF", 6)
+    monkeypatch.setattr(routes, "AUTOMATIC_SECTOR_STATES", 0)
+    monkeypatch.setattr(routes, "FIRST_CUTOFF", 6)
     chip, frequencies, beta = feedline(), probe_frequencies(), 0.018 * np.exp(0.7j)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -116,6 +125,25 @@ def test_complete_space_matches_the_product_space(monkeypatch):
     excess = np.asarray(product.noise_components["device.correlations"][1])
     assert np.max(np.abs(excess[..., 0, 0] - excess[..., 1, 1])) > 1e-3 * np.max(np.abs(excess))
     assert_same_measurement(sectors, product, rtol=1e-8)
+
+
+def test_a_pump_at_the_probe_frequency_solves_on_the_sectors(monkeypatch):
+    """A pump on the qubit at the probe frequency joins the sector drive; the result is the product-space one."""
+    monkeypatch.setattr(routes, "AUTOMATIC_SECTOR_STATES", 0)
+    monkeypatch.setattr(routes, "FIRST_CUTOFF", 6)
+    frequency, beta = float(probe_frequencies()[1]), 0.018 * np.exp(0.7j)
+    sector, product = (VNA(feedline(drive=True), ports=["feed"]) for _ in range(2))
+    for vna in (sector, product):
+        vna.pump("xy", freq=frequency, amplitude=0.03j)
+    solved = sector.measure(frequency, beta, noise_frequencies=OFFSETS)
+    reference = product.measure(frequency, beta, noise_frequencies=OFFSETS, options={})
+    assert solved.diagnostics[0]["solver"] == "sector_stationary"
+    assert_same_measurement(solved, reference, rtol=1e-7)
+    # A pump at another frequency leaves no static frame for either route.
+    detuned = VNA(feedline(drive=True), ports=["feed"])
+    detuned.pump("xy", freq=frequency + 0.01, amplitude=0.03j)
+    with pytest.raises(ValueError, match="distinct stationary tones"):
+        detuned.finite_power(frequency, beta)
 
 
 def test_sector_route_matches_the_compact_engine_at_the_same_cutoff():
@@ -166,7 +194,7 @@ def test_two_outputs_and_a_charge_basis_transmon_match_the_compact_engine():
 def test_a_dark_state_converges_only_when_the_probe_reaches_it(monkeypatch):
     """N = 2 couples the dark state back to the bus; N <= 1 leaves a second stationary state and raises."""
     # The automatic route starts at N <= 2, which is the whole space here, so it is exact and does not warn.
-    monkeypatch.setattr(measurement, "_AUTOMATIC_CUTOFF_STATES", 0)
+    monkeypatch.setattr(routes, "AUTOMATIC_SECTOR_STATES", 0)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         complete = VNA(dark_pair()).finite_power(5.0, 0.1)
@@ -246,6 +274,19 @@ def test_two_starts_resolve_a_slowly_emptied_dark_state():
 
 
 @pytest.mark.unit
+def test_the_uniqueness_bound_of_a_large_sector_counts_the_channels_of_each_device():
+    """1100 one-excitation states share one port and each decay on their own; the bound proves no dark state."""
+    count = 1100
+    shape = (count + 1, count + 1)
+    port = sparse.csr_matrix((np.full(count, 0.1), (np.zeros(count, dtype=int), np.arange(1, count + 1))), shape)
+    local = [sparse.csr_matrix(([1e-2], ([0], [state])), shape) for state in range(1, count + 1)]
+    # The port alone leaves count - 1 dark states. With the local channels the Gershgorin bound of the sum is
+    # negative, but each state decays at 1e-4 / ns on its own.
+    assert sector_solver.has_dark_state([1, count], [port])
+    assert not sector_solver.has_dark_state([1, count], [port, *local])
+
+
+@pytest.mark.unit
 def test_a_solve_that_does_not_converge_raises(monkeypatch):
     """A residual above the limit raises instead of returning an unconverged state."""
     monkeypatch.setattr(sector_solver, "_TOLERANCE", 1e-300)
@@ -302,11 +343,42 @@ def test_the_cutoff_check_compares_every_noise_offset():
 
 
 @pytest.mark.unit
+def test_the_noise_solve_takes_each_missing_negative_offset(monkeypatch):
+    """A grid that is symmetric only to round-off solves the negative of its first offset, not its reversed neighbor."""
+    offsets = np.array([-0.02000000000001, -0.01, 0.0, 0.01, 0.02])
+    grids, resolvent = [], sector_solver.SectorGenerator.resolvent
+
+    def record(self, frequency, drive, source, grid, observables):
+        grids.append(np.asarray(grid))
+        return resolvent(self, frequency, drive, source, grid, observables)
+
+    monkeypatch.setattr(sector_solver.SectorGenerator, "resolvent", record)
+    VNA(feedline(space=ExcitationCutoff(max_total=2))).measure(6.5, 0.01, noise_frequencies=offsets)
+    assert grids and all(np.any(grid == 0.02000000000001) and np.any(grid == -0.02) for grid in grids)
+
+
+@pytest.mark.unit
+def test_the_output_checks_compare_every_offset_and_delay():
+    """A small sample beside a large one fails the check, although the norm over the grid barely changes."""
+    zeros, peak, shifted = np.zeros(2), np.array([1.0, 0.0]), np.array([1.0, 5e-7])
+    # At the second sample, the change is 5e-7 over the floor, 1e-3 of the peak.
+    spectra = [(peak, zeros, 1.0, 0.5), (shifted, zeros, 1.0, 0.5), (shifted, zeros, 1.0, 0.5)]
+    assert vna_analysis._spectrum_change(*spectra[:2]) == pytest.approx(5e-7 / (5e-7 + 1e-3))
+    cutoff, _, check = routes.automatic_cutoff(4, lambda total, lower: spectra[total - 2],
+                                               vna_analysis._spectrum_change, fits=lambda total: True,
+                                               states=lambda total: total)
+    assert cutoff == 3 and check.status == "passed"
+    assert vna_analysis._correlation_change((peak, 1.0, 2.0), (shifted, 1.0, 2.0)) > routes.CUTOFF_TOLERANCE
+    # Each intensity sets its own scale, so a small output intensity is compared with itself.
+    assert vna_analysis._correlation_change((peak, 1.0, 1e-6), (peak, 1.0, 1e-6 * (1 + 1e-5))) > 1e-6
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("method", ["finite_power", "measure"])
 @pytest.mark.parametrize("case", ["passed", "noise", "memory"])
 def test_automatic_cutoff_warns_once_at_the_call(monkeypatch, method, case):
     """One warning per call names K and the result of its check, at the caller's line."""
-    monkeypatch.setattr(measurement, "_AUTOMATIC_CUTOFF_STATES", 0)
+    monkeypatch.setattr(routes, "AUTOMATIC_SECTOR_STATES", 0)
     if case == "noise":
         monkeypatch.setattr(measurement, "_NOISE_CHECK_STATES", 0)
     if case == "memory":
@@ -404,7 +476,7 @@ def test_twelve_pairs_approach_the_small_signal_response_as_beta_squared():
 
 @pytest.mark.validation
 def test_an_explicit_cutoff_is_differentiable_under_jax():
-    """Under tracing, the backend solves the compact model; value and derivative match the concrete sector solve."""
+    """Under tracing, the backend solves the compact model and says so; value and derivative match the sector solve."""
     jax = pytest.importorskip("jax")
     pytest.importorskip("dynamiqs")
     import jax.numpy as jnp
@@ -413,14 +485,178 @@ def test_an_explicit_cutoff_is_differentiable_under_jax():
     traced = VNA(feedline(space=ExcitationCutoff(max_total=2), backend="dynamiqs"))
     concrete = VNA(feedline(space=ExcitationCutoff(max_total=2)))
 
+    taken = []
+
     def transmission(amplitude):
-        return jnp.abs(traced.finite_power(frequency, amplitude).ratio("feed"))
+        result = traced.finite_power(frequency, amplitude)
+        taken.append(result.diagnostics[0]["route"])
+        return jnp.abs(result.ratio("feed"))
 
     def reference(amplitude):
         return abs(complex(np.ravel(concrete.finite_power(frequency, amplitude).ratio("feed"))[0]))
 
     value, derivative = jax.jit(jax.value_and_grad(transmission))(jnp.asarray(0.02))
+    (route,) = set(taken)
+    assert route.name == "stationary_resolvent" and route.arrays == "jax" and route.dimension == 10
+    assert "traced" in route.reason and "N <= 2" in route.reason
+    assert concrete.finite_power(frequency, 0.02).diagnostics[0]["route"].name == "sector_stationary"
     # Richardson extrapolation removes the step^2 error of the central differences.
     central = [(reference(0.02 + step) - reference(0.02 - step)) / (2 * step) for step in (1e-3, 1e-4)]
     np.testing.assert_allclose(value, reference(0.02), rtol=1e-9)
     np.testing.assert_allclose(derivative, (100 * central[1] - central[0]) / 99, rtol=1e-6)
+
+
+def pumped(chip, port, frequency, amplitude):
+    """Return a VNA of ``chip`` with one pump."""
+    vna = VNA(chip)
+    vna.pump(port, freq=frequency, amplitude=amplitude)
+    return vna
+
+
+def assert_same_output(sector, product, offsets, delays, *, port="feed", rtol):
+    """Compare the spectra, fluxes and raw correlations of two VNAs, with ``rtol`` of each largest value."""
+    def close(a, b):
+        a, b = np.asarray(a), np.asarray(b)
+        np.testing.assert_allclose(a, b, rtol=rtol, atol=rtol * np.max(np.abs(b)))
+
+    spectra = [vna.output_spectrum(port, frequencies=offsets, **options)
+               for vna, options in ((sector, {}), (product, {"options": {}}))]
+    assert spectra[0].diagnostics["solver"] == "sector_stationary"
+    assert spectra[1].diagnostics["solver"] == "stationary_resolvent"
+    for name in ("signal_fluctuation_spectrum", "added_noise_spectrum"):
+        close(getattr(spectra[0], name), getattr(spectra[1], name))
+    close([spectra[0].signal_photon_flux, spectra[0].signal_coherent_flux],
+          [spectra[1].signal_photon_flux, spectra[1].signal_coherent_flux])
+    for method in ("g1", "g2"):
+        values = [getattr(vna, method)(port, delays, **options)
+                  for vna, options in ((sector, {}), (product, {"options": {}}))]
+        close(values[0].unnormalized, values[1].unnormalized)
+        close(values[0].values, values[1].values)
+    return spectra
+
+
+@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=[pytest.mark.optional_backend,
+                                                                              pytest.mark.validation])])
+def test_output_statistics_on_every_sector_match_the_product_space(monkeypatch, backend):
+    """With N <= 6, the sector spectrum, fluxes, g1, g2 and state agree with the product space on both backends."""
+    if backend == "dynamiqs":
+        pytest.importorskip("dynamiqs")
+    # Every chip takes the sector route, and the automatic cutoff keeps every label, so nothing is truncated.
+    monkeypatch.setattr(routes, "AUTOMATIC_SECTOR_STATES", 0)
+    monkeypatch.setattr(routes, "FIRST_CUTOFF", 6)
+    chip = feedline(backend=backend)
+    frequency, beta = float(probe_frequencies()[1]), 0.02 * np.exp(0.7j)
+    # The offsets are not symmetric, so the spectrum needs the resolvent at -f as well.
+    offsets, delays = np.array([-0.004, 0.0, 0.0015, 0.009]), np.array([0.0, 3.0, 25.0])
+    sector, product = (pumped(chip, "feed", frequency, beta) for _ in range(2))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        spectra = assert_same_output(sector, product, offsets, delays, rtol=1e-7)
+    assert not cutoff_warnings(caught)
+    states = [spectrum.steady_state for spectrum in spectra]
+    assert states[0].excitation_space is not None and states[0].frame.frequencies == states[1].frame.frequencies
+    for label in ("q", "r0", "r1"):
+        np.testing.assert_allclose(np.asarray(chip.backend.to_array(states[0].reduced_state(label))),
+                                   np.asarray(chip.backend.to_array(states[1].reduced_state(label))), atol=1e-9)
+
+
+def test_the_cutoff_check_raises_k_for_output_statistics():
+    """N <= 2 misses the shelved population; the comparison with K + 1 raises K until the statistics agree."""
+    chip, offsets, delays = shelving_chip(), np.array([-0.004, 0.0, 0.004]), np.array([0.0, 5.0])
+    automatic, product = (pumped(chip, "line", 6.0, 0.02) for _ in range(2))
+    first = pumped(chip.with_space(ExcitationCutoff(max_total=2)), "line", 6.0, 0.02)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        spectra = assert_same_output(automatic, product, offsets, delays, port="line", rtol=1e-5)
+    warned = cutoff_warnings(caught)
+    assert len(warned) == 3 and all(warning.filename == __file__ for warning in warned)
+    diagnostics = spectra[0].diagnostics
+    assert diagnostics["cutoff_choice"] == "automatic" and diagnostics["excitation_cutoff"] > 2
+    assert diagnostics["cutoff_check"]["status"] == "passed" and diagnostics["cutoff_check"]["change"] <= 1e-6
+    truncated = first.output_spectrum("line", frequencies=offsets)
+    assert truncated.diagnostics["cutoff_choice"] == "explicit"
+    # At N <= 2 the incoherent emission is almost absent.
+    reference = np.asarray(spectra[1].signal_fluctuation_spectrum)
+    difference = np.asarray(truncated.signal_fluctuation_spectrum) - reference
+    assert np.max(np.abs(difference)) > 0.5 * np.max(np.abs(reference))
+
+
+def test_three_readout_pairs_solve_their_output_statistics_at_n_le_2():
+    """Of 729 product states, N <= 2 keeps 28; each stationary workflow solves there."""
+    chip = readout_pairs(3).with_space(ExcitationCutoff(max_total=2))
+    vna = pumped(chip, "feed", float(chip.freq("r0")), 1e-3)
+    results = [chip.steadystate(), vna.output_spectrum("feed", frequencies=np.linspace(-0.01, 0.01, 5)),
+               vna.g1("feed", np.array([0.0, 10.0])), vna.g2("feed", np.array([0.0, 10.0]))]
+    for result in results:
+        assert result.diagnostics["route"].name == "sector_stationary"
+    assert [result.diagnostics["excitation_cutoff"] for result in results[1:]] == [2, 2, 2]
+    assert [result.diagnostics["retained_dimension"] for result in results[1:]] == [28, 28, 28]
+
+
+@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])
+def test_an_undriven_conserving_chip_is_in_its_vacuum(backend):
+    """On 81 product states, steadystate() proves the vacuum unique without a Liouvillian solve."""
+    if backend == "dynamiqs":
+        pytest.importorskip("dynamiqs")
+    chip = readout_pairs(2, backend)
+    resonator = next(device for device in chip.devices if device.label == "r1")
+    result = chip.steadystate(e_ops={resonator: 1 - resonator.number_operator(), "q0": "n"})
+    assert result.diagnostics["solver"] == "sector_stationary" and result.nullity == 1
+    assert result.excitation_space is not None
+    assert complex(result.expect(resonator)) == 1 and complex(result.expect("q0")) == 0
+    for label in ("q0", "r1"):
+        np.testing.assert_array_equal(np.asarray(chip.backend.to_array(result.reduced_state(label))),
+                                      np.diag([1.0, 0.0, 0.0]))
+    if backend == "qutip":
+        product = chip.steadystate(options={})
+        np.testing.assert_allclose(np.asarray(product.reduced_state("r1").full()), np.diag([1.0, 0.0, 0.0]),
+                                   atol=1e-9)
+
+
+def test_a_dark_state_leaves_steadystate_to_the_liouvillian():
+    """The lowering channels leave a dark N = 1 state, so steadystate() does not claim the vacuum and raises."""
+    with pytest.raises(ValueError, match="nullity 2"):
+        dark_pair(max_total=1).steadystate()
+
+
+@pytest.mark.validation
+@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])
+def test_a_pumped_detuned_qubit_pair_matches_the_product_space(monkeypatch, backend):
+    """Two detuned, exchange-coupled transmons under a pump near one of them, on every sector and the product space."""
+    if backend == "dynamiqs":
+        pytest.importorskip("dynamiqs")
+    monkeypatch.setattr(routes, "AUTOMATIC_SECTOR_STATES", 0)
+    monkeypatch.setattr(routes, "FIRST_CUTOFF", 4)
+    q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0", T1=5e3)
+    q1 = DuffingTransmon(freq=5.08, anharmonicity=-0.22, levels=3, label="q1", T1=8e3, T2=6e3)
+    network = PortNetwork(label="line")
+    network.expose("p0", at=network.port("q0", target=q0, rate=0.01))
+    network.expose("p1", at=network.port("q1", target=q1, rate=0.004))
+    chip = Chip([q0, q1], [Capacitive(q0, q1, g=0.02)], port_network=network, approximation=RWA(), backend=backend)
+    # The pump is 2 MHz above the dressed q0 transition and strong enough to saturate it.
+    frequency = float(chip.freq("q0")) + 0.002
+    sector, product = (pumped(chip, "p0", frequency, 0.06 * np.exp(0.3j)) for _ in range(2))
+
+    def close(a, b, rtol=1e-7):
+        a, b = np.asarray(a), np.asarray(b)
+        np.testing.assert_allclose(a, b, rtol=rtol, atol=rtol * np.max(np.abs(b)))
+
+    for port in ("p0", "p1"):
+        spectra = [sector.output_spectrum(port, frequencies=[0.02]),
+                   product.output_spectrum(port, frequencies=[0.02], options={})]
+        assert spectra[0].diagnostics["solver"] == "sector_stationary"
+        assert abs(spectra[1].signal_fluctuation_spectrum[0]) > 0
+        close(spectra[0].signal_fluctuation_spectrum, spectra[1].signal_fluctuation_spectrum)
+        close(spectra[0].signal_photon_flux, spectra[1].signal_photon_flux)
+    for label in ("q0", "q1"):
+        close(chip.backend.to_array(spectra[0].steady_state.reduced_state(label)),
+              chip.backend.to_array(spectra[1].steady_state.reduced_state(label)))
+    delays = np.array([0.0, 7.3])
+    for method in ("g1", "g2"):
+        for output in ("p0", "p1"):
+            values = [getattr(sector, method)(output, delays, input="p0"),
+                      getattr(product, method)(output, delays, input="p0", options={})]
+            close(values[0].unnormalized, values[1].unnormalized)
+    # The cross-correlation of q1 with the pumped port has a large imaginary part, so the check sees its phase.
+    cross = np.asarray(product.g1("p1", delays, input="p0", options={}).unnormalized)
+    assert np.all(np.abs(cross.imag) > 0.5 * np.abs(cross))

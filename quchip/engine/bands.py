@@ -52,7 +52,6 @@ __all__ = [
     "decompose_two_body_canonical_bands",
     "canonical_to_coo",
     "canonical_to_dense_array",
-    "concrete_excitation_changes",
     "local_mode_bands",
     "prune_zero_diagonals",
 ]
@@ -156,30 +155,6 @@ def prune_zero_diagonals(canonical: CanonicalOperator) -> CanonicalOperator:
         subsystem_labels=canonical.subsystem_labels,
         tag=canonical.tag,
     )
-
-
-def concrete_excitation_changes(
-    matrix: Any,
-    dims: tuple[int, ...],
-    energy_vectors: Any | None = None,
-) -> frozenset[int] | None:
-    """Return the total level changes carried by a concrete operator.
-
-    ``matrix`` acts on a product basis whose energy-ordered states are the
-    columns of ``energy_vectors``; ``None`` means the product basis is already
-    energy ordered. ``dims`` counts the energy levels per subsystem. Exact
-    nonzero comparison can add round-off weights but never omits a band.
-    Traced payloads return ``None``: their bands are not statically known.
-    """
-    if contains_tracer((matrix, energy_vectors)):
-        return None
-    values = np.asarray(matrix, dtype=complex)
-    if energy_vectors is not None:
-        vectors = np.asarray(energy_vectors, dtype=complex)
-        values = vectors.conj().T @ values @ vectors
-    levels = np.indices(tuple(dims)).reshape(len(dims), -1).sum(axis=0)
-    rows, cols = np.nonzero(values)
-    return frozenset(int(change) for change in np.unique(levels[cols] - levels[rows]))
 
 
 def _decompose_dense_bands(

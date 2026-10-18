@@ -24,7 +24,7 @@ from quchip.backend import _backend_context
 from quchip.backend.protocol import Backend, Operator, State
 from quchip.approximations import Approximation, RWA, require_approximation
 from quchip.cutoff import ExcitationCutoff, active_cutoff, require_space
-from quchip.chip.analysis import ChipAnalysis, DressedResult, KerrMatrix
+from quchip.chip.analysis import ChipAnalysis, KerrMatrix
 from quchip.chip.baths import Bath
 from quchip.chip.effective import EffectiveTerms
 from quchip.chip.port_network import PortNetwork
@@ -36,6 +36,7 @@ from quchip.control.equipment import ControlEquipment
 from quchip.control.signal import Crosstalk, SignalTransform
 from quchip.declarative.expr import PhysicsExpr
 from quchip.devices.base import BaseDevice
+from quchip.engine.dressing import DressedResult
 from quchip.engine.frames import FramePlan
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
 from quchip.utils.labeling import LabelKeyedDict, resolve_label
@@ -43,6 +44,7 @@ from quchip.utils.values import TracedKey, scoped_entry, scoped_hit
 
 if TYPE_CHECKING:
     from quchip.chip.partition import PartitionResult
+    from quchip.engine.excitation import ExcitationStructure
     from quchip.engine.ir import EngineResult, FrameSpec, SolveProblem
     from quchip.results.results import SimulationBatchResult, SimulationResult
     from quchip.results.steady_state import SteadyStateResult
@@ -817,10 +819,12 @@ class Chip:
     def with_space(self, space: ExcitationCutoff | None) -> "Chip":
         """Return an isolated copy that keeps the product labels selected by ``space``.
 
-        The policy applies to dressed analysis, :meth:`resolve`, and
-        deterministic pulse solves. Workflows that do not support a cutoff
-        raise, e.g. VNA, steady-state, stochastic trajectory and elimination
-        calculations. The copy keeps the policy through cloning, parameter
+        The policy applies to dressed analysis, :meth:`resolve`,
+        deterministic pulse solves, :meth:`steadystate` and the stationary VNA
+        workflows ``finite_power()``, ``measure()``, ``output_spectrum()``,
+        ``g1()`` and ``g2()``. Workflows that do not support a cutoff raise,
+        e.g. ``VNA.sweep()``, stochastic trajectories, partitions and
+        eliminations. The copy keeps the policy through cloning, parameter
         rebinding and serialization. quchip never changes it automatically.
 
         Parameters
@@ -1231,7 +1235,11 @@ class Chip:
         force: bool = False,
         labeling: str = "DE",
     ) -> DressedResult:
-        """Diagonalize the exact lab-frame Hamiltonian.
+        """Diagonalize the static lab-frame Hamiltonian under the chip's approximation.
+
+        The Hamiltonian keeps the declared truncation of each device and the
+        Hamiltonian terms of the port network. Under ``RWA()`` it has no
+        counter-rotating terms.
 
         Parameters
         ----------
@@ -1351,6 +1359,33 @@ class Chip:
         """
         return self._analysis.drive_matrix_elements(transition, drives=drives)
 
+    def rotation_amplitude(
+        self,
+        transition: str | BaseDevice | tuple[Mapping[str | BaseDevice, int], Mapping[str | BaseDevice, int]],
+        line: str | BaseDrive,
+        envelope: Any,
+        angle: Any = np.pi,
+    ) -> Any:
+        """Return a first-guess amplitude that rotates a dressed transition by ``angle``.
+
+        The amplitude solves ``θ = 2π |m| |A a|`` for the dressed matrix element
+        m of the line and the envelope area ``A a`` at amplitude A. See
+        :meth:`ChipAnalysis.rotation_amplitude` for its limits; the value is a
+        starting point for a calibration.
+
+        Parameters
+        ----------
+        transition : str, BaseDevice, or pair of mappings
+            Transition shorthand or explicit lower/upper bare labels.
+        line : str or BaseDrive
+            Wired device-target line without signal-chain transforms.
+        envelope : Envelope
+            Pulse shape with an ``amplitude`` field.
+        angle : scalar, default=pi
+            Rotation angle in rad.
+        """
+        return self._analysis.rotation_amplitude(transition, line, envelope, angle)
+
     def state_components(
         self,
         state: int | Mapping[str | BaseDevice, int] | None = None,
@@ -1390,6 +1425,15 @@ class Chip:
     # interaction strength equals the dressed dispersive (cross-Kerr) shift.
     static_zz = dispersive_shift
     zz = dispersive_shift
+
+    def excitation_structure(self) -> "ExcitationStructure":
+        """Return the excitation-number structure of the static model.
+
+        The record shows whether the static model conserves the total
+        excitation number, which terms break it, and the block size that
+        dressed queries diagonalize. See :meth:`ChipAnalysis.excitation_structure`.
+        """
+        return self._analysis.excitation_structure()
 
     def kerr_matrix(self) -> KerrMatrix:
         """Return the labeled dressed self-Kerr and cross-Kerr matrix in GHz.
@@ -1743,9 +1787,9 @@ class Chip:
         budget, so this method raises for it.
         """
         from quchip.chip.partition import partition_chip
-        from quchip.cutoff import reject_cutoff
+        from quchip.engine.routes import require_workflow
 
-        reject_cutoff(self, "partition()")
+        require_workflow(self, "partition()")
         return partition_chip(self)
 
     def status(self) -> None:
@@ -1923,20 +1967,19 @@ class Chip:
         self,
         *components: Mapping[str | BaseDevice, int] | str | tuple[Any, Any],
     ) -> State:
-        """Return a normalized bare-basis superposition of tensor-product states.
+        """Return a normalized superposition of the dressed states of level labels.
 
-        Each component is a bare-state spec or an ``(amplitude, spec)`` tuple
-        for weighted mixing. A bare-state spec is a dict keyed by device or
-        label, or a string if you called :meth:`set_state_order` before.
-        Weights default to uniform, and results are normalized to unit norm.
-
-        Unlike :meth:`state`, this method stays in the bare product basis and
-        does no dressed diagonalization, so the probe basis is explicit.
+        Each component is a level label or an ``(amplitude, label)`` tuple for
+        weighted mixing. A label is a dict keyed by device or label, or a
+        string if you called :meth:`set_state_order` before, and names the
+        dressed state that :meth:`state` returns. Weights default to uniform,
+        and results are normalized to unit norm. :meth:`bare_state` takes the
+        same components for a superposition of bare product states.
 
         Parameters
         ----------
         *components : mapping, str, or tuple
-            Bare-state specifications, optionally paired with amplitudes.
+            Level labels, optionally paired with amplitudes.
 
         Examples
         --------
@@ -1966,15 +2009,22 @@ class Chip:
         Accepts a string shorthand (for example ``"eg1"``) if you called
         :meth:`set_state_order` before.
 
+        A level label names this state wherever quchip takes one: as the
+        ``initial_state`` of a solve, as a target of ``overlap()`` and
+        ``amplitude_array()``, and in :meth:`superposition` and
+        :meth:`compact_state`. A solve takes the state under its own
+        approximation and excitation cutoff, and places it in its frame at
+        ``tlist[0]``. :meth:`bare_state` gives the bare product state.
+
         If the requested label's assignment overlap is low, this method warns
         and names :meth:`bare_state` as the product-state alternative.
 
         This method is safe in ``jax.jit``/``grad``/``vmap``. Under tracing,
-        the :func:`~quchip.chip.dressing.label_eigensystem` array kernel
+        the :func:`~quchip.engine.dressing.label_eigensystem` array kernel
         selects the assigned eigenvector column, so dressed initial states are
         differentiable end-to-end. The state's amplitude on its assigned
         product state is real and nonnegative (see
-        :func:`~quchip.chip.dressing.gauge_phases`), so a nondegenerate state
+        :func:`~quchip.engine.dressing.gauge_phases`), so a nondegenerate state
         vector, not only its populations, is the same on each backend. On a
         chip whose static model conserves the total energy-level index, the
         method diagonalizes only the sector of the label.
@@ -1988,53 +2038,64 @@ class Chip:
         """
         return self._analysis.state(device_states, **device_state_kwargs)
 
-    def compact_state(self, *components: Any, dressed: bool = False) -> Any:
+    def compact_state(self, *components: Any, dressed: bool = True) -> Any:
         """Prepare a reusable state without a full product-space allocation.
 
         Parameters
         ----------
         *components : mapping, str, or (amplitude, specification) pairs
-            Bare product energy labels, using the same strings and mappings as
+            Energy-level labels, using the same strings and mappings as
             ``superposition``. Unmentioned devices have level zero. Components
             are summed and normalized. No components prepares the vacuum.
-        dressed : bool, default=False
+        dressed : bool, default=True
             Use the static dressed eigenstate assigned to each label. This
-            requires proven static excitation conservation.
+            requires proven static excitation conservation or an excitation
+            cutoff. False uses the bare product of each label, and a mapping
+            can then also give a device a local ket, as in ``bare_state``.
 
         Returns
         -------
         CompactState
             Captured state accepted as a pulse simulation's initial_state.
         """
-        from quchip.results.compact import compact_state
+        from quchip.engine.states import compact_state
         return compact_state(self, *components, dressed=dressed)
 
     def bare_state(
         self,
-        device_states: Mapping[str | BaseDevice, int | State] | str | None = None,
-        /,
+        *components: Mapping[str | BaseDevice, int | State] | str | tuple[Any, Any],
         **device_state_kwargs: int | State,
     ) -> State:
-        """Return a product state from per-device energy levels or authored local kets.
+        """Return a product state, or a superposition of product states, from energy levels or local kets.
 
         Specify each device as an energy-level index (``int``) or as a ket vector in that
         device's authored local space. Unspecified devices use the ground state (level
         0). Unlike :meth:`state`, this method does **not** diagonalize the coupled
         system.
 
-        Accepts a string shorthand (for example ``"eg1"``) if you called
-        :meth:`set_state_order` before.
+        One mapping or string, keywords, or both give one product state. Several
+        components, or ``(amplitude, specification)`` pairs, give the normalized
+        superposition of their products, as :meth:`superposition` combines
+        dressed states. Accepts a string shorthand (for example ``"eg1"``) if you
+        called :meth:`set_state_order` before.
+
+        Inside ``jax.jit``, a state that depends on no traced value stays a
+        constant, so a solve keeps the excitation sectors of its levels. A
+        level of a device that solves in its native basis, such as
+        ``Fluxonium(basis="native")``, depends on that device's traced
+        parameters, and a solve then uses the full product space.
+        ``compact_state(..., dressed=False)`` keeps the sectors in every case.
 
         Parameters
         ----------
-        device_states : mapping, str, or None, default=None
+        *components : mapping, str, or (amplitude, specification) pairs
             Per-device levels or local kets. Omitted devices use level zero.
         **device_state_kwargs : int or State
-            Per-device levels or local kets keyed by label.
+            Per-device levels or local kets keyed by label, for one product state.
         """
         from quchip.chip.states import bare_state
 
-        return bare_state(self, device_states, **device_state_kwargs)
+        return bare_state(self, *components, **device_state_kwargs)
 
     # ------------------------------------------------------------------
     # Control equipment
@@ -2245,7 +2306,7 @@ class Chip:
         return solve_problem(problem)
 
     def solve_many(
-        self, batch_or_problems: Any, *, progress: bool = True,
+        self, batch_or_problems: Any, *, progress: bool = True, max_workers: int | None = None,
     ) -> "SimulationBatchResult":
         """Solve a :class:`SolveBatch` or list of problems.
 
@@ -2258,6 +2319,11 @@ class Chip:
             Batch or prepared problems built for this chip.
         progress : bool, default=True
             Show backend progress where supported.
+        max_workers : int or None, default=None
+            Worker processes for a backend that solves points in parallel,
+            such as QuTiP. ``None`` takes the CPU count that loky reports,
+            which honors ``LOKY_MAX_CPU_COUNT``, or fewer when the available
+            memory cannot hold them. ``1`` solves in this process.
         """
         # `quchip.engine.solve_many` owns the single SolveBatch / list
         # input-shape dispatch and the batching.
@@ -2272,7 +2338,7 @@ class Chip:
             for i, problem in enumerate(batch_or_problems):
                 self._check_problem(problem, index=i)
 
-        return solve_many(batch_or_problems, progress=progress)
+        return solve_many(batch_or_problems, progress=progress, max_workers=max_workers)
 
     def steadystate(
         self,
@@ -2284,12 +2350,23 @@ class Chip:
     ) -> "SteadyStateResult":
         """Solve this chip's unique static Lindblad steady state.
 
+        A chip that conserves the total excitation ``N`` and has an
+        :class:`~quchip.ExcitationCutoff` or more than 64 product states needs
+        no Liouvillian solve when its lowering channels prove the vacuum
+        unique. The result then holds the vacuum on the labels with
+        ``N <= 1``. The vacuum is the same in every frame, so this also holds
+        in a frame where the resolved Hamiltonian is not static. Other chips,
+        and every call with ``options``, solve the backend's stationary
+        Liouvillian. ``result.diagnostics["route"]`` records the route and the
+        reason for it.
+
         Parameters
         ----------
         e_ops : dict or None, default=None
             Static expectation operators.
         options : dict or None, default=None
-            Backend solver options.
+            Backend solver options. A dictionary, also an empty one, selects
+            the backend's stationary Liouvillian.
         frame : FrameSpec or None, default=None
             Solve frame, or ``None`` to use the chip default.
         approximation : Approximation or None, default=None

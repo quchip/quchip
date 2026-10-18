@@ -91,6 +91,7 @@ if TYPE_CHECKING:
     from quchip.chip.transformations.active_patch import ActivePatchResult
     from quchip.declarative.expr import PhysicsExpr
     from quchip.engine.ir import FrameSpec, SolveBatch, SolveProblem
+    from quchip.results.propagator import PropagatorResult
     from quchip.results.results import SimulationBatchResult, SimulationResult
 
 
@@ -1363,20 +1364,22 @@ class QuantumSequence:
         e_ops : dict, optional
             Named observables to evaluate.
         initial_state : object or mapping, optional
-            ``None`` uses the eigenstate of the solve's undriven static lab-frame Hamiltonian, as
-            kept by its approximation, that is assigned to the all-ground label. Its overlap with
-            the bare product is made real and nonnegative before it is expressed in the solve frame
-            at ``tlist[0]``. With ordinary couplings, this is the bare product under the default
-            RWA. When the solve uses the chip's approximation, it is the same physical state as
-            ``chip.state()`` before the frame transform. Kept bands, effective terms, or network
-            Hamiltonian terms that couple the vacuum can also dress an RWA start. At a nonzero
-            rotating-frame start time, the frame transform is applied at ``tlist[0]``, so the state
-            need not match the lab-frame vector returned by ``chip.state()``. Mappings and
-            configured string shorthand give product states in the resolved local bases. QuTiP
-            ``Qobj`` and dynamiqs ``QArray`` kets or density matrices use resolved solver
-            coordinates. Arrays, symbolic expressions, and callables are authored-space kets
-            projected onto kept levels. A ``CompactState`` reuses captured excitation
-            coordinates and requires the same local energy bases.
+            A label of local energy levels, such as ``{"q0": 1}``, or configured string
+            shorthand names its dressed state: the eigenstate of the solve's undriven static
+            lab-frame Hamiltonian, as kept by its approximation and excitation cutoff, that is
+            assigned to the label. Its overlap with the bare product is made real and
+            nonnegative, and it is placed in the solve frame at ``tlist[0]`` as the label target
+            of ``overlap()``. ``None`` and ``{}`` give the all-ground label. With ordinary
+            couplings under the default RWA, that state is the bare vacuum. When the solve uses
+            the chip's approximation, a label start is the same physical state as
+            ``chip.state()`` before the frame transform. At a nonzero rotating-frame start time,
+            the frame transform is applied at ``tlist[0]``, so the state need not match the
+            lab-frame vector returned by ``chip.state()``. ``chip.bare_state(...)`` gives a bare
+            product, and a mapping with a local ket raises. QuTiP ``Qobj`` and dynamiqs
+            ``QArray`` kets or density matrices use resolved solver coordinates. Arrays,
+            symbolic expressions, and callables are authored-space kets projected onto kept
+            levels. A ``CompactState`` reuses captured excitation coordinates and requires the
+            same local energy bases.
         backend : object or {"qutip", "dynamiqs"}, optional
             Per-call backend override.
         partition : bool, default=True
@@ -1446,6 +1449,7 @@ class QuantumSequence:
         dissipation: bool = True,
         run_args: dict | None = None,
         duration: Any | None = None,
+        max_workers: int | None = None,
     ) -> "SimulationBatchResult":
         """Build and solve a batched sweep over pulse or sequence parameters.
 
@@ -1468,6 +1472,11 @@ class QuantumSequence:
             Include declared collapse channels.
         duration : float, optional
             Positive end time in ns when ``tlist`` is omitted.
+        max_workers : int or None, default=None
+            Worker processes for a backend that solves points in parallel,
+            such as QuTiP. ``None`` takes the CPU count that loky reports,
+            which honors ``LOKY_MAX_CPU_COUNT``, or fewer when the available
+            memory cannot hold them. ``1`` solves in this process.
 
         Returns
         -------
@@ -1495,9 +1504,95 @@ class QuantumSequence:
                 dissipation=dissipation,
             )
             result = self._chip.solve_many(
-                problem_batch, progress=progress,
+                problem_batch, progress=progress, max_workers=max_workers,
             )
         return result
+
+    def subspace_propagator(
+        self,
+        devices: str | BaseDevice | Sequence[str | BaseDevice],
+        levels: Sequence[int] = (0, 1),
+        *,
+        frame: str = "dressed",
+        tlist: Any | None = None,
+        duration: Any | None = None,
+        solver: str | None = None,
+        options: dict | None = None,
+        backend: Any | None = None,
+        approximation: Approximation | None = None,
+        progress: bool = False,
+        max_workers: int | None = None,
+    ) -> "PropagatorResult":
+        """Return the propagator of this sequence on the dressed states of a product of levels.
+
+        The inputs are the labels that give each selected device one of
+        ``levels`` and every other device level 0, in the order of
+        ``itertools.product(levels, repeat=len(devices))``. One batch starts
+        each input in its dressed state and projects every final state on the
+        label target of every input, as
+        :meth:`~quchip.results.results.SimulationResult.amplitude_array`
+        does. The record converts the matrix to ``frame``. The dressed frame
+        takes the dressed frequencies and the dressed ground energy from the
+        static model of the solve, with its approximation and excitation
+        cutoff. The solve leaves out collapse channels and warns, so the
+        matrix is the propagator of the Hamiltonian alone.
+
+        Parameters
+        ----------
+        devices : device object, str, or sequence of them
+            Selected devices, in the order of the levels of each label.
+        levels : sequence of int, default=(0, 1)
+            Levels of each selected device.
+        frame : {"dressed", "lab", "integration"}, default="dressed"
+            Frame of the returned matrix.
+        tlist, duration, solver, options, backend, approximation
+            As for :meth:`simulate`. The propagator runs from ``tlist[0]`` to ``tlist[-1]``.
+        progress : bool, default=False
+            Show backend batch progress when supported.
+        max_workers : int or None, default=None
+            As for :meth:`simulate_batch`.
+
+        Returns
+        -------
+        PropagatorResult
+            Matrix, labels, leakage of each input, frame frequencies, and the batch of solves.
+        """
+        import itertools
+        import warnings
+
+        from quchip.results.propagator import FRAMES, subspace_propagator
+
+        if frame not in FRAMES:
+            raise ValueError(f"frame must be one of {FRAMES}; got {frame!r}.")
+        selected = (devices,) if isinstance(devices, (str, BaseDevice)) else tuple(devices)
+        names = tuple(resolve_label(device) for device in selected)
+        if not names or len(set(names)) != len(names):
+            raise ValueError("Select at least one device, and each device once.")
+        labels = tuple(itertools.product(tuple(levels), repeat=len(names)))
+        if not labels or len(set(levels)) != len(tuple(levels)):
+            raise ValueError("levels must name at least one level, and each level once.")
+        with self._scoped_backend(backend):
+            problem_batch = self.build_batch(
+                self.vary("initial_state", [dict(zip(names, label)) for label in labels]),
+                tlist=tlist,
+                duration=duration,
+                solver=solver,
+                options=options,
+                approximation=approximation,
+                states="final",
+                dissipation=False,
+            )
+            omitted = tuple(channel.key for channel in problem_batch.problems[0].engine_result.slh.channels)
+            if omitted:
+                warnings.warn(
+                    f"subspace_propagator() solves without the collapse channels {list(omitted)}, so the "
+                    "matrix is the propagator of the Hamiltonian alone.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            batch = self._chip.solve_many(problem_batch, progress=progress, max_workers=max_workers)
+        return subspace_propagator(batch, names, labels, frame, omitted)
+
     def active_patch(self, *, hops: int = 1, method: str = "sw", local: bool = False,
                      order: Any | None = None) -> "ActivePatchResult":
         """Reduce the chip to this schedule's active patch (spectators eliminated).

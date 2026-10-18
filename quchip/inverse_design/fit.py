@@ -44,7 +44,7 @@ from scipy.optimize import brentq, least_squares
 from quchip.analysis.effective_hamiltonian import effective_hamiltonian_between_states
 from quchip.backend import _backend_context
 from quchip.chip import Chip
-from quchip.cutoff import active_cutoff, reject_cutoff
+from quchip.cutoff import active_cutoff
 from quchip.inverse_design.observables import (
     TargetSpec,
     build_dressed_target_specs,
@@ -606,7 +606,9 @@ def fit_a_dress(
         raise ValueError(f"Unknown evaluator {evaluator!r}; choose 'full' or 'local'.")
     if evaluator == "local":
         # A one-hop neighborhood would spend the global excitation budget on fewer devices.
-        reject_cutoff(chip, "fit_a_dress(evaluator='local')")
+        from quchip.engine.routes import require_workflow
+
+        require_workflow(chip, "fit_a_dress(evaluator='local')")
     if isinstance(max_hilbert_dim, bool) or not isinstance(max_hilbert_dim, Integral) or max_hilbert_dim < 1:
         raise ValueError("max_hilbert_dim must be a positive integer.")
     constraint_mapping = _coerce_mapping(constraints, "constraints") if constraints is not None else None

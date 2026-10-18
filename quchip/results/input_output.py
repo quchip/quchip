@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Mapping
 
@@ -247,6 +247,9 @@ class OutputSpectrumResult:
     fourier_convention : str
         Definition of the reported two-sided spectrum. The engineering
         correlation is the conjugate of the internal physics correlation.
+    diagnostics : mapping
+        The solve's route under ``"route"`` and its name under ``"solver"``,
+        with the truncation entries of a solve on excitation sectors.
     """
 
     port: str
@@ -259,6 +262,7 @@ class OutputSpectrumResult:
     signal_incoherent_flux: Any
     steady_state: Any
     fourier_convention: str = "2 Re integral_0^inf d tau exp(-j 2 pi f tau) C_engineering(tau), j = i"
+    diagnostics: Mapping[str, Any] = field(default_factory=lambda: _LazyDiagnostics({}), repr=False)
 
 
 @dataclass(frozen=True)
@@ -281,6 +285,9 @@ class OutputCorrelationResult:
         Captured stationary state.
     normalization : str
         Human-readable normalization convention.
+    diagnostics : mapping
+        The solve's route under ``"route"`` and its name under ``"solver"``,
+        with the truncation entries of a solve on excitation sectors.
     """
 
     order: int
@@ -293,6 +300,7 @@ class OutputCorrelationResult:
     output_intensity: Any
     steady_state: Any
     normalization: str
+    diagnostics: Mapping[str, Any] = field(default_factory=lambda: _LazyDiagnostics({}), repr=False)
 
     @property
     def port(self) -> str:

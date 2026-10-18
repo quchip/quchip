@@ -30,6 +30,7 @@ Frame    : lab
 Approx.  : RWA
 Dressed  : not computed
 Hilbert  : 4 x 5 = 20 levels
+Sectors  : N conserved; dressed queries with N <= 2 diagonalize at most 3 states
 
 Devices (2)
 ───────────
@@ -43,6 +44,11 @@ Couplings (1)
 qr : q ↔ r
     g = 0.05 GHz
 ```
+
+The `Sectors` line shows that this RWA model conserves the total excitation
+number $N$, the sum of the device levels. Dressed queries therefore diagonalize
+one small block for each $N$ instead of all 20 levels.
+`chip.excitation_structure()` lists the terms that decide this.
 
 ## Read dressed observables
 

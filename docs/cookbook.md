@@ -13,6 +13,7 @@ Frequencies are in GHz, times in ns, temperatures in mK and decay rates in
 | A spectrum over a parameter grid | `SpectrumSweep` with `Sweep` |
 | A pulse or an idle interval | `QuantumSequence.simulate()` |
 | Related pulse experiments | `sequence.simulate_batch()` |
+| A gate on dressed computational states | `sequence.subspace_propagator()` |
 | Steady-state populations or fields | `chip.steadystate()` |
 | Small-signal S parameters | `VNA.sweep()` |
 | Readout responses for each qubit state | `VNA.sweep(..., when={q: 1})` |
@@ -218,6 +219,30 @@ A cancellation tone on the target's own line follows the target's frame by
 default. `vz(target, ...)` then shifts both tones, and `vz(control, ...)`
 shifts neither.
 
+## Read a gate on dressed states
+
+```python
+shape = Gaussian(duration=20.0, sigmas=3.0)
+amplitude = chip.rotation_amplitude(q, xy, shape)
+gate = QuantumSequence(chip)
+gate.schedule(xy, envelope=Gaussian(duration=20.0, sigmas=3.0, amplitude=amplitude), freq=chip.freq(q))
+propagator = gate.subspace_propagator(q)
+fidelity = propagator.fidelity([[0, 1], [-1, 0]])
+```
+
+`rotation_amplitude()` solves `θ = 2π |m| |A a|` for the dressed matrix
+element `m` of the line and the envelope area `A a`, with `θ = π` by default.
+On an isolated transmon, the charge drive has `m = -i` on the 0 → 1
+transition. The dressed element here is `-0.99969i`, so a real π pulse aims
+at `iY`.
+`subspace_propagator(q)` starts the dressed states of `q` in levels 0 and 1 as
+one batch. The matrix has the final label in rows and the initial label in
+columns, in the frame of the dressed frequencies. `propagator.leakage` gives
+the probability that each input leaves the labels, and `fidelity()` counts it.
+Here the fidelity is 0.993. Off-resonant coupling to the third level gives an
+AC Stark shift and a coherent rotation error, while the final leakage is only
+about 2e-6. The amplitude is a first guess for a calibration. `frame="lab"` and `frame="integration"` select the other frames.
+
 ## Choose what to save
 
 ```python
@@ -236,14 +261,18 @@ only requested expectation traces. Later state measurements require saved
 states. `observable_at()` can select or interpolate a saved trace. State
 queries use saved times and do not interpolate quantum states.
 
-An omitted `initial_state` uses the all-ground-labeled eigenstate of the undriven static
-lab-frame Hamiltonian that the solve's approximation keeps. This eigenstate is then expressed
-in the solve frame at `tlist[0]`. With ordinary couplings, this is the bare product under the
-default RWA. With the chip's approximation, it is the same physical state as `chip.state()`
-before the frame transform. Use `chip.state()` for other coupled eigenstates and
-`chip.bare_state()` to request a bare product state explicitly.
-`result.population(q, level=1)` measures a local isolated energy-state population. `overlap()`
-tests a particular joint state.
+A level label names its dressed state everywhere: `chip.state(q=1)`,
+`initial_state={"q": 1}` or `"e"`, the targets of `overlap()` and
+`amplitude_array()`, `chip.superposition()` and `chip.compact_state()`. The
+dressed state is the eigenstate of the undriven static lab-frame Hamiltonian
+that the solve's approximation keeps, assigned to the label. A label
+`initial_state` is placed in the solve frame at `tlist[0]`, and an omitted
+`initial_state` is the all-ground label, so it equals `{}`. A chip at rest
+then stays in its label, with no exchange between coupled devices. Use
+`chip.bare_state(q=1)` when the bare product state is the point, for example to
+show that exchange. `result.population(q, level=1)` measures a local isolated
+energy-state population, which on a coupled chip differs from
+`overlap({"q": 1})`.
 
 ## Reuse an exact compact pulse state
 
@@ -254,7 +283,7 @@ The solver never substitutes an excitation cutoff.
 
 ```python
 initial = chip.compact_state({"q": 1})
-# Use dressed=True for assigned eigenstates of a conserving static model.
+# The label's dressed state. Use dressed=False for its bare product.
 idle = QuantumSequence(chip)
 result = idle.simulate(duration=60.0, initial_state=initial)
 occupation = result.population("q", level=1)
@@ -262,7 +291,9 @@ saved = result.compact_state()
 ```
 
 The factory also accepts weighted superpositions, such as
-`chip.compact_state((1, {}), (1j, {"q": 1}))`. It normalizes the sum.
+`chip.compact_state((1, {}), (1j, {"q": 1}))`. It normalizes the sum. With
+`dressed=False`, a device can also take a local ket, so a bare product needs no
+product-space vector on a large chip.
 Pass `saved` as the next solve's `initial_state`, with the same captured local
 bases. Start the next time grid at the previous final time to continue
 absolute-time controls.
@@ -309,18 +340,20 @@ model's vacuum-assigned eigenvector. `check_truncation(result)[ExcitationCutoff(
 gives the maximum sampled population in the sectors that one step can move
 above the cutoff. This value is a warning heuristic, not an error bound.
 
-`VNA.finite_power()` and `VNA.measure()` solve the truncated model.
-`chip.dress()`, `VNA.sweep()`, `VNA.output_spectrum()`, `VNA.g1()`,
-`VNA.g2()`, `steadystate()`, stochastic trajectory solvers, `eliminate()`,
+`steadystate()`, `VNA.finite_power()`, `VNA.measure()`,
+`VNA.output_spectrum()`, `VNA.g1()` and `VNA.g2()` solve the truncated model.
+`chip.dress()`, `VNA.sweep()`, stochastic trajectory solvers, `eliminate()`,
 `eliminate_spectators()`, `active_patch()`, `fit_a_dress(evaluator="local")`
 and `chip.partition()` raise for a limited chip. Use `chip.with_space(None)`
 for them.
 
-Without a cutoff, `finite_power()` and `measure()` truncate their own solve of
-a chip that conserves the total excitation and has more than 64 product states.
-They start at `K = 2`, compare every grid point with `K + 1`, and warn which
-`K` they kept. Set the cutoff on the chip to choose `K`, or pass `options={}`
-to solve the full product space.
+Without a cutoff, the VNA workflows above truncate their own solve of a chip
+that conserves the total excitation and has more than 64 product states. They
+start at `K = 2`, compare every grid point with `K + 1`, and warn which `K`
+they kept. Set the cutoff on the chip to choose `K`, or pass `options={}` to
+solve the full product space. An undriven `steadystate()` of such a chip
+returns the vacuum when the lowering channels prove it unique.
+`result.diagnostics["route"]` names the route that each call took and why.
 
 ## Declare network noise
 
@@ -379,6 +412,7 @@ calibration.
 | A dressed label near an avoided crossing | Inspect `assignment_overlaps` or `state_components()`. Lowering the overlap threshold does not improve the assignment. |
 | A small boundary population | Call `check_truncation(result)` explicitly, then increase local levels and compare the observable. The check covers only available samples. |
 | A smooth trace | Refine the output grid separately from the solver tolerances. |
+| A gate fidelity | `fidelity()` counts leakage. `omitted_channels` names the collapse channels that the propagator leaves out. |
 
 QuTiP is the default. Choose dynamiqs for JAX gradients and compiled batches.
 The initial state and declared dissipation select `sesolve` or `mesolve`

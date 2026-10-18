@@ -14,7 +14,7 @@ from scipy import sparse
 from quchip.chip.ports import Port
 from quchip.engine.field_noise import amplifier_values, attenuation_value, noise_parameters, thermal_occupation_value
 from quchip.engine.output_network import pad_mixing
-from quchip.engine.slh import _same_carrier
+from quchip.engine.slh import CompiledChannel, CompiledNetwork, ModeResponse, _same_carrier, cascade_hamiltonian
 from quchip.engine.reference import (
     FieldChannel,
     ReferenceAmplifier,
@@ -443,45 +443,8 @@ def _mode_reflection_transfer(
     return transfer * xp.where(xp.real(root(reference_freq)) < 0.0, -1.0, 1.0)
 
 
-def _cascade_hamiltonian(products: Sequence[tuple[Any, Any, Any]]) -> Any | None:
-    """Return ``sum (L_d^dagger c L_u - h.c.) / 2i`` over ``(L_d, L_u, c)`` matrices on one space.
-
-    A concrete result is ``None`` when each element is below ``64 n ε`` times
-    the magnitude of the products that form it. This conservative threshold
-    removes cancellation residue, e.g. the Lamb shift ``γ sin(π)`` of a giant
-    atom, and also a genuine term that small. Each element has its own
-    threshold, so the cancellation of one pair does not hide the small rate of
-    another pair. A traced result keeps every term.
-    """
-    traced = contains_tracer(products)
-    xp = select_array_module(traced)
-    values: Any = 0.0
-    scale: Any = 0.0
-    for left, right, coefficient in products:
-        left, right = xp.asarray(left), xp.asarray(right)
-        product = xp.conj(xp.swapaxes(left, -1, -2)) @ (xp.asarray(coefficient) * right)
-        values = values + (product - xp.conj(xp.swapaxes(product, -1, -2))) / (2j)
-        if not traced:
-            size = np.abs(coefficient) * (np.swapaxes(np.abs(left), -1, -2) @ np.abs(right))
-            scale = scale + (size + np.swapaxes(size, -1, -2)) / 2
-    if not traced and np.all(np.abs(values) <= 64 * np.finfo(float).eps * values.shape[-1] * scale):
-        return None
-    return values
-
-
 #: ``(coefficient, boundary_input, upstream_output)`` for one structurally fed column.
 _Feeder = tuple[Any, "TerminalKey | None", "TerminalKey | None"]
-
-
-@dataclass(frozen=True)
-class _ModeResponse:
-    """A removed harmonic pole attached to its original quantum-port locations."""
-
-    label: str
-    ports: tuple[str, ...]
-    freq: Any
-    weight: Any
-    internal_rate: Any
 
 
 @dataclass
@@ -489,22 +452,6 @@ class _AffineField:
     scattering: list[Any]
     coupling: dict[str, Any]
     support: list[bool]
-
-
-@dataclass(frozen=True)
-class _CompiledChannel:
-    exposure: NetworkPort
-    coupling: Mapping[str, Any]
-    reference: ReferencePlane
-
-
-@dataclass(frozen=True)
-class _CompiledNetwork:
-    channels: tuple[_CompiledChannel, ...]
-    scattering: Any
-    generated_pairs: tuple[tuple[str, str, Any], ...]
-    support: np.ndarray
-    output_network: Any = None
 
 
 class PortNetwork:
@@ -563,7 +510,7 @@ class PortNetwork:
         self._connections: dict[TerminalKey, TerminalKey] = {}
         self._used_outputs: dict[TerminalKey, TerminalKey] = {}
         self._exposures: list[NetworkPort] = []
-        self._mode_responses: tuple[_ModeResponse, ...] = ()
+        self._mode_responses: tuple[ModeResponse, ...] = ()
 
     @classmethod
     def from_ports(
@@ -1362,7 +1309,7 @@ class PortNetwork:
         )
 
     def resolve(
-        self, base: "ResolvedSLH", *, _compiled: _CompiledNetwork | None = None, _generated: Any = None,
+        self, base: "ResolvedSLH", *, _compiled: CompiledNetwork | None = None, _generated: Any = None,
     ) -> "ResolvedSLH":
         """Compose this boundary onto an input-free SLH value.
 
@@ -1457,7 +1404,7 @@ class PortNetwork:
             output_network=compiled.output_network,
         )
 
-    def _field_channels(self, compiled: _CompiledNetwork) -> tuple[FieldChannel, ...]:
+    def _field_channels(self, compiled: CompiledNetwork) -> tuple[FieldChannel, ...]:
         """Resolve source states once for both operator and compact mode solvers."""
         xp = select_array_module(contains_tracer(compiled.scattering))
         scattering = xp.asarray(compiled.scattering)
@@ -1609,7 +1556,7 @@ class PortNetwork:
                 raise ValueError(f"Mode response {payload['label']!r} must name distinct ports of this network, "
                                  f"got {list(ports)}. Available ports: {sorted(known)}.")
         network._mode_responses = tuple(
-            _ModeResponse(payload["label"], tuple(payload["ports"]),
+            ModeResponse(payload["label"], tuple(payload["ports"]),
                           *(cls._deserialize_scalar(payload[name]) for name in ("freq", "weight", "internal_rate")))
             for payload in data.get("mode_responses", ())
         )
@@ -1912,7 +1859,7 @@ class PortNetwork:
         return notes
 
     def dynamical_supports(
-        self, chip: Any, *, _compiled: _CompiledNetwork | None = None,
+        self, chip: Any, *, _compiled: CompiledNetwork | None = None,
     ) -> tuple[tuple[str, ...], ...]:
         """Return device groups coupled by cascade-generated Hamiltonian terms.
 
@@ -1940,7 +1887,7 @@ class PortNetwork:
         return tuple(groups)
 
     def fed_ports(
-        self, chip: Any, exposure: str, *, _compiled: _CompiledNetwork | None = None,
+        self, chip: Any, exposure: str, *, _compiled: CompiledNetwork | None = None,
     ) -> list[tuple[Any, Any]]:
         """Return ``(port, coefficient)`` pairs reached from ``exposure``.
 
@@ -1971,7 +1918,7 @@ class PortNetwork:
         return fed
 
     def _responses_by_output(
-        self, *, recorded: bool = False, _compiled: _CompiledNetwork | None = None,
+        self, *, recorded: bool = False, _compiled: CompiledNetwork | None = None,
     ) -> dict[str, tuple[str, ...]]:
         """Return the retained mode responses whose ports emit into each output channel.
 
@@ -2235,7 +2182,7 @@ class PortNetwork:
     def _compile(
         self, *, _embedded: Mapping[TerminalKey, ReferenceElement] | None = None,
         _retained: Mapping[str, ReferencePlane] | None = None,
-    ) -> _CompiledNetwork:
+    ) -> CompiledNetwork:
         exposures = self._effective_exposures()
         traversals: set[TerminalKey] = set()
         peeled = [self._peel(exposure, traversals=traversals) for exposure in exposures]
@@ -2380,9 +2327,9 @@ class PortNetwork:
             support_matrix = (mixes.astype(int) @ support_matrix.astype(int)) > 0
 
         self._validate_unitary(scattering)
-        return _CompiledNetwork(
+        return CompiledNetwork(
             channels=tuple(
-                _CompiledChannel(exposure, MappingProxyType(mapping), plane)
+                CompiledChannel(exposure, MappingProxyType(mapping), plane)
                 for exposure, mapping, plane in zip(exposures, coupling_maps, planes, strict=True)
             ),
             scattering=scattering,
@@ -2653,7 +2600,7 @@ class PortNetwork:
             return None
         first = next(iter(operators.values()))
         if values is None:
-            values = _cascade_hamiltonian([
+            values = cascade_hamiltonian([
                 (operators[downstream].to_dense(), operators[upstream].to_dense(), coefficient)
                 for downstream, upstream, coefficient in pairs
             ])

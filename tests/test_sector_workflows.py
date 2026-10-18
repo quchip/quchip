@@ -6,7 +6,6 @@ import numpy as np
 import pytest
 
 from quchip import ChargeDrive, Chip, DuffingTransmon, Exact, fit_a_dress
-from quchip.chip.effective import conserves_excitation_number
 from quchip.declarative import CouplingModel, Scalar, parameter
 
 
@@ -28,8 +27,8 @@ def pair(*, backend="qutip"):
 def test_exact_exchange_uses_sectors_and_matches_independent_spectrum():
     """A custom exchange Hamiltonian needs no RWA to conserve the energy-level index."""
     chip = pair()
-    assert conserves_excitation_number(chip, chip.approximation)
-    assert chip.analysis._dressed_dimension(2) == 3
+    assert chip.excitation_structure().conserves
+    assert chip.excitation_structure().largest_block(2) == 3
     expected = 5.2 - np.sqrt(0.2**2 + 0.04**2)
     assert chip.freq("q") == pytest.approx(expected, abs=1e-12)
 
@@ -80,7 +79,7 @@ def test_counter_rotating_support_is_not_declared_conserving_at_zero_strength():
     q, r = source.devices
     for g in (0.0, 1e-16, 0.04):
         chip = Chip([q, r], [Capacitive(q, r, g=g)], approximation=Exact())
-        assert not conserves_excitation_number(chip, chip.approximation)
+        assert not chip.excitation_structure().conserves
 
 
 @pytest.mark.optional_backend
@@ -145,7 +144,7 @@ def test_undeclared_retained_matrix_is_checked_without_a_tolerance():
         h = np.diag([0.0, 0.01, 0.02])
         h[0, 1] = h[1, 0] = offdiagonal
         chip = Chip([q], effective_terms=[EffectiveTerms(("q",), (3,), h)], approximation=Exact())
-        assert conserves_excitation_number(chip, chip.approximation) == (offdiagonal == 0)
+        assert chip.excitation_structure().conserves == (offdiagonal == 0)
         if offdiagonal == 0:
             assert chip.freq(q) == pytest.approx(5.01, abs=1e-12)
 
@@ -166,7 +165,9 @@ def test_projected_cascade_port_is_not_declared_conserving():
                              projection=OperatorProjection(("a",), (2,), ("a",), (2,), hadamard))
     chip = Chip([a, b], port_network=network, effective_terms=[rotated], approximation=Exact())
     # Both authored ports lower one level, but the projected upstream port also keeps and raises levels.
-    assert not conserves_excitation_number(chip, chip.approximation)
+    structure = chip.excitation_structure()
+    assert not structure.conserves
+    assert [(term.label, term.changes) for term in structure.breaking] == [("a_out", frozenset({-1, 0, 1}))]
     default = QuantumSequence(chip).build_problem([0.0, 1.0]).initial_state
     default = np.ravel(np.asarray(chip.backend.to_array(default)))
     np.testing.assert_allclose(default, np.ravel(np.asarray(chip.backend.to_array(chip.state({})))), atol=1e-12)
@@ -176,7 +177,7 @@ def test_projected_cascade_port_is_not_declared_conserving():
 def test_sector_and_full_fallback_refuse_impossible_allocations(monkeypatch):
     """Static requests reject an oversized sector before assembly and an oversized full eigensystem before solving."""
     from quchip import Capacitive
-    from quchip.backend import _memory
+    from quchip.utils import memory as _memory
 
     chip = pair()
     model = chip.analysis._sector_model()
@@ -221,7 +222,7 @@ def test_conserving_chip_state_reads_its_sector_and_matches_the_full_eigensystem
 def test_reduced_chip_state_and_default_initial_state_need_no_full_eigensystem(monkeypatch):
     """A conserving reduced chip prepares its states from sectors within a budget that refuses a full eigensystem."""
     from quchip import Capacitive, QuantumSequence, RWA, Resonator, Square, eliminate
-    from quchip.backend import _memory
+    from quchip.utils import memory as _memory
 
     q = DuffingTransmon(freq=5.3, anharmonicity=-0.26, levels=3, label="q")
     modes = [Resonator(freq=6.0 + 0.1 * i, levels=3, label=f"m{i}") for i in range(5)]
@@ -342,7 +343,7 @@ def test_fit_rechecks_dimension_when_tracing_cannot_prove_conservation():
 
     q, r = pair().devices
     chip = Chip([q, r], [MatrixExchange(q, r, g=.04, label="qr")], approximation=Exact(), backend="dynamiqs")
-    assert chip.analysis._dressed_dimension(1) == 2
+    assert chip.excitation_structure().largest_block(1) == 2
     with pytest.raises(ValueError, match="dimension 9, exceeding max_hilbert_dim=2"):
         fit_a_dress(chip, constraints={"q": {"freq": 4.95, "anharmonicity": None},
                                       "r": {"freq": None, "anharmonicity": None},
@@ -352,7 +353,7 @@ def test_fit_rechecks_dimension_when_tracing_cannot_prove_conservation():
 
 def test_opaque_traced_operator_requires_declared_changes():
     """Undeclared traced matrix support is unknown; a supplied conservation declaration survives tracing."""
-    from quchip.chip.effective import authored_excitation_changes
+    from quchip.engine.excitation import authored_excitation_changes
     from quchip.declarative.expr import PhysicsExpr
     from quchip.engine.assembly import _resolve_system
 

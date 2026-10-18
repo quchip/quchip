@@ -304,6 +304,51 @@ class Backend(ABC):
             )
         )
 
+    def compact_operator(self, rows: Any, columns: Any, values: Any, size: int) -> Operator:
+        r"""Construct an operator on ``size`` compact excitation states from its entries.
+
+        Repeated entries add. Each backend chooses the storage. The default
+        stores a dense matrix, which keeps traced values traced, and raises
+        :class:`MemoryError` before it allocates one that cannot fit.
+
+        Parameters
+        ----------
+        rows, columns : array_like of int
+            Row and column index of each entry.
+        values : array_like
+            Value of each entry.
+        size : int
+            Number of compact states.
+        """
+        from quchip.utils.jax_utils import concrete_array_module
+        from quchip.utils.memory import dense_bytes, require_memory
+
+        require_memory(dense_bytes(size, size, copies=2), task=f"A dense compact operator (dimension {size})",
+                       remedy="Reduce the model, the initial excitation support, or an excitation cutoff's max_total.")
+        xp = concrete_array_module(values)
+        result = xp.zeros((size, size), dtype=complex)
+        if xp is np:
+            np.add.at(result, (rows, columns), values)
+        else:
+            result = result.at[rows, columns].add(values)
+        return self.from_array(result, dims=[[size], [size]])
+
+    def compact_operators_fit(self, size: int, count: int) -> bool:
+        r"""Return whether ``count`` compact operators on ``size`` states fit in the available memory.
+
+        The default stores each as a dense matrix, as :meth:`compact_operator` does.
+
+        Parameters
+        ----------
+        size : int
+            Number of compact states.
+        count : int
+            Number of operators that exist at the same time.
+        """
+        from quchip.utils.memory import dense_bytes, fits_memory
+
+        return fits_memory(dense_bytes(size, size, copies=count))
+
     @abstractmethod
     def to_canonical_operator(self, op: Operator) -> "CanonicalOperator":
         r"""Serialize a native operator into the backend-agnostic canonical IR.
@@ -1064,6 +1109,90 @@ class Backend(ABC):
         return self.mesolve(prepared.rhs, psi0, tlist_arr,
                             c_ops=c_ops, e_ops=e_ops_arg, options=opts)
 
+
+    def trajectory_view(
+        self, native: Any, problem: "SolveProblem", *, index: int | None, states: bool, deterministic: bool,
+    ) -> tuple[Any, Any, Any]:
+        """Read one view of a native stochastic result of this backend.
+
+        Parameters
+        ----------
+        native : object
+            Native stochastic result that :meth:`solve_problem` returned.
+        problem : SolveProblem
+            Captured request, with its solver, state storage and native options.
+        index : int or None
+            Kept trajectory, or ``None`` for the native ensemble average.
+        states : bool
+            Whether to read the saved states.
+        deterministic : bool
+            Whether to read the deterministic no-click run instead.
+
+        Returns
+        -------
+        tuple
+            Expectation values, state history and final state. Each entry is
+            ``None`` when the native result does not keep it.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not implement native solver {problem.solver!r}.")
+
+    def trajectory_records(self, native: Any, problem: "SolveProblem") -> tuple[Any, str]:
+        """Read the diffusive measurement currents of a native stochastic result.
+
+        Parameters
+        ----------
+        native : object
+            Native stochastic result that :meth:`solve_problem` returned.
+        problem : SolveProblem
+            Captured request, with its solver and native options.
+
+        Returns
+        -------
+        tuple
+            Currents of shape ``(runs, channels, intervals)``, or
+            ``(runs, channels, 2, intervals)`` for heterodyne detection, and
+            the sampling of the signal in each interval: ``"start"``,
+            ``"middle"``, ``"end"`` or ``"mean"``.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not implement native solver {problem.solver!r}.")
+
+    def trajectory_clicks(self, native: Any, problem: "SolveProblem") -> tuple[list[Any], Any, Any, Any]:
+        """Read the jump events of a native stochastic result.
+
+        Parameters
+        ----------
+        native : object
+            Native stochastic result that :meth:`solve_problem` returned.
+        problem : SolveProblem
+            Captured request, with its solver and native options.
+
+        Returns
+        -------
+        tuple
+            For each run, its click times and the native jump-operator index of
+            each click; the sampling weight of each run; the weight of the
+            no-click run that the native sampling solves apart; and whether
+            each run filled its native click buffer.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not implement native solver {problem.solver!r}.")
+
+    def trajectory_run_expect(self, native: Any, problem: "SolveProblem") -> list[Any]:
+        """Read the expectation values of every kept run of a native stochastic result.
+
+        Parameters
+        ----------
+        native : object
+            Native stochastic result that :meth:`solve_problem` returned.
+        problem : SolveProblem
+            Captured request, with its native expectation operators.
+
+        Returns
+        -------
+        list
+            One array of shape ``(runs, times)`` for each native expectation operator.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not implement native solver {problem.solver!r}.")
+
     def _stationary_liouvillian(self, engine_result: "EngineResult") -> Any:
         """Lower a static engine description to the backend's native generator."""
         raise NotImplementedError(f"{type(self).__name__} must implement stationary lowering")
@@ -1090,6 +1219,16 @@ class Backend(ABC):
         if prepared.backend is not self or prepared.engine_result is not engine_result:
             raise ValueError("Stationary preparation belongs to a different backend or operating point.")
         return prepared
+
+    def stationary_bytes(self, engine_result: "EngineResult") -> int | None:
+        """Return the estimated peak bytes of a stationary solve of a static model, or ``None``.
+
+        Parameters
+        ----------
+        engine_result : EngineResult
+            Captured static Hamiltonian and collapse channels.
+        """
+        return None
 
     def steadystate(
         self, problem: Any, *, prepared: PreparedStationary | None = None, guess: State | None = None,
@@ -1139,6 +1278,67 @@ class Backend(ABC):
             Sector Hamiltonians, channels and frozen-reference probe sources.
         """
         raise NotImplementedError(f"{type(self).__name__} must implement coherence_response()")
+
+    def sector_generator(self, sizes: Sequence[int], hamiltonian: Any, lowering: Sequence[Any],
+                         conserving: Sequence[Any]) -> Any:
+        r"""Return the truncated Lindblad generator of a conserving model on the totals ``N <= K``.
+
+        The generator solves stationary states, resolvents and regression
+        propagations matrix-free on excitation sectors. This default solves on
+        host NumPy and SciPy arrays for every backend, so it needs concrete
+        values.
+
+        Parameters
+        ----------
+        sizes : sequence of int
+            Dimension of each sector ``N = 0..K``.
+        hamiltonian : scipy.sparse matrix
+            Static Hamiltonian in rad/ns, in the lab frame and relative to the
+            vacuum energy, with states ordered by ``N``.
+        lowering, conserving : sequence of scipy.sparse matrix
+            Channel couplings in ``1/sqrt(ns)`` that lower ``N`` by one or
+            conserve it.
+
+        Returns
+        -------
+        SectorGenerator
+            Generator with ``stationary()``, ``resolvent()`` and ``propagate()``.
+        """
+        from quchip.backend._sector_stationary import SectorGenerator
+
+        return SectorGenerator(sizes, hamiltonian, lowering, conserving)
+
+    def sector_solve_bytes(self, sizes: Sequence[int], *, smallest: bool = False) -> int:
+        """Return the estimated peak bytes of a stationary solve on excitation sectors.
+
+        Parameters
+        ----------
+        sizes : sequence of int
+            Dimension of each sector ``N = 0..K``.
+        smallest : bool, default=False
+            Estimate at the shortest Krylov restart, which is the least memory
+            that a solve can run with, instead of the default restart.
+        """
+        from quchip.backend._sector_stationary import _MINIMUM_RESTART, _RESTART, sector_solve_bytes
+
+        return sector_solve_bytes(sizes, _MINIMUM_RESTART if smallest else _RESTART)
+
+    def sector_unique(self, sizes: Sequence[int], lowering: Sequence[Any]) -> bool:
+        """Return whether the lowering channels prove one stationary state on the sectors ``N <= K``.
+
+        The proof holds whatever the Hamiltonian, a probe and the conserving
+        channels. Without a probe, that state is the vacuum.
+
+        Parameters
+        ----------
+        sizes : sequence of int
+            Dimension of each sector ``N = 0..K``.
+        lowering : sequence of scipy.sparse matrix
+            Channel couplings in ``1/sqrt(ns)`` that lower ``N`` by one.
+        """
+        from quchip.backend._sector_stationary import has_dark_state
+
+        return not has_dark_state(sizes, lowering)
 
     def stationary_resolvent(
         self,
@@ -1217,6 +1417,7 @@ class Backend(ABC):
         problems: list["SolveProblem"],
         *,
         progress: bool = True,
+        max_workers: int | None = None,
     ) -> list[SolverResult] | None:
         """Dispatch structurally heterogeneous problems in parallel.
 
@@ -1226,6 +1427,9 @@ class Backend(ABC):
             Problems that cannot be merged into one structural batch.
         progress
             Display solver progress if the backend supports it.
+        max_workers
+            Worker processes, for backends that solve in parallel. ``None``
+            lets the backend choose, and ``1`` solves in this process.
 
         Returns
         -------
@@ -1233,7 +1437,7 @@ class Backend(ABC):
             Backend results in input order, or ``None`` to keep the engine's
             structural-group dispatch.
         """
-        _ = problems, progress
+        _ = problems, progress, max_workers
         return None
 
     def prepare_batch(self, batch: "SolveBatch") -> "PreparedBatch":
@@ -1272,7 +1476,9 @@ class Backend(ABC):
             tlist=batch.tlist,
         )
 
-    def solve_batch(self, batch: "SolveBatch", *, progress: bool = True) -> list[SolverResult]:
+    def solve_batch(
+        self, batch: "SolveBatch", *, progress: bool = True, max_workers: int | None = None,
+    ) -> list[SolverResult]:
         r"""Lower and solve a :class:`SolveBatch`.
 
         Default: prepares the batch, then dispatches each element's RHS through
@@ -1285,6 +1491,9 @@ class Backend(ABC):
             Captured problems and batch parameter values.
         progress : bool, default True
             Request a batch progress display.
+        max_workers : int or None, default None
+            Worker processes, for backends that solve in parallel. ``None``
+            lets the backend choose, and ``1`` solves in this process.
 
         Returns
         -------
@@ -1334,7 +1543,7 @@ class Backend(ABC):
             raise ValueError("Every SolveBatch point must resolve to the same solver.")
         solver_name = solver_names[0]
         runner = self.batched_mesolve if solver_name == "mesolve" else self.batched_sesolve
-        return runner(dict_problems, progress=progress)
+        return runner(dict_problems, n_jobs=-1 if max_workers is None else max_workers, progress=progress)
 
     # ------------------------------------------------------------------
     # Internal helpers

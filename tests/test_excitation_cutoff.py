@@ -27,7 +27,7 @@ from quchip import (
     fit_a_dress,
     with_truncation,
 )
-from quchip.engine.sectors import excitation_classes
+from quchip.engine.excitation import excitation_classes
 
 
 def ladder(levels):
@@ -175,18 +175,13 @@ def _ported_pair():
 
 @pytest.mark.unit
 @pytest.mark.parametrize("workflow", [
-    lambda chip: chip.steadystate(),
     lambda chip: VNA(chip).sweep(7.0),
-    lambda chip: VNA(chip).output_spectrum("out", frequencies=0.0),
-    lambda chip: VNA(chip).g1("out", 0.0),
-    lambda chip: VNA(chip).g2("out", 0.0),
     lambda chip: eliminate(chip, "r"),
     lambda chip: chip.partition(),
     lambda chip: QuantumSequence(chip).active_patch(),
     lambda chip: QuantumSequence(chip).simulate(tlist=[0.0, 1.0], solver="mcsolve"),
     lambda chip: fit_a_dress(chip, constraints={"q": {"freq": 5.0}}, vary={"q": ["freq"]}, evaluator="local"),
-], ids=["steadystate", "vna_sweep", "vna_output_spectrum", "vna_g1", "vna_g2", "eliminate", "partition",
-        "active_patch", "mcsolve", "local_fit"])
+], ids=["vna_sweep", "eliminate", "partition", "active_patch", "mcsolve", "local_fit"])
 def test_workflows_without_cutoff_support_raise(workflow):
     """Each excluded workflow raises and names the full product space instead of ignoring the cutoff."""
     with pytest.raises(ValueError, match=r"with_space\(None\)"):
@@ -244,6 +239,12 @@ def test_dressed_statics_and_states_use_the_truncated_eigenvectors():
         compact = limited.compact_state({"q": 1}, dressed=True)
         coordinates = [pairs[1, 0][1][labels.index(tuple(int(n) for n in level))] for level in compact.space.levels]
         np.testing.assert_allclose(np.asarray(compact.values).reshape(-1), coordinates, atol=1e-10)
+        # A label initial state is the same eigenvector of P H P, in the rows of the solve's space.
+        problem = QuantumSequence(limited).build_problem(np.array([0.0, 1.0]), initial_state={"q": 1})
+        rows = problem.engine_result.excitation_space.levels
+        coordinates = [pairs[1, 0][1][labels.index(tuple(int(n) for n in level))] for level in rows]
+        np.testing.assert_allclose(np.asarray(limited.backend.to_array(problem.initial_state)).reshape(-1),
+                                   coordinates, atol=1e-10, rtol=0)
     with pytest.raises(ValueError, match="requires proven static excitation conservation"):
         chip.compact_state({"q": 1}, dressed=True)
 
@@ -334,8 +335,8 @@ def test_raising_ports_keep_the_exchange_through_a_label_above_the_cutoff():
     network.expose("out", input=first.input, output=second.output)
     chip = Chip([u, d], port_network=network, space=ExcitationCutoff(1))
     tlist = np.linspace(0.0, 40.0, 41)
-    result = QuantumSequence(chip).simulate(tlist=tlist, initial_state={"d": 1}, dissipation=False,
-                                            options=tolerances("qutip"))
+    result = QuantumSequence(chip).simulate(tlist=tlist, initial_state=chip.compact_state({"d": 1}, dressed=False),
+                                            dissipation=False, options=tolerances("qutip"))
     np.testing.assert_allclose(result.population("u", 1), np.sin(rate * tlist / 2) ** 2, atol=1e-6)
 
 
@@ -364,8 +365,9 @@ def test_global_budget_couples_uncoupled_driven_devices():
 def test_compact_replay_measurement_and_batches_keep_the_cutoff():
     """A saved compact state continues the solve, and each batch point equals its single solve."""
     chip = pair(loss=True, frame={"q": 5.0, "r": 7.0}, space=ExcitationCutoff(2))
-    whole = QuantumSequence(chip).simulate(tlist=np.linspace(0.0, 20.0, 5), initial_state={"q": 1})
-    first = QuantumSequence(chip).simulate(tlist=np.linspace(0.0, 10.0, 3), initial_state={"q": 1})
+    start = chip.compact_state({"q": 1}, dressed=False)
+    whole = QuantumSequence(chip).simulate(tlist=np.linspace(0.0, 20.0, 5), initial_state=start)
+    first = QuantumSequence(chip).simulate(tlist=np.linspace(0.0, 10.0, 3), initial_state=start)
     replay = QuantumSequence(chip).simulate(tlist=np.linspace(10.0, 20.0, 3), initial_state=first.compact_state())
     np.testing.assert_allclose(replay.population("q", 1)[-1], whole.population("q", 1)[-1], atol=1e-7)
     native = QuantumSequence(chip).simulate(tlist=np.linspace(0.0, 20.0, 5),
@@ -464,7 +466,7 @@ def test_compact_operators_are_stored_sparse_on_qutip():
 def test_a_dense_compact_operator_that_cannot_fit_raises(monkeypatch):
     """dynamiqs holds compact operators densely, so the memory check runs before each one is allocated."""
     pytest.importorskip("dynamiqs")
-    from quchip.backend import _memory
+    from quchip.utils import memory as _memory
 
     devices = [Resonator(freq=0.25, levels=3, label=f"r{i}") for i in range(4)]
     chain = [Capacitive(a, b, g=0.01) for a, b in zip(devices, devices[1:])]

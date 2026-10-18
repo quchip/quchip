@@ -8,7 +8,7 @@ from typing import Any, Mapping
 
 import numpy as np
 
-from quchip.analysis.field_statistics import block_diagonal, normal_spectrum, quadrature_transfer
+from quchip.engine.field_statistics import block_diagonal, normal_spectrum, quadrature_transfer
 from quchip.utils.constants import TWO_PI, hbar
 from quchip.results.input_output import MeanFieldResponseResult
 from quchip.utils.jax_utils import array_namespace, contains_tracer, is_jax_array, select_array_module
