@@ -18,6 +18,7 @@ from quchip.results.results import (
     SimulationResult,
     wrap_solver_result,
 )
+from quchip.results.propagator import PropagatorResult
 from quchip.results.trajectories import TrajectoryResult
 from quchip.results.steady_state import SteadyStateBatchResult, SteadyStateResult
 from quchip.results.input_output import (
@@ -45,6 +46,7 @@ __all__ = [
     "SimulationBatchResult",
     "SimulationResult",
     "TrajectoryResult",
+    "PropagatorResult",
     "SteadyStateResult",
     "SteadyStateBatchResult",
     "MeanFieldResponseResult",

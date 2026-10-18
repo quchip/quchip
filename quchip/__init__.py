@@ -134,6 +134,7 @@ from quchip.engine.states import CompactState
 from quchip.results import (
     ObservableTrace,
     PartitionedSimulationResult,
+    PropagatorResult,
     SimulationBatchResult,
     SimulationResult,
     SteadyStateBatchResult,
@@ -172,6 +173,7 @@ __all__ = [
     "with_truncation",
     "with_monitoring",
     "TrajectoryResult",
+    "PropagatorResult",
     "IQReadout",
     "StateMeasurement",
     "StateSamples",

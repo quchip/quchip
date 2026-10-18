@@ -653,6 +653,8 @@ An idle dressed state then reads 1 in every frame. Its amplitude turns at
 dressed energy `E_k`. A bare product `|k>` is a frame eigenstate, so
 `U(t)† |k> exp(-i 2π t Σ_i f_ref,i k_i) = |k>`, and the ket target
 `chip.bare_state(...)` gives the bare overlap in every frame.
+`QuantumSequence.subspace_propagator()` collects these label amplitudes into a
+propagator and converts it to the dressed or lab frame (§9.4).
 
 ### 4.3 What `"rotating"` means in practice
 
@@ -1893,6 +1895,55 @@ resolved levels has `NaN` on the diagonal, but its defined off-diagonal
 entries stay available. Every entry comes from the complete dressed chip,
 not from a matching authored edge. For example, an isolated `KerrCavity`
 with `H = omega*n - K*n*(n-1)` has `K[i,i] = -2*K`.
+
+### 9.4 Subspace propagators
+
+Sources: [`quchip/results/propagator.py`](quchip/results/propagator.py), [`quchip/control/sequence.py`](quchip/control/sequence.py)
+
+`QuantumSequence.subspace_propagator(devices, levels=(0, 1))` takes the labels
+that give each selected device one of `levels` and every other device level
+0. One batch starts each label `j` in its dressed state at `t0 = tlist[0]`
+(§9) and projects the final states at `T = tlist[-1]` on the label targets of
+§4.2:
+
+```text
+A_ij = <target_i(T)|psi_j(T)> = exp(i 2π T F_i) <d_i|U_lab(T, t0)|d_j> exp(-i 2π t0 F_j)
+```
+
+with `F_k = Σ_d f_ref,d k_d`. Every other device starts and ends in level 0.
+A frame gives label `k` the energy `E_k = E_0 + Σ_d f_d k_d`, and the record
+holds
+
+```text
+M_ij = exp(i 2π T E_i) <d_i|U_lab(T, t0)|d_j> exp(-i 2π t0 E_j)
+```
+
+The frames are:
+
+- `"dressed"`, the default: `f_d = E(1_d) - E(0)` and `E_0 = E(0)`, from the
+  static model with the approximation and excitation cutoff of the solve. An
+  idle label with at most one excitation keeps amplitude 1, and an idle pair
+  of qubits gives `diag(1, 1, 1, exp(-i 2π ζ (T - t0)))`, with the static ZZ
+  `ζ` of §9.3.
+- `"lab"`: `f_d = 0` and `E_0 = 0`.
+- `"integration"`: `E_k = F_k`, so `M = A`, the amplitudes of
+  `amplitude_array()`.
+
+Energies from another approximation would add a phase that grows with time.
+For example, the Bloch-Siegert shift of `Exact()` is absent from an `RWA()`
+solve. The frame factors are phases, so `|M_ij|` and the leakage
+`L_j = 1 - Σ_i |M_ij|²` do not depend on the frame. `fidelity(V)` returns the
+average gate fidelity over pure states in the labels,
+
+```text
+F = (Tr(M† M) + |Tr(V† M)|²) / (d (d + 1))
+```
+
+for a unitary target `V` of dimension `d`. Leakage lowers `Tr(M† M)`, so it
+lowers `F`. The solves leave out declared collapse channels with a warning, and
+`omitted_channels` names them, so `M` is the propagator of the Hamiltonian.
+On dynamiqs, the matrix and the fidelity are differentiable in chip and pulse
+parameters (§13).
 
 ## 10. Adiabatic Elimination and Dispersive Readout
 

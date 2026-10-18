@@ -13,6 +13,7 @@ Frequencies are in GHz, times in ns, temperatures in mK and decay rates in
 | A spectrum over a parameter grid | `SpectrumSweep` with `Sweep` |
 | A pulse or an idle interval | `QuantumSequence.simulate()` |
 | Related pulse experiments | `sequence.simulate_batch()` |
+| A gate on dressed computational states | `sequence.subspace_propagator()` |
 | Steady-state populations or fields | `chip.steadystate()` |
 | Small-signal S parameters | `VNA.sweep()` |
 | A driven response with receiver noise | `VNA.measure()` |
@@ -173,6 +174,30 @@ and an explicit `start_time` for overlap.
 A scheduled carrier stays fixed when device parameters change. Use the pulse's
 `freq` parameter to retune it. For independently built experiments, pass their
 `build_problem()` results to `solve_many()`.
+
+## Read a gate on dressed states
+
+```python
+shape = Gaussian(duration=20.0, sigmas=3.0)
+amplitude = chip.rotation_amplitude(q, xy, shape)
+gate = QuantumSequence(chip)
+gate.schedule(xy, envelope=Gaussian(duration=20.0, sigmas=3.0, amplitude=amplitude), freq=chip.freq(q))
+propagator = gate.subspace_propagator(q)
+fidelity = propagator.fidelity([[0, 1], [-1, 0]])
+```
+
+`rotation_amplitude()` solves `θ = 2π |m| |A a|` for the dressed matrix
+element `m` of the line and the envelope area `A a`, with `θ = π` by default.
+On an isolated transmon, the charge drive has `m = -i` on the 0 → 1
+transition. The dressed element here is `-0.99969i`, so a real π pulse aims
+at `iY`.
+`subspace_propagator(q)` starts the dressed states of `q` in levels 0 and 1 as
+one batch. The matrix has the final label in rows and the initial label in
+columns, in the frame of the dressed frequencies. `propagator.leakage` gives
+the probability that each input leaves the labels, and `fidelity()` counts it.
+Here the fidelity is 0.993. Off-resonant coupling to the third level gives an
+AC Stark shift and a coherent rotation error, while the final leakage is only
+about 2e-6. The amplitude is a first guess for a calibration. `frame="lab"` and `frame="integration"` select the other frames.
 
 ## Choose what to save
 
@@ -343,6 +368,7 @@ calibration.
 | A dressed label near an avoided crossing | Inspect `assignment_overlaps` or `state_components()`. Lowering the overlap threshold does not improve the assignment. |
 | A small boundary population | Call `result.check_truncation()` explicitly, then increase local levels and compare the observable. The check covers only available samples. |
 | A smooth trace | Refine the output grid separately from the solver tolerances. |
+| A gate fidelity | `fidelity()` counts leakage. `omitted_channels` names the collapse channels that the propagator leaves out. |
 
 QuTiP is the default. Choose dynamiqs for JAX gradients and compiled batches.
 The initial state and declared dissipation select `sesolve` or `mesolve`

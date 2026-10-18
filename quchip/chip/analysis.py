@@ -566,6 +566,22 @@ class ChipAnalysis:
         self._label_cache = scoped_entry(key, column, traced=contains_tracer(column))
         return column
 
+    def _label_energy(self, label: tuple[int, ...], approximation: "Approximation") -> Any:
+        """Return the energy in GHz of the eigenstate that :meth:`_label_ket` assigns to ``label``."""
+        from quchip.engine.assembly import _build_static_analysis_result
+        from quchip.engine.states import block_model
+
+        chip = self._chip
+        model = block_model(chip, approximation)
+        if model is not None:
+            return model.eigensystem(sum(label)).energy(tuple(label))
+        if approximation == chip.approximation:
+            values, _, _, labeling = self._compute_array_labeled(self.engine_result(_advise=False))
+        else:
+            static = _build_static_analysis_result(chip, approximation=approximation, _advisories=[])
+            values, _, _, labeling = labeled_eigensystem(static, chip.backend)
+        return self._eigenvalue_of_label(label, precomputed=(values, labeling))
+
     def _bare_label_index(self, label: tuple[int, ...]) -> int:
         """Position of ``label`` in canonical bare-label order (Python int)."""
         bare_labels, index_map = self._bare_labels_with_index()
