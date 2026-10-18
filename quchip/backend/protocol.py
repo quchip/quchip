@@ -304,6 +304,35 @@ class Backend(ABC):
             )
         )
 
+    def compact_operator(self, rows: Any, columns: Any, values: Any, size: int) -> Operator:
+        r"""Construct an operator on ``size`` compact excitation states from its entries.
+
+        Repeated entries add. Each backend chooses the storage. The default
+        stores a dense matrix, which keeps traced values traced, and raises
+        :class:`MemoryError` before it allocates one that cannot fit.
+
+        Parameters
+        ----------
+        rows, columns : array_like of int
+            Row and column index of each entry.
+        values : array_like
+            Value of each entry.
+        size : int
+            Number of compact states.
+        """
+        from quchip.backend._memory import require_memory
+        from quchip.utils.jax_utils import concrete_array_module
+
+        require_memory(16 * 2 * size**2, task=f"A dense compact operator (dimension {size})",
+                       remedy="Reduce the model, the initial excitation support, or an excitation cutoff's max_total.")
+        xp = concrete_array_module(values)
+        result = xp.zeros((size, size), dtype=complex)
+        if xp is np:
+            np.add.at(result, (rows, columns), values)
+        else:
+            result = result.at[rows, columns].add(values)
+        return self.from_array(result, dims=[[size], [size]])
+
     @abstractmethod
     def to_canonical_operator(self, op: Operator) -> "CanonicalOperator":
         r"""Serialize a native operator into the backend-agnostic canonical IR.

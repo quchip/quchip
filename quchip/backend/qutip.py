@@ -823,6 +823,16 @@ class QuTiPBackend(Backend):
             data = np.asarray(data.to_jax(), dtype=complex)
         return Qobj(data, dims=dims)
 
+    def compact_operator(self, rows: Any, columns: Any, values: Any, size: int) -> Operator:
+        from quchip.engine.ir import CanonicalOperator
+
+        matrix = sparse.csr_matrix((np.asarray(values, dtype=complex), (rows, columns)), shape=(size, size))
+        matrix.eliminate_zeros()
+        return self.from_canonical_operator(CanonicalOperator.from_csr(
+            matrix.data, matrix.indices, matrix.indptr, shape=matrix.shape, dims=(size,), basis="fock",
+            subsystem_labels=("0",),
+        ))
+
     def linear_combination(self, terms: Sequence[tuple[Any, Operator]]) -> Operator:
         self._validate_input(terms)
         return super().linear_combination(terms)

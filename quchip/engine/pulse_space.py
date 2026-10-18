@@ -12,7 +12,6 @@ from math import prod
 from typing import Any
 
 import numpy as np
-from scipy import sparse
 
 from quchip.backend._memory import fits_memory, require_memory
 from quchip.utils.jax_utils import concrete_array_module, contains_tracer
@@ -86,19 +85,9 @@ class PulseSpace:
     def embed(self, backend, operator, support):
         """Gather a resolved local operator without a product-space allocation.
 
-        A NumPy backend receives a CSR operator, and other backends a dense one.
+        The backend chooses the storage of the result.
         """
-        rows, columns, values = self.entries(backend, operator, support)
-        if backend.array_module is np:
-            return self._sparse(backend, rows, columns, values)
-        self._require_dense(2)
-        xp = concrete_array_module(values)
-        result = xp.zeros((self.size, self.size), dtype=complex)
-        if xp is np:
-            result[rows, columns] = values
-        else:
-            result = result.at[rows, columns].set(values)
-        return backend.from_array(result, dims=[[self.size], [self.size]])
+        return backend.compact_operator(*self.entries(backend, operator, support), self.size)
 
     def authored(self, backend, operator, support):
         """Lower a factored authored sum directly into energy coordinates."""
@@ -111,63 +100,31 @@ class PulseSpace:
         terms = _local_products(operator, labels, self.bases)
         if terms is None:
             return None
-        if backend.array_module is np:
-            return self._sparse(backend, *self._authored_entries(terms))
-        # The product below holds the result, the running term, a gathered factor and their product.
-        self._require_dense(4)
-        xp = concrete_array_module(terms, tuple(self.bases[label].energy_vectors for label in labels))
-        result = xp.zeros((self.size, self.size), dtype=complex)
-        for coefficient, factors in terms:
-            value = xp.ones((self.size, self.size), dtype=complex) * coefficient
-            for axis, label in enumerate(self.labels):
-                levels = self.levels[:, axis]
-                if label not in factors:
-                    value = value * (levels[:, None] == levels[None, :])
-                else:
-                    vectors = xp.asarray(self.bases[label].energy_vectors)
-                    local = xp.conj(vectors.T) @ xp.asarray(factors[label]) @ vectors
-                    value = value * local[levels[:, None], levels[None, :]]
-            result = result + value
-        return backend.from_array(result, dims=[[self.size], [self.size]])
+        return backend.compact_operator(*self._authored_entries(terms, labels), self.size)
 
-    def _authored_entries(self, terms):
+    def _authored_entries(self, terms, labels):
         """Return the rows, columns and values of a sum of local products, with repeated entries."""
         from quchip.engine.sectors import _level_pairs
 
-        rows, columns, values = [np.zeros(0, dtype=int)], [np.zeros(0, dtype=int)], [np.zeros(0, dtype=complex)]
+        xp = concrete_array_module(terms, tuple(self.bases[label].energy_vectors for label in labels))
+        rows, columns, values = [np.zeros(0, dtype=int)], [np.zeros(0, dtype=int)], [xp.zeros(0, dtype=complex)]
         for coefficient, factors in terms:
             axes = tuple(sorted(self.labels.index(label) for label in factors))
             if not axes:
                 diagonal = np.arange(self.size)
                 rows.append(diagonal)
                 columns.append(diagonal)
-                values.append(np.full(self.size, coefficient, dtype=complex))
+                values.append(xp.full(self.size, coefficient, dtype=complex))
                 continue
-            local = np.ones((1, 1), dtype=complex)
+            local = xp.ones((1, 1), dtype=complex)
             for axis in axes:
-                vectors = np.asarray(self.bases[self.labels[axis]].energy_vectors)
-                local = np.kron(local, vectors.conj().T @ np.asarray(factors[self.labels[axis]]) @ vectors)
+                vectors = xp.asarray(self.bases[self.labels[axis]].energy_vectors)
+                local = xp.kron(local, xp.conj(vectors.T) @ xp.asarray(factors[self.labels[axis]]) @ vectors)
             pair_rows, pair_columns, local_rows, local_columns = _level_pairs(self.dims, axes, self.levels, self.levels)
             rows.append(pair_rows)
             columns.append(pair_columns)
             values.append(coefficient * local[local_rows, local_columns])
-        return np.concatenate(rows), np.concatenate(columns), np.concatenate(values)
-
-    def _require_dense(self, matrices):
-        """Raise before ``matrices`` dense operators on this space exceed the available memory."""
-        require_memory(_dense_bytes(self.size, matrices), task=f"A dense compact operator (dimension {self.size})",
-                       remedy=_OPERATOR_REMEDY)
-
-    def _sparse(self, backend, rows, columns, values):
-        """Return the CSR operator with these entries, summing repeated ones and dropping zeros."""
-        from quchip.engine.ir import CanonicalOperator
-
-        matrix = sparse.csr_matrix((np.asarray(values, dtype=complex), (rows, columns)), shape=(self.size, self.size))
-        matrix.eliminate_zeros()
-        return backend.from_canonical_operator(CanonicalOperator.from_csr(
-            matrix.data, matrix.indices, matrix.indptr, shape=matrix.shape, dims=(self.size,), basis="fock",
-            subsystem_labels=("0",),
-        ))
+        return np.concatenate(rows), np.concatenate(columns), xp.concatenate(values)
 
     def lift(self, state, backend):
         """Expand a state into captured solver coordinates, after a memory check."""
