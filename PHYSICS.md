@@ -632,6 +632,25 @@ When `initial_state=None`, the solver receives
 lab-frame default that §9 describes. A nonzero rotating-frame start
 therefore need not equal the lab-frame vector that `chip.state()` returns.
 
+Each result records its integration frame as `result.frame`, a
+`ResolvedFrame` with the frequencies `f_ref,i`. `state()`, `state_at()`,
+`dm_at()` and `reduced_state()` take `frame="lab"`, which applies `U(t)` to
+the stored state. A ket target of `overlap()`, `amplitude_array()`,
+`final_overlap_magnitudes()` and `final_amplitudes()` is a fixed vector of the
+integration frame, so a target such as `|+>` is written in that frame. With
+`frame="lab"`, the ket is a fixed lab-frame vector instead, such as a dressed
+state from `chip.state()`. A label target such as `{"q0": 0, "q1": 1}` is the
+bare product state of local energy levels. With `dressed=True`, it is the
+dressed eigenstate `|d_k>` of label `k`, which turns with its label:
+
+```text
+target_k(t) = U(t)† |d_k> exp(-i 2π t Σ_i f_ref,i k_i)
+```
+
+An idle dressed state then reads 1 in every frame. Its amplitude turns at
+`Σ_i f_ref,i k_i - E_k`, the detuning of the label's frame energy from its
+dressed energy `E_k`.
+
 ### 4.3 What `"rotating"` means in practice
 
 `"rotating"` means:
@@ -967,8 +986,8 @@ every label whose levels sum to `N = sum_i n_i <= K`. It counts levels, not
 energy, so it is not an energy window. Set it with `Chip(..., space=...)` or
 `chip.with_space(...)`, and remove it with `chip.with_space(None)`. Clones,
 parameter rebinding, serialization, and fitted chips keep the policy. quchip
-never selects or changes a chip's policy. Without a policy, `VNA.finite_power()`
-and `VNA.measure()` can truncate their own stationary solve and warn (§6.5).
+never selects or changes a chip's policy. Without a policy, the stationary VNA
+workflows can truncate their own solve and warn (§6.5).
 
 With the projector `P` on the retained labels, the truncated model is
 
@@ -1046,41 +1065,47 @@ resonator of the `ExcitationCutoff` docstring example, it is +2.261 MHz at
 `K = 3` and -1.136 MHz at `K = 4`, against -1.137 MHz without a cutoff.
 
 Workflows that need the full product space or a local neighborhood raise under
-an active cutoff. They are `VNA.sweep()`, `VNA.output_spectrum()`, `VNA.g1()`,
-`VNA.g2()`, `steadystate()`, stochastic trajectory solvers, `eliminate()`,
-`eliminate_spectators()`, `active_patch()`, `fit_a_dress(evaluator="local")`,
-and `chip.partition()`. Each message names `chip.with_space(None)`.
-`VNA.finite_power()` and `VNA.measure()` solve the truncated model (§6.5). A
+an active cutoff. They are `VNA.sweep()`, stochastic trajectory solvers,
+`eliminate()`, `eliminate_spectators()`, `active_patch()`,
+`fit_a_dress(evaluator="local")`, and `chip.partition()`. Each message names
+`chip.with_space(None)`. `steadystate()`, `VNA.finite_power()`,
+`VNA.measure()`, `VNA.output_spectrum()`, `VNA.g1()` and `VNA.g2()` solve the
+truncated model (§6.5). A
 cutoff with `K >= sum_i (d_i - 1)` keeps every label, so it is inactive and
 changes no calculation. The classes and spaces depend
 only on structural excitation changes, so they stay fixed under JAX tracing.
 Traced class blocks use differentiable eigensolves, with the derivative
 conditions of §9.
 
-### 6.5 Finite-probe stationary states on excitation sectors
+### 6.5 Stationary states on excitation sectors
 
 Sources: [`quchip/engine/sector_stationary.py`](quchip/engine/sector_stationary.py),
 [`quchip/backend/_sector_stationary.py`](quchip/backend/_sector_stationary.py),
-[`quchip/analysis/measurement.py`](quchip/analysis/measurement.py)
+[`quchip/analysis/measurement.py`](quchip/analysis/measurement.py),
+[`quchip/analysis/vna.py`](quchip/analysis/vna.py)
 
-`VNA.finite_power()` and `VNA.measure()` solve one stationary state at each
-grid point (§8.1, §8.2). For a chip that conserves the total excitation `N`, a
-weak probe reaches only `N = 0` and `N = 1`. A finite probe couples every `N`
-to `N ± 1`, so no finite set of sectors is closed. These methods then solve
-the truncated model of §6.4 on the labels with `N <= K`. It differs from the
-full model only by the probe elements from `N = K` to `N = K + 1`.
+`steadystate()`, `VNA.finite_power()`, `VNA.measure()`,
+`VNA.output_spectrum()`, `VNA.g1()` and `VNA.g2()` solve one stationary state
+at each grid point (§8.1, §8.2). For a chip that conserves the total
+excitation `N`, a weak probe reaches only `N = 0` and `N = 1`. A finite probe
+or pump couples every `N` to `N ± 1`, so no finite set of sectors is closed.
+These methods then solve the truncated model of §6.4 on the labels with
+`N <= K`. It differs from the full model only by the drive elements from
+`N = K` to `N = K + 1`.
 
 This route applies when the static model conserves `N`, every port lowers `N`
 by one, and every other channel lowers `N` by one or conserves it. The inputs
-must be vacuum, and the chip must have no thermal device occupation, pump,
-output network or retained mode response. All values must be concrete. Other
-chips and calls under JAX tracing use the stationary engine. It solves the
-compact model directly under an explicit cutoff, and the full product space
-otherwise.
+must be vacuum apart from coherent tones at one frequency, and the chip must
+have no thermal device occupation, output network or retained mode response.
+In `finite_power()` and `measure()`, a pump must have the probe frequency. All
+values must be concrete. Other chips and calls under JAX tracing use the
+stationary engine. It solves the compact model directly under an explicit
+cutoff, and the full product space otherwise.
 
-In the probe frame, `H' = 2π (H - E_0 - f N)`. Port `k` receives the probe
-coefficient `c_k = S_k,in beta_in h_in(f)`, with the probe amplitude
-`beta_in` in the physics convention (§8.1). With lowering channels `L_k` and
+In the frame of the tones, `H' = 2π (H - E_0 - f N)`. Port `k` receives the
+coefficient `c_k = sum_i S_k,i beta_i h_i(f)` from the inputs `i`, with each
+amplitude `beta_i` in the physics convention (§8.1) and `h_i` its inbound
+transfer. With lowering channels `L_k` and
 conserving channels `C_m`, the generator is
 
 ```text
@@ -1113,7 +1138,12 @@ support of every stationary state holds the vacuum, and two stationary states
 with orthogonal supports cannot exist. This holds for any Hamiltonian, probe
 and conserving channels. The solver compares the smallest eigenvalue of
 `sum_k L_k† L_k` in each sector with `δ`. Above 1024 labels, it uses the
-Gershgorin bound. If a sector fails this test, a dark state is possible, and
+Gershgorin bound. Without a drive the vacuum is stationary, so when this test
+passes, `steadystate()` solves nothing and returns the vacuum on the labels
+with `N <= 1`. When it fails, `steadystate()` solves the backend's stationary
+Liouvillian. The `steady_state` of the output statistics reports `nullity=1`
+when the test passes and `None` when it fails. If a sector fails this test, a
+dark state is possible, and
 the solver starts again from a fixed generic full-rank state. The equations do
 not fix the weight on a second stationary state, so the two starts usually end
 with different weights on it. A start such as the maximally mixed state can
@@ -1133,27 +1163,41 @@ stationary state. At `K = 2`, the dark state empties at a rate of order
 
 The noise spectra solve `(G + i 2π f) Y = B` with `Tr Y = 0` on the same
 blocks, with the sign of `stationary_resolvent()` (§8.2). Since
-`R_f(B†) = R_{-f}(B)†`, each output and offset needs one solve. Mode
+`R_f(B†) = R_{-f}(B)†`, the adjoint source at `f` needs the resolvent at
+`-f`. Each output therefore solves at every offset and at its negative. On
+the symmetric grid of `measure()` these are the same points. Mode
 amplitudes and photon numbers evaluate the authored `a` and `n` on the
 retained labels. Every mode is solved in the probe frame, so
 `mode_frequencies` holds the probe frequency, as for the harmonic route. A
 channel that couples modes at different frequencies is then static.
 
+`output_spectrum()` sends these spectra through the outbound reference of its
+port, as `measure()` does. Its fluxes read the output field
+`b = h(f) (b_bg I + L)`, where `b_bg = sum_i S_k,i beta_i h_i(f)` is the
+coherent field that the inputs carry to the port and `h` is the outbound
+transfer. `g1()` and `g2()` evolve `b_in rho` and `b_in rho b_in†` with the
+generator `G`, without the trace constraint, by Krylov exponentials on the
+sorted delays. They read `b_out†` and `b_out† b_out`. As on the product space,
+they raise for an amplifier or a thermal field.
+
 With `chip.with_space(ExcitationCutoff(max_total=K))`, `K` is the chip's, and
 the call does not check it. Without a cutoff, with `options=None` and more
 than 64 product states, the methods choose `K`. They start at `K = 2`, solve
-the whole grid, and solve it again at `K + 1`. At every grid point, they
-compare the output means, mode amplitudes and photon numbers. When
-`N <= K + 1` has at most 1024 labels, they also compare the noise spectra at
-every offset. For two values `a` and `b` of one quantity, the change is
+the whole grid, and solve it again at `K + 1`. At every grid point,
+`finite_power()` and `measure()` compare the output means, mode amplitudes
+and photon numbers. When `N <= K + 1` has at most 1024 labels, `measure()`
+also compares the noise spectra at every offset. `output_spectrum()` compares
+its spectra and fluxes, and `g1()` and `g2()` compare the raw correlations and
+the two intensities. `steadystate()` needs no `K`, because the vacuum is
+exact. For two values `a` and `b` of one quantity, the change is
 `|a - b| / (max(|a|, |b|) + 1e-3 m)`, where `m` is the largest value of that
 quantity on the grid. The floor gives an absolute tolerance of `1e-9 m`. If
 any change is above `1e-6`, `K` increases by one. The result is the solve at
 `K`, not at `K + 1`. One warning per call gives `K`, the retained dimension
 and the result of the check. If `K + 1` does not fit in memory, the check does
 not run, and the warning says so. If `K` reaches the largest total, the solve
-is exact and the call does not warn. Without a cutoff, `options={}` solves the
-full product space.
+is exact and the call does not warn. `options={}` solves the backend's
+stationary Liouvillian, on the full product space when there is no cutoff.
 
 This check measures the change from `K` to `K + 1`, not the error of the
 result. The weight on `N = K` alone does not measure the error, because a
@@ -1170,7 +1214,34 @@ report the GMRES iterations and relative residual, the trace, Hermiticity and
 positivity errors of the state, and the iterations, residual and `|Tr Y|` of
 the noise solves. An automatic choice adds `cutoff_check`. Under an explicit
 cutoff, the stationary engine reports `excitation_cutoff` and
-`retained_dimension` with its own diagnostics.
+`retained_dimension` with its own diagnostics. Every result also records its
+route (§6.6).
+
+### 6.6 Solve routes
+
+Source: [`quchip/engine/routes.py`](quchip/engine/routes.py)
+
+One planner chooses how each stationary calculation solves. Each result
+records the choice as a `SolveRoute` under `diagnostics["route"]`, and
+`diagnostics["solver"]` holds its name. The record gives the `reason` for the
+route, the `dimension` that it solves on, the array library of the solve
+(`arrays`, `"numpy"` or `"jax"`), and `peak_bytes`, the estimated peak memory,
+which is calculated on request.
+
+| Route | Solves | Workflows |
+|---|---|---|
+| `linear_response` | mode equations of a passive harmonic chip | `VNA.sweep()`, `VNA.measure()` |
+| `vacuum_response` | vacuum and one-excitation states under a weak probe | `VNA.sweep()` |
+| `conditional_response` | adjacent-sector coherences of a frozen dressed reference | `VNA.sweep(when=...)` |
+| `sector_stationary` | labels with `N <= K` (§6.5) | `steadystate()` and the stationary VNA workflows |
+| `stationary_resolvent` | backend's stationary Liouvillian on the product space or on the labels of a cutoff | every stationary workflow |
+
+The sector route solves with SciPy on the host for both backends. On
+dynamiqs, it therefore does not use JAX arrays, and its reason says so. Traced
+values use the backend's Liouvillian. Static dressed queries diagonalize the
+sector of their label when the static model conserves `N` or the chip has an
+excitation cutoff, and the full static model otherwise. `chip.describe()`
+reports this choice.
 
 ## 7. Counter-Rotating Terms
 

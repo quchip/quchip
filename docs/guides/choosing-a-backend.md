@@ -136,6 +136,11 @@ stationary = chip.steadystate(options={"method": "direct", "solver": "spsolve"})
 available. dynamiqs uses a differentiable constrained direct solve. A non-unique
 state raises outside tracing and becomes `NaN` inside `jax.jit`.
 
+Solver options always select this backend solve. Without them, an undriven chip
+that conserves the total excitation and has more than 64 product states
+returns its vacuum when the lowering channels prove it unique.
+`result.diagnostics["route"]` names the route and the reason for it.
+
 Inspect `residual`, `trace_error`, and `positivity_error`. By default, dense
 QuTiP nullity and condition-number diagnostics are calculated only up to
 Hilbert dimension 16. Adjust `diagnostic_max_dimension` as needed.

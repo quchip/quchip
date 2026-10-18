@@ -265,18 +265,20 @@ model's vacuum-assigned eigenvector. `result.check_truncation()[ExcitationCutoff
 gives the maximum sampled population in the sectors that one step can move
 above the cutoff. This value is a warning heuristic, not an error bound.
 
-`VNA.finite_power()` and `VNA.measure()` solve the truncated model.
-`chip.dress()`, `VNA.sweep()`, `VNA.output_spectrum()`, `VNA.g1()`,
-`VNA.g2()`, `steadystate()`, stochastic trajectory solvers, `eliminate()`,
+`steadystate()`, `VNA.finite_power()`, `VNA.measure()`,
+`VNA.output_spectrum()`, `VNA.g1()` and `VNA.g2()` solve the truncated model.
+`chip.dress()`, `VNA.sweep()`, stochastic trajectory solvers, `eliminate()`,
 `eliminate_spectators()`, `active_patch()`, `fit_a_dress(evaluator="local")`
 and `chip.partition()` raise for a limited chip. Use `chip.with_space(None)`
 for them.
 
-Without a cutoff, `finite_power()` and `measure()` truncate their own solve of
-a chip that conserves the total excitation and has more than 64 product states.
-They start at `K = 2`, compare every grid point with `K + 1`, and warn which
-`K` they kept. Set the cutoff on the chip to choose `K`, or pass `options={}`
-to solve the full product space.
+Without a cutoff, the VNA workflows above truncate their own solve of a chip
+that conserves the total excitation and has more than 64 product states. They
+start at `K = 2`, compare every grid point with `K + 1`, and warn which `K`
+they kept. Set the cutoff on the chip to choose `K`, or pass `options={}` to
+solve the full product space. An undriven `steadystate()` of such a chip
+returns the vacuum when the lowering channels prove it unique.
+`result.diagnostics["route"]` names the route that each call took and why.
 
 ## Declare network noise
 

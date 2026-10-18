@@ -145,6 +145,32 @@ This file records notable user-visible changes to quchip.
   totals for the check, and the check finds the compact rows when it runs.
   ([#188](https://github.com/quchip/quchip/pull/188))
 
+- On a chip that conserves the total excitation `N` and has more than 64
+  product states or an `ExcitationCutoff`, `steadystate()` returns the vacuum
+  without a Liouvillian solve when the lowering channels prove it unique. The
+  result holds the vacuum on the labels with `N <= 1`, which
+  `result.excitation_space` names, so `result.state` is no longer a
+  product-space matrix. `reduced_state()` and `e_ops` values do not change.
+  Pass `options={}` to keep the product-space solve.
+  ([#191](https://github.com/quchip/quchip/issues/191),
+  [#203](https://github.com/quchip/quchip/issues/203),
+  [#205](https://github.com/quchip/quchip/pull/205))
+- Without an excitation cutoff, `VNA.output_spectrum()`, `VNA.g1()` and
+  `VNA.g2()` with `options=None` solve a chip that conserves `N` and has more
+  than 64 product states on the labels with `N <= K`, as `finite_power()`
+  does, and warn which `K` they kept. Spectra, fluxes and correlations can
+  change by about `1e-6` of their size. Pass `options={}` to keep the full
+  product-space solve. `finite_power()` and `measure()` also take this route
+  when the VNA has pumps at the probe frequency.
+  ([#191](https://github.com/quchip/quchip/issues/191),
+  [#205](https://github.com/quchip/quchip/pull/205))
+- QuTiP batches take their default worker count from loky's `cpu_count()`,
+  which follows `LOKY_MAX_CPU_COUNT`, CPU affinity and container limits,
+  instead of `os.cpu_count()`. The default pool shrinks, with a warning, to the
+  number of workers that the available memory holds.
+  ([#196](https://github.com/quchip/quchip/issues/196),
+  [#205](https://github.com/quchip/quchip/pull/205))
+
 #### New features
 
 - `eliminate_spectators(chip, keep)` reduces a chip to the kept devices, one
@@ -328,6 +354,47 @@ This file records notable user-visible changes to quchip.
   ([#152](https://github.com/quchip/quchip/issues/152),
   [#168](https://github.com/quchip/quchip/pull/168))
 
+- Every stationary result records its numerical route under
+  `diagnostics["route"]`. The `SolveRoute` gives the route, the reason for it,
+  the dimension that it solves on, its array library and an estimate of its
+  peak memory. `SteadyStateResult`, `OutputSpectrumResult` and
+  `OutputCorrelationResult` gain `diagnostics`. One planner chooses the route
+  of each stationary workflow, and `PHYSICS.md` §6.6 lists the routes. On
+  dynamiqs, the sector route solves with SciPy on the host, and its reason
+  says so. ([#203](https://github.com/quchip/quchip/issues/203),
+  [#205](https://github.com/quchip/quchip/pull/205))
+- `steadystate()`, `VNA.output_spectrum()`, `VNA.g1()` and `VNA.g2()` accept a
+  chip with an `ExcitationCutoff`. A chip that conserves `N` solves on the
+  excitation sectors, and other chips solve the projected model with the
+  backend's stationary Liouvillian. Three transmon-readout pairs have 729
+  product states, and at `N <= 2` each of these calls takes less than 0.2 s.
+  ([#191](https://github.com/quchip/quchip/issues/191),
+  [#205](https://github.com/quchip/quchip/pull/205))
+- Every result records its integration frame as `result.frame`. `state()`,
+  `state_at()`, `dm_at()` and `reduced_state()` take `frame="lab"`.
+  `overlap()`, `amplitude_array()`, `final_overlap_magnitudes()` and
+  `final_amplitudes()` take `frame="lab"`, which reads a ket target as a
+  lab-frame vector, and `dressed=True`, which reads a label target as its
+  dressed eigenstate that turns with the label. An idle dressed state then
+  reads 1 in every frame. A ket target keeps its meaning, a vector of the
+  integration frame. ([#190](https://github.com/quchip/quchip/issues/190),
+  [#202](https://github.com/quchip/quchip/issues/202),
+  [#205](https://github.com/quchip/quchip/pull/205))
+- `chip.excitation_structure()` reports whether the static model conserves the
+  total excitation `N`, the change of `N` of each coupling, retained term,
+  port, drive and collapse channel, the largest entry of each term that breaks
+  conservation, and the largest block that dressed queries diagonalize.
+  `describe()` shows the verdict and the block size. When only entries below
+  `1e-12` of the largest local level span break conservation, dressed queries
+  warn and name the terms. ([#195](https://github.com/quchip/quchip/issues/195),
+  [#201](https://github.com/quchip/quchip/issues/201),
+  [#205](https://github.com/quchip/quchip/pull/205))
+- `simulate_batch()`, `Chip.solve_many()`, `solve_many()` and `solve_batch()`
+  take `max_workers`. `max_workers=1` solves in the calling process, and a
+  count that does not fit in memory raises `MemoryError`.
+  ([#196](https://github.com/quchip/quchip/issues/196),
+  [#205](https://github.com/quchip/quchip/pull/205))
+
 #### Fixes
 
 - Every calculation evaluates a generic `Coupling` with the chip's backend.
@@ -464,6 +531,20 @@ This file records notable user-visible changes to quchip.
   warnings when the solve starts before zero.
   ([#104](https://github.com/quchip/quchip/pull/104))
 
+- QuTiP stationary solves estimate the memory of their LU factors before they
+  factorize, and raise `MemoryError` when it does not fit. Previously, they
+  checked only the generator. On three transmon-readout pairs, whose factors
+  need about 1.6 TB, SuperLU ran for more than 15 minutes, and the call now
+  raises after 2.3 s. The dynamiqs steady state counts the six `D² × D²` arrays
+  of its solve instead of the generator alone. An 81-state chip peaked at
+  4.65 GB against a check of 0.69 GB.
+  ([#189](https://github.com/quchip/quchip/issues/189),
+  [#205](https://github.com/quchip/quchip/pull/205))
+- Memory checks run on macOS and Windows. Previously, without `/proc/meminfo`
+  or an installed psutil, every check accepted every request.
+  ([#200](https://github.com/quchip/quchip/issues/200),
+  [#205](https://github.com/quchip/quchip/pull/205))
+
 #### Performance
 
 - On QuTiP, exact excitation spaces and `ExcitationCutoff` solves store each
@@ -540,6 +621,13 @@ This file records notable user-visible changes to quchip.
   `VNA.finite_power()` over 44 points runs 3.2 times faster.
   ([#85](https://github.com/quchip/quchip/pull/85))
 
+- On two transmon-readout pairs with 81 product states, `VNA.output_spectrum()`
+  takes 0.07 s instead of 86.7 s on QuTiP, and 0.11 s instead of 144.7 s on
+  dynamiqs. On dynamiqs, `chip.steadystate()` takes 0.6 s instead of 124 s.
+  ([#191](https://github.com/quchip/quchip/issues/191),
+  [#203](https://github.com/quchip/quchip/issues/203),
+  [#205](https://github.com/quchip/quchip/pull/205))
+
 #### Compatibility
 
 - The dynamiqs backend supports dynamiqs 0.3.7, where `QArray` is abstract,
@@ -556,6 +644,20 @@ This file records notable user-visible changes to quchip.
   raises `NotImplementedError`, so a custom backend must implement it to
   support `VNA.sweep(..., when=...)`. The QuTiP and dynamiqs backends
   implement it. ([#124](https://github.com/quchip/quchip/pull/124))
+
+- psutil is a required dependency.
+  ([#200](https://github.com/quchip/quchip/issues/200),
+  [#205](https://github.com/quchip/quchip/pull/205))
+- The backend protocol gains `sector_generator()`, `sector_solve_bytes()`,
+  `sector_unique()`, `stationary_bytes()`, `compact_operator()`,
+  `compact_operators_fit()` and `trajectory_view()`. Their defaults run the
+  host SciPy sector solver and dense storage, so a custom backend needs no
+  change. `Backend.solve_batch()` takes `max_workers`, and a backend that
+  overrides it must accept the keyword.
+  ([#200](https://github.com/quchip/quchip/issues/200),
+  [#203](https://github.com/quchip/quchip/issues/203),
+  [#204](https://github.com/quchip/quchip/issues/204),
+  [#205](https://github.com/quchip/quchip/pull/205))
 
 #### Documentation and examples
 
@@ -583,6 +685,10 @@ This file records notable user-visible changes to quchip.
   strongly to its dispersive shift.
   ([#88](https://github.com/quchip/quchip/pull/88))
 
+- `PHYSICS.md` §4.2 describes result frames and dressed label targets, §6.5
+  the sector routes of `steadystate()` and the output statistics, and §6.6
+  the route record. ([#205](https://github.com/quchip/quchip/pull/205))
+
 #### Development
 
 - `CONTRIBUTING.md` documents the release-note format, and the pull request
@@ -592,6 +698,14 @@ This file records notable user-visible changes to quchip.
 - `tools/theme_figures.py` renders a PDF or dark PNG only when its light SVG
   changed. `--force` renders every figure.
   ([#88](https://github.com/quchip/quchip/pull/88))
+- The engine owns the resolution kernels, state preparation, excitation
+  structure, frame map and route planner. Engine kernels move out of `chip/`,
+  state preparation moves out of `results/`, and `results/` no longer imports
+  `analysis/` or dynamiqs. `quchip/utils/memory.py` holds one memory cost
+  model. ([#200](https://github.com/quchip/quchip/issues/200),
+  [#201](https://github.com/quchip/quchip/issues/201),
+  [#204](https://github.com/quchip/quchip/issues/204),
+  [#205](https://github.com/quchip/quchip/pull/205))
 
 ## [0.4.0] - 2026-09-29 <a id="quchip-0-4-0"></a>
 
