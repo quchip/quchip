@@ -1150,13 +1150,9 @@ def _sector_spectrum(sector: _SectorOutput, output_port: str, offsets: Any) -> O
         coherent = abs(complex(field.multiply(state.T).sum())) ** 2
         return source(components["device.correlations"]), added, intensity, coherent, info
 
-    def change(lower: tuple[Any, ...], upper: tuple[Any, ...]) -> float:
-        return max(largest_change(lower[:1], upper[:1]), largest_change(lower[1:2], upper[1:2]),
-                   largest_change(lower[2:4], upper[2:4]))
-
     # The warning names the caller of VNA.output_spectrum().
     cutoff, (solved, (signal, added, intensity, coherent, info)), choice, check = _sector_solve(
-        sector, measure, change, "spectra and photon fluxes", stacklevel=4)
+        sector, measure, _spectrum_change, "spectra and photon fluxes", stacklevel=4)
     diagnostics = {**sector_diagnostics(model, cutoff, solved, sector.reason, choice, check), **info}
     xp = model.chip.backend.array_module
     return OutputSpectrumResult(
@@ -1171,6 +1167,21 @@ def _sector_spectrum(sector: _SectorOutput, output_port: str, offsets: Any) -> O
         steady_state=model.steady_state(cutoff, solved, sector.frame, diagnostics),
         diagnostics=_LazyDiagnostics(diagnostics),
     )
+
+
+def _spectrum_change(lower: tuple[Any, ...], upper: tuple[Any, ...]) -> float:
+    """Compare two spectrum solves at each offset, and their total and coherent photon fluxes.
+
+    The fluxes share the floor of the total flux, which bounds the coherent one.
+    """
+    return max(largest_change(list(lower[0]), list(upper[0])), largest_change(list(lower[1]), list(upper[1])),
+               largest_change(lower[2:4], upper[2:4]))
+
+
+def _correlation_change(lower: tuple[Any, ...], upper: tuple[Any, ...]) -> float:
+    """Compare two correlation solves at each delay, and each of their two intensities."""
+    return max(largest_change(list(lower[0]), list(upper[0])), largest_change(lower[1:2], upper[1:2]),
+               largest_change(lower[2:3], upper[2:3]))
 
 
 def _sector_correlation(sector: _SectorOutput, order: int, output_port: str, input_port: str,
@@ -1188,12 +1199,9 @@ def _sector_correlation(sector: _SectorOutput, order: int, output_port: str, inp
             raise ValueError("Normalized output correlations require nonzero output intensity.")
         return values
 
-    def change(lower: tuple[Any, ...], upper: tuple[Any, ...]) -> float:
-        return max(largest_change(lower[:1], upper[:1]), largest_change(lower[1:], upper[1:]))
-
     # The warning names the caller of VNA.g1() or VNA.g2().
     cutoff, (solved, (raw, input_intensity, output_intensity)), choice, check = _sector_solve(
-        sector, measure, change, "correlations and intensities", stacklevel=5)
+        sector, measure, _correlation_change, "correlations and intensities", stacklevel=5)
     raw = np.conj(raw)
     denominator = np.sqrt(input_intensity * output_intensity) if order == 1 else input_intensity * output_intensity
     diagnostics = sector_diagnostics(model, cutoff, solved, sector.reason, choice, check)

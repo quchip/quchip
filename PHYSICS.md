@@ -1192,7 +1192,8 @@ the whole grid, and solve it again at `K + 1`. At every grid point,
 `finite_power()` and `measure()` compare the output means, mode amplitudes
 and photon numbers. When `N <= K + 1` has at most 1024 labels, `measure()`
 also compares the noise spectra at every offset. `output_spectrum()` compares
-its spectra and fluxes, and `g1()` and `g2()` compare the raw correlations and
+its spectra at every offset and its fluxes, and `g1()` and `g2()` compare the
+raw correlations at every delay and
 the two intensities. `steadystate()` needs no `K`, because the vacuum is
 exact. For two values `a` and `b` of one quantity, the change is
 `|a - b| / (max(|a|, |b|) + 1e-3 m)`, where `m` is the largest value of that

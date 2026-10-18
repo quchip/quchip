@@ -132,8 +132,10 @@ This file records notable user-visible changes to quchip.
 - Without an excitation cutoff, `VNA.finite_power()` and `VNA.measure()` with
   `options=None` solve a chip that conserves the total excitation and has more
   than 64 product states on the labels with `N <= K`, and they warn which `K`
-  they kept. Means, mode values and noise spectra can change by about `1e-6`
-  of their size. Pass `options={}` to keep the full product-space solve.
+  they kept. When `K + 1` fits in memory, they compare the results with it at
+  a tolerance of `1e-6`, and the warning says whether this check ran. The
+  check does not bound the error against the full product space. Pass
+  `options={}` to keep the full product-space solve.
   ([#156](https://github.com/quchip/quchip/issues/156),
   [#185](https://github.com/quchip/quchip/pull/185))
 - The truncation check is now the function `quchip.check_truncation(result)`,
@@ -158,8 +160,8 @@ This file records notable user-visible changes to quchip.
 - Without an excitation cutoff, `VNA.output_spectrum()`, `VNA.g1()` and
   `VNA.g2()` with `options=None` solve a chip that conserves `N` and has more
   than 64 product states on the labels with `N <= K`, as `finite_power()`
-  does, and warn which `K` they kept. Spectra, fluxes and correlations can
-  change by about `1e-6` of their size. Pass `options={}` to keep the full
+  does, and warn which `K` they kept. They compare each offset or delay with
+  `K + 1` as `finite_power()` does. Pass `options={}` to keep the full
   product-space solve. `finite_power()` and `measure()` also take this route
   when the VNA has pumps at the probe frequency.
   ([#191](https://github.com/quchip/quchip/issues/191),

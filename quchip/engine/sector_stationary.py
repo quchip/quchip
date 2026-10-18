@@ -23,10 +23,6 @@ from quchip.engine.sectors import _level_pairs
 from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
 
-# Offsets of a spectrum grid that agree with the negated offsets to this relative tolerance
-# share one resolvent solve, as the symmetric grids of measurements do.
-_SYMMETRY = 1e-12
-
 
 class SectorProbeModel:
     """Sector operators of one conserving chip under coherent inputs, for any cutoff.
@@ -231,21 +227,23 @@ class SectorProbeModel:
         return tuple(float(np.sum(diagonal[offsets[n]:offsets[n + 1]])) for n in range(cutoff + 1))
 
     def quadrature_spectrum(self, cutoff: int, frequency: float, amplitudes: Any, state: np.ndarray,
-                            offsets: Any) -> tuple[np.ndarray, dict[str, Any]]:
+                            offsets: Any, *, symmetric: bool = False) -> tuple[np.ndarray, dict[str, Any]]:
         """Return the normally ordered excess IQ spectrum of the selected ports.
 
         It follows :func:`quchip.engine.field_statistics.quadrature_spectrum`
         for vacuum inputs. The source of output ``p`` is ``(L_p - <L_p>) rho``.
         The adjoint source at ``f`` needs the resolvent at ``-f``, so the solve
-        covers every offset and its negative. A grid that is symmetric to
-        round-off reuses its own points.
+        covers every offset and its negative. ``symmetric=True`` states that
+        the grid holds the negative of each offset in reverse order, as the
+        validated grid of ``measure()`` does. Otherwise only an exact negative
+        reuses a point.
         """
         _, channels, _ = self.operators(cutoff)
         generator, drive = self.generator(cutoff), self.drive(frequency, amplitudes)
         offsets = np.asarray(offsets, dtype=float)
-        grid, mirror = list(offsets), []
-        for value in -offsets:
-            match = np.flatnonzero(np.isclose(offsets, value, rtol=_SYMMETRY, atol=0.0))
+        grid, mirror = list(offsets), list(range(len(offsets) - 1, -1, -1)) if symmetric else []
+        for value in () if symmetric else -offsets:
+            match = np.flatnonzero(offsets == value)
             if match.size:
                 mirror.append(int(match[0]))
             else:

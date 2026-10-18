@@ -8,6 +8,7 @@ import pytest
 from scipy import sparse
 
 import quchip.analysis.measurement as measurement
+import quchip.analysis.vna as vna_analysis
 import quchip.engine.routes as routes
 import quchip.backend._sector_stationary as sector_solver
 from quchip import (RWA, VNA, Bath, Capacitive, ChargeBasisTransmon, Chip, DuffingTransmon, ExcitationCutoff,
@@ -339,6 +340,22 @@ def test_the_cutoff_check_compares_every_noise_offset():
     shifted[0] *= 1 + 1e-5
     assert measurement._sector_change(points(background), points(shifted), True) > 1e-6
     assert measurement._sector_change(points(background), points(shifted), False) == 0.0
+
+
+@pytest.mark.unit
+def test_the_output_checks_compare_every_offset_and_delay():
+    """A small sample beside a large one fails the check, although the norm over the grid barely changes."""
+    zeros, peak, shifted = np.zeros(2), np.array([1.0, 0.0]), np.array([1.0, 5e-7])
+    # At the second sample, the change is 5e-7 over the floor, 1e-3 of the peak.
+    spectra = [(peak, zeros, 1.0, 0.5), (shifted, zeros, 1.0, 0.5), (shifted, zeros, 1.0, 0.5)]
+    assert vna_analysis._spectrum_change(*spectra[:2]) == pytest.approx(5e-7 / (5e-7 + 1e-3))
+    cutoff, _, check = routes.automatic_cutoff(4, lambda total, lower: spectra[total - 2],
+                                               vna_analysis._spectrum_change, fits=lambda total: True,
+                                               states=lambda total: total)
+    assert cutoff == 3 and check.status == "passed"
+    assert vna_analysis._correlation_change((peak, 1.0, 2.0), (shifted, 1.0, 2.0)) > routes.CUTOFF_TOLERANCE
+    # Each intensity sets its own scale, so a small output intensity is compared with itself.
+    assert vna_analysis._correlation_change((peak, 1.0, 1e-6), (peak, 1.0, 1e-6 * (1 + 1e-5))) > 1e-6
 
 
 @pytest.mark.unit

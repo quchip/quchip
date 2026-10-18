@@ -279,8 +279,8 @@ def _sector_pass(entries: list[Any], cutoff: int, *, offsets: Any, noise: bool, 
             guess = previous[1]
         solved = model.stationary(cutoff, frequency, internal, guess)
         amplitudes, numbers = model.mode_values(cutoff, solved.state)
-        excess, info = (model.quadrature_spectrum(cutoff, frequency, internal, solved.state, offsets) if noise
-                        else (None, {}))
+        excess, info = (model.quadrature_spectrum(cutoff, frequency, internal, solved.state, offsets, symmetric=True)
+                        if noise else (None, {}))
         points.append(_SectorPoint(solved, model.means(cutoff, frequency, internal, solved.state),
                                    amplitudes, numbers, excess, info))
         previous = (chip, solved.state)
