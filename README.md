@@ -111,7 +111,7 @@ The remaining calls read dressed transition frequencies and the resonator freque
 
 ## Add dynamics and readout
 
-The [dynamics guide](https://docs.quchip.org/guides/dynamics-pulses-and-readout) adds control lines and pulse sequences to the chip above. It compares short and selective Gaussian qubit drives in the full multilevel model, then simulates conditional resonator readout.
+The [dynamics guide](https://docs.quchip.org/guides/dynamics-pulses-and-readout) adds control lines and pulse sequences to the chip above. It compares short and selective Gaussian qubit drives in the full multilevel model, reads them as gates, then simulates conditional resonator readout.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://docs.quchip.org/_static/readme/hello_qubit_drive_leakage-dark.png">
@@ -129,8 +129,8 @@ The [dynamics guide](https://docs.quchip.org/guides/dynamics-pulses-and-readout)
 
 - [Your first chip](https://docs.quchip.org/guides/defining-and-inspecting-a-chip): build a coupled model, inspect its Hamiltonian, and fit dressed targets.
 - [Spectra and parameter sweeps](https://docs.quchip.org/guides/statics-and-parameter-studies): follow an avoided crossing and compare a fluxonium model with measured spectroscopy.
-- [Pulses, leakage, and readout](https://docs.quchip.org/guides/dynamics-pulses-and-readout): compare pulse selectivity, conditional resonator response, and cavity depletion.
-- [Readout and fridge wiring](https://docs.quchip.org/guides/steady-state-and-vna): calculate VNA traces and qubit readout with receiver noise.
+- [Pulses, leakage, and readout](https://docs.quchip.org/guides/dynamics-pulses-and-readout): compare pulse selectivity, read pulses as gates, and simulate conditional resonator response and cavity depletion.
+- [Readout and fridge wiring](https://docs.quchip.org/guides/steady-state-and-vna): calculate VNA traces and their resonances, and qubit readout with receiver noise.
 - [Model reduction](https://docs.quchip.org/guides/chip-transformations): compare a reduced model with the full pulse simulation, remove a readout from its feedline, solve in an exact excitation space, and truncate the excitation number.
 - [Gradients and parameter fitting](https://docs.quchip.org/guides/differentiability): differentiate spectra and pulse responses, and fit measured circuit parameters.
 - [Extending quchip](https://docs.quchip.org/extensions): define custom models, controls, dissipation and interoperability mappings.

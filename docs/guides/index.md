@@ -12,14 +12,16 @@ New to quchip? Start with {doc}`your first chip <defining-and-inspecting-a-chip>
 - {doc}`Spectra and parameter sweeps <statics-and-parameter-studies>`:
   compare dressed observables and track states through avoided crossings.
 - {doc}`Pulses, leakage, and readout <dynamics-pulses-and-readout>`:
-  compare pulse bandwidth, leakage, and conditional resonator response.
+  compare pulse bandwidth and leakage, read the pulses as gates, and follow
+  the conditional resonator response.
 - {doc}`What happens during a qubit measurement? <continuous-measurement>`:
   follow single trajectories, map their density, and condition on an endpoint.
 
 ## Microwave networks
 
 - {doc}`Readout and fridge wiring <steady-state-and-vna>`:
-  calculate VNA traces and qubit readout with receiver noise.
+  calculate VNA traces and their resonances, and qubit readout with receiver
+  noise.
 
 ## Model reduction and fitting
 
