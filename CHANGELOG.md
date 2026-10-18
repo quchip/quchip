@@ -415,6 +415,19 @@ This file records notable user-visible changes to quchip.
   the shift.
   ([#184](https://github.com/quchip/quchip/issues/184),
   [#183](https://github.com/quchip/quchip/pull/183))
+- `quchip.gateset` calibrates native gates and composes circuits from them.
+  `GateSet.standard()` declares DRAG SX and X gates and echoed
+  cross-resonance ZX90 gates; `NativeGate` and `Knob` declare your own. Each
+  fit targets the ideal gate on a block that includes coupled spectator
+  qubits, with free virtual Z phases, and reports the infidelity, leakage,
+  error generator, knob bounds, and fit identifiability. `GateSet.unitary()`
+  reuses each gate's propagator at new start times and frames when its
+  Hamiltonian allows it, and `GateSet.simulate()` solves the circuit's
+  schedule with noise. On a chip above 64 states, gate-set solves pick and
+  raise an excitation cutoff with a warning.
+- `QuantumSequence.propagator()` returns the lab-frame propagator of a
+  schedule, and `Propagator.computational()` gives its block on dressed
+  computational states. `QuantumSequence.extend()` appends another sequence.
 - `ExcitationCutoff(max_total=K)` keeps the product energy labels whose levels
   sum to at most `K`. Set it with `Chip(..., space=...)` or `chip.with_space(...)`.
   It is separate from `RWA()` and `Exact()`, and quchip never sets it. The

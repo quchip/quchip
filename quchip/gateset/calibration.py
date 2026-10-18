@@ -10,8 +10,12 @@ minimizes ``|r|²`` with
 
 where ``V`` is the gate's computational block, ``ℓ`` the leaked amplitudes,
 and ``Z(φ) = Π_q exp(iφ_q n_q)``. At ``γ = arg Tr M``,
-``|r|² = 1 - F_avg + (d - |Tr M|)² / (d (d + 1))``, so the fit and the average
-gate fidelity share their optimum.
+``|r|² = 1 - F_avg + (d - |Tr M|)² / (d (d + 1))``. The second term is of
+higher order in the gate error, so near a good gate ``|r|²`` and ``1 - F_avg``
+agree to leading order; their optima can still differ slightly.
+
+The knob columns of the Jacobian are forward differences with a fixed step in
+the scaled coordinates, and the phase columns are analytic.
 """
 
 from __future__ import annotations
@@ -30,7 +34,7 @@ from quchip.gateset.ideals import pauli_components
 from quchip.gateset.native import ResolvedKnob
 from quchip.inverse_design.fit import _identifiability_receipt
 
-#: Relative finite-difference step of the scaled knobs.
+#: Finite-difference step of the scaled knobs.
 DIFF_STEP = 1e-4
 
 
@@ -132,7 +136,9 @@ class GateCalibration:
         ``sin(Δ/2)`` from the eigenphase arc of ``U``. For a unitary error it
         equals the diamond distance.
     identifiability : dict
-        Jacobian rank, condition number, and weak directions of the final fit.
+        Jacobian rank, condition number, and weak directions of the final fit,
+        and ``jacobian_step_change``: the relative change of the knob columns
+        when the difference step shrinks tenfold.
     unitarity_defect : float
         ``max |U†U - I|`` over the computed columns, from the integrator.
     options, frame, cutoff
@@ -154,6 +160,13 @@ class GateCalibration:
         Wall time of the fit.
     version : int
         Calibration count of this native in its gate set.
+    cutoff_difference : float or None
+        Largest change of the block or leakage at the next excitation cutoff,
+        for an automatic cutoff.
+    block_qubits : tuple of str
+        Qubits of the fitted block: the gate's qubits, then its spectators.
+        ``block`` and ``ideal`` use this order, and ``fidelity`` and
+        ``leakage`` refer to this block.
     """
 
     name: str
@@ -185,6 +198,8 @@ class GateCalibration:
     dependencies: dict[Any, int] = field(default_factory=dict)
     seconds: float = 0.0
     version: int = 0
+    cutoff_difference: float | None = None
+    block_qubits: tuple[str, ...] = ()
 
     @property
     def infidelity(self) -> float:
@@ -193,8 +208,10 @@ class GateCalibration:
 
     def summary(self) -> str:
         """Return a text report."""
+        spectators = [q for q in self.block_qubits if q not in self.qubits]
+        joint = f" with spectators {', '.join(spectators)}" if spectators else ""
         lines = [
-            f"{self.name} on {', '.join(self.qubits)}: 1 - F_avg = {self.infidelity:.3e}, "
+            f"{self.name} on {', '.join(self.qubits)}{joint}: 1 - F_avg = {self.infidelity:.3e}, "
             f"leakage = {self.leakage:.2e}, status = {self.status}",
             f"  {self.solves} solves in {self.seconds:.1f} s from {self.seed}; |r|^2 = {self.cost:.3e}; "
             f"unitarity defect = {self.unitarity_defect:.1e}",
@@ -241,6 +258,7 @@ class FitOutcome:
     jacobian: np.ndarray
     names: list[str]
     seconds: float
+    jacobian_step_change: float = 0.0
 
 
 class _Residual:
@@ -264,6 +282,8 @@ class _Residual:
         self.solves = 0
         self.best = np.inf
         self.history: list[tuple[int, float]] = []
+        self.upper = np.full(self.free.size, np.inf)
+        self.step = DIFF_STEP
 
     def values(self, z: np.ndarray) -> np.ndarray:
         x = self.initial.copy()
@@ -289,13 +309,42 @@ class _Residual:
         before = self.solves
         block, leaked, _ = self.block(self.values(z))
         r = self.vector(block, leaked, z[n_free:n_free + n_phases], float(z[-1]))
-        cost = float(r @ r)
-        self.best = min(self.best, cost)
+        self._record(r, before)
+        return r
+
+    def _record(self, r: np.ndarray, before: int) -> None:
+        self.best = min(self.best, float(r @ r))
         if self.solves != before:
             self.history.append((self.solves, self.best))
         elif self.history:
             self.history[-1] = (self.solves, self.best)
-        return r
+
+    def jacobian(self, z: np.ndarray, step: float | None = None) -> np.ndarray:
+        """Return ``∂r/∂z``: forward differences for the knobs, exact columns for the phases."""
+        step = self.step if step is None else step
+        n_free = self.free.size
+        n_phases = self.z_bits.shape[1]
+        phases, gamma = z[n_free:n_free + n_phases], float(z[-1])
+        block, leaked, _ = self.block(self.values(z))
+        r0 = self.vector(block, leaked, phases, gamma)
+        jacobian = np.empty((r0.size, z.size))
+        for j in range(n_free):
+            h = step if z[j] + step <= self.upper[j] else -step
+            shifted = z.copy()
+            shifted[j] += h
+            before = self.solves
+            b, ell, _ = self.block(self.values(shifted))
+            r = self.vector(b, ell, phases, gamma)
+            self._record(r, before)
+            jacobian[:, j] = (r - r0) / h
+        rotated = np.exp(1j * (self.z_bits @ phases))[:, None] * block
+        zero_leak = np.zeros(2 * leaked.size)
+        for k in range(n_phases):
+            column = self.ideal_dagger @ (1j * self.z_bits[:, k][:, None] * rotated) / np.sqrt(self.d + 1)
+            jacobian[:, n_free + k] = np.concatenate([column.real.ravel(), column.imag.ravel(), zero_leak])
+        column = -1j * np.exp(1j * gamma) * np.eye(self.d) / np.sqrt(self.d + 1)
+        jacobian[:, -1] = np.concatenate([column.real.ravel(), column.imag.ravel(), zero_leak])
+        return jacobian
 
     def phase_start(self, block: np.ndarray, leaked: np.ndarray) -> np.ndarray:
         """Fit only the phases at a fixed block; costs no solve."""
@@ -367,6 +416,7 @@ def fit_block(
         block, leaked, _ = residual.block(residual.values(np.concatenate([u, np.zeros(n_phases + 1)])))
         return np.concatenate([u, residual.phase_start(block, leaked)])
 
+    residual.upper = ub[: free.size]
     vectors = [(start_vector(values), provenance) for values, provenance in starts]
     if explore and free.size:
         best_start = min(vectors, key=lambda item: float(np.sum(residual(item[0]) ** 2)))
@@ -378,8 +428,8 @@ def fit_block(
     best = None
     for vector, provenance in vectors:
         vector = np.clip(vector, lb, ub)
-        result = least_squares(residual, vector, jac="2-point", method="trf", bounds=(lb, ub), x_scale=1.0,
-                               diff_step=DIFF_STEP, xtol=1e-12, ftol=1e-14, gtol=1e-14, max_nfev=max_nfev)
+        result = least_squares(residual, vector, jac=residual.jacobian, method="trf", bounds=(lb, ub),
+                               x_scale=1.0, xtol=1e-12, ftol=1e-14, gtol=1e-14, max_nfev=max_nfev)
         if best is None or result.cost < best[0].cost:
             best = (result, provenance)
     assert best is not None
@@ -388,11 +438,18 @@ def fit_block(
     block, leaked, defect = residual.block(values)
     phases = result.x[free.size:free.size + n_phases]
     names = [knobs[i].name for i in free] + [f"z {name}" for name in phase_names] + ["global phase"]
+    jacobian = residual.jacobian(result.x)
+    change = 0.0
+    if free.size:
+        finer = residual.jacobian(result.x, step=residual.step / 10)
+        norms = np.linalg.norm(jacobian[:, :free.size], axis=0)
+        differences = np.linalg.norm(finer[:, :free.size] - jacobian[:, :free.size], axis=0)
+        change = float(np.max(differences / np.maximum(norms, np.finfo(float).tiny)))
     history = np.array(residual.history, dtype=float).reshape(-1, 2)
     return FitOutcome(values=values, phases=np.asarray(phases, dtype=float), global_phase=float(result.x[-1]),
                       block=block, leaked=leaked, defect=defect, cost=float(2 * result.cost), solves=residual.solves,
-                      seed=provenance, history=history, jacobian=np.asarray(result.jac), names=names,
-                      seconds=time.perf_counter() - began)
+                      seed=provenance, history=history, jacobian=jacobian, names=names,
+                      seconds=time.perf_counter() - began, jacobian_step_change=change)
 
 
 def report(
@@ -425,6 +482,7 @@ def report(
     generator, distance = error_generator(product)
     leakage = np.real(np.sum(np.conj(outcome.leaked) * outcome.leaked, axis=0))
     receipt = _identifiability_receipt(outcome.jacobian, outcome.names, np.ones(len(outcome.names)))
+    receipt["jacobian_step_change"] = outcome.jacobian_step_change
     fidelity = average_fidelity(block, ideal)
     if at_bound:
         status = "at_bound"

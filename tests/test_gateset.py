@@ -181,36 +181,51 @@ def test_gate_set_validates_natives_and_instructions():
 
 @pytest.mark.unit
 def test_covariance_check_is_structural():
-    """RWA pulses with one carrier pass; two carriers, Exact couplings, and frames fail."""
+    """Each pulse's own terms decide: one carrier and frame per piece, bands at -q(f + δ) of the same pulse,
+    no coefficient of absolute time, and RWA statics."""
     from quchip.engine.problem import build_solve_problem
+    from quchip.gateset.cache import Delivered, DeliveredTerm, lower_pulse, model_check
 
     chip = two_transmons()
     seq = QuantumSequence(chip)
     seq.schedule("xy0", envelope=Gaussian(duration=20.0, amplitude=0.04), freq=chip.freq("q0"), detuning=0.002)
     seq.schedule("xy1", envelope=Gaussian(duration=20.0, amplitude=0.04), freq=chip.freq("q1"))
     ops = list(seq.scheduled_ops)
-    problem = build_solve_problem(chip, ops, np.array([0.0, 20.0]), frame="lab", states="final",
-                                  dissipation=False, _product_space=True)
-    assert split_pieces(ops) == [(0.0, 20.0, [0, 1])]
-    assert covariance(problem, ops, [0], (0.0, 20.0))[0] is False
-    single = QuantumSequence(chip)
-    single.schedule("xy0", envelope=Gaussian(duration=20.0, amplitude=0.04), freq=chip.freq("q0"), detuning=0.002)
-    ops = list(single.scheduled_ops)
-    problem = build_solve_problem(chip, ops, np.array([0.0, 20.0]), frame="lab", states="final",
-                                  dissipation=False, _product_space=True)
-    assert covariance(problem, ops, [0], (0.0, 20.0)) == (True, "", chip.freq("q0"), "q0")
+    delivered = [lower_pulse(chip, op) for op in ops]
+    assert [item.support for item in delivered] == [(0.0, 20.0), (0.0, 20.0)]
+    assert split_pieces([item.support for item in delivered]) == [(0.0, 20.0, [0, 1])]
+    assert covariance(ops, delivered, [0, 1])[0] is False
+    assert covariance(ops, delivered, [0]) == (True, "", chip.freq("q0"), "q0")
+    assert sorted(band for term in delivered[0].terms for band in term.bands) == pytest.approx(
+        [-(chip.freq("q0") + 0.002), chip.freq("q0") + 0.002])
+
+    # A charge-2 term at -10 GHz is covariant only when its own pulse sits at 5 GHz.
+    pulses = QuantumSequence(chip)
+    pulses.schedule("xy0", envelope=Gaussian(duration=20.0, amplitude=0.0), freq=5.0)
+    pulses.schedule("xy0", envelope=Gaussian(duration=20.0, amplitude=0.0), freq=5.0, detuning=5.0)
+    two = list(pulses.scheduled_ops)
+    double = Delivered((0.0, 20.0), (DeliveredTerm(frozenset({2}), (-10.0,), ""),))
+    quiet = Delivered((0.0, 20.0), ())
+    assert covariance(two, [double, quiet], [0, 1])[0] is True
+    covariant, reason, _, _ = covariance(two, [quiet, double], [0, 1])
+    assert not covariant and "not at -20" in reason
+    absolute = Delivered((0.0, 20.0), (DeliveredTerm(frozenset({0}), (0.0,), "CoefficientRef"),))
+    covariant, reason, _, _ = covariance(two, [absolute, quiet], [0, 1])
+    assert not covariant and "CoefficientRef" in reason
+
     exact = two_transmons(approximation=Exact())
-    problem = build_solve_problem(exact, ops, np.array([0.0, 20.0]), frame="lab", states="final",
+    problem = build_solve_problem(exact, [], np.array([0.0, 1.0]), frame="lab", states="final",
                                   dissipation=False, _product_space=True)
-    covariant, reason, _, _ = covariance(problem, ops, [0], (0.0, 20.0))
+    assert "excitation number" in model_check(problem)
+    covariant, reason, _, _ = covariance(ops, delivered, [0], model_check(problem))
     assert not covariant and "excitation number" in reason
 
 
-def calibrated_sx(df=0.2, duration=30.0, **noise):
+def calibrated_sx(df=0.2, duration=30.0, spectators="coupled", **noise):
     chip = two_transmons(df, **noise)
-    gates = GateSet(chip, ["q0", "q1"])
-    gates.add(drag_sx(chip, "q0", duration=duration))
-    gates.add(drag_sx(chip, "q1", duration=duration))
+    gates = GateSet(chip, ["q0", "q1"], spectators=spectators)
+    gates.add(drag_sx(chip, "q0", duration=duration, sigmas=4.0))
+    gates.add(drag_sx(chip, "q1", duration=duration, sigmas=4.0))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         gates.calibrate()
@@ -218,9 +233,11 @@ def calibrated_sx(df=0.2, duration=30.0, **noise):
 
 
 def test_drag_sx_calibrates_to_the_leakage_floor():
-    """A 30 ns ±4σ DRAG SX reaches 1 - F_avg < 1e-8 from the physics seeds, with β near 1/(4π|α|)."""
-    _, gates = calibrated_sx()
+    """With q1 held in |0>, a 30 ns ±4σ DRAG SX reaches 1 - F_avg < 1e-8 from the physics seeds, with β near
+    1/(4π|α|)."""
+    _, gates = calibrated_sx(spectators="none")
     calibration = gates.calibration("SX", "q0")
+    assert calibration.block_qubits == ("q0",)
     assert calibration.infidelity < 1e-8
     assert calibration.status in ("ok", "solver_floor")
     assert calibration.knobs["beta"].value == pytest.approx(1 / (4 * np.pi * 0.33), rel=0.05)
@@ -230,6 +247,23 @@ def test_drag_sx_calibrates_to_the_leakage_floor():
     assert calibration.repetitions[1] == pytest.approx(calibration.infidelity, rel=0.2, abs=1e-9)
     text = gates.describe()
     assert "SX" in text and "q0" in text
+
+
+def test_spectator_block_carries_the_static_zz_of_the_gate():
+    """With the coupled spectator in the block, the SX fit targets SX ⊗ I. Its error is the ZZ phase that the
+    gate cannot remove, between the ZZ angle with and without the echo of the half rotation."""
+    chip, gates = calibrated_sx()
+    calibration = gates.calibration("SX", "q0")
+    assert calibration.block_qubits == ("q0", "q1") and set(calibration.free_z) == {"q0", "q1"}
+    assert calibration.ideal.shape == (4, 4)
+    zeta = abs(float(chip.kerr_matrix().values[0, 1]))
+    angle = np.pi * zeta * 30.0 / 2
+    assert 0.2 * 0.8 * angle**2 < calibration.infidelity < 0.8 * angle**2
+    assert calibration.repetitions[1] == pytest.approx(calibration.infidelity, rel=0.05)
+    # The ground-spectator fit, scored on the same joint block, is worse.
+    _, restricted = calibrated_sx(spectators="none")
+    block, _ = gates._block(restricted.calibration("SX", "q0").sequence, ("q0", "q1"), 30.0)
+    assert 1 - average_fidelity(np.asarray(block.matrix), calibration.ideal) > calibration.infidelity
 
 
 def test_cached_circuit_matches_the_direct_schedule_solve():
@@ -278,7 +312,7 @@ def test_auto_cutoff_keeps_the_gate_and_warns():
                                              Capacitive(q0, r0, g=0.08, label="g0"),
                                              Capacitive(q1, r1, g=0.08, label="g1")])
     chip.wire(ChargeDrive(q0, label="xy0"), ChargeDrive(q1, label="xy1"))
-    gates = GateSet(chip, ["q0", "q1"])
+    gates = GateSet(chip, ["q0", "q1"], spectators="none")
     gates.add(drag_sx(chip, "q0", duration=30.0))
     with pytest.warns(UserWarning, match=r"ExcitationCutoff\(max_total=3\)"):
         gates.calibrate()
@@ -315,6 +349,82 @@ def test_exact_chip_places_gates_by_direct_solves():
     correction = gates._frame_correction(gates.qubits, composed.frame_offsets)
     # Lab-frame solves at rtol 1e-8 set the agreement.
     assert np.abs(composed.computational - correction[:, None] * np.asarray(block.matrix)).max() < 2e-5
+
+
+def test_cached_circuits_follow_delivered_fields():
+    """A 5 ns line delay extends each q0 gate to its delivered field. Separated gates still reuse the cache,
+    back-to-back gates on the delayed line are solved together, and both match a direct solve."""
+    from quchip.control.signal import Delay
+
+    q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.33, levels=3, label="q0")
+    q1 = DuffingTransmon(freq=5.2, anharmonicity=-0.33, levels=3, label="q1")
+    chip = Chip([q0, q1], couplings=[Capacitive(q0, q1, g=0.003, label="J")])
+    chip.wire(ChargeDrive(q0, label="xy0"), ChargeDrive(q1, label="xy1"), signal_chain=[Delay("xy0", delta_t=5.0)])
+    gates = GateSet(chip, ["q0", "q1"])
+    gates.add(drag_sx(chip, "q0", duration=20.0))
+    gates.add(drag_sx(chip, "q1", duration=20.0))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        gates.calibrate(max_nfev=30)
+    assert gates.entry("SX", "q0").duration == pytest.approx(25.0)
+    assert gates.entry("SX", "q1").duration == pytest.approx(20.0)
+    # The idles exceed the delay, so no delivered field crosses into the next gate.
+    separated = [("SX", "q0"), ("RZ", "q0", 0.4), ("IDLE", "q0", 10.0), ("SX", "q0"), ("IDLE", "q0", 10.0),
+                 ("RZ", "q1", -0.7), ("SX", "q1")]
+    back_to_back = [("SX", "q0"), ("RZ", "q0", 0.4), ("SX", "q0")]
+    for circuit, overlapping in ((separated, False), (back_to_back, True)):
+        composed = gates.unitary(circuit, policy="serial")
+        assert (composed.solves > 0) is overlapping
+        direct = gates.schedule(circuit, policy="serial").propagator(
+            tlist=[0.0, composed.duration], frame="rotating", options=gates.options, dissipation=False)
+        assert np.abs(composed.full - np.asarray(direct.matrix)).max() < 2e-6
+    assert gates.unitary(back_to_back, policy="serial").duration == pytest.approx(45.0)
+
+
+def test_calibration_leaves_a_zero_amplitude_start():
+    """The knob step is fixed in scaled units, so a fit that starts at zero amplitude reaches the exact SX
+    of a 2 ns square pulse on a two-level qubit."""
+    from quchip import Square
+
+    qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=2, label="q")
+    chip = Chip([qubit])
+    chip.wire(ChargeDrive(qubit, label="xy"))
+    element = complex(chip.drive_matrix_elements("q")["xy"])
+    seq = QuantumSequence(chip)
+    pulse = seq.schedule("xy", envelope=Square(duration=2.0, amplitude=0.0), freq=chip.freq("q"),
+                         phase=-float(np.angle(element)))
+    gates = GateSet(chip, ["q"])
+    gates.add(NativeGate("SX", ("q",), seq, knobs={"amplitude": Knob(pulse, "amplitude", scale=0.1)}, ideal="SX",
+                         free_z=("q",)))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        calibration = gates.calibrate()[("SX", ("q",))]
+    assert calibration.infidelity < 1e-8
+    assert calibration.knobs["amplitude"].value == pytest.approx(0.125 / abs(element), rel=1e-5)
+    assert calibration.identifiability["jacobian_step_change"] < 1e-3
+
+
+def test_automatic_cutoff_recalibrates_until_the_gate_converges():
+    """A nearly harmonic qubit next to a 17-level resonator (68 states) starts at max_total=2. The calibrated
+    gate differs at max_total=3, so the gate set raises the cutoff and calibrates again."""
+    from quchip import Square
+    from quchip.gateset import Seed
+
+    qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.01, levels=4, label="q")
+    cavity = Resonator(freq=7.0, levels=17, label="r")
+    chip = Chip([qubit, cavity])
+    chip.wire(ChargeDrive(qubit, label="xy"))
+    element = complex(chip.drive_matrix_elements("q")["xy"])
+    seq = QuantumSequence(chip)
+    pulse = seq.schedule("xy", envelope=Square(duration=2.0, amplitude=0.0), freq=chip.freq("q"),
+                         phase=-float(np.angle(element)))
+    gates = GateSet(chip, ["q"])
+    gates.add(NativeGate("SX", ("q",), seq, knobs={"amplitude": Knob(pulse, "amplitude", scale=0.1)}, ideal="SX",
+                         free_z=("q",), seeds=(Seed({"amplitude": 0.1}, "test"),)))
+    with pytest.warns(UserWarning, match="recalibrating"):
+        calibration = gates.calibrate(max_nfev=40)[("SX", ("q",))]
+    assert gates.cutoff is None or gates.cutoff >= 3
+    assert calibration.cutoff_difference is None or calibration.cutoff_difference <= gates.cutoff_tolerance
 
 
 @pytest.mark.validation

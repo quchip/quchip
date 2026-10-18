@@ -148,6 +148,15 @@ def test_extend_appends_aligned_copies_with_their_frame_shifts():
     left = composed.propagator(frame="rotating", options=TIGHT, tlist=[0.0, 50.0])
     right = by_hand.propagator(frame="rotating", options=TIGHT, tlist=[0.0, 50.0])
     assert np.abs(np.asarray(left.matrix) - np.asarray(right.matrix)).max() < 1e-10
+    # A device that the native only shifts keeps its cursor; the shift still applies in program order.
+    shifting = QuantumSequence(chip)
+    drag_pulse(shifting, chip, detuning=None)
+    shifting.vz("q1", 0.2)
+    parallel = QuantumSequence(chip)
+    parallel.extend(shifting)
+    parallel.schedule("xy1", envelope=Gaussian(duration=30.0, sigmas=4.0, amplitude=0.02), freq=chip.freq("q1"))
+    last = list(parallel.scheduled_ops)[-1]
+    assert (last.start_time, last.phase_offset) == (0.0, pytest.approx(0.2))
 
 
 @pytest.mark.unit

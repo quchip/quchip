@@ -40,8 +40,8 @@ def drag_sx(
     qubit: Any,
     *,
     line: Any = None,
-    duration: float = 20.0,
-    sigmas: float = 4.0,
+    duration: float = 40.0,
+    sigmas: float = 3.0,
     name: str = "SX",
     angle: float = np.pi / 2,
 ) -> NativeGate:
@@ -63,11 +63,13 @@ def drag_sx(
         Driven qubit.
     line : str or drive, optional
         Charge line. The default is the qubit's only charge line.
-    duration : float, default 20.0
+    duration : float, default 40.0
         Pulse duration in ns.
-    sigmas : float, default 4.0
-        Gaussian half-window in standard deviations. At ±4σ, the window edges
-        sit at 3e-4 of the peak.
+    sigmas : float, default 3.0
+        Gaussian half-window in standard deviations. A narrower pulse has more
+        spectral weight at a neighbor's frequency: next to a qubit 100 MHz
+        away with g = 3 MHz, a 30 ns X at ±4σ leaves 1.5e-4 in the neighbor,
+        where 40 ns at ±3σ leaves 2e-6.
     name : str, default "SX"
         Gate name.
     angle : float, default π/2
@@ -107,6 +109,17 @@ def drag_sx(
     return NativeGate(name, (label,), sequence, knobs=knobs, ideal=ideal, free_z=(label,))
 
 
+def _conditional_ix(chip: "Chip", control: str, target: str, line_label: str) -> complex:
+    """Return a line's IX coefficient on the target: its dressed ``0 -> 1`` element averaged over the control."""
+    equipment = chip.control_equipment
+    assert equipment is not None
+    line = next(line for line in equipment.lines if line.label == line_label)
+    control_device, target_device = chip.device_map[control], chip.device_map[target]
+    t0 = chip.drive_matrix_elements(({}, {target_device: 1}), drives=[line])[line]
+    t1 = chip.drive_matrix_elements(({control_device: 1}, {control_device: 1, target_device: 1}), drives=[line])[line]
+    return complex((t0 + t1) / 2)
+
+
 def cross_resonance(
     chip: "Chip",
     control: Any,
@@ -129,7 +142,8 @@ def cross_resonance(
     phase and the cancellation amplitude and phase. The seeds come from
     :func:`~quchip.analysis.cross_resonance.analyze_cr_susceptibility`: the CR
     amplitude sets the ZX angle to π/2 over the envelope area, and the
-    cancellation tone cancels the IX term.
+    cancellation tone cancels the IX term with the target line's IX
+    coefficient, the average of its elements with the control in 0 and 1.
 
     With ``echo=True`` the native is composite: CR+, X on the control, CR-,
     and X on the control, where CR- reverses the phases of both tones. The X
@@ -156,8 +170,10 @@ def cross_resonance(
         Rise and fall time of each tone in ns. The CR tone is detuned from the
         control by the qubit detuning Δ, so a fast edge excites the control.
         The default sets the edge Gaussian's width to ``σ = 6 / (2π|Δ|)`` and
-        the edge to ``2 sigmas σ``, which leaves about 4e-6 of the drive
-        spectrum at Δ.
+        the edge to ``2 sigmas σ``. The Gaussian part of the spectrum is then
+        negligible at Δ; the joints between the edges and the plateau leave a
+        tail that falls as Δ⁻³, about 7e-4 of the zero-frequency value for a
+        200 ns tone at Δ = 100 MHz.
     sigmas : float, default 2.5
         Half-width of each edge in Gaussian standard deviations
         (``σ = edge / (2 sigmas)``).
@@ -184,7 +200,8 @@ def cross_resonance(
     cr_amplitude = 1.0 / (4 * halves * abs(zx) * area)
     cr_phase = -float(np.angle(zx))
     if cancel:
-        element = complex(chip.drive_matrix_elements(target_label)[target_line])
+        assert target_line is not None
+        element = _conditional_ix(chip, control_label, target_label, target_line)
         wanted = -ix * cr_amplitude * np.exp(1j * cr_phase) / element
         cancel_amplitude, cancel_phase = abs(wanted), float(np.angle(wanted))
     frequency = chip.freq(target_label)
@@ -196,6 +213,7 @@ def cross_resonance(
                                freq=frequency, frame=target_label, phase=cr_phase + offset)
         cancellation = None
         if cancel:
+            assert target_line is not None
             cancellation = sequence.schedule(
                 target_line, envelope=GaussianEdge(duration=tone, edge_duration=edge, sigmas=sigmas,
                                                    amplitude=cancel_amplitude),

@@ -1724,9 +1724,12 @@ class QuantumSequence:
         """Append the entries of another sequence on the same chip.
 
         A barrier first aligns the cursors of every device, coupling, and
-        input that *other* uses, so its pulses start together. *other*'s
-        entries then replay from there with their own delays, barriers, and
-        virtual-Z shifts. Pulse handles of *other* do not transfer. A pulse
+        input that *other*'s pulses, delays, and barriers use, so its pulses
+        start together. Virtual-Z shifts take no time and keep their program
+        order, so a device that *other* only shifts does not join the
+        barrier. *other*'s entries then replay from there with their own
+        delays, barriers, and virtual-Z shifts. Pulse handles of *other* do
+        not transfer. A pulse
         scheduled in *other* with an explicit ``start_time`` raises, because
         its absolute time would not move with the cursor.
 
@@ -1747,8 +1750,10 @@ class QuantumSequence:
                         "extend() needs cursor-timed pulses. Replace start_time= with delay() in the appended sequence."
                     )
                 labels: tuple[str, ...] = (entry.target_label,)
-            elif isinstance(entry, (_DelayEntry, _FrameShiftEntry)):
+            elif isinstance(entry, _DelayEntry):
                 labels = (entry.device_label,)
+            elif isinstance(entry, _FrameShiftEntry):
+                continue
             else:
                 labels = entry.device_labels or tuple(self._device_labels())
             targets.extend(label for label in labels if label not in targets)

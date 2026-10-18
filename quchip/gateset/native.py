@@ -123,7 +123,12 @@ def _default_scale_and_lower(sequence: "QuantumSequence", path: str, value: floa
         return 0.1, -np.inf
     if field == "start_time":
         return max(abs(value), 0.1), 0.0
-    envelope = sequence._entries[int(index)].envelope
+    from quchip.control.sequence import _PulseEntry
+
+    entry = sequence._entries[int(index)]
+    if not isinstance(entry, _PulseEntry):
+        raise KeyError(f"pulse.{index} is not a pulse entry.")
+    envelope = entry.envelope
     declaration = parameter_fields(type(envelope)).get(field.removeprefix("envelope."))
     floor = 0.1 if declaration is not None and declaration.unit == "ns" else 1e-3
     lower = 0.0 if declaration is not None and (declaration.positive or declaration.nonnegative) else -np.inf
@@ -181,10 +186,10 @@ def bind_pulses(sequence: "QuantumSequence", bindings: Mapping[str, Any]) -> "Qu
     for path, value in bindings.items():
         _, index, field = path.split(".", 2)
         grouped.setdefault(int(index), {})[field] = value
-    for index, updates in grouped.items():
-        entry = bound._entries[index]
+    for position, updates in grouped.items():
+        entry = bound._entries[position]
         if not isinstance(entry, _PulseEntry):
-            raise KeyError(f"pulse.{index} is not a pulse entry.")
+            raise KeyError(f"pulse.{position} is not a pulse entry.")
         envelope_updates = {
             field.removeprefix("envelope."): value for field, value in updates.items() if field not in _PULSE_FIELDS
         }
@@ -195,7 +200,7 @@ def bind_pulses(sequence: "QuantumSequence", bindings: Mapping[str, Any]) -> "Qu
         }
         if envelope_updates:
             entry_updates["envelope"] = entry.envelope.with_params(envelope_updates)
-        bound._entries[index] = replace(entry, **entry_updates)
+        bound._entries[position] = replace(entry, **entry_updates)
     return bound
 
 

@@ -11,7 +11,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from quchip.gateset.cache import GatePropagator, Idle, Piece, covariance, split_pieces
+from quchip.gateset.cache import (Delivered, GatePropagator, Idle, Piece, covariance, lower_pulse, model_check,
+                                  split_pieces)
 from quchip.gateset.calibration import GateCalibration, average_fidelity, fit_block, report
 from quchip.gateset.ideals import IDEALS, canonical_name, embed, ideal_unitary, rule_table
 from quchip.gateset.native import NativeGate, bind_pulses
@@ -27,6 +28,11 @@ DEFAULT_OPTIONS = {"atol": 1e-12, "rtol": 1e-10, "nsteps": 10**7}
 
 #: Full product spaces up to this size skip the automatic excitation cutoff.
 AUTO_CUTOFF_DIMENSION = 64
+
+
+def _defect(propagator: Any) -> float:
+    defect = propagator.unitarity_defect
+    return 0.0 if defect is None else float(defect)
 
 
 class _Unresolved(KeyError):
@@ -136,6 +142,13 @@ class GateSet:
     cutoff_tolerance : float, default 1e-6
         Largest change of a gate's computational amplitudes or leakage
         accepted when the cutoff is raised by one.
+    spectators : {"coupled", "all", "none"}, default "coupled"
+        Other gate-set qubits in each calibration block. The fit then targets
+        ``U ⊗ I`` on the joint block, with a free virtual Z on each spectator,
+        so static ZZ and drive crosstalk during the gate enter the objective.
+        ``"coupled"`` takes the gate-set qubits that a coupling path reaches
+        without passing another gate-set qubit, ``"all"`` takes every other
+        gate-set qubit, and ``"none"`` fits with the others in level 0.
     """
 
     def __init__(
@@ -148,6 +161,7 @@ class GateSet:
         backend: Any = None,
         space: Any = "auto",
         cutoff_tolerance: float = 1e-6,
+        spectators: str = "coupled",
     ) -> None:
         self.chip = chip
         self.qubits = tuple(resolve_label(qubit) for qubit in qubits)
@@ -160,6 +174,9 @@ class GateSet:
         self.options = dict(DEFAULT_OPTIONS if options is None else options)
         self.backend = backend
         self.cutoff_tolerance = float(cutoff_tolerance)
+        if spectators not in ("coupled", "all", "none"):
+            raise ValueError(f"spectators must be 'coupled', 'all', or 'none'; got {spectators!r}.")
+        self.spectators = spectators
         self._space_request = space
         self._natives: dict[tuple[str, tuple[str, ...]], NativeGate] = {}
         self._calibrations: dict[tuple[str, tuple[str, ...]], GateCalibration] = {}
@@ -173,6 +190,9 @@ class GateSet:
         self._lab: Any = None
         self._idle: Idle | None = None
         self._placed: dict[Any, np.ndarray] = {}
+        self._delivered: dict[Any, Delivered] = {}
+        self._model_reason: str | None = None
+        self._warm: dict[tuple[str, tuple[str, ...]], dict[str, float]] = {}
 
     # ------------------------------------------------------------------ setup
 
@@ -183,7 +203,7 @@ class GateSet:
         qubits: Sequence[Any],
         *,
         pairs: Iterable[tuple[Any, Any]] = (),
-        sx_duration: float = 30.0,
+        sx_duration: float = 40.0,
         x_duration: float | None = None,
         cr_duration: float | None = None,
         echo: bool = True,
@@ -199,7 +219,7 @@ class GateSet:
             Computational qubits.
         pairs : iterable of (control, target), default ()
             Directed cross-resonance pairs.
-        sx_duration : float, default 30.0
+        sx_duration : float, default 40.0
             SX pulse duration in ns.
         x_duration : float or None, default None
             X pulse duration in ns. The default is ``sx_duration``.
@@ -347,6 +367,8 @@ class GateSet:
         self._idle = None
         self._entries.clear()
         self._placed.clear()
+        self._delivered.clear()
+        self._model_reason = None
 
     def _on_solver(self, sequence: "QuantumSequence", chip: "Chip | None" = None) -> "QuantumSequence":
         target = self.solver_chip if chip is None else chip
@@ -356,9 +378,45 @@ class GateSet:
         if self._lab is None:
             from quchip.engine.problem import build_solve_problem
 
-            self._lab = build_solve_problem(self.solver_chip, [], np.array([0.0, 1.0]), states="final", frame="lab",
-                                            dissipation=False, _product_space=True)
+            lab = build_solve_problem(self.solver_chip, [], np.array([0.0, 1.0]), states="final", frame="lab",
+                                      dissipation=False, _product_space=True)
+            if lab.engine_result.dynamic_terms:
+                raise ValueError("The chip has time-dependent terms of its own; gate sets need a chip whose "
+                                 "Hamiltonian changes only through scheduled pulses.")
+            self._lab = lab
         return self._lab
+
+    def _model(self) -> str:
+        """Why the chip's own terms break placement reuse, or ``""``."""
+        if self._model_reason is None:
+            self._model_reason = model_check(self._lab_problem())
+        return self._model_reason
+
+    def _delivered_of(self, op: Any) -> Delivered:
+        """Delivered terms and window of one scheduled op, cached by its structure and timing."""
+        def number(value: Any) -> Any:
+            return None if value is None else round(float(value), 12)
+
+        key = (type(op).__name__, getattr(op, "target_label", None), getattr(op, "drive_label", None),
+               number(getattr(op, "freq", None)), number(getattr(op, "detuning", None)), getattr(op, "frame", None),
+               number(op.start_time), type(op.envelope).__name__, number(op.envelope.duration))
+        if key not in self._delivered:
+            self._lab_problem()
+            self._delivered[key] = lower_pulse(self.solver_chip, op)
+        return self._delivered[key]
+
+    def _span(self, ops: Sequence[Any], duration: float, start: float = 0.0) -> float:
+        """Return the end of ``[start, start + duration]`` extended to the last delivered field."""
+        stop = start + float(duration)
+        for op in ops:
+            support = self._delivered_of(op).support
+            if support is None:
+                continue
+            if support[0] < start - 1e-9:
+                raise ValueError(f"The pulse on {op.drive_label!r} delivers a field at {support[0]:g} ns, before "
+                                 f"its gate starts at {start:g} ns; negative line delays are not supported.")
+            stop = max(stop, support[1])
+        return stop
 
     def _states(self, qubits: Sequence[str], background: Mapping[str, int] | None = None,
                 chip: "Chip | None" = None) -> tuple[np.ndarray, np.ndarray]:
@@ -375,19 +433,22 @@ class GateSet:
 
     def _block(self, sequence: "QuantumSequence", qubits: Sequence[str], duration: float, *,
                background: Mapping[str, int] | None = None, chip: "Chip | None" = None) -> tuple[Any, float]:
-        """Return the gate block ``Π_q RZ_q(-F_q) V`` of a sequence over ``[0, duration]`` and the unitarity defect.
+        """Return the gate block ``Π_q RZ_q(-F_q) V`` of a sequence and the unitarity defect.
 
-        ``F_q`` sums the sequence's own ``vz`` angles, as in a circuit.
+        The block spans ``[0, duration]``, extended to the last delivered
+        field when the signal chain delays a pulse. ``F_q`` sums the
+        sequence's own ``vz`` angles, as in a circuit.
         """
         columns, energies = self._states(qubits, background, chip)
+        stop = self._span(list(self._on_solver(sequence).scheduled_ops), duration)
         propagator = self._on_solver(sequence, chip).propagator(
-            tlist=[0.0, duration], columns=columns, frame=self.frame, options=self.options, dissipation=False,
+            tlist=[0.0, stop], columns=columns, frame=self.frame, options=self.options, dissipation=False,
             backend=self.backend)
         image = np.asarray(propagator.matrix)
-        block = project_computational(image, columns, energies, 0.0, duration, tuple(qubits))
+        block = project_computational(image, columns, energies, 0.0, stop, tuple(qubits))
         correction = self._frame_correction(tuple(qubits), self._offsets(sequence))
         block = replace(block, matrix=correction[:, None] * np.asarray(block.matrix))
-        return block, float(propagator.unitarity_defect)
+        return block, _defect(propagator)
 
     # ------------------------------------------------------------- calibration
 
@@ -421,13 +482,23 @@ class GateSet:
             Calibration reports by ``(name, qubits)``. A ``UserWarning`` names
             each native whose status is not ``"ok"``.
         """
-        keys = self._select(selection)
+        selected = keys = self._select(selection)
         self._check_cutoff([key for key in keys if not self._natives[key].is_composite])
-        results = {}
-        for key in keys:
-            results[key] = self._calibrate(key, max_nfev=max_nfev, explore=explore, target=target, progress=progress)
-        self._check_cutoff_after(list(results))
-        return results
+        while True:
+            results = {}
+            for key in keys:
+                results[key] = self._calibrate(key, max_nfev=max_nfev, explore=explore, target=target,
+                                               progress=progress)
+            failing = self._check_cutoff_after(list(results))
+            if not failing:
+                self._warm.clear()
+                return {key: results[key] for key in selected}
+            # Recalibrate every calibrated native in the larger space, starting from its fitted knobs.
+            self._warm = {key: {name: knob.value for name, knob in calibration.knobs.items()}
+                          for key, calibration in self._calibrations.items()}
+            keys = sorted(set(keys) | set(self._calibrations), key=lambda k: self._natives[k].is_composite)
+            self._calibrations.clear()
+            self._versions.clear()
 
     def _select(self, selection: Sequence[Any]) -> list[tuple[str, tuple[str, ...]]]:
         if not selection:
@@ -488,15 +559,53 @@ class GateSet:
             print(calibration.summary().splitlines()[0])
         return calibration
 
+    def spectators_of(self, native: NativeGate) -> tuple[str, ...]:
+        """Return the gate-set qubits that join a native's calibration block, in gate-set order.
+
+        Parameters
+        ----------
+        native : NativeGate
+            Native gate.
+        """
+        others = [q for q in self.qubits if q not in native.qubits]
+        if self.spectators == "none":
+            return ()
+        if self.spectators == "all":
+            return tuple(others)
+        links: dict[str, set[str]] = {}
+        for coupling in self.chip.couplings:
+            a, b = getattr(coupling, "device_a_label", None), getattr(coupling, "device_b_label", None)
+            if a is None or b is None:
+                continue
+            links.setdefault(a, set()).add(b)
+            links.setdefault(b, set()).add(a)
+        reached: set[str] = set()
+        frontier = list(native.qubits)
+        seen = set(frontier)
+        while frontier:
+            device = frontier.pop()
+            for neighbor in links.get(device, ()):
+                if neighbor in seen:
+                    continue
+                seen.add(neighbor)
+                if neighbor in self.qubits:
+                    reached.add(neighbor)
+                else:
+                    frontier.append(neighbor)
+        return tuple(q for q in others if q in reached)
+
     def _fit(self, native: NativeGate, *, max_nfev: int, explore: bool) -> GateCalibration:
         template = native.sequence
         assert template is not None
         knobs = native.resolved_knobs()
-        ideal = native.ideal_matrix()
+        spectators = self.spectators_of(native)
+        block_qubits = (*native.qubits, *spectators)
+        ideal = np.kron(native.ideal_matrix(), np.eye(2 ** len(spectators)))
+        free_z = (*native.free_z, *spectators)
         duration = native.duration
-        bits = np.array(list(itertools.product((0, 1), repeat=len(native.qubits))), dtype=float).reshape(
-            -1, len(native.qubits))
-        z_bits = bits[:, [native.qubits.index(q) for q in native.free_z]]
+        bits = np.array(list(itertools.product((0, 1), repeat=len(block_qubits))), dtype=float).reshape(
+            -1, len(block_qubits))
+        z_bits = bits[:, [block_qubits.index(q) for q in free_z]]
 
         def bindings(values: np.ndarray) -> dict[str, float]:
             out: dict[str, float] = {}
@@ -505,12 +614,15 @@ class GateSet:
             return out
 
         def evaluate(values: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
-            block, defect = self._block(bind_pulses(template, bindings(values)), native.qubits, duration)
+            block, defect = self._block(bind_pulses(template, bindings(values)), block_qubits, duration)
             return np.asarray(block.matrix), np.asarray(block.leaked), defect
 
         initial = np.array([knob.initial for knob in knobs], dtype=float)
         starts = [(initial, "template")]
         names = [knob.name for knob in knobs]
+        warm = self._warm.get(native.key)
+        if warm is not None and set(warm) == set(names):
+            starts.append((np.array([warm[name] for name in names], dtype=float), "previous space"))
         for seed in native.seeds:
             unknown = set(seed.values) - set(names)
             if unknown:
@@ -520,10 +632,11 @@ class GateSet:
                 values[names.index(name)] = float(value)
             starts.append((values, seed.provenance))
         outcome = fit_block(evaluate, ideal, z_bits, knobs, starts=starts, max_nfev=max_nfev, explore=explore,
-                            phase_names=native.free_z)
+                            phase_names=free_z)
         calibration = report(outcome, name=native.name, qubits=native.qubits, knobs=knobs, ideal=ideal,
-                             z_bits=z_bits, phase_names=native.free_z, options=self.options, frame=self.frame,
+                             z_bits=z_bits, phase_names=free_z, options=self.options, frame=self.frame,
                              cutoff=self.cutoff)
+        calibration.block_qubits = block_qubits
         sequence = bind_pulses(template, bindings(outcome.values))
         for qubit, phase in calibration.free_z.items():
             sequence.vz(qubit, -phase)
@@ -537,24 +650,26 @@ class GateSet:
             if spectator in native.qubits:
                 continue
             block, _ = self._block(calibration.sequence, native.qubits, native.duration, background={spectator: 1})
-            calibration.spectators[spectator] = average_fidelity(np.asarray(block.matrix), calibration.ideal)
+            calibration.spectators[spectator] = average_fidelity(np.asarray(block.matrix), native.ideal_matrix())
         entry = self._entry(key)
+        block_qubits = calibration.block_qubits or native.qubits
         if entry.covariant:
-            columns, energies = self._states(native.qubits)
+            columns, energies = self._states(block_qubits)
             total = solver_levels(self._lab_problem().engine_result).sum(axis=1)
             reference = None
             worst = 0.0
-            for start in np.linspace(0.0, 100.0, 21):
+            # Start times spread over 100 ns without a common period, so no carrier aliases them.
+            for start in np.concatenate([[0.0], 100.0 * ((np.arange(1, 21) * 0.6180339887498949) % 1.0)]):
                 placed = entry.placed(float(start), {}, total, self._idle_of())
                 block = project_computational(placed @ columns, columns, energies, float(start),
-                                              float(start) + native.duration, native.qubits)
+                                              float(start) + entry.duration, block_qubits)
                 matrix = np.asarray(block.matrix)
                 if reference is None:
                     reference = matrix
                 worst = max(worst, float(np.abs(matrix - reference).max()))
             calibration.placement_sensitivity = worst
         for count in (1, 4, 20) if entry.covariant else (1, 4):
-            composed = self.unitary([(native.name, native.qubits)] * count, qubits=native.qubits)
+            composed = self.unitary([(native.name, native.qubits)] * count, qubits=block_qubits)
             calibration.repetitions[count] = 1.0 - composed.fidelity()
 
     def _check_cutoff(self, keys: list[tuple[str, tuple[str, ...]]]) -> None:
@@ -594,13 +709,19 @@ class GateSet:
             f"product states; the native templates change by {difference:.1e} at max_total={cutoff + 1}. "
             "Pass space= to choose the space.", UserWarning, stacklevel=3)
 
-    def _check_cutoff_after(self, keys: list[tuple[str, tuple[str, ...]]]) -> None:
-        """Compare calibrated gates with the next cutoff and warn when they differ."""
-        if self.cutoff is None or self._space_request != "auto":
-            return
+    def _check_cutoff_after(self, keys: list[tuple[str, tuple[str, ...]]]) -> list[tuple[str, tuple[str, ...]]]:
+        """Compare calibrated gates with the next cutoff; on a change, raise the cutoff and return the gates.
+
+        Only an automatic cutoff is raised. The caller recalibrates in the
+        larger space.
+        """
+        if self.cutoff is None or self._space_request != "auto" or self.chip.space is not None:
+            return []
         from quchip.cutoff import ExcitationCutoff
 
         larger = self.chip.with_space(ExcitationCutoff(max_total=self.cutoff + 1))
+        failing = []
+        worst = 0.0
         for key in keys:
             native = self._natives[key]
             calibration = self._calibrations[key]
@@ -608,10 +729,22 @@ class GateSet:
             right, _ = self._block(calibration.sequence, native.qubits, native.duration, chip=larger)
             difference = max(float(np.abs(np.asarray(left.matrix) - np.asarray(right.matrix)).max()),
                              float(np.abs(np.asarray(left.leakage) - np.asarray(right.leakage)).max()))
-            calibration.cutoff_difference = difference  # type: ignore[attr-defined]
+            calibration.cutoff_difference = difference
             if difference > self.cutoff_tolerance:
-                warnings.warn(f"{native.name} on {native.qubits} changes by {difference:.1e} at "
-                              f"max_total={self.cutoff + 1}; pass a larger space=.", UserWarning, stacklevel=3)
+                failing.append(key)
+                worst = max(worst, difference)
+        if failing:
+            maximum = sum(int(d) - 1 for d in self.chip.dims)
+            names = ", ".join(f"{name} on {','.join(qubits)}" for name, qubits in failing)
+            if self.cutoff + 1 >= maximum:
+                self._set_solver_chip(self.chip)
+                where = "the full product space"
+            else:
+                self._set_solver_chip(larger)
+                where = f"max_total={self.cutoff}"
+            warnings.warn(f"{names} changed by {worst:.1e} at the next excitation cutoff; recalibrating in {where}.",
+                          UserWarning, stacklevel=3)
+        return failing
 
     # ------------------------------------------------------------------- cache
 
@@ -623,22 +756,19 @@ class GateSet:
     def _entry(self, key: tuple[str, tuple[str, ...]]) -> GatePropagator:
         """Return the cached propagator of a calibrated native."""
         if key not in self._entries:
-            from quchip.engine.problem import build_solve_problem
-
             calibration = self._calibrations[key]
             native = self._natives[key]
             sequence = self._on_solver(calibration.sequence)
             ops = list(sequence.scheduled_ops)
-            duration = native.duration
-            lab = build_solve_problem(self.solver_chip, ops, np.array([0.0, duration]), states="final", frame="lab",
-                                      dissipation=False, _product_space=True)
+            duration = self._span(ops, native.duration)
+            delivered = [self._delivered_of(op) for op in ops]
             pieces = []
             defect = 0.0
-            for start, stop, indices in split_pieces(ops):
-                covariant, reason, carrier, frame = covariance(lab, ops, indices, (start, stop))
+            for start, stop, indices in split_pieces([item.support for item in delivered]):
+                covariant, reason, carrier, frame = covariance(ops, delivered, indices, self._model())
                 propagator = sequence.propagator(tlist=[start, stop], frame=self.frame, options=self.options,
                                                  dissipation=False, backend=self.backend)
-                defect = max(defect, float(propagator.unitarity_defect))
+                defect = max(defect, _defect(propagator))
                 pieces.append(Piece(start, stop, carrier, frame, covariant, reason, np.asarray(propagator.matrix)))
             self._entries[key] = GatePropagator(duration, pieces, defect)
         return self._entries[key]
@@ -657,7 +787,7 @@ class GateSet:
 
     # ---------------------------------------------------------------- circuits
 
-    def _normalize(self, instruction: Any) -> tuple[str, tuple[str, ...], tuple[float, ...]]:
+    def _normalize(self, instruction: Any) -> tuple[str, tuple[Any, ...], tuple[float, ...]]:
         if not isinstance(instruction, (tuple, list)) or not instruction:
             raise TypeError(f"An instruction is (name, qubits) or (name, qubits, params); got {instruction!r}.")
         name = canonical_name(instruction[0])
@@ -849,7 +979,7 @@ class GateSet:
                 if op.frame is not None:
                     offsets[op.frame] = float(op.phase_offset) - float(reference.phase_offset)
             if start is not None:
-                instances.append((start, start + self._natives[key].duration, key, offsets))
+                instances.append((start, start + self._entry(key).duration, key, offsets))
         instances.sort(key=lambda item: item[0])
         segments: list[list[Any]] = []
         for instance in instances:
@@ -857,7 +987,7 @@ class GateSet:
                 segments[-1].append(instance)
             else:
                 segments.append([instance])
-        duration = float(sequence.total_duration)
+        duration = max([float(sequence.total_duration), *(item[1] for item in instances)])
         result = np.eye(total.size, dtype=complex)
         cursor = 0.0
         solves = 0
@@ -913,7 +1043,7 @@ class GateSet:
         return self.chip.state(mapping)
 
     @staticmethod
-    def _bits(bits: Any, order: Sequence[str]) -> dict[str, int]:
+    def _bits(bits: Any, order: Sequence[str]) -> dict[Any, int]:
         values = [int(b) for b in (bits if not isinstance(bits, str) else list(bits))]
         if len(values) != len(order) or any(b not in (0, 1) for b in values):
             raise ValueError(f"Expected {len(order)} bits for {list(order)}; got {bits!r}.")
@@ -952,7 +1082,7 @@ class GateSet:
         circuit = list(circuit)
         sequence, _, global_phase = self._compile(circuit, policy)
         solver_sequence = self._on_solver(sequence)
-        duration = float(sequence.total_duration)
+        duration = self._span(list(solver_sequence.scheduled_ops), float(sequence.total_duration))
         columns, energies = self._states(order)
         dimension = 2 ** len(order)
         if initial is None:

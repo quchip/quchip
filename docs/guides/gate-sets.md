@@ -1,0 +1,101 @@
+# Gate sets and circuits
+
+A gate set turns a chip into calibrated gates. You declare native gates as pulse
+templates with knobs, calibrate each native against its ideal unitary, and then
+compose circuits from the calibrated gates. quchip solves each native once and
+reuses its propagator at every place in a circuit where the physics allows it.
+
+## Calibrate a standard gate set
+
+`GateSet.standard()` declares a DRAG SX and X on each qubit and an echoed
+cross-resonance ZX90 on each directed pair. The CR duration depends on the
+coupling and the detuning, so you give it.
+
+```python
+from quchip import Capacitive, ChargeDrive, Chip, DuffingTransmon
+from quchip.gateset import GateSet
+
+q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.33, levels=3, label="q0")
+q1 = DuffingTransmon(freq=5.1, anharmonicity=-0.33, levels=3, label="q1")
+chip = Chip([q0, q1], couplings=[Capacitive(q0, q1, g=0.003, label="J")])
+chip.wire(ChargeDrive(q0, label="xy0"), ChargeDrive(q1, label="xy1"))
+
+gates = GateSet.standard(chip, ["q0", "q1"], pairs=[("q0", "q1")], cr_duration=400.0)
+gates.calibrate()
+print(gates.describe())
+```
+
+Each calibration reports the average gate infidelity, the leakage, the fitted
+knobs, the error generator, and a status. A status other than `"ok"` comes with
+a warning:
+
+- `"at_bound"`: a knob ends at a bound, so the optimum is outside the range.
+- `"weak_direction"`: the fit does not determine some knob combination.
+- `"solver_floor"`: the error is close to the integrator's unitarity defect.
+- `"poor_fit"`: the infidelity is above the target (default `1e-3`).
+
+`gates.calibration("ZX90", ("q0", "q1")).summary()` prints the full report.
+
+## What the fit targets
+
+The calibration block holds the gate's qubits and the gate-set qubits that
+couple to them. The fit targets the ideal gate times the identity on these
+spectators, with a free virtual Z on every qubit of the block. Static ZZ and
+drive crosstalk during the gate are part of the error. Pass
+`GateSet(..., spectators="none")` to fit with the other qubits in `|0>`.
+
+RZ is virtual: a circuit `RZ(λ)` becomes `vz(q, -λ)` and costs no time. The
+free Z phases of each fit become trailing `vz` entries of the calibrated
+sequence.
+
+## Compose and simulate circuits
+
+```python
+circuit = [("H", "q0"), ("CX", ("q0", "q1"))]
+result = gates.unitary(circuit)
+print(result.fidelity(), result.leakage)
+
+run = gates.simulate(circuit, "00")
+print(run.probabilities)
+```
+
+`unitary()` composes cached gate propagators, so a long circuit costs a few
+matrix products. Gates that overlap in time, gates on a chip without the RWA,
+and gates whose pulses depend on absolute time are solved directly, once per
+placement. `simulate()` solves the circuit's schedule, with the chip's
+collapse channels unless you pass `dissipation=False`.
+
+The decomposition rules turn H, X, Y, Z, S, T, RX, RY, CX, CZ, and SWAP into
+the natives. Add your own with `gates.rule(name, qubits, expansion)`.
+
+## Declare your own native
+
+A native is a `QuantumSequence` that starts at time 0, its knobs, and its
+ideal. Knobs name pulse fields, with optional bounds and scales.
+
+```python
+import numpy as np
+from quchip import GaussianDRAG, QuantumSequence
+from quchip.gateset import Knob, NativeGate
+
+element = chip.drive_matrix_elements("q0")["xy0"]
+sequence = QuantumSequence(chip)
+pulse = sequence.schedule("xy0", envelope=GaussianDRAG(duration=40.0, sigmas=3.0, amplitude=0.012, beta=0.24),
+                          freq=chip.freq("q0"), phase=-np.angle(element))
+native = NativeGate("SX", ("q0",), sequence,
+                    knobs={"amplitude": Knob(pulse, "amplitude"), "beta": Knob(pulse, "beta", scale=0.1)},
+                    ideal="SX", free_z=("q0",))
+gates.add(native)
+```
+
+A composite native, such as the echoed CR, builds its sequence from other
+calibrated natives, so it follows their calibration.
+
+## Large chips
+
+When the chip's product space has more than 64 states and the chip sets no
+space policy, gate-set solves use an excitation cutoff. The gate set starts at
+one excitation above the number of gate-set qubits and raises the cutoff until
+the gates stop changing, with a warning that states the cutoff. Pass
+`space=ExcitationCutoff(max_total=K)` to fix it, or `space=None` for the full
+product space.

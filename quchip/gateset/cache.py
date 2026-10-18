@@ -1,9 +1,11 @@
 """Gate propagators that are reused at any start time and virtual-Z frame.
 
-A native splits into time-disjoint pieces at every instant that no pulse
-spans. A piece is covariant when the conditions below hold, and then its
-propagator at start time ``τ`` and frame offset ``F`` follows from the
-template without a new solve:
+Each pulse of a native is lowered alone on the lab-frame problem, which gives
+its delivered terms after the signal chain (delays and crosstalk included) and
+their time windows. The native splits into time-disjoint pieces where no
+delivered window is open. A piece is covariant when the conditions below hold,
+and then its propagator at start time ``τ`` and frame offset ``F`` follows
+from the template without a new solve:
 
 .. math::
 
@@ -12,13 +14,20 @@ template without a new solve:
 
 with ``N`` the total excitation number and ``f_c`` the piece's carrier
 ``freq``. The start-referenced ``detuning`` does not enter. The conditions are
-structural and use the lab-frame terms of the solve:
+structural:
 
-1. every static term has N-charge 0;
-2. every dynamic term has one N-charge q, and each of its signal bands sits at
-   ``-q (f_c + δ)`` for a pulse of the piece with detuning δ, or at 0 for q = 0;
+1. every static term has N-charge 0 and every collapse operator one N-charge
+   (checked once for the chip);
+2. the chip has no time-dependent terms of its own;
 3. every carrier pulse of the piece has the same ``freq`` and frame;
-4. every collapse operator has one N-charge.
+4. every delivered term of a pulse has one N-charge q, and each of its signal
+   bands sits at ``-q (f + δ)`` for that pulse's carrier ``f`` and detuning δ
+   (``f = 0`` for a baseband pulse);
+5. every term is built from the pulse's envelope, carriers, and the standard
+   signal algebra, with no coefficient of absolute time.
+
+This assumes that the signal chain delivers each pulse's signals separately,
+as the built-in delays, gains, and crosstalk do.
 """
 
 from __future__ import annotations
@@ -28,20 +37,88 @@ from typing import Any
 
 import numpy as np
 
-from quchip.engine.ir import signal_window_bounds
+from quchip.engine import ir
+from quchip.engine.ir import signal_children, signal_window_bounds
 from quchip.results.propagator import solver_levels
 
 _CHARGE_ATOL = 1e-12
 _FREQUENCY_RTOL = 1e-9
+_PULSE_LOCAL_NODES = (ir.Constant, ir.EnvelopeRef, ir.Carrier, ir.Window, ir.Shift, ir.Scale, ir.PolarScale,
+                      ir.Add, ir.Multiply, ir.Conjugate, ir.RealPart, ir.ImagPart, ir.SignalPower)
 
 
 def _dense(term_operator: Any) -> np.ndarray:
     return np.asarray(term_operator.to_dense())
 
 
-def _charges(matrix: np.ndarray, total: np.ndarray) -> set[int]:
+def _charges(matrix: np.ndarray, total: np.ndarray) -> frozenset[int]:
     rows, cols = np.nonzero(np.abs(matrix) > _CHARGE_ATOL * max(1.0, float(np.abs(matrix).max(initial=0.0))))
-    return set((total[rows] - total[cols]).tolist())
+    return frozenset((total[rows] - total[cols]).tolist())
+
+
+def _foreign_node(signal: Any) -> str:
+    """Return the name of a node that is not pulse-local, or ``""``."""
+    if not isinstance(signal, _PULSE_LOCAL_NODES):
+        return type(signal).__name__
+    for child in signal_children(signal):
+        name = _foreign_node(child)
+        if name:
+            return name
+    return ""
+
+
+def model_check(problem: Any) -> str:
+    """Return why the chip's own terms break placement reuse, or ``""``."""
+    engine_result = problem.engine_result
+    total = solver_levels(engine_result).sum(axis=1)
+    for term in engine_result.static_terms:
+        if _charges(_dense(term.operator), total) - {0}:
+            return "a static term changes the excitation number (no RWA)"
+    for term in engine_result.collapse_terms:
+        if len(_charges(_dense(term.operator), total)) > 1:
+            return f"collapse operator {term.source}.{term.channel} mixes excitation numbers"
+    return ""
+
+
+@dataclass(frozen=True)
+class DeliveredTerm:
+    """One delivered term of a pulse: N-charges, signal bands in GHz, and a foreign signal node."""
+
+    charges: frozenset[int]
+    bands: tuple[float, ...]
+    foreign: str
+
+
+@dataclass(frozen=True)
+class Delivered:
+    """The delivered terms of one pulse and the hull of their windows (``None`` when nothing is delivered)."""
+
+    support: tuple[float, float] | None
+    terms: tuple[DeliveredTerm, ...]
+
+
+def lower_pulse(chip: Any, op: Any) -> Delivered:
+    """Lower one scheduled op alone and return its delivered terms."""
+    from quchip.engine.problem import build_solve_problem
+
+    stop = float(op.start_time) + float(op.envelope.duration)
+    problem = build_solve_problem(chip, [op], np.array([0.0, max(stop, 1.0)]), states="final", frame="lab",
+                                  dissipation=False, _product_space=True)
+    total = solver_levels(problem.engine_result).sum(axis=1)
+    windows: list[tuple[float, float]] = []
+    terms = []
+    for term in problem.engine_result.dynamic_terms:
+        signal = term.time_dependence.signal
+        bounds = signal_window_bounds(signal)
+        if not bounds:
+            raise ValueError(f"A delivered field of the pulse on {op.drive_label!r} at {float(op.start_time):g} ns "
+                             "has no time window, so the gate set cannot bound the gate.")
+        windows.extend((float(lo), float(hi)) for lo, hi in bounds)
+        terms.append(DeliveredTerm(_charges(_dense(term.operator), total),
+                                   tuple(float(band.freq) / (2 * np.pi) for band in signal.bands()),
+                                   _foreign_node(signal)))
+    support = (min(lo for lo, _ in windows), max(hi for _, hi in windows)) if windows else None
+    return Delivered(support, tuple(terms))
 
 
 @dataclass(frozen=True)
@@ -51,7 +128,7 @@ class Piece:
     Attributes
     ----------
     start, stop : float
-        Span in ns, relative to the gate start.
+        Delivered span in ns, relative to the gate start.
     carrier : float or None
         Common carrier ``freq`` in GHz, or ``None`` for baseband pulses only.
     frame : str or None
@@ -73,12 +150,10 @@ class Piece:
     matrix: np.ndarray = field(repr=False)
 
 
-def split_pieces(ops: list[Any]) -> list[tuple[float, float, list[int]]]:
-    """Group ops into time-disjoint pieces; touching windows stay apart."""
-    spans = sorted(
-        ((float(op.start_time), float(op.start_time) + float(op.envelope.duration), index)
-         for index, op in enumerate(ops)),
-    )
+def split_pieces(supports: list[tuple[float, float] | None]) -> list[tuple[float, float, list[int]]]:
+    """Group pulses into time-disjoint pieces by their delivered spans; touching spans stay apart."""
+    spans = sorted((lo, hi, index) for index, span in enumerate(supports) if span is not None
+                   for lo, hi in [span])
     pieces: list[tuple[float, float, list[int]]] = []
     for start, stop, index in spans:
         if pieces and start < pieces[-1][1] - 1e-12:
@@ -89,21 +164,17 @@ def split_pieces(ops: list[Any]) -> list[tuple[float, float, list[int]]]:
     return pieces
 
 
-def covariance(problem: Any, ops: list[Any], piece_indices: list[int], span: tuple[float, float]) -> tuple[
-        bool, str, float | None, str | None]:
-    """Check the structural conditions for one piece on a lab-frame problem.
+def covariance(ops: list[Any], delivered: list[Delivered], piece_indices: list[int],
+               model_reason: str = "") -> tuple[bool, str, float | None, str | None]:
+    """Check the structural conditions for one piece.
 
     Returns ``(covariant, reason, carrier, frame)``.
     """
-    engine_result = problem.engine_result
-    total = solver_levels(engine_result).sum(axis=1)
-    for term in engine_result.static_terms:
-        if _charges(_dense(term.operator), total) - {0}:
-            return False, "a static term changes the excitation number (no RWA)", None, None
-    for term in engine_result.collapse_terms:
-        if len(_charges(_dense(term.operator), total)) > 1:
-            return False, f"collapse operator {term.source}.{term.channel} mixes excitation numbers", None, None
+    if model_reason:
+        return False, model_reason, None, None
     piece_ops = [ops[i] for i in piece_indices]
+    if any(not isinstance(op, ir.DriveOp) for op in piece_ops):
+        return False, "the piece holds an operation that is not a drive pulse", None, None
     carriers = {float(op.freq) for op in piece_ops if op.freq is not None}
     frames = {op.frame for op in piece_ops if op.freq is not None}
     if len(carriers) > 1:
@@ -112,26 +183,20 @@ def covariance(problem: Any, ops: list[Any], piece_indices: list[int], span: tup
         return False, f"carrier pulses use {len(frames)} frames", None, None
     carrier = next(iter(carriers)) if carriers else None
     frame = next(iter(frames)) if frames else None
-    detunings = {0.0 if op.detuning is None else float(op.detuning) for op in piece_ops if op.freq is not None}
-    for term in engine_result.dynamic_terms:
-        windows = signal_window_bounds(term.time_dependence.signal)
-        if windows and not any(float(lo) < span[1] - 1e-12 and float(hi) > span[0] + 1e-12 for lo, hi in windows):
-            continue
-        charges = _charges(_dense(term.operator), total)
-        if len(charges) > 1:
-            return False, "a drive term mixes excitation numbers (no RWA)", carrier, frame
-        charge = next(iter(charges)) if charges else 0
-        bands = [float(band.freq) / (2 * np.pi) for band in term.time_dependence.signal.bands()]
-        if charge == 0:
-            if any(abs(nu) > 1e-12 for nu in bands):
-                return False, "an excitation-preserving term oscillates", carrier, frame
-            continue
-        if carrier is None:
-            return False, "a baseband pulse drives an excitation-changing term", carrier, frame
-        allowed = [-charge * (carrier + delta) for delta in detunings]
-        for nu in bands:
-            if not any(abs(nu - a) <= _FREQUENCY_RTOL * max(1.0, abs(a)) for a in allowed):
-                return False, f"a charge-{charge} term oscillates at {nu:.6g} GHz, not at its carrier", carrier, frame
+    for index in piece_indices:
+        op = ops[index]
+        tone = 0.0 if op.freq is None else float(op.freq) + (0.0 if op.detuning is None else float(op.detuning))
+        for term in delivered[index].terms:
+            if term.foreign:
+                return False, f"a term of the pulse on {op.drive_label!r} uses {term.foreign}", carrier, frame
+            if len(term.charges) > 1:
+                return False, "a drive term mixes excitation numbers (no RWA)", carrier, frame
+            charge = next(iter(term.charges)) if term.charges else 0
+            allowed = -charge * tone
+            for nu in term.bands:
+                if abs(nu - allowed) > _FREQUENCY_RTOL * max(1.0, abs(allowed)):
+                    return False, (f"a charge-{charge} term of the pulse on {op.drive_label!r} oscillates at "
+                                   f"{nu:.6g} GHz, not at {allowed:.6g} GHz"), carrier, frame
     return True, "", carrier, frame
 
 
@@ -142,7 +207,8 @@ class GatePropagator:
     Attributes
     ----------
     duration : float
-        Gate duration in ns.
+        Span in ns from the gate start to the end of its authored window or
+        of its last delivered field, whichever is later.
     pieces : list of Piece
         Time-disjoint pieces in time order.
     covariant : bool
