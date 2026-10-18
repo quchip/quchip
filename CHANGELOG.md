@@ -153,7 +153,9 @@ This file records notable user-visible changes to quchip.
   result holds the vacuum on the labels with `N <= 1`, which
   `result.excitation_space` names, so `result.state` is no longer a
   product-space matrix. `reduced_state()` and `e_ops` values do not change.
-  Pass `options={}` to keep the product-space solve.
+  The call no longer raises in a frame where the resolved Hamiltonian is not
+  static, because the vacuum is the same in every frame. Pass `options={}` to
+  keep the product-space solve.
   ([#191](https://github.com/quchip/quchip/issues/191),
   [#203](https://github.com/quchip/quchip/issues/203),
   [#205](https://github.com/quchip/quchip/pull/205))

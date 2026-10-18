@@ -1145,8 +1145,10 @@ other channels add a positive semidefinite part. The Gershgorin bound alone
 is negative on a cascaded feedline, whose port channels couple the labels of
 different devices. Without a drive the vacuum is stationary, so when this test
 passes, `steadystate()` solves nothing and returns the vacuum on the labels
-with `N <= 1`. When it fails, `steadystate()` solves the backend's stationary
-Liouvillian. The `steady_state` of the output statistics reports `nullity=1`
+with `N <= 1`. The frame map `U(t)` keeps `|0><0|`, so the vacuum is also the
+stationary state of a frame in which the resolved Hamiltonian is not static,
+where the backend's solve raises. When the test fails, `steadystate()` solves
+the backend's stationary Liouvillian. The `steady_state` of the output statistics reports `nullity=1`
 when the test passes and `None` when it fails. If a sector fails this test, a
 dark state is possible, and
 the solver starts again from a fixed generic full-rank state. The equations do

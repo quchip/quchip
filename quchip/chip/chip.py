@@ -2306,9 +2306,11 @@ class Chip:
         :class:`~quchip.ExcitationCutoff` or more than 64 product states needs
         no Liouvillian solve when its lowering channels prove the vacuum
         unique. The result then holds the vacuum on the labels with
-        ``N <= 1``. Other chips, and every call with ``options``, solve the
-        backend's stationary Liouvillian. ``result.diagnostics["route"]``
-        records the route and the reason for it.
+        ``N <= 1``. The vacuum is the same in every frame, so this also holds
+        in a frame where the resolved Hamiltonian is not static. Other chips,
+        and every call with ``options``, solve the backend's stationary
+        Liouvillian. ``result.diagnostics["route"]`` records the route and the
+        reason for it.
 
         Parameters
         ----------

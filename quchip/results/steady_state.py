@@ -152,25 +152,6 @@ def build_steady_state_result(
     fewer labels than the engine result has. ``None`` uses the engine result's
     excitation space.
     """
-    xp = backend.array_module
-
-    expectations: dict[Any, Any] = {}
-    if problem.e_ops_meta is not None:
-        from quchip.engine.observables import recombine_expect
-
-        flat = [xp.asarray([value], dtype=complex) for value in solver_result.expect or ()]
-        _, recombined = recombine_expect(
-            flat,
-            problem.e_ops_meta,
-            xp.asarray([0.0]),
-            problem.resolved_frame.demod_freqs,
-        )
-        for key, value in recombined.items():
-            if isinstance(value, list):
-                expectations[key] = tuple(item[0] for item in value)
-            else:
-                expectations[key] = value[0]
-
     space = problem.engine_result.excitation_space if space is None else space
     return SteadyStateResult(
         state=solver_result.state,
@@ -181,11 +162,33 @@ def build_steady_state_result(
         device_info=problem.device_info,
         stats=MappingProxyType(dict(solver_result.stats)),
         _backend=backend,
-        _expectations=MappingProxyType(expectations),
+        _expectations=stationary_expectations(solver_result.expect, problem.e_ops_meta, problem.resolved_frame,
+                                              backend),
         frame=problem.resolved_frame,
         excitation_space=space,
         diagnostics=MappingProxyType(dict(diagnostics or {})),
     )
+
+
+def stationary_expectations(values: Any, meta: Any, frame: Any, backend: Backend) -> Mapping[Any, Any]:
+    """Return the public expectation values of a stationary state from the solver's flat values.
+
+    ``meta`` is the metadata of the decomposed ``e_ops``, or ``None``, and
+    ``frame`` the resolved frame whose demodulation the values take.
+    """
+    expectations: dict[Any, Any] = {}
+    if meta is not None:
+        from quchip.engine.observables import recombine_expect
+
+        xp = backend.array_module
+        flat = [xp.asarray([value], dtype=complex) for value in values or ()]
+        _, recombined = recombine_expect(flat, meta, xp.asarray([0.0]), frame.demod_freqs)
+        for key, value in recombined.items():
+            if isinstance(value, list):
+                expectations[key] = tuple(item[0] for item in value)
+            else:
+                expectations[key] = value[0]
+    return MappingProxyType(expectations)
 
 
 class SteadyStateBatchResult(BatchResult[SteadyStateResult]):

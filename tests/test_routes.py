@@ -65,6 +65,27 @@ def test_a_small_chip_solves_the_product_space_and_says_why(backend):
     assert route.arrays == ("numpy" if backend == "qutip" else "jax") and route.peak_bytes > 0
 
 
+def test_a_large_feedline_is_in_its_vacuum():
+    """On 6561 product states, the channels of each device prove the vacuum unique in sectors above 1024 labels."""
+    chip = readout_pairs(4)
+    result = chip.steadystate()
+    assert result.diagnostics["route"].name == "sector_stationary"
+    for label in ("q0", "r3"):
+        np.testing.assert_allclose(chip.backend.to_array(result.reduced_state(label)), np.diag([1.0, 0.0, 0.0]),
+                                   atol=1e-15)
+
+
+def test_the_vacuum_needs_no_static_frame():
+    """Each device rotates at its own frequency, which makes terms dynamic; the vacuum is the same in every frame."""
+    chip = readout_pairs(2, frame="rotating")
+    result = chip.steadystate()
+    assert result.diagnostics["route"].name == "sector_stationary"
+    assert result.frame.frequencies["q0"] != result.frame.frequencies["r0"]
+    np.testing.assert_allclose(chip.backend.to_array(result.reduced_state("r0")), np.diag([1.0, 0.0, 0.0]), atol=1e-15)
+    with pytest.raises(ValueError, match="statically compose"):
+        chip.steadystate(options={})
+
+
 def test_product_routes_name_what_rules_out_the_sectors():
     """Solver options and a model that does not conserve N each select the product route."""
     options = readout_pairs(2).steadystate(options={}).diagnostics["route"]
