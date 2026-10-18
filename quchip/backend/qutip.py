@@ -892,6 +892,18 @@ class QuTiPBackend(Backend):
     def expect(self, op: Operator, state: State) -> complex:
         return qutip.expect(op, state)
 
+    def expect_over_time(self, op: Operator, stacked_states: Any) -> Any:
+        if not (isinstance(op, Qobj) and isinstance(op.data, qutip.data.CSR)):
+            return super().expect_over_time(op, stacked_states)
+        # A CSR operator acts on the stacked states without a dense copy.
+        matrix = op.data_as("csr_matrix")
+        states = np.asarray(self.to_array(stacked_states), dtype=complex)
+        if self._is_ket_stack(states):
+            psi = states[..., 0]
+            return np.einsum("ti,ti->t", psi.conj(), (matrix @ psi.T).T)
+        entries = matrix.tocoo()
+        return np.einsum("k,tk->t", entries.data, states[:, entries.col, entries.row])
+
     def ptrace(self, state: State, keep: int | list[int], dims: list[int]) -> State:
         # QuTiP's Qobj.ptrace needs the correct composite dims. Rebuild when the
         # incoming state carries flat dims (as when assembled outside tensor).

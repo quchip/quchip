@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence, cast
 import jax
 import jax.numpy as jnp
 import numpy as np
+from scipy import sparse
 
 from quchip.approximations import Approximation, RWA, require_approximation
 from quchip.backend import _backend_context
@@ -699,9 +700,10 @@ def _compact_network_hamiltonian(chip: "Chip", resolution: _SystemResolution, ba
 
     Products of port operators that are already restricted to the space drop
     each intermediate state outside it. This function forms every product on
-    its ports' joint support first, so the result is ``P H_gen P``. It returns
-    ``None`` for the product space or a network without generated pairs, and a
-    zero matrix when every local term is below the round-off threshold.
+    its ports' joint support first, so the result is ``P H_gen P``, as CSR on a
+    NumPy backend. It returns ``None`` for the product space or a network
+    without generated pairs, and a zero matrix when every local term is below
+    the round-off threshold.
     """
     from quchip.chip.ports import Port
     from quchip.engine.sectors import generated_products
@@ -722,13 +724,24 @@ def _compact_network_hamiltonian(chip: "Chip", resolution: _SystemResolution, ba
             if owner.phase is not None:
                 scale = xp.exp(1j * xp.asarray(owner.phase)) * scale
             ports[owner.label] = (scale * xp.asarray(local), support)
-    total = None
+    entries = []
     for term, joint in generated_products(ports, pairs, resolution.dims):
         local_dims = [resolution.dims[index] for index in joint]
-        embedded = backend.to_array(resolution.space.embed(
-            backend, backend.from_array(term, dims=[local_dims, local_dims]), joint))
-        total = embedded if total is None else total + embedded
-    return np.zeros((resolution.space.size,) * 2, dtype=complex) if total is None else total
+        local = backend.from_array(term, dims=[local_dims, local_dims])
+        entries.append(resolution.space.entries(backend, local, joint))
+    size = resolution.space.size
+    # Products of different pairs can share entries, which the sum adds.
+    if backend.array_module is np:
+        return sum((sparse.csr_matrix((values, (rows, columns)), shape=(size, size))
+                    for rows, columns, values in entries), start=sparse.csr_matrix((size, size), dtype=complex))
+    xp = concrete_array_module(*(values for *_, values in entries))
+    total = xp.zeros((size, size), dtype=complex)
+    for rows, columns, values in entries:
+        if xp is np:
+            np.add.at(total, (rows, columns), values)
+        else:
+            total = total.at[rows, columns].add(values)
+    return total
 
 
 def _concrete_port_resolution(
