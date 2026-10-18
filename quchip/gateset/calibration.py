@@ -149,9 +149,17 @@ class GateCalibration:
     sequence : QuantumSequence
         Calibrated pulses with the trailing ``vz`` entries.
     spectators : dict of str to float
-        Average gate fidelity with each other gate-set qubit in dressed level 1.
+        Average gate fidelity of the gate's own block with each other gate-set
+        qubit in dressed level 1, with the implemented corrections.
+    ground_fidelity : float or None
+        Average gate fidelity of the gate's own block with every spectator in
+        level 0, with the implemented corrections. ``None`` without
+        spectators in the calibration block.
     placement_sensitivity : float or None
-        Largest change of the computational block over start times.
+        Sampled largest entrywise change of the dressed computational block
+        over start times in [0, 100) ns at fixed frame offsets. A nonzero value
+        on a reusable gate means that its coherent error changes orientation
+        with the start time; the cache applies that change exactly.
     repetitions : dict of int to float
         Infidelity of N applications against the ideal to the N.
     dependencies : dict
@@ -194,6 +202,7 @@ class GateCalibration:
     sequence: Any = None
     spectators: dict[str, float] = field(default_factory=dict)
     placement_sensitivity: float | None = None
+    ground_fidelity: float | None = None
     repetitions: dict[int, float] = field(default_factory=dict)
     dependencies: dict[Any, int] = field(default_factory=dict)
     seconds: float = 0.0
@@ -226,6 +235,8 @@ class GateCalibration:
         lines.append("  error generator (rad): " + ", ".join(f"{k} {v:+.2e}" for k, v in largest))
         lines.append(f"  worst-case distance = {self.worst_case_distance:.2e}; Jacobian condition = "
                      f"{self.identifiability.get('jacobian_condition_number', float('nan')):.2e}")
+        if self.ground_fidelity is not None:
+            lines.append(f"  spectators in |0>: 1 - F = {1 - self.ground_fidelity:.2e}")
         if self.spectators:
             lines.append("  spectators in |1>: " + ", ".join(
                 f"{q} 1 - F = {1 - f:.2e}" for q, f in self.spectators.items()))
@@ -282,6 +293,7 @@ class _Residual:
         self.solves = 0
         self.best = np.inf
         self.history: list[tuple[int, float]] = []
+        self.lower = np.full(self.free.size, -np.inf)
         self.upper = np.full(self.free.size, np.inf)
         self.step = DIFF_STEP
 
@@ -329,7 +341,12 @@ class _Residual:
         r0 = self.vector(block, leaked, phases, gamma)
         jacobian = np.empty((r0.size, z.size))
         for j in range(n_free):
-            h = step if z[j] + step <= self.upper[j] else -step
+            # Step toward the side with room, shortened to the feasible distance when both bounds are near.
+            room_up, room_down = self.upper[j] - z[j], z[j] - self.lower[j]
+            h = min(step, room_up) if room_up >= min(step, room_down) else -min(step, room_down)
+            if h == 0.0:
+                jacobian[:, j] = 0.0
+                continue
             shifted = z.copy()
             shifted[j] += h
             before = self.solves
@@ -416,6 +433,7 @@ def fit_block(
         block, leaked, _ = residual.block(residual.values(np.concatenate([u, np.zeros(n_phases + 1)])))
         return np.concatenate([u, residual.phase_start(block, leaked)])
 
+    residual.lower = lb[: free.size]
     residual.upper = ub[: free.size]
     vectors = [(start_vector(values), provenance) for values, provenance in starts]
     if explore and free.size:

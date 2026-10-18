@@ -67,20 +67,21 @@ def drag_sx(
         Pulse duration in ns.
     sigmas : float, default 3.0
         Gaussian half-window in standard deviations. A narrower pulse has more
-        spectral weight at a neighbor's frequency: next to a qubit 100 MHz
-        away with g = 3 MHz, a 30 ns X at ±4σ leaves 1.5e-4 in the neighbor,
-        where 40 ns at ±3σ leaves 2e-6.
+        spectral weight at a neighbor's frequency. Next to a qubit 100 MHz
+        away with g = 3 MHz, held in ``|0>``, a 30 ns X at ±4σ has
+        ``1 - F = 1.5e-4``, mostly population left in the neighbor, and a
+        40 ns X at ±3σ has ``1.9e-6``.
     name : str, default "SX"
         Gate name.
     angle : float, default π/2
         Rotation angle; π/2 gives SX and π gives X.
     detuning : bool, default False
-        Add the pulse detuning as a knob, bounded to ±5 MHz. The dressed
-        frequency is the qubit's transition frequency, and β corrects the phase
-        error of the pulse, so the default fit needs no detuning. Near β's
-        optimum, a detuning and a change of β have almost the same effect,
+        Add the pulse detuning as a knob, bounded to ±5 MHz. A detuning can
+        lower the error, for example by centering the carrier between the
+        frequencies that a spectator's ZZ shift gives. Near β's optimum,
+        however, a detuning and a change of β have almost the same effect,
         and a fit with both knobs can move far along that direction for a
-        small gain, such as a part of a spectator's ZZ error.
+        small gain. The default keeps the fit to the amplitude and β.
     """
     from quchip.control.envelopes import GaussianDRAG
     from quchip.control.sequence import QuantumSequence

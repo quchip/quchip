@@ -18,16 +18,19 @@ structural:
 
 1. every static term has N-charge 0 and every collapse operator one N-charge
    (checked once for the chip);
-2. the chip has no time-dependent terms of its own;
-3. every carrier pulse of the piece has the same ``freq`` and frame;
+2. the chip has no time-dependent terms of its own, and every transform of its
+   signal chain declares ``linear_time_invariant``, as the built-in delays,
+   gains, and crosstalk do;
+3. every carrier pulse of the piece has the same ``freq`` ``f_c`` and frame;
 4. every delivered term of a pulse has one N-charge q, and each of its signal
-   bands sits at ``-q (f + δ)`` for that pulse's carrier ``f`` and detuning δ
-   (``f = 0`` for a baseband pulse);
+   bands sits at ``-q (f_c + δ)`` for the piece's carrier ``f_c`` (0 when the
+   piece has no carrier) and the pulse's detuning δ, so a baseband pulse in a
+   carrier piece needs charge 0;
 5. every term is built from the pulse's envelope, carriers, and the standard
    signal algebra, with no coefficient of absolute time.
 
-This assumes that the signal chain delivers each pulse's signals separately,
-as the built-in delays, gains, and crosstalk do.
+Condition 2 lets each pulse be lowered alone: the delivered field of a piece
+is the sum of its pulses' delivered fields, and each moves with its pulse.
 """
 
 from __future__ import annotations
@@ -80,13 +83,40 @@ def model_check(problem: Any) -> str:
     return ""
 
 
+def _reached(matrix: np.ndarray, levels: np.ndarray) -> np.ndarray:
+    """Return a mask of the devices whose level a term changes or on whose level its diagonal depends."""
+    magnitude = np.abs(matrix)
+    tolerance = _CHARGE_ATOL * max(1.0, float(magnitude.max(initial=0.0)))
+    rows, cols = np.nonzero(magnitude > tolerance)
+    reached = np.any(levels[rows] != levels[cols], axis=0)
+    diagonal = np.diag(matrix)
+    for device in np.flatnonzero(~reached):
+        first: dict[tuple[int, ...], complex] = {}
+        for key, value in zip(map(tuple, np.delete(levels, device, axis=1)), diagonal):
+            if abs(value - first.setdefault(key, value)) > tolerance:
+                reached[device] = True
+                break
+    return reached
+
+
+def signal_check(chip: Any) -> str:
+    """Return why the chip's signal chain breaks placement reuse, or ``""``."""
+    equipment = chip.control_equipment
+    for transform in () if equipment is None else equipment.signal_chain:
+        if not getattr(transform, "linear_time_invariant", False):
+            return f"the signal transform {type(transform).__name__} does not declare linear_time_invariant"
+    return ""
+
+
 @dataclass(frozen=True)
 class DeliveredTerm:
-    """One delivered term of a pulse: N-charges, signal bands in GHz, and a foreign signal node."""
+    """One delivered term of a pulse: N-charges, signal bands in GHz, a foreign signal node, and the devices
+    whose levels it changes or on whose levels it depends."""
 
     charges: frozenset[int]
     bands: tuple[float, ...]
     foreign: str
+    devices: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -104,7 +134,9 @@ def lower_pulse(chip: Any, op: Any) -> Delivered:
     stop = float(op.start_time) + float(op.envelope.duration)
     problem = build_solve_problem(chip, [op], np.array([0.0, max(stop, 1.0)]), states="final", frame="lab",
                                   dissipation=False, _product_space=True)
-    total = solver_levels(problem.engine_result).sum(axis=1)
+    levels = solver_levels(problem.engine_result)
+    total = levels.sum(axis=1)
+    labels = np.array([device.label for device in chip.devices])
     windows: list[tuple[float, float]] = []
     terms = []
     for term in problem.engine_result.dynamic_terms:
@@ -114,9 +146,10 @@ def lower_pulse(chip: Any, op: Any) -> Delivered:
             raise ValueError(f"A delivered field of the pulse on {op.drive_label!r} at {float(op.start_time):g} ns "
                              "has no time window, so the gate set cannot bound the gate.")
         windows.extend((float(lo), float(hi)) for lo, hi in bounds)
-        terms.append(DeliveredTerm(_charges(_dense(term.operator), total),
+        matrix = _dense(term.operator)
+        terms.append(DeliveredTerm(_charges(matrix, total),
                                    tuple(float(band.freq) / (2 * np.pi) for band in signal.bands()),
-                                   _foreign_node(signal)))
+                                   _foreign_node(signal), frozenset(labels[_reached(matrix, levels)].tolist())))
     support = (min(lo for lo, _ in windows), max(hi for _, hi in windows)) if windows else None
     return Delivered(support, tuple(terms))
 
@@ -185,7 +218,8 @@ def covariance(ops: list[Any], delivered: list[Delivered], piece_indices: list[i
     frame = next(iter(frames)) if frames else None
     for index in piece_indices:
         op = ops[index]
-        tone = 0.0 if op.freq is None else float(op.freq) + (0.0 if op.detuning is None else float(op.detuning))
+        # The placement conjugation rotates every charge-q term at the piece's carrier, baseband pulses included.
+        tone = (0.0 if carrier is None else carrier) + (0.0 if op.detuning is None else float(op.detuning))
         for term in delivered[index].terms:
             if term.foreign:
                 return False, f"a term of the pulse on {op.drive_label!r} uses {term.foreign}", carrier, frame

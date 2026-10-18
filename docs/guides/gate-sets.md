@@ -39,9 +39,11 @@ a warning:
 ## What the fit targets
 
 The calibration block holds the gate's qubits and the gate-set qubits that
-couple to them. The fit targets the ideal gate times the identity on these
-spectators, with a free virtual Z on every qubit of the block. Static ZZ and
-drive crosstalk during the gate are part of the error. Pass
+couple to them or that the gate's pulses reach through line crosstalk. The fit
+targets the ideal gate times the identity on these spectators, with a free
+virtual Z on every qubit of the block. Static ZZ and drive crosstalk during
+the gate are part of the error. The report also gives the error with all
+spectators in `|0>` and with each one in `|1>`. Pass
 `GateSet(..., spectators="none")` to fit with the other qubits in `|0>`.
 
 RZ is virtual: a circuit `RZ(λ)` becomes `vz(q, -λ)` and costs no time. The

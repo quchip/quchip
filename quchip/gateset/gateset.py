@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from quchip.gateset.cache import (Delivered, GatePropagator, Idle, Piece, covariance, lower_pulse, model_check,
+                                  signal_check,
                                   split_pieces)
 from quchip.gateset.calibration import GateCalibration, average_fidelity, fit_block, report
 from quchip.gateset.ideals import IDEALS, canonical_name, embed, ideal_unitary, rule_table
@@ -424,7 +425,7 @@ class GateSet:
     def _model(self) -> str:
         """Why the chip's own terms break placement reuse, or ``""``."""
         if self._model_reason is None:
-            self._model_reason = model_check(self._lab_problem())
+            self._model_reason = model_check(self._lab_problem()) or signal_check(self.chip)
         return self._model_reason
 
     def _delivered_of(self, op: Any) -> Delivered:
@@ -607,6 +608,11 @@ class GateSet:
             return ()
         if self.spectators == "all":
             return tuple(others)
+        # The native's own pulses reach their devices directly, through the signal chain's crosstalk too.
+        sources = set(native.qubits)
+        for op in () if native.sequence is None else native.sequence.scheduled_ops:
+            for term in self._delivered_of(op).terms:
+                sources |= term.devices
         links: dict[str, set[str]] = {}
         for coupling in self.chip.couplings:
             a, b = getattr(coupling, "device_a_label", None), getattr(coupling, "device_b_label", None)
@@ -614,9 +620,9 @@ class GateSet:
                 continue
             links.setdefault(a, set()).add(b)
             links.setdefault(b, set()).add(a)
-        reached: set[str] = set()
-        frontier = list(native.qubits)
-        seen = set(frontier)
+        reached = {device for device in sources if device in others}
+        frontier = [device for device in sources if device not in reached]
+        seen = set(sources)
         while frontier:
             device = frontier.pop()
             for neighbor in links.get(device, ()):
@@ -681,6 +687,9 @@ class GateSet:
     def _post_checks(self, native: NativeGate, calibration: GateCalibration) -> None:
         """Fill the spectator, placement, and repetition fields of a fresh calibration."""
         key = native.key
+        if calibration.block_qubits and len(calibration.block_qubits) > len(native.qubits):
+            block, _ = self._block(calibration.sequence, native.qubits, native.duration)
+            calibration.ground_fidelity = average_fidelity(np.asarray(block.matrix), native.ideal_matrix())
         for spectator in self.qubits:
             if spectator in native.qubits:
                 continue
@@ -726,8 +735,9 @@ class GateSet:
             for key in keys:
                 native = self._natives[key]
                 assert native.sequence is not None
-                left, _ = self._block(native.sequence, native.qubits, native.duration, chip=current)
-                right, _ = self._block(native.sequence, native.qubits, native.duration, chip=larger)
+                block_qubits = (*native.qubits, *self.spectators_of(native))
+                left, _ = self._block(native.sequence, block_qubits, native.duration, chip=current)
+                right, _ = self._block(native.sequence, block_qubits, native.duration, chip=larger)
                 difference = max(difference, float(np.abs(np.asarray(left.matrix) - np.asarray(right.matrix)).max()),
                                  float(np.abs(np.asarray(left.leakage) - np.asarray(right.leakage)).max()))
             if difference <= self.cutoff_tolerance:
@@ -760,8 +770,9 @@ class GateSet:
         for key in keys:
             native = self._natives[key]
             calibration = self._calibrations[key]
-            left, _ = self._block(calibration.sequence, native.qubits, native.duration)
-            right, _ = self._block(calibration.sequence, native.qubits, native.duration, chip=larger)
+            block_qubits = calibration.block_qubits or native.qubits
+            left, _ = self._block(calibration.sequence, block_qubits, native.duration)
+            right, _ = self._block(calibration.sequence, block_qubits, native.duration, chip=larger)
             difference = max(float(np.abs(np.asarray(left.matrix) - np.asarray(right.matrix)).max()),
                              float(np.abs(np.asarray(left.leakage) - np.asarray(right.leakage)).max()))
             calibration.cutoff_difference = difference

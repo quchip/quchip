@@ -3393,23 +3393,29 @@ reused when:
 
 - each static term conserves `N`, each collapse operator changes `N` by one
   fixed charge, and the chip has no time-dependent terms of its own;
-- the carrier pulses of the piece share one `freq` and one frame;
+- each transform of the signal chain declares `linear_time_invariant`, as the
+  built-in delays, gains, and crosstalk do, so the delivered field of a piece
+  is the sum of its pulses' fields and each moves with its pulse;
+- the carrier pulses of the piece share one `freq` `f_c` and one frame;
 - each delivered term of a pulse has one charge `q`, and each of its signal
-  bands sits at `-q (f + δ)` for that pulse's carrier `f` and detuning `δ`
-  (`f = 0` for a baseband pulse);
+  bands sits at `-q (f_c + δ)` for the piece's carrier `f_c` (0 when the
+  piece has no carrier) and the pulse's detuning `δ`. A baseband pulse in a
+  carrier piece therefore needs charge 0: `C` would rotate a transverse
+  baseband term that a time shift leaves unchanged;
 - each term is built from the pulse envelope, carriers, and the standard
   signal algebra, with no coefficient of absolute time.
 
 A chip without the RWA fails the first condition. A piece that fails is solved
-again at each new placement, and the report states the reason. The check
-assumes that the signal chain delivers each pulse separately, as the built-in
-delays, gains, and crosstalk do.
+again at each new placement, and the report states the reason. A custom signal
+transform that clips or gates signals at fixed times fails the second
+condition, even when its signal nodes are of the standard kinds.
 
 ### 17.3 Calibration residual
 
 A native gate has knobs (pulse fields with bounds and scales), an ideal
 unitary `U`, and free virtual-Z qubits. The calibration block holds the gate's
-qubits and, by default, the gate-set qubits that a coupling path reaches
+qubits and, by default, the gate-set qubits that the gate's delivered pulses
+act on (signal-chain crosstalk included) or that a coupling path reaches
 without passing another gate-set qubit. The target is `U ⊗ I` on this joint
 block, and each spectator gets a free virtual Z, so static ZZ and drive
 crosstalk during the gate enter the objective. The fit minimizes `|r|²` over
@@ -3423,31 +3429,41 @@ where `ℓ` holds the leaked amplitudes. At the optimal `γ`,
 `|r|² = 1 - F_avg + (d - |Tr M|)²/(d(d+1))`. The second term is of higher
 order in the gate error, so near a good gate `|r|²` and `1 - F_avg` agree to
 leading order. The knob columns of the Jacobian are forward differences with
-a fixed step of `1e-4` in the scaled knobs, and the phase columns are exact.
+a fixed step of `1e-4` in the scaled knobs, shortened to the distance to a
+bound when both bounds are closer, and the phase columns are exact.
 The calibrated sequence ends with `vz(q, -φ_q)`.
 
 The report gives the error generator `H = i log U_P` of the polar part `U_P`
 of `M`, with Pauli coefficients `Tr(P H)/d` (a rotation `θ` about `P` gives
 `θ/2`). It also gives the leakage, the Jacobian condition number and its
-change under a ten times smaller step, knobs at a bound, the infidelity with
-each spectator in `|1>`, the infidelity after `N` repetitions, and the change
-of `V` over start times. The `solver_floor` status is a heuristic: the
+change under a ten times smaller step, knobs at a bound, the infidelity of
+the gate's own block with all spectators in `|0>` and with each spectator in
+`|1>` (both with the implemented corrections), and the infidelity after `N`
+repetitions. It also gives the largest entrywise change of `V` over sampled
+start times in [0, 100) ns at fixed frame offsets. On a reusable gate this
+change is the rotation of the coherent error by `C`, which leaves `F_avg` of a
+single-carrier piece unchanged. The `solver_floor` status is a heuristic: the
 integrator's unitarity defect does not bound a coherent phase error.
+
+The free spectator Z is a frame update in program order. A later pulse in the
+spectator's frame that overlaps the gate in time sees the update for its whole
+duration, so such overlapping gates are solved together and do not inherit
+the isolated calibration's fidelity.
 
 ### 17.4 Built-in natives
 
 `drag_sx()` schedules one `GaussianDRAG` pulse at the dressed qubit frequency
 with phase `-arg m`, where `m` is the dressed `0 -> 1` element of the line. The
 seeds are the amplitude `A = θ/(2π |m| ∫E dt)` and `β = 1/(4π |α|)`. The
-knobs are the amplitude and `β`. The pulse detuning is an optional knob,
-bounded to ±5 MHz: near the optimum of `β`, a detuning and a change of `β` act
-almost alike, and with both knobs a fit can move far along that direction for
-a small gain. With a spectator in the block, it trades part of the static ZZ
-error for `β ≈ ±10 ns` at the bound. For a spectator `Δ` above the carrier, a
-negative `β` puts the DRAG zero of `(1 + 2πβΔ)` near the spectator, but the
-excitation of the spectator also depends on the driven qubit's state during
-the pulse, which one `β` cannot cancel. The defaults (40 ns, ±3σ) keep this
-below `1e-5` for a neighbor 100 MHz away with `g = 3 MHz`.
+knobs are the amplitude and `β`, which keeps the fit small. The pulse
+detuning is an optional knob, bounded to ±5 MHz. It can lower the joint error,
+for example by centering the carrier between the frequencies that a spectator
+ZZ shift gives, but near the optimum of `β` a detuning and a change of `β` act
+almost alike. With both knobs and a spectator in the block, the fit on two
+transmons 100 MHz apart moved to the detuning bound with `β ≈ ±10 ns`. Next to
+a neighbor 100 MHz away with `g = 3 MHz`, held in `|0>`, a 30 ns ±4σ X has
+`1 - F_avg = 1.5e-4`, mostly population left in the neighbor; the defaults
+(40 ns, ±3σ) give `1.9e-6`.
 
 `cross_resonance()` drives the control at the target frequency. With the
 susceptibility coefficients of section 9.2, the seeds are

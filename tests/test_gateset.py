@@ -192,8 +192,9 @@ def test_gate_set_validates_natives_and_instructions():
 def test_covariance_check_is_structural():
     """Each pulse's own terms decide: one carrier and frame per piece, bands at -q(f + δ) of the same pulse,
     no coefficient of absolute time, and RWA statics."""
+    from quchip.control.signal import Delay, Gain, SignalTransform
     from quchip.engine.problem import build_solve_problem
-    from quchip.gateset.cache import Delivered, DeliveredTerm, lower_pulse, model_check
+    from quchip.gateset.cache import Delivered, DeliveredTerm, lower_pulse, model_check, signal_check
 
     chip = two_transmons()
     seq = QuantumSequence(chip)
@@ -222,12 +223,49 @@ def test_covariance_check_is_structural():
     covariant, reason, _, _ = covariance(two, [absolute, quiet], [0, 1])
     assert not covariant and "CoefficientRef" in reason
 
+    # Placement rotates every charge-q term at the piece's carrier: a transverse baseband term next to a carrier
+    # pulse fails, and a longitudinal one passes.
+    mixed = QuantumSequence(chip)
+    mixed.schedule("xy0", envelope=Gaussian(duration=20.0, amplitude=0.0), freq=5.0)
+    mixed.schedule("xy1", envelope=Gaussian(duration=20.0, amplitude=0.0))
+    pair = list(mixed.scheduled_ops)
+    transverse = Delivered((0.0, 20.0), (DeliveredTerm(frozenset({1}), (0.0,), ""),))
+    longitudinal = Delivered((0.0, 20.0), (DeliveredTerm(frozenset({0}), (0.0,), ""),))
+    covariant, reason, _, _ = covariance(pair, [quiet, transverse], [0, 1])
+    assert not covariant and "not at -5" in reason
+    assert covariance(pair, [quiet, longitudinal], [0, 1])[0] is True
+
+    # Only transforms that declare themselves linear and time-invariant keep reuse.
+    class Clip(SignalTransform):
+        def apply(self, signals):
+            return signals
+
+    for chain, expected in (([Delay("xy", delta_t=1.0), Gain("xy", factor=0.9)], ""), ([Clip()], "Clip")):
+        qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.33, levels=3, label="q")
+        wired = Chip([qubit])
+        wired.wire(ChargeDrive(qubit, label="xy"), signal_chain=chain)
+        assert (expected in signal_check(wired)) and (bool(signal_check(wired)) == bool(expected))
+
     exact = two_transmons(approximation=Exact())
     problem = build_solve_problem(exact, [], np.array([0.0, 1.0]), frame="lab", states="final",
                                   dissipation=False, _product_space=True)
     assert "excitation number" in model_check(problem)
     covariant, reason, _, _ = covariance(ops, delivered, [0], model_check(problem))
     assert not covariant and "excitation number" in reason
+
+
+@pytest.mark.unit
+def test_coupled_spectators_include_qubits_that_line_crosstalk_reaches():
+    """q2 has no coupling to q0, but crosstalk from q0's line drives it, so it joins the SX block."""
+    from quchip.control.signal import Crosstalk
+
+    devices = [DuffingTransmon(freq=f, anharmonicity=-0.33, levels=3, label=f"q{i}")
+               for i, f in enumerate((5.0, 5.2, 5.4))]
+    for chain, expected in (([], ("q1",)), ([Crosstalk("xy0", "xy2", beta=0.03)], ("q1", "q2"))):
+        chip = Chip(devices, couplings=[Capacitive(devices[0], devices[1], g=0.003, label="J")])
+        chip.wire(*(ChargeDrive(d, label=f"xy{i}") for i, d in enumerate(devices)), signal_chain=chain)
+        gates = GateSet(chip, ["q0", "q1", "q2"])
+        assert gates.spectators_of(gates.add(drag_sx(chip, "q0"))) == expected
 
 
 def calibrated_sx(df=0.2, duration=30.0, spectators="coupled", **noise):
@@ -414,6 +452,16 @@ def test_calibration_leaves_a_zero_amplitude_start():
     assert calibration.infidelity < 1e-8
     assert calibration.knobs["amplitude"].value == pytest.approx(0.125 / abs(element), rel=1e-5)
     assert calibration.identifiability["jacobian_step_change"] < 1e-3
+    # Bounds closer than the step on both sides shorten it, so the difference stays a valid pulse.
+    narrow = QuantumSequence(chip)
+    short = narrow.schedule("xy", envelope=Square(duration=1.5e-6, amplitude=0.1), freq=chip.freq("q"))
+    tight = GateSet(chip, ["q"])
+    tight.add(NativeGate("SX", ("q",), narrow, knobs={"duration": Knob(short, "duration", bounds=(1e-6, 2e-6),
+                                                                       scale=0.1)}, ideal="SX", free_z=("q",)))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        value = tight.calibrate(max_nfev=5)[("SX", ("q",))].knobs["duration"].value
+    assert 1e-6 <= value <= 2e-6
 
 
 def test_automatic_cutoff_recalibrates_until_the_gate_converges():
@@ -437,6 +485,32 @@ def test_automatic_cutoff_recalibrates_until_the_gate_converges():
         calibration = gates.calibrate(max_nfev=40)[("SX", ("q",))]
     assert gates.cutoff is None or gates.cutoff >= 3
     assert calibration.cutoff_difference is None or calibration.cutoff_difference <= gates.cutoff_tolerance
+
+
+def test_cutoff_checks_include_excited_spectators():
+    """A strong 2 ns pulse drives a nearly harmonic qubit to level 3. With the spectator in |1>, those states
+    lie above max_total=3, so the joint block changes there while the gate's own block does not; the gate set
+    raises the cutoff until the joint block matches the full space."""
+    from quchip import Square
+    from quchip.gateset import Seed
+
+    qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.01, levels=4, label="q")
+    spectator = DuffingTransmon(freq=5.2, anharmonicity=-0.3, levels=2, label="s")
+    chip = Chip([qubit, spectator, Resonator(freq=7.0, levels=9, label="r")])
+    chip.wire(ChargeDrive(qubit, label="xy"))
+    element = complex(chip.drive_matrix_elements("q")["xy"])
+    seq = QuantumSequence(chip)
+    pulse = seq.schedule("xy", envelope=Square(duration=2.0, amplitude=0.0), freq=chip.freq("q"),
+                         phase=-float(np.angle(element)))
+    gates = GateSet(chip, ["q", "s"], spectators="all")
+    gates.add(NativeGate("SX", ("q",), seq, knobs={"amplitude": Knob(pulse, "amplitude", scale=0.1)}, ideal="SX",
+                         free_z=("q",), seeds=(Seed({"amplitude": 0.1}, "test"),)))
+    with pytest.warns(UserWarning, match="recalibrating"):
+        calibration = gates.calibrate(max_nfev=40)[("SX", ("q",))]
+    assert gates.cutoff is None or gates.cutoff >= 4
+    cut, _ = gates._block(calibration.sequence, ("q", "s"), 2.0)
+    full, _ = GateSet(chip, ["q", "s"], space=None)._block(calibration.sequence, ("q", "s"), 2.0)
+    assert np.abs(np.asarray(cut.matrix) - np.asarray(full.matrix)).max() < 1e-6
 
 
 @pytest.mark.validation
