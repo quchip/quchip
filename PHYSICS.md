@@ -653,6 +653,8 @@ An idle dressed state then reads 1 in every frame. Its amplitude turns at
 dressed energy `E_k`. A bare product `|k>` is a frame eigenstate, so
 `U(t)† |k> exp(-i 2π t Σ_i f_ref,i k_i) = |k>`, and the ket target
 `chip.bare_state(...)` gives the bare overlap in every frame.
+`QuantumSequence.subspace_propagator()` collects these label amplitudes into a
+propagator and converts it to the dressed or lab frame (§9.4).
 
 ### 4.3 What `"rotating"` means in practice
 
@@ -927,6 +929,55 @@ which generally has both diagonal and transverse energy-basis components.
 The transverse components follow the ordinary sideband selection above.
 Arbitrary nonlinear signal programs retain their authored waveform when the
 engine cannot infer a first-order carrier partner.
+
+### 6.2.1 Rotation angle of a resonant pulse
+
+Sources: [`quchip/control/envelopes.py`](quchip/control/envelopes.py), [`quchip/chip/analysis.py`](quchip/chip/analysis.py)
+
+Take a dressed transition `i -> f` with the drive matrix element
+`m = <f~|D|i~>` of §9.1, and a carrier at the transition frequency. In the
+frame of the transition, `RWA()` keeps
+
+```text
+H~/ħ = π (s(t) m σ+ + s(t)* m* σ-),    σ+ = |f~><i~|
+```
+
+where `s(t)` is the complex envelope, with the phase of `schedule()`. When the
+phase of `s` stays constant, the pulse rotates the transition by
+
+```text
+θ = 2π |m| |∫ s dt|
+```
+
+about the axis `(cos α, sin α, 0)`, with `α = arg(s m)` and `|i~>` at `+z`.
+On the `0 -> 1` transition of an isolated Duffing transmon, the charge drive
+has `m = -i`, so a real π pulse gives `iY` and an envelope phase of `π/2`
+gives `-iX`. Dressing changes `m` slightly, and other transitions have other
+elements, such as `m = -i√2` for `1 -> 2`. When the phase changes during the
+pulse, as for DRAG with a nonzero `beta`, time ordering first contributes at
+second Magnus order, and the area alone does not set the gate. Detuning,
+leakage to other levels, and the counter-rotating terms of `Exact()` also
+change the rotation.
+
+`Envelope.area()` returns `∫_0^τ E(t) dt` at the envelope's amplitude `A`.
+The built-in envelopes use closed forms:
+
+| Envelope | Area |
+|---|---|
+| `Square` | `A τ` |
+| `LinearRamp` | `A (τ - τ_r/2)` |
+| `Gaussian` | `A σ √(2π) erf(N_σ/√2)`, with `σ = τ/(2 N_σ)` |
+| `GaussianDRAG` | the `Gaussian` area, because the derivative quadrature integrates to zero |
+| `GaussianEdge`, `SquareWithGaussianEdges` | `A (τ - 2τ_e) + A σ √(2π) erf(√2 N_σ)`, with `σ = τ_e/(2 N_σ)` |
+
+Other envelopes use 16-point Gauss-Legendre quadrature between consecutive
+sampling times, with `0` and `τ` added. The quadrature is traceable, and its
+accuracy depends on how well the sampling times resolve the envelope.
+
+`Chip.rotation_amplitude(transition, line, envelope, angle=π)` returns
+`A = θ / (2π |m| |a|)`, where `a` is the area at unit amplitude. It takes the
+amplitude at the device, so a line with signal-chain transforms or crosstalk
+raises. The result is a starting point for a calibration.
 
 ### 6.3 Exact excitation spaces in pulse solves
 
@@ -1845,6 +1896,55 @@ entries stay available. Every entry comes from the complete dressed chip,
 not from a matching authored edge. For example, an isolated `KerrCavity`
 with `H = omega*n - K*n*(n-1)` has `K[i,i] = -2*K`.
 
+### 9.4 Subspace propagators
+
+Sources: [`quchip/results/propagator.py`](quchip/results/propagator.py), [`quchip/control/sequence.py`](quchip/control/sequence.py)
+
+`QuantumSequence.subspace_propagator(devices, levels=(0, 1))` takes the labels
+that give each selected device one of `levels` and every other device level
+0. One batch starts each label `j` in its dressed state at `t0 = tlist[0]`
+(§9) and projects the final states at `T = tlist[-1]` on the label targets of
+§4.2:
+
+```text
+A_ij = <target_i(T)|psi_j(T)> = exp(i 2π T F_i) <d_i|U_lab(T, t0)|d_j> exp(-i 2π t0 F_j)
+```
+
+with `F_k = Σ_d f_ref,d k_d`. Every other device starts and ends in level 0.
+A frame gives label `k` the energy `E_k = E_0 + Σ_d f_d k_d`, and the record
+holds
+
+```text
+M_ij = exp(i 2π T E_i) <d_i|U_lab(T, t0)|d_j> exp(-i 2π t0 E_j)
+```
+
+The frames are:
+
+- `"dressed"`, the default: `f_d = E(1_d) - E(0)` and `E_0 = E(0)`, from the
+  static model with the approximation and excitation cutoff of the solve. An
+  idle label with at most one excitation keeps amplitude 1, and an idle pair
+  of qubits gives `diag(1, 1, 1, exp(-i 2π ζ (T - t0)))`, with the static ZZ
+  `ζ` of §9.3.
+- `"lab"`: `f_d = 0` and `E_0 = 0`.
+- `"integration"`: `E_k = F_k`, so `M = A`, the amplitudes of
+  `amplitude_array()`.
+
+Energies from another approximation would add a phase that grows with time.
+For example, the Bloch-Siegert shift of `Exact()` is absent from an `RWA()`
+solve. The frame factors are phases, so `|M_ij|` and the leakage
+`L_j = 1 - Σ_i |M_ij|²` do not depend on the frame. `fidelity(V)` returns the
+average gate fidelity over pure states in the labels,
+
+```text
+F = (Tr(M† M) + |Tr(V† M)|²) / (d (d + 1))
+```
+
+for a unitary target `V` of dimension `d`. Leakage lowers `Tr(M† M)`, so it
+lowers `F`. The solves leave out declared collapse channels with a warning, and
+`omitted_channels` names them, so `M` is the propagator of the Hamiltonian.
+On dynamiqs, the matrix and the fidelity are differentiable in chip and pulse
+parameters (§13).
+
 ## 10. Adiabatic Elimination and Dispersive Readout
 
 Sources: [`quchip/chip/transformations/`](quchip/chip/transformations/), [`quchip/analysis/dispersive_readout.py`](quchip/analysis/dispersive_readout.py)
@@ -2679,6 +2779,32 @@ Native measurement records describe selected L in the integration frame, without
 adding coherent incident beta or downstream receiver noise. Native weighted jump
 averages include deterministic no-click paths. Truncation checks are explicit
 and cover available samples, with final-only coverage identified separately.
+
+`TrajectoryResult.records()` gives the diffusive currents of both backends in
+one layout, with shape `(runs, channels, intervals)`. QuTiP heterodyne adds a
+quadrature axis before the intervals. A channel with collapse operator `L`,
+which includes the square root of its rate, efficiency `eta` and phase `phase`
+records
+
+```text
+I = 2 Re<c> + xi,    c = sqrt(eta) exp(-i phase) L
+```
+
+in 1/sqrt(ns). The homodyne noise `xi` has variance `1/Δt`. QuTiP heterodyne
+records `2 Re<c> + xi_X` and `2 Im<c> + xi_Y`, and each noise has variance
+`2/Δt`. QuTiP samples the signal at the start or the
+end of each interval, or takes the mean of both, as `store_measurement`
+selects. Dynamiqs divides the increment of the integrated record by `Δt`, so
+its signal is the mean over the interval. For a decaying coherent field with
+`L = a`, `eta = 1` and `<a>(0) = 1`, the interval `[0, 1]` ns gives the
+signals 2, 1.21306, 1.60653 and 1.57388 for the start, end, middle and mean.
+
+`clicks()` gives the click times and channels of each run with its sampling
+weight `w_r`. An ensemble mean is `Σ_r w_r x_r`, plus the no-click run with
+`no_click_weight` when QuTiP `improved_sampling` or Dynamiqs smart sampling
+solves that run apart. `full` marks a run that filled its Dynamiqs `nmaxclick`
+buffer, whose evolution can stop early. `run_expect(key)` gives the
+expectation of each run without weights.
 See [the solver guide](docs/guides/choosing-a-backend.md) and
 [Wiseman and Milburn, chapter 4](https://doi.org/10.1017/CBO9780511813948).
 

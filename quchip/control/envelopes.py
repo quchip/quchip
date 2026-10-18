@@ -38,6 +38,8 @@ from abc import ABC, abstractmethod
 from typing import Any, Mapping, Self
 
 import jax.tree_util as jtu
+import numpy as np
+from jax.scipy.special import erf
 
 from quchip.declarative import qnp
 from quchip.declarative.parameters import (
@@ -170,6 +172,27 @@ class Envelope(Registrable, ABC, registry_root=True, metaclass=DeclarativeMeta):
         """
         return qnp.linspace(0.0, self.duration, 65)
 
+    def area(self) -> Any:
+        """Return the complex area ``∫₀^τ E(t) dt``, in ns times the amplitude unit.
+
+        Built-in envelopes return closed forms. Other envelopes integrate
+        :meth:`value` with 16-point Gauss-Legendre quadrature on each interval
+        between the sorted :meth:`sampling_times`, so the area stays traceable
+        under JAX. Its accuracy depends on how well these times resolve the
+        shape, so list the time of each step or narrow feature in
+        :meth:`sampling_times` and check convergence.
+        """
+        knots = qnp.sort(qnp.clip(qnp.concatenate((
+            qnp.asarray([0.0]), qnp.ravel(qnp.asarray(self.sampling_times(), dtype=float)),
+            qnp.reshape(qnp.asarray(self.duration, dtype=float), (1,)),
+        )), 0.0, self.duration))
+        left, right = knots[:-1], knots[1:]
+        nodes, weights = np.polynomial.legendre.leggauss(16)
+        half = (right - left) / 2.0
+        times = (left + right)[:, None] / 2.0 + half[:, None] * qnp.asarray(nodes)[None, :]
+        values = qnp.asarray(self.value(times), dtype=complex)
+        return qnp.sum(half * qnp.sum(qnp.asarray(weights)[None, :] * values, axis=1))
+
     def sample(self, local_time: Any, *, real: bool = False) -> Any:
         """Evaluate the shape, optionally returning only its real I component.
 
@@ -247,6 +270,19 @@ def _gaussian_flat_top(t: Any, duration: Any, edge_duration: Any, sigmas: Any, a
     return qnp.asarray(out, dtype=complex)
 
 
+def _gaussian_flat_top_area(duration: Any, edge_duration: Any, sigmas: Any, amplitude: Any) -> Any:
+    """Return the area of :func:`_gaussian_flat_top`: the plateau plus two half-Gaussian edges."""
+    sigma = edge_duration / (2.0 * sigmas)
+    edges = sigma * qnp.sqrt(2.0 * qnp.pi) * erf(qnp.sqrt(2.0) * sigmas)
+    return qnp.asarray(amplitude * (duration - 2.0 * edge_duration + edges), dtype=complex)
+
+
+def _gaussian_area(duration: Any, sigmas: Any, amplitude: Any) -> Any:
+    """Return the area of a centered Gaussian whose window ends ``sigmas`` widths from its center."""
+    sigma = duration / (2.0 * sigmas)
+    return qnp.asarray(amplitude * sigma * qnp.sqrt(2.0 * qnp.pi) * erf(sigmas / qnp.sqrt(2.0)), dtype=complex)
+
+
 def _gaussian_sampling_times(duration: Any, sigmas: Any) -> Any:
     sigma = duration / (2 * sigmas)
     half_width = qnp.minimum(duration / 2, 6 * sigma)
@@ -305,6 +341,10 @@ class Gaussian(Envelope):
     def sampling_times(self) -> Any:
         return _gaussian_sampling_times(self.duration, self.sigmas)
 
+    def area(self) -> Any:
+        """Return ``A σ √(2π) erf(N_σ/√2)``, the area of the window."""
+        return _gaussian_area(self.duration, self.sigmas, self.amplitude)
+
     def value(self, t: Any) -> Any:
         """Evaluate the centered Gaussian envelope.
 
@@ -357,6 +397,10 @@ class GaussianDRAG(Envelope):
 
     def sampling_times(self) -> Any:
         return _gaussian_sampling_times(self.duration, self.sigmas)
+
+    def area(self) -> Any:
+        """Return the area of the in-phase Gaussian. The derivative quadrature integrates to zero."""
+        return _gaussian_area(self.duration, self.sigmas, self.amplitude)
 
     def value(self, t: Any) -> Any:
         """Evaluate the DRAG envelope.
@@ -420,6 +464,10 @@ class GaussianEdge(Envelope):
     def sampling_times(self) -> Any:
         return _gaussian_edge_sampling_times(self.duration, self.edge_duration, self.sigmas)
 
+    def area(self) -> Any:
+        """Return ``A(τ − 2τ_e) + A σ √(2π) erf(√2 N_σ)``: the plateau and two half-Gaussian edges."""
+        return _gaussian_flat_top_area(self.duration, self.edge_duration, self.sigmas, self.amplitude)
+
     def value(self, t: Any) -> Any:
         """Evaluate the flat-top Gaussian-edge envelope.
 
@@ -475,6 +523,10 @@ class SquareWithGaussianEdges(Envelope):
 
     def sampling_times(self) -> Any:
         return _gaussian_edge_sampling_times(self.duration, self.edge_duration, self.sigmas)
+
+    def area(self) -> Any:
+        """Return ``A(τ − 2τ_e) + A σ √(2π) erf(√2 N_σ)``: the plateau and two half-Gaussian edges."""
+        return _gaussian_flat_top_area(self.duration, self.edge_duration, self.sigmas, self.amplitude)
 
     def value(self, t: Any) -> Any:
         """Evaluate the fraction-parameterized Gaussian-edge envelope.
@@ -545,6 +597,10 @@ class LinearRamp(Envelope):
     def sampling_times(self) -> Any:
         return qnp.concatenate((qnp.linspace(0.0, self.ramp_duration, 33), qnp.asarray([self.duration])))
 
+    def area(self) -> Any:
+        """Return ``A(τ − τ_r/2)``: the ramp and the hold."""
+        return qnp.asarray(self.amplitude * (self.duration - self.ramp_duration / 2.0), dtype=complex)
+
     def value(self, t: Any) -> Any:
         """Evaluate the linear-ramp envelope at time points *t* (ns).
 
@@ -585,6 +641,10 @@ class Square(Envelope):
 
     def sampling_times(self) -> Any:
         return qnp.asarray([0.0, self.duration])
+
+    def area(self) -> Any:
+        """Return ``A τ``."""
+        return qnp.asarray(self.amplitude * self.duration, dtype=complex)
 
     def value(self, t: Any) -> Any:
         """Evaluate the constant envelope.

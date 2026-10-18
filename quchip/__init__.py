@@ -132,8 +132,11 @@ from quchip.interop import EigenbasisDevice, ModelMapping
 from quchip.inverse_design import FitADressResult, FitParameterReport, ObservableReport, fit_a_dress
 from quchip.engine.states import CompactState
 from quchip.results import (
+    ClickRecords,
+    MeasurementRecords,
     ObservableTrace,
     PartitionedSimulationResult,
+    PropagatorResult,
     SimulationBatchResult,
     SimulationResult,
     SteadyStateBatchResult,
@@ -172,6 +175,9 @@ __all__ = [
     "with_truncation",
     "with_monitoring",
     "TrajectoryResult",
+    "MeasurementRecords",
+    "ClickRecords",
+    "PropagatorResult",
     "IQReadout",
     "StateMeasurement",
     "StateSamples",
