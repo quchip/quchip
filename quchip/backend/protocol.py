@@ -573,8 +573,8 @@ class Backend(ABC):
         r"""Return ⟨op⟩(t) for every save point, as one ``(T,)`` array in :attr:`array_module`.
 
         Accepts a ket stack ``(T, n, 1)`` (returns ⟨ψ|op|ψ⟩) or a density-matrix
-        stack ``(T, n, n)`` (returns ``Tr(op·ρ)``). One einsum replaces the
-        per-point ``expect`` loop. Every intermediate stays in
+        stack ``(T, n, n)`` (returns ``Tr(op·ρ)``). One matrix product replaces
+        the per-point ``expect`` loop. Every intermediate stays in
         :attr:`array_module`, so the JAX backend keeps the trace differentiable.
 
         Parameters
@@ -589,7 +589,7 @@ class Backend(ABC):
         rho = xp.asarray(self.to_array(stacked_states), dtype=complex)
         if self._is_ket_stack(rho):
             psi = rho[..., 0]
-            return xp.einsum("ti,ij,tj->t", xp.conj(psi), op_arr, psi)
+            return xp.einsum("ti,ti->t", xp.conj(psi), psi @ op_arr.T)
         return xp.einsum("tij,ji->t", rho, op_arr)
 
     def overlap_over_time(self, target: State, stacked_states: Any) -> Any:

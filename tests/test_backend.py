@@ -187,6 +187,26 @@ class TestCoerceOperator:
         npt.assert_allclose(np.asarray(backend.to_array(d)), m.conj().T, atol=1e-14)
 
 
+class TestExpectationsOverTime:
+    """Expectation values over a stack of saved states."""
+
+    def test_a_csr_operator_gives_the_dense_expectations(self, backend: QuTiPBackend) -> None:
+        """A CSR operator and its dense form give the same values on kets and density matrices."""
+        from qutip import Qobj
+        from scipy import sparse
+
+        rng = np.random.default_rng(1)
+        matrix = rng.normal(size=(6, 6)) + 1j * rng.normal(size=(6, 6))
+        matrix[np.abs(matrix) < 1.0] = 0.0
+        kets = rng.normal(size=(4, 6, 1)) + 1j * rng.normal(size=(4, 6, 1))
+        densities = kets @ kets.conj().transpose(0, 2, 1)
+        expected = {"kets": np.einsum("ti,ij,tj->t", kets[..., 0].conj(), matrix, kets[..., 0]),
+                    "densities": np.einsum("tij,ji->t", densities, matrix)}
+        for name, stacked in (("kets", kets), ("densities", densities)):
+            for op in (Qobj(sparse.csr_matrix(matrix), dtype="CSR"), Qobj(matrix, dtype="Dense")):
+                npt.assert_allclose(backend.expect_over_time(op, stacked), expected[name], rtol=1e-13)
+
+
 class TestSuperoperatorMemory:
     """QuTiP keeps structurally sparse operators sparse and refuses Liouvillians that cannot fit."""
 

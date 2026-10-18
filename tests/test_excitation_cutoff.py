@@ -425,6 +425,34 @@ def test_state_of_a_large_cutoff_chip_raises_before_the_product_vector():
         chip.state({"q0": 0})
 
 
+@pytest.mark.unit
+def test_compact_operators_are_stored_sparse_on_qutip():
+    """On QuTiP, every compact operator is CSR, so its memory follows its entries instead of the dimension squared."""
+    limited = pair(loss=True).with_space(ExcitationCutoff(3))
+    engine = schedule(limited).build_problem(np.linspace(0.0, 16.0, 5), solver="mesolve").engine_result
+    terms = (*engine.static_terms, *engine.dynamic_terms, *engine.collapse_terms)
+    assert len(terms) == 6 and all(term.operator.layout == "csr" for term in terms)
+
+
+@pytest.mark.unit
+@pytest.mark.optional_backend
+def test_a_dense_compact_operator_that_cannot_fit_raises(monkeypatch):
+    """dynamiqs holds compact operators densely, so the memory check runs before each one is allocated."""
+    pytest.importorskip("dynamiqs")
+    from quchip.backend import _memory
+
+    devices = [Resonator(freq=0.25, levels=3, label=f"r{i}") for i in range(4)]
+    chain = [Capacitive(a, b, g=0.01) for a, b in zip(devices, devices[1:])]
+    chip = Chip(devices, couplings=chain, approximation=Exact(), backend="dynamiqs").with_space(ExcitationCutoff(3))
+    sequence, tlist = QuantumSequence(chip), np.linspace(0.0, 3.0, 7)
+    # The first build keeps the dressed excitation classes, whose eigenvectors need more memory than one operator.
+    sequence.build_problem(tlist, initial_state={"r0": 1})
+    # The odd sectors keep 20 labels, so one dense operator and its fill take 12.8 kB.
+    monkeypatch.setattr(_memory, "available_memory_bytes", lambda: 10**4)
+    with pytest.raises(MemoryError, match=r"dense compact operator \(dimension 20\)"):
+        sequence.build_problem(tlist, initial_state={"r0": 1})
+
+
 @pytest.mark.validation
 def test_ring_pilot_keeps_exact_classes_without_a_convergence_claim():
     """A 24-device ring diagonalizes only its parity classes, and K = 1 reproduces the RWA spectrum."""

@@ -458,6 +458,16 @@ This file records notable user-visible changes to quchip.
 
 #### Performance
 
+- On QuTiP, exact excitation spaces and `ExcitationCutoff` solves store each
+  compact operator as CSR instead of a dense matrix of the compact dimension.
+  A dense backend, such as dynamiqs, checks each dense compact operator
+  against the available memory before it allocates it, instead of budgeting
+  eight such matrices for any number of terms. A driven ring of 24
+  three-level transmons at `ExcitationCutoff(max_total=3)` has 2,901 states.
+  Its `build_problem()` and `simulate()` now peak at 0.25 GB instead of
+  7.35 GB, and `check_truncation()` takes 0.6 s instead of 82 s.
+  ([#186](https://github.com/quchip/quchip/issues/186),
+  [#187](https://github.com/quchip/quchip/pull/187))
 - On a chip whose static model conserves the total energy-level index,
   `chip.state()` diagonalizes only the sector of its label, and the default
   initial state of a solve is the bare product with no static model. The
