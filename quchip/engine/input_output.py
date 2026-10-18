@@ -24,29 +24,41 @@ def reject_retained_mode_responses(chip: Any) -> None:
         )
 
 
-def resolve_stationary_engine(
-    chip: Any,
-    port_frequencies: tuple[tuple[str, Any], ...],
-) -> EngineResult:
-    """Resolve port-tone frequencies into one static engine description."""
-    from quchip.cutoff import reject_cutoff
+_STATIONARY_TAIL = "Use QuantumSequence for time evolution; periodic/Floquet steady states are not supported."
 
-    reject_cutoff(chip, "Stationary port analysis")
-    reject_retained_mode_responses(chip)
+
+def stationary_frame_plan(chip: Any, port_frequencies: tuple[tuple[str, Any], ...]) -> tuple[Any, Any]:
+    """Return the frame plan of stationary port tones and the planning resolution."""
     if not port_frequencies:
         raise ValueError("Stationary port analysis requires at least one tone frequency.")
-
-    tail = "Use QuantumSequence for time evolution; periodic/Floquet steady states are not supported."
     resolution = planning_resolution(chip)
     tones = stationary_tones(chip, port_frequencies, resolution=resolution)
     try:
         plan = plan_frame(chip, tones, approximation=chip.approximation, strict=True, local_resolution=resolution)
     except FrameConflict as conflict:
         if conflict.kind == "port":
-            raise ValueError(f"Ports address {conflict.devices[0]!r} with distinct stationary tones. {tail}") from None
+            raise ValueError(
+                f"Ports address {conflict.devices[0]!r} with distinct stationary tones. {_STATIONARY_TAIL}"
+            ) from None
         raise ValueError(
-            f"Exchange-connected devices {list(conflict.cluster)!r} are addressed by distinct stationary tones. {tail}"
+            f"Exchange-connected devices {list(conflict.cluster)!r} are addressed by distinct stationary tones. "
+            f"{_STATIONARY_TAIL}"
         ) from None
+    return plan, resolution
+
+
+def resolve_stationary_engine(
+    chip: Any,
+    port_frequencies: tuple[tuple[str, Any], ...],
+) -> EngineResult:
+    """Resolve port-tone frequencies into one static engine description.
+
+    Under an active excitation cutoff, the engine keeps the labels with
+    ``N <= K`` and the projected model on them.
+    """
+    reject_retained_mode_responses(chip)
+    plan, resolution = stationary_frame_plan(chip, port_frequencies)
+    tail = _STATIONARY_TAIL
     engine = chip._resolve(frame=plan, _resolution=resolution)
     if engine.dynamic_terms:
         raise ValueError(

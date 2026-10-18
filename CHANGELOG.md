@@ -129,6 +129,13 @@ This file records notable user-visible changes to quchip.
   envelope now adds a carrier offset and keeps the envelope's value. Use the
   new path with `with_params()` and `QuantumSequence.vary()`.
   ([#106](https://github.com/quchip/quchip/pull/106))
+- Without an excitation cutoff, `VNA.finite_power()` and `VNA.measure()` with
+  `options=None` solve a chip that conserves the total excitation and has more
+  than 64 product states on the labels with `N <= K`, and they warn which `K`
+  they kept. Means, mode values and noise spectra can change by about `1e-6`
+  of their size. Pass `options={}` to keep the full product-space solve.
+  ([#156](https://github.com/quchip/quchip/issues/156),
+  [#185](https://github.com/quchip/quchip/pull/185))
 
 #### New features
 
@@ -168,10 +175,26 @@ This file records notable user-visible changes to quchip.
   then need blocks of 301 and 2600 states at `K = 3`. Labels and supplied states
   above the cutoff raise. `result.check_truncation()` reports the sampled
   population in the sectors that connect above the cutoff, as a heuristic.
-  `Chip.dress()`, VNA, steady-state, stochastic, elimination, local-fit and
-  partition workflows raise for an active cutoff. Compare results at
-  increasing `K`, because convergence need not be monotone.
+  `Chip.dress()`, VNA sweeps, output spectra and correlations, steady-state,
+  stochastic, elimination, local-fit and partition workflows raise for an
+  active cutoff. Compare results at increasing `K`, because convergence need
+  not be monotone.
   ([#180](https://github.com/quchip/quchip/pull/180))
+- `VNA.finite_power()` and `VNA.measure()` solve a chip that conserves the
+  total excitation on the product labels with `N <= K`, without the product
+  space. This route applies when every port lowers `N`, other channels lower
+  or conserve it, the inputs are vacuum, and the chip has no pump or thermal
+  occupation. A finite probe couples every `N` to `N ± 1`, so the route
+  truncates. With `chip.with_space(ExcitationCutoff(max_total=K))`, `K` is the
+  chip's. Without a cutoff, a chip with more than 64 product states starts at
+  `K = 2`, compares every grid point with `K + 1`, raises `K` until the change
+  is at most `1e-6` of each value, and warns which `K` it kept. A truncation
+  that leaves more than one stationary state raises. Two
+  transmon-readout pairs take 0.06 s instead of 18 s for two grid points, and
+  12 pairs keep 325 of 3²⁴ product states at `K = 2`. Under a cutoff, a chip
+  outside this route and a JAX-traced call solve the compact model directly.
+  ([#156](https://github.com/quchip/quchip/issues/156),
+  [#185](https://github.com/quchip/quchip/pull/185))
 - `eliminate()` removes a readout with one port in each direction of a two-way
   hanger feedline. The reduced network keeps the readout's dressed pole at the
   original ports, so vacuum `VNA.sweep()` keeps the dip and the reflection into

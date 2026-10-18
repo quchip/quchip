@@ -439,7 +439,10 @@ again. Receiver time, digital filtering, calibration, and random draws use
 the captured arrays.
 
 Stationary harmonic calculations use mode-space equations without a Fock
-cutoff, and nonlinear devices use the density-matrix solver. Sampling
+cutoff, and nonlinear devices use the density-matrix solver. On a chip that
+conserves the total excitation and has more than 64 product states, the
+solver keeps the states with at most `K` excitations and warns which `K` it
+kept. Sampling
 describes stationary Gaussian field moments. Colored thermal noise into the
 chip needs an explicit dynamical filter or bath model. This setup does not
 include amplifier saturation, finite reverse isolation, or reverse amplifier
