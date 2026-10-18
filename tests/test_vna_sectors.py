@@ -5,6 +5,8 @@ import warnings
 import numpy as np
 import pytest
 
+from scipy import sparse
+
 import quchip.analysis.measurement as measurement
 import quchip.engine.routes as routes
 import quchip.backend._sector_stationary as sector_solver
@@ -268,6 +270,19 @@ def test_two_starts_resolve_a_slowly_emptied_dark_state():
     # Without it the dark state empties at a rate of order beta^2, which the solve cannot resolve.
     with pytest.raises(ValueError, match="cannot resolve"):
         bus_pair_generator(2).stationary(0.0, [beta])
+
+
+@pytest.mark.unit
+def test_the_uniqueness_bound_of_a_large_sector_counts_the_channels_of_each_device():
+    """1100 one-excitation states share one port and each decay on their own; the bound proves no dark state."""
+    count = 1100
+    shape = (count + 1, count + 1)
+    port = sparse.csr_matrix((np.full(count, 0.1), (np.zeros(count, dtype=int), np.arange(1, count + 1))), shape)
+    local = [sparse.csr_matrix(([1e-2], ([0], [state])), shape) for state in range(1, count + 1)]
+    # The port alone leaves count - 1 dark states. With the local channels the Gershgorin bound of the sum is
+    # negative, but each state decays at 1e-4 / ns on its own.
+    assert sector_solver.has_dark_state([1, count], [port])
+    assert not sector_solver.has_dark_state([1, count], [port, *local])
 
 
 @pytest.mark.unit

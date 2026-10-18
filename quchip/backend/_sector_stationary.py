@@ -83,7 +83,9 @@ def has_dark_state(sizes: Sequence[int], lowering: Sequence[Any], damping: float
     unique, whatever the Hamiltonian, a probe and the conserving channels. The
     test compares the smallest escape rate of each sector with ``damping``.
     Above 1024 states a sector uses a lower bound of that rate, so ``True``
-    means only that uniqueness is not proven.
+    means only that uniqueness is not proven. The bound is the larger of the
+    Gershgorin bound and the smallest diagonal rate of the channels on one
+    device, which add to the positive rates of the other channels.
 
     Parameters
     ----------
@@ -97,13 +99,22 @@ def has_dark_state(sizes: Sequence[int], lowering: Sequence[Any], damping: float
     """
     offsets = np.concatenate(([0], np.cumsum(sizes))).astype(int)
     dimension = int(offsets[-1])
-    escape = sparse.csr_matrix((dimension, dimension), dtype=complex)
+    # A channel on one device lowers only its own level, so its rate L†L is diagonal in energy coordinates.
+    local, shared = (sparse.csr_matrix((dimension, dimension), dtype=complex) for _ in range(2))
     for channel in lowering:
         channel = sparse.csr_matrix(channel, dtype=complex)
-        escape = escape + channel.conj().T @ channel
+        rate = (channel.conj().T @ channel).tocsr()
+        rate.eliminate_zeros()
+        entries = rate.tocoo()
+        if np.all(entries.row == entries.col):
+            local = local + rate
+        else:
+            shared = shared + rate
+    escape = (local + shared).tocsr()
     if damping is None:
         damping = _DAMPING * max(float(np.max(escape.diagonal().real, initial=0.0)), np.finfo(float).tiny)
-    return any(_smallest_rate(escape[offsets[n]:offsets[n + 1], offsets[n]:offsets[n + 1]]) <= damping
+    local_rates = local.diagonal().real
+    return any(_sector_rate(escape, local_rates, shared, slice(offsets[n], offsets[n + 1])) <= damping
                for n in range(1, len(sizes)))
 
 
@@ -463,6 +474,17 @@ def _generic_state(dimension: int) -> np.ndarray:
     vector = generator.standard_normal(dimension) + 1j * generator.standard_normal(dimension)
     state = np.diag(generator.uniform(0.5, 1.5, dimension)) + np.outer(vector, vector.conj()) / np.vdot(vector, vector)
     return state / np.trace(state)
+
+
+def _sector_rate(escape: Any, local_rates: np.ndarray, shared: Any, span: slice) -> float:
+    """Return the smallest escape rate of one sector, or a lower bound of it for a large sector."""
+    block = escape[span, span]
+    rate = _smallest_rate(block)
+    if block.shape[0] > _EIG_LIMIT:
+        # Every L†L is positive semidefinite, so the diagonal local rates plus a bound of the other channels also
+        # bound the sum. The off-diagonal rates of cascaded ports can make the Gershgorin bound of the sum negative.
+        rate = max(rate, float(np.min(local_rates[span])) + max(_smallest_rate(shared[span, span]), 0.0))
+    return rate
 
 
 def _smallest_rate(block: Any) -> float:

@@ -1137,8 +1137,13 @@ stationary state is unique. Each state then has a lowering jump, so the
 support of every stationary state holds the vacuum, and two stationary states
 with orthogonal supports cannot exist. This holds for any Hamiltonian, probe
 and conserving channels. The solver compares the smallest eigenvalue of
-`sum_k L_k† L_k` in each sector with `δ`. Above 1024 labels, it uses the
-Gershgorin bound. Without a drive the vacuum is stationary, so when this test
+`sum_k L_k† L_k` in each sector with `δ`. Above 1024 labels, it uses a lower
+bound of that eigenvalue: the larger of the Gershgorin bound and the smallest
+diagonal entry of the channels on one device. A channel on one device lowers
+only its own level, so its `L† L` is diagonal in energy coordinates, and the
+other channels add a positive semidefinite part. The Gershgorin bound alone
+is negative on a cascaded feedline, whose port channels couple the labels of
+different devices. Without a drive the vacuum is stationary, so when this test
 passes, `steadystate()` solves nothing and returns the vacuum on the labels
 with `N <= 1`. When it fails, `steadystate()` solves the backend's stationary
 Liouvillian. The `steady_state` of the output statistics reports `nullity=1`
