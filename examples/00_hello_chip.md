@@ -28,7 +28,6 @@ charge lines address the qubit and the readout.
 
 ```python
 import numpy as np
-from scipy import integrate
 from quchip import (
     RWA, Capacitive, ChargeDrive, Chip, DuffingTransmon,
     Gaussian, GaussianEdge, QuantumSequence, Resonator,
@@ -48,24 +47,22 @@ _ = chip.wire(qubit_line, readout_line)
 
 ## Compare a short and a long qubit pulse
 
-Both Gaussians have the same nominal π area. The short pulse's spectral
-width is comparable to the separation between the dressed 0→1 and 1→2
-transitions, so the four-times-longer pulse is more selective.
+`chip.rotation_amplitude()` gives each Gaussian the amplitude of a π
+rotation, from the envelope area and the dressed matrix element of the qubit
+line. The short pulse's spectral width is comparable to the separation
+between the dressed 0→1 and 1→2 transitions, so the four-times-longer pulse
+is more selective.
 
 ```python
 f01 = float(chip.freq(qubit))
 f12 = float(chip.transition_frequency(qubit, 1, 2))
 drive_durations = 3 / (np.pi * abs(f12 - f01)) * np.array([1.0, 4.0])
 
-
-def pi_gaussian(duration):
-    unit_pulse = Gaussian(duration=duration, sigmas=3.0, amplitude=1.0)
-    grid = np.linspace(0, duration, 20001)
-    area = integrate.trapezoid(np.asarray(unit_pulse.value(grid)).real, grid)
-    return Gaussian(duration=duration, sigmas=3.0, amplitude=0.5 / area)
-
-
-drive_pulses = [pi_gaussian(duration) for duration in drive_durations]
+drive_pulses = []
+for duration in drive_durations:
+    shape = Gaussian(duration=duration, sigmas=3.0)
+    amplitude = chip.rotation_amplitude(qubit, qubit_line, shape)
+    drive_pulses.append(Gaussian(duration=duration, sigmas=3.0, amplitude=amplitude))
 ```
 
 Schedule the short pulse, then change its duration and amplitude
@@ -157,7 +154,7 @@ for index, name in enumerate(("Short", "Long")):
 Output:
 
 ```text
-Short: final P1 = 32.7%; peak P2 = 56.3%
+Short: final P1 = 32.7%; peak P2 = 56.4%
 Long: final P1 = 98.1%; peak P2 = 3.8%
 ```
 
@@ -165,6 +162,46 @@ Long: final P1 = 98.1%; peak P2 = 3.8%
 
 Equal pulse area does not guarantee equal inversion in a multilevel system.
 The smaller peak P2 shows why the longer pulse comes closer to the target.
+
+## Read the pulses as gates
+
+`subspace_propagator(qubit)` runs a pulse from each dressed qubit state, |0⟩
+and |1⟩, with the resonator empty. It returns the 2 × 2 matrix in the frame
+of the dressed frequencies and the leakage of each input out of these
+states. The charge line has a dressed matrix element close to −i on the 0→1
+transition, so a real π pulse aims at iY. `fidelity()` gives the average
+gate fidelity, which counts the leakage. A propagator describes the
+Hamiltonian alone, so remove the resonator loss for this study. On the lossy
+chip, the call warns that it leaves the loss out.
+
+```python
+closed_chip = chip.with_params({"r.internal_quality_factor": None})
+gates = {}
+for name, pulse in zip(("Short", "Long"), drive_pulses):
+    gate_sequence = QuantumSequence(closed_chip)
+    _ = gate_sequence.schedule(qubit_line, envelope=pulse, freq=f01)
+    gates[name] = gate_sequence.subspace_propagator(qubit)
+
+iy = np.array([[0, 1], [-1, 0]])
+for name, gate in gates.items():
+    print(f"{name}: fidelity to iY = {float(gate.fidelity(iy)):.3f}; "
+          f"leakage from |0⟩ = {float(gate.leakage[0]):.1e}")
+```
+
+<!-- executed-output:start -->
+
+Output:
+
+```text
+Short: fidelity to iY = 0.422; leakage from |0⟩ = 5.8e-01
+Long: fidelity to iY = 0.988; leakage from |0⟩ = 4.3e-05
+```
+
+<!-- executed-output:end -->
+
+The short pulse moves most of |0⟩ out of the qubit states. The long pulse leaks little, so most of its error is a
+coherent rotation error: the coupling to |2⟩ shifts the 0→1 transition
+during the pulse. The amplitude is a first guess for a calibration.
 
 ## Read out the prepared qubit state
 
@@ -303,7 +340,7 @@ print(f"RESULT readout={json.dumps(readout_receipt, sort_keys=True)}")
 Output:
 
 ```text
-RESULT drive={"final_p1": {"long": 0.9808186959428326, "short": 0.3274130996870313}, "peak_p2": {"long": 0.038430704898919095, "short": 0.5631356326693644}}
+RESULT drive={"final_p1": {"long": 0.9808175465941472, "short": 0.3268777388364312}, "peak_p2": {"long": 0.03849751009317295, "short": 0.5637322736940182}}
 RESULT readout={"conditional_resonator_frequencies_ghz": [6.801997782702374, 6.801428548310606], "final_iq_separation": 0.9021929173534362, "solver": "mesolve"}
 ```
 
