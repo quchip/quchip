@@ -2779,6 +2779,32 @@ Native measurement records describe selected L in the integration frame, without
 adding coherent incident beta or downstream receiver noise. Native weighted jump
 averages include deterministic no-click paths. Truncation checks are explicit
 and cover available samples, with final-only coverage identified separately.
+
+`TrajectoryResult.records()` gives the diffusive currents of both backends in
+one layout, with shape `(runs, channels, intervals)`. QuTiP heterodyne adds a
+quadrature axis before the intervals. A channel with collapse operator `L`,
+which includes the square root of its rate, efficiency `eta` and phase `phase`
+records
+
+```text
+I = 2 Re<c> + xi,    c = sqrt(eta) exp(-i phase) L
+```
+
+in 1/sqrt(ns). The homodyne noise `xi` has variance `1/Δt`. QuTiP heterodyne
+records `2 Re<c> + xi_X` and `2 Im<c> + xi_Y`, and each noise has variance
+`2/Δt`. QuTiP samples the signal at the start or the
+end of each interval, or takes the mean of both, as `store_measurement`
+selects. Dynamiqs divides the increment of the integrated record by `Δt`, so
+its signal is the mean over the interval. For a decaying coherent field with
+`L = a`, `eta = 1` and `<a>(0) = 1`, the interval `[0, 1]` ns gives the
+signals 2, 1.21306, 1.60653 and 1.57388 for the start, end, middle and mean.
+
+`clicks()` gives the click times and channels of each run with its sampling
+weight `w_r`. An ensemble mean is `Σ_r w_r x_r`, plus the no-click run with
+`no_click_weight` when QuTiP `improved_sampling` or Dynamiqs smart sampling
+solves that run apart. `full` marks a run that filled its Dynamiqs `nmaxclick`
+buffer, whose evolution can stop early. `run_expect(key)` gives the
+expectation of each run without weights.
 See [the solver guide](docs/guides/choosing-a-backend.md) and
 [Wiseman and Milburn, chapter 4](https://doi.org/10.1017/CBO9780511813948).
 

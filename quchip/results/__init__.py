@@ -19,7 +19,7 @@ from quchip.results.results import (
     wrap_solver_result,
 )
 from quchip.results.propagator import PropagatorResult
-from quchip.results.trajectories import TrajectoryResult
+from quchip.results.trajectories import ClickRecords, MeasurementRecords, TrajectoryResult
 from quchip.results.steady_state import SteadyStateBatchResult, SteadyStateResult
 from quchip.results.input_output import (
     OutputCorrelationResult,
@@ -46,6 +46,8 @@ __all__ = [
     "SimulationBatchResult",
     "SimulationResult",
     "TrajectoryResult",
+    "MeasurementRecords",
+    "ClickRecords",
     "PropagatorResult",
     "SteadyStateResult",
     "SteadyStateBatchResult",

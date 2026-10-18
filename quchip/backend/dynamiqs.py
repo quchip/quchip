@@ -1163,17 +1163,53 @@ class DynamiqsBackend(Backend):
         retain = problem.states == "all" if problem.states is not None else problem.options.get("save_states", True)
         if not retain and not deterministic:
             history = None
-        if (problem.solver == "jssesolve" and not deterministic and isinstance(native.method, dq.method.Event)
-                and any(value is not None for value in (values, history, final))):
-            import equinox as eqx
-
-            nclicks = native.nclicks if index is None else native.nclicks[index]
-            values, history, final = eqx.error_if(
-                (values, history, final), jnp.any(jnp.sum(nclicks, axis=-1) >= native.options.nmaxclick),
-                "Native Event exhausted nmaxclick before completing evolution; increase the buffer. "
-                "The incomplete native result remains accessible through result.native.",
-            )
+        if not deterministic and any(value is not None for value in (values, history, final)):
+            values, history, final = self._complete_events(native, problem, (values, history, final), index)
         return values, history, final
+
+    def _complete_events(self, native: Any, problem: Any, values: Any, index: int | None = None) -> Any:
+        """Return ``values``, which raise when a native Event run filled its click buffer before the end.
+
+        ``index`` selects one run; None checks every run.
+        """
+        if problem.solver != "jssesolve" or not isinstance(native.method, dq.method.Event):
+            return values
+        import equinox as eqx
+
+        nclicks = native.nclicks if index is None else native.nclicks[index]
+        return eqx.error_if(
+            values, jnp.any(jnp.sum(nclicks, axis=-1) >= native.options.nmaxclick),
+            "Native Event exhausted nmaxclick before completing evolution; increase the buffer. "
+            "The incomplete native result remains accessible through result.native.",
+        )
+
+    def trajectory_records(self, native: Any, problem: Any) -> tuple[Any, str]:
+        if problem.solver not in ("dssesolve", "dsmesolve"):
+            raise ValueError("Records need a diffusive solver: dssesolve or dsmesolve.")
+        # Dynamiqs records the increment of each integrated signal over an interval, divided by its length.
+        return native.measurements, "mean"
+
+    def trajectory_clicks(self, native: Any, problem: Any) -> tuple[list[Any], Any, Any, Any]:
+        if problem.solver != "jssesolve":
+            raise ValueError("Clicks need a jump solver: jssesolve.")
+        clicktimes = np.asarray(native.clicktimes, dtype=float)
+        events = []
+        for run in clicktimes:
+            which, slot = np.nonzero(~np.isnan(run))
+            order = np.argsort(run[which, slot], kind="stable")
+            events.append((run[which, slot][order], which[order]))
+        runs = len(events)
+        smart = isinstance(native.method, dq.method.Event) and native.method.smart_sampling
+        no_click = float(native.infos.noclick_prob) if smart else 0.0
+        weights = np.full(runs, (1.0 - no_click) / runs)
+        full = np.asarray(jnp.sum(native.nclicks, axis=-1) >= native.options.nmaxclick)
+        return events, weights, no_click, full
+
+    def trajectory_run_expect(self, native: Any, problem: Any) -> list[Any]:
+        if native.expects is None:
+            return []
+        expects = self._complete_events(native, problem, native.expects)
+        return [expects[:, index] for index in range(expects.shape[1])]
 
     def _trajectory_inputs(self, problem: Any) -> dict[str, Any]:
         if problem.solver not in ("jssesolve", "dssesolve", "dsmesolve"):

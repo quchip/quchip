@@ -1171,6 +1171,26 @@ class QuTiPBackend(Backend):
             values, history, final = run.expect, run.states if states else None, run.final_state if states else None
         return values, history or None, final
 
+    def trajectory_records(self, native: Any, problem: Any) -> tuple[Any, str]:
+        sampling = problem.options.get("store_measurement", "")
+        if problem.solver not in ("ssesolve", "smesolve") or not sampling:
+            raise ValueError("Records need ssesolve or smesolve with the native option store_measurement "
+                             "'start', 'middle' or 'end'.")
+        return np.asarray(native.measurement, dtype=float), "end" if sampling is True else sampling
+
+    def trajectory_clicks(self, native: Any, problem: Any) -> tuple[list[Any], Any, Any, Any]:
+        if problem.solver != "mcsolve":
+            raise ValueError("Clicks need a jump solver: mcsolve.")
+        events = [(np.asarray(times, dtype=float), np.asarray(which, dtype=int))
+                  for times, which in zip(native.col_times, native.col_which)]
+        weights = np.asarray(native.runs_weights, dtype=float)
+        return events, weights, float(sum(native.deterministic_weights)), np.zeros(len(events), dtype=bool)
+
+    def trajectory_run_expect(self, native: Any, problem: Any) -> list[Any]:
+        if problem.e_ops and not native.runs_expect:
+            raise RuntimeError("Per-run values require native keep_runs_results=True.")
+        return list(native.runs_expect)
+
     def sesolve(
         self,
         H: Any,

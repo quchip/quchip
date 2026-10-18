@@ -219,6 +219,14 @@ This file records notable user-visible changes to quchip.
   axis and its limits.
   ([#197](https://github.com/quchip/quchip/issues/197),
   [#207](https://github.com/quchip/quchip/pull/207))
+- `TrajectoryResult.records()`, `clicks()` and `run_expect(key)` read the
+  measurement currents, click events and per-run expectations of QuTiP and
+  Dynamiqs in one layout. Records have shape `(runs, channels, intervals)` and
+  name their native sampling. Click records keep the sampling weight of each
+  run, the no-click weight and a full-buffer flag. `result.native` does not
+  change.
+  ([#194](https://github.com/quchip/quchip/issues/194),
+  [#207](https://github.com/quchip/quchip/pull/207))
 - `eliminate_spectators(chip, keep)` reduces a chip to the kept devices, one
   `eliminate()` step at a time, and returns every step. Its default order keeps
   the operators of kept devices small under `local=True`. A spectator waits
