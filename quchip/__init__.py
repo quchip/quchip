@@ -90,6 +90,8 @@ from quchip.control import (
     TwoPhotonDrive,
 )
 from quchip.control.sequence import QuantumSequence
+from quchip.gateset import GateCalibration, GateSet, Knob, NativeGate, cross_resonance, drag_sx  # noqa: E402
+from quchip.results.propagator import ComputationalBlock, Propagator  # noqa: E402
 from quchip.declarative import (
     CollapseChannel,
     CosineCoefficient,
@@ -195,6 +197,15 @@ __all__ = [
     "RWA",
     # Retained-space policies
     "ExcitationCutoff",
+    # Gate sets and propagators
+    "ComputationalBlock",
+    "GateCalibration",
+    "GateSet",
+    "Knob",
+    "NativeGate",
+    "Propagator",
+    "cross_resonance",
+    "drag_sx",
     # Declarative extension API
     "CollapseChannel",
     "EffectiveTerms",

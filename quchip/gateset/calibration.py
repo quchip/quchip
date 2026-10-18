@@ -1,0 +1,445 @@
+"""Least-squares calibration of a native gate on its computational block.
+
+For knob values ``x``, free Z phases ``φ``, and a global phase ``γ``, the fit
+minimizes ``|r|²`` with
+
+.. math::
+
+    r = \\left[\\frac{M - e^{i\\gamma} I}{\\sqrt{d + 1}},\\ \\frac{\\ell}{\\sqrt{d}}\\right],
+    \\qquad M = U_\\mathrm{ideal}^\\dagger Z(\\varphi) V(x),
+
+where ``V`` is the gate's computational block, ``ℓ`` the leaked amplitudes,
+and ``Z(φ) = Π_q exp(iφ_q n_q)``. At ``γ = arg Tr M``,
+``|r|² = 1 - F_avg + (d - |Tr M|)² / (d (d + 1))``, so the fit and the average
+gate fidelity share their optimum.
+"""
+
+from __future__ import annotations
+
+import itertools
+import time
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
+from typing import Any
+
+import numpy as np
+from scipy.linalg import logm
+from scipy.optimize import least_squares, minimize
+
+from quchip.gateset.ideals import pauli_components
+from quchip.gateset.native import ResolvedKnob
+from quchip.inverse_design.fit import _identifiability_receipt
+
+#: Relative finite-difference step of the scaled knobs.
+DIFF_STEP = 1e-4
+
+
+def average_fidelity(block: np.ndarray, ideal: np.ndarray) -> float:
+    """Return Pedersen's average gate fidelity of a block against an ideal, global phase removed."""
+    product = ideal.conj().T @ block
+    d = ideal.shape[0]
+    return float((np.trace(product @ product.conj().T).real + abs(np.trace(product)) ** 2) / (d * (d + 1)))
+
+
+def error_generator(product: np.ndarray) -> tuple[dict[str, float], float]:
+    """Return the Pauli coefficients of ``i log U`` and the worst-case distance of ``U``.
+
+    ``U`` is the unitary polar factor of ``product = U_ideal† Z V`` with its
+    global phase removed. A rotation by θ about a Pauli axis has the
+    coefficient θ/2. The distance is ``sin(Δ/2)``, where Δ is the smallest arc
+    that holds the eigenphases of ``U``, and 1 when Δ ≥ π.
+    """
+    left, _, right = np.linalg.svd(product)
+    unitary = left @ right
+    unitary = unitary * np.exp(-1j * np.angle(np.trace(unitary)))
+    generator = 1j * logm(unitary)
+    generator = 0.5 * (generator + generator.conj().T)
+    phases = np.sort(np.angle(np.linalg.eigvals(unitary)))
+    gaps = np.diff(np.concatenate([phases, phases[:1] + 2 * np.pi]))
+    arc = 2 * np.pi - float(gaps.max())
+    distance = 1.0 if arc >= np.pi else float(np.sin(arc / 2))
+    return pauli_components(generator), distance
+
+
+@dataclass(frozen=True)
+class KnobResult:
+    """One knob's calibration.
+
+    Attributes
+    ----------
+    initial, value : float
+        Template and calibrated values.
+    lower, upper : float
+        Bounds.
+    scale : float
+        Fit scale.
+    at_bound : bool
+        True when the value sits on a bound.
+    change : float
+        ``(value - initial) / scale``.
+    fixed : bool
+        True when calibration kept the template value.
+    """
+
+    initial: float
+    value: float
+    lower: float
+    upper: float
+    scale: float
+    at_bound: bool
+    change: float
+    fixed: bool
+
+
+@dataclass(eq=False)
+class GateCalibration:
+    """Calibration report of one native gate.
+
+    Attributes
+    ----------
+    name : str
+        Gate name.
+    qubits : tuple of str
+        Gate qubits.
+    knobs : dict of str to KnobResult
+        Calibrated knobs.
+    free_z : dict of str to float
+        Post-gate Z phases ``φ_q``, applied as trailing ``vz(q, -φ_q)``.
+    global_phase : float
+        Fitted global phase ``γ``.
+    fidelity : float
+        Average gate fidelity ``F_avg`` of ``Z(φ) V`` against the ideal.
+    leakage : float
+        Mean leakage over the computational inputs.
+    leakage_per_input : numpy.ndarray
+        Leakage of each computational input.
+    cost : float
+        Final ``|r|²``.
+    solves : int
+        Propagator solves of the calibration.
+    seed : str
+        Provenance of the winning fit start.
+    history : numpy.ndarray
+        ``(solves, best |r|²)`` after each solve.
+    block : numpy.ndarray
+        Calibrated computational block ``Z(φ) V``.
+    ideal : numpy.ndarray
+        Ideal unitary.
+    error_generator : dict of str to float
+        Pauli coefficients, in rad, of ``i log U``, with ``U`` the unitary polar
+        factor of ``U_ideal† Z(φ) V`` without its global phase.
+    worst_case_distance : float
+        ``sin(Δ/2)`` from the eigenphase arc of ``U``. For a unitary error it
+        equals the diamond distance.
+    identifiability : dict
+        Jacobian rank, condition number, and weak directions of the final fit.
+    unitarity_defect : float
+        ``max |U†U - I|`` over the computed columns, from the integrator.
+    options, frame, cutoff
+        Solver settings of the calibration.
+    status : str
+        ``"ok"``, ``"at_bound"``, ``"weak_direction"``, ``"solver_floor"``,
+        ``"poor_fit"`` (infidelity above the calibration target), or ``"stale"``.
+    sequence : QuantumSequence
+        Calibrated pulses with the trailing ``vz`` entries.
+    spectators : dict of str to float
+        Average gate fidelity with each other gate-set qubit in dressed level 1.
+    placement_sensitivity : float or None
+        Largest change of the computational block over start times.
+    repetitions : dict of int to float
+        Infidelity of N applications against the ideal to the N.
+    dependencies : dict
+        Versions of the natives inside a composite gate.
+    seconds : float
+        Wall time of the fit.
+    version : int
+        Calibration count of this native in its gate set.
+    """
+
+    name: str
+    qubits: tuple[str, ...]
+    knobs: dict[str, KnobResult]
+    free_z: dict[str, float]
+    global_phase: float
+    fidelity: float
+    leakage: float
+    leakage_per_input: np.ndarray
+    cost: float
+    solves: int
+    seed: str
+    history: np.ndarray
+    block: np.ndarray
+    ideal: np.ndarray
+    error_generator: dict[str, float]
+    worst_case_distance: float
+    identifiability: dict[str, Any]
+    unitarity_defect: float
+    options: dict[str, Any]
+    frame: Any
+    cutoff: int | None
+    status: str
+    sequence: Any = None
+    spectators: dict[str, float] = field(default_factory=dict)
+    placement_sensitivity: float | None = None
+    repetitions: dict[int, float] = field(default_factory=dict)
+    dependencies: dict[Any, int] = field(default_factory=dict)
+    seconds: float = 0.0
+    version: int = 0
+
+    @property
+    def infidelity(self) -> float:
+        """``1 - F_avg``."""
+        return 1.0 - self.fidelity
+
+    def summary(self) -> str:
+        """Return a text report."""
+        lines = [
+            f"{self.name} on {', '.join(self.qubits)}: 1 - F_avg = {self.infidelity:.3e}, "
+            f"leakage = {self.leakage:.2e}, status = {self.status}",
+            f"  {self.solves} solves in {self.seconds:.1f} s from {self.seed}; |r|^2 = {self.cost:.3e}; "
+            f"unitarity defect = {self.unitarity_defect:.1e}",
+        ]
+        for name, knob in self.knobs.items():
+            flags = " (fixed)" if knob.fixed else " (at bound)" if knob.at_bound else ""
+            lines.append(f"  {name:>18s} = {knob.value:+.6g}  from {knob.initial:+.6g}, "
+                         f"{knob.change:+.2f} scales{flags}")
+        for qubit, phase in self.free_z.items():
+            lines.append(f"  {'z ' + qubit:>18s} = {phase:+.6f} rad")
+        largest = sorted(self.error_generator.items(), key=lambda item: -abs(item[1]))[:3]
+        lines.append("  error generator (rad): " + ", ".join(f"{k} {v:+.2e}" for k, v in largest))
+        lines.append(f"  worst-case distance = {self.worst_case_distance:.2e}; Jacobian condition = "
+                     f"{self.identifiability.get('jacobian_condition_number', float('nan')):.2e}")
+        if self.spectators:
+            lines.append("  spectators in |1>: " + ", ".join(
+                f"{q} 1 - F = {1 - f:.2e}" for q, f in self.spectators.items()))
+        if self.repetitions:
+            lines.append("  repetitions: " + ", ".join(f"N={n} 1 - F = {v:.2e}"
+                                                      for n, v in self.repetitions.items()))
+        if self.placement_sensitivity is not None:
+            lines.append(f"  placement sensitivity = {self.placement_sensitivity:.2e}")
+        return "\n".join(lines)
+
+    def __repr__(self) -> str:
+        return (f"GateCalibration({self.name!r}, qubits={self.qubits}, 1-F={self.infidelity:.2e}, "
+                f"status={self.status!r})")
+
+
+@dataclass
+class FitOutcome:
+    """Result of :func:`fit_block` before the report adds gate-set checks."""
+
+    values: np.ndarray
+    phases: np.ndarray
+    global_phase: float
+    block: np.ndarray
+    leaked: np.ndarray
+    defect: float
+    cost: float
+    solves: int
+    seed: str
+    history: np.ndarray
+    jacobian: np.ndarray
+    names: list[str]
+    seconds: float
+
+
+class _Residual:
+    """Residual vector with one solve per distinct knob vector."""
+
+    def __init__(
+        self,
+        evaluate: Callable[[np.ndarray], tuple[np.ndarray, np.ndarray, float]],
+        ideal: np.ndarray,
+        z_bits: np.ndarray,
+        knobs: Sequence[ResolvedKnob],
+    ) -> None:
+        self.evaluate = evaluate
+        self.ideal_dagger = ideal.conj().T
+        self.z_bits = z_bits
+        self.d = ideal.shape[0]
+        self.initial = np.array([knob.initial for knob in knobs], dtype=float)
+        self.scale = np.array([knob.scale for knob in knobs], dtype=float)
+        self.free = np.array([i for i, knob in enumerate(knobs) if not knob.fixed], dtype=int)
+        self.cache: dict[bytes, tuple[np.ndarray, np.ndarray, float]] = {}
+        self.solves = 0
+        self.best = np.inf
+        self.history: list[tuple[int, float]] = []
+
+    def values(self, z: np.ndarray) -> np.ndarray:
+        x = self.initial.copy()
+        x[self.free] = self.initial[self.free] + self.scale[self.free] * z[: self.free.size]
+        return x
+
+    def block(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
+        key = np.asarray(x, dtype=float).tobytes()
+        if key not in self.cache:
+            self.cache[key] = self.evaluate(x)
+            self.solves += 1
+        return self.cache[key]
+
+    def vector(self, block: np.ndarray, leaked: np.ndarray, phases: np.ndarray, gamma: float) -> np.ndarray:
+        product = self.ideal_dagger @ (np.exp(1j * (self.z_bits @ phases))[:, None] * block)
+        diff = (product - np.exp(1j * gamma) * np.eye(self.d)) / np.sqrt(self.d + 1)
+        leak = leaked / np.sqrt(self.d)
+        return np.concatenate([diff.real.ravel(), diff.imag.ravel(), leak.real.ravel(), leak.imag.ravel()])
+
+    def __call__(self, z: np.ndarray) -> np.ndarray:
+        n_free = self.free.size
+        n_phases = self.z_bits.shape[1]
+        before = self.solves
+        block, leaked, _ = self.block(self.values(z))
+        r = self.vector(block, leaked, z[n_free:n_free + n_phases], float(z[-1]))
+        cost = float(r @ r)
+        self.best = min(self.best, cost)
+        if self.solves != before:
+            self.history.append((self.solves, self.best))
+        elif self.history:
+            self.history[-1] = (self.solves, self.best)
+        return r
+
+    def phase_start(self, block: np.ndarray, leaked: np.ndarray) -> np.ndarray:
+        """Fit only the phases at a fixed block; costs no solve."""
+        n_phases = self.z_bits.shape[1]
+        product = self.ideal_dagger @ block
+        start = np.zeros(n_phases + 1)
+        start[-1] = float(np.angle(np.trace(product)))
+
+        def residual(p: np.ndarray) -> np.ndarray:
+            return self.vector(block, leaked, p[:n_phases], float(p[-1]))
+
+        best = least_squares(residual, start, method="lm", xtol=1e-14, ftol=1e-14)
+        for trial in itertools.product((0.0, np.pi / 2, np.pi, -np.pi / 2), repeat=min(n_phases, 2)):
+            if not any(trial):
+                continue
+            guess = start.copy()
+            guess[: len(trial)] = trial
+            candidate = least_squares(residual, guess, method="lm", xtol=1e-14, ftol=1e-14)
+            if candidate.cost < best.cost:
+                best = candidate
+        return best.x
+
+
+def fit_block(
+    evaluate: Callable[[np.ndarray], tuple[np.ndarray, np.ndarray, float]],
+    ideal: np.ndarray,
+    z_bits: np.ndarray,
+    knobs: Sequence[ResolvedKnob],
+    *,
+    starts: Sequence[tuple[np.ndarray, str]],
+    max_nfev: int,
+    explore: bool,
+    phase_names: Sequence[str],
+) -> FitOutcome:
+    """Fit knobs, free Z phases, and the global phase to the ideal.
+
+    Parameters
+    ----------
+    evaluate : callable
+        Knob values -> ``(block, leaked, unitarity_defect)`` of the gate.
+    ideal : numpy.ndarray
+        Ideal unitary.
+    z_bits : numpy.ndarray
+        ``(2^n, n_free_z)`` bit of each free-Z qubit in each computational state.
+    knobs : sequence of ResolvedKnob
+        Resolved knobs in fit order.
+    starts : sequence of (values, provenance)
+        Knob vectors to start from.
+    max_nfev : int
+        Bound on residual evaluations of each fit, finite differences excluded.
+    explore : bool
+        Run a Nelder-Mead stage on ``|r|²`` before the fits.
+    phase_names : sequence of str
+        Labels of the free-Z qubits.
+    """
+    began = time.perf_counter()
+    residual = _Residual(evaluate, ideal, z_bits, knobs)
+    free = residual.free
+    n_phases = z_bits.shape[1]
+    lower = np.array([knobs[i].lower for i in free], dtype=float)
+    upper = np.array([knobs[i].upper for i in free], dtype=float)
+    initial = residual.initial[free]
+    scale = residual.scale[free]
+    lb = np.concatenate([(lower - initial) / scale, np.full(n_phases + 1, -np.inf)])
+    ub = np.concatenate([(upper - initial) / scale, np.full(n_phases + 1, np.inf)])
+
+    def start_vector(values: np.ndarray) -> np.ndarray:
+        u = (np.asarray(values, dtype=float)[free] - initial) / scale
+        block, leaked, _ = residual.block(residual.values(np.concatenate([u, np.zeros(n_phases + 1)])))
+        return np.concatenate([u, residual.phase_start(block, leaked)])
+
+    vectors = [(start_vector(values), provenance) for values, provenance in starts]
+    if explore and free.size:
+        best_start = min(vectors, key=lambda item: float(np.sum(residual(item[0]) ** 2)))
+        found = minimize(lambda z: float(np.sum(residual(z) ** 2)), best_start[0], method="Nelder-Mead",
+                         bounds=list(zip(lb, ub)), options={"maxfev": 40 * (free.size + 1), "xatol": 1e-6,
+                                                            "fatol": 1e-12})
+        values = residual.values(found.x)
+        vectors.append((start_vector(values), "explore"))
+    best = None
+    for vector, provenance in vectors:
+        vector = np.clip(vector, lb, ub)
+        result = least_squares(residual, vector, jac="2-point", method="trf", bounds=(lb, ub), x_scale=1.0,
+                               diff_step=DIFF_STEP, xtol=1e-12, ftol=1e-14, gtol=1e-14, max_nfev=max_nfev)
+        if best is None or result.cost < best[0].cost:
+            best = (result, provenance)
+    assert best is not None
+    result, provenance = best
+    values = residual.values(result.x)
+    block, leaked, defect = residual.block(values)
+    phases = result.x[free.size:free.size + n_phases]
+    names = [knobs[i].name for i in free] + [f"z {name}" for name in phase_names] + ["global phase"]
+    history = np.array(residual.history, dtype=float).reshape(-1, 2)
+    return FitOutcome(values=values, phases=np.asarray(phases, dtype=float), global_phase=float(result.x[-1]),
+                      block=block, leaked=leaked, defect=defect, cost=float(2 * result.cost), solves=residual.solves,
+                      seed=provenance, history=history, jacobian=np.asarray(result.jac), names=names,
+                      seconds=time.perf_counter() - began)
+
+
+def report(
+    outcome: FitOutcome,
+    *,
+    name: str,
+    qubits: tuple[str, ...],
+    knobs: Sequence[ResolvedKnob],
+    ideal: np.ndarray,
+    z_bits: np.ndarray,
+    phase_names: Sequence[str],
+    options: dict[str, Any],
+    frame: Any,
+    cutoff: int | None,
+    condition_limit: float = 1e6,
+) -> GateCalibration:
+    """Build the report of a fit."""
+    knob_results = {}
+    at_bound = False
+    for knob, value in zip(knobs, outcome.values):
+        tolerance = 1e-6 * knob.scale
+        hit = (not knob.fixed) and (value - knob.lower < tolerance or knob.upper - value < tolerance)
+        at_bound = at_bound or hit
+        knob_results[knob.name] = KnobResult(initial=knob.initial, value=float(value), lower=knob.lower,
+                                             upper=knob.upper, scale=knob.scale, at_bound=bool(hit),
+                                             change=float((value - knob.initial) / knob.scale), fixed=knob.fixed)
+    z = np.exp(1j * (z_bits @ outcome.phases))
+    block = z[:, None] * outcome.block
+    product = ideal.conj().T @ block
+    generator, distance = error_generator(product)
+    leakage = np.real(np.sum(np.conj(outcome.leaked) * outcome.leaked, axis=0))
+    receipt = _identifiability_receipt(outcome.jacobian, outcome.names, np.ones(len(outcome.names)))
+    fidelity = average_fidelity(block, ideal)
+    if at_bound:
+        status = "at_bound"
+    elif receipt["rank_deficient"] or receipt["jacobian_condition_number"] > condition_limit:
+        status = "weak_direction"
+    elif 1.0 - fidelity < 10 * outcome.defect:
+        status = "solver_floor"
+    else:
+        status = "ok"
+    return GateCalibration(
+        name=name, qubits=qubits, knobs=knob_results,
+        free_z={q: float(np.angle(np.exp(1j * phi))) for q, phi in zip(phase_names, outcome.phases)},
+        global_phase=float(np.angle(np.exp(1j * outcome.global_phase))), fidelity=fidelity,
+        leakage=float(np.mean(leakage)), leakage_per_input=leakage, cost=outcome.cost, solves=outcome.solves,
+        seed=outcome.seed, history=outcome.history, block=block, ideal=ideal, error_generator=generator,
+        worst_case_distance=distance, identifiability=receipt, unitarity_defect=float(outcome.defect),
+        options=dict(options), frame=frame, cutoff=cutoff, status=status, seconds=outcome.seconds,
+    )
