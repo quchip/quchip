@@ -198,6 +198,15 @@ This file records notable user-visible changes to quchip.
 
 #### New features
 
+- `VNA(chip).resonances()` returns the poles of the weak-probe response on
+  the routes of `VNA.sweep()`: for each pole, its lab-frame frequency, its
+  response linewidth `κ = −2 Re λ`, its composition over the modes, the
+  dominant label and the residue of each S entry. `scattering(frequencies)`
+  rebuilds the swept response from the poles, and `dark` marks poles that the
+  selected ports do not see. A defective drift at an exceptional point raises.
+  Frequencies and linewidths have JAX derivatives.
+  ([#192](https://github.com/quchip/quchip/issues/192),
+  [#208](https://github.com/quchip/quchip/pull/208))
 - `eliminate_spectators(chip, keep)` reduces a chip to the kept devices, one
   `eliminate()` step at a time, and returns every step. Its default order keeps
   the operators of kept devices small under `local=True`. A spectator waits

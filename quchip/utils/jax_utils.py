@@ -7,8 +7,9 @@ JAX is a required dependency of quchip (see ``pyproject.toml``).
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
+import jax
 from jax.core import Tracer
 from jax.tree_util import tree_leaves
 import jax.numpy as jnp
@@ -29,6 +30,36 @@ def contains_tracer(pytree: Any) -> bool:
         if isinstance(leaf, Tracer):
             return True
     return False
+
+
+def raise_if(invalid: Any, error: Callable[..., Exception], *values: Any) -> None:
+    """Raise ``error(*values)`` when ``invalid`` holds, also inside ``jax.jit``.
+
+    A traced check runs through :func:`jax.experimental.io_callback`, which
+    also survives callers that request only a gradient. The values reach
+    ``error`` as concrete arrays there. Inside ``jit``, the exception reaches
+    the caller as a JAX runtime error with the same message, so only an eager
+    check raises the type that ``error`` returns.
+
+    Parameters
+    ----------
+    invalid : bool or array_like
+        Scalar condition, concrete or traced.
+    error : callable
+        Returns the exception for the concrete ``values``.
+    *values : array_like
+        Diagnostic values for the exception.
+    """
+    def check(flag: Any, *concrete: Any) -> None:
+        if bool(flag):
+            raise error(*concrete)
+
+    if contains_tracer((invalid, values)):
+        jax.experimental.io_callback(
+            check, None, jax.lax.stop_gradient(invalid), *(jax.lax.stop_gradient(value) for value in values),
+        )
+    else:
+        check(invalid, *values)
 
 
 def array_namespace(array: Any) -> Any:

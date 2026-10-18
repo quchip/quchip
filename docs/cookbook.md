@@ -15,6 +15,7 @@ Frequencies are in GHz, times in ns, temperatures in mK and decay rates in
 | Related pulse experiments | `sequence.simulate_batch()` |
 | Steady-state populations or fields | `chip.steadystate()` |
 | Small-signal S parameters | `VNA.sweep()` |
+| The frequency and linewidth of each resonance | `VNA(chip).resonances()` |
 | A driven response with receiver noise | `VNA.measure()` |
 | Outcomes from a saved quantum state | `result.measure()` |
 | Bare parameters that meet dressed targets | `fit_a_dress()` |
@@ -122,6 +123,28 @@ response timescale. They do not provide a fit-error bound.
 This route rejects pumps, thermal inputs and stationary solver options.
 Use scheduled coherent inputs when the preparation, delay or acquisition
 window matters. `VNA.measure()` continues to describe stationary measurements.
+
+## Read the resonances of a readout
+
+The poles of the weak-probe response give each resonance without a fit:
+
+```python
+from quchip import VNA
+
+resonances = VNA(readout_chip).resonances()
+qubit = resonances["q"]
+frequency, linewidth = qubit.frequency, qubit.linewidth  # GHz and 1/ns
+rebuilt = resonances.scattering(frequencies)
+```
+
+A label selects the pole whose composition that mode dominates; an index also
+works. The linewidth `κ = −2 Re λ` is the full response width in angular
+units. It includes port loss, internal loss, Purcell decay and dephasing.
+`rebuilt` equals `VNA(readout_chip).sweep(frequencies).matrix`, reference-plane
+transfers included. `resonances.dark` marks poles that no selected port sees.
+The call covers the weak-probe routes of `VNA.sweep()` and raises for pumps.
+Inside `jax.jit`, select poles by index. Frequencies and linewidths have JAX
+derivatives; the composition and the residues do not.
 
 ## Change parameters without rebuilding the example
 

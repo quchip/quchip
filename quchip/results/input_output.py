@@ -8,7 +8,7 @@ from typing import Any, Mapping
 
 import numpy as np
 
-from quchip.utils.jax_utils import is_jax_array, select_array_module
+from quchip.utils.jax_utils import concrete_array_module, contains_tracer, is_jax_array, select_array_module
 
 from quchip.utils.labeling import resolve_label
 
@@ -127,6 +127,231 @@ class SParameterResult:
 
     def __array__(self) -> np.ndarray:
         return np.asarray(self.matrix)
+
+
+# A pole is dark when its residues are below this fraction of their scale.
+_DARK_RESIDUE = 1e-10
+
+
+@dataclass(frozen=True)
+class ResonanceResult:
+    """Poles of the weak-probe response between selected ports.
+
+    The weak-probe routes of :meth:`VNA.sweep` give the response
+    ``S(f) = S_d + C (-i 2π f - A)^-1 (-C† S_d)`` with the drift
+    ``A = -iH - C†C/2``. Each eigenvalue ``λ_p`` of ``A`` is a pole of every S
+    entry, at ``f_p = -Im λ_p / 2π`` with the response linewidth
+    ``κ_p = -2 Re λ_p``. In the convention of :class:`SParameterResult`,
+
+    ``S(f) = T(f) (D + Σ_p r_p / (f - z_p))``,  ``z_p = f_p + i κ_p / 4π``,
+
+    where ``D`` is :attr:`direct`, the conjugate of ``S_d``, and ``T(f)``
+    holds the transfers of the port reference planes.
+    :meth:`scattering` evaluates this sum. The poles are in increasing
+    frequency. Iteration, an index, or the label of a pole's dominant mode
+    gives one :class:`Resonance`.
+
+    ``κ_p`` is the full width at half maximum of ``|S - S_d|²`` near an
+    isolated pole, in angular units. It includes port loss, internal loss,
+    Purcell decay and dephasing, so it can exceed the decay rate of the
+    mode's population. ``f_p`` is the frequency of the open system, which can
+    differ from the closed dressed frequency of :meth:`Chip.freq`.
+
+    Attributes
+    ----------
+    frequencies : array_like, shape (poles,)
+        Pole frequencies ``f_p`` in GHz, in the lab frame.
+    linewidths : array_like, shape (poles,)
+        Response linewidths ``κ_p`` in 1/ns.
+    poles : array_like, shape (poles,)
+        Complex poles ``z_p`` in GHz.
+    mode_labels : tuple of str
+        Modes of :attr:`composition`: the harmonic modes, or the devices whose
+        first excited levels span the one-excitation states, then the poles
+        that ``eliminate()`` retained.
+    ports : tuple of str
+        Port labels in the output and input order of :attr:`residues`.
+    route : SolveRoute
+        The weak-probe route and the reason for it.
+    """
+
+    frequencies: Any
+    linewidths: Any
+    poles: Any
+    mode_labels: tuple[str, ...]
+    ports: tuple[str, ...]
+    route: Any
+    _eigensystem: Any = field(repr=False)
+    _problem: Any = field(repr=False)
+    _transfers: Any = field(repr=False)
+
+    @property
+    def composition(self) -> Any:
+        """Weight of each mode in each pole, shape ``(poles, modes)``.
+
+        Row p is ``|v_pk|² / Σ_k |v_pk|²`` for the right eigenvector ``v_p`` of
+        the drift, in :attr:`mode_labels` order. It describes the pole in the
+        mode basis. It is not an occupation probability, because the drift is
+        not normal in general. A JAX derivative of it raises, because JAX does
+        not differentiate the eigenvectors of a general matrix.
+        """
+        vectors, _ = self._eigensystem.modes()
+        xp = concrete_array_module(vectors)
+        weights = xp.abs(vectors.T) ** 2
+        return weights / xp.sum(weights, axis=1, keepdims=True)
+
+    @property
+    def dominant(self) -> tuple[str, ...]:
+        """Mode label with the largest weight in each pole.
+
+        The labels need concrete values, so inside ``jax.jit`` they raise.
+        Select poles by index there.
+        """
+        vectors = self._eigensystem.vectors
+        if contains_tracer(vectors):
+            raise ValueError("The dominant labels need concrete values. Inside jax.jit, select poles by index.")
+        weights = np.abs(np.asarray(vectors)) ** 2
+        return tuple(self.mode_labels[int(k)] for k in np.argmax(weights, axis=0))
+
+    @property
+    def direct(self) -> Any:
+        """Instantaneous scattering ``S_d`` between the ports, shape ``(ports, ports)``."""
+        problem = self._problem
+        indices = list(problem.plane_indices)
+        scattering = problem.scattering
+        xp = concrete_array_module(scattering)
+        return xp.conj(xp.asarray(scattering, dtype=complex)[xp.ix_(indices, indices)])
+
+    @property
+    def residues(self) -> Any:
+        """Residue ``r_p`` of each S entry at each pole, shape ``(poles, ports, ports)``.
+
+        The entries are ``[pole, output, input]``, before the reference-plane
+        transfers. A JAX derivative of them raises, as for :attr:`composition`.
+        """
+        return self._residues(*self._eigensystem.modes())
+
+    @property
+    def dark(self) -> Any:
+        """Whether the selected ports do not see each pole, shape ``(poles,)``.
+
+        A pole is dark when its residues are below ``1e-10`` of
+        ``|C v_p| |u_p† C† S_d| / 2π``, for the right and left eigenvectors
+        ``v_p`` and ``u_p``. Its eigenvalue stays a pole of the drift, for
+        example of a mode that only a hidden loss channel reaches.
+        """
+        system = self._eigensystem
+        problem = self._problem
+        xp = concrete_array_module(system.vectors, problem.couplings, problem.scattering)
+        indices = list(problem.plane_indices)
+        couplings = xp.asarray(problem.couplings, dtype=complex)
+        sources = -couplings.conj().T @ xp.asarray(problem.scattering, dtype=complex)[:, indices]
+        residues = self._residues(system.vectors, system.inverse)
+        scale = (xp.linalg.norm(couplings[indices]) * xp.linalg.norm(sources) / (2.0 * np.pi)
+                 * xp.linalg.norm(system.vectors, axis=0) * xp.linalg.norm(system.inverse, axis=1))
+        return xp.max(xp.abs(residues), axis=(1, 2)) <= _DARK_RESIDUE * scale
+
+    def scattering(self, frequencies: Any) -> Any:
+        """Return ``S(f)`` from the poles, shape ``(*frequencies.shape, ports, ports)``.
+
+        It includes the reference-plane transfers, so on the weak-probe route
+        it equals :meth:`VNA.sweep` at the same frequencies.
+
+        Parameters
+        ----------
+        frequencies : scalar or array_like
+            Probe frequencies in GHz.
+        """
+        residues = self.residues
+        xp = concrete_array_module(residues, frequencies, self.poles)
+        values = xp.asarray(frequencies, dtype=float)
+        flat = xp.reshape(values, (-1,))
+        outbound, inbound = self._transfers(flat)
+        terms = residues[None] / (flat[:, None, None, None] - self.poles[None, :, None, None])
+        core = self.direct[None] + xp.sum(terms, axis=1)
+        matrix = xp.conj(outbound[:, :, None] * inbound[:, None, :]) * core
+        return xp.reshape(matrix, (*values.shape, len(self.ports), len(self.ports)))
+
+    def _residues(self, vectors: Any, inverse: Any) -> Any:
+        problem = self._problem
+        xp = concrete_array_module(vectors, problem.couplings, problem.scattering)
+        indices = list(problem.plane_indices)
+        couplings = xp.asarray(problem.couplings, dtype=complex)
+        sources = -couplings.conj().T @ xp.asarray(problem.scattering, dtype=complex)[:, indices]
+        rows = (couplings[indices] @ vectors).T
+        columns = inverse @ sources
+        # 1/(-i 2π f - λ) = (i/2π)/(f - z); the public convention conjugates the residue.
+        return xp.conj(1j / (2.0 * np.pi) * rows[:, :, None] * columns[:, None, :])
+
+    def __len__(self) -> int:
+        return len(self.mode_labels)
+
+    def __iter__(self):
+        return (Resonance(self, index) for index in range(len(self)))
+
+    def __getitem__(self, key: Any) -> "Resonance":
+        """Return the pole at an index, or the one pole that a mode label dominates."""
+        if isinstance(key, (int, np.integer)):
+            if not -len(self) <= key < len(self):
+                raise IndexError(f"Pole index {key} is out of range for {len(self)} poles.")
+            return Resonance(self, int(key) % len(self))
+        label = resolve_label(key)
+        matches = [index for index, name in enumerate(self.dominant) if name == label]
+        if len(matches) != 1:
+            raise KeyError(f"{len(matches)} poles have the dominant mode {label!r}. Dominant modes: "
+                           f"{list(self.dominant)}. Select the pole by index.")
+        return Resonance(self, matches[0])
+
+
+@dataclass(frozen=True)
+class Resonance:
+    """One pole of a :class:`ResonanceResult`.
+
+    Attributes
+    ----------
+    result : ResonanceResult
+        The poles that hold this one.
+    index : int
+        Position of the pole in increasing frequency.
+    """
+
+    result: ResonanceResult = field(repr=False)
+    index: int
+
+    @property
+    def frequency(self) -> Any:
+        """Pole frequency in GHz."""
+        return self.result.frequencies[self.index]
+
+    @property
+    def linewidth(self) -> Any:
+        """Response linewidth κ in 1/ns."""
+        return self.result.linewidths[self.index]
+
+    @property
+    def pole(self) -> Any:
+        """Complex pole ``f + iκ/4π`` in GHz."""
+        return self.result.poles[self.index]
+
+    @property
+    def dominant(self) -> str:
+        """Mode label with the largest weight."""
+        return self.result.dominant[self.index]
+
+    @property
+    def composition(self) -> dict[str, Any]:
+        """Weight of each mode, keyed by mode label."""
+        return dict(zip(self.result.mode_labels, self.result.composition[self.index]))
+
+    @property
+    def residues(self) -> Any:
+        """Residue of each S entry, shape ``(ports, ports)``, as ``[output, input]``."""
+        return self.result.residues[self.index]
+
+    @property
+    def dark(self) -> Any:
+        """Whether the selected ports do not see this pole."""
+        return self.result.dark[self.index]
 
 
 @dataclass(frozen=True)

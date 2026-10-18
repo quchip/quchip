@@ -140,6 +140,8 @@ from quchip.results import (
     SteadyStateResult,
     MeanFieldResponseResult,
     SParameterResult,
+    ResonanceResult,
+    Resonance,
     OutputCorrelationResult,
     OutputSpectrumResult,
 )
@@ -273,6 +275,8 @@ __all__ = [
     "VNAMeasurementStatistics",
     "VNAMeasurementSamples",
     "SParameterResult",
+    "ResonanceResult",
+    "Resonance",
     "OutputSpectrumResult",
     "OutputCorrelationResult",
     "PartitionedSimulationResult",

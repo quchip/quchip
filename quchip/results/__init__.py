@@ -24,6 +24,8 @@ from quchip.results.input_output import (
     OutputCorrelationResult,
     OutputSpectrumResult,
     MeanFieldResponseResult,
+    Resonance,
+    ResonanceResult,
     SParameterResult,
 )
 
@@ -49,6 +51,8 @@ __all__ = [
     "SteadyStateBatchResult",
     "MeanFieldResponseResult",
     "SParameterResult",
+    "ResonanceResult",
+    "Resonance",
     "OutputSpectrumResult",
     "OutputCorrelationResult",
     "PartitionedSimulationResult",
