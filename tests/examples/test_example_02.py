@@ -74,3 +74,14 @@ def test_executed_outputs_record_feedline_and_excitation_space_checks() -> None:
     # The exact 24-state solve agrees with the hopping propagator to round-off.
     assert _printed_value(output, "Maximum population difference") < 1e-10
     assert "Lossy ring: mesolve on 25 states" in output
+
+
+def test_executed_pathways_give_the_exchange_shift() -> None:
+    """The q1 shift of the second step is the second-order exchange through q2."""
+    output = _stream_output(nbformat.read(EXAMPLE_IPYNB, as_version=4))
+    pathways = re.findall(r"^(\(\d+(?:, \d+)*\)): (\S+) MHz$", output, re.MULTILINE)
+    assert [state for state, _ in pathways] == ["(0, 0, 1)"]
+    # The first step lowers q2 by g²/Δ, so the second step sees the detuning Δ - g²/Δ.
+    coupling, detuning = 0.012, 0.35
+    shifted_detuning = detuning - coupling**2 / detuning
+    assert abs(float(pathways[0][1]) * 1e-3 + coupling**2 / shifted_detuning) < 5e-7

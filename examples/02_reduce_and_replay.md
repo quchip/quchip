@@ -220,6 +220,26 @@ notes:
 
 </details>
 
+`pathways()` attributes one element of the retained Hamiltonian to the
+virtual states of the chip that the step reduces. The second step shifts
+`q1` through one state, with the excitation on `q2`. Each state lists the
+levels of `q0`, `q1` and `q2`.
+
+```python
+for state, contribution in patch.steps[1].pathways({"q1": 1}):
+    print(f"{state}: {1e3 * contribution.real:.3f} MHz")
+```
+
+<!-- executed-output:start -->
+
+Output:
+
+```text
+(0, 0, 1): -0.412 MHz
+```
+
+<!-- executed-output:end -->
+
 To remove a specific device directly, use
 `eliminate(chip, "q3", method="sw")`, then inspect the returned `.chip` and
 `.describe()`. `method="exact"` uses the kept block of the diagonalized model
@@ -461,8 +481,11 @@ space from the initial state and every retained operator, then solves in it
 without an excitation cutoff.
 
 Couple 24 identical transmons in a ring at 10 MHz and start with one
-excitation on `q0`. `compact_state()` prepares this bare state without
-building the 3²⁴-state product space.
+excitation on `q0`. `compact_state(..., dressed=False)` prepares this bare
+state without building the 3²⁴-state product space. Without
+`dressed=False`, the label names a dressed eigenstate. The identical
+transmons share every eigenstate, so that state would spread over the ring
+and be stationary, and quchip warns about its small assignment overlap.
 
 ```python
 ring_size = 24
@@ -477,7 +500,8 @@ ring_couplings = [
 ring = Chip(ring_qubits, ring_couplings, approximation=RWA())
 
 ring_times = np.linspace(0.0, 100.0, 201)
-ring_result = QuantumSequence(ring).simulate(tlist=ring_times, initial_state=ring.compact_state({"q0": 1}))
+bare_start = ring.compact_state({"q0": 1}, dressed=False)
+ring_result = QuantumSequence(ring).simulate(tlist=ring_times, initial_state=bare_start)
 
 for name, result in (("Driven chain", full_result), ("Idle ring", ring_result)):
     space = result.stats["excitation_reduction"]
@@ -535,7 +559,7 @@ transmon, the master equation runs on 25 states:
 ```python
 lossy_ring = ring.with_params({f"q{index}.T1": 20_000.0 for index in range(ring_size)})
 lossy_result = QuantumSequence(lossy_ring).simulate(
-    tlist=ring_times, initial_state=lossy_ring.compact_state({"q0": 1}),
+    tlist=ring_times, initial_state=lossy_ring.compact_state({"q0": 1}, dressed=False),
 )
 
 print(f"Lossy ring: {lossy_result.solver} on {lossy_result.stats['excitation_reduction']['dimension']} states")
