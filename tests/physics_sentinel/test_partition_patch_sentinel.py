@@ -47,8 +47,8 @@ def test_patch_plus_partition_reproduces_full_readout_bank():
 
     # hops=1 from {q0, q1}: active = {q0, r0, q1, r1}; bus is 2 hops, spec 3.
     patch = seq.active_patch(hops=1)
-    assert set(patch.eliminated_labels) == {"bus", "spec"}
-    assert patch.eliminated_labels[0] == "spec"  # farthest first
+    # spec waits for bus, which links it to r0, the kept device nearer to spec in frequency.
+    assert patch.eliminated_labels == ("bus", "spec")
 
     # e_ops takes built operators (chip.e_ops(...)), not raw name strings —
     # decompose_eops (engine/observables.py) expects the former, and

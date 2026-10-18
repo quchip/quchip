@@ -25,6 +25,7 @@ label here and you need not import this module directly.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Iterator
 from dataclasses import replace
 from functools import reduce
@@ -320,20 +321,67 @@ def _hamiltonian_interactions(chip: "Chip", resolution: Any, approximation: Any)
     return _resolved_energy_interactions(chip, resolution, approximation, effective_terms=static)
 
 
-def _bare_transition_frequencies(chip: "Chip", resolution: Any, labels: tuple[str, ...],
-                                 approximation: Any) -> dict[str, Any]:
-    """Read single-excitation diagonal gaps from local terms, without network terms or a full-space matrix."""
+def _one_excitation_elements(chip: "Chip", resolution: Any, labels: tuple[str, ...], approximation: Any,
+                             *, pairs: bool = False) -> tuple[dict[str, Any], dict[tuple[str, str], Any]]:
+    """Read single-excitation gaps and exchange elements from local terms, without network terms or a full-space matrix.
+
+    The gap of a device is ``E(1) - E(0)`` on the diagonal of the Hamiltonian,
+    as the SW denominators read it. With ``pairs``, the element of two devices
+    ``(a, b)`` in chip order is ``<1_a|H|1_b>``, summed over the terms on both.
+    Values are in GHz.
+    """
     frequencies = {label: resolution.bases[label].energies[1] - resolution.bases[label].energies[0]
                    for label in labels}
+    elements: dict[tuple[str, str], Any] = {}
     indices = {chip.device_index(label): label for label in labels}
     for operator, support in _hamiltonian_interactions(chip, resolution, approximation):
         dims = tuple(resolution.dims[index] for index in support)
-        for axis, index in enumerate(support):
+        rows = {index: prod(dims[axis + 1:]) for axis, index in enumerate(support)}
+        for index in support:
             if index in indices:
-                row = prod(dims[axis + 1:])
+                row = rows[index]
                 label = indices[index]
                 frequencies[label] = frequencies[label] + _real(operator[row, row] - operator[0, 0])
-    return frequencies
+        if pairs:
+            for first, second in combinations(sorted(index for index in support if index in indices), 2):
+                key = (indices[first], indices[second])
+                elements[key] = elements.get(key, 0.0) + operator[rows[first], rows[second]]
+    return frequencies, elements
+
+
+def _bare_transition_frequencies(chip: "Chip", resolution: Any, labels: tuple[str, ...],
+                                 approximation: Any) -> dict[str, Any]:
+    """Read single-excitation diagonal gaps from local terms, without network terms or a full-space matrix."""
+    return _one_excitation_elements(chip, resolution, labels, approximation)[0]
+
+
+# A transported operator whose dense matrix needs this many bytes or more makes a local step warn.
+_TRANSPORT_WARNING_BYTES = 2**28
+
+
+def _transport_note(chip: "Chip", mode_label: str) -> str:
+    """Describe the widest operator support after a local step, and warn when its dense matrix is large.
+
+    An operator on a device passes through every captured map that it meets
+    (PHYSICS.md §10.7), so this support sets the size of the drives,
+    observables and channels on that device.
+    """
+    dims = dict(zip((d.label for d in chip.devices), chip.authored_dims))
+    supports = {d.label: retained_support(chip, (d.label,)) for d in chip.devices}
+    label = max(supports, key=lambda name: prod(dims[x] for x in supports[name]))
+    support = supports[label]
+    states = prod(dims[x] for x in support)
+    if 16 * states**2 >= _TRANSPORT_WARNING_BYTES:
+        # Hops: _transport_note -> reduce_device -> reduce_local -> eliminate -> caller.
+        warnings.warn(
+            f"eliminate({mode_label!r}, local=True): an operator on {label!r} now acts on {len(support)} "
+            f"devices in retained coordinates ({states:,} states, {16 * states**2 / 2**20:,.0f} MiB as a dense "
+            "matrix). Drives, observables and channels on it pass through these maps. Another elimination "
+            "order can keep it smaller; eliminate_spectators() chooses one.",
+            UserWarning, stacklevel=5,
+        )
+    return (f"An operator on {label!r} acts on {list(support)} in retained coordinates ({states} states), "
+            "the widest of any device.")
 
 
 def _local_dressed_transition(chip: "Chip", resolution: Any, mode_label: str, lowering: Any,
@@ -1326,6 +1374,8 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
         edges=exchange_by_pair if is_multi else None,
         notes=notes,
     )
+    if local:
+        notes.append(_transport_note(final, mode_label))
     return EliminationResult(chip=final, effective_params=effective_params, validity=validity,
                              notes=notes, mapping=mapping)
 

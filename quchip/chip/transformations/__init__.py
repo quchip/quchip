@@ -14,7 +14,12 @@ the shipped handlers (below).
 
 from __future__ import annotations
 
-from quchip.chip.transformations.active_patch import ActivePatchResult, active_patch
+from quchip.chip.transformations.active_patch import (
+    ActivePatchResult,
+    SpectatorEliminationResult,
+    active_patch,
+    eliminate_spectators,
+)
 from quchip.chip.transformations.dispatch import (
     EliminationTarget,
     eliminate,
@@ -37,6 +42,8 @@ __all__ = [
     "EliminationResult",
     "ReductionMap",
     "eliminate",
+    "eliminate_spectators",
+    "SpectatorEliminationResult",
     "EliminationTarget",
     "register_elimination_target",
     "register_reduction_method",
