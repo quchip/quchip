@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from quchip.approximations import Approximation
     from quchip.chip.chip import Chip
     from quchip.control.drive import BaseDrive
+    from quchip.engine.excitation import ExcitationStructure
     from quchip.engine.ir import EngineResult
     from quchip.engine.sectors import SectorModel
 
@@ -422,20 +423,22 @@ class ChipAnalysis:
         cache like the full eigensystem.
         """
         from quchip.cutoff import active_cutoff
-        from quchip.engine.excitation import excitation_structure
+        from quchip.engine.assembly import _resolve_system
+        from quchip.engine.excitation import excitation_structure, round_off_advisory
         from quchip.engine.sectors import SectorModel
 
         signature = self._analysis_signature()
         if scoped_hit(self._sector_cache, signature):
             return _reported(self._sector_cache[2], _advise)
         chip = self._chip
-        from quchip.engine.assembly import _resolve_system
-
         resolution = _resolve_system(chip, chip.backend) if _local_resolution is None else _local_resolution
         advisories: list[str] = []
-        model = (SectorModel(chip, resolution=resolution, advisories=advisories)
-                 if active_cutoff(chip) is not None
-                 or excitation_structure(chip, chip.approximation, resolution=resolution).conserves else None)
+        structure = excitation_structure(chip, chip.approximation, resolution=resolution)
+        model = None
+        if active_cutoff(chip) is not None or structure.conserves:
+            model = SectorModel(chip, resolution=resolution, advisories=advisories)
+        elif (advisory := round_off_advisory(structure)) is not None:
+            advisories.append(advisory)
         self._sector_cache = scoped_entry(signature, (model, advisories), traced=model is not None and model.traced)
         return _reported((model, advisories), _advise)
 
@@ -505,16 +508,8 @@ class ChipAnalysis:
         total : int
             Largest total energy-level index of the queried labels.
         """
-        from quchip.engine.excitation import sector_size
-
         model = self._sector_model()
-        if model is None:
-            return self._chip.total_dim
-        dims = model.dims
-        if model.classes is None:
-            return max(sector_size(dims, level_sum) for level_sum in range(total + 1))
-        return max(sum(sector_size(dims, level_sum) for level_sum in group)
-                   for group in model.classes if group[0] <= total)
+        return self._chip.total_dim if model is None else model.structure.largest_block(total)
 
     def _ground_ket(self, approximation: "Approximation") -> Any | None:
         """Return the all-ground-labeled lab-frame eigenstate for ``approximation``.
@@ -1116,6 +1111,37 @@ class ChipAnalysis:
         index_a, _ = self._chip._resolve_device_index(device_a)
         index_b, _ = self._chip._resolve_device_index(device_b)
         return _kerr_coefficient(index_a, index_b, self._semantic_dims(), self._energy_lookup())
+
+    def excitation_structure(self) -> ExcitationStructure:
+        """Return the excitation-number structure of the chip's static model.
+
+        The record states whether the static model conserves the total
+        excitation number ``N``, the isolated energy-level index summed over
+        devices. It gives the changes of ``N`` of each coupling, retained term,
+        generated port pair, port, drive and collapse channel under the chip's
+        approximation, and the largest entry of each term that breaks
+        conservation. :meth:`~quchip.engine.excitation.ExcitationStructure.largest_block`
+        gives the largest matrix that dressed queries diagonalize. Each call
+        reads the chip as it is, and the record keeps no reference to it.
+
+        Returns
+        -------
+        ExcitationStructure
+            Complete record for the chip's approximation.
+
+        Examples
+        --------
+        >>> from quchip import DuffingTransmon, Capacitive, Chip, RWA
+        >>> q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
+        >>> q1 = DuffingTransmon(freq=5.2, anharmonicity=-0.22, levels=3, label="q1")
+        >>> chip = Chip([q0, q1], couplings=[Capacitive(q0, q1, g=0.02)], approximation=RWA())
+        >>> structure = chip.excitation_structure()
+        >>> structure.conserves, structure.largest_block(2)
+        (True, 3)
+        """
+        from quchip.engine.excitation import excitation_structure
+
+        return excitation_structure(self._chip, self._chip.approximation, complete=True)
 
     def kerr_matrix(self) -> KerrMatrix:
         """Return the dressed self-Kerr and cross-Kerr matrix in GHz.

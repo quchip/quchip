@@ -44,6 +44,7 @@ from quchip.utils.values import TracedKey, scoped_entry, scoped_hit
 
 if TYPE_CHECKING:
     from quchip.chip.partition import PartitionResult
+    from quchip.engine.excitation import ExcitationStructure
     from quchip.engine.ir import EngineResult, FrameSpec, SolveProblem
     from quchip.results.results import SimulationBatchResult, SimulationResult
     from quchip.results.steady_state import SteadyStateResult
@@ -1391,6 +1392,15 @@ class Chip:
     # interaction strength equals the dressed dispersive (cross-Kerr) shift.
     static_zz = dispersive_shift
     zz = dispersive_shift
+
+    def excitation_structure(self) -> "ExcitationStructure":
+        """Return the excitation-number structure of the static model.
+
+        The record shows whether the static model conserves the total
+        excitation number, which terms break it, and the block size that
+        dressed queries diagonalize. See :meth:`ChipAnalysis.excitation_structure`.
+        """
+        return self._analysis.excitation_structure()
 
     def kerr_matrix(self) -> KerrMatrix:
         """Return the labeled dressed self-Kerr and cross-Kerr matrix in GHz.

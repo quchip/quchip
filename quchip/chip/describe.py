@@ -65,6 +65,27 @@ def _section(title: str, rule: str = "─") -> list[str]:
     return [title, rule * len(title)]
 
 
+def _sector_line(chip: "Chip") -> str:
+    """Summarize the excitation-number verdict and the largest dressed block for labels with N <= 2."""
+    import numpy as np
+
+    from quchip.engine.excitation import format_changes
+
+    if chip.backend.array_module is np and contains_tracer(dict(chip.parameters)):
+        return "not available while JAX traces a QuTiP chip"
+    structure = chip.excitation_structure()
+    block = structure.largest_block(2)
+    if structure.cutoff is not None:
+        classes = ", ".join(str(group) for group in structure.classes(structure.cutoff))
+        return f"cutoff classes {classes}; dressed queries with N <= 2 diagonalize at most {block} states"
+    if structure.conserves:
+        return f"N conserved; dressed queries with N <= 2 diagonalize at most {block} states"
+    breaking = ", ".join(f"{term.label} ({format_changes(term.changes)})" for term in structure.breaking)
+    verdict = "N not proven conserved" if any(term.changes is None for term in structure.breaking) else (
+        "N not conserved")
+    return f"{verdict} by {breaking}; dressed queries diagonalize all {block} states"
+
+
 def describe_chip(chip: "Chip") -> str:
     """Sectioned plain-text report of a chip's composition. See :meth:`Chip.describe`."""
     lines: list[str] = []
@@ -91,6 +112,7 @@ def describe_chip(chip: "Chip") -> str:
         lines.append(
             f"Hilbert  : {' x '.join(str(n) for n in dims)} = {chip.total_dim} levels"
         )
+        lines.append(f"Sectors  : {_sector_line(chip)}")
 
     lines.append("")
     lines += _section(f"Devices ({len(chip.devices)})")

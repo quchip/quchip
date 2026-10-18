@@ -15,6 +15,8 @@ Responsibilities
   their :class:`~quchip.engine.ir.ScalarModulation` signal programs. It applies
   2π, rotating-frame subtraction, RWA band decomposition (Jaynes & Cummings
   1963; Gambetta et al., *PRA* **74**, 042318 (2006)).
+* :mod:`quchip.engine.excitation` reads the excitation-number structure of a
+  resolved chip into an :class:`~quchip.engine.excitation.ExcitationStructure`.
 * :mod:`quchip.engine.observables` decomposes dict-form ``e_ops`` into
   solver-ready bands and, after the solve, demodulates expectations back into
   the lab/control frame.

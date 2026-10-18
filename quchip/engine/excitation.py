@@ -218,23 +218,95 @@ def authored_excitation_changes(
                 return None
         elif contains_tracer(node):
             return None
-        records = [bases[label] for label in support]
-        if contains_tracer(tuple(record.energy_vectors for record in records)):
-            return None
-        from quchip.backend._memory import require_memory
-
-        dimension = prod(record.native_dim for record in records)
-        require_memory(16 * 5 * dimension**2, task="Excitation-number proof on local support",
-                       remedy="Use factored operators or declare their excitation_changes.")
-        with jax.ensure_compile_time_eval(), backend.eager_operators():
-            matrix = backend.to_array(materialize_expr(node, backend, bindings=bindings, local_bases=bases))
-            vectors = records[0].energy_vectors
-            for record in records[1:]:
-                vectors = jnp.kron(vectors, record.energy_vectors)
-            dims = tuple(int(record.energy_vectors.shape[1]) for record in records)
-            return concrete_excitation_changes(matrix, dims, vectors)
+        energy = _energy_matrix(node, support, backend, bases, bindings)
+        return None if energy is None else concrete_excitation_changes(*energy)
 
     return changes(operator, labels)
+
+
+def largest_changing_entry(
+    operator: Any,
+    labels: tuple[str, ...],
+    backend: Any,
+    bases: Mapping[str, Any] | None,
+) -> float | None:
+    """Return the largest magnitude of an entry of ``operator`` that changes ``N``.
+
+    The operator is read as one complete matrix in the captured energy bases,
+    in its own units. ``None`` means that a basis is missing, that the matrix
+    would not fit in memory, or that the operator, its parameters or the
+    energy vectors are traced.
+
+    Parameters
+    ----------
+    operator : PhysicsExpr or backend operator
+        Operator on ``labels`` in their authored coordinates.
+    labels : tuple[str, ...]
+        Ordered device labels supporting ``operator``.
+    backend : Backend
+        Backend used to materialize ``operator``.
+    bases : mapping or None
+        Captured basis records keyed by device label.
+    """
+    if bases is None or any(label not in bases for label in labels):
+        return None
+    bindings = _bound_values(operator) if isinstance(operator, PhysicsExpr) else None
+    if contains_tracer((operator, bindings)):
+        return None
+    from quchip.backend._memory import fits_memory
+
+    if not fits_memory(_ENERGY_MATRIX_COPIES * 16 * prod(bases[label].native_dim for label in labels) ** 2):
+        return None
+    energy = _energy_matrix(operator, labels, backend, bases, bindings)
+    if energy is None:
+        return None
+    values, dims = energy
+    levels = excitation_sectors(dims)
+    return float(np.abs(values[levels[:, None] != levels[None, :]]).max(initial=0.0))
+
+
+# The local operator, the energy vectors and the products of the basis change.
+_ENERGY_MATRIX_COPIES = 5
+
+
+def _energy_matrix(node: Any, support: tuple[str, ...], backend: Any, bases: Mapping[str, Any],
+                   bindings: Any) -> tuple[np.ndarray, tuple[int, ...]] | None:
+    """Return ``node`` on ``support`` in the product energy basis and its level counts, or ``None`` when traced."""
+    records = [bases[label] for label in support]
+    if contains_tracer(tuple(record.energy_vectors for record in records)):
+        return None
+    from quchip.backend._memory import require_memory
+
+    dimension = prod(record.native_dim for record in records)
+    require_memory(_ENERGY_MATRIX_COPIES * 16 * dimension**2, task="Excitation-number proof on local support",
+                   remedy="Use factored operators or declare their excitation_changes.")
+    with jax.ensure_compile_time_eval(), backend.eager_operators():
+        matrix = backend.to_array(materialize_expr(node, backend, bindings=bindings, local_bases=bases))
+        vectors = records[0].energy_vectors
+        for record in records[1:]:
+            vectors = jnp.kron(vectors, record.energy_vectors)
+    if contains_tracer((matrix, vectors)):
+        return None
+    vectors = np.asarray(vectors, dtype=complex)
+    values = vectors.conj().T @ np.asarray(matrix, dtype=complex) @ vectors
+    return values, tuple(int(record.energy_vectors.shape[1]) for record in records)
+
+
+def format_changes(changes: frozenset[int] | None) -> str:
+    """Return ``changes`` as text, with each symmetric pair written ``±c``.
+
+    Parameters
+    ----------
+    changes : frozenset of int or None
+        Changes of ``N``, or ``None`` when unknown.
+    """
+    if changes is None:
+        return "unknown"
+    if not changes:
+        return "none"
+    if all(-change in changes for change in changes):
+        return ", ".join("0" if step == 0 else f"±{step}" for step in sorted({abs(change) for change in changes}))
+    return ", ".join(f"{change:+d}" if change else "0" for change in sorted(changes))
 
 
 def keeps_zero_total_only(approximation: Any) -> bool:
@@ -266,23 +338,32 @@ def lowers_by_one(changes: frozenset[int] | None) -> bool:
 class ExcitationTerm:
     """The changes of the total excitation number ``N`` that one term carries.
 
+    A change ``c`` maps a product state with total ``N`` to total ``N - c``,
+    so a lowering operator has the change ``1``.
+
     Attributes
     ----------
     label : str
         Label of the coupling, retained term, port, drive or collapse channel.
-        A port pair is labeled ``"upstream -> downstream"``.
+        A port pair is labeled ``"upstream -> downstream"`` and a collapse
+        channel ``"owner.name"``.
     kind : str
         ``"coupling"``, ``"retained"``, ``"cascade"`` (the Hamiltonian that a
         port network generates for one port pair), ``"port"``, ``"drive"`` or
         ``"channel"``.
     changes : frozenset of int or None
-        Changes of ``N`` that the term keeps under the approximation, or
-        ``None`` when quchip cannot prove them.
+        Changes of ``N`` that quchip finds for the term under the
+        approximation, or ``None`` when it cannot prove them.
+    largest_entry : float or None
+        For a coupling or retained term that changes ``N``, the largest
+        magnitude in GHz of a static entry that changes ``N``. ``None`` for
+        other terms and when the entry is traced.
     """
 
     label: str
     kind: str
     changes: frozenset[int] | None
+    largest_entry: float | None = None
 
 
 class ExcitationStructure:
@@ -293,9 +374,25 @@ class ExcitationStructure:
     generated port pair keeps only zero changes of ``N``, and every port of a
     generated pair lowers ``N`` by one. quchip reads these changes from exact
     operator structure: a nonzero entry that changes ``N`` breaks conservation
-    however small it is, and unknown structure is not a proof. The engine
-    builds one record for each resolved system and approximation, and reads
-    each fact the first time a route asks for it.
+    however small it is, and unknown structure is not a proof. A conserving
+    static model is block diagonal with one block for each ``N``, and dressed
+    queries diagonalize only the blocks of their labels. Under an active
+    :class:`~quchip.cutoff.ExcitationCutoff`, each block is one class of
+    totals that the static changes connect.
+
+    :meth:`Chip.excitation_structure() <quchip.chip.chip.Chip.excitation_structure>`
+    returns a complete record. The engine builds one record for each resolved
+    system and approximation, and reads each fact the first time a route asks
+    for it.
+
+    Parameters
+    ----------
+    chip : Chip
+        Chip whose static model is read.
+    approximation : Approximation
+        Approximation that selects the static terms.
+    resolution : object
+        Resolved local bases of ``chip``.
 
     Attributes
     ----------
@@ -303,13 +400,18 @@ class ExcitationStructure:
         Approximation that selects the static terms.
     dims : tuple of int
         Resolved level count of each device, in chip order.
+    cutoff : int or None
+        Largest total of the chip's active excitation cutoff, or ``None``.
     """
 
     def __init__(self, chip: Any, approximation: Any, resolution: Any) -> None:
+        from quchip.cutoff import active_cutoff
         from quchip.engine.assembly import _interaction_contributions
 
+        policy = active_cutoff(chip)
         self.approximation = approximation
         self.dims = tuple(int(dimension) for dimension in resolution.dims)
+        self.cutoff = None if policy is None else int(policy.max_total)
         self._chip, self._bases = chip, resolution.bases
         self._interactions = tuple(_interaction_contributions(chip))
         self._pairs = () if resolution.network is None else tuple(resolution.network.generated_pairs)
@@ -318,6 +420,7 @@ class ExcitationStructure:
         self._interaction_changes: list[frozenset[int] | None] = []
         self._authored_ports: dict[str, frozenset[int] | None] = {}
         self._retained_ports: dict[str, frozenset[int] | None] = {}
+        self._entries: dict[int, float | None] = {}
 
     @cached_property
     def changes(self) -> frozenset[int] | None:
@@ -356,22 +459,67 @@ class ExcitationStructure:
                     term.expression(), term.labels, self._chip.backend, self._bases))
             yield self._interaction_changes[index]
 
-    @property
+    @cached_property
     def terms(self) -> tuple[ExcitationTerm, ...]:
         """Changes of ``N`` of every coupling, retained term and generated port pair."""
-        found = [ExcitationTerm(term.label, "retained" if term.retained else "coupling", changes)
-                 for term, changes in zip(self._interactions, self.interaction_changes())]
+        return tuple(ExcitationTerm(label, kind, changes, None if index is None or not _breaks(changes)
+                                    else self._largest_entry(index))
+                     for index, label, kind, changes in self._term_changes)
+
+    @cached_property
+    def _term_changes(self) -> tuple[tuple[int | None, str, str, frozenset[int] | None], ...]:
+        """Index, label, kind and changes of every term; only couplings and retained terms have an index."""
+        found: list[tuple[int | None, str, str, frozenset[int] | None]] = [
+            (index, term.label, "retained" if term.retained else "coupling", changes)
+            for index, (term, changes) in enumerate(zip(self._interactions, self.interaction_changes()))
+        ]
         for downstream, upstream, _ in self._pairs:
             up, down = self._authored_port(upstream), self._authored_port(downstream)
             changes = None if up is None or down is None else frozenset(
                 sign * (u - d) for u in up for d in down for sign in (1, -1))
-            found.append(ExcitationTerm(f"{upstream} -> {downstream}", "cascade", changes))
+            found.append((None, f"{upstream} -> {downstream}", "cascade", changes))
         return tuple(found)
 
-    @property
+    @cached_property
     def ports(self) -> tuple[ExcitationTerm, ...]:
         """Changes of ``N`` of each port of a generated pair, in the chip's retained coordinates."""
         return tuple(ExcitationTerm(label, "port", self._retained_port(label)) for label in self._pair_ports)
+
+    @cached_property
+    def breaking(self) -> tuple[ExcitationTerm, ...]:
+        """Terms and ports that prevent a proof of conservation, empty when the static model conserves ``N``."""
+        return (*(term for term in self.terms if _breaks(term.changes)),
+                *(port for port in self.ports if not lowers_by_one(port.changes)))
+
+    @cached_property
+    def drives(self) -> tuple[ExcitationTerm, ...]:
+        """Changes of ``N`` of each wired control line under the approximation."""
+        equipment = self._chip.control_equipment
+        found = []
+        for line in () if equipment is None else equipment.lines:
+            if line._target is not None:
+                changes = drive_excitation_changes(self._chip, line, line._target, self._bases, self.approximation)
+                found.append(ExcitationTerm(line.label, "drive", None if changes is None else frozenset(changes)))
+        return tuple(found)
+
+    @cached_property
+    def channels(self) -> tuple[ExcitationTerm, ...]:
+        """Changes of ``N`` of each collapse channel, ports included."""
+        chip, labels = self._chip, tuple(device.label for device in self._chip.devices)
+        found = []
+        for operator, _rate, support, source, name, *_ in chip._collapse_contributions_with_owners(self._bases):
+            support_labels = tuple(labels[index] for index in support) or labels
+            changes = authored_excitation_changes(operator, support_labels, chip.backend, self._bases)
+            found.append(ExcitationTerm(f"{source}.{name}", "channel", changes))
+        return tuple(found)
+
+    @cached_property
+    def level_span(self) -> float | None:
+        """Largest spread of one device's resolved energies in GHz, or ``None`` when they are traced."""
+        energies = tuple(self._bases[device.label].energies for device in self._chip.devices)
+        if contains_tracer(energies):
+            return None
+        return max((float(np.ptp(np.asarray(values))) for values in energies), default=0.0)
 
     def classes(self, max_total: int) -> tuple[tuple[int, ...], ...]:
         """Return the classes of totals ``0..max_total`` that the static changes connect.
@@ -392,6 +540,25 @@ class ExcitationStructure:
             Largest total excitation number.
         """
         return tuple(sector_size(self.dims, total) for total in range(max_total + 1))
+
+    def largest_block(self, max_total: int) -> int:
+        """Return the size of the largest block that dressed queries diagonalize for labels up to ``max_total``.
+
+        A conserving chip diagonalizes one sector for each total, a chip with
+        an active excitation cutoff one class, and any other chip its complete
+        static model.
+
+        Parameters
+        ----------
+        max_total : int
+            Largest total excitation number of the queried labels.
+        """
+        if self.cutoff is not None:
+            return max(sum(sector_size(self.dims, total) for total in group)
+                       for group in self.classes(self.cutoff) if group[0] <= max_total)
+        if self.conserves:
+            return max(self.sector_sizes(max_total))
+        return prod(self.dims)
 
     def _authored_port(self, label: str) -> frozenset[int] | None:
         if label not in self._authored_ports:
@@ -416,8 +583,66 @@ class ExcitationStructure:
             self._retained_ports[label] = authored_excitation_changes(operator, labels, chip.backend, self._bases)
         return self._retained_ports[label]
 
+    def _largest_entry(self, index: int) -> float | None:
+        if index not in self._entries:
+            term = self._interactions[index]
+            self._entries[index] = largest_changing_entry(term.expression(), term.labels, self._chip.backend,
+                                                          self._bases)
+        return self._entries[index]
 
-def excitation_structure(chip: Any, approximation: Any, *, resolution: Any = None) -> ExcitationStructure:
+    def _evaluated(self) -> ExcitationStructure:
+        """Evaluate every fact, then release the chip so that the record no longer reads it."""
+        for name in ("changes", "conserves", "terms", "ports", "breaking", "drives", "channels", "level_span"):
+            getattr(self, name)
+        self._chip = self._bases = None
+        return self
+
+
+def round_off_advisory(structure: ExcitationStructure) -> str | None:
+    """Return a warning when only entries far below the level spacings break conservation.
+
+    Every term that breaks conservation must be a coupling or retained term
+    whose largest entry that changes ``N`` is below ``1e-12`` times the
+    largest level span of one device. The heuristic does not change the
+    verdict, and ``None`` means that it does not apply. The search stops at
+    the first term that rules it out.
+
+    Parameters
+    ----------
+    structure : ExcitationStructure
+        Record of a chip whose static model does not conserve ``N``.
+    """
+    span = structure.level_span
+    breaking = [(index, label, changes) for index, label, _kind, changes in structure._term_changes
+                if _breaks(changes)]
+    if span is None or not breaking or any(index is None or changes is None for index, _, changes in breaking):
+        return None
+    if not all(lowers_by_one(port.changes) for port in structure.ports):
+        return None
+    largest = 0.0
+    for index, _label, _changes in breaking:
+        assert index is not None
+        entry = structure._largest_entry(index)
+        if entry is None or entry >= 1e-12 * span:
+            return None
+        largest = max(largest, entry)
+    names = ", ".join(f"{label!r} ({format_changes(changes)})" for _index, label, changes in breaking)
+    return (
+        f"The total excitation number N changes only through entries of at most {largest:.1e} GHz in {names}, "
+        f"far below the largest local level span of {span:.3g} GHz. quchip decides conservation from exact "
+        f"operator structure, so dressed queries diagonalize the complete {prod(structure.dims)}-state static "
+        "model instead of N sectors. Remove these entries if they are round-off, or the terms if they are "
+        "switched off."
+    )
+
+
+def _breaks(changes: frozenset[int] | None) -> bool:
+    """Return whether ``changes`` fails to prove that a term keeps ``N``."""
+    return changes is None or not changes <= {0}
+
+
+def excitation_structure(chip: Any, approximation: Any, *, resolution: Any = None,
+                         complete: bool = False) -> ExcitationStructure:
     """Return the excitation structure of ``chip`` under ``approximation``.
 
     The record is built once for each resolved system and approximation.
@@ -430,10 +655,15 @@ def excitation_structure(chip: Any, approximation: Any, *, resolution: Any = Non
         Approximation that selects the static terms.
     resolution : optional
         Resolved local bases to reuse. ``None`` resolves the chip.
+    complete : bool, default=False
+        Evaluate every fact now and keep no reference to ``chip``. Such a
+        record is not cached.
     """
     from quchip.engine.assembly import _resolve_system
 
     resolution = _resolve_system(chip, chip.backend) if resolution is None else resolution
+    if complete:
+        return ExcitationStructure(chip, approximation, resolution)._evaluated()
     cache = resolution.excitation
     if approximation not in cache:
         cache[approximation] = ExcitationStructure(chip, approximation, resolution)
@@ -464,13 +694,14 @@ def drive_excitation_changes(chip: Any, drive: Any, target: Any, bases: Mapping[
     from quchip.control.drive import CouplingDrive
     from quchip.engine.assembly import _drive_authored_terms, _keeps_drive_band, _retained_operator
 
-    changes = set()
+    changes: set[int] = set()
     for _, authored in _drive_authored_terms(chip, drive, target, chip.backend):
         support = tuple(chip.device_index(label) for label in authored.labels)
         retained = any(term.projection is not None for term in chip.effective_terms)
         if retained:
             authored, support = _retained_operator(chip, authored, support, chip.backend,
                                                    f"drive:{drive.label}", bases=bases)
+        weights: set[int] | frozenset[int] | None
         if not retained and isinstance(drive, CouplingDrive) and approximation.conserves_excitation_number():
             weights = {0}
         else:

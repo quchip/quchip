@@ -261,8 +261,8 @@ class SectorModel:
         self.approximation = chip.approximation if approximation is None else approximation
         policy = active_cutoff(chip)
         self.cutoff: int | None = None if policy is None else policy.max_total
-        self.classes = None if self.cutoff is None else excitation_structure(
-            chip, self.approximation, resolution=resolution).classes(self.cutoff)
+        self.structure = excitation_structure(chip, self.approximation, resolution=resolution)
+        self.classes = None if self.cutoff is None else self.structure.classes(self.cutoff)
         self._ports: dict[str, tuple[Any, tuple[int, ...]]] | None = None
         pairs = () if self.network is None else self.network.generated_pairs
         generated = () if not pairs else generated_products(self.port_couplings(), pairs, self.dims)

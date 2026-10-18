@@ -35,6 +35,8 @@ RETURNED_TYPES = (
     "quchip.control.batch.DelayHandle",
     "quchip.control.field.CoherentInput",
     "quchip.chip.analysis.ChipAnalysis",
+    "quchip.engine.excitation.ExcitationStructure",
+    "quchip.engine.excitation.ExcitationTerm",
     "quchip.chip.port_network.FieldTerminal",
     "quchip.chip.port_network.SLHComponent",
     "quchip.chip.port_network.IncludedNetwork",
