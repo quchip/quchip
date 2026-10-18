@@ -233,6 +233,17 @@ reduction from a patch around the device. The result matches the full
 reduction up to round-off omissions, which its notes report in GHz, and
 repeated local eliminations stay local.
 
+To keep a chosen set of devices, call `eliminate_spectators(chip, keep)`. It
+removes the spectators one `eliminate()` step at a time and returns every
+step. `active_patch()` uses the same default order, which here removes `q3`
+and then `q2`. A spectator waits while a spectator neighbour links it to a
+kept device near it in frequency, so the chain keeps their fourth-order
+exchange shift. Under `local=True`, the order also keeps the operators of the
+kept devices small. Pass `order=` to either function to set the steps. When a
+device that stays on the chip, such as a kept coupler, links a removed
+spectator to a kept device, each SW step estimates the shift that it omits
+from that kept device. `omitted_shifts` holds these estimates in GHz.
+
 ## Check the reduction error
 
 A small coupling-to-detuning ratio is a diagnostic, not a guarantee of accurate
@@ -600,7 +611,7 @@ Population error at K = 2 (15 states): 2.7e-06
 `K = 1` removes the second excitation that the pulse adds. Almost all of it
 is in the second excited level of `q0`, which reaches a population of 5e-4.
 At `K = 2`, the difference is at the tolerance of the default solver, and
-tighter solver tolerances reduce it to 1e-8. `result.check_truncation()`
+tighter solver tolerances reduce it to 1e-8. `check_truncation(result)`
 reports the population next to the cutoff as a warning heuristic, not an
 error bound. The [cookbook](../cookbook.md#truncate-the-total-excitation)
 shows a static case where the error is not monotone in `K`.

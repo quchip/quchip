@@ -279,8 +279,10 @@ estimate.
 ```python
 import json
 
+from quchip import check_truncation
+
 for result in (*drive_batch, *readout_batch):
-    top_levels = result.check_truncation(threshold=1.0)
+    top_levels = check_truncation(result, threshold=1.0)
     assert max(top_levels.values()) < 1e-3
 
 drive_receipt = {
@@ -302,7 +304,7 @@ Output:
 
 ```text
 RESULT drive={"final_p1": {"long": 0.9808186959428326, "short": 0.3274130996870313}, "peak_p2": {"long": 0.038430704898919095, "short": 0.5631356326693644}}
-RESULT readout={"conditional_resonator_frequencies_ghz": [6.801997782702374, 6.801428548310606], "final_iq_separation": 0.9021929173550125, "solver": "mesolve"}
+RESULT readout={"conditional_resonator_frequencies_ghz": [6.801997782702374, 6.801428548310606], "final_iq_separation": 0.9021929173534362, "solver": "mesolve"}
 ```
 
 <!-- executed-output:end -->

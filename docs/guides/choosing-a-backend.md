@@ -32,6 +32,9 @@ Results keep physical dimensions. `result.stats["excitation_reduction"]`
 reports the dimensions and the proof or the fallback reason. Under
 `ExcitationCutoff(max_total=K)`, both backends evolve only the states with at
 most `K` excitations, an explicit approximation that the same record reports.
+QuTiP stores the operators of the compact space as CSR matrices. dynamiqs
+stores each one as a dense array of the compact dimension, and quchip raises
+`MemoryError` before it allocates an array that does not fit.
 The [model reduction guide](chip-transformations.md#use-an-exact-excitation-space)
 solves a 24-transmon ring in its exact space and compares a cutoff with the
 full solve.
@@ -257,15 +260,15 @@ and [Wiseman and Milburn, chapter 4](https://doi.org/10.1017/CBO9780511813948).
 ## Explicit truncation diagnostics
 
 Simulation no longer checks cutoffs automatically, so call
-`result.check_truncation()` to inspect saved states. For reduced storage:
+`check_truncation(result)` to inspect saved states. For reduced storage:
 
 ```python
-from quchip import with_truncation
+from quchip import check_truncation, with_truncation
 
 problem = sequence.build_problem(times, states="none")
 result = chip.solve(with_truncation(problem))
 
-maximum = result.check_truncation()
+maximum = check_truncation(result)
 ```
 
 The helper also accepts a built batch. It collects cutoff observables on the
