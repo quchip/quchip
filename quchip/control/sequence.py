@@ -98,7 +98,7 @@ if TYPE_CHECKING:
     from quchip.declarative.expr import PhysicsExpr
     from quchip.engine.ir import FrameSpec, SolveBatch, SolveProblem
     from quchip.results.channel import ChannelResult
-    from quchip.results.propagator import PropagatorResult
+    from quchip.results.propagator import Propagator, PropagatorResult
     from quchip.results.results import SimulationBatchResult, SimulationResult
 
 
@@ -1464,6 +1464,7 @@ class QuantumSequence:
         dissipation: bool = True,
         run_args: dict | None = None,
         duration: Any | None = None,
+        frame: FrameSpec | None = None,
     ) -> "SimulationResult":
         """Build and solve one scheduled simulation.
 
@@ -1513,6 +1514,10 @@ class QuantumSequence:
             Include declared collapse channels when ``True``.
         duration : float, optional
             Positive simulation end time in ns when ``tlist`` is omitted.
+        frame : FrameSpec or None, default=None
+            Integration-frame override, as in :meth:`build_problem`. ``None``
+            uses the chip's frame. An explicit frame solves the joint chip
+            without partitioning.
 
         Returns
         -------
@@ -1563,6 +1568,7 @@ class QuantumSequence:
                 approximation=approximation,
                 states=states,
                 dissipation=dissipation,
+                frame=frame,
             )
     def simulate_batch(
         self,
@@ -1637,6 +1643,118 @@ class QuantumSequence:
                 problem_batch, progress=progress, max_workers=max_workers,
             )
         return result
+
+    def propagator(
+        self,
+        tlist: Any | None = None,
+        *,
+        columns: Any = None,
+        frame: FrameSpec | None = None,
+        options: dict | None = None,
+        approximation: Approximation | None = None,
+        dissipation: bool = True,
+        backend: Any | None = None,
+        duration: Any | None = None,
+    ) -> "Propagator":
+        """Compute the propagator of this schedule, expressed in the lab frame.
+
+        The calculation integrates the identity, or the given input states,
+        once from the first to the last time. It uses every retained
+        coordinate: the full product space, or every label with ``N <= K``
+        under an :class:`~quchip.cutoff.ExcitationCutoff`. The result is
+        returned in the lab frame, so the integration frame changes only cost
+        and accuracy (see :class:`~quchip.results.propagator.Propagator`).
+
+        Parameters
+        ----------
+        tlist : array_like or None, default=None
+            Times in ns. Only the first and last values are used. ``None``
+            uses ``[0, total_duration]``.
+        columns : array_like or None, default=None
+            ``(d, k)`` lab-frame input states at the first time, in solver
+            coordinates, or a sequence of native kets. Closed systems only.
+        frame : FrameSpec or None, default=None
+            Integration frame. ``None`` uses the chip's frame. A rotating frame
+            is usually faster and more accurate for carrier pulses.
+        options : dict or None, default=None
+            Backend solver options, such as tolerances.
+        approximation : Approximation or None, default=None
+            Engine approximation override.
+        dissipation : bool, default=True
+            Include collapse channels. With channels, the result is a
+            superoperator on column-stacked density matrices.
+        backend : object or {"qutip", "dynamiqs"}, optional
+            Per-call backend override.
+        duration : float or None, default=None
+            End time in ns when ``tlist`` is omitted. It must reach the
+            schedule end.
+
+        Returns
+        -------
+        Propagator
+            Lab-frame unitary, block of output states, or superoperator.
+        """
+        from quchip.engine.problem import build_solve_problem
+        from quchip.results.propagator import Propagator
+
+        with self._scoped_backend(backend):
+            if tlist is None:
+                grid = self._resolve_tlist(None, duration=duration)
+                times = np.array([0.0, float(grid.bounds[-1])])
+            else:
+                if duration is not None:
+                    raise ValueError("duration and tlist are mutually exclusive.")
+                times = np.asarray(tlist, dtype=float)
+                if times.ndim != 1 or times.size < 2:
+                    raise ValueError("tlist needs at least a start and an end time.")
+                times = times[[0, -1]]
+            problem = build_solve_problem(
+                self._chip, self._materialize_drive_ops(), times, options=options,
+                approximation=approximation, states="final", dissipation=dissipation, frame=frame,
+                _product_space=True,
+            )
+            if columns is not None and not hasattr(columns, "shape"):
+                columns = np.stack(
+                    [np.asarray(state.full() if hasattr(state, "full") else state).reshape(-1) for state in columns],
+                    axis=1,
+                )
+            return Propagator.from_problem(problem, columns=columns)
+
+    def extend(self, other: "QuantumSequence") -> None:
+        """Append the entries of another sequence on the same chip.
+
+        A barrier first aligns the cursors of every device, coupling, and
+        input that *other* uses, so its pulses start together. *other*'s
+        entries then replay from there with their own delays, barriers, and
+        virtual-Z shifts. Pulse handles of *other* do not transfer. A pulse
+        scheduled in *other* with an explicit ``start_time`` raises, because
+        its absolute time would not move with the cursor.
+
+        Parameters
+        ----------
+        other : QuantumSequence
+            Sequence built for this sequence's chip.
+        """
+        if other is self:
+            raise ValueError("A sequence cannot extend itself.")
+        if other._chip is not self._chip:
+            raise ValueError("extend() needs a sequence built for the same chip object.")
+        targets: list[str] = []
+        for entry in other._entries:
+            if isinstance(entry, _PulseEntry):
+                if entry.requested_start_time is not None:
+                    raise ValueError(
+                        "extend() needs cursor-timed pulses. Replace start_time= with delay() in the appended sequence."
+                    )
+                labels: tuple[str, ...] = (entry.target_label,)
+            elif isinstance(entry, (_DelayEntry, _FrameShiftEntry)):
+                labels = (entry.device_label,)
+            else:
+                labels = entry.device_labels or tuple(self._device_labels())
+            targets.extend(label for label in labels if label not in targets)
+        if targets:
+            self._entries.append(_BarrierEntry(device_labels=tuple(targets)))
+        self._entries.extend(other._entries)
 
     def subspace_propagator(
         self,

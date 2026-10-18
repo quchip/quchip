@@ -1113,6 +1113,28 @@ class Backend(ABC):
         return self.mesolve(prepared.rhs, psi0, tlist_arr,
                             c_ops=c_ops, e_ops=e_ops_arg, options=opts)
 
+    def solve_propagator(self, problem: "SolveProblem", columns: Any = None) -> Any:
+        r"""Return a problem's propagator from its first to its last time.
+
+        A problem without collapse channels gives the unitary on the solver
+        coordinates, or its action on ``columns``. A problem with collapse
+        channels gives the :math:`d^2 \times d^2` superoperator that acts on
+        column-stacked density matrices. Both use the problem's integration
+        frame. The problem's initial state is not used.
+
+        Parameters
+        ----------
+        problem : SolveProblem
+            Deterministic problem whose Hamiltonian, channels, grid ends and options apply.
+        columns : array_like or None, default None
+            ``(d, k)`` input states in solver coordinates, closed systems only.
+
+        Returns
+        -------
+        array
+            Dense ``(d, d)``, ``(d, k)`` or ``(d², d²)`` array of the backend's array module.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not compute propagators.")
 
     def trajectory_view(
         self, native: Any, problem: "SolveProblem", *, index: int | None, states: bool, deterministic: bool,

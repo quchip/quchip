@@ -1,14 +1,37 @@
-"""Propagators of a sequence on the dressed states of a product of levels."""
+"""Propagators of scheduled sequences.
+
+A :class:`Propagator` holds ``U(t1, t0)`` on a problem's solver coordinates:
+the product of each device's local energy levels, or the retained labels of an
+:class:`~quchip.cutoff.ExcitationCutoff`. The matrix is always stored in the
+lab frame,
+
+.. math::
+
+    U_\\mathrm{lab}(t_1, t_0) = R(t_1)\\, U_\\mathrm{solver}(t_1, t_0)\\, R(t_0)^\\dagger,
+    \\qquad R(t) = e^{-2\\pi i t \\sum_i f_i n_i},
+
+where ``f_i`` are the integration-frame frequencies and ``n_i`` the level
+indices. The integration frame therefore changes only cost and accuracy.
+:meth:`Propagator.computational` expresses the gate on dressed computational
+states in the frame that rotates with each device's dressed frequency.
+
+A :class:`PropagatorResult` holds the propagator on the dressed states of a
+product of levels, from one ket solve per input.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import itertools
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from functools import cached_property
 from typing import Any
 
 import numpy as np
 
 from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import contains_tracer
+from quchip.utils.labeling import resolve_label
 
 FRAMES = ("dressed", "lab", "integration")
 
@@ -194,3 +217,303 @@ def subspace_propagator(batch: Any, devices: tuple[str, ...], labels: tuple[tupl
         omitted_channels=tuple(omitted_channels),
         batch=batch,
     )
+
+
+def solver_levels(engine_result: Any) -> np.ndarray:
+    """Return the level index of every device for each solver coordinate, shape ``(d, devices)``.
+
+    Parameters
+    ----------
+    engine_result : EngineResult
+        Resolved problem description whose coordinates are listed.
+    """
+    space = engine_result.excitation_space
+    if space is not None:
+        return np.asarray(space.levels, dtype=int)
+    return np.array(list(itertools.product(*(range(int(d)) for d in engine_result.dims))), dtype=int).reshape(
+        -1, len(engine_result.dims)
+    )
+
+
+def _frame_phases(levels: np.ndarray, frequencies: np.ndarray, time: Any, xp: Any) -> Any:
+    """Diagonal of ``R(t) = exp(-2πi t Σ f_i n_i)`` on the solver coordinates."""
+    generator = levels @ frequencies
+    return xp.exp(-2j * np.pi * time * xp.asarray(generator))
+
+
+@dataclass(frozen=True, eq=False)
+class ComputationalBlock:
+    """A propagator restricted to dressed computational states.
+
+    Attributes
+    ----------
+    matrix : array
+        ``(2^n, k)`` amplitudes ``<b| V |input>`` in the computational frame, with
+        the first qubit most significant. For a full propagator, ``k = 2^n``.
+    leaked : array
+        ``(d, k)`` amplitudes of each output outside the computational states,
+        in solver coordinates and the lab frame.
+    leakage : array
+        Population of each output outside the computational states.
+    qubits : tuple of str
+        Qubit labels in matrix order.
+    """
+
+    matrix: Any
+    leaked: Any
+    leakage: Any
+    qubits: tuple[str, ...]
+
+    def fidelity(self, ideal: Any) -> float:
+        """Return the average gate fidelity against an ideal unitary, global phase removed.
+
+        The value is ``(Tr M M† + |Tr M|²) / (d (d + 1))`` with ``M = ideal† V``
+        (Pedersen, Møller and Mølmer, Phys. Lett. A 367, 47 (2007)). Leakage
+        lowers ``Tr M M†``.
+
+        Parameters
+        ----------
+        ideal : array_like
+            ``(2^n, 2^n)`` target unitary in the same qubit order.
+        """
+        ideal = np.asarray(ideal, dtype=complex)
+        matrix = np.asarray(self.matrix)
+        if matrix.shape != ideal.shape:
+            raise ValueError(f"The block has shape {matrix.shape}; the ideal has shape {ideal.shape}.")
+        product = ideal.conj().T @ matrix
+        dimension = ideal.shape[0]
+        return float((np.trace(product @ product.conj().T).real + abs(np.trace(product)) ** 2)
+                     / (dimension * (dimension + 1)))
+
+
+@dataclass(frozen=True, eq=False)
+class Propagator:
+    """Lab-frame propagator of a sequence over ``[t0, t1]``.
+
+    Create it with :meth:`QuantumSequence.propagator
+    <quchip.control.sequence.QuantumSequence.propagator>`.
+
+    Attributes
+    ----------
+    matrix : array
+        ``(d, d)`` unitary, ``(d, k)`` image of the input states, or
+        ``(d², d²)`` superoperator on column-stacked density matrices.
+    kind : {"unitary", "superoperator"}
+        Closed or open evolution.
+    t0, t1 : float
+        Start and end times in ns.
+    labels : tuple of str
+        Device labels in coordinate order.
+    levels : numpy.ndarray
+        ``(d, devices)`` level index of each solver coordinate.
+    dims : tuple of int
+        Retained levels of each device.
+    frame_frequencies : mapping
+        Integration-frame frequency of each device in GHz.
+    inputs : array or None
+        ``(d, k)`` lab-frame input states at ``t0`` when columns were requested.
+    options : mapping
+        Solver options of the calculation.
+    cutoff : int or None
+        Excitation cutoff ``K`` of the solve, or ``None`` for the product space.
+    """
+
+    matrix: Any
+    kind: str
+    t0: float
+    t1: float
+    labels: tuple[str, ...]
+    levels: np.ndarray
+    dims: tuple[int, ...]
+    frame_frequencies: Mapping[str, Any]
+    inputs: Any = None
+    options: Mapping[str, Any] = field(default_factory=dict)
+    cutoff: int | None = None
+    _problem: Any = field(default=None, repr=False)
+
+    @classmethod
+    def from_problem(cls, problem: Any, *, columns: Any = None) -> "Propagator":
+        """Solve a prepared problem for its propagator.
+
+        Parameters
+        ----------
+        problem : SolveProblem
+            Deterministic problem built on the full retained coordinates.
+        columns : array_like or None, default None
+            ``(d, k)`` lab-frame input states at the first time.
+        """
+        backend = problem.backend
+        xp = backend.array_module
+        engine_result = problem.engine_result
+        levels = solver_levels(engine_result)
+        labels = tuple(device.label for device in problem.chip.devices)
+        frame = problem.resolved_frame.frequencies
+        frequencies = np.array([float(frame.get(label, 0.0)) for label in labels])
+        times = xp.asarray(problem.tlist, dtype=float)
+        t0, t1 = times[0], times[-1]
+        start = _frame_phases(levels, frequencies, t0, xp)
+        end = _frame_phases(levels, frequencies, t1, xp)
+        inputs = None
+        solver_columns = None
+        if columns is not None:
+            inputs = xp.asarray(columns, dtype=complex)
+            if inputs.ndim == 1:
+                inputs = inputs[:, None]
+            if inputs.shape[0] != levels.shape[0]:
+                raise ValueError(f"columns have {inputs.shape[0]} rows; the solver space has {levels.shape[0]}.")
+            solver_columns = xp.conj(start)[:, None] * inputs
+        native = backend.solve_propagator(problem, solver_columns)
+        matrix = xp.asarray(native)
+        if engine_result.collapse_terms:
+            kind = "superoperator"
+            # Column stacking: vec(R rho R†) = (R* ⊗ R) vec(rho), so element (i + d j) carries R_i conj(R_j).
+            lift = lambda phases: (phases[:, None] * xp.conj(phases)[None, :]).T.reshape(-1)  # noqa: E731
+            matrix = lift(end)[:, None] * matrix * xp.conj(lift(start))[None, :]
+        else:
+            kind = "unitary"
+            matrix = end[:, None] * matrix if columns is not None else end[:, None] * matrix * xp.conj(start)[None, :]
+        reduction = engine_result.metadata.get("excitation_reduction") or {}
+        return cls(
+            matrix=matrix,
+            kind=kind,
+            t0=t0,
+            t1=t1,
+            labels=labels,
+            levels=levels,
+            dims=tuple(int(d) for d in problem.chip.dims),
+            frame_frequencies=dict(frame),
+            inputs=inputs,
+            options=dict(problem.options),
+            cutoff=reduction.get("cutoff"),
+            _problem=problem,
+        )
+
+    @cached_property
+    def unitarity_defect(self) -> float | None:
+        """Return ``max |U† U - I|`` over the computed columns, or ``None`` for a superoperator.
+
+        For a block of input states, the reference is the inputs' own overlap
+        matrix. A large defect means the integrator, not the physics, limits a
+        fit.
+        """
+        if self.kind != "unitary":
+            return None
+        matrix = np.asarray(self.matrix)
+        gram = matrix.conj().T @ matrix
+        reference = np.eye(matrix.shape[1]) if self.inputs is None else (
+            np.asarray(self.inputs).conj().T @ np.asarray(self.inputs))
+        return float(np.abs(gram - reference).max())
+
+    def solver_frame(self) -> Any:
+        """Return the matrix in the problem's integration frame."""
+        xp = self._problem.backend.array_module
+        frequencies = np.array([float(self.frame_frequencies.get(label, 0.0)) for label in self.labels])
+        start = _frame_phases(self.levels, frequencies, self.t0, xp)
+        end = _frame_phases(self.levels, frequencies, self.t1, xp)
+        if self.kind == "superoperator":
+            lift = lambda phases: (phases[:, None] * xp.conj(phases)[None, :]).T.reshape(-1)  # noqa: E731
+            return xp.conj(lift(end))[:, None] * self.matrix * lift(start)[None, :]
+        if self.inputs is not None:
+            return xp.conj(end)[:, None] * self.matrix
+        return xp.conj(end)[:, None] * self.matrix * start[None, :]
+
+    def computational(self, qubits: Sequence[Any]) -> ComputationalBlock:
+        """Express a unitary propagator on dressed computational states.
+
+        The computational states hold each listed qubit in dressed level 0 or 1
+        and every other device in dressed level 0, with the first qubit most
+        significant. Their phases follow ``chip.state()``. The frame removes
+        each device's dressed precession, so an idle interval leaves only the
+        static ZZ phases:
+
+        .. math::
+
+            V = W_c^\\dagger e^{2\\pi i F t_1} U(t_1, t_0) e^{-2\\pi i F t_0} W_c,
+            \\qquad F = \\sum_i f_i \\tilde n_i,
+
+        with ``f_i = chip.freq(i)`` and ``ñ_i`` the dressed level label. A full
+        propagator gives the square block on the computational inputs. A
+        propagator computed from ``columns`` gives ``<b| e^{2πiF t1} U |input>``
+        for its own inputs, with the input frame phase applied when the inputs
+        are these computational states.
+
+        Parameters
+        ----------
+        qubits : sequence of str or device
+            Computational qubits in matrix order.
+        """
+        if self.kind != "unitary":
+            raise ValueError("computational() needs a unitary propagator; pass dissipation=False.")
+        names = tuple(resolve_label(qubit) for qubit in qubits)
+        columns, energies = computational_states(self._problem, names, self.levels)
+        xp = self._problem.backend.array_module
+        start = xp.exp(-2j * np.pi * energies * self.t0)
+        end = xp.exp(2j * np.pi * energies * self.t1)
+        if self.inputs is None:
+            image = self.matrix @ columns
+            inputs_phase = start
+        else:
+            image = self.matrix
+            inputs = np.asarray(self.inputs)
+            same = inputs.shape == np.shape(columns) and np.allclose(inputs, np.asarray(columns), atol=1e-12)
+            inputs_phase = start if same else None
+        block = xp.conj(columns).T @ image
+        leaked = image - columns @ block
+        if inputs_phase is not None:
+            block = block * inputs_phase[None, :]
+            leaked = leaked * inputs_phase[None, :]
+        block = end[:, None] * block
+        leakage = xp.real(xp.sum(xp.conj(leaked) * leaked, axis=0))
+        return ComputationalBlock(matrix=block, leaked=leaked, leakage=leakage, qubits=names)
+
+
+def computational_states(problem: Any, qubits: Sequence[str], levels: np.ndarray) -> tuple[Any, Any]:
+    """Return dressed computational kets in solver coordinates and their frame frequencies.
+
+    Each ket is ``chip.compact_state(label, dressed=True)`` scattered onto the
+    solver coordinates, so the gauge matches ``chip.state()``. The frequency of
+    a computational state is ``Σ_q f_q b_q`` with ``f_q = chip.freq(q)``.
+
+    Parameters
+    ----------
+    problem : SolveProblem
+        Problem whose chip and coordinates define the states.
+    qubits : sequence of str
+        Computational qubit labels, first most significant.
+    levels : numpy.ndarray
+        ``(d, devices)`` level index of each solver coordinate.
+    """
+    chip = problem.chip
+    xp = problem.backend.array_module
+    labels = [device.label for device in chip.devices]
+    unknown = [label for label in qubits if label not in labels]
+    if unknown:
+        raise ValueError(f"Unknown qubits {unknown}. Devices: {labels}.")
+    if len(set(qubits)) != len(qubits):
+        raise ValueError(f"Qubits must be distinct, got {list(qubits)}.")
+    positions = {tuple(row): index for index, row in enumerate(levels.tolist())}
+    frequencies = np.array([float(chip.freq(label)) for label in qubits])
+    columns = []
+    energies = []
+    for bits in itertools.product((0, 1), repeat=len(qubits)):
+        mapping = dict(zip(qubits, bits))
+        state = chip.compact_state(mapping, dressed=True)
+        values = xp.asarray(state.values).reshape(-1)
+        rows = []
+        for row in np.asarray(state.space.levels).tolist():
+            index = positions.get(tuple(row))
+            if index is None:
+                raise ValueError(
+                    f"The dressed state {mapping} reaches the label {tuple(row)}, which the solve does not retain."
+                )
+            rows.append(index)
+        column = xp.zeros(levels.shape[0], dtype=complex)
+        column = column.at[np.array(rows)].set(values) if hasattr(column, "at") else _scatter(column, rows, values)
+        columns.append(column)
+        energies.append(float(frequencies @ np.array(bits, dtype=float)))
+    return xp.stack(columns, axis=1), xp.asarray(energies)
+
+
+def _scatter(column: Any, rows: list[int], values: Any) -> Any:
+    column[np.array(rows)] = values
+    return column
