@@ -855,6 +855,10 @@ class QuTiPBackend(Backend):
             subsystem_labels=("0",),
         ))
 
+    def compact_operators_fit(self, size: int, count: int) -> bool:
+        # CSR operators keep only their entries, which the generator's entries bound.
+        return True
+
     def linear_combination(self, terms: Sequence[tuple[Any, Operator]]) -> Operator:
         self._validate_input(terms)
         return super().linear_combination(terms)

@@ -13,7 +13,7 @@ from typing import Any
 
 import numpy as np
 
-from quchip.utils.memory import dense_bytes, fits_memory, level_table_bytes, require_memory
+from quchip.utils.memory import dense_bytes, level_table_bytes, require_memory
 from quchip.utils.jax_utils import concrete_array_module, contains_tracer
 
 
@@ -403,7 +403,7 @@ def plan_pulse_space(chip, operations, states, resolution, approximation, dissip
         return PulseSpace.create(dims, labels, occupied, bases), reason, boundary
     if size == prod(dims):
         return None, "The proven generator closure reaches the full product space.", None
-    if chip.backend.array_module is not np and not fits_memory(dense_bytes(size, size, copies=8)):
-        return None, f"Dense compact operators on {size} states do not fit in available memory.", None
+    if not chip.backend.compact_operators_fit(size, 8):
+        return None, f"The backend's compact operators on {size} states do not fit in available memory.", None
     reason = "The initial support and complete generator close exactly."
     return PulseSpace.create(dims, labels, occupied, bases), reason, None

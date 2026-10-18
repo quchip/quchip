@@ -333,6 +333,22 @@ class Backend(ABC):
             result = result.at[rows, columns].add(values)
         return self.from_array(result, dims=[[size], [size]])
 
+    def compact_operators_fit(self, size: int, count: int) -> bool:
+        r"""Return whether ``count`` compact operators on ``size`` states fit in the available memory.
+
+        The default stores each as a dense matrix, as :meth:`compact_operator` does.
+
+        Parameters
+        ----------
+        size : int
+            Number of compact states.
+        count : int
+            Number of operators that exist at the same time.
+        """
+        from quchip.utils.memory import dense_bytes, fits_memory
+
+        return fits_memory(dense_bytes(size, size, copies=count))
+
     @abstractmethod
     def to_canonical_operator(self, op: Operator) -> "CanonicalOperator":
         r"""Serialize a native operator into the backend-agnostic canonical IR.
