@@ -12,13 +12,13 @@ inverse as the right preconditioner of a restarted GMRES iteration.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 import numpy as np
 import scipy.linalg
 from scipy import sparse
 
-from quchip.utils.memory import available_memory_bytes
+from quchip.utils.memory import available_memory_bytes, dense_bytes, krylov_bytes
 
 # Relative residual at which GMRES stops, the smaller one of a second attempt when two
 # starts disagree, and the residual above which a solve fails.
@@ -29,6 +29,11 @@ _RESIDUAL_LIMIT = 1e-8
 _RESTART = 64
 _MINIMUM_RESTART = 8
 _CYCLES = 40
+# Besides the Krylov basis, a solve keeps about eight state-sized work arrays. Each
+# sector keeps its drift, its eigenvectors and their inverse, with LAPACK workspace,
+# in eight blocks.
+_WORK_VECTORS = 8
+_SECTOR_BLOCKS = 8
 # Sectors up to this size use the eigenvectors of their drift in the preconditioner;
 # larger or ill-conditioned sectors use the eigenvectors of their Hamiltonian.
 _EIG_LIMIT = 1024
@@ -66,6 +71,20 @@ class SectorSolve:
     state: np.ndarray
     iterations: int
     residual: float
+
+
+def sector_solve_bytes(sizes: Sequence[int], restart: int) -> int:
+    """Return the peak bytes of a stationary solve on excitation sectors.
+
+    Parameters
+    ----------
+    sizes : sequence of int
+        Number of product labels in each sector ``N = 0..cutoff``.
+    restart : int
+        Krylov restart length. The basis keeps ``restart + 1`` vectors.
+    """
+    blocks = dense_bytes(sum(size**2 for size in sizes), copies=_SECTOR_BLOCKS)
+    return blocks + krylov_bytes(sum(sizes) ** 2, restart + 1 + _WORK_VECTORS)
 
 
 class SectorGenerator:
@@ -227,17 +246,12 @@ class SectorGenerator:
 
     def restart(self) -> int:
         """Return the Krylov restart length that fits in the available memory, or zero."""
-        vector = 16 * self.dimension**2
         available = available_memory_bytes()
         if available is None:
             return _RESTART
-        # Besides the basis, a solve keeps about eight state-sized work arrays.
-        count = int(0.8 * available // vector) - 9
+        # The sector blocks exist already, so only the Krylov part of the solve estimate remains to allocate.
+        count = int(0.8 * available // krylov_bytes(self.dimension**2, 1)) - _WORK_VECTORS - 1
         return min(_RESTART, count) if count >= _MINIMUM_RESTART else 0
-
-    def required_memory(self) -> float:
-        """Return the bytes that a solve with the shortest restart needs."""
-        return 16 * self.dimension**2 * (_MINIMUM_RESTART + 9)
 
     def stationary(self, frequency: float, drive: Any, guess: np.ndarray | None = None) -> SectorSolve:
         """Solve the stationary state at one frame frequency and probe.

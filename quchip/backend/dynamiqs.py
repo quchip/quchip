@@ -43,7 +43,7 @@ import jax.numpy as jnp  # noqa: E402
 import jax.scipy.linalg as jsp_linalg  # noqa: E402
 import jax.tree_util as jtu  # noqa: E402
 
-from quchip.utils.memory import require_memory
+from quchip.utils.memory import dense_bytes, require_memory
 from quchip.backend._response import coherence_response, linear_response, stationary_condition_number
 from quchip.utils.jax_utils import contains_tracer
 from quchip.utils.values import DeferredValue
@@ -76,6 +76,13 @@ from quchip.engine.ir import (  # noqa: E402
 # not at the native Tsit5 defaults (rtol = atol = 1e-6).
 _DEFAULT_RTOL = 1e-9
 _DEFAULT_ATOL = 1e-11
+# Dense D²×D² arrays that the stationary solves keep besides the generator. A
+# steady state keeps the trace-constrained generator, and XLA's LU factors with
+# a column-major copy of their input. The singular values of the generator need
+# two more copies, and JAX can compute them while the solve runs. A resolvent
+# keeps the shifted and constrained generator and the LU factors with their copy.
+_STEADY_STATE_COPIES = 5
+_RESOLVENT_COPIES = 3
 
 
 def _shared_operator_slots(results: Sequence[Any]) -> list[list[int]]:
@@ -383,6 +390,15 @@ class _DynamiqsBatchHamiltonian:
     static_coefficients: tuple[Any, ...]
     dynamic_operators: tuple[Any, ...]
     dynamic_signals: tuple[Any, ...]
+
+
+def _require_dense_solve_memory(dimension: int, copies: int, solve: str) -> None:
+    """Raise before a dense stationary solve whose D²×D² arrays cannot fit in memory."""
+    require_memory(
+        dense_bytes(dimension**2, dimension**2, copies=copies),
+        task=f"The dense {solve} at Hilbert dimension D = {dimension}",
+        remedy="Reduce the device cutoffs, or use backend='qutip', whose sparse solves need less memory.",
+    )
 
 
 class DynamiqsBackend(Backend):
@@ -889,9 +905,8 @@ class DynamiqsBackend(Backend):
         hamiltonian = self.prepare_hamiltonian(engine_result).rhs
         collapse_ops = self._collapse_operators(engine_result)
         dimension = math.prod(engine_result.dims)
-        # The dense D²×D² generator alone is a lower bound on the solve's memory.
         require_memory(
-            16 * dimension**4,
+            dense_bytes(dimension**2, dimension**2),
             task=f"The dense D²×D² stationary Liouvillian at Hilbert dimension D = {dimension}",
             remedy="Reduce the device cutoffs.",
         )
@@ -937,8 +952,9 @@ class DynamiqsBackend(Backend):
                 "Unknown Dynamiqs steady-state options: " + ", ".join(sorted(options))
             )
 
-        liouvillian = self.prepare_stationary(problem.engine_result, prepared=prepared).liouvillian
         dimension = math.prod(problem.engine_result.dims)
+        _require_dense_solve_memory(dimension, _STEADY_STATE_COPIES + (prepared is None), "stationary solve")
+        liouvillian = self.prepare_stationary(problem.engine_result, prepared=prepared).liouvillian
 
         trace_row = jnp.eye(dimension, dtype=jnp.complex128).reshape(-1)
         constrained = liouvillian.at[-1, :].set(trace_row)
@@ -994,8 +1010,9 @@ class DynamiqsBackend(Backend):
         *,
         prepared: PreparedStationary | None = None,
     ) -> dict[tuple[str, str], Any]:
-        liouvillian = self.prepare_stationary(engine_result, prepared=prepared).liouvillian
         dimension = math.prod(engine_result.dims)
+        _require_dense_solve_memory(dimension, _RESOLVENT_COPIES + (prepared is None), "stationary resolvent")
+        liouvillian = self.prepare_stationary(engine_result, prepared=prepared).liouvillian
         targets = jnp.stack(
             [
                 jnp.asarray(operator.to_dense(), dtype=jnp.complex128).T.reshape(-1)
@@ -1005,7 +1022,7 @@ class DynamiqsBackend(Backend):
         )
         targets = targets.at[-1, :].set(0.0)
         trace_row = jnp.eye(dimension, dtype=jnp.complex128).reshape(-1)
-        identity = jnp.eye(dimension * dimension, dtype=jnp.complex128)
+        diagonal = jnp.arange(dimension * dimension)
         native_observables = tuple(
             (label, jnp.asarray(operator.to_dense(), dtype=jnp.complex128))
             for label, operator in observables
@@ -1015,8 +1032,8 @@ class DynamiqsBackend(Backend):
         }
 
         for frequency in jnp.atleast_1d(jnp.asarray(frequencies, dtype=float)):
-            shifted = liouvillian + 1j * (2.0 * jnp.pi) * frequency * identity
-            constrained = shifted.at[-1, :].set(trace_row)
+            shift = 1j * (2.0 * jnp.pi) * frequency
+            constrained = liouvillian.at[diagonal, diagonal].add(shift).at[-1, :].set(trace_row)
             solutions = jnp.linalg.solve(constrained, targets)
             for column, (source_label, _) in enumerate(sources):
                 response = solutions[:, column].reshape((dimension, dimension)).T

@@ -10,8 +10,12 @@ from __future__ import annotations
 
 from math import prod
 from pathlib import Path
+from typing import Any
 
+import numpy as np
 import psutil
+from scipy import sparse
+from scipy.sparse.csgraph import reverse_cuthill_mckee
 
 # Bytes of one complex double and of one 64-bit index.
 COMPLEX_BYTES = 16
@@ -22,6 +26,14 @@ INDEX_BYTES = 8
 _EIGENSYSTEM_COPIES = 6
 # The cgroup v2 files of this process's container, when it has one.
 _CGROUP = Path("/sys/fs/cgroup")
+# SuperLU keeps a complex value and a 32-bit row index for each entry of its factors.
+_LU_ENTRY_BYTES = COMPLEX_BYTES + 4
+# SuperLU's fill depends on its column ordering and on partial pivoting. On
+# quchip's stationary generators, from driven feedlines of transmons and
+# resonators to a resonator with 300 levels, the fill was between 0.32 and 2.2
+# times the reverse Cuthill-McKee envelope of the symmetrized pattern, so a
+# quarter of the envelope stayed below each measured fill.
+_ENVELOPE_FILL_FRACTION = 0.25
 
 
 def dense_bytes(*shape: int, copies: int = 1, itemsize: int = COMPLEX_BYTES) -> int:
@@ -74,6 +86,39 @@ def krylov_bytes(size: int, vectors: int) -> int:
         Number of vectors that the basis keeps.
     """
     return dense_bytes(size, vectors)
+
+
+def sparse_lu_bytes(matrix: Any) -> int:
+    """Return a low estimate of the bytes of the sparse LU factors of a square matrix.
+
+    SuperLU knows its fill only after the factorization, so the estimate is a
+    quarter of the reverse Cuthill-McKee envelope of the symmetrized pattern.
+    For a few modes with many levels the envelope grows faster than the fill,
+    and the estimate can exceed the fill of a resonator with many hundreds of
+    levels.
+
+    Parameters
+    ----------
+    matrix : scipy.sparse matrix or array
+        Square matrix.
+    """
+    size = matrix.shape[0]
+    if size == 0:
+        return 0
+    if matrix.format not in ("csr", "csc"):
+        matrix = sparse.csr_matrix(matrix)
+    # Read as CSR, a CSC matrix is its transpose, which has the same symmetrized pattern.
+    pattern = sparse.csr_matrix((np.ones(matrix.nnz, dtype=bool), matrix.indices, matrix.indptr), shape=(size, size))
+    pattern = (pattern + pattern.T).tocsr()
+    position = np.empty(size, dtype=np.int64)
+    position[reverse_cuthill_mckee(pattern, symmetric_mode=True)] = np.arange(size)
+    # After the reordering, the envelope of each row runs from its first entry to the diagonal.
+    first = position.copy()
+    rows = np.flatnonzero(np.diff(pattern.indptr))
+    if rows.size:
+        first[rows] = np.minimum(first[rows], np.minimum.reduceat(position[pattern.indices], pattern.indptr[rows]))
+    envelope = size + 2 * int(np.sum(position - first))
+    return int(_ENVELOPE_FILL_FRACTION * _LU_ENTRY_BYTES * envelope)
 
 
 def available_memory_bytes() -> int | None:

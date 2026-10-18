@@ -35,7 +35,7 @@ from qutip.solver.mesolve import MESolver
 from qutip.solver.sesolve import SESolver
 from scipy import sparse
 
-from quchip.utils.memory import require_memory
+from quchip.utils.memory import dense_bytes, fits_memory, require_memory, sparse_lu_bytes
 from quchip.backend._response import coherence_response, linear_response, stationary_condition_number
 from quchip.utils.values import DeferredValue
 from quchip.backend._dims import (
@@ -678,6 +678,19 @@ def _annihilates(liouvillian: sparse.csr_matrix, state: Any) -> bool:
     return bool(np.linalg.norm(liouvillian @ vector) <= _STATIONARY_REUSE_EPS * np.finfo(float).eps * scale)
 
 
+def _require_lu_memory(matrix: Any) -> None:
+    """Raise before SuperLU factorizes a stationary generator whose factors cannot fit in memory."""
+    size = matrix.shape[0]
+    # The estimate never exceeds a dense matrix, so the pattern needs no analysis when one fits.
+    if fits_memory(dense_bytes(size, size)):
+        return
+    require_memory(
+        sparse_lu_bytes(matrix),
+        task=f"Factorizing the {size} × {size} stationary generator",
+        remedy="Reduce the device cutoffs. This estimate is low; the factors usually need more memory.",
+    )
+
+
 def _direct_steady_state(liouvillian: sparse.csr_matrix, dims: Sequence[int]) -> Qobj | None:
     """Solve as ``qutip.steadystate``'s default direct method does, without its option scope.
 
@@ -700,7 +713,9 @@ def _direct_steady_state(liouvillian: sparse.csr_matrix, dims: Sequence[int]) ->
     )
     target = np.zeros(size, dtype=complex)
     target[0] = weight
-    vector = sparse.linalg.spsolve((liouvillian + trace).tocsr(), target)
+    constrained = (liouvillian + trace).tocsr()
+    _require_lu_memory(constrained)
+    vector = sparse.linalg.spsolve(constrained, target)
     rho = vector.reshape(n, n, order="F")
     return Qobj(0.5 * (rho + rho.conj().T), dims=[list(dims), list(dims)], isherm=True)
 
@@ -1328,6 +1343,8 @@ class QuTiPBackend(Backend):
             shape=(size, size),
         )
         base = keep @ matrix + trace_row
+        # The frequency shift adds only diagonal entries, which every envelope holds.
+        _require_lu_memory(base)
         native_observables = tuple(
             (label, self.from_canonical_operator(operator))
             for label, operator in observables

@@ -68,11 +68,9 @@ class SectorProbeModel:
 
     def required_memory(self, cutoff: int) -> float:
         """Return the bytes that a solve on ``N <= cutoff`` needs at the shortest Krylov restart."""
-        from quchip.backend._sector_stationary import _MINIMUM_RESTART
+        from quchip.backend._sector_stationary import _MINIMUM_RESTART, sector_solve_bytes
 
-        sizes = self.sector_sizes(cutoff)
-        # Each sector keeps its drift, eigenvectors and their inverse, with LAPACK workspace.
-        return 16 * sum(sizes)**2 * (_MINIMUM_RESTART + 9) + 16 * 8 * sum(size**2 for size in sizes)
+        return sector_solve_bytes(self.sector_sizes(cutoff), _MINIMUM_RESTART)
 
     def sector_sizes(self, cutoff: int) -> tuple[int, ...]:
         """Return the size of each sector ``N = 0..cutoff``."""
