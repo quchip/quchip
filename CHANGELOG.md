@@ -234,6 +234,35 @@ This file records notable user-visible changes to quchip.
   shifts. It takes level mappings such as `{"qa": 1}`.
   ([#199](https://github.com/quchip/quchip/issues/199),
   [#208](https://github.com/quchip/quchip/pull/208))
+- `sequence.subspace_propagator(devices, levels=(0, 1))` returns the
+  propagator of a sequence on the dressed states of the selected levels, as a
+  `PropagatorResult`. One batch starts each label in its dressed state, and
+  the record converts the label amplitudes to the dressed frame by default, or
+  to the lab or integration frame. The dressed frame turns each device at its
+  dressed frequency under the solve's approximation and cutoff, so an idle
+  pair of qubits gives `diag(1, 1, 1, exp(-2πiζT))` with the static ZZ `ζ`.
+  The record gives the leakage of each input, and `fidelity(target)` returns
+  the average gate fidelity, which counts that leakage. The solves leave out
+  collapse channels, with a warning.
+  ([#193](https://github.com/quchip/quchip/issues/193),
+  [#207](https://github.com/quchip/quchip/pull/207))
+- `Envelope.area()` returns the complex area of an envelope: closed forms for
+  the built-in shapes, and Gauss-Legendre quadrature between the sampling
+  times for other shapes, also under JAX tracing.
+  `chip.rotation_amplitude(transition, line, envelope, angle=π)` returns a
+  first-guess amplitude from `θ = 2π |m| |A a|`, with the dressed matrix
+  element `m` of the line. PHYSICS.md §6.2.1 states the relation, its rotation
+  axis and its limits.
+  ([#197](https://github.com/quchip/quchip/issues/197),
+  [#207](https://github.com/quchip/quchip/pull/207))
+- `TrajectoryResult.records()`, `clicks()` and `run_expect(key)` read the
+  measurement currents, click events and per-run expectations of QuTiP and
+  Dynamiqs in one layout. Records have shape `(runs, channels, intervals)` and
+  name their native sampling. Click records keep the sampling weight of each
+  run, the no-click weight and a full-buffer flag. `result.native` does not
+  change.
+  ([#194](https://github.com/quchip/quchip/issues/194),
+  [#207](https://github.com/quchip/quchip/pull/207))
 - `eliminate_spectators(chip, keep)` reduces a chip to the kept devices, one
   `eliminate()` step at a time, and returns every step. Its default order keeps
   the operators of kept devices small under `local=True`. A spectator waits

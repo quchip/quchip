@@ -623,6 +623,16 @@ class LabelTargets:
             ket = backend.to_array(space.project(native, backend)).reshape(-1)
         return ket
 
+    def energy(self, levels):
+        """Return the energy in GHz of the dressed eigenstate that :meth:`dressed` assigns to a label.
+
+        Parameters
+        ----------
+        levels : tuple of int
+            Product label of local energy levels.
+        """
+        return self.chip.analysis._label_energy(tuple(levels), self.approximation)
+
 
 def _scatter(vector, indices, values):
     """Return ``vector`` with ``values`` written at ``indices``."""

@@ -91,6 +91,7 @@ if TYPE_CHECKING:
     from quchip.chip.transformations.active_patch import ActivePatchResult
     from quchip.declarative.expr import PhysicsExpr
     from quchip.engine.ir import FrameSpec, SolveBatch, SolveProblem
+    from quchip.results.propagator import PropagatorResult
     from quchip.results.results import SimulationBatchResult, SimulationResult
 
 
@@ -1506,6 +1507,92 @@ class QuantumSequence:
                 problem_batch, progress=progress, max_workers=max_workers,
             )
         return result
+
+    def subspace_propagator(
+        self,
+        devices: str | BaseDevice | Sequence[str | BaseDevice],
+        levels: Sequence[int] = (0, 1),
+        *,
+        frame: str = "dressed",
+        tlist: Any | None = None,
+        duration: Any | None = None,
+        solver: str | None = None,
+        options: dict | None = None,
+        backend: Any | None = None,
+        approximation: Approximation | None = None,
+        progress: bool = False,
+        max_workers: int | None = None,
+    ) -> "PropagatorResult":
+        """Return the propagator of this sequence on the dressed states of a product of levels.
+
+        The inputs are the labels that give each selected device one of
+        ``levels`` and every other device level 0, in the order of
+        ``itertools.product(levels, repeat=len(devices))``. One batch starts
+        each input in its dressed state and projects every final state on the
+        label target of every input, as
+        :meth:`~quchip.results.results.SimulationResult.amplitude_array`
+        does. The record converts the matrix to ``frame``. The dressed frame
+        takes the dressed frequencies and the dressed ground energy from the
+        static model of the solve, with its approximation and excitation
+        cutoff. The solve leaves out collapse channels and warns, so the
+        matrix is the propagator of the Hamiltonian alone.
+
+        Parameters
+        ----------
+        devices : device object, str, or sequence of them
+            Selected devices, in the order of the levels of each label.
+        levels : sequence of int, default=(0, 1)
+            Levels of each selected device.
+        frame : {"dressed", "lab", "integration"}, default="dressed"
+            Frame of the returned matrix.
+        tlist, duration, solver, options, backend, approximation
+            As for :meth:`simulate`. The propagator runs from ``tlist[0]`` to ``tlist[-1]``.
+        progress : bool, default=False
+            Show backend batch progress when supported.
+        max_workers : int or None, default=None
+            As for :meth:`simulate_batch`.
+
+        Returns
+        -------
+        PropagatorResult
+            Matrix, labels, leakage of each input, frame frequencies, and the batch of solves.
+        """
+        import itertools
+        import warnings
+
+        from quchip.results.propagator import FRAMES, subspace_propagator
+
+        if frame not in FRAMES:
+            raise ValueError(f"frame must be one of {FRAMES}; got {frame!r}.")
+        selected = (devices,) if isinstance(devices, (str, BaseDevice)) else tuple(devices)
+        names = tuple(resolve_label(device) for device in selected)
+        if not names or len(set(names)) != len(names):
+            raise ValueError("Select at least one device, and each device once.")
+        labels = tuple(itertools.product(tuple(levels), repeat=len(names)))
+        if not labels or len(set(levels)) != len(tuple(levels)):
+            raise ValueError("levels must name at least one level, and each level once.")
+        with self._scoped_backend(backend):
+            problem_batch = self.build_batch(
+                self.vary("initial_state", [dict(zip(names, label)) for label in labels]),
+                tlist=tlist,
+                duration=duration,
+                solver=solver,
+                options=options,
+                approximation=approximation,
+                states="final",
+                dissipation=False,
+            )
+            omitted = tuple(channel.key for channel in problem_batch.problems[0].engine_result.slh.channels)
+            if omitted:
+                warnings.warn(
+                    f"subspace_propagator() solves without the collapse channels {list(omitted)}, so the "
+                    "matrix is the propagator of the Hamiltonian alone.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            batch = self._chip.solve_many(problem_batch, progress=progress, max_workers=max_workers)
+        return subspace_propagator(batch, names, labels, frame, omitted)
+
     def active_patch(self, *, hops: int = 1, method: str = "sw", local: bool = False,
                      order: Any | None = None) -> "ActivePatchResult":
         """Reduce the chip to this schedule's active patch (spectators eliminated).

@@ -391,8 +391,9 @@ def recombine_expect(
 
     for series, meta in zip(flat_expect, meta_list):
         values = xp.asarray(series, dtype=complex)
-        if values.shape != times.shape:
-            raise ValueError(f"Expectation series shape {values.shape} does not match tlist shape {times.shape}")
+        # Leading axes, such as the runs of a stochastic solve, share the time axis.
+        if values.shape[-1:] != times.shape:
+            raise ValueError(f"Expectation series shape {values.shape} does not end with tlist shape {times.shape}")
 
         acc_key: _AccKey = (meta.key, meta.sub_index)
         if meta.sub_index is not None:

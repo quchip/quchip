@@ -44,13 +44,25 @@ def test_jumps_match_native_events_and_weighted_averages(backend):
                               **problem.run_args)
         assert result.native.col_times == native.col_times
         expected = native.average_expect[0]
+        events = [np.asarray(times) for times in native.col_times]
     else:
         import dynamiqs as dq
         native = dq.jssesolve(rhs, owner._collapse_operators(problem.engine_result), problem.initial_state,
                               problem.tlist, exp_ops=problem.e_ops, **problem.run_args)
         np.testing.assert_allclose(result.native.clicktimes, native.clicktimes)
         expected = native.mean_expects()[0]
+        events = [times[~np.isnan(times)] for times in np.asarray(native.clicktimes)[:, 0]]
     np.testing.assert_allclose(result.expect("r"), expected)
+    clicks = result.clicks()
+    assert len(clicks.times) == 16 and not np.any(clicks.full)
+    for times, channels, native_times in zip(clicks.times, clicks.channels, events):
+        np.testing.assert_array_equal(times, native_times)
+        assert channels == result.channel_labels * len(native_times)
+    np.testing.assert_allclose(clicks.weights, 1 / 16, rtol=0, atol=1e-15)
+    per_run = result.run_expect("r")
+    assert per_run.shape == (16, 3)
+    for index in (0, 7):
+        np.testing.assert_array_equal(per_run[index], result.run(index).expect("r"))
     assert len(result.run(0).states) == 3
     assert result.average().final_state.shape == (2, 2)
 
@@ -244,6 +256,11 @@ def test_advanced_jump_sampling_retains_no_click_diagnostics(backend):
     result = solve_problem(with_truncation(problem))
     native_mean = (result.native.average_expect[0] if backend == "qutip" else result.native.mean_expects()[0])
     np.testing.assert_allclose(result.expect("r"), native_mean)
+    clicks = result.clicks()
+    # One excitation decays at 1/ns, so the no-click run carries the survival probability exp(−1).
+    np.testing.assert_allclose(clicks.no_click_weight, np.exp(-1.0), rtol=1e-6)
+    np.testing.assert_allclose(np.sum(clicks.weights) + clicks.no_click_weight, 1.0, rtol=0, atol=1e-12)
+    assert all(count == 1 for count in clicks.counts())
     diagnostics = check_truncation(result, threshold=2.)
     assert len(diagnostics["deterministic"]) == 1
     assert diagnostics["deterministic"][0]["r"] == pytest.approx(1.)
@@ -280,7 +297,12 @@ def test_native_current_identity_offset_and_variance(backend):
     key = problem.engine_result.slh.channels[0].key
     problem = with_monitoring(problem, {key: .4}, phases={key: .3})
     result = solve_problem(problem)
-    records = np.asarray(result.native.measurement if backend == "qutip" else result.native.measurements)
+    record = result.records()
+    assert record.channels == (key,) and record.efficiencies == (.4,) and record.phases == (.3,)
+    assert record.sampling == ("end" if backend == "qutip" else "mean") and not record.heterodyne
+    np.testing.assert_array_equal(record.edges, [0., .1, .2])
+    records = np.asarray(record.values)
+    assert records.shape == (1024, 1, 2)
     expected_mean = 2*np.real(np.sqrt(.5*.4)*np.exp(-.3j)*(1.+.2j))
     # Native current is dW/dt, with interval variance 1/dt; five sampling standard errors.
     variance = 1/.1
@@ -304,7 +326,140 @@ def test_native_event_buffer_exhaustion_cannot_look_like_completed_evolution():
         options={"nmaxclick": 1})
     incomplete = solve_problem(problem)
     assert incomplete.native.clicktimes.shape[-1] == 1
+    assert np.all(incomplete.clicks().full)
     with pytest.raises(Exception, match="exhausted nmaxclick"):
         incomplete.expect("r")
+    with pytest.raises(Exception, match="exhausted nmaxclick"):
+        incomplete.run_expect("r")
     complete = solve_problem(replace(problem, options={"nmaxclick": 8}))
     np.testing.assert_allclose(complete.expect("r"), [2., 0., 0.], atol=1e-12)
+    clicks = complete.clicks()
+    assert not np.any(clicks.full) and list(clicks.counts()) == [2, 2]
+
+
+TRAJECTORY_SOLVERS = {
+    "qutip": ("smesolve", "mcsolve"),
+    "dynamiqs": ("dsmesolve", "jssesolve"),
+}
+
+
+def native_trajectory_arguments(solver, count, seed):
+    """Native run arguments and options that keep every run, its records and its expectations."""
+    if solver in ("smesolve", "ssesolve"):
+        return ({"ntraj": count, "seeds": seed},
+                {"dt": .001, "store_measurement": "end", "keep_runs_results": True, "progress_bar": ""})
+    if solver == "mcsolve":
+        return {"ntraj": count, "seeds": seed}, {"keep_runs_results": True, "progress_bar": ""}
+    import dynamiqs as dq
+    import jax
+
+    keys = jax.random.split(jax.random.key(seed), count)
+    if solver == "jssesolve":
+        return {"keys": keys, "method": dq.method.Event(dtmax=.01)}, {"nmaxclick": 8}
+    return {"keys": keys, "method": dq.method.EulerMaruyama(dt=.001)}, {}
+
+
+@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])
+def test_records_clicks_and_run_values_share_one_layout(backend):
+    """#194: records, clicks and per-run expectations have the same shapes and labels on both backends."""
+    from quchip import with_monitoring
+
+    if backend == "dynamiqs":
+        pytest.importorskip("dynamiqs")
+    times = np.linspace(0., 1., 11)
+    diffusive, jumps = TRAJECTORY_SOLVERS[backend]
+    for solver in (diffusive, jumps):
+        chip = Chip([Resonator(freq=5., levels=3, label="r", T1=1.)], backend=backend, frame="rotating")
+        run_args, options = native_trajectory_arguments(solver, 4, 1)
+        problem = QuantumSequence(chip).build_problem(times, solver=solver, initial_state={"r": 2},
+                                                      run_args=run_args, options=options, e_ops=chip.e_ops(r="n"))
+        key = problem.engine_result.slh.channels[0].key
+        if solver == diffusive:
+            problem = with_monitoring(problem, {key: .5})
+        result = solve_problem(problem)
+        if solver == diffusive:
+            record = result.records()
+            assert np.shape(record.values) == (4, 1, 10) and record.channels == (key,)
+            assert record.efficiencies == (.5,) and np.shape(record.edges) == (11,)
+            with pytest.raises(ValueError, match="jump solver"):
+                result.clicks()
+        else:
+            clicks = result.clicks()
+            assert len(clicks.times) == 4 and all(set(channels) <= {key} for channels in clicks.channels)
+            np.testing.assert_allclose(np.sum(clicks.weights), 1., rtol=0, atol=1e-12)
+            with pytest.raises(ValueError, match="diffusive solver|store_measurement"):
+                result.records()
+        per_run = result.run_expect("r")
+        assert np.shape(per_run) == (4, 11)
+        np.testing.assert_array_equal(per_run[2], result.run(2).expect("r"))
+
+
+@pytest.mark.validation
+@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])
+@pytest.mark.parametrize("sampling", ["plain", "no-click run apart"])
+def test_weighted_click_count_matches_the_emitted_photon_number(backend, sampling):
+    """Two photons decay at 1/ns. The weighted mean click count over 1 ns is γ∫⟨n⟩dt = 2(1 − e⁻¹)."""
+    if backend == "dynamiqs":
+        dq = pytest.importorskip("dynamiqs")
+    chip = Chip([Resonator(freq=1., levels=3, label="r", T1=1.)], backend=backend, frame="rotating")
+    solver = TRAJECTORY_SOLVERS[backend][1]
+    count = 1024
+    run_args, options = native_trajectory_arguments(solver, count, 5)
+    if sampling != "plain":
+        if backend == "qutip":
+            options = {**options, "improved_sampling": True}
+        else:
+            run_args = {**run_args, "method": dq.method.Event(dtmax=.01, smart_sampling=True)}
+    problem = QuantumSequence(chip).build_problem([0., .5, 1.], solver=solver, initial_state={"r": 2},
+                                                  run_args=run_args, options=options, states="none")
+    clicks = solve_problem(problem).clicks()
+    counts = clicks.counts()
+    mean = float(np.sum(clicks.weights * counts))
+    expected = 2 * (1 - np.exp(-1.))
+    # Each photon leaves independently with probability p = 1 − e⁻¹, so a run count is binomial. A no-click run
+    # solved apart leaves runs with one or two clicks, weighted by 1 − e⁻², which lowers the variance.
+    p = 1 - np.exp(-1.)
+    clicked = np.array([2 * p * (1 - p), p**2]) / (1 - np.exp(-2.))
+    variance = (2 * p * (1 - p) if sampling == "plain"
+                else (1 - np.exp(-2.)) ** 2 * (clicked @ [1., 4.] - (clicked @ [1., 2.]) ** 2))
+    np.testing.assert_allclose(mean, expected, rtol=0, atol=5 * np.sqrt(variance / count))
+    if sampling != "plain":
+        np.testing.assert_allclose(clicks.no_click_weight, np.exp(-2.), rtol=1e-6)
+        assert np.all(counts >= 1)
+
+
+@pytest.mark.validation
+@pytest.mark.parametrize("backend,sampling", [("qutip", "start"), ("qutip", "middle"), ("qutip", "end"),
+                                              pytest.param("dynamiqs", "mean", marks=pytest.mark.optional_backend)])
+def test_mean_record_follows_the_native_sampling_of_a_decaying_field(backend, sampling):
+    """A coherent state α₀ = 1 decays at γ = 1/ns under ideal homodyne detection and stays coherent, so the
+    signal 2Re⟨√γ a⟩ = 2e^(−t/2) is deterministic. Over one 1-ns interval, its start, middle (the mean of
+    both ends), end and interval mean are 2, 1.60653, 1.21306 and 1.57388."""
+    from quchip import with_monitoring
+
+    if backend == "dynamiqs":
+        dq = pytest.importorskip("dynamiqs")
+        import jax
+
+        solver = "dssesolve"
+        count = 4096
+        run_args = {"keys": jax.random.split(jax.random.key(3), count), "method": dq.method.EulerMaruyama(dt=.005)}
+        options = {}
+    else:
+        solver = "ssesolve"
+        count = 2048
+        run_args = {"ntraj": count, "seeds": 3}
+        options = {"dt": .005, "store_measurement": sampling, "keep_runs_results": True, "progress_bar": ""}
+    from scipy.special import factorial
+
+    chip = Chip([Resonator(freq=1., levels=12, label="r", T1=1.)], backend=backend, frame="rotating")
+    levels = np.arange(12)
+    coherent = np.exp(-.5) / np.sqrt(factorial(levels))
+    problem = QuantumSequence(chip).build_problem([0., 1.], solver=solver, initial_state=chip.bare_state(r=coherent),
+                                                  run_args=run_args, options=options, states="none")
+    problem = with_monitoring(problem, {problem.engine_result.slh.channels[0].key: 1.})
+    record = solve_problem(problem).records()
+    assert record.sampling == sampling
+    signal = {"start": 2., "middle": 1. + np.exp(-.5), "end": 2 * np.exp(-.5), "mean": 4 * (1 - np.exp(-.5))}
+    # The homodyne noise of one 1-ns interval has variance 1: five standard errors of the mean.
+    np.testing.assert_allclose(np.mean(record.values), signal[sampling], rtol=0, atol=5 / np.sqrt(count))

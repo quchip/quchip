@@ -1135,6 +1135,64 @@ class Backend(ABC):
             ``None`` when the native result does not keep it.
         """
         raise NotImplementedError(f"{type(self).__name__} does not implement native solver {problem.solver!r}.")
+
+    def trajectory_records(self, native: Any, problem: "SolveProblem") -> tuple[Any, str]:
+        """Read the diffusive measurement currents of a native stochastic result.
+
+        Parameters
+        ----------
+        native : object
+            Native stochastic result that :meth:`solve_problem` returned.
+        problem : SolveProblem
+            Captured request, with its solver and native options.
+
+        Returns
+        -------
+        tuple
+            Currents of shape ``(runs, channels, intervals)``, or
+            ``(runs, channels, 2, intervals)`` for heterodyne detection, and
+            the sampling of the signal in each interval: ``"start"``,
+            ``"middle"``, ``"end"`` or ``"mean"``.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not implement native solver {problem.solver!r}.")
+
+    def trajectory_clicks(self, native: Any, problem: "SolveProblem") -> tuple[list[Any], Any, Any, Any]:
+        """Read the jump events of a native stochastic result.
+
+        Parameters
+        ----------
+        native : object
+            Native stochastic result that :meth:`solve_problem` returned.
+        problem : SolveProblem
+            Captured request, with its solver and native options.
+
+        Returns
+        -------
+        tuple
+            For each run, its click times and the native jump-operator index of
+            each click; the sampling weight of each run; the weight of the
+            no-click run that the native sampling solves apart; and whether
+            each run filled its native click buffer.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not implement native solver {problem.solver!r}.")
+
+    def trajectory_run_expect(self, native: Any, problem: "SolveProblem") -> list[Any]:
+        """Read the expectation values of every kept run of a native stochastic result.
+
+        Parameters
+        ----------
+        native : object
+            Native stochastic result that :meth:`solve_problem` returned.
+        problem : SolveProblem
+            Captured request, with its native expectation operators.
+
+        Returns
+        -------
+        list
+            One array of shape ``(runs, times)`` for each native expectation operator.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not implement native solver {problem.solver!r}.")
+
     def _stationary_liouvillian(self, engine_result: "EngineResult") -> Any:
         """Lower a static engine description to the backend's native generator."""
         raise NotImplementedError(f"{type(self).__name__} must implement stationary lowering")
