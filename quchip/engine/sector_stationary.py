@@ -18,7 +18,8 @@ from scipy import sparse
 from quchip.backend._sector_stationary import SectorGenerator, SectorSolve
 from quchip.engine.linear_response import _UnsupportedLinearModel, _sector_response_model
 from quchip.engine.reference import FieldChannel, cw_transfer
-from quchip.engine.sectors import _level_pairs, _sector_levels, sector_size
+from quchip.engine.excitation import sector_levels, sector_size
+from quchip.engine.sectors import _level_pairs
 from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
 
@@ -78,7 +79,7 @@ class SectorProbeModel:
         return tuple(sector_size(self.dims, total) for total in range(cutoff + 1))
 
     def _levels(self, cutoff: int) -> np.ndarray:
-        return np.concatenate([_sector_levels(self.dims, total) for total in range(cutoff + 1)])
+        return np.concatenate([sector_levels(self.dims, total) for total in range(cutoff + 1)])
 
     def _sparse(self, levels: np.ndarray, matrix: Any, support: tuple[int, ...]) -> Any:
         """Return an operator on ``support`` as a sparse matrix on the retained labels."""

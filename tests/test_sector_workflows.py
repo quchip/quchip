@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from quchip import ChargeDrive, Chip, DuffingTransmon, Exact, fit_a_dress
-from quchip.engine.excitation import conserves_excitation_number
+from quchip.engine.excitation import excitation_structure
 from quchip.declarative import CouplingModel, Scalar, parameter
 
 
@@ -28,7 +28,7 @@ def pair(*, backend="qutip"):
 def test_exact_exchange_uses_sectors_and_matches_independent_spectrum():
     """A custom exchange Hamiltonian needs no RWA to conserve the energy-level index."""
     chip = pair()
-    assert conserves_excitation_number(chip, chip.approximation)
+    assert excitation_structure(chip, chip.approximation).conserves
     assert chip.analysis._dressed_dimension(2) == 3
     expected = 5.2 - np.sqrt(0.2**2 + 0.04**2)
     assert chip.freq("q") == pytest.approx(expected, abs=1e-12)
@@ -80,7 +80,7 @@ def test_counter_rotating_support_is_not_declared_conserving_at_zero_strength():
     q, r = source.devices
     for g in (0.0, 1e-16, 0.04):
         chip = Chip([q, r], [Capacitive(q, r, g=g)], approximation=Exact())
-        assert not conserves_excitation_number(chip, chip.approximation)
+        assert not excitation_structure(chip, chip.approximation).conserves
 
 
 @pytest.mark.optional_backend
@@ -145,7 +145,7 @@ def test_undeclared_retained_matrix_is_checked_without_a_tolerance():
         h = np.diag([0.0, 0.01, 0.02])
         h[0, 1] = h[1, 0] = offdiagonal
         chip = Chip([q], effective_terms=[EffectiveTerms(("q",), (3,), h)], approximation=Exact())
-        assert conserves_excitation_number(chip, chip.approximation) == (offdiagonal == 0)
+        assert excitation_structure(chip, chip.approximation).conserves == (offdiagonal == 0)
         if offdiagonal == 0:
             assert chip.freq(q) == pytest.approx(5.01, abs=1e-12)
 
@@ -166,7 +166,7 @@ def test_projected_cascade_port_is_not_declared_conserving():
                              projection=OperatorProjection(("a",), (2,), ("a",), (2,), hadamard))
     chip = Chip([a, b], port_network=network, effective_terms=[rotated], approximation=Exact())
     # Both authored ports lower one level, but the projected upstream port also keeps and raises levels.
-    assert not conserves_excitation_number(chip, chip.approximation)
+    assert not excitation_structure(chip, chip.approximation).conserves
     default = QuantumSequence(chip).build_problem([0.0, 1.0]).initial_state
     default = np.ravel(np.asarray(chip.backend.to_array(default)))
     np.testing.assert_allclose(default, np.ravel(np.asarray(chip.backend.to_array(chip.state({})))), atol=1e-12)

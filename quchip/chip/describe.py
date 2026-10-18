@@ -80,7 +80,7 @@ def describe_chip(chip: "Chip") -> str:
         lines += [f"           {line}" for line in _format_frame_plan(plan)]
     lines.append(f"Approx.  : {type(chip.approximation).__name__}")
     if chip.space is not None:
-        from quchip.engine.sectors import sector_size
+        from quchip.engine.excitation import sector_size
 
         retained = sum(sector_size(chip.dims, total) for total in range(chip.space.max_total + 1))
         kept = "every product label" if not chip.space.binds(chip.dims) else f"{retained} product labels"

@@ -230,7 +230,7 @@ class _SectorResponseModel:
 
 def _sector_response_model(chip: Any, plane_labels: tuple[str, ...]) -> _SectorResponseModel:
     """Assemble every channel on its local support and require a conserving vacuum-input model."""
-    from quchip.engine.excitation import authored_excitation_changes
+    from quchip.engine.excitation import authored_excitation_changes, lowers_by_one
 
     network = chip.port_network
     if network is None or chip.dynamic_contributions():
@@ -248,8 +248,7 @@ def _sector_response_model(chip: Any, plane_labels: tuple[str, ...]) -> _SectorR
         operator_labels = tuple(labels[index] for index in support) if support else labels
         changes = authored_excitation_changes(operator, operator_labels, backend, sectors.bases)
         if maybe_concrete_scalar(_scalar_value(rate, backend)) != 0.0:
-            lowering = changes is not None and changes <= {1}
-            if not lowering and (changes != {0} or isinstance(owner, Port)):
+            if not lowers_by_one(changes) and (changes != {0} or isinstance(owner, Port)):
                 raise _UnsupportedLinearModel
         if not isinstance(owner, Port):
             if changes == {0}:

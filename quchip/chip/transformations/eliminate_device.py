@@ -62,7 +62,7 @@ from quchip.chip.sw import (
     mode_blocks,
     cross_block_gap,
 )
-from quchip.engine.excitation import authored_excitation_changes, conserves_excitation_number, excitation_sectors
+from quchip.engine.excitation import authored_excitation_changes, excitation_sectors, excitation_structure
 from quchip.chip.transformations.dispatch import EliminationTarget, register_elimination_target
 from quchip.chip.transformations.methods import (
     DeviceReductionContext,
@@ -396,7 +396,7 @@ def _local_dressed_transition(chip: "Chip", resolution: Any, mode_label: str, lo
     dims = resolution.dims
     mode_axis = chip.device_index(mode_label)
     terms = tuple(_hamiltonian_interactions(chip, resolution, approximation))
-    conserving = conserves_excitation_number(chip, approximation, resolution=resolution)
+    conserving = excitation_structure(chip, approximation, resolution=resolution).conserves
     ground = (0,) * len(dims)
     excited = tuple(int(index == mode_axis) for index in range(len(dims)))
     states = dict.fromkeys((ground, excited))
@@ -820,13 +820,13 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
     # A structurally conserving model has no matrix elements between
     # total-excitation sectors; removing their round-off keeps both routes,
     # and every captured map, inside the sectors.
-    sectors = excitation_sectors(dims) if conserves_excitation_number(numeric, approximation) else None
+    sectors = excitation_sectors(dims) if excitation_structure(numeric, approximation).conserves else None
     if sectors is not None:
         h = concrete_array_module(h).where(sectors[:, None] == sectors[None, :], h, 0.0)
     conserving = sectors is not None
     if local and conserving and boundary_ports:
         # A retained pole serves the vacuum response of the whole reduced chip.
-        conserving = conserves_excitation_number(chip, approximation)
+        conserving = excitation_structure(chip, approximation).conserves
     if len(boundary_ports) > 1 and not conserving:
         raise NotImplementedError(
             f"Eliminating {mode_label!r} with ports {[port.label for port in boundary_ports]} requires an "

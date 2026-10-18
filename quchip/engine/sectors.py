@@ -39,7 +39,9 @@ from quchip.engine.assembly import (
     _project_on_support,
     _resolve_system,
 )
-from quchip.engine.excitation import sector_eigh
+from quchip.engine.excitation import (
+    excitation_structure, sector_eigh, sector_levels, sector_size,
+)
 from quchip.engine.slh import cascade_hamiltonian
 from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import concrete_array_module, contains_tracer
@@ -47,37 +49,6 @@ from quchip.utils.values import scoped_entry, scoped_hit
 
 if TYPE_CHECKING:
     from quchip.chip.chip import Chip
-
-
-@functools.lru_cache(maxsize=1024)
-def _sector_levels(dims: tuple[int, ...], total: int) -> np.ndarray:
-    """Return every level product below ``dims`` that sums to ``total``, in C order."""
-    if not dims:
-        return np.zeros((1 if total == 0 else 0, 0), dtype=np.int64)
-    blocks = []
-    for level in range(min(dims[0] - 1, total) + 1):
-        rest = _sector_levels(dims[1:], total - level)
-        if rest.shape[0]:
-            blocks.append(np.column_stack((np.full(rest.shape[0], level, dtype=np.int64), rest)))
-    levels = np.concatenate(blocks) if blocks else np.zeros((0, len(dims)), dtype=np.int64)
-    levels.flags.writeable = False
-    return levels
-
-
-def sector_size(dims: Sequence[int], total: int) -> int:
-    """Count the product states of ``dims`` whose levels sum to ``total``.
-
-    Parameters
-    ----------
-    dims : sequence of int
-        Level count of each device.
-    total : int
-        Total energy-level index.
-    """
-    counts = [1] + [0] * total
-    for dimension in dims:
-        counts = [sum(counts[n - level] for level in range(min(dimension - 1, n) + 1)) for n in range(total + 1)]
-    return counts[total]
 
 
 def _level_pairs(dims: Sequence[int], support: tuple[int, ...], row_levels: np.ndarray,
@@ -111,41 +82,6 @@ def _level_pairs(dims: Sequence[int], support: tuple[int, ...], row_levels: np.n
     offsets = np.arange(pair_rows.size) - np.repeat(np.cumsum(counts) - counts, counts)
     pair_columns = order[np.repeat(start, counts) + offsets]
     return pair_rows, pair_columns, local_rows[pair_rows], local_columns[pair_columns]
-
-
-def excitation_classes(changes: frozenset[int] | None, maximum: int) -> tuple[tuple[int, ...], ...]:
-    """Partition the totals ``0..maximum`` into the classes that ``changes`` connect.
-
-    A class holds the totals that steps ``n -> n +- c`` with every
-    intermediate total in ``[0, maximum]`` connect. Unknown changes give one
-    class.
-
-    Parameters
-    ----------
-    changes : frozenset of int or None
-        Changes of the total energy-level index, or ``None`` when unknown.
-    maximum : int
-        Largest retained total.
-    """
-    if changes is None:
-        return (tuple(range(maximum + 1)),)
-    steps = sorted({abs(change) for change in changes} - {0})
-    seen: set[int] = set()
-    classes: list[tuple[int, ...]] = []
-    for start in range(maximum + 1):
-        if start in seen:
-            continue
-        members, frontier = {start}, [start]
-        while frontier:
-            total = frontier.pop()
-            for step in steps:
-                for reached in (total - step, total + step):
-                    if 0 <= reached <= maximum and reached not in members:
-                        members.add(reached)
-                        frontier.append(reached)
-        seen |= members
-        classes.append(tuple(sorted(members)))
-    return tuple(classes)
 
 
 def generated_products(ports: dict[str, tuple[Any, tuple[int, ...]]], pairs: Sequence[tuple[str, str, Any]],
@@ -292,11 +228,11 @@ class SectorModel:
 
     Without a cutoff, the chip's static model must conserve the total
     energy-level index, as
-    :func:`~quchip.engine.excitation.conserves_excitation_number` checks, and each
-    block is one sector. Under an active
+    :attr:`~quchip.engine.excitation.ExcitationStructure.conserves` states, and
+    each block is one sector. Under an active
     :class:`~quchip.cutoff.ExcitationCutoff`, the model is ``P H P`` on the
     labels with ``N <= K``, and each block is one class of
-    :func:`excitation_classes`. A block holds the device energies, each
+    :func:`~quchip.engine.excitation.excitation_classes`. A block holds the device energies, each
     coupling band that the chip's approximation keeps, each retained term, and
     the Hamiltonian that cascaded ports generate.
 
@@ -314,7 +250,6 @@ class SectorModel:
 
     def __init__(self, chip: "Chip", *, resolution: Any = None, advisories: list[str] | None = None,
                  approximation: Any = None) -> None:
-        from quchip.engine.excitation import static_excitation_changes
         from quchip.cutoff import active_cutoff
 
         resolution = _resolve_system(chip, chip.backend) if resolution is None else resolution
@@ -326,8 +261,8 @@ class SectorModel:
         self.approximation = chip.approximation if approximation is None else approximation
         policy = active_cutoff(chip)
         self.cutoff: int | None = None if policy is None else policy.max_total
-        self.classes = None if self.cutoff is None else excitation_classes(
-            static_excitation_changes(chip, self.approximation, resolution=resolution), self.cutoff)
+        self.classes = None if self.cutoff is None else excitation_structure(
+            chip, self.approximation, resolution=resolution).classes(self.cutoff)
         self._ports: dict[str, tuple[Any, tuple[int, ...]]] | None = None
         pairs = () if self.network is None else self.network.generated_pairs
         generated = () if not pairs else generated_products(self.port_couplings(), pairs, self.dims)
@@ -383,8 +318,8 @@ class SectorModel:
                            task=f"Excitation {block} (dimension {size})",
                            remedy="Request lower-excitation labels or reduce the model." if self.cutoff is None
                            else "Request lower-excitation labels, lower max_total, or reduce the model.")
-            levels = (_sector_levels(self.dims, key[0]) if len(key) == 1
-                      else np.concatenate([_sector_levels(self.dims, total) for total in key]))
+            levels = (sector_levels(self.dims, key[0]) if len(key) == 1
+                      else np.concatenate([sector_levels(self.dims, total) for total in key]))
             levels.flags.writeable = False
             self._spaces[key] = SectorSpace(self.dims, key, levels)
         return self._spaces[key]

@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import itertools
 import warnings
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from functools import partial
 from math import prod
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence, cast
@@ -119,6 +119,9 @@ class _SystemResolution:
     dims: tuple[int, ...]
     network: CompiledNetwork | None
     space: Any = None
+    # Excitation records keyed by approximation. They do not depend on the
+    # solver space, so a copy with another space shares them.
+    excitation: dict[Any, Any] = field(default_factory=dict, repr=False, compare=False)
 
     @property
     def operator_dims(self):
@@ -1539,29 +1542,6 @@ def _drive_authored_terms(chip, drive, target, backend):
     for index, (_, operator) in enumerate(terms):
         yield index, as_operator_expr(operator, labels=pair, dims=dims, owner=drive,
                                       scope=f"drive.{drive.label}", name=rf"H_{{{drive.label},{index}}}")
-
-
-def drive_excitation_changes(chip, drive, target, bases, approximation):
-    from quchip.engine.excitation import authored_excitation_changes
-
-    changes = set()
-    for _, authored in _drive_authored_terms(chip, drive, target, chip.backend):
-        support = tuple(chip.device_index(label) for label in authored.labels)
-        retained = any(term.projection is not None for term in chip.effective_terms)
-        if retained:
-            authored, support = _retained_operator(chip, authored, support, chip.backend,
-                                                   f"drive:{drive.label}", bases=bases)
-        if not retained and isinstance(drive, CouplingDrive) and approximation.conserves_excitation_number():
-            weights = {0}
-        else:
-            weights = authored_excitation_changes(authored, tuple(chip.devices[i].label for i in support),
-                                                   chip.backend, bases)
-            if weights is None:
-                return None
-            if len(support) == 1:
-                weights = {n for n in weights if _keeps_drive_band(drive, approximation, (n,))}
-        changes.update(weights)
-    return changes
 
 
 def drive_bands(

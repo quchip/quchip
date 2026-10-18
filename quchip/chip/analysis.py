@@ -421,8 +421,8 @@ class ChipAnalysis:
         cutoff classes of :class:`~quchip.engine.sectors.SectorModel`. Results
         cache like the full eigensystem.
         """
-        from quchip.engine.excitation import conserves_excitation_number
         from quchip.cutoff import active_cutoff
+        from quchip.engine.excitation import excitation_structure
         from quchip.engine.sectors import SectorModel
 
         signature = self._analysis_signature()
@@ -435,7 +435,7 @@ class ChipAnalysis:
         advisories: list[str] = []
         model = (SectorModel(chip, resolution=resolution, advisories=advisories)
                  if active_cutoff(chip) is not None
-                 or conserves_excitation_number(chip, chip.approximation, resolution=resolution) else None)
+                 or excitation_structure(chip, chip.approximation, resolution=resolution).conserves else None)
         self._sector_cache = scoped_entry(signature, (model, advisories), traced=model is not None and model.traced)
         return _reported((model, advisories), _advise)
 
@@ -505,7 +505,7 @@ class ChipAnalysis:
         total : int
             Largest total energy-level index of the queried labels.
         """
-        from quchip.engine.sectors import sector_size
+        from quchip.engine.excitation import sector_size
 
         model = self._sector_model()
         if model is None:
@@ -528,9 +528,9 @@ class ChipAnalysis:
         perturbation theory over the same eigensystem, masking gaps at the
         tolerance of :func:`~quchip.engine.basis._differentiable_eigenpairs`.
         """
-        from quchip.engine.excitation import conserves_excitation_number
         from quchip.engine.assembly import _analysis_matrix_ghz, _build_static_analysis_result
         from quchip.engine.basis import _differentiable_eigenvector
+        from quchip.engine.excitation import excitation_structure
         from quchip.engine.states import bare_state_from_bases
 
         key = (self._analysis_signature(), approximation)
@@ -543,7 +543,7 @@ class ChipAnalysis:
         same_approximation = approximation == chip.approximation
         conserving = (
             self._sector_model(_advise=False) is not None if same_approximation
-            else conserves_excitation_number(chip, approximation)
+            else excitation_structure(chip, approximation).conserves
         )
         if conserving:
             self._ground_cache = scoped_entry(key, None, traced=False)

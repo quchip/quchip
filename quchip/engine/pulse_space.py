@@ -51,12 +51,12 @@ class PulseSpace:
 
     @classmethod
     def create(cls, dims, labels, totals, bases):
-        from quchip.engine.sectors import _sector_levels, sector_size
+        from quchip.engine.excitation import sector_levels, sector_size
 
         totals = tuple(sorted(set(totals)))
         size = sum(sector_size(dims, total) for total in totals)
         require_memory(8 * len(dims) * size, task=f"Exact pulse space (dimension {size})", remedy=_OPERATOR_REMEDY)
-        levels = np.concatenate([_sector_levels(tuple(dims), n) for n in totals])
+        levels = np.concatenate([sector_levels(tuple(dims), n) for n in totals])
         levels.flags.writeable = False
         return cls(tuple(dims), tuple(labels), totals, levels, dict(bases))
 
@@ -293,24 +293,20 @@ def plan_pulse_space(chip, operations, states, resolution, approximation, dissip
     that a generator change can move above ``K``, or is ``None`` when the
     changes are unknown or no cutoff is active.
     """
-    from quchip.engine.excitation import (
-        authored_excitation_changes, conserves_excitation_number, static_excitation_changes,
-    )
     from quchip.chip.ports import Port
     from quchip.cutoff import active_cutoff
-    from quchip.engine.assembly import (
-        _interaction_contributions,
-        _build_delivered_signals,
-        drive_excitation_changes,
-        _component_authored_terms,
+    from quchip.engine.assembly import _build_delivered_signals, _component_authored_terms
+    from quchip.engine.excitation import (
+        authored_excitation_changes, drive_excitation_changes, excitation_structure, keeps_zero_total_only, sector_size,
     )
     from quchip.engine.ir import CoherentOp
-    from quchip.engine.sectors import excitation_classes, sector_size
 
     bases, dims = resolution.bases, resolution.dims
     labels = tuple(d.label for d in chip.devices)
     policy = active_cutoff(chip)
     cutoff = None if policy is None else policy.max_total
+
+    structure = excitation_structure(chip, approximation, resolution=resolution)
 
     def fallback(reason):
         if cutoff is None:
@@ -322,9 +318,8 @@ def plan_pulse_space(chip, operations, states, resolution, approximation, dissip
     if any(state is None for state in states):
         if cutoff is not None:
             # The default state is the vacuum-assigned eigenvector of the truncated static model.
-            changes = static_excitation_changes(chip, approximation, resolution=resolution)
-            occupied.update(next(group for group in excitation_classes(changes, cutoff) if 0 in group))
-        elif not conserves_excitation_number(chip, approximation, resolution=resolution):
+            occupied.update(next(group for group in structure.classes(cutoff) if 0 in group))
+        elif not structure.conserves:
             return None, "The default dressed state has no proven finite excitation support.", None
         else:
             occupied.add(0)
@@ -341,10 +336,7 @@ def plan_pulse_space(chip, operations, states, resolution, approximation, dissip
             return None, "Initial excitation support is unknown.", None
         occupied.update(totals)
     changes = {0}
-    for term in _interaction_contributions(chip):
-        if not term.retained and approximation.filters_terms and approximation.conserves_excitation_number():
-            continue
-        support = authored_excitation_changes(term.expression(), term.labels, chip.backend, bases)
+    for support in structure.interaction_changes():
         if support is None:
             return fallback("Static interaction support is unknown.")
         changes.update(support)
@@ -352,7 +344,7 @@ def plan_pulse_space(chip, operations, states, resolution, approximation, dissip
     for operator, _coefficient, support, _owner, _origin, _tag in _component_authored_terms(
         chip, resolution, chip.backend
     ):
-        if len(support) == 2 and approximation.filters_terms and approximation.conserves_excitation_number():
+        if len(support) == 2 and keeps_zero_total_only(approximation):
             continue
         support_changes = authored_excitation_changes(operator, tuple(labels[i] for i in support), chip.backend, bases)
         if support_changes is None:

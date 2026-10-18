@@ -283,14 +283,14 @@ class CompactState:
             State values and numerical basis arrays.
         """
         from quchip.engine.basis import BasisRecord
-        from quchip.engine.sectors import _sector_levels
+        from quchip.engine.excitation import sector_levels
 
         dims, labels, totals, records = metadata
         bases = {
             label: BasisRecord(kind, arrays[0], arrays[1], arrays[2], native, resolved)
             for label, (kind, native, resolved), arrays in zip(labels, records, leaves[1:])
         }
-        levels = np.concatenate([_sector_levels(dims, total) for total in totals])
+        levels = np.concatenate([sector_levels(dims, total) for total in totals])
         return cls(leaves[0], PulseSpace(dims, labels, totals, levels, bases))
 
 
@@ -314,8 +314,8 @@ def compact_state(chip, *components, dressed=False):
     from quchip.chip.states import normalize_device_state_mapping
     from quchip.cutoff import active_cutoff
     from quchip.engine.assembly import _resolve_system
+    from quchip.engine.excitation import excitation_structure
     from quchip.engine.sectors import SectorModel
-    from quchip.engine.excitation import conserves_excitation_number
     from quchip.utils.jax_utils import maybe_concrete_scalar
 
     resolution = _resolve_system(chip, chip.backend)
@@ -338,7 +338,8 @@ def compact_state(chip, *components, dressed=False):
                 f"cutoff N <= {policy.max_total}."
             )
         entries.append((amplitude, levels))
-    if dressed and policy is None and not conserves_excitation_number(chip, chip.approximation, resolution=resolution):
+    if dressed and policy is None and not excitation_structure(
+            chip, chip.approximation, resolution=resolution).conserves:
         raise ValueError("Compact dressed preparation requires proven static excitation conservation.")
     model = None
     totals = {sum(levels) for _, levels in entries}

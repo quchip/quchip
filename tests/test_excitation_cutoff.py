@@ -27,7 +27,7 @@ from quchip import (
     fit_a_dress,
     with_truncation,
 )
-from quchip.engine.sectors import excitation_classes
+from quchip.engine.excitation import excitation_classes
 
 
 def ladder(levels):

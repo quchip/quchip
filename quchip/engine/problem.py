@@ -136,7 +136,7 @@ def prepare_solve_problem_context(
     from quchip.engine.assembly import _resolve_system, _prepare_engine_assembly
     from quchip.engine.frames import plan_for_operations
     from quchip.engine.pulse_space import plan_pulse_space
-    from quchip.engine.sectors import sector_size
+    from quchip.engine.excitation import sector_size
     from quchip.approximations import require_approximation
     from quchip.cutoff import active_cutoff
 

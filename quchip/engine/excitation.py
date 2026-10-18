@@ -3,13 +3,17 @@
 ``N`` is the total isolated energy-level index of a product state. This module
 finds the changes of ``N`` that authored operators carry, proves whether the
 retained static model of a chip conserves ``N``, and indexes product states by
-``N``.
+``N``. :class:`ExcitationStructure` holds these facts for one resolved system
+and one approximation, and the engine's routes read them from it.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass
+from functools import cached_property, lru_cache
 from math import prod
-from typing import Any, Mapping
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -24,6 +28,72 @@ from quchip.utils.jax_utils import contains_tracer
 def excitation_sectors(dims: tuple[int, ...]) -> np.ndarray:
     """Total energy-level index of every C-order product state."""
     return np.indices(tuple(dims)).reshape(len(dims), -1).sum(axis=0)
+
+
+@lru_cache(maxsize=1024)
+def sector_levels(dims: tuple[int, ...], total: int) -> np.ndarray:
+    """Return every level product below ``dims`` that sums to ``total``, in C order."""
+    if not dims:
+        return np.zeros((1 if total == 0 else 0, 0), dtype=np.int64)
+    blocks = []
+    for level in range(min(dims[0] - 1, total) + 1):
+        rest = sector_levels(dims[1:], total - level)
+        if rest.shape[0]:
+            blocks.append(np.column_stack((np.full(rest.shape[0], level, dtype=np.int64), rest)))
+    levels = np.concatenate(blocks) if blocks else np.zeros((0, len(dims)), dtype=np.int64)
+    levels.flags.writeable = False
+    return levels
+
+
+def sector_size(dims: Sequence[int], total: int) -> int:
+    """Count the product states of ``dims`` whose levels sum to ``total``.
+
+    Parameters
+    ----------
+    dims : sequence of int
+        Level count of each device.
+    total : int
+        Total energy-level index.
+    """
+    counts = [1] + [0] * total
+    for dimension in dims:
+        counts = [sum(counts[n - level] for level in range(min(dimension - 1, n) + 1)) for n in range(total + 1)]
+    return counts[total]
+
+
+def excitation_classes(changes: frozenset[int] | None, maximum: int) -> tuple[tuple[int, ...], ...]:
+    """Partition the totals ``0..maximum`` into the classes that ``changes`` connect.
+
+    A class holds the totals that steps ``n -> n +- c`` with every
+    intermediate total in ``[0, maximum]`` connect. Unknown changes give one
+    class.
+
+    Parameters
+    ----------
+    changes : frozenset of int or None
+        Changes of the total energy-level index, or ``None`` when unknown.
+    maximum : int
+        Largest retained total.
+    """
+    if changes is None:
+        return (tuple(range(maximum + 1)),)
+    steps = sorted({abs(change) for change in changes} - {0})
+    seen: set[int] = set()
+    classes: list[tuple[int, ...]] = []
+    for start in range(maximum + 1):
+        if start in seen:
+            continue
+        members, frontier = {start}, [start]
+        while frontier:
+            total = frontier.pop()
+            for step in steps:
+                for reached in (total - step, total + step):
+                    if 0 <= reached <= maximum and reached not in members:
+                        members.add(reached)
+                        frontier.append(reached)
+        seen |= members
+        classes.append(tuple(sorted(members)))
+    return tuple(classes)
 
 
 def sector_eigh(h: Any, sectors: np.ndarray) -> tuple[Any, Any]:
@@ -167,90 +237,248 @@ def authored_excitation_changes(
     return changes(operator, labels)
 
 
-def static_excitation_changes(chip: Any, approximation: Any, *, resolution: Any = None) -> frozenset[int] | None:
-    """Return the total energy-level changes of the retained static model, or ``None`` when unknown.
+def keeps_zero_total_only(approximation: Any) -> bool:
+    """Return whether ``approximation`` keeps only the zero-total bands of ordinary interactions.
 
-    The set is symmetric and holds ``0``. A zero-total band filter removes
-    every change of an ordinary interaction. Retained terms bypass that
-    filter. A generated port pair ``L_d^dagger L_u`` changes the total by
-    ``u - d`` for each change ``u`` of the upstream port and ``d`` of the
-    downstream port.
+    Such an approximation removes every change of ``N`` from a coupling or an
+    intrinsic two-device term. Retained terms bypass the filter.
 
     Parameters
     ----------
-    chip : Chip
-        Chip whose static model is checked.
     approximation : Approximation
-        Approximation the static model is resolved with.
-    resolution : optional
-        Local basis resolution to reuse.
+        Approximation the model is resolved with.
     """
-    from quchip.engine.assembly import _interaction_contributions, _resolve_system
-
-    resolution = _resolve_system(chip, chip.backend) if resolution is None else resolution
-    bases = resolution.bases
-    found = {0}
-    for term in _interaction_contributions(chip):
-        if not term.retained and approximation.filters_terms and approximation.conserves_excitation_number():
-            continue
-        changes = authored_excitation_changes(term.expression(), term.labels, chip.backend, bases)
-        if changes is None:
-            return None
-        found.update(changes)
-    pairs = () if resolution.network is None else resolution.network.generated_pairs
-    weights: dict[str, frozenset[int]] = {}
-    for label in dict.fromkeys(label for downstream, upstream, _ in pairs for label in (downstream, upstream)):
-        port = chip.port(label)
-        ((channel, _paths),) = port._collapse_channels_with_paths(chip)
-        changes = authored_excitation_changes(channel.operator, port.resolve_targets(chip), chip.backend, bases)
-        if changes is None:
-            return None
-        weights[label] = changes
-    for downstream, upstream, _ in pairs:
-        found.update(up - down for up in weights[upstream] for down in weights[downstream])
-    return frozenset(found | {-change for change in found})
+    return bool(approximation.filters_terms and approximation.conserves_excitation_number())
 
 
-def conserves_excitation_number(chip: Any, approximation: Any, *, resolution: Any = None) -> bool:
-    """Prove conservation of the total isolated energy-level index from retained operators.
+def lowers_by_one(changes: frozenset[int] | None) -> bool:
+    """Return whether ``changes`` proves that an operator lowers ``N`` by one and does nothing else.
 
-    A zero-total band filter proves conservation of ordinary interactions.
-    Otherwise their authored algebra or exact local matrix support must prove
-    it. Retained terms bypass that filter. Unknown support is not a proof.
-    Generated port pairs additionally require single-excitation lowering at
-    both ends.
+    Parameters
+    ----------
+    changes : frozenset of int or None
+        Changes of ``N`` that the operator carries, or ``None`` when unknown.
+    """
+    return changes is not None and changes <= {1}
+
+
+@dataclass(frozen=True)
+class ExcitationTerm:
+    """The changes of the total excitation number ``N`` that one term carries.
+
+    Attributes
+    ----------
+    label : str
+        Label of the coupling, retained term, port, drive or collapse channel.
+        A port pair is labeled ``"upstream -> downstream"``.
+    kind : str
+        ``"coupling"``, ``"retained"``, ``"cascade"`` (the Hamiltonian that a
+        port network generates for one port pair), ``"port"``, ``"drive"`` or
+        ``"channel"``.
+    changes : frozenset of int or None
+        Changes of ``N`` that the term keeps under the approximation, or
+        ``None`` when quchip cannot prove them.
+    """
+
+    label: str
+    kind: str
+    changes: frozenset[int] | None
+
+
+class ExcitationStructure:
+    """Excitation-number structure of one resolved chip under one approximation.
+
+    ``N`` is the total isolated energy-level index of a product state. The
+    static model conserves ``N`` when every coupling, retained term and
+    generated port pair keeps only zero changes of ``N``, and every port of a
+    generated pair lowers ``N`` by one. quchip reads these changes from exact
+    operator structure: a nonzero entry that changes ``N`` breaks conservation
+    however small it is, and unknown structure is not a proof. The engine
+    builds one record for each resolved system and approximation, and reads
+    each fact the first time a route asks for it.
+
+    Attributes
+    ----------
+    approximation : Approximation
+        Approximation that selects the static terms.
+    dims : tuple of int
+        Resolved level count of each device, in chip order.
+    """
+
+    def __init__(self, chip: Any, approximation: Any, resolution: Any) -> None:
+        from quchip.engine.assembly import _interaction_contributions
+
+        self.approximation = approximation
+        self.dims = tuple(int(dimension) for dimension in resolution.dims)
+        self._chip, self._bases = chip, resolution.bases
+        self._interactions = tuple(_interaction_contributions(chip))
+        self._pairs = () if resolution.network is None else tuple(resolution.network.generated_pairs)
+        self._pair_ports = tuple(dict.fromkeys(label for downstream, upstream, _ in self._pairs
+                                               for label in (downstream, upstream)))
+        self._interaction_changes: list[frozenset[int] | None] = []
+        self._authored_ports: dict[str, frozenset[int] | None] = {}
+        self._retained_ports: dict[str, frozenset[int] | None] = {}
+
+    @cached_property
+    def changes(self) -> frozenset[int] | None:
+        """Changes of ``N`` of the static model, closed under negation and holding ``0``, or ``None`` when unknown."""
+        found = {0}
+        for changes in self.interaction_changes():
+            if changes is None:
+                return None
+            found.update(changes)
+        weights: dict[str, frozenset[int]] = {}
+        for label in self._pair_ports:
+            changes = self._authored_port(label)
+            if changes is None:
+                return None
+            weights[label] = changes
+        # A generated pair L_d^dagger L_u changes N by u - d.
+        for downstream, upstream, _ in self._pairs:
+            found.update(up - down for up in weights[upstream] for down in weights[downstream])
+        return frozenset(found | {-change for change in found})
+
+    @cached_property
+    def conserves(self) -> bool:
+        """Whether the static model conserves ``N``."""
+        return self.changes == {0} and all(lowers_by_one(self._retained_port(label)) for label in self._pair_ports)
+
+    def interaction_changes(self) -> Iterator[frozenset[int] | None]:
+        """Yield the changes of ``N`` of each coupling and retained term, in chip order.
+
+        Each term is read once. A coupling under an approximation that keeps
+        only zero-total bands yields ``{0}``.
+        """
+        for index, term in enumerate(self._interactions):
+            if index == len(self._interaction_changes):
+                filtered = not term.retained and keeps_zero_total_only(self.approximation)
+                self._interaction_changes.append(frozenset({0}) if filtered else authored_excitation_changes(
+                    term.expression(), term.labels, self._chip.backend, self._bases))
+            yield self._interaction_changes[index]
+
+    @property
+    def terms(self) -> tuple[ExcitationTerm, ...]:
+        """Changes of ``N`` of every coupling, retained term and generated port pair."""
+        found = [ExcitationTerm(term.label, "retained" if term.retained else "coupling", changes)
+                 for term, changes in zip(self._interactions, self.interaction_changes())]
+        for downstream, upstream, _ in self._pairs:
+            up, down = self._authored_port(upstream), self._authored_port(downstream)
+            changes = None if up is None or down is None else frozenset(
+                sign * (u - d) for u in up for d in down for sign in (1, -1))
+            found.append(ExcitationTerm(f"{upstream} -> {downstream}", "cascade", changes))
+        return tuple(found)
+
+    @property
+    def ports(self) -> tuple[ExcitationTerm, ...]:
+        """Changes of ``N`` of each port of a generated pair, in the chip's retained coordinates."""
+        return tuple(ExcitationTerm(label, "port", self._retained_port(label)) for label in self._pair_ports)
+
+    def classes(self, max_total: int) -> tuple[tuple[int, ...], ...]:
+        """Return the classes of totals ``0..max_total`` that the static changes connect.
+
+        Parameters
+        ----------
+        max_total : int
+            Largest retained total excitation number.
+        """
+        return excitation_classes(self.changes, max_total)
+
+    def sector_sizes(self, max_total: int) -> tuple[int, ...]:
+        """Return the number of product states with each total ``0..max_total``.
+
+        Parameters
+        ----------
+        max_total : int
+            Largest total excitation number.
+        """
+        return tuple(sector_size(self.dims, total) for total in range(max_total + 1))
+
+    def _authored_port(self, label: str) -> frozenset[int] | None:
+        if label not in self._authored_ports:
+            port = self._chip.port(label)
+            ((channel, _paths),) = port._collapse_channels_with_paths(self._chip)
+            self._authored_ports[label] = authored_excitation_changes(
+                channel.operator, port.resolve_targets(self._chip), self._chip.backend, self._bases)
+        return self._authored_ports[label]
+
+    def _retained_port(self, label: str) -> frozenset[int] | None:
+        """Read a port's operator in the chip's retained coordinates, as assembly does."""
+        if label not in self._retained_ports:
+            from quchip.chip.effective import retained_operator
+
+            chip, port = self._chip, self._chip.port(label)
+            ((channel, _paths),) = port._collapse_channels_with_paths(chip)
+            operator, labels = channel.operator, tuple(port.resolve_targets(chip))
+            retained = retained_operator(chip, operator, labels, chip.backend, f"port:{port.label}",
+                                         bases=self._bases, local_bases=self._bases)
+            if retained is not None:
+                operator, labels = retained, retained.labels
+            self._retained_ports[label] = authored_excitation_changes(operator, labels, chip.backend, self._bases)
+        return self._retained_ports[label]
+
+
+def excitation_structure(chip: Any, approximation: Any, *, resolution: Any = None) -> ExcitationStructure:
+    """Return the excitation structure of ``chip`` under ``approximation``.
+
+    The record is built once for each resolved system and approximation.
 
     Parameters
     ----------
     chip : Chip
-        Chip whose static model is checked.
+        Chip whose static model is read.
     approximation : Approximation
-        Approximation the static model is resolved with.
+        Approximation that selects the static terms.
     resolution : optional
-        Local basis resolution to reuse.
+        Resolved local bases to reuse. ``None`` resolves the chip.
     """
     from quchip.engine.assembly import _resolve_system
 
     resolution = _resolve_system(chip, chip.backend) if resolution is None else resolution
-    if static_excitation_changes(chip, approximation, resolution=resolution) != {0}:
-        return False
-    pairs = () if resolution.network is None else resolution.network.generated_pairs
-    labels = dict.fromkeys(label for downstream, upstream, _ in pairs for label in (downstream, upstream))
-    return all(_port_lowers_level_index(chip, chip.port(label), resolution.bases) for label in labels)
+    cache = resolution.excitation
+    if approximation not in cache:
+        cache[approximation] = ExcitationStructure(chip, approximation, resolution)
+    return cache[approximation]
 
 
-def _port_lowers_level_index(chip: Any, port: Any, bases: Mapping[str, Any]) -> bool:
-    """Return whether a port's operator lowers the total energy-level index by one and does nothing else.
+def drive_excitation_changes(chip: Any, drive: Any, target: Any, bases: Mapping[str, Any],
+                             approximation: Any) -> set[int] | None:
+    """Return the changes of ``N`` that a delivered drive keeps under ``approximation``, or ``None``.
 
-    The check reads the operator in the chip's retained coordinates, as assembly does.
+    The operator-band filter applies to a coupling drive under every
+    approximation, so an approximation whose retained bands conserve ``N``
+    removes every change of a coupling drive that no captured map retains.
+
+    Parameters
+    ----------
+    chip : Chip
+        Chip that owns the drive.
+    drive : BaseDrive
+        Drive whose authored terms are read.
+    target : object
+        Device or coupling that receives the drive.
+    bases : mapping
+        Resolved basis records keyed by device label.
+    approximation : Approximation
+        Approximation the model is resolved with.
     """
-    from quchip.chip.effective import retained_operator
+    from quchip.control.drive import CouplingDrive
+    from quchip.engine.assembly import _drive_authored_terms, _keeps_drive_band, _retained_operator
 
-    ((channel, _paths),) = port._collapse_channels_with_paths(chip)
-    operator, labels = channel.operator, tuple(port.resolve_targets(chip))
-    retained = retained_operator(chip, operator, labels, chip.backend, f"port:{port.label}", bases=bases,
-                                 local_bases=bases)
-    if retained is not None:
-        operator, labels = retained, retained.labels
-    changes = authored_excitation_changes(operator, labels, chip.backend, bases)
-    return changes is not None and changes <= {1}
+    changes = set()
+    for _, authored in _drive_authored_terms(chip, drive, target, chip.backend):
+        support = tuple(chip.device_index(label) for label in authored.labels)
+        retained = any(term.projection is not None for term in chip.effective_terms)
+        if retained:
+            authored, support = _retained_operator(chip, authored, support, chip.backend,
+                                                   f"drive:{drive.label}", bases=bases)
+        if not retained and isinstance(drive, CouplingDrive) and approximation.conserves_excitation_number():
+            weights = {0}
+        else:
+            weights = authored_excitation_changes(authored, tuple(chip.devices[i].label for i in support),
+                                                  chip.backend, bases)
+            if weights is None:
+                return None
+            if len(support) == 1:
+                weights = {n for n in weights if _keeps_drive_band(drive, approximation, (n,))}
+        changes.update(weights)
+    return changes
