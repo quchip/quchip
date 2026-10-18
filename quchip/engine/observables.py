@@ -133,6 +133,8 @@ def decompose_eops(
     backend: Backend,
     bases: Mapping[str, Any] | None = None,
     engine_result: Any | None = None,
+    *,
+    space: Any | None = None,
 ) -> tuple[list[Any], list[BandMeta | OutputMeta]]:
     """Flatten dict-form ``e_ops`` into ``(ops, meta)`` ready for the solver.
 
@@ -151,7 +153,9 @@ def decompose_eops(
     For each band, the returned :class:`BandMeta` records the original key, the
     weight, and the sub-index, which identifies each entry when the user passed
     a list of operators for one key. The backend solver can use the matching
-    ``ops`` list directly.
+    ``ops`` list directly. Device operators act on the retained labels of
+    ``space``, or else of the engine result's excitation space when it has
+    one, and on the product space otherwise.
     """
     if bases is None:
         bases = chip.resolve().bases
@@ -161,7 +165,8 @@ def decompose_eops(
     output_exposures: set[str] = set()
 
     dims = chip.dims
-    space = None if engine_result is None else engine_result.excitation_space
+    if space is None and engine_result is not None:
+        space = engine_result.excitation_space
 
     for raw_key, val in e_ops_dict.items():
         key = _resolve_eop_key(raw_key)

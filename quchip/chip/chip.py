@@ -819,10 +819,12 @@ class Chip:
     def with_space(self, space: ExcitationCutoff | None) -> "Chip":
         """Return an isolated copy that keeps the product labels selected by ``space``.
 
-        The policy applies to dressed analysis, :meth:`resolve`, and
-        deterministic pulse solves. Workflows that do not support a cutoff
-        raise, e.g. VNA, steady-state, stochastic trajectory and elimination
-        calculations. The copy keeps the policy through cloning, parameter
+        The policy applies to dressed analysis, :meth:`resolve`,
+        deterministic pulse solves, :meth:`steadystate` and the stationary VNA
+        workflows ``finite_power()``, ``measure()``, ``output_spectrum()``,
+        ``g1()`` and ``g2()``. Workflows that do not support a cutoff raise,
+        e.g. ``VNA.sweep()``, stochastic trajectories, partitions and
+        eliminations. The copy keeps the policy through cloning, parameter
         rebinding and serialization. quchip never changes it automatically.
 
         Parameters
@@ -1754,9 +1756,9 @@ class Chip:
         budget, so this method raises for it.
         """
         from quchip.chip.partition import partition_chip
-        from quchip.cutoff import reject_cutoff
+        from quchip.engine.routes import require_workflow
 
-        reject_cutoff(self, "partition()")
+        require_workflow(self, "partition()")
         return partition_chip(self)
 
     def status(self) -> None:
@@ -2300,12 +2302,21 @@ class Chip:
     ) -> "SteadyStateResult":
         """Solve this chip's unique static Lindblad steady state.
 
+        A chip that conserves the total excitation ``N`` and has an
+        :class:`~quchip.ExcitationCutoff` or more than 64 product states needs
+        no Liouvillian solve when its lowering channels prove the vacuum
+        unique. The result then holds the vacuum on the labels with
+        ``N <= 1``. Other chips, and every call with ``options``, solve the
+        backend's stationary Liouvillian. ``result.diagnostics["route"]``
+        records the route and the reason for it.
+
         Parameters
         ----------
         e_ops : dict or None, default=None
             Static expectation operators.
         options : dict or None, default=None
-            Backend solver options.
+            Backend solver options. A dictionary, also an empty one, selects
+            the backend's stationary Liouvillian.
         frame : FrameSpec or None, default=None
             Solve frame, or ``None`` to use the chip default.
         approximation : Approximation or None, default=None

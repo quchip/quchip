@@ -422,9 +422,9 @@ class ChipAnalysis:
         cutoff classes of :class:`~quchip.engine.sectors.SectorModel`. Results
         cache like the full eigensystem.
         """
-        from quchip.cutoff import active_cutoff
         from quchip.engine.assembly import _resolve_system
         from quchip.engine.excitation import excitation_structure, round_off_advisory
+        from quchip.engine.routes import static_route
         from quchip.engine.sectors import SectorModel
 
         signature = self._analysis_signature()
@@ -435,7 +435,7 @@ class ChipAnalysis:
         advisories: list[str] = []
         structure = excitation_structure(chip, chip.approximation, resolution=resolution)
         model = None
-        if active_cutoff(chip) is not None or structure.conserves:
+        if static_route(chip, structure).name == "sector_eigensystem":
             model = SectorModel(chip, resolution=resolution, advisories=advisories)
         elif (advisory := round_off_advisory(structure)) is not None:
             advisories.append(advisory)

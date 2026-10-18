@@ -977,7 +977,7 @@ class FrameMap:
         for label, frequency in zip(labels, frequencies):
             record = bases[label]
             energies = (energies[:, None] + xp.asarray(frequency) * xp.arange(record.resolved_dim)).reshape(-1)
-            # At zero frequency R(t) is the identity on the device, so its basis change cancels.
+            # At zero frequency U(t) is the identity on the device, so its basis change cancels.
             transforms.append(None if maybe_concrete_scalar(frequency) == 0.0 else record.energy_to_solver())
         return cls(frequencies, energies, tuple(bases[label].resolved_dim for label in labels), tuple(transforms))
 
