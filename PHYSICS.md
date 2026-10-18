@@ -3401,28 +3401,36 @@ reused when:
   pulse turns by `exp(iqθ)` when the pulse phase turns by `θ`. A term of a
   baseband pulse in a carrier piece has charge 0: `C` would turn a transverse
   baseband term that a time shift and a `vz` leave unchanged;
-- each term is built from the pulse envelope, carriers, and the standard
-  signal algebra, with no coefficient of absolute time.
+- the drive builds the pulse's signal with the shared `signal()`, and each
+  term is built from the pulse envelope, carriers, and the standard signal
+  algebra, with no coefficient of absolute time.
 
 Under the second, third, and last conditions, a carrier pulse that starts `τ`
 later gives the field of the same pulse with its phase turned by `-2π f_c τ`,
 moved by `τ`. The phase condition therefore also covers the start time. The
 gate set proves it on the structure of each delivered coefficient. It lowers
-each carrier pulse again with its phase turned by a small step `Δ` and walks
-both signal trees together. A node whose scalar turns by `exp(ikΔ)` carries
-phase harmonic `k`. A sum takes the union of its children's harmonics, a
-product adds them, a conjugate negates them, a real or imaginary part takes
+each carrier pulse again with a stand-in for its phase. The stand-in has no
+arithmetic, conversion, or truth value, so the lowering can only store it. It
+must reach each delivered tree only as the angle of a polar scale, and the
+tree must equal the first lowering everywhere else. Such a polar scale
+carries phase harmonic 1. A sum takes the union of its children's harmonics,
+a product adds them, a conjugate negates them, a real or imaginary part takes
 both signs, and an integer power adds them that many times. A term passes
 when its only harmonic is its charge `q`, which holds for every phase,
-amplitude, and envelope. Any other change between the two trees fails the
-term. The signal bands of a term do not settle this. At zero delivered
-frequency, `f_c + δ = 0`, both sidebands of a pulse fall on one band, and a
-flux pulse then changes its amplitude, not its phase, when the phase turns.
+amplitude, and envelope. A lowering that computes with the phase fails the
+term, even when the result is the same field: `E(t) cos φ` written as a scale
+factor fails, and `Re(e^{iφ} E(t))` is checked. The signal bands of a term do
+not settle this. At zero delivered frequency, `f_c + δ = 0`, both sidebands
+of a pulse fall on one band, and a flux pulse then changes its amplitude, not
+its phase, when the phase turns.
 
 A chip without the RWA fails the first condition. A piece that fails is solved
 again at each new placement, and the report states the reason. A custom signal
 transform that clips or gates signals at fixed times fails the second
-condition, even when its signal nodes are of the standard kinds.
+condition, even when its signal nodes are of the standard kinds. A drive that
+overrides `signal()` fails the last condition, because the gate set cannot
+follow how its field moves with the start time. A drive that only defines its
+own `hamiltonian()` keeps reuse when its terms pass the phase check.
 
 ### 17.3 Calibration residual
 

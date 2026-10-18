@@ -69,8 +69,8 @@ print(run.probabilities)
 
 `unitary()` composes cached gate propagators, so a long circuit costs a few
 matrix products. Gates that overlap in time, gates on a chip without the RWA,
-and gates whose pulses depend on absolute time are solved directly, once per
-placement. `simulate()` solves the circuit's schedule, with the chip's
+gates whose pulses depend on absolute time, and gates on a drive that
+overrides `signal()` are solved directly, once per placement. `simulate()` solves the circuit's schedule, with the chip's
 collapse channels unless you pass `dissipation=False`.
 
 The decomposition rules turn H, X, Y, Z, S, T, RX, RY, CX, CZ, and SWAP into

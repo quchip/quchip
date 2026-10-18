@@ -25,7 +25,8 @@ structural:
 4. every delivered term of a pulse has one N-charge q; a term of a carrier
    pulse turns by ``exp(iqθ)`` when the pulse phase turns by θ, and a term of
    a baseband pulse in a carrier piece has charge 0;
-5. every term is built from the pulse's envelope, carriers, and the standard
+5. the pulse's drive builds its signal with the shared ``signal()``, and
+   every term is built from the pulse's envelope, carriers, and the standard
    signal algebra, with no coefficient of absolute time.
 
 Condition 2 lets each pulse be lowered alone: the delivered field of a piece
@@ -35,15 +36,18 @@ the field of the same pulse with its phase turned by ``-2π f_c τ``, shifted
 by ``τ``, so condition 4 also covers the start time.
 
 The gate set proves condition 4 on the structure of each delivered
-coefficient. It lowers a carrier pulse a second time with its phase turned by
-a small step and walks both signal trees together. A node whose scalar turns
-by ``exp(ik·step)`` carries phase harmonic ``k``, and the node types combine
+coefficient. It lowers a carrier pulse a second time with a stand-in for its
+phase that has no arithmetic, conversion, or truth value, so the lowering can
+only store it. The stand-in must reach each delivered tree only as the angle
+of a polar scale, and the tree must equal the first lowering everywhere else.
+Such a polar scale carries phase harmonic 1, and the node types combine
 harmonics: a sum takes their union, a product adds them, a conjugate negates
 them, a real or imaginary part takes both signs, and an integer power adds
 them that many times. A term passes when its only harmonic is its charge, so
-the result holds for every phase, amplitude, and envelope. Any other change
-between the two trees fails the term. Signal bands cannot show the harmonic:
-at zero delivered frequency both sidebands of a pulse fall on one band.
+the result holds for every phase, amplitude, and envelope. A lowering that
+computes with the phase, for example one that folds ``cos θ`` into a scale
+factor, fails the term. Signal bands cannot show the harmonic: at zero
+delivered frequency both sidebands of a pulse fall on one band.
 """
 
 from __future__ import annotations
@@ -55,13 +59,12 @@ from typing import Any
 import jax.tree_util as jtu
 import numpy as np
 
+from quchip.control.drive import BaseDrive
 from quchip.engine import ir
 from quchip.engine.ir import signal_children, signal_window_bounds
 from quchip.results.propagator import solver_levels
 
 _CHARGE_ATOL = 1e-12
-_TURN_ATOL = 1e-9
-_PHASE_STEP = 2 * np.pi / 4099  # rad; exp(ik·step) differs for every |k| <= 2049, so a turn names its harmonic
 _PULSE_LOCAL_NODES = (ir.Constant, ir.EnvelopeRef, ir.Carrier, ir.Window, ir.Shift, ir.Scale, ir.PolarScale,
                       ir.Add, ir.Multiply, ir.Conjugate, ir.RealPart, ir.ImagPart, ir.SignalPower)
 
@@ -148,10 +151,25 @@ class DeliveredTerm:
 
 @dataclass(frozen=True)
 class Delivered:
-    """The delivered terms of one pulse and the hull of their windows (``None`` when nothing is delivered)."""
+    """The delivered terms of one pulse, the hull of their windows (``None`` when nothing is delivered), and the
+    class of the pulse's drive when that class builds the signal with its own ``signal()`` (else ``""``)."""
 
     support: tuple[float, float] | None
     terms: tuple[DeliveredTerm, ...]
+    own_signal: str = ""
+
+
+class _Phase:
+    """A stand-in for a pulse phase. It has no arithmetic, conversion, or truth value, so a lowering can only
+    store it."""
+
+    __slots__ = ()
+
+    def __bool__(self) -> bool:
+        raise TypeError("the phase stand-in of a gate-set check has no truth value")
+
+    def __repr__(self) -> str:
+        return "<pulse phase>"
 
 
 def _lowered(chip: Any, op: Any) -> Any:
@@ -162,16 +180,21 @@ def _lowered(chip: Any, op: Any) -> Any:
                                dissipation=False, _product_space=True).engine_result
 
 
-def _turn(before: Any, after: Any) -> int | None:
-    """Return ``k`` when a node scalar turned by ``exp(ik·step)`` between the two lowerings, or ``None``."""
-    before, after = complex(before), complex(after)
-    if before == after:
-        return 0
-    if before == 0 or abs(abs(after / before) - 1.0) > _TURN_ATOL:
-        return None
-    angle = float(np.angle(after / before))
-    k = round(angle / _PHASE_STEP)
-    return k if abs(angle - k * _PHASE_STEP) <= _TURN_ATOL else None
+def _probed(chip: Any, op: Any) -> list[tuple[np.ndarray, Any]]:
+    """Lower a pulse with the phase stand-in and return each term's operator and signal; empty when the lowering
+    computes with the phase."""
+    try:
+        terms = _lowered(chip, replace(op, phase_offset=_Phase())).dynamic_terms
+        return [(_dense(term.operator), term.time_dependence.signal) for term in terms]
+    except Exception:  # any use of the stand-in other than storage
+        return []
+
+
+def _holds_phase(value: Any) -> bool:
+    """Whether a node field holds the phase stand-in among its leaves."""
+    return any(isinstance(leaf, _Phase) or (isinstance(leaf, np.ndarray) and leaf.dtype == object
+                                            and any(isinstance(item, _Phase) for item in leaf.flat))
+               for leaf in jtu.tree_leaves(value))
 
 
 def _same(before: Any, after: Any) -> bool:
@@ -183,29 +206,29 @@ def _same(before: Any, after: Any) -> bool:
     return left_tree == right_tree and all(np.array_equal(np.asarray(a), np.asarray(b)) for a, b in zip(left, right))
 
 
-def _harmonics(before: Any, after: Any) -> frozenset[int] | None:
+def _harmonics(signal: Any, probed: Any, phase: Any) -> frozenset[int] | None:
     """Return the harmonics of the pulse phase in a delivered signal, or ``None`` when its structure does not
-    prove them. ``before`` and ``after`` are the signal lowered at the pulse phase and at the phase plus the step.
+    prove them. ``probed`` is the same signal lowered with the phase stand-in, which may appear only as the angle
+    of a polar scale; every other field must equal its value in ``signal``, and that angle must equal ``phase``.
     """
-    if type(before) is not type(after) or not isinstance(before, _PULSE_LOCAL_NODES):
+    if type(signal) is not type(probed) or not isinstance(signal, _PULSE_LOCAL_NODES):
         return None
-    if isinstance(before, ir.PolarScale):
-        own = _turn(before.amplitude * np.exp(1j * before.theta), after.amplitude * np.exp(1j * after.theta))
-    elif isinstance(before, ir.Scale):
-        own = _turn(before.factor, after.factor)
-    elif isinstance(before, ir.Constant):
-        own = _turn(before.value, after.value)
-    else:
-        own = 0
-    scalars = {"amplitude", "theta", "factor", "value"}
-    children = getattr(type(before), "_signal_child_fields", ())
-    if own is None or not all(_same(getattr(before, item.name), getattr(after, item.name))
-                              for item in fields(before) if item.name not in scalars and item.name not in children):
+    children = getattr(type(signal), "_signal_child_fields", ())
+    own = 0
+    for item in fields(signal):
+        if item.name in children:
+            continue
+        value, stand_in = getattr(signal, item.name), getattr(probed, item.name)
+        if isinstance(signal, ir.PolarScale) and item.name == "theta" and isinstance(stand_in, _Phase):
+            if not _same(value, phase):
+                return None
+            own = 1
+        elif _holds_phase(stand_in) or not _same(value, stand_in):
+            return None
+    pairs = list(zip(signal_children(signal), signal_children(probed)))
+    if len(pairs) != len(signal_children(signal)) or len(pairs) != len(signal_children(probed)):
         return None
-    pairs = list(zip(signal_children(before), signal_children(after)))
-    if len(pairs) != len(signal_children(before)) or len(pairs) != len(signal_children(after)):
-        return None
-    parts = [_harmonics(a, b) for a, b in pairs]
+    parts = [_harmonics(a, b, phase) for a, b in pairs]
     if any(part is None for part in parts):
         return None
     sets: list[frozenset[int]] = [part for part in parts if part is not None]
@@ -213,16 +236,16 @@ def _harmonics(before: Any, after: Any) -> frozenset[int] | None:
     def plus(left: frozenset[int], right: frozenset[int]) -> frozenset[int]:
         return frozenset(a + b for a in left for b in right)
 
-    if isinstance(before, ir.Add):
+    if isinstance(signal, ir.Add):
         combined = frozenset().union(*sets)
-    elif isinstance(before, ir.Multiply):
+    elif isinstance(signal, ir.Multiply):
         combined = reduce(plus, sets, frozenset({0}))
-    elif isinstance(before, ir.Conjugate):
+    elif isinstance(signal, ir.Conjugate):
         combined = frozenset(-h for h in sets[0])
-    elif isinstance(before, (ir.RealPart, ir.ImagPart)):
+    elif isinstance(signal, (ir.RealPart, ir.ImagPart)):
         combined = sets[0] | frozenset(-h for h in sets[0])
-    elif isinstance(before, ir.SignalPower):
-        exponent = float(before.exponent)
+    elif isinstance(signal, ir.SignalPower):
+        exponent = float(signal.exponent)
         if sets[0] == frozenset({0}):
             combined = sets[0]
         elif exponent.is_integer() and exponent >= 0:
@@ -237,17 +260,15 @@ def _harmonics(before: Any, after: Any) -> frozenset[int] | None:
 def lower_pulse(chip: Any, op: Any) -> Delivered:
     """Lower one scheduled op alone and return its delivered terms.
 
-    A carrier pulse is lowered a second time with its phase turned by a small
-    step, which shows the phase harmonics of each term. Charges, windows, and
+    A carrier pulse is lowered a second time with a stand-in for its phase,
+    which shows the phase harmonics of each term. Charges, windows, and
     harmonics depend on the pulse's structure, not on its amplitude or phase.
     """
     engine_result = _lowered(chip, op)
     levels = solver_levels(engine_result)
     total = levels.sum(axis=1)
     labels = np.array([device.label for device in chip.devices])
-    turned = None
-    if isinstance(op, ir.DriveOp) and op.freq is not None:
-        turned = _lowered(chip, replace(op, phase_offset=float(op.phase_offset) + _PHASE_STEP)).dynamic_terms
+    probed = _probed(chip, op) if isinstance(op, ir.DriveOp) and op.freq is not None else None
     windows: list[tuple[float, float]] = []
     terms = []
     for position, term in enumerate(engine_result.dynamic_terms):
@@ -260,16 +281,20 @@ def lower_pulse(chip: Any, op: Any) -> Delivered:
         matrix = _dense(term.operator)
         charges = _charges(matrix, total)
         follows = True
-        if turned is not None:
+        if probed is not None:
             harmonics = None
-            if len(turned) == len(engine_result.dynamic_terms) and np.array_equal(_dense(turned[position].operator),
-                                                                                    matrix):
-                harmonics = _harmonics(signal, turned[position].time_dependence.signal)
+            if len(probed) == len(engine_result.dynamic_terms) and np.array_equal(probed[position][0], matrix):
+                harmonics = _harmonics(signal, probed[position][1], op.phase_offset)
             follows = harmonics is not None and len(charges) <= 1 and harmonics <= {next(iter(charges), 0)}
         terms.append(DeliveredTerm(charges, _foreign_node(signal), frozenset(labels[_reached(matrix, levels)].tolist()),
                                    follows))
     support = (min(lo for lo, _ in windows), max(hi for _, hi in windows)) if windows else None
-    return Delivered(support, tuple(terms))
+    own_signal = ""
+    if isinstance(op, ir.DriveOp) and chip.control_equipment is not None:
+        drive = next((line for line in chip.control_equipment.lines if line.label == op.drive_label), None)
+        if drive is not None and type(drive).signal is not BaseDrive.signal:
+            own_signal = type(drive).__name__
+    return Delivered(support, tuple(terms), own_signal)
 
 
 @dataclass(frozen=True)
@@ -336,6 +361,10 @@ def covariance(ops: list[Any], delivered: list[Delivered], piece_indices: list[i
     frame = next(iter(frames)) if frames else None
     for index in piece_indices:
         op = ops[index]
+        owner = delivered[index].own_signal
+        if owner:
+            return False, (f"the drive {op.drive_label!r} builds its signal with {owner}.signal(), so the gate set "
+                           "cannot follow how its field moves with the start time"), carrier, frame
         for term in delivered[index].terms:
             if term.foreign:
                 return False, f"a term of the pulse on {op.drive_label!r} uses {term.foreign}", carrier, frame
@@ -347,9 +376,9 @@ def covariance(ops: list[Any], delivered: list[Delivered], piece_indices: list[i
                 return False, (f"a baseband term of the pulse on {op.drive_label!r} has charge {charge}, but the "
                                "piece has a carrier pulse, so only charge 0 keeps reuse"), carrier, frame
             if not term.follows_phase:
-                how = "changes" if charge == 0 else f"does not turn by exp({charge}iθ)"
-                return False, (f"a charge-{charge} term of the pulse on {op.drive_label!r} {how} when the pulse "
-                               "phase turns by θ"), carrier, frame
+                how = "stays the same" if charge == 0 else f"turns by exp({charge}iθ)"
+                return False, (f"the gate set cannot show that a charge-{charge} term of the pulse on "
+                               f"{op.drive_label!r} {how} when the pulse phase turns by θ"), carrier, frame
     return True, "", carrier, frame
 
 

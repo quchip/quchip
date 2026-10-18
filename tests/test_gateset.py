@@ -195,10 +195,10 @@ def test_covariance_check_is_structural():
     """Each pulse's own terms decide: one carrier and frame per piece, terms that turn with the pulse phase as their
     charge requires, charge 0 for baseband terms next to a carrier, no coefficient of absolute time, and RWA
     statics."""
-    from quchip.control.signal import Delay, Gain, SignalTransform
+    from quchip.control.signal import AnalyticSignal, Delay, Gain, SignalTransform
     from quchip.engine.problem import build_solve_problem
     from quchip.engine import ir
-    from quchip.gateset.cache import (_PHASE_STEP, Delivered, DeliveredTerm, _harmonics, _reached, lower_pulse,
+    from quchip.gateset.cache import (Delivered, DeliveredTerm, _harmonics, _Phase, _reached, lower_pulse,
                                       model_check, signal_check)
 
     chip = two_transmons()
@@ -218,21 +218,64 @@ def test_covariance_check_is_structural():
     qubit = DuffingTransmon(freq=0.1, anharmonicity=-0.3, levels=2, label="q")
     flux = Chip([qubit])
     flux.wire(FluxDrive(qubit, label="z"))
-    fields = []
-    for phase in (0.0, np.pi / 2):
-        pulse = QuantumSequence(flux)
+
+    def flux_pulse(chip, phase):
+        pulse = QuantumSequence(chip)
         pulse.schedule("z", envelope=Square(duration=2.0, amplitude=0.125), freq=0.1, detuning=-0.1, phase=phase,
                        frame="q")
-        fields.append(np.asarray(pulse.propagator(frame="lab", dissipation=False).matrix))
+        return pulse
+
+    fields = [np.asarray(flux_pulse(flux, phase).propagator(frame="lab", dissipation=False).matrix)
+              for phase in (0.0, np.pi / 2)]
     assert np.abs(fields[0] - fields[1]).max() > 1.0
-    # Its two harmonics fail at every initial phase, including -0.5 rad, where one turn of 1 rad looks unchanged.
+    # Its two harmonics fail at every initial phase.
     for phase in (0.0, -0.5, np.pi / 2):
-        pulse = QuantumSequence(flux)
-        pulse.schedule("z", envelope=Square(duration=2.0, amplitude=0.125), freq=0.1, detuning=-0.1, phase=phase,
-                       frame="q")
-        zero = list(pulse.scheduled_ops)
+        zero = list(flux_pulse(flux, phase).scheduled_ops)
         covariant, reason, _, _ = covariance(zero, [lower_pulse(flux, zero[0])], [0])
-        assert not covariant and "charge-0 term of the pulse on 'z' changes" in reason
+        assert not covariant and "cannot show that a charge-0 term of the pulse on 'z' stays the same" in reason
+
+    # The same field with the phase folded into a scale factor, E(t) cos φ, also fails, including at φ = -π/4099,
+    # where cos φ is equal before and after a turn by 2π/4099.
+    class FoldedFlux(FluxDrive):
+        def signal(self, pulse, target):
+            local = ir.Window(ir.EnvelopeRef(pulse.envelope), 0.0, pulse.envelope.duration)
+            return AnalyticSignal(program=ir.Scale(ir.Shift(local, pulse.start_time), np.cos(pulse.phase_offset)))
+
+    folded = Chip([qubit])
+    folded.wire(FoldedFlux(qubit, label="z"))
+    for phase in (0.0, -np.pi / 4099, np.pi / 2):
+        assert np.allclose(flux_pulse(folded, phase).propagator(frame="lab", dissipation=False).matrix,
+                           flux_pulse(flux, phase).propagator(frame="lab", dissipation=False).matrix, atol=1e-8)
+        zero = list(flux_pulse(folded, phase).scheduled_ops)
+        result = lower_pulse(folded, zero[0])
+        assert not any(term.follows_phase for term in result.terms)
+        covariant, reason, _, _ = covariance(zero, [result], [0])
+        assert not covariant and "FoldedFlux.signal()" in reason
+
+    # A transform that folds each polar scale into a complex scale factor leaves the field unchanged, but the gate
+    # set can no longer follow the phase, so a charge pulse that passes without it fails with it.
+    def fold(node):
+        node = node.rebuild_children(fold)
+        if isinstance(node, ir.PolarScale):
+            return ir.Scale(node.child, node.amplitude * np.exp(1j * node.theta))
+        return node
+
+    class FoldPhase(SignalTransform):
+        linear_time_invariant = True
+
+        def apply(self, signals):
+            return {key: type(s)(program=fold(s.program), carrier=s.carrier, phase_reference=s.phase_reference)
+                    for key, s in signals.items()}
+
+    for chain, passes in (([], True), ([FoldPhase()], False)):
+        single = DuffingTransmon(freq=5.0, anharmonicity=-0.33, levels=3, label="q")
+        wired = Chip([single])
+        wired.wire(ChargeDrive(single, label="xy"), signal_chain=chain)
+        pulse = QuantumSequence(wired)
+        pulse.schedule("xy", envelope=Gaussian(duration=20.0, amplitude=0.04), freq=5.0, phase=-np.pi / 4099)
+        charge = list(pulse.scheduled_ops)
+        covariant, reason, _, _ = covariance(charge, [lower_pulse(wired, charge[0])], [0])
+        assert covariant is passes and (passes or "cannot show that a charge-" in reason)
 
     # Harmonics come from structure, not from values: |s|^2 + (|s|^2 - 1) Re s has harmonics -1, 0, 1 at every
     # amplitude, although at unit amplitude it does not change with the phase; |s|^2 alone has only 0.
@@ -241,13 +284,15 @@ def test_covariance_check_is_structural():
         power = ir.Multiply((s, ir.Conjugate(s)))
         return power, ir.Add((power, ir.Multiply((ir.Add((power, ir.Constant(-1.0 + 0j))), ir.RealPart(s)))))
 
+    stand_in = _Phase()
     for amplitude in (1.0, 0.125):
-        (power, mixed), (power_turned, mixed_turned) = nonlinear(0.3, amplitude), nonlinear(0.3 + _PHASE_STEP,
-                                                                                            amplitude)
-        assert _harmonics(power, power_turned) == {0}
-        assert _harmonics(mixed, mixed_turned) == {-1, 0, 1}
+        (power, mixed), (power_probed, mixed_probed) = nonlinear(0.3, amplitude), nonlinear(stand_in, amplitude)
+        assert _harmonics(power, power_probed, 0.3) == {0}
+        assert _harmonics(mixed, mixed_probed, 0.3) == {-1, 0, 1}
     square = ir.SignalPower(ir.PolarScale(ir.Constant(1.0 + 0j), 1.0, 0.3), 2)
-    assert _harmonics(square, ir.SignalPower(ir.PolarScale(ir.Constant(1.0 + 0j), 1.0, 0.3 + _PHASE_STEP), 2)) == {2}
+    assert _harmonics(square, ir.SignalPower(ir.PolarScale(ir.Constant(1.0 + 0j), 1.0, stand_in), 2), 0.3) == {2}
+    # The stand-in must sit where the phase sits.
+    assert _harmonics(square, ir.SignalPower(ir.PolarScale(ir.Constant(1.0 + 0j), 1.0, stand_in), 2), 0.4) is None
 
     pulses = QuantumSequence(chip)
     pulses.schedule("xy0", envelope=Gaussian(duration=20.0, amplitude=0.0), freq=5.0)
@@ -258,7 +303,7 @@ def test_covariance_check_is_structural():
     quiet = Delivered((0.0, 20.0), ())
     assert covariance(two, [double, quiet], [0, 1])[0] is True
     covariant, reason, _, _ = covariance(two, [quiet, stray], [0, 1])
-    assert not covariant and "does not turn by exp(1iθ)" in reason
+    assert not covariant and "cannot show that a charge-1 term of the pulse on 'xy0' turns by exp(1iθ)" in reason
     absolute = Delivered((0.0, 20.0), (DeliveredTerm(frozenset({0}), "CoefficientRef"),))
     covariant, reason, _, _ = covariance(two, [absolute, quiet], [0, 1])
     assert not covariant and "CoefficientRef" in reason
