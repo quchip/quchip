@@ -333,9 +333,10 @@ def simulate(
         two-body observable).
     initial_state : optional
         Initial state. ``None`` uses the default start described in
-        :func:`build_problem`. A ``Mapping`` gives a product state from per-device
-        energy levels or authored local kets. Configured string shorthand gives
-        per-device energy levels. Both are built in the resolved local bases. QuTiP
+        :func:`build_problem`. A label of per-device energy levels, as a ``Mapping``
+        or configured string shorthand, names its dressed state under the solve's
+        approximation and excitation cutoff, placed in the solve frame at
+        ``tlist[0]``. ``chip.bare_state(...)`` gives a bare product. QuTiP
         ``Qobj`` and dynamiqs ``QArray`` kets or density matrices use resolved
         solver coordinates. Their first dimension must match the kept dimension.
         NumPy and JAX arrays, symbolic state expressions, and callables are

@@ -15,6 +15,7 @@ Collapse operators enter the standard Lindblad master equation
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -25,10 +26,9 @@ from quchip.backend import BatchSolveError
 from quchip.engine.states import (
     CompactState,
     compatible_values,
-    default_initial_state,
+    label_state,
     materialize_compact,
     materialize_state_spec,
-    truncated_vacuum,
 )
 from quchip.engine.ir import (
     ControlOp,
@@ -338,11 +338,9 @@ def build_solve_batch_from_results(
 
 
 def _initial_state(chip, spec, result, start):
+    if spec is None or isinstance(spec, (Mapping, str)):
+        return label_state(chip, spec, result, start)
     if result.excitation_space is not None:
-        from quchip.cutoff import active_cutoff
-
-        if spec is None and active_cutoff(chip) is not None:
-            return truncated_vacuum(chip, result, start)
         return materialize_compact(chip, spec, result.excitation_space)
     if isinstance(spec, CompactState):
         backend = chip.backend
@@ -350,8 +348,6 @@ def _initial_state(chip, spec, result, start):
         native = backend.from_array(values, dims=[[spec.space.size],
                                     [1] if spec.values.shape[-1] == 1 else [spec.space.size]])
         spec = spec.space.lift(native, backend)
-    if spec is None:
-        return default_initial_state(chip, result, start)
     return materialize_state_spec(chip, spec, result.bases)
 
 

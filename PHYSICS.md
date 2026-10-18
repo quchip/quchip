@@ -42,7 +42,7 @@ The authored view does not:
 
 `BaseDevice.hamiltonian()` resolves the isolated device physics through the engine, with the device's basis policy and the lab frame. For another local frame, pass `frame=` to `device.resolve()`. These queries do not change when you attach the device to a chip. For the coupled system, use `chip.hamiltonian()` or `chip.freq(device)`.
 
-Local level labels refer to the energy order of the isolated Hamiltonian. `chip.bare_state(q=1)` prepares that local excited state, and `result.population(q, 1)` measures its occupation, summed over the other devices. A result keeps the energy vectors that quchip used to build its calculation. The frame generator is the same energy-level index operator in each solver basis.
+Local level labels refer to the energy order of the isolated Hamiltonian. `chip.bare_state(q=1)` prepares that local excited state, and `result.population(q, 1)` measures its occupation, summed over the other devices. A level label such as `{"q": 1}` names the dressed state of the coupled chip (§9). A result keeps the energy vectors that quchip used to build its calculation. The frame generator is the same energy-level index operator in each solver basis.
 
 Numerical device Pauli operators act on the lowest two isolated energy states and vanish on higher
 levels: `Z = |0><0| - |1><1|`, `X = |0><1| + |1><0|`, and `Y = -i|0><1| + i|1><0|`. quchip does not
@@ -627,10 +627,12 @@ H_rot = U† H_lab U - 2π Σ_i f_ref,i * n_i
 
 Because of that second term, the assembler subtracts `f_ref,i * n_i` from `H0`.
 
-When `initial_state=None`, the solver receives
-`psi_solve(t0) = U(t0)† psi_lab` at `t0 = tlist[0]`, where `psi_lab` is the
-lab-frame default that §9 describes. A nonzero rotating-frame start
-therefore need not equal the lab-frame vector that `chip.state()` returns.
+A label `initial_state`, or an omitted one, is the dressed state `|d_k>` of
+§9. The solver receives it at `t0 = tlist[0]` as its label target below,
+`psi_solve(t0) = target_k(t0)`, so its label amplitude starts at 1. A ket
+`initial_state` is an integration-frame vector at `t0` and is not moved. A
+nonzero rotating-frame start therefore need not equal the lab-frame vector
+that `chip.state()` returns.
 
 Each result records its integration frame as `result.frame`, a
 `ResolvedFrame` with the frequencies `f_ref,i`. `state()`, `state_at()`,
@@ -640,8 +642,7 @@ the stored state. A ket target of `overlap()`, `amplitude_array()`,
 integration frame, so a target such as `|+>` is written in that frame. With
 `frame="lab"`, the ket is a fixed lab-frame vector instead, such as a dressed
 state from `chip.state()`. A label target such as `{"q0": 0, "q1": 1}` is the
-bare product state of local energy levels. With `dressed=True`, it is the
-dressed eigenstate `|d_k>` of label `k`, which turns with its label:
+dressed eigenstate `|d_k>` of label `k` (§9), which turns with its label:
 
 ```text
 target_k(t) = U(t)† |d_k> exp(-i 2π t Σ_i f_ref,i k_i)
@@ -649,7 +650,9 @@ target_k(t) = U(t)† |d_k> exp(-i 2π t Σ_i f_ref,i k_i)
 
 An idle dressed state then reads 1 in every frame. Its amplitude turns at
 `Σ_i f_ref,i k_i - E_k`, the detuning of the label's frame energy from its
-dressed energy `E_k`.
+dressed energy `E_k`. A bare product `|k>` is a frame eigenstate, so
+`U(t)† |k> exp(-i 2π t Σ_i f_ref,i k_i) = |k>`, and the ket target
+`chip.bare_state(...)` gives the bare overlap in every frame.
 
 ### 4.3 What `"rotating"` means in practice
 
@@ -971,9 +974,12 @@ dimensions. Local population, measurement, reduced-state, and channel queries
 operate on compact coordinates. Native `states`, `state()`, and `final_state`
 exports expand lazily and refuse allocations that cannot fit.
 `chip.compact_state(...)` and `result.compact_state(t=None)` provide reusable
-states without expansion. Their maps capture local energy bases. Replay
-requires the same bases. Explicit inputs retain the existing integration-frame
-convention (§4.2). quchip applies no hidden phase transformation.
+states without expansion. `chip.compact_state(...)` gives the dressed states of
+its labels, and `dressed=False` their bare products, whose devices can also
+take local kets. Their maps capture local
+energy bases. Replay requires the same bases. Explicit inputs retain the
+existing integration-frame convention (§4.2). quchip applies no hidden phase
+transformation.
 
 ### 6.4 Excitation cutoffs
 
@@ -1028,12 +1034,11 @@ every retained label. The budget couples all devices, also devices without
 interactions. A limited chip's solve is therefore never partitioned, and
 `chip.partition()` raises.
 
-With `initial_state=None`, a solve starts from the eigenvector of the truncated
-static lab-frame model `P H_0 P` that is assigned to the bare vacuum, under the
-solve's approximation. Its vacuum overlap is real and nonnegative. Each
-retained label `|n>` then takes the frame phase `exp(i 2π t0 sum_i f_i n_i)`
-at the solve's start `t0`. This state belongs to the approximate model and
-changes with `K`. Supplied states must lie inside the cutoff. A label or
+A label `initial_state`, or an omitted one, starts from the eigenvector of the
+truncated static lab-frame model `P H_0 P` that is assigned to the label, under
+the solve's approximation. Its overlap with the label's bare product is real
+and nonnegative, and the solve places it at `t0` as §4.2 describes. This
+state belongs to the approximate model and changes with `K`. Supplied states must lie inside the cutoff. A label or
 `CompactState` with `N > K` raises, and so does a native state with more than
 `1e-20` of its weight on `N > K`. quchip treats a smaller residue as
 basis-conversion round-off. The solve drops it and does not renormalize the
@@ -1665,8 +1670,8 @@ assignment can give a vector a zero amplitude on its own label. When `|a|` is no
 above the square root of the floating-point epsilon, the anchor is the first
 amplitude within a relative `1e-6` of the vector's largest magnitude.
 `Chip.state()`, the eigenstates and eigenvector matrix of `DressedResult`,
-dressed-basis operators, drive matrix elements, sector eigenvectors and the default
-initial state use this convention. The convention is piecewise. Backend agreement
+dressed-basis operators, drive matrix elements, sector eigenvectors and label
+initial states use this convention. The convention is piecewise. Backend agreement
 and derivatives need resolved eigenvalue gaps, a locally constant assignment, and
 a stable anchor: an assigned amplitude that stays above the floor, or a fallback
 amplitude that stays the unique near-largest one. A phase cannot fix a rotation, so
@@ -1710,20 +1715,43 @@ snapshot has dynamic Hamiltonian terms, `dress(at_time=...)` is required, and
 it evaluates their signal programs at that instant. The result is an
 instantaneous eigensystem, not Floquet or cycle-averaged analysis.
 
-When `initial_state=None`, a solve uses the eigenstate assigned to the
-all-ground label of the undriven static lab-frame Hamiltonian that its
-approximation keeps. The state is phase-fixed to have a real, nonnegative
-overlap on the bare product before the runtime frame transform (§4.2). With
-ordinary couplings, the default RWA leaves the bare product unchanged. When the
-static model of the solve's approximation conserves `N`, the bare product is
-the only state with `N = 0`. The solve then starts from it with no static
-model or eigensystem. Other models first apply the static Hamiltonian to the
-bare product, and they diagonalize it only when the bare product is not an
-eigenstate. When
-the solve uses the chip's approximation, it starts from the same physical
-state as `chip.state()` for the all-ground label before the frame transform.
-Retained bands, effective terms, or network Hamiltonian terms that couple the
-vacuum can dress an RWA default.
+A level label such as `{"q0": 1}` or `"eg"` names the dressed eigenstate
+`|d_k>` assigned to label `k` wherever quchip takes one: in `Chip.state()`, as
+the `initial_state` of a solve, as a target of `overlap()` and
+`amplitude_array()` (§4.2), and in `Chip.superposition()` and
+`Chip.compact_state()`. `Chip.bare_state()` gives the bare product state, and
+its `(amplitude, label)` pairs give bare superpositions. Operators stay local.
+`population(q, k)` is the projector on level `k` of device `q`, so on a
+dressed state it reads less than the overlap with the state's label.
+
+A label `initial_state`, or an omitted one, uses the eigenstate of the
+undriven static lab-frame Hamiltonian that the solve's approximation keeps,
+or of `P H_0 P` under an excitation cutoff, with the phase convention above.
+The solve places it at `t0 = tlist[0]` as the label target of §4.2:
+
+```text
+psi_solve(t0) = U(t0)† |d_k> exp(-i 2π t0 Σ_i f_ref,i k_i)
+```
+
+An omitted state is the all-ground label, so it equals `{}`. The labels of an
+uncoupled chip start in their bare products in every frame. An
+`initial_state` label takes integer levels, and `Chip.bare_state(...)` gives a
+product of local kets. When the solve uses the chip's approximation and
+cutoff, a label at `t0 = 0` starts from the same vector as `chip.state()`. A
+ket such as `chip.state()` or `chip.superposition()` is an integration-frame
+vector at `t0` and is not moved, so at `t0 != 0` it can differ from its label
+by the frame phases of its components. At an exact degeneracy the label names
+whichever eigenvector the eigensolver returns, as above.
+
+With ordinary couplings, the default RWA leaves the all-ground bare product
+unchanged. When the static model of the solve's approximation conserves `N`,
+the bare product is the only state with `N = 0`. The solve then starts from
+it with no static model or eigensystem. Other models first apply the static
+Hamiltonian to the bare product, and they diagonalize it only when the bare
+product is not an eigenstate. Retained bands, effective terms, or network
+Hamiltonian terms that couple the vacuum can dress an RWA default. An excited
+label diagonalizes the sector or cutoff class of its total when the model
+conserves `N` or has a cutoff, and the full static model otherwise.
 
 ### 9.1 Dressed drive matrix elements
 

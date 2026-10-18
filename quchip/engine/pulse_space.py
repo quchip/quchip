@@ -6,6 +6,7 @@ unknown support never supplies an exact reduction.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import cached_property
 from math import prod
@@ -196,17 +197,14 @@ class PulseSpace:
 
 
 def initial_totals(chip, state, resolution, cutoff=None):
-    """Return the excitation totals that an initial state occupies, or ``None`` when unknown.
+    """Return the excitation totals that a given initial state occupies, or ``None`` when unknown.
 
+    The planner places labels and an omitted state, which are dressed states.
     With ``cutoff``, a state with more than round-off weight on totals above
     it raises, and only totals up to the cutoff are returned.
     """
-    from collections.abc import Mapping
-    from quchip.chip.states import normalize_device_state_mapping
-    from quchip.engine.states import CompactState, bare_local_kets, materialize_state_spec
+    from quchip.engine.states import CompactState, materialize_state_spec
 
-    if state is None:
-        return {0}
     if isinstance(state, CompactState):
         if state.space.labels != tuple(d.label for d in chip.devices) or state.space.dims != resolution.dims:
             raise ValueError("Compact state devices and dimensions do not match this chip.")
@@ -216,35 +214,6 @@ def initial_totals(chip, state, resolution, cutoff=None):
                 f"N <= {cutoff}. Prepare it for this chip with chip.compact_state()."
             )
         return set(state.space.totals)
-    if isinstance(state, (Mapping, str)):
-        prepared = normalize_device_state_mapping(chip, state, {})
-        if all(isinstance(n, int) and not isinstance(n, bool) for n in prepared.values()):
-            for label, n in prepared.items():
-                if label not in resolution.bases or not 0 <= n < resolution.bases[label].resolved_dim:
-                    raise ValueError(f"Invalid initial level {n!r} for {label!r}.")
-            total = sum(prepared.values())
-            if cutoff is not None and total > cutoff:
-                raise ValueError(
-                    f"The initial label has total excitation {total}, outside the excitation cutoff N <= {cutoff}."
-                )
-            return {total}
-        kets = bare_local_kets(chip, prepared, resolution.bases)
-        totals = {0}
-        weights = np.ones(1)
-        for device, ket in zip(chip.devices, kets):
-            vector = chip.backend.to_array(ket).reshape(-1)
-            transform = resolution.bases[device.label].energy_to_solver()
-            if contains_tracer((vector, transform)):
-                return None
-            if transform is not None:
-                vector = np.asarray(transform).conj().T @ np.asarray(vector)
-            local = np.flatnonzero(np.asarray(vector) != 0)
-            totals = {n + int(level) for n in totals for level in local}
-            weights = np.convolve(weights, np.abs(np.asarray(vector)) ** 2)
-        if cutoff is not None:
-            _require_inside(cutoff, float(np.sum(weights[cutoff + 1:])), float(np.sum(weights)), "initial state")
-            totals = {n for n in totals if n <= cutoff}
-        return totals
     if contains_tracer(state):
         return None
     # Native state support is known only for concrete captured arrays.
@@ -296,6 +265,7 @@ def plan_pulse_space(chip, operations, states, resolution, approximation, dissip
         authored_excitation_changes, drive_excitation_changes, excitation_structure, keeps_zero_total_only, sector_size,
     )
     from quchip.engine.ir import CoherentOp
+    from quchip.engine.states import label_levels
 
     bases, dims = resolution.bases, resolution.dims
     labels = tuple(d.label for d in chip.devices)
@@ -311,16 +281,21 @@ def plan_pulse_space(chip, operations, states, resolution, approximation, dissip
         return space, f"{reason} The solve keeps every label with N <= {cutoff}.", None
 
     occupied = set()
-    if any(state is None for state in states):
-        if cutoff is not None:
-            # The default state is the vacuum-assigned eigenvector of the truncated static model.
-            occupied.update(next(group for group in structure.classes(cutoff) if 0 in group))
-        elif not structure.conserves:
-            return None, "The default dressed state has no proven finite excitation support.", None
-        else:
-            occupied.add(0)
     for state in states:
-        if state is None:
+        if state is None or isinstance(state, (Mapping, str)):
+            # A label is the dressed state that the static model assigns to it.
+            total = 0 if state is None else sum(label_levels(chip, state, dims))
+            if cutoff is not None:
+                if total > cutoff:
+                    raise ValueError(
+                        f"The initial label has total excitation {total}, outside the excitation cutoff N <= {cutoff}."
+                    )
+                # Under a cutoff, the dressed state spans the totals of its class.
+                occupied.update(next(group for group in structure.classes(cutoff) if total in group))
+            elif not structure.conserves:
+                return None, "The dressed initial state has no proven finite excitation support.", None
+            else:
+                occupied.add(total)
             continue
         totals = initial_totals(chip, state, resolution, cutoff)
         if totals is None and cutoff is not None:

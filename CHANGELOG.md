@@ -10,6 +10,24 @@ This file records notable user-visible changes to quchip.
 
 #### Changes and migration
 
+- A level label such as `{"q0": 1}` or `"eg"` names its dressed state
+  everywhere. An `initial_state` label starts a solve in the dressed state of
+  the label, under the solve's approximation and excitation cutoff, placed in
+  the solve frame at `tlist[0]` as an omitted `initial_state` is. So
+  `initial_state={}` equals an omitted state. Previously, a label
+  `initial_state` was the bare product, so a coupled chip exchanged
+  excitation from the start. Two transmons 100 MHz apart with `g = 30 MHz`
+  exchanged 26% of the population. `chip.superposition()` and
+  `chip.compact_state()` also give dressed states, and
+  `compact_state(..., dressed=False)` keeps the bare form. Uncoupled chips do
+  not change. To keep a bare start, pass `initial_state=chip.bare_state(...)`,
+  which also takes `(amplitude, label)` pairs for bare superpositions. A
+  mapping with a local ket raises as an `initial_state`. Pass
+  `chip.bare_state(...)` instead, or `chip.compact_state(..., dressed=False)`,
+  which now also takes local kets, on a chip too large for its product space.
+  `population()` stays the local projector.
+  ([#206](https://github.com/quchip/quchip/issues/206),
+  [#205](https://github.com/quchip/quchip/pull/205))
 - `active_patch()` eliminates spectators in the default order of
   `eliminate_spectators()`. Previously, it took the spectator farthest from the
   active devices first, then label order. On rings of transmons and coupling
@@ -378,9 +396,9 @@ This file records notable user-visible changes to quchip.
   `state_at()`, `dm_at()` and `reduced_state()` take `frame="lab"`.
   `overlap()`, `amplitude_array()`, `final_overlap_magnitudes()` and
   `final_amplitudes()` take `frame="lab"`, which reads a ket target as a
-  lab-frame vector, and `dressed=True`, which reads a label target as its
-  dressed eigenstate that turns with the label. An idle dressed state then
-  reads 1 in every frame. A ket target keeps its meaning, a vector of the
+  lab-frame vector. Their label targets, such as `{"q0": 1}`, are dressed
+  eigenstates that turn with the label. An idle dressed state then reads 1
+  in every frame. A ket target keeps its meaning, a vector of the
   integration frame. ([#190](https://github.com/quchip/quchip/issues/190),
   [#202](https://github.com/quchip/quchip/issues/202),
   [#205](https://github.com/quchip/quchip/pull/205))
@@ -690,8 +708,8 @@ This file records notable user-visible changes to quchip.
   ([#88](https://github.com/quchip/quchip/pull/88))
 
 - `PHYSICS.md` §4.2 describes result frames and dressed label targets, §6.5
-  the sector routes of `steadystate()` and the output statistics, and §6.6
-  the route record. ([#205](https://github.com/quchip/quchip/pull/205))
+  the sector routes of `steadystate()` and the output statistics, §6.6 the
+  route record, and §9 the dressed meaning of level labels. ([#205](https://github.com/quchip/quchip/pull/205))
 
 #### Development
 

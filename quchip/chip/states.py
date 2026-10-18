@@ -131,15 +131,14 @@ def superposition(
     chip: "Chip",
     *components: Mapping[str | "BaseDevice", int] | str | tuple[Any, Any],
 ) -> State:
-    """Normalized bare-basis superposition of tensor-product states.
+    """Normalized superposition of the dressed states of level labels.
 
-    Each component is a bare-state spec or an ``(amplitude, spec)`` tuple for
-    weighted mixing. A bare-state spec is a dict keyed by device or label, or a
-    string after you call :func:`set_state_order`. The weights are uniform by
-    default, and the result is normalized to unit norm.
-
-    Unlike :meth:`~quchip.Chip.state`, this function stays in the bare product
-    basis and does no dressed diagonalization, so the probe basis is explicit.
+    Each component is a level label or an ``(amplitude, label)`` pair. A label
+    is a dict keyed by device or label, or a string after you call
+    :func:`set_state_order`, and names the dressed state that
+    :meth:`~quchip.Chip.state` returns. The weights are uniform by default,
+    and the result is normalized to unit norm. :func:`bare_state` takes the
+    same components for a superposition of bare products.
 
     Examples
     --------
@@ -154,14 +153,15 @@ def superposition(
     ...     (np.sqrt(0.7), {qb: 1, cr: 1}),
     ... )
     """
+    return _combine(chip, components, chip.state)
+
+
+def _combine(chip: "Chip", components: tuple[Any, ...], prepare: Any) -> State:
+    """Return the normalized sum of the states that ``prepare`` gives for each component."""
     if not components:
-        raise ValueError("superposition requires at least one component")
-
-    from quchip.engine.states import bare_state_from_bases
-
+        raise ValueError("A superposition requires at least one component.")
     amps: list[Any] = []
     kets: list[State] = []
-    bases = chip.resolve().bases
     for component in components:
         if (
             isinstance(component, tuple)
@@ -171,8 +171,7 @@ def superposition(
             amp, spec = component
         else:
             amp, spec = 1.0, component
-        resolved = normalize_device_state_mapping(chip, spec, {})
-        kets.append(bare_state_from_bases(chip, resolved, bases))
+        kets.append(prepare(spec))
         amps.append(amp)
 
     psi = amps[0] * kets[0]
@@ -180,17 +179,18 @@ def superposition(
         psi = psi + amp * ket
     backend = chip.backend
     norm = backend.norm(psi)
-    # Backend.norm may return a traced 0-d array (dynamiqs). The zero-norm
-    # short-circuit runs directly when concretely readable. Otherwise the
-    # divisor itself must be guarded (mirrors Bath._bose's safe-denominator
-    # pattern): xp.where evaluates both branches, so dividing by the
-    # (possibly zero) traced norm directly would still produce 0/0 -> NaN
-    # in the unselected branch. Replacing the zero norm with 1.0 before the
-    # division makes an all-zero traced amplitude set return the
-    # already-zero (unnormalized) state instead of NaN.
+    # Backend.norm may return a traced 0-d array (dynamiqs). A concrete zero
+    # norm raises. Otherwise the divisor itself must be guarded (mirrors
+    # Bath._bose's safe-denominator pattern): xp.where evaluates both branches,
+    # so dividing by the (possibly zero) traced norm directly would still
+    # produce 0/0 -> NaN in the unselected branch. Replacing the zero norm
+    # with 1.0 before the division makes an all-zero traced amplitude set
+    # return the already-zero (unnormalized) state instead of NaN.
     concrete_norm = maybe_concrete_scalar(norm)
     if concrete_norm is not None:
-        return psi if concrete_norm <= 0 else psi / norm
+        if concrete_norm <= 0:
+            raise ValueError("The superposition has zero norm.")
+        return psi / norm
     xp = backend.array_module
     safe_norm = xp.where(norm == 0, 1.0, norm)
     return psi / safe_norm
@@ -198,21 +198,36 @@ def superposition(
 
 def bare_state(
     chip: "Chip",
-    device_states: Mapping[str | "BaseDevice", int | State] | str | None = None,
-    /,
+    *components: Mapping[str | "BaseDevice", int | State] | str | tuple[Any, Any],
     **device_state_kwargs: int | State,
 ) -> State:
-    """Product state from per-device energy levels or authored local kets.
+    """Product state, or normalized superposition of product states, from energy levels or local kets.
 
     You can specify each device as an energy-level index (``int``) or as a ket vector
     in that device's authored local space. Unmentioned devices default to the ground
     state (level 0). Unlike :meth:`~quchip.Chip.state`, this function does **not**
     diagonalize the coupled system.
 
-    Accepts a string shorthand (for example ``"eg1"``) after you call
-    :func:`set_state_order`.
+    One mapping or string, keywords, or both give one product state. Several
+    components, or ``(amplitude, specification)`` pairs, give the normalized
+    superposition of their products, as :func:`superposition` combines
+    dressed states. Accepts a string shorthand (for example ``"eg1"``) after
+    you call :func:`set_state_order`.
     """
     from quchip.engine.states import bare_state_from_bases
 
-    resolved = normalize_device_state_mapping(chip, device_states, device_state_kwargs)
-    return bare_state_from_bases(chip, resolved, chip.resolve().bases)
+    bases = chip.resolve().bases
+
+    def product(spec: Any, keywords: dict[str, Any] | None = None) -> State:
+        resolved = normalize_device_state_mapping(chip, spec, keywords or {})
+        return bare_state_from_bases(chip, resolved, bases)
+
+    weighted = any(
+        isinstance(component, tuple) and len(component) == 2 and not isinstance(component[0], (dict, str, Mapping))
+        for component in components
+    )
+    if len(components) <= 1 and not weighted:
+        return product(components[0] if components else None, device_state_kwargs)
+    if device_state_kwargs:
+        raise TypeError("Keyword levels name one product state. Write each component of a superposition as a mapping.")
+    return _combine(chip, components, product)

@@ -501,12 +501,13 @@ class SimulationResult:
         state = self._in_frame(state, index, frame)
         return state if self._excitation_space is None else self._excitation_space.lift(state, self._backend)
 
-    def _resolve_target(self, target, frame, dressed, times):
+    def _resolve_target(self, target, frame, times):
         """Return a fixed native target, or an array with one target ket per time.
 
         A ket keeps its integration-frame meaning unless ``frame`` is ``"lab"``.
-        A bare label is fixed in the integration frame. A dressed label k
-        turns with its label: ``U(t)†|d_k⟩ exp(−i 2π t Σᵢ fᵢ kᵢ)``.
+        A label k is its dressed state, which turns with its label:
+        ``U(t)†|d_k⟩ exp(−i 2π t Σᵢ fᵢ kᵢ)``. The all-ground label of a
+        conserving model is the fixed bare vacuum.
         """
         frame = _frame_choice(frame)
         backend = self._backend
@@ -517,17 +518,15 @@ class SimulationResult:
                 raise RuntimeError("This result has no captured chip for label targets; it was not created by a solve.")
             levels = self._label_targets.levels(target, self.dims)
             space = self._excitation_space
-            if not dressed:
+            vector = self._label_targets.dressed(levels, self._bases, space)
+            if vector is None:
                 vector = self._label_targets.bare(levels, self._bases, space)
                 dims = self._saved_dims()
                 return backend.from_array(vector.reshape(-1, 1), dims=[dims, [1] * len(dims)]), None
             frame_map = self._frame_map()
-            vector = self._label_targets.dressed(levels, self._bases, space)
             xp = backend.array_module
             phase = xp.exp(-1j * TWO_PI * xp.asarray(times) * frame_map.label_energy(levels))
             return None, phase[:, None] * frame_map.kets(vector, times)
-        if dressed:
-            raise ValueError("dressed=True applies to label targets, such as {'q0': 0, 'q1': 1}.")
         fixed = self._target_state(target)
         if frame == "integration":
             return fixed, None
@@ -552,7 +551,7 @@ class SimulationResult:
         state = self._raw_final_state() if t is None else self._raw_state_at(t)
         return CompactState(self._backend.to_array(state), self._excitation_space)
 
-    def overlap(self, target: Any, *, frame: Frame = "integration", dressed: bool = False) -> Any:
+    def overlap(self, target: Any, *, frame: Frame = "integration") -> Any:
         """Return the overlap with *target* at every stored time.
 
         For ket trajectories, the method returns ``|<target|psi(t)>|**2``. For
@@ -561,29 +560,27 @@ class SimulationResult:
         batched op covers the leading time axis, with no per-point loop.
 
         A ket target is a fixed vector of the integration frame, so a target
-        such as |+⟩ is written in that frame. With ``frame="lab"``, the target
-        is a fixed lab-frame vector, such as a dressed state from
-        ``chip.state()``. A label target, such as ``{"q0": 0, "q1": 1}``, is
-        the bare product state of local energy levels. With ``dressed=True``,
-        it is the dressed eigenstate ``|d_k⟩`` of label k, which turns with
-        its label: ``U(t)†|d_k⟩ exp(−i 2π t Σᵢ fᵢ kᵢ)``, where ``U(t)†`` maps
-        the lab frame into the integration frame and ``fᵢ`` are the frame
+        such as |+⟩ is written in that frame, and ``chip.bare_state(...)``
+        gives a bare product. With ``frame="lab"``, the target is a fixed
+        lab-frame vector, such as a dressed state from ``chip.state()``. A
+        label target, such as ``{"q0": 0, "q1": 1}``, is the dressed
+        eigenstate ``|d_k⟩`` of label k, which turns with its label:
+        ``U(t)†|d_k⟩ exp(−i 2π t Σᵢ fᵢ kᵢ)``, where ``U(t)†`` maps the lab
+        frame into the integration frame and ``fᵢ`` are the frame
         frequencies. An idle dressed state then reads 1 in every frame. A
         snapshot of the solve's chip supplies ``|d_k⟩``, with the solve's
-        approximation.
+        approximation and excitation cutoff.
 
         Parameters
         ----------
         target : state_like, mapping, or str
             Target ket in the captured full Hilbert space, a compatible ``CompactState``,
-            or a label of local energy levels.
+            or a label of local energy levels, which names its dressed state.
         frame : {"integration", "lab"}, default="integration"
             Frame in which a ket target is fixed.
-        dressed : bool, default=False
-            Use the dressed eigenstate of a label target.
         """
         backend = self._backend
-        target, moving = self._resolve_target(target, frame, dressed, self.times)
+        target, moving = self._resolve_target(target, frame, self.times)
         if moving is not None:
             return _moving_projection(backend, moving, self._stacked_states(), amplitude=False)
         vector = backend.to_array(target)
@@ -593,33 +590,31 @@ class SimulationResult:
         series = backend.expect_over_time(projector, self._stacked_states())
         return backend.array_module.abs(series)
 
-    def amplitude_array(self, target: Any, *, frame: Frame = "integration", dressed: bool = False) -> Any:
+    def amplitude_array(self, target: Any, *, frame: Frame = "integration") -> Any:
         """Return the phase-sensitive complex projection ``<target|psi(t)>`` for kets.
 
         Density-matrix trajectories raise :class:`TypeError`, because a mixed
         state has no single phase-sensitive amplitude. For a mixed state, use
         :meth:`overlap`. The method uses one batched op, with no per-point
-        loop. Targets, ``frame`` and ``dressed`` are as in :meth:`overlap`.
-        With ``frame="lab"``, the phase is the lab-frame phase. A dressed label
-        target gives a phase that turns at ``Σᵢ fᵢ kᵢ − E_k``, the detuning of
-        the label's frame energy from its dressed energy ``E_k``.
+        loop. Targets and ``frame`` are as in :meth:`overlap`. With
+        ``frame="lab"``, the phase is the lab-frame phase. A label target gives
+        a phase that turns at ``Σᵢ fᵢ kᵢ − E_k``, the detuning of the label's
+        frame energy from its dressed energy ``E_k``.
 
         Parameters
         ----------
         target : state_like, mapping, or str
             Target ket in the captured full Hilbert space, a compatible ``CompactState``,
-            or a label of local energy levels.
+            or a label of local energy levels, which names its dressed state.
         frame : {"integration", "lab"}, default="integration"
             Frame in which a ket target is fixed.
-        dressed : bool, default=False
-            Use the dressed eigenstate of a label target.
         """
         backend = self._backend
         if not self._is_ket_trajectory():
             raise TypeError(
                 "amplitude_array() requires ket trajectories; use overlap() for density matrices."
             )
-        target, moving = self._resolve_target(target, frame, dressed, self.times)
+        target, moving = self._resolve_target(target, frame, self.times)
         if moving is not None:
             return _moving_projection(backend, moving, self._stacked_states(), amplitude=True)
         return backend.array_module.asarray(
@@ -730,7 +725,7 @@ class SimulationResult:
             return self._final_state
         raise RuntimeError('No final state available; run with states="all" or states="final" to retain it.')
 
-    def _final_projection(self, target: Any, *, amplitude: bool, frame: Frame, dressed: bool) -> Any:
+    def _final_projection(self, target: Any, *, amplitude: bool, frame: Frame) -> Any:
         """Project the final saved state on a target, without its history."""
         backend = self._backend
         state = self._raw_final_state()
@@ -738,7 +733,7 @@ class SimulationResult:
         if amplitude and not is_ket:
             raise TypeError("Final amplitudes require ket states; use final_overlap_magnitudes for density matrices.")
         stacked = backend.stack_states([state])
-        target, moving = self._resolve_target(target, frame, dressed, self.times[-1:])
+        target, moving = self._resolve_target(target, frame, self.times[-1:])
         if moving is not None:
             return _moving_projection(backend, moving, stacked, amplitude=amplitude)[0]
         value = backend.overlap_over_time(target, stacked)[0]
@@ -1202,19 +1197,17 @@ class SimulationBatchResult(BatchResult[SimulationResult]):
         """
         return self._trace_values([r.collapse_integral(key) for r in self._results], reduce)
 
-    def _final_projections(self, targets: list[Any] | tuple[Any, ...], *, amplitude: bool, frame: Frame,
-                           dressed: bool) -> Any:
+    def _final_projections(self, targets: list[Any] | tuple[Any, ...], *, amplitude: bool, frame: Frame) -> Any:
         self._check_targets_len(targets)
         return self._stack([
-            result._final_projection(target, amplitude=amplitude, frame=frame, dressed=dressed)
+            result._final_projection(target, amplitude=amplitude, frame=frame)
             for result, target in zip(self._results, targets)
         ])
 
-    def final_overlap_magnitudes(self, targets: list[Any] | tuple[Any, ...], *, frame: Frame = "integration",
-                                 dressed: bool = False) -> Any:
+    def final_overlap_magnitudes(self, targets: list[Any] | tuple[Any, ...], *, frame: Frame = "integration") -> Any:
         """Return final target-state populations without histories.
 
-        Targets, ``frame`` and ``dressed`` are as in :meth:`SimulationResult.overlap`.
+        Targets and ``frame`` are as in :meth:`SimulationResult.overlap`.
 
         Parameters
         ----------
@@ -1222,16 +1215,13 @@ class SimulationBatchResult(BatchResult[SimulationResult]):
             One target ket or label per batch result.
         frame : {"integration", "lab"}, default="integration"
             Frame in which a ket target is fixed.
-        dressed : bool, default=False
-            Use the dressed eigenstate of a label target.
         """
-        return self._final_projections(targets, amplitude=False, frame=frame, dressed=dressed)
+        return self._final_projections(targets, amplitude=False, frame=frame)
 
-    def final_amplitudes(self, targets: list[Any] | tuple[Any, ...], *, frame: Frame = "integration",
-                         dressed: bool = False) -> Any:
+    def final_amplitudes(self, targets: list[Any] | tuple[Any, ...], *, frame: Frame = "integration") -> Any:
         """Return final complex ket amplitudes without histories.
 
-        Targets, ``frame`` and ``dressed`` are as in :meth:`SimulationResult.amplitude_array`.
+        Targets and ``frame`` are as in :meth:`SimulationResult.amplitude_array`.
 
         Parameters
         ----------
@@ -1239,10 +1229,8 @@ class SimulationBatchResult(BatchResult[SimulationResult]):
             One target ket or label per batch result.
         frame : {"integration", "lab"}, default="integration"
             Frame in which a ket target is fixed.
-        dressed : bool, default=False
-            Use the dressed eigenstate of a label target.
         """
-        return self._final_projections(targets, amplitude=True, frame=frame, dressed=dressed)
+        return self._final_projections(targets, amplitude=True, frame=frame)
 
 # ---------------------------------------------------------------------------
 # Result wrapping helpers

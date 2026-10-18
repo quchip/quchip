@@ -239,6 +239,12 @@ def test_dressed_statics_and_states_use_the_truncated_eigenvectors():
         compact = limited.compact_state({"q": 1}, dressed=True)
         coordinates = [pairs[1, 0][1][labels.index(tuple(int(n) for n in level))] for level in compact.space.levels]
         np.testing.assert_allclose(np.asarray(compact.values).reshape(-1), coordinates, atol=1e-10)
+        # A label initial state is the same eigenvector of P H P, in the rows of the solve's space.
+        problem = QuantumSequence(limited).build_problem(np.array([0.0, 1.0]), initial_state={"q": 1})
+        rows = problem.engine_result.excitation_space.levels
+        coordinates = [pairs[1, 0][1][labels.index(tuple(int(n) for n in level))] for level in rows]
+        np.testing.assert_allclose(np.asarray(limited.backend.to_array(problem.initial_state)).reshape(-1),
+                                   coordinates, atol=1e-10, rtol=0)
     with pytest.raises(ValueError, match="requires proven static excitation conservation"):
         chip.compact_state({"q": 1}, dressed=True)
 
@@ -329,8 +335,8 @@ def test_raising_ports_keep_the_exchange_through_a_label_above_the_cutoff():
     network.expose("out", input=first.input, output=second.output)
     chip = Chip([u, d], port_network=network, space=ExcitationCutoff(1))
     tlist = np.linspace(0.0, 40.0, 41)
-    result = QuantumSequence(chip).simulate(tlist=tlist, initial_state={"d": 1}, dissipation=False,
-                                            options=tolerances("qutip"))
+    result = QuantumSequence(chip).simulate(tlist=tlist, initial_state=chip.compact_state({"d": 1}, dressed=False),
+                                            dissipation=False, options=tolerances("qutip"))
     np.testing.assert_allclose(result.population("u", 1), np.sin(rate * tlist / 2) ** 2, atol=1e-6)
 
 
@@ -359,8 +365,9 @@ def test_global_budget_couples_uncoupled_driven_devices():
 def test_compact_replay_measurement_and_batches_keep_the_cutoff():
     """A saved compact state continues the solve, and each batch point equals its single solve."""
     chip = pair(loss=True, frame={"q": 5.0, "r": 7.0}, space=ExcitationCutoff(2))
-    whole = QuantumSequence(chip).simulate(tlist=np.linspace(0.0, 20.0, 5), initial_state={"q": 1})
-    first = QuantumSequence(chip).simulate(tlist=np.linspace(0.0, 10.0, 3), initial_state={"q": 1})
+    start = chip.compact_state({"q": 1}, dressed=False)
+    whole = QuantumSequence(chip).simulate(tlist=np.linspace(0.0, 20.0, 5), initial_state=start)
+    first = QuantumSequence(chip).simulate(tlist=np.linspace(0.0, 10.0, 3), initial_state=start)
     replay = QuantumSequence(chip).simulate(tlist=np.linspace(10.0, 20.0, 3), initial_state=first.compact_state())
     np.testing.assert_allclose(replay.population("q", 1)[-1], whole.population("q", 1)[-1], atol=1e-7)
     native = QuantumSequence(chip).simulate(tlist=np.linspace(0.0, 20.0, 5),

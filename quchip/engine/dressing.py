@@ -311,6 +311,44 @@ def _labeling_arrays(
     return indices, chosen_overlaps, margins, duplicates
 
 
+STATE_OVERLAP_WARNING = 0.9
+
+
+def warn_weak_assignment(label: tuple[int, ...], overlap: Any) -> None:
+    """Warn when the dressed state assigned to a label keeps less than 0.9 of its bare product.
+
+    Every query that selects the dressed state of a label calls this. A traced
+    overlap does not warn. The warning names the first caller outside quchip.
+
+    Parameters
+    ----------
+    label : tuple of int
+        Product label of local energy levels.
+    overlap : scalar
+        Squared overlap of the assigned dressed state with the bare product.
+    """
+    import os
+    import sys
+    from types import FrameType
+
+    from quchip.utils.jax_utils import maybe_concrete_scalar
+
+    value = maybe_concrete_scalar(overlap)
+    if value is None or value >= STATE_OVERLAP_WARNING:
+        return
+    package = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    frame: FrameType | None = sys._getframe(1)
+    level = 2
+    while frame is not None and os.path.abspath(frame.f_code.co_filename).startswith(package + os.sep):
+        frame, level = frame.f_back, level + 1
+    warnings.warn(
+        f"Dressed state label {tuple(label)} has assignment overlap {value:.3f} (< {STATE_OVERLAP_WARNING:.3f}); "
+        "the label names the assigned dressed eigenstate. Use chip.bare_state(...) for the product state.",
+        UserWarning,
+        stacklevel=level,
+    )
+
+
 def gauge_phases(amplitudes: Any, indices: Any) -> Any:
     """Return the phase factor that makes each column's assigned reference amplitude real and nonnegative.
 

@@ -1363,20 +1363,22 @@ class QuantumSequence:
         e_ops : dict, optional
             Named observables to evaluate.
         initial_state : object or mapping, optional
-            ``None`` uses the eigenstate of the solve's undriven static lab-frame Hamiltonian, as
-            kept by its approximation, that is assigned to the all-ground label. Its overlap with
-            the bare product is made real and nonnegative before it is expressed in the solve frame
-            at ``tlist[0]``. With ordinary couplings, this is the bare product under the default
-            RWA. When the solve uses the chip's approximation, it is the same physical state as
-            ``chip.state()`` before the frame transform. Kept bands, effective terms, or network
-            Hamiltonian terms that couple the vacuum can also dress an RWA start. At a nonzero
-            rotating-frame start time, the frame transform is applied at ``tlist[0]``, so the state
-            need not match the lab-frame vector returned by ``chip.state()``. Mappings and
-            configured string shorthand give product states in the resolved local bases. QuTiP
-            ``Qobj`` and dynamiqs ``QArray`` kets or density matrices use resolved solver
-            coordinates. Arrays, symbolic expressions, and callables are authored-space kets
-            projected onto kept levels. A ``CompactState`` reuses captured excitation
-            coordinates and requires the same local energy bases.
+            A label of local energy levels, such as ``{"q0": 1}``, or configured string
+            shorthand names its dressed state: the eigenstate of the solve's undriven static
+            lab-frame Hamiltonian, as kept by its approximation and excitation cutoff, that is
+            assigned to the label. Its overlap with the bare product is made real and
+            nonnegative, and it is placed in the solve frame at ``tlist[0]`` as the label target
+            of ``overlap()``. ``None`` and ``{}`` give the all-ground label. With ordinary
+            couplings under the default RWA, that state is the bare vacuum. When the solve uses
+            the chip's approximation, a label start is the same physical state as
+            ``chip.state()`` before the frame transform. At a nonzero rotating-frame start time,
+            the frame transform is applied at ``tlist[0]``, so the state need not match the
+            lab-frame vector returned by ``chip.state()``. ``chip.bare_state(...)`` gives a bare
+            product, and a mapping with a local ket raises. QuTiP ``Qobj`` and dynamiqs
+            ``QArray`` kets or density matrices use resolved solver coordinates. Arrays,
+            symbolic expressions, and callables are authored-space kets projected onto kept
+            levels. A ``CompactState`` reuses captured excitation coordinates and requires the
+            same local energy bases.
         backend : object or {"qutip", "dynamiqs"}, optional
             Per-call backend override.
         partition : bool, default=True

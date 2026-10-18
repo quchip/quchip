@@ -1235,7 +1235,11 @@ class Chip:
         force: bool = False,
         labeling: str = "DE",
     ) -> DressedResult:
-        """Diagonalize the exact lab-frame Hamiltonian.
+        """Diagonalize the static lab-frame Hamiltonian under the chip's approximation.
+
+        The Hamiltonian keeps the declared truncation of each device and the
+        Hamiltonian terms of the port network. Under ``RWA()`` it has no
+        counter-rotating terms.
 
         Parameters
         ----------
@@ -1936,20 +1940,19 @@ class Chip:
         self,
         *components: Mapping[str | BaseDevice, int] | str | tuple[Any, Any],
     ) -> State:
-        """Return a normalized bare-basis superposition of tensor-product states.
+        """Return a normalized superposition of the dressed states of level labels.
 
-        Each component is a bare-state spec or an ``(amplitude, spec)`` tuple
-        for weighted mixing. A bare-state spec is a dict keyed by device or
-        label, or a string if you called :meth:`set_state_order` before.
-        Weights default to uniform, and results are normalized to unit norm.
-
-        Unlike :meth:`state`, this method stays in the bare product basis and
-        does no dressed diagonalization, so the probe basis is explicit.
+        Each component is a level label or an ``(amplitude, label)`` tuple for
+        weighted mixing. A label is a dict keyed by device or label, or a
+        string if you called :meth:`set_state_order` before, and names the
+        dressed state that :meth:`state` returns. Weights default to uniform,
+        and results are normalized to unit norm. :meth:`bare_state` takes the
+        same components for a superposition of bare product states.
 
         Parameters
         ----------
         *components : mapping, str, or tuple
-            Bare-state specifications, optionally paired with amplitudes.
+            Level labels, optionally paired with amplitudes.
 
         Examples
         --------
@@ -1979,6 +1982,13 @@ class Chip:
         Accepts a string shorthand (for example ``"eg1"``) if you called
         :meth:`set_state_order` before.
 
+        A level label names this state wherever quchip takes one: as the
+        ``initial_state`` of a solve, as a target of ``overlap()`` and
+        ``amplitude_array()``, and in :meth:`superposition` and
+        :meth:`compact_state`. A solve takes the state under its own
+        approximation and excitation cutoff, and places it in its frame at
+        ``tlist[0]``. :meth:`bare_state` gives the bare product state.
+
         If the requested label's assignment overlap is low, this method warns
         and names :meth:`bare_state` as the product-state alternative.
 
@@ -2001,18 +2011,20 @@ class Chip:
         """
         return self._analysis.state(device_states, **device_state_kwargs)
 
-    def compact_state(self, *components: Any, dressed: bool = False) -> Any:
+    def compact_state(self, *components: Any, dressed: bool = True) -> Any:
         """Prepare a reusable state without a full product-space allocation.
 
         Parameters
         ----------
         *components : mapping, str, or (amplitude, specification) pairs
-            Bare product energy labels, using the same strings and mappings as
+            Energy-level labels, using the same strings and mappings as
             ``superposition``. Unmentioned devices have level zero. Components
             are summed and normalized. No components prepares the vacuum.
-        dressed : bool, default=False
+        dressed : bool, default=True
             Use the static dressed eigenstate assigned to each label. This
-            requires proven static excitation conservation.
+            requires proven static excitation conservation or an excitation
+            cutoff. False uses the bare product of each label, and a mapping
+            can then also give a device a local ket, as in ``bare_state``.
 
         Returns
         -------
@@ -2024,30 +2036,32 @@ class Chip:
 
     def bare_state(
         self,
-        device_states: Mapping[str | BaseDevice, int | State] | str | None = None,
-        /,
+        *components: Mapping[str | BaseDevice, int | State] | str | tuple[Any, Any],
         **device_state_kwargs: int | State,
     ) -> State:
-        """Return a product state from per-device energy levels or authored local kets.
+        """Return a product state, or a superposition of product states, from energy levels or local kets.
 
         Specify each device as an energy-level index (``int``) or as a ket vector in that
         device's authored local space. Unspecified devices use the ground state (level
         0). Unlike :meth:`state`, this method does **not** diagonalize the coupled
         system.
 
-        Accepts a string shorthand (for example ``"eg1"``) if you called
-        :meth:`set_state_order` before.
+        One mapping or string, keywords, or both give one product state. Several
+        components, or ``(amplitude, specification)`` pairs, give the normalized
+        superposition of their products, as :meth:`superposition` combines
+        dressed states. Accepts a string shorthand (for example ``"eg1"``) if you
+        called :meth:`set_state_order` before.
 
         Parameters
         ----------
-        device_states : mapping, str, or None, default=None
+        *components : mapping, str, or (amplitude, specification) pairs
             Per-device levels or local kets. Omitted devices use level zero.
         **device_state_kwargs : int or State
-            Per-device levels or local kets keyed by label.
+            Per-device levels or local kets keyed by label, for one product state.
         """
         from quchip.chip.states import bare_state
 
-        return bare_state(self, device_states, **device_state_kwargs)
+        return bare_state(self, *components, **device_state_kwargs)
 
     # ------------------------------------------------------------------
     # Control equipment

@@ -45,10 +45,10 @@ from quchip.engine.dressing import (
     gauge_phases,
     labeled_eigensystem,
     materialize_dressed_result,
+    warn_weak_assignment,
 )
 from quchip.chip.states import normalize_device_state_mapping
 from quchip.devices.base import BaseDevice, _validate_level_pair
-from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
 from quchip.utils.values import TracedKey, scoped_entry, scoped_hit
 from quchip.utils.labeling import LabelKeyedDict, bare_label_from_mapping, resolve_label, top_components
@@ -62,24 +62,11 @@ if TYPE_CHECKING:
     from quchip.engine.sectors import SectorModel
 
 
-_STATE_OVERLAP_WARNING = 0.9
 _CUTOFF_SPECTRUM_ERROR = (
     "The full dressed spectrum (chip.dress() and the views built on it) is not available under an "
     "excitation cutoff, and this chip keeps only N <= {max_total}. Use label queries such as chip.energy(), "
     "chip.freq(), chip.state() or chip.compact_state(), or chip.with_space(None) for the full product space."
 )
-def _is_eigenstate(state: State, result: "EngineResult", backend: Any) -> bool:
-    """Return whether a concrete static result maps ``state`` onto a multiple of itself.
-
-    The residual tolerance is ``1e-12`` times the Hamiltonian's angular
-    spectral span.
-    """
-    operators = [term.coefficient * backend.from_canonical_operator(term.operator) for term in result.static_terms]
-    image = sum(operators[1:], start=operators[0]) @ state
-    residual = float(backend.norm(image - backend.overlap(state, image) * state))
-    return residual <= 1e-12 * TWO_PI * result.metadata["spectral_bound_ghz"]
-
-
 @dataclass(frozen=True)
 class KerrMatrix:
     """Labeled dressed self-Kerr and cross-Kerr coefficients in GHz.
@@ -519,11 +506,11 @@ class ChipAnalysis:
         """Return the lab-frame eigenstate assigned to ``label`` for ``approximation``.
 
         The ket uses solver coordinates and has real, nonnegative overlap on
-        the bare product of ``label``. ``None`` means that bare product is
-        already an eigenstate. A block model takes the ket from the block of the
-        label's total. Without a cutoff, such a model conserves the total
-        energy-level index, so the all-ground label needs no eigensystem: its
-        bare product is the only state with total level 0. Results cache against
+        the bare product of ``label``. A block model takes the ket from the
+        block of the label's total. Without a cutoff, such a model conserves
+        the total energy-level index, so the all-ground label needs no
+        eigensystem: its bare product is the only state with total level 0,
+        and ``None`` means that bare product. Results cache against
         the analysis signature, ``approximation`` and ``label``; traced ones only
         inside their trace. A traced ket is differentiated by first-order
         perturbation theory over the same eigensystem, masking gaps at the
@@ -533,7 +520,7 @@ class ChipAnalysis:
         from quchip.engine.assembly import _analysis_matrix_ghz, _build_static_analysis_result
         from quchip.engine.basis import _differentiable_eigenvector
         from quchip.engine.excitation import excitation_structure
-        from quchip.engine.states import bare_state_from_bases, block_model
+        from quchip.engine.states import block_model
 
         key = (self._analysis_signature(), approximation, label)
         if scoped_hit(self._label_cache, key):
@@ -558,29 +545,26 @@ class ChipAnalysis:
             self.engine_result(_advise=False) if same_approximation
             else _build_static_analysis_result(chip, approximation=approximation, _advisories=[])
         )
-        devices = [device.label for device in chip.devices]
-        bare = bare_state_from_bases(chip, dict(zip(devices, label)), static.bases)
-        traced = static._contains_tracer()
-        ket = None
-        if traced or not _is_eigenstate(bare, static, backend):
-            values, vectors, _, labeling = (
-                self._compute_array_labeled(static) if same_approximation else labeled_eigensystem(static, backend)
-            )
-            xp = backend.array_module
-            position = self._bare_label_index(label)
-            index = labeling.indices[position]
-            column = xp.asarray(vectors)[:, index]
-            if traced:
-                # JAX's eigh derivative can be NaN at an unrelated exact tie.
-                matrix = jnp.asarray(_analysis_matrix_ghz(static))
-                column = _differentiable_eigenvector(matrix, values[index], values, vectors, column)
-                # That derivative transports the phase. The gauge restores the derivative of the anchor's phase.
-                # Rolling the rows puts the label's own amplitude first, where the gauge anchors.
-                amplitudes = jnp.roll(self._semantic_amplitudes(column[:, None], static), -position, axis=0)
-                column = column * gauge_phases(amplitudes, jnp.zeros(1, dtype=int))[0]
-            ket = column
-        self._label_cache = scoped_entry(key, ket, traced=contains_tracer(ket))
-        return ket
+        # A residual test cannot prove that a bare product is an eigenstate near a degeneracy, so the label
+        # always takes its assigned eigenvector, as chip.state() does.
+        values, vectors, _, labeling = (
+            self._compute_array_labeled(static) if same_approximation else labeled_eigensystem(static, backend)
+        )
+        xp = backend.array_module
+        position = self._bare_label_index(label)
+        index = labeling.indices[position]
+        warn_weak_assignment(label, labeling.overlaps[position])
+        column = xp.asarray(vectors)[:, index]
+        if static._contains_tracer():
+            # JAX's eigh derivative can be NaN at an unrelated exact tie.
+            matrix = jnp.asarray(_analysis_matrix_ghz(static))
+            column = _differentiable_eigenvector(matrix, values[index], values, vectors, column)
+            # That derivative transports the phase. The gauge restores the derivative of the anchor's phase.
+            # Rolling the rows puts the label's own amplitude first, where the gauge anchors.
+            amplitudes = jnp.roll(self._semantic_amplitudes(column[:, None], static), -position, axis=0)
+            column = column * gauge_phases(amplitudes, jnp.zeros(1, dtype=int))[0]
+        self._label_cache = scoped_entry(key, column, traced=contains_tracer(column))
+        return column
 
     def _bare_label_index(self, label: tuple[int, ...]) -> int:
         """Position of ``label`` in canonical bare-label order (Python int)."""
@@ -758,16 +742,7 @@ class ChipAnalysis:
             raise KeyError(
                 f"State label {label_t} not found in state map. Available (first 10): {available}"
             ) from None
-        overlap = dressed.assignment_overlaps[label_t]
-        if overlap < _STATE_OVERLAP_WARNING:
-            # Hops: _dressed_state -> ChipAnalysis.state -> Chip.state -> caller.
-            warnings.warn(
-                f"Dressed state label {label_t} has assignment overlap {overlap:.3f} "
-                f"(< {_STATE_OVERLAP_WARNING:.3f}); chip.state() returns the assigned dressed "
-                "eigenstate. Use chip.bare_state(...) for the product state.",
-                UserWarning,
-                stacklevel=4,
-            )
+        warn_weak_assignment(label_t, dressed.assignment_overlaps[label_t])
         return dressed.eigenstates[eigen_idx]
 
     def _sector_state(self, model: SectorModel, label: tuple[int, ...]) -> Any:
@@ -778,16 +753,7 @@ class ChipAnalysis:
         """
         system = model.eigensystem(sum(label))
         row = system.space.row(label)
-        overlap = maybe_concrete_scalar(system.labeling.overlaps[row])
-        if overlap is not None and overlap < _STATE_OVERLAP_WARNING:
-            # Hops: _sector_state -> _dressed_state -> ChipAnalysis.state -> Chip.state -> caller.
-            warnings.warn(
-                f"Dressed state label {label} has assignment overlap {overlap:.3f} "
-                f"(< {_STATE_OVERLAP_WARNING:.3f}); chip.state() returns the assigned dressed "
-                "eigenstate. Use chip.bare_state(...) for the product state.",
-                UserWarning,
-                stacklevel=5,
-            )
+        warn_weak_assignment(label, system.labeling.overlaps[row])
         vectors = system.eigenvectors
         xp = jnp if contains_tracer((vectors, system.labeling.indices)) else np
         column = model.embed(system.space.totals, xp.asarray(vectors)[:, system.labeling.indices[row]])

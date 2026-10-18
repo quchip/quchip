@@ -192,14 +192,18 @@ only requested expectation traces. Later state measurements require saved
 states. `observable_at()` can select or interpolate a saved trace. State
 queries use saved times and do not interpolate quantum states.
 
-An omitted `initial_state` uses the all-ground-labeled eigenstate of the undriven static
-lab-frame Hamiltonian that the solve's approximation keeps. This eigenstate is then expressed
-in the solve frame at `tlist[0]`. With ordinary couplings, this is the bare product under the
-default RWA. With the chip's approximation, it is the same physical state as `chip.state()`
-before the frame transform. Use `chip.state()` for other coupled eigenstates and
-`chip.bare_state()` to request a bare product state explicitly.
-`result.population(q, level=1)` measures a local isolated energy-state population. `overlap()`
-tests a particular joint state.
+A level label names its dressed state everywhere: `chip.state(q=1)`,
+`initial_state={"q": 1}` or `"e"`, the targets of `overlap()` and
+`amplitude_array()`, `chip.superposition()` and `chip.compact_state()`. The
+dressed state is the eigenstate of the undriven static lab-frame Hamiltonian
+that the solve's approximation keeps, assigned to the label. A label
+`initial_state` is placed in the solve frame at `tlist[0]`, and an omitted
+`initial_state` is the all-ground label, so it equals `{}`. A chip at rest
+then stays in its label, with no exchange between coupled devices. Use
+`chip.bare_state(q=1)` when the bare product state is the point, for example to
+show that exchange. `result.population(q, level=1)` measures a local isolated
+energy-state population, which on a coupled chip differs from
+`overlap({"q": 1})`.
 
 ## Reuse an exact compact pulse state
 
@@ -210,7 +214,7 @@ The solver never substitutes an excitation cutoff.
 
 ```python
 initial = chip.compact_state({"q": 1})
-# Use dressed=True for assigned eigenstates of a conserving static model.
+# The label's dressed state. Use dressed=False for its bare product.
 idle = QuantumSequence(chip)
 result = idle.simulate(duration=60.0, initial_state=initial)
 occupation = result.population("q", level=1)
@@ -218,7 +222,9 @@ saved = result.compact_state()
 ```
 
 The factory also accepts weighted superpositions, such as
-`chip.compact_state((1, {}), (1j, {"q": 1}))`. It normalizes the sum.
+`chip.compact_state((1, {}), (1j, {"q": 1}))`. It normalizes the sum. With
+`dressed=False`, a device can also take a local ket, so a bare product needs no
+product-space vector on a large chip.
 Pass `saved` as the next solve's `initial_state`, with the same captured local
 bases. Start the next time grid at the previous final time to continue
 absolute-time controls.

@@ -472,7 +472,7 @@ class SectorModel:
         dimension = prod(self.dims)
         # The zero vector, each basis transform and the native ket can each hold a product-space copy.
         require_memory(dense_bytes(dimension, copies=4), task=f"Product-space state (dimension {dimension})",
-                       remedy="Use chip.compact_state(..., dressed=True), which keeps the block coordinates.")
+                       remedy="Use chip.compact_state(...), which keeps the block coordinates.")
         space = self.space(totals)
         rows = np.ravel_multi_index(tuple(space.levels.T), self.dims)
         transforms = [self.bases[device.label].energy_to_solver() for device in self.chip.devices]

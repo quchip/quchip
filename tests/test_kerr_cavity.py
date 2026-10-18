@@ -83,7 +83,7 @@ class TestCatStatePreparation:
         tlist = np.linspace(0, T_total, n_steps)
         # Prepare the Fock vacuum; the truncated negative-Kerr Hamiltonian's
         # lowest energy lies at the cutoff and is not the cat-preparation state.
-        result = seq.simulate(tlist=tlist, initial_state={cav: cav.basis_state(0)},
+        result = seq.simulate(tlist=tlist, initial_state=chip.bare_state({cav: cav.basis_state(0)}),
                               e_ops=e_ops, options={"nsteps": 5000})
 
         n_final = float(np.real(result.expect_final(cav, index=0)))

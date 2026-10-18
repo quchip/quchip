@@ -68,11 +68,11 @@ def test_an_idle_dressed_state_keeps_overlap_one_in_every_frame(backend, approxi
         frequencies = result.frame.frequencies
 
         # Lab-frame phases turn at 5 GHz, so the lab solve sets the tolerance.
-        np.testing.assert_allclose(result.overlap(label, dressed=True), 1.0, atol=1e-7)
+        np.testing.assert_allclose(result.overlap(label), 1.0, atol=1e-7)
         np.testing.assert_allclose(result.overlap(dressed, frame="lab"), 1.0, atol=1e-7)
         # The label's amplitude turns at its frame energy minus its dressed energy.
         expected = np.exp(-2j * np.pi * (chip.energy(label) - frequencies["q1"]) * times)
-        np.testing.assert_allclose(result.amplitude_array(label, dressed=True), expected, atol=1e-7)
+        np.testing.assert_allclose(result.amplitude_array(label), expected, atol=1e-7)
         if isinstance(approximation, RWA):
             # A fixed integration-frame ket sees the components of c|01> + s|10> turn apart.
             s2 = abs(array(chip, dressed).reshape(3, 3)[1, 0]) ** 2
@@ -128,10 +128,10 @@ def test_dressed_label_targets_on_cutoff_and_batch_results():
                 frame="rotating").with_space(ExcitationCutoff(2))
     label = {"q0": 0, "q1": 1}
     times = np.linspace(0.0, 20.0, 101)
-    start = chip.compact_state(label, dressed=True)
+    start = chip.compact_state(label)
     closed = QuantumSequence(chip).simulate(times, initial_state=start, dissipation=False, options=tight("qutip"))
     assert closed.stats["excitation_reduction"]["exact"]
-    np.testing.assert_allclose(closed.overlap(label, dressed=True), 1.0, atol=1e-8)
+    np.testing.assert_allclose(closed.overlap(label), 1.0, atol=1e-8)
 
     qa = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="qa")
     qb = DuffingTransmon(freq=5.3, anharmonicity=-0.25, levels=3, label="qb")
@@ -143,11 +143,11 @@ def test_dressed_label_targets_on_cutoff_and_batch_results():
     batch = sequence.simulate_batch(pulse.vary("amplitude", np.linspace(0.005, 0.03, 4)), duration=20.0,
                                     progress=False, options=tight("qutip"))
     ket = chip.state(qa=1)
-    finals = batch.final_overlap_magnitudes([{"qa": 1}] * 4, dressed=True)
+    finals = batch.final_overlap_magnitudes([{"qa": 1}] * 4)
     amplitudes = batch.final_amplitudes([ket] * 4, frame="lab")
 
     for point, final, amplitude in zip(batch.results, finals, amplitudes):
-        assert final == pytest.approx(point.overlap({"qa": 1}, dressed=True)[-1], abs=1e-12)
+        assert final == pytest.approx(point.overlap({"qa": 1})[-1], abs=1e-12)
         assert amplitude == pytest.approx(point.amplitude_array(ket, frame="lab")[-1], abs=1e-12)
     np.testing.assert_allclose(finals, np.abs(amplitudes) ** 2, atol=1e-12)
     assert np.ptp(finals) > 0.5
@@ -210,7 +210,7 @@ def test_frame_map_matches_the_exponential_of_the_frame_generator():
 
 @pytest.mark.unit
 def test_frame_arguments_and_label_targets_reject_ambiguous_requests():
-    """Unknown frames, labels in the lab frame and dressed kets raise; a later chip change keeps the targets."""
+    """Unknown frames, labels in the lab frame and levels out of range raise; a later chip change keeps the targets."""
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=2, label="q")
     p = DuffingTransmon(freq=5.1, anharmonicity=-0.25, levels=2, label="p")
     chip = Chip([q, p], [Capacitive(q, p, g=0.01, label="c")], frame="rotating")
@@ -221,10 +221,8 @@ def test_frame_arguments_and_label_targets_reject_ambiguous_requests():
         result.state_at(1.0, frame="rotating")
     with pytest.raises(ValueError, match="frame= applies to ket targets"):
         result.overlap({"q": 1}, frame="lab")
-    with pytest.raises(ValueError, match="dressed=True applies to label targets"):
-        result.overlap(ket, dressed=True)
     with pytest.raises(ValueError, match="needs integer energy levels below"):
         result.overlap({"q": 2})
     chip.couplings[0].g = 0.03
     assert abs(chip.state(q=1).full().ravel() @ ket.full().ravel().conj()) < 0.999
-    np.testing.assert_allclose(result.overlap({"q": 1}, dressed=True), 1.0, atol=1e-8)
+    np.testing.assert_allclose(result.overlap({"q": 1}), 1.0, atol=1e-8)
