@@ -264,8 +264,8 @@ class SectorGenerator:
         start = None if guess is None else _useful(operator, rhs, guess.reshape(-1) - vacuum.reshape(-1))
         solved = _gmres(operator, precondition, rhs, start, restart)
         if self.dark:
-            # The equations do not fix the weight on a second stationary state. A start that has none of the
-            # symmetries of the model, unlike the vacuum, therefore ends with another weight on it.
+            # The equations do not fix the weight on a second stationary state, so a generic start usually ends
+            # with another weight on it than the vacuum start. Agreement is evidence, not a proof.
             other_start = (_generic_state(dimension) - vacuum).reshape(-1)
             # Without a probe the right side vanishes, and the residual of the start sets the scale.
             scale = float(np.linalg.norm(rhs)) or float(np.linalg.norm(operator(other_start)))
