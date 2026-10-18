@@ -153,11 +153,12 @@ class ResonanceResult:
     gives one :class:`Resonance`.
 
     ``κ_p`` is the full width at half maximum of ``|r_p / (f - z_p)|²`` in
-    angular units, so it gives the width of ``|S - D|²`` near an isolated
-    pole where the transfers vary slowly. It includes port loss, internal loss,
-    Purcell decay and dephasing, so it can exceed the decay rate of the
-    mode's population. ``f_p`` is the frequency of the open system, which can
-    differ from the closed dressed frequency of :meth:`Chip.freq`.
+    angular units. Near an isolated pole, where the other poles add little
+    and the transfers vary slowly, it is the width of ``|S - T D|²``. It
+    includes port loss, internal loss, Purcell decay and dephasing, so it can
+    exceed the decay rate of the mode's population. ``f_p`` is the frequency
+    of the open system, which can differ from the closed dressed frequency of
+    :meth:`Chip.freq`.
 
     Attributes
     ----------
@@ -194,8 +195,10 @@ class ResonanceResult:
         Row p is ``|v_pk|² / Σ_k |v_pk|²`` for the right eigenvector ``v_p`` of
         the drift, in :attr:`mode_labels` order. It describes the pole in the
         mode basis. It is not an occupation probability, because the drift is
-        not normal in general. A JAX derivative of it raises, because JAX does
-        not differentiate the eigenvectors of a general matrix.
+        not normal in general. At a repeated pole, the rows of the copies
+        depend on the chosen eigenvectors. A JAX derivative of it raises,
+        because JAX does not differentiate the eigenvectors of a general
+        matrix.
         """
         vectors, _ = self._eigensystem.modes()
         xp = concrete_array_module(vectors)
@@ -232,7 +235,9 @@ class ResonanceResult:
         """Residue ``r_p`` of each S entry at each pole, shape ``(poles, ports, ports)``.
 
         The entries are ``[pole, output, input]``, before the reference-plane
-        transfers. A JAX derivative of them raises, as for :attr:`composition`.
+        transfers. At a repeated pole, only the sum over the copies is
+        defined, and it can cancel in an entry. A JAX derivative of them
+        raises, as for :attr:`composition`.
         """
         return self._residues(*self._eigensystem.modes())
 
@@ -246,11 +251,11 @@ class ResonanceResult:
         and ``b_i`` is column i of ``B = -C† S_d``. The pole is dark when no
         output sees it, ``|c_j v_p| <= 1e-10 |c_j| |v_p|`` for every j, or no
         input excites it, ``|u_p† b_i| <= 1e-10 |u_p| |b_i|`` for every i. Its
-        residues then vanish, and it stays an eigenvalue of the drift, for
-        example of a mode that only a hidden loss channel reaches. Each port
-        is compared with its own scale, so a weak port does not make a pole
-        dark: a lossless resonator with a port rate of ``1e-12`` /ns reflects
-        ``-1`` on resonance.
+        residues are then numerically negligible, and it stays an eigenvalue
+        of the drift, for example of a mode that only a hidden loss channel
+        reaches. Each port is compared with its own scale, so a weak port does
+        not make a pole dark: a lossless resonator with a port rate of
+        ``1e-12`` /ns reflects ``-1`` on resonance.
         """
         system = self._eigensystem
         problem = self._problem

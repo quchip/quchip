@@ -67,7 +67,8 @@ def test_dispersive_poles_match_the_exact_two_mode_drift():
         poles = sorted([mean + root, mean - root], key=lambda value: -value.imag)
         assert result.route.name == "vacuum_response" and result.dominant == ("q", "r")
         np.testing.assert_allclose(result.frequencies, [-value.imag / TWO_PI for value in poles], rtol=1e-14)
-        np.testing.assert_allclose(result.linewidths, [-2 * value.real for value in poles], rtol=1e-9)
+        # The eigensolve is backward stable, so each eigenvalue errs by about ε |A_0| ≈ 2e-15 /ns.
+        np.testing.assert_allclose(result.linewidths, [-2 * value.real for value in poles], rtol=0, atol=1e-14)
         # Σκ = −2 Re tr A = tr(C†C): the port and internal rates of the readout.
         np.testing.assert_allclose(np.sum(result.linewidths), kappa, rtol=1e-12)
         delta = omega_q - omega_r
@@ -137,15 +138,19 @@ def test_a_pole_that_no_port_reaches_is_dark():
 
 
 @pytest.mark.unit
-def test_a_weak_port_keeps_its_pole_bright():
-    """Each port is compared with its own scale. A lossless resonator behind a port of rate 1e-12 /ns, next to a port
-    of rate 1 /ns, reflects −1 on resonance, so its pole is not dark."""
-    chip = resonator_pair(1e-12, 1.0, second_freq=5.0)
+@pytest.mark.parametrize("rate", [1e-12, 1e-18])
+def test_a_weak_port_keeps_its_pole_bright_and_its_linewidth(rate):
+    """Each port is compared with its own scale. A lossless resonator behind a weak port, next to a port of rate
+    1 /ns, reflects −1 on resonance, so its pole is not dark. Its linewidth is the port rate to round-off, and the
+    poles rebuild that reflection."""
+    chip = resonator_pair(rate, 1.0, second_freq=5.0)
     result = VNA(chip).resonances()
 
     assert result.dominant == ("r2", "r1") and not np.any(result.dark)
-    np.testing.assert_allclose(result["r1"].residues, [[1j * 1e-12 / TWO_PI, 0.0], [0.0, 0.0]], rtol=1e-12)
+    np.testing.assert_allclose(result["r1"].linewidth, rate, rtol=1e-12)
+    np.testing.assert_allclose(result["r1"].residues, [[1j * rate / TWO_PI, 0.0], [0.0, 0.0]], rtol=1e-12)
     np.testing.assert_allclose(VNA(chip).sweep([7.0]).matrix[0, 0, 0], -1.0, atol=1e-9)
+    np.testing.assert_allclose(result.scattering([7.0])[0, 0, 0], -1.0, atol=1e-9)
 
 
 @pytest.mark.unit

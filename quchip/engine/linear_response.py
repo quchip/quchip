@@ -219,15 +219,16 @@ def _one_to_one(targets: Any, candidates: Any) -> Any:
 def response_poles(problem: LinearResponseProblem) -> ResponsePoles:
     """Return the poles of a weak-probe response, the eigenvalues of its drift.
 
-    The eigensolves remove the common diagonal first, which keeps the pole
-    splittings accurate. Two ill-conditioned poles that are too close to
+    The eigensolves subtract the mean frequency of the drift, which keeps the
+    pole splittings accurate. They keep its damping, so adding the mean back
+    does not cancel digits of a narrow linewidth. Two ill-conditioned poles that are too close to
     resolve raise. This happens near an exceptional point, where two poles
     merge.
     """
     drift = response_drift(problem)
     xp = concrete_array_module(drift)
     count = drift.shape[0]
-    center = xp.trace(drift) / count
+    center = 1j * xp.imag(xp.trace(drift)) / count
     shifted = drift - center * xp.eye(count)
     fixed = shifted if xp is np else jax.lax.stop_gradient(shifted)
     fxp = concrete_array_module(fixed)

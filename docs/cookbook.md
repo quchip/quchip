@@ -142,9 +142,9 @@ A label selects the pole whose composition that mode dominates; an index also
 works. The linewidth `κ = −2 Re λ` is the full response width in angular
 units. It includes port loss, internal loss, Purcell decay and dephasing.
 `rebuilt` equals `VNA(readout_chip).sweep(frequencies).matrix`, reference-plane
-transfers included. `resonances.dark` marks poles whose residues vanish at the
-selected ports. The call covers the weak-probe routes of `VNA.sweep()` and
-raises for pumps. Inside `jax.jit`, select poles by index. Frequencies and
+transfers included. `resonances.dark` marks poles whose residues are
+negligible at the selected ports. The call covers the weak-probe routes of
+`VNA.sweep()` and raises for pumps. Inside `jax.jit`, select poles by index. Frequencies and
 linewidths have JAX derivatives; the composition and the residues do not.
 
 ## Change parameters without rebuilding the example
