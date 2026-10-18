@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from quchip import RWA, Capacitive, Chip, QuantumSequence, Resonator
+from quchip import RWA, Capacitive, Chip, QuantumSequence, Resonator, check_truncation
 
 
 def pair(*, loss=False, backend=None):
@@ -84,7 +84,7 @@ def test_decay_coherence_compact_replay_and_measurement(backend):
     np.testing.assert_allclose(
         chip.backend.to_array(resumed.final_state), chip.backend.to_array(reference.final_state), atol=3e-6
     )
-    assert result.check_truncation()
+    assert check_truncation(result)
 
 
 @pytest.mark.parametrize("loss", [False, True])

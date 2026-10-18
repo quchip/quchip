@@ -168,6 +168,7 @@ from quchip.results.terminal import IQReadout, StateMeasurement, StateSamples
 
 __all__ = [
     "CompactState",
+    "check_truncation",
     "with_truncation",
     "with_monitoring",
     "TrajectoryResult",
@@ -408,6 +409,6 @@ def __dir__() -> list[str]:
     # tab-completion until first access.
     return sorted(set(globals()) | set(_LAZY_INTEROP_EXPORTS) | set(_LAZY_VIZ_EXPORTS))
 
-from quchip.engine.truncation import with_truncation
+from quchip.engine.truncation import check_truncation, with_truncation
 from quchip.engine.monitoring import with_monitoring
 from quchip.results.trajectories import TrajectoryResult

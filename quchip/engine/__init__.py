@@ -430,7 +430,7 @@ def solve_problem(
 ) -> "SimulationResult":
     """Dispatch a :class:`SolveProblem` through its chip backend.
 
-    Call ``result.check_truncation()`` explicitly to inspect saved samples.
+    Call :func:`quchip.check_truncation` explicitly to inspect saved samples.
 
     Parameters
     ----------
