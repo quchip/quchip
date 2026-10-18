@@ -156,6 +156,7 @@ def test_gate_set_validates_natives_and_instructions():
     chip = two_transmons()
     gates = GateSet(chip, ["q0", "q1"])
     gates.add(drag_sx(chip, "q0"))
+    assert set(drag_sx(chip, "q1", detuning=True).knobs) == {"amplitude", "beta", "detuning"}
     with pytest.raises(ValueError, match="already has"):
         gates.add(drag_sx(chip, "q0"))
     foreign = QuantumSequence(chip)
@@ -241,7 +242,7 @@ def test_drag_sx_calibrates_to_the_leakage_floor():
     assert calibration.infidelity < 1e-8
     assert calibration.status in ("ok", "solver_floor")
     assert calibration.knobs["beta"].value == pytest.approx(1 / (4 * np.pi * 0.33), rel=0.05)
-    assert abs(calibration.knobs["detuning"].value) < 1e-4
+    assert set(calibration.knobs) == {"amplitude", "beta"}
     assert calibration.solves < 120
     assert set(calibration.spectators) == {"q1"} and calibration.placement_sensitivity < 1e-9
     assert calibration.repetitions[1] == pytest.approx(calibration.infidelity, rel=0.2, abs=1e-9)
@@ -260,6 +261,9 @@ def test_spectator_block_carries_the_static_zz_of_the_gate():
     angle = np.pi * zeta * 30.0 / 2
     assert 0.2 * 0.8 * angle**2 < calibration.infidelity < 0.8 * angle**2
     assert calibration.repetitions[1] == pytest.approx(calibration.infidelity, rel=0.05)
+    # The knobs stay at their physical values; only the error budget changes.
+    assert calibration.status == "ok"
+    assert calibration.knobs["beta"].value == pytest.approx(1 / (4 * np.pi * 0.33), rel=0.6)
     # The ground-spectator fit, scored on the same joint block, is worse.
     _, restricted = calibrated_sx(spectators="none")
     block, _ = gates._block(restricted.calibration("SX", "q0").sequence, ("q0", "q1"), 30.0)

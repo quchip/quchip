@@ -3439,7 +3439,11 @@ integrator's unitarity defect does not bound a coherent phase error.
 `drag_sx()` schedules one `GaussianDRAG` pulse at the dressed qubit frequency
 with phase `-arg m`, where `m` is the dressed `0 -> 1` element of the line. The
 seeds are the amplitude `A = θ/(2π |m| ∫E dt)` and `β = 1/(4π |α|)`. The
-detuning knob is bounded to ±5 MHz. For a spectator `Δ` above the carrier, a
+knobs are the amplitude and `β`. The pulse detuning is an optional knob,
+bounded to ±5 MHz: near the optimum of `β`, a detuning and a change of `β` act
+almost alike, and with both knobs a fit can move far along that direction for
+a small gain. With a spectator in the block, it trades part of the static ZZ
+error for `β ≈ ±10 ns` at the bound. For a spectator `Δ` above the carrier, a
 negative `β` puts the DRAG zero of `(1 + 2πβΔ)` near the spectator, but the
 excitation of the spectator also depends on the driven qubit's state during
 the pulse, which one `β` cannot cancel. The defaults (40 ns, ±3σ) keep this

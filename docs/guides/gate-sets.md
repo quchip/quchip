@@ -66,12 +66,15 @@ placement. `simulate()` solves the circuit's schedule, with the chip's
 collapse channels unless you pass `dissipation=False`.
 
 The decomposition rules turn H, X, Y, Z, S, T, RX, RY, CX, CZ, and SWAP into
-the natives. Add your own with `gates.rule(name, qubits, expansion)`.
+the natives. Add your own with `gates.rule(name, qubits, expansion)`, where
+`qubits` is the gate's qubit count and `expansion` returns the instructions
+that replace it.
 
 ## Declare your own native
 
 A native is a `QuantumSequence` that starts at time 0, its knobs, and its
-ideal. Knobs name pulse fields, with optional bounds and scales.
+ideal. Knobs name pulse fields, with optional bounds and scales. This SX on
+`q0` goes into a new gate set, because the standard set already has one.
 
 ```python
 import numpy as np
@@ -85,7 +88,9 @@ pulse = sequence.schedule("xy0", envelope=GaussianDRAG(duration=40.0, sigmas=3.0
 native = NativeGate("SX", ("q0",), sequence,
                     knobs={"amplitude": Knob(pulse, "amplitude"), "beta": Knob(pulse, "beta", scale=0.1)},
                     ideal="SX", free_z=("q0",))
-gates.add(native)
+custom = GateSet(chip, ["q0", "q1"])
+custom.add(native)
+custom.calibrate()
 ```
 
 A composite native, such as the echoed CR, builds its sequence from other

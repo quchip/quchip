@@ -44,16 +44,16 @@ def drag_sx(
     sigmas: float = 3.0,
     name: str = "SX",
     angle: float = np.pi / 2,
+    detuning: bool = False,
 ) -> NativeGate:
     """Return a single-qubit rotation native with one ``GaussianDRAG`` pulse.
 
     The pulse runs at ``freq=chip.freq(qubit)`` with ``phase=-arg(m)``, where
     ``m`` is the qubit's dressed ``0 -> 1`` drive matrix element on the line,
-    so it rotates about +X. The knobs are the amplitude, the DRAG coefficient
-    β (for devices with more than two levels), and the detuning, bounded to
-    ±5 MHz so that a wrong-axis solution ends at a bound. The seeds are the
-    amplitude ``A = θ / (2π |m| ∫E dt)`` and ``β = 1 / (4π |α|)``, with α the
-    dressed anharmonicity.
+    so it rotates about +X. The knobs are the amplitude and, for devices with
+    more than two levels, the DRAG coefficient β. The seeds are the amplitude
+    ``A = θ / (2π |m| ∫E dt)`` and ``β = 1 / (4π |α|)``, with α the dressed
+    anharmonicity.
 
     Parameters
     ----------
@@ -74,6 +74,13 @@ def drag_sx(
         Gate name.
     angle : float, default π/2
         Rotation angle; π/2 gives SX and π gives X.
+    detuning : bool, default False
+        Add the pulse detuning as a knob, bounded to ±5 MHz. The dressed
+        frequency is the qubit's transition frequency, and β corrects the phase
+        error of the pulse, so the default fit needs no detuning. Near β's
+        optimum, a detuning and a change of β have almost the same effect,
+        and a fit with both knobs can move far along that direction for a
+        small gain, such as a part of a spectator's ZZ error.
     """
     from quchip.control.envelopes import GaussianDRAG
     from quchip.control.sequence import QuantumSequence
@@ -98,7 +105,8 @@ def drag_sx(
     knobs = {"amplitude": Knob(pulse, "amplitude")}
     if levels > 2:
         knobs["beta"] = Knob(pulse, "beta", scale=0.1)
-    knobs["detuning"] = Knob(pulse, "detuning", bounds=(-0.005, 0.005))
+    if detuning:
+        knobs["detuning"] = Knob(pulse, "detuning", bounds=(-0.005, 0.005))
     ideal: Any
     if np.isclose(angle, np.pi / 2):
         ideal = "SX"
