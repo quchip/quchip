@@ -34,23 +34,15 @@ class TestZippedSweep:
 
 class TestQuTiPBatchedIntegration:
     @pytest.mark.validation
-    def test_qutip_parallel_sweep_matches_sequential(self, monkeypatch):
+    def test_qutip_parallel_sweep_matches_sequential(self):
         """The reusable-loky parallel batch path matches the in-process sequential one exactly."""
-        from quchip.backend.qutip import QuTiPBackend
-
         amps = [0.005 * (k + 1) for k in range(12)]  # >= _PARALLEL_MIN_BATCH, exercises loky dispatch
 
-        def run(force_sequential: bool):
+        def run(max_workers):
             q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=4, label="q")
             drive = ChargeDrive(target=q)
-            backend = QuTiPBackend()
-            chip = Chip([q], backend=backend)
+            chip = Chip([q], backend="qutip")
             chip.connect(ControlEquipment(lines=[drive]))
-            if force_sequential:
-                def _sequential_map(*, task, items, n_jobs, progress, desc):
-                    return [task(item) for item in items]
-
-                monkeypatch.setattr(backend, "_parallel_map", _sequential_map)
             seq = QuantumSequence(chip)
             pulse = seq.schedule(drive, envelope=Square(duration=10.0, amplitude=0.02), freq=5.0)
             amp = pulse.vary("amplitude", amps, name="amp")
@@ -59,10 +51,12 @@ class TestQuTiPBatchedIntegration:
                 tlist=np.linspace(0.0, 10.0, 21),
                 initial_state=chip.bare_state(q=0),
                 progress=False,
+                max_workers=max_workers,
             )
 
-        parallel = run(force_sequential=False)
-        sequential = run(force_sequential=True)
+        parallel = run(None)
+        # One worker solves every point in this process.
+        sequential = run(1)
 
         assert len(parallel) == len(amps) == len(sequential)
         for element in range(len(amps)):
