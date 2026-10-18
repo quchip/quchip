@@ -1120,6 +1120,21 @@ class QuTiPBackend(Backend):
             rhs, self.coerce_state(problem.initial_state, dims=problem.engine_result.dims), problem.tlist, **kwargs)
         return SolverResult(times=problem.tlist, solver=problem.solver, native=native)
 
+    def trajectory_view(
+        self, native: Any, problem: Any, *, index: int | None, states: bool, deterministic: bool,
+    ) -> tuple[Any, Any, Any]:
+        if index is None:
+            values = native.average_expect
+            history = native.average_states if states else None
+            final = native.average_final_state if states else None
+        else:
+            runs = native.deterministic_trajectories if deterministic else native.trajectories
+            if not runs:
+                raise RuntimeError("Individual runs require native keep_runs_results=True.")
+            run = runs[index]
+            values, history, final = run.expect, run.states if states else None, run.final_state if states else None
+        return values, history or None, final
+
     def sesolve(
         self,
         H: Any,

@@ -1064,6 +1064,32 @@ class Backend(ABC):
         return self.mesolve(prepared.rhs, psi0, tlist_arr,
                             c_ops=c_ops, e_ops=e_ops_arg, options=opts)
 
+
+    def trajectory_view(
+        self, native: Any, problem: "SolveProblem", *, index: int | None, states: bool, deterministic: bool,
+    ) -> tuple[Any, Any, Any]:
+        """Read one view of a native stochastic result of this backend.
+
+        Parameters
+        ----------
+        native : object
+            Native stochastic result that :meth:`solve_problem` returned.
+        problem : SolveProblem
+            Captured request, with its solver, state storage and native options.
+        index : int or None
+            Kept trajectory, or ``None`` for the native ensemble average.
+        states : bool
+            Whether to read the saved states.
+        deterministic : bool
+            Whether to read the deterministic no-click run instead.
+
+        Returns
+        -------
+        tuple
+            Expectation values, state history and final state. Each entry is
+            ``None`` when the native result does not keep it.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not implement native solver {problem.solver!r}.")
     def _stationary_liouvillian(self, engine_result: "EngineResult") -> Any:
         """Lower a static engine description to the backend's native generator."""
         raise NotImplementedError(f"{type(self).__name__} must implement stationary lowering")

@@ -1119,6 +1119,34 @@ class DynamiqsBackend(Backend):
         )
         return self._wrap_result(result, solver=solver_name, options=opts)
 
+    def trajectory_view(
+        self, native: Any, problem: Any, *, index: int | None, states: bool, deterministic: bool,
+    ) -> tuple[Any, Any, Any]:
+        if deterministic:
+            values = native.infos.noclick_expects
+            history = native.infos.noclick_states if states else None
+        elif index is None:
+            values = native.mean_expects()
+            history = native.mean_states() if states else None
+        else:
+            values = native.expects[index] if native.expects is not None else None
+            history = native.states[index] if states else None
+        final = history[-1] if history is not None else None
+        retain = problem.states == "all" if problem.states is not None else problem.options.get("save_states", True)
+        if not retain and not deterministic:
+            history = None
+        if (problem.solver == "jssesolve" and not deterministic and isinstance(native.method, dq.method.Event)
+                and any(value is not None for value in (values, history, final))):
+            import equinox as eqx
+
+            nclicks = native.nclicks if index is None else native.nclicks[index]
+            values, history, final = eqx.error_if(
+                (values, history, final), jnp.any(jnp.sum(nclicks, axis=-1) >= native.options.nmaxclick),
+                "Native Event exhausted nmaxclick before completing evolution; increase the buffer. "
+                "The incomplete native result remains accessible through result.native.",
+            )
+        return values, history, final
+
     def _trajectory_inputs(self, problem: Any) -> dict[str, Any]:
         if problem.solver not in ("jssesolve", "dssesolve", "dsmesolve"):
             raise ValueError(f"Dynamiqs does not provide {problem.solver!r}.")
