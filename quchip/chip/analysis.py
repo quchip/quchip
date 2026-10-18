@@ -224,7 +224,7 @@ class ChipAnalysis:
         self._array_cache: tuple[Any, Any, tuple[Any, Any, Any, Labeling]] | None = None
         self._sector_cache: tuple[Any, Any, tuple[SectorModel | None, list[str]]] | None = None
         self._engine_result_cache: tuple[Any, Any, tuple[EngineResult, list[str]]] | None = None
-        self._ground_cache: tuple[Any, Any, Any] | None = None
+        self._label_cache: tuple[Any, Any, Any] | None = None
         self._bare_labels_cache: tuple[
             tuple[tuple[int, ...], ...], dict[tuple[int, ...], int]
         ] | None = None
@@ -512,42 +512,54 @@ class ChipAnalysis:
         return self._chip.total_dim if model is None else model.structure.largest_block(total)
 
     def _ground_ket(self, approximation: "Approximation") -> Any | None:
-        """Return the all-ground-labeled lab-frame eigenstate for ``approximation``.
+        """Return the all-ground-labeled lab-frame eigenstate for ``approximation``, as :meth:`_label_ket` does."""
+        return self._label_ket((0,) * len(self._chip.devices), approximation)
+
+    def _label_ket(self, label: tuple[int, ...], approximation: "Approximation") -> Any | None:
+        """Return the lab-frame eigenstate assigned to ``label`` for ``approximation``.
 
         The ket uses solver coordinates and has real, nonnegative overlap on
-        the bare product. ``None`` means the bare product is already an
-        eigenstate. A static model that conserves the total energy-level index
-        returns ``None`` with no static model, because the bare product is the
-        only state with total level 0. Results cache against the analysis signature and
-        ``approximation``; traced ones only inside their trace. A traced ket is differentiated by first-order
+        the bare product of ``label``. ``None`` means that bare product is
+        already an eigenstate. A block model takes the ket from the block of the
+        label's total. Without a cutoff, such a model conserves the total
+        energy-level index, so the all-ground label needs no eigensystem: its
+        bare product is the only state with total level 0. Results cache against
+        the analysis signature, ``approximation`` and ``label``; traced ones only
+        inside their trace. A traced ket is differentiated by first-order
         perturbation theory over the same eigensystem, masking gaps at the
         tolerance of :func:`~quchip.engine.basis._differentiable_eigenpairs`.
         """
+        from quchip.cutoff import active_cutoff
         from quchip.engine.assembly import _analysis_matrix_ghz, _build_static_analysis_result
         from quchip.engine.basis import _differentiable_eigenvector
         from quchip.engine.excitation import excitation_structure
-        from quchip.engine.states import bare_state_from_bases
+        from quchip.engine.states import bare_state_from_bases, block_model
 
-        key = (self._analysis_signature(), approximation)
-        if scoped_hit(self._ground_cache, key):
-            return self._ground_cache[2]
+        key = (self._analysis_signature(), approximation, label)
+        if scoped_hit(self._label_cache, key):
+            return self._label_cache[2]
         chip = self._chip
         backend = chip.backend
         # Reuse dressed analysis only when it describes the solve's approximation.
         # The solve's own snapshot reports the advisories of that approximation.
         same_approximation = approximation == chip.approximation
-        conserving = (
-            self._sector_model(_advise=False) is not None if same_approximation
-            else excitation_structure(chip, approximation).conserves
-        )
-        if conserving:
-            self._ground_cache = scoped_entry(key, None, traced=False)
+        model = None
+        if any(label) or active_cutoff(chip) is not None:
+            model = block_model(chip, approximation)
+        elif (self._sector_model(_advise=False) is not None if same_approximation
+              else excitation_structure(chip, approximation).conserves):
+            self._label_cache = scoped_entry(key, None, traced=False)
             return None
+        if model is not None:
+            ket = backend.to_array(self._sector_state(model, label)).reshape(-1)
+            self._label_cache = scoped_entry(key, ket, traced=contains_tracer(ket))
+            return ket
         static = (
             self.engine_result(_advise=False) if same_approximation
             else _build_static_analysis_result(chip, approximation=approximation, _advisories=[])
         )
-        bare = bare_state_from_bases(chip, {}, static.bases)
+        devices = [device.label for device in chip.devices]
+        bare = bare_state_from_bases(chip, dict(zip(devices, label)), static.bases)
         traced = static._contains_tracer()
         ket = None
         if traced or not _is_eigenstate(bare, static, backend):
@@ -555,17 +567,19 @@ class ChipAnalysis:
                 self._compute_array_labeled(static) if same_approximation else labeled_eigensystem(static, backend)
             )
             xp = backend.array_module
-            index = labeling.indices[0]  # Label 0 is the all-ground product.
+            position = self._bare_label_index(label)
+            index = labeling.indices[position]
             column = xp.asarray(vectors)[:, index]
             if traced:
                 # JAX's eigh derivative can be NaN at an unrelated exact tie.
                 matrix = jnp.asarray(_analysis_matrix_ghz(static))
                 column = _differentiable_eigenvector(matrix, values[index], values, vectors, column)
                 # That derivative transports the phase. The gauge restores the derivative of the anchor's phase.
-                amplitudes = self._semantic_amplitudes(column[:, None], static)
+                # Rolling the rows puts the label's own amplitude first, where the gauge anchors.
+                amplitudes = jnp.roll(self._semantic_amplitudes(column[:, None], static), -position, axis=0)
                 column = column * gauge_phases(amplitudes, jnp.zeros(1, dtype=int))[0]
             ket = column
-        self._ground_cache = scoped_entry(key, ket, traced=contains_tracer(ket))
+        self._label_cache = scoped_entry(key, ket, traced=contains_tracer(ket))
         return ket
 
     def _bare_label_index(self, label: tuple[int, ...]) -> int:

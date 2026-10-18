@@ -69,6 +69,25 @@ class PartitionedSimulationResult:
         return self._partition
 
     @property
+    def frame(self) -> Any:
+        """Return the joint integration frame, with the frame frequency that each component gives its devices.
+
+        The mode is the common mode of the components, or ``"dict"`` when
+        they differ. A component that plans its own ``"auto"`` frame keeps its
+        plan in ``components[i].frame``.
+        """
+        from quchip.engine.ir import ResolvedFrame
+
+        frames = [result.frame for result in self._results]
+        modes = {frame.mode for frame in frames}
+        return ResolvedFrame(
+            frequencies={label: value for frame in frames for label, value in frame.frequencies.items()},
+            demod_freqs={label: value for frame in frames for label, value in frame.demod_freqs.items()},
+            mode=modes.pop() if len(modes) == 1 else "dict",
+            plan=frames[0].plan if len(frames) == 1 else None,
+        )
+
+    @property
     def device_order(self) -> tuple[str, ...]:
         """Return the parent chip's original device-label order.
 
@@ -304,7 +323,7 @@ class PartitionedSimulationResult:
         # `_promote_to_common_state_kind`.
         return self._joint_state([r.final_state for r in self._results])
 
-    def state_at(self, t: Any, *, method: str = "exact") -> Any:
+    def state_at(self, t: Any, *, method: str = "exact", frame: str = "integration") -> Any:
         """Reconstruct a joint state at a saved time.
 
         Parameters
@@ -313,8 +332,10 @@ class PartitionedSimulationResult:
             Query time in ns.
         method : {"exact", "nearest"}, default="exact"
             Time-selection rule.
+        frame : {"integration", "lab"}, default="integration"
+            Frame of the returned state.
         """
-        return self._joint_state([r.state_at(t, method=method) for r in self._results])
+        return self._joint_state([r.state_at(t, method=method, frame=frame) for r in self._results])
 
     def _joint_state(self, states: list) -> Any:
         warnings.warn(_JOINT_WARNING, UserWarning, stacklevel=3)

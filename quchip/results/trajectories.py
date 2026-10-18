@@ -15,6 +15,8 @@ class TrajectoryResult(SimulationResult):
         QuTiP or Dynamiqs stochastic result, including seeds/keys and records.
     problem : SolveProblem
         Captured model, observables, channel order, and integration frame.
+    label_targets : LabelTargets or None, optional
+        Snapshot of the solve's chip that prepares label targets.
 
     Attributes
     ----------
@@ -28,10 +30,11 @@ class TrajectoryResult(SimulationResult):
         Native record channel order for an explicit selection, or None when unknown.
     """
 
-    def __init__(self, native: Any, problem: Any):
+    def __init__(self, native: Any, problem: Any, *, label_targets: Any = None):
         super().__init__(SolverResult(times=problem.tlist, solver=problem.solver),
                          problem.backend, problem.engine_result.dims, device_info=problem.device_info,
-                         bases=problem.engine_result.bases, dissipation=problem.dissipation)
+                         bases=problem.engine_result.bases, dissipation=problem.dissipation,
+                         frame=problem.resolved_frame, label_targets=label_targets)
         self.native = native
         self._problem = problem
         labels = tuple(channel.key for channel in problem.engine_result.slh.channels) if problem.dissipation else ()
@@ -57,7 +60,7 @@ class TrajectoryResult(SimulationResult):
             self.native, self._problem, index=index, states=states, deterministic=deterministic)
         payload = SolverResult(times=self.times, states=history, final_state=final,
                                expect=list(values) if values is not None else None, solver=self.solver)
-        return wrap_solver_result(payload, self._problem, self._problem.backend)
+        return wrap_solver_result(payload, self._problem, self._problem.backend, label_targets=self._label_targets)
 
     def average(self) -> SimulationResult:
         """Return native ensemble averages, including native trajectory weights."""

@@ -31,6 +31,8 @@ class SteadyStateResult:
         ``(label, computational)`` records used by accessors.
     stats : mapping
         Backend solver statistics.
+    frame : ResolvedFrame or None
+        Integration frame of the stationary state.
     """
 
     state: Any
@@ -42,6 +44,7 @@ class SteadyStateResult:
     stats: Mapping[str, Any]
     _backend: Backend = field(repr=False, compare=False)
     _expectations: Mapping[Any, Any] = field(repr=False, compare=False)
+    frame: Any = None
 
     @property
     def condition_number(self) -> Any:
@@ -158,6 +161,7 @@ def build_steady_state_result(
         stats=MappingProxyType(dict(solver_result.stats)),
         _backend=backend,
         _expectations=MappingProxyType(expectations),
+        frame=problem.resolved_frame,
     )
 
 

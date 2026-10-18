@@ -487,6 +487,7 @@ def _solve_backend_problems(
     """
     from quchip.results.results import (
         SimulationBatchResult,
+        capture_label_targets,
         wrap_solver_result,
         wrap_solver_results_from_batch,
     )
@@ -559,8 +560,9 @@ def _solve_backend_problems(
                     "parallel_solve_problems returned "
                     f"{len(parallel_results)} results for {len(problems)} problems."
                 )
+            captured: dict[int, list[tuple[Any, Any, Any]]] = {}
             wrapped = [
-                wrap_solver_result(result, problem, backend)
+                wrap_solver_result(result, problem, backend, label_targets=capture_label_targets(problem, captured))
                 for problem, result in zip(problems, parallel_results)
             ]
             return SimulationBatchResult(wrapped)

@@ -439,6 +439,106 @@ def sector_label_ket(chip, model, space, levels):
     return vector.at[indices].set(column[kept]) if xp is jnp else _scatter(vector, indices, column[kept])
 
 
+@dataclass(frozen=True, eq=False)
+class LabelTargets:
+    """Prepare the label targets of one solve from a snapshot of its chip.
+
+    :meth:`capture` takes an isolated clone when the solve finishes, so later
+    changes to the source chip do not change the targets. The clone runs its
+    dressed analysis only when a dressed target is requested.
+
+    Parameters
+    ----------
+    chip : Chip
+        Isolated clone of the solve's chip.
+    approximation : Approximation
+        Approximation of the solve's static model.
+    """
+
+    chip: Any
+    approximation: Any
+
+    @classmethod
+    def capture(cls, chip, approximation):
+        """Record an isolated clone of a chip.
+
+        Parameters
+        ----------
+        chip : Chip
+            Source chip of the solve.
+        approximation : Approximation
+            Approximation of the solve's static model.
+        """
+        return cls(chip.clone(), approximation)
+
+    def levels(self, spec, dims):
+        """Return the product label of a mapping or state shorthand, in device order.
+
+        Parameters
+        ----------
+        spec : mapping or str
+            Local energy level of each named device. Devices without a level are in level 0.
+        dims : sequence of int
+            Level count of each device.
+        """
+        from quchip.chip.states import normalize_device_state_mapping
+
+        labels = tuple(device.label for device in self.chip.devices)
+        prepared = normalize_device_state_mapping(self.chip, spec, {})
+        if set(prepared) - set(labels):
+            raise ValueError("The label target names a device that the solve does not have.")
+        levels = tuple(prepared.get(label, 0) for label in labels)
+        if any(not isinstance(n, int) or isinstance(n, bool) or not 0 <= n < d for n, d in zip(levels, dims)):
+            raise ValueError(f"A label target needs integer energy levels below {tuple(dims)}; got {levels}.")
+        return levels
+
+    def bare(self, levels, bases, space=None):
+        """Return the bare product state of a label, in solver coordinates or in the rows of ``space``.
+
+        Parameters
+        ----------
+        levels : tuple of int
+            Product label of local energy levels.
+        bases : mapping
+            Resolved basis record of each device.
+        space : PulseSpace or None, optional
+            Excitation space of the solve. A label outside it gives a zero vector.
+        """
+        backend = self.chip.backend
+        if space is not None:
+            return backend.array_module.asarray(np.arange(space.size) == space.rows.get(levels, -1), dtype=complex)
+        labels = tuple(device.label for device in self.chip.devices)
+        return backend.to_array(bare_state_from_bases(self.chip, dict(zip(labels, levels)), bases)).reshape(-1)
+
+    def dressed(self, levels, bases, space=None):
+        """Return the lab-frame dressed eigenstate assigned to a label, as :meth:`bare` places it.
+
+        The static model is the one that the solve's approximation keeps.
+
+        Parameters
+        ----------
+        levels : tuple of int
+            Product label of local energy levels.
+        bases : mapping
+            Resolved basis record of each device.
+        space : PulseSpace or None, optional
+            Excitation space of the solve.
+        """
+        backend = self.chip.backend
+        if space is not None:
+            model = block_model(self.chip, self.approximation)
+            if model is not None:
+                return sector_label_ket(self.chip, model, space, levels)
+        ket = self.chip.analysis._label_ket(levels, self.approximation)
+        if ket is None:
+            return self.bare(levels, bases, space)
+        if space is not None:
+            dims = list(space.dims)
+            native = backend.from_array(ket.reshape(-1, 1), dims=[dims, [1] * len(dims)])
+            ket = backend.to_array(space.project(native, backend)).reshape(-1)
+        return ket
+
+
 def _scatter(vector, indices, values):
     """Return ``vector`` with ``values`` written at ``indices``."""
     vector[indices] = values
