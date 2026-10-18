@@ -77,6 +77,12 @@ RULES: dict[str, tuple[int, Callable[..., list[tuple[Any, ...]]]]] = {
     "SWAP": (2, lambda: [("CX", (0, 1)), ("H", 0), ("H", 1), ("CX", (0, 1)), ("H", 0), ("H", 1), ("CX", (0, 1))]),
 }
 
+#: Built-in rules that apply when the rules above do not resolve a gate, such
+#: as a CX against the direction of the gate set's ZX90.
+FALLBACK_RULES: dict[str, tuple[int, Callable[..., list[tuple[Any, ...]]]]] = {
+    "CX": (2, lambda: [("H", 0), ("H", 1), ("CX", (1, 0)), ("H", 0), ("H", 1)]),
+}
+
 
 def canonical_name(name: str) -> str:
     """Return the registered spelling of a gate name."""
@@ -136,8 +142,10 @@ def pauli_components(generator: np.ndarray) -> dict[str, float]:
 
 
 def rule_table(user_rules: Mapping[str, list[tuple[int, Callable[..., Any]]]]) -> dict[str, list[tuple[int, Any]]]:
-    """Merge user rules ahead of the built-in ones."""
+    """Merge user rules ahead of the built-in ones and the built-in ones ahead of the fallbacks."""
     table: dict[str, list[tuple[int, Any]]] = {name: [rule] for name, rule in RULES.items()}
+    for name, rule in FALLBACK_RULES.items():
+        table.setdefault(name, []).append(rule)
     for name, rules in user_rules.items():
         table[name] = list(rules) + table.get(name, [])
     return table

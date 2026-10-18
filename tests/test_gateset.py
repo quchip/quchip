@@ -22,7 +22,7 @@ from quchip import (
 from quchip.gateset import GateSet, Knob, NativeGate, drag_sx
 from quchip.gateset.cache import covariance, split_pieces
 from quchip.gateset.calibration import _Residual, average_fidelity, error_generator
-from quchip.gateset.ideals import IDEALS, RULES, embed, ideal_unitary
+from quchip.gateset.ideals import FALLBACK_RULES, IDEALS, RULES, embed, ideal_unitary
 from quchip.gateset.native import ResolvedKnob, bind_pulses, resolve_knob
 from quchip.results.propagator import project_computational
 
@@ -42,10 +42,10 @@ def same_up_to_phase(left, right):
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("name", sorted(RULES))
-def test_built_in_rules_reproduce_their_ideals(name):
-    """Each built-in expansion multiplies out to its ideal up to a global phase."""
-    count, expansion = RULES[name]
+@pytest.mark.parametrize("name, rule", [*sorted(RULES.items()), *sorted(FALLBACK_RULES.items())])
+def test_built_in_rules_reproduce_their_ideals(name, rule):
+    """Each built-in expansion and fallback multiplies out to its ideal up to a global phase."""
+    count, expansion = rule
     params = (0.7,) if name in ("RX", "RY") else ()
     natives = {"SX": IDEALS["SX"], "ZX90": IDEALS["ZX90"]}
 
@@ -175,6 +175,14 @@ def test_gate_set_validates_natives_and_instructions():
         GateSet.standard(chip, ["q0", "q1"], pairs=[("q0", "q1")])
     with pytest.raises(KeyError, match="No native or rule"):
         gates._expand([("ZX90", ("q0", "q1"))])
+    # Without a ZX90 in either direction, the CX fallback does not loop back to itself.
+    with pytest.raises(KeyError, match="No native or rule gives CX"):
+        gates._expand([("CX", ("q1", "q0"))])
+    cr = QuantumSequence(chip)
+    cr.schedule("xy0", envelope=Gaussian(duration=20.0, amplitude=0.04), freq=chip.freq("q1"), frame="q1")
+    gates.add(NativeGate("ZX90", ("q0", "q1"), cr, ideal="ZX90"))
+    gates.add(drag_sx(chip, "q1"))
+    assert ("native", ("ZX90", ("q0", "q1"))) in gates._expand([("CX", ("q1", "q0"))])
     expanded = gates._expand([("H", "q0"), ("RZ", "q0", 0.2), ("IDLE", "q0", 5.0)])
     assert [item[0] for item in expanded] == ["RZ", "native", "RZ", "RZ", "IDLE"]
     assert np.allclose(gates.ideal([("RZ", "q1", 0.4)]), np.kron(np.eye(2), ideal_unitary("RZ", (0.4,))))
@@ -443,3 +451,19 @@ def test_echoed_cross_resonance_calibrates_a_cx():
     assert calibration.infidelity < 1e-3
     assert calibration.dependencies and gates.entry("ZX90", ("q0", "q1")).covariant
     assert gates.unitary([("CX", ("q0", "q1"))]).fidelity() > 1 - 2e-3
+
+
+@pytest.mark.validation
+def test_default_tolerances_follow_the_backend():
+    """On dynamiqs the default tolerances become a Dopri8 method, and the gate block matches the QuTiP solve."""
+    dq = pytest.importorskip("dynamiqs")
+    chip = two_transmons()
+    sequence = drag_sx(chip, "q0").sequence
+    on_qutip = GateSet(chip, ["q0", "q1"])
+    on_dynamiqs = GateSet(chip, ["q0", "q1"], backend="dynamiqs")
+    method = on_dynamiqs.options["method"]
+    assert isinstance(method, dq.method.Dopri8) and (method.atol, method.rtol) == (1e-12, 1e-10)
+    assert on_dynamiqs.options is on_dynamiqs.options
+    left, _ = on_qutip._block(sequence, ("q0", "q1"), 40.0)
+    right, _ = on_dynamiqs._block(sequence, ("q0", "q1"), 40.0)
+    assert np.abs(np.asarray(left.matrix) - np.asarray(right.matrix)).max() < 1e-7

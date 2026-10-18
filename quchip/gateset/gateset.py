@@ -26,6 +26,22 @@ if TYPE_CHECKING:
 #: Integration settings of gate-set solves (Section "Gate-set solver settings" of the guide).
 DEFAULT_OPTIONS = {"atol": 1e-12, "rtol": 1e-10, "nsteps": 10**7}
 
+
+def _tight_options(backend: Any) -> dict[str, Any]:
+    """Return the default gate-set tolerances in the form of the backend that solves."""
+    import sys
+
+    from quchip.backend import _coerce_backend
+
+    resolved = _coerce_backend(backend)
+    module = sys.modules.get("quchip.backend.dynamiqs")
+    if module is not None and isinstance(resolved, module.DynamiqsBackend):
+        import dynamiqs as dq
+
+        return {"method": dq.method.Dopri8(rtol=DEFAULT_OPTIONS["rtol"], atol=DEFAULT_OPTIONS["atol"],
+                                           max_steps=DEFAULT_OPTIONS["nsteps"])}
+    return dict(DEFAULT_OPTIONS)
+
 #: Full product spaces up to this size skip the automatic excitation cutoff.
 AUTO_CUTOFF_DIMENSION = 64
 
@@ -129,7 +145,9 @@ class GateSet:
     frame : FrameSpec, default "rotating"
         Integration frame of gate-set solves.
     options : dict, optional
-        Solver options. The default is ``atol=1e-12``, ``rtol=1e-10``.
+        Solver options. The default is ``atol=1e-12`` and ``rtol=1e-10`` in
+        the form of the backend that solves: QuTiP options, or a dynamiqs
+        ``Dopri8`` method.
     backend : object or str, optional
         Backend of gate-set solves.
     space : "auto", ExcitationCutoff, or None, default "auto"
@@ -171,7 +189,8 @@ class GateSet:
         if len(set(self.qubits)) != len(self.qubits):
             raise ValueError(f"Gate-set qubits must be distinct, got {list(self.qubits)}.")
         self.frame = frame
-        self.options = dict(DEFAULT_OPTIONS if options is None else options)
+        self._default_options: dict[Any, dict[str, Any]] = {}
+        self.options = options
         self.backend = backend
         self.cutoff_tolerance = float(cutoff_tolerance)
         if spectators not in ("coupled", "all", "none"):
@@ -195,6 +214,22 @@ class GateSet:
         self._warm: dict[tuple[str, tuple[str, ...]], dict[str, float]] = {}
 
     # ------------------------------------------------------------------ setup
+
+    @property
+    def options(self) -> dict[str, Any]:
+        """Solver options of gate-set solves."""
+        if self._options is not None:
+            return self._options
+        backend = self.chip.backend if self.backend is None else self.backend
+        # One options object per backend, so that a backend that caches compiled solves can reuse them.
+        key = backend if isinstance(backend, str) else id(backend)
+        if key not in self._default_options:
+            self._default_options[key] = _tight_options(backend)
+        return self._default_options[key]
+
+    @options.setter
+    def options(self, value: Mapping[str, Any] | None) -> None:
+        self._options = None if value is None else dict(value)
 
     @classmethod
     def standard(
@@ -802,8 +837,13 @@ class GateSet:
             params = (params,)
         return name, labels, tuple(float(p) for p in params)
 
-    def _expand(self, circuit: Iterable[Any], depth: int = 0) -> list[tuple[Any, ...]]:
-        """Expand a circuit into natives and virtual instructions."""
+    def _expand(self, circuit: Iterable[Any], depth: int = 0,
+                stack: tuple[tuple[str, tuple[str, ...]], ...] = ()) -> list[tuple[Any, ...]]:
+        """Expand a circuit into natives and virtual instructions.
+
+        ``stack`` holds the gates whose rules are being expanded, so a rule
+        that leads back to one of them does not resolve it.
+        """
         if depth > 32:
             raise RecursionError("Decomposition rules nest more than 32 levels.")
         rules = rule_table(self._user_rules)
@@ -821,6 +861,8 @@ class GateSet:
                 out.append(("GLOBALPHASE", params[0] if params else 0.0))
             elif (name, qubits) in self._natives:
                 out.append(("native", (name, qubits)))
+            elif (name, qubits) in stack:
+                raise _Unresolved(f"The rules for {name} on {qubits} lead back to it.")
             else:
                 for count, expansion in rules.get(name, []):
                     if count != len(qubits):
@@ -831,7 +873,7 @@ class GateSet:
                         mapped = tuple(qubits[s] for s in slots) if isinstance(slots, tuple) else qubits[slots]
                         body.append((item[0], mapped, *item[2:]))
                     try:
-                        out.extend(self._expand(body, depth + 1))
+                        out.extend(self._expand(body, depth + 1, (*stack, (name, qubits))))
                     except _Unresolved:
                         continue
                     break

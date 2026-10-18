@@ -66,7 +66,8 @@ placement. `simulate()` solves the circuit's schedule, with the chip's
 collapse channels unless you pass `dissipation=False`.
 
 The decomposition rules turn H, X, Y, Z, S, T, RX, RY, CX, CZ, and SWAP into
-the natives. Add your own with `gates.rule(name, qubits, expansion)`, where
+the natives. A CX against the direction of the gate set's ZX90 gets an H on
+both qubits before and after it. Add your own with `gates.rule(name, qubits, expansion)`, where
 `qubits` is the gate's qubit count and `expansion` returns the instructions
 that replace it.
 
