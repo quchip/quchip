@@ -108,5 +108,6 @@ jobs:
         run: uv run --no-sync pytest -m unit --durations=10
       - name: End-to-end and physics tests
         if: ${{ needs.changes.outputs.full_ci == 'true' }}
-        timeout-minutes: 10
+        # The suite takes 8 to 10 minutes on hosted runners. The limit catches a hung solve.
+        timeout-minutes: 15
         run: uv run --no-sync pytest -m e2e --durations=10
