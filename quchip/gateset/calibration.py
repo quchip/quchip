@@ -32,17 +32,11 @@ from scipy.optimize import least_squares, minimize
 
 from quchip.gateset.ideals import pauli_components
 from quchip.gateset.native import ResolvedKnob
+from quchip.results.propagator import average_fidelity
 from quchip.inverse_design.fit import _identifiability_receipt
 
 #: Finite-difference step of the scaled knobs.
 DIFF_STEP = 1e-4
-
-
-def average_fidelity(block: np.ndarray, ideal: np.ndarray) -> float:
-    """Return Pedersen's average gate fidelity of a block against an ideal, global phase removed."""
-    product = ideal.conj().T @ block
-    d = ideal.shape[0]
-    return float((np.trace(product @ product.conj().T).real + abs(np.trace(product)) ** 2) / (d * (d + 1)))
 
 
 def error_generator(product: np.ndarray) -> tuple[dict[str, float], float]:

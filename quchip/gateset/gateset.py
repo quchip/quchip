@@ -14,10 +14,10 @@ import numpy as np
 from quchip.gateset.cache import (Delivered, GatePropagator, Idle, Piece, covariance, lower_pulse, model_check,
                                   signal_check,
                                   split_pieces)
-from quchip.gateset.calibration import GateCalibration, average_fidelity, fit_block, report
+from quchip.gateset.calibration import GateCalibration, fit_block, report
 from quchip.gateset.ideals import IDEALS, canonical_name, embed, ideal_unitary, rule_table
 from quchip.gateset.native import NativeGate, bind_pulses
-from quchip.results.propagator import computational_states, project_computational, solver_levels
+from quchip.results.propagator import average_fidelity, computational_states, project_computational, solver_levels
 from quchip.utils.labeling import resolve_label
 
 if TYPE_CHECKING:
@@ -50,6 +50,14 @@ AUTO_CUTOFF_DIMENSION = 64
 def _defect(propagator: Any) -> float:
     defect = propagator.unitarity_defect
     return 0.0 if defect is None else float(defect)
+
+
+def _static_problem(chip: "Chip", dissipation: bool = False) -> Any:
+    """Return the lab-frame problem of the chip's own terms on its product space."""
+    from quchip.engine.problem import build_solve_problem
+
+    return build_solve_problem(chip, [], np.array([0.0, 1.0]), states="final", frame="lab",
+                               dissipation=dissipation, _product_space=True)
 
 
 class _Unresolved(KeyError):
@@ -412,10 +420,7 @@ class GateSet:
 
     def _lab_problem(self) -> Any:
         if self._lab is None:
-            from quchip.engine.problem import build_solve_problem
-
-            lab = build_solve_problem(self.solver_chip, [], np.array([0.0, 1.0]), states="final", frame="lab",
-                                      dissipation=False, _product_space=True)
+            lab = _static_problem(self.solver_chip)
             if lab.engine_result.dynamic_terms:
                 raise ValueError("The chip has time-dependent terms of its own; gate sets need a chip whose "
                                  "Hamiltonian changes only through scheduled pulses.")
@@ -456,13 +461,7 @@ class GateSet:
 
     def _states(self, qubits: Sequence[str], background: Mapping[str, int] | None = None,
                 chip: "Chip | None" = None) -> tuple[np.ndarray, np.ndarray]:
-        if chip is None:
-            problem = self._lab_problem()
-        else:
-            from quchip.engine.problem import build_solve_problem
-
-            problem = build_solve_problem(chip, [], np.array([0.0, 1.0]), states="final", frame="lab",
-                                          dissipation=False, _product_space=True)
+        problem = self._lab_problem() if chip is None else _static_problem(chip)
         levels = solver_levels(problem.engine_result)
         columns, energies = computational_states(problem, tuple(qubits), levels, background)
         return np.asarray(columns), np.asarray(energies)
@@ -689,12 +688,12 @@ class GateSet:
         key = native.key
         if calibration.block_qubits and len(calibration.block_qubits) > len(native.qubits):
             block, _ = self._block(calibration.sequence, native.qubits, native.duration)
-            calibration.ground_fidelity = average_fidelity(np.asarray(block.matrix), native.ideal_matrix())
+            calibration.ground_fidelity = block.fidelity(native.ideal_matrix())
         for spectator in self.qubits:
             if spectator in native.qubits:
                 continue
             block, _ = self._block(calibration.sequence, native.qubits, native.duration, background={spectator: 1})
-            calibration.spectators[spectator] = average_fidelity(np.asarray(block.matrix), native.ideal_matrix())
+            calibration.spectators[spectator] = block.fidelity(native.ideal_matrix())
         entry = self._entry(key)
         block_qubits = calibration.block_qubits or native.qubits
         if entry.covariant:
@@ -1152,7 +1151,8 @@ class GateSet:
         initial = np.asarray(initial, dtype=complex)
         correction = self._frame_correction(order, self._offsets(sequence)) * np.exp(1j * global_phase)
         mapping = correction[:, None] * np.exp(2j * np.pi * energies * duration)[:, None] * columns.conj().T
-        open_system = dissipation and bool(self._lab_problem_open().engine_result.collapse_terms)
+        open_system = dissipation and bool(_static_problem(self.solver_chip, dissipation=True)
+                                           .engine_result.collapse_terms)
         if initial.ndim == 1 and not open_system:
             propagator = solver_sequence.propagator(tlist=[0.0, duration], columns=columns @ initial[:, None],
                                                     frame=self.frame, options=self.options, dissipation=False,
@@ -1175,12 +1175,6 @@ class GateSet:
         populations = np.real(np.diag(state))
         return CircuitRun(state=state, probabilities=self._probabilities(populations, order),
                           leakage=float(1.0 - populations.sum()), result=superoperator)
-
-    def _lab_problem_open(self) -> Any:
-        from quchip.engine.problem import build_solve_problem
-
-        return build_solve_problem(self.solver_chip, [], np.array([0.0, 1.0]), states="final", frame="lab",
-                                   dissipation=True, _product_space=True)
 
     @staticmethod
     def _probabilities(populations: np.ndarray, order: Sequence[str]) -> dict[str, float]:

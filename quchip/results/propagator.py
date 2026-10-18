@@ -219,6 +219,30 @@ def subspace_propagator(batch: Any, devices: tuple[str, ...], labels: tuple[tupl
     )
 
 
+def average_fidelity(block: Any, ideal: Any) -> float:
+    """Return the average gate fidelity of a block against an ideal unitary, global phase removed.
+
+    The value is ``(Tr M M† + |Tr M|²) / (d (d + 1))`` with ``M = ideal† V``
+    (Pedersen, Møller and Mølmer, Phys. Lett. A 367, 47 (2007)). Leakage
+    lowers ``Tr M M†``.
+
+    Parameters
+    ----------
+    block : array_like
+        ``(2^n, 2^n)`` block ``V`` on the computational states.
+    ideal : array_like
+        ``(2^n, 2^n)`` target unitary in the same qubit order.
+    """
+    ideal = np.asarray(ideal, dtype=complex)
+    matrix = np.asarray(block)
+    if matrix.shape != ideal.shape:
+        raise ValueError(f"The block has shape {matrix.shape}; the ideal has shape {ideal.shape}.")
+    product = ideal.conj().T @ matrix
+    dimension = ideal.shape[0]
+    return float((np.trace(product @ product.conj().T).real + abs(np.trace(product)) ** 2)
+                 / (dimension * (dimension + 1)))
+
+
 def solver_levels(engine_result: Any) -> np.ndarray:
     """Return the level index of every device for each solver coordinate, shape ``(d, devices)``.
 
@@ -276,14 +300,7 @@ class ComputationalBlock:
         ideal : array_like
             ``(2^n, 2^n)`` target unitary in the same qubit order.
         """
-        ideal = np.asarray(ideal, dtype=complex)
-        matrix = np.asarray(self.matrix)
-        if matrix.shape != ideal.shape:
-            raise ValueError(f"The block has shape {matrix.shape}; the ideal has shape {ideal.shape}.")
-        product = ideal.conj().T @ matrix
-        dimension = ideal.shape[0]
-        return float((np.trace(product @ product.conj().T).real + abs(np.trace(product)) ** 2)
-                     / (dimension * (dimension + 1)))
+        return average_fidelity(self.matrix, ideal)
 
 
 @dataclass(frozen=True, eq=False)

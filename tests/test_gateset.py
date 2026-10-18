@@ -192,9 +192,7 @@ def test_gate_set_validates_natives_and_instructions():
 
 @pytest.mark.unit
 def test_covariance_check_is_structural():
-    """Each pulse's own terms decide: one carrier and frame per piece, terms that turn with the pulse phase as their
-    charge requires, charge 0 for baseband terms next to a carrier, no coefficient of absolute time, and RWA
-    statics."""
+    """Placement reuse needs one carrier per piece, terms that turn as their charge requires, and RWA statics."""
     from quchip.control.signal import AnalyticSignal, Delay, Gain, SignalTransform
     from quchip.engine.problem import build_solve_problem
     from quchip.engine import ir
@@ -399,8 +397,7 @@ def calibrated_sx(df=0.2, duration=30.0, spectators="coupled", **noise):
 
 
 def test_drag_sx_calibrates_to_the_leakage_floor():
-    """With q1 held in |0>, a 30 ns ±4σ DRAG SX reaches 1 - F_avg < 1e-8 from the physics seeds, with β near
-    1/(4π|α|)."""
+    """With q1 in |0>, a 30 ns ±4σ DRAG SX reaches 1 - F_avg < 1e-8, with β near 1/(4π|α|)."""
     _, gates = calibrated_sx(spectators="none")
     calibration = gates.calibration("SX", "q0")
     assert calibration.block_qubits == ("q0",)
@@ -416,8 +413,7 @@ def test_drag_sx_calibrates_to_the_leakage_floor():
 
 
 def test_spectator_block_carries_the_static_zz_of_the_gate():
-    """With the coupled spectator in the block, the SX fit targets SX ⊗ I. Its error is the ZZ phase that the
-    amplitude and beta knobs do not remove, between the ZZ angle with and without the echo of the half rotation."""
+    """The joint-block SX error is the static ZZ phase, between the ZZ angle with and without the half-turn echo."""
     chip, gates = calibrated_sx()
     calibration = gates.calibration("SX", "q0")
     assert calibration.block_qubits == ("q0", "q1") and set(calibration.free_z) == {"q0", "q1"}
@@ -521,8 +517,7 @@ def test_exact_chip_places_gates_by_direct_solves():
 
 
 def test_cached_circuits_follow_delivered_fields():
-    """A 5 ns line delay extends each q0 gate to its delivered field. Separated gates still reuse the cache,
-    back-to-back gates on the delayed line are solved together, and both match a direct solve."""
+    """With a 5 ns line delay, cached and jointly solved q0 gates match a direct solve."""
     from quchip.control.signal import Delay
 
     q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.33, levels=3, label="q0")
@@ -551,8 +546,7 @@ def test_cached_circuits_follow_delivered_fields():
 
 
 def test_calibration_leaves_a_zero_amplitude_start():
-    """The knob step is fixed in scaled units, so a fit that starts at zero amplitude reaches the exact SX
-    of a 2 ns square pulse on a two-level qubit."""
+    """A fit that starts at zero amplitude reaches the exact SX of a 2 ns square pulse on a two-level qubit."""
     from quchip import Square
 
     qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=2, label="q")
@@ -584,8 +578,7 @@ def test_calibration_leaves_a_zero_amplitude_start():
 
 
 def test_automatic_cutoff_recalibrates_until_the_gate_converges():
-    """A nearly harmonic qubit next to a 17-level resonator (68 states) starts at max_total=2. The calibrated
-    gate differs at max_total=3, so the gate set raises the cutoff and calibrates again."""
+    """When a gate changes at the next excitation cutoff, the gate set raises the cutoff and calibrates again."""
     from quchip import Square
     from quchip.gateset import Seed
 
@@ -607,9 +600,7 @@ def test_automatic_cutoff_recalibrates_until_the_gate_converges():
 
 
 def test_cutoff_checks_include_excited_spectators():
-    """A strong 2 ns pulse drives a nearly harmonic qubit to level 3. With the spectator in |1>, those states
-    lie above max_total=3, so the joint block changes there while the gate's own block does not; the gate set
-    raises the cutoff until the joint block matches the full space."""
+    """The cutoff rises until the joint block with an excited spectator matches the full space."""
     from quchip import Square
     from quchip.gateset import Seed
 
@@ -634,9 +625,7 @@ def test_cutoff_checks_include_excited_spectators():
 
 @pytest.mark.validation
 def test_echoed_cross_resonance_calibrates_a_cx():
-    """GateSet.standard() calibrates an echoed ZX90, and the CX it implies reaches 1 - F < 1e-3. The CR pieces
-    turn with the target's carrier and the echo pieces with the control's, so the ZX90 error changes with the
-    start time, while the one-carrier SX keeps its error at every start."""
+    """The echoed ZX90 gives a CX with 1 - F < 1e-3; its error changes with start time, and the SX error does not."""
     chip = two_transmons(df=0.1)
     gates = GateSet.standard(chip, ["q0", "q1"], pairs=[("q0", "q1")], sx_duration=40.0, cr_duration=400.0)
     with warnings.catch_warnings():

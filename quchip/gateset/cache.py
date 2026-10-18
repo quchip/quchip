@@ -210,7 +210,9 @@ def _same(before: Any, after: Any) -> bool:
         return True
     left, left_tree = jtu.tree_flatten(before)
     right, right_tree = jtu.tree_flatten(after)
-    return left_tree == right_tree and all(np.array_equal(np.asarray(a), np.asarray(b)) for a, b in zip(left, right))
+    # PyTreeDef compares by value at runtime; jax's stubs give mypy no signature for it.
+    same_tree = left_tree == right_tree  # type: ignore[operator]
+    return same_tree and all(np.array_equal(np.asarray(a), np.asarray(b)) for a, b in zip(left, right))
 
 
 def _harmonics(signal: Any, probed: Any, phase: Any) -> frozenset[int] | None:
