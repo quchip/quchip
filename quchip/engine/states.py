@@ -19,7 +19,6 @@ import numpy as np
 
 from quchip.backend.protocol import State
 from quchip.engine.pulse_space import PulseSpace
-from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import array_namespace, maybe_concrete_scalar
 
 if TYPE_CHECKING:
@@ -136,34 +135,13 @@ def default_initial_state(chip: "Chip", engine_result: Any, start_time: Any) -> 
     ground = chip.analysis._ground_ket(approximation) if moves else None
     if ground is None:
         return bare_state_from_bases(chip, {}, engine_result.bases)
-    ket = _to_solve_frame(ground, chip, engine_result, start_time)
+    from quchip.engine.frames import FrameMap
+
+    labels = tuple(device.label for device in chip.devices)
+    frame_map = FrameMap.create(engine_result.resolved_frame, labels, engine_result.bases, chip.backend.array_module)
+    ket = frame_map.kets(ground.reshape(-1), start_time)
     dims = list(engine_result.dims)
     return chip.backend.from_array(ket.reshape(-1, 1), dims=[dims, [1] * len(dims)])
-
-
-def _to_solve_frame(ket: Any, chip: "Chip", engine_result: Any, start_time: Any) -> Any:
-    """Express a lab-frame ket in the solve's frame at ``start_time``.
-
-    The solver evolves ``U(t)† psi`` with ``U(t) = exp(-i 2π t Σ_i f_i n_i)``
-    in absolute time, where ``n_i`` is each device's energy-level index.
-    """
-    xp = chip.backend.array_module
-    frequencies = engine_result.resolved_frame.frequencies
-    tensor = ket.reshape(tuple(engine_result.dims))
-    for axis, device in enumerate(chip.devices):
-        angle = TWO_PI * start_time * frequencies.get(device.label, 0.0)
-        if maybe_concrete_scalar(angle) == 0.0:
-            continue
-        record = engine_result.bases[device.label]
-        phases = xp.exp(1j * xp.asarray(angle) * xp.arange(record.resolved_dim))
-        transform = record.energy_to_solver()
-        if transform is None:
-            local = xp.diag(phases)
-        else:
-            transform = xp.asarray(transform)
-            local = (transform * phases) @ xp.conj(transform).T
-        tensor = xp.moveaxis(xp.tensordot(local, tensor, axes=([1], [axis])), 0, axis)
-    return tensor.reshape(-1)
 
 
 def materialize_state_spec(
@@ -372,8 +350,7 @@ def truncated_vacuum(chip, result, start):
     The state is the eigenvector of the truncated static lab-frame model
     ``P H P`` that is assigned to the bare vacuum, under the solve's
     approximation. Its overlap with the bare vacuum is real and nonnegative.
-    Each compact basis state ``|n>`` then takes the phase
-    ``exp(i 2π t0 Σ_i f_i n_i)`` of the solve frame at ``start``.
+    The frame map then expresses it in the solve frame at ``start``.
 
     Parameters
     ----------
@@ -389,35 +366,77 @@ def truncated_vacuum(chip, result, start):
     state
         Native backend ket in the coordinates of ``result.excitation_space``.
     """
+    from quchip.engine.frames import FrameMap
+
+    space = result.excitation_space
+    model = block_model(chip, result.approximation)
+    vector = sector_label_ket(chip, model, space, (0,) * len(space.labels))
+    frame_map = FrameMap.create(result.resolved_frame, space.labels, space.bases, array_namespace(vector), space=space)
+    vector = frame_map.kets(vector, start)
+    return chip.backend.from_array(vector.reshape(-1, 1), dims=[[space.size], [1]])
+
+
+def block_model(chip, approximation):
+    """Return the static block model of ``approximation``, or None when dressing needs the full eigensystem.
+
+    Under an excitation cutoff, every chip has a block model. Without one, the
+    static model must conserve the total energy-level index.
+
+    Parameters
+    ----------
+    chip : Chip
+        Chip whose static model is split.
+    approximation : Approximation
+        Approximation of the static model.
+    """
+    from quchip.cutoff import active_cutoff
+    from quchip.engine.excitation import excitation_structure
+    from quchip.engine.sectors import SectorModel
+
+    if approximation == chip.approximation:
+        return chip._analysis._sector_model(_advise=False)
+    if active_cutoff(chip) is None and not excitation_structure(chip, approximation).conserves:
+        return None
+    return SectorModel(chip, approximation=approximation, advisories=[])
+
+
+def sector_label_ket(chip, model, space, levels):
+    """Return the dressed eigenstate assigned to a label in the rows of an excitation space.
+
+    The eigenvector comes from the block of ``model`` that holds the label.
+    Rows of the block outside ``space`` are dropped, because the states of
+    the solve have no amplitude there.
+
+    Parameters
+    ----------
+    chip : Chip
+        Chip whose backend sets the array module.
+    model : SectorModel
+        Static block model of the solve's approximation.
+    space : PulseSpace
+        Excitation space of the solve.
+    levels : tuple of int
+        Product label of local energy levels.
+    """
     import jax.numpy as jnp
 
     from quchip.engine.basis import _differentiable_eigenvector
-    from quchip.engine.sectors import SectorModel
-    from quchip.utils.constants import TWO_PI
     from quchip.utils.jax_utils import contains_tracer
 
-    backend, space = chip.backend, result.excitation_space
-    model = (chip._analysis._sector_model(_advise=False) if result.approximation == chip.approximation
-             else SectorModel(chip, approximation=result.approximation, advisories=[]))
-    system = model.eigensystem(0)
-    row = system.space.row((0,) * len(space.labels))
-    index = system.labeling.indices[row]
+    system = model.eigensystem(sum(levels))
+    index = system.labeling.indices[system.space.row(tuple(levels))]
     traced = contains_tracer((system.eigenvalues, system.eigenvectors, index))
-    xp = jnp if traced else backend.array_module
+    xp = jnp if traced else chip.backend.array_module
     column = xp.asarray(system.eigenvectors)[:, index]
     if contains_tracer(system.eigenvectors):
         # JAX's eigh derivative can be NaN at an unrelated exact tie.
         matrix = jnp.asarray(model.hamiltonian(system.space.totals))
         column = _differentiable_eigenvector(matrix, system.eigenvalues[index], system.eigenvalues,
                                              system.eigenvectors, column)
-    frequencies = result.resolved_frame.frequencies
-    angle = sum(xp.asarray(frequencies.get(label, 0.0)) * system.space.levels[:, axis]
-                for axis, label in enumerate(space.labels))
-    column = column * xp.exp(1j * TWO_PI * xp.asarray(start) * angle)
-    indices = np.asarray([space.rows[label] for label in system.space.labels])
+    kept = np.asarray([i for i, label in enumerate(system.space.labels) if label in space.rows], dtype=int)
+    indices = np.asarray([space.rows[system.space.labels[i]] for i in kept], dtype=int)
     vector = xp.zeros(space.size, dtype=complex)
-    vector = vector.at[indices].set(column) if xp is jnp else _scatter(vector, indices, column)
-    return backend.from_array(vector.reshape(-1, 1), dims=[[space.size], [1]])
+    return vector.at[indices].set(column[kept]) if xp is jnp else _scatter(vector, indices, column[kept])
 
 
 def _scatter(vector, indices, values):
