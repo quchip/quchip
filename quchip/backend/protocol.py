@@ -1162,6 +1162,16 @@ class Backend(ABC):
             raise ValueError("Stationary preparation belongs to a different backend or operating point.")
         return prepared
 
+    def stationary_bytes(self, engine_result: "EngineResult") -> int | None:
+        """Return the estimated peak bytes of a stationary solve of a static model, or ``None``.
+
+        Parameters
+        ----------
+        engine_result : EngineResult
+            Captured static Hamiltonian and collapse channels.
+        """
+        return None
+
     def steadystate(
         self, problem: Any, *, prepared: PreparedStationary | None = None, guess: State | None = None,
     ) -> SteadyStateSolverResult:
@@ -1210,6 +1220,67 @@ class Backend(ABC):
             Sector Hamiltonians, channels and frozen-reference probe sources.
         """
         raise NotImplementedError(f"{type(self).__name__} must implement coherence_response()")
+
+    def sector_generator(self, sizes: Sequence[int], hamiltonian: Any, lowering: Sequence[Any],
+                         conserving: Sequence[Any]) -> Any:
+        r"""Return the truncated Lindblad generator of a conserving model on the totals ``N <= K``.
+
+        The generator solves stationary states, resolvents and regression
+        propagations matrix-free on excitation sectors. This default solves on
+        host NumPy and SciPy arrays for every backend, so it needs concrete
+        values.
+
+        Parameters
+        ----------
+        sizes : sequence of int
+            Dimension of each sector ``N = 0..K``.
+        hamiltonian : scipy.sparse matrix
+            Static Hamiltonian in rad/ns, in the lab frame and relative to the
+            vacuum energy, with states ordered by ``N``.
+        lowering, conserving : sequence of scipy.sparse matrix
+            Channel couplings in ``1/sqrt(ns)`` that lower ``N`` by one or
+            conserve it.
+
+        Returns
+        -------
+        SectorGenerator
+            Generator with ``stationary()``, ``resolvent()`` and ``propagate()``.
+        """
+        from quchip.backend._sector_stationary import SectorGenerator
+
+        return SectorGenerator(sizes, hamiltonian, lowering, conserving)
+
+    def sector_solve_bytes(self, sizes: Sequence[int], *, smallest: bool = False) -> int:
+        """Return the estimated peak bytes of a stationary solve on excitation sectors.
+
+        Parameters
+        ----------
+        sizes : sequence of int
+            Dimension of each sector ``N = 0..K``.
+        smallest : bool, default=False
+            Estimate at the shortest Krylov restart, which is the least memory
+            that a solve can run with, instead of the default restart.
+        """
+        from quchip.backend._sector_stationary import _MINIMUM_RESTART, _RESTART, sector_solve_bytes
+
+        return sector_solve_bytes(sizes, _MINIMUM_RESTART if smallest else _RESTART)
+
+    def sector_unique(self, sizes: Sequence[int], lowering: Sequence[Any]) -> bool:
+        """Return whether the lowering channels prove one stationary state on the sectors ``N <= K``.
+
+        The proof holds whatever the Hamiltonian, a probe and the conserving
+        channels. Without a probe, that state is the vacuum.
+
+        Parameters
+        ----------
+        sizes : sequence of int
+            Dimension of each sector ``N = 0..K``.
+        lowering : sequence of scipy.sparse matrix
+            Channel couplings in ``1/sqrt(ns)`` that lower ``N`` by one.
+        """
+        from quchip.backend._sector_stationary import has_dark_state
+
+        return not has_dark_state(sizes, lowering)
 
     def stationary_resolvent(
         self,

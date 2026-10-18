@@ -1315,6 +1315,19 @@ class QuTiPBackend(Backend):
             ),
         )
 
+    def stationary_bytes(self, engine_result: Any) -> int:
+        """Return the estimated bytes of the sparse LU factors of a stationary generator.
+
+        The method builds the generator again. The estimate is low, as
+        :func:`~quchip.utils.memory.sparse_lu_bytes` says.
+
+        Parameters
+        ----------
+        engine_result : EngineResult
+            Captured static Hamiltonian and collapse channels.
+        """
+        return sparse_lu_bytes(self._scipy_liouvillian(self._stationary_liouvillian(engine_result)))
+
     def _stationary_condition_number(self, engine_result: Any) -> float:
         liouvillian = self._scipy_liouvillian(self._stationary_liouvillian(engine_result)).toarray()
         return float(stationary_condition_number(liouvillian, math.prod(engine_result.dims), xp=np))

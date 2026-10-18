@@ -991,6 +991,17 @@ class DynamiqsBackend(Backend):
             _condition_number=DeferredValue(partial(self._stationary_condition_number, problem.engine_result)),
         )
 
+    def stationary_bytes(self, engine_result: Any) -> int:
+        """Return the estimated peak bytes of the dense stationary solve, with its generator.
+
+        Parameters
+        ----------
+        engine_result : EngineResult
+            Captured static Hamiltonian and collapse channels.
+        """
+        dimension = math.prod(engine_result.dims)
+        return dense_bytes(dimension**2, dimension**2, copies=_STEADY_STATE_COPIES + 1)
+
     def _stationary_condition_number(self, engine_result: Any) -> Any:
         liouvillian = self._stationary_liouvillian(engine_result)
         return stationary_condition_number(liouvillian, math.prod(engine_result.dims), xp=jnp)
