@@ -291,6 +291,47 @@ the 60 dB input attenuation; isolator and cable loss give an approximately
 resonators, losses, filters, and amplifier gain. Added amplifier noise increases
 the fluctuation level but does not change this curve.
 
+## Read the resonances from the poles
+
+`vna.resonances()` gives the poles of the same small-signal response, without
+a fit. Each pole has a lab-frame frequency, a response linewidth κ, and a
+weight on each mode. `dominant` names the mode with the largest weight.
+
+```python
+poles = vna.resonances()
+for pole in poles:
+    print(f"{pole.dominant}: {float(pole.frequency):.5f} GHz, "
+          f"kappa/2pi = {1e3 * float(pole.linewidth) / (2 * np.pi):.2f} MHz")
+```
+
+Output:
+
+```text
+r1: 6.39902 GHz, kappa/2pi = 18.44 MHz
+r2: 6.49995 GHz, kappa/2pi = 10.84 MHz
+bus: 6.50025 GHz, kappa/2pi = 963.84 MHz
+r3: 6.60078 GHz, kappa/2pi = 15.28 MHz
+```
+
+The bus pulls r1 down by 1.0 MHz and r3 up by 0.8 MHz. The linewidths are
+1–4% above the nominal 17.8, 10.7 and 14.8 MHz, which the formula above
+gives to second order for each resonator alone. The poles include the
+couplings to all orders and the exchange through the shared bus.
+
+<details>
+<summary>Check the poles against the sweep</summary>
+
+`poles.scattering()` rebuilds S from the poles and their residues, with the
+reference planes of the ports. It agrees with the swept S21 to round-off.
+
+```python
+# Axes: frequency, output, input, with the ports in the order (drive, readout).
+rebuilt = poles.scattering(frequencies)[:, 1, 0]
+assert np.max(np.abs(rebuilt - steady_state)) < 1e-10
+```
+
+</details>
+
 ## Sample a VNA trace
 
 A sampled trace also needs the probe amplitude and the receiver integration
