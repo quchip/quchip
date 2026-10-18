@@ -360,10 +360,11 @@ def _require_product_state(context, result):
     dissipative = context.dissipation and bool(result.slh.collapse_terms)
     if result.excitation_space is None and dissipative and context.solver in (None, "mesolve"):
         from math import prod
-        from quchip.backend._memory import require_memory
+        from quchip.utils.memory import dense_bytes, require_memory
 
         dimension = prod(result.dims)
-        require_memory(16 * dimension**2, task=f"The product-space density matrix at dimension {dimension}",
+        require_memory(dense_bytes(dimension, dimension),
+                       task=f"The product-space density matrix at dimension {dimension}",
                        remedy="Use a model and initial state with a smaller proven invariant space.")
 
 

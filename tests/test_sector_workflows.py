@@ -177,7 +177,7 @@ def test_projected_cascade_port_is_not_declared_conserving():
 def test_sector_and_full_fallback_refuse_impossible_allocations(monkeypatch):
     """Static requests reject an oversized sector before assembly and an oversized full eigensystem before solving."""
     from quchip import Capacitive
-    from quchip.backend import _memory
+    from quchip.utils import memory as _memory
 
     chip = pair()
     model = chip.analysis._sector_model()
@@ -222,7 +222,7 @@ def test_conserving_chip_state_reads_its_sector_and_matches_the_full_eigensystem
 def test_reduced_chip_state_and_default_initial_state_need_no_full_eigensystem(monkeypatch):
     """A conserving reduced chip prepares its states from sectors within a budget that refuses a full eigensystem."""
     from quchip import Capacitive, QuantumSequence, RWA, Resonator, Square, eliminate
-    from quchip.backend import _memory
+    from quchip.utils import memory as _memory
 
     q = DuffingTransmon(freq=5.3, anharmonicity=-0.26, levels=3, label="q")
     modes = [Resonator(freq=6.0 + 0.1 * i, levels=3, label=f"m{i}") for i in range(5)]

@@ -91,7 +91,7 @@ def test_decay_coherence_compact_replay_and_measurement(backend):
 @pytest.mark.parametrize("frame", ["lab", "auto"])
 def test_large_ring_never_embeds_full_operators(loss, frame, monkeypatch):
     """Twenty-four three-level devices evolve in 24 amplitudes with guarded exports."""
-    from quchip.backend import _memory
+    from quchip.utils import memory as _memory
 
     # A fixed host memory keeps the export guard active on every platform.
     monkeypatch.setattr(_memory, "available_memory_bytes", lambda: 2**33)
@@ -538,7 +538,7 @@ def test_compact_dressed_state_matches_full_assigned_state():
 def test_large_nonconserving_pulse_refuses_before_global_allocation(monkeypatch):
     """An ineligible large drive raises a memory error before full tensor materialization."""
     from quchip import ChargeDrive, Square
-    from quchip.backend import _memory
+    from quchip.utils import memory as _memory
 
     # A fixed host memory keeps the assembly guard active on every platform.
     monkeypatch.setattr(_memory, "available_memory_bytes", lambda: 2**33)
@@ -555,7 +555,7 @@ def test_large_nonconserving_pulse_refuses_before_global_allocation(monkeypatch)
 def test_full_pulse_route_counts_stored_operator_entries(monkeypatch):
     """A transverse pulse builds sparse product operators that dense estimates would refuse."""
     from quchip import ChargeDrive, Square
-    from quchip.backend import _memory
+    from quchip.utils import memory as _memory
 
     devices = [Resonator(freq=0.25, levels=3, label=f"r{i}") for i in range(6)]
     chain = [Capacitive(a, b, g=0.01) for a, b in zip(devices, devices[1:])]
@@ -575,7 +575,7 @@ def test_full_pulse_route_counts_stored_operator_entries(monkeypatch):
 def test_low_memory_moves_only_dense_compact_operators_to_the_product_route(monkeypatch, backend, dimension):
     """QuTiP holds compact operators as CSR; dense compact operators that cannot fit solve on the product route."""
     from quchip import Exact
-    from quchip.backend import _memory
+    from quchip.utils import memory as _memory
 
     if backend == "dynamiqs":
         dq = pytest.importorskip("dynamiqs")
@@ -599,7 +599,7 @@ def test_low_memory_moves_only_dense_compact_operators_to_the_product_route(monk
 
 def test_large_partitioned_pulse_keeps_local_results_and_guards_joint_export(monkeypatch):
     """Independent components remain exact without allocating their full joint vacuum."""
-    from quchip.backend import _memory
+    from quchip.utils import memory as _memory
 
     # A fixed host memory keeps the export guard active on every platform.
     monkeypatch.setattr(_memory, "available_memory_bytes", lambda: 2**33)

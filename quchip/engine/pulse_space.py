@@ -13,7 +13,7 @@ from typing import Any
 
 import numpy as np
 
-from quchip.backend._memory import fits_memory, require_memory
+from quchip.utils.memory import dense_bytes, fits_memory, level_table_bytes, require_memory
 from quchip.utils.jax_utils import concrete_array_module, contains_tracer
 
 
@@ -23,11 +23,6 @@ _CUTOFF_RESIDUE = 1e-20
 
 
 _OPERATOR_REMEDY = "Reduce the model, the initial excitation support, or an excitation cutoff's max_total."
-
-
-def _dense_bytes(size, matrices):
-    """Bytes of ``matrices`` dense complex operators on ``size`` states."""
-    return 16 * matrices * size**2
 
 
 def _require_inside(cutoff, outside, total, source):
@@ -55,7 +50,8 @@ class PulseSpace:
 
         totals = tuple(sorted(set(totals)))
         size = sum(sector_size(dims, total) for total in totals)
-        require_memory(8 * len(dims) * size, task=f"Exact pulse space (dimension {size})", remedy=_OPERATOR_REMEDY)
+        require_memory(level_table_bytes(size, len(dims)), task=f"Exact pulse space (dimension {size})",
+                       remedy=_OPERATOR_REMEDY)
         levels = np.concatenate([sector_levels(tuple(dims), n) for n in totals])
         levels.flags.writeable = False
         return cls(tuple(dims), tuple(labels), totals, levels, dict(bases))
@@ -132,14 +128,14 @@ class PulseSpace:
         dimension = prod(self.dims)
         ket = matrix.shape[-1] == 1
         require_memory(
-            16 * 4 * (dimension if ket else dimension**2),
+            dense_bytes(*((dimension,) if ket else (dimension, dimension)), copies=4),
             task="Full pulse state export",
             remedy="Use compact_state(), population(), or reduced_state() instead.",
         )
         xp = backend.array_module
         # Build only the isometry columns present in the compact space.
         require_memory(
-            16 * 3 * dimension * self.size,
+            dense_bytes(dimension, self.size, copies=3),
             task="Pulse state coordinate map",
             remedy="Use compact_state() or reduced_state() instead.",
         )
@@ -407,7 +403,7 @@ def plan_pulse_space(chip, operations, states, resolution, approximation, dissip
         return PulseSpace.create(dims, labels, occupied, bases), reason, boundary
     if size == prod(dims):
         return None, "The proven generator closure reaches the full product space.", None
-    if chip.backend.array_module is not np and not fits_memory(_dense_bytes(size, 8)):
+    if chip.backend.array_module is not np and not fits_memory(dense_bytes(size, size, copies=8)):
         return None, f"Dense compact operators on {size} states do not fit in available memory.", None
     reason = "The initial support and complete generator close exactly."
     return PulseSpace.create(dims, labels, occupied, bases), reason, None

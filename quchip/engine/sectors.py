@@ -119,13 +119,13 @@ def generated_products(ports: dict[str, tuple[Any, tuple[int, ...]]], pairs: Seq
 
 def _widen(matrix: Any, support: tuple[int, ...], joint: tuple[int, ...], dims: Sequence[int]) -> Any:
     """Return a matrix on ``support`` as a matrix on the larger support ``joint``."""
-    from quchip.backend._memory import require_memory
+    from quchip.utils.memory import dense_bytes, require_memory
 
     extra = tuple(index for index in joint if index not in support)
     order = (*support, *extra)
     local = [int(dims[index]) for index in order]
     size = prod(local)
-    require_memory(16 * 4 * size**2, task=f"Cascaded port product on devices {list(joint)}",
+    require_memory(dense_bytes(size, size, copies=4), task=f"Cascaded port product on devices {list(joint)}",
                    remedy="Use ports on fewer devices or reduce the device cutoffs.")
     xp = concrete_array_module(matrix)
     widened = xp.kron(xp.asarray(matrix), xp.eye(prod(local[len(support):]), dtype=complex))
@@ -310,11 +310,11 @@ class SectorModel:
         """
         key = _key(totals)
         if key not in self._spaces:
-            from quchip.backend._memory import require_memory
+            from quchip.utils.memory import eigensystem_bytes, level_table_bytes, require_memory
 
             size = sum(sector_size(self.dims, total) for total in key)
             block = f"sector N={key[0]}" if len(key) == 1 else f"class N in {list(key)}"
-            require_memory(16 * 6 * size**2 + 8 * len(self.dims) * size,
+            require_memory(eigensystem_bytes(size) + level_table_bytes(size, len(self.dims)),
                            task=f"Excitation {block} (dimension {size})",
                            remedy="Request lower-excitation labels or reduce the model." if self.cutoff is None
                            else "Request lower-excitation labels, lower max_total, or reduce the model.")
@@ -467,11 +467,11 @@ class SectorModel:
         vector : array_like
             Amplitudes in the block's product energy basis.
         """
-        from quchip.backend._memory import require_memory
+        from quchip.utils.memory import dense_bytes, require_memory
 
         dimension = prod(self.dims)
         # The zero vector, each basis transform and the native ket can each hold a product-space copy.
-        require_memory(16 * 4 * dimension, task=f"Product-space state (dimension {dimension})",
+        require_memory(dense_bytes(dimension, copies=4), task=f"Product-space state (dimension {dimension})",
                        remedy="Use chip.compact_state(..., dressed=True), which keeps the block coordinates.")
         space = self.space(totals)
         rows = np.ravel_multi_index(tuple(space.levels.T), self.dims)
@@ -508,9 +508,9 @@ class SectorModel:
         for key in keys:
             offsets[key] = size
             size += systems[key].space.size
-        from quchip.backend._memory import require_memory
+        from quchip.utils.memory import dense_bytes, require_memory
 
-        require_memory(16 * 3 * size**2, task=f"Combined excitation blocks (dimension {size})",
+        require_memory(dense_bytes(size, size, copies=3), task=f"Combined excitation blocks (dimension {size})",
                        remedy="Request fewer blocks or reduce the model.")
         xp = concrete_array_module(tuple((system.eigenvectors, system.labeling.indices) for system in systems.values()))
         eigenvalues = xp.concatenate([xp.asarray(systems[key].eigenvalues) for key in keys])

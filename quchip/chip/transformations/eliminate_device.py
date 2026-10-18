@@ -391,7 +391,7 @@ def _local_dressed_transition(chip: "Chip", resolution: Any, mode_label: str, lo
     fixed. Selection uses dimensions and proved conservation, never parameter
     values. All local terms supply the intermediate states' diagonal energies.
     """
-    from quchip.backend._memory import require_memory
+    from quchip.utils.memory import dense_bytes, level_table_bytes, require_memory
 
     dims = resolution.dims
     mode_axis = chip.device_index(mode_label)
@@ -411,7 +411,7 @@ def _local_dressed_transition(chip: "Chip", resolution: Any, mode_label: str, lo
                     state[index] = level
                 states[tuple(state)] = None
     size = len(states)
-    require_memory(16 * 12 * size**2 + 8 * len(dims) * size,
+    require_memory(dense_bytes(size, size, copies=12) + level_table_bytes(size, len(dims)),
                    task=f"Local SW transition (dimension {size})",
                    remedy="Use interactions on smaller local supports or reduce the model.")
     levels = np.asarray(tuple(states), dtype=np.int64)

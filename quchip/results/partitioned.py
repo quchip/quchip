@@ -275,9 +275,9 @@ class PartitionedSimulationResult:
         warnings.warn(_JOINT_WARNING, UserWarning, stacklevel=2)
         backend = self._results[0]._backend
         from math import prod
-        from quchip.backend._memory import require_memory
+        from quchip.utils.memory import dense_bytes, require_memory
         dimension = prod(d for result in self._results for d in result.dims)
-        require_memory(16 * 4 * len(self.times) * dimension, task="Joint partitioned history export",
+        require_memory(dense_bytes(len(self.times), dimension, copies=4), task="Joint partitioned history export",
                        remedy="Read local observables or component states instead.")
         per_component_trajectories = self._collect_component_ket_trajectories()
         joint_steps = [backend.tensor_states(*step) for step in zip(*per_component_trajectories)]
@@ -320,10 +320,10 @@ class PartitionedSimulationResult:
         warnings.warn(_JOINT_WARNING, UserWarning, stacklevel=3)
         backend = self._results[0]._backend
         from math import prod
-        from quchip.backend._memory import require_memory
+        from quchip.utils.memory import dense_bytes, require_memory
         dimension = prod(d for result in self._results for d in result.dims)
         power = 1 if all(backend.is_ket(state) for state in states) else 2
-        require_memory(16 * 4 * dimension**power, task="Joint partitioned state export",
+        require_memory(dense_bytes(*(dimension,) * power, copies=4), task="Joint partitioned state export",
                        remedy="Read local observables or component states instead.")
         joint = backend.tensor_states(*self._promote_to_common_state_kind(backend, states))
         permutation = self._chip_order_permutation()

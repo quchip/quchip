@@ -77,7 +77,7 @@ _COHERENCE_DENSE_LIMIT = 256
 def coherence_response(problem: Any, *, xp: Any) -> Any:
     """Solve the Lindblad action on (N,N-1) from the highest sector downwards."""
     from quchip.backend.containers import CoherenceResponseSolverResult
-    from quchip.backend._memory import require_memory
+    from quchip.utils.memory import dense_bytes, krylov_bytes, require_memory
 
     H = tuple(xp.asarray(h, dtype=complex) for h in problem.hamiltonians)
     lower = tuple(xp.asarray(channel, dtype=complex) for channel in problem.lowering)
@@ -85,7 +85,8 @@ def coherence_response(problem: Any, *, xp: Any) -> Any:
     sources = tuple(xp.asarray(b, dtype=complex) for b in problem.sources)
     sizes = tuple(h.shape[0] for h in H)
     counts = tuple(sizes[n] * sizes[n - 1] for n in range(1, len(H)))
-    require_memory(16 * sum(6 * d**2 if d <= _COHERENCE_DENSE_LIMIT else 150 * d for d in counts),
+    require_memory(sum(dense_bytes(d, d, copies=6) if d <= _COHERENCE_DENSE_LIMIT else krylov_bytes(d, 150)
+                       for d in counts),
                    task="Conditional VNA coherence solve", remedy="Reduce the model or its local level counts.")
     drift = tuple(-1j * h - 0.5 * (
         xp.einsum("kab,kac->bc", channel.conj(), channel) + xp.einsum("kab,kac->bc", z.conj(), z)

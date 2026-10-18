@@ -396,10 +396,10 @@ def measure_result(result: Any, devices: tuple[Any, ...], *, t: Any = None,
         state = result.state(t)
         dims = tuple(result.dims)
     else:
-        from quchip.backend._memory import require_memory
         from math import prod
+        from quchip.utils.memory import dense_bytes, require_memory
         dims = tuple(result.dims[axis] for axis in selected)
-        require_memory(16 * 4 * prod(dims)**2, task="Joint measurement coordinates",
+        require_memory(dense_bytes(prod(dims), prod(dims), copies=4), task="Joint measurement coordinates",
                        remedy="Measure fewer devices at a time.")
         raw = result._raw_final_state() if t is None else result._raw_state_at(t)
         state = space.reduced(raw, backend, selected)

@@ -36,7 +36,7 @@ from scipy import sparse
 
 from quchip.approximations import Approximation, RWA, require_approximation
 from quchip.backend import _backend_context
-from quchip.backend._memory import require_memory
+from quchip.utils.memory import INDEX_BYTES, dense_bytes, require_memory
 from quchip.backend.protocol import Backend, Operator
 from quchip.control.drive import BaseDrive, CouplingDrive
 from quchip.chip.effective import EffectiveTerms, retained_operator
@@ -1058,7 +1058,9 @@ def _resolved_energy_interactions(chip: "Chip", resolution: _SystemResolution, a
         if approximation.filters_terms and not contribution.retained:
             dims = tuple(resolution.dims[index] for index in support)
             dimension = prod(dims)
-            require_memory((16 + 24 * len(dims)) * dimension**2,
+            # The filtered operator, and the weight table with its sorted copy and inverse.
+            require_memory(dense_bytes(dimension, dimension)
+                           + dense_bytes(dimension**2, len(dims), copies=3, itemsize=INDEX_BYTES),
                            task=f"Static band mask on {contribution.labels}",
                            remedy="Use interactions on smaller local supports.")
             levels = np.indices(dims).reshape(len(dims), -1).T

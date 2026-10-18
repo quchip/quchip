@@ -464,7 +464,7 @@ def test_compact_operators_are_stored_sparse_on_qutip():
 def test_a_dense_compact_operator_that_cannot_fit_raises(monkeypatch):
     """dynamiqs holds compact operators densely, so the memory check runs before each one is allocated."""
     pytest.importorskip("dynamiqs")
-    from quchip.backend import _memory
+    from quchip.utils import memory as _memory
 
     devices = [Resonator(freq=0.25, levels=3, label=f"r{i}") for i in range(4)]
     chain = [Capacitive(a, b, g=0.01) for a, b in zip(devices, devices[1:])]

@@ -320,10 +320,10 @@ class Backend(ABC):
         size : int
             Number of compact states.
         """
-        from quchip.backend._memory import require_memory
         from quchip.utils.jax_utils import concrete_array_module
+        from quchip.utils.memory import dense_bytes, require_memory
 
-        require_memory(16 * 2 * size**2, task=f"A dense compact operator (dimension {size})",
+        require_memory(dense_bytes(size, size, copies=2), task=f"A dense compact operator (dimension {size})",
                        remedy="Reduce the model, the initial excitation support, or an excitation cutoff's max_total.")
         xp = concrete_array_module(values)
         result = xp.zeros((size, size), dtype=complex)

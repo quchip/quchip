@@ -18,7 +18,7 @@ import numpy as np
 import scipy.linalg
 from scipy import sparse
 
-from quchip.backend._memory import available_memory_bytes
+from quchip.utils.memory import available_memory_bytes
 
 # Relative residual at which GMRES stops, the smaller one of a second attempt when two
 # starts disagree, and the residual above which a solve fails.

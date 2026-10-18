@@ -365,12 +365,14 @@ class SimulationResult:
         if self._states is None or len(self._states) == 0:
             raise RuntimeError(_NO_STATES_MSG)
         if self._excitation_space is not None:
-            from quchip.backend._memory import require_memory
             from math import prod
+            from quchip.utils.memory import dense_bytes, require_memory
             ket = self._backend.is_ket(self._states[0])
             # A stacked history keeps the cached states and a new stack.
             copies = 1 if isinstance(self._states, list) else 2
-            require_memory(16 * copies * len(self._states) * prod(self.dims)**(1 if ket else 2),
+            dimension = prod(self.dims)
+            require_memory(dense_bytes(len(self._states), *((dimension,) if ket else (dimension, dimension)),
+                                       copies=copies),
                            task="Full pulse history export", remedy="Use compact_state() or local observables.")
             lifted = [self._export_state(state, index) for index, state in enumerate(self._states)]
             return lifted if isinstance(self._states, list) else self._backend.stack_states(lifted)
@@ -688,7 +690,7 @@ class SimulationResult:
         backend = self._backend
         if self._excitation_space is not None:
             from math import prod
-            from quchip.backend._memory import require_memory
+            from quchip.utils.memory import require_memory
             require_memory((256 + 8 * len(self.dims) + 16 * len(self.times)) * prod(self.dims),
                            task="Full product population dictionary",
                            remedy="Use population(device, level) instead.")

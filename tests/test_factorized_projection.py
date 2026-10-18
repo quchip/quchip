@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from quchip import Capacitive, Chip, Exact, Fluxonium
-from quchip.backend import _memory
+from quchip.utils import memory as _memory
 from quchip.declarative import CouplingModel, Scalar, parameter
 
 

@@ -691,10 +691,10 @@ def _gauge_fixed_eigensystem(eigensystem: EigensystemData, reference: Any, label
 
 def _require_eigensystem_memory(dims: Sequence[int]) -> None:
     """Raise :class:`MemoryError` before a full static eigensystem that cannot fit."""
-    from quchip.backend._memory import require_memory
+    from quchip.utils.memory import eigensystem_bytes, require_memory
 
     dimension = int(np.prod(dims))
-    require_memory(16 * 6 * dimension**2, task=f"Full static eigensystem (dimension {dimension})",
+    require_memory(eigensystem_bytes(dimension), task=f"Full static eigensystem (dimension {dimension})",
                    remedy="Use a conserving model with labeled sector queries or reduce the model.")
 
 

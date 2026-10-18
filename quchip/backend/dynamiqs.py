@@ -43,7 +43,7 @@ import jax.numpy as jnp  # noqa: E402
 import jax.scipy.linalg as jsp_linalg  # noqa: E402
 import jax.tree_util as jtu  # noqa: E402
 
-from quchip.backend._memory import require_memory
+from quchip.utils.memory import require_memory
 from quchip.backend._response import coherence_response, linear_response, stationary_condition_number
 from quchip.utils.jax_utils import contains_tracer
 from quchip.utils.values import DeferredValue

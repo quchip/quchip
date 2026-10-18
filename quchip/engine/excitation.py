@@ -253,9 +253,10 @@ def largest_changing_entry(
     bindings = _bound_values(operator) if isinstance(operator, PhysicsExpr) else None
     if contains_tracer((operator, bindings)):
         return None
-    from quchip.backend._memory import fits_memory
+    from quchip.utils.memory import dense_bytes, fits_memory
 
-    if not fits_memory(_ENERGY_MATRIX_COPIES * 16 * prod(bases[label].native_dim for label in labels) ** 2):
+    dimension = prod(bases[label].native_dim for label in labels)
+    if not fits_memory(dense_bytes(dimension, dimension, copies=_ENERGY_MATRIX_COPIES)):
         return None
     energy = _energy_matrix(operator, labels, backend, bases, bindings)
     if energy is None:
@@ -275,10 +276,11 @@ def _energy_matrix(node: Any, support: tuple[str, ...], backend: Any, bases: Map
     records = [bases[label] for label in support]
     if contains_tracer(tuple(record.energy_vectors for record in records)):
         return None
-    from quchip.backend._memory import require_memory
+    from quchip.utils.memory import dense_bytes, require_memory
 
     dimension = prod(record.native_dim for record in records)
-    require_memory(_ENERGY_MATRIX_COPIES * 16 * dimension**2, task="Excitation-number proof on local support",
+    require_memory(dense_bytes(dimension, dimension, copies=_ENERGY_MATRIX_COPIES),
+                   task="Excitation-number proof on local support",
                    remedy="Use factored operators or declare their excitation_changes.")
     with jax.ensure_compile_time_eval(), backend.eager_operators():
         matrix = backend.to_array(materialize_expr(node, backend, bindings=bindings, local_bases=bases))

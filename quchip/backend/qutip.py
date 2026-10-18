@@ -35,7 +35,7 @@ from qutip.solver.mesolve import MESolver
 from qutip.solver.sesolve import SESolver
 from scipy import sparse
 
-from quchip.backend._memory import require_memory
+from quchip.utils.memory import require_memory
 from quchip.backend._response import coherence_response, linear_response, stationary_condition_number
 from quchip.utils.values import DeferredValue
 from quchip.backend._dims import (
