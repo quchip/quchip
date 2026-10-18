@@ -3,7 +3,10 @@
 An approximation (:class:`~quchip.approximations.RWA` or
 :class:`~quchip.approximations.Exact`) selects Hamiltonian terms. A space
 policy selects the product energy labels that a calculation keeps. quchip
-never selects or changes a space policy automatically.
+never sets or changes a chip's space policy. Without a policy,
+:meth:`~quchip.VNA.finite_power` and :meth:`~quchip.VNA.measure` can truncate
+their own stationary solve of a large excitation-conserving chip, and they
+warn which truncation they kept.
 """
 
 from __future__ import annotations

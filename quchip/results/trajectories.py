@@ -127,32 +127,3 @@ class TrajectoryResult(SimulationResult):
             Entry in a list-valued observable. Trajectory selection uses run().
         """
         return self._view(None, states=False).expect(key, index)
-
-    def check_truncation(self, *, threshold: float = 1e-3) -> dict[str, Any]:
-        """Report per-run cutoff maxima and their largest value across kept runs.
-
-        Parameters
-        ----------
-        threshold : float, default 1e-3
-            Warning threshold for each run's sampled boundary population.
-
-        Returns
-        -------
-        dict
-            ``runs`` contains each run's device maxima, and ``maximum`` aggregates
-            them. Missing per-run states and diagnostic samples raise an error
-            rather than falling back to an ensemble mean. Unsaved or unsampled
-            excursions remain unknown.
-        """
-        count = len(self.native.trajectories) if hasattr(self.native, "trajectories") else len(self.native.keys)
-        if not count:
-            raise RuntimeError("Per-run truncation data unavailable; retain native trajectory results.")
-        runs = tuple(self.run(i).check_truncation(threshold=threshold) for i in range(count))
-        deterministic_count = (len(self.native.deterministic_trajectories)
-                               if hasattr(self.native, "deterministic_trajectories")
-                               else int(getattr(self.native.method, "smart_sampling", False)))
-        deterministic = tuple(self._view(i, deterministic=True).check_truncation(threshold=threshold)
-                              for i in range(deterministic_count))
-        xp = self._problem.backend.array_module
-        maximum = {key: xp.max(xp.stack([run[key] for run in runs + deterministic])) for key in runs[0]}
-        return {"runs": runs, "deterministic": deterministic, "maximum": maximum}

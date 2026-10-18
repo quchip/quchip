@@ -9,6 +9,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
+from scipy import sparse
 
 from quchip.chip.ports import Port
 from quchip.engine.field_noise import amplifier_values, attenuation_value, noise_parameters, thermal_occupation_value
@@ -2656,11 +2657,24 @@ class PortNetwork:
                 (operators[downstream].to_dense(), operators[upstream].to_dense(), coefficient)
                 for downstream, upstream, coefficient in pairs
             ])
-        elif not contains_tracer(values) and not np.any(np.asarray(values)):
+        elif sparse.issparse(values) and not values.count_nonzero():
+            values = None
+        elif not sparse.issparse(values) and not contains_tracer(values) and not np.any(np.asarray(values)):
             # The compact caller already dropped each local term below the round-off threshold.
             values = None
         if values is None:
             return None
+        if sparse.issparse(values):
+            return CanonicalOperator.from_csr(
+                values.data,
+                values.indices,
+                values.indptr,
+                shape=values.shape,
+                dims=first.dims,
+                basis=first.basis,
+                subsystem_labels=first.subsystem_labels,
+                tag=f"slh-network:{self.label}",
+            )
         return CanonicalOperator.from_dense(
             values,
             dims=first.dims,

@@ -10,6 +10,15 @@ This file records notable user-visible changes to quchip.
 
 #### Changes and migration
 
+- `active_patch()` eliminates spectators in the default order of
+  `eliminate_spectators()`. Previously, it took the spectator farthest from the
+  active devices first, then label order. On rings of transmons and coupling
+  resonators, that order spread a drive over 768 states and dropped the
+  near-resonant exchange shifts of kept transmons. The reduced chip, its notes
+  and `eliminated_labels` can change. To keep a previous order, pass its
+  `eliminated_labels` as `order=`.
+  ([#151](https://github.com/quchip/quchip/issues/151),
+  [#183](https://github.com/quchip/quchip/pull/183))
 - `chip.state()`, `DressedResult.eigenstates` and
   `DressedResult.eigenvector_matrix` give each dressed vector a real,
   nonnegative amplitude on its assigned bare state. Previously, their signs
@@ -120,9 +129,49 @@ This file records notable user-visible changes to quchip.
   envelope now adds a carrier offset and keeps the envelope's value. Use the
   new path with `with_params()` and `QuantumSequence.vary()`.
   ([#106](https://github.com/quchip/quchip/pull/106))
+- Without an excitation cutoff, `VNA.finite_power()` and `VNA.measure()` with
+  `options=None` solve a chip that conserves the total excitation and has more
+  than 64 product states on the labels with `N <= K`, and they warn which `K`
+  they kept. Means, mode values and noise spectra can change by about `1e-6`
+  of their size. Pass `options={}` to keep the full product-space solve.
+  ([#156](https://github.com/quchip/quchip/issues/156),
+  [#185](https://github.com/quchip/quchip/pull/185))
+- The truncation check is now the function `quchip.check_truncation(result)`,
+  next to `with_truncation`. It accepts the same results and returns the same
+  reports as the `check_truncation()` methods of `SimulationResult`,
+  `TrajectoryResult` and `PartitionedSimulationResult`. These methods still
+  work but warn with `DeprecationWarning`, and quchip 0.6 removes them. Under
+  an `ExcitationCutoff`, a request now records only the cutoff and its boundary
+  totals for the check, and the check finds the compact rows when it runs.
+  ([#188](https://github.com/quchip/quchip/pull/188))
 
 #### New features
 
+- `eliminate_spectators(chip, keep)` reduces a chip to the kept devices, one
+  `eliminate()` step at a time, and returns every step. Its default order keeps
+  the operators of kept devices small under `local=True`. A spectator waits
+  while a spectator neighbour links it to a kept device near it in frequency,
+  so the chain keeps their fourth-order exchange shift. It also waits while its
+  step would couple two near-degenerate spectators beyond the fold limit
+  `g/Δ = 0.1`. On a ring of eight transmons with four kept, the drives stay
+  within 256 states. The largest f01 error is 22.8 kHz, against 98.1 kHz when
+  each arc goes from one end. `order=` sets the steps, and the default order
+  raises under JAX tracing of device parameters. Each `eliminate(...,
+  local=True)` step reports its widest operator support in `notes` and warns
+  when one dense copy needs 256 MiB or more. `active_patch()` accepts `order=`.
+  ([#151](https://github.com/quchip/quchip/issues/151),
+  [#183](https://github.com/quchip/quchip/pull/183))
+- `eliminate_spectators()` and `active_patch()` estimate the shift that each
+  Schrieffer-Wolff step omits from a kept device when a device that stays on
+  the chip links a removed spectator to it. An example is the coupler that
+  `active_patch(hops=1)` keeps next to a driven transmon. `omitted_shifts`
+  holds the estimate in GHz, and a note names each term. For a transmon with a
+  kept coupler and a spectator 40 MHz away, the estimate is -39.9 kHz and the
+  f01 error is +39.7 kHz. Outside the dispersive regime, and next to a direct
+  exchange, the estimate is `None`. `method="exact"` with `local=False` keeps
+  the shift.
+  ([#184](https://github.com/quchip/quchip/issues/184),
+  [#183](https://github.com/quchip/quchip/pull/183))
 - `ExcitationCutoff(max_total=K)` keeps the product energy labels whose levels
   sum to at most `K`. Set it with `Chip(..., space=...)` or `chip.with_space(...)`.
   It is separate from `RWA()` and `Exact()`, and quchip never sets it. The
@@ -132,12 +181,28 @@ This file records notable user-visible changes to quchip.
   deterministic pulse solves on QuTiP and dynamiqs use it, also under JAX
   tracing. Under `Exact()`, the frequencies of a ring of 24 three-level devices
   then need blocks of 301 and 2600 states at `K = 3`. Labels and supplied states
-  above the cutoff raise. `result.check_truncation()` reports the sampled
+  above the cutoff raise. `quchip.check_truncation(result)` reports the sampled
   population in the sectors that connect above the cutoff, as a heuristic.
-  `Chip.dress()`, VNA, steady-state, stochastic, elimination, local-fit and
-  partition workflows raise for an active cutoff. Compare results at
-  increasing `K`, because convergence need not be monotone.
+  `Chip.dress()`, VNA sweeps, output spectra and correlations, steady-state,
+  stochastic, elimination, local-fit and partition workflows raise for an
+  active cutoff. Compare results at increasing `K`, because convergence need
+  not be monotone.
   ([#180](https://github.com/quchip/quchip/pull/180))
+- `VNA.finite_power()` and `VNA.measure()` solve a chip that conserves the
+  total excitation on the product labels with `N <= K`, without the product
+  space. This route applies when every port lowers `N`, other channels lower
+  or conserve it, the inputs are vacuum, and the chip has no pump or thermal
+  occupation. A finite probe couples every `N` to `N ± 1`, so the route
+  truncates. With `chip.with_space(ExcitationCutoff(max_total=K))`, `K` is the
+  chip's. Without a cutoff, a chip with more than 64 product states starts at
+  `K = 2`, compares every grid point with `K + 1`, raises `K` until the change
+  is at most `1e-6` of each value, and warns which `K` it kept. A truncation
+  that leaves more than one stationary state raises. Two
+  transmon-readout pairs take 0.06 s instead of 18 s for two grid points, and
+  12 pairs keep 325 of 3²⁴ product states at `K = 2`. Under a cutoff, a chip
+  outside this route and a JAX-traced call solve the compact model directly.
+  ([#156](https://github.com/quchip/quchip/issues/156),
+  [#185](https://github.com/quchip/quchip/pull/185))
 - `eliminate()` removes a readout with one port in each direction of a two-way
   hanger feedline. The reduced network keeps the readout's dressed pole at the
   original ports, so vacuum `VNA.sweep()` keeps the dip and the reflection into
@@ -401,6 +466,16 @@ This file records notable user-visible changes to quchip.
 
 #### Performance
 
+- On QuTiP, exact excitation spaces and `ExcitationCutoff` solves store each
+  compact operator as CSR instead of a dense matrix of the compact dimension.
+  A dense backend, such as dynamiqs, checks each dense compact operator
+  against the available memory before it allocates it, instead of budgeting
+  eight such matrices for any number of terms. A driven ring of 24
+  three-level transmons at `ExcitationCutoff(max_total=3)` has 2,901 states.
+  Its `build_problem()` and `simulate()` now peak at 0.25 GB instead of
+  7.35 GB, and `check_truncation()` takes 0.6 s instead of 82 s.
+  ([#186](https://github.com/quchip/quchip/issues/186),
+  [#187](https://github.com/quchip/quchip/pull/187))
 - On a chip whose static model conserves the total energy-level index,
   `chip.state()` diagonalizes only the sector of its label, and the default
   initial state of a solve is the bare product with no static model. The

@@ -7,7 +7,7 @@ from quchip.approximations import RWA
 import numpy as np
 import pytest
 
-from quchip import Bath, Capacitive, ChargeDrive, Chip, DuffingTransmon, Gaussian
+from quchip import Bath, Capacitive, ChargeDrive, Chip, DuffingTransmon, Gaussian, check_truncation
 from quchip.chip.partition import (
     split_drive_ops,
     split_e_ops,
@@ -225,6 +225,12 @@ def test_engine_partition_parity_with_joint_solve():
     for key in ("q0", "q2", ("q0", "q2")):
         assert np.allclose(np.asarray(split.expect(key)), np.asarray(joint.expect(key)), atol=1e-8)
     assert np.allclose(np.asarray(split.population("q1", 0)), np.asarray(joint.population("q1", 0)), atol=1e-8)
+    report, reference = check_truncation(split, threshold=1.0), check_truncation(joint, threshold=1.0)
+    assert report.keys() == reference.keys() == {"q0", "q1", "q2", "q3"}
+    for label, value in reference.items():
+        assert float(report[label]) == pytest.approx(float(value), abs=1e-8)
+    with pytest.warns(DeprecationWarning, match="PartitionedSimulationResult.check_truncation"):
+        assert split.check_truncation(1.0) == report
 
 
 def test_engine_partition_mapping_initial_state():

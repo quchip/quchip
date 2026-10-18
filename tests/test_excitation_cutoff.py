@@ -1,6 +1,7 @@
 """An excitation cutoff keeps P H P and P L P on the product labels with N <= K."""
 
 import math
+from dataclasses import replace
 
 import jax
 import jax.numpy as jnp
@@ -21,8 +22,10 @@ from quchip import (
     PortNetwork,
     QuantumSequence,
     Resonator,
+    check_truncation,
     eliminate,
     fit_a_dress,
+    with_truncation,
 )
 from quchip.engine.sectors import excitation_classes
 
@@ -173,13 +176,17 @@ def _ported_pair():
 @pytest.mark.unit
 @pytest.mark.parametrize("workflow", [
     lambda chip: chip.steadystate(),
-    lambda chip: VNA(chip),
+    lambda chip: VNA(chip).sweep(7.0),
+    lambda chip: VNA(chip).output_spectrum("out", frequencies=0.0),
+    lambda chip: VNA(chip).g1("out", 0.0),
+    lambda chip: VNA(chip).g2("out", 0.0),
     lambda chip: eliminate(chip, "r"),
     lambda chip: chip.partition(),
     lambda chip: QuantumSequence(chip).active_patch(),
     lambda chip: QuantumSequence(chip).simulate(tlist=[0.0, 1.0], solver="mcsolve"),
     lambda chip: fit_a_dress(chip, constraints={"q": {"freq": 5.0}}, vary={"q": ["freq"]}, evaluator="local"),
-], ids=["steadystate", "vna", "eliminate", "partition", "active_patch", "mcsolve", "local_fit"])
+], ids=["steadystate", "vna_sweep", "vna_output_spectrum", "vna_g1", "vna_g2", "eliminate", "partition",
+        "active_patch", "mcsolve", "local_fit"])
 def test_workflows_without_cutoff_support_raise(workflow):
     """Each excluded workflow raises and names the full product space instead of ignoring the cutoff."""
     with pytest.raises(ValueError, match=r"with_space\(None\)"):
@@ -270,10 +277,32 @@ def test_driven_dissipative_solve_matches_a_sliced_lindblad_reference():
         assert np.trace(rho).real == pytest.approx(1, abs=1e-8)
         assert np.linalg.eigvalsh(rho).min() > -1e-9
         sampled.append(np.trace(rho[np.ix_(boundary, boundary)]).real)
-    observed = result.check_truncation(threshold=1.0)[ExcitationCutoff(3)]
+    observed = check_truncation(result, threshold=1.0)[ExcitationCutoff(3)]
     assert float(observed) == pytest.approx(max(sampled), abs=1e-10)
     with pytest.warns(UserWarning, match="not an error bound"):
-        result.check_truncation(threshold=0.0)
+        check_truncation(result, threshold=0.0)
+
+
+@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
+def test_cutoff_check_finds_the_boundary_rows_when_it_runs(backend):
+    """A request keeps the cutoff and its boundary totals, but no compact rows or matrices.
+
+    The check reads the boundary sectors from the saved diagonals, and with_truncation samples the same
+    projector during the solve.
+    """
+    chip = pair(loss=True, backend=backend, space=ExcitationCutoff(3))
+    problem = schedule(chip).build_problem(np.linspace(0.0, 16.0, 9), solver="mesolve", options=tolerances(backend))
+    plan = problem.truncation
+    # The counter-rotating coupling raises N by 2, and the drive and the heating raise it by 1.
+    assert plan.excitation == (3, problem.engine_result.metadata["excitation_reduction"]["boundary"]) == (3, (2, 3))
+    assert plan.space is problem.engine_result.excitation_space
+    assert (plan.operators, plan.metadata, plan.sampled) == ((), (), False)
+    saved = check_truncation(chip.solve(problem), threshold=1.0)
+    sampled = check_truncation(chip.solve(with_truncation(replace(problem, states="none"))), threshold=1.0)
+    assert saved.keys() == sampled.keys() == {"q", "r", ExcitationCutoff(3)}
+    for key, value in saved.items():
+        assert float(sampled[key]) == pytest.approx(float(value), abs=1e-12)
+    assert float(saved[ExcitationCutoff(3)]) > 1e-2
 
 
 def test_cascade_at_the_one_excitation_cutoff_matches_the_exact_space():
@@ -419,6 +448,34 @@ def test_state_of_a_large_cutoff_chip_raises_before_the_product_vector():
     chip = _ring(Exact()).with_space(ExcitationCutoff(3))
     with pytest.raises(MemoryError, match=r"Product-space state.*compact_state"):
         chip.state({"q0": 0})
+
+
+@pytest.mark.unit
+def test_compact_operators_are_stored_sparse_on_qutip():
+    """On QuTiP, every compact operator is CSR, so its memory follows its entries instead of the dimension squared."""
+    limited = pair(loss=True).with_space(ExcitationCutoff(3))
+    engine = schedule(limited).build_problem(np.linspace(0.0, 16.0, 5), solver="mesolve").engine_result
+    terms = (*engine.static_terms, *engine.dynamic_terms, *engine.collapse_terms)
+    assert len(terms) == 6 and all(term.operator.layout == "csr" for term in terms)
+
+
+@pytest.mark.unit
+@pytest.mark.optional_backend
+def test_a_dense_compact_operator_that_cannot_fit_raises(monkeypatch):
+    """dynamiqs holds compact operators densely, so the memory check runs before each one is allocated."""
+    pytest.importorskip("dynamiqs")
+    from quchip.backend import _memory
+
+    devices = [Resonator(freq=0.25, levels=3, label=f"r{i}") for i in range(4)]
+    chain = [Capacitive(a, b, g=0.01) for a, b in zip(devices, devices[1:])]
+    chip = Chip(devices, couplings=chain, approximation=Exact(), backend="dynamiqs").with_space(ExcitationCutoff(3))
+    sequence, tlist = QuantumSequence(chip), np.linspace(0.0, 3.0, 7)
+    # The first build keeps the dressed excitation classes, whose eigenvectors need more memory than one operator.
+    sequence.build_problem(tlist, initial_state={"r0": 1})
+    # The odd sectors keep 20 labels, so one dense operator and its fill take 12.8 kB.
+    monkeypatch.setattr(_memory, "available_memory_bytes", lambda: 10**4)
+    with pytest.raises(MemoryError, match=r"dense compact operator \(dimension 20\)"):
+        sequence.build_problem(tlist, initial_state={"r0": 1})
 
 
 @pytest.mark.validation

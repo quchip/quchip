@@ -158,7 +158,14 @@ def eliminate(chip: "Chip", target: Any, *, method: str = "sw", local: bool = Fa
         intermediate states from all local Hamiltonian terms, including
         spectator dressing.
         ``chi`` describes only the patch. Chips with baths
-        raise ``NotImplementedError``.
+        raise ``NotImplementedError``. In a chain of local steps, an
+        operator on a kept device spreads over each patch that it meets, so
+        the order of the steps sets its size. If every coupler of a ring
+        goes first, a drive on one transmon spreads over all of them.
+        :func:`~quchip.chip.transformations.eliminate_spectators` chooses an
+        order (PHYSICS.md §10.8). Each local step reports its widest operator
+        support in ``notes`` and warns when one dense copy of that operator
+        needs 256 MiB or more.
 
     Returns
     -------

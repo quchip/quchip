@@ -10,7 +10,7 @@ import pytest
 from quchip import (
     Bath, Capacitive, ChargeDrive, Chip, DuffingTransmon, Gaussian, QuantumSequence, PortNetwork,
 )
-from quchip.chip.transformations.active_patch import active_labels, coupling_adjacency, graph_distances
+from quchip.chip.transformations.active_patch import active_labels
 
 
 def _chain(n=4, g=0.004):
@@ -29,16 +29,14 @@ def _driven_pair_chain():
     return chip, seq
 
 
-def test_graph_distances():
-    """graph_distances reports BFS hop-distance from the active devices, which include a tone's frame device."""
+def test_active_labels_include_the_frame_device_of_a_tone():
+    """A tone on q0 that follows the frame of q1 makes both active; one hop adds q2."""
     chip, qs, drives = _chain()
     seq = QuantumSequence(chip)
     seq.schedule(drives[0], envelope=Gaussian(duration=20.0, sigmas=3, amplitude=0.02), freq=chip.freq(qs[1]),
                  frame=qs[1])
-    active = active_labels(seq, hops=0)
-    assert active == {"q0", "q1"}
-    dist = graph_distances(coupling_adjacency(chip), active)
-    assert dist == {"q0": 0, "q1": 0, "q2": 1, "q3": 2}
+    assert active_labels(seq, hops=0) == {"q0", "q1"}
+    assert active_labels(seq, hops=1) == {"q0", "q1", "q2"}
 
 
 def test_active_patch_trivial_when_everything_active():

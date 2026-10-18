@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from quchip import TrajectoryResult, with_monitoring, with_truncation
+from quchip import TrajectoryResult, check_truncation, with_monitoring, with_truncation
 from quchip.engine.ir import SolveProblem
 
 from quchip import CouplingDrive, DeviceDrive, Envelope, TimeCoefficient
@@ -94,5 +94,5 @@ attenuator = ExternalAttenuator(line="pump", loss=0.5)
 
 def inspect_trajectory(problem: SolveProblem, result: TrajectoryResult) -> None:
     prepared: SolveProblem = with_truncation(with_monitoring(problem, {}))
-    result.run(0).check_truncation()
+    check_truncation(result.run(0))
     _ = prepared, result.native, result.expect("q")

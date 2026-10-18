@@ -172,7 +172,7 @@ def test_native_cutoff_reconstruction_is_sampled_in_rotating_frame():
 
     q = Exchange(label="q", levels=2)
     chip = Chip([q], frame="rotating")
-    from quchip import with_truncation
+    from quchip import check_truncation, with_truncation
     from quchip.engine import solve_problem
     from quchip.engine.sampling import automatic_tlist
 
@@ -180,7 +180,7 @@ def test_native_cutoff_reconstruction_is_sampled_in_rotating_frame():
         [0.0, 1.0], initial_state=chip.backend.basis(2, 0), states="none"))
     from dataclasses import replace
     result = solve_problem(replace(problem, tlist=automatic_tlist([problem])))
-    assert result.check_truncation(threshold=2.0)["q"] > 0.997
+    assert check_truncation(result, threshold=2.0)["q"] > 0.997
     np.testing.assert_allclose(result._boundary_traces[0],
                                np.sin(2 * np.pi * q.rate * result.times) ** 2, atol=1e-6)
 

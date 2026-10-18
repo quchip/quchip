@@ -20,6 +20,7 @@ Frequencies are in GHz, times in ns, temperatures in mK and decay rates in
 | Outcomes from a saved quantum state | `result.measure()` |
 | Bare parameters that meet dressed targets | `fit_a_dress()` |
 | A reduced model around driven devices | `sequence.active_patch()` |
+| A reduced model of chosen devices | `eliminate_spectators(chip, keep)` |
 | Diagonalize effective terms, such as a junction cosine | `eliminate(chip, label, method="exact")` |
 
 The {doc}`guides <guides/index>` develop these workflows. The
@@ -308,10 +309,18 @@ model's vacuum-assigned eigenvector. `result.check_truncation()[ExcitationCutoff
 gives the maximum sampled population in the sectors that one step can move
 above the cutoff. This value is a warning heuristic, not an error bound.
 
-`chip.dress()`, VNA and stationary analyses, `steadystate()`, stochastic
-trajectory solvers, `eliminate()`, `active_patch()`,
-`fit_a_dress(evaluator="local")` and `chip.partition()` raise for a limited
-chip. Use `chip.with_space(None)` for them.
+`VNA.finite_power()` and `VNA.measure()` solve the truncated model.
+`chip.dress()`, `VNA.sweep()`, `VNA.output_spectrum()`, `VNA.g1()`,
+`VNA.g2()`, `steadystate()`, stochastic trajectory solvers, `eliminate()`,
+`eliminate_spectators()`, `active_patch()`, `fit_a_dress(evaluator="local")`
+and `chip.partition()` raise for a limited chip. Use `chip.with_space(None)`
+for them.
+
+Without a cutoff, `finite_power()` and `measure()` truncate their own solve of
+a chip that conserves the total excitation and has more than 64 product states.
+They start at `K = 2`, compare every grid point with `K + 1`, and warn which
+`K` they kept. Set the cutoff on the chip to choose `K`, or pass `options={}`
+to solve the full product space.
 
 ## Declare network noise
 

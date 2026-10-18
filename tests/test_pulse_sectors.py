@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from quchip import RWA, Capacitive, Chip, QuantumSequence, Resonator
+from quchip import RWA, Capacitive, Chip, QuantumSequence, Resonator, check_truncation
 
 
 def pair(*, loss=False, backend=None):
@@ -84,7 +84,7 @@ def test_decay_coherence_compact_replay_and_measurement(backend):
     np.testing.assert_allclose(
         chip.backend.to_array(resumed.final_state), chip.backend.to_array(reference.final_state), atol=3e-6
     )
-    assert result.check_truncation()
+    assert check_truncation(result)
 
 
 @pytest.mark.parametrize("loss", [False, True])
@@ -570,25 +570,31 @@ def test_full_pulse_route_counts_stored_operator_entries(monkeypatch):
     assert problem.engine_result.dims == (3,) * 6
 
 
-def test_dense_compact_shortfall_selects_the_full_route(monkeypatch):
-    """A proven space whose dense operators cannot fit solves on the sparse product route."""
+@pytest.mark.parametrize("backend, dimension",
+                         [("qutip", 40), pytest.param("dynamiqs", 81, marks=pytest.mark.optional_backend)])
+def test_low_memory_moves_only_dense_compact_operators_to_the_product_route(monkeypatch, backend, dimension):
+    """QuTiP holds compact operators as CSR; dense compact operators that cannot fit solve on the product route."""
     from quchip import Exact
     from quchip.backend import _memory
 
+    if backend == "dynamiqs":
+        dq = pytest.importorskip("dynamiqs")
+        options = {"method": dq.method.Tsit5(atol=1e-11, rtol=1e-10)}
+    else:
+        options = {"atol": 1e-11, "rtol": 1e-10}
     devices = [Resonator(freq=0.25, levels=3, label=f"r{i}") for i in range(4)]
     chain = [Capacitive(a, b, g=0.01) for a, b in zip(devices, devices[1:])]
-    chip = Chip(devices, couplings=chain, approximation=Exact())
+    chip = Chip(devices, couplings=chain, approximation=Exact(), backend=backend)
     sequence = QuantumSequence(chip)
-    kwargs = dict(tlist=np.linspace(0, 3, 7), initial_state={"r0": 1}, dissipation=False,
-                  options={"atol": 1e-11, "rtol": 1e-10})
+    kwargs = dict(tlist=np.linspace(0, 3, 7), initial_state={"r0": 1}, dissipation=False, options=options)
     compact = sequence.simulate(**kwargs)
     assert compact.stats["excitation_reduction"]["dimension"] == 40
     # Dense operators on the 40 odd-parity states need 206 kB. Each sparse operator needs less than 20 kB.
     monkeypatch.setattr(_memory, "available_memory_bytes", lambda: 10**5)
-    full = sequence.simulate(**kwargs)
-    assert full.stats["excitation_reduction"]["dimension"] == 81
+    limited = sequence.simulate(**kwargs)
+    assert limited.stats["excitation_reduction"]["dimension"] == dimension
     # Both routes integrate the same equations at rtol 1e-10, so 2e-7 bounds their difference.
-    np.testing.assert_allclose(full.population("r3", 1), compact.population("r3", 1), atol=2e-7)
+    np.testing.assert_allclose(limited.population("r3", 1), compact.population("r3", 1), atol=2e-7)
 
 
 def test_large_partitioned_pulse_keeps_local_results_and_guards_joint_export(monkeypatch):

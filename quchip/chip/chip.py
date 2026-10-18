@@ -2232,7 +2232,7 @@ class Chip:
     def solve(self, problem: "SolveProblem") -> "SimulationResult":
         """Solve a typed :class:`SolveProblem` through this chip's backend.
 
-        Call ``result.check_truncation()`` to inspect saved boundary samples.
+        Call :func:`quchip.check_truncation` to inspect saved boundary samples.
 
         Parameters
         ----------

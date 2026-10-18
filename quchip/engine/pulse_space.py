@@ -12,6 +12,7 @@ from math import prod
 from typing import Any
 
 import numpy as np
+from scipy import sparse
 
 from quchip.backend._memory import fits_memory, require_memory
 from quchip.utils.jax_utils import concrete_array_module, contains_tracer
@@ -22,9 +23,12 @@ from quchip.utils.jax_utils import concrete_array_module, contains_tracer
 _CUTOFF_RESIDUE = 1e-20
 
 
-def _dense_bytes(size, devices):
-    """Peak bytes of dense compact operators and coordinate labels on ``size`` states."""
-    return 16 * 8 * size**2 + 8 * devices * size
+_OPERATOR_REMEDY = "Reduce the model, the initial excitation support, or an excitation cutoff's max_total."
+
+
+def _dense_bytes(size, matrices):
+    """Bytes of ``matrices`` dense complex operators on ``size`` states."""
+    return 16 * matrices * size**2
 
 
 def _require_inside(cutoff, outside, total, source):
@@ -52,11 +56,7 @@ class PulseSpace:
 
         totals = tuple(sorted(set(totals)))
         size = sum(sector_size(dims, total) for total in totals)
-        require_memory(
-            _dense_bytes(size, len(dims)),
-            task=f"Exact pulse space (dimension {size})",
-            remedy="Reduce the model, the initial excitation support, or an excitation cutoff's max_total.",
-        )
+        require_memory(8 * len(dims) * size, task=f"Exact pulse space (dimension {size})", remedy=_OPERATOR_REMEDY)
         levels = np.concatenate([_sector_levels(tuple(dims), n) for n in totals])
         levels.flags.writeable = False
         return cls(tuple(dims), tuple(labels), totals, levels, dict(bases))
@@ -73,16 +73,26 @@ class PulseSpace:
     def rows(self):
         return {tuple(label): index for index, label in enumerate(self.levels)}
 
-    def embed(self, backend, operator, support):
-        """Gather a resolved local operator without a product-space allocation."""
+    def entries(self, backend, operator, support):
+        """Return the rows, columns and values of a resolved local operator on this space."""
         from quchip.engine.assembly import _energy_operator
         from quchip.engine.sectors import _level_pairs
 
         support = tuple(support) or tuple(range(len(self.dims)))
         matrix = _energy_operator(operator, tuple(self.labels[axis] for axis in support), self.bases, backend)
-        xp = concrete_array_module(matrix)
         rows, columns, local_rows, local_columns = _level_pairs(self.dims, support, self.levels, self.levels)
-        values = matrix[local_rows, local_columns]
+        return rows, columns, matrix[local_rows, local_columns]
+
+    def embed(self, backend, operator, support):
+        """Gather a resolved local operator without a product-space allocation.
+
+        A NumPy backend receives a CSR operator, and other backends a dense one.
+        """
+        rows, columns, values = self.entries(backend, operator, support)
+        if backend.array_module is np:
+            return self._sparse(backend, rows, columns, values)
+        self._require_dense(2)
+        xp = concrete_array_module(values)
         result = xp.zeros((self.size, self.size), dtype=complex)
         if xp is np:
             result[rows, columns] = values
@@ -101,6 +111,10 @@ class PulseSpace:
         terms = _local_products(operator, labels, self.bases)
         if terms is None:
             return None
+        if backend.array_module is np:
+            return self._sparse(backend, *self._authored_entries(terms))
+        # The product below holds the result, the running term, a gathered factor and their product.
+        self._require_dense(4)
         xp = concrete_array_module(terms, tuple(self.bases[label].energy_vectors for label in labels))
         result = xp.zeros((self.size, self.size), dtype=complex)
         for coefficient, factors in terms:
@@ -115,6 +129,45 @@ class PulseSpace:
                     value = value * local[levels[:, None], levels[None, :]]
             result = result + value
         return backend.from_array(result, dims=[[self.size], [self.size]])
+
+    def _authored_entries(self, terms):
+        """Return the rows, columns and values of a sum of local products, with repeated entries."""
+        from quchip.engine.sectors import _level_pairs
+
+        rows, columns, values = [np.zeros(0, dtype=int)], [np.zeros(0, dtype=int)], [np.zeros(0, dtype=complex)]
+        for coefficient, factors in terms:
+            axes = tuple(sorted(self.labels.index(label) for label in factors))
+            if not axes:
+                diagonal = np.arange(self.size)
+                rows.append(diagonal)
+                columns.append(diagonal)
+                values.append(np.full(self.size, coefficient, dtype=complex))
+                continue
+            local = np.ones((1, 1), dtype=complex)
+            for axis in axes:
+                vectors = np.asarray(self.bases[self.labels[axis]].energy_vectors)
+                local = np.kron(local, vectors.conj().T @ np.asarray(factors[self.labels[axis]]) @ vectors)
+            pair_rows, pair_columns, local_rows, local_columns = _level_pairs(self.dims, axes, self.levels, self.levels)
+            rows.append(pair_rows)
+            columns.append(pair_columns)
+            values.append(coefficient * local[local_rows, local_columns])
+        return np.concatenate(rows), np.concatenate(columns), np.concatenate(values)
+
+    def _require_dense(self, matrices):
+        """Raise before ``matrices`` dense operators on this space exceed the available memory."""
+        require_memory(_dense_bytes(self.size, matrices), task=f"A dense compact operator (dimension {self.size})",
+                       remedy=_OPERATOR_REMEDY)
+
+    def _sparse(self, backend, rows, columns, values):
+        """Return the CSR operator with these entries, summing repeated ones and dropping zeros."""
+        from quchip.engine.ir import CanonicalOperator
+
+        matrix = sparse.csr_matrix((np.asarray(values, dtype=complex), (rows, columns)), shape=(self.size, self.size))
+        matrix.eliminate_zeros()
+        return backend.from_canonical_operator(CanonicalOperator.from_csr(
+            matrix.data, matrix.indices, matrix.indptr, shape=matrix.shape, dims=(self.size,), basis="fock",
+            subsystem_labels=("0",),
+        ))
 
     def lift(self, state, backend):
         """Expand a state into captured solver coordinates, after a memory check."""
@@ -407,7 +460,7 @@ def plan_pulse_space(chip, operations, states, resolution, approximation, dissip
         return PulseSpace.create(dims, labels, occupied, bases), reason, boundary
     if size == prod(dims):
         return None, "The proven generator closure reaches the full product space.", None
-    if not fits_memory(_dense_bytes(size, len(dims))):
+    if chip.backend.array_module is not np and not fits_memory(_dense_bytes(size, 8)):
         return None, f"Dense compact operators on {size} states do not fit in available memory.", None
     reason = "The initial support and complete generator close exactly."
     return PulseSpace.create(dims, labels, occupied, bases), reason, None
