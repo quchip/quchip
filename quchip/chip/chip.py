@@ -24,7 +24,7 @@ from quchip.backend import _backend_context
 from quchip.backend.protocol import Backend, Operator, State
 from quchip.approximations import Approximation, RWA, require_approximation
 from quchip.cutoff import ExcitationCutoff, active_cutoff, require_space
-from quchip.chip.analysis import ChipAnalysis, DressedResult, KerrMatrix
+from quchip.chip.analysis import ChipAnalysis, KerrMatrix
 from quchip.chip.baths import Bath
 from quchip.chip.effective import EffectiveTerms
 from quchip.chip.port_network import PortNetwork
@@ -36,6 +36,7 @@ from quchip.control.equipment import ControlEquipment
 from quchip.control.signal import Crosstalk, SignalTransform
 from quchip.declarative.expr import PhysicsExpr
 from quchip.devices.base import BaseDevice
+from quchip.engine.dressing import DressedResult
 from quchip.engine.frames import FramePlan
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
 from quchip.utils.labeling import LabelKeyedDict, resolve_label
@@ -1970,11 +1971,11 @@ class Chip:
         and names :meth:`bare_state` as the product-state alternative.
 
         This method is safe in ``jax.jit``/``grad``/``vmap``. Under tracing,
-        the :func:`~quchip.chip.dressing.label_eigensystem` array kernel
+        the :func:`~quchip.engine.dressing.label_eigensystem` array kernel
         selects the assigned eigenvector column, so dressed initial states are
         differentiable end-to-end. The state's amplitude on its assigned
         product state is real and nonnegative (see
-        :func:`~quchip.chip.dressing.gauge_phases`), so a nondegenerate state
+        :func:`~quchip.engine.dressing.gauge_phases`), so a nondegenerate state
         vector, not only its populations, is the same on each backend. On a
         chip whose static model conserves the total energy-level index, the
         method diagonalizes only the sector of the label.
@@ -2006,7 +2007,7 @@ class Chip:
         CompactState
             Captured state accepted as a pulse simulation's initial_state.
         """
-        from quchip.results.compact import compact_state
+        from quchip.engine.states import compact_state
         return compact_state(self, *components, dressed=dressed)
 
     def bare_state(

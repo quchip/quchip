@@ -1253,11 +1253,11 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
                                for label, dim in zip(labels, dims)))
             frequency, weight = reduction.dressed_transition(ctx, lowering)
     if coupled_response:
-        from quchip.chip.port_network import _ModeResponse
+        from quchip.engine.slh import ModeResponse
 
         network = final.port_network
         assert network is not None
-        network._mode_responses += (_ModeResponse(
+        network._mode_responses += (ModeResponse(
             mode_label, tuple(port.label for port in boundary_ports), frequency, weight, weight * internal_rate,
         ),)
         notes.append(

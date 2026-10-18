@@ -48,7 +48,7 @@ from quchip.utils.jax_utils import (
 from quchip.utils.constants import TWO_PI
 
 if TYPE_CHECKING:
-    from quchip.chip.dressing import BareProductReference
+    from quchip.engine.dressing import BareProductReference
     from quchip.control.envelopes import Envelope
     from quchip.control.signal import SignalKey
     from quchip.engine.frames import FramePlan
@@ -1684,7 +1684,7 @@ class EngineResult:
         labeling : str, default="DE"
             Bare-to-dressed assignment strategy.
         """
-        from quchip.chip.analysis import dress_engine_result
+        from quchip.engine.dressing import dress_engine_result
 
         return dress_engine_result(
             self,

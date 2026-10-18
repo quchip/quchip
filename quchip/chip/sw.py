@@ -31,7 +31,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from quchip.chip.dressing import BareProductReference, Labeling, assign_rowwise_greedy, label_eigensystem
+from quchip.engine.dressing import BareProductReference, Labeling, assign_rowwise_greedy, label_eigensystem
 from quchip.utils.jax_utils import concrete_array_module, contains_tracer
 
 if TYPE_CHECKING:

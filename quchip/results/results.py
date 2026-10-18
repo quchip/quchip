@@ -423,13 +423,13 @@ class SimulationResult:
         return lifted
 
     def _target_state(self, target):
-        from quchip.results.compact import CompactState, _compatible_values
+        from quchip.engine.states import CompactState, compatible_values
         backend = self._backend
         space = self._excitation_space
         if isinstance(target, CompactState):
             if target.values.shape[-1] != 1:
                 raise TypeError("Overlap targets must be kets.")
-            values = _compatible_values(
+            values = compatible_values(
                 target, tuple(label for label, _ in self.device_info), self.dims, self._bases, backend,
             )
             if space is not None:
@@ -456,7 +456,7 @@ class SimulationResult:
         CompactState
             Captured excitation state accepted as initial_state by a later solve.
         """
-        from quchip.results.compact import CompactState
+        from quchip.engine.states import CompactState
         if self._excitation_space is None:
             raise ValueError("This result stores full product states. Use state() to reuse them.")
         state = self._raw_final_state() if t is None else self._raw_state_at(t)

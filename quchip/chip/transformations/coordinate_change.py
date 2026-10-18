@@ -14,7 +14,7 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from quchip.chip.dressing import BareProductReference, label_eigensystem
+from quchip.engine.dressing import BareProductReference, label_eigensystem
 from quchip.chip.effective import EffectiveTerms, OperatorProjection
 from quchip.chip.sw import bare_hamiltonian
 from quchip.chip.transformations.plumbing import inherited_notes, rebuild_chip

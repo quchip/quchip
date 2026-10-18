@@ -97,7 +97,7 @@ class SectorProbeModel:
         """
         if cutoff in self._operators:
             return self._operators[cutoff]
-        from quchip.chip.observables import prepare_local_op
+        from quchip.engine.observables import prepare_local_op
         from quchip.engine.assembly import _energy_operator
 
         sectors, levels = self.sectors, self._levels(cutoff)

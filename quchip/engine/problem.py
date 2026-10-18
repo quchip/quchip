@@ -22,7 +22,14 @@ import numpy as np
 
 from quchip.approximations import Approximation
 from quchip.backend import BatchSolveError
-from quchip.chip.states import default_initial_state, materialize_state_spec
+from quchip.engine.states import (
+    CompactState,
+    compatible_values,
+    default_initial_state,
+    materialize_compact,
+    materialize_state_spec,
+    truncated_vacuum,
+)
 from quchip.engine.ir import (
     ControlOp,
     EngineResult,
@@ -333,15 +340,13 @@ def build_solve_batch_from_results(
 def _initial_state(chip, spec, result, start):
     if result.excitation_space is not None:
         from quchip.cutoff import active_cutoff
-        from quchip.results.compact import materialize_compact, truncated_vacuum
 
         if spec is None and active_cutoff(chip) is not None:
             return truncated_vacuum(chip, result, start)
         return materialize_compact(chip, spec, result.excitation_space)
-    from quchip.results.compact import CompactState, _compatible_values
     if isinstance(spec, CompactState):
         backend = chip.backend
-        values = _compatible_values(spec, tuple(d.label for d in chip.devices), result.dims, result.bases, backend)
+        values = compatible_values(spec, tuple(d.label for d in chip.devices), result.dims, result.bases, backend)
         native = backend.from_array(values, dims=[[spec.space.size],
                                     [1] if spec.values.shape[-1] == 1 else [spec.space.size]])
         spec = spec.space.lift(native, backend)

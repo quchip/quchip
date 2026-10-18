@@ -51,7 +51,7 @@ class _Acquisition:
 
 def capture_modes(chip: Any, operating: Any, modes: tuple[str, ...]) -> tuple[Any, Any, Any]:
     """Read authored Fock-mode observables in the solved stationary frames."""
-    from quchip.chip.observables import prepare_local_op
+    from quchip.engine.observables import prepare_local_op
 
     backend = chip.backend
     xp = backend.array_module

@@ -1,14 +1,242 @@
-"""Reusable states in captured excitation coordinates."""
+"""State preparation in the solver basis.
+
+Product states from energy labels or authored local kets, authored states of
+the full chip, the default initial state of a solve, and reusable states in
+captured excitation coordinates. The chip's state queries and the solve
+problems call these functions.
+"""
 
 from __future__ import annotations
 
+import warnings
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from math import prod
+from typing import TYPE_CHECKING, Any
 
 import jax
 import numpy as np
 
+from quchip.backend.protocol import State
 from quchip.engine.pulse_space import PulseSpace
+from quchip.utils.constants import TWO_PI
+from quchip.utils.jax_utils import array_namespace, maybe_concrete_scalar
+
+if TYPE_CHECKING:
+    from quchip.chip.chip import Chip
+
+
+def bare_state_from_bases(chip: "Chip", resolved: Mapping[str, Any], bases: Mapping[str, Any]) -> State:
+    """Build a product state from the shared local state preparation."""
+    kets = bare_local_kets(chip, resolved, bases)
+    return kets[0] if len(kets) == 1 else chip.backend.tensor_states(*kets)
+
+
+def bare_local_kets(
+    chip: "Chip",
+    resolved: Mapping[str, Any],
+    bases: Mapping[str, Any],
+) -> list[State]:
+    """Resolve each local ket without allocating its tensor product."""
+    backend = chip.backend
+    available = list(chip._device_map.keys())
+    prepared = dict(resolved)
+
+    for label in resolved:
+        if label not in chip._device_map:
+            raise ValueError(f"Unknown device label '{label}'. Available labels: {available}")
+
+    for label, val in resolved.items():
+        if isinstance(val, bool):
+            raise ValueError(f"Level index for '{label}' must be an integer, got {type(val).__name__}: {val!r}")
+        basis = bases[label]
+        if isinstance(val, int):
+            if val < 0:
+                raise ValueError(f"Level index for '{label}' must be >= 0, got {val}")
+            if val >= basis.resolved_dim:
+                raise ValueError(
+                    f"Level index {val} for '{label}' exceeds the resolved "
+                    f"dimension {basis.resolved_dim}."
+                )
+        else:
+            from quchip.declarative.expr import (
+                as_state_expr,
+                materialize_expr,
+            )
+
+            device = chip[label]
+            expression = as_state_expr(
+                val,
+                labels=(device.label,),
+                dims=(basis.native_dim,),
+                name=rf"\lvert\psi_{{{device.label}}}\rangle",
+                owner=device,
+                scope=device.label,
+            )
+            val = materialize_expr(expression, backend)
+            prepared[label] = val
+            shape = getattr(val, "shape", None)
+            is_array_ket = shape is not None and (
+                len(shape) == 1 or (len(shape) == 2 and shape[1] == 1)
+            )
+            if not is_array_ket and not backend.is_ket(val):
+                raise ValueError(f"State for '{label}' must be a ket vector, got a non-ket state")
+            if shape is not None and shape[0] != basis.native_dim:
+                raise ValueError(
+                    f"Authored state dimension for '{label}' is {val.shape[0]}, "
+                    f"expected {basis.native_dim}."
+                )
+
+    kets: list[State] = []
+    for dev in chip.devices:
+        val = prepared.get(dev.label)
+        basis = bases[dev.label]
+        if val is None:
+            level = 0
+        elif isinstance(val, int):
+            level = val
+        else:
+            authored = backend.to_array(val).reshape(basis.native_dim, -1)
+            projected = basis.vectors.conj().T @ authored
+            authored_norm = backend.array_module.linalg.norm(authored)
+            projected_norm = backend.array_module.linalg.norm(projected)
+            lost = maybe_concrete_scalar(authored_norm**2 - projected_norm**2)
+            if lost is not None and lost > 1e-10:
+                warnings.warn(
+                    f"Projection discarded {lost:.3g} of the state norm on {dev.label!r}.",
+                    stacklevel=2,
+                )
+            kets.append(
+                backend.from_array(
+                    projected,
+                    dims=[[basis.resolved_dim], [1]],
+                )
+            )
+            continue
+
+        vector = basis.energy_state(level).reshape(basis.resolved_dim, 1)
+        kets.append(backend.from_array(vector, dims=[[basis.resolved_dim], [1]]))
+
+    return kets
+
+
+def default_initial_state(chip: "Chip", engine_result: Any, start_time: Any) -> State:
+    """Return the default initial state for a solve.
+
+    Use the eigenstate assigned to the all-ground label, taken from the
+    undriven static lab-frame Hamiltonian that ``engine_result.approximation``
+    keeps. Make its overlap with the bare product real and nonnegative, then
+    express it in the solve frame at ``start_time``. If the bare product is
+    already an eigenstate, return the bare product directly.
+    """
+    from quchip.engine.assembly import _may_raise_ground
+
+    approximation = engine_result.approximation
+    moves = engine_result.slh.has_network_hamiltonian or _may_raise_ground(chip, approximation, engine_result.bases)
+    ground = chip.analysis._ground_ket(approximation) if moves else None
+    if ground is None:
+        return bare_state_from_bases(chip, {}, engine_result.bases)
+    ket = _to_solve_frame(ground, chip, engine_result, start_time)
+    dims = list(engine_result.dims)
+    return chip.backend.from_array(ket.reshape(-1, 1), dims=[dims, [1] * len(dims)])
+
+
+def _to_solve_frame(ket: Any, chip: "Chip", engine_result: Any, start_time: Any) -> Any:
+    """Express a lab-frame ket in the solve's frame at ``start_time``.
+
+    The solver evolves ``U(t)† psi`` with ``U(t) = exp(-i 2π t Σ_i f_i n_i)``
+    in absolute time, where ``n_i`` is each device's energy-level index.
+    """
+    xp = chip.backend.array_module
+    frequencies = engine_result.resolved_frame.frequencies
+    tensor = ket.reshape(tuple(engine_result.dims))
+    for axis, device in enumerate(chip.devices):
+        angle = TWO_PI * start_time * frequencies.get(device.label, 0.0)
+        if maybe_concrete_scalar(angle) == 0.0:
+            continue
+        record = engine_result.bases[device.label]
+        phases = xp.exp(1j * xp.asarray(angle) * xp.arange(record.resolved_dim))
+        transform = record.energy_to_solver()
+        if transform is None:
+            local = xp.diag(phases)
+        else:
+            transform = xp.asarray(transform)
+            local = (transform * phases) @ xp.conj(transform).T
+        tensor = xp.moveaxis(xp.tensordot(local, tensor, axes=([1], [axis])), 0, axis)
+    return tensor.reshape(-1)
+
+
+def materialize_state_spec(
+    chip: "Chip",
+    state_spec: Any,
+    bases: Mapping[str, Any],
+) -> State:
+    """Materialize one authored state specification in the engine's solver basis.
+
+    An omitted state is :func:`default_initial_state`, which needs the solve's engine result.
+    """
+    if isinstance(state_spec, (Mapping, str)):
+        from quchip.chip.states import normalize_device_state_mapping
+
+        resolved = normalize_device_state_mapping(chip, state_spec, {})
+        return bare_state_from_bases(chip, resolved, bases)
+
+    from quchip.declarative.expr import as_state_expr, materialize_expr
+
+    backend = chip.backend
+    ordered = [bases[device.label] for device in chip.devices]
+    authored_dims = tuple(record.native_dim for record in ordered)
+    resolved_dims = tuple(record.resolved_dim for record in ordered)
+    authored_dim = prod(authored_dims)
+    resolved_dim = prod(resolved_dims)
+    # QuTiP ``Qobj`` (``full``) and dynamiqs ``QArray`` (``to_jax``) states are in
+    # solver coordinates whichever backend solves; plain arrays and symbolic
+    # specifications are authored.
+    resolved_native = (
+        backend.is_native_state(state_spec) or hasattr(state_spec, "full") or hasattr(state_spec, "to_jax")
+    )
+
+    shape = getattr(state_spec, "shape", None)
+    if shape is None:
+        state_spec = as_state_expr(
+            state_spec,
+            labels=tuple(device.label for device in chip.devices),
+            dims=authored_dims,
+            name=r"\lvert\psi\rangle",
+            owner=chip,
+            scope="chip",
+        )
+    state = materialize_expr(state_spec, backend)
+    shape = getattr(state, "shape", None)
+    if shape is None:
+        raise TypeError("Initial state must be a semantic specification, callable, or ket.")
+    if resolved_native:
+        if shape[0] != resolved_dim:
+            raise ValueError(
+                f"A solver-native initial state must have dimension {resolved_dim}, got {shape}."
+            )
+        return state
+    if shape[0] != authored_dim or len(shape) not in (1, 2) or (len(shape) == 2 and shape[1] != 1):
+        raise ValueError(
+            "Initial-state dimension must match the authored or resolved chip space; "
+            f"got {shape}, authored {authored_dim}, resolved {resolved_dim}."
+        )
+
+    authored = backend.to_array(state).reshape(authored_dim, 1)
+    xp = array_namespace(ordered[0].vectors)
+    transform = ordered[0].vectors
+    for record in ordered[1:]:
+        transform = xp.kron(transform, record.vectors)
+    projected = transform.conj().T @ authored
+    authored_norm = xp.linalg.norm(authored)
+    projected_norm = xp.linalg.norm(projected)
+    lost = maybe_concrete_scalar(authored_norm**2 - projected_norm**2)
+    if lost is not None and lost > 1e-10:
+        warnings.warn(
+            f"Projection discarded {lost:.3g} of the initial-state norm.",
+            stacklevel=2,
+        )
+    return backend.from_array(projected, dims=[list(resolved_dims), [1]])
 
 
 @jax.tree_util.register_pytree_node_class
@@ -197,7 +425,7 @@ def _scatter(vector, indices, values):
     return vector
 
 
-def _compatible_values(state, labels, dims, bases, backend):
+def compatible_values(state, labels, dims, bases, backend):
     """Validate captured coordinates before interpreting a saved energy state."""
     from quchip.results._time import require_valid
 
@@ -232,8 +460,8 @@ def materialize_compact(chip, spec, space):
     state
         Native backend ket or density matrix in ``space`` coordinates.
     """
-    from quchip.chip.states import materialize_state_spec, normalize_device_state_mapping
-    from collections.abc import Mapping
+    from quchip.chip.states import normalize_device_state_mapping
+
     backend = chip.backend
     xp = backend.array_module
     if spec is None or isinstance(spec, (Mapping, str)):
@@ -242,10 +470,8 @@ def materialize_compact(chip, spec, space):
         if all(isinstance(n, int) for n in label):
             vector = xp.asarray(np.arange(space.size) == space.rows[label], dtype=complex).reshape(-1, 1)
             return backend.from_array(vector, dims=[[space.size], [1]])
-        from quchip.chip.states import _bare_local_kets
-
         vector = xp.ones(space.size, dtype=complex)
-        for axis, (key, ket) in enumerate(zip(space.labels, _bare_local_kets(chip, prepared, space.bases))):
+        for axis, (key, ket) in enumerate(zip(space.labels, bare_local_kets(chip, prepared, space.bases))):
             local = xp.asarray(backend.to_array(ket)).reshape(-1)
             transform = space.bases[key].energy_to_solver()
             if transform is not None:
@@ -253,7 +479,7 @@ def materialize_compact(chip, spec, space):
             vector = vector * local[space.levels[:, axis]]
         return backend.from_array(vector.reshape(-1, 1), dims=[[space.size], [1]])
     if isinstance(spec, CompactState):
-        values = _compatible_values(spec, space.labels, space.dims, space.bases, backend)
+        values = compatible_values(spec, space.labels, space.dims, space.bases, backend)
         indices = np.asarray([space.rows[tuple(label)] for label in spec.space.levels])
         transform = xp.asarray(np.eye(space.size)[:, indices])
         values = transform @ values

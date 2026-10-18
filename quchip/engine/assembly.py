@@ -105,7 +105,7 @@ from quchip.engine.bands import (
 
 if TYPE_CHECKING:
     from quchip.chip.chip import Chip
-    from quchip.chip.port_network import _CompiledNetwork
+    from quchip.engine.slh import CompiledNetwork
     from quchip.engine.ir import ControlOp
 
 
@@ -117,7 +117,7 @@ class _SystemResolution:
     bases: dict[str, BasisRecord]
     hamiltonians: tuple[Operator, ...]
     dims: tuple[int, ...]
-    network: _CompiledNetwork | None
+    network: CompiledNetwork | None
     space: Any = None
 
     @property
@@ -2064,7 +2064,7 @@ def _resolved_dressing_context(
     resolution: _SystemResolution,
 ) -> _ResolvedDressingContext:
     """Freeze assembly-time basis references for ``EngineResult.dress()``."""
-    from quchip.chip.dressing import BareProductReference
+    from quchip.engine.dressing import BareProductReference
 
     if resolution.space is not None:
         return _ResolvedDressingContext(backend=chip.backend, reference=BareProductReference(resolution.operator_dims))

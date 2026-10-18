@@ -249,8 +249,8 @@ def initial_totals(chip, state, resolution, cutoff=None):
     it raises, and only totals up to the cutoff are returned.
     """
     from collections.abc import Mapping
-    from quchip.chip.states import normalize_device_state_mapping, materialize_state_spec
-    from quchip.results.compact import CompactState
+    from quchip.chip.states import normalize_device_state_mapping
+    from quchip.engine.states import CompactState, bare_local_kets, materialize_state_spec
 
     if state is None:
         return {0}
@@ -275,9 +275,7 @@ def initial_totals(chip, state, resolution, cutoff=None):
                     f"The initial label has total excitation {total}, outside the excitation cutoff N <= {cutoff}."
                 )
             return {total}
-        from quchip.chip.states import _bare_local_kets
-
-        kets = _bare_local_kets(chip, prepared, resolution.bases)
+        kets = bare_local_kets(chip, prepared, resolution.bases)
         totals = {0}
         weights = np.ones(1)
         for device, ket in zip(chip.devices, kets):

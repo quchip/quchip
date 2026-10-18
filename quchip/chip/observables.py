@@ -20,55 +20,10 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from quchip.backend import _backend_context
-from quchip.declarative.expr import (
-    as_operator_expr,
-    materialize_expr,
-)
 from quchip.devices.base import BaseDevice
 
 if TYPE_CHECKING:
     from quchip.chip.chip import Chip
-    from quchip.engine.basis import BasisRecord
-
-
-def prepare_local_op(
-    dev: BaseDevice,
-    spec: str | Any,
-    basis: "BasisRecord",
-    backend: Any,
-) -> Any:
-    """Return one observable in the resolved local solver basis."""
-    with _backend_context(backend):
-        default_pauli = {"X": "sigma_x", "Y": "sigma_y", "Z": "sigma_z"}.get(spec) if isinstance(spec, str) else None
-        if (
-            default_pauli is not None
-            and type(dev).local_operator is BaseDevice.local_operator
-            and getattr(type(dev), default_pauli) is getattr(BaseDevice, default_pauli)
-        ):
-            authored = dev._pauli_operator(default_pauli, basis=basis)
-        else:
-            authored = dev.local_operator(spec) if isinstance(spec, str) else spec
-    authored = as_operator_expr(
-        authored,
-        labels=(dev.label,),
-        dims=(basis.native_dim,),
-        name=rf"\hat O_{{{dev.label}}}",
-        owner=dev,
-        scope=dev.label,
-    )
-    local = materialize_expr(authored, backend)
-    if local.shape != (basis.native_dim, basis.native_dim):
-        raise ValueError(
-            f"Authored operator for {dev.label!r} must have shape "
-            f"{(basis.native_dim, basis.native_dim)}, got {local.shape}."
-        )
-    if basis.kind == "native":
-        return local
-    matrix = backend.to_array(local)
-    return backend.from_array(
-        basis.transform_operator(matrix),
-        dims=[[basis.resolved_dim], [basis.resolved_dim]],
-    )
 
 
 def from_array(chip: "Chip", data: Any, device: str | BaseDevice | None = None) -> Any:
@@ -91,6 +46,8 @@ def from_array(chip: "Chip", data: Any, device: str | BaseDevice | None = None) 
             )
         return chip.backend.from_array(array, dims=[list(chip.dims), list(chip.dims)])
 
+    from quchip.engine.observables import prepare_local_op
+
     idx, dev = chip._resolve_device_index(device)
     basis = chip.resolve().bases[dev.label]
     local = prepare_local_op(dev, array, basis, chip.backend)
@@ -112,6 +69,8 @@ def observable(chip: "Chip", device: str | BaseDevice, op: str | Any) -> Any:
     band-decompose and embed them correctly. If you pass this embedded operator
     to ``simulate(e_ops=...)``, it is misread as a local device operator.
     """
+    from quchip.engine.observables import prepare_local_op
+
     idx, dev = chip._resolve_device_index(device)
     basis = chip.resolve().bases[dev.label]
     with _backend_context(chip.backend):

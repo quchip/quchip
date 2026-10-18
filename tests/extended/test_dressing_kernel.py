@@ -1,4 +1,4 @@
-"""Unit tests for the ``quchip.chip.dressing`` JAX-traceable kernel.
+"""Unit tests for the ``quchip.engine.dressing`` JAX-traceable kernel.
 
 These tests exercise the pure-array labeling primitives in isolation
 from :class:`Chip`. Traceability through the full chip pipeline is
@@ -11,7 +11,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from quchip.chip.dressing import (
+from quchip.engine.dressing import (
     BareProductReference,
     EigenstateReference,
     LabelingPath,

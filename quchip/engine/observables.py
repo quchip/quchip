@@ -35,8 +35,11 @@ from typing import Any, Literal, Mapping, Sequence
 
 import numpy as np
 
-from quchip.backend import Backend, SolverResult
+from quchip.backend import Backend, SolverResult, _backend_context
 from quchip.chip.chip import Chip
+from quchip.declarative.expr import as_operator_expr, materialize_expr
+from quchip.devices.base import BaseDevice
+from quchip.engine.basis import BasisRecord
 from quchip.engine.ir import CanonicalOperator, ResolvedFrame
 from quchip.engine.reference import carrier_transfer, has_filter, time_shift
 from quchip.observables import OutputField, is_output_field
@@ -49,6 +52,46 @@ from quchip.engine.bands import local_mode_bands
 EOpKey = str | tuple[str, str]
 BandWeight = int | tuple[int, int]
 DeviceLabels = str | tuple[str, str]
+
+
+def prepare_local_op(
+    dev: BaseDevice,
+    spec: str | Any,
+    basis: BasisRecord,
+    backend: Any,
+) -> Any:
+    """Return one observable in the resolved local solver basis."""
+    with _backend_context(backend):
+        default_pauli = {"X": "sigma_x", "Y": "sigma_y", "Z": "sigma_z"}.get(spec) if isinstance(spec, str) else None
+        if (
+            default_pauli is not None
+            and type(dev).local_operator is BaseDevice.local_operator
+            and getattr(type(dev), default_pauli) is getattr(BaseDevice, default_pauli)
+        ):
+            authored = dev._pauli_operator(default_pauli, basis=basis)
+        else:
+            authored = dev.local_operator(spec) if isinstance(spec, str) else spec
+    authored = as_operator_expr(
+        authored,
+        labels=(dev.label,),
+        dims=(basis.native_dim,),
+        name=rf"\hat O_{{{dev.label}}}",
+        owner=dev,
+        scope=dev.label,
+    )
+    local = materialize_expr(authored, backend)
+    if local.shape != (basis.native_dim, basis.native_dim):
+        raise ValueError(
+            f"Authored operator for {dev.label!r} must have shape "
+            f"{(basis.native_dim, basis.native_dim)}, got {local.shape}."
+        )
+    if basis.kind == "native":
+        return local
+    matrix = backend.to_array(local)
+    return backend.from_array(
+        basis.transform_operator(matrix),
+        dims=[[basis.resolved_dim], [basis.resolved_dim]],
+    )
 
 
 @dataclass(frozen=True)
@@ -168,8 +211,6 @@ def decompose_eops(
                 ops_with_idx = [(None, val)]
 
             for sub_idx, op in ops_with_idx:
-                from quchip.chip.observables import prepare_local_op
-
                 op = prepare_local_op(dev, op, basis, backend)
                 bands = local_mode_bands(backend, op, dim=dev_dim, label=device_label,
                                          semantic_to_solver=basis.energy_to_solver()) or [(0, op)]
@@ -201,8 +242,6 @@ def decompose_eops(
             basis_b = bases[label_b]
             dim_a = basis_a.resolved_dim
             dim_b = basis_b.resolved_dim
-
-            from quchip.chip.observables import prepare_local_op
 
             op_a = prepare_local_op(dev_a, op_a, basis_a, backend)
             op_b = prepare_local_op(dev_b, op_b, basis_b, backend)

@@ -32,7 +32,6 @@ import jax
 import numpy as np
 
 from quchip.approximations import require_approximation
-from quchip.control.signal import AnalyticSignal
 from quchip.engine.ir import (
     CoherentOp,
     ResolvedFrame,
@@ -597,6 +596,7 @@ def frame_tones(
     window is ``[0, last pulse end]``. Traced values leave the corresponding
     weight unknown.
     """
+    from quchip.control.signal import AnalyticSignal
     from quchip.engine.assembly import _build_delivered_signals, drive_bands
 
     span = _window(operations, solve_window)

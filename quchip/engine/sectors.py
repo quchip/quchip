@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, Sequence
 import jax.numpy as jnp
 import numpy as np
 
-from quchip.chip.dressing import (
+from quchip.engine.dressing import (
     BareProductReference,
     Labeling,
     assign_rowwise_greedy,
@@ -40,6 +40,7 @@ from quchip.engine.assembly import (
     _project_on_support,
     _resolve_system,
 )
+from quchip.engine.slh import cascade_hamiltonian
 from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import concrete_array_module, contains_tracer
 from quchip.utils.values import scoped_entry, scoped_hit
@@ -168,8 +169,6 @@ def generated_products(ports: dict[str, tuple[Any, tuple[int, ...]]], pairs: Seq
     dims : sequence of int
         Level count of each device.
     """
-    from quchip.chip.port_network import _cascade_hamiltonian
-
     everything = tuple(range(len(dims)))
     products: dict[tuple[int, ...], list[tuple[Any, Any, Any]]] = {}
     for downstream, upstream, coefficient in pairs:
@@ -178,7 +177,7 @@ def generated_products(ports: dict[str, tuple[Any, tuple[int, ...]]], pairs: Seq
         joint = tuple(sorted({*left_support, *right_support}))
         products.setdefault(joint, []).append(
             (_widen(left, left_support, joint, dims), _widen(right, right_support, joint, dims), coefficient))
-    terms = ((_cascade_hamiltonian(group), joint) for joint, group in products.items())
+    terms = ((cascade_hamiltonian(group), joint) for joint, group in products.items())
     return tuple((term, joint) for term, joint in terms if term is not None)
 
 
@@ -263,7 +262,7 @@ class SectorEigensystem:
     eigenvectors : array_like
         Eigenvectors as columns in the block's product energy basis. Each
         column has a real, nonnegative amplitude on its assigned label, as
-        :func:`~quchip.chip.dressing.gauge_phases` sets.
+        :func:`~quchip.engine.dressing.gauge_phases` sets.
     labeling : Labeling
         Assignment of each bare label in ``space`` to one eigenvector.
     """
