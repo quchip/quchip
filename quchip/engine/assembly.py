@@ -641,7 +641,7 @@ def _collect_collapse_terms(
             if (retained_coordinates or len(check_support) > 1) and not _is_concrete_zero(resolved_rate):
                 frequencies = tuple(resolved_frame.frequencies[labels[index]] for index in check_support)
                 if not all(maybe_concrete_scalar(frequency) == 0.0 for frequency in frequencies):
-                    from quchip.chip.effective import authored_excitation_changes
+                    from quchip.engine.excitation import authored_excitation_changes
                     weights = authored_excitation_changes(operator, tuple(labels[i] for i in check_support),
                                                           backend, resolution.bases)
                     common = all(maybe_concrete_scalar(f) == maybe_concrete_scalar(frequencies[0])
@@ -1542,7 +1542,8 @@ def _drive_authored_terms(chip, drive, target, backend):
 
 
 def drive_excitation_changes(chip, drive, target, bases, approximation):
-    from quchip.chip.effective import authored_excitation_changes
+    from quchip.engine.excitation import authored_excitation_changes
+
     changes = set()
     for _, authored in _drive_authored_terms(chip, drive, target, chip.backend):
         support = tuple(chip.device_index(label) for label in authored.labels)

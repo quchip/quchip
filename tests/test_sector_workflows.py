@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from quchip import ChargeDrive, Chip, DuffingTransmon, Exact, fit_a_dress
-from quchip.chip.effective import conserves_excitation_number
+from quchip.engine.excitation import conserves_excitation_number
 from quchip.declarative import CouplingModel, Scalar, parameter
 
 
@@ -352,7 +352,7 @@ def test_fit_rechecks_dimension_when_tracing_cannot_prove_conservation():
 
 def test_opaque_traced_operator_requires_declared_changes():
     """Undeclared traced matrix support is unknown; a supplied conservation declaration survives tracing."""
-    from quchip.chip.effective import authored_excitation_changes
+    from quchip.engine.excitation import authored_excitation_changes
     from quchip.declarative.expr import PhysicsExpr
     from quchip.engine.assembly import _resolve_system
 

@@ -32,7 +32,6 @@ from quchip.engine.dressing import (
     label_eigensystem,
 )
 from quchip.chip.ports import Port
-from quchip.chip.sw import _sector_eigh
 from quchip.declarative.expr import materialize_expr
 from quchip.engine.assembly import (
     _energy_operator,
@@ -40,6 +39,7 @@ from quchip.engine.assembly import (
     _project_on_support,
     _resolve_system,
 )
+from quchip.engine.excitation import sector_eigh
 from quchip.engine.slh import cascade_hamiltonian
 from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import concrete_array_module, contains_tracer
@@ -292,7 +292,7 @@ class SectorModel:
 
     Without a cutoff, the chip's static model must conserve the total
     energy-level index, as
-    :func:`~quchip.chip.effective.conserves_excitation_number` checks, and each
+    :func:`~quchip.engine.excitation.conserves_excitation_number` checks, and each
     block is one sector. Under an active
     :class:`~quchip.cutoff.ExcitationCutoff`, the model is ``P H P`` on the
     labels with ``N <= K``, and each block is one class of
@@ -314,7 +314,7 @@ class SectorModel:
 
     def __init__(self, chip: "Chip", *, resolution: Any = None, advisories: list[str] | None = None,
                  approximation: Any = None) -> None:
-        from quchip.chip.effective import static_excitation_changes
+        from quchip.engine.excitation import static_excitation_changes
         from quchip.cutoff import active_cutoff
 
         resolution = _resolve_system(chip, chip.backend) if resolution is None else resolution
@@ -509,7 +509,7 @@ class SectorModel:
             eigenvalues, real_vectors = np.linalg.eigh(np.asarray(matrix).real)
             eigenvectors = real_vectors.astype(complex)
         else:
-            eigenvalues, eigenvectors = _sector_eigh(matrix, np.zeros(space.size, dtype=np.int64))
+            eigenvalues, eigenvectors = sector_eigh(matrix, np.zeros(space.size, dtype=np.int64))
         labeling = label_eigensystem(eigenvectors, BareProductReference((space.size,)), policy=assign_rowwise_greedy)
         # The reference is the sector's product energy basis, so the amplitudes are the vectors.
         eigenvectors = eigenvectors * gauge_phases(eigenvectors, labeling.indices)

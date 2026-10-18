@@ -293,7 +293,7 @@ def plan_pulse_space(chip, operations, states, resolution, approximation, dissip
     that a generator change can move above ``K``, or is ``None`` when the
     changes are unknown or no cutoff is active.
     """
-    from quchip.chip.effective import (
+    from quchip.engine.excitation import (
         authored_excitation_changes, conserves_excitation_number, static_excitation_changes,
     )
     from quchip.chip.ports import Port

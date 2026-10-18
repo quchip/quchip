@@ -315,7 +315,7 @@ def compact_state(chip, *components, dressed=False):
     from quchip.cutoff import active_cutoff
     from quchip.engine.assembly import _resolve_system
     from quchip.engine.sectors import SectorModel
-    from quchip.chip.effective import conserves_excitation_number
+    from quchip.engine.excitation import conserves_excitation_number
     from quchip.utils.jax_utils import maybe_concrete_scalar
 
     resolution = _resolve_system(chip, chip.backend)

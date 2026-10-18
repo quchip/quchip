@@ -45,8 +45,6 @@ from quchip.chip.effective import (
     OperatorProjection,
     _in_device_order,
     _retained_owners,
-    authored_excitation_changes,
-    conserves_excitation_number,
     lineage,
     lineage_labels,
     retained_support,
@@ -63,8 +61,8 @@ from quchip.chip.sw import (
     basis_row,
     mode_blocks,
     cross_block_gap,
-    excitation_sectors,
 )
+from quchip.engine.excitation import authored_excitation_changes, conserves_excitation_number, excitation_sectors
 from quchip.chip.transformations.dispatch import EliminationTarget, register_elimination_target
 from quchip.chip.transformations.methods import (
     DeviceReductionContext,

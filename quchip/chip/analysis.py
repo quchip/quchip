@@ -421,7 +421,7 @@ class ChipAnalysis:
         cutoff classes of :class:`~quchip.engine.sectors.SectorModel`. Results
         cache like the full eigensystem.
         """
-        from quchip.chip.effective import conserves_excitation_number
+        from quchip.engine.excitation import conserves_excitation_number
         from quchip.cutoff import active_cutoff
         from quchip.engine.sectors import SectorModel
 
@@ -528,7 +528,7 @@ class ChipAnalysis:
         perturbation theory over the same eigensystem, masking gaps at the
         tolerance of :func:`~quchip.engine.basis._differentiable_eigenpairs`.
         """
-        from quchip.chip.effective import conserves_excitation_number
+        from quchip.engine.excitation import conserves_excitation_number
         from quchip.engine.assembly import _analysis_matrix_ghz, _build_static_analysis_result
         from quchip.engine.basis import _differentiable_eigenvector
         from quchip.engine.states import bare_state_from_bases

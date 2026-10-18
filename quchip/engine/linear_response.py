@@ -230,7 +230,7 @@ class _SectorResponseModel:
 
 def _sector_response_model(chip: Any, plane_labels: tuple[str, ...]) -> _SectorResponseModel:
     """Assemble every channel on its local support and require a conserving vacuum-input model."""
-    from quchip.chip.effective import authored_excitation_changes
+    from quchip.engine.excitation import authored_excitation_changes
 
     network = chip.port_network
     if network is None or chip.dynamic_contributions():
