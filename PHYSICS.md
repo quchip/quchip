@@ -928,6 +928,55 @@ The transverse components follow the ordinary sideband selection above.
 Arbitrary nonlinear signal programs retain their authored waveform when the
 engine cannot infer a first-order carrier partner.
 
+### 6.2.1 Rotation angle of a resonant pulse
+
+Sources: [`quchip/control/envelopes.py`](quchip/control/envelopes.py), [`quchip/chip/analysis.py`](quchip/chip/analysis.py)
+
+Take a dressed transition `i -> f` with the drive matrix element
+`m = <f~|D|i~>` of §9.1, and a carrier at the transition frequency. In the
+frame of the transition, `RWA()` keeps
+
+```text
+H~/ħ = π (s(t) m σ+ + s(t)* m* σ-),    σ+ = |f~><i~|
+```
+
+where `s(t)` is the complex envelope, with the phase of `schedule()`. When the
+phase of `s` stays constant, the pulse rotates the transition by
+
+```text
+θ = 2π |m| |∫ s dt|
+```
+
+about the axis `(cos α, sin α, 0)`, with `α = arg(s m)` and `|i~>` at `+z`.
+On the `0 -> 1` transition of an isolated Duffing transmon, the charge drive
+has `m = -i`, so a real π pulse gives `iY` and an envelope phase of `π/2`
+gives `-iX`. Dressing changes `m` slightly, and other transitions have other
+elements, such as `m = -i√2` for `1 -> 2`. When the phase changes during the
+pulse, as for DRAG with a nonzero `beta`, time ordering first contributes at
+second Magnus order, and the area alone does not set the gate. Detuning,
+leakage to other levels, and the counter-rotating terms of `Exact()` also
+change the rotation.
+
+`Envelope.area()` returns `∫_0^τ E(t) dt` at the envelope's amplitude `A`.
+The built-in envelopes use closed forms:
+
+| Envelope | Area |
+|---|---|
+| `Square` | `A τ` |
+| `LinearRamp` | `A (τ - τ_r/2)` |
+| `Gaussian` | `A σ √(2π) erf(N_σ/√2)`, with `σ = τ/(2 N_σ)` |
+| `GaussianDRAG` | the `Gaussian` area, because the derivative quadrature integrates to zero |
+| `GaussianEdge`, `SquareWithGaussianEdges` | `A (τ - 2τ_e) + A σ √(2π) erf(√2 N_σ)`, with `σ = τ_e/(2 N_σ)` |
+
+Other envelopes use 16-point Gauss-Legendre quadrature between consecutive
+sampling times, with `0` and `τ` added. The quadrature is traceable, and its
+accuracy depends on how well the sampling times resolve the envelope.
+
+`Chip.rotation_amplitude(transition, line, envelope, angle=π)` returns
+`A = θ / (2π |m| |a|)`, where `a` is the area at unit amplitude. It takes the
+amplitude at the device, so a line with signal-chain transforms or crosstalk
+raises. The result is a starting point for a calibration.
+
 ### 6.3 Exact excitation spaces in pulse solves
 
 Source: [`quchip/engine/pulse_space.py`](quchip/engine/pulse_space.py)

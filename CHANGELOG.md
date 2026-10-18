@@ -198,6 +198,15 @@ This file records notable user-visible changes to quchip.
 
 #### New features
 
+- `Envelope.area()` returns the complex area of an envelope: closed forms for
+  the built-in shapes, and Gauss-Legendre quadrature between the sampling
+  times for other shapes, also under JAX tracing.
+  `chip.rotation_amplitude(transition, line, envelope, angle=π)` returns a
+  first-guess amplitude from `θ = 2π |m| |A a|`, with the dressed matrix
+  element `m` of the line. PHYSICS.md §6.2.1 states the relation, its rotation
+  axis and its limits.
+  ([#197](https://github.com/quchip/quchip/issues/197),
+  [#207](https://github.com/quchip/quchip/pull/207))
 - `eliminate_spectators(chip, keep)` reduces a chip to the kept devices, one
   `eliminate()` step at a time, and returns every step. Its default order keeps
   the operators of kept devices small under `local=True`. A spectator waits

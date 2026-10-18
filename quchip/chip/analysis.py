@@ -1025,6 +1025,64 @@ class ChipAnalysis:
             elements[drive.label] = xp.vdot(final, acted)
         return elements
 
+    def rotation_amplitude(
+        self,
+        transition: str | BaseDevice | tuple[Mapping[str | BaseDevice, int], Mapping[str | BaseDevice, int]],
+        line: str | "BaseDrive",
+        envelope: Any,
+        angle: Any = np.pi,
+    ) -> Any:
+        """Return a first-guess amplitude that rotates a dressed transition by ``angle``.
+
+        On resonance under ``RWA()``, in the two-level limit, a pulse whose
+        envelope keeps one phase rotates the transition by
+        ``θ = 2π |m| |A a|``, where m is the dressed matrix element of the
+        line from :meth:`drive_matrix_elements` and ``A a`` the
+        :meth:`~quchip.control.envelopes.Envelope.area` of the envelope at
+        amplitude A. The method returns ``A = θ / (2π |m| |a|)``. Leakage to
+        other levels, detuning, counter-rotating terms under ``Exact()``, and
+        a phase that changes during the pulse all change the rotation, so the
+        value is a starting point for a calibration, not a calibrated gate.
+
+        Parameters
+        ----------
+        transition : str, BaseDevice, or tuple[mapping, mapping]
+            Transition as for :meth:`drive_matrix_elements`.
+        line : str or BaseDrive
+            Wired device-target line that plays the pulse.
+        envelope : Envelope
+            Pulse shape with an ``amplitude`` field. The field's present value is ignored.
+        angle : scalar, default=pi
+            Rotation angle in rad.
+
+        Raises
+        ------
+        ValueError
+            If a signal-chain transform or crosstalk acts on the line, or if the
+            matrix element or the area per unit amplitude is zero.
+        TypeError
+            If the envelope has no ``amplitude`` field.
+        """
+        label = resolve_label(line)
+        equipment = self._chip.control_equipment
+        acting = [] if equipment is None else [
+            type(transform).__name__ for transform in equipment.signal_chain if label in transform.referenced_lines()
+        ]
+        if acting:
+            raise ValueError(
+                f"Line '{label}' has the signal-chain transforms {acting}. rotation_amplitude() takes the "
+                "amplitude at the device, so it supports only a line without transforms."
+            )
+        if "amplitude" not in envelope.parameter_values():
+            raise TypeError(f"{type(envelope).__name__} has no amplitude field to scale.")
+        element = self.drive_matrix_elements(transition, drives=[label])[label]
+        unit = envelope.with_params({"amplitude": 1.0}).area()
+        xp = jnp if contains_tracer((element, unit, angle)) else np
+        strength = 2.0 * np.pi * xp.abs(element) * xp.abs(unit)
+        if maybe_concrete_scalar(strength) == 0.0:
+            raise ValueError(f"Line '{label}' cannot drive this transition: |m| |area| is zero.")
+        return angle / strength
+
     def state_components(
         self,
         state: int | Mapping[str | BaseDevice, int] | None = None,

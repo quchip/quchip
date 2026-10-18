@@ -1359,6 +1359,33 @@ class Chip:
         """
         return self._analysis.drive_matrix_elements(transition, drives=drives)
 
+    def rotation_amplitude(
+        self,
+        transition: str | BaseDevice | tuple[Mapping[str | BaseDevice, int], Mapping[str | BaseDevice, int]],
+        line: str | BaseDrive,
+        envelope: Any,
+        angle: Any = np.pi,
+    ) -> Any:
+        """Return a first-guess amplitude that rotates a dressed transition by ``angle``.
+
+        The amplitude solves ``θ = 2π |m| |A a|`` for the dressed matrix element
+        m of the line and the envelope area ``A a`` at amplitude A. See
+        :meth:`ChipAnalysis.rotation_amplitude` for its limits; the value is a
+        starting point for a calibration.
+
+        Parameters
+        ----------
+        transition : str, BaseDevice, or pair of mappings
+            Transition shorthand or explicit lower/upper bare labels.
+        line : str or BaseDrive
+            Wired device-target line without signal-chain transforms.
+        envelope : Envelope
+            Pulse shape with an ``amplitude`` field.
+        angle : scalar, default=pi
+            Rotation angle in rad.
+        """
+        return self._analysis.rotation_amplitude(transition, line, envelope, angle)
+
     def state_components(
         self,
         state: int | Mapping[str | BaseDevice, int] | None = None,
