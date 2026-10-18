@@ -3397,13 +3397,27 @@ reused when:
   built-in delays, gains, and crosstalk do, so the delivered field of a piece
   is the sum of its pulses' fields and each moves with its pulse;
 - the carrier pulses of the piece share one `freq` `f_c` and one frame;
-- each delivered term of a pulse has one charge `q`, and each of its signal
-  bands sits at `-q (f_c + δ)` for the piece's carrier `f_c` (0 when the
-  piece has no carrier) and the pulse's detuning `δ`. A baseband pulse in a
-  carrier piece therefore needs charge 0: `C` would rotate a transverse
-  baseband term that a time shift leaves unchanged;
+- each delivered term of a pulse has one charge `q`. A term of a carrier
+  pulse turns by `exp(iqθ)` when the pulse phase turns by `θ`. A term of a
+  baseband pulse in a carrier piece has charge 0: `C` would turn a transverse
+  baseband term that a time shift and a `vz` leave unchanged;
 - each term is built from the pulse envelope, carriers, and the standard
   signal algebra, with no coefficient of absolute time.
+
+Under the second, third, and last conditions, a carrier pulse that starts `τ`
+later gives the field of the same pulse with its phase turned by `-2π f_c τ`,
+moved by `τ`. The phase condition therefore also covers the start time. The
+gate set proves it on the structure of each delivered coefficient. It lowers
+each carrier pulse again with its phase turned by a small step `Δ` and walks
+both signal trees together. A node whose scalar turns by `exp(ikΔ)` carries
+phase harmonic `k`. A sum takes the union of its children's harmonics, a
+product adds them, a conjugate negates them, a real or imaginary part takes
+both signs, and an integer power adds them that many times. A term passes
+when its only harmonic is its charge `q`, which holds for every phase,
+amplitude, and envelope. Any other change between the two trees fails the
+term. The signal bands of a term do not settle this. At zero delivered
+frequency, `f_c + δ = 0`, both sidebands of a pulse fall on one band, and a
+flux pulse then changes its amplitude, not its phase, when the phase turns.
 
 A chip without the RWA fails the first condition. A piece that fails is solved
 again at each new placement, and the report states the reason. A custom signal
@@ -3439,11 +3453,27 @@ of `M`, with Pauli coefficients `Tr(P H)/d` (a rotation `θ` about `P` gives
 change under a ten times smaller step, knobs at a bound, the infidelity of
 the gate's own block with all spectators in `|0>` and with each spectator in
 `|1>` (both with the implemented corrections), and the infidelity after `N`
-repetitions. It also gives the largest entrywise change of `V` over sampled
-start times in [0, 100) ns at fixed frame offsets. On a reusable gate this
-change is the rotation of the coherent error by `C`, which leaves `F_avg` of a
-single-carrier piece unchanged. The `solver_floor` status is a heuristic: the
-integrator's unitarity defect does not bound a coherent phase error.
+repetitions. Over sampled start times in [0, 100) ns at fixed frame offsets,
+it gives the largest entrywise change of `V` and the smallest and largest
+`1 - F_avg` with the implemented corrections. For a reusable gate with one
+carrier, the change is the conjugation by `C`, expressed in the computational
+frame. When the ideal commutes with it, as for the built-in SX and X, only the
+orientation of the coherent error changes and `F_avg` stays the same.
+Otherwise the operation itself changes with the start time: an SX on a 5 GHz
+qubit driven at `freq = 4.99` with `detuning = 0.01` has its axis turned by
+90° when it starts 25 ns later, and its `F_avg` against SX drops to 0.5. A
+gate whose pieces use different carriers turns each piece with its own
+carrier, so its error can change with the start time even when the intended
+action of each piece commutes with its own rotation. For two transmons
+100 MHz apart with `g = 3 MHz`, the echoed CR of section 17.4 has
+`1 - F_avg = 5.0e-5` at its calibration start and between `3.7e-5` and
+`1.4e-4` over the sampled starts. Its dominant observed harmonic has a
+period of `1/(2 Δf) = 5 ns`, which fits interference between the errors of
+the two CR halves, between which the echo flips the control; other error
+terms can have other periods. The cache applies these changes exactly; the
+fit at start 0 does not average over them. The `solver_floor`
+status is a heuristic: the integrator's unitarity defect does not bound a
+coherent phase error.
 
 The free spectator Z is a frame update in program order. A later pulse in the
 spectator's frame that overlaps the gate in time sees the update for its whole
@@ -3460,8 +3490,9 @@ detuning is an optional knob, bounded to ±5 MHz. It can lower the joint error,
 for example by centering the carrier between the frequencies that a spectator
 ZZ shift gives, but near the optimum of `β` a detuning and a change of `β` act
 almost alike. With both knobs and a spectator in the block, the fit on two
-transmons 100 MHz apart moved to the detuning bound with `β ≈ ±10 ns`. Next to
-a neighbor 100 MHz away with `g = 3 MHz`, held in `|0>`, a 30 ns ±4σ X has
+transmons 100 MHz apart moved to the detuning bound with `β ≈ ±10 ns`. For an
+X fit with `spectators="none"` next to a neighbor 100 MHz away with
+`g = 3 MHz`, scored with the neighbor in `|0>`, a 30 ns ±4σ pulse has
 `1 - F_avg = 1.5e-4`, mostly population left in the neighbor; the defaults
 (40 ns, ±3σ) give `1.9e-6`.
 

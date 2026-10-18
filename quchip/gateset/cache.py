@@ -22,22 +22,37 @@ structural:
    signal chain declares ``linear_time_invariant``, as the built-in delays,
    gains, and crosstalk do;
 3. every carrier pulse of the piece has the same ``freq`` ``f_c`` and frame;
-4. every delivered term of a pulse has one N-charge q, and each of its signal
-   bands sits at ``-q (f_c + δ)`` for the piece's carrier ``f_c`` (0 when the
-   piece has no carrier) and the pulse's detuning δ, so a baseband pulse in a
-   carrier piece needs charge 0;
+4. every delivered term of a pulse has one N-charge q; a term of a carrier
+   pulse turns by ``exp(iqθ)`` when the pulse phase turns by θ, and a term of
+   a baseband pulse in a carrier piece has charge 0;
 5. every term is built from the pulse's envelope, carriers, and the standard
    signal algebra, with no coefficient of absolute time.
 
 Condition 2 lets each pulse be lowered alone: the delivered field of a piece
 is the sum of its pulses' delivered fields, and each moves with its pulse.
+Under conditions 2, 3, and 5, a carrier pulse that starts ``τ`` later gives
+the field of the same pulse with its phase turned by ``-2π f_c τ``, shifted
+by ``τ``, so condition 4 also covers the start time.
+
+The gate set proves condition 4 on the structure of each delivered
+coefficient. It lowers a carrier pulse a second time with its phase turned by
+a small step and walks both signal trees together. A node whose scalar turns
+by ``exp(ik·step)`` carries phase harmonic ``k``, and the node types combine
+harmonics: a sum takes their union, a product adds them, a conjugate negates
+them, a real or imaginary part takes both signs, and an integer power adds
+them that many times. A term passes when its only harmonic is its charge, so
+the result holds for every phase, amplitude, and envelope. Any other change
+between the two trees fails the term. Signal bands cannot show the harmonic:
+at zero delivered frequency both sidebands of a pulse fall on one band.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, replace
+from functools import reduce
 from typing import Any
 
+import jax.tree_util as jtu
 import numpy as np
 
 from quchip.engine import ir
@@ -45,7 +60,8 @@ from quchip.engine.ir import signal_children, signal_window_bounds
 from quchip.results.propagator import solver_levels
 
 _CHARGE_ATOL = 1e-12
-_FREQUENCY_RTOL = 1e-9
+_TURN_ATOL = 1e-9
+_PHASE_STEP = 2 * np.pi / 4099  # rad; exp(ik·step) differs for every |k| <= 2049, so a turn names its harmonic
 _PULSE_LOCAL_NODES = (ir.Constant, ir.EnvelopeRef, ir.Carrier, ir.Window, ir.Shift, ir.Scale, ir.PolarScale,
                       ir.Add, ir.Multiply, ir.Conjugate, ir.RealPart, ir.ImagPart, ir.SignalPower)
 
@@ -84,17 +100,27 @@ def model_check(problem: Any) -> str:
 
 
 def _reached(matrix: np.ndarray, levels: np.ndarray) -> np.ndarray:
-    """Return a mask of the devices whose level a term changes or on whose level its diagonal depends."""
+    """Return a mask of the devices on which a term does not act as the identity.
+
+    A term acts as the identity on a device when it keeps the device's level
+    and each of its elements is the same for every level of the device that
+    the basis holds.
+    """
     magnitude = np.abs(matrix)
     tolerance = _CHARGE_ATOL * max(1.0, float(magnitude.max(initial=0.0)))
     rows, cols = np.nonzero(magnitude > tolerance)
     reached = np.any(levels[rows] != levels[cols], axis=0)
-    diagonal = np.diag(matrix)
+    index = {state: i for i, state in enumerate(map(tuple, levels.tolist()))}
     for device in np.flatnonzero(~reached):
-        first: dict[tuple[int, ...], complex] = {}
-        for key, value in zip(map(tuple, np.delete(levels, device, axis=1)), diagonal):
-            if abs(value - first.setdefault(key, value)) > tolerance:
-                reached[device] = True
+        for row, col in zip(rows, cols):
+            row_state, col_state = list(levels[row]), list(levels[col])
+            for level in range(int(levels[:, device].max()) + 1):
+                row_state[device] = col_state[device] = level
+                i, j = index.get(tuple(row_state)), index.get(tuple(col_state))
+                if i is not None and j is not None and abs(matrix[i, j] - matrix[row, col]) > tolerance:
+                    reached[device] = True
+                    break
+            if reached[device]:
                 break
     return reached
 
@@ -110,13 +136,14 @@ def signal_check(chip: Any) -> str:
 
 @dataclass(frozen=True)
 class DeliveredTerm:
-    """One delivered term of a pulse: N-charges, signal bands in GHz, a foreign signal node, and the devices
-    whose levels it changes or on whose levels it depends."""
+    """One delivered term of a pulse: N-charges, a foreign signal node, the devices on which it does not act as
+    the identity, and whether its structure proves that it turns by ``exp(iqθ)`` when the phase of its carrier
+    pulse turns by θ (always true for a baseband pulse, which has no carrier phase)."""
 
     charges: frozenset[int]
-    bands: tuple[float, ...]
     foreign: str
     devices: frozenset[str] = frozenset()
+    follows_phase: bool = True
 
 
 @dataclass(frozen=True)
@@ -127,19 +154,103 @@ class Delivered:
     terms: tuple[DeliveredTerm, ...]
 
 
-def lower_pulse(chip: Any, op: Any) -> Delivered:
-    """Lower one scheduled op alone and return its delivered terms."""
+def _lowered(chip: Any, op: Any) -> Any:
     from quchip.engine.problem import build_solve_problem
 
     stop = float(op.start_time) + float(op.envelope.duration)
-    problem = build_solve_problem(chip, [op], np.array([0.0, max(stop, 1.0)]), states="final", frame="lab",
-                                  dissipation=False, _product_space=True)
-    levels = solver_levels(problem.engine_result)
+    return build_solve_problem(chip, [op], np.array([0.0, max(stop, 1.0)]), states="final", frame="lab",
+                               dissipation=False, _product_space=True).engine_result
+
+
+def _turn(before: Any, after: Any) -> int | None:
+    """Return ``k`` when a node scalar turned by ``exp(ik·step)`` between the two lowerings, or ``None``."""
+    before, after = complex(before), complex(after)
+    if before == after:
+        return 0
+    if before == 0 or abs(abs(after / before) - 1.0) > _TURN_ATOL:
+        return None
+    angle = float(np.angle(after / before))
+    k = round(angle / _PHASE_STEP)
+    return k if abs(angle - k * _PHASE_STEP) <= _TURN_ATOL else None
+
+
+def _same(before: Any, after: Any) -> bool:
+    """Whether two node fields hold the same values; the engine rebuilds envelopes, so compare pytree leaves."""
+    if before is after:
+        return True
+    left, left_tree = jtu.tree_flatten(before)
+    right, right_tree = jtu.tree_flatten(after)
+    return left_tree == right_tree and all(np.array_equal(np.asarray(a), np.asarray(b)) for a, b in zip(left, right))
+
+
+def _harmonics(before: Any, after: Any) -> frozenset[int] | None:
+    """Return the harmonics of the pulse phase in a delivered signal, or ``None`` when its structure does not
+    prove them. ``before`` and ``after`` are the signal lowered at the pulse phase and at the phase plus the step.
+    """
+    if type(before) is not type(after) or not isinstance(before, _PULSE_LOCAL_NODES):
+        return None
+    if isinstance(before, ir.PolarScale):
+        own = _turn(before.amplitude * np.exp(1j * before.theta), after.amplitude * np.exp(1j * after.theta))
+    elif isinstance(before, ir.Scale):
+        own = _turn(before.factor, after.factor)
+    elif isinstance(before, ir.Constant):
+        own = _turn(before.value, after.value)
+    else:
+        own = 0
+    scalars = {"amplitude", "theta", "factor", "value"}
+    children = getattr(type(before), "_signal_child_fields", ())
+    if own is None or not all(_same(getattr(before, item.name), getattr(after, item.name))
+                              for item in fields(before) if item.name not in scalars and item.name not in children):
+        return None
+    pairs = list(zip(signal_children(before), signal_children(after)))
+    if len(pairs) != len(signal_children(before)) or len(pairs) != len(signal_children(after)):
+        return None
+    parts = [_harmonics(a, b) for a, b in pairs]
+    if any(part is None for part in parts):
+        return None
+    sets: list[frozenset[int]] = [part for part in parts if part is not None]
+
+    def plus(left: frozenset[int], right: frozenset[int]) -> frozenset[int]:
+        return frozenset(a + b for a in left for b in right)
+
+    if isinstance(before, ir.Add):
+        combined = frozenset().union(*sets)
+    elif isinstance(before, ir.Multiply):
+        combined = reduce(plus, sets, frozenset({0}))
+    elif isinstance(before, ir.Conjugate):
+        combined = frozenset(-h for h in sets[0])
+    elif isinstance(before, (ir.RealPart, ir.ImagPart)):
+        combined = sets[0] | frozenset(-h for h in sets[0])
+    elif isinstance(before, ir.SignalPower):
+        exponent = float(before.exponent)
+        if sets[0] == frozenset({0}):
+            combined = sets[0]
+        elif exponent.is_integer() and exponent >= 0:
+            combined = reduce(plus, [sets[0]] * int(exponent), frozenset({0}))
+        else:
+            return None
+    else:
+        combined = sets[0] if sets else frozenset({0})
+    return frozenset(h + own for h in combined)
+
+
+def lower_pulse(chip: Any, op: Any) -> Delivered:
+    """Lower one scheduled op alone and return its delivered terms.
+
+    A carrier pulse is lowered a second time with its phase turned by a small
+    step, which shows the phase harmonics of each term. Charges, windows, and
+    harmonics depend on the pulse's structure, not on its amplitude or phase.
+    """
+    engine_result = _lowered(chip, op)
+    levels = solver_levels(engine_result)
     total = levels.sum(axis=1)
     labels = np.array([device.label for device in chip.devices])
+    turned = None
+    if isinstance(op, ir.DriveOp) and op.freq is not None:
+        turned = _lowered(chip, replace(op, phase_offset=float(op.phase_offset) + _PHASE_STEP)).dynamic_terms
     windows: list[tuple[float, float]] = []
     terms = []
-    for term in problem.engine_result.dynamic_terms:
+    for position, term in enumerate(engine_result.dynamic_terms):
         signal = term.time_dependence.signal
         bounds = signal_window_bounds(signal)
         if not bounds:
@@ -147,9 +258,16 @@ def lower_pulse(chip: Any, op: Any) -> Delivered:
                              "has no time window, so the gate set cannot bound the gate.")
         windows.extend((float(lo), float(hi)) for lo, hi in bounds)
         matrix = _dense(term.operator)
-        terms.append(DeliveredTerm(_charges(matrix, total),
-                                   tuple(float(band.freq) / (2 * np.pi) for band in signal.bands()),
-                                   _foreign_node(signal), frozenset(labels[_reached(matrix, levels)].tolist())))
+        charges = _charges(matrix, total)
+        follows = True
+        if turned is not None:
+            harmonics = None
+            if len(turned) == len(engine_result.dynamic_terms) and np.array_equal(_dense(turned[position].operator),
+                                                                                    matrix):
+                harmonics = _harmonics(signal, turned[position].time_dependence.signal)
+            follows = harmonics is not None and len(charges) <= 1 and harmonics <= {next(iter(charges), 0)}
+        terms.append(DeliveredTerm(charges, _foreign_node(signal), frozenset(labels[_reached(matrix, levels)].tolist()),
+                                   follows))
     support = (min(lo for lo, _ in windows), max(hi for _, hi in windows)) if windows else None
     return Delivered(support, tuple(terms))
 
@@ -218,19 +336,20 @@ def covariance(ops: list[Any], delivered: list[Delivered], piece_indices: list[i
     frame = next(iter(frames)) if frames else None
     for index in piece_indices:
         op = ops[index]
-        # The placement conjugation rotates every charge-q term at the piece's carrier, baseband pulses included.
-        tone = (0.0 if carrier is None else carrier) + (0.0 if op.detuning is None else float(op.detuning))
         for term in delivered[index].terms:
             if term.foreign:
                 return False, f"a term of the pulse on {op.drive_label!r} uses {term.foreign}", carrier, frame
             if len(term.charges) > 1:
                 return False, "a drive term mixes excitation numbers (no RWA)", carrier, frame
             charge = next(iter(term.charges)) if term.charges else 0
-            allowed = -charge * tone
-            for nu in term.bands:
-                if abs(nu - allowed) > _FREQUENCY_RTOL * max(1.0, abs(allowed)):
-                    return False, (f"a charge-{charge} term of the pulse on {op.drive_label!r} oscillates at "
-                                   f"{nu:.6g} GHz, not at {allowed:.6g} GHz"), carrier, frame
+            # The placement conjugation turns every charge-q term at the piece's carrier, baseband pulses included.
+            if op.freq is None and carrier is not None and charge != 0:
+                return False, (f"a baseband term of the pulse on {op.drive_label!r} has charge {charge}, but the "
+                               "piece has a carrier pulse, so only charge 0 keeps reuse"), carrier, frame
+            if not term.follows_phase:
+                how = "changes" if charge == 0 else f"does not turn by exp({charge}iθ)"
+                return False, (f"a charge-{charge} term of the pulse on {op.drive_label!r} {how} when the pulse "
+                               "phase turns by θ"), carrier, frame
     return True, "", carrier, frame
 
 

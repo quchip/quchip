@@ -46,6 +46,12 @@ the gate are part of the error. The report also gives the error with all
 spectators in `|0>` and with each one in `|1>`. Pass
 `GateSet(..., spectators="none")` to fit with the other qubits in `|0>`.
 
+The fit places the gate at time 0. A gate with one carrier, such as the
+built-in SX and X, has the same error at every start time. The echoed CR uses
+the target's carrier for its CR pulses and the control's for its echo, so its
+error changes with the start time. The report gives the smallest and largest
+error over start times in [0, 100) ns.
+
 RZ is virtual: a circuit `RZ(λ)` becomes `vz(q, -λ)` and costs no time. The
 free Z phases of each fit become trailing `vz` entries of the calibrated
 sequence.

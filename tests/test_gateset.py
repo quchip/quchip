@@ -14,10 +14,12 @@ from quchip import (
     Chip,
     DuffingTransmon,
     Exact,
+    FluxDrive,
     Gaussian,
     GaussianDRAG,
     QuantumSequence,
     Resonator,
+    Square,
 )
 from quchip.gateset import GateSet, Knob, NativeGate, drag_sx
 from quchip.gateset.cache import covariance, split_pieces
@@ -190,11 +192,14 @@ def test_gate_set_validates_natives_and_instructions():
 
 @pytest.mark.unit
 def test_covariance_check_is_structural():
-    """Each pulse's own terms decide: one carrier and frame per piece, bands at -q(f + δ) of the same pulse,
-    no coefficient of absolute time, and RWA statics."""
+    """Each pulse's own terms decide: one carrier and frame per piece, terms that turn with the pulse phase as their
+    charge requires, charge 0 for baseband terms next to a carrier, no coefficient of absolute time, and RWA
+    statics."""
     from quchip.control.signal import Delay, Gain, SignalTransform
     from quchip.engine.problem import build_solve_problem
-    from quchip.gateset.cache import Delivered, DeliveredTerm, lower_pulse, model_check, signal_check
+    from quchip.engine import ir
+    from quchip.gateset.cache import (_PHASE_STEP, Delivered, DeliveredTerm, _harmonics, _reached, lower_pulse,
+                                      model_check, signal_check)
 
     chip = two_transmons()
     seq = QuantumSequence(chip)
@@ -206,34 +211,76 @@ def test_covariance_check_is_structural():
     assert split_pieces([item.support for item in delivered]) == [(0.0, 20.0, [0, 1])]
     assert covariance(ops, delivered, [0, 1])[0] is False
     assert covariance(ops, delivered, [0]) == (True, "", chip.freq("q0"), "q0")
-    assert sorted(band for term in delivered[0].terms for band in term.bands) == pytest.approx(
-        [-(chip.freq("q0") + 0.002), chip.freq("q0") + 0.002])
+    assert sorted(next(iter(term.charges)) for term in delivered[0].terms) == [-1, 1]
+    assert all(term.follows_phase for term in delivered[0].terms)
 
-    # A charge-2 term at -10 GHz is covariant only when its own pulse sits at 5 GHz.
+    # At zero delivered frequency both sidebands of a flux pulse sit at 0 GHz, and the phase sets the field.
+    qubit = DuffingTransmon(freq=0.1, anharmonicity=-0.3, levels=2, label="q")
+    flux = Chip([qubit])
+    flux.wire(FluxDrive(qubit, label="z"))
+    fields = []
+    for phase in (0.0, np.pi / 2):
+        pulse = QuantumSequence(flux)
+        pulse.schedule("z", envelope=Square(duration=2.0, amplitude=0.125), freq=0.1, detuning=-0.1, phase=phase,
+                       frame="q")
+        fields.append(np.asarray(pulse.propagator(frame="lab", dissipation=False).matrix))
+    assert np.abs(fields[0] - fields[1]).max() > 1.0
+    # Its two harmonics fail at every initial phase, including -0.5 rad, where one turn of 1 rad looks unchanged.
+    for phase in (0.0, -0.5, np.pi / 2):
+        pulse = QuantumSequence(flux)
+        pulse.schedule("z", envelope=Square(duration=2.0, amplitude=0.125), freq=0.1, detuning=-0.1, phase=phase,
+                       frame="q")
+        zero = list(pulse.scheduled_ops)
+        covariant, reason, _, _ = covariance(zero, [lower_pulse(flux, zero[0])], [0])
+        assert not covariant and "charge-0 term of the pulse on 'z' changes" in reason
+
+    # Harmonics come from structure, not from values: |s|^2 + (|s|^2 - 1) Re s has harmonics -1, 0, 1 at every
+    # amplitude, although at unit amplitude it does not change with the phase; |s|^2 alone has only 0.
+    def nonlinear(theta, amplitude):
+        s = ir.PolarScale(ir.EnvelopeRef(Square(duration=2.0, amplitude=amplitude)), 1.0, theta)
+        power = ir.Multiply((s, ir.Conjugate(s)))
+        return power, ir.Add((power, ir.Multiply((ir.Add((power, ir.Constant(-1.0 + 0j))), ir.RealPart(s)))))
+
+    for amplitude in (1.0, 0.125):
+        (power, mixed), (power_turned, mixed_turned) = nonlinear(0.3, amplitude), nonlinear(0.3 + _PHASE_STEP,
+                                                                                            amplitude)
+        assert _harmonics(power, power_turned) == {0}
+        assert _harmonics(mixed, mixed_turned) == {-1, 0, 1}
+    square = ir.SignalPower(ir.PolarScale(ir.Constant(1.0 + 0j), 1.0, 0.3), 2)
+    assert _harmonics(square, ir.SignalPower(ir.PolarScale(ir.Constant(1.0 + 0j), 1.0, 0.3 + _PHASE_STEP), 2)) == {2}
+
     pulses = QuantumSequence(chip)
     pulses.schedule("xy0", envelope=Gaussian(duration=20.0, amplitude=0.0), freq=5.0)
     pulses.schedule("xy0", envelope=Gaussian(duration=20.0, amplitude=0.0), freq=5.0, detuning=5.0)
     two = list(pulses.scheduled_ops)
-    double = Delivered((0.0, 20.0), (DeliveredTerm(frozenset({2}), (-10.0,), ""),))
+    double = Delivered((0.0, 20.0), (DeliveredTerm(frozenset({2}), ""),))
+    stray = Delivered((0.0, 20.0), (DeliveredTerm(frozenset({1}), "", follows_phase=False),))
     quiet = Delivered((0.0, 20.0), ())
     assert covariance(two, [double, quiet], [0, 1])[0] is True
-    covariant, reason, _, _ = covariance(two, [quiet, double], [0, 1])
-    assert not covariant and "not at -20" in reason
-    absolute = Delivered((0.0, 20.0), (DeliveredTerm(frozenset({0}), (0.0,), "CoefficientRef"),))
+    covariant, reason, _, _ = covariance(two, [quiet, stray], [0, 1])
+    assert not covariant and "does not turn by exp(1iθ)" in reason
+    absolute = Delivered((0.0, 20.0), (DeliveredTerm(frozenset({0}), "CoefficientRef"),))
     covariant, reason, _, _ = covariance(two, [absolute, quiet], [0, 1])
     assert not covariant and "CoefficientRef" in reason
 
-    # Placement rotates every charge-q term at the piece's carrier: a transverse baseband term next to a carrier
+    # Placement turns every charge-q term at the piece's carrier: a transverse baseband term next to a carrier
     # pulse fails, and a longitudinal one passes.
     mixed = QuantumSequence(chip)
     mixed.schedule("xy0", envelope=Gaussian(duration=20.0, amplitude=0.0), freq=5.0)
     mixed.schedule("xy1", envelope=Gaussian(duration=20.0, amplitude=0.0))
     pair = list(mixed.scheduled_ops)
-    transverse = Delivered((0.0, 20.0), (DeliveredTerm(frozenset({1}), (0.0,), ""),))
-    longitudinal = Delivered((0.0, 20.0), (DeliveredTerm(frozenset({0}), (0.0,), ""),))
+    transverse = Delivered((0.0, 20.0), (DeliveredTerm(frozenset({1}), ""),))
+    longitudinal = Delivered((0.0, 20.0), (DeliveredTerm(frozenset({0}), ""),))
     covariant, reason, _, _ = covariance(pair, [quiet, transverse], [0, 1])
-    assert not covariant and "not at -5" in reason
+    assert not covariant and "baseband term of the pulse on 'xy1' has charge 1" in reason
     assert covariance(pair, [quiet, longitudinal], [0, 1])[0] is True
+
+    # A term reaches a device unless it acts there as the identity: X on q0 times Z on q2 reaches q2.
+    levels = np.array([[a, b] for a in range(2) for b in range(2)])
+    x, z = np.array([[0.0, 1.0], [1.0, 0.0]]), np.diag([1.0, -1.0])
+    assert _reached(np.kron(x, z), levels).tolist() == [True, True]
+    assert _reached(np.kron(x, np.eye(2)), levels).tolist() == [True, False]
+    assert _reached(np.kron(np.eye(2), z), levels).tolist() == [False, True]
 
     # Only transforms that declare themselves linear and time-invariant keep reuse.
     class Clip(SignalTransform):
@@ -298,7 +345,7 @@ def test_drag_sx_calibrates_to_the_leakage_floor():
 
 def test_spectator_block_carries_the_static_zz_of_the_gate():
     """With the coupled spectator in the block, the SX fit targets SX ⊗ I. Its error is the ZZ phase that the
-    gate cannot remove, between the ZZ angle with and without the echo of the half rotation."""
+    amplitude and beta knobs do not remove, between the ZZ angle with and without the echo of the half rotation."""
     chip, gates = calibrated_sx()
     calibration = gates.calibration("SX", "q0")
     assert calibration.block_qubits == ("q0", "q1") and set(calibration.free_z) == {"q0", "q1"}
@@ -515,7 +562,9 @@ def test_cutoff_checks_include_excited_spectators():
 
 @pytest.mark.validation
 def test_echoed_cross_resonance_calibrates_a_cx():
-    """GateSet.standard() calibrates an echoed ZX90, and the CX it implies reaches 1 - F < 1e-3."""
+    """GateSet.standard() calibrates an echoed ZX90, and the CX it implies reaches 1 - F < 1e-3. The CR pieces
+    turn with the target's carrier and the echo pieces with the control's, so the ZX90 error changes with the
+    start time, while the one-carrier SX keeps its error at every start."""
     chip = two_transmons(df=0.1)
     gates = GateSet.standard(chip, ["q0", "q1"], pairs=[("q0", "q1")], sx_duration=40.0, cr_duration=400.0)
     with warnings.catch_warnings():
@@ -525,6 +574,14 @@ def test_echoed_cross_resonance_calibrates_a_cx():
     assert calibration.infidelity < 1e-3
     assert calibration.dependencies and gates.entry("ZX90", ("q0", "q1")).covariant
     assert gates.unitary([("CX", ("q0", "q1"))]).fidelity() > 1 - 2e-3
+    low, high = calibration.placement_infidelity
+    assert low <= calibration.infidelity + 1e-9 and high > 1.5 * calibration.infidelity
+    # The cached range matches a gate placed after an idle and composed like any circuit.
+    idle = gates.unitary([("IDLE", "q0", 37.1), ("IDLE", "q1", 37.1)]).computational
+    placed = gates.unitary([("IDLE", "q0", 37.1), ("IDLE", "q1", 37.1), ("ZX90", ("q0", "q1"))]).computational
+    assert low <= 1 - average_fidelity(placed @ idle.conj().T, calibration.ideal) <= high
+    sx = gates.calibration("SX", "q0").placement_infidelity
+    assert sx[1] - sx[0] < 1e-12 and sx[0] == pytest.approx(gates.calibration("SX", "q0").infidelity, abs=1e-9)
 
 
 @pytest.mark.validation

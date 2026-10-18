@@ -700,8 +700,10 @@ class GateSet:
         if entry.covariant:
             columns, energies = self._states(block_qubits)
             total = solver_levels(self._lab_problem().engine_result).sum(axis=1)
+            correction = self._frame_correction(block_qubits, self._offsets(calibration.sequence))
             reference = None
             worst = 0.0
+            errors = []
             # Start times spread over 100 ns without a common period, so no carrier aliases them.
             for start in np.concatenate([[0.0], 100.0 * ((np.arange(1, 21) * 0.6180339887498949) % 1.0)]):
                 placed = entry.placed(float(start), {}, total, self._idle_of())
@@ -711,7 +713,9 @@ class GateSet:
                 if reference is None:
                     reference = matrix
                 worst = max(worst, float(np.abs(matrix - reference).max()))
+                errors.append(1.0 - average_fidelity(correction[:, None] * matrix, calibration.ideal))
             calibration.placement_sensitivity = worst
+            calibration.placement_infidelity = (min(errors), max(errors))
         for count in (1, 4, 20) if entry.covariant else (1, 4):
             composed = self.unitary([(native.name, native.qubits)] * count, qubits=block_qubits)
             calibration.repetitions[count] = 1.0 - composed.fidelity()

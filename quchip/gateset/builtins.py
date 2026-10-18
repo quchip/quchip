@@ -67,10 +67,11 @@ def drag_sx(
         Pulse duration in ns.
     sigmas : float, default 3.0
         Gaussian half-window in standard deviations. A narrower pulse has more
-        spectral weight at a neighbor's frequency. Next to a qubit 100 MHz
-        away with g = 3 MHz, held in ``|0>``, a 30 ns X at ±4σ has
+        spectral weight at a neighbor's frequency. For an X fit with
+        ``spectators="none"`` next to a qubit 100 MHz away with g = 3 MHz,
+        scored with that qubit in ``|0>``, a 30 ns pulse at ±4σ has
         ``1 - F = 1.5e-4``, mostly population left in the neighbor, and a
-        40 ns X at ±3σ has ``1.9e-6``.
+        40 ns pulse at ±3σ has ``1.9e-6``.
     name : str, default "SX"
         Gate name.
     angle : float, default π/2

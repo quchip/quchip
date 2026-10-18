@@ -157,9 +157,16 @@ class GateCalibration:
         spectators in the calibration block.
     placement_sensitivity : float or None
         Sampled largest entrywise change of the dressed computational block
-        over start times in [0, 100) ns at fixed frame offsets. A nonzero value
-        on a reusable gate means that its coherent error changes orientation
-        with the start time; the cache applies that change exactly.
+        over start times in [0, 100) ns at fixed frame offsets. On a reusable
+        gate the cache applies this change exactly. When the ideal commutes
+        with the placement rotation, only the orientation of the coherent
+        error changes; otherwise the operation itself changes with the start
+        time, for example when a carrier is away from its qubit's frequency.
+    placement_infidelity : tuple of float or None
+        Smallest and largest ``1 - F_avg`` over the same start times, with
+        the implemented corrections. A native whose pieces use different
+        carriers, such as the echoed cross-resonance gate, turns each piece
+        with its own carrier, so its error can change with the start time.
     repetitions : dict of int to float
         Infidelity of N applications against the ideal to the N.
     dependencies : dict
@@ -202,6 +209,7 @@ class GateCalibration:
     sequence: Any = None
     spectators: dict[str, float] = field(default_factory=dict)
     placement_sensitivity: float | None = None
+    placement_infidelity: tuple[float, float] | None = None
     ground_fidelity: float | None = None
     repetitions: dict[int, float] = field(default_factory=dict)
     dependencies: dict[Any, int] = field(default_factory=dict)
@@ -245,6 +253,9 @@ class GateCalibration:
                                                       for n, v in self.repetitions.items()))
         if self.placement_sensitivity is not None:
             lines.append(f"  placement sensitivity = {self.placement_sensitivity:.2e}")
+        if self.placement_infidelity is not None:
+            low, high = self.placement_infidelity
+            lines.append(f"  start times in [0, 100) ns: 1 - F = {low:.2e} to {high:.2e}")
         return "\n".join(lines)
 
     def __repr__(self) -> str:
