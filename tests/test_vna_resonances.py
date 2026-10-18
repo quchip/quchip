@@ -23,14 +23,14 @@ def readout_rate():
     return TWO_PI * 0.001 + TWO_PI * 7.0 / 1e5
 
 
-def resonator_pair(first_rate, second_rate, g):
-    """Two resonators at 7 GHz with their own ports and an exchange coupling g."""
-    modes = [Resonator(freq=7.0, levels=2, label=f"r{index}") for index in (1, 2)]
+def resonator_pair(first_rate, second_rate, g=None, second_freq=7.0, backend="qutip"):
+    """Resonators at 7 GHz and second_freq with their own ports and, optionally, an exchange coupling g."""
+    modes = [Resonator(freq=freq, levels=2, label=f"r{index}") for index, freq in ((1, 7.0), (2, second_freq))]
     network = PortNetwork(label="line")
     for mode, rate in zip(modes, (first_rate, second_rate)):
         port = network.port(f"{mode.label}_port", target=mode, rate=rate)
         network.expose(f"p{mode.label[-1]}", input=port.input, output=port.output)
-    return Chip(modes, [Capacitive(*modes, g=g)], port_network=network)
+    return Chip(modes, [Capacitive(*modes, g=g)] if g else [], port_network=network, backend=backend)
 
 
 @pytest.mark.unit
@@ -137,11 +137,23 @@ def test_a_pole_that_no_port_reaches_is_dark():
 
 
 @pytest.mark.unit
-def test_exceptional_point_raises_and_a_nearby_drift_keeps_simple_poles():
-    """At (κ₂ − κ₁)/4 = g_ω the drift is −0.2 I + N with N² = 0 after the common frequency, so the response has a
-    double pole. Away from it, the simple poles rebuild the response."""
+def test_a_weak_port_keeps_its_pole_bright():
+    """Each port is compared with its own scale. A lossless resonator behind a port of rate 1e-12 /ns, next to a port
+    of rate 1 /ns, reflects −1 on resonance, so its pole is not dark."""
+    chip = resonator_pair(1e-12, 1.0, second_freq=5.0)
+    result = VNA(chip).resonances()
+
+    assert result.dominant == ("r2", "r1") and not np.any(result.dark)
+    np.testing.assert_allclose(result["r1"].residues, [[1j * 1e-12 / TWO_PI, 0.0], [0.0, 0.0]], rtol=1e-12)
+    np.testing.assert_allclose(VNA(chip).sweep([7.0]).matrix[0, 0, 0], -1.0, atol=1e-9)
+
+
+@pytest.mark.unit
+def test_unresolved_poles_raise_and_a_nearby_drift_keeps_simple_poles():
+    """At (κ₂ − κ₁)/4 = g_ω the drift is −0.2 I + N with N² = 0 after the common frequency: an exceptional point,
+    where the eigensolve cannot resolve the two poles. Away from it, the simple poles rebuild the response."""
     coupling = 0.1 / TWO_PI
-    with pytest.raises(ValueError, match="exceptional point near 7"):
+    with pytest.raises(ValueError, match=r"near 7(\.\d+)? GHz are ill-conditioned and too close to resolve"):
         VNA(resonator_pair(0.2, 0.6, coupling)).resonances()
     chip = resonator_pair(0.2, 0.61, coupling)
     frequencies = np.linspace(6.9, 7.1, 11)
@@ -168,6 +180,26 @@ def test_backends_give_the_same_poles():
     for name in ("frequencies", "linewidths", "residues", "composition"):
         np.testing.assert_allclose(np.asarray(getattr(dynamiqs, name)), np.asarray(getattr(qutip, name)),
                                    rtol=1e-12, atol=1e-16)
+
+
+@pytest.mark.optional_backend
+def test_repeated_poles_keep_a_complete_eigenbasis_under_jit():
+    """Two identical uncoupled resonators give a repeated pole. Inside jax.jit, each copy keeps its own eigenvector,
+    so the rebuilt response equals the reflection 1 − κ/(κ/2 + i 2π (f − 7)) of each port."""
+    pytest.importorskip("dynamiqs")
+    import jax
+
+    chip = resonator_pair(0.1, 0.1, backend="dynamiqs")
+    frequencies = np.linspace(6.95, 7.05, 5)
+
+    def rebuilt(freq):
+        result = VNA(chip.with_params({"r1.freq": freq})).resonances()
+        return result.scattering(frequencies), result.composition
+
+    matrix, composition = jax.jit(rebuilt)(7.0)
+    reflection = 1 - 0.1 / (0.05 + 1j * TWO_PI * (frequencies - 7.0))
+    np.testing.assert_allclose(np.asarray(matrix), reflection[:, None, None] * np.eye(2), rtol=0, atol=1e-13)
+    np.testing.assert_allclose(np.sum(np.asarray(composition), axis=0), [1.0, 1.0], rtol=0, atol=1e-13)
 
 
 @pytest.mark.validation

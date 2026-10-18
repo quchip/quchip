@@ -129,8 +129,8 @@ class SParameterResult:
         return np.asarray(self.matrix)
 
 
-# A pole is dark when its residues are below this fraction of their scale.
-_DARK_RESIDUE = 1e-10
+# A port sees or excites a pole when their overlap exceeds this fraction of their norms.
+_DARK = 1e-10
 
 
 @dataclass(frozen=True)
@@ -139,9 +139,10 @@ class ResonanceResult:
 
     The weak-probe routes of :meth:`VNA.sweep` give the response
     ``S(f) = S_d + C (-i 2π f - A)^-1 (-C† S_d)`` with the drift
-    ``A = -iH - C†C/2``. Each eigenvalue ``λ_p`` of ``A`` is a pole of every S
-    entry, at ``f_p = -Im λ_p / 2π`` with the response linewidth
-    ``κ_p = -2 Re λ_p``. In the convention of :class:`SParameterResult`,
+    ``A = -iH - C†C/2``. Each eigenvalue ``λ_p`` of ``A`` is a pole of the S
+    entries where its residue does not vanish, at ``f_p = -Im λ_p / 2π`` with
+    the response linewidth ``κ_p = -2 Re λ_p``. In the convention of
+    :class:`SParameterResult`,
 
     ``S(f) = T(f) (D + Σ_p r_p / (f - z_p))``,  ``z_p = f_p + i κ_p / 4π``,
 
@@ -151,8 +152,9 @@ class ResonanceResult:
     frequency. Iteration, an index, or the label of a pole's dominant mode
     gives one :class:`Resonance`.
 
-    ``κ_p`` is the full width at half maximum of ``|S - S_d|²`` near an
-    isolated pole, in angular units. It includes port loss, internal loss,
+    ``κ_p`` is the full width at half maximum of ``|r_p / (f - z_p)|²`` in
+    angular units, so it gives the width of ``|S - D|²`` near an isolated
+    pole where the transfers vary slowly. It includes port loss, internal loss,
     Purcell decay and dephasing, so it can exceed the decay rate of the
     mode's population. ``f_p`` is the frequency of the open system, which can
     differ from the closed dressed frequency of :meth:`Chip.freq`.
@@ -215,9 +217,12 @@ class ResonanceResult:
 
     @property
     def direct(self) -> Any:
-        """Instantaneous scattering ``S_d`` between the ports, shape ``(ports, ports)``."""
+        """Instantaneous scattering ``D`` between the ports, shape ``(ports, ports)``.
+
+        It is the conjugate of ``S_d``, in the convention of :class:`SParameterResult`.
+        """
         problem = self._problem
-        indices = list(problem.plane_indices)
+        indices = np.asarray(problem.plane_indices, dtype=int)
         scattering = problem.scattering
         xp = concrete_array_module(scattering)
         return xp.conj(xp.asarray(scattering, dtype=complex)[xp.ix_(indices, indices)])
@@ -235,27 +240,37 @@ class ResonanceResult:
     def dark(self) -> Any:
         """Whether the selected ports do not see each pole, shape ``(poles,)``.
 
-        A pole is dark when its residues are below ``1e-10`` of
-        ``|C v_p| |u_p† C† S_d| / 2π``, for the right and left eigenvectors
-        ``v_p`` and ``u_p``. Its eigenvalue stays a pole of the drift, for
-        example of a mode that only a hidden loss channel reaches.
+        The residue of pole p from input i to output j is the product of
+        ``c_j v_p``, how output j sees the right eigenvector ``v_p``, and
+        ``u_p† b_i``, how input i excites it. Here ``c_j`` is row j of ``C``
+        and ``b_i`` is column i of ``B = -C† S_d``. The pole is dark when no
+        output sees it, ``|c_j v_p| <= 1e-10 |c_j| |v_p|`` for every j, or no
+        input excites it, ``|u_p† b_i| <= 1e-10 |u_p| |b_i|`` for every i. Its
+        residues then vanish, and it stays an eigenvalue of the drift, for
+        example of a mode that only a hidden loss channel reaches. Each port
+        is compared with its own scale, so a weak port does not make a pole
+        dark: a lossless resonator with a port rate of ``1e-12`` /ns reflects
+        ``-1`` on resonance.
         """
         system = self._eigensystem
         problem = self._problem
         xp = concrete_array_module(system.vectors, problem.couplings, problem.scattering)
-        indices = list(problem.plane_indices)
+        indices = np.asarray(problem.plane_indices, dtype=int)
         couplings = xp.asarray(problem.couplings, dtype=complex)
+        rows = couplings[indices]
         sources = -couplings.conj().T @ xp.asarray(problem.scattering, dtype=complex)[:, indices]
-        residues = self._residues(system.vectors, system.inverse)
-        scale = (xp.linalg.norm(couplings[indices]) * xp.linalg.norm(sources) / (2.0 * np.pi)
-                 * xp.linalg.norm(system.vectors, axis=0) * xp.linalg.norm(system.inverse, axis=1))
-        return xp.max(xp.abs(residues), axis=(1, 2)) <= _DARK_RESIDUE * scale
+        norm = xp.linalg.norm
+        seen = xp.abs(rows @ system.vectors) > _DARK * norm(rows, axis=1)[:, None] * norm(system.vectors, axis=0)
+        excited = (xp.abs(system.inverse @ sources)
+                   > _DARK * norm(system.inverse, axis=1)[:, None] * norm(sources, axis=0))
+        return ~(xp.any(seen, axis=0) & xp.any(excited, axis=1))
 
     def scattering(self, frequencies: Any) -> Any:
         """Return ``S(f)`` from the poles, shape ``(*frequencies.shape, ports, ports)``.
 
         It includes the reference-plane transfers, so on the weak-probe route
-        it equals :meth:`VNA.sweep` at the same frequencies.
+        it equals :meth:`VNA.sweep` at the same frequencies. It uses the
+        residues, so a JAX derivative of it raises.
 
         Parameters
         ----------
@@ -275,7 +290,7 @@ class ResonanceResult:
     def _residues(self, vectors: Any, inverse: Any) -> Any:
         problem = self._problem
         xp = concrete_array_module(vectors, problem.couplings, problem.scattering)
-        indices = list(problem.plane_indices)
+        indices = np.asarray(problem.plane_indices, dtype=int)
         couplings = xp.asarray(problem.couplings, dtype=complex)
         sources = -couplings.conj().T @ xp.asarray(problem.scattering, dtype=complex)[:, indices]
         rows = (couplings[indices] @ vectors).T

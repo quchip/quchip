@@ -212,8 +212,9 @@ This file records notable user-visible changes to quchip.
   the routes of `VNA.sweep()`: for each pole, its lab-frame frequency, its
   response linewidth `κ = −2 Re λ`, its composition over the modes, the
   dominant label and the residue of each S entry. `scattering(frequencies)`
-  rebuilds the swept response from the poles, and `dark` marks poles that the
-  selected ports do not see. A defective drift at an exceptional point raises.
+  rebuilds the swept response from the poles, and `dark` marks poles whose
+  residues vanish at the selected ports. Ill-conditioned poles that are too
+  close to resolve, as near an exceptional point, raise.
   Frequencies and linewidths have JAX derivatives.
   ([#192](https://github.com/quchip/quchip/issues/192),
   [#208](https://github.com/quchip/quchip/pull/208))

@@ -22,7 +22,7 @@ from quchip.engine.reference import ReferencePlane, cw_transfer
 from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import concrete_array_module, maybe_concrete_scalar, raise_if
 
-# Two poles closer than this multiple of their round-off meet at an exceptional point.
+# Two ill-conditioned poles closer than this multiple of their round-off are not resolved.
 _POLE_RESOLUTION = 100.0
 
 
@@ -152,7 +152,7 @@ def response_drift(problem: LinearResponseProblem) -> Any:
     """Return the drift ``A = -iH - C†C/2`` of a weak-probe problem, in rad/ns.
 
     The backends solve ``S(f) = S_d + C (-i 2π f - A)^-1 (-C† S_d)`` with this
-    drift, so its eigenvalues are the poles of every S entry.
+    drift, so its eigenvalues are the poles of the response.
     """
     xp = concrete_array_module(problem.hamiltonian, problem.couplings)
     couplings = xp.asarray(problem.couplings, dtype=complex)
@@ -185,27 +185,44 @@ class ResponsePoles:
     def modes(self) -> tuple[Any, Any]:
         """Return the right eigenvectors and their inverse in the order of ``values``.
 
-        A traced drift solves its eigenvectors again without the stopped
-        derivative, so JAX raises when a derivative reaches them: JAX does not
-        differentiate the eigenvectors of a general matrix.
+        A JAX derivative that reaches them through the drift raises, because
+        JAX does not differentiate the eigenvectors of a general matrix.
         """
         if concrete_array_module(self.drift) is np:
             return self.vectors, self.inverse
-        count = self.drift.shape[0]
-        center = jnp.trace(self.drift) / count
-        found, vectors = jnp.linalg.eig(self.drift - center * jnp.eye(count))
-        targets = jax.lax.stop_gradient(self.values - center)
-        order = jnp.argmin(jnp.abs(targets[:, None] - jax.lax.stop_gradient(found)[None, :]), axis=1)
-        vectors = vectors[:, order]
-        return vectors, jnp.linalg.inv(vectors)
+        return _undifferentiated_eigenvectors(self.vectors, self.inverse, self.drift)
+
+
+@jax.custom_jvp
+def _undifferentiated_eigenvectors(vectors: Any, inverse: Any, drift: Any) -> tuple[Any, Any]:
+    return vectors, inverse
+
+
+@_undifferentiated_eigenvectors.defjvp
+def _undifferentiated_eigenvectors_jvp(primals: Any, tangents: Any) -> Any:
+    raise NotImplementedError("The composition and the residues of the poles need eigenvector derivatives, "
+                              "which JAX does not define for a general matrix.")
+
+
+def _one_to_one(targets: Any, candidates: Any) -> Any:
+    """Return, for each target in order, the index of the nearest candidate that no earlier target took."""
+    xp = concrete_array_module(targets, candidates)
+    taken = xp.zeros(candidates.shape[0], dtype=bool)
+    picks = []
+    for target in targets:
+        pick = xp.argmin(xp.where(taken, xp.inf, xp.abs(candidates - target)))
+        picks.append(pick)
+        taken = taken | (xp.arange(candidates.shape[0]) == pick)
+    return xp.stack(picks)
 
 
 def response_poles(problem: LinearResponseProblem) -> ResponsePoles:
     """Return the poles of a weak-probe response, the eigenvalues of its drift.
 
     The eigensolves remove the common diagonal first, which keeps the pole
-    splittings accurate. Two poles that meet at an exceptional point raise,
-    because the defective drift gives the response a double pole there.
+    splittings accurate. Two ill-conditioned poles that are too close to
+    resolve raise. This happens near an exceptional point, where two poles
+    merge.
     """
     drift = response_drift(problem)
     xp = concrete_array_module(drift)
@@ -218,8 +235,8 @@ def response_poles(problem: LinearResponseProblem) -> ResponsePoles:
     values = found
     if xp is not np:
         values = jnp.linalg.eigvals(shifted)
-        # Pair each differentiable eigenvalue with the eigenvector of its nearest fixed eigenvalue.
-        nearest = fxp.argmin(fxp.abs(jax.lax.stop_gradient(values)[:, None] - found[None, :]), axis=1)
+        # Pair each differentiable eigenvalue with one fixed eigenpair. Repeated eigenvalues take distinct ones.
+        nearest = _one_to_one(jax.lax.stop_gradient(values), found)
         found, vectors = found[nearest], vectors[:, nearest]
     order = fxp.argsort(-fxp.imag(found))
     found, vectors, values = found[order], vectors[:, order], values[order]
@@ -231,16 +248,16 @@ def response_poles(problem: LinearResponseProblem) -> ResponsePoles:
     meeting = ((fxp.abs(found[:, None] - found[None, :]) <= limit)
                & (fxp.minimum(condition[:, None], condition[None, :]) > 10.0) & ~fxp.eye(count, dtype=bool))
     frequencies = -fxp.imag(found + (center if xp is np else jax.lax.stop_gradient(center))) / TWO_PI
-    raise_if(fxp.any(meeting), _exceptional_point, meeting, frequencies)
+    raise_if(fxp.any(meeting), _unresolved_poles, meeting, frequencies)
     return ResponsePoles(values=values + center, vectors=vectors, inverse=inverse, drift=drift)
 
 
-def _exceptional_point(meeting: Any, frequencies: Any) -> ValueError:
+def _unresolved_poles(meeting: Any, frequencies: Any) -> ValueError:
     pairs = np.argwhere(np.triu(np.asarray(meeting), 1))
     places = ", ".join(f"{float(np.asarray(frequencies)[i]):.9g}" for i in sorted({int(i) for i, _ in pairs}))
     return ValueError(
-        f"Poles of the weak-probe response meet at an exceptional point near {places} GHz. The drift is "
-        "defective there and the response has a double pole, so it has no expansion in simple poles."
+        f"Poles of the weak-probe response near {places} GHz are ill-conditioned and too close to resolve "
+        "reliably. This happens near an exceptional point, where two poles merge."
     )
 
 

@@ -359,8 +359,8 @@ class VNA:
         ------
         ValueError
             If the VNA has pump tones, if no weak-probe route applies, with the
-            reason that :meth:`sweep` gives, or if two poles meet at an
-            exceptional point, where the response has a double pole.
+            reason that :meth:`sweep` gives, or if two ill-conditioned poles
+            are too close to resolve, as near an exceptional point.
         """
         require_workflow(self.chip, "VNA.resonances()")
         if self._tones:

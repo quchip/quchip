@@ -1453,8 +1453,9 @@ APIs raise. Periodic/Floquet stationary states are not implemented.
 `VNA(chip).resonances()` diagonalizes the drift `A` of either weak-probe route
 and returns one record per eigenvalue `λ_p`. The pole has the lab-frame
 frequency `f_p = −Im λ_p / 2π` and the response linewidth `κ_p = −2 Re λ_p`
-in 1/ns, the full width of `|S − S_d|^2` near an isolated pole in angular
-units. The linewidth includes every loss and dephasing term of `A`, so it can
+in 1/ns. It is the full width at half maximum of `|r_p / (f − z_p)|^2` in
+angular units, so it gives the width of `|S − D|^2` near an isolated pole
+where the transfers vary slowly. The linewidth includes every loss and dephasing term of `A`, so it can
 exceed the decay rate of a population, and `f_p` can differ from the closed
 dressed frequency of `chip.freq()`. The linewidths sum to
 `−2 Re tr A = tr(C^dagger C) − 2 Im tr H`, which includes the internal loss of
@@ -1472,16 +1473,24 @@ r_p = conj((i/2π) (C v_p)(u_p^dagger B)),     B = −C^dagger S_d,     D = conj
 
 where `T_in` and `T_out` are the transfers of the reference planes, such as a
 cable delay. `result.scattering(frequencies)` evaluates this sum and equals
-`VNA.sweep()`. A pole whose residues vanish at every selected port is dark: it
-is an eigenvalue of the drift that the ports do not see. The composition of a
+`VNA.sweep()`. The residue from input i to output j is the product of
+`c_j v_p` and `u_p^dagger b_i`, with `c_j` row j of `C` and `b_i` column i of
+`B`. A pole is dark when no selected output sees it or no selected input
+excites it: `|c_j v_p| <= 1e-10 |c_j| |v_p|` for every j, or
+`|u_p^dagger b_i| <= 1e-10 |u_p| |b_i|` for every i. Its residues then vanish,
+and it stays an eigenvalue of the drift. Each port is compared with its own
+scale, so a weak port does not make a pole dark. The composition of a
 pole is the squared magnitude of its normalized right eigenvector in the mode
 basis, and `dominant` names its largest entry. The composition describes the
 eigenvector, not an occupation probability.
 
-Two poles that meet at an exceptional point make the drift defective. The
-response then has a double pole and no expansion in simple poles, so
-`resonances()` raises. It checks the eigenvalue separation against the
-condition of the two eigenvectors. Frequencies and linewidths are
+Near an exceptional point, two poles merge and their eigenvectors become
+parallel, so the residues grow and cancel. `resonances()` raises when two
+poles are ill-conditioned and too close to resolve reliably: both condition
+numbers `s_p = |u_p| |v_p|` exceed 10, and the separation is below
+`100 ε |A_0|_F (s_p + s_q)`, where `ε` is the machine precision and
+`A_0 = A − (tr A / n) I`. The test finds poles that the eigensolve cannot
+resolve. It does not prove that the drift is defective. Frequencies and linewidths are
 differentiable under JAX. The composition and the residues need eigenvector
 derivatives, which JAX does not define for a general matrix, so they are
 computed only when they are read, and a derivative of them raises.
