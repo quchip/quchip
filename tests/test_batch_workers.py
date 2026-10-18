@@ -1,5 +1,6 @@
 """QuTiP batches use the worker count that the caller, the environment and the memory allow."""
 
+import loky
 import numpy as np
 import psutil
 import pytest
@@ -59,7 +60,8 @@ def test_pool_size_follows_max_workers_and_loky_cpu_count(pool_sizes, monkeypatc
 def test_pool_size_fits_the_available_memory(pool_sizes, monkeypatch):
     """With memory for three workers, the default runs three of eight and a request for eight raises."""
     sequence, amplitudes = sweep()
-    monkeypatch.setenv("LOKY_MAX_CPU_COUNT", "8")
+    # LOKY_MAX_CPU_COUNT cannot raise the count above the CPUs of the machine, so the test sets the count.
+    monkeypatch.setattr(loky, "cpu_count", lambda *args, **kwargs: 8)
     monkeypatch.setattr(memory, "available_memory_bytes", lambda: int(3.5 * qutip_backend._WORKER_BYTES))
 
     with pytest.warns(UserWarning, match="runs on 3 of 8 worker processes"):
