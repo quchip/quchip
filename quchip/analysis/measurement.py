@@ -412,9 +412,9 @@ def _warn_cutoff(method: str, cutoff: int, size: int, check: _CutoffCheck, noise
             f"N <= {cutoff}, not on the full product space.")
     if check.status == "passed":
         text += (f" Solving with N <= {check.compared_with} changed the {quantities} by at most "
-                 f"{check.change:.1e} of their size at every grid point (tolerance {_CUTOFF_TOLERANCE:.0e}). "
-                 f"A value below {_CUTOFF_FLOOR / _CUTOFF_TOLERANCE:.0e} of the largest one on the grid is "
-                 "compared with that floor instead.")
+                 f"{check.change:.1e} (tolerance {_CUTOFF_TOLERANCE:.0e}) at every grid point, as a norm of the "
+                 f"change over the larger norm plus {_CUTOFF_FLOOR / _CUTOFF_TOLERANCE:.0e} of the largest norm on "
+                 "the grid.")
         if noise and not check.noise:
             text += (f" The noise spectra were not compared, because N <= {check.compared_with} has "
                      f"{check.states:,} states (the comparison limit is {_NOISE_CHECK_STATES:,}).")

@@ -7,7 +7,8 @@ import pytest
 
 import quchip.analysis.measurement as measurement
 import quchip.backend._sector_stationary as sector_solver
-from quchip import RWA, VNA, Bath, Capacitive, Chip, DuffingTransmon, ExcitationCutoff, PortNetwork, Resonator
+from quchip import (RWA, VNA, Bath, Capacitive, ChargeBasisTransmon, Chip, DuffingTransmon, ExcitationCutoff,
+                    PortNetwork, Resonator)
 from quchip.declarative import CollapseChannel, CouplingModel, Scalar, parameter
 
 OFFSETS = np.array([-0.02, -1e-3, -1e-5, 0.0, 1e-5, 1e-3, 0.02])
@@ -128,6 +129,40 @@ def test_sector_route_matches_the_compact_engine_at_the_same_cutoff():
     assert_same_measurement(sectors, compact, rtol=1e-8)
 
 
+def test_two_outputs_and_a_charge_basis_transmon_match_the_compact_engine():
+    """A hybrid, a phase shift and a cable correlate two outputs; the transmon keeps its charge basis.
+
+    At N <= 2, the sector route and the direct compact solve give the same means, mode values and cross-spectra.
+    """
+    q = ChargeBasisTransmon(E_C=0.25, E_J=12.0, n_g=0.1, num_basis=5, basis="native", label="q")
+    r0 = Resonator(freq=6.5, levels=3, label="r0", internal_quality_factor=1e5)
+    r1 = Resonator(freq=6.52, levels=3, label="r1", internal_quality_factor=1e5)
+    network = PortNetwork(label="hybrid")
+    p0 = network.port("r0", target=r0, rate=2 * np.pi * 0.004)
+    p1 = network.port("r1", target=r1, rate=2 * np.pi * 0.003)
+    mix, shift = network.hybrid90("mix"), network.phase_shift("shift", phase=0.7)
+    cable = network.delay("cable", duration=3.0)
+    network.connect(p0.output, mix.input_terminal("left"))
+    network.connect(p1.output, mix.input_terminal("right"))
+    network.cascade(mix.output_terminal("left"), shift)
+    # The right output of the hybrid also drives the second resonator through a two-way cable.
+    network.connect(mix.output_terminal("right"), cable.input_terminal("1"))
+    network.connect(cable.output_terminal("1"), p1.input)
+    network.expose("left", input=p0.input, output=shift)
+    network.expose("right", at=cable.port(2))
+    chip = Chip([q, r0, r1], [Capacitive(q, r0, g=0.06), Capacitive(r0, r1, g=0.01)], port_network=network,
+                approximation=RWA(), space=ExcitationCutoff(max_total=2))
+    assert chip.resolve_basis("q") == "native"
+    frequencies, beta = float(chip.freq("r0")) + np.array([-0.002, 0.0007]), 0.018 * np.exp(0.7j)
+    sectors, compact = (VNA(chip).measure(frequencies, beta, input="left", outputs=["left", "right"],
+                                          noise_frequencies=OFFSETS, options=options) for options in (None, {}))
+    assert sectors.diagnostics[0]["solver"] == "sector_stationary"
+    assert compact.diagnostics[0]["solver"] == "stationary_resolvent"
+    (excess,) = (np.asarray(excess) for _, excess in compact.noise_components.values())
+    assert np.max(np.abs(excess[..., :2, 2:])) > 0.1 * np.max(np.abs(excess))
+    assert_same_measurement(sectors, compact, rtol=1e-8)
+
+
 def test_a_dark_state_converges_only_when_the_probe_reaches_it(monkeypatch):
     """N = 2 couples the dark state back to the bus; N <= 1 leaves a second stationary state and raises."""
     # The automatic route starts at N <= 2, which is the whole space here, so it is exact and does not warn.
@@ -178,6 +213,21 @@ def test_the_uniqueness_check_finds_a_second_stationary_state(beta, conserving):
     generator = bus_pair_generator(1, conserving=conserving)
     with pytest.raises(ValueError, match="more than one stationary state"):
         generator.stationary(0.0, [beta])
+
+
+@pytest.mark.unit
+def test_the_second_start_separates_two_symmetric_dark_states():
+    """Jumps from b into two dark states make each stationary; a symmetric start would weight both equally."""
+    def transition(row, column):
+        matrix = np.zeros((4, 4))
+        matrix[row, column] = 1.0
+        return matrix
+
+    # The states are the vacuum, b and the two dark states, all with N = 1 except the vacuum.
+    generator = sector_solver.SectorGenerator([1, 3], np.zeros((4, 4)), [transition(0, 1)],
+                                              [transition(2, 1), transition(3, 1)])
+    with pytest.raises(ValueError, match="more than one stationary state"):
+        generator.stationary(0.0, [0.1])
 
 
 @pytest.mark.unit

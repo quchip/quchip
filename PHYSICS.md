@@ -1112,12 +1112,14 @@ with orthogonal supports cannot exist. This holds for any Hamiltonian, probe
 and conserving channels. The solver compares the smallest eigenvalue of
 `sum_k L_k† L_k` in each sector with `δ`. Above 1024 labels, it uses the
 Gershgorin bound. If a sector fails this test, a dark state is possible, and
-the solver starts again from the maximally mixed state. The equations do not
-fix the weight on a second stationary state, so this start ends with another
-weight on it. If the two corrections `Δ` differ by more than `1e-6` of the
-first, both solves continue to a relative residual of `1e-15`. If they still
-differ, the call raises, because the truncated model has more than one
-stationary state or one that the solve cannot resolve. Two resonant qubits on
+the solver starts again from a fixed full-rank state that has none of the
+symmetries of the model. The equations do not fix the weight on a second
+stationary state, so this start ends with another weight on it. If the two
+corrections `Δ` differ by more than `1e-6` of the first, both solves continue
+to a relative residual of `1e-15`. If they still differ, the call raises,
+because the truncated model has more than one stationary state or one that the
+solve cannot resolve. Agreement of the two starts is evidence of one
+stationary state, not a proof. Two resonant qubits on
 one channel `σ_1 + 2 σ_2` have the dark state `2|10> - |01>`. The probe
 reaches it only through `|11>`, so `K = 1` raises and `K = 2` has one
 stationary state. At `K = 2`, the dark state empties at a rate of order

@@ -264,12 +264,12 @@ class SectorGenerator:
         start = None if guess is None else _useful(operator, rhs, guess.reshape(-1) - vacuum.reshape(-1))
         solved = _gmres(operator, precondition, rhs, start, restart)
         if self.dark:
-            # The equations do not fix the weight on a second stationary state, so a start from the
-            # maximally mixed state ends with another weight on it than the first solve.
-            mixed = (np.eye(dimension, dtype=complex) / dimension - vacuum).reshape(-1)
+            # The equations do not fix the weight on a second stationary state. A start that has none of the
+            # symmetries of the model, unlike the vacuum, therefore ends with another weight on it.
+            other_start = (_generic_state(dimension) - vacuum).reshape(-1)
             # Without a probe the right side vanishes, and the residual of the start sets the scale.
-            scale = float(np.linalg.norm(rhs)) or float(np.linalg.norm(operator(mixed)))
-            other = _gmres(operator, precondition, rhs, mixed, restart, scale=scale)
+            scale = float(np.linalg.norm(rhs)) or float(np.linalg.norm(operator(other_start)))
+            other = _gmres(operator, precondition, rhs, other_start, restart, scale=scale)
             difference = _difference(solved.state, other.state)
             if difference > _UNIQUENESS:
                 # A state that relaxes slowly also separates the starts, and a smaller residual resolves it.
@@ -328,6 +328,14 @@ class SectorGenerator:
             trace = max(trace, abs(np.trace(response)))
             previous = solved.state
         return values, iterations, residual, trace
+
+
+def _generic_state(dimension: int) -> np.ndarray:
+    """Return a full-rank density matrix with distinct populations and coherences, the same on every call."""
+    generator = np.random.default_rng(0)
+    vector = generator.standard_normal(dimension) + 1j * generator.standard_normal(dimension)
+    state = np.diag(generator.uniform(0.5, 1.5, dimension)) + np.outer(vector, vector.conj()) / np.vdot(vector, vector)
+    return state / np.trace(state)
 
 
 def _smallest_rate(block: Any) -> float:
