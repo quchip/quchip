@@ -442,7 +442,8 @@ def _problem_from_context(context, drive_ops, initial_state):
 
 
 def solve_problem_list(problems: list[SolveProblem], *, progress: bool = True,
-                       parameters: tuple[dict[str, Any], ...] | None = None) -> Any:
+                       parameters: tuple[dict[str, Any], ...] | None = None,
+                       max_workers: int | None = None) -> Any:
     """Dispatch each captured backend's requests and restore the original point order."""
     from quchip.results.results import SimulationBatchResult
 
@@ -454,7 +455,7 @@ def solve_problem_list(problems: list[SolveProblem], *, progress: bool = True,
     for entries in groups.values():
         try:
             results = _solve_backend_problems([problem for _, problem in entries],
-                entries[0][1].backend, progress=progress,
+                entries[0][1].backend, progress=progress, max_workers=max_workers,
                 failure_context=tuple((index, parameters[index] if parameters is not None else {})
                                       for index, _ in entries))
         except BatchSolveError as exc:
@@ -470,6 +471,7 @@ def _solve_backend_problems(
     *,
     progress: bool = True,
     failure_context: tuple[tuple[int, dict[str, Any]], ...] = (),
+    max_workers: int | None = None,
 ) -> Any:
     """Group problems by shared operator skeleton and dispatch as :class:`SolveBatch`es.
 
@@ -550,7 +552,7 @@ def _solve_backend_problems(
         groups.setdefault(_skeleton_prefilter_key(problem), []).append((idx, problem))
 
     if len(groups) > 1 and not any(problem.stochastic for problem in problems):
-        parallel_results = backend.parallel_solve_problems(problems, progress=progress)
+        parallel_results = backend.parallel_solve_problems(problems, progress=progress, max_workers=max_workers)
         if parallel_results is not None:
             if len(parallel_results) != len(problems):
                 raise RuntimeError(
@@ -582,7 +584,7 @@ def _solve_backend_problems(
             continue
 
         try:
-            solver_results = backend.solve_batch(batch, progress=progress)
+            solver_results = backend.solve_batch(batch, progress=progress, max_workers=max_workers)
         except BatchSolveError as exc:
             raise BatchSolveError(indices[exc.index], exc.detail, exc.parameters) from exc
         for idx_original, wrapped_result in zip(

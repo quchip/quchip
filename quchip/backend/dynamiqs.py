@@ -1478,7 +1478,9 @@ class DynamiqsBackend(Backend):
             tlist=batch.tlist,
         )
 
-    def solve_batch(self, batch: Any, *, progress: bool = True) -> list[SolverResult]:
+    def solve_batch(
+        self, batch: Any, *, progress: bool = True, max_workers: int | None = None,
+    ) -> list[SolverResult]:
         r"""Solve a :class:`SolveBatch` with a single native dynamiqs vmap.
 
         Raises :class:`RuntimeError`, with no silent fallback, when the batch
@@ -1491,6 +1493,9 @@ class DynamiqsBackend(Backend):
             Captured problems and batch parameter values.
         progress : bool, default True
             Request a batch progress display.
+        max_workers : int or None, default None
+            Accepted for the backend protocol. The vmapped solve runs in this
+            process.
 
         Returns
         -------

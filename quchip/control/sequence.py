@@ -1446,6 +1446,7 @@ class QuantumSequence:
         dissipation: bool = True,
         run_args: dict | None = None,
         duration: Any | None = None,
+        max_workers: int | None = None,
     ) -> "SimulationBatchResult":
         """Build and solve a batched sweep over pulse or sequence parameters.
 
@@ -1468,6 +1469,11 @@ class QuantumSequence:
             Include declared collapse channels.
         duration : float, optional
             Positive end time in ns when ``tlist`` is omitted.
+        max_workers : int or None, default=None
+            Worker processes for a backend that solves points in parallel,
+            such as QuTiP. ``None`` takes the CPU count that loky reports,
+            which honors ``LOKY_MAX_CPU_COUNT``, or fewer when the available
+            memory cannot hold them. ``1`` solves in this process.
 
         Returns
         -------
@@ -1495,7 +1501,7 @@ class QuantumSequence:
                 dissipation=dissipation,
             )
             result = self._chip.solve_many(
-                problem_batch, progress=progress,
+                problem_batch, progress=progress, max_workers=max_workers,
             )
         return result
     def active_patch(self, *, hops: int = 1, method: str = "sw", local: bool = False,

@@ -1272,6 +1272,7 @@ class Backend(ABC):
         problems: list["SolveProblem"],
         *,
         progress: bool = True,
+        max_workers: int | None = None,
     ) -> list[SolverResult] | None:
         """Dispatch structurally heterogeneous problems in parallel.
 
@@ -1281,6 +1282,9 @@ class Backend(ABC):
             Problems that cannot be merged into one structural batch.
         progress
             Display solver progress if the backend supports it.
+        max_workers
+            Worker processes, for backends that solve in parallel. ``None``
+            lets the backend choose, and ``1`` solves in this process.
 
         Returns
         -------
@@ -1288,7 +1292,7 @@ class Backend(ABC):
             Backend results in input order, or ``None`` to keep the engine's
             structural-group dispatch.
         """
-        _ = problems, progress
+        _ = problems, progress, max_workers
         return None
 
     def prepare_batch(self, batch: "SolveBatch") -> "PreparedBatch":
@@ -1327,7 +1331,9 @@ class Backend(ABC):
             tlist=batch.tlist,
         )
 
-    def solve_batch(self, batch: "SolveBatch", *, progress: bool = True) -> list[SolverResult]:
+    def solve_batch(
+        self, batch: "SolveBatch", *, progress: bool = True, max_workers: int | None = None,
+    ) -> list[SolverResult]:
         r"""Lower and solve a :class:`SolveBatch`.
 
         Default: prepares the batch, then dispatches each element's RHS through
@@ -1340,6 +1346,9 @@ class Backend(ABC):
             Captured problems and batch parameter values.
         progress : bool, default True
             Request a batch progress display.
+        max_workers : int or None, default None
+            Worker processes, for backends that solve in parallel. ``None``
+            lets the backend choose, and ``1`` solves in this process.
 
         Returns
         -------
@@ -1389,7 +1398,7 @@ class Backend(ABC):
             raise ValueError("Every SolveBatch point must resolve to the same solver.")
         solver_name = solver_names[0]
         runner = self.batched_mesolve if solver_name == "mesolve" else self.batched_sesolve
-        return runner(dict_problems, progress=progress)
+        return runner(dict_problems, n_jobs=-1 if max_workers is None else max_workers, progress=progress)
 
     # ------------------------------------------------------------------
     # Internal helpers

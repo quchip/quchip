@@ -2256,7 +2256,7 @@ class Chip:
         return solve_problem(problem)
 
     def solve_many(
-        self, batch_or_problems: Any, *, progress: bool = True,
+        self, batch_or_problems: Any, *, progress: bool = True, max_workers: int | None = None,
     ) -> "SimulationBatchResult":
         """Solve a :class:`SolveBatch` or list of problems.
 
@@ -2269,6 +2269,11 @@ class Chip:
             Batch or prepared problems built for this chip.
         progress : bool, default=True
             Show backend progress where supported.
+        max_workers : int or None, default=None
+            Worker processes for a backend that solves points in parallel,
+            such as QuTiP. ``None`` takes the CPU count that loky reports,
+            which honors ``LOKY_MAX_CPU_COUNT``, or fewer when the available
+            memory cannot hold them. ``1`` solves in this process.
         """
         # `quchip.engine.solve_many` owns the single SolveBatch / list
         # input-shape dispatch and the batching.
@@ -2283,7 +2288,7 @@ class Chip:
             for i, problem in enumerate(batch_or_problems):
                 self._check_problem(problem, index=i)
 
-        return solve_many(batch_or_problems, progress=progress)
+        return solve_many(batch_or_problems, progress=progress, max_workers=max_workers)
 
     def steadystate(
         self,

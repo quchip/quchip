@@ -202,7 +202,9 @@ _SPARSE_SUPEROPERATOR_PEAK_COPIES = 3
 
 
 def _operator_parts(operator: Any) -> list[Qobj]:
-    """Return the constant operators of a ``Qobj`` or ``QobjEvo``."""
+    """Return the constant operators of a ``Qobj``, a ``QobjEvo``, or a sequence of them."""
+    if isinstance(operator, (list, tuple)):
+        return [part for item in operator for part in _operator_parts(item)]
     if isinstance(operator, qutip.QobjEvo):
         return [part[0] if isinstance(part, list) else part for part in operator.to_list()]
     return [operator]
@@ -724,6 +726,9 @@ def _direct_steady_state(liouvillian: sparse.csr_matrix, dims: Sequence[int]) ->
 # (10 s by default), and that respawn costs ~3 s on the next sweep. Sweeps in an
 # interactive session arrive minutes apart, so the pool is kept warm for an hour.
 _POOL_IDLE_TIMEOUT_S = 3600
+# Each loky worker imports quchip, QuTiP and JAX, which takes about 190 MB
+# before its first problem.
+_WORKER_BYTES = 190 * 10**6
 
 
 def _warmup_noop(_idx: Any = None) -> None:
@@ -750,6 +755,8 @@ class QuTiPBackend(Backend):
     # Batches smaller than this run sequentially in-process: the loky pool's
     # fork/import/IPC overhead dominates a handful of fast QuTiP solves.
     _PARALLEL_MIN_BATCH = 8
+    # Worker count of the reusable loky pool that this process started, or zero.
+    _pool_workers = 0
 
     def __init__(self) -> None:
         # Per-(kind, dim) memo of the Fock-space operator factories. These are
@@ -1423,6 +1430,7 @@ class QuTiPBackend(Backend):
         problems: list[Any],
         *,
         progress: bool = True,
+        max_workers: int | None = None,
     ) -> list[SolverResult] | None:
         r"""Solve large, structurally heterogeneous problem lists through loky workers.
 
@@ -1432,6 +1440,9 @@ class QuTiPBackend(Backend):
             Problems that cannot be merged into one structural batch.
         progress
             Display solver progress if the backend supports it.
+        max_workers
+            Worker processes. ``None`` chooses the count, and ``1`` solves in
+            this process.
 
         Returns
         -------
@@ -1448,7 +1459,8 @@ class QuTiPBackend(Backend):
         return self._parallel_map(
             task=self.solve_problem,
             items=problems,
-            n_jobs=-1,
+            max_workers=max_workers,
+            point_bytes=max(self._point_bytes(problem) for problem in problems),
             progress=progress,
             desc="Sweep (independent)",
         )
@@ -1484,7 +1496,7 @@ class QuTiPBackend(Backend):
         return self._parallel_map(
             task=lambda problem: solve(**problem),
             items=problems,
-            n_jobs=n_jobs,
+            max_workers=None if n_jobs in (-1, None) else n_jobs,
             progress=progress,
             desc=f"Sweep ({solver_fn})",
         )
@@ -1598,7 +1610,9 @@ class QuTiPBackend(Backend):
             tlist=batch.tlist,
         )
 
-    def solve_batch(self, batch: Any, *, progress: bool = True) -> list[SolverResult]:
+    def solve_batch(
+        self, batch: Any, *, progress: bool = True, max_workers: int | None = None,
+    ) -> list[SolverResult]:
         r"""Solve a :class:`SolveBatch`, with the ``QobjEvo`` for each element built in loky workers.
 
         Parameters
@@ -1607,6 +1621,10 @@ class QuTiPBackend(Backend):
             Captured problems and batch parameter values.
         progress : bool, default True
             Request a batch progress display.
+        max_workers : int or None, default None
+            Worker processes. ``None`` takes the CPU count that loky reports,
+            which honors ``LOKY_MAX_CPU_COUNT``, or fewer when the available
+            memory cannot hold them. ``1`` solves in this process.
 
         Returns
         -------
@@ -1619,7 +1637,7 @@ class QuTiPBackend(Backend):
         """
         if any(problem.stochastic for problem in batch.problems):
             return self._parallel_map(task=self.solve_problem, items=list(batch.problems),
-                                      n_jobs=1, progress=progress, desc="quchip trajectories")
+                                      max_workers=1, progress=progress, desc="quchip trajectories")
         if batch.batch_size == 0:
             return []
 
@@ -1678,14 +1696,16 @@ class QuTiPBackend(Backend):
             )
             return getattr(self, task.solver_name)(**kwargs)
 
-        reference_solver = tasks[0].solver_name
-
+        reference = tasks[0]
+        operators = ([op for op in (reference.static_rhs, *reference.dynamic_qobjs) if op is not None],
+                     reference.c_ops)
         return self._parallel_map(
             task=build_and_solve,
             items=tasks,
-            n_jobs=-1,
+            max_workers=max_workers,
+            point_bytes=self._point_bytes(batch.problems[0], operators),
             progress=progress,
-            desc=f"Sweep ({reference_solver})",
+            desc=f"Sweep ({reference.solver_name})",
         )
 
     # ------------------------------------------------------------------
@@ -1732,10 +1752,11 @@ class QuTiPBackend(Backend):
         Parameters
         ----------
         n_jobs : int, default -1
-            Worker count. ``-1`` selects all CPUs.
+            Worker count. ``-1`` takes the CPU count that loky reports.
         """
         try:
-            executor = self._get_executor(n_jobs)
+            workers = self._worker_count(None if n_jobs in (-1, None) else n_jobs, 0)
+            executor = self._get_executor(workers)
         except (ModuleNotFoundError, ImportError) as exc:
             warnings.warn(
                 f"QuTiP sweep warmup unavailable ({exc!r}); the loky pool will "
@@ -1743,31 +1764,73 @@ class QuTiPBackend(Backend):
                 stacklevel=2,
             )
             return
-        workers = getattr(executor, "_max_workers", None) or (os.cpu_count() or 1)
         list(executor.map(_warmup_noop, range(workers)))
 
-    @staticmethod
-    def _get_executor(n_jobs: int) -> Any:
-        """Return the process-wide reusable loky executor.
+    def _point_bytes(self, problem: Any, operators: tuple[Any, Sequence[Any]] | None = None) -> int:
+        """Estimate the memory that one batch point needs in a worker, besides the worker's imports.
 
-        ``reuse=True`` hands back the same live pool across sweeps; the long
-        idle timeout avoids loky's ~10 s-default respawn, which otherwise
-        stalls the following sweep by ~3 s. Worker count follows ``n_jobs``
-        (``-1``/``None`` → all cores), clamped to at least one.
+        The estimate counts the saved states and, for a master equation whose
+        native Hamiltonian parts and collapse operators are given, the peak of
+        its Liouvillian assembly.
+        """
+        dimension = math.prod(problem.engine_result.dims)
+        solver = problem.solver_name(self)
+        state = dense_bytes(dimension) if solver == "sesolve" else dense_bytes(dimension, dimension)
+        saved = {"final": 1, "none": 0}.get(problem.states, len(problem.tlist))
+        if solver == "mesolve" and operators is not None:
+            return saved * state + _superoperator_peak_bytes(*operators)
+        return saved * state
+
+    @staticmethod
+    def _worker_count(max_workers: int | None, point_bytes: int) -> int:
+        """Return the pool size for a batch whose points each need ``point_bytes`` in a worker.
+
+        An explicit count that cannot fit in the available memory raises
+        :class:`MemoryError`. The default, the CPU count that loky reports,
+        drops with a warning to the largest count that fits.
+        """
+        from loky import cpu_count
+
+        def required(count: int) -> int:
+            # Workers of the running pool have their imports already.
+            started = max(0, count - QuTiPBackend._pool_workers)
+            return count * point_bytes + started * _WORKER_BYTES
+
+        if max_workers is not None:
+            if max_workers > 1:
+                require_memory(required(max_workers), task=f"A batch on {max_workers} worker processes",
+                               remedy="Pass a smaller max_workers.")
+            return max_workers
+        workers = cpu_count()
+        if fits_memory(required(workers)):
+            return workers
+        fitting = next((count for count in range(workers - 1, 0, -1) if fits_memory(required(count))), 1)
+        warnings.warn(
+            f"The batch runs on {fitting} of {workers} worker processes, because each needs about "
+            f"{(point_bytes + _WORKER_BYTES) / 1e9:.2f} GB and the available memory holds no more. "
+            "Pass max_workers to choose the count.",
+            stacklevel=2,
+        )
+        return fitting
+
+    @staticmethod
+    def _get_executor(workers: int) -> Any:
+        """Return the process-wide reusable loky executor with ``workers`` processes.
+
+        ``reuse=True`` hands back the same live pool across sweeps, resized when
+        the count changes; the long idle timeout avoids loky's ~10 s-default
+        respawn, which otherwise stalls the following sweep by ~3 s.
         """
         from loky import get_reusable_executor
 
-        workers = os.cpu_count() if n_jobs in (-1, None) else n_jobs
-        workers = max(1, int(workers or 1))
-        return get_reusable_executor(
-            max_workers=workers,
-            reuse=True,
-            timeout=_POOL_IDLE_TIMEOUT_S,
-        )
+        executor = get_reusable_executor(max_workers=workers, reuse=True, timeout=_POOL_IDLE_TIMEOUT_S)
+        QuTiPBackend._pool_workers = workers
+        return executor
 
     @staticmethod
     def _shutdown_executor() -> None:
         """Shut down the pool (best-effort) so a poisoned reused pool self-heals next sweep."""
+        QuTiPBackend._pool_workers = 0
         try:
             from loky import get_reusable_executor
 
@@ -1780,18 +1843,20 @@ class QuTiPBackend(Backend):
         *,
         task: Callable[[Any], SolverResult],
         items: list[Any],
-        n_jobs: int,
+        max_workers: int | None,
+        point_bytes: int = 0,
         progress: bool,
         desc: str,
     ) -> list[SolverResult]:
         """Run *task* over *items*, picking the cheapest dispatch path.
 
-        Small batches (``< _PARALLEL_MIN_BATCH``) run sequentially in-process —
-        the loky pool's fork/import/IPC overhead dominates a handful of fast
-        QuTiP solves. Larger batches dispatch through the process-wide reusable
-        loky executor. Worker-pool failures may use sequential execution;
-        failures raised by an individual solve retain their point index and
-        propagate without retrying the numerical work.
+        Small batches (``< _PARALLEL_MIN_BATCH``) and ``max_workers=1`` run
+        sequentially in-process — the loky pool's fork/import/IPC overhead
+        dominates a handful of fast QuTiP solves. Larger batches dispatch
+        through the process-wide reusable loky executor, sized by
+        :meth:`_worker_count`. Worker-pool failures may use sequential
+        execution; failures raised by an individual solve retain their point
+        index and propagate without retrying the numerical work.
         """
         from tqdm import tqdm
 
@@ -1806,11 +1871,14 @@ class QuTiPBackend(Backend):
             iterator = tqdm(enumerate(items), total=len(items), desc=desc) if progress else enumerate(items)
             return [indexed_task(entry) for entry in iterator]
 
-        if n_jobs == 1 or len(items) < self._PARALLEL_MIN_BATCH:
+        if max_workers == 1 or len(items) < self._PARALLEL_MIN_BATCH:
             return sequential()
 
         try:
-            executor = self._get_executor(n_jobs)
+            workers = self._worker_count(max_workers, point_bytes)
+            if workers == 1:
+                return sequential()
+            executor = self._get_executor(workers)
         except (ModuleNotFoundError, ImportError) as exc:
             warnings.warn(
                 f"QuTiP batched solve parallelism unavailable ({exc!r}); "
