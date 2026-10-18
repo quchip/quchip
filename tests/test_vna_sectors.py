@@ -7,7 +7,7 @@ import pytest
 
 import quchip.analysis.measurement as measurement
 import quchip.backend._sector_stationary as sector_solver
-from quchip import RWA, VNA, Capacitive, Chip, DuffingTransmon, ExcitationCutoff, PortNetwork, Resonator
+from quchip import RWA, VNA, Bath, Capacitive, Chip, DuffingTransmon, ExcitationCutoff, PortNetwork, Resonator
 from quchip.declarative import CollapseChannel, CouplingModel, Scalar, parameter
 
 OFFSETS = np.array([-0.02, -1e-3, -1e-5, 0.0, 1e-5, 1e-3, 0.02])
@@ -143,6 +143,58 @@ def test_a_dark_state_converges_only_when_the_probe_reaches_it(monkeypatch):
         VNA(dark_pair(max_total=1)).finite_power(5.0, 0.1)
 
 
+def bus_pair_generator(max_total, *, decay=0.0, conserving=()):
+    """Return the sector generator of two resonant qubits on the bus ``σ_1 + 2 σ_2``, with optional own decay."""
+    lower = np.array([[0.0, 1.0], [0.0, 0.0]])
+    first, second = np.kron(lower, np.eye(2)), np.kron(np.eye(2), lower)
+    lowering = [first + 2 * second] + ([np.sqrt(decay) * first, np.sqrt(decay) * second] if decay else [])
+    # The product order |00>, |01>, |10>, |11> lists the states by N, and N <= 1 keeps the first three.
+    size = 3 if max_total == 1 else 4
+    return sector_solver.SectorGenerator([1, 2, 1][:max_total + 1], np.zeros((size, size)),
+                                         [op[:size, :size] for op in lowering], [op[:size, :size] for op in conserving])
+
+
+def dense_stationary(lowering, drive):
+    """Return the stationary state of ``H = i(c* L - c L†)`` with jumps ``L`` by a dense solve for ``ρ - |0><0|``."""
+    dimension = lowering[0].shape[0]
+    identity = np.eye(dimension)
+    hamiltonian = sum(1j * (np.conj(c) * op - c * op.conj().T) for c, op in zip(drive, lowering))
+    generator = -1j * (np.kron(hamiltonian, identity) - np.kron(identity, hamiltonian.T))
+    for op in lowering:
+        decay = op.conj().T @ op
+        generator += np.kron(op, op.conj()) - 0.5 * np.kron(decay, identity) - 0.5 * np.kron(identity, decay.T)
+    generator[0] = identity.reshape(-1)
+    vacuum = np.zeros(dimension**2, dtype=complex)
+    vacuum[0] = 1.0
+    correction = np.linalg.solve(generator, vacuum - generator @ vacuum)
+    return (vacuum + correction).reshape(dimension, dimension)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("beta, conserving", [(0.0, ()), (0.1, (np.diag([0.0, 1.0, 1.0, 2.0]),)), (0.1, (np.eye(4),))],
+                         ids=["no_probe", "number_dephasing", "identity_jump"])
+def test_the_uniqueness_check_finds_a_second_stationary_state(beta, conserving):
+    """At N <= 1 the dark state stays stationary without a probe, and conserving jumps do not hide it."""
+    generator = bus_pair_generator(1, conserving=conserving)
+    with pytest.raises(ValueError, match="more than one stationary state"):
+        generator.stationary(0.0, [beta])
+
+
+@pytest.mark.unit
+def test_two_starts_resolve_a_slowly_emptied_dark_state():
+    """Qubit decay at 1e-6 / ns empties the dark state slowly; the solve matches a dense one, and raises without it."""
+    beta, vacuum = 1e-6, np.diag([1.0, 0.0, 0.0, 0.0])
+    lower = np.array([[0.0, 1.0], [0.0, 0.0]])
+    first, second = np.kron(lower, np.eye(2)), np.kron(np.eye(2), lower)
+    expected = dense_stationary([first + 2 * second, np.sqrt(1e-6) * first, np.sqrt(1e-6) * second], [beta, 0.0, 0.0])
+    solved = bus_pair_generator(2, decay=1e-6).stationary(0.0, [beta, 0.0, 0.0])
+    np.testing.assert_allclose(solved.state - vacuum, expected - vacuum, rtol=0,
+                               atol=1e-8 * np.linalg.norm(expected - vacuum))
+    # Without it the dark state empties at a rate of order beta^2, which the solve cannot resolve.
+    with pytest.raises(ValueError, match="cannot resolve"):
+        bus_pair_generator(2).stationary(0.0, [beta])
+
+
 @pytest.mark.unit
 def test_a_solve_that_does_not_converge_raises(monkeypatch):
     """A residual above the limit raises instead of returning an unconverged state."""
@@ -223,9 +275,31 @@ def test_automatic_cutoff_warns_once_at_the_call(monkeypatch, method, case):
     if case == "memory":
         assert check["status"] == "not run" and "not verified" in text
     else:
-        assert check["status"] == "passed" and check["relative_change"] <= 1e-6
+        assert check["status"] == "passed" and check["change"] <= 1e-6
         assert ("noise spectra by at most" in text) == (method == "measure" and case == "passed")
         assert ("noise spectra were not compared" in text) == (method == "measure" and case == "noise")
+
+
+def test_modes_are_reported_in_the_probe_frame_of_the_solve():
+    """A shared loss channel drives a mode detuned by 1 GHz at the probe frequency; both routes report that frame."""
+    def chip(space=None):
+        a = Resonator(freq=6.0, levels=3, label="a", T1=100.0)
+        b = Resonator(freq=5.0, levels=3, label="b", T1=100.0)
+        network = PortNetwork(label="line")
+        network.expose("line", at=network.port("a", target=a, rate=0.1))
+        return Chip([a, b], port_network=network, baths=[Bath("collective_decay", targets=[a, b], rate=0.1)],
+                     approximation=RWA(), space=space)
+
+    offsets = [-0.01, -0.001, 0.0, 0.001, 0.01]
+    sectors = VNA(chip(ExcitationCutoff(max_total=2))).measure(6.0, 0.01, noise_frequencies=offsets)
+    harmonic = VNA(chip()).measure(6.0, 0.01, noise_frequencies=offsets)
+    assert sectors.diagnostics[0]["solver"] == "sector_stationary"
+    assert harmonic.diagnostics[0]["solver"] == "linear_response"
+    np.testing.assert_array_equal(sectors.mode_frequencies, [6.0, 6.0])
+    np.testing.assert_array_equal(harmonic.mode_frequencies, [6.0, 6.0])
+    # Three levels and N <= 2 differ from the harmonic modes only at order |<a>|^2.
+    assert abs(sectors.mode_amplitude("b")) > 1e-4
+    np.testing.assert_allclose(sectors.mode_amplitudes, harmonic.mode_amplitudes, rtol=1e-5)
 
 
 def test_an_explicit_cutoff_with_heating_solves_the_compact_model():
@@ -256,7 +330,7 @@ def test_two_readout_pairs_match_the_product_space_with_an_automatic_cutoff():
     (warning,) = cutoff_warnings(caught)
     check = automatic.diagnostics[0]["cutoff_check"]
     assert automatic.diagnostics[0]["excitation_cutoff"] == 3 and "N <= 3" in str(warning.message)
-    assert check["status"] == "passed" and check["relative_change"] <= 1e-6
+    assert check["status"] == "passed" and check["change"] <= 1e-6
     np.testing.assert_allclose(automatic.values, product.values, rtol=0, atol=1e-6 * beta)
 
 

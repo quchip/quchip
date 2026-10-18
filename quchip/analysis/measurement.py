@@ -187,9 +187,8 @@ def _acquire(
     sector_points = [index for index, point in enumerate(points) if point[2] is not None]
     if sector_points:
         method = "VNA.measure()" if noise else "VNA.finite_power()"
-        solved = _sector_acquire([points[index] for index in sector_points], labels=labels,
-                                 input_label=input_label, offsets=offsets, noise=noise, progress=progress,
-                                 method=method, xp=xp)
+        solved = _sector_acquire([points[index] for index in sector_points], labels=labels, offsets=offsets,
+                                 noise=noise, progress=progress, method=method, xp=xp)
         for index, acquired in zip(sector_points, solved, strict=True):
             captured[index] = acquired
     remaining = [index for index, point in enumerate(points) if point[2] is None]
@@ -272,7 +271,7 @@ class _CutoffCheck:
     states: int
 
     def record(self) -> dict[str, Any]:
-        return {"status": self.status, "compared_with": self.compared_with, "relative_change": self.change,
+        return {"status": self.status, "compared_with": self.compared_with, "change": self.change,
                 "noise_compared": self.noise, "tolerance": _CUTOFF_TOLERANCE}
 
 
@@ -333,7 +332,7 @@ def _sector_change(lower: list[_SectorPoint], upper: list[_SectorPoint], noise: 
     return max(changes)
 
 
-def _sector_acquire(entries: list[Any], *, labels: tuple[str, ...], input_label: str, offsets: Any, noise: bool,
+def _sector_acquire(entries: list[Any], *, labels: tuple[str, ...], offsets: Any, noise: bool,
                     progress: bool, method: str, xp: Any) -> list[_Acquisition]:
     """Acquire grid points on excitation sectors at the chip's cutoff, or at an automatic one."""
     models = [entry[2] for entry in entries]
@@ -373,10 +372,9 @@ def _sector_acquire(entries: list[Any], *, labels: tuple[str, ...], input_label:
                                    progress=progress, method=method))
         if check is not None:
             _warn_cutoff(method, cutoff, first.size(cutoff), check, noise, bool(first.modes))
-    plans: dict[tuple[int, float], Any] = {}
     acquired = []
     for entry, point in zip(entries, points, strict=True):
-        chip, _, model, _, amplitude, frequency = entry
+        _, _, model, _, _, frequency = entry
         components: dict[str, tuple[Any, Any]] = {}
         delays = None
         frames: np.ndarray = np.zeros(0)
@@ -384,12 +382,8 @@ def _sector_acquire(entries: list[Any], *, labels: tuple[str, ...], input_label:
             components, delays = propagate_noise(model.fields, model.scattering, None, point.excess, labels,
                                                  float(frequency), np.asarray(offsets), np)
             components = {name: (xp.asarray(white), xp.asarray(excess)) for name, (white, excess) in components.items()}
-            key = (id(chip), float(frequency))
-            if key not in plans:
-                from quchip.engine.input_output import stationary_frame_plan
-
-                plans[key] = stationary_frame_plan(chip, ((input_label, frequency),))[0]
-            frames = np.asarray([plans[key].frequencies[label] for label in model.modes], dtype=float)
+            # Every mode is solved in the probe frame.
+            frames = np.full(len(model.modes), float(frequency))
         state = point.solve.state
         diagnostics = {
             "solver": "sector_stationary", "excitation_cutoff": cutoff, "cutoff_choice": choice,
@@ -418,7 +412,9 @@ def _warn_cutoff(method: str, cutoff: int, size: int, check: _CutoffCheck, noise
             f"N <= {cutoff}, not on the full product space.")
     if check.status == "passed":
         text += (f" Solving with N <= {check.compared_with} changed the {quantities} by at most "
-                 f"{check.change:.1e} relative (tolerance {_CUTOFF_TOLERANCE:.0e}) at every grid point.")
+                 f"{check.change:.1e} of their size at every grid point (tolerance {_CUTOFF_TOLERANCE:.0e}). "
+                 f"A value below {_CUTOFF_FLOOR / _CUTOFF_TOLERANCE:.0e} of the largest one on the grid is "
+                 "compared with that floor instead.")
         if noise and not check.noise:
             text += (f" The noise spectra were not compared, because N <= {check.compared_with} has "
                      f"{check.states:,} states (the comparison limit is {_NOISE_CHECK_STATES:,}).")

@@ -1088,12 +1088,12 @@ A = -i H' - (1/2) sum_k L_k† L_k - (1/2) sum_m C_m† C_m,   W = sum_k conj(c_
 
 The solver stores the blocks `X_NM` with `N, M <= K` and never forms the
 product space. It replaces the vacuum equation by `Tr X = 1` and writes
-`X = |0><0| + Δ`. The iteration then resolves only the probe's correction, so
-weak probes keep their relative accuracy. A product-space solve has an
-absolute round-off near `1e-15` on the vacuum population instead. At
-`|beta| = 1.1e-4`, this made its excess noise spectra differ by `1.3e-6`
-relative, and iterative refinement of its state reduced the difference to
-`1e-8`.
+`X = |0><0| + Δ`. The right side is then of the order of the probe, and the
+residual is relative to the probe's correction instead of the vacuum
+population. The error of `Δ` still grows with the condition number of the
+generator, which is large when a state relaxes slowly. For the dark pair
+below at `K = 2`, the relative error of `Δ` is `3e-11` at `|beta| = 0.1` and
+`1e-7` at `|beta| = 3e-5`.
 
 Restarted GMRES solves for `Δ`. Its right preconditioner inverts the
 probe-free generator. The lowering jumps stay exact, and the conserving jumps
@@ -1105,18 +1105,33 @@ ill-conditioned eigenbasis, uses the eigenbasis of the Hermitian part of its
 drift. A solve whose relative residual stays above `1e-8` raises. The Krylov
 storage is checked against the available memory first.
 
-A sector drift eigenvalue that decays more slowly than `δ` can mark a dark
-state. The solver then starts again from the maximally mixed state. If the two
-solutions differ by more than `1e-6`, the truncated model has more than one
-stationary state, and the call raises. Two resonant qubits on one channel
-`σ_1 + 2 σ_2` have the dark state `2|10> - |01>`. The probe reaches it only
-through `|11>`, so `K = 1` raises and `K = 2` has one stationary state.
+If the lowering channels empty every state of each sector `N >= 1`, the
+stationary state is unique. Each state then has a lowering jump, so the
+support of every stationary state holds the vacuum, and two stationary states
+with orthogonal supports cannot exist. This holds for any Hamiltonian, probe
+and conserving channels. The solver compares the smallest eigenvalue of
+`sum_k L_k† L_k` in each sector with `δ`. Above 1024 labels, it uses the
+Gershgorin bound. If a sector fails this test, a dark state is possible, and
+the solver starts again from the maximally mixed state. The equations do not
+fix the weight on a second stationary state, so this start ends with another
+weight on it. If the two corrections `Δ` differ by more than `1e-6` of the
+first, both solves continue to a relative residual of `1e-15`. If they still
+differ, the call raises, because the truncated model has more than one
+stationary state or one that the solve cannot resolve. Two resonant qubits on
+one channel `σ_1 + 2 σ_2` have the dark state `2|10> - |01>`. The probe
+reaches it only through `|11>`, so `K = 1` raises and `K = 2` has one
+stationary state. At `K = 2`, the dark state empties at a rate of order
+`|beta|^2`, and the call raises at `|beta| = 1e-5`. With a decay of
+`1e-6 / ns` on each qubit, `|beta| = 1e-6` gives the state of a dense solve to
+`2e-10`.
 
 The noise spectra solve `(G + i 2π f) Y = B` with `Tr Y = 0` on the same
 blocks, with the sign of `stationary_resolvent()` (§8.2). Since
 `R_f(B†) = R_{-f}(B)†`, each output and offset needs one solve. Mode
 amplitudes and photon numbers evaluate the authored `a` and `n` on the
-retained labels.
+retained labels. Every mode is solved in the probe frame, so
+`mode_frequencies` holds the probe frequency, as for the harmonic route. A
+channel that couples modes at different frequencies is then static.
 
 With `chip.with_space(ExcitationCutoff(max_total=K))`, `K` is the chip's, and
 the call does not check it. Without a cutoff, with `options=None` and more

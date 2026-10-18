@@ -20,8 +20,10 @@ from scipy import sparse
 
 from quchip.backend._memory import available_memory_bytes
 
-# Relative residual at which GMRES stops, and the residual above which a solve fails.
+# Relative residual at which GMRES stops, the smaller one of a second attempt when two
+# starts disagree, and the residual above which a solve fails.
 _TOLERANCE = 1e-12
+_REFINED_TOLERANCE = 1e-15
 _RESIDUAL_LIMIT = 1e-8
 # Krylov vectors kept between restarts, and the restart cycles allowed.
 _RESTART = 64
@@ -33,6 +35,9 @@ _EIG_LIMIT = 1024
 _CONDITION_LIMIT = 1e8
 # Damping added to every preconditioner denominator, relative to the largest decay rate.
 _DAMPING = 1e-6
+# Largest difference between the probe corrections from two starts, relative to the first
+# one, that counts as one stationary state.
+_UNIQUENESS = 1e-6
 
 _CONVERGENCE_MESSAGE = (
     "The excitation-sector stationary solve did not converge (relative residual {residual:.1e}). "
@@ -100,8 +105,13 @@ class SectorGenerator:
         self._factors = tuple(self._factor(n) for n in range(len(self.sizes)))
         rates = [np.max(-values.real, initial=0.0) for values, _, _, _ in self._factors]
         self.damping = _DAMPING * max(max(rates), np.finfo(float).tiny)
-        # A drift eigenvalue that decays no faster than the damping marks a possible dark state.
-        self.dark = any(np.any(values.real > -self.damping) for values, _, _, _ in self._factors[1:])
+        # When the lowering channels empty every state of every sector N >= 1, the support of any stationary
+        # state holds the vacuum, so no two stationary states have orthogonal supports and the state is unique,
+        # whatever the Hamiltonian, the probe and the conserving channels. Otherwise a dark state is possible.
+        escape = sparse.csr_matrix((dimension, dimension), dtype=complex)
+        for channel in self.lowering:
+            escape = escape + channel.conj().T @ channel
+        self.dark = any(_smallest_rate(escape[span, span]) <= self.damping for span in self._spans[1:])
 
     def _factor(self, n: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, tuple[np.ndarray, ...]]:
         """Return diagonal drift values, the basis, its inverse and conserving diagonals of one sector."""
@@ -250,23 +260,30 @@ class SectorGenerator:
         target[0] = 1.0
         # The vacuum carries the zeroth order, so the iteration resolves the probe's correction.
         rhs = target - operator(vacuum.reshape(-1))
+        restart = self.restart()
         start = None if guess is None else _useful(operator, rhs, guess.reshape(-1) - vacuum.reshape(-1))
-        solved = _gmres(operator, precondition, rhs, start, self.restart())
-        state = solved.state.reshape(dimension, dimension) + vacuum
+        solved = _gmres(operator, precondition, rhs, start, restart)
         if self.dark:
-            # A dark state can leave more than one stationary state; a second start would find another.
-            # GMRES changes a start only along directions that the generator reaches, so this start is
-            # used even though its residual is large.
-            mixed = np.eye(dimension, dtype=complex) / dimension - vacuum
-            other = _gmres(operator, precondition, rhs, mixed.reshape(-1), self.restart())
-            difference = (float(np.linalg.norm(other.state - solved.state))
-                          / max(float(np.linalg.norm(solved.state)), 1.0))
-            if difference > 1e-6:
+            # The equations do not fix the weight on a second stationary state, so a start from the
+            # maximally mixed state ends with another weight on it than the first solve.
+            mixed = (np.eye(dimension, dtype=complex) / dimension - vacuum).reshape(-1)
+            # Without a probe the right side vanishes, and the residual of the start sets the scale.
+            scale = float(np.linalg.norm(rhs)) or float(np.linalg.norm(operator(mixed)))
+            other = _gmres(operator, precondition, rhs, mixed, restart, scale=scale)
+            difference = _difference(solved.state, other.state)
+            if difference > _UNIQUENESS:
+                # A state that relaxes slowly also separates the starts, and a smaller residual resolves it.
+                solved = _gmres(operator, precondition, rhs, solved.state, restart, _REFINED_TOLERANCE)
+                other = _gmres(operator, precondition, rhs, other.state, restart, _REFINED_TOLERANCE, scale)
+                difference = _difference(solved.state, other.state)
+            if difference > _UNIQUENESS:
                 raise ValueError(
-                    "The truncated model has more than one stationary state: two starts converge to states "
-                    f"that differ by {difference:.1e}. A dark state that the probe does not reach can cause "
-                    "this. Raise the excitation cutoff or add the missing loss channel."
+                    "The truncated model has more than one stationary state, or a stationary state that this "
+                    f"solve cannot resolve: two starts converge to states that differ by {difference:.1e}. A state "
+                    "that the probe and the loss channels reach only weakly or not at all, such as a dark state, "
+                    "causes this. Raise the excitation cutoff or add the missing loss channel."
                 )
+        state = solved.state.reshape(dimension, dimension) + vacuum
         return SectorSolve(state, solved.iterations, solved.residual)
 
     def resolvent(self, frequency: float, drive: Any, source: np.ndarray, offsets: Any,
@@ -313,30 +330,51 @@ class SectorGenerator:
         return values, iterations, residual, trace
 
 
+def _smallest_rate(block: Any) -> float:
+    """Return the smallest eigenvalue of a Hermitian sector block, or a lower bound for a large block."""
+    if block.shape[0] <= _EIG_LIMIT:
+        return float(np.linalg.eigvalsh(block.toarray())[0])
+    # No eigenvalue lies below a diagonal entry minus the magnitudes of the rest of its row.
+    diagonal = block.diagonal().real
+    rows = np.asarray(abs(block).sum(axis=1)).ravel()
+    return float(np.min(2 * diagonal - rows))
+
+
+def _difference(first: np.ndarray, second: np.ndarray) -> float:
+    """Return the norm of the difference of two corrections, relative to the first one unless it is zero."""
+    return float(np.linalg.norm(second - first)) / (float(np.linalg.norm(first)) or 1.0)
+
+
 def _useful(operator: Callable[[np.ndarray], np.ndarray], rhs: np.ndarray, guess: np.ndarray) -> np.ndarray | None:
     """Return ``guess`` if its residual is smaller than that of zero, else ``None``."""
     return guess if np.linalg.norm(rhs - operator(guess)) < np.linalg.norm(rhs) else None
 
 
 def _gmres(operator: Callable[[np.ndarray], np.ndarray], precondition: Callable[[np.ndarray], np.ndarray],
-           rhs: np.ndarray, guess: np.ndarray | None, restart: int) -> SectorSolve:
+           rhs: np.ndarray, guess: np.ndarray | None, restart: int, tolerance: float | None = None,
+           scale: float | None = None) -> SectorSolve:
     """Solve ``operator(x) = rhs`` by restarted GMRES with right preconditioning.
 
     The residual that GMRES minimizes is the residual of the original
-    equations, so the returned residual is the true one.
+    equations, so the returned residual is the true one. It is relative to
+    ``scale``, by default the norm of ``rhs``, or the residual of the start
+    when ``rhs`` is zero. A cycle that starts below the failure limit and does
+    not halve the residual ends the solve.
     """
     if restart <= 0:
         raise MemoryError("The excitation-sector solve does not fit in the available memory. "
                           "Lower the excitation cutoff or reduce the model.")
-    scale = np.linalg.norm(rhs)
-    if scale == 0.0:
-        return SectorSolve(np.zeros_like(rhs), 0, 0.0)
     solution = np.zeros_like(rhs) if guess is None else guess.copy()
-    iterations = 0
     residual = rhs - operator(solution)
+    if scale is None:
+        scale = float(np.linalg.norm(rhs)) or float(np.linalg.norm(residual))
+    if scale == 0.0:
+        return SectorSolve(solution, 0, 0.0)
+    tolerance = _TOLERANCE if tolerance is None else tolerance
+    iterations = 0
     for _ in range(_CYCLES):
         norm = np.linalg.norm(residual)
-        if norm <= _TOLERANCE * scale:
+        if norm <= tolerance * scale:
             break
         basis = np.empty((restart + 1, rhs.size), dtype=complex)
         hessenberg = np.zeros((restart + 1, restart), dtype=complex)
@@ -355,11 +393,17 @@ def _gmres(operator: Callable[[np.ndarray], np.ndarray], precondition: Callable[
             coefficients = np.linalg.lstsq(hessenberg[:step + 2, :step + 1], target, rcond=None)[0]
             estimate = np.linalg.norm(hessenberg[:step + 2, :step + 1] @ coefficients - target)
             iterations += 1
-            if estimate <= _TOLERANCE * scale or hessenberg[step + 1, step] == 0.0:
+            if estimate <= tolerance * scale or hessenberg[step + 1, step] == 0.0:
                 break
             basis[step + 1] = vector / hessenberg[step + 1, step]
-        solution = solution + precondition(coefficients @ basis[:step + 1])
-        residual = rhs - operator(solution)
+        candidate = solution + precondition(coefficients @ basis[:step + 1])
+        remaining = rhs - operator(candidate)
+        if np.linalg.norm(remaining) > 0.5 * norm and norm <= _RESIDUAL_LIMIT * scale:
+            # A cycle that does not halve an acceptable residual has reached the round-off of the equations.
+            if np.linalg.norm(remaining) < norm:
+                solution, residual = candidate, remaining
+            break
+        solution, residual = candidate, remaining
     relative = float(np.linalg.norm(residual) / scale)
     if not np.isfinite(relative) or relative > _RESIDUAL_LIMIT:
         raise SectorConvergenceError(_CONVERGENCE_MESSAGE.format(residual=relative))

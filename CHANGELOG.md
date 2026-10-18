@@ -133,7 +133,7 @@ This file records notable user-visible changes to quchip.
   `options=None` solve a chip that conserves the total excitation and has more
   than 64 product states on the labels with `N <= K`, and they warn which `K`
   they kept. Means, mode values and noise spectra can change by about `1e-6`
-  relative. Pass `options={}` to keep the full product-space solve.
+  of their size. Pass `options={}` to keep the full product-space solve.
   ([#156](https://github.com/quchip/quchip/issues/156),
   [#185](https://github.com/quchip/quchip/pull/185))
 
@@ -188,7 +188,8 @@ This file records notable user-visible changes to quchip.
   truncates. With `chip.with_space(ExcitationCutoff(max_total=K))`, `K` is the
   chip's. Without a cutoff, a chip with more than 64 product states starts at
   `K = 2`, compares every grid point with `K + 1`, raises `K` until the change
-  is at most `1e-6` relative, and warns which `K` it kept. Two
+  is at most `1e-6` of each value, and warns which `K` it kept. A truncation
+  that leaves more than one stationary state raises. Two
   transmon-readout pairs take 0.06 s instead of 18 s for two grid points, and
   12 pairs keep 325 of 3²⁴ product states at `K = 2`. Under a cutoff, a chip
   outside this route and a JAX-traced call solve the compact model directly.
