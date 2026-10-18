@@ -5,7 +5,7 @@ import warnings
 import numpy as np
 import pytest
 
-from quchip import Chip, QuantumSequence, with_truncation
+from quchip import Chip, QuantumSequence, check_truncation, with_truncation
 from quchip.engine import solve_problem, solve_many
 from quchip.declarative import DeviceModel, parameter
 
@@ -37,8 +37,8 @@ def test_boundary_excursion_is_checked_before_return_to_ground(backend, storage)
         )))
     assert not any("boundary" in str(w.message) for w in caught)
     with pytest.warns(UserWarning, match="q.*sampled"):
-        result.check_truncation()
-    observed = result.check_truncation(threshold=2.0)
+        check_truncation(result)
+    observed = check_truncation(result, threshold=2.0)
     assert observed["q"] == pytest.approx(1.0, abs=2e-6)
     np.testing.assert_allclose(result.expect("q"), np.sin(0.5 * np.pi * times) ** 2, atol=2e-6)
     assert result.observable_traces.keys() == {"q"}
@@ -54,14 +54,25 @@ def test_intrinsically_finite_qubit_has_no_cutoff_warning(backend):
             [0.0, 1.0], initial_state=chip.backend.basis(2, 0), states="none",
         )))
     assert not [warning for warning in caught if "truncation" in str(warning.message).lower()]
-    assert result.check_truncation() == {}
+    assert check_truncation(result) == {}
+
+
+def test_result_method_warns_and_returns_the_function_report():
+    """The deprecated method calls quchip.check_truncation, which rejects a request that has no solve."""
+    chip = Chip([DrivenLadder(label="q")], frame="lab")
+    sequence = QuantumSequence(chip)
+    result = sequence.simulate([0.0, 1.0], initial_state=chip.backend.basis(2, 0))
+    with pytest.warns(DeprecationWarning, match=r"quchip\.check_truncation\(result\).*quchip 0\.6"):
+        assert result.check_truncation(threshold=2.0) == check_truncation(result, threshold=2.0)
+    with pytest.raises(TypeError, match="not SolveProblem"):
+        check_truncation(sequence.build_problem([0.0, 1.0]))
 
 
 def test_unretained_diagnostic_explains_what_to_request():
     chip = Chip([DrivenLadder(label="q")], frame="lab")
     result = QuantumSequence(chip).simulate([0.0, 1.0], states="none")
     with pytest.raises(RuntimeError, match="with_truncation"):
-        result.check_truncation()
+        check_truncation(result)
 
 
 @pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
@@ -75,9 +86,11 @@ def test_batched_diagnostics_do_not_need_state_histories(backend):
         batch = solve_many(with_truncation(sequence.build_batch(
             axis, tlist=[0.0, 1.0, 2.0], states="none", e_ops={"q": q.number_operator()})), progress=False)
         for result in batch:
-            result.check_truncation()
+            check_truncation(result)
+    with pytest.raises(TypeError, match="each result of the batch"):
+        check_truncation(batch)
     for result in batch:
-        assert result.check_truncation(threshold=2.0)["q"] == pytest.approx(1.0, abs=2e-6)
+        assert check_truncation(result, threshold=2.0)["q"] == pytest.approx(1.0, abs=2e-6)
         with pytest.raises(RuntimeError, match='states="all"'):
             _ = result.states
         if backend == "dynamiqs":
@@ -113,10 +126,10 @@ def test_warning_threshold_for_small_boundary_populations(population):
         result = solve_problem(
             with_truncation(QuantumSequence(chip).build_problem([0.0, 0.01], initial_state=initial, states="none"))
         )
-        result.check_truncation()
+        check_truncation(result)
     matching = [warning for warning in caught if "maximum sampled" in str(warning.message)]
     assert bool(matching) == (population > 1e-3)
-    assert result.check_truncation(threshold=2.0)["q"] == pytest.approx(population, abs=1e-10)
+    assert check_truncation(result, threshold=2.0)["q"] == pytest.approx(population, abs=1e-10)
 
 
 @pytest.mark.parametrize("space", ["charge", "phase"])
@@ -140,8 +153,8 @@ def test_native_coordinate_cutoffs_cover_both_edges(space, edge):
                 )
             )
         )
-        result.check_truncation()
-    assert result.check_truncation(threshold=2.0)["q"] == pytest.approx(1.0)
+        check_truncation(result)
+    assert check_truncation(result, threshold=2.0)["q"] == pytest.approx(1.0)
 
 
 def test_projected_space_checks_its_retained_energy_boundary():
@@ -153,8 +166,8 @@ def test_projected_space_checks_its_retained_energy_boundary():
         result = solve_problem(
             with_truncation(QuantumSequence(chip).build_problem([0.0, 0.1], initial_state={"q": 2}, states="none"))
         )
-        result.check_truncation()
-    assert result.check_truncation(threshold=2.0)["q"] == pytest.approx(1.0)
+        check_truncation(result)
+    assert check_truncation(result, threshold=2.0)["q"] == pytest.approx(1.0)
 
 
 def test_request_captures_boundary_before_source_changes():
@@ -167,10 +180,10 @@ def test_request_captures_boundary_before_source_changes():
     q.truncation_boundary = lambda: None
     with pytest.warns(UserWarning, match="maximum sampled"):
         result = solve_problem(with_truncation(problem))
-        result.check_truncation()
-    assert result.check_truncation(threshold=2.0)["q"] == pytest.approx(1.0)
+        check_truncation(result)
+    assert check_truncation(result, threshold=2.0)["q"] == pytest.approx(1.0)
     fresh = sequence.build_problem([0.0, 1.0], states="none")
-    assert solve_problem(fresh).check_truncation() == {}
+    assert check_truncation(solve_problem(fresh)) == {}
 
 
 def test_lazy_boundary_query_does_not_cache_a_tracer():
@@ -180,10 +193,10 @@ def test_lazy_boundary_query_does_not_cache_a_tracer():
     chip = Chip([DrivenLadder(label="q")], backend="dynamiqs", frame="lab")
     result = QuantumSequence(chip).simulate([0.0, 1.0, 2.0], initial_state=chip.backend.basis(2, 0))
     with pytest.warns(UserWarning, match="traced"):
-        maximum = jax.jit(lambda: result.check_truncation(threshold=2.0)["q"])()
+        maximum = jax.jit(lambda: check_truncation(result, threshold=2.0)["q"])()
     assert float(maximum) == pytest.approx(1.0, abs=2e-6)
     assert not contains_tracer(result._boundary_traces)
-    assert result.check_truncation(threshold=2.0)["q"] == pytest.approx(1.0, abs=2e-6)
+    assert check_truncation(result, threshold=2.0)["q"] == pytest.approx(1.0, abs=2e-6)
 
 
 def test_unknown_custom_cutoff_explains_unavailable_diagnostic():
@@ -199,9 +212,9 @@ def test_unknown_custom_cutoff_explains_unavailable_diagnostic():
     chip = Chip([UnknownCutoff(label="q")], frame="lab")
     with pytest.warns(UserWarning, match="diagnostic unavailable.*CustomSpace"):
         result = solve_problem(with_truncation(QuantumSequence(chip).build_problem([0.0, 1.0], states="none")))
-        result.check_truncation()
+        check_truncation(result)
     with pytest.warns(UserWarning, match="diagnostic unavailable"):
-        assert result.check_truncation() == {}
+        assert check_truncation(result) == {}
 
 
 def test_boundary_indices_capture_source_sequence_and_reject_double_counting():
@@ -226,7 +239,7 @@ def test_sampled_boundary_maximum_has_the_correct_gradient():
             [0.0, 0.5, 1.0, 1.5, 2.0], initial_state=chip.backend.basis(2, 0), states="none",
         )
         result = solve_problem(with_truncation(problem))
-        return result.check_truncation(threshold=2.0)["q"]
+        return check_truncation(result, threshold=2.0)["q"]
 
     with pytest.warns(UserWarning, match="traced"):
         value, derivative = jax.jit(jax.value_and_grad(maximum))(0.21)
@@ -244,8 +257,8 @@ def test_saved_samples_and_prepared_diagnostics_agree_on_frozen_grid(backend):
     problem = QuantumSequence(chip).build_problem([0., 1., 2.], initial_state=chip.backend.basis(2, 0))
     sampled = with_truncation(replace(problem, states="none"))
     np.testing.assert_array_equal(sampled.tlist, problem.tlist)
-    saved_maximum = solve_problem(problem).check_truncation(threshold=2.)["q"]
-    assert solve_problem(sampled).check_truncation(threshold=2.)["q"] == pytest.approx(saved_maximum)
+    saved_maximum = check_truncation(solve_problem(problem), threshold=2.)["q"]
+    assert check_truncation(solve_problem(sampled), threshold=2.)["q"] == pytest.approx(saved_maximum)
     final = solve_problem(replace(problem, states="final"))
-    assert final.check_truncation(threshold=2.)["q"] < 1e-8
+    assert check_truncation(final, threshold=2.)["q"] < 1e-8
     assert final.stats["truncation_sampling"] == "final state only"

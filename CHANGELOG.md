@@ -136,6 +136,14 @@ This file records notable user-visible changes to quchip.
   of their size. Pass `options={}` to keep the full product-space solve.
   ([#156](https://github.com/quchip/quchip/issues/156),
   [#185](https://github.com/quchip/quchip/pull/185))
+- The truncation check is now the function `quchip.check_truncation(result)`,
+  next to `with_truncation`. It accepts the same results and returns the same
+  reports as the `check_truncation()` methods of `SimulationResult`,
+  `TrajectoryResult` and `PartitionedSimulationResult`. These methods still
+  work but warn with `DeprecationWarning`, and quchip 0.6 removes them. Under
+  an `ExcitationCutoff`, a request now records only the cutoff and its boundary
+  totals for the check, and the check finds the compact rows when it runs.
+  ([#188](https://github.com/quchip/quchip/pull/188))
 
 #### New features
 
@@ -173,7 +181,7 @@ This file records notable user-visible changes to quchip.
   deterministic pulse solves on QuTiP and dynamiqs use it, also under JAX
   tracing. Under `Exact()`, the frequencies of a ring of 24 three-level devices
   then need blocks of 301 and 2600 states at `K = 3`. Labels and supplied states
-  above the cutoff raise. `result.check_truncation()` reports the sampled
+  above the cutoff raise. `quchip.check_truncation(result)` reports the sampled
   population in the sectors that connect above the cutoff, as a heuristic.
   `Chip.dress()`, VNA sweeps, output spectra and correlations, steady-state,
   stochastic, elimination, local-fit and partition workflows raise for an

@@ -1023,9 +1023,11 @@ state.
 `result.stats["excitation_reduction"]` adds `cutoff`, `cutoff_dimension`, the
 number of retained labels, and `boundary`. The boundary holds the retained
 totals from which one Hamiltonian term, drive, jump, or no-jump product can
-reach `N > K`. `result.check_truncation()` adds the key `ExcitationCutoff(K)`.
-Its value is the maximum sampled population in the boundary totals, and a
-value above `threshold` warns. Unknown changes make this check unavailable,
+reach `N > K`. `quchip.check_truncation(result)` adds the key
+`ExcitationCutoff(K)`. Its value is the maximum sampled population in the
+boundary totals, and a value above `threshold` warns. The projector onto these
+totals is diagonal in the product labels, so no frame changes it, and the check
+reads it from the diagonals of the saved states. Unknown changes make this check unavailable,
 with a warning. The per-device level checks remain. The boundary population is
 a sampling heuristic, not an error bound. It ignores coupling strengths and
 detunings, and it can miss excursions between samples.

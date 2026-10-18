@@ -194,22 +194,21 @@ class PartitionedSimulationResult:
         return self._owner_result(device).population(device, level)
 
     def check_truncation(self, threshold: float = 1e-3) -> dict[str, float]:
-        """Run each component's truncation check and merge the per-device results.
+        """Deprecated method form of :func:`quchip.check_truncation`.
 
-        The return shape is the same as for
-        :meth:`~quchip.results.results.SimulationResult.check_truncation` (a
-        ``dict`` keyed by device label), which gives duck-typing parity between
-        joint and partitioned results.
+        quchip 0.6 removes this method. Call ``quchip.check_truncation(result)``.
 
         Parameters
         ----------
         threshold : float, default=1e-3
             Maximum accepted boundary population.
         """
-        merged: dict[str, float] = {}
-        for result in self._results:
-            merged.update(result.check_truncation(threshold=threshold))
-        return merged
+        from quchip.engine.truncation import check_truncation
+        from quchip.utils.deprecation import warn_renamed
+
+        warn_renamed("PartitionedSimulationResult.check_truncation()", "quchip.check_truncation(result)",
+                     removal="0.6")
+        return check_truncation(self, threshold=threshold)
 
     def _chip_order_permutation(self) -> tuple[list[int], list[int]] | None:
         """Return ``(dims, order)`` for :meth:`~quchip.backend.protocol.Backend.permute_state`.

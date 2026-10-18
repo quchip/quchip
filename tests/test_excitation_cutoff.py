@@ -1,6 +1,7 @@
 """An excitation cutoff keeps P H P and P L P on the product labels with N <= K."""
 
 import math
+from dataclasses import replace
 
 import jax
 import jax.numpy as jnp
@@ -21,8 +22,10 @@ from quchip import (
     PortNetwork,
     QuantumSequence,
     Resonator,
+    check_truncation,
     eliminate,
     fit_a_dress,
+    with_truncation,
 )
 from quchip.engine.sectors import excitation_classes
 
@@ -274,10 +277,32 @@ def test_driven_dissipative_solve_matches_a_sliced_lindblad_reference():
         assert np.trace(rho).real == pytest.approx(1, abs=1e-8)
         assert np.linalg.eigvalsh(rho).min() > -1e-9
         sampled.append(np.trace(rho[np.ix_(boundary, boundary)]).real)
-    observed = result.check_truncation(threshold=1.0)[ExcitationCutoff(3)]
+    observed = check_truncation(result, threshold=1.0)[ExcitationCutoff(3)]
     assert float(observed) == pytest.approx(max(sampled), abs=1e-10)
     with pytest.warns(UserWarning, match="not an error bound"):
-        result.check_truncation(threshold=0.0)
+        check_truncation(result, threshold=0.0)
+
+
+@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
+def test_cutoff_check_finds_the_boundary_rows_when_it_runs(backend):
+    """A request keeps the cutoff and its boundary totals, but no compact rows or matrices.
+
+    The check reads the boundary sectors from the saved diagonals, and with_truncation samples the same
+    projector during the solve.
+    """
+    chip = pair(loss=True, backend=backend, space=ExcitationCutoff(3))
+    problem = schedule(chip).build_problem(np.linspace(0.0, 16.0, 9), solver="mesolve", options=tolerances(backend))
+    plan = problem.truncation
+    # The counter-rotating coupling raises N by 2, and the drive and the heating raise it by 1.
+    assert plan.excitation == (3, problem.engine_result.metadata["excitation_reduction"]["boundary"]) == (3, (2, 3))
+    assert plan.space is problem.engine_result.excitation_space
+    assert (plan.operators, plan.metadata, plan.sampled) == ((), (), False)
+    saved = check_truncation(chip.solve(problem), threshold=1.0)
+    sampled = check_truncation(chip.solve(with_truncation(replace(problem, states="none"))), threshold=1.0)
+    assert saved.keys() == sampled.keys() == {"q", "r", ExcitationCutoff(3)}
+    for key, value in saved.items():
+        assert float(sampled[key]) == pytest.approx(float(value), abs=1e-12)
+    assert float(saved[ExcitationCutoff(3)]) > 1e-2
 
 
 def test_cascade_at_the_one_excitation_cutoff_matches_the_exact_space():

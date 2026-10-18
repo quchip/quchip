@@ -10,7 +10,6 @@ JAX arrays for Dynamiqs, even for eager calls. Host conversion is explicit.
 from __future__ import annotations
 
 import itertools
-import warnings
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -20,8 +19,6 @@ from quchip.backend import Backend, SolverResult
 from quchip.devices.base import BaseDevice
 from quchip.results._batch import BatchResult
 from quchip.utils.labeling import resolve_label
-
-DEFAULT_TRUNCATION_THRESHOLD = 1e-3
 
 # Mirrors quchip.viz.results.StateMode so the plot_state shim can re-expose the
 # same literal without a hard import of the lazily loaded viz module.
@@ -844,70 +841,21 @@ class SimulationResult:
 
         return plot_wigner(self, index, trace_out=trace_out, ax=ax, **kwargs)
 
-    def check_truncation(self, *, threshold: float = DEFAULT_TRUNCATION_THRESHOLD) -> dict[Any, Any]:
-        """Report the maximum boundary population of each device over available samples.
+    def check_truncation(self, *, threshold: float = 1e-3) -> dict[Any, Any]:
+        """Deprecated method form of :func:`quchip.check_truncation`.
 
-        This warning heuristic can miss excursions between samples. To confirm
-        convergence, increase the applicable cutoff and compare observables.
-        Native arrays stay differentiable. Warning thresholds are evaluated only
-        for concrete results. Boundaries are declared by the captured component
-        model.
-
-        Under an :class:`~quchip.cutoff.ExcitationCutoff`, the result also holds
-        the policy as a key. Its value is the maximum population in the retained
-        sectors that a Hamiltonian term, drive, or jump can move above the
-        cutoff. This population is not an error bound. To check convergence,
-        compare observables at a larger ``max_total``.
+        quchip 0.6 removes this method. Call ``quchip.check_truncation(result)``.
 
         Parameters
         ----------
         threshold : float, default=1e-3
             Maximum accepted boundary population.
         """
-        from quchip.engine.truncation import evaluate_boundaries
-        from quchip.utils.jax_utils import contains_tracer
+        from quchip.engine.truncation import check_truncation
+        from quchip.utils.deprecation import warn_renamed
 
-        if not np.isfinite(threshold) or threshold < 0:
-            raise ValueError("truncation threshold must be finite and nonnegative")
-        plan, traces = evaluate_boundaries(self)
-        for reason in plan.unavailable:
-            warnings.warn(f"Truncation diagnostic unavailable: {reason}", UserWarning, stacklevel=2)
-        xp = self._backend.array_module
-        observed: dict[Any, Any] = {}
-        maxima = tuple(xp.maximum(0.0, xp.max(trace)) for trace in traces)
-        maxima, excitation = maxima[:len(plan.checks)], maxima[len(plan.checks):]
-        traced = contains_tracer(maxima)
-        if traced:
-            warnings.warn(
-                "Truncation boundary populations are traced; warning thresholds cannot be evaluated here. "
-                "Check the concrete result afterward.",
-                UserWarning, stacklevel=2,
-            )
-        for check, maximum in zip(plan.checks, maxima, strict=True):
-            observed[check.label] = xp.maximum(observed.get(check.label, 0.0), maximum)
-            if not traced and float(maximum) > threshold:
-                warnings.warn(
-                    f"Device {check.label!r}: maximum sampled {check.boundary.description} population "
-                    f"({self.stats.get('truncation_sampling', 'saved time grid')}) "
-                    f"{float(maximum):.3g} > threshold {threshold:.3g}. "
-                    f"{check.boundary.convergence_hint} This is a sampling heuristic, not an error bound.",
-                    UserWarning, stacklevel=2,
-                )
-        if excitation:
-            from quchip.cutoff import ExcitationCutoff
-
-            assert plan.excitation is not None
-            (maximum,) = excitation
-            observed[ExcitationCutoff(plan.excitation[0])] = maximum
-            if not traced and float(maximum) > threshold:
-                warnings.warn(
-                    f"Excitation cutoff N <= {plan.excitation[0]}: maximum sampled population in sectors that "
-                    f"connect above the cutoff ({self.stats.get('truncation_sampling', 'saved time grid')}) "
-                    f"{float(maximum):.3g} > threshold {threshold:.3g}. Raise max_total and compare observables. "
-                    "This is a sampling heuristic, not an error bound.",
-                    UserWarning, stacklevel=2,
-                )
-        return observed
+        warn_renamed(f"{type(self).__name__}.check_truncation()", "quchip.check_truncation(result)", removal="0.6")
+        return check_truncation(self, threshold=threshold)
 
     def __repr__(self) -> str:
         t_min = float(self.times[0]) if len(self.times) > 0 else 0.0

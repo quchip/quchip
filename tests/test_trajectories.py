@@ -6,7 +6,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from quchip import Chip, QuantumSequence, Resonator, with_truncation
+from quchip import Chip, QuantumSequence, Resonator, check_truncation, with_truncation
 from quchip.engine import solve_many, solve_problem
 
 
@@ -65,7 +65,7 @@ def test_jump_decay_and_explicit_per_run_truncation(backend):
     assert not any("boundary" in str(w.message) for w in caught)
     # Bernoulli excitation variance is bounded by 1/4: five standard errors.
     np.testing.assert_allclose(result.expect("r"), np.exp(-problem.tlist), atol=2.5 / np.sqrt(128))
-    report = result.check_truncation(threshold=2.)
+    report = check_truncation(result, threshold=2.)
     assert len(report["runs"]) == 128
     assert report["maximum"]["r"] == pytest.approx(1.)
 
@@ -244,9 +244,11 @@ def test_advanced_jump_sampling_retains_no_click_diagnostics(backend):
     result = solve_problem(with_truncation(problem))
     native_mean = (result.native.average_expect[0] if backend == "qutip" else result.native.mean_expects()[0])
     np.testing.assert_allclose(result.expect("r"), native_mean)
-    diagnostics = result.check_truncation(threshold=2.)
+    diagnostics = check_truncation(result, threshold=2.)
     assert len(diagnostics["deterministic"]) == 1
     assert diagnostics["deterministic"][0]["r"] == pytest.approx(1.)
+    with pytest.warns(DeprecationWarning, match="TrajectoryResult.check_truncation"):
+        assert result.check_truncation(threshold=2.)["maximum"] == diagnostics["maximum"]
 
 
 @pytest.mark.validation
