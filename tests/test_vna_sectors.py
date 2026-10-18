@@ -343,6 +343,21 @@ def test_the_cutoff_check_compares_every_noise_offset():
 
 
 @pytest.mark.unit
+def test_the_noise_solve_takes_each_missing_negative_offset(monkeypatch):
+    """A grid that is symmetric only to round-off solves the negative of its first offset, not its reversed neighbor."""
+    offsets = np.array([-0.02000000000001, -0.01, 0.0, 0.01, 0.02])
+    grids, resolvent = [], sector_solver.SectorGenerator.resolvent
+
+    def record(self, frequency, drive, source, grid, observables):
+        grids.append(np.asarray(grid))
+        return resolvent(self, frequency, drive, source, grid, observables)
+
+    monkeypatch.setattr(sector_solver.SectorGenerator, "resolvent", record)
+    VNA(feedline(space=ExcitationCutoff(max_total=2))).measure(6.5, 0.01, noise_frequencies=offsets)
+    assert grids and all(np.any(grid == 0.02000000000001) and np.any(grid == -0.02) for grid in grids)
+
+
+@pytest.mark.unit
 def test_the_output_checks_compare_every_offset_and_delay():
     """A small sample beside a large one fails the check, although the norm over the grid barely changes."""
     zeros, peak, shifted = np.zeros(2), np.array([1.0, 0.0]), np.array([1.0, 5e-7])

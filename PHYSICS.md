@@ -1171,8 +1171,9 @@ stationary state. At `K = 2`, the dark state empties at a rate of order
 The noise spectra solve `(G + i 2π f) Y = B` with `Tr Y = 0` on the same
 blocks, with the sign of `stationary_resolvent()` (§8.2). Since
 `R_f(B†) = R_{-f}(B)†`, the adjoint source at `f` needs the resolvent at
-`-f`. Each output therefore solves at every offset and at its negative. On
-the symmetric grid of `measure()` these are the same points. Mode
+`-f`. Each output therefore solves at every offset and at its negative. Only
+an exact negative reuses a point, so the default grid of `measure()`, which is
+exactly symmetric, needs no extra solves. Mode
 amplitudes and photon numbers evaluate the authored `a` and `n` on the
 retained labels. Every mode is solved in the probe frame, so
 `mode_frequencies` holds the probe frequency, as for the harmonic route. A
@@ -1199,8 +1200,12 @@ raw correlations at every delay and
 the two intensities. `steadystate()` needs no `K`, because the vacuum is
 exact. For two values `a` and `b` of one quantity, the change is
 `|a - b| / (max(|a|, |b|) + 1e-3 m)`, where `m` is the largest value of that
-quantity on the grid. The floor gives an absolute tolerance of `1e-9 m`. If
-any change is above `1e-6`, `K` increases by one. The result is the solve at
+quantity on the grid. The floor gives an absolute tolerance of `1e-9 m`. In
+`finite_power()` and `measure()`, one value holds all ports at one grid point,
+and `|.|` is the Euclidean norm, or the Frobenius norm of the IQ matrix at one
+noise offset. This is a joint criterion, so a port whose values are much
+smaller than those of the others is not checked to its own size. If any
+change is above `1e-6`, `K` increases by one. The result is the solve at
 `K`, not at `K + 1`. One warning per call gives `K`, the retained dimension
 and the result of the check. If `K + 1` does not fit in memory, the check does
 not run, and the warning says so. If `K` reaches the largest total, the solve

@@ -227,22 +227,20 @@ class SectorProbeModel:
         return tuple(float(np.sum(diagonal[offsets[n]:offsets[n + 1]])) for n in range(cutoff + 1))
 
     def quadrature_spectrum(self, cutoff: int, frequency: float, amplitudes: Any, state: np.ndarray,
-                            offsets: Any, *, symmetric: bool = False) -> tuple[np.ndarray, dict[str, Any]]:
+                            offsets: Any) -> tuple[np.ndarray, dict[str, Any]]:
         """Return the normally ordered excess IQ spectrum of the selected ports.
 
         It follows :func:`quchip.engine.field_statistics.quadrature_spectrum`
         for vacuum inputs. The source of output ``p`` is ``(L_p - <L_p>) rho``.
         The adjoint source at ``f`` needs the resolvent at ``-f``, so the solve
-        covers every offset and its negative. ``symmetric=True`` states that
-        the grid holds the negative of each offset in reverse order, as the
-        validated grid of ``measure()`` does. Otherwise only an exact negative
-        reuses a point.
+        covers every offset and its negative. Only an exact negative reuses a
+        point, so an exactly symmetric grid needs no extra solves.
         """
         _, channels, _ = self.operators(cutoff)
         generator, drive = self.generator(cutoff), self.drive(frequency, amplitudes)
         offsets = np.asarray(offsets, dtype=float)
-        grid, mirror = list(offsets), list(range(len(offsets) - 1, -1, -1)) if symmetric else []
-        for value in () if symmetric else -offsets:
+        grid, mirror = list(offsets), []
+        for value in -offsets:
             match = np.flatnonzero(offsets == value)
             if match.size:
                 mirror.append(int(match[0]))
