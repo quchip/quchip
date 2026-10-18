@@ -275,7 +275,7 @@ def test_wiring_noise_retains_differentiated_gain():
     """Amplifier noise and engineering cable phase retain their analytical derivatives."""
     import jax
     import jax.numpy as jnp
-    from quchip.analysis.field_noise import ReadoutWiring
+    from quchip.results.terminal import ReadoutWiring
     chip, out, _, _ = wired_result(backend="dynamiqs")
     def variance(gain):
         candidate = chip.with_params({"network.component.hemt.gain": gain})

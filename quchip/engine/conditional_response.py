@@ -57,12 +57,12 @@ def build_conditional_response(
     rho = xp.outer(vector, vector.conj())
     energy = system.eigenvalues[index]
     sizes = tuple(sectors.space(n).size for n in range(total + 2))
-    from quchip.backend._memory import require_memory
+    from quchip.utils.memory import dense_bytes, require_memory
 
     channel_count = len(model.channels)
     block_entries = sum(size**2 for size in sizes) * (len(model.conserving_indices) + 4)
     block_entries += sum(sizes[n] * sizes[n - 1] for n in range(1, len(sizes))) * (channel_count + len(labels))
-    require_memory(32 * block_entries, task="Conditional VNA sector operators",
+    require_memory(dense_bytes(block_entries, copies=2), task="Conditional VNA sector operators",
                    remedy="Reduce the model or its local level counts.")
     hamiltonians = tuple(TWO_PI * (xp.asarray(sectors.hamiltonian(n)) - energy * xp.eye(size))
                          for n, size in enumerate(sizes))

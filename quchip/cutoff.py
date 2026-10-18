@@ -111,22 +111,4 @@ def active_cutoff(chip: Any) -> ExcitationCutoff | None:
     return policy
 
 
-def reject_cutoff(chip: Any, workflow: str) -> None:
-    """Raise when a workflow without cutoff support receives an active cutoff.
-
-    Parameters
-    ----------
-    chip : Chip
-        Chip whose policy is checked.
-    workflow : str
-        Name of the calling workflow, used in the message.
-    """
-    policy = active_cutoff(chip)
-    if policy is not None:
-        raise ValueError(
-            f"{workflow} does not support an excitation cutoff, and this chip keeps only "
-            f"N <= {policy.max_total}. Use chip.with_space(None) to run it on the full product space."
-        )
-
-
 __all__ = ["ExcitationCutoff"]

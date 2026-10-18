@@ -20,17 +20,27 @@ class SteadyStateResult:
     Attributes
     ----------
     state : backend state
-        Stationary density matrix in the solver basis.
+        Stationary density matrix in the solver basis, or in the energy
+        coordinates of ``excitation_space`` when that is set.
     residual : scalar
         Residual norm of the stationary equation.
     nullity : scalar
         Null-space dimension of the trace-constrained generator.
     dims : tuple of int
-        Hilbert-space dimensions in chip order.
+        Hilbert-space dimensions in chip order. With ``excitation_space``,
+        they are the dimensions of its product space.
     device_info : tuple
         ``(label, computational)`` records used by accessors.
     stats : mapping
         Backend solver statistics.
+    frame : ResolvedFrame or None
+        Integration frame of the stationary state.
+    excitation_space : PulseSpace or None
+        Retained product labels of ``state`` when the solve kept only some of
+        them, else ``None``.
+    diagnostics : mapping
+        The solve's route under ``"route"`` and its name under ``"solver"``.
+        A solve on excitation sectors adds its truncation entries.
     """
 
     state: Any
@@ -42,6 +52,9 @@ class SteadyStateResult:
     stats: Mapping[str, Any]
     _backend: Backend = field(repr=False, compare=False)
     _expectations: Mapping[Any, Any] = field(repr=False, compare=False)
+    frame: Any = None
+    excitation_space: Any = None
+    diagnostics: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}), repr=False, compare=False)
 
     @property
     def condition_number(self) -> Any:
@@ -118,6 +131,8 @@ class SteadyStateResult:
         label = resolve_label(device)
         for index, (candidate, _) in enumerate(self.device_info):
             if candidate == label:
+                if self.excitation_space is not None:
+                    return self.excitation_space.reduced(self.state, self._backend, (index,))
                 return self._backend.ptrace(self.state, index, list(self.dims))
         available = [candidate for candidate, _ in self.device_info]
         raise ValueError(f"Device '{label}' not found. Available: {available}")
@@ -127,38 +142,53 @@ def build_steady_state_result(
     solver_result: SteadyStateSolverResult,
     problem: Any,
     backend: Backend,
+    *,
+    diagnostics: Mapping[str, Any] | None = None,
+    space: Any = None,
 ) -> SteadyStateResult:
-    """Wrap one backend stationary solve without concretizing native arrays."""
-    xp = backend.array_module
+    """Wrap one backend stationary solve without concretizing native arrays.
 
-    expectations: dict[Any, Any] = {}
-    if problem.e_ops_meta is not None:
-        from quchip.engine.observables import recombine_expect
-
-        flat = [xp.asarray([value], dtype=complex) for value in solver_result.expect or ()]
-        _, recombined = recombine_expect(
-            flat,
-            problem.e_ops_meta,
-            xp.asarray([0.0]),
-            problem.resolved_frame.demod_freqs,
-        )
-        for key, value in recombined.items():
-            if isinstance(value, list):
-                expectations[key] = tuple(item[0] for item in value)
-            else:
-                expectations[key] = value[0]
-
+    ``space`` holds the retained labels of a state that a route solved on
+    fewer labels than the engine result has. ``None`` uses the engine result's
+    excitation space.
+    """
+    space = problem.engine_result.excitation_space if space is None else space
     return SteadyStateResult(
         state=solver_result.state,
         residual=solver_result.residual,
         nullity=solver_result.nullity,
         _condition_number=solver_result._condition_number,
-        dims=tuple(problem.engine_result.dims),
+        dims=tuple(problem.engine_result.dims if space is None else space.dims),
         device_info=problem.device_info,
         stats=MappingProxyType(dict(solver_result.stats)),
         _backend=backend,
-        _expectations=MappingProxyType(expectations),
+        _expectations=stationary_expectations(solver_result.expect, problem.e_ops_meta, problem.resolved_frame,
+                                              backend),
+        frame=problem.resolved_frame,
+        excitation_space=space,
+        diagnostics=MappingProxyType(dict(diagnostics or {})),
     )
+
+
+def stationary_expectations(values: Any, meta: Any, frame: Any, backend: Backend) -> Mapping[Any, Any]:
+    """Return the public expectation values of a stationary state from the solver's flat values.
+
+    ``meta`` is the metadata of the decomposed ``e_ops``, or ``None``, and
+    ``frame`` the resolved frame whose demodulation the values take.
+    """
+    expectations: dict[Any, Any] = {}
+    if meta is not None:
+        from quchip.engine.observables import recombine_expect
+
+        xp = backend.array_module
+        flat = [xp.asarray([value], dtype=complex) for value in values or ()]
+        _, recombined = recombine_expect(flat, meta, xp.asarray([0.0]), frame.demod_freqs)
+        for key, value in recombined.items():
+            if isinstance(value, list):
+                expectations[key] = tuple(item[0] for item in value)
+            else:
+                expectations[key] = value[0]
+    return MappingProxyType(expectations)
 
 
 class SteadyStateBatchResult(BatchResult[SteadyStateResult]):

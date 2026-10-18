@@ -183,9 +183,9 @@ def eliminate(chip: "Chip", target: Any, *, method: str = "sw", local: bool = Fa
     >>> [d.label for d in reduced.devices]
     ['q']
     """
-    from quchip.cutoff import reject_cutoff
+    from quchip.engine.routes import require_workflow
 
-    reject_cutoff(chip, "eliminate()")
+    require_workflow(chip, "eliminate()")
     if method not in reduction_method_names():
         expected = " or ".join(repr(n) for n in sorted(reduction_method_names()))
         raise ValueError(f"Unknown method {method!r} for eliminate(); expected {expected}.")

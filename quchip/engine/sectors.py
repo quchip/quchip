@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, Sequence
 import jax.numpy as jnp
 import numpy as np
 
-from quchip.chip.dressing import (
+from quchip.engine.dressing import (
     BareProductReference,
     Labeling,
     assign_rowwise_greedy,
@@ -32,7 +32,6 @@ from quchip.chip.dressing import (
     label_eigensystem,
 )
 from quchip.chip.ports import Port
-from quchip.chip.sw import _sector_eigh
 from quchip.declarative.expr import materialize_expr
 from quchip.engine.assembly import (
     _energy_operator,
@@ -40,43 +39,16 @@ from quchip.engine.assembly import (
     _project_on_support,
     _resolve_system,
 )
+from quchip.engine.excitation import (
+    excitation_structure, sector_eigh, sector_levels, sector_size,
+)
+from quchip.engine.slh import cascade_hamiltonian
 from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import concrete_array_module, contains_tracer
 from quchip.utils.values import scoped_entry, scoped_hit
 
 if TYPE_CHECKING:
     from quchip.chip.chip import Chip
-
-
-@functools.lru_cache(maxsize=1024)
-def _sector_levels(dims: tuple[int, ...], total: int) -> np.ndarray:
-    """Return every level product below ``dims`` that sums to ``total``, in C order."""
-    if not dims:
-        return np.zeros((1 if total == 0 else 0, 0), dtype=np.int64)
-    blocks = []
-    for level in range(min(dims[0] - 1, total) + 1):
-        rest = _sector_levels(dims[1:], total - level)
-        if rest.shape[0]:
-            blocks.append(np.column_stack((np.full(rest.shape[0], level, dtype=np.int64), rest)))
-    levels = np.concatenate(blocks) if blocks else np.zeros((0, len(dims)), dtype=np.int64)
-    levels.flags.writeable = False
-    return levels
-
-
-def sector_size(dims: Sequence[int], total: int) -> int:
-    """Count the product states of ``dims`` whose levels sum to ``total``.
-
-    Parameters
-    ----------
-    dims : sequence of int
-        Level count of each device.
-    total : int
-        Total energy-level index.
-    """
-    counts = [1] + [0] * total
-    for dimension in dims:
-        counts = [sum(counts[n - level] for level in range(min(dimension - 1, n) + 1)) for n in range(total + 1)]
-    return counts[total]
 
 
 def _level_pairs(dims: Sequence[int], support: tuple[int, ...], row_levels: np.ndarray,
@@ -112,41 +84,6 @@ def _level_pairs(dims: Sequence[int], support: tuple[int, ...], row_levels: np.n
     return pair_rows, pair_columns, local_rows[pair_rows], local_columns[pair_columns]
 
 
-def excitation_classes(changes: frozenset[int] | None, maximum: int) -> tuple[tuple[int, ...], ...]:
-    """Partition the totals ``0..maximum`` into the classes that ``changes`` connect.
-
-    A class holds the totals that steps ``n -> n +- c`` with every
-    intermediate total in ``[0, maximum]`` connect. Unknown changes give one
-    class.
-
-    Parameters
-    ----------
-    changes : frozenset of int or None
-        Changes of the total energy-level index, or ``None`` when unknown.
-    maximum : int
-        Largest retained total.
-    """
-    if changes is None:
-        return (tuple(range(maximum + 1)),)
-    steps = sorted({abs(change) for change in changes} - {0})
-    seen: set[int] = set()
-    classes: list[tuple[int, ...]] = []
-    for start in range(maximum + 1):
-        if start in seen:
-            continue
-        members, frontier = {start}, [start]
-        while frontier:
-            total = frontier.pop()
-            for step in steps:
-                for reached in (total - step, total + step):
-                    if 0 <= reached <= maximum and reached not in members:
-                        members.add(reached)
-                        frontier.append(reached)
-        seen |= members
-        classes.append(tuple(sorted(members)))
-    return tuple(classes)
-
-
 def generated_products(ports: dict[str, tuple[Any, tuple[int, ...]]], pairs: Sequence[tuple[str, str, Any]],
                        dims: Sequence[int]) -> tuple[tuple[Any, tuple[int, ...]], ...]:
     """Return the Hamiltonian of cascaded port pairs as local terms on joint supports.
@@ -168,8 +105,6 @@ def generated_products(ports: dict[str, tuple[Any, tuple[int, ...]]], pairs: Seq
     dims : sequence of int
         Level count of each device.
     """
-    from quchip.chip.port_network import _cascade_hamiltonian
-
     everything = tuple(range(len(dims)))
     products: dict[tuple[int, ...], list[tuple[Any, Any, Any]]] = {}
     for downstream, upstream, coefficient in pairs:
@@ -178,19 +113,19 @@ def generated_products(ports: dict[str, tuple[Any, tuple[int, ...]]], pairs: Seq
         joint = tuple(sorted({*left_support, *right_support}))
         products.setdefault(joint, []).append(
             (_widen(left, left_support, joint, dims), _widen(right, right_support, joint, dims), coefficient))
-    terms = ((_cascade_hamiltonian(group), joint) for joint, group in products.items())
+    terms = ((cascade_hamiltonian(group), joint) for joint, group in products.items())
     return tuple((term, joint) for term, joint in terms if term is not None)
 
 
 def _widen(matrix: Any, support: tuple[int, ...], joint: tuple[int, ...], dims: Sequence[int]) -> Any:
     """Return a matrix on ``support`` as a matrix on the larger support ``joint``."""
-    from quchip.backend._memory import require_memory
+    from quchip.utils.memory import dense_bytes, require_memory
 
     extra = tuple(index for index in joint if index not in support)
     order = (*support, *extra)
     local = [int(dims[index]) for index in order]
     size = prod(local)
-    require_memory(16 * 4 * size**2, task=f"Cascaded port product on devices {list(joint)}",
+    require_memory(dense_bytes(size, size, copies=4), task=f"Cascaded port product on devices {list(joint)}",
                    remedy="Use ports on fewer devices or reduce the device cutoffs.")
     xp = concrete_array_module(matrix)
     widened = xp.kron(xp.asarray(matrix), xp.eye(prod(local[len(support):]), dtype=complex))
@@ -263,7 +198,7 @@ class SectorEigensystem:
     eigenvectors : array_like
         Eigenvectors as columns in the block's product energy basis. Each
         column has a real, nonnegative amplitude on its assigned label, as
-        :func:`~quchip.chip.dressing.gauge_phases` sets.
+        :func:`~quchip.engine.dressing.gauge_phases` sets.
     labeling : Labeling
         Assignment of each bare label in ``space`` to one eigenvector.
     """
@@ -293,11 +228,11 @@ class SectorModel:
 
     Without a cutoff, the chip's static model must conserve the total
     energy-level index, as
-    :func:`~quchip.chip.effective.conserves_excitation_number` checks, and each
-    block is one sector. Under an active
+    :attr:`~quchip.engine.excitation.ExcitationStructure.conserves` states, and
+    each block is one sector. Under an active
     :class:`~quchip.cutoff.ExcitationCutoff`, the model is ``P H P`` on the
     labels with ``N <= K``, and each block is one class of
-    :func:`excitation_classes`. A block holds the device energies, each
+    :func:`~quchip.engine.excitation.excitation_classes`. A block holds the device energies, each
     coupling band that the chip's approximation keeps, each retained term, and
     the Hamiltonian that cascaded ports generate.
 
@@ -315,7 +250,6 @@ class SectorModel:
 
     def __init__(self, chip: "Chip", *, resolution: Any = None, advisories: list[str] | None = None,
                  approximation: Any = None) -> None:
-        from quchip.chip.effective import static_excitation_changes
         from quchip.cutoff import active_cutoff
 
         resolution = _resolve_system(chip, chip.backend) if resolution is None else resolution
@@ -327,8 +261,8 @@ class SectorModel:
         self.approximation = chip.approximation if approximation is None else approximation
         policy = active_cutoff(chip)
         self.cutoff: int | None = None if policy is None else policy.max_total
-        self.classes = None if self.cutoff is None else excitation_classes(
-            static_excitation_changes(chip, self.approximation, resolution=resolution), self.cutoff)
+        self.structure = excitation_structure(chip, self.approximation, resolution=resolution)
+        self.classes = None if self.cutoff is None else self.structure.classes(self.cutoff)
         self._ports: dict[str, tuple[Any, tuple[int, ...]]] | None = None
         pairs = () if self.network is None else self.network.generated_pairs
         generated = () if not pairs else generated_products(self.port_couplings(), pairs, self.dims)
@@ -376,16 +310,16 @@ class SectorModel:
         """
         key = _key(totals)
         if key not in self._spaces:
-            from quchip.backend._memory import require_memory
+            from quchip.utils.memory import eigensystem_bytes, level_table_bytes, require_memory
 
             size = sum(sector_size(self.dims, total) for total in key)
             block = f"sector N={key[0]}" if len(key) == 1 else f"class N in {list(key)}"
-            require_memory(16 * 6 * size**2 + 8 * len(self.dims) * size,
+            require_memory(eigensystem_bytes(size) + level_table_bytes(size, len(self.dims)),
                            task=f"Excitation {block} (dimension {size})",
                            remedy="Request lower-excitation labels or reduce the model." if self.cutoff is None
                            else "Request lower-excitation labels, lower max_total, or reduce the model.")
-            levels = (_sector_levels(self.dims, key[0]) if len(key) == 1
-                      else np.concatenate([_sector_levels(self.dims, total) for total in key]))
+            levels = (sector_levels(self.dims, key[0]) if len(key) == 1
+                      else np.concatenate([sector_levels(self.dims, total) for total in key]))
             levels.flags.writeable = False
             self._spaces[key] = SectorSpace(self.dims, key, levels)
         return self._spaces[key]
@@ -510,7 +444,7 @@ class SectorModel:
             eigenvalues, real_vectors = np.linalg.eigh(np.asarray(matrix).real)
             eigenvectors = real_vectors.astype(complex)
         else:
-            eigenvalues, eigenvectors = _sector_eigh(matrix, np.zeros(space.size, dtype=np.int64))
+            eigenvalues, eigenvectors = sector_eigh(matrix, np.zeros(space.size, dtype=np.int64))
         labeling = label_eigensystem(eigenvectors, BareProductReference((space.size,)), policy=assign_rowwise_greedy)
         # The reference is the sector's product energy basis, so the amplitudes are the vectors.
         eigenvectors = eigenvectors * gauge_phases(eigenvectors, labeling.indices)
@@ -533,12 +467,12 @@ class SectorModel:
         vector : array_like
             Amplitudes in the block's product energy basis.
         """
-        from quchip.backend._memory import require_memory
+        from quchip.utils.memory import dense_bytes, require_memory
 
         dimension = prod(self.dims)
         # The zero vector, each basis transform and the native ket can each hold a product-space copy.
-        require_memory(16 * 4 * dimension, task=f"Product-space state (dimension {dimension})",
-                       remedy="Use chip.compact_state(..., dressed=True), which keeps the block coordinates.")
+        require_memory(dense_bytes(dimension, copies=4), task=f"Product-space state (dimension {dimension})",
+                       remedy="Use chip.compact_state(...), which keeps the block coordinates.")
         space = self.space(totals)
         rows = np.ravel_multi_index(tuple(space.levels.T), self.dims)
         transforms = [self.bases[device.label].energy_to_solver() for device in self.chip.devices]
@@ -574,9 +508,9 @@ class SectorModel:
         for key in keys:
             offsets[key] = size
             size += systems[key].space.size
-        from quchip.backend._memory import require_memory
+        from quchip.utils.memory import dense_bytes, require_memory
 
-        require_memory(16 * 3 * size**2, task=f"Combined excitation blocks (dimension {size})",
+        require_memory(dense_bytes(size, size, copies=3), task=f"Combined excitation blocks (dimension {size})",
                        remedy="Request fewer blocks or reduce the model.")
         xp = concrete_array_module(tuple((system.eigenvectors, system.labeling.indices) for system in systems.values()))
         eigenvalues = xp.concatenate([xp.asarray(systems[key].eigenvalues) for key in keys])

@@ -31,7 +31,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from quchip.chip.dressing import BareProductReference, Labeling, assign_rowwise_greedy, label_eigensystem
+from quchip.engine.excitation import sector_eigh
+from quchip.engine.dressing import BareProductReference, Labeling, assign_rowwise_greedy, label_eigensystem
 from quchip.utils.jax_utils import concrete_array_module, contains_tracer
 
 if TYPE_CHECKING:
@@ -223,45 +224,6 @@ def extract_pair_parameters(
     return params
 
 
-def excitation_sectors(dims: tuple[int, ...]) -> np.ndarray:
-    """Total energy-level index of every C-order product state."""
-    return np.indices(tuple(dims)).reshape(len(dims), -1).sum(axis=0)
-
-
-def _sector_eigh(h: Any, sectors: np.ndarray) -> tuple[Any, Any]:
-    """Diagonalize each total-excitation block; return ascending eigenpairs.
-
-    Eigenvectors have exact zeros outside their own sector, so round-off can
-    neither mix sectors nor make the result depend on near-degeneracies
-    between them. A concrete Hamiltonian is diagonalized on the host, where
-    the differently sized blocks compile no device programs.
-    """
-    if not contains_tracer(h):
-        h = np.asarray(h)
-        eigenvalues: Any = np.zeros(h.shape[0], dtype=h.real.dtype)
-        eigenvectors: Any = np.zeros(h.shape, dtype=h.dtype)
-        start = 0
-        for sector in np.unique(sectors):
-            rows = np.flatnonzero(sectors == sector)
-            columns = np.arange(start, start + rows.size)
-            eigenvalues[columns], eigenvectors[np.ix_(rows, columns)] = np.linalg.eigh(h[np.ix_(rows, rows)])
-            start += rows.size
-        order: Any = np.argsort(eigenvalues, kind="stable")
-        return eigenvalues[order], eigenvectors[:, order]
-    eigenvalues = jnp.zeros(h.shape[0], dtype=h.real.dtype)
-    eigenvectors = jnp.zeros(h.shape, dtype=h.dtype)
-    start = 0
-    for sector in np.unique(sectors):
-        rows = np.flatnonzero(sectors == sector)
-        columns = np.arange(start, start + rows.size)
-        values, vectors = jnp.linalg.eigh(h[np.ix_(rows, rows)])
-        eigenvalues = eigenvalues.at[columns].set(values)
-        eigenvectors = eigenvectors.at[np.ix_(rows, columns)].set(vectors)
-        start += rows.size
-    order = jnp.argsort(eigenvalues)
-    return eigenvalues[order], eigenvectors[:, order]
-
-
 def _eigh(h: Any) -> tuple[Any, Any]:
     """Ascending eigenpairs of a Hermitian matrix, computed on the host when it is concrete."""
     return jnp.linalg.eigh(h) if contains_tracer(h) else np.linalg.eigh(np.asarray(h))
@@ -274,7 +236,7 @@ def _exact_eigensystem(h: Any, dims: tuple[int, ...], sectors: np.ndarray | None
     Hamiltonian is known to conserve it; each sector is then diagonalized
     separately.
     """
-    eigenvalues, eigenvectors = _eigh(h) if sectors is None else _sector_eigh(h, sectors)
+    eigenvalues, eigenvectors = _eigh(h) if sectors is None else sector_eigh(h, sectors)
     labeling = label_eigensystem(
         eigenvectors,
         BareProductReference(dims),

@@ -15,6 +15,8 @@ class TrajectoryResult(SimulationResult):
         QuTiP or Dynamiqs stochastic result, including seeds/keys and records.
     problem : SolveProblem
         Captured model, observables, channel order, and integration frame.
+    label_targets : LabelTargets or None, optional
+        Snapshot of the solve's chip that prepares label targets.
 
     Attributes
     ----------
@@ -28,10 +30,11 @@ class TrajectoryResult(SimulationResult):
         Native record channel order for an explicit selection, or None when unknown.
     """
 
-    def __init__(self, native: Any, problem: Any):
+    def __init__(self, native: Any, problem: Any, *, label_targets: Any = None):
         super().__init__(SolverResult(times=problem.tlist, solver=problem.solver),
                          problem.backend, problem.engine_result.dims, device_info=problem.device_info,
-                         bases=problem.engine_result.bases, dissipation=problem.dissipation)
+                         bases=problem.engine_result.bases, dissipation=problem.dissipation,
+                         frame=problem.resolved_frame, label_targets=label_targets)
         self.native = native
         self._problem = problem
         labels = tuple(channel.key for channel in problem.engine_result.slh.channels) if problem.dissipation else ()
@@ -53,54 +56,11 @@ class TrajectoryResult(SimulationResult):
             self.monitor_labels = tuple(labels[i] for i in selected)
 
     def _view(self, index: int | None, *, states: bool = True, deterministic: bool = False) -> SimulationResult:
-        native = self.native
-        if self.solver in ("mcsolve", "ssesolve", "smesolve"):
-            if index is None:
-                values = native.average_expect
-                history = native.average_states if states else None
-                final = native.average_final_state if states else None
-            else:
-                runs = native.deterministic_trajectories if deterministic else native.trajectories
-                if not runs:
-                    raise RuntimeError("Individual runs require native keep_runs_results=True.")
-                run = runs[index]
-                values, history, final = run.expect, run.states if states else None, run.final_state if states else None
-            history = history or None
-        else:
-            if deterministic:
-                values = native.infos.noclick_expects
-                history = native.infos.noclick_states if states else None
-            elif index is None:
-                values = native.mean_expects()
-                history = native.mean_states() if states else None
-            else:
-                values = native.expects[index] if native.expects is not None else None
-                history = native.states[index] if states else None
-            final = history[-1] if history is not None else None
-            retain = (
-                self._problem.states == "all"
-                if self._problem.states is not None
-                else self._problem.options.get("save_states", True)
-            )
-            if not retain and not deterministic:
-                history = None
-        if self.solver == "jssesolve" and not deterministic and any(
-            value is not None for value in (values, history, final)
-        ):
-            import dynamiqs as dq
-            import equinox as eqx
-
-            if isinstance(native.method, dq.method.Event):
-                xp = self._backend.array_module
-                nclicks = native.nclicks if index is None else native.nclicks[index]
-                values, history, final = eqx.error_if(
-                    (values, history, final), xp.any(xp.sum(nclicks, axis=-1) >= native.options.nmaxclick),
-                    "Native Event exhausted nmaxclick before completing evolution; increase the buffer. "
-                    "The incomplete native result remains accessible through result.native.",
-                )
+        values, history, final = self._backend.trajectory_view(
+            self.native, self._problem, index=index, states=states, deterministic=deterministic)
         payload = SolverResult(times=self.times, states=history, final_state=final,
                                expect=list(values) if values is not None else None, solver=self.solver)
-        return wrap_solver_result(payload, self._problem, self._problem.backend)
+        return wrap_solver_result(payload, self._problem, self._problem.backend, label_targets=self._label_targets)
 
     def average(self) -> SimulationResult:
         """Return native ensemble averages, including native trajectory weights."""

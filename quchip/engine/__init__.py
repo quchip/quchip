@@ -15,6 +15,8 @@ Responsibilities
   their :class:`~quchip.engine.ir.ScalarModulation` signal programs. It applies
   2π, rotating-frame subtraction, RWA band decomposition (Jaynes & Cummings
   1963; Gambetta et al., *PRA* **74**, 042318 (2006)).
+* :mod:`quchip.engine.excitation` reads the excitation-number structure of a
+  resolved chip into an :class:`~quchip.engine.excitation.ExcitationStructure`.
 * :mod:`quchip.engine.observables` decomposes dict-form ``e_ops`` into
   solver-ready bands and, after the solve, demodulates expectations back into
   the lab/control frame.
@@ -331,9 +333,10 @@ def simulate(
         two-body observable).
     initial_state : optional
         Initial state. ``None`` uses the default start described in
-        :func:`build_problem`. A ``Mapping`` gives a product state from per-device
-        energy levels or authored local kets. Configured string shorthand gives
-        per-device energy levels. Both are built in the resolved local bases. QuTiP
+        :func:`build_problem`. A label of per-device energy levels, as a ``Mapping``
+        or configured string shorthand, names its dressed state under the solve's
+        approximation and excitation cutoff, placed in the solve frame at
+        ``tlist[0]``. ``chip.bare_state(...)`` gives a bare product. QuTiP
         ``Qobj`` and dynamiqs ``QArray`` kets or density matrices use resolved
         solver coordinates. Their first dimension must match the kept dimension.
         NumPy and JAX arrays, symbolic state expressions, and callables are
@@ -444,7 +447,7 @@ def solve_problem(
 
 
 def solve_batch(
-    batch: "SolveBatch", *, progress: bool = True,
+    batch: "SolveBatch", *, progress: bool = True, max_workers: int | None = None,
 ) -> "SimulationBatchResult":
     """Dispatch a :class:`SolveBatch` through its chip backend.
 
@@ -457,9 +460,15 @@ def solve_batch(
         Captured batch of compatible solve requests.
     progress : bool, default=True
         Show backend progress.
+    max_workers : int or None, default=None
+        Worker processes for a backend that solves points in parallel, such as
+        QuTiP. ``None`` takes the CPU count that loky reports, which honors
+        ``LOKY_MAX_CPU_COUNT``, or fewer when the available memory cannot hold
+        them. ``1`` solves in this process.
     """
     from quchip.results.results import SimulationBatchResult, wrap_solver_results_from_batch
 
+    _check_max_workers(max_workers)
     if batch.batch_size == 0:
         return SimulationBatchResult([])
 
@@ -471,12 +480,12 @@ def solve_batch(
     try:
         backend = batch.problems[0].backend
         if batch.has_shared_tlist:
-            solver_results = backend.solve_batch(batch, progress=progress)
+            solver_results = backend.solve_batch(batch, progress=progress, max_workers=max_workers)
             result = SimulationBatchResult(wrap_solver_results_from_batch(solver_results, batch, backend))
         else:
             from quchip.engine.problem import solve_problem_list
 
-            result = solve_problem_list(list(batch.problems), progress=progress,
+            result = solve_problem_list(list(batch.problems), progress=progress, max_workers=max_workers,
                 parameters=tuple(batch.params_at(index) for index in range(batch.batch_size)))
     except BatchSolveError as exc:
         raise BatchSolveError(exc.index, exc.detail, batch.params_at(exc.index)) from exc
@@ -487,6 +496,7 @@ def solve_many(
     batch_or_problems: "SolveBatch | list[SolveProblem]",
     *,
     progress: bool = True,
+    max_workers: int | None = None,
 ) -> "SimulationBatchResult":
     """Solve a native batch or an ordered collection of captured requests.
 
@@ -500,9 +510,15 @@ def solve_many(
         Requests to dispatch.
     progress : bool, default=True
         Show backend progress.
+    max_workers : int or None, default=None
+        Worker processes for a backend that solves points in parallel, such as
+        QuTiP. ``None`` takes the CPU count that loky reports, which honors
+        ``LOKY_MAX_CPU_COUNT``, or fewer when the available memory cannot hold
+        them. ``1`` solves in this process.
     """
     if isinstance(batch_or_problems, SolveBatch):
-        return solve_batch(batch_or_problems, progress=progress)
+        return solve_batch(batch_or_problems, progress=progress, max_workers=max_workers)
+    _check_max_workers(max_workers)
 
     problems = list(batch_or_problems)
     from quchip.results.results import SimulationBatchResult
@@ -516,4 +532,10 @@ def solve_many(
 
     from quchip.engine.problem import solve_problem_list
 
-    return solve_problem_list(problems, progress=progress)
+    return solve_problem_list(problems, progress=progress, max_workers=max_workers)
+
+
+def _check_max_workers(max_workers: int | None) -> None:
+    if max_workers is not None and (isinstance(max_workers, bool) or not isinstance(max_workers, int)
+                                    or max_workers < 1):
+        raise ValueError(f"max_workers must be a positive integer or None; got {max_workers!r}.")

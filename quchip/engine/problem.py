@@ -15,6 +15,7 @@ Collapse operators enter the standard Lindblad master equation
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -22,7 +23,13 @@ import numpy as np
 
 from quchip.approximations import Approximation
 from quchip.backend import BatchSolveError
-from quchip.chip.states import default_initial_state, materialize_state_spec
+from quchip.engine.states import (
+    CompactState,
+    compatible_values,
+    label_state,
+    materialize_compact,
+    materialize_state_spec,
+)
 from quchip.engine.ir import (
     ControlOp,
     EngineResult,
@@ -129,7 +136,7 @@ def prepare_solve_problem_context(
     from quchip.engine.assembly import _resolve_system, _prepare_engine_assembly
     from quchip.engine.frames import plan_for_operations
     from quchip.engine.pulse_space import plan_pulse_space
-    from quchip.engine.sectors import sector_size
+    from quchip.engine.excitation import sector_size
     from quchip.approximations import require_approximation
     from quchip.cutoff import active_cutoff
 
@@ -331,22 +338,16 @@ def build_solve_batch_from_results(
 
 
 def _initial_state(chip, spec, result, start):
+    if spec is None or isinstance(spec, (Mapping, str)):
+        return label_state(chip, spec, result, start)
     if result.excitation_space is not None:
-        from quchip.cutoff import active_cutoff
-        from quchip.results.compact import materialize_compact, truncated_vacuum
-
-        if spec is None and active_cutoff(chip) is not None:
-            return truncated_vacuum(chip, result, start)
         return materialize_compact(chip, spec, result.excitation_space)
-    from quchip.results.compact import CompactState, _compatible_values
     if isinstance(spec, CompactState):
         backend = chip.backend
-        values = _compatible_values(spec, tuple(d.label for d in chip.devices), result.dims, result.bases, backend)
+        values = compatible_values(spec, tuple(d.label for d in chip.devices), result.dims, result.bases, backend)
         native = backend.from_array(values, dims=[[spec.space.size],
                                     [1] if spec.values.shape[-1] == 1 else [spec.space.size]])
         spec = spec.space.lift(native, backend)
-    if spec is None:
-        return default_initial_state(chip, result, start)
     return materialize_state_spec(chip, spec, result.bases)
 
 
@@ -355,10 +356,11 @@ def _require_product_state(context, result):
     dissipative = context.dissipation and bool(result.slh.collapse_terms)
     if result.excitation_space is None and dissipative and context.solver in (None, "mesolve"):
         from math import prod
-        from quchip.backend._memory import require_memory
+        from quchip.utils.memory import dense_bytes, require_memory
 
         dimension = prod(result.dims)
-        require_memory(16 * dimension**2, task=f"The product-space density matrix at dimension {dimension}",
+        require_memory(dense_bytes(dimension, dimension),
+                       task=f"The product-space density matrix at dimension {dimension}",
                        remedy="Use a model and initial state with a smaller proven invariant space.")
 
 
@@ -436,7 +438,8 @@ def _problem_from_context(context, drive_ops, initial_state):
 
 
 def solve_problem_list(problems: list[SolveProblem], *, progress: bool = True,
-                       parameters: tuple[dict[str, Any], ...] | None = None) -> Any:
+                       parameters: tuple[dict[str, Any], ...] | None = None,
+                       max_workers: int | None = None) -> Any:
     """Dispatch each captured backend's requests and restore the original point order."""
     from quchip.results.results import SimulationBatchResult
 
@@ -448,7 +451,7 @@ def solve_problem_list(problems: list[SolveProblem], *, progress: bool = True,
     for entries in groups.values():
         try:
             results = _solve_backend_problems([problem for _, problem in entries],
-                entries[0][1].backend, progress=progress,
+                entries[0][1].backend, progress=progress, max_workers=max_workers,
                 failure_context=tuple((index, parameters[index] if parameters is not None else {})
                                       for index, _ in entries))
         except BatchSolveError as exc:
@@ -464,6 +467,7 @@ def _solve_backend_problems(
     *,
     progress: bool = True,
     failure_context: tuple[tuple[int, dict[str, Any]], ...] = (),
+    max_workers: int | None = None,
 ) -> Any:
     """Group problems by shared operator skeleton and dispatch as :class:`SolveBatch`es.
 
@@ -479,6 +483,7 @@ def _solve_backend_problems(
     """
     from quchip.results.results import (
         SimulationBatchResult,
+        capture_label_targets,
         wrap_solver_result,
         wrap_solver_results_from_batch,
     )
@@ -544,15 +549,16 @@ def _solve_backend_problems(
         groups.setdefault(_skeleton_prefilter_key(problem), []).append((idx, problem))
 
     if len(groups) > 1 and not any(problem.stochastic for problem in problems):
-        parallel_results = backend.parallel_solve_problems(problems, progress=progress)
+        parallel_results = backend.parallel_solve_problems(problems, progress=progress, max_workers=max_workers)
         if parallel_results is not None:
             if len(parallel_results) != len(problems):
                 raise RuntimeError(
                     "parallel_solve_problems returned "
                     f"{len(parallel_results)} results for {len(problems)} problems."
                 )
+            captured: dict[int, list[tuple[Any, Any, Any]]] = {}
             wrapped = [
-                wrap_solver_result(result, problem, backend)
+                wrap_solver_result(result, problem, backend, label_targets=capture_label_targets(problem, captured))
                 for problem, result in zip(problems, parallel_results)
             ]
             return SimulationBatchResult(wrapped)
@@ -576,7 +582,7 @@ def _solve_backend_problems(
             continue
 
         try:
-            solver_results = backend.solve_batch(batch, progress=progress)
+            solver_results = backend.solve_batch(batch, progress=progress, max_workers=max_workers)
         except BatchSolveError as exc:
             raise BatchSolveError(indices[exc.index], exc.detail, exc.parameters) from exc
         for idx_original, wrapped_result in zip(

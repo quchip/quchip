@@ -109,14 +109,13 @@ def test_shared_feedline_with_transmons_uses_the_one_excitation_block(reduced):
 @pytest.mark.unit
 def test_feedline_port_that_does_not_lower_the_level_index_breaks_conservation():
     """A cascade pair with a port coupled through sigma_x changes the level index, so the compact route declines."""
-    from quchip.chip.effective import conserves_excitation_number
     from quchip.engine.linear_response import try_build_weak_probe_problem
 
     lowering = _feedline_chip(2)
     quadrature = _feedline_chip(2, operators=(None, "X"))
 
-    assert conserves_excitation_number(lowering, lowering.approximation)
-    assert not conserves_excitation_number(quadrature, quadrature.approximation)
+    assert lowering.excitation_structure().conserves
+    assert not quadrature.excitation_structure().conserves
     assert try_build_weak_probe_problem(quadrature, FEEDLINE_FREQUENCIES, plane_labels=("feed",)) is None
 
 

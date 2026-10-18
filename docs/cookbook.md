@@ -192,14 +192,18 @@ only requested expectation traces. Later state measurements require saved
 states. `observable_at()` can select or interpolate a saved trace. State
 queries use saved times and do not interpolate quantum states.
 
-An omitted `initial_state` uses the all-ground-labeled eigenstate of the undriven static
-lab-frame Hamiltonian that the solve's approximation keeps. This eigenstate is then expressed
-in the solve frame at `tlist[0]`. With ordinary couplings, this is the bare product under the
-default RWA. With the chip's approximation, it is the same physical state as `chip.state()`
-before the frame transform. Use `chip.state()` for other coupled eigenstates and
-`chip.bare_state()` to request a bare product state explicitly.
-`result.population(q, level=1)` measures a local isolated energy-state population. `overlap()`
-tests a particular joint state.
+A level label names its dressed state everywhere: `chip.state(q=1)`,
+`initial_state={"q": 1}` or `"e"`, the targets of `overlap()` and
+`amplitude_array()`, `chip.superposition()` and `chip.compact_state()`. The
+dressed state is the eigenstate of the undriven static lab-frame Hamiltonian
+that the solve's approximation keeps, assigned to the label. A label
+`initial_state` is placed in the solve frame at `tlist[0]`, and an omitted
+`initial_state` is the all-ground label, so it equals `{}`. A chip at rest
+then stays in its label, with no exchange between coupled devices. Use
+`chip.bare_state(q=1)` when the bare product state is the point, for example to
+show that exchange. `result.population(q, level=1)` measures a local isolated
+energy-state population, which on a coupled chip differs from
+`overlap({"q": 1})`.
 
 ## Reuse an exact compact pulse state
 
@@ -210,7 +214,7 @@ The solver never substitutes an excitation cutoff.
 
 ```python
 initial = chip.compact_state({"q": 1})
-# Use dressed=True for assigned eigenstates of a conserving static model.
+# The label's dressed state. Use dressed=False for its bare product.
 idle = QuantumSequence(chip)
 result = idle.simulate(duration=60.0, initial_state=initial)
 occupation = result.population("q", level=1)
@@ -218,7 +222,9 @@ saved = result.compact_state()
 ```
 
 The factory also accepts weighted superpositions, such as
-`chip.compact_state((1, {}), (1j, {"q": 1}))`. It normalizes the sum.
+`chip.compact_state((1, {}), (1j, {"q": 1}))`. It normalizes the sum. With
+`dressed=False`, a device can also take a local ket, so a bare product needs no
+product-space vector on a large chip.
 Pass `saved` as the next solve's `initial_state`, with the same captured local
 bases. Start the next time grid at the previous final time to continue
 absolute-time controls.
@@ -265,18 +271,20 @@ model's vacuum-assigned eigenvector. `result.check_truncation()[ExcitationCutoff
 gives the maximum sampled population in the sectors that one step can move
 above the cutoff. This value is a warning heuristic, not an error bound.
 
-`VNA.finite_power()` and `VNA.measure()` solve the truncated model.
-`chip.dress()`, `VNA.sweep()`, `VNA.output_spectrum()`, `VNA.g1()`,
-`VNA.g2()`, `steadystate()`, stochastic trajectory solvers, `eliminate()`,
+`steadystate()`, `VNA.finite_power()`, `VNA.measure()`,
+`VNA.output_spectrum()`, `VNA.g1()` and `VNA.g2()` solve the truncated model.
+`chip.dress()`, `VNA.sweep()`, stochastic trajectory solvers, `eliminate()`,
 `eliminate_spectators()`, `active_patch()`, `fit_a_dress(evaluator="local")`
 and `chip.partition()` raise for a limited chip. Use `chip.with_space(None)`
 for them.
 
-Without a cutoff, `finite_power()` and `measure()` truncate their own solve of
-a chip that conserves the total excitation and has more than 64 product states.
-They start at `K = 2`, compare every grid point with `K + 1`, and warn which
-`K` they kept. Set the cutoff on the chip to choose `K`, or pass `options={}`
-to solve the full product space.
+Without a cutoff, the VNA workflows above truncate their own solve of a chip
+that conserves the total excitation and has more than 64 product states. They
+start at `K = 2`, compare every grid point with `K + 1`, and warn which `K`
+they kept. Set the cutoff on the chip to choose `K`, or pass `options={}` to
+solve the full product space. An undriven `steadystate()` of such a chip
+returns the vacuum when the lowering channels prove it unique.
+`result.diagnostics["route"]` names the route that each call took and why.
 
 ## Declare network noise
 

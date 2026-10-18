@@ -22,11 +22,14 @@ def test_cascade_without_dissipation_keeps_its_exchange():
     first, second = network.port("p1", target=r1, rate=rate), network.port("p2", target=r2, rate=rate)
     network.cascade(first, second)
     network.expose("out", input=first.input, output=second.output)
-    sequence = QuantumSequence(Chip([r1, r2], port_network=network))
+    chip = Chip([r1, r2], port_network=network)
+    sequence = QuantumSequence(chip)
     times = np.linspace(0.0, 40.0, 81)
-    problem = sequence.build_problem(times, initial_state={"r1": 1}, dissipation=False)
+    # The bare product exchanges. The degenerate dressed states are its symmetric combinations.
+    start = chip.bare_state(r1=1)
+    problem = sequence.build_problem(times, initial_state=start, dissipation=False)
     assert problem.engine_result.excitation_space.size == 2
-    result = sequence.simulate(tlist=times, initial_state={"r1": 1}, dissipation=False,
+    result = sequence.simulate(tlist=times, initial_state=start, dissipation=False,
                                options={"atol": 1e-12, "rtol": 1e-10})
     # H_gen = (L_2^dag L_1 - h.c.) / 2i exchanges one photon at sqrt(k1 k2) / 2.
     np.testing.assert_allclose(result.population("r2", 1), np.sin(rate * times / 2) ** 2, atol=1e-6)
@@ -36,7 +39,8 @@ def test_exchange_uses_exact_space_and_exports_original_coordinates():
     """A one-excitation exchange evolves two amplitudes and retains tensor export semantics."""
     chip = pair()
     times = np.linspace(0, 10, 51)
-    problem = QuantumSequence(chip).build_problem(times, initial_state={"a": 1}, dissipation=False, states="all")
+    problem = QuantumSequence(chip).build_problem(times, initial_state=chip.bare_state(a=1), dissipation=False,
+                                                  states="all")
     assert problem.engine_result.excitation_space.size == 2
     result = chip.solve(problem)
     # Analytic exchange. QuTiP diagonalizes this static generator, so only round-off remains.
@@ -91,7 +95,7 @@ def test_decay_coherence_compact_replay_and_measurement(backend):
 @pytest.mark.parametrize("frame", ["lab", "auto"])
 def test_large_ring_never_embeds_full_operators(loss, frame, monkeypatch):
     """Twenty-four three-level devices evolve in 24 amplitudes with guarded exports."""
-    from quchip.backend import _memory
+    from quchip.utils import memory as _memory
 
     # A fixed host memory keeps the export guard active on every platform.
     monkeypatch.setattr(_memory, "available_memory_bytes", lambda: 2**33)
@@ -109,11 +113,13 @@ def test_large_ring_never_embeds_full_operators(loss, frame, monkeypatch):
         return original_embed(operator, target, dims)
 
     monkeypatch.setattr(chip.backend, "embed", guarded_embed)
-    problem = QuantumSequence(chip).build_problem(np.linspace(0, 2, 11), initial_state={"r0": 1}, dissipation=loss)
+    problem = QuantumSequence(chip).build_problem(
+        np.linspace(0, 2, 11), initial_state=chip.compact_state({"r0": 1}, dressed=False), dissipation=loss
+    )
     assert problem.engine_result.dims == (25 if loss else 24,)
     result = QuantumSequence(chip).simulate(
         tlist=np.linspace(0, 2, 11),
-        initial_state={"r0": np.array([0, 1, 0])},
+        initial_state=chip.compact_state({"r0": np.array([0, 1, 0])}, dressed=False),
         dissipation=loss,
     )
     from scipy.linalg import expm
@@ -259,7 +265,7 @@ def test_jitted_parameter_gradient_matches_exchange_solution():
     def objective(g):
         bound = chip.with_params({f"{edge}.g": g})
         result = QuantumSequence(bound).simulate(
-            tlist=jnp.linspace(0, 3, 11), initial_state={"a": 1}, dissipation=False
+            tlist=jnp.linspace(0, 3, 11), initial_state=bound.bare_state(a=1), dissipation=False
         )
         return result.population("b", 1)[-1]
 
@@ -282,8 +288,9 @@ def test_traced_frequency_keeps_the_exact_space_and_detuned_exchange_gradient():
 
     def population(frequency):
         bound = chip.with_params({"a.freq": frequency})
-        result = QuantumSequence(bound).simulate(tlist=jnp.linspace(0, t, 21), initial_state={"a": 1},
-                                                 dissipation=False)
+        # The bare product depends on no traced value, so it stays a constant and keeps its support under jit.
+        start = bound.bare_state(a=1)
+        result = QuantumSequence(bound).simulate(tlist=jnp.linspace(0, t, 21), initial_state=start, dissipation=False)
         assert result.stats["excitation_reduction"]["dimension"] == 2
         return result.population("b", 1)[-1]
 
@@ -460,12 +467,12 @@ def test_counter_rotating_explicit_state_uses_parity_not_low_excitation_cutoff(m
     chip = pair()
     chip = Chip(chip.devices, chip.couplings, approximation=Exact(), frame="lab")
     seq = QuantumSequence(chip)
-    actual = seq.simulate(tlist=np.linspace(0, 3, 31), initial_state={"a": 1}, dissipation=False)
+    actual = seq.simulate(tlist=np.linspace(0, 3, 31), initial_state=chip.bare_state(a=1), dissipation=False)
     assert actual.stats["excitation_reduction"]["totals"] == (1, 3)
     assert np.max(actual.population("b", 2)) > 1e-5
     monkeypatch.setattr("quchip.engine.pulse_space.plan_pulse_space",
                         lambda *a, **k: (None, "full test reference", None))
-    reference = seq.simulate(tlist=np.linspace(0, 3, 31), initial_state={"a": 1}, dissipation=False)
+    reference = seq.simulate(tlist=np.linspace(0, 3, 31), initial_state=chip.bare_state(a=1), dissipation=False)
     # QuTiP diagonalizes both static generators, so only round-off separates the routes.
     np.testing.assert_allclose(
         chip.backend.to_array(actual.final_state), chip.backend.to_array(reference.final_state), atol=2e-6
@@ -480,7 +487,8 @@ def test_compact_state_pytree_and_initial_state_batch():
     import jax.numpy as jnp
 
     chip = pair(backend="dynamiqs")
-    state = chip.compact_state({"a": 1})
+    # The resonant pair exchanges a bare excitation. Its dressed states are the symmetric combinations.
+    state = chip.compact_state({"a": 1}, dressed=False)
 
     @jax.jit
     def evolve(initial):
@@ -490,7 +498,8 @@ def test_compact_state_pytree_and_initial_state_batch():
     evolved = evolve(state)
     np.testing.assert_allclose(jnp.linalg.norm(evolved.values), 1, atol=2e-6)
     sequence = QuantumSequence(chip)
-    batch = sequence.build_batch(sequence.vary("initial_state", [{}, {"a": 1}]), tlist=[0, 1], dissipation=False)
+    batch = sequence.build_batch(sequence.vary("initial_state", [{}, chip.bare_state(a=1)]), tlist=[0, 1],
+                                 dissipation=False)
     assert all(p.engine_result.excitation_space.totals == (0, 1) for p in batch)
     result = chip.solve_many(batch, progress=False)
     np.testing.assert_allclose(result[0].population("a", 1), 0, atol=1e-10)
@@ -538,7 +547,7 @@ def test_compact_dressed_state_matches_full_assigned_state():
 def test_large_nonconserving_pulse_refuses_before_global_allocation(monkeypatch):
     """An ineligible large drive raises a memory error before full tensor materialization."""
     from quchip import ChargeDrive, Square
-    from quchip.backend import _memory
+    from quchip.utils import memory as _memory
 
     # A fixed host memory keeps the assembly guard active on every platform.
     monkeypatch.setattr(_memory, "available_memory_bytes", lambda: 2**33)
@@ -555,7 +564,7 @@ def test_large_nonconserving_pulse_refuses_before_global_allocation(monkeypatch)
 def test_full_pulse_route_counts_stored_operator_entries(monkeypatch):
     """A transverse pulse builds sparse product operators that dense estimates would refuse."""
     from quchip import ChargeDrive, Square
-    from quchip.backend import _memory
+    from quchip.utils import memory as _memory
 
     devices = [Resonator(freq=0.25, levels=3, label=f"r{i}") for i in range(6)]
     chain = [Capacitive(a, b, g=0.01) for a, b in zip(devices, devices[1:])]
@@ -575,7 +584,7 @@ def test_full_pulse_route_counts_stored_operator_entries(monkeypatch):
 def test_low_memory_moves_only_dense_compact_operators_to_the_product_route(monkeypatch, backend, dimension):
     """QuTiP holds compact operators as CSR; dense compact operators that cannot fit solve on the product route."""
     from quchip import Exact
-    from quchip.backend import _memory
+    from quchip.utils import memory as _memory
 
     if backend == "dynamiqs":
         dq = pytest.importorskip("dynamiqs")
@@ -586,7 +595,7 @@ def test_low_memory_moves_only_dense_compact_operators_to_the_product_route(monk
     chain = [Capacitive(a, b, g=0.01) for a, b in zip(devices, devices[1:])]
     chip = Chip(devices, couplings=chain, approximation=Exact(), backend=backend)
     sequence = QuantumSequence(chip)
-    kwargs = dict(tlist=np.linspace(0, 3, 7), initial_state={"r0": 1}, dissipation=False, options=options)
+    kwargs = dict(tlist=np.linspace(0, 3, 7), initial_state=chip.bare_state(r0=1), dissipation=False, options=options)
     compact = sequence.simulate(**kwargs)
     assert compact.stats["excitation_reduction"]["dimension"] == 40
     # Dense operators on the 40 odd-parity states need 206 kB. Each sparse operator needs less than 20 kB.
@@ -599,7 +608,7 @@ def test_low_memory_moves_only_dense_compact_operators_to_the_product_route(monk
 
 def test_large_partitioned_pulse_keeps_local_results_and_guards_joint_export(monkeypatch):
     """Independent components remain exact without allocating their full joint vacuum."""
-    from quchip.backend import _memory
+    from quchip.utils import memory as _memory
 
     # A fixed host memory keeps the export guard active on every platform.
     monkeypatch.setattr(_memory, "available_memory_bytes", lambda: 2**33)

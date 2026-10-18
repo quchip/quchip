@@ -6,7 +6,7 @@ from typing import Any, Callable
 
 import numpy as np
 
-from quchip.analysis.field_statistics import quadrature_transfer
+from quchip.engine.field_statistics import quadrature_transfer
 from quchip.utils.jax_utils import contains_tracer, is_jax_array, select_array_module
 
 

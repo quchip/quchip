@@ -20,10 +20,9 @@ import itertools
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
-import jax.numpy as jnp
 import numpy as np
 
-from quchip.chip.sw import bare_hamiltonian, exact_subspace, pathway_attribution, sylvester_generator
+from quchip.chip.sw import bare_hamiltonian, pathway_attribution, sylvester_generator
 from quchip.devices.base import BaseDevice
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
 
@@ -268,40 +267,6 @@ class EffectiveHamiltonianResult:
         return text
 
 
-def _h_eff_on_basis(chip: "Chip", basis: Sequence[tuple[int, ...]]) -> Any:
-    """Löwdin-orthonormalized effective Hamiltonian projected onto explicit bare states.
-
-    Shared core behind :func:`effective_hamiltonian` (an arbitrary subspace,
-    built from a ``{device: levels}``/bare-sequence spec via
-    :func:`_normalize_subspace`) and
-    :func:`effective_hamiltonian_between_states` (exactly two explicit
-    states) — see :class:`EffectiveHamiltonianResult` for the construction.
-    """
-    analysis = chip._analysis
-    sectors = analysis._sector_model()
-    if sectors is not None:
-        # A conserving chip needs only the sectors that the requested states occupy.
-        labels = [tuple(state) for state in basis]
-        if not labels:
-            raise ValueError("Effective subspace must contain at least one state.")
-        invalid = [label for label in labels if not analysis._is_bare_label(label)]
-        if invalid:
-            raise ValueError(f"Effective subspace state {invalid[0]} is not a valid bare product-basis label.")
-        eigenvalues, evecs, kept, dressed_idx = sectors.labeled_subspace(labels)
-        return exact_subspace(eigenvalues, evecs, kept, dressed_idx).hamiltonian
-
-    engine = analysis.engine_result()
-    eigenvalues, evecs, _, labeling = analysis._compute_array_labeled(engine)
-    evecs = analysis._semantic_amplitudes(evecs, engine)
-
-    bare_idx_list = [int(np.ravel_multi_index(state, engine.dims)) for state in basis]
-    if not bare_idx_list:
-        raise ValueError("Effective subspace must contain at least one state.")
-    dressed_idx = jnp.stack([labeling.indices[i] for i in bare_idx_list])
-
-    return exact_subspace(eigenvalues, evecs, bare_idx_list, dressed_idx).hamiltonian
-
-
 def effective_hamiltonian(
     chip: "Chip",
     subspace: Mapping[str | BaseDevice, int] | Sequence[str | BaseDevice],
@@ -341,7 +306,7 @@ def effective_hamiltonian(
     # eigensystem, supplies both this function and `dispersive_shift`.
     device_labels = tuple(dev.label for dev in chip.devices)
     basis = _normalize_subspace(chip, subspace)
-    h_eff = _h_eff_on_basis(chip, basis)
+    h_eff = chip._analysis.effective_hamiltonian_on_basis(basis)
     return EffectiveHamiltonianResult(h_eff=h_eff, basis=tuple(basis), device_labels=device_labels)
 
 
@@ -386,4 +351,4 @@ def effective_hamiltonian_between_states(
     >>> h_eff.shape
     (2, 2)
     """
-    return _h_eff_on_basis(chip, (state_a, state_b))
+    return chip._analysis.effective_hamiltonian_on_basis((state_a, state_b))

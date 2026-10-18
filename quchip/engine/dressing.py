@@ -1,25 +1,32 @@
-"""Assign dressed eigenvectors to bare or eigenstate references.
+"""Assign dressed eigenvectors to bare or eigenstate references, and build dressed results.
 
 :func:`label_eigensystem` supports greedy, global-greedy, and continuation
 assignments. :class:`BareProductReference` and :class:`EigenstateReference`
 supply vectors and labels, and :func:`compute_overlaps` computes their
 overlaps. The assignment kernels are inspired by SuperGrad's
-``compute_energy_map``.
+``compute_energy_map``. :class:`DressedResult` is the eager, label-keyed view
+of one dressed eigensystem that ``Chip.dress()`` and ``EngineResult.dress()``
+return.
 """
 
 from __future__ import annotations
 
 import itertools
+import warnings
 from dataclasses import dataclass
 from functools import partial
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Sequence
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import lax
 
+from quchip.backend import EigensystemData
 from quchip.utils.jax_utils import concrete_array_module, contains_tracer
+
+if TYPE_CHECKING:
+    from quchip.engine.ir import EngineResult
 
 
 @dataclass(frozen=True)
@@ -111,7 +118,7 @@ class EigenstateReference:
     keys: tuple[Any, ...]
 
 
-def _reference_amplitudes(reference: Any, evecs: jnp.ndarray) -> jnp.ndarray:
+def reference_amplitudes(reference: Any, evecs: jnp.ndarray) -> jnp.ndarray:
     """Express solver eigenvectors in the captured reference coordinates.
 
     Concrete inputs combine on the host, where they compile no device programs.
@@ -130,7 +137,7 @@ def _reference_amplitudes(reference: Any, evecs: jnp.ndarray) -> jnp.ndarray:
 
 def compute_overlaps(reference: Any, evecs: jnp.ndarray) -> jnp.ndarray:
     """``|<ref_k | psi_j>|**2`` matrix, shape ``(n_labels, n_dressed)``."""
-    amplitudes = _reference_amplitudes(reference, evecs)
+    amplitudes = reference_amplitudes(reference, evecs)
     return concrete_array_module(amplitudes).abs(amplitudes) ** 2
 
 
@@ -304,6 +311,44 @@ def _labeling_arrays(
     return indices, chosen_overlaps, margins, duplicates
 
 
+STATE_OVERLAP_WARNING = 0.9
+
+
+def warn_weak_assignment(label: tuple[int, ...], overlap: Any) -> None:
+    """Warn when the dressed state assigned to a label keeps less than 0.9 of its bare product.
+
+    Every query that selects the dressed state of a label calls this. A traced
+    overlap does not warn. The warning names the first caller outside quchip.
+
+    Parameters
+    ----------
+    label : tuple of int
+        Product label of local energy levels.
+    overlap : scalar
+        Squared overlap of the assigned dressed state with the bare product.
+    """
+    import os
+    import sys
+    from types import FrameType
+
+    from quchip.utils.jax_utils import maybe_concrete_scalar
+
+    value = maybe_concrete_scalar(overlap)
+    if value is None or value >= STATE_OVERLAP_WARNING:
+        return
+    package = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    frame: FrameType | None = sys._getframe(1)
+    level = 2
+    while frame is not None and os.path.abspath(frame.f_code.co_filename).startswith(package + os.sep):
+        frame, level = frame.f_back, level + 1
+    warnings.warn(
+        f"Dressed state label {tuple(label)} has assignment overlap {value:.3f} (< {STATE_OVERLAP_WARNING:.3f}); "
+        "the label names the assigned dressed eigenstate. Use chip.bare_state(...) for the product state.",
+        UserWarning,
+        stacklevel=level,
+    )
+
+
 def gauge_phases(amplitudes: Any, indices: Any) -> Any:
     """Return the phase factor that makes each column's assigned reference amplitude real and nonnegative.
 
@@ -468,3 +513,246 @@ def track_path(
         duplicates=duplicates_path,
         swap_events=swap_events,
     )
+
+
+DRESS_TRACING_ERROR = (
+    "Dressing returns a concrete dict-keyed DressedResult and is not "
+    "traceable under jax.jit/grad/vmap. Use Chip.energy(), Chip.freq(), "
+    "Chip.dispersive_shift(), or Chip.state() inside transforms — they "
+    "route through the array-only kernel in quchip.engine.dressing and stay "
+    "differentiable."
+)
+
+
+@dataclass
+class DressedResult:
+    """Store a frozen snapshot of a dressed-state diagonalization.
+
+    Attributes
+    ----------
+    eigenvalues : array-like
+        Sorted dressed eigenvalues in GHz.
+    eigenstates : array-like
+        Backend eigenstate objects in the same order as ``eigenvalues``, with
+        the phases of ``eigenvector_matrix``. They are materialized lazily on
+        first access from the underlying
+        :class:`~quchip.backend.containers.EigensystemData`. The dressing and
+        sweep hot path never touches them, so the backend builds per-column
+        kets only on request.
+    state_map : dict[tuple[int, ...], int]
+        Map from each bare product-basis label (one int per device) to the
+        dressed eigenstate index with the largest overlap.
+    dressed_eigenvalues : dict[tuple[int, ...], Any]
+        Dressed eigenvalue for each assigned bare label, the direct lookup path
+        for :meth:`Chip.energy`.
+    assignment_overlaps : dict[tuple[int, ...], float]
+        ``|⟨bare|dressed⟩|²`` of each assignment. Values below
+        ``overlap_threshold`` flag hybridization.
+    hybridized_labels : tuple[tuple[int, ...], ...]
+        Bare labels whose assignment quality is below ``overlap_threshold``. A
+        non-empty tuple triggers a user warning at dress time.
+    bare_labels : tuple[tuple[int, ...], ...]
+        Labels of the product energy levels exposed by the chip's resolved
+        local dimensions, in chip order.
+    bare_labels_by_dressed_index : dict[int, tuple[int, ...]]
+        Inverse of :attr:`state_map`: dressed index → assigned bare label.
+    eigenvector_matrix : array-like or None
+        Dressed eigenvectors as columns, in the resolved solver basis, used by
+        :meth:`ChipAnalysis.operator_in_dressed_basis` and
+        :meth:`ChipAnalysis.state_components`. Each column has a real,
+        nonnegative amplitude on its assigned bare state
+        (:func:`~quchip.engine.dressing.gauge_phases`).
+    overlap_threshold : float
+        Minimum overlap for a confident assignment.
+    labeling : str
+        Algorithm id (currently only ``"DE"``). It resolves to the confidence-ordered
+        row-greedy overlap-matching policy run by :meth:`ChipAnalysis.dress`
+        (:func:`~quchip.engine.dressing.assign_rowwise_greedy`).
+    """
+
+    eigenvalues: Any
+    state_map: dict[tuple[int, ...], int]
+    dressed_eigenvalues: dict[tuple[int, ...], Any]
+    assignment_overlaps: dict[tuple[int, ...], float]
+    hybridized_labels: tuple[tuple[int, ...], ...]
+    bare_labels: tuple[tuple[int, ...], ...]
+    bare_labels_by_dressed_index: dict[int, tuple[int, ...]]
+    eigenvector_matrix: Any = None
+    overlap_threshold: float = 0.5
+    labeling: str = "DE"
+    _eigensystem: EigensystemData | None = None
+
+    @property
+    def eigenstates(self) -> Any:
+        """Backend eigenstate kets, materialized lazily from the eigensystem."""
+        if self._eigensystem is None:
+            raise RuntimeError(
+                "DressedResult was constructed without an EigensystemData; "
+                "eigenstates are unavailable."
+            )
+        return self._eigensystem.eigenstates
+
+
+def materialize_dressed_result(
+    eigenvalues: Any,
+    eigenvector_matrix: Any,
+    eigensystem: EigensystemData,
+    kernel_labeling: Labeling,
+    *,
+    overlap_threshold: float,
+    labeling: str,
+    warning_stacklevel: int,
+) -> DressedResult:
+    """Build the eager label-keyed result shared by chip and resolved dressing."""
+    if contains_tracer((kernel_labeling.indices, kernel_labeling.overlaps)):
+        raise RuntimeError(DRESS_TRACING_ERROR)
+
+    bare_labels = kernel_labeling.keys
+    indices_np = np.asarray(kernel_labeling.indices)
+    overlaps_np = np.asarray(kernel_labeling.overlaps)
+    state_map: dict[tuple[int, ...], int] = {}
+    bare_labels_by_dressed_index: dict[int, tuple[int, ...]] = {}
+    assignment_overlaps: dict[tuple[int, ...], float] = {}
+    dressed_eigenvalues: dict[tuple[int, ...], Any] = {}
+    for k, bare_label in enumerate(bare_labels):
+        index = int(indices_np[k])
+        state_map[bare_label] = index
+        bare_labels_by_dressed_index[index] = bare_label
+        assignment_overlaps[bare_label] = float(overlaps_np[k])
+        dressed_eigenvalues[bare_label] = eigenvalues[index]
+
+    hybridized_labels = tuple(
+        bare_label
+        for bare_label in bare_labels
+        if assignment_overlaps[bare_label] < overlap_threshold
+    )
+    if hybridized_labels:
+        # Fixed text, so the default warning filter shows it once per call
+        # site instead of once per sweep point.
+        warnings.warn(
+            "Strong hybridization detected during dressed-state assignment; "
+            f"bare labels with overlap below {overlap_threshold} are approximate. "
+            "Inspect DressedResult.hybridized_labels and "
+            "DressedResult.assignment_overlaps for the affected states.",
+            UserWarning,
+            stacklevel=warning_stacklevel,
+        )
+
+    return DressedResult(
+        eigenvalues=eigenvalues,
+        state_map=state_map,
+        dressed_eigenvalues=dressed_eigenvalues,
+        assignment_overlaps=assignment_overlaps,
+        hybridized_labels=hybridized_labels,
+        bare_labels=bare_labels,
+        bare_labels_by_dressed_index=bare_labels_by_dressed_index,
+        eigenvector_matrix=eigenvector_matrix,
+        overlap_threshold=float(overlap_threshold),
+        labeling=labeling,
+        _eigensystem=eigensystem,
+    )
+
+
+def dress_engine_result(
+    result: "EngineResult",
+    *,
+    at_time: Any | None = None,
+    overlap_threshold: float = 0.5,
+    labeling: str = "DE",
+) -> DressedResult:
+    """Materialize the instantaneous dressed eigensystem of an engine snapshot."""
+    if labeling != "DE":
+        raise ValueError(f"Unsupported labeling {labeling!r}. Only 'DE' is implemented.")
+    if result._dressing_context is None:
+        raise RuntimeError(
+            "EngineResult has no resolved dressing context; obtain it from Chip.resolve() "
+            "or a built solve problem."
+        )
+    if result.dynamic_terms and at_time is None:
+        raise ValueError(
+            "A dynamic EngineResult requires dress(at_time=...); this is an "
+            "instantaneous eigensystem, not a Floquet analysis."
+        )
+    context = result._dressing_context
+    backend = context.backend
+    _require_eigensystem_memory(result.dims)
+    hamiltonian = result.hamiltonian().matrix(t=at_time, backend=backend)
+    if contains_tracer((hamiltonian, context.reference.local_vectors)):
+        raise RuntimeError(DRESS_TRACING_ERROR)
+    native_hamiltonian = backend.from_array(
+        hamiltonian,
+        dims=[list(result.dims), list(result.dims)],
+    )
+    eigensystem = backend.eigensystem_data(native_hamiltonian)
+    kernel_labeling = label_eigensystem(
+        eigensystem.eigenvector_matrix,
+        context.reference,
+        policy=assign_rowwise_greedy,
+    )
+    eigensystem = _gauge_fixed_eigensystem(eigensystem, context.reference, kernel_labeling)
+    eigenvalues = eigensystem.eigenvalues
+    eigenvector_matrix = eigensystem.eigenvector_matrix
+    if result.excitation_space is not None:
+        from dataclasses import replace
+        kernel_labeling = replace(kernel_labeling, keys=tuple(map(tuple, result.excitation_space.levels.tolist())))
+    return materialize_dressed_result(
+        eigenvalues,
+        eigenvector_matrix,
+        eigensystem,
+        kernel_labeling,
+        overlap_threshold=float(overlap_threshold),
+        labeling=labeling,
+        warning_stacklevel=4,
+    )
+
+
+def _gauge_fixed_eigensystem(eigensystem: EigensystemData, reference: Any, labeling: Labeling) -> EigensystemData:
+    """Rephase each eigenvector so that its assigned bare amplitude is real and nonnegative.
+
+    The kets of the backend take the same phases, so a degenerate eigenspace
+    keeps the eigensolver's basis.
+    """
+    raw = eigensystem.eigenvector_matrix
+    phases = gauge_phases(reference_amplitudes(reference, raw), labeling.indices)
+    xp = concrete_array_module(raw, phases)
+    vectors = xp.asarray(raw) * phases
+    if isinstance(raw, jax.Array) and xp is np:
+        vectors = jnp.asarray(vectors)
+    factors = [complex(factor) for factor in phases] if xp is np else list(phases)
+
+    def build_states() -> list[Any]:
+        return [state * factor for state, factor in zip(eigensystem.eigenstates, factors, strict=True)]
+
+    return EigensystemData(eigenvalues=eigensystem.eigenvalues, eigenvector_matrix=vectors,
+                           _states_builder=build_states)
+
+
+def _require_eigensystem_memory(dims: Sequence[int]) -> None:
+    """Raise :class:`MemoryError` before a full static eigensystem that cannot fit."""
+    from quchip.utils.memory import eigensystem_bytes, require_memory
+
+    dimension = int(np.prod(dims))
+    require_memory(eigensystem_bytes(dimension), task=f"Full static eigensystem (dimension {dimension})",
+                   remedy="Use a conserving model with labeled sector queries or reduce the model.")
+
+
+def labeled_eigensystem(engine_result: "EngineResult", backend: Any) -> tuple[Any, Any, Any, Labeling]:
+    """Diagonalize a static analysis result and assign its bare product labels.
+
+    Returns ``(eigenvalues, eigenvector_matrix, eigensystem, labeling)``;
+    traced Hamiltonians stay traced. Each eigenvector follows the phase
+    convention of :func:`~quchip.engine.dressing.gauge_phases`.
+    """
+    from quchip.engine.assembly import _analysis_matrix_ghz
+
+    context = engine_result._dressing_context
+    if context is None:
+        raise RuntimeError("Resolved analysis is missing its captured dressing reference.")
+    dims = list(engine_result.dims)
+    _require_eigensystem_memory(dims)
+    eigensystem = backend.eigensystem_data(
+        backend.from_array(_analysis_matrix_ghz(engine_result), dims=[dims, dims])
+    )
+    labeling = label_eigensystem(eigensystem.eigenvector_matrix, context.reference, policy=assign_rowwise_greedy)
+    eigensystem = _gauge_fixed_eigensystem(eigensystem, context.reference, labeling)
+    return eigensystem.eigenvalues, eigensystem.eigenvector_matrix, eigensystem, labeling

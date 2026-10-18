@@ -435,9 +435,9 @@ def eliminate_spectators(
     >>> [d.label for d in result.chip.devices]
     ['q0', 'q2']
     """
-    from quchip.cutoff import reject_cutoff
+    from quchip.engine.routes import require_workflow
 
-    reject_cutoff(chip, "eliminate_spectators()")
+    require_workflow(chip, "eliminate_spectators()")
     if isinstance(keep, str) or not isinstance(keep, Iterable):
         keep = (keep,)
     kept = {resolve_label(device) for device in keep}
@@ -545,10 +545,10 @@ def active_patch(
     -------
     ActivePatchResult
     """
-    from quchip.cutoff import reject_cutoff
+    from quchip.engine.routes import require_workflow
 
     chip = sequence._chip
-    reject_cutoff(chip, "active_patch()")
+    require_workflow(chip, "active_patch()")
     active = active_labels(sequence, hops=hops)
     model, doomed, notes = _plan(chip, active, order, "active_patch()")
     working, strip_notes = _strip_dead_control_lines(chip, sequence, doomed)

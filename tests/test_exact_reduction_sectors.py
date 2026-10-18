@@ -7,7 +7,7 @@ from quchip import (
     Capacitive, ChargeDrive, Chip, DuffingTransmon, Gaussian, PortNetwork, QuantumSequence, Resonator, RWA,
     eliminate, simulate,
 )
-from quchip.chip.sw import excitation_sectors
+from quchip.engine.excitation import excitation_sectors
 
 pytestmark = pytest.mark.optional_backend
 pytest.importorskip("dynamiqs")

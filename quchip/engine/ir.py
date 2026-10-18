@@ -48,7 +48,7 @@ from quchip.utils.jax_utils import (
 from quchip.utils.constants import TWO_PI
 
 if TYPE_CHECKING:
-    from quchip.chip.dressing import BareProductReference
+    from quchip.engine.dressing import BareProductReference
     from quchip.control.envelopes import Envelope
     from quchip.control.signal import SignalKey
     from quchip.engine.frames import FramePlan
@@ -1684,7 +1684,7 @@ class EngineResult:
         labeling : str, default="DE"
             Bare-to-dressed assignment strategy.
         """
-        from quchip.chip.analysis import dress_engine_result
+        from quchip.engine.dressing import dress_engine_result
 
         return dress_engine_result(
             self,
@@ -1921,21 +1921,25 @@ def _is_scalar_like(value: Any) -> bool:
 class ResolvedFrame:
     """Resolved per-device frame information.
 
-    Describes the rotating-frame transformation applied uniformly to
-    the chip:
+    Describes the rotating-frame transformation applied uniformly to the
+    chip. The static Hamiltonian gets the counter-term ``−Σᵢ ω_frame,ᵢ nᵢ``,
+    and solves and results keep states in this integration frame.
 
-    * ``frequencies[label]``: the per-device integration-frame frequency
-      ``ω_frame`` in GHz. The static Hamiltonian gets the counter-term
-      ``−Σᵢ ω_frame,ᵢ nᵢ``.
-    * ``demod_freqs[label] = reference_freq − ω_frame``: the demodulation
-      frequency used after the solve to rotate expectations back into the
-      user's control frame. ``reference_freq`` is the device attribute (see
-      :attr:`~quchip.devices.base.BaseDevice.reference_freq`). It defaults to
-      the dressed drive frequency when not set explicitly.
-    * ``mode``: one of ``"lab"`` / ``"rotating"`` / ``"auto"`` / ``"float"`` /
-      ``"dict"``.
-    * ``plan``: the :class:`~quchip.engine.frames.FramePlan` selected for
-      ``"auto"``, or ``None`` for an explicit frame.
+    Attributes
+    ----------
+    frequencies : dict
+        Integration-frame frequency ``ω_frame`` of each device label, in GHz.
+    demod_freqs : dict
+        ``reference_freq − ω_frame`` of each device label, in GHz. After the
+        solve, this frequency rotates expectations back into the user's
+        control frame. ``reference_freq`` is the device attribute (see
+        :attr:`~quchip.devices.base.BaseDevice.reference_freq`), which
+        defaults to the dressed drive frequency.
+    mode : str
+        One of ``"lab"``, ``"rotating"``, ``"auto"``, ``"float"`` and ``"dict"``.
+    plan : FramePlan or None
+        The :class:`~quchip.engine.frames.FramePlan` selected for ``"auto"``,
+        or None for an explicit frame.
     """
 
     frequencies: dict[str, Any]

@@ -130,7 +130,7 @@ from quchip.engine import (
 )
 from quchip.interop import EigenbasisDevice, ModelMapping
 from quchip.inverse_design import FitADressResult, FitParameterReport, ObservableReport, fit_a_dress
-from quchip.results.compact import CompactState
+from quchip.engine.states import CompactState
 from quchip.results import (
     ObservableTrace,
     PartitionedSimulationResult,
