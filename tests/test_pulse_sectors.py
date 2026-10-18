@@ -288,8 +288,8 @@ def test_traced_frequency_keeps_the_exact_space_and_detuned_exchange_gradient():
 
     def population(frequency):
         bound = chip.with_params({"a.freq": frequency})
-        # A compact bare product keeps its support under tracing; a traced ket could occupy every level.
-        start = bound.compact_state({"a": 1}, dressed=False)
+        # The bare product depends on no traced value, so it stays a constant and keeps its support under jit.
+        start = bound.bare_state(a=1)
         result = QuantumSequence(bound).simulate(tlist=jnp.linspace(0, t, 21), initial_state=start, dissipation=False)
         assert result.stats["excitation_reduction"]["dimension"] == 2
         return result.population("b", 1)[-1]

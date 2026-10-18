@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Mapping
 
+import jax
+
 from quchip.backend.protocol import State
 from quchip.utils.jax_utils import maybe_concrete_scalar
 from quchip.utils.labeling import merge_labeled_values, resolve_label
@@ -213,6 +215,9 @@ def bare_state(
     superposition of their products, as :func:`superposition` combines
     dressed states. Accepts a string shorthand (for example ``"eg1"``) after
     you call :func:`set_state_order`.
+
+    Inside ``jax.jit``, a state that depends on no traced value stays a
+    constant, so a solve can read its excitation support.
     """
     from quchip.engine.states import bare_state_from_bases
 
@@ -226,8 +231,10 @@ def bare_state(
         isinstance(component, tuple) and len(component) == 2 and not isinstance(component[0], (dict, str, Mapping))
         for component in components
     )
-    if len(components) <= 1 and not weighted:
-        return product(components[0] if components else None, device_state_kwargs)
-    if device_state_kwargs:
+    if device_state_kwargs and (len(components) > 1 or weighted):
         raise TypeError("Keyword levels name one product state. Write each component of a superposition as a mapping.")
-    return _combine(chip, components, product)
+    # jit stages every array operation, so a fixed ket would become a tracer of unknown support.
+    with jax.ensure_compile_time_eval():
+        if len(components) <= 1 and not weighted:
+            return product(components[0] if components else None, device_state_kwargs)
+        return _combine(chip, components, product)

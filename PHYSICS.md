@@ -938,6 +938,10 @@ that support under every retained Hamiltonian term, delivered drive, jump,
 and no-jump product. It checks local authored algebra before global embedding.
 Scalar zeros and small numerical entries do not prove conservation. Unknown
 support selects the full product route, with a memory check before assembly.
+A ket traced by `jax.jit` has unknown support. `chip.bare_state()` stays a
+constant when it depends on no traced value, but a level of a device that
+solves in its native basis follows that device's traced parameters. A label
+or `chip.compact_state(...)` keeps its support in every case.
 Dense compact operators that cannot fit in memory also select the full route.
 A batch proves one space from the initial states of all its points, or it uses
 the full route. The calculation never introduces an excitation cutoff

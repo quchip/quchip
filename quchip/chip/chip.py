@@ -2052,6 +2052,13 @@ class Chip:
         dressed states. Accepts a string shorthand (for example ``"eg1"``) if you
         called :meth:`set_state_order` before.
 
+        Inside ``jax.jit``, a state that depends on no traced value stays a
+        constant, so a solve keeps the excitation sectors of its levels. A
+        level of a device that solves in its native basis, such as
+        ``Fluxonium(basis="native")``, depends on that device's traced
+        parameters, and a solve then uses the full product space.
+        ``compact_state(..., dressed=False)`` keeps the sectors in every case.
+
         Parameters
         ----------
         *components : mapping, str, or (amplitude, specification) pairs

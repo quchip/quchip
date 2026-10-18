@@ -21,7 +21,10 @@ This file records notable user-visible changes to quchip.
   `chip.compact_state()` also give dressed states, and
   `compact_state(..., dressed=False)` keeps the bare form. Uncoupled chips do
   not change. To keep a bare start, pass `initial_state=chip.bare_state(...)`,
-  which also takes `(amplitude, label)` pairs for bare superpositions. A
+  which also takes `(amplitude, label)` pairs for bare superpositions. Inside
+  `jax.jit`, `chip.bare_state()` now stays a constant when it depends on no
+  traced value, so this start keeps the exact excitation space of its levels.
+  Previously, the traced ket made the solve use the full product space. A
   mapping with a local ket raises as an `initial_state`. Pass
   `chip.bare_state(...)` instead, or `chip.compact_state(..., dressed=False)`,
   which now also takes local kets, on a chip too large for its product space.
