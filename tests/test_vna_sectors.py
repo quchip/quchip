@@ -599,9 +599,11 @@ def test_an_undriven_conserving_chip_is_in_its_vacuum(backend):
     if backend == "dynamiqs":
         pytest.importorskip("dynamiqs")
     chip = readout_pairs(2, backend)
-    result = chip.steadystate()
+    resonator = next(device for device in chip.devices if device.label == "r1")
+    result = chip.steadystate(e_ops={resonator: 1 - resonator.number_operator(), "q0": "n"})
     assert result.diagnostics["solver"] == "sector_stationary" and result.nullity == 1
     assert result.excitation_space is not None
+    assert complex(result.expect(resonator)) == 1 and complex(result.expect("q0")) == 0
     for label in ("q0", "r1"):
         np.testing.assert_array_equal(np.asarray(chip.backend.to_array(result.reduced_state(label))),
                                       np.diag([1.0, 0.0, 0.0]))
