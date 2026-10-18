@@ -2049,7 +2049,18 @@ The diagnostic name `omega_c` denotes ordinary coupler frequency in GHz.
 This is the weight that the flux-drive retarget rule uses (§11). It varies the coupler's
 first transition while holding the charge matrix elements fixed. Capacitive legs give
 `L_a conj(L_b) / u_ab = g_a g_b |<0|Q_c|1>|^2`, so a resonator or Duffing coupler gives
-`(g_a*g_b/2)(1/Delta_a^2 + 1/Delta_b^2)`. Per-element virtual-state attribution (`pathways`) is `(1/2) V_ik V_kj (1/(E_i−E_k) + 1/(E_j−E_k))` summed over intermediate `|k>`, with the same guarded denominator.
+`(g_a*g_b/2)(1/Delta_a^2 + 1/Delta_b^2)`.
+
+The virtual-state attribution of a retained element `(i, j)` lists the contribution
+`(1/2) V_ik V_kj (1/(E_i−E_k) + 1/(E_j−E_k))` of each intermediate state `|k>` of the eliminated
+block, with the same guarded denominator. Every nonzero contribution is listed, so the
+contributions sum to the second-order part `(H_eff − PHP)_ij` of the element. Each `|k>` is a
+bare product state of the source chip, written as its occupation tuple in device order. For
+example, `(1, 1, 1)` holds one excitation in each of two transmons and their bus; this pathway
+exists only with counter-rotating terms. The exchange of a survivor pair lists its pathways under
+`pathways`, and `EliminationResult.pathways(final, initial)` attributes any retained element,
+including the diagonal shifts. A local reduction (§10.7) gives the same attribution, and a device
+outside its patch keeps its level in every pathway.
 
 ### 10.4 The exact route (`method="exact"`)
 

@@ -497,21 +497,34 @@ def exact_pair_parameters(subspace: ExactSubspace, labels: list[str], dims: tupl
     return params
 
 
+def _generator_entries(couplings: Any, gaps: Any) -> Any:
+    """Return ``V / ΔE`` with the guard of :func:`interaction_generator`: zero for an uncoupled zero gap, NaN for a
+    coupled one."""
+    xp = concrete_array_module(couplings, gaps)
+    ratio = couplings / xp.where(gaps != 0.0, gaps, 1.0)
+    return xp.where((gaps == 0.0) & (couplings != 0.0), xp.nan, ratio)
+
+
 def pathway_attribution(h: Any, s: Any, p_mask: Any, i_idx: int, j_idx: int) -> list[tuple[int, Any]]:
     """Virtual-state attribution for one ``H_eff`` matrix element.
 
     Intermediate ``|k⟩``'s contribution to ``(½[S, V])_ij`` is
-    ``½ V_ik V_kj (1/(E_i − E_k) + 1/(E_j − E_k))``, evaluated directly from the supplied generator
-    and its commutator. Returns ``(k, amount)`` pairs for the Q-block states that carry a nonzero
-    path at working precision. Under tracing, the nonzero filter cannot run, so every Q state is
-    returned. Either way the diagnostics stay complete, because extra entries are exact zeros.
+    ``½ V_ik V_kj (1/(E_i − E_k) + 1/(E_j − E_k))``, evaluated from the supplied generator and its
+    commutator. With ``s=None``, the two generator rows come from ``h``. Returns ``(k, amount)``
+    pairs for every Q-block state with a nonzero contribution, so the amounts sum to the second-order
+    part ``(H_eff − PHP)_ij``. Under tracing, the nonzero filter cannot run, so every Q state is
+    returned, and the extra entries are exact zeros.
     """
     xp = concrete_array_module(h, s)
     v = h - xp.diag(xp.diagonal(h))
-    amounts = 0.5 * (s[i_idx, :] * v[:, j_idx] - v[i_idx, :] * s[:, j_idx])
-
     q_index = np.flatnonzero(~np.asarray(p_mask))
+    if s is None:
+        energies = xp.real(xp.diagonal(h))
+        left = _generator_entries(v[i_idx, q_index], energies[i_idx] - energies[q_index])
+        right = _generator_entries(v[q_index, j_idx], energies[q_index] - energies[j_idx])
+    else:
+        left, right = s[i_idx, q_index], s[q_index, j_idx]
+    amounts = 0.5 * (left * v[q_index, j_idx] - v[i_idx, q_index] * right)
     if contains_tracer(amounts):
-        return [(int(k), amounts[int(k)]) for k in q_index]
-    path_strength = np.abs(np.asarray(v[i_idx, :])) * np.abs(np.asarray(v[:, j_idx]))
-    return [(int(k), amounts[int(k)]) for k in q_index if path_strength[int(k)] > _WORKING_PRECISION]
+        return [(int(k), amounts[row]) for row, k in enumerate(q_index)]
+    return [(int(q_index[row]), amounts[row]) for row in np.flatnonzero(np.asarray(amounts) != 0)]

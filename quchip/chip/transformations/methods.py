@@ -20,7 +20,8 @@ two shipped strategies, :class:`SchriefferWolffMethod` and
 from __future__ import annotations
 
 from dataclasses import dataclass
-from functools import cached_property
+from collections.abc import Callable
+from functools import cached_property, partial
 from typing import Any, ClassVar
 
 from jax.scipy.linalg import expm
@@ -201,6 +202,15 @@ class ReductionMethod:
         """Top virtual-state attribution of the pair's mediated exchange, or ``None``."""
         raise NotImplementedError
 
+    def pathway_source(self, ctx: DeviceReductionContext) -> Callable[[int, int], list] | None:
+        """Attribution of any retained element to virtual states, or ``None`` when the route has none.
+
+        The function takes two product-state indices of ``ctx`` and returns
+        ``(index, amount)`` pairs. The elimination result keeps it, so it
+        holds only the arrays it reads.
+        """
+        return None
+
     def label_margins(self, ctx: DeviceReductionContext) -> dict | None:
         """Margins of the route's dressed-state labeling checks, or ``None`` when it has none."""
         return None
@@ -245,6 +255,9 @@ class SchriefferWolffMethod(ReductionMethod):
         i_idx = bare_index(ctx.labels, ctx.dims, a)
         j_idx = bare_index(ctx.labels, ctx.dims, b)
         return pathway_attribution(ctx.h, ctx.s, ctx.p_mask, i_idx, j_idx)
+
+    def pathway_source(self, ctx: DeviceReductionContext) -> Callable[[int, int], list] | None:
+        return partial(pathway_attribution, ctx.h, None, ctx.p_mask)
 
     def dropped_suffix(self) -> str:
         return ", higher-order (>2) corrections."

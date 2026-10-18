@@ -367,6 +367,7 @@ calibration.
 | A small boundary population | Call `result.check_truncation()` explicitly, then increase local levels and compare the observable. The check covers only available samples. |
 | A smooth trace | Refine the output grid separately from the solver tolerances. |
 | An exact reduction near a crossing | Follow `validity["<mode>_labeling"]["margin"]` along the sweep. A failed check raises `EliminationError` with the label and its weight. |
+| The origin of a mediated shift | `result.pathways({"q": 1})` lists the virtual states of an SW reduction. The amounts sum to the second-order part of the element. |
 
 QuTiP is the default. Choose dynamiqs for JAX gradients and compiled batches.
 The initial state and declared dissipation select `sesolve` or `mesolve`

@@ -1,4 +1,6 @@
-"""Labeling margins and typed errors of eliminate() (#198)."""
+"""Labeling margins and typed errors of eliminate() (#198), and its virtual-state pathways (#199)."""
+
+import itertools
 
 import numpy as np
 import pytest
@@ -102,3 +104,71 @@ def test_labeling_margin_derivative_and_compiled_error_text():
         jax.block_until_ready(jax.jit(margin)(5.09))
 
 
+@pytest.mark.unit
+def test_exchange_pathways_are_keyed_by_occupation():
+    """The exchange of #199 runs through |bus=1⟩ and, by counter-rotating terms, |qa=1, qb=1, bus=1⟩. Each amount is
+    ½ g² (1/(E_i − E_k) + 1/(E_j − E_k)) with g = 0.07 GHz."""
+    result = eliminate(bus_chip(6.40), "bus", method="sw")
+    pathways = result.effective_params["exchange"]["pathways"]
+
+    def amount(energy):
+        return 0.5 * 0.07**2 * (1 / (5.05 - energy) + 1 / (5.35 - energy))
+
+    assert [key for key, _ in pathways] == [(0, 0, 1), (1, 1, 1)]
+    np.testing.assert_allclose([complex(value) for _, value in pathways], [amount(6.40), amount(16.80)], rtol=1e-12)
+    assert result.pathways({"qa": 1}, {"qb": 1}) == pathways
+
+
+@pytest.mark.validation
+def test_element_pathways_sum_to_the_retained_second_order_part():
+    """For every retained element, diagonal or not, the pathways sum to the reduced Hamiltonian minus its bare part."""
+    chip = bus_chip(6.40)
+    result = eliminate(chip, "bus", method="sw")
+    bare = np.asarray(chip.hamiltonian().matrix())
+    kept = [np.ravel_multi_index((a, b, 0), chip.dims) for a, b in itertools.product(range(3), range(3))]
+    second = np.asarray(result.chip.hamiltonian().matrix()) - bare[np.ix_(kept, kept)]
+    assert np.max(np.abs(second)) > 1e-2
+    for (row, final), (column, initial) in itertools.product(enumerate(itertools.product(range(3), range(3))),
+                                                             repeat=2):
+        pathways = result.pathways(dict(zip(("qa", "qb"), final)), dict(zip(("qa", "qb"), initial)))
+        np.testing.assert_allclose(sum(complex(value) for _, value in pathways), second[row, column],
+                                   rtol=0, atol=1e-14)
+
+
+@pytest.mark.unit
+def test_pathways_keep_contributions_below_the_old_reporting_floor():
+    """A 1e-7 GHz coupling across a 1e-5 GHz gap shifts the qubit by g²/Δ = −1e-9 GHz, through one pathway."""
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=2, label="q")
+    r = Resonator(freq=5.0 + 1e-5, levels=2, label="r")
+    result = eliminate(Chip([q, r], [Capacitive(q, r, g=1e-7)], approximation=Exact()), "r", method="sw")
+    [(key, value)] = result.pathways({"q": 1})
+    assert key == (0, 1)
+    np.testing.assert_allclose(complex(value), -1e-14 / 1e-5, rtol=1e-9)
+
+
+@pytest.mark.e2e
+def test_local_pathways_match_the_full_reduction_and_keep_spectator_levels():
+    """A local reduction attributes the same elements; a spectator outside the patch keeps its level."""
+    chip = bus_chip(6.40, spectator=True)
+    full, local = (eliminate(chip, "bus", method="sw", local=flag) for flag in (False, True))
+    for final, initial in [({"qa": 1}, {"qb": 1}), ({"qa": 1, "qc": 1}, {"qb": 1, "qc": 1}), ({"qb": 2}, None)]:
+        expected = full.pathways(final, initial)
+        actual = local.pathways(final, initial)
+        assert [key for key, _ in actual] == [key for key, _ in expected]
+        np.testing.assert_allclose([complex(v) for _, v in actual], [complex(v) for _, v in expected],
+                                   rtol=1e-12, atol=1e-18)
+    assert [key for key, _ in local.pathways({"qa": 1, "qc": 1}, {"qb": 1, "qc": 1})] == [(0, 0, 1, 1), (1, 1, 1, 1)]
+    assert local.pathways({"qa": 1, "qc": 1}, {"qb": 1}) == []
+
+
+@pytest.mark.unit
+def test_pathways_reject_other_routes_and_states_outside_the_retained_space():
+    result = eliminate(bus_chip(6.40), "bus", method="sw")
+    with pytest.raises(ValueError, match="needs a device elimination with method='sw'"):
+        eliminate(bus_chip(6.40), "bus", method="exact").pathways({"qa": 1})
+    with pytest.raises(ValueError, match="'bus' is eliminated"):
+        result.pathways({"bus": 1})
+    with pytest.raises(ValueError, match="not a device of the source chip"):
+        result.pathways({"qx": 1})
+    with pytest.raises(ValueError, match="Level 3 of 'qa' is outside its 3 levels"):
+        result.pathways({"qa": 3})

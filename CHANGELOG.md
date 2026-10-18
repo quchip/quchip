@@ -10,6 +10,16 @@ This file records notable user-visible changes to quchip.
 
 #### Changes and migration
 
+- `eliminate(..., method="sw")` keys the exchange `pathways` by occupation
+  tuples in the source chip's device order, as `analyze_static_zz()` does.
+  Previously, the keys were flat product indices, such as `1` and `17` for
+  `(0, 0, 1)` and `(1, 1, 1)` on a chip with dims `(3, 3, 4)`. The pathways of
+  both calls now list every nonzero contribution, so they sum to the
+  second-order part of their element. Previously, contributions with
+  `|V_ik V_kj| <= 1e-12` GHz² were left out, so a weak coupling across a small
+  gap could list no pathway for a shift of `-1e-9` GHz.
+  ([#199](https://github.com/quchip/quchip/issues/199),
+  [#208](https://github.com/quchip/quchip/pull/208))
 - A level label such as `{"q0": 1}` or `"eg"` names its dressed state
   everywhere. An `initial_state` label starts a solve in the dressed state of
   the label, under the solve's approximation and excitation cutoff, placed in
@@ -217,6 +227,11 @@ This file records notable user-visible changes to quchip.
   message is the previous message followed by these values, also inside
   `jax.jit`.
   ([#198](https://github.com/quchip/quchip/issues/198),
+  [#208](https://github.com/quchip/quchip/pull/208))
+- `EliminationResult.pathways(final, initial)` attributes any element of an
+  SW-retained Hamiltonian to virtual states, including dispersive and Lamb
+  shifts. It takes level mappings such as `{"qa": 1}`.
+  ([#199](https://github.com/quchip/quchip/issues/199),
   [#208](https://github.com/quchip/quchip/pull/208))
 - `eliminate_spectators(chip, keep)` reduces a chip to the kept devices, one
   `eliminate()` step at a time, and returns every step. Its default order keeps
