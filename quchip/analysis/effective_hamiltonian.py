@@ -87,8 +87,9 @@ class StaticZZResult:
         tuples of ``pathways``.
 
     Amounts stay in the array namespace of the chip's parameters (JAX in, JAX
-    out) — traceable and differentiable, precision-filtered only on the
-    concrete path (:func:`~quchip.chip.sw.pathway_attribution`).
+    out) — traceable and differentiable. The concrete path lists every
+    nonzero contribution, so the amounts sum to the second-order correction
+    (:func:`~quchip.chip.sw.pathway_attribution`).
     """
 
     zz: Any

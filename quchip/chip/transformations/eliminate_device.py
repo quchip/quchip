@@ -857,6 +857,16 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
         sectors=sectors,
     )
     pair_params = reduction.pair_parameters(ctx)
+    device_order = tuple(device.label for device in chip.devices)
+
+    def source_occupation(index: int, levels: dict[str, int] | None = None) -> tuple[int, ...]:
+        """Product state ``index`` of the reduction space in the source chip's device order.
+
+        Devices outside a local patch take their ``levels``, by default the ground state.
+        """
+        reduced_levels = dict(zip(labels, (int(level) for level in np.unravel_index(index, dims))))
+        return tuple(reduced_levels.get(label, (levels or {}).get(label, 0)) for label in device_order)
+
     incoming_frequencies = {
         label: _real(h[bare_index(labels, dims, label), bare_index(labels, dims, label)] - h[0, 0])
         for label in labels
@@ -949,6 +959,9 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
             "is_valid": g_over_delta < 0.1,
             "min_block_gap": min_gap,
         }
+    label_margins = reduction.label_margins(ctx)
+    if label_margins is not None:
+        validity[f"{mode_label}_labeling"] = label_margins
 
     exchange_by_pair: dict[tuple[str, str], dict[str, Any]] = LabelKeyedDict()
     if is_multi:
@@ -992,6 +1005,8 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
             )
             zz = reduction.residual_zz(ctx, pair_params, label_a, label_b)
             pathways = reduction.pathways(ctx, pair_params, label_a, label_b)
+            if pathways is not None:
+                pathways = [(source_occupation(index), amount) for index, amount in pathways]
 
             mediated = edge_type(reduced[label_a], reduced[label_b], **{strength_name: mediated_strength},
                                  label=edge_label)
@@ -1374,8 +1389,38 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
     )
     if local:
         notes.append(_transport_note(final, mode_label))
+    attribution = reduction.pathway_source(ctx)
+    element_pathways = None
+    if attribution is not None:
+        level_counts = dict(zip(device_order, chip.dims))
+
+        def element_pathways(final_levels: Any, initial_levels: Any) -> list[tuple[tuple[int, ...], Any]]:
+            states = [_retained_levels(state, level_counts, mode_label) for state in (final_levels, initial_levels)]
+            # The generator acts on the reduction space alone, so devices outside it keep their levels.
+            outside = [label for label in device_order if label not in labels]
+            if any(states[0].get(label, 0) != states[1].get(label, 0) for label in outside):
+                return []
+            rows = [int(np.ravel_multi_index(tuple(state.get(label, 0) for label in labels), dims))
+                    for state in states]
+            return [(source_occupation(index, states[0]), amount) for index, amount in attribution(*rows)]
+
     return EliminationResult(chip=final, effective_params=effective_params, validity=validity,
-                             notes=notes, mapping=mapping)
+                             notes=notes, mapping=mapping, _element_pathways=element_pathways)
+
+
+def _retained_levels(state: Any, dims: dict[str, int], mode_label: str) -> dict[str, int]:
+    """Read a level mapping of a retained product state, checking its labels and levels."""
+    levels: dict[str, int] = {}
+    for key, level in dict(state).items():
+        label = resolve_label(key)
+        if label not in dims:
+            raise ValueError(f"pathways() names {label!r}, which is not a device of the source chip.")
+        if not 0 <= int(level) < dims[label]:
+            raise ValueError(f"Level {int(level)} of {label!r} is outside its {dims[label]} levels.")
+        levels[label] = int(level)
+    if levels.get(mode_label, 0):
+        raise ValueError(f"{mode_label!r} is eliminated, so a retained element keeps it in its ground state.")
+    return levels
 
 
 register_elimination_target(EliminationTarget(

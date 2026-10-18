@@ -102,6 +102,7 @@ class Workflow:
 WORKFLOWS: Mapping[str, Workflow] = MappingProxyType({workflow.name: workflow for workflow in (
     Workflow("steadystate()", cutoff=True, sectors=True),
     Workflow("VNA.sweep()", cutoff=False, sectors=False),
+    Workflow("VNA.resonances()", cutoff=False, sectors=False),
     Workflow("VNA.finite_power()", cutoff=True, sectors=True),
     Workflow("VNA.measure()", cutoff=True, sectors=True),
     Workflow("VNA.output_spectrum()", cutoff=True, sectors=True),

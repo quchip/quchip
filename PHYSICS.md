@@ -1303,8 +1303,8 @@ which is calculated on request.
 
 | Route | Solves | Workflows |
 |---|---|---|
-| `linear_response` | mode equations of a passive harmonic chip | `VNA.sweep()`, `VNA.measure()` |
-| `vacuum_response` | vacuum and one-excitation states under a weak probe | `VNA.sweep()` |
+| `linear_response` | mode equations of a passive harmonic chip | `VNA.sweep()`, `VNA.measure()`, `VNA.resonances()` |
+| `vacuum_response` | vacuum and one-excitation states under a weak probe | `VNA.sweep()`, `VNA.resonances()` |
 | `conditional_response` | adjacent-sector coherences of a frozen dressed reference | `VNA.sweep(when=...)` |
 | `sector_stationary` | labels with `N <= K` (§6.5) | `steadystate()` and the stationary VNA workflows |
 | `stationary_resolvent` | backend's stationary Liouvillian on the product space or on the labels of a cutoff | every stationary workflow |
@@ -1498,6 +1498,60 @@ skipped rank or condition diagnostic is `None`, not a successful check.
 
 If frame and approximation resolution leave dynamic terms, the stationary
 APIs raise. Periodic/Floquet stationary states are not implemented.
+
+#### Poles of the weak-probe response
+
+`VNA(chip).resonances()` diagonalizes the drift `A` of either weak-probe route
+and returns one record per eigenvalue `λ_p`. The pole has the lab-frame
+frequency `f_p = −Im λ_p / 2π` and the response linewidth `κ_p = −2 Re λ_p`
+in 1/ns. It is the full width at half maximum of `|r_p / (f − z_p)|^2` in
+angular units. Near an isolated pole, where the other poles add little and
+the transfers vary slowly, it is the width of `|S − T D|^2`, with `T` the
+transfer of the entry. The linewidth includes every loss and dephasing term
+of `A`, so it can exceed the decay rate of a population, and `f_p` can differ
+from the closed dressed frequency of `chip.freq()`. The linewidths sum to
+`−2 Re tr A = tr(C^dagger C) − 2 Im tr H`, which includes the internal loss of
+poles that `eliminate()` retained.
+
+A diagonalizable drift `A = sum_p λ_p v_p u_p^dagger`, with right and left
+eigenvectors normalized by `u_p^dagger v_q = delta_pq`, expands the response
+in simple poles. In the convention of `VNA.sweep()`,
+
+```text
+S_ji(f) = conj(T_out,j(f) T_in,i(f)) [D_ji + sum_p r_p,ji / (f − z_p)],
+z_p = conj(i λ_p / 2π) = f_p + i κ_p / 4π,
+r_p = conj((i/2π) (C v_p)(u_p^dagger B)),     B = −C^dagger S_d,     D = conj(S_d),
+```
+
+where `T_in` and `T_out` are the transfers of the reference planes, such as a
+cable delay. `result.scattering(frequencies)` evaluates this sum and equals
+`VNA.sweep()`. The residue from input i to output j is the product of
+`c_j v_p` and `u_p^dagger b_i`, with `c_j` row j of `C` and `b_i` column i of
+`B`. A pole is dark when no selected output sees it or no selected input
+excites it: `|c_j v_p| <= 1e-10 |c_j| |v_p|` for every j, or
+`|u_p^dagger b_i| <= 1e-10 |u_p| |b_i|` for every i. Its residues are then
+numerically negligible, and it stays an eigenvalue of the drift. Each port is
+compared with its own scale, so a weak port does not make a pole dark. The
+composition of a pole is the squared magnitude of its normalized right
+eigenvector in the mode basis, and `dominant` names its largest entry. The
+composition describes the eigenvector, not an occupation probability. At a
+repeated pole, the residues and compositions of the copies depend on the
+chosen eigenvectors. Only the sum of their residues is defined, and it can
+cancel in an entry.
+
+Near an exceptional point, two poles merge and their eigenvectors become
+parallel, so the residues grow and cancel. `resonances()` raises when two
+poles are ill-conditioned and too close to resolve reliably: both condition
+numbers `s_p = |u_p| |v_p|` exceed 10, and the separation is below
+`100 ε |A_0|_F (s_p + s_q)`, where `ε` is the machine precision and
+`A_0 = A − i (Im tr A / n) I` is the drift without its mean frequency. The
+test finds poles that the eigensolve cannot resolve. It does not prove that
+the drift is defective. The eigensolve keeps the damping of `A`, so adding the
+mean frequency back does not cancel digits of a narrow linewidth. Frequencies
+and linewidths are differentiable under JAX. The composition and the residues
+need eigenvector derivatives, which JAX does not define for a general matrix,
+so they are computed only when they are read, and a derivative of them
+raises.
 
 #### Conditional weak-probe response
 
@@ -2111,7 +2165,18 @@ The diagnostic name `omega_c` denotes ordinary coupler frequency in GHz.
 This is the weight that the flux-drive retarget rule uses (§11). It varies the coupler's
 first transition while holding the charge matrix elements fixed. Capacitive legs give
 `L_a conj(L_b) / u_ab = g_a g_b |<0|Q_c|1>|^2`, so a resonator or Duffing coupler gives
-`(g_a*g_b/2)(1/Delta_a^2 + 1/Delta_b^2)`. Per-element virtual-state attribution (`pathways`) is `(1/2) V_ik V_kj (1/(E_i−E_k) + 1/(E_j−E_k))` summed over intermediate `|k>`, with the same guarded denominator.
+`(g_a*g_b/2)(1/Delta_a^2 + 1/Delta_b^2)`.
+
+The virtual-state attribution of a retained element `(i, j)` lists the contribution
+`(1/2) V_ik V_kj (1/(E_i−E_k) + 1/(E_j−E_k))` of each intermediate state `|k>` of the eliminated
+block, with the same guarded denominator. Every nonzero contribution is listed, so the
+contributions sum to the second-order part `(H_eff − PHP)_ij` of the element. Each `|k>` is a
+bare product state of the source chip, written as its occupation tuple in device order. For
+example, `(1, 1, 1)` holds one excitation in each of two transmons and their bus; this pathway
+exists only with counter-rotating terms. The exchange of a survivor pair lists its pathways under
+`pathways`, and `EliminationResult.pathways(final, initial)` attributes any retained element,
+including the diagonal shifts. A local reduction (§10.7) gives the same attribution, and a device
+outside its patch keeps its level in every pathway.
 
 ### 10.4 The exact route (`method="exact"`)
 
@@ -2152,12 +2217,22 @@ tracing and parameter rebinding. It raises if the required sector or full-space
 matrix exceeds that limit. The fit does not select a different approximation.
 
 `method="exact"` validates the ground, the single excitations of touching survivors, and their pair
-excitations. Each diagnostic label needs a distinct majority dressed eigenstate, and the full
-retained overlap Gram matrix must permit stable orthonormalization. These checks apply in eager,
-compiled and gradient-only execution. In that regime, near-degenerate dressed states straddle the
-bare labels, and quantities assigned to a single label are not well defined.
-Shift the operating point or reconsider the retained subspace. SW also requires
-small mixing and cannot resolve a coupled degeneracy by itself.
+excitations. Each diagnostic label needs a distinct majority dressed eigenstate, with a largest
+weight `|<k|label>|^2` of at least `0.5 + 1e-6`. The full retained overlap Gram matrix `S` must
+permit stable orthonormalization: the residual `||S^(−1/2) S S^(−1/2) − I||` must be finite and at
+most `1e-9`. These checks apply in eager, compiled and gradient-only execution. In that regime,
+near-degenerate dressed states straddle the bare labels, and quantities assigned to a single label
+are not well defined. Shift the operating point or reconsider the retained subspace. SW also
+requires small mixing and cannot resolve a coupled degeneracy by itself.
+
+The result reports the margins of these checks under `validity["<mode>_labeling"]`. For each
+diagnostic label, it gives the largest weight, the runner-up and the margin to `0.5 + 1e-6`. It
+also gives the smallest of these margins, the smallest eigenvalue of `S` as a measure of
+conditioning, and the residual with its margin to `1e-9`. A sweep can follow the margins toward a
+failure. A failed check raises `EliminationError`, a `ValueError` that carries the route, the
+check, and the label with its weight or the residual. The SW degeneracy check raises it with the
+two levels and their coupling element. Inside `jax.jit`, the checks run in a host callback, so the
+error reaches the caller as a JAX runtime error with the same text.
 
 ### 10.5 Collapse transforms and validity metrics
 

@@ -16,6 +16,7 @@ Frequencies are in GHz, times in ns, temperatures in mK and decay rates in
 | A gate on dressed computational states | `sequence.subspace_propagator()` |
 | Steady-state populations or fields | `chip.steadystate()` |
 | Small-signal S parameters | `VNA.sweep()` |
+| The frequency and linewidth of each resonance | `VNA(chip).resonances()` |
 | A driven response with receiver noise | `VNA.measure()` |
 | Outcomes from a saved quantum state | `result.measure()` |
 | Bare parameters that meet dressed targets | `fit_a_dress()` |
@@ -123,6 +124,28 @@ response timescale. They do not provide a fit-error bound.
 This route rejects pumps, thermal inputs and stationary solver options.
 Use scheduled coherent inputs when the preparation, delay or acquisition
 window matters. `VNA.measure()` continues to describe stationary measurements.
+
+## Read the resonances of a readout
+
+The poles of the weak-probe response give each resonance without a fit:
+
+```python
+from quchip import VNA
+
+resonances = VNA(readout_chip).resonances()
+qubit = resonances["q"]
+frequency, linewidth = qubit.frequency, qubit.linewidth  # GHz and 1/ns
+rebuilt = resonances.scattering(frequencies)
+```
+
+A label selects the pole whose composition that mode dominates; an index also
+works. The linewidth `κ = −2 Re λ` is the full response width in angular
+units. It includes port loss, internal loss, Purcell decay and dephasing.
+`rebuilt` equals `VNA(readout_chip).sweep(frequencies).matrix`, reference-plane
+transfers included. `resonances.dark` marks poles whose residues are
+negligible at the selected ports. The call covers the weak-probe routes of
+`VNA.sweep()` and raises for pumps. Inside `jax.jit`, select poles by index. Frequencies and
+linewidths have JAX derivatives; the composition and the residues do not.
 
 ## Change parameters without rebuilding the example
 
@@ -368,6 +391,8 @@ calibration.
 | A dressed label near an avoided crossing | Inspect `assignment_overlaps` or `state_components()`. Lowering the overlap threshold does not improve the assignment. |
 | A small boundary population | Call `result.check_truncation()` explicitly, then increase local levels and compare the observable. The check covers only available samples. |
 | A smooth trace | Refine the output grid separately from the solver tolerances. |
+| An exact reduction near a crossing | Follow `validity["<mode>_labeling"]["margin"]` along the sweep. A failed check raises `EliminationError` with the label and its weight. |
+| The origin of a mediated shift | `result.pathways({"q": 1})` lists the virtual states of an SW reduction. The amounts sum to the second-order part of the element. |
 | A gate fidelity | `fidelity()` counts leakage. `omitted_channels` names the collapse channels that the propagator leaves out. |
 
 QuTiP is the default. Choose dynamiqs for JAX gradients and compiled batches.

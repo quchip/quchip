@@ -83,14 +83,16 @@ def test_exact_projection_guards_survive_compiled_and_gradient_only_calls(execut
 
     def value(parameter):
         if invalidity == "singular":
-            return jnp.trace(_inverse_sqrt_hermitian(jnp.diag(jnp.array([1., parameter]))))
+            return jnp.trace(_inverse_sqrt_hermitian(jnp.diag(jnp.array([1., parameter])))[0])
         h = jnp.diag(jnp.array([0., parameter, 5., parameter + 5.]))
         h = h.at[1, 2].set(.02).at[2, 1].set(.02)
         return jnp.real(exact_mode_subspace(h, ["q", "r"], (2, 2), "r", ["q"]).hamiltonian[1, 1])
 
     evaluate = {"eager": value, "jit": jax.jit(value), "gradient": jax.jit(jax.grad(value))}[execution]
     parameter = 0. if invalidity == "singular" else 5.
-    message = "Gram matrix" if invalidity == "singular" else "Near-degenerate"
+    # The labeling failure names its label and weight, also through a compiled callback.
+    message = "Gram matrix" if invalidity == "singular" else (
+        r"Near-degenerate.*Label \(1, 0\) of \('q', 'r'\) has largest dressed weight 0\.5,")
     with pytest.raises(Exception, match=message):
         jax.block_until_ready(evaluate(parameter))
 

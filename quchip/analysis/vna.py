@@ -19,7 +19,7 @@ from quchip.engine.input_output import (
     same_frequency,
     stationary_frame_plan,
 )
-from quchip.engine.linear_response import try_build_weak_probe_problem
+from quchip.engine.linear_response import response_poles, try_build_weak_probe_problem
 from quchip.engine.conditional_response import build_conditional_response
 from quchip.results.measurement import VNAMeasurement
 from quchip.engine.output_network import output_mixing
@@ -34,12 +34,13 @@ from quchip.results.input_output import (
     MeanFieldResponseResult,
     OutputCorrelationResult,
     OutputSpectrumResult,
+    ResonanceResult,
     SParameterResult,
     _LazyDiagnostics,
 )
 from quchip.results.steady_state import SteadyStateResult
 from quchip.sweep import Sweep, ZippedSweep, _axis_metadata, _iter_axis_points
-from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
+from quchip.utils.jax_utils import concrete_array_module, contains_tracer, maybe_concrete_scalar
 from quchip.utils.labeling import bare_label_from_mapping, resolve_label
 from quchip.utils.memory import fits_memory
 from quchip.engine.field_statistics import canonical as _canonical_matrix, normal_spectrum, propagate_noise
@@ -335,6 +336,66 @@ class VNA:
             diagnostics.append(operating.diagnostics)
 
         return result(diagnostics, *(xp.stack(part) for part in zip(*blocks, strict=True)))
+
+    def resonances(self) -> ResonanceResult:
+        """Return the poles of the weak-probe response between the selected ports.
+
+        The poles come from the model that :meth:`sweep` solves on its
+        ``"linear_response"`` and ``"vacuum_response"`` routes, without a fit.
+        Each eigenvalue ``λ_p`` of the drift ``A = -iH - C†C/2`` gives a pole
+        frequency ``f_p = -Im λ_p / 2π`` in GHz and a response linewidth
+        ``κ_p = -2 Re λ_p`` in 1/ns, which includes port, internal, Purcell and
+        dephasing broadening. The frequencies and linewidths stay
+        differentiable under JAX on a fixed structure away from degenerate
+        poles. Compositions and residues are computed when they are read.
+
+        Returns
+        -------
+        ResonanceResult
+            Poles in increasing frequency, with their composition, dominant
+            mode and residues.
+
+        Raises
+        ------
+        ValueError
+            If the VNA has pump tones, if no weak-probe route applies, with the
+            reason that :meth:`sweep` gives, or if two ill-conditioned poles
+            are too close to resolve, as near an exceptional point.
+        """
+        require_workflow(self.chip, "VNA.resonances()")
+        if self._tones:
+            raise ValueError("resonances() describes the weak-probe response without pumps. Remove the pump tones.")
+        labels = self.ports
+        built = try_build_weak_probe_problem(self.chip, np.zeros(1), plane_labels=labels)
+        if built is None:
+            raise ValueError(f"resonances() needs a weak-probe route of VNA.sweep(). "
+                             f"{weak_probe_reason(self.chip, labels)}")
+        problem, name = built
+        route = SolveRoute(name, WEAK_PROBE[name], len(problem.mode_labels), array_name(self.chip.backend))
+        system = response_poles(problem)
+        xp = concrete_array_module(system.values)
+        chip = self.chip
+
+        def transfers(frequencies: Any) -> tuple[Any, Any]:
+            # The route does not depend on the probe frequencies, so the rebuilt problem exists.
+            rebuilt_problem = try_build_weak_probe_problem(chip, frequencies, plane_labels=labels)
+            assert rebuilt_problem is not None
+            rebuilt = rebuilt_problem[0]
+            indices = list(rebuilt.plane_indices)
+            return rebuilt.outbound_transfer[:, indices], rebuilt.inbound_transfer[:, indices]
+
+        return ResonanceResult(
+            frequencies=-xp.imag(system.values) / (2.0 * np.pi),
+            linewidths=-2.0 * xp.real(system.values),
+            # The public convention conjugates the pole i λ / 2π.
+            poles=xp.conj(1j * system.values / (2.0 * np.pi)),
+            mode_labels=problem.mode_labels,
+            ports=labels,
+            route=route,
+            _eigensystem=system,
+            _problem=problem,
+            _transfers=transfers,
+        )
 
     def finite_power(
         self,
