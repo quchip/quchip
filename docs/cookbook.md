@@ -366,6 +366,7 @@ calibration.
 | A dressed label near an avoided crossing | Inspect `assignment_overlaps` or `state_components()`. Lowering the overlap threshold does not improve the assignment. |
 | A small boundary population | Call `result.check_truncation()` explicitly, then increase local levels and compare the observable. The check covers only available samples. |
 | A smooth trace | Refine the output grid separately from the solver tolerances. |
+| An exact reduction near a crossing | Follow `validity["<mode>_labeling"]["margin"]` along the sweep. A failed check raises `EliminationError` with the label and its weight. |
 
 QuTiP is the default. Choose dynamiqs for JAX gradients and compiled batches.
 The initial state and declared dissipation select `sesolve` or `mesolve`

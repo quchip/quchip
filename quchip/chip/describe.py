@@ -332,6 +332,13 @@ def _validity_line(validity: dict[str, Any]) -> str:
     parts = []
     min_gap = None
     for label, v in validity.items():
+        if "residual_margin" in v:
+            margin, is_valid = _concrete(v["margin"]), _concrete(v["is_valid"])
+            if margin is None or is_valid is None:
+                parts.append(f"{label} weight margin=<traced>")
+            else:
+                parts.append(f"{label} weight margin={margin:.2g} {'✓' if is_valid else '✗'} (≥ 0)")
+            continue
         if "self_energy_over_width" in v:
             symbol, key = "|Σ|/h", "self_energy_over_width"
         else:

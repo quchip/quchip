@@ -949,6 +949,9 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
             "is_valid": g_over_delta < 0.1,
             "min_block_gap": min_gap,
         }
+    label_margins = reduction.label_margins(ctx)
+    if label_margins is not None:
+        validity[f"{mode_label}_labeling"] = label_margins
 
     exchange_by_pair: dict[tuple[str, str], dict[str, Any]] = LabelKeyedDict()
     if is_multi:

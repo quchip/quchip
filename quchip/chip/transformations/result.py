@@ -171,7 +171,15 @@ class EliminationResult:
         amplitude damping. The entry reports the largest value, and
         ``is_valid`` uses ``self_energy_over_width < 0.1``. Both are ``None``
         when the reduced chip has no vacuum one-excitation model, for example
-        with a thermal bath.
+        with a thermal bath. The exact route of a device adds
+        ``"<mode>_labeling"``: the ``labels`` mapping gives each diagnostic
+        label's occupation its largest dressed ``weight``, its ``runner_up``
+        and its ``margin`` to ``threshold`` ``0.5 + 1e-6``. The entry also
+        gives the smallest ``margin``, the ``gram_min_eigenvalue`` of the kept
+        overlap matrix, and the orthonormalization ``residual`` with its
+        ``residual_margin`` to ``residual_threshold`` ``1e-9`` (PHYSICS.md
+        §10.4). A failed check raises
+        :class:`~quchip.chip.sw.EliminationError` instead.
     notes
         Approximation order, omitted physics and control retargeting.
     mapping

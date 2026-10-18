@@ -207,6 +207,17 @@ This file records notable user-visible changes to quchip.
   Frequencies and linewidths have JAX derivatives.
   ([#192](https://github.com/quchip/quchip/issues/192),
   [#208](https://github.com/quchip/quchip/pull/208))
+- The exact route of `eliminate()` reports the margins of its labeling checks
+  under `validity["<mode>_labeling"]`: the largest dressed weight of each
+  diagnostic label, the runner-up and the margin to `0.5 + 1e-6`, and the
+  smallest eigenvalue and orthonormalization residual of the kept overlap
+  matrix. A failed check of either route raises `EliminationError`, a
+  `ValueError` that carries the route, the check, and the label with its
+  weight, the residual, or the two degenerate levels with their coupling. Its
+  message is the previous message followed by these values, also inside
+  `jax.jit`.
+  ([#198](https://github.com/quchip/quchip/issues/198),
+  [#208](https://github.com/quchip/quchip/pull/208))
 - `eliminate_spectators(chip, keep)` reduces a chip to the kept devices, one
   `eliminate()` step at a time, and returns every step. Its default order keeps
   the operators of kept devices small under `local=True`. A spectator waits

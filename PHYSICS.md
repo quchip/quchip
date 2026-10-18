@@ -2090,12 +2090,22 @@ tracing and parameter rebinding. It raises if the required sector or full-space
 matrix exceeds that limit. The fit does not select a different approximation.
 
 `method="exact"` validates the ground, the single excitations of touching survivors, and their pair
-excitations. Each diagnostic label needs a distinct majority dressed eigenstate, and the full
-retained overlap Gram matrix must permit stable orthonormalization. These checks apply in eager,
-compiled and gradient-only execution. In that regime, near-degenerate dressed states straddle the
-bare labels, and quantities assigned to a single label are not well defined.
-Shift the operating point or reconsider the retained subspace. SW also requires
-small mixing and cannot resolve a coupled degeneracy by itself.
+excitations. Each diagnostic label needs a distinct majority dressed eigenstate, with a largest
+weight `|<k|label>|^2` of at least `0.5 + 1e-6`. The full retained overlap Gram matrix `S` must
+permit stable orthonormalization: the residual `||S^(−1/2) S S^(−1/2) − I||` must be finite and at
+most `1e-9`. These checks apply in eager, compiled and gradient-only execution. In that regime,
+near-degenerate dressed states straddle the bare labels, and quantities assigned to a single label
+are not well defined. Shift the operating point or reconsider the retained subspace. SW also
+requires small mixing and cannot resolve a coupled degeneracy by itself.
+
+The result reports the margins of these checks under `validity["<mode>_labeling"]`. For each
+diagnostic label, it gives the largest weight, the runner-up and the margin to `0.5 + 1e-6`. It
+also gives the smallest of these margins, the smallest eigenvalue of `S` as a measure of
+conditioning, and the residual with its margin to `1e-9`. A sweep can follow the margins toward a
+failure. A failed check raises `EliminationError`, a `ValueError` that carries the route, the
+check, and the label with its weight or the residual. The SW degeneracy check raises it with the
+two levels and their coupling element. Inside `jax.jit`, the checks run in a host callback, so the
+error reaches the caller as a JAX runtime error with the same text.
 
 ### 10.5 Collapse transforms and validity metrics
 
