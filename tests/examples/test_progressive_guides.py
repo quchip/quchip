@@ -37,6 +37,7 @@ GUIDE_OUTPUT_RTOL = 1e-10
 # Two hertz for GHz-valued receipts, below the guide's displayed precision.
 GUIDE_OUTPUT_ATOL = 2e-9
 DYNAMIQS_NOTEBOOKS = {"03_differentiate_a_driven_chip"}
+LOCAL_PATH_RE = re.compile(r"/Users/|/home/|/private/|/tmp/|[A-Za-z]:\\|site-packages")
 
 
 @pytest.fixture
@@ -133,6 +134,27 @@ def test_committed_markdown_contains_current_notebook_outputs() -> None:
     assert check.returncode == 0, check.stdout + check.stderr
     for path in sorted((ROOT / "examples").glob("0[0-4]_*.md")):
         assert "<!-- executed-output:start -->" in path.read_text(encoding="utf-8")
+
+
+def test_committed_notebooks_show_no_warnings_or_local_paths() -> None:
+    """A warning prints the path of its source file, so its output differs between machines."""
+    for stem in DEFAULT_PAIRS:
+        notebook = nbformat.read(ROOT / "examples" / f"{stem}.ipynb", as_version=4)
+        for index, cell in enumerate((cell for cell in notebook.cells if cell.cell_type == "code"), start=1):
+            stderr = "".join(
+                "".join(output.get("text", "")) for output in cell.outputs if output.get("name") == "stderr"
+            )
+            assert not stderr, f"{stem} code cell {index} writes to stderr:\n{stderr}"
+            rendered = render_cell_outputs(cell)
+            assert LOCAL_PATH_RE.search(rendered) is None, f"{stem} code cell {index} shows a local path"
+
+
+def test_rendered_output_does_not_depend_on_stream_flushes() -> None:
+    """The kernel can split one printed text into several stream outputs."""
+    text = ["K = 1: 8.9e-04\n", "K = 2: 2.7e-06\n"]
+    split = nbformat.v4.new_code_cell(outputs=[nbformat.v4.new_output("stream", text=line) for line in text])
+    whole = nbformat.v4.new_code_cell(outputs=[nbformat.v4.new_output("stream", text="".join(text))])
+    assert render_cell_outputs(split) == render_cell_outputs(whole)
 
 
 @pytest.mark.examples
