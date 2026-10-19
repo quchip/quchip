@@ -62,12 +62,17 @@ def _printed_value(output: str, label: str) -> float:
 
 
 def test_executed_outputs_record_feedline_and_excitation_space_checks() -> None:
-    """The feedline reduction stays within its dispersive scale, the idle ring uses its exact space, and K = 2 holds."""
+    """The feedline error is the omitted qubit damping, the idle ring uses its exact space, and K = 2 holds."""
     output = _stream_output(nbformat.read(EXAMPLE_IPYNB, as_version=4))
-    # Purcell dispersion of the strongest pair sets the field-error scale (g/Δ)²κ/(2π|Δ|).
-    assert _printed_value(output, "Maximum complex S difference") < 10 * (0.105 / 2.0) ** 2 * 0.001 / 2.0
+    # The retained pole omits the T1 share (g/Δ)²/T1 of its linewidth, which sets the dip error
+    # κ_e (g/Δ)²/(T1 κ²). Corrections are of relative order (g/Δ)², and the printed value has two digits.
+    kappa_ext, mixing = 2 * math.pi * 0.001, (0.105 / 2.0) ** 2
+    loaded_rate = kappa_ext + 2 * math.pi * 7.0 / 200_000
+    omitted_damping_scale = kappa_ext * mixing / (60_000.0 * loaded_rate**2)
+    s_difference = _printed_value(output, "Maximum complex S difference")
+    assert abs(s_difference - omitted_damping_scale) < 10 * mixing * omitted_damping_scale
     assert _printed_value(output, "Return-path self-energy over width") < 0.1
-    # QuTiP's default relative tolerance of 1e-6 sets the floor of the cutoff comparison.
+    # With QuTiP's default relative tolerance of 1e-6, integration error limits the cutoff comparison.
     assert _printed_value(output, "Population error at K = 2 (15 states)") < 1e-5
     assert "Driven chain: 81 of 81 states" in output
     assert f"Idle ring: 24 of {3**24} states" in output

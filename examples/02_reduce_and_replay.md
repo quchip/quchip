@@ -109,7 +109,7 @@ plt.show()
 :alt: The full q0-q1-q2-q3 chain and its reduced q0-q1 model, both driven on q0.
 
 The reduced model has 9 basis states. The removed spectators contribute
-Hamiltonian corrections; labels show bare parameters.
+Hamiltonian corrections, and the labels show bare parameters.
 [PDF](../images/active_patch_topology.pdf)
 ```
 
@@ -175,7 +175,7 @@ plt.show()
 ```{figure} ../images/reduce_and_replay.svg
 :alt: Driven-qubit population on the full chip and reduced model, with their absolute difference below.
 
-The full and reduced trajectories overlap; the lower panel resolves their
+The full and reduced trajectories overlap, and the lower panel resolves their
 absolute difference. Values below 10⁻¹⁰ are floored for display only.
 [PDF](../images/reduce_and_replay.pdf)
 ```
@@ -256,13 +256,15 @@ repeated local eliminations stay local.
 To keep a chosen set of devices, call `eliminate_spectators(chip, keep)`. It
 removes the spectators one `eliminate()` step at a time and returns every
 step. `active_patch()` uses the same default order, which here removes `q3`
-and then `q2`. A spectator waits while a spectator neighbour links it to a
-kept device near it in frequency, so the chain keeps their fourth-order
-exchange shift. Under `local=True`, the order also keeps the operators of the
-kept devices small. Pass `order=` to either function to set the steps. When a
-device that stays on the chip, such as a kept coupler, links a removed
-spectator to a kept device, each SW step estimates the shift that it omits
-from that kept device. `omitted_shifts` holds these estimates in GHz.
+and then `q2`. When another spectator links a spectator to a kept device near
+it in frequency, the default order removes the linking spectator first. The
+chain then keeps the fourth-order exchange shift between the spectator and the
+kept device. Under `local=True`, the order also limits how far the operators
+of the kept devices spread. Pass `order=` to either function to set the steps.
+A device that stays on the chip, such as a kept coupler, can link a removed
+spectator to a kept device. Each SW step then estimates the shift that it
+omits from that kept device, and `omitted_shifts` holds these estimates in
+GHz.
 
 ## Check the reduction error
 
@@ -432,43 +434,52 @@ Return-path self-energy over width: 0.0042
 Here `rb` lies about 115 MHz from the removed pole, so the return path is
 0.4% of its damping.
 
-A readout with one port keeps its scattering as a reference section at its
-dressed transition instead: `PortNetwork.mode_reflection(...)` when the port
-is alone on its plane, and `mode_transmission(...)` on a shared one-way
-feedline. The transformed ports act on every surviving device, so a later
-elimination can remove the next readout. A measurement record of that line,
-or of a loss channel on the removed readout, would omit the section, so it
-raises `NotImplementedError`. An output field applies the section at its
+A readout with one port instead keeps its scattering as a reference section
+at its dressed transition. The section is `PortNetwork.mode_reflection(...)`
+when the port is alone on its plane, and `mode_transmission(...)` on a shared
+one-way feedline. The transformed ports act on every surviving device, so a
+later elimination can remove the next readout. A measurement record of that
+line, or of a loss channel on the removed readout, would omit the section, so
+it raises `NotImplementedError`. An output field applies the section at its
 carrier frequency, a narrowband approximation.
 
 This vacuum weak-probe calculation supports global SW, local SW, and global
 exact elimination. Inspect `reduction.notes` and `reduction.validity` before
 you use the reduced model. The retained response keeps the dispersive limits
 described in the [physics
-reference](../physics.md#105-collapse-transforms-and-validity-metrics). Keep
-the readout mode for pumped, finite-power, noisy, or excited-reference field
-calculations. Unsupported port layouts raise `NotImplementedError`.
+reference](../physics.md#105-collapse-transforms-and-validity-metrics). It
+also omits the share of survivor decay that dresses the pole. Here the T1 of
+`qa` damps the pole of `ra`, and this omitted damping sets the S difference
+above. Keep the readout mode for pumped, finite-power, noisy, or
+excited-reference field calculations. Unsupported port layouts raise
+`NotImplementedError`.
 
 <details>
 <summary>Check the field error and the return path</summary>
 
-Purcell dispersion leaves field errors of order $(g/\Delta)^2\kappa/(2\pi|\Delta|)$
-for the strongest qubit–readout pair. Allow one order of magnitude above it.
+The pole of `ra` carries a fraction of about $(g/\Delta)^2$ of `qa`, so the
+T1 of `qa` adds about $(g/\Delta)^2/T_1$ to its linewidth. At the dip, the
+reduced S parameters then differ by about $\kappa_e(g/\Delta)^2/(T_1\kappa^2)$,
+with $\kappa_e$ the external rate and $\kappa$ the loaded linewidth of `ra`.
+Corrections to this estimate are of relative order $(g/\Delta)^2$. Without
+the T1 of `qa`, the difference falls to 2e-8.
 
-The return path scales as $(\kappa/2)^2/(\Delta_p h_b)$. Here $\Delta_p$ is
+The return path scales as $(\kappa_e/2)^2/(\Delta_p h_b)$. Here $\Delta_p$ is
 the angular detuning of `rb` from the dressed pole of `ra`, and $h_b$ is the
-amplitude damping of `rb`. The photon weight of the pole lowers it by about
-$(g/\Delta)^2$.
+amplitude damping of `rb`. The photon weight of the pole lowers it by a
+relative amount of about $(g/\Delta)^2$.
 
 ```python
-dispersive_scale = (0.105 / (7.0 - 5.0))**2 * 0.001 / (7.0 - 5.0)
-assert s_difference < 10 * dispersive_scale
+mixing = (0.105 / (7.0 - 5.0))**2
+loaded_rate = kappa_ext + 2 * np.pi * float(readouts[0].freq) / 200_000
+omitted_damping_scale = kappa_ext * mixing / (float(readout_qubits[0].T1) * loaded_rate**2)
+assert abs(s_difference - omitted_damping_scale) < 10 * mixing * omitted_damping_scale
 
 pole_detuning = 2 * np.pi * abs(float(readouts[1].freq) - float(hanger.freq(readouts[0])))
 rb_damping = (kappa_ext + 2 * np.pi * float(readouts[1].freq) / 200_000) / 2
 return_path_estimate = (kappa_ext / 2)**2 / (pole_detuning * rb_damping)
 assert return_path["is_valid"]
-assert abs(return_path["self_energy_over_width"] - return_path_estimate) < 2 * (0.105 / 2.0)**2 * return_path_estimate
+assert abs(return_path["self_energy_over_width"] - return_path_estimate) < 2 * mixing * return_path_estimate
 ```
 
 </details>
@@ -483,9 +494,9 @@ without an excitation cutoff.
 Couple 24 identical transmons in a ring at 10 MHz and start with one
 excitation on `q0`. `compact_state(..., dressed=False)` prepares this bare
 state without building the 3²⁴-state product space. Without
-`dressed=False`, the label names a dressed eigenstate. The identical
-transmons share every eigenstate, so that state would spread over the ring
-and be stationary, and quchip warns about its small assignment overlap.
+`dressed=False`, the label names a dressed eigenstate. The one-excitation
+eigenstates of the identical ring extend around it, so that state would keep
+constant populations, and quchip warns about its small assignment overlap.
 
 ```python
 ring_size = 24
@@ -579,7 +590,11 @@ A transverse drive or thermal raising can require the full space, and
 stochastic solvers keep it. `chip.state()`, labeled dressed queries, the
 default initial state, weak-probe VNA sweeps, and `fit_a_dress()` also use
 only the excitation sectors they need, as the
-[cookbook](../cookbook.md#fit-a-large-conserving-model) describes.
+[cookbook](../cookbook.md#fit-a-large-conserving-model) describes. The
+finite-probe VNA workflows, such as `VNA.measure()`, truncate their own solve
+of a large conserving chip and check it at one more excitation, as
+[Truncate the total excitation](../cookbook.md#truncate-the-total-excitation)
+describes.
 
 <details>
 <summary>Check the exact spaces</summary>
@@ -597,11 +612,11 @@ assert population_difference < 1e-10
 
 ## Truncate the excitation number
 
-The charge drive on the chain changes the excitation number, so its solve
-needs the full product space. On a larger chip, that space may not fit in
-memory. `ExcitationCutoff(max_total=K)` keeps only the product states with at
-most `K` excitations. It changes the model, so compare results at increasing
-`K`. Here the full 81-state solve gives an exact reference:
+The driven chain above needs its full product space. On a larger chip, that
+space can be too large for the memory. `ExcitationCutoff(max_total=K)` keeps
+only the product states with at most `K` excitations. It changes the model,
+so compare results at increasing `K`. Here the full 81-state solve is the
+untruncated reference:
 
 ```python
 from quchip import ExcitationCutoff
@@ -634,16 +649,18 @@ Population error at K = 2 (15 states): 2.7e-06
 
 `K = 1` removes the second excitation that the pulse adds. Almost all of it
 is in the second excited level of `q0`, which reaches a population of 5e-4.
-At `K = 2`, the difference is at the tolerance of the default solver, and
-tighter solver tolerances reduce it to 1e-8. `check_truncation(result)`
-reports the population next to the cutoff as a warning heuristic, not an
-error bound. The [cookbook](../cookbook.md#truncate-the-total-excitation)
-shows a static case where the error is not monotone in `K`.
+At `K = 2`, integration error of the default solver dominates the
+difference, and tighter solver tolerances reduce it to 1e-8.
+`check_truncation(result)` reports the population next to the cutoff as a
+warning heuristic, not an error bound. The
+[cookbook](../cookbook.md#truncate-the-total-excitation) shows a static case
+where the error is not monotone in `K`.
 
 <details>
 <summary>Check the cutoff</summary>
 
-QuTiP's default relative tolerance of 1e-6 sets the floor of the comparison.
+With QuTiP's default relative tolerance of 1e-6, integration error limits the
+comparison.
 
 ```python
 assert cutoff_errors[2] < 1e-5
