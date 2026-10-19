@@ -1,6 +1,3 @@
-> [!WARNING]
-> quchip is an alpha-stage 0.x project. Minor releases can change public APIs, so pin an exact version when reproducibility matters.
-
 <p align="center">
   <a href="https://quchip.org">
     <picture>
@@ -27,21 +24,21 @@
 
 `quchip` is an open-source Python toolkit to model quantum devices. Its
 built-in models cover circuit QED, and custom Hamiltonians, operators, and
-loss channels describe other systems.
-
-A predictive chip model needs more than a Hamiltonian. Device physics, control-line transformations, frames, approximations, dissipation, and measured observables each need an explicit place in it. Gain, delay, and crosstalk stay properties of the control chain instead of being folded into Hamiltonian coefficients by hand.
-
-Declare the chip once, then use the same model for dressed-state analysis, model reduction, control sequences, open-system simulation, parameter sweeps, and JAX gradients.
+loss channels describe other systems. Declare the chip once, then use the same
+model for dressed-state analysis, model reduction, control sequences,
+open-system simulation, parameter sweeps, and JAX gradients.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://docs.quchip.org/_static/readme/quchip_pipeline_dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="https://docs.quchip.org/_static/readme/quchip_pipeline_light.png">
-  <img src="https://docs.quchip.org/_static/readme/quchip_pipeline_light.png" alt="quchip pipeline from declared devices and control parameters through model resolution, simulation, observables, and gradients" width="1084">
+  <source media="(prefers-color-scheme: dark)" srcset="https://docs.quchip.org/_static/readme/guide_overview-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="https://docs.quchip.org/_static/readme/guide_overview.png">
+  <img src="https://docs.quchip.org/_static/readme/guide_overview.png" alt="Four quchip calculations: an avoided crossing of two transmons, the populations of a transmon during a short Gaussian pulse, a VNA trace sampled through fridge wiring, and fluxonium energies fitted to measured spectroscopy" width="1084">
 </picture>
 
-QuTiP is the default simulation backend. The optional dynamiqs backend is JAX-native and keeps declared device and control parameters differentiable through a solve. The [backend guide](https://docs.quchip.org/guides/choosing-a-backend.html) compares their numerical and workflow tradeoffs. The scqubits integration imports and exports selected device and composite models.
+Each panel uses the model of one of the [guides](#guides). The
+fluxonium measurements are from [Stefanski *et al.*](https://arxiv.org/abs/2411.13437).
 
-`quchip` uses GHz for ordinary frequencies, ns for time, and mK for temperature. The [physics guide](https://docs.quchip.org/physics) documents the implemented conventions and approximations.
+> [!WARNING]
+> quchip is an alpha-stage 0.x project. Minor releases can change public APIs, so pin an exact version when reproducibility matters.
 
 ## Install
 
@@ -101,6 +98,11 @@ f12 = chip.transition_frequency(qubit, 1, 2)
 fr0 = chip.freq(readout, when={qubit: 0})
 fr1 = chip.freq(readout, when={qubit: 1})
 chi_z = (fr0 - fr1) / 2
+print(f"f01 = {f01:.4f} GHz, f12 = {f12:.4f} GHz, chi_Z = {1e3 * chi_z:.3f} MHz")
+```
+
+```text
+f01 = 4.9980 GHz, f12 = 4.6986 GHz, chi_Z = 0.285 MHz
 ```
 
 `unresolved_hamiltonian()` keeps the local device and coupling expressions you declared. `hamiltonian()` applies the chip's basis, frame, and approximation. Both return inspectable symbolic expressions. If a resolved expression is time-dependent and you need its numerical array, call `.matrix(t=...)`.
@@ -114,22 +116,20 @@ The remaining calls read dressed transition frequencies and the resonator freque
 The [dynamics guide](https://docs.quchip.org/guides/dynamics-pulses-and-readout) adds control lines and pulse sequences to the chip above. It compares short and selective Gaussian qubit drives in the full multilevel model, reads them as gates, then simulates conditional resonator readout.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://docs.quchip.org/_static/readme/hello_qubit_drive_leakage-dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="https://docs.quchip.org/_static/readme/hello_qubit_drive_leakage.png">
-  <img src="https://docs.quchip.org/_static/readme/hello_qubit_drive_leakage.png" alt="Short and long Gaussian pulses with multilevel qubit populations" width="720">
-</picture>
-
-<picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://docs.quchip.org/_static/readme/hello_dispersive_readout_iq-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="https://docs.quchip.org/_static/readme/hello_dispersive_readout_iq.png">
   <img src="https://docs.quchip.org/_static/readme/hello_dispersive_readout_iq.png" alt="Conditional resonator IQ paths with emphasized final points" width="560">
 </picture>
+
+During the readout pulse, the resonator field follows a different path for
+each prepared qubit state.
 
 ## Guides
 
 - [Your first chip](https://docs.quchip.org/guides/defining-and-inspecting-a-chip): build a coupled model, inspect its Hamiltonian, and fit dressed targets.
 - [Spectra and parameter sweeps](https://docs.quchip.org/guides/statics-and-parameter-studies): follow an avoided crossing and compare a fluxonium model with measured spectroscopy.
 - [Pulses, leakage, and readout](https://docs.quchip.org/guides/dynamics-pulses-and-readout): compare pulse selectivity, read pulses as gates, and simulate conditional resonator response and cavity depletion.
+- [What happens during a qubit measurement?](https://docs.quchip.org/guides/continuous-measurement): follow single measurement trajectories, map their density, and condition on an endpoint.
 - [Readout and fridge wiring](https://docs.quchip.org/guides/steady-state-and-vna): calculate VNA traces, their resonances, and qubit readout with receiver noise.
 - [Model reduction](https://docs.quchip.org/guides/chip-transformations): compare a reduced model with the full pulse simulation, remove a readout from its feedline, solve in an exact excitation space, and truncate the excitation number.
 - [Gradients and parameter fitting](https://docs.quchip.org/guides/differentiability): differentiate spectra and pulse responses, and fit measured circuit parameters.
@@ -140,6 +140,20 @@ The [dynamics guide](https://docs.quchip.org/guides/dynamics-pulses-and-readout)
 ## Focused studies
 
 - [Purcell filtering and T1](https://docs.quchip.org/guides/slh-networks): how much can a Purcell filter suppress qubit decay while keeping the readout bandwidth?
+
+## How quchip works
+
+A predictive chip model needs more than a Hamiltonian. Device physics, control-line transformations, frames, approximations, dissipation, and measured observables each need an explicit place in it. Gain, delay, and crosstalk stay properties of the control chain instead of being folded into Hamiltonian coefficients by hand.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://docs.quchip.org/_static/readme/quchip_pipeline_dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="https://docs.quchip.org/_static/readme/quchip_pipeline_light.png">
+  <img src="https://docs.quchip.org/_static/readme/quchip_pipeline_light.png" alt="quchip pipeline from declared devices and control parameters through model resolution, simulation, observables, and gradients" width="1084">
+</picture>
+
+QuTiP is the default simulation backend. The optional dynamiqs backend is JAX-native and keeps declared device and control parameters differentiable through a solve. The [backend guide](https://docs.quchip.org/guides/choosing-a-backend.html) compares their numerical and workflow tradeoffs. The scqubits integration imports and exports selected device and composite models.
+
+`quchip` uses GHz for ordinary frequencies, ns for time, and mK for temperature. The [physics guide](https://docs.quchip.org/physics) documents the implemented conventions and approximations.
 
 ## Project status and contributing
 

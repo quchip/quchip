@@ -38,6 +38,8 @@ GUIDE_OUTPUT_RTOL = 1e-10
 GUIDE_OUTPUT_ATOL = 2e-9
 DYNAMIQS_NOTEBOOKS = {"03_differentiate_a_driven_chip"}
 LOCAL_PATH_RE = re.compile(r"/Users/|/home/|/private/|/tmp/|[A-Za-z]:\\|site-packages")
+README_EXAMPLE_RE = re.compile(r"```python\n(.*?)\n```\n\n```text\n(.*?)\n```", re.DOTALL)
+README_FIGURE_RE = re.compile(r"https://docs\.quchip\.org/_static/readme/([\w.-]+\.png)")
 
 
 @pytest.fixture
@@ -155,6 +157,30 @@ def test_rendered_output_does_not_depend_on_stream_flushes() -> None:
     split = nbformat.v4.new_code_cell(outputs=[nbformat.v4.new_output("stream", text=line) for line in text])
     whole = nbformat.v4.new_code_cell(outputs=[nbformat.v4.new_output("stream", text="".join(text))])
     assert render_cell_outputs(split) == render_cell_outputs(whole)
+
+
+def test_readme_example_reproduces_its_output() -> None:
+    """The README chip prints the frequencies that the README shows."""
+    examples = README_EXAMPLE_RE.findall((ROOT / "README.md").read_text(encoding="utf-8"))
+    assert len(examples) == 1
+    code, expected = examples[0]
+    captured = io.StringIO()
+    with contextlib.redirect_stdout(captured):
+        exec(compile(code, str(ROOT / "README.md"), "exec"), {"__name__": "__readme__"})
+    _assert_output_matches(captured.getvalue(), expected)
+
+
+def test_readme_figures_are_current_copies_of_the_docs_figures() -> None:
+    """The README links to copies in docs/_static/readme, which tools/theme_figures.py refreshes."""
+    published = ROOT / "docs" / "_static" / "readme"
+    linked = README_FIGURE_RE.findall((ROOT / "README.md").read_text(encoding="utf-8"))
+    assert linked
+    for name in linked:
+        assert (published / name).exists(), f"the README links to a missing figure: {name}"
+    for copy in sorted(published.glob("*.png")):
+        source = ROOT / "docs" / "images" / copy.name
+        if source.exists():
+            assert copy.read_bytes() == source.read_bytes(), f"{copy.name} differs from docs/images"
 
 
 @pytest.mark.examples

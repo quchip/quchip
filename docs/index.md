@@ -48,6 +48,13 @@ Hamiltonian and change a parameter.
 
 ## What would you like to calculate?
 
+```{figure} images/guide_overview.svg
+:alt: Four quchip calculations: an avoided crossing of two transmons, the populations of a transmon during a short Gaussian pulse, a VNA trace sampled through fridge wiring, and fluxonium energies fitted to measured spectroscopy
+
+Each panel uses the model of one of the guides below. The fluxonium
+measurements are from [Stefanski *et al.*](https://arxiv.org/abs/2411.13437).
+```
+
 ```{raw} html
 <div class="docs-paths">
   <a href="guides/statics-and-parameter-studies.html"><strong>Spectra and interactions</strong><span>Sweep parameters and follow dressed states.</span><b aria-hidden="true">→</b></a>

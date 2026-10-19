@@ -773,7 +773,9 @@ This file records notable user-visible changes to quchip.
   backends guide describes exact excitation spaces, the excitation cutoff and
   how each backend stores compact operators. The gradients guide states the
   level-order check for traced devices. The first-chip guide describes the
-  fit history fields. The README gives χ_Z with ground-positive Z.
+  fit history fields. The README gives χ_Z with ground-positive Z and prints
+  the values of its example chip. The README and the documentation front page
+  open with an overview figure that uses the models of four guides.
   ([#164](https://github.com/quchip/quchip/pull/164))
 - `PHYSICS.md` §10.4 identifies the Löwdin map of
   `eliminate(..., method="exact")` with the canonical Schrieffer–Wolff

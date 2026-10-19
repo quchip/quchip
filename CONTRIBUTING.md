@@ -157,7 +157,7 @@ The [guides](docs/guides/index.md) and [cookbook](docs/cookbook.md) explain how 
 
 Readable Jupytext Markdown is the canonical source. Commit its executed `.ipynb` partner with the `python3` kernel, identical code cells, and inspected outputs. Use standard fenced Python cells, not percent-format scripts.
 
-Notebook outputs stay in the executed `.ipynb`. Save only figures selected for the website under `docs/images/`. Include the canonical Markdown from its page under `docs/guides/`. Figures load `docs/_static/quchip.mplstyle` and save a single light `.svg`. Then `python3 tools/theme_figures.py` derives the `-dark.svg`, `.pdf`, and README `-dark.png` variants and rejects colors outside the palette.
+Notebook outputs stay in the executed `.ipynb`. Save only figures selected for the website under `docs/images/`. Include the canonical Markdown from its page under `docs/guides/`. Figures load `docs/_static/quchip.mplstyle` and save a single light `.svg`. Then `python3 tools/theme_figures.py` derives the `-dark.svg`, `.pdf`, and README `-dark.png` variants and rejects colors outside the palette. It also copies each README pair to `docs/_static/readme/`, where the README links to it. `python3 tools/overview_figure.py` redraws the overview figure of the README and the documentation front page from the models of four guides.
 
 From the repository root, replace `<name>` with the example stem and run:
 

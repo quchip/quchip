@@ -5,8 +5,6 @@ microwave measurements, reductions and fitting.
 
 New to quchip? Start with {doc}`your first chip <defining-and-inspecting-a-chip>`.
 
-- {doc}`Extending quchip <../extensions>`: declare your own operators, models and controls.
-
 ## Spectra and dynamics
 
 - {doc}`Spectra and parameter sweeps <statics-and-parameter-studies>`:
@@ -39,6 +37,8 @@ from the talk.
 
 For studies of specific physical questions, see {doc}`../studies/index`.
 For API choices and common pitfalls, see the {doc}`cookbook <../cookbook>`.
+To declare your own operators, models and controls, see
+{doc}`Extending quchip <../extensions>`.
 
 ```{toctree}
 :hidden:
