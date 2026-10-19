@@ -1,5 +1,7 @@
 """A sequence returns its propagator on the dressed states of a product of levels, with leakage."""
 
+import warnings
+
 import numpy as np
 import pytest
 from scipy.integrate import solve_ivp
@@ -12,7 +14,9 @@ from quchip import (
     DuffingTransmon,
     Exact,
     Gaussian,
+    PortNetwork,
     QuantumSequence,
+    Resonator,
     Square,
     analyze_static_zz,
 )
@@ -139,15 +143,52 @@ def test_leakage_is_the_population_of_the_other_dressed_levels():
     np.testing.assert_allclose(record.leakage, overlaps, rtol=0, atol=1e-10)
 
 
-def test_collapse_channels_are_left_out_with_a_warning():
-    """A chip with T1 gives the propagator of its Hamiltonian, and the record names the omitted channel."""
+def test_collapse_channels_are_left_out_with_a_warning_unless_dissipation_is_false():
+    """A chip with T1 gives the propagator of its Hamiltonian, and the record names the omitted channel.
+
+    The default call warns. ``dissipation=False`` gives the same record without a warning, and ``True`` raises.
+    """
     chip = driven_transmon(T1=10.0)
     sequence = QuantumSequence(chip)
     sequence.schedule("xy", envelope=Square(duration=20.0, amplitude=0.025), freq=chip.freq("q"))
-    with pytest.warns(UserWarning, match="without the collapse channels"):
-        record = sequence.subspace_propagator("q", tlist=np.array([0.0, 20.0]), options=TIGHT)
+    times = np.array([0.0, 20.0])
+    with pytest.warns(UserWarning, match="without the collapse channels .* Pass dissipation=False"):
+        record = sequence.subspace_propagator("q", tlist=times, options=TIGHT)
     assert len(record.omitted_channels) == 1
     np.testing.assert_allclose(record.matrix, [[0, 1], [-1, 0]], rtol=0, atol=1e-8)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        quiet = sequence.subspace_propagator("q", tlist=times, options=TIGHT, dissipation=False)
+    assert quiet.omitted_channels == record.omitted_channels
+    np.testing.assert_array_equal(quiet.matrix, record.matrix)
+    with pytest.raises(ValueError, match="propagator of the Hamiltonian alone"):
+        sequence.subspace_propagator("q", tlist=times, options=TIGHT, dissipation=True)
+
+
+def test_a_chip_with_a_port_gives_its_propagator_without_a_warning():
+    """A port rate must be positive, so on a chip with a port, only ``dissipation=False`` gives a quiet call.
+
+    The record names the port and the internal loss, and neither enters the matrix: it equals the matrix of the
+    same chip without internal loss.
+    """
+    qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.30, levels=3, label="q")
+    readout = Resonator(freq=6.8, levels=3, internal_quality_factor=6800, label="r")
+    feedline = PortNetwork(label="feedline")
+    feedline.port("out", target=readout, rate=2 * np.pi * 0.001)
+    chip = Chip([qubit, readout], [Capacitive(qubit, readout, g=0.060, label="qr")], port_network=feedline,
+                frame="rotating")
+    chip.wire(ChargeDrive(qubit, label="xy"))
+    sequence = QuantumSequence(chip)
+    sequence.schedule("xy", envelope=Gaussian(duration=20.0, sigmas=3.0, amplitude=0.05), freq=chip.freq("q"))
+    times = np.array([0.0, 20.0])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        record = sequence.subspace_propagator("q", tlist=times, options=TIGHT, dissipation=False)
+    assert record.omitted_channels == ("out", "hidden.r.internal_photon_loss")
+    lossless = sequence.with_params({"r.internal_quality_factor": None})
+    with pytest.warns(UserWarning, match=r"collapse channels \['out'\]"):
+        reference = lossless.subspace_propagator("q", tlist=times, options=TIGHT)
+    np.testing.assert_array_equal(record.matrix, reference.matrix)
 
 
 def lab_hamiltonian(f, alpha, g, levels):

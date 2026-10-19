@@ -1520,6 +1520,7 @@ class QuantumSequence:
         options: dict | None = None,
         backend: Any | None = None,
         approximation: Approximation | None = None,
+        dissipation: bool | None = None,
         progress: bool = False,
         max_workers: int | None = None,
     ) -> "PropagatorResult":
@@ -1534,8 +1535,8 @@ class QuantumSequence:
         does. The record converts the matrix to ``frame``. The dressed frame
         takes the dressed frequencies and the dressed ground energy from the
         static model of the solve, with its approximation and excitation
-        cutoff. The solve leaves out collapse channels and warns, so the
-        matrix is the propagator of the Hamiltonian alone.
+        cutoff. The solve leaves out collapse channels, so the matrix is the
+        propagator of the Hamiltonian alone.
 
         Parameters
         ----------
@@ -1547,6 +1548,12 @@ class QuantumSequence:
             Frame of the returned matrix.
         tlist, duration, solver, options, backend, approximation
             As for :meth:`simulate`. The propagator runs from ``tlist[0]`` to ``tlist[-1]``.
+        dissipation : bool or None, default=None
+            ``None`` leaves out the chip's collapse channels and warns when it
+            has any. ``False`` leaves them out without a warning. ``True``
+            raises, because the matrix cannot include them. The result's
+            :attr:`~quchip.results.propagator.PropagatorResult.omitted_channels`
+            names the channels that the solve left out.
         progress : bool, default=False
             Show backend batch progress when supported.
         max_workers : int or None, default=None
@@ -1556,12 +1563,24 @@ class QuantumSequence:
         -------
         PropagatorResult
             Matrix, labels, leakage of each input, frame frequencies, and the batch of solves.
+
+        Raises
+        ------
+        ValueError
+            If ``dissipation`` is ``True``, ``frame`` is unknown, or a device
+            or level is missing or repeated.
         """
         import itertools
         import warnings
 
         from quchip.results.propagator import FRAMES, subspace_propagator
 
+        if dissipation:
+            raise ValueError(
+                "subspace_propagator() returns the propagator of the Hamiltonian alone, so it cannot include the "
+                "collapse channels. Use dissipation=False to leave them out without a warning, or simulate() for "
+                "the evolution with them."
+            )
         if frame not in FRAMES:
             raise ValueError(f"frame must be one of {FRAMES}; got {frame!r}.")
         selected = (devices,) if isinstance(devices, (str, BaseDevice)) else tuple(devices)
@@ -1583,10 +1602,11 @@ class QuantumSequence:
                 dissipation=False,
             )
             omitted = tuple(channel.key for channel in problem_batch.problems[0].engine_result.slh.channels)
-            if omitted:
+            if omitted and dissipation is None:
                 warnings.warn(
                     f"subspace_propagator() solves without the collapse channels {list(omitted)}, so the "
-                    "matrix is the propagator of the Hamiltonian alone.",
+                    "matrix is the propagator of the Hamiltonian alone. Pass dissipation=False to leave them "
+                    "out without this warning.",
                     UserWarning,
                     stacklevel=2,
                 )
