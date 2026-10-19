@@ -10,6 +10,7 @@ chip.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from math import prod
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
@@ -145,7 +146,11 @@ class EliminationResult:
         of the mediated exchange; the retained correction keeps the remainder.
         The flux-retargeting derivative remains second-order even with exact
         reduction. ``zz`` is available for the exact route and ``pathways``
-        for SW.
+        for SW. ``pathways`` lists ``(occupation, amount)`` pairs: each
+        occupation is an intermediate bare product state of the source chip
+        in its device order, and the amounts in GHz sum to the second-order
+        part of the exchange element. :meth:`pathways` attributes any other
+        retained element.
 
         An effective-terms target reports ``freq_after``, ``lamb_shift``,
         ``anharmonicity`` (with three or more levels) and ``cross_kerr`` for
@@ -164,6 +169,22 @@ class EliminationResult:
         dispersive field-error scale at incoming kept-port frequencies beyond
         the section. Dressed shifts can exceed this scale. ``is_valid`` uses
         ``kappa_over_delta < 0.1`` as a diagnostic, not an accuracy guarantee.
+        A kept coupled response adds ``self_energy_over_width`` and
+        ``is_valid`` under ``"<mode>_response"``. For each kept target of the
+        other ports, the value divides the self-energy of the return path
+        through the omitted pole, at the target's frequency, by the target's
+        amplitude damping. The entry reports the largest value, and
+        ``is_valid`` uses ``self_energy_over_width < 0.1``. Both are ``None``
+        when the reduced chip has no vacuum one-excitation model, for example
+        with a thermal bath. The exact route of a device adds
+        ``"<mode>_labeling"``: the ``labels`` mapping gives each diagnostic
+        label's occupation its largest dressed ``weight``, its ``runner_up``
+        and its ``margin`` to ``threshold`` ``0.5 + 1e-6``. The entry also
+        gives the smallest ``margin``, the ``gram_min_eigenvalue`` of the kept
+        overlap matrix, and the orthonormalization ``residual`` with its
+        ``residual_margin`` to ``residual_threshold`` ``1e-9`` (PHYSICS.md
+        §10.4). A failed check raises
+        :class:`~quchip.chip.sw.EliminationError` instead.
     notes
         Approximation order, omitted physics and control retargeting.
     mapping
@@ -179,6 +200,38 @@ class EliminationResult:
     validity: dict[str, Any]
     notes: list[str] = field(default_factory=list)
     mapping: ReductionMap | None = None
+    _element_pathways: Any = field(default=None, repr=False, compare=False)
+
+    def pathways(self, final: Mapping[Any, int],
+                 initial: Mapping[Any, int] | None = None) -> list[tuple[tuple[int, ...], Any]]:
+        """Attribute one element of the retained Hamiltonian to virtual states.
+
+        The element is ``⟨final|H|initial⟩`` between bare product states of the
+        reduced chip, given as level mappings such as ``{"qa": 1}``. Omitted
+        devices are in their ground state, and ``initial`` defaults to
+        ``final``, the diagonal element. Each pathway pairs an intermediate
+        bare product state of the source chip, as an occupation tuple in its
+        device order, with its contribution in GHz (PHYSICS.md §10.3). The
+        contributions sum to the second-order part of the element. Under
+        tracing, every intermediate state is listed, with exact zeros.
+
+        Parameters
+        ----------
+        final : mapping
+            Levels of the final state, keyed by device label or object.
+        initial : mapping, optional
+            Levels of the initial state. Defaults to ``final``.
+
+        Raises
+        ------
+        ValueError
+            For a result without a perturbative generator, such as
+            ``method="exact"``, or for a state outside the retained space.
+        """
+        if self._element_pathways is None:
+            raise ValueError("pathways() needs a device elimination with method='sw'. "
+                             "Other routes have no perturbative generator.")
+        return self._element_pathways(final, final if initial is None else initial)
 
     def describe(self) -> str:
         """Describe frequency shifts, transformed loss, exchange and validity.

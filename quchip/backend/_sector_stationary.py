@@ -1,0 +1,567 @@
+"""Matrix-free stationary and resolvent solves on excitation-sector blocks.
+
+The states are the product energy labels with total excitation ``N <= K``,
+ordered by ``N``. A density matrix ``X`` splits into blocks ``X_NM``. The
+generator keeps the static Hamiltonian, which conserves ``N``, channels that
+lower ``N`` by one or conserve it, and a coherent probe ``i(c* L - c L†)`` on
+the lowering channels. Without the probe, the jumps move ``X_{N+1,M+1}`` into
+``X_NM``, so the probe-free generator is block triangular. The solver uses its
+inverse as the right preconditioner of a restarted GMRES iteration.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Callable, Sequence
+
+import numpy as np
+import scipy.linalg
+from scipy import sparse
+from scipy.sparse.linalg import LinearOperator, expm_multiply
+
+from quchip.utils.memory import available_memory_bytes, dense_bytes, krylov_bytes
+
+# Relative residual at which GMRES stops, the smaller one of a second attempt when two
+# starts disagree, and the residual above which a solve fails.
+_TOLERANCE = 1e-12
+_REFINED_TOLERANCE = 1e-15
+_RESIDUAL_LIMIT = 1e-8
+# Krylov vectors kept between restarts, and the restart cycles allowed.
+_RESTART = 64
+_MINIMUM_RESTART = 8
+_CYCLES = 40
+# Besides the Krylov basis, a solve keeps about eight state-sized work arrays. Each
+# sector keeps its drift, its eigenvectors and their inverse, with LAPACK workspace,
+# in eight blocks.
+_WORK_VECTORS = 8
+_SECTOR_BLOCKS = 8
+# Sectors up to this size use the eigenvectors of their drift in the preconditioner;
+# larger or ill-conditioned sectors use the eigenvectors of their Hamiltonian.
+_EIG_LIMIT = 1024
+_CONDITION_LIMIT = 1e8
+# Damping added to every preconditioner denominator, relative to the largest decay rate.
+_DAMPING = 1e-6
+# Largest difference between the probe corrections from two starts, relative to the first
+# one, that counts as one stationary state.
+_UNIQUENESS = 1e-6
+
+_CONVERGENCE_MESSAGE = (
+    "The excitation-sector stationary solve did not converge (relative residual {residual:.1e}). "
+    "Check that the model has one stationary state, or set the excitation cutoff explicitly."
+)
+
+
+class SectorConvergenceError(ValueError):
+    """A sector solve that did not reach its residual limit."""
+
+
+@dataclass(frozen=True)
+class SectorSolve:
+    """One converged sector solve and its diagnostics.
+
+    Attributes
+    ----------
+    state : numpy.ndarray
+        Solution in the sector-ordered basis.
+    iterations : int
+        GMRES iterations.
+    residual : float
+        Relative residual of the original, unpreconditioned equations.
+    """
+
+    state: np.ndarray
+    iterations: int
+    residual: float
+
+
+def has_dark_state(sizes: Sequence[int], lowering: Sequence[Any], damping: float | None = None) -> bool:
+    """Return whether a sector ``N >= 1`` can keep a state that the lowering channels do not empty.
+
+    When the lowering channels empty every state of every sector ``N >= 1``,
+    the support of any stationary state holds the vacuum. Then no two
+    stationary states have orthogonal supports, so the stationary state is
+    unique, whatever the Hamiltonian, a probe and the conserving channels. The
+    test compares the smallest escape rate of each sector with ``damping``.
+    Above 1024 states a sector uses a lower bound of that rate, so ``True``
+    means only that uniqueness is not proven. The bound is the larger of the
+    Gershgorin bound and the smallest diagonal rate of the channels on one
+    device, which add to the positive rates of the other channels.
+
+    Parameters
+    ----------
+    sizes : sequence of int
+        Dimension of each sector ``N = 0..K``.
+    lowering : sequence of sparse matrix
+        Channel couplings in ``1/sqrt(ns)`` that lower ``N`` by one, with states ordered by ``N``.
+    damping : float or None, optional
+        Smallest escape rate in ``1/ns`` that counts as decay. ``None`` uses
+        ``1e-6`` of the largest escape rate of a single state.
+    """
+    offsets = np.concatenate(([0], np.cumsum(sizes))).astype(int)
+    dimension = int(offsets[-1])
+    # A channel on one device lowers only its own level, so its rate L†L is diagonal in energy coordinates.
+    local, shared = (sparse.csr_matrix((dimension, dimension), dtype=complex) for _ in range(2))
+    for channel in lowering:
+        channel = sparse.csr_matrix(channel, dtype=complex)
+        rate = (channel.conj().T @ channel).tocsr()
+        rate.eliminate_zeros()
+        entries = rate.tocoo()
+        if np.all(entries.row == entries.col):
+            local = local + rate
+        else:
+            shared = shared + rate
+    escape = (local + shared).tocsr()
+    if damping is None:
+        damping = _DAMPING * max(float(np.max(escape.diagonal().real, initial=0.0)), np.finfo(float).tiny)
+    local_rates = local.diagonal().real
+    return any(_sector_rate(escape, local_rates, shared, slice(offsets[n], offsets[n + 1])) <= damping
+               for n in range(1, len(sizes)))
+
+
+def sector_solve_bytes(sizes: Sequence[int], restart: int) -> int:
+    """Return the peak bytes of a stationary solve on excitation sectors.
+
+    Parameters
+    ----------
+    sizes : sequence of int
+        Number of product labels in each sector ``N = 0..cutoff``.
+    restart : int
+        Krylov restart length. The basis keeps ``restart + 1`` vectors.
+    """
+    blocks = dense_bytes(sum(size**2 for size in sizes), copies=_SECTOR_BLOCKS)
+    return blocks + krylov_bytes(sum(sizes) ** 2, restart + 1 + _WORK_VECTORS)
+
+
+class SectorGenerator:
+    """Truncated Lindblad generator of a conserving model on the totals ``0..K``.
+
+    Parameters
+    ----------
+    sizes : sequence of int
+        Dimension of each sector ``N = 0..K``.
+    hamiltonian : sparse matrix
+        Static Hamiltonian in rad/ns, in the lab frame and relative to the
+        vacuum energy, with states ordered by ``N``.
+    lowering : sequence of sparse matrix
+        Channel couplings in ``1/sqrt(ns)`` that lower ``N`` by one.
+    conserving : sequence of sparse matrix
+        Channel couplings in ``1/sqrt(ns)`` that conserve ``N``.
+    """
+
+    def __init__(self, sizes: Any, hamiltonian: Any, lowering: Any, conserving: Any) -> None:
+        self.sizes = tuple(int(size) for size in sizes)
+        self.cutoff = len(self.sizes) - 1
+        self.offsets = np.concatenate(([0], np.cumsum(self.sizes))).astype(int)
+        self.dimension = int(self.offsets[-1])
+        dimension = self.dimension
+        self.totals = np.repeat(np.arange(len(self.sizes)), self.sizes)
+        self.lowering = tuple(sparse.csr_matrix(channel, dtype=complex) for channel in lowering)
+        self.conserving = tuple(sparse.csr_matrix(channel, dtype=complex) for channel in conserving)
+        damping = sparse.csr_matrix((dimension, dimension), dtype=complex)
+        for channel in (*self.lowering, *self.conserving):
+            damping = damping + channel.conj().T @ channel
+        self._drift = (-1j * sparse.csr_matrix(hamiltonian, dtype=complex) - 0.5 * damping).tocsr()
+        self._spans = tuple(slice(self.offsets[n], self.offsets[n + 1]) for n in range(len(self.sizes)))
+        self._jumps = tuple(
+            tuple(channel[self._spans[n - 1], self._spans[n]].tocsr() for n in range(1, len(self.sizes)))
+            for channel in self.lowering
+        )
+        self._factors = tuple(self._factor(n) for n in range(len(self.sizes)))
+        rates = [np.max(-values.real, initial=0.0) for values, _, _, _ in self._factors]
+        self.damping = _DAMPING * max(max(rates), np.finfo(float).tiny)
+        self.dark = has_dark_state(self.sizes, self.lowering, self.damping)
+
+    def _factor(self, n: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, tuple[np.ndarray, ...]]:
+        """Return diagonal drift values, the basis, its inverse and conserving diagonals of one sector."""
+        span = self._spans[n]
+        drift = self._drift[span, span].toarray()
+        size = drift.shape[0]
+        basis = inverse = None
+        if size <= _EIG_LIMIT:
+            values, vectors = scipy.linalg.eig(drift)
+            try:
+                candidate = np.linalg.inv(vectors)
+            except np.linalg.LinAlgError:
+                candidate = None
+            if (candidate is not None
+                    and np.linalg.norm(vectors) * np.linalg.norm(candidate) <= _CONDITION_LIMIT * size):
+                basis, inverse = vectors, candidate
+        if basis is None or inverse is None:
+            # The Hermitian part keeps a unitary basis, and the diagonal of the drift approximates it.
+            _, basis = np.linalg.eigh(0.5j * (drift - drift.conj().T))
+            inverse = basis.conj().T
+            values = np.einsum("ij,ij->j", inverse.T, drift @ basis)
+        diagonals = tuple(np.einsum("ij,ij->j", inverse.T, channel[span, span].toarray() @ basis)
+                          for channel in self.conserving)
+        return values, basis, inverse, diagonals
+
+    def drift(self, frequency: float) -> Any:
+        """Return ``-i H' - (1/2) sum L†L`` in the frame that rotates at ``frequency`` GHz per excitation."""
+        return self._drift + sparse.diags(2j * np.pi * frequency * self.totals)
+
+    def probe(self, drive: Any) -> Any:
+        """Return ``W - W†`` with ``W = sum_k conj(c_k) L_k``, so the probe adds ``[W - W†, X]``."""
+        dimension = self.dimension
+        weighted = sparse.csr_matrix((dimension, dimension), dtype=complex)
+        for coefficient, channel in zip(drive, self.lowering, strict=True):
+            if coefficient != 0:
+                weighted = weighted + np.conj(coefficient) * channel
+        return (weighted - weighted.conj().T).tocsr()
+
+    def operator(self, frequency: float, drive: Any, shift: complex = 0.0) -> Callable[[np.ndarray], np.ndarray]:
+        """Return ``X -> (G + shift) X`` with the vacuum equation replaced by the trace.
+
+        Parameters
+        ----------
+        frequency : float
+            Frame frequency in GHz per excitation.
+        drive : sequence of complex
+            Probe coefficient ``c_k`` of each lowering channel, in ``1/sqrt(ns)``.
+        shift : complex, default=0
+            Value added to the generator, ``i 2π f`` for a resolvent at offset ``f``.
+        """
+        dimension = self.dimension
+        drift = self.drift(frequency)
+        probe = self.probe(drive)
+        probe_dagger = probe.conj().T.tocsr()
+        channels = (*self.lowering, *self.conserving)
+
+        def apply(vector: np.ndarray) -> np.ndarray:
+            state = vector.reshape(dimension, dimension)
+            adjoint = state.conj().T
+            out = drift @ state + (drift @ adjoint).conj().T
+            for channel in channels:
+                out += channel @ (channel @ adjoint).conj().T
+            out += probe @ state - (probe_dagger @ adjoint).conj().T
+            if shift:
+                out += shift * state
+            out[0, 0] = np.trace(state)
+            return out.reshape(-1)
+
+        return apply
+
+    def preconditioner(self, frequency: float, shift: complex = 0.0) -> Callable[[np.ndarray], np.ndarray]:
+        """Return the inverse of the damped probe-free generator.
+
+        The blocks are solved from the highest ``N + M`` downwards, each in the
+        basis of its sector drifts. The conserving jumps keep only their
+        diagonals in that basis. The vacuum block comes last from the trace.
+        """
+        dimension, cutoff, spans = self.dimension, self.cutoff, self._spans
+        denominators = {}
+        for n in range(cutoff + 1):
+            values_n, _, _, kept_n = self._factors[n]
+            values_n = values_n + 2j * np.pi * frequency * n
+            for m in range(cutoff + 1):
+                if n == m == 0:
+                    continue
+                values_m, _, _, kept_m = self._factors[m]
+                values_m = values_m + 2j * np.pi * frequency * m
+                value = values_n[:, None] + values_m.conj()[None, :] + shift
+                for left, right in zip(kept_n, kept_m, strict=True):
+                    value = value + left[:, None] * right.conj()[None, :]
+                # Keep every real part at or below -2 * damping, whatever the basis.
+                denominators[n, m] = np.minimum(value.real, 0.0) - 2 * self.damping + 1j * value.imag
+
+        def apply(vector: np.ndarray) -> np.ndarray:
+            residual = vector.reshape(dimension, dimension)
+            out = np.zeros_like(residual)
+            for level in range(2 * cutoff, 0, -1):
+                for n in range(max(0, level - cutoff), min(cutoff, level) + 1):
+                    m = level - n
+                    rhs = residual[spans[n], spans[m]]
+                    if n < cutoff and m < cutoff:
+                        above = out[spans[n + 1], spans[m + 1]]
+                        for blocks in self._jumps:
+                            rhs = rhs - blocks[n] @ (blocks[m] @ above.conj().T).conj().T
+                    _, basis_n, inverse_n, _ = self._factors[n]
+                    _, basis_m, inverse_m, _ = self._factors[m]
+                    solved = (inverse_n @ rhs @ inverse_m.conj().T) / denominators[n, m]
+                    out[spans[n], spans[m]] = basis_n @ solved @ basis_m.conj().T
+            out[0, 0] = residual[0, 0] - sum(np.trace(out[spans[n], spans[n]]) for n in range(1, cutoff + 1))
+            return out.reshape(-1)
+
+        return apply
+
+    def restart(self) -> int:
+        """Return the Krylov restart length that fits in the available memory, or zero."""
+        available = available_memory_bytes()
+        if available is None:
+            return _RESTART
+        # The sector blocks exist already, so only the Krylov part of the solve estimate remains to allocate.
+        count = int(0.8 * available // krylov_bytes(self.dimension**2, 1)) - _WORK_VECTORS - 1
+        return min(_RESTART, count) if count >= _MINIMUM_RESTART else 0
+
+    def stationary(self, frequency: float, drive: Any, guess: np.ndarray | None = None) -> SectorSolve:
+        """Solve the stationary state at one frame frequency and probe.
+
+        Parameters
+        ----------
+        frequency : float
+            Frame frequency in GHz per excitation.
+        drive : sequence of complex
+            Probe coefficient of each lowering channel, in ``1/sqrt(ns)``.
+        guess : numpy.ndarray or None, optional
+            Density matrix to start from, for example the state at a nearby grid point.
+        """
+        dimension = self.dimension
+        operator = self.operator(frequency, drive)
+        precondition = self.preconditioner(frequency)
+        vacuum = np.zeros((dimension, dimension), dtype=complex)
+        vacuum[0, 0] = 1.0
+        target = np.zeros(dimension**2, dtype=complex)
+        target[0] = 1.0
+        # The vacuum carries the zeroth order, so the iteration resolves the probe's correction.
+        rhs = target - operator(vacuum.reshape(-1))
+        restart = self.restart()
+        start = None if guess is None else _useful(operator, rhs, guess.reshape(-1) - vacuum.reshape(-1))
+        solved = _gmres(operator, precondition, rhs, start, restart)
+        if self.dark:
+            # The equations do not fix the weight on a second stationary state, so a generic start usually ends
+            # with another weight on it than the vacuum start. Agreement is evidence, not a proof.
+            other_start = (_generic_state(dimension) - vacuum).reshape(-1)
+            # Without a probe the right side vanishes, and the residual of the start sets the scale.
+            scale = float(np.linalg.norm(rhs)) or float(np.linalg.norm(operator(other_start)))
+            other = _gmres(operator, precondition, rhs, other_start, restart, scale=scale)
+            difference = _difference(solved.state, other.state)
+            if difference > _UNIQUENESS:
+                # A state that relaxes slowly also separates the starts, and a smaller residual resolves it.
+                solved = _gmres(operator, precondition, rhs, solved.state, restart, _REFINED_TOLERANCE)
+                other = _gmres(operator, precondition, rhs, other.state, restart, _REFINED_TOLERANCE, scale)
+                difference = _difference(solved.state, other.state)
+            if difference > _UNIQUENESS:
+                raise ValueError(
+                    "The truncated model has more than one stationary state, or a stationary state that this "
+                    f"solve cannot resolve: two starts converge to states that differ by {difference:.1e}. A state "
+                    "that the probe and the loss channels reach only weakly or not at all, such as a dark state, "
+                    "causes this. Raise the excitation cutoff or add the missing loss channel."
+                )
+        state = solved.state.reshape(dimension, dimension) + vacuum
+        return SectorSolve(state, solved.iterations, solved.residual)
+
+    def resolvent(self, frequency: float, drive: Any, source: np.ndarray, offsets: Any,
+                  observables: Any) -> tuple[np.ndarray, int, float, float]:
+        """Return ``Tr(O Y)`` for ``(G + i 2π f) Y = source`` with ``Tr Y = 0`` at each offset ``f``.
+
+        Parameters
+        ----------
+        frequency : float
+            Frame frequency in GHz per excitation.
+        drive : sequence of complex
+            Probe coefficient of each lowering channel.
+        source : numpy.ndarray
+            Traceless source in the sector-ordered basis.
+        offsets : array_like
+            Offsets in GHz.
+        observables : sequence of sparse matrix
+            Observables ``O``.
+
+        Returns
+        -------
+        tuple
+            Values with shape ``(len(offsets), len(observables))``, the largest
+            iteration count, the largest relative residual and the largest
+            ``|Tr Y|``.
+        """
+        rhs = np.array(source, dtype=complex).reshape(-1)
+        rhs[0] = 0.0
+        values = np.zeros((len(offsets), len(observables)), dtype=complex)
+        iterations, residual, trace = 0, 0.0, 0.0
+        previous = None
+        restart = self.restart()
+        for index, offset in enumerate(np.asarray(offsets, dtype=float)):
+            shift = 2j * np.pi * offset
+            operator = self.operator(frequency, drive, shift)
+            start = None if previous is None else _useful(operator, rhs, previous)
+            solved = _gmres(operator, self.preconditioner(frequency, shift), rhs, start, restart)
+            response = solved.state.reshape(self.dimension, self.dimension)
+            values[index] = [observable.multiply(response.T).sum() for observable in observables]
+            iterations = max(iterations, solved.iterations)
+            residual = max(residual, solved.residual)
+            trace = max(trace, abs(np.trace(response)))
+            previous = solved.state
+        return values, iterations, residual, trace
+
+    def lindbladian(self, frequency: float, drive: Any) -> LinearOperator:
+        """Return ``X -> G X`` and its adjoint, without the trace constraint of :meth:`operator`.
+
+        Parameters
+        ----------
+        frequency : float
+            Frame frequency in GHz per excitation.
+        drive : sequence of complex
+            Probe coefficient of each lowering channel, in ``1/sqrt(ns)``.
+        """
+        dimension = self.dimension
+        drift = self.drift(frequency)
+        drift_dagger = drift.conj().T.tocsr()
+        probe = self.probe(drive)
+        probe_dagger = probe.conj().T.tocsr()
+        channels = (*self.lowering, *self.conserving)
+        adjoints = tuple(channel.conj().T.tocsr() for channel in channels)
+
+        # G X = D X + X D† + sum L X L† + [P, X], with X D† = (D X†)†, and its adjoint
+        # G† Y = D† Y + Y D + sum L† Y L - [P, Y].
+        def apply(vector: np.ndarray) -> np.ndarray:
+            state = vector.reshape(dimension, dimension)
+            adjoint = state.conj().T
+            out = drift @ state + (drift @ adjoint).conj().T
+            for channel in channels:
+                out += channel @ (channel @ adjoint).conj().T
+            out += probe @ state - (probe_dagger @ adjoint).conj().T
+            return out.reshape(-1)
+
+        def apply_adjoint(vector: np.ndarray) -> np.ndarray:
+            state = vector.reshape(dimension, dimension)
+            adjoint = state.conj().T
+            out = drift_dagger @ state + (drift_dagger @ adjoint).conj().T
+            for channel in adjoints:
+                out += channel @ (channel @ adjoint).conj().T
+            out += (probe_dagger @ adjoint).conj().T - probe @ state
+            return out.reshape(-1)
+
+        return LinearOperator((dimension**2, dimension**2), matvec=apply, rmatvec=apply_adjoint, dtype=complex)
+
+    def propagate(self, frequency: float, drive: Any, initial: np.ndarray, delays: Any,
+                  observables: Any) -> np.ndarray:
+        """Return ``Tr(O exp(G τ) X)`` for each delay ``τ`` and observable ``O``.
+
+        ``X`` need not be a density matrix, which serves the quantum
+        regression of output correlations. The generator keeps every equation,
+        so a traceless ``X`` stays traceless.
+
+        Parameters
+        ----------
+        frequency : float
+            Frame frequency in GHz per excitation.
+        drive : sequence of complex
+            Probe coefficient of each lowering channel.
+        initial : numpy.ndarray
+            Operator ``X`` in the sector-ordered basis.
+        delays : array_like
+            Non-negative delays in ns.
+        observables : sequence of sparse matrix
+            Observables ``O``.
+
+        Returns
+        -------
+        numpy.ndarray
+            Values with shape ``(len(delays), len(observables))``.
+        """
+        generator = self.lindbladian(frequency, drive)
+        dimension = self.dimension
+        # The trace of G is 2 d Re Tr D + sum |Tr L|², because the probe commutator has no trace.
+        trace = 2 * dimension * float(np.real(self.drift(frequency).diagonal().sum())) + sum(
+            abs(channel.diagonal().sum()) ** 2 for channel in (*self.lowering, *self.conserving))
+        delays = np.asarray(delays, dtype=float).reshape(-1)
+        values = np.zeros((len(delays), len(observables)), dtype=complex)
+        vector = np.array(initial, dtype=complex).reshape(-1)
+        elapsed = 0.0
+        # Sorted delays let each step start from the previous one.
+        for index in np.argsort(delays, kind="stable"):
+            step = float(delays[index]) - elapsed
+            if step > 0.0:
+                vector = expm_multiply(generator * step, vector, traceA=trace * step)
+                elapsed = float(delays[index])
+            state = vector.reshape(dimension, dimension)
+            values[index] = [observable.multiply(state.T).sum() for observable in observables]
+        return values
+
+
+def _generic_state(dimension: int) -> np.ndarray:
+    """Return a full-rank density matrix with distinct populations and coherences, the same on every call."""
+    generator = np.random.default_rng(0)
+    vector = generator.standard_normal(dimension) + 1j * generator.standard_normal(dimension)
+    state = np.diag(generator.uniform(0.5, 1.5, dimension)) + np.outer(vector, vector.conj()) / np.vdot(vector, vector)
+    return state / np.trace(state)
+
+
+def _sector_rate(escape: Any, local_rates: np.ndarray, shared: Any, span: slice) -> float:
+    """Return the smallest escape rate of one sector, or a lower bound of it for a large sector."""
+    block = escape[span, span]
+    rate = _smallest_rate(block)
+    if block.shape[0] > _EIG_LIMIT:
+        # Every L†L is positive semidefinite, so the diagonal local rates plus a bound of the other channels also
+        # bound the sum. The off-diagonal rates of cascaded ports can make the Gershgorin bound of the sum negative.
+        rate = max(rate, float(np.min(local_rates[span])) + max(_smallest_rate(shared[span, span]), 0.0))
+    return rate
+
+
+def _smallest_rate(block: Any) -> float:
+    """Return the smallest eigenvalue of a Hermitian sector block, or a lower bound for a large block."""
+    if block.shape[0] <= _EIG_LIMIT:
+        return float(np.linalg.eigvalsh(block.toarray())[0])
+    # No eigenvalue lies below a diagonal entry minus the magnitudes of the rest of its row.
+    diagonal = block.diagonal().real
+    rows = np.asarray(abs(block).sum(axis=1)).ravel()
+    return float(np.min(2 * diagonal - rows))
+
+
+def _difference(first: np.ndarray, second: np.ndarray) -> float:
+    """Return the norm of the difference of two corrections, relative to the first one unless it is zero."""
+    return float(np.linalg.norm(second - first)) / (float(np.linalg.norm(first)) or 1.0)
+
+
+def _useful(operator: Callable[[np.ndarray], np.ndarray], rhs: np.ndarray, guess: np.ndarray) -> np.ndarray | None:
+    """Return ``guess`` if its residual is smaller than that of zero, else ``None``."""
+    return guess if np.linalg.norm(rhs - operator(guess)) < np.linalg.norm(rhs) else None
+
+
+def _gmres(operator: Callable[[np.ndarray], np.ndarray], precondition: Callable[[np.ndarray], np.ndarray],
+           rhs: np.ndarray, guess: np.ndarray | None, restart: int, tolerance: float | None = None,
+           scale: float | None = None) -> SectorSolve:
+    """Solve ``operator(x) = rhs`` by restarted GMRES with right preconditioning.
+
+    The residual that GMRES minimizes is the residual of the original
+    equations, so the returned residual is the true one. It is relative to
+    ``scale``, by default the norm of ``rhs``, or the residual of the start
+    when ``rhs`` is zero. A cycle that starts below the failure limit and does
+    not halve the residual ends the solve.
+    """
+    if restart <= 0:
+        raise MemoryError("The excitation-sector solve does not fit in the available memory. "
+                          "Lower the excitation cutoff or reduce the model.")
+    solution = np.zeros_like(rhs) if guess is None else guess.copy()
+    residual = rhs - operator(solution)
+    if scale is None:
+        scale = float(np.linalg.norm(rhs)) or float(np.linalg.norm(residual))
+    if scale == 0.0:
+        return SectorSolve(solution, 0, 0.0)
+    tolerance = _TOLERANCE if tolerance is None else tolerance
+    iterations = 0
+    for _ in range(_CYCLES):
+        norm = np.linalg.norm(residual)
+        if norm <= tolerance * scale:
+            break
+        basis = np.empty((restart + 1, rhs.size), dtype=complex)
+        hessenberg = np.zeros((restart + 1, restart), dtype=complex)
+        basis[0] = residual / norm
+        step = 0
+        coefficients = np.zeros(0, dtype=complex)
+        for step in range(restart):
+            vector = operator(precondition(basis[step]))
+            for _ in range(2):
+                projection = basis[:step + 1].conj() @ vector
+                vector -= projection @ basis[:step + 1]
+                hessenberg[:step + 1, step] += projection
+            hessenberg[step + 1, step] = np.linalg.norm(vector)
+            target = np.zeros(step + 2, dtype=complex)
+            target[0] = norm
+            coefficients = np.linalg.lstsq(hessenberg[:step + 2, :step + 1], target, rcond=None)[0]
+            estimate = np.linalg.norm(hessenberg[:step + 2, :step + 1] @ coefficients - target)
+            iterations += 1
+            if estimate <= tolerance * scale or hessenberg[step + 1, step] == 0.0:
+                break
+            basis[step + 1] = vector / hessenberg[step + 1, step]
+        candidate = solution + precondition(coefficients @ basis[:step + 1])
+        remaining = rhs - operator(candidate)
+        if np.linalg.norm(remaining) > 0.5 * norm and norm <= _RESIDUAL_LIMIT * scale:
+            # A cycle that does not halve an acceptable residual has reached the round-off of the equations.
+            if np.linalg.norm(remaining) < norm:
+                solution, residual = candidate, remaining
+            break
+        solution, residual = candidate, remaining
+    relative = float(np.linalg.norm(residual) / scale)
+    if not np.isfinite(relative) or relative > _RESIDUAL_LIMIT:
+        raise SectorConvergenceError(_CONVERGENCE_MESSAGE.format(residual=relative))
+    return SectorSolve(solution, iterations, relative)

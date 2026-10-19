@@ -253,7 +253,7 @@ class TestSolveProblem:
             )
 
 class TestDroppedTerms:
-    """Surface RWA-dropped terms on EngineResult (issue #59)."""
+    """Surface RWA-dropped terms on EngineResult."""
 
     @pytest.mark.parametrize("approximation", [RWA(), Exact()])
     def test_capacitive_reports_drops_for_selected_approximation(self, approximation):
@@ -280,27 +280,27 @@ class TestDroppedTerms:
         assert all(isinstance(dt, DroppedTerm) for dt in description.dropped_terms)
         operators = {dt.operator for dt in description.dropped_terms}
         assert operators == {
-            "coupling band (Δa=+1, Δb=+1) on q0·q1",
-            "coupling band (Δa=-1, Δb=-1) on q0·q1",
+            "coupling band (+1, +1) on q0·q1",
+            "coupling band (-1, -1) on q0·q1",
         }
         band_weights = {dt.band_weights for dt in description.dropped_terms}
         assert band_weights == {(-1, -1), (1, 1)}
         for dt in description.dropped_terms:
             assert dt.source == "cap_q0_q1"
-            assert "counter-rotating" in dt.reason.lower()
+            assert "RWA band selection" in dt.reason
             # amplitude = the dropped band's largest matrix element — for the
             # a†b† / ab bands of g·i(a-a†)·i(b-b†) on 3-level ladders that is
-            # g·√2·√2 = 2g; frequency = the band's rotating-frame oscillation
-            # |Δa·f_a + Δb·f_b| = f_a + f_b (dressed refs here, so approximate
-            # to the hybridization shift).
+            # g·√2·√2 = 2g. Its bare detuning includes both anharmonicities.
             assert dt.amplitude == pytest.approx(0.02, rel=1e-12)
-            assert dt.frequency == pytest.approx(10.2, rel=1e-3)
+            assert dt.frequency == pytest.approx(9.7, abs=1e-12)
+            # The carrier uses dressed references, so it differs from 10.2 GHz by the hybridization shift.
+            assert dt.frame_frequency == pytest.approx(10.2, rel=1e-3)
 
         summary = description.dropped_terms_summary()
         assert "cap_q0_q1" in summary
         assert "on q0·q1" in summary
         assert "amp 0.02 GHz" in summary
-        assert "freq 10.2" in summary
+        assert "detuning 9.7" in summary
 
     @pytest.mark.parametrize("approximation", [RWA(), Exact()])
     def test_drive_reports_drops_for_selected_approximation(self, approximation):
@@ -334,7 +334,8 @@ class TestDroppedTerms:
         for dt in records:
             assert dt.source == "d0"
             assert dt.amplitude is None  # drive prefactors are envelopes, not scalars
-            assert dt.frequency == pytest.approx(10.0)  # f_d + |w|·f_ref = 5 + 5
+            assert dt.frequency is None
+            assert dt.frame_frequency == pytest.approx(10.0)  # f_d + |w|·f_ref = 5 + 5
 
     def test_summary_prints_traced_values_as_placeholder(self):
         """Traced amplitudes format as 'traced' — the summary never concretizes them."""
@@ -351,7 +352,7 @@ class TestDroppedTerms:
                 source="c",
                 operator="a·b",
                 reason="counter-rotating under RWA",
-                band_weights=(-1, -1),
+                band_weights=(1, 1),
                 amplitude=g,
                 frequency=10.2,
             )
@@ -368,5 +369,5 @@ class TestDroppedTerms:
 
         out = build(jnp.asarray(0.01))
         assert "amp traced" in seen["summary"]
-        assert "freq 10.2 GHz" in seen["summary"]
+        assert "detuning 10.2 GHz" in seen["summary"]
         assert float(out) == pytest.approx(0.02)

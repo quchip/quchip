@@ -142,20 +142,30 @@ def eliminate(chip: "Chip", target: Any, *, method: str = "sw", local: bool = Fa
         follow the captured map, and components keep rate ownership. Control
         operators are not transformed yet.
     local
-        For a device target with ``method="sw"``, read only a patch around the
-        device. The patch holds the device and every device that shares a
+        For a device target with ``method="sw"``, compute its generator on a
+        patch. The patch holds the device and every device that shares a
         coupling, an effective Hamiltonian or a port with it. It also holds the
         far device of each coupling whose diagonal part depends on such a
         neighbour's level, as for a ``CrossKerr`` edge. It holds each such effective
-        Hamiltonian and each port pair whose series Hamiltonian acts on the
-        core. It also holds every device that the device's
-        port operators act on. The reduction never resolves the full chip, and
+        Hamiltonian. It also holds every device that the device's
+        port operators act on. The reduction never assembles the full product space, and
         devices and couplings outside the patch stay unchanged. Each part of
         the correction and each transformed channel keeps its own support, so
         later patches stay local. The result matches full-chip reduction up to
-        recorded numerical omissions. ``chi`` describes only the patch. Chips with baths, and
-        port networks that link a patch port to a port outside the patch raise
-        ``NotImplementedError``.
+        recorded numerical omissions. Devices linked only through a feedline
+        do not enlarge the patch: the full network regenerates its terms from
+        transformed ports. The removed mode's reference section reads its
+        intermediate states from all local Hamiltonian terms, including
+        spectator dressing.
+        ``chi`` describes only the patch. Chips with baths
+        raise ``NotImplementedError``. In a chain of local steps, an
+        operator on a kept device spreads over each patch that it meets, so
+        the order of the steps sets its size. If every coupler of a ring
+        goes first, a drive on one transmon spreads over all of them.
+        :func:`~quchip.chip.transformations.eliminate_spectators` chooses an
+        order (PHYSICS.md §10.8). Each local step reports its widest operator
+        support in ``notes`` and warns when one dense copy of that operator
+        needs 256 MiB or more.
 
     Returns
     -------
@@ -173,6 +183,9 @@ def eliminate(chip: "Chip", target: Any, *, method: str = "sw", local: bool = Fa
     >>> [d.label for d in reduced.devices]
     ['q']
     """
+    from quchip.engine.routes import require_workflow
+
+    require_workflow(chip, "eliminate()")
     if method not in reduction_method_names():
         expected = " or ".join(repr(n) for n in sorted(reduction_method_names()))
         raise ValueError(f"Unknown method {method!r} for eliminate(); expected {expected}.")

@@ -7,7 +7,7 @@ problem. Dressed-state analysis lives in :mod:`quchip.chip.analysis`.
 # Every chip holds the dressed-state analysis as `chip._analysis` and exposes it
 # via the chip's public methods.
 
-from quchip.chip.analysis import DressedResult, KerrMatrix
+from quchip.chip.analysis import KerrMatrix
 from quchip.chip.baths import Bath
 from quchip.chip.chip import Chip
 from quchip.chip.port_network import ComponentPort, NetworkPort, PortNetwork
@@ -17,13 +17,17 @@ from quchip.chip.retarget import register_retarget_rule
 from quchip.chip.transformations import (
     ActivePatchResult,
     ChipTransform,
+    EliminationError,
     EliminationResult,
     ReductionMap,
+    SpectatorEliminationResult,
     active_patch,
     eliminate,
+    eliminate_spectators,
     register_elimination_target,
     register_reduction_method,
 )
+from quchip.engine.dressing import DressedResult
 
 __all__ = [
     "Chip",
@@ -39,9 +43,12 @@ __all__ = [
     "CrossKerr",
     "TunableCapacitive",
     "ChipTransform",
+    "EliminationError",
     "EliminationResult",
     "ReductionMap",
     "eliminate",
+    "eliminate_spectators",
+    "SpectatorEliminationResult",
     "ActivePatchResult",
     "active_patch",
     "register_retarget_rule",

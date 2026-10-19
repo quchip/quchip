@@ -146,8 +146,8 @@ plt.close(fig)
 :alt: Two lumped circuit schematics: a shunted Josephson junction coupled capacitively to the readout, connected either directly or through a Purcell resonator to the feedline.
 
 The filter moves the feedline coupling from the readout to a second resonator.
-J is chosen to preserve the readout bandwidth. Intrinsic losses are specified
-by T₁ and Qᵢ; Z₀ represents the matched feedline bath.
+J is chosen to preserve the readout bandwidth. T₁ and Qᵢ set the intrinsic
+losses, and Z₀ represents the matched feedline bath.
 [PDF](../images/slh_circuits.pdf)
 ```
 
@@ -309,3 +309,6 @@ it**. These values are within the broad-filter estimate's 5% design tolerance.
 A `network.filter()` applies a transfer function to the signal path and cannot
 give this T1 protection. That protection needs a coupled resonator in the
 quantum model, which changes the decay channels.
+
+To remove a readout from its feedline and keep its weak-probe response, see
+[Remove a readout from its feedline](chip-transformations.md#remove-a-readout-from-its-feedline).

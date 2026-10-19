@@ -259,6 +259,68 @@ def test_backend_operator_factories_match_dynamiqs(dynamiqs_backend, layout) -> 
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("offsets", [(), (-1, 0, 2), (5,), (-5,)])
+@pytest.mark.parametrize("batched", [False, True])
+def test_sparse_operator_payloads_preserve_values_and_gradients(dynamiqs_backend, offsets, batched) -> None:
+    """Empty and nonempty sparse operators retain their dimensions, batches and traced payloads."""
+    import dynamiqs as dq
+    import jax
+    import jax.numpy as jnp
+
+    from quchip.backend.dynamiqs import _dia_qarray
+
+    dims = (2, 3)
+    n = 6
+    diags = np.zeros((len(offsets), n), dtype=complex)
+    expected = np.zeros((n, n), dtype=complex)
+    for row, offset in enumerate(offsets):
+        values = np.arange(1, n - abs(offset) + 1) * (row + 1j)
+        diags[row, max(offset, 0):n + min(offset, 0)] = values
+        expected += np.diag(values, offset)
+    if batched:
+        diags = np.stack([diags, 2 * diags])
+        expected = np.stack([expected, 2 * expected])
+
+    def matrix(scale):
+        operator = _dia_qarray(dims, offsets, scale * jnp.asarray(diags))
+        assert operator.layout is dq.dia
+        assert operator.dims == dims
+        return operator.to_jax()
+
+    def constant_matrix(scale):
+        with jax.ensure_compile_time_eval():
+            operator = _dia_qarray(dims, offsets, diags)
+        return scale * operator.to_jax()
+
+    # Concrete operators also occur inside compile-time evaluation during reductions.
+    npt.assert_allclose(np.asarray(jax.jit(constant_matrix)(0.7)), 0.7 * expected, atol=1e-14)
+    npt.assert_allclose(np.asarray(jax.jit(matrix)(0.7)), 0.7 * expected, atol=1e-14)
+    npt.assert_allclose(np.asarray(_dia_qarray(dims, offsets, diags).to_jax()), expected, atol=1e-14)
+    gradient = jax.grad(lambda scale: jnp.real(jnp.sum(matrix(scale))))(0.7)
+    npt.assert_allclose(gradient, expected.real.sum(), atol=1e-14)
+
+
+def test_dressed_frequency_gradient_matches_one_excitation_spectrum(dynamiqs_backend) -> None:
+    """Dressed frequencies and coupling derivatives agree with the two-mode analytic spectrum."""
+    import jax
+
+    from quchip import RWA, Capacitive, DuffingTransmon, Resonator
+
+    qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+    resonator = Resonator(freq=7.0, levels=3, label="r")
+    chip = Chip([qubit, resonator], [Capacitive(qubit, resonator, g=0.05, label="qr")],
+                frame="lab", approximation=RWA(), backend=dynamiqs_backend)
+
+    def frequency(g):
+        return chip.with_params({"qr.g": g}).freq("q")
+
+    value, gradient = jax.jit(jax.value_and_grad(frequency))(0.05)
+    splitting = np.sqrt((resonator.freq - qubit.freq) ** 2 + 4 * 0.05**2)
+    npt.assert_allclose(value, (qubit.freq + resonator.freq - splitting) / 2, atol=1e-12)
+    npt.assert_allclose(gradient, -2 * 0.05 / splitting, atol=1e-12)
+
+
+@pytest.mark.unit
 def test_linear_combination_matches_operator_arithmetic(dynamiqs_backend) -> None:
     """Sparse-DIA, dense and traced-coefficient combinations equal the same sum formed with qarray arithmetic."""
     import jax

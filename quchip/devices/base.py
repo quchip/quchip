@@ -110,7 +110,10 @@ def _energy_basis_dissipation(device: Any, p: Any) -> tuple[CollapseChannel, ...
                     continue
                 down = jnp.outer(vectors[:, lower_index], vectors[:, upper].conj())
                 transitions.append((down, rate_ratio / p.T1))
-    occupation = p.thermal_occupation if device.thermal_occupation is not None else None
+    occupation = None
+    if device.thermal_occupation is not None:
+        # A concrete zero stays exact, so the absorption rate is an exact zero.
+        occupation = 0.0 if maybe_concrete_scalar(device.thermal_occupation) == 0.0 else p.thermal_occupation
     channels = [
         channel
         for down, rate in transitions
@@ -881,7 +884,8 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
                 _, basis, matrices = cached
             else:
                 basis = resolve_device_basis(self, basis="native")
-                if not contains_tracer(basis.energy_vectors):
+                # A traced record would keep its trace alive in the cache.
+                if not contains_tracer((basis.energies, basis.energy_vectors)):
                     self._pauli_cache = (key, basis, matrices)
         assert basis is not None
         matrix = matrices.get(name)
@@ -1007,13 +1011,12 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
                 CollapseChannel(operator("a", "lowering_operator"),
                                 base_rate * (occupation + 1.0), "thermal_emission")
             )
-            occupation_value = maybe_concrete_scalar(
-                0.0 if self.thermal_occupation is None else self.thermal_occupation
-            )
-            if occupation_value is None or occupation_value > 0:
+            if self.thermal_occupation is not None:
+                # A concrete zero gives an exact zero rate, so gradients avoid sqrt'(0).
+                exact_zero = maybe_concrete_scalar(self.thermal_occupation) == 0.0
                 channels.append(
                     CollapseChannel(operator("adag", "raising_operator"),
-                                    base_rate * occupation, "thermal_absorption")
+                                    0.0 if exact_zero else base_rate * occupation, "thermal_absorption")
                 )
         gamma_phi = self._dephasing_rate(self.T1, self.T2)
         if gamma_phi is not None:
@@ -1165,13 +1168,14 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         """Emission and absorption channels for one transition.
 
         Returns ``(lower_op, rate * (n_bar + 1))`` (relaxation / stimulated
-        emission) and, when the bath occupation is non-zero, additionally
+        emission) and, when a bath occupation is declared, additionally
         ``(raise_op, rate * n_bar)`` (thermal absorption).
-        ``n_bar is None`` is treated as zero occupation, yielding the down
-        channel only. The positivity gate reads a *concrete* scalar only, so
-        a traced ``n_bar`` keeps both channels. The math is
-        pure :mod:`jax.numpy`, so the result type follows the supplied
-        operators.
+        ``n_bar is None`` yields the down channel only. An explicit zero
+        keeps absorption support fixed during parameter rebinding. A concrete
+        zero gives an exact zero absorption rate, so gradients over other
+        parameters stay finite.
+        The math is pure :mod:`jax.numpy`, so the result type follows the
+        supplied operators.
         """
         n_bar_eff = 0.0 if n_bar is None else n_bar
         terms = [
@@ -1181,12 +1185,11 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
                 emission_name,
             )
         ]
-        n_bar_value = maybe_concrete_scalar(n_bar_eff)
-        if n_bar_value is None or n_bar_value > 0:
+        if n_bar is not None:
             terms.append(
                 CollapseChannel(
                     raise_op,
-                    rate * n_bar_eff,
+                    0.0 if maybe_concrete_scalar(n_bar) == 0.0 else rate * n_bar_eff,
                     absorption_name,
                 )
             )

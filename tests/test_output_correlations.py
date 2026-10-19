@@ -69,7 +69,7 @@ def test_vacuum_output_has_zero_fluctuation_spectrum() -> None:
     np.testing.assert_allclose(result.total_fluctuation_spectrum, 0.0, atol=1e-10)
     np.testing.assert_allclose(result.signal_coherent_flux, 0.0, atol=1e-12)
     np.testing.assert_allclose(result.signal_photon_flux, 0.0, atol=1e-12)
-    assert result.fourier_convention == "2 Re integral_0^inf d tau exp(-j 2 pi f tau) C(tau); engineering j = -i"
+    assert result.fourier_convention == "2 Re integral_0^inf d tau exp(-j 2 pi f tau) C_engineering(tau), j = i"
 
 
 def test_thermal_output_has_g2_zero_near_two() -> None:

@@ -203,7 +203,7 @@ def test_stationary_sweep_solves_an_unpumped_operating_point_once(monkeypatch) -
     monkeypatch.setattr(QuTiPBackend, "steadystate", recorded)
     swept = VNA(chip).sweep(frequencies, options={"method": "direct"})
 
-    assert reused == [False, True, True]
+    assert reused == [False]
     np.testing.assert_allclose(swept.matrix, np.concatenate(separate), atol=1e-13)
 
 

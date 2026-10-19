@@ -10,7 +10,7 @@ JAX arrays for Dynamiqs, even for eager calls. Host conversion is explicit.
 from __future__ import annotations
 
 import itertools
-import warnings
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -19,13 +19,13 @@ import numpy as np
 from quchip.backend import Backend, SolverResult
 from quchip.devices.base import BaseDevice
 from quchip.results._batch import BatchResult
+from quchip.utils.constants import TWO_PI
 from quchip.utils.labeling import resolve_label
-
-DEFAULT_TRUNCATION_THRESHOLD = 1e-3
 
 # Mirrors quchip.viz.results.StateMode so the plot_state shim can re-expose the
 # same literal without a hard import of the lazily loaded viz module.
 StateMode = Literal["population", "dm"]
+Frame = Literal["integration", "lab"]
 
 if TYPE_CHECKING:
     from quchip.engine.ir import SLHChannel, SolveBatch, SolveProblem
@@ -124,8 +124,19 @@ class SimulationResult:
         Captured device, observable, output, channel, and basis metadata.
     dissipation : bool, default=True
         Whether collapse channels were included.
+    excitation_space : optional
+        Captured exact excitation coordinate map, or None for product coordinates.
     readout_wiring : optional
         Captured downstream readout wiring.
+    frame : ResolvedFrame or None, optional
+        Integration frame of the saved states.
+    label_targets : LabelTargets or None, optional
+        Snapshot of the solve's chip that prepares label targets.
+
+    Attributes
+    ----------
+    frame : ResolvedFrame or None
+        Integration frame of the saved states: the frame frequency of each device and the frame mode.
     """
 
     def __init__(
@@ -141,7 +152,15 @@ class SimulationResult:
         bases: dict[str, Any] | None = None,
         dissipation: bool = True,
         readout_wiring: Any = None,
+        excitation_space: Any = None,
+        frame: Any = None,
+        label_targets: Any = None,
     ) -> None:
+        self.frame = frame
+        self._label_targets = label_targets
+        self._frame_map_cache: Any = None
+        self._expanded_states: dict[int, Any] = {}
+        self._excitation_space = excitation_space
         self._readout_wiring = readout_wiring
         self._backend = backend
         self._truncation: Any = None
@@ -362,6 +381,18 @@ class SimulationResult:
         """Return the kept native state history, or tell how to save it."""
         if self._states is None or len(self._states) == 0:
             raise RuntimeError(_NO_STATES_MSG)
+        if self._excitation_space is not None:
+            from math import prod
+            from quchip.utils.memory import dense_bytes, require_memory
+            ket = self._backend.is_ket(self._states[0])
+            # A stacked history keeps the cached states and a new stack.
+            copies = 1 if isinstance(self._states, list) else 2
+            dimension = prod(self.dims)
+            require_memory(dense_bytes(len(self._states), *((dimension,) if ket else (dimension, dimension)),
+                                       copies=copies),
+                           task="Full pulse history export", remedy="Use compact_state() or local observables.")
+            lifted = [self._export_state(state, index) for index, state in enumerate(self._states)]
+            return lifted if isinstance(self._states, list) else self._backend.stack_states(lifted)
         return self._states
 
     def _stacked_states(self) -> Any:
@@ -375,7 +406,9 @@ class SimulationResult:
         """
         cached = getattr(self, "_stacked_cache", None)
         if cached is None:
-            cached = self._backend.stack_states(self.states)
+            if self._states is None or len(self._states) == 0:
+                raise RuntimeError(_NO_STATES_MSG)
+            cached = self._backend.stack_states(self._states)
             from quchip.utils.jax_utils import contains_tracer
 
             if not contains_tracer(cached):
@@ -384,7 +417,7 @@ class SimulationResult:
 
     def _is_ket_trajectory(self) -> bool:
         """Return whether the stored trajectory is kets (vs density matrices)."""
-        return self._backend.is_ket(self.states[0])
+        return self._backend.is_ket(self._stacked_states()[0])
 
     @property
     def _basis_labels(self) -> list[tuple[int, ...]]:
@@ -395,7 +428,130 @@ class SimulationResult:
             self._basis_labels_cache = cached
         return cached
 
-    def overlap(self, target: Any) -> Any:
+    def _export_state(self, state, index):
+        """Lift one saved compact state, caching it by its time index."""
+        if self._excitation_space is None:
+            return state
+        from quchip.utils.jax_utils import contains_tracer
+        key = None if contains_tracer(index) else int(index)
+        if key in self._expanded_states:
+            return self._expanded_states[key]
+        lifted = self._excitation_space.lift(state, self._backend)
+        if key is not None and not contains_tracer(lifted):
+            self._expanded_states[key] = lifted
+        return lifted
+
+    def _target_state(self, target):
+        from quchip.engine.states import CompactState, compatible_values
+        backend = self._backend
+        space = self._excitation_space
+        if isinstance(target, CompactState):
+            if target.values.shape[-1] != 1:
+                raise TypeError("Overlap targets must be kets.")
+            values = compatible_values(
+                target, tuple(label for label, _ in self.device_info), self.dims, self._bases, backend,
+            )
+            if space is not None:
+                xp = backend.array_module
+                # The saved states have no amplitude outside this space.
+                columns = np.asarray([target.space.rows.get(tuple(level), target.space.size) for level in space.levels])
+                padded = xp.concatenate([values, xp.zeros((1, 1), dtype=values.dtype)])
+                return backend.from_array(padded[columns], dims=[[space.size], [1]])
+            native = backend.from_array(values, dims=[[target.space.size], [1]])
+            return target.space.lift(native, backend)
+        native = backend.coerce_state(target, dims=tuple(self.dims))
+        return native if space is None else space.project(native, backend)
+
+    def _frame_map(self):
+        """Return the map between the lab frame and the frame of the saved states."""
+        from quchip.engine.frames import FrameMap
+        from quchip.utils.jax_utils import contains_tracer
+
+        if self._frame_map_cache is not None:
+            return self._frame_map_cache
+        if self.frame is None or self.device_info is None:
+            raise RuntimeError("This result has no captured frame; it was not created by a solve.")
+        frame_map = FrameMap.create(self.frame, tuple(label for label, _ in self.device_info), self._bases,
+                                    self._backend.array_module, space=self._excitation_space)
+        if not contains_tracer(frame_map.energies):
+            self._frame_map_cache = frame_map
+        return frame_map
+
+    def _saved_dims(self) -> list[int]:
+        return list(self.dims if self._excitation_space is None else self._excitation_space.solver_dims)
+
+    def _in_frame(self, state, index, frame):
+        """Return a saved native state in the requested frame, in saved coordinates."""
+        if _frame_choice(frame) == "integration":
+            return state
+        backend = self._backend
+        values = backend.to_array(state)
+        time = self.times[index]
+        frame_map = self._frame_map()
+        ket = backend.is_ket(state)
+        mapped = (frame_map.kets(values.reshape(-1), time, to_lab=True).reshape(values.shape) if ket
+                  else frame_map.operators(values, time, to_lab=True))
+        dims = self._saved_dims()
+        return backend.from_array(mapped, dims=[dims, [1] * len(dims) if ket else dims])
+
+    def _exported(self, state, index, frame):
+        """Return a saved state in captured product coordinates and the requested frame."""
+        if _frame_choice(frame) == "integration":
+            return self._export_state(state, index)
+        state = self._in_frame(state, index, frame)
+        return state if self._excitation_space is None else self._excitation_space.lift(state, self._backend)
+
+    def _resolve_target(self, target, frame, times):
+        """Return a fixed native target, or an array with one target ket per time.
+
+        A ket keeps its integration-frame meaning unless ``frame`` is ``"lab"``.
+        A label k is its dressed state, which turns with its label:
+        ``U(t)†|d_k⟩ exp(−i 2π t Σᵢ fᵢ kᵢ)``. The all-ground label of a
+        conserving model is the fixed bare vacuum.
+        """
+        frame = _frame_choice(frame)
+        backend = self._backend
+        if isinstance(target, (Mapping, str)):
+            if frame == "lab":
+                raise ValueError("A label target turns with its label in every frame; frame= applies to ket targets.")
+            if self._label_targets is None:
+                raise RuntimeError("This result has no captured chip for label targets; it was not created by a solve.")
+            levels = self._label_targets.levels(target, self.dims)
+            space = self._excitation_space
+            vector = self._label_targets.dressed(levels, self._bases, space)
+            if vector is None:
+                vector = self._label_targets.bare(levels, self._bases, space)
+                dims = self._saved_dims()
+                return backend.from_array(vector.reshape(-1, 1), dims=[dims, [1] * len(dims)]), None
+            frame_map = self._frame_map()
+            xp = backend.array_module
+            phase = xp.exp(-1j * TWO_PI * xp.asarray(times) * frame_map.label_energy(levels))
+            return None, phase[:, None] * frame_map.kets(vector, times)
+        fixed = self._target_state(target)
+        if frame == "integration":
+            return fixed, None
+        return None, self._frame_map().kets(backend.to_array(fixed).reshape(-1), times)
+
+    def compact_state(self, t: Any = None) -> Any:
+        """Return a reusable saved state without product-space expansion.
+
+        Parameters
+        ----------
+        t : scalar or None, optional
+            Saved time in ns. None selects the final state.
+
+        Returns
+        -------
+        CompactState
+            Captured excitation state accepted as initial_state by a later solve.
+        """
+        from quchip.engine.states import CompactState
+        if self._excitation_space is None:
+            raise ValueError("This result stores full product states. Use state() to reuse them.")
+        state = self._raw_final_state() if t is None else self._raw_state_at(t)
+        return CompactState(self._backend.to_array(state), self._excitation_space)
+
+    def overlap(self, target: Any, *, frame: Frame = "integration") -> Any:
         """Return the overlap with *target* at every stored time.
 
         For ket trajectories, the method returns ``|<target|psi(t)>|**2``. For
@@ -403,36 +559,64 @@ class SimulationResult:
         stays in the backend's array module, so it is differentiable. One
         batched op covers the leading time axis, with no per-point loop.
 
+        A ket target is a fixed vector of the integration frame, so a target
+        such as |+⟩ is written in that frame, and ``chip.bare_state(...)``
+        gives a bare product. With ``frame="lab"``, the target is a fixed
+        lab-frame vector, such as a dressed state from ``chip.state()``. A
+        label target, such as ``{"q0": 0, "q1": 1}``, is the dressed
+        eigenstate ``|d_k⟩`` of label k, which turns with its label:
+        ``U(t)†|d_k⟩ exp(−i 2π t Σᵢ fᵢ kᵢ)``, where ``U(t)†`` maps the lab
+        frame into the integration frame and ``fᵢ`` are the frame
+        frequencies. An idle dressed state then reads 1 in every frame. A
+        snapshot of the solve's chip supplies ``|d_k⟩``, with the solve's
+        approximation and excitation cutoff.
+
         Parameters
         ----------
-        target : state_like
-            Target ket in the captured full Hilbert space.
+        target : state_like, mapping, or str
+            Target ket in the captured full Hilbert space, a compatible ``CompactState``,
+            or a label of local energy levels, which names its dressed state.
+        frame : {"integration", "lab"}, default="integration"
+            Frame in which a ket target is fixed.
         """
         backend = self._backend
-        target = backend.coerce_state(target, dims=tuple(self.dims))
-        projector = backend.matmul(target, backend.dag(target))
+        target, moving = self._resolve_target(target, frame, self.times)
+        if moving is not None:
+            return _moving_projection(backend, moving, self._stacked_states(), amplitude=False)
+        vector = backend.to_array(target)
+        dims = self.dims if self._excitation_space is None else self._excitation_space.solver_dims
+        projector = backend.from_array(vector @ backend.array_module.conj(vector.T),
+                                       dims=[list(dims), list(dims)])
         series = backend.expect_over_time(projector, self._stacked_states())
         return backend.array_module.abs(series)
 
-    def amplitude_array(self, target: Any) -> Any:
+    def amplitude_array(self, target: Any, *, frame: Frame = "integration") -> Any:
         """Return the phase-sensitive complex projection ``<target|psi(t)>`` for kets.
 
         Density-matrix trajectories raise :class:`TypeError`, because a mixed
         state has no single phase-sensitive amplitude. For a mixed state, use
         :meth:`overlap`. The method uses one batched op, with no per-point
-        loop.
+        loop. Targets and ``frame`` are as in :meth:`overlap`. With
+        ``frame="lab"``, the phase is the lab-frame phase. A label target gives
+        a phase that turns at ``Σᵢ fᵢ kᵢ − E_k``, the detuning of the label's
+        frame energy from its dressed energy ``E_k``.
 
         Parameters
         ----------
-        target : state_like
-            Target ket in the captured full Hilbert space.
+        target : state_like, mapping, or str
+            Target ket in the captured full Hilbert space, a compatible ``CompactState``,
+            or a label of local energy levels, which names its dressed state.
+        frame : {"integration", "lab"}, default="integration"
+            Frame in which a ket target is fixed.
         """
         backend = self._backend
         if not self._is_ket_trajectory():
             raise TypeError(
                 "amplitude_array() requires ket trajectories; use overlap() for density matrices."
             )
-        target = backend.coerce_state(target, dims=tuple(self.dims))
+        target, moving = self._resolve_target(target, frame, self.times)
+        if moving is not None:
+            return _moving_projection(backend, moving, self._stacked_states(), amplitude=True)
         return backend.array_module.asarray(
             backend.overlap_over_time(target, self._stacked_states())
         )
@@ -447,7 +631,7 @@ class SimulationResult:
         available = [lbl for lbl, _ in self.device_info]
         raise ValueError(f"Device '{label}' not found in device_info. Available: {available}")
 
-    def state(self, t: float | None = None, *, dm: bool = False) -> Any:
+    def state(self, t: float | None = None, *, dm: bool = False, frame: Frame = "integration") -> Any:
         """Return a kept state, optionally promoted to a density matrix.
 
         Parameters
@@ -456,13 +640,34 @@ class SimulationResult:
             Saved time in ns. ``None`` selects the final state.
         dm : bool, default=False
             Promote a ket to a density matrix.
+        frame : {"integration", "lab"}, default="integration"
+            Frame of the returned state.
         """
-        s = self.final_state if t is None else self.state_at(t)
+        s = (self._exported(self._raw_final_state(), len(self.times) - 1, frame) if t is None
+             else self.state_at(t, frame=frame))
         if dm and self._backend.is_ket(s):
             return self._backend.state_to_dm(s)
         return s
 
-    def state_at(self, t: Any, *, method: str = "exact") -> Any:
+    def state_at(self, t: Any, *, method: str = "exact", frame: Frame = "integration") -> Any:
+        """Return a saved native state in captured product coordinates.
+
+        Saved states are in the integration frame of :attr:`frame`. With
+        ``frame="lab"``, the method maps the state into the lab frame at its
+        saved time.
+
+        Parameters
+        ----------
+        t : scalar
+            Saved time in ns.
+        method : {"exact", "nearest"}, default="exact"
+            Time-selection rule. The lookup never interpolates states.
+        frame : {"integration", "lab"}, default="integration"
+            Frame of the returned state.
+        """
+        return self._exported(*self._saved_state(t, method), frame)
+
+    def _raw_state_at(self, t: Any, *, method: str = "exact") -> Any:
         """Return a kept state at a scalar time without state interpolation.
 
         Parameters
@@ -472,6 +677,10 @@ class SimulationResult:
         method : {"exact", "nearest"}, default="exact"
             Time-selection rule.
         """
+        return self._saved_state(t, method)[0]
+
+    def _saved_state(self, t: Any, method: str) -> tuple[Any, Any]:
+        """Return a kept native state and its time index."""
         from quchip.results._time import require_valid, time_selection
         from quchip.utils.jax_utils import contains_tracer
 
@@ -484,12 +693,12 @@ class SimulationResult:
         if self._states is None or len(self._states) == 0:
             if not contains_tracer(index) and int(index) != len(self.times) - 1:
                 raise RuntimeError(_NO_STATES_MSG)
-            return require_valid(self.final_state, index != len(self.times) - 1, _NO_STATES_MSG)
+            return require_valid(self._raw_final_state(), index != len(self.times) - 1, _NO_STATES_MSG), index
         if contains_tracer(index):
-            return self._stacked_states()[index]
-        return self._states[int(index)]
+            return self._stacked_states()[index], index
+        return self._states[int(index)], index
 
-    def dm_at(self, t: float, *, method: str = "exact") -> Any:
+    def dm_at(self, t: float, *, method: str = "exact", frame: Frame = "integration") -> Any:
         """Return a density matrix at a kept time, and promote kets on demand.
 
         Parameters
@@ -498,18 +707,37 @@ class SimulationResult:
             Query time in ns.
         method : {"exact", "nearest"}, default="exact"
             Time-selection rule.
+        frame : {"integration", "lab"}, default="integration"
+            Frame of the returned state.
         """
-        state = self.state_at(t, method=method)
+        state = self.state_at(t, method=method, frame=frame)
         return self._backend.state_to_dm(state) if self._backend.is_ket(state) else state
 
     @property
     def final_state(self) -> Any:
-        """Return the last history entry or the separately kept final state."""
+        """Return the last kept state in captured product coordinates."""
+        return self._export_state(self._raw_final_state(), len(self.times) - 1)
+
+    def _raw_final_state(self):
         if self._states is not None and len(self._states) > 0:
             return self._states[-1]
         if self._final_state is not None:
             return self._final_state
         raise RuntimeError('No final state available; run with states="all" or states="final" to retain it.')
+
+    def _final_projection(self, target: Any, *, amplitude: bool, frame: Frame) -> Any:
+        """Project the final saved state on a target, without its history."""
+        backend = self._backend
+        state = self._raw_final_state()
+        is_ket = backend.is_ket(state)
+        if amplitude and not is_ket:
+            raise TypeError("Final amplitudes require ket states; use final_overlap_magnitudes for density matrices.")
+        stacked = backend.stack_states([state])
+        target, moving = self._resolve_target(target, frame, self.times[-1:])
+        if moving is not None:
+            return _moving_projection(backend, moving, stacked, amplitude=amplitude)[0]
+        value = backend.overlap_over_time(target, stacked)[0]
+        return value if amplitude else backend.array_module.abs(value) ** (2 if is_ket else 1)
 
     def iq_readout(self, output: Any, *, means: Any, frequency: Any, receiver: Any,
                    noise_frequencies: Any = None) -> Any:
@@ -565,7 +793,7 @@ class SimulationResult:
         from quchip.results.terminal import measure_result
         return measure_result(self, devices, t=t, basis=basis)
 
-    def reduced_state(self, t: float, device: str | BaseDevice) -> Any:
+    def reduced_state(self, t: float, device: str | BaseDevice, *, frame: Frame = "integration") -> Any:
         """Partial-trace a saved state down to one device.
 
         Parameters
@@ -574,9 +802,14 @@ class SimulationResult:
             Saved time in ns.
         device : device object or str
             Device to keep.
+        frame : {"integration", "lab"}, default="integration"
+            Frame of the returned state.
         """
         dev_idx, _ = self._resolve_device_idx(device)
-        return self._backend.ptrace(self.state_at(t), dev_idx, self.dims)
+        state = self._in_frame(*self._saved_state(t, "exact"), frame)
+        if self._excitation_space is not None:
+            return self._excitation_space.reduced(state, self._backend, (dev_idx,))
+        return self._backend.ptrace(state, dev_idx, self.dims)
 
     # ------------------------------------------------------------------
     # Populations
@@ -595,6 +828,15 @@ class SimulationResult:
         it reads the DM diagonal at each timestep.
         """
         backend = self._backend
+        if self._excitation_space is not None:
+            from math import prod
+            from quchip.utils.memory import require_memory
+            require_memory((256 + 8 * len(self.dims) + 16 * len(self.times)) * prod(self.dims),
+                           task="Full product population dictionary",
+                           remedy="Use population(device, level) instead.")
+            states = self._backend.stack_states(self.states)
+            values = backend.array_module.real(backend.populations_over_time(states))
+            return {label: values[:, i] for i, label in enumerate(self._basis_labels)}
         basis_labels = self._basis_labels
 
         # One batched diagonal read over the leading time axis -> (T, ∏dims),
@@ -621,6 +863,10 @@ class SimulationResult:
                 f"Level {level} out of range for device '{label}' with {dev_dim} levels (0..{dev_dim - 1})."
             )
 
+        if self._excitation_space is not None:
+            diags = backend.populations_over_time(self._stacked_states())
+            selected = self._excitation_space.levels[:, dev_idx] == level
+            return xp.real(diags @ xp.asarray(selected, dtype=float))
         basis = self._bases.get(label)
         if basis is not None and basis.energy_to_solver() is not None:
             vector = xp.asarray(basis.energy_state(level))
@@ -737,49 +983,21 @@ class SimulationResult:
 
         return plot_wigner(self, index, trace_out=trace_out, ax=ax, **kwargs)
 
-    def check_truncation(self, *, threshold: float = DEFAULT_TRUNCATION_THRESHOLD) -> dict[str, Any]:
-        """Report the maximum boundary population of each device over available samples.
+    def check_truncation(self, *, threshold: float = 1e-3) -> dict[Any, Any]:
+        """Deprecated method form of :func:`quchip.check_truncation`.
 
-        This warning heuristic can miss excursions between samples. To confirm
-        convergence, increase the applicable cutoff and compare observables.
-        Native arrays stay differentiable. Warning thresholds are evaluated only
-        for concrete results. Boundaries are declared by the captured component
-        model.
+        quchip 0.6 removes this method. Call ``quchip.check_truncation(result)``.
 
         Parameters
         ----------
         threshold : float, default=1e-3
             Maximum accepted boundary population.
         """
-        from quchip.engine.truncation import evaluate_boundaries
-        from quchip.utils.jax_utils import contains_tracer
+        from quchip.engine.truncation import check_truncation
+        from quchip.utils.deprecation import warn_renamed
 
-        if not np.isfinite(threshold) or threshold < 0:
-            raise ValueError("truncation threshold must be finite and nonnegative")
-        plan, traces = evaluate_boundaries(self)
-        for reason in plan.unavailable:
-            warnings.warn(f"Truncation diagnostic unavailable: {reason}", UserWarning, stacklevel=2)
-        xp = self._backend.array_module
-        observed: dict[str, Any] = {}
-        maxima = tuple(xp.maximum(0.0, xp.max(trace)) for trace in traces)
-        traced = contains_tracer(maxima)
-        if traced:
-            warnings.warn(
-                "Truncation boundary populations are traced; warning thresholds cannot be evaluated here. "
-                "Check the concrete result afterward.",
-                UserWarning, stacklevel=2,
-            )
-        for check, maximum in zip(plan.checks, maxima, strict=True):
-            observed[check.label] = xp.maximum(observed.get(check.label, 0.0), maximum)
-            if not traced and float(maximum) > threshold:
-                warnings.warn(
-                    f"Device {check.label!r}: maximum sampled {check.boundary.description} population "
-                    f"({self.stats.get('truncation_sampling', 'saved time grid')}) "
-                    f"{float(maximum):.3g} > threshold {threshold:.3g}. "
-                    f"{check.boundary.convergence_hint} This is a sampling heuristic, not an error bound.",
-                    UserWarning, stacklevel=2,
-                )
-        return observed
+        warn_renamed(f"{type(self).__name__}.check_truncation()", "quchip.check_truncation(result)", removal="0.6")
+        return check_truncation(self, threshold=threshold)
 
     def __repr__(self) -> str:
         t_min = float(self.times[0]) if len(self.times) > 0 else 0.0
@@ -979,50 +1197,48 @@ class SimulationBatchResult(BatchResult[SimulationResult]):
         """
         return self._trace_values([r.collapse_integral(key) for r in self._results], reduce)
 
-    def _final_projections(self, targets: list[Any] | tuple[Any, ...], *, amplitude: bool) -> Any:
+    def _final_projections(self, targets: list[Any] | tuple[Any, ...], *, amplitude: bool, frame: Frame) -> Any:
         self._check_targets_len(targets)
-        values = []
-        for result, target in zip(self._results, targets):
-            backend = result._backend
-            state = result.final_state
-            is_ket = backend.is_ket(state)
-            if amplitude and not is_ket:
-                raise TypeError(
-                    "Final amplitudes require ket states; use final_overlap_magnitudes for density matrices."
-                )
-            target = backend.coerce_state(target, dims=tuple(result.dims))
-            value = backend.overlap_over_time(target, backend.stack_states([state]))[0]
-            if not amplitude:
-                value = backend.array_module.abs(value) ** (2 if is_ket else 1)
-            values.append(value)
-        return self._stack(values)
+        return self._stack([
+            result._final_projection(target, amplitude=amplitude, frame=frame)
+            for result, target in zip(self._results, targets)
+        ])
 
-    def final_overlap_magnitudes(self, targets: list[Any] | tuple[Any, ...]) -> Any:
+    def final_overlap_magnitudes(self, targets: list[Any] | tuple[Any, ...], *, frame: Frame = "integration") -> Any:
         """Return final target-state populations without histories.
 
+        Targets and ``frame`` are as in :meth:`SimulationResult.overlap`.
+
         Parameters
         ----------
-        targets : sequence of state_like
-            One target ket per batch result.
+        targets : sequence of state_like, mapping, or str
+            One target ket or label per batch result.
+        frame : {"integration", "lab"}, default="integration"
+            Frame in which a ket target is fixed.
         """
-        return self._final_projections(targets, amplitude=False)
+        return self._final_projections(targets, amplitude=False, frame=frame)
 
-    def final_amplitudes(self, targets: list[Any] | tuple[Any, ...]) -> Any:
+    def final_amplitudes(self, targets: list[Any] | tuple[Any, ...], *, frame: Frame = "integration") -> Any:
         """Return final complex ket amplitudes without histories.
 
+        Targets and ``frame`` are as in :meth:`SimulationResult.amplitude_array`.
+
         Parameters
         ----------
-        targets : sequence of state_like
-            One target ket per batch result.
+        targets : sequence of state_like, mapping, or str
+            One target ket or label per batch result.
+        frame : {"integration", "lab"}, default="integration"
+            Frame in which a ket target is fixed.
         """
-        return self._final_projections(targets, amplitude=True)
+        return self._final_projections(targets, amplitude=True, frame=frame)
 
 # ---------------------------------------------------------------------------
 # Result wrapping helpers
 # ---------------------------------------------------------------------------
 
 
-def wrap_solver_result(solver_result: SolverResult, problem: SolveProblem, backend: Backend) -> SimulationResult:
+def wrap_solver_result(solver_result: SolverResult, problem: SolveProblem, backend: Backend, *,
+                       label_targets: Any = None) -> SimulationResult:
     """Wrap a raw backend :class:`SolverResult` into a user-facing :class:`SimulationResult`.
 
     The engine-side :class:`~quchip.engine.ir.SolveProblem` carries the
@@ -1038,11 +1254,15 @@ def wrap_solver_result(solver_result: SolverResult, problem: SolveProblem, backe
         Frozen request carrying result metadata.
     backend : Backend
         Backend that owns the native states and arrays.
+    label_targets : LabelTargets or None, optional
+        Record captured when the solve finished. None captures it now.
     """
+    if label_targets is None:
+        label_targets = capture_label_targets(problem, {})
     if solver_result.native is not None:
         from quchip.results.trajectories import TrajectoryResult
 
-        return TrajectoryResult(solver_result.native, problem)
+        return TrajectoryResult(solver_result.native, problem, label_targets=label_targets)
     from quchip.engine.truncation import boundary_traces
 
     plan = problem.truncation
@@ -1068,12 +1288,13 @@ def wrap_solver_result(solver_result: SolverResult, problem: SolveProblem, backe
             resolved_frame=problem.resolved_frame,
             engine_result=engine_result,
         )
-    from quchip.analysis.field_noise import ReadoutWiring
+    from quchip.results.terminal import ReadoutWiring
 
     result = SimulationResult(
         solver_result=solver_result,
         backend=backend,
-        dims=engine_result.dims,
+        dims=engine_result.dims if engine_result.excitation_space is None else engine_result.excitation_space.dims,
+        excitation_space=engine_result.excitation_space,
         device_info=problem.device_info,
         observable_traces=observable_traces,
         output_traces=output_traces,
@@ -1081,10 +1302,13 @@ def wrap_solver_result(solver_result: SolverResult, problem: SolveProblem, backe
         bases=engine_result.bases,
         dissipation=engine_result.dissipation,
         readout_wiring=ReadoutWiring.capture(engine_result.slh, backend.array_module),
+        frame=problem.resolved_frame,
+        label_targets=label_targets,
     )
     result._truncation = plan
     result._boundary_traces = samples
     result.stats["states"] = problem.states
+    result.stats["excitation_reduction"] = engine_result.metadata.get("excitation_reduction")
     return result
 
 
@@ -1096,7 +1320,54 @@ def wrap_solver_results_from_batch(
     """Wrap backend results with each batch point's resolved solve context."""
     if len(solver_results) != batch.batch_size:
         raise RuntimeError(f"Backend returned {len(solver_results)} results for {batch.batch_size} batch points.")
+    captured: dict[int, list[tuple[Any, Any, Any]]] = {}
     return [
-        wrap_solver_result(solver_result, problem, backend)
+        wrap_solver_result(solver_result, problem, backend, label_targets=capture_label_targets(problem, captured))
         for solver_result, problem in zip(solver_results, batch.problems)
     ]
+
+
+def capture_label_targets(problem: SolveProblem, captured: dict[int, list[tuple[Any, Any, Any]]]) -> Any:
+    """Capture the label-target record of a solve, once for each chip and approximation of a batch.
+
+    Parameters
+    ----------
+    problem : SolveProblem
+        Finished solve request.
+    captured : dict
+        ``(chip, approximation, record)`` entries already captured for this batch, by chip identity.
+        The function adds new ones.
+    """
+    from quchip.engine.states import LabelTargets
+
+    if problem.chip is None:
+        return None
+    approximation = problem.engine_result.approximation
+    entries = captured.setdefault(id(problem.chip), [])
+    for chip, known, record in entries:
+        if chip is problem.chip and known == approximation:
+            return record
+    record = LabelTargets.capture(problem.chip, approximation)
+    entries.append((problem.chip, approximation, record))
+    return record
+
+
+def _frame_choice(frame: Any) -> str:
+    if not isinstance(frame, str) or frame not in ("integration", "lab"):
+        raise ValueError(f'frame must be "integration" or "lab"; got {frame!r}.')
+    return frame
+
+
+def _moving_projection(backend: Backend, targets: Any, stacked: Any, *, amplitude: bool) -> Any:
+    """Project stacked states on one target ket per time.
+
+    Kets give ``⟨v(t)|ψ(t)⟩``, or its squared magnitude when ``amplitude`` is
+    False. Density matrices give ``⟨v(t)|ρ(t)|v(t)⟩``.
+    """
+    xp = backend.array_module
+    states = xp.asarray(backend.to_array(stacked), dtype=complex)
+    targets = xp.asarray(targets, dtype=complex)
+    if backend._is_ket_stack(states):
+        values = xp.einsum("ti,ti->t", xp.conj(targets), states[..., 0])
+        return values if amplitude else xp.abs(values) ** 2
+    return xp.abs(xp.einsum("ti,tij,tj->t", xp.conj(targets), states, targets))

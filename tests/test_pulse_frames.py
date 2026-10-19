@@ -72,9 +72,9 @@ def test_vz_before_a_cross_resonance_gate_keeps_basis_state_populations():
     rates = analyze_cr_susceptibility(chip, "q0", "q1", drive="cr")
     zx, ix = complex(rates.ZX_per_amplitude), complex(rates.IX_per_amplitude)
     times = np.linspace(0.0, duration, 20001)
-    amplitude = 1 / (2 * np.trapezoid(envelope(1.0).value(times).real, times) * abs(zx))
+    amplitude = 1 / (4 * np.trapezoid(envelope(1.0).value(times).real, times) * abs(zx))
     phase = -np.angle(zx)
-    cancel = -ix * amplitude * np.exp(1j * phase) / (2 * complex(chip.drive_matrix_elements("q1")["xy1"]))
+    cancel = -ix * amplitude * np.exp(1j * phase) / complex(chip.drive_matrix_elements("q1")["xy1"])
 
     def populations(vz_device):
         rows = []

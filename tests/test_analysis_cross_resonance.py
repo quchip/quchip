@@ -302,3 +302,28 @@ def test_cr_covariance_respects_parameter_units(monkeypatch):
     np.testing.assert_allclose(result.cov_ctrl0, np.diag(expected_variances), rtol=1e-12)
     for name, index in (("IX", 0), ("IY", 1), ("IZ", 2), ("ZX", 0), ("ZY", 1), ("ZZ", 2)):
         assert result.coeffs()[name][1] == pytest.approx(np.sqrt(expected_variances[index] / 2) * 1e-9)
+
+
+@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
+def test_cr_susceptibility_matches_the_scheduled_carrier(backend):
+    """Reported CR coefficients reproduce the dressed scheduled-drive matrix elements."""
+    from quchip import QuantumSequence, Square
+
+    if backend == "dynamiqs":
+        pytest.importorskip("dynamiqs")
+    chip, control, target, drive = _driven_pair(backend=backend)
+    response = analyze_cr_susceptibility(chip, control, target, drive=drive)
+    sequence = QuantumSequence(chip)
+    amplitude = 0.001
+    sequence.schedule(drive, envelope=Square(duration=10.0, amplitude=amplitude), freq=chip.freq(target))
+    driven = np.asarray(sequence.hamiltonian().matrix(t=0.0)) - np.asarray(chip.hamiltonian().matrix(t=0.0))
+    transitions = []
+    for level in (0, 1):
+        states = []
+        for excitation in (0, 1):
+            state = np.asarray(chip.backend.to_array(chip.state(control=level, target=excitation))).ravel()
+            pivot = state[3 * level + excitation]
+            states.append(state * np.conj(pivot) / abs(pivot))
+        transitions.append(np.vdot(states[1], driven @ states[0]) / amplitude)
+    np.testing.assert_allclose(response.IX_per_amplitude, transitions[0] + transitions[1], atol=1e-12)
+    np.testing.assert_allclose(response.ZX_per_amplitude, transitions[0] - transitions[1], atol=1e-12)

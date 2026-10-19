@@ -69,6 +69,25 @@ class PartitionedSimulationResult:
         return self._partition
 
     @property
+    def frame(self) -> Any:
+        """Return the joint integration frame, with the frame frequency that each component gives its devices.
+
+        The mode is the common mode of the components, or ``"dict"`` when
+        they differ. A component that plans its own ``"auto"`` frame keeps its
+        plan in ``components[i].frame``.
+        """
+        from quchip.engine.ir import ResolvedFrame
+
+        frames = [result.frame for result in self._results]
+        modes = {frame.mode for frame in frames}
+        return ResolvedFrame(
+            frequencies={label: value for frame in frames for label, value in frame.frequencies.items()},
+            demod_freqs={label: value for frame in frames for label, value in frame.demod_freqs.items()},
+            mode=modes.pop() if len(modes) == 1 else "dict",
+            plan=frames[0].plan if len(frames) == 1 else None,
+        )
+
+    @property
     def device_order(self) -> tuple[str, ...]:
         """Return the parent chip's original device-label order.
 
@@ -194,22 +213,21 @@ class PartitionedSimulationResult:
         return self._owner_result(device).population(device, level)
 
     def check_truncation(self, threshold: float = 1e-3) -> dict[str, float]:
-        """Run each component's truncation check and merge the per-device results.
+        """Deprecated method form of :func:`quchip.check_truncation`.
 
-        The return shape is the same as for
-        :meth:`~quchip.results.results.SimulationResult.check_truncation` (a
-        ``dict`` keyed by device label), which gives duck-typing parity between
-        joint and partitioned results.
+        quchip 0.6 removes this method. Call ``quchip.check_truncation(result)``.
 
         Parameters
         ----------
         threshold : float, default=1e-3
             Maximum accepted boundary population.
         """
-        merged: dict[str, float] = {}
-        for result in self._results:
-            merged.update(result.check_truncation(threshold=threshold))
-        return merged
+        from quchip.engine.truncation import check_truncation
+        from quchip.utils.deprecation import warn_renamed
+
+        warn_renamed("PartitionedSimulationResult.check_truncation()", "quchip.check_truncation(result)",
+                     removal="0.6")
+        return check_truncation(self, threshold=threshold)
 
     def _chip_order_permutation(self) -> tuple[list[int], list[int]] | None:
         """Return ``(dims, order)`` for :meth:`~quchip.backend.protocol.Backend.permute_state`.
@@ -275,6 +293,11 @@ class PartitionedSimulationResult:
         """
         warnings.warn(_JOINT_WARNING, UserWarning, stacklevel=2)
         backend = self._results[0]._backend
+        from math import prod
+        from quchip.utils.memory import dense_bytes, require_memory
+        dimension = prod(d for result in self._results for d in result.dims)
+        require_memory(dense_bytes(len(self.times), dimension, copies=4), task="Joint partitioned history export",
+                       remedy="Read local observables or component states instead.")
         per_component_trajectories = self._collect_component_ket_trajectories()
         joint_steps = [backend.tensor_states(*step) for step in zip(*per_component_trajectories)]
         permutation = self._chip_order_permutation()
@@ -300,7 +323,7 @@ class PartitionedSimulationResult:
         # `_promote_to_common_state_kind`.
         return self._joint_state([r.final_state for r in self._results])
 
-    def state_at(self, t: Any, *, method: str = "exact") -> Any:
+    def state_at(self, t: Any, *, method: str = "exact", frame: str = "integration") -> Any:
         """Reconstruct a joint state at a saved time.
 
         Parameters
@@ -309,12 +332,20 @@ class PartitionedSimulationResult:
             Query time in ns.
         method : {"exact", "nearest"}, default="exact"
             Time-selection rule.
+        frame : {"integration", "lab"}, default="integration"
+            Frame of the returned state.
         """
-        return self._joint_state([r.state_at(t, method=method) for r in self._results])
+        return self._joint_state([r.state_at(t, method=method, frame=frame) for r in self._results])
 
     def _joint_state(self, states: list) -> Any:
         warnings.warn(_JOINT_WARNING, UserWarning, stacklevel=3)
         backend = self._results[0]._backend
+        from math import prod
+        from quchip.utils.memory import dense_bytes, require_memory
+        dimension = prod(d for result in self._results for d in result.dims)
+        power = 1 if all(backend.is_ket(state) for state in states) else 2
+        require_memory(dense_bytes(*(dimension,) * power, copies=4), task="Joint partitioned state export",
+                       remedy="Read local observables or component states instead.")
         joint = backend.tensor_states(*self._promote_to_common_state_kind(backend, states))
         permutation = self._chip_order_permutation()
         if permutation is None:

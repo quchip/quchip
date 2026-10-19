@@ -243,6 +243,7 @@ def _build_component_chip(
         baths=_component_baths(clone, member_set) or None,
         port_network=network,
         effective_terms=[terms for terms in clone.effective_terms if set(terms.labels) <= member_set],
+        space=clone.space,
     )
     equipment = clone.control_equipment
     if equipment is not None and lines:

@@ -3,7 +3,9 @@ import jax
 import numpy as np
 import pytest
 
-from quchip import RWA, VNA, Capacitive, Chip, DuffingTransmon, Exact, PortNetwork, Resonator, eliminate
+from quchip import (
+    RWA, VNA, Capacitive, Chip, DuffingTransmon, EffectiveTerms, Exact, PortNetwork, Resonator, eliminate,
+)
 
 
 def _readout_chip(alpha=-0.25, levels=3, *, approximation=RWA(), qubit_occupation=None, backend="qutip", g=0.06):
@@ -16,7 +18,7 @@ def _readout_chip(alpha=-0.25, levels=3, *, approximation=RWA(), qubit_occupatio
                 approximation=approximation, backend=backend)
 
 
-def _feedline_chip(readouts, *, operators=None):
+def _feedline_chip(readouts, *, operators=None, backend="qutip"):
     resonators = [Resonator(freq=6.5 + 0.1 * index, levels=2, label=f"r{index}", internal_quality_factor=2e5)
                   for index in range(readouts)]
     qubits = [DuffingTransmon(freq=5.3 - 0.1 * index, anharmonicity=-0.26, levels=3, label=f"q{index}", T1=3e4)
@@ -27,7 +29,8 @@ def _feedline_chip(readouts, *, operators=None):
     network.cascade(*ports)
     network.expose("feed", input=ports[0], output=ports[-1])
     couplings = [Capacitive(qubit, resonator, g=0.04) for qubit, resonator in zip(qubits, resonators)]
-    return Chip([*qubits, *resonators], couplings, port_network=network, frame=5.2, approximation=RWA())
+    return Chip([*qubits, *resonators], couplings, port_network=network, frame=5.2,
+                approximation=RWA(), backend=backend)
 
 
 def _sweep(chip, frequencies, **options):
@@ -106,14 +109,13 @@ def test_shared_feedline_with_transmons_uses_the_one_excitation_block(reduced):
 @pytest.mark.unit
 def test_feedline_port_that_does_not_lower_the_level_index_breaks_conservation():
     """A cascade pair with a port coupled through sigma_x changes the level index, so the compact route declines."""
-    from quchip.chip.effective import conserves_excitation_number
     from quchip.engine.linear_response import try_build_weak_probe_problem
 
     lowering = _feedline_chip(2)
     quadrature = _feedline_chip(2, operators=(None, "X"))
 
-    assert conserves_excitation_number(lowering, lowering.approximation)
-    assert not conserves_excitation_number(quadrature, quadrature.approximation)
+    assert lowering.excitation_structure().conserves
+    assert not quadrature.excitation_structure().conserves
     assert try_build_weak_probe_problem(quadrature, FEEDLINE_FREQUENCIES, plane_labels=("feed",)) is None
 
 
@@ -124,6 +126,67 @@ def test_weak_probe_route_requires_a_stationary_vacuum():
     _, route = _sweep(_readout_chip(qubit_occupation=0.05), FREQUENCIES[:2])
     assert route != "vacuum_response"
     assert try_build_weak_probe_problem(_readout_chip(approximation=Exact()), FREQUENCIES, plane_labels=("r",)) is None
+
+
+@pytest.mark.validation
+@pytest.mark.optional_backend
+def test_traced_feedline_frequency_keeps_compact_response_and_correct_derivative():
+    """RWA proves interaction conservation while a traced port frequency keeps guarded compact assembly."""
+    pytest.importorskip("dynamiqs")
+    import jax.numpy as jnp
+
+    chip = _feedline_chip(2, backend="dynamiqs")
+    reference = _feedline_chip(2)
+
+    def response(frequency):
+        result = VNA(chip.with_params({"r0.freq": frequency})).sweep(6.5007)
+        assert result.diagnostics[0]["solver"] == "vacuum_response"
+        return jnp.stack((result.s11.real, result.s11.imag))
+
+    def independent(frequency):
+        value = VNA(reference.with_params({"r0.freq": frequency})).sweep(6.5007).s11
+        return np.array((value.real, value.imag))
+
+    value, derivative = jax.jit(lambda f: jax.jvp(response, (f,), (jnp.ones_like(f),)))(jnp.asarray(6.5))
+    step = 1e-7
+    expected = (independent(6.5 + step) - independent(6.5 - step)) / (2 * step)
+    # QuTiP solves the same one-excitation block. The bound covers round-off.
+    np.testing.assert_allclose(value, independent(6.5), atol=1e-9)
+    # Central difference of the QuTiP response. The bound covers its O(step²) error and round-off.
+    np.testing.assert_allclose(derivative, expected, rtol=2e-5, atol=2e-7)
+
+
+@pytest.mark.optional_backend
+def test_traced_user_matrix_with_unknown_level_changes_uses_the_general_route():
+    """Tracing hides the level changes of a user matrix, so the sweep takes the general route with the same response."""
+    pytest.importorskip("dynamiqs")
+    import jax.numpy as jnp
+
+    lowering = np.diag(np.sqrt(np.arange(1, 3)), 1)
+    exchange = np.kron(lowering.T, lowering) + np.kron(lowering, lowering.T)
+    routes = []
+
+    def reflection(g):
+        qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q", T1=3e4)
+        resonator = Resonator(freq=6.5, levels=3, label="r")
+        network = PortNetwork(label="m")
+        network.port("r", target=resonator, rate=0.002)
+        terms = EffectiveTerms(("q", "r"), (3, 3), g * exchange, label="exchange")
+        chip = Chip([qubit, resonator], effective_terms=(terms,), port_network=network,
+                    approximation=Exact(), backend="dynamiqs")
+        result = VNA(chip).sweep(6.5005)
+        routes.append(result.diagnostics[0]["solver"])
+        return jnp.stack((result.s11.real, result.s11.imag))
+
+    plain = reflection(0.04)
+    traced, derivative = jax.jit(lambda g: jax.jvp(reflection, (g,), (jnp.ones_like(g),)))(jnp.asarray(0.04))
+    assert routes == ["vacuum_response", "stationary_resolvent"]
+    step = 1e-6
+    expected = (reflection(0.04 + step) - reflection(0.04 - step)) / (2 * step)
+    # Both routes solve the same linear equations; the stationary route adds its solver tolerance.
+    np.testing.assert_allclose(traced, plain, atol=1e-9)
+    # The central difference error is about 3e-7 at this step.
+    np.testing.assert_allclose(derivative, expected, atol=1e-6)
 
 
 @pytest.mark.validation

@@ -382,13 +382,13 @@ def test_dropped_term_audit_survives_traced_coupling() -> None:
         )
         description = build_engine_result(chip, [], resolved_frame=resolve_frame(chip, chip.frame))
         seen["summary"] = description.dropped_terms_summary()
-        # band_weights is static structure, so selecting the populated a†b†
-        # band is trace-safe; its amplitude (largest band element, g·√2·√2)
+        # band_weights is static structure, so selecting the populated ab
+        # band is trace-safe; its amplitude (the selected entry, g·√2·√2)
         # stays a raw tracer.
         record = next(dt for dt in description.dropped_terms if dt.band_weights == (1, 1))
         return record.amplitude * 2.0
 
     out = jax.jit(build)(jnp.asarray(0.01))
     assert "amp traced" in seen["summary"]
-    assert "freq 10.1 GHz" in seen["summary"]  # pinned frame refs stay concrete
+    assert "detuning traced" in seen["summary"]  # the maximizing entry depends on the traced coupling
     npt.assert_allclose(np.asarray(out), 0.04)  # 2 × the band's 2g max element

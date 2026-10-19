@@ -9,11 +9,12 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
+from scipy import sparse
 
 from quchip.chip.ports import Port
 from quchip.engine.field_noise import amplifier_values, attenuation_value, noise_parameters, thermal_occupation_value
 from quchip.engine.output_network import pad_mixing
-from quchip.engine.slh import _same_carrier
+from quchip.engine.slh import CompiledChannel, CompiledNetwork, ModeResponse, _same_carrier, cascade_hamiltonian
 from quchip.engine.reference import (
     FieldChannel,
     ReferenceAmplifier,
@@ -453,22 +454,6 @@ class _AffineField:
     support: list[bool]
 
 
-@dataclass(frozen=True)
-class _CompiledChannel:
-    exposure: NetworkPort
-    coupling: Mapping[str, Any]
-    reference: ReferencePlane
-
-
-@dataclass(frozen=True)
-class _CompiledNetwork:
-    channels: tuple[_CompiledChannel, ...]
-    scattering: Any
-    generated_pairs: tuple[tuple[str, str, Any], ...]
-    support: np.ndarray
-    output_network: Any = None
-
-
 class PortNetwork:
     """Compose Markovian ports with instantaneous scalar scattering.
 
@@ -525,6 +510,7 @@ class PortNetwork:
         self._connections: dict[TerminalKey, TerminalKey] = {}
         self._used_outputs: dict[TerminalKey, TerminalKey] = {}
         self._exposures: list[NetworkPort] = []
+        self._mode_responses: tuple[ModeResponse, ...] = ()
 
     @classmethod
     def from_ports(
@@ -615,7 +601,13 @@ class PortNetwork:
 
     @property
     def parameters(self) -> Mapping[str, Any]:
-        """Return bindable scalar network parameters visible in authored scattering."""
+        """Return bindable scalar parameters of the network and retained responses.
+
+        Paths are ``scattering.<output>.<input>``, ``component.<label>.<name>``
+        and ``response.<mode>.<name>``. A retained mode response has ``freq`` in
+        GHz, a dimensionless ``weight`` and ``internal_rate`` in 1/ns. The
+        ``internal_rate`` already includes the weight.
+        """
         values: dict[str, Any] = {}
         if isinstance(self._authored_scattering, Mapping):
             for (output, input_), value in self._authored_scattering.items():
@@ -623,6 +615,9 @@ class PortNetwork:
         for component in self.components:
             for name, value in component._parameters.items():
                 values[f"component.{component.label}.{name}"] = value
+        for mode in self._mode_responses:
+            for name in ("freq", "weight", "internal_rate"):
+                values[f"response.{mode.label}.{name}"] = getattr(mode, name)
         return MappingProxyType(values)
 
     def set_parameter_value(self, name: str, value: Any) -> None:
@@ -631,9 +626,10 @@ class PortNetwork:
         Parameters
         ----------
         name : str
-            Path below ``scattering`` or ``component``.
+            Path below ``scattering``, ``component`` or ``response``.
         value : Any
-            Replacement scalar in the component parameter's declared units.
+            Replacement scalar in the parameter's units. :attr:`parameters` gives
+            the units of retained mode responses.
         """
         parts = name.split(".")
         if (
@@ -650,6 +646,13 @@ class PortNetwork:
             if component is not None and parts[2] in component._parameters:
                 component._parameters[parts[2]] = value
                 return
+        if len(parts) == 3 and parts[0] == "response" and parts[2] in {"freq", "weight", "internal_rate"}:
+            for index, mode in enumerate(self._mode_responses):
+                if mode.label == parts[1]:
+                    modes = list(self._mode_responses)
+                    modes[index] = replace(mode, **{parts[2]: value})
+                    self._mode_responses = tuple(modes)
+                    return
         raise KeyError(name)
 
     def port(
@@ -1300,10 +1303,13 @@ class PortNetwork:
             tuple(self._connections.items()),
             tuple((item.label, item._input_key, item._output_key) for item in self._exposures),
             self._cache_value(self._authored_scattering),
+            tuple((mode.label, mode.ports, *(self._cache_value(getattr(mode, name))
+                                           for name in ("freq", "weight", "internal_rate")))
+                  for mode in self._mode_responses),
         )
 
     def resolve(
-        self, base: "ResolvedSLH", *, _compiled: _CompiledNetwork | None = None,
+        self, base: "ResolvedSLH", *, _compiled: CompiledNetwork | None = None, _generated: Any = None,
     ) -> "ResolvedSLH":
         """Compose this boundary onto an input-free SLH value.
 
@@ -1373,7 +1379,9 @@ class PortNetwork:
                 )
             )
 
-        generated = self._materialize_generated_hamiltonian(compiled.generated_pairs, operators)
+        # A compact caller supplies the generated Hamiltonian, formed on each pair's joint support before
+        # projection, because composing projected ports drops exchanges through labels outside its space.
+        generated = self._materialize_generated_hamiltonian(compiled.generated_pairs, operators, _generated)
         static_terms = base.H.static_terms
         if generated is not None:
             static_terms = (*static_terms, StaticTerm(operator=generated, origin="network"))
@@ -1396,7 +1404,7 @@ class PortNetwork:
             output_network=compiled.output_network,
         )
 
-    def _field_channels(self, compiled: _CompiledNetwork) -> tuple[FieldChannel, ...]:
+    def _field_channels(self, compiled: CompiledNetwork) -> tuple[FieldChannel, ...]:
         """Resolve source states once for both operator and compact mode solvers."""
         xp = select_array_module(contains_tracer(compiled.scattering))
         scattering = xp.asarray(compiled.scattering)
@@ -1422,7 +1430,7 @@ class PortNetwork:
         return tuple(fields)
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize a static network graph and its quantum ports."""
+        """Serialize the network graph, quantum ports and retained mode responses."""
         filters = [component.label for component in self.components if component._kind == "filter"]
         if filters:
             raise TypeError(
@@ -1433,6 +1441,12 @@ class PortNetwork:
         return {
             "label": self.label,
             "ports": [port.to_dict() for port in self._ports],
+            **({"mode_responses": [
+                {"label": mode.label, "ports": list(mode.ports),
+                 **{name: self._serialize_scalar(getattr(mode, name))
+                    for name in ("freq", "weight", "internal_rate")}}
+                for mode in self._mode_responses
+            ]} if self._mode_responses else {}),
             "scattering": self._serialize_boundary(self._authored_scattering),
             "components": [
                 self._serialize_component(component)
@@ -1479,7 +1493,7 @@ class PortNetwork:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "PortNetwork":
-        """Reconstruct a static network produced by :meth:`to_dict`.
+        """Reconstruct a network produced by :meth:`to_dict`.
 
         Parameters
         ----------
@@ -1491,6 +1505,7 @@ class PortNetwork:
             "ports",
             "scattering",
             "components",
+            "mode_responses",
             "connections",
             "exposures",
         }
@@ -1534,6 +1549,17 @@ class PortNetwork:
                 input=FieldTerminal(input_component, input_name, "input", network._token),
                 output=FieldTerminal(output_component, output_name, "output", network._token),
             )
+        known = {port.label for port in network._ports}
+        for payload in data.get("mode_responses", ()):
+            ports = tuple(payload["ports"])
+            if not ports or len(set(ports)) != len(ports) or not known.issuperset(ports):
+                raise ValueError(f"Mode response {payload['label']!r} must name distinct ports of this network, "
+                                 f"got {list(ports)}. Available ports: {sorted(known)}.")
+        network._mode_responses = tuple(
+            ModeResponse(payload["label"], tuple(payload["ports"]),
+                          *(cls._deserialize_scalar(payload[name]) for name in ("freq", "weight", "internal_rate")))
+            for payload in data.get("mode_responses", ())
+        )
         return network
 
     def copy(self) -> "PortNetwork":
@@ -1563,8 +1589,9 @@ class PortNetwork:
         KeyError
             A selected port is not part of this network.
         ValueError
-            A reachable subgraph also touches an unselected port, or boundary
-            scattering couples kept and dropped planes.
+            A reachable subgraph also touches an unselected port, boundary
+            scattering couples kept and dropped planes, or the kept ports hold
+            only part of a retained mode response.
         """
         labels = {port if isinstance(port, str) else port.label for port in ports}
         known = {port.label for port in self._ports}
@@ -1784,6 +1811,10 @@ class PortNetwork:
     def _copy_graph(self, replacements: Mapping[str, Port], keep: set[str] | None) -> "PortNetwork":
         """Copy the components in ``keep`` (all when ``None``) with their wiring and parameters."""
         kept = keep if keep is not None else {component.label for component in self.components}
+        for mode in self._mode_responses:
+            if set(mode.ports) & kept and not set(mode.ports) <= kept:
+                raise ValueError(f"Retained mode response {mode.label!r} needs all of its ports "
+                                 f"{sorted(mode.ports)}. Restrict them together.")
         scattering = copy_value(self._authored_scattering) if keep is None else self._restricted_boundary(kept)
         copied = PortNetwork(scattering=scattering, label=self.label)
         for component in self.components:
@@ -1805,19 +1836,30 @@ class PortNetwork:
             for exposure in self._exposures
             if exposure._input_key[0] in kept
         ]
+        copied._mode_responses = tuple(
+            replace(mode, **{name: copy_value(getattr(mode, name)) for name in ("freq", "weight", "internal_rate")})
+            for mode in self._mode_responses if set(mode.ports) <= kept
+        )
         return copied
 
     def physics_notes(self) -> list[str]:
         """Return the boundary convention and approximation scope."""
-        return [
+        notes = [
             "This instantaneous Markovian boundary uses b_out = S b_in + L; scalar S is unitary after "
             "explicit loss dilation; declared thermal input states enter the quantum dynamics.",
             "Reference sections shift incident and reported fields at external planes only; they do not "
             "enter S, L, or H and cannot sit inside feedback loops. Acyclic output mixing preserves joint noise.",
         ]
+        if self._mode_responses:
+            notes.append(
+                "Retained multiport harmonic poles enter vacuum VNA sweeps at their original port locations. "
+                "Quantum dynamics use only the transformed Markov channels. "
+                "The dissipative reduction remains dispersive."
+            )
+        return notes
 
     def dynamical_supports(
-        self, chip: Any, *, _compiled: _CompiledNetwork | None = None,
+        self, chip: Any, *, _compiled: CompiledNetwork | None = None,
     ) -> tuple[tuple[str, ...], ...]:
         """Return device groups coupled by cascade-generated Hamiltonian terms.
 
@@ -1845,7 +1887,7 @@ class PortNetwork:
         return tuple(groups)
 
     def fed_ports(
-        self, chip: Any, exposure: str, *, _compiled: _CompiledNetwork | None = None,
+        self, chip: Any, exposure: str, *, _compiled: CompiledNetwork | None = None,
     ) -> list[tuple[Any, Any]]:
         """Return ``(port, coefficient)`` pairs reached from ``exposure``.
 
@@ -1874,6 +1916,34 @@ class PortNetwork:
             for source in self._active_mapping_sources(mapping):
                 fed.append((chip.port(source), gain * mapping[source]))
         return fed
+
+    def _responses_by_output(
+        self, *, recorded: bool = False, _compiled: CompiledNetwork | None = None,
+    ) -> dict[str, tuple[str, ...]]:
+        """Return the retained mode responses whose ports emit into each output channel.
+
+        The keys are the exposure labels of the affected channels. A channel
+        whose coupling has no active weight on a response port is absent.
+        With ``recorded``, a port also counts the removed modes that it
+        records, whose kept response its Markov field lacks.
+        """
+        owners: dict[str, set[str]] = {}
+        for mode in self._mode_responses:
+            for label in mode.ports:
+                owners.setdefault(label, set()).add(mode.label)
+        for port in self._ports if recorded else ():
+            if port._omitted_responses:
+                owners.setdefault(port.label, set()).update(port._omitted_responses)
+        if not owners:
+            return {}
+        compiled = self._compile() if _compiled is None else _compiled
+        reached: dict[str, tuple[str, ...]] = {}
+        for channel in compiled.channels:
+            labels = sorted({label for source in self._active_mapping_sources(channel.coupling)
+                             for label in owners.get(source, ())})
+            if labels:
+                reached[channel.exposure.label] = tuple(labels)
+        return reached
 
     @staticmethod
     def _active_pairs(
@@ -2112,7 +2182,7 @@ class PortNetwork:
     def _compile(
         self, *, _embedded: Mapping[TerminalKey, ReferenceElement] | None = None,
         _retained: Mapping[str, ReferencePlane] | None = None,
-    ) -> _CompiledNetwork:
+    ) -> CompiledNetwork:
         exposures = self._effective_exposures()
         traversals: set[TerminalKey] = set()
         peeled = [self._peel(exposure, traversals=traversals) for exposure in exposures]
@@ -2257,9 +2327,9 @@ class PortNetwork:
             support_matrix = (mixes.astype(int) @ support_matrix.astype(int)) > 0
 
         self._validate_unitary(scattering)
-        return _CompiledNetwork(
+        return CompiledNetwork(
             channels=tuple(
-                _CompiledChannel(exposure, MappingProxyType(mapping), plane)
+                CompiledChannel(exposure, MappingProxyType(mapping), plane)
                 for exposure, mapping, plane in zip(exposures, coupling_maps, planes, strict=True)
             ),
             scattering=scattering,
@@ -2522,22 +2592,36 @@ class PortNetwork:
         self,
         pairs: Sequence[tuple[str, str, Any]],
         operators: dict[str, Any],
+        values: Any = None,
     ) -> Any | None:
         from quchip.engine.ir import CanonicalOperator
 
         if not pairs:
             return None
         first = next(iter(operators.values()))
-        prefer_jax = contains_tracer((pairs, tuple(operator.values for operator in operators.values())))
-        xp = select_array_module(prefer_jax)
-        values = xp.zeros(first.shape, dtype=complex)
-        for downstream, upstream, coefficient in pairs:
-            left = xp.asarray(operators[downstream].to_dense())
-            right = xp.asarray(operators[upstream].to_dense())
-            product = xp.conj(xp.swapaxes(left, -1, -2)) @ (xp.asarray(coefficient) * right)
-            values = values + (product - xp.conj(xp.swapaxes(product, -1, -2))) / (2j)
-        if not contains_tracer(values) and np.allclose(np.asarray(values), 0.0):
+        if values is None:
+            values = cascade_hamiltonian([
+                (operators[downstream].to_dense(), operators[upstream].to_dense(), coefficient)
+                for downstream, upstream, coefficient in pairs
+            ])
+        elif sparse.issparse(values) and not values.count_nonzero():
+            values = None
+        elif not sparse.issparse(values) and not contains_tracer(values) and not np.any(np.asarray(values)):
+            # The compact caller already dropped each local term below the round-off threshold.
+            values = None
+        if values is None:
             return None
+        if sparse.issparse(values):
+            return CanonicalOperator.from_csr(
+                values.data,
+                values.indices,
+                values.indptr,
+                shape=values.shape,
+                dims=first.dims,
+                basis=first.basis,
+                subsystem_labels=first.subsystem_labels,
+                tag=f"slh-network:{self.label}",
+            )
         return CanonicalOperator.from_dense(
             values,
             dims=first.dims,

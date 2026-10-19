@@ -1,8 +1,8 @@
 """Schrieffer-Wolff reduction kernels (2nd order) on bare chip blocks.
 
 Kernels follow their inputs: a concrete chip reduces with NumPy on the host,
-and a traced chip reduces with ``jax.numpy``. A conditional host check reports
-coupled singularities. No traced physics is coerced to Python scalars. ``H`` is
+and a traced chip reduces with ``jax.numpy``. A host check reports coupled
+singularities, also under tracing. No traced physics is coerced to Python scalars. ``H`` is
 the chip's bare Hamiltonian in the C-order product basis, in ordinary GHz.
 
 The partition eliminates one mode: P is the mode in its ground state, and Q is
@@ -23,16 +23,16 @@ References: Bravyi, DiVincenzo & Loss, Ann. Phys. 326, 2793 (2011)
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
-from quchip.chip.dressing import BareProductReference, Labeling, assign_rowwise_greedy, label_eigensystem
-from quchip.utils.jax_utils import concrete_array_module, contains_tracer
+from quchip.engine.excitation import sector_eigh
+from quchip.engine.dressing import BareProductReference, Labeling, assign_rowwise_greedy, label_eigensystem
+from quchip.utils.jax_utils import concrete_array_module, contains_tracer, raise_if
 
 if TYPE_CHECKING:
     from quchip.approximations import Approximation
@@ -41,6 +41,65 @@ if TYPE_CHECKING:
 #: Matrix elements at or below this magnitude are treated as structural zeros
 #: when selecting *which* entries feed a diagnostic (never on the value path).
 _WORKING_PRECISION = 1e-12
+#: Smallest largest-weight that gives a diagnostic label its majority dressed state.
+_MAJORITY_WEIGHT = .5 + 1e-6
+#: Largest residual ``‖X G X − I‖`` of the symmetric orthonormalization ``X = G^(-1/2)``.
+_ORTHONORMALIZATION_RESIDUAL = 1e-9
+_DEGENERACY_MESSAGE = ("Schrieffer-Wolff reduction is undefined for degenerate levels with nonzero coupling. "
+                       "Keep the coupled levels together or change the operating point.")
+_GRAM_MESSAGE = ("The projected dressed-state Gram matrix is singular or too ill-conditioned "
+                 "for stable symmetric orthonormalization.")
+
+
+class EliminationError(ValueError):
+    """A check of :func:`~quchip.chip.transformations.eliminate` failed.
+
+    The string form is the message of the check followed by its values. Inside
+    ``jax.jit`` the check runs in a host callback, so the caller receives a JAX
+    runtime error with the same text instead of this type.
+
+    Parameters
+    ----------
+    message : str
+        The message of the check followed by its values.
+    route, check, devices, label, weight, levels, coupling, residual, threshold : optional
+        Keywords that set the attributes below.
+
+    Attributes
+    ----------
+    route : str
+        ``"sw"`` or ``"exact"``.
+    check : str
+        ``"degeneracy"`` when two coupled levels have the same bare energy,
+        ``"labeling"`` when a diagnostic label has no distinct majority dressed
+        state, or ``"orthonormalization"`` when the kept overlap matrix cannot
+        be orthonormalized stably.
+    devices : tuple of str
+        Device order of the occupations in ``label`` and ``levels``.
+    label : tuple of int or None
+        The diagnostic label that failed the labeling check.
+    weight : float or None
+        Its largest dressed weight.
+    levels : tuple of tuple of int, or None
+        The two coupled levels that failed the degeneracy check.
+    coupling : complex or None
+        Their coupling element in GHz.
+    residual : float or None
+        The orthonormalization residual.
+    threshold : float or None
+        The bound of the check: the smallest weight of a label, or the
+        largest residual.
+    """
+
+    def __init__(self, message: str, *, route: str | None = None, check: str | None = None,
+                 devices: tuple[str, ...] = (), label: tuple[int, ...] | None = None, weight: float | None = None,
+                 levels: tuple[tuple[int, ...], ...] | None = None, coupling: complex | None = None,
+                 residual: float | None = None, threshold: float | None = None) -> None:
+        super().__init__(message)
+        self.route, self.check, self.devices = route, check, devices
+        self.label, self.weight = label, weight
+        self.levels, self.coupling = levels, coupling
+        self.residual, self.threshold = residual, threshold
 
 
 def bare_hamiltonian(
@@ -103,15 +162,27 @@ def cross_block_gap(h: Any, p_mask: Any) -> Any:
     return xp.min(xp.where(active, xp.abs(energies[:, None] - energies[None, :]), xp.inf))
 
 
-def _reject_coupled_degeneracy(invalid: Any) -> None:
-    if bool(invalid):
-        raise ValueError(
-            "Schrieffer-Wolff reduction is undefined for degenerate levels with nonzero coupling. "
-            "Keep the coupled levels together or change the operating point."
+def _coupled_degeneracy(row: Any, column: Any, coupling: Any, energy: Any) -> Exception:
+    return ValueError(_DEGENERACY_MESSAGE)
+
+
+def degeneracy_error(labels: Any, dims: tuple[int, ...]) -> Any:
+    """Return the error of a coupled degeneracy that names its levels in the product basis of ``labels``."""
+    devices = tuple(labels)
+
+    def error(row: Any, column: Any, coupling: Any, energy: Any) -> Exception:
+        levels = tuple(tuple(int(level) for level in np.unravel_index(int(index), dims)) for index in (row, column))
+        element = complex(coupling)
+        return EliminationError(
+            f"{_DEGENERACY_MESSAGE} Levels {levels[0]} and {levels[1]} of {devices} have the same bare energy, "
+            f"{float(energy):.6g} GHz, and a coupling element of magnitude {abs(element):.3g} GHz.",
+            route="sw", check="degeneracy", devices=devices, levels=levels, coupling=element,
         )
 
+    return error
 
-def sylvester_generator(h: Any, p_mask: Any) -> tuple[Any, Any]:
+
+def sylvester_generator(h: Any, p_mask: Any, *, error: Any = None) -> tuple[Any, Any]:
     """Generator ``S`` that solves the P↔Q Sylvester condition, and the block-gap diagnostic.
 
     ``E = diag(H)`` are the bare energies and ``V = H − diag(E)``.
@@ -119,12 +190,11 @@ def sylvester_generator(h: Any, p_mask: Any) -> tuple[Any, Any]:
     double-``where`` guard, so an exactly degenerate cross pair with no matrix
     element between it contributes zero with a finite gradient. It does not
     propagate a ``NaN`` backward through the unselected branch. A coupled
-    degeneracy raises.
+    degeneracy raises ``error(row, column, coupling, energy)``, by default a
+    ``ValueError``; :func:`degeneracy_error` names the levels.
 
-    Traced execution uses a conditional error callback and marks invalid
-    outputs NaN, so an elided debug effect cannot return a plausible generator.
-    Valid vmapped calls can still dispatch the predicate check to the host
-    under JAX's conditional batching rule.
+    Traced execution checks through a host callback that also survives callers
+    requesting only a gradient, and marks invalid outputs NaN.
 
     Returns
     -------
@@ -138,24 +208,23 @@ def sylvester_generator(h: Any, p_mask: Any) -> tuple[Any, Any]:
     energies = xp.real(xp.diagonal(h))
     v = h - xp.diag(xp.diagonal(h))
     cross = p_mask[:, None] ^ p_mask[None, :]
-    return interaction_generator(energies, xp.where(cross, v, 0.0)), cross_block_gap(h, p_mask)
+    return interaction_generator(energies, xp.where(cross, v, 0.0), error=error), cross_block_gap(h, p_mask)
 
 
-def interaction_generator(energies: Any, interaction: Any) -> Any:
-    """First-order anti-Hermitian generator that removes the off-diagonal part of an interaction."""
+def interaction_generator(energies: Any, interaction: Any, *, error: Any = None) -> Any:
+    """First-order anti-Hermitian generator that removes the off-diagonal part of an interaction.
+
+    A coupled degeneracy raises ``error(row, column, coupling, energy)`` for its first pair, by default a
+    ``ValueError`` (:func:`sylvester_generator`).
+    """
     xp = concrete_array_module(energies, interaction)
     denom = energies[:, None] - energies[None, :]
     v = interaction - xp.diag(xp.diagonal(interaction))
-    invalid = xp.any((denom == 0.0) & (v != 0.0))
-    if xp is jnp:
-        jax.lax.cond(
-            invalid,
-            lambda flag: jax.debug.callback(_reject_coupled_degeneracy, flag),
-            lambda flag: None,
-            invalid,
-        )
-    else:
-        _reject_coupled_degeneracy(invalid)
+    degenerate = (denom == 0.0) & (v != 0.0)
+    invalid = xp.any(degenerate)
+    first = xp.argmax(degenerate.ravel())
+    row, column = first // v.shape[1], first % v.shape[1]
+    raise_if(invalid, error or _coupled_degeneracy, row, column, v.ravel()[first], energies[row])
     s = v / xp.where(denom != 0.0, denom, 1.0)
     return xp.where(invalid, xp.full_like(s, xp.nan), s)
 
@@ -223,45 +292,6 @@ def extract_pair_parameters(
     return params
 
 
-def excitation_sectors(dims: tuple[int, ...]) -> np.ndarray:
-    """Total energy-level index of every C-order product state."""
-    return np.indices(tuple(dims)).reshape(len(dims), -1).sum(axis=0)
-
-
-def _sector_eigh(h: Any, sectors: np.ndarray) -> tuple[Any, Any]:
-    """Diagonalize each total-excitation block; return ascending eigenpairs.
-
-    Eigenvectors have exact zeros outside their own sector, so round-off can
-    neither mix sectors nor make the result depend on near-degeneracies
-    between them. A concrete Hamiltonian is diagonalized on the host, where
-    the differently sized blocks compile no device programs.
-    """
-    if not contains_tracer(h):
-        h = np.asarray(h)
-        eigenvalues: Any = np.zeros(h.shape[0], dtype=h.real.dtype)
-        eigenvectors: Any = np.zeros(h.shape, dtype=h.dtype)
-        start = 0
-        for sector in np.unique(sectors):
-            rows = np.flatnonzero(sectors == sector)
-            columns = np.arange(start, start + rows.size)
-            eigenvalues[columns], eigenvectors[np.ix_(rows, columns)] = np.linalg.eigh(h[np.ix_(rows, rows)])
-            start += rows.size
-        order: Any = np.argsort(eigenvalues, kind="stable")
-        return eigenvalues[order], eigenvectors[:, order]
-    eigenvalues = jnp.zeros(h.shape[0], dtype=h.real.dtype)
-    eigenvectors = jnp.zeros(h.shape, dtype=h.dtype)
-    start = 0
-    for sector in np.unique(sectors):
-        rows = np.flatnonzero(sectors == sector)
-        columns = np.arange(start, start + rows.size)
-        values, vectors = jnp.linalg.eigh(h[np.ix_(rows, rows)])
-        eigenvalues = eigenvalues.at[columns].set(values)
-        eigenvectors = eigenvectors.at[np.ix_(rows, columns)].set(vectors)
-        start += rows.size
-    order = jnp.argsort(eigenvalues)
-    return eigenvalues[order], eigenvectors[:, order]
-
-
 def _eigh(h: Any) -> tuple[Any, Any]:
     """Ascending eigenpairs of a Hermitian matrix, computed on the host when it is concrete."""
     return jnp.linalg.eigh(h) if contains_tracer(h) else np.linalg.eigh(np.asarray(h))
@@ -274,7 +304,7 @@ def _exact_eigensystem(h: Any, dims: tuple[int, ...], sectors: np.ndarray | None
     Hamiltonian is known to conserve it; each sector is then diagonalized
     separately.
     """
-    eigenvalues, eigenvectors = _eigh(h) if sectors is None else _sector_eigh(h, sectors)
+    eigenvalues, eigenvectors = _eigh(h) if sectors is None else sector_eigh(h, sectors)
     labeling = label_eigensystem(
         eigenvectors,
         BareProductReference(dims),
@@ -283,23 +313,22 @@ def _exact_eigensystem(h: Any, dims: tuple[int, ...], sectors: np.ndarray | None
     return eigenvalues, eigenvectors, labeling
 
 
-def _raise_exact_condition(invalid: Any, *, message: str) -> None:
-    if bool(invalid):
-        raise ValueError(message)
+def _ill_conditioned_gram(residual: Any) -> Exception:
+    return ValueError(_GRAM_MESSAGE)
 
 
-def _check_exact_condition(invalid: Any, message: str) -> None:
-    if contains_tracer(invalid):
-        # An effectful check also survives callers requesting only a gradient.
-        jax.experimental.io_callback(
-            partial(_raise_exact_condition, message=message), None, jax.lax.stop_gradient(invalid),
-        )
-    else:
-        _raise_exact_condition(invalid, message=message)
+def _orthonormalization_error(residual: Any) -> Exception:
+    value = float(residual)
+    detail = (f"Its residual is {value:.3g}, above the threshold {_ORTHONORMALIZATION_RESIDUAL:.0e}."
+              if np.isfinite(value) else "Its residual is not finite.")
+    return EliminationError(
+        f"{_GRAM_MESSAGE} {detail}",
+        route="exact", check="orthonormalization", residual=value, threshold=_ORTHONORMALIZATION_RESIDUAL,
+    )
 
 
-def _inverse_sqrt_hermitian(matrix: Any, iterations: int = 64) -> Any:
-    """Return a differentiable inverse square root of a positive-definite Hermitian matrix.
+def _inverse_sqrt_hermitian(matrix: Any, iterations: int = 64, *, error: Any = None) -> tuple[Any, Any]:
+    """Return a differentiable inverse square root of a positive-definite Hermitian matrix, and its residual.
 
     The coupled Newton-Schulz iteration evaluates the matrix function through
     products and sums. It therefore avoids eigenvector derivatives, which are
@@ -307,7 +336,8 @@ def _inverse_sqrt_hermitian(matrix: Any, iterations: int = 64) -> Any:
     square root remains smooth. Eager and traced calls verify the defining
     residual; the fixed iteration count keeps the traced path compatible with reverse-
     mode differentiation and resolves condition numbers through ``1e8`` in
-    double precision.
+    double precision. A residual ``‖X M X − I‖`` above ``1e-9``, or a
+    non-finite one, raises ``error(residual)``, by default a ``ValueError``.
     """
     xp = concrete_array_module(matrix)
     matrix = 0.5 * (matrix + matrix.conj().T)
@@ -322,42 +352,52 @@ def _inverse_sqrt_hermitian(matrix: Any, iterations: int = 64) -> Any:
     inverse_sqrt = z / xp.sqrt(scale)
     inverse_sqrt = 0.5 * (inverse_sqrt + inverse_sqrt.conj().T)
     residual = xp.linalg.norm(inverse_sqrt @ matrix @ inverse_sqrt - identity)
-    _check_exact_condition(
-        ~xp.isfinite(residual) | (residual > 1e-9),
-        "The projected dressed-state Gram matrix is singular or too ill-conditioned "
-        "for stable symmetric orthonormalization.",
-    )
-    return inverse_sqrt
+    raise_if(~xp.isfinite(residual) | (residual > _ORTHONORMALIZATION_RESIDUAL), error or _ill_conditioned_gram,
+             residual)
+    return inverse_sqrt, residual
 
 
 @dataclass(frozen=True)
 class ExactSubspace:
-    """One orthonormal kept coordinate map and its exact Hamiltonian."""
+    """One orthonormal kept coordinate map and its exact Hamiltonian.
+
+    ``gram`` is the overlap matrix of the kept dressed states on the kept bare
+    states, and ``residual`` the error of its symmetric orthonormalization.
+    ``label_margins`` holds the labeling report of :func:`exact_mode_subspace`.
+    """
 
     hamiltonian: Any
     embedding: Any
     energies: Any
     kept_indices: Any
+    gram: Any = None
+    residual: Any = None
+    label_margins: dict | None = None
 
     def transform_operator(self, operator: Any) -> Any:
         xp = concrete_array_module(self.embedding, operator)
         return self.embedding.conj().T @ xp.asarray(operator) @ self.embedding
 
 
-def exact_subspace(eigenvalues: Any, eigenvectors: Any, kept_indices: Any, dressed_indices: Any) -> ExactSubspace:
-    """Use one Lowdin map for a complete kept Hamiltonian and every operator."""
+def exact_subspace(eigenvalues: Any, eigenvectors: Any, kept_indices: Any, dressed_indices: Any, *,
+                   error: Any = None) -> ExactSubspace:
+    """Use one Lowdin map for a complete kept Hamiltonian and every operator.
+
+    An unstable orthonormalization raises ``error(residual)``, by default a ``ValueError``.
+    """
     kept = np.array(kept_indices, dtype=int, copy=True)
     kept.flags.writeable = False
     xp = concrete_array_module(eigenvalues, eigenvectors, dressed_indices)
     selected = xp.asarray(eigenvectors)[:, xp.asarray(dressed_indices)]
     energies = xp.asarray(eigenvalues)[xp.asarray(dressed_indices)]
     w = selected[kept]
-    inverse_sqrt = _inverse_sqrt_hermitian(w @ w.conj().T)
+    gram = w @ w.conj().T
+    inverse_sqrt, residual = _inverse_sqrt_hermitian(gram, error=error)
     unitary = inverse_sqrt @ w
     embedding = selected @ unitary.conj().T
     hamiltonian = (unitary * energies) @ unitary.conj().T
     hamiltonian = .5 * (hamiltonian + hamiltonian.conj().T)
-    return ExactSubspace(hamiltonian, embedding, energies, kept)
+    return ExactSubspace(hamiltonian, embedding, energies, kept, gram, residual)
 
 
 def exact_mode_subspace(h: Any, labels: list[str], dims: tuple[int, ...], mode_label: str,
@@ -368,6 +408,15 @@ def exact_mode_subspace(h: Any, labels: list[str], dims: tuple[int, ...], mode_l
     With ``sectors``, the Hamiltonian conserves total excitation number and the
     kept map keeps every sector separate.
     Reuse ``eigensystem`` when the caller already diagonalized and labeled ``h``.
+
+    The diagnostic labels are the ground state and the single and pair
+    excitations of the survivors. Each needs a distinct majority dressed state,
+    with a largest weight of at least ``0.5 + 1e-6``, and the kept overlap
+    matrix needs a stable orthonormalization. A failed check raises
+    :class:`EliminationError`. ``label_margins`` of the result reports, for
+    each diagnostic label in the occupation order of ``labels``, its largest
+    weight, the runner-up and the margin to that threshold, and the smallest
+    eigenvalue of the overlap matrix, the residual and its margin to ``1e-9``.
     """
     eigenvalues, eigenvectors, labeling = _exact_eigensystem(h, dims, sectors) if eigensystem is None else eigensystem
     p_mask, _ = mode_blocks(dims, labels, mode_label)
@@ -387,13 +436,46 @@ def exact_mode_subspace(h: Any, labels: list[str], dims: tuple[int, ...], mode_l
     weights = xp.abs(eigenvectors[rows]) ** 2
     best = xp.argmax(weights, axis=1)
     duplicate = xp.any(xp.triu(best[:, None] == best[None, :], k=1))
-    _check_exact_condition(
-        duplicate | xp.any(xp.max(weights, axis=1) < .5 + 1e-6),
+    ranked = xp.sort(weights, axis=1)
+    largest, runner_up = ranked[:, -1], ranked[:, -2]
+    raise_if(duplicate | xp.any(largest < _MAJORITY_WEIGHT),
+             partial(_labeling_error, mode_label, tuple(labels), diagnostics), largest, best)
+    subspace = exact_subspace(eigenvalues, eigenvectors, kept, xp.asarray(labeling.indices)[kept],
+                              error=_orthonormalization_error)
+    margins = largest - _MAJORITY_WEIGHT
+    residual_margin = _ORTHONORMALIZATION_RESIDUAL - subspace.residual
+    report = {
+        "labels": {occupation: {"weight": largest[row], "runner_up": runner_up[row], "margin": margins[row]}
+                   for row, occupation in enumerate(diagnostics)},
+        "threshold": _MAJORITY_WEIGHT,
+        "margin": xp.min(margins),
+        "gram_min_eigenvalue": xp.linalg.eigvalsh(subspace.gram)[0],
+        "residual": subspace.residual,
+        "residual_threshold": _ORTHONORMALIZATION_RESIDUAL,
+        "residual_margin": residual_margin,
+        "is_valid": (xp.min(margins) >= 0) & (residual_margin >= 0) & ~duplicate,
+    }
+    return replace(subspace, label_margins=report)
+
+
+def _labeling_error(mode_label: str, devices: tuple[str, ...], diagnostics: list[tuple[int, ...]],
+                    largest: Any, best: Any) -> Exception:
+    largest, best = np.asarray(largest), np.asarray(best)
+    row = int(np.argmin(largest))
+    if largest[row] >= _MAJORITY_WEIGHT:
+        # Every label has a majority, so two of them share one dressed state.
+        row = next(index for index in range(len(best)) if np.count_nonzero(best[:index] == best[index]))
+        detail = f"Label {diagnostics[row]} of {devices} shares its majority dressed state with another label."
+    else:
+        detail = (f"Label {diagnostics[row]} of {devices} has largest dressed weight {largest[row]:.7g}, "
+                  f"below the threshold {_MAJORITY_WEIGHT:.7g}.")
+    return EliminationError(
         f"Exact reduction of {mode_label!r} cannot label the kept block: Near-degenerate dressed states "
         "leave computational bare labels without distinct majority eigenstates. Shift the operating point "
-        "or use an appropriate SW reduction.",
+        f"or use an appropriate SW reduction. {detail}",
+        route="exact", check="labeling", devices=devices, label=diagnostics[row], weight=float(largest[row]),
+        threshold=_MAJORITY_WEIGHT,
     )
-    return exact_subspace(eigenvalues, eigenvectors, kept, xp.asarray(labeling.indices)[kept])
 
 
 def exact_pair_parameters(subspace: ExactSubspace, labels: list[str], dims: tuple[int, ...], mode_label: str,
@@ -415,21 +497,34 @@ def exact_pair_parameters(subspace: ExactSubspace, labels: list[str], dims: tupl
     return params
 
 
+def _generator_entries(couplings: Any, gaps: Any) -> Any:
+    """Return ``V / ΔE`` with the guard of :func:`interaction_generator`: zero for an uncoupled zero gap, NaN for a
+    coupled one."""
+    xp = concrete_array_module(couplings, gaps)
+    ratio = couplings / xp.where(gaps != 0.0, gaps, 1.0)
+    return xp.where((gaps == 0.0) & (couplings != 0.0), xp.nan, ratio)
+
+
 def pathway_attribution(h: Any, s: Any, p_mask: Any, i_idx: int, j_idx: int) -> list[tuple[int, Any]]:
     """Virtual-state attribution for one ``H_eff`` matrix element.
 
     Intermediate ``|k⟩``'s contribution to ``(½[S, V])_ij`` is
-    ``½ V_ik V_kj (1/(E_i − E_k) + 1/(E_j − E_k))``, evaluated directly from the supplied generator
-    and its commutator. Returns ``(k, amount)`` pairs for the Q-block states that carry a nonzero
-    path at working precision. Under tracing, the nonzero filter cannot run, so every Q state is
-    returned. Either way the diagnostics stay complete, because extra entries are exact zeros.
+    ``½ V_ik V_kj (1/(E_i − E_k) + 1/(E_j − E_k))``, evaluated from the supplied generator and its
+    commutator. With ``s=None``, the two generator rows come from ``h``. Returns ``(k, amount)``
+    pairs for every Q-block state with a nonzero contribution, so the amounts sum to the second-order
+    part ``(H_eff − PHP)_ij``. Under tracing, the nonzero filter cannot run, so every Q state is
+    returned, and the extra entries are exact zeros.
     """
     xp = concrete_array_module(h, s)
     v = h - xp.diag(xp.diagonal(h))
-    amounts = 0.5 * (s[i_idx, :] * v[:, j_idx] - v[i_idx, :] * s[:, j_idx])
-
     q_index = np.flatnonzero(~np.asarray(p_mask))
+    if s is None:
+        energies = xp.real(xp.diagonal(h))
+        left = _generator_entries(v[i_idx, q_index], energies[i_idx] - energies[q_index])
+        right = _generator_entries(v[q_index, j_idx], energies[q_index] - energies[j_idx])
+    else:
+        left, right = s[i_idx, q_index], s[q_index, j_idx]
+    amounts = 0.5 * (left * v[q_index, j_idx] - v[i_idx, q_index] * right)
     if contains_tracer(amounts):
-        return [(int(k), amounts[int(k)]) for k in q_index]
-    path_strength = np.abs(np.asarray(v[i_idx, :])) * np.abs(np.asarray(v[:, j_idx]))
-    return [(int(k), amounts[int(k)]) for k in q_index if path_strength[int(k)] > _WORKING_PRECISION]
+        return [(int(k), amounts[row]) for row, k in enumerate(q_index)]
+    return [(int(q_index[row]), amounts[row]) for row in np.flatnonzero(np.asarray(amounts) != 0)]

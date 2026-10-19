@@ -39,6 +39,7 @@ from quchip.analysis import (  # noqa: E402
     effective_hamiltonian,
 )
 from quchip.approximations import Approximation, Exact, RWA  # noqa: E402
+from quchip.cutoff import ExcitationCutoff  # noqa: E402
 from quchip.backend import get_default_backend, set_default_backend  # noqa: E402
 from quchip.chip.effective import EffectiveTerms
 from quchip.chip import (
@@ -54,12 +55,15 @@ from quchip.chip import (
     Coupling,
     CrossKerr,
     DressedResult,
+    EliminationError,
     EliminationResult,
     ReductionMap,
     KerrMatrix,
+    SpectatorEliminationResult,
     TunableCapacitive,
     active_patch,
     eliminate,
+    eliminate_spectators,
     register_elimination_target,
     register_reduction_method,
     register_retarget_rule,
@@ -127,15 +131,21 @@ from quchip.engine import (
 )
 from quchip.interop import EigenbasisDevice, ModelMapping
 from quchip.inverse_design import FitADressResult, FitParameterReport, ObservableReport, fit_a_dress
+from quchip.engine.states import CompactState
 from quchip.results import (
+    ClickRecords,
+    MeasurementRecords,
     ObservableTrace,
     PartitionedSimulationResult,
+    PropagatorResult,
     SimulationBatchResult,
     SimulationResult,
     SteadyStateBatchResult,
     SteadyStateResult,
     MeanFieldResponseResult,
     SParameterResult,
+    ResonanceResult,
+    Resonance,
     OutputCorrelationResult,
     OutputSpectrumResult,
 )
@@ -163,9 +173,14 @@ _LAZY_VIZ_EXPORTS = {
 from quchip.results.terminal import IQReadout, StateMeasurement, StateSamples
 
 __all__ = [
+    "CompactState",
+    "check_truncation",
     "with_truncation",
     "with_monitoring",
     "TrajectoryResult",
+    "MeasurementRecords",
+    "ClickRecords",
+    "PropagatorResult",
     "IQReadout",
     "StateMeasurement",
     "StateSamples",
@@ -175,6 +190,8 @@ __all__ = [
     "Approximation",
     "Exact",
     "RWA",
+    # Retained-space policies
+    "ExcitationCutoff",
     # Declarative extension API
     "CollapseChannel",
     "EffectiveTerms",
@@ -229,9 +246,12 @@ __all__ = [
     "ComponentPort",
     "NetworkPort",
     "ChipTransform",
+    "EliminationError",
     "EliminationResult",
     "ReductionMap",
     "eliminate",
+    "eliminate_spectators",
+    "SpectatorEliminationResult",
     "ActivePatchResult",
     "active_patch",
     "register_retarget_rule",
@@ -263,6 +283,8 @@ __all__ = [
     "VNAMeasurementStatistics",
     "VNAMeasurementSamples",
     "SParameterResult",
+    "ResonanceResult",
+    "Resonance",
     "OutputSpectrumResult",
     "OutputCorrelationResult",
     "PartitionedSimulationResult",
@@ -399,6 +421,6 @@ def __dir__() -> list[str]:
     # tab-completion until first access.
     return sorted(set(globals()) | set(_LAZY_INTEROP_EXPORTS) | set(_LAZY_VIZ_EXPORTS))
 
-from quchip.engine.truncation import with_truncation
+from quchip.engine.truncation import check_truncation, with_truncation
 from quchip.engine.monitoring import with_monitoring
 from quchip.results.trajectories import TrajectoryResult

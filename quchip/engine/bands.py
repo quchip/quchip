@@ -52,9 +52,7 @@ __all__ = [
     "decompose_two_body_canonical_bands",
     "canonical_to_coo",
     "canonical_to_dense_array",
-    "concrete_excitation_changes",
     "local_mode_bands",
-    "embed_single_mode_bands",
     "prune_zero_diagonals",
 ]
 
@@ -157,30 +155,6 @@ def prune_zero_diagonals(canonical: CanonicalOperator) -> CanonicalOperator:
         subsystem_labels=canonical.subsystem_labels,
         tag=canonical.tag,
     )
-
-
-def concrete_excitation_changes(
-    matrix: Any,
-    dims: tuple[int, ...],
-    energy_vectors: Any | None = None,
-) -> frozenset[int] | None:
-    """Return the total level changes carried by a concrete operator.
-
-    ``matrix`` acts on a product basis whose energy-ordered states are the
-    columns of ``energy_vectors``; ``None`` means the product basis is already
-    energy ordered. ``dims`` counts the energy levels per subsystem. Exact
-    nonzero comparison can add round-off weights but never omits a band.
-    Traced payloads return ``None``: their bands are not statically known.
-    """
-    if contains_tracer((matrix, energy_vectors)):
-        return None
-    values = np.asarray(matrix, dtype=complex)
-    if energy_vectors is not None:
-        vectors = np.asarray(energy_vectors, dtype=complex)
-        values = vectors.conj().T @ values @ vectors
-    levels = np.indices(tuple(dims)).reshape(len(dims), -1).sum(axis=0)
-    rows, cols = np.nonzero(values)
-    return frozenset(int(change) for change in np.unique(levels[cols] - levels[rows]))
 
 
 def _decompose_dense_bands(
@@ -584,34 +558,6 @@ def local_mode_bands(
     return [
         (weight, backend.from_canonical_operator(band))
         for weight, band in sorted(bands.items(), key=lambda kv: kv[0])
-    ]
-
-
-def embed_single_mode_bands(
-    backend: Any,
-    local_op: Any,
-    *,
-    device_index: int,
-    dim: int,
-    label: str,
-    dims: tuple[int, ...],
-    semantic_to_solver: Any | None = None,
-) -> list[tuple[int, Any]]:
-    """Like :func:`local_mode_bands`, but each band is embedded into *dims*.
-
-    Returns ``[(weight, embedded_op), ...]``, where ``embedded_op`` acts on the
-    full chip Hilbert space, still in the lab frame and ordinary GHz (no
-    ``2π``).
-    """
-    return [
-        (weight, backend.embed(band_op, device_index, dims))
-        for weight, band_op in local_mode_bands(
-            backend,
-            local_op,
-            dim=dim,
-            label=label,
-            semantic_to_solver=semantic_to_solver,
-        )
     ]
 
 

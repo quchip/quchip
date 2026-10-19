@@ -2,97 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from math import prod
 from typing import Any, Mapping
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
 from quchip.declarative.dissipation import CollapseChannel
-from quchip.declarative.expr import PhysicsExpr, declared_excitation_changes, materialize_expr
+from quchip.declarative.expr import PhysicsExpr, materialize_expr
+from quchip.engine.excitation import authored_excitation_changes
 from quchip.utils.jax_utils import concrete_array_module, contains_tracer
 from quchip.utils.values import copy_value, value_fingerprint
-
-
-def authored_excitation_changes(
-    operator: Any,
-    labels: tuple[str, ...],
-    backend: Any,
-    bases: Mapping[str, Any] | None,
-) -> frozenset[int] | None:
-    """Return the total energy-level changes an authored operator carries.
-
-    A declared matrix contribution returns its declaration. Otherwise the
-    operator is evaluated at compile time in the captured energy bases of
-    ``labels``, so a constant operator stays concrete inside ``jax.jit``.
-    Missing bases, traced bases, or parameter-dependent operators return
-    ``None``.
-
-    Parameters
-    ----------
-    operator : PhysicsExpr or backend operator
-        Operator on ``labels`` in their authored coordinates.
-    labels : tuple[str, ...]
-        Ordered device labels supporting ``operator``.
-    backend : Backend
-        Backend used to materialize ``operator``.
-    bases : mapping or None
-        Captured basis records keyed by device label.
-    """
-    from quchip.engine.bands import concrete_excitation_changes
-
-    declared = declared_excitation_changes(operator)
-    if declared is not None:
-        return declared
-    if bases is None or any(label not in bases for label in labels):
-        return None
-    records = [bases[label] for label in labels]
-    with jax.ensure_compile_time_eval(), backend.eager_operators():
-        matrix = backend.to_array(materialize_expr(operator, backend, local_bases=bases))
-        vectors = records[0].energy_vectors
-        for record in records[1:]:
-            vectors = jnp.kron(vectors, record.energy_vectors)
-        dims = tuple(int(record.energy_vectors.shape[1]) for record in records)
-        return concrete_excitation_changes(matrix, dims, vectors)
-
-
-def conserves_excitation_number(chip: Any, approximation: Any) -> bool:
-    """Return whether a chip's static model structurally conserves the total energy-level index.
-
-    Device Hamiltonians are diagonal in their energy bases. The approximation
-    must keep only bands of zero total weight, and every retained term must
-    declare conservation. A port pair that generates the cascade Hamiltonian
-    ``Im(L2^dagger S2 L1)`` conserves the index when both port operators lower
-    it by one, as the ports of a shared feedline do.
-
-    Parameters
-    ----------
-    chip : Chip
-        Chip whose static model is checked.
-    approximation : Approximation
-        Approximation the static model is resolved with.
-    """
-    if not approximation.conserves_excitation_number():
-        return False
-    if any(terms.excitation_changes is None for terms in chip.effective_terms):
-        return False
-    pairs = () if chip.port_network is None else chip.port_network._active_generated_pairs()
-    if not pairs:
-        return True
-    from quchip.engine.assembly import _resolve_system
-
-    bases = _resolve_system(chip, chip.backend).bases
-    labels = dict.fromkeys(label for downstream, upstream, _ in pairs for label in (downstream, upstream))
-    return all(_port_lowers_level_index(chip, chip.port(label), bases) for label in labels)
-
-
-def _port_lowers_level_index(chip: Any, port: Any, bases: Mapping[str, Any]) -> bool:
-    """Return whether a port's operator lowers the total energy-level index by one and does nothing else."""
-    ((channel, _paths),) = port._collapse_channels_with_paths(chip)
-    changes = authored_excitation_changes(channel.operator, port.resolve_targets(chip), chip.backend, bases)
-    return changes is not None and changes <= {1}
 
 
 @dataclass(frozen=True, eq=False)
@@ -105,6 +26,8 @@ class OperatorProjection:
     other devices keep their coordinates. A chain of local reductions therefore
     never forms a full-space embedding. Rates and local operators remain owned
     by the components. This record carries only their change of coordinates.
+    ``unchanged_labels`` identifies tensor factors on which this map is the
+    identity, proved by the reduction's generator support.
     """
 
     source_labels: tuple[str, ...]
@@ -114,6 +37,7 @@ class OperatorProjection:
     embedding: Any
     overrides: tuple[tuple[str, OperatorProjection], ...] = ()
     parents: tuple[OperatorProjection, ...] = ()
+    unchanged_labels: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for name in ("source_labels", "source_dims", "target_labels", "target_dims"):
@@ -143,26 +67,39 @@ class OperatorProjection:
         if any(not isinstance(parent, OperatorProjection) for parent in parents):
             raise TypeError("OperatorProjection parents must be OperatorProjection values.")
         object.__setattr__(self, "parents", parents)
+        unchanged = tuple(self.unchanged_labels)
+        if not set(unchanged) <= set(self.target_labels):
+            raise ValueError("Unchanged operator coordinates must belong to the target space.")
+        if any(self.source_dims[self.source_labels.index(label)] != self.target_dims[self.target_labels.index(label)]
+               for label in unchanged):
+            raise ValueError("Unchanged operator coordinates must keep their dimensions.")
+        object.__setattr__(self, "unchanged_labels", unchanged)
 
     @classmethod
     def capture(cls, chip: Any, target_labels: tuple[str, ...], target_dims: tuple[int, ...],
-                embedding: Any) -> OperatorProjection:
+                embedding: Any, *, unchanged_labels: tuple[str, ...] = ()) -> OperatorProjection:
         """Compose a reduction with the source's already captured operator coordinates.
 
         ``embedding`` maps the targets into the product space of all of
         ``chip``'s devices. One earlier map over all of them is multiplied
         in. Otherwise the earlier maps become parents, in the
         order they apply, and keep their own embeddings.
+        ``unchanged_labels`` names targets on which this reduction is the
+        identity. A multiplied-in map keeps only the labels that both maps
+        leave unchanged.
         """
         labels, dims = tuple(d.label for d in chip.devices), tuple(chip.authored_dims)
         previous = tuple(t.projection for t in chip.effective_terms if t.projection is not None)
         if not (len(previous) == 1 and previous[0].target_labels == labels):
-            return cls(labels, dims, target_labels, target_dims, embedding, parents=lineage(previous))
+            return cls(labels, dims, target_labels, target_dims, embedding, parents=lineage(previous),
+                       unchanged_labels=unchanged_labels)
         parent = previous[0]
 
         def advance(previous: OperatorProjection) -> OperatorProjection:
             return replace(previous, target_labels=target_labels, target_dims=target_dims,
-                           embedding=previous.embedding @ embedding, overrides=())
+                           embedding=previous.embedding @ embedding, overrides=(),
+                           unchanged_labels=tuple(label for label in previous.unchanged_labels
+                                                  if label in unchanged_labels))
 
         return replace(advance(parent), overrides=tuple((key, advance(p)) for key, p in parent.overrides))
 
@@ -254,7 +191,7 @@ class OperatorProjection:
     def fingerprint(self) -> Any:
         own = value_fingerprint((self.source_labels, self.source_dims, self.target_labels,
                                  self.target_dims, self.embedding,
-                                 tuple((key, p.fingerprint()) for key, p in self.overrides)))
+                                 tuple((key, p.fingerprint()) for key, p in self.overrides), self.unchanged_labels))
         # Parent keys are already fingerprints. Hashing them again would double
         # their nesting depth at every step of a chain.
         return own if not self.parents else (own, tuple(p.fingerprint() for p in self.parents))
@@ -267,17 +204,20 @@ class OperatorProjection:
                     overrides={key: p.to_dict() for key, p in self.overrides})
         if self.parents:
             data["parents"] = [p.to_dict() for p in self.parents]
+        if self.unchanged_labels:
+            data["unchanged_labels"] = list(self.unchanged_labels)
         return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> OperatorProjection:
         required = {"source_labels", "source_dims", "target_labels", "target_dims", "real", "imag", "overrides"}
-        if not required <= set(data) <= required | {"parents"}:
+        if not required <= set(data) <= required | {"parents", "unchanged_labels"}:
             raise ValueError("Invalid serialized OperatorProjection fields.")
         return cls(tuple(data["source_labels"]), tuple(data["source_dims"]), tuple(data["target_labels"]),
                    tuple(data["target_dims"]), np.asarray(data["real"]) + 1j * np.asarray(data["imag"]),
                    tuple((key, cls.from_dict(p)) for key, p in data["overrides"].items()),
-                   tuple(cls.from_dict(p) for p in data.get("parents", ())))
+                   tuple(cls.from_dict(p) for p in data.get("parents", ())),
+                   tuple(data.get("unchanged_labels", ())))
 
 
 def lineage(projections: tuple[OperatorProjection, ...]) -> tuple[OperatorProjection, ...]:
@@ -313,7 +253,7 @@ def _walk(steps: tuple[OperatorProjection, ...], operator: Any, labels: tuple[st
     start, override = _entry(steps, owner_key)
     acted = False
     for step in (() if override is None else override._steps()) + steps[start:]:
-        if not set(step.source_labels).isdisjoint(labels):
+        if not set(step.source_labels).difference(step.unchanged_labels).isdisjoint(labels):
             operator, labels, dims = step._embed(operator, labels, dims)
             acted = True
     return operator, labels, dims, acted
@@ -325,7 +265,7 @@ def _reach(steps: tuple[OperatorProjection, ...], labels: tuple[str, ...],
     start, override = _entry(steps, owner_key)
     acted = False
     for step in (() if override is None else override._steps()) + steps[start:]:
-        if not set(step.source_labels).isdisjoint(labels):
+        if not set(step.source_labels).difference(step.unchanged_labels).isdisjoint(labels):
             labels = step.target_labels + tuple(label for label in labels if label not in step.source_labels)
             acted = True
     return labels if acted else None
@@ -453,6 +393,13 @@ class EffectiveTerms:
         row, that each named channel can carry. Band decomposition then treats
         every other change as zero, even for traced values. ``None`` declares
         no structure.
+    omitted_responses : mapping of str to iterable of str, default={}
+        Labels of the removed modes whose kept response, a multiport pole or
+        a one-port section, the time-domain field of each named channel omits.
+        A reduction declares them for the channels that it carries from such a
+        mode. A solve rejects diffusive monitoring of these channels with
+        a nonzero efficiency, also when the port network no longer holds the
+        response.
     """
 
     labels: tuple[str, ...]
@@ -463,6 +410,7 @@ class EffectiveTerms:
     projection: OperatorProjection | None = None
     notes: tuple[str, ...] = ()
     excitation_changes: Mapping[str, frozenset[int]] | None = None
+    omitted_responses: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         labels, dims = tuple(self.labels), tuple(self.dims)
@@ -516,6 +464,14 @@ class EffectiveTerms:
                 for name in names if name in self.excitation_changes
             }
             object.__setattr__(self, "excitation_changes", changes)
+        unknown = set(self.omitted_responses) - {channel.name for channel in channels}
+        if unknown:
+            raise ValueError(f"Omitted responses name unknown effective channels {sorted(unknown)}.")
+        omitted = {channel.name: tuple(sorted(set(self.omitted_responses[channel.name])))
+                   for channel in channels if self.omitted_responses.get(channel.name)}
+        if any(not isinstance(label, str) or not label for labels in omitted.values() for label in labels):
+            raise ValueError("Omitted response labels must be nonempty strings.")
+        object.__setattr__(self, "omitted_responses", omitted)
         object.__setattr__(self, "notes", notes)
         object.__setattr__(self, "labels", labels)
         object.__setattr__(self, "dims", dims)
@@ -616,6 +572,8 @@ class EffectiveTerms:
             data["excitation_changes"] = {
                 name: sorted(changes) for name, changes in self.excitation_changes.items()
             }
+        if self.omitted_responses:
+            data["omitted_responses"] = {name: list(labels) for name, labels in self.omitted_responses.items()}
         return data
 
     @classmethod
@@ -628,7 +586,7 @@ class EffectiveTerms:
             Payload produced by :meth:`to_dict`.
         """
         required = {"label", "labels", "dims", "hamiltonian", "channels", "projection"}
-        if not required <= set(data) <= required | {"notes", "excitation_changes"}:
+        if not required <= set(data) <= required | {"notes", "excitation_changes", "omitted_responses"}:
             raise ValueError("Invalid serialized EffectiveTerms fields.")
 
         def matrix(value: dict[str, Any]) -> Any:
@@ -643,4 +601,5 @@ class EffectiveTerms:
             None if data["projection"] is None else OperatorProjection.from_dict(data["projection"]),
             tuple(data.get("notes", ())),
             data.get("excitation_changes"),
+            data.get("omitted_responses", {}),
         )

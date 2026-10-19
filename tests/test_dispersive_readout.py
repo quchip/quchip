@@ -1,9 +1,4 @@
-"""Dispersive readout — χ/κ reporting in ``eliminate()`` and the closed-form module.
-
-χ convention (χ_pull) used throughout: ``chi = f_r(qubit in |1⟩) − f_r(qubit in |0⟩)``
-in GHz — the *full* resonator pull per qubit excitation, which is **2×** the σ_z
-convention ``H_disp = (ω_r + χ σ_z) a†a`` of most textbooks.
-"""
+"""Dispersive pull, intrinsic decay diagnostics, and steady-state detected readout."""
 
 from __future__ import annotations
 
@@ -72,14 +67,15 @@ def test_snr_grows_as_sqrt_tau():
     assert snr_4 / snr_1 == pytest.approx(2.0, rel=1e-9)
 
 
-def test_dephasing_rate_matches_small_chi_limit():
-    """Small-chi dephasing rate matches Gamma_m = 8*(chi_sigma_z,ang)^2*nbar/kappa (Gambetta PRA 74, 042318)."""
+@pytest.mark.parametrize("delta_r", [0.0, 0.005])
+def test_dephasing_rate_matches_small_chi_limit(delta_r):
+    """Small-pull dephasing includes the analytic detuning suppression."""
     from quchip.analysis import analyze_dispersive_readout
 
-    # χ_pull = 2χ_σz, so the angular σ_z-convention χ is 2π·(chi/2) = π·chi.
-    chi, kappa, nbar = 1e-5, 0.02, 5.0
-    ro = analyze_dispersive_readout(chi=chi, kappa=kappa, tau=500.0, n_photons=nbar)
-    expected = 8 * (np.pi * chi) ** 2 * nbar / kappa
+    # Z has positive ground eigenvalue, so chi_Z,angular = -pi*chi_pull.
+    chi, kappa, nbar = 1e-7, 0.02, 5.0
+    ro = analyze_dispersive_readout(chi=chi, kappa=kappa, tau=500.0, n_photons=nbar, delta_r=delta_r)
+    expected = 8 * (np.pi * chi) ** 2 * nbar / kappa / (1 + (4 * np.pi * delta_r / kappa) ** 2)
     assert float(ro.dephasing_rate) == pytest.approx(expected, rel=1e-3)
 
 
@@ -129,3 +125,45 @@ def test_module_is_jax_traceable_and_differentiable():
     assert float(grad) != 0.0
     jitted = float(jax.jit(snr)(jnp.float64(-5e-4)))
     assert jitted == pytest.approx(float(snr(jnp.float64(-5e-4))), rel=1e-12)
+
+    def collected_snr(efficiency):
+        return analyze_dispersive_readout(chi=-5e-4, kappa=0.02, tau=500.0,
+                                          n_photons=2.0, kappa_detected=0.01, efficiency=efficiency).snr
+
+    value, slope = jax.jit(jax.value_and_grad(collected_snr))(0.5)
+    # SNR scales as sqrt(efficiency), with all cavity dynamics held fixed.
+    assert float(slope) == pytest.approx(float(value) / (2 * 0.5), rel=1e-12)
+
+
+@pytest.mark.unit
+def test_detected_loss_changes_information_but_not_pointer_states_or_dephasing():
+    """Unobserved vacuum loss preserves pointer dynamics while reducing the detected SNR."""
+    from quchip import analyze_dispersive_readout
+
+    arguments = dict(chi=-5e-4, kappa=0.02, tau=500.0, n_photons=2.0)
+    ideal = analyze_dispersive_readout(**arguments)
+    lossy = analyze_dispersive_readout(**arguments, kappa_detected=0.01, efficiency=0.5)
+    np.testing.assert_allclose(lossy.pointer_states, ideal.pointer_states, atol=1e-14)
+    assert lossy.dephasing_rate == pytest.approx(ideal.dephasing_rate)
+    assert lossy.snr == pytest.approx(ideal.snr / 2)
+    assert lossy.sigma == pytest.approx(ideal.sigma * 2)
+    dark = analyze_dispersive_readout(**arguments, kappa_detected=0.0)
+    assert dark.snr == 0.0
+    assert dark.assignment_error == 0.5
+    assert np.isinf(dark.sigma)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("name,value", [
+    ("kappa", 0.0), ("tau", -1.0), ("n_photons", -1.0), ("n_crit", 0.0),
+    ("levels", 1), ("levels", 2.5), ("kappa_detected", -0.01),
+    ("kappa_detected", 0.03), ("efficiency", 1.1), ("kappa", np.nan),
+])
+def test_readout_rejects_invalid_concrete_domains(name, value):
+    """Concrete parameters outside the model's physical domains raise before calculation."""
+    from quchip import analyze_dispersive_readout
+
+    arguments = dict(chi=-5e-4, kappa=0.02, tau=500.0, n_photons=2.0)
+    arguments[name] = value
+    with pytest.raises(ValueError, match=name):
+        analyze_dispersive_readout(**arguments)

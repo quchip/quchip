@@ -22,6 +22,11 @@ class Fluxonium(DeviceModel):
     :math:`4E_C n^2 + E_L(\varphi+2\pi\varphi_{ext})^2/2
     -E_J\cos\varphi` in ordinary GHz.
 
+    The chip's default ``RWA()`` keeps bands whose energy-level index weights
+    sum to zero, so it can discard near-resonant transitions of this uneven
+    spectrum. Compare with ``Exact()``, or list every band to keep in
+    ``RWA(keep_bands=...)``, which replaces the default selection.
+
     Parameters
     ----------
     E_C, E_J, E_L : float

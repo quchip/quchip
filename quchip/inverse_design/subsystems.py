@@ -77,6 +77,7 @@ def build_local_subsystem(chip: Chip, labels: tuple[str, ...]) -> Chip:
         basis=chip.basis,
         backend=chip.backend,
         port_network=network,
+        space=chip.space,
     )
     from quchip.chip.states import copy_state_configuration
 

@@ -9,8 +9,9 @@ arrive in.
 
 from __future__ import annotations
 
-from dataclasses import replace
-from typing import Any, Sequence
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any, Sequence
 
 import numpy as np
 from scipy.linalg import block_diag
@@ -19,9 +20,69 @@ from quchip.engine.ir import CanonicalOperator, CollapseTerm, HamiltonianProgram
 from quchip.engine.reference import ReferencePlane
 from quchip.utils.jax_utils import contains_tracer, is_jax_array, maybe_concrete_scalar, select_array_module
 
+if TYPE_CHECKING:
+    from quchip.chip.port_network import NetworkPort
+
 __all__ = ["series_product", "concatenate", "feedback_reduce"]
 
 _SINGULAR_TOLERANCE = 1e-12
+
+
+@dataclass(frozen=True)
+class ModeResponse:
+    """A removed harmonic pole attached to its original quantum-port locations."""
+
+    label: str
+    ports: tuple[str, ...]
+    freq: Any
+    weight: Any
+    internal_rate: Any
+
+
+@dataclass(frozen=True)
+class CompiledChannel:
+    """One exposure of a compiled network with its couplings by port and its reference plane."""
+
+    exposure: NetworkPort
+    coupling: Mapping[str, Any]
+    reference: ReferencePlane
+
+
+@dataclass(frozen=True)
+class CompiledNetwork:
+    """The Markovian core of a port network, compiled for one chip."""
+
+    channels: tuple[CompiledChannel, ...]
+    scattering: Any
+    generated_pairs: tuple[tuple[str, str, Any], ...]
+    support: np.ndarray
+    output_network: Any = None
+
+
+def cascade_hamiltonian(products: Sequence[tuple[Any, Any, Any]]) -> Any | None:
+    """Return ``sum (L_d^dagger c L_u - h.c.) / 2i`` over ``(L_d, L_u, c)`` matrices on one space.
+
+    A concrete result is ``None`` when each element is below ``64 n ε`` times
+    the magnitude of the products that form it. This conservative threshold
+    removes cancellation residue, e.g. the Lamb shift ``γ sin(π)`` of a giant
+    atom, and also a genuine term that small. Each element has its own
+    threshold, so the cancellation of one pair does not hide the small rate of
+    another pair. A traced result keeps every term.
+    """
+    traced = contains_tracer(products)
+    xp = select_array_module(traced)
+    values: Any = 0.0
+    scale: Any = 0.0
+    for left, right, coefficient in products:
+        left, right = xp.asarray(left), xp.asarray(right)
+        product = xp.conj(xp.swapaxes(left, -1, -2)) @ (xp.asarray(coefficient) * right)
+        values = values + (product - xp.conj(xp.swapaxes(product, -1, -2))) / (2j)
+        if not traced:
+            size = np.abs(coefficient) * (np.swapaxes(np.abs(left), -1, -2) @ np.abs(right))
+            scale = scale + (size + np.swapaxes(size, -1, -2)) / 2
+    if not traced and np.all(np.abs(values) <= 64 * np.finfo(float).eps * values.shape[-1] * scale):
+        return None
+    return values
 
 
 def series_product(first: ResolvedSLH, second: ResolvedSLH) -> ResolvedSLH:

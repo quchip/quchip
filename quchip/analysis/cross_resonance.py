@@ -389,20 +389,23 @@ class CRSusceptibilityResult:
 
     .. math::
 
-        H_\mathrm{eff} = \tfrac{1}{2}(IX\,I\!X + ZX\,Z\!X)
+        H_\mathrm{eff} = \tfrac{1}{2}[\mathrm{Re}(C_I)IX + \mathrm{Im}(C_I)IY
+        + \mathrm{Re}(C_Z)ZX + \mathrm{Im}(C_Z)ZY]
 
-    gives ``IX_per_amplitude = m_0 + m_1`` and
-    ``ZX_per_amplitude = m_0 - m_1``. The values are backend-native complex
-    scalars and stay JAX-traceable.
+    gives ``IX_per_amplitude = (m_0 + m_1)/2`` and
+    ``ZX_per_amplitude = (m_0 - m_1)/2`` for a real carrier's peak amplitude.
+    The raw matrix elements retain the full drive operator normalization.
+    Complex values encode ``IX+i IY`` and ``ZX+i ZY`` in the raising convention.
+    Their real and imaginary parts multiply Hermitian X and Y operators.
 
     Attributes
     ----------
-    m_control_0, m_control_1
+    m_control_0, m_control_1 : complex or array_like
         Dressed target-transition matrix elements, conditioned on the control
         in ``|0>`` and in ``|1>``.
-    IX_per_amplitude, ZX_per_amplitude
-        Weak-drive Pauli coefficients per unit of signal amplitude.
-    control, target, drive
+    IX_per_amplitude, ZX_per_amplitude : complex or array_like
+        Complex weak-drive X/Y coefficients per unit of scheduled peak amplitude.
+    control, target, drive : str
         Resolved labels.
     """
 
@@ -442,7 +445,8 @@ def analyze_cr_susceptibility(
     -------
     CRSusceptibilityResult
         Conditional matrix elements and the related ``IX`` and ``ZX``
-        coefficients per unit of programmed amplitude.
+        complex X/Y coefficients per unit of scheduled peak amplitude.
+        Carrier selection contributes a factor of one half.
 
     Raises
     ------
@@ -454,7 +458,9 @@ def analyze_cr_susceptibility(
     References
     ----------
     Magesan and Gambetta, Phys. Rev. A 101, 052308 (2020).
+    https://arxiv.org/abs/1804.04073.
     Malekakhlagh, Magesan, and McKay, Phys. Rev. A 102, 042605 (2020).
+    https://arxiv.org/abs/2005.00133.
     """
     _, control_device = chip._resolve_device_index(control)
     _, target_device = chip._resolve_device_index(target)
@@ -495,8 +501,8 @@ def analyze_cr_susceptibility(
     return CRSusceptibilityResult(
         m_control_0=m0,
         m_control_1=m1,
-        IX_per_amplitude=m0 + m1,
-        ZX_per_amplitude=m0 - m1,
+        IX_per_amplitude=(m0 + m1) / 2,
+        ZX_per_amplitude=(m0 - m1) / 2,
         control=control_device.label,
         target=target_device.label,
         drive=selected.label,

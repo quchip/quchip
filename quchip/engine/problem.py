@@ -15,6 +15,7 @@ Collapse operators enter the standard Lindblad master equation
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -22,7 +23,13 @@ import numpy as np
 
 from quchip.approximations import Approximation
 from quchip.backend import BatchSolveError
-from quchip.chip.states import default_initial_state, materialize_state_spec
+from quchip.engine.states import (
+    CompactState,
+    compatible_values,
+    label_state,
+    materialize_compact,
+    materialize_state_spec,
+)
 from quchip.engine.ir import (
     ControlOp,
     EngineResult,
@@ -101,6 +108,8 @@ def prepare_solve_problem_context(
     states: StateStorage | None = None,
     dissipation: bool = True,
     run_args: dict | None = None,
+    initial_states: list[Any] | None = None,
+    _product_space: bool = False,
 ) -> SolveProblemContext:
     """Resolve the frame and keep authored observables and state specifications.
 
@@ -123,13 +132,51 @@ def prepare_solve_problem_context(
 
     if e_ops is not None and not isinstance(e_ops, dict):
         raise TypeError("e_ops must be dict or None")
-    base_result = resolve_for_operations(
-        chip,
-        drive_ops or [],
-        frame=frame,
-        approximation=approximation,
-        solve_window=(tlist_arr[0], tlist_arr[-1]),
-    )
+    from math import prod
+    from quchip.engine.assembly import _resolve_system, _prepare_engine_assembly
+    from quchip.engine.frames import plan_for_operations
+    from quchip.engine.pulse_space import plan_pulse_space
+    from quchip.engine.excitation import sector_size
+    from quchip.approximations import require_approximation
+    from quchip.cutoff import active_cutoff
+
+    strategy = chip.approximation if approximation is None else require_approximation(approximation)
+    resolution = _resolve_system(chip, backend)
+    policy = active_cutoff(chip)
+    deterministic = solver in (None, "sesolve", "mesolve")
+    if policy is not None and not deterministic:
+        raise ValueError(
+            f"Stochastic trajectory solvers do not support an excitation cutoff, and this chip keeps only "
+            f"N <= {policy.max_total}. Use sesolve or mesolve, or chip.with_space(None) for the full product space."
+        )
+    space, reason, boundary = (None, "Trajectory solvers use the product space.", None)
+    if _product_space and policy is None:
+        reason = "Batch points prove different exact spaces."
+    elif deterministic:
+        # Under a cutoff, batch points that prove different spaces all keep every label with N <= K.
+        space, reason, boundary = plan_pulse_space(chip, drive_ops or [], initial_states or [None], resolution,
+                                                   strategy, dissipation, whole=_product_space)
+    if space is None:
+        base_result = resolve_for_operations(
+            chip, drive_ops or [], frame=frame, approximation=strategy,
+            solve_window=(tlist_arr[0], tlist_arr[-1]),
+        )
+    else:
+        spec = plan_for_operations(chip, chip.frame if frame is None else frame, drive_ops or [],
+                                   approximation=strategy, solve_window=(tlist_arr[0], tlist_arr[-1]),
+                                   _resolution=resolution)
+        resolution, resolved_frame = _prepare_engine_assembly(chip, spec, strategy, resolution=resolution)
+        base_result = build_engine_result(chip, [], resolved_frame=resolved_frame, approximation=strategy,
+                                          _local_resolution=replace(resolution, space=space))
+    base_result = replace(base_result, metadata={**base_result.metadata, "excitation_reduction": {
+        "exact": space is not None, "reason": reason,
+        "full_dimension": prod(resolution.dims), "dimension": prod(base_result.dims),
+        "totals": None if space is None else space.totals,
+        "cutoff": None if policy is None else policy.max_total,
+        "cutoff_dimension": None if policy is None else sum(
+            sector_size(resolution.dims, total) for total in range(policy.max_total + 1)),
+        "boundary": boundary,
+    }})
     return SolveProblemContext(
         chip=chip,
         tlist=tlist if isinstance(tlist, tuple) and solver in ("jssesolve", "dssesolve") else tlist_arr,
@@ -255,13 +302,14 @@ def build_solve_batch_from_results(
         raise ValueError(
             f"initial_states length {len(initial_states)} does not match batch_size {batch_size}"
         )
+    _require_product_state(context, ref)
     # Materialize the shared default only when at least one point omits its state.
     ground = (
-        default_initial_state(context.chip, ref, context.tlist[0])
+        _initial_state(context.chip, None, ref, context.tlist[0])
         if any(state_spec is None for state_spec in initial_states) else None
     )
     states = tuple(
-        ground if state_spec is None else materialize_state_spec(context.chip, state_spec, result.bases)
+        ground if state_spec is None else _initial_state(context.chip, state_spec, result, context.tlist[0])
         for state_spec, result in zip(initial_states, engine_results)
     )
 
@@ -289,6 +337,33 @@ def build_solve_batch_from_results(
     return SolveBatch(chip=context.chip, problems=tuple(problems))
 
 
+def _initial_state(chip, spec, result, start):
+    if spec is None or isinstance(spec, (Mapping, str)):
+        return label_state(chip, spec, result, start)
+    if result.excitation_space is not None:
+        return materialize_compact(chip, spec, result.excitation_space)
+    if isinstance(spec, CompactState):
+        backend = chip.backend
+        values = compatible_values(spec, tuple(d.label for d in chip.devices), result.dims, result.bases, backend)
+        native = backend.from_array(values, dims=[[spec.space.size],
+                                    [1] if spec.values.shape[-1] == 1 else [spec.space.size]])
+        spec = spec.space.lift(native, backend)
+    return materialize_state_spec(chip, spec, result.bases)
+
+
+def _require_product_state(context, result):
+    """Raise before a dissipative product-space solve evolves a density matrix that cannot fit."""
+    dissipative = context.dissipation and bool(result.slh.collapse_terms)
+    if result.excitation_space is None and dissipative and context.solver in (None, "mesolve"):
+        from math import prod
+        from quchip.utils.memory import dense_bytes, require_memory
+
+        dimension = prod(result.dims)
+        require_memory(dense_bytes(dimension, dimension),
+                       task=f"The product-space density matrix at dimension {dimension}",
+                       remedy="Use a model and initial state with a smaller proven invariant space.")
+
+
 def build_solve_problem(
     chip: Chip,
     drive_ops: list[ControlOp],
@@ -303,6 +378,8 @@ def build_solve_problem(
     states: StateStorage | None = None,
     dissipation: bool = True,
     run_args: dict | None = None,
+    _initial_states: list[Any] | None = None,
+    _product_space: bool = False,
 ) -> SolveProblem:
     """Resolve, assemble, and package a frozen :class:`SolveProblem`.
 
@@ -326,24 +403,28 @@ def build_solve_problem(
         frame=frame,
         states=states,
         dissipation=dissipation,
+        initial_states=[initial_state] if _initial_states is None else _initial_states,
+        _product_space=_product_space,
     )
+    return _problem_from_context(context, drive_ops, initial_state)
+
+
+def _problem_from_context(context, drive_ops, initial_state):
+    """Instantiate one solve request on a prepared context."""
     engine_result = build_engine_result(
-        chip,
+        context.chip,
         drive_ops,
         resolved_frame=context.resolved_frame,
         approximation=context.approximation,
         _base_result=context._base_result,
     )
     engine_result = replace(engine_result, dissipation=context.dissipation)
+    _require_product_state(context, engine_result)
     e_ops_solver, e_ops_meta = _prepare_context_eops(context, engine_result)
     problem = SolveProblem(
         chip=context.chip,
         engine_result=engine_result,
-        initial_state=(
-            default_initial_state(context.chip, engine_result, context.tlist[0])
-            if initial_state is None
-            else materialize_state_spec(context.chip, initial_state, engine_result.bases)
-        ),
+        initial_state=_initial_state(context.chip, initial_state, engine_result, context.tlist[0]),
         tlist=context.tlist,
         e_ops=e_ops_solver,
         e_ops_meta=e_ops_meta,
@@ -357,7 +438,8 @@ def build_solve_problem(
 
 
 def solve_problem_list(problems: list[SolveProblem], *, progress: bool = True,
-                       parameters: tuple[dict[str, Any], ...] | None = None) -> Any:
+                       parameters: tuple[dict[str, Any], ...] | None = None,
+                       max_workers: int | None = None) -> Any:
     """Dispatch each captured backend's requests and restore the original point order."""
     from quchip.results.results import SimulationBatchResult
 
@@ -369,7 +451,7 @@ def solve_problem_list(problems: list[SolveProblem], *, progress: bool = True,
     for entries in groups.values():
         try:
             results = _solve_backend_problems([problem for _, problem in entries],
-                entries[0][1].backend, progress=progress,
+                entries[0][1].backend, progress=progress, max_workers=max_workers,
                 failure_context=tuple((index, parameters[index] if parameters is not None else {})
                                       for index, _ in entries))
         except BatchSolveError as exc:
@@ -385,6 +467,7 @@ def _solve_backend_problems(
     *,
     progress: bool = True,
     failure_context: tuple[tuple[int, dict[str, Any]], ...] = (),
+    max_workers: int | None = None,
 ) -> Any:
     """Group problems by shared operator skeleton and dispatch as :class:`SolveBatch`es.
 
@@ -400,6 +483,7 @@ def _solve_backend_problems(
     """
     from quchip.results.results import (
         SimulationBatchResult,
+        capture_label_targets,
         wrap_solver_result,
         wrap_solver_results_from_batch,
     )
@@ -465,15 +549,16 @@ def _solve_backend_problems(
         groups.setdefault(_skeleton_prefilter_key(problem), []).append((idx, problem))
 
     if len(groups) > 1 and not any(problem.stochastic for problem in problems):
-        parallel_results = backend.parallel_solve_problems(problems, progress=progress)
+        parallel_results = backend.parallel_solve_problems(problems, progress=progress, max_workers=max_workers)
         if parallel_results is not None:
             if len(parallel_results) != len(problems):
                 raise RuntimeError(
                     "parallel_solve_problems returned "
                     f"{len(parallel_results)} results for {len(problems)} problems."
                 )
+            captured: dict[int, list[tuple[Any, Any, Any]]] = {}
             wrapped = [
-                wrap_solver_result(result, problem, backend)
+                wrap_solver_result(result, problem, backend, label_targets=capture_label_targets(problem, captured))
                 for problem, result in zip(problems, parallel_results)
             ]
             return SimulationBatchResult(wrapped)
@@ -497,7 +582,7 @@ def _solve_backend_problems(
             continue
 
         try:
-            solver_results = backend.solve_batch(batch, progress=progress)
+            solver_results = backend.solve_batch(batch, progress=progress, max_workers=max_workers)
         except BatchSolveError as exc:
             raise BatchSolveError(indices[exc.index], exc.detail, exc.parameters) from exc
         for idx_original, wrapped_result in zip(

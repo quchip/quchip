@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+import json
+import re
+from dataclasses import replace
+
 import numpy as np
 import pytest
 import jax
 import jax.numpy as jnp
 
-from quchip import Capacitive, Chip, DuffingTransmon, Exact, PortNetwork, Resonator, RWA, eliminate
+from quchip import (
+    Bath, Capacitive, Chip, CrossKerr, DuffingTransmon, Exact, PortNetwork, QuantumSequence, Resonator, RWA,
+    eliminate, with_monitoring,
+)
+from quchip.engine import solve_problem
+from quchip.observables import OutputField
 
 
 def _readout_chip(*, phase_shift: float | None = None, approximation=RWA()) -> tuple[Chip, float]:
@@ -237,6 +246,88 @@ def _bus_readout_chip(port_count: int = 1) -> Chip:
     )
 
 
+def test_local_feedline_section_keeps_spectator_frequency_corrections() -> None:
+    """A readout outside the generator patch still contributes its incoming gap to the section's diagnostic."""
+    from quchip import EffectiveTerms
+
+    source = _feedline_chip()
+    chip = Chip(source.devices, source.couplings, port_network=source.port_network.copy(), frame=source.frame,
+                approximation=source.approximation,
+                effective_terms=[EffectiveTerms(("r3",), (2,), np.diag([0.0, 0.07]), label="shift")])
+    full, local = eliminate(chip, "r2"), eliminate(chip, "r2", local=True)
+    key = "r2_transmission"
+    rate = local.chip.parameters[f"network.component.{key}.external_rate"]
+    expected = rate / (2 * np.pi * (chip["r3"].freq + 0.07 - chip["r2"].freq))
+    # The 0.169 GHz gap is a difference of 6.7 GHz energies, so its round-off is about 1e-14 relative.
+    assert local.validity[key]["kappa_over_delta"] == pytest.approx(expected, rel=1e-12)
+    assert local.validity[key]["kappa_over_delta"] == pytest.approx(full.validity[key]["kappa_over_delta"], rel=1e-12)
+
+
+def _spectator_dressed_boundary(g=0.12, *, backend="qutip", shared=True, effective=False) -> Chip:
+    """A conserved boundary occupation shifts the spectator pair's virtual excitation energy."""
+    from quchip import EffectiveTerms
+
+    mode = Resonator(freq=7.0, levels=2, label="m")
+    first = Resonator(freq=4.0, levels=2, label="a")
+    second = Resonator(freq=5.0, levels=2, label="b")
+    network = PortNetwork(label="line")
+    port = network.port("pm", target=mode, rate=0.03)
+    if shared:
+        other = network.port("pb", target=second, rate=0.02)
+        network.cascade(port, other)
+        network.expose("feed", input=port.input, output=other.output)
+    couplings = [CrossKerr(mode, first, chi=0.7, label="ma")]
+    terms = []
+    if effective:
+        coordinate = np.array([[0.0, 1.0], [1.0, 0.0]])
+        terms = [EffectiveTerms(("a", "b"), (2, 2), g * np.kron(coordinate, coordinate), label="pair")]
+    else:
+        couplings.append(Capacitive(first, second, g=g, label="ab"))
+    return Chip([mode, first, second], couplings, port_network=network, approximation=Exact(),
+                backend=backend, effective_terms=terms)
+
+
+@pytest.mark.parametrize("shared", [False, True])
+@pytest.mark.parametrize("effective", [False, True])
+def test_local_section_includes_spectator_dressing(shared, effective) -> None:
+    """The section pole and weight include virtual states outside the elimination generator's support."""
+    chip = _spectator_dressed_boundary(shared=shared, effective=effective)
+    full, local = eliminate(chip, "m"), eliminate(chip, "m", local=True)
+    prefix = f"network.component.m_{'transmission' if shared else 'reflection'}."
+    # Each m occupation gives a two-state spectator rotation with gap E or E + chi.
+    gap, chi, g = 9.0, 0.7, 0.12
+    frequency = 7.0 + g**2 / gap - g**2 / (gap + chi)
+    weight = np.cos(g / gap - g / (gap + chi)) ** 2
+    expected = np.array([frequency, 0.03 * weight])
+    # Both routes evaluate these second-order formulas, so only round-off differs.
+    # 2e-14 is about 20 double-precision spacings at 7 GHz.
+    for result in (full, local):
+        actual = [result.chip.parameters[prefix + key] for key in ("freq", "external_rate")]
+        np.testing.assert_allclose(actual, expected, rtol=0, atol=2e-14)
+    projection = next(terms.projection for terms in local.chip.effective_terms if terms.projection is not None)
+    assert projection.source_labels == ("m", "a")
+
+
+@pytest.mark.validation
+@pytest.mark.optional_backend
+@pytest.mark.parametrize("g", [0.0, 0.12])
+def test_local_spectator_section_derivatives_match_analytic_rotation(g) -> None:
+    """A traced spectator coupling retains the pole and weight curvature, including at zero coupling."""
+    pytest.importorskip("dynamiqs")
+
+    def section_values(strength):
+        reduced = eliminate(_spectator_dressed_boundary(strength, backend="dynamiqs"), "m", local=True).chip
+        prefix = "network.component.m_transmission."
+        return jnp.array([reduced.parameters[prefix + key] for key in ("freq", "external_rate")])
+
+    difference = 1 / 9.0 - 1 / 9.7
+    actual = jax.jit(jax.jacfwd(jax.jacfwd(section_values)))(jnp.asarray(g))
+    expected = [2 * difference, -0.06 * difference**2 * np.cos(2 * g * difference)]
+    # The traced section evaluates these closed forms, so its derivatives differ only by round-off.
+    # The measured error is below 1e-13 relative, well inside both tolerances.
+    np.testing.assert_allclose(actual, expected, rtol=1e-9, atol=1e-13)
+
+
 @pytest.mark.parametrize("method", ["sw", "exact"])
 def test_field_elimination_transforms_the_port_onto_every_survivor(method) -> None:
     """A port-coupled mode on a multi-device chip reduces to one joint port with the Purcell rate."""
@@ -330,6 +421,64 @@ def test_reduced_boundary_serializes_with_the_chip() -> None:
     )
 
 
+def _monitored_readout(shared: bool, *, bath: bool) -> Chip:
+    """A transmon and a lossy readout on a one-port line, alone or upstream of a kept readout."""
+    qubit = DuffingTransmon(freq=5.3, anharmonicity=-0.26, levels=2, T1=50e3, label="q")
+    readout = Resonator(freq=6.0, levels=3, internal_quality_factor=2e4, label="r")
+    devices = [qubit, readout]
+    network = PortNetwork(label="line")
+    port = network.port("r_port", target=readout, rate=0.006)
+    output = port.output
+    if shared:
+        kept = Resonator(freq=6.3, levels=2, label="k")
+        devices.append(kept)
+        downstream = network.port("k_port", target=kept, rate=0.006)
+        network.cascade(port, downstream)
+        output = downstream.output
+    network.expose("line", input=port.input, output=output)
+    baths = [Bath("thermal", targets=["r"], temperature=20., rate=1e-4, label="fridge")] if bath else []
+    return Chip(devices, [Capacitive(qubit, readout, g=0.04)], port_network=network, frame=6.0,
+                approximation=RWA(), baths=baths)
+
+
+def _monitoring_problem(chip: Chip, observed: str = "q"):
+    sequence = QuantumSequence(chip)
+    e_ops = chip.e_ops(**{observed: "n"})
+    return replace(sequence.build_problem(np.linspace(0., 2., 3), e_ops=e_ops), solver="smesolve",
+                   run_args={"ntraj": 2, "seeds": 1}, options={"dt": 0.01, "progress_bar": ""})
+
+
+@pytest.mark.parametrize("shared", [False, True])
+@pytest.mark.parametrize("local", [False, True])
+def test_section_rejects_records_that_miss_the_readout_response(shared, local) -> None:
+    """Records of the line and of channels on the removed readout raise; other records and solves run."""
+    # Local reduction does not transform baths.
+    reduced = eliminate(_monitored_readout(shared, bath=not local), "r", local=local).chip
+    data = json.loads(json.dumps(reduced.to_dict()))
+    chips = [Chip.from_dict(data)]
+    if not shared:
+        # Without the section, the transformed port and the carried channels still lack the readout.
+        data["port_network"].update(components=[], connections=[], exposures=[
+            {"label": "line", "input": ["r_port", "field"], "output": ["r_port", "field"]}])
+        chips.append(Chip.from_dict(data))
+    affected = {"line", "hidden.retained_r.internal_photon_loss"}
+    if not local:
+        affected |= {"hidden.fridge.thermal_emission:r", "hidden.fridge.thermal_absorption:r"}
+    for chip in chips:
+        # The output field applies the section at the carrier.
+        QuantumSequence(chip).build_problem(np.linspace(0., 2., 3), e_ops={"line": OutputField("line")})
+        problem = _monitoring_problem(chip)
+        keys = {channel.key for channel in problem.engine_result.slh.channels}
+        assert affected < keys
+        for key in keys:
+            if key in affected:
+                with pytest.raises(NotImplementedError, match=rf"Monitored channel '{re.escape(key)}' .*\['r'\]"):
+                    solve_problem(with_monitoring(problem, {key: 1.}))
+            # A concrete zero efficiency records nothing.
+            result = solve_problem(with_monitoring(problem, {key: 0. if key in affected else 1.}))
+            assert np.all(np.isfinite(np.real(result.expect("q"))))
+
+
 def _two_readout_chip(backend: str = "qutip") -> Chip:
     """Two qubits on a bus, each read out through its own port-coupled resonator."""
     first = DuffingTransmon(freq=5.326, anharmonicity=-0.262, levels=2, label="q1", T1=30000.0)
@@ -370,6 +519,18 @@ def test_second_readout_elimination_carries_the_earlier_transformed_port(method)
     # The orders differ by less than 1e-12, well below either reduction's
     # residual against the full chip (2e-8 exact, 1e-7 SW).
     np.testing.assert_allclose(sweeps[0], sweeps[1], atol=2e-7)
+
+
+def test_transformed_ports_keep_their_record_through_a_later_reduction() -> None:
+    """A port transformed again keeps its removed readout and does not record a mode it reaches by dressing."""
+    reduced = _eliminate_in_order(_two_readout_chip(), ("r1", "r2"), "sw")
+    assert {port.label: port._omitted_responses for port in reduced.ports} == {"p1": ("r1",), "p2": ("r2",)}
+    problem = _monitoring_problem(reduced, "q1")
+    for key, removed in (("p1", "r1"), ("p2", "r2")):
+        with pytest.raises(NotImplementedError, match=rf"Monitored channel '{key}' .*\['{removed}'\]"):
+            solve_problem(with_monitoring(problem, {key: 1.}))
+    result = solve_problem(with_monitoring(problem, {"hidden.q1.thermal_emission": 1.}))
+    assert np.all(np.isfinite(np.real(result.expect("q1"))))
 
 
 @pytest.mark.optional_backend
@@ -423,12 +584,6 @@ def test_field_elimination_rejects_an_authored_joint_port() -> None:
 
     with pytest.raises(NotImplementedError, match="unsupported ports: \\['joint'\\]"):
         eliminate(chip, "r1")
-
-
-def test_field_elimination_rejects_a_mode_with_several_ports() -> None:
-    """A mode transmitting between two ports has no reduced boundary yet."""
-    with pytest.raises(NotImplementedError, match="transmission between them"):
-        eliminate(_bus_readout_chip(port_count=2), "r1")
 
 
 def test_field_elimination_rejects_a_plane_shared_with_another_port() -> None:

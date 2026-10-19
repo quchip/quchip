@@ -78,6 +78,8 @@ class Port:
         self.label = label if label is not None else auto_label(self._type_prefix)
         self._network: PortNetwork | None = None
         self._network_component: SLHComponent | None = None
+        # Removed modes whose kept response the Markov field of a transformed port lacks.
+        self._omitted_responses: tuple[str, ...] = ()
 
     def _bind_network(self, network: "PortNetwork", component: "SLHComponent") -> None:
         """Bind terminal access to the one network that owns this port."""
@@ -219,7 +221,7 @@ class Port:
     def copy(self) -> "Port":
         """Return an independent port that keeps label-based targets."""
         operator = self.operator.copy() if isinstance(self.operator, np.ndarray) else self.operator
-        return Port(
+        result = Port(
             tuple(resolve_label(target) for target in self._targets),
             rate=self.rate,
             external_quality_factor=self.external_quality_factor,
@@ -227,6 +229,8 @@ class Port:
             phase=self.phase,
             label=self.label,
         )
+        result._omitted_responses = self._omitted_responses
+        return result
 
     def physics_notes(self) -> list[str]:
         """Return the input-output convention owned by this port."""
@@ -254,6 +258,7 @@ class Port:
             }
         elif isinstance(operator, str):
             operator = {"kind": "named", "name": operator}
+        omitted = {"omitted_responses": list(self._omitted_responses)} if self._omitted_responses else {}
         return {
             "targets": [resolve_label(target) for target in self._targets],
             "rate": self.rate,
@@ -261,6 +266,7 @@ class Port:
             "operator": operator,
             "phase": self.phase,
             "label": self.label,
+            **omitted,
         }
 
     @classmethod
@@ -282,7 +288,7 @@ class Port:
                 operator = np.asarray(operator["real"]) + 1j * np.asarray(operator["imag"])
             else:
                 raise TypeError(f"Unknown serialized Port operator kind: {operator.get('kind')!r}")
-        return cls(
+        port = cls(
             target,
             rate=data.get("rate"),
             external_quality_factor=data.get("external_quality_factor"),
@@ -290,3 +296,8 @@ class Port:
             phase=data.get("phase", 0.0),
             label=data.get("label"),
         )
+        omitted = data.get("omitted_responses", ())
+        if any(not isinstance(label, str) or not label for label in omitted):
+            raise ValueError("Omitted port responses must be nonempty labels.")
+        port._omitted_responses = tuple(sorted(set(omitted)))
+        return port

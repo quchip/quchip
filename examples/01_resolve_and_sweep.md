@@ -236,13 +236,13 @@ static_snapshot
 Output:
 
 ```text
-{'q1_f01_ghz': 5.297988973339862,
- 'q1_f12_ghz': 4.649377172766265,
+{'q1_f01_ghz': 5.297988973339825,
+ 'q1_f12_ghz': 4.649377172766316,
  'kerr_labels': ('q1', 'q2', 'bus'),
  'kerr_matrix_ghz': array([[-6.48611801e-01,  1.71057586e-05, -1.35398353e-03],
         [ 1.71057586e-05, -6.48003156e-01, -2.04352737e-03],
-        [-1.35398353e-03, -2.04352737e-03, -4.63804200e-06]]),
- 'q1_drive_matrix_element': -0.9991667711850264j}
+        [-1.35398353e-03, -2.04352737e-03, -4.63804199e-06]]),
+ 'q1_drive_matrix_element': -0.9991667711850256j}
 ```
 
 <!-- executed-output:end -->
@@ -283,10 +283,10 @@ Output:
 
 ```text
 4 term(s) dropped:
-  [q1-bus] coupling band (Δa=-1, Δb=-1) on q1·bus  (counter-rotating under RWA; amp 0.15 GHz, freq 11.8525 GHz)
-  [q1-bus] coupling band (Δa=+1, Δb=+1) on q1·bus  (counter-rotating under RWA; amp 0.15 GHz, freq 11.8525 GHz)
-  [q2-bus] coupling band (Δa=-1, Δb=-1) on q2·bus  (counter-rotating under RWA; amp 0.15 GHz, freq 12.132 GHz)
-  [q2-bus] coupling band (Δa=+1, Δb=+1) on q2·bus  (counter-rotating under RWA; amp 0.15 GHz, freq 12.132 GHz)
+  [q1-bus] coupling band (-1, -1) on q1·bus  (discarded by RWA band selection; amp 0.15 GHz, detuning 10.55 GHz)
+  [q1-bus] coupling band (+1, +1) on q1·bus  (discarded by RWA band selection; amp 0.15 GHz, detuning 10.55 GHz)
+  [q2-bus] coupling band (-1, -1) on q2·bus  (discarded by RWA band selection; amp 0.15 GHz, detuning 10.83 GHz)
+  [q2-bus] coupling band (+1, +1) on q2·bus  (discarded by RWA band selection; amp 0.15 GHz, detuning 10.83 GHz)
 ```
 
 <!-- executed-output:end -->
@@ -333,7 +333,7 @@ print(f"RESULT statics={json.dumps(statics_receipt, sort_keys=True, separators=(
 Output:
 
 ```text
-RESULT statics={"approximation":"RWA","dressed_frequencies_ghz":{"bus":6.554557999183757,"q1":5.297988973339862,"q2":5.577453027476459},"dropped_rwa_terms":4,"figure":"../docs/images/resolve_and_sweep.svg","full_dimension":64,"inferred_exchange_rate_mhz":1.9936406352263347,"minimum_at_bare_q2_ghz":5.3,"minimum_splitting_mhz":3.9872812704526694,"original_chip_unchanged":true,"relative_difference_to_second_order":0.0031898250172573274,"second_order_splitting_scale_mhz":4.000000000000001,"static_zz_khz":17.105758551849704,"sweep_points":181}
+RESULT statics={"approximation":"RWA","dressed_frequencies_ghz":{"bus":6.554557999183753,"q1":5.297988973339825,"q2":5.577453027476421},"dropped_rwa_terms":4,"figure":"../docs/images/resolve_and_sweep.svg","full_dimension":64,"inferred_exchange_rate_mhz":1.9936406352263347,"minimum_at_bare_q2_ghz":5.3,"minimum_splitting_mhz":3.9872812704526694,"original_chip_unchanged":true,"relative_difference_to_second_order":0.0031898250172573274,"second_order_splitting_scale_mhz":4.000000000000001,"static_zz_khz":17.10575862112762,"sweep_points":181}
 ```
 
 <!-- executed-output:end -->
@@ -361,7 +361,7 @@ Output:
 ```text
 {'original_q2_freq': 5.58,
  'shifted_q2_freq': 5.4,
- 'shifted_dressed_q2_freq': 5.397877155337802}
+ 'shifted_dressed_q2_freq': 5.39787715533777}
 ```
 
 <!-- executed-output:end -->
@@ -498,7 +498,9 @@ readout resonator.
 
 `processed_data_fx8.csv` contains measured qubit frequencies and the
 authors' fitted parameters. `res_fit_results.csv` contains the conditional
-resonator frequencies and their half-difference $\chi=(f_{r,1}-f_{r,0})/2$.
+resonator frequencies and the paper's $\chi_{\rm paper}=(f_{r,1}-f_{r,0})/2$.
+We convert these data to quchip's coefficient $\chi_Z=-\chi_{\rm paper}$,
+with $Z=|0\rangle\langle0|-|1\rangle\langle1|$.
 
 ```python
 import csv
@@ -706,7 +708,7 @@ class FluxoniumReadoutCoupling(CouplingModel):
 
 Use the published interaction with the fitted circuit parameters. Keep every
 coupling band with `Exact()`. Counter-rotating terms contribute strongly to the
-fluxonium's dispersive shift, and under `RWA()` the $\chi$ RMSE against the
+fluxonium's dispersive shift, and under `RWA()` the $\chi_Z$ RMSE against the
 data increases from 0.77 MHz to 1.42 MHz.
 
 ```python
@@ -740,15 +742,15 @@ paper_chip = Chip(
 ```
 
 `chip.freq("readout")` is the resonator transition with the qubit in
-$|0\rangle$. `chip.dispersive_shift()` returns the full state-dependent pull,
-so the paper's $\chi$ is half of it.
+$|0\rangle$. `chip.dispersive_shift()` returns the full state-dependent pull.
+Its negative half is $\chi_Z$, the coefficient of $Z n_r$ in $H/h$.
 
 ```python
 readout_rows = [row for row in readout_rows if row["phi_ext_disshift"]]
 readout_flux_all = np.asarray([float(row["phi_ext_disshift"]) for row in readout_rows])
 measured_fr0_all = np.asarray([float(row["fr_q0"]) for row in readout_rows])
 measured_fr1_all = np.asarray([float(row["fr_q1"]) for row in readout_rows])
-measured_chi_all = np.asarray([float(row["chi"]) for row in readout_rows])
+measured_chi_all = -np.asarray([float(row["chi"]) for row in readout_rows])
 
 readout_window = readout_flux_all <= 0.85
 readout_flux = readout_flux_all[readout_window]
@@ -765,7 +767,7 @@ def readout_observables(phi_ext):
     point = paper_chip.with_params({"q.phi_ext": phi_ext})
     fr0 = float(point.freq("readout"))
     full_pull = float(point.dispersive_shift("q", "readout"))
-    return fr0, fr0 + full_pull, 500.0 * full_pull
+    return fr0, fr0 + full_pull, -500.0 * full_pull
 
 
 readout_model_flux = np.linspace(0.5, 0.85, 351)
@@ -830,7 +832,7 @@ chi_axis.plot(
 )
 chi_axis.set(
     xlabel=r"External flux $\Phi_{\mathrm{ext}}/\Phi_0$",
-    ylabel=r"$\chi$ (MHz)",
+    ylabel=r"$\chi_Z$ (MHz)",
 )
 chi_axis.legend()
 
@@ -852,6 +854,7 @@ higher-level resonances in the dispersive shift.
 The paper operates at the sweet spot for idle and control, then pulses to
 $\Phi_{\mathrm{ext}}/\Phi_0=0.6567$ during readout. These two points give
 a compact numerical check against the values in the text.
+Both sets of dispersive coefficients below use quchip's $\chi_Z$ convention.
 
 ```python
 sweet_spot = readout_observables(0.5)
@@ -863,15 +866,15 @@ operating_points = {
         "quchip_f01_ghz": isolated_f01(0.5),
         "paper_fr0_ghz": 5.1739,
         "quchip_fr0_ghz": sweet_spot[0],
-        "paper_chi_mhz": 0.92,
-        "quchip_chi_mhz": sweet_spot[2],
+        "paper_chi_z_mhz": -0.92,
+        "quchip_chi_z_mhz": sweet_spot[2],
     },
     "flux_pulsed_readout": {
         "paper_flux": 0.6567,
         "paper_f01_ghz": 3.47,
         "quchip_f01_ghz": isolated_f01(0.6567),
-        "paper_chi_mhz": -1.09,
-        "quchip_chi_mhz": flux_pulsed[2],
+        "paper_chi_z_mhz": 1.09,
+        "quchip_chi_z_mhz": flux_pulsed[2],
     },
 }
 
@@ -886,14 +889,14 @@ Output:
 {'sweet_spot': {'paper_f01_ghz': 0.377,
   'quchip_f01_ghz': 0.37229583974981484,
   'paper_fr0_ghz': 5.1739,
-  'quchip_fr0_ghz': 5.173631975636752,
-  'paper_chi_mhz': 0.92,
-  'quchip_chi_mhz': 1.141802995032748},
+  'quchip_fr0_ghz': 5.173631975636759,
+  'paper_chi_z_mhz': -0.92,
+  'quchip_chi_z_mhz': -1.1418029950416297},
  'flux_pulsed_readout': {'paper_flux': 0.6567,
   'paper_f01_ghz': 3.47,
   'quchip_f01_ghz': 3.4802282134309794,
-  'paper_chi_mhz': -1.09,
-  'quchip_chi_mhz': -1.1351841383498429}}
+  'paper_chi_z_mhz': 1.09,
+  'quchip_chi_z_mhz': 1.135184138345846}}
 ```
 
 <!-- executed-output:end -->
@@ -932,7 +935,7 @@ print(
 Output:
 
 ```text
-RESULT paper_statics={"chi_median_absolute_error_mhz":0.17674709860376137,"chi_rmse_mhz":0.7651558998064977,"readout_frequency_rmse_mhz":1.084764273500819,"readout_model_points":351,"readout_points":151,"spectrum_median_absolute_error_mhz":1.5923938298776363,"spectrum_model_points":351,"spectrum_p95_absolute_error_mhz":6.0767685282924555,"spectrum_points":153}
+RESULT paper_statics={"chi_median_absolute_error_mhz":0.1767470986041748,"chi_rmse_mhz":0.7651558998064251,"readout_frequency_rmse_mhz":1.0847642735008483,"readout_model_points":351,"readout_points":151,"spectrum_median_absolute_error_mhz":1.5923938298776363,"spectrum_model_points":351,"spectrum_p95_absolute_error_mhz":6.0767685282924555,"spectrum_points":153}
 ```
 
 <!-- executed-output:end -->

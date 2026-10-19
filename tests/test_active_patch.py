@@ -10,7 +10,7 @@ import pytest
 from quchip import (
     Bath, Capacitive, ChargeDrive, Chip, DuffingTransmon, Gaussian, QuantumSequence, PortNetwork,
 )
-from quchip.chip.transformations.active_patch import active_labels, coupling_adjacency, graph_distances
+from quchip.chip.transformations.active_patch import active_labels
 
 
 def _chain(n=4, g=0.004):
@@ -29,16 +29,14 @@ def _driven_pair_chain():
     return chip, seq
 
 
-def test_graph_distances():
-    """graph_distances reports BFS hop-distance from the active devices, which include a tone's frame device."""
+def test_active_labels_include_the_frame_device_of_a_tone():
+    """A tone on q0 that follows the frame of q1 makes both active; one hop adds q2."""
     chip, qs, drives = _chain()
     seq = QuantumSequence(chip)
     seq.schedule(drives[0], envelope=Gaussian(duration=20.0, sigmas=3, amplitude=0.02), freq=chip.freq(qs[1]),
                  frame=qs[1])
-    active = active_labels(seq, hops=0)
-    assert active == {"q0", "q1"}
-    dist = graph_distances(coupling_adjacency(chip), active)
-    assert dist == {"q0": 0, "q1": 0, "q2": 1, "q3": 2}
+    assert active_labels(seq, hops=0) == {"q0", "q1"}
+    assert active_labels(seq, hops=1) == {"q0", "q1", "q2"}
 
 
 def test_active_patch_trivial_when_everything_active():
@@ -96,6 +94,37 @@ def test_active_patch_matches_full_solve_in_dispersive_regime():
     delta = abs(chip.freq("q2") - chip.freq("q1"))
     tol = 50 * (g / delta) ** 2
     assert np.max(np.abs(z_full - z_patch)) < tol
+
+
+def test_active_patch_sequence_keeps_the_timing_and_frames_of_removed_devices():
+    """A patch sequence replays delays, barriers and virtual-Z entries on removed devices with the source timing."""
+
+    def schedule(with_vz):
+        chip, qs, drives = _chain()
+        seq = QuantumSequence(chip)
+        pulse = Gaussian(duration=20.0, sigmas=3, amplitude=0.02)
+        if with_vz:
+            seq.vz(qs[3], np.pi / 2)
+        seq.schedule(drives[0], envelope=pulse, freq=chip.freq(qs[0]))
+        seq.delay(qs[3], duration=100.0)  # advances the cursor of d3, which the patch strips
+        seq.barrier()
+        if with_vz:
+            seq.vz(qs[3], np.pi / 2)
+        seq.schedule(drives[0], envelope=pulse, freq=chip.freq(qs[0]))
+        return seq, seq.active_patch(hops=1)
+
+    seq, patch = schedule(with_vz=True)
+    assert set(patch.eliminated_labels) == {"q2", "q3"}
+    assert [op.start_time for op in patch.sequence.scheduled_ops] == [op.start_time for op in seq.scheduled_ops]
+    assert [op.start_time for op in seq.scheduled_ops] == [0.0, 100.0]
+    assert patch.sequence.total_duration == seq.total_duration
+    pulse_paths = {path for path in seq.parameters if path.startswith("pulse.")}
+    assert pulse_paths and {path for path in patch.sequence.parameters if path.startswith("pulse.")} == pulse_paths
+
+    tlist = np.linspace(0.0, 120.0, 7)
+    with_vz = patch.simulate(tlist=tlist).final_state
+    without_vz = schedule(with_vz=False)[1].simulate(tlist=tlist).final_state
+    np.testing.assert_allclose(np.asarray(with_vz.full()), np.asarray(without_vz.full()), rtol=0, atol=1e-12)
 
 
 def test_active_patch_warns_on_poor_sw_validity():

@@ -65,6 +65,27 @@ def _section(title: str, rule: str = "─") -> list[str]:
     return [title, rule * len(title)]
 
 
+def _sector_line(chip: "Chip") -> str:
+    """Summarize the excitation-number verdict and the largest dressed block for labels with N <= 2."""
+    import numpy as np
+
+    from quchip.engine.excitation import format_changes
+
+    if chip.backend.array_module is np and contains_tracer(dict(chip.parameters)):
+        return "not available while JAX traces a QuTiP chip"
+    structure = chip.excitation_structure()
+    block = structure.largest_block(2)
+    if structure.cutoff is not None:
+        classes = ", ".join(str(group) for group in structure.classes(structure.cutoff))
+        return f"cutoff classes {classes}; dressed queries with N <= 2 diagonalize at most {block} states"
+    if structure.conserves:
+        return f"N conserved; dressed queries with N <= 2 diagonalize at most {block} states"
+    breaking = ", ".join(f"{term.label} ({format_changes(term.changes)})" for term in structure.breaking)
+    verdict = "N not proven conserved" if any(term.changes is None for term in structure.breaking) else (
+        "N not conserved")
+    return f"{verdict} by {breaking}; dressed queries diagonalize all {block} states"
+
+
 def describe_chip(chip: "Chip") -> str:
     """Sectioned plain-text report of a chip's composition. See :meth:`Chip.describe`."""
     lines: list[str] = []
@@ -79,12 +100,19 @@ def describe_chip(chip: "Chip") -> str:
         plan = plan_frame(chip, (), approximation=chip.approximation, strict=False)
         lines += [f"           {line}" for line in _format_frame_plan(plan)]
     lines.append(f"Approx.  : {type(chip.approximation).__name__}")
+    if chip.space is not None:
+        from quchip.engine.excitation import sector_size
+
+        retained = sum(sector_size(chip.dims, total) for total in range(chip.space.max_total + 1))
+        kept = "every product label" if not chip.space.binds(chip.dims) else f"{retained} product labels"
+        lines.append(f"Space    : N <= {chip.space.max_total} (ExcitationCutoff), {kept}")
     lines.append(f"Dressed  : {'cached' if chip.is_dressed else 'not computed'}")
     dims = chip.dims
     if dims:
         lines.append(
             f"Hilbert  : {' x '.join(str(n) for n in dims)} = {chip.total_dim} levels"
         )
+        lines.append(f"Sectors  : {_sector_line(chip)}")
 
     lines.append("")
     lines += _section(f"Devices ({len(chip.devices)})")
@@ -304,12 +332,24 @@ def _validity_line(validity: dict[str, Any]) -> str:
     parts = []
     min_gap = None
     for label, v in validity.items():
-        symbol, key = ("κ/Δ", "kappa_over_delta") if "kappa_over_delta" in v else ("g/Δ", "g_over_delta")
+        if "residual_margin" in v:
+            margin, is_valid = _concrete(v["margin"]), _concrete(v["is_valid"])
+            if margin is None or is_valid is None:
+                parts.append(f"{label} weight margin=<traced>")
+            else:
+                parts.append(f"{label} weight margin={margin:.2g} {'✓' if is_valid else '✗'} (≥ 0)")
+            continue
+        if "self_energy_over_width" in v:
+            symbol, key = "|Σ|/h", "self_energy_over_width"
+        else:
+            symbol, key = ("κ/Δ", "kappa_over_delta") if "kappa_over_delta" in v else ("g/Δ", "g_over_delta")
         ratio = _concrete(v.get(key))
         is_valid = _concrete(v.get("is_valid"))
         if min_gap is None and "min_block_gap" in v:
             min_gap = _concrete(v["min_block_gap"])
-        if ratio is None or is_valid is None:
+        if v.get(key) is None:
+            parts.append(f"{label} {symbol}=unavailable")
+        elif ratio is None or is_valid is None:
             parts.append(f"{label} {symbol}=<traced>")
         else:
             mark = "✓" if is_valid else "✗"

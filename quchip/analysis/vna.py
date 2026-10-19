@@ -14,29 +14,42 @@ from quchip.backend.containers import PreparedStationary
 from quchip.engine.input_output import (
     add_port_inputs,
     port_operators,
+    reject_retained_mode_responses,
     resolve_stationary_engine,
     same_frequency,
+    stationary_frame_plan,
 )
-from quchip.engine.linear_response import try_build_weak_probe_problem
+from quchip.engine.linear_response import response_poles, try_build_weak_probe_problem
+from quchip.engine.conditional_response import build_conditional_response
 from quchip.results.measurement import VNAMeasurement
 from quchip.engine.output_network import output_mixing
 from quchip.engine.reference import cw_transfer, has_amplifier, ReferenceFilter, ReferenceLoss
-from quchip.engine.ir import CanonicalOperator, EngineResult, SteadyStateProblem
+from quchip.engine.ir import CanonicalOperator, EngineResult, LinearResponseProblem, SteadyStateProblem
+from quchip.engine.routes import (
+    WEAK_PROBE, SolveRoute, array_name, automatic_cutoff, largest_change, plan_sectors, require_workflow,
+    sector_diagnostics, warn_cutoff, weak_probe_reason,
+)
 from quchip.engine.steady_state import solve_steadystate_problem
 from quchip.results.input_output import (
     MeanFieldResponseResult,
     OutputCorrelationResult,
     OutputSpectrumResult,
+    ResonanceResult,
     SParameterResult,
     _LazyDiagnostics,
 )
 from quchip.results.steady_state import SteadyStateResult
 from quchip.sweep import Sweep, ZippedSweep, _axis_metadata, _iter_axis_points
-from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
-from quchip.utils.labeling import resolve_label
-from quchip.analysis.field_statistics import canonical as _canonical_matrix
+from quchip.utils.jax_utils import concrete_array_module, contains_tracer, maybe_concrete_scalar
+from quchip.utils.labeling import bare_label_from_mapping, resolve_label
+from quchip.utils.memory import fits_memory
+from quchip.engine.field_statistics import canonical as _canonical_matrix, normal_spectrum, propagate_noise
 
 _TONE_PREFIX = "__vna_tone_"
+_VACUUM_REFERENCE = ("The when= reference is the vacuum, which is stationary, so a weak probe keeps the vacuum and "
+                     "the one-excitation states.")
+_FROZEN_REFERENCE = ("The when= reference freezes one dressed state, so the response solves the coherences between "
+                     "its sector and the adjacent sectors.")
 
 
 @dataclass(frozen=True)
@@ -51,13 +64,18 @@ class _OperatingPoint:
 
     @property
     def diagnostics(self) -> Mapping[str, Any]:
-        return _LazyDiagnostics({
+        values = {
             "solver": "stationary_resolvent",
+            "route": self.state.diagnostics["route"],
             "residual": self.state.residual,
             "trace_error": self.state.trace_error,
             "positivity_error": DeferredValue(partial(getattr, self.state, "positivity_error")),
             "condition_number": partial(getattr, self.state, "condition_number"),
-        })
+        }
+        space = self.engine.excitation_space
+        if space is not None:
+            values.update(excitation_cutoff=max(space.totals), retained_dimension=space.size)
+        return _LazyDiagnostics(values)
 
 
 @dataclass(frozen=True)
@@ -125,7 +143,7 @@ class VNA:
     To select a subset, pass exposed port objects or their labels as ``ports``. A bare
     label string is rejected.
 
-    S-parameters follow the engineering ``e^{+jωt}`` convention, where ``j = −i``. Probe
+    S-parameters follow the engineering ``e^{+jωt}`` convention, where ``j = i``. Probe
     and pump amplitudes, returned fields, correlations, and IQ statistics use this
     convention, while internal mode observables keep the physics convention.
 
@@ -193,6 +211,7 @@ class VNA:
         self,
         frequencies: Any,
         *variations: Sweep | ZippedSweep,
+        when: Mapping[Any, int] | None = None,
         options: dict | None = None,
         progress: bool = False,
     ) -> SParameterResult:
@@ -205,8 +224,8 @@ class VNA:
         pump-tone axes. At each frequency, the passive-linear route solves one
         multi-right-hand-side mode-space system. The stationary route solves one
         pumped operating point, then uses one shifted-Liouvillian factorization for
-        every input port. An operating point that stays stationary when the probe
-        frequency moves the port frames is reused.
+        every input port. A pump-free model that is static in the lab frame uses
+        one stationary state per chip point and a resolvent at each probe frequency.
 
         Parameters
         ----------
@@ -214,8 +233,15 @@ class VNA:
             Probe frequencies in GHz.
         *variations : Sweep or ZippedSweep
             Chip and pump axes. Cartesian axes combine and zipped axes vary together.
+        when : mapping of device objects or labels to int, optional
+            Frozen dressed-reference label. Unspecified devices have level zero.
+            Supports zero or one total excitation, static conserving models and
+            vacuum inputs. ``None`` uses the ordinary stationary response.
+            An excited reference is fixed in the probe source, while its response
+            includes all loss channels. It does not model an evolving preparation.
         options : dict or None, optional
             Stationary solver options. ``None`` permits the passive-linear path.
+            Explicit ``when`` requires ``None``.
         progress : bool, default=False
             Show a progress bar for stationary solves.
 
@@ -225,6 +251,7 @@ class VNA:
             Matrix with shape ``(*shape, n_ports, n_ports)`` and indexing
             ``[..., output, input]``.
         """
+        require_workflow(self.chip, "VNA.sweep()")
         freq_values, freq_is_axis = _axis_values(frequencies)
         self._validate_variations(variations, reserved=("frequency",) if freq_is_axis else ())
         variation_shape, variation_points = _iter_axis_points(variations)
@@ -250,12 +277,34 @@ class VNA:
                 conjugate_matrix=xp.conj(xp.reshape(conjugate, block)),
             )
 
+        reference = None
+        if when is not None:
+            if not isinstance(when, Mapping):
+                raise TypeError("VNA when must be a mapping of device objects or labels to integer levels.")
+            reference = bare_label_from_mapping(tuple(d.label for d in self.chip.devices), when, {})
+            if any(isinstance(level, (bool, np.bool_)) or not isinstance(level, (int, np.integer)) or level < 0
+                   for level in reference) or sum(reference) > 1:
+                raise ValueError("Conditional VNA requires integer levels with zero or one total excitation.")
+            if self._tones:
+                raise ValueError("Conditional VNA does not support fixed pumps.")
+            if options is not None:
+                raise ValueError("Conditional VNA does not accept stationary solver options.")
         chip_points = [(self._tone_values(p), self._chip_at(p)) for _, p in variation_points]
-        if not self._tones and options is None:
+        if reference is not None:
+            conditional = self._conditional_sweep([chip for _, chip in chip_points], freq_values, labels, reference)
+            matrix = xp.concatenate(conditional[0])
+            return result(conditional[1], matrix, xp.zeros_like(matrix))
+        space = "The backend's stationary Liouvillian solves the product space."
+        if self._tones:
+            reason = f"Pump tones need the stationary state of the pumped chip. {space}"
+        elif options is not None:
+            reason = "Solver options select the backend's stationary Liouvillian on the product space."
+        else:
             linear = self._linear_sweep([chip for _, chip in chip_points], freq_values, labels)
-            if linear is not None:
+            if not isinstance(linear, str):
                 matrix = xp.concatenate(linear[0])
                 return result(linear[1], matrix, xp.zeros_like(matrix))
+            reason = f"{linear} {space}"
 
         points = [(tones, chip, frequency) for tones, chip in chip_points for frequency in freq_values]
         iterator: Any = points
@@ -267,19 +316,86 @@ class VNA:
         blocks: list[tuple[Any, Any]] = []
         diagnostics: list[Mapping[str, Any]] = []
         previous: tuple[Any, Any, _OperatingPoint] | None = None
+        lab_operating: _OperatingPoint | None = None
         for tones, chip, frequency in iterator:
-            # The probe frequency only moves the selected planes' frames: an
-            # operating point that commutes with that shift stays stationary.
             same_point = previous is not None and previous[0] is tones and previous[1] is chip
-            guess = previous[2].state.state if previous is not None and same_point else None
-            operating = _operating_point(
-                chip, tones, frequency, labels, options, guess=guess
-            )
+            if not same_point and not tones:
+                reject_retained_mode_responses(chip)
+                engine = chip._resolve(frame="lab")
+                lab_operating = None if engine.dynamic_terms else _solve_engine(chip, engine, tones, options,
+                                                                                reason=reason)
+            if lab_operating is not None:
+                operating = lab_operating
+            else:
+                guess = previous[2].state.state if previous is not None and same_point else None
+                operating = _operating_point(chip, tones, frequency, labels, options, guess=guess, reason=reason)
             previous = (tones, chip, operating)
-            blocks.append(_small_signal_matrix(operating, labels, frequency))
+            blocks.append(_small_signal_matrix(
+                operating, labels, frequency, offset=frequency if lab_operating is not None else 0.0,
+            ))
             diagnostics.append(operating.diagnostics)
 
         return result(diagnostics, *(xp.stack(part) for part in zip(*blocks, strict=True)))
+
+    def resonances(self) -> ResonanceResult:
+        """Return the poles of the weak-probe response between the selected ports.
+
+        The poles come from the model that :meth:`sweep` solves on its
+        ``"linear_response"`` and ``"vacuum_response"`` routes, without a fit.
+        Each eigenvalue ``λ_p`` of the drift ``A = -iH - C†C/2`` gives a pole
+        frequency ``f_p = -Im λ_p / 2π`` in GHz and a response linewidth
+        ``κ_p = -2 Re λ_p`` in 1/ns, which includes port, internal, Purcell and
+        dephasing broadening. The frequencies and linewidths stay
+        differentiable under JAX on a fixed structure away from degenerate
+        poles. Compositions and residues are computed when they are read.
+
+        Returns
+        -------
+        ResonanceResult
+            Poles in increasing frequency, with their composition, dominant
+            mode and residues.
+
+        Raises
+        ------
+        ValueError
+            If the VNA has pump tones, if no weak-probe route applies, with the
+            reason that :meth:`sweep` gives, or if two ill-conditioned poles
+            are too close to resolve, as near an exceptional point.
+        """
+        require_workflow(self.chip, "VNA.resonances()")
+        if self._tones:
+            raise ValueError("resonances() describes the weak-probe response without pumps. Remove the pump tones.")
+        labels = self.ports
+        built = try_build_weak_probe_problem(self.chip, np.zeros(1), plane_labels=labels)
+        if built is None:
+            raise ValueError(f"resonances() needs a weak-probe route of VNA.sweep(). "
+                             f"{weak_probe_reason(self.chip, labels)}")
+        problem, name = built
+        route = SolveRoute(name, WEAK_PROBE[name], len(problem.mode_labels), array_name(self.chip.backend))
+        system = response_poles(problem)
+        xp = concrete_array_module(system.values)
+        chip = self.chip
+
+        def transfers(frequencies: Any) -> tuple[Any, Any]:
+            # The route does not depend on the probe frequencies, so the rebuilt problem exists.
+            rebuilt_problem = try_build_weak_probe_problem(chip, frequencies, plane_labels=labels)
+            assert rebuilt_problem is not None
+            rebuilt = rebuilt_problem[0]
+            indices = list(rebuilt.plane_indices)
+            return rebuilt.outbound_transfer[:, indices], rebuilt.inbound_transfer[:, indices]
+
+        return ResonanceResult(
+            frequencies=-xp.imag(system.values) / (2.0 * np.pi),
+            linewidths=-2.0 * xp.real(system.values),
+            # The public convention conjugates the pole i λ / 2π.
+            poles=xp.conj(1j * system.values / (2.0 * np.pi)),
+            mode_labels=problem.mode_labels,
+            ports=labels,
+            route=route,
+            _eigensystem=system,
+            _problem=problem,
+            _transfers=transfers,
+        )
 
     def finite_power(
         self,
@@ -305,9 +421,21 @@ class VNA:
         and hidden-channel bookkeeping as ``sweep()``. It also stores the incident
         ``beta``, broadcast over the grid.
 
-        This method always uses the stationary Liouvillian route. It does not use the
-        passive-linear mode-space shortcut or follow sweep-rate hysteresis and
-        metastable branches.
+        This method does not use the passive-linear mode-space shortcut or follow
+        sweep-rate hysteresis and metastable branches. A chip whose static model
+        conserves the total excitation ``N``, with ports that lower ``N``, other
+        channels that lower or conserve it, vacuum inputs, no thermal occupation,
+        pumps only at the probe frequency and no output network, solves on
+        excitation sectors. A finite probe couples every ``N`` to ``N ± 1``, so
+        this route keeps the product states with ``N <= K``. With
+        ``chip.with_space(ExcitationCutoff(max_total=K))``, ``K`` is the chip's.
+        Without a cutoff, a chip with more than 64 product states starts at
+        ``K = 2``, compares the result with ``K + 1`` at every grid point, raises
+        ``K`` until the change is below ``1e-6`` relative, and warns which ``K``
+        it kept. This is a convergence check, not an error bound. ``options``
+        other than ``None`` solve the backend's stationary Liouvillian. Each
+        entry of ``diagnostics`` records the route and its reason under
+        ``"route"``.
 
         Parameters
         ----------
@@ -318,7 +446,8 @@ class VNA:
         input : port object or str, optional
             Probe input, required when multiple ports are selected.
         options : dict or None, optional
-            Stationary solver options.
+            Stationary solver options. Without a cutoff, a dictionary selects the
+            full product space.
         progress : bool, default=False
             Show a progress bar.
 
@@ -388,6 +517,11 @@ class VNA:
         Fock-mode amplitudes and occupations, which you query with
         mode_amplitude(device) and photon_number(device).
 
+        An excitation-conserving chip solves on the product states with
+        ``N <= K``, as :meth:`finite_power` describes. Without a cutoff, the
+        automatic check also compares the noise spectra on the requested offset
+        grid when the ``K + 1`` space has at most 1024 states.
+
         Parameters
         ----------
         frequencies, amplitudes : scalar or array_like
@@ -401,7 +535,9 @@ class VNA:
         noise_frequencies : array_like or None, optional
             Symmetric increasing offset grid in GHz, including zero.
         options : dict or None, optional
-            Stationary solver options.
+            Stationary solver options. ``None`` permits the passive-linear
+            shortcut and the excitation sectors. A dictionary selects the
+            backend's stationary Liouvillian.
         progress : bool, default=False
             Show a progress bar.
 
@@ -427,6 +563,10 @@ class VNA:
         coherent carrier is reported separately because it is a delta peak,
         not a finite sampled spectral density.
 
+        A chip with pumps at one frequency solves on excitation sectors under
+        the conditions of :meth:`finite_power`, and chooses ``K`` as it does.
+        ``result.diagnostics["route"]`` records the route and its reason.
+
         Parameters
         ----------
         output : port object or str
@@ -434,11 +574,16 @@ class VNA:
         frequencies : scalar or array_like
             Offset frequencies in GHz.
         options : dict or None, optional
-            Stationary solver options.
+            Stationary solver options. A dictionary selects the backend's
+            stationary Liouvillian.
         """
+        workflow = require_workflow(self.chip, "VNA.output_spectrum()")
         output_port = _resolve_exposure(self.chip, output)
         frequency_values, _ = _axis_values(frequencies)
-        operating = self._stationary_output(output_port, options)
+        sector, reason = self._sector_output(workflow, (output_port,), options, frequency_values)
+        if sector is not None:
+            return _sector_spectrum(sector, output_port, frequency_values)
+        operating = self._stationary_output(output_port, options, reason=reason)
         engine, state, tones = operating.engine, operating.state, operating.tones
         operators = port_operators(engine, self.chip.backend)
         incoming = _stationary_output_backgrounds(engine, tones, self.chip.backend)
@@ -459,8 +604,6 @@ class VNA:
         components, _ = capture_noise(operating, self.chip.backend, (output_port,), carrier,
                                       xp.asarray(frequency_values))
 
-        from quchip.analysis.field_statistics import normal_spectrum
-
         def source_spectrum(pair: tuple[Any, Any]) -> Any:
             white, excess = pair
             return normal_spectrum(white + excess, xp)
@@ -478,6 +621,7 @@ class VNA:
             signal_coherent_flux=coherent_flux,
             signal_incoherent_flux=intensity - coherent_flux,
             steady_state=state,
+            diagnostics=operating.diagnostics,
         )
 
     def g1(
@@ -490,6 +634,8 @@ class VNA:
     ) -> OutputCorrelationResult:
         """Return normalized first-order output coherence ``g1``.
 
+        The excitation sectors apply as in :meth:`output_spectrum`.
+
         Parameters
         ----------
         output : port object or str
@@ -499,7 +645,8 @@ class VNA:
         input : port object or str, optional
             Cross-correlation input. The default is ``output``.
         options : dict or None, optional
-            Stationary solver options.
+            Stationary solver options. A dictionary selects the backend's
+            stationary Liouvillian.
 
         Returns
         -------
@@ -518,6 +665,8 @@ class VNA:
     ) -> OutputCorrelationResult:
         """Return normalized second-order output intensity correlation ``g2``.
 
+        The excitation sectors apply as in :meth:`output_spectrum`.
+
         Parameters
         ----------
         output : port object or str
@@ -527,7 +676,8 @@ class VNA:
         input : port object or str, optional
             Cross-correlation input. The default is ``output``.
         options : dict or None, optional
-            Stationary solver options.
+            Stationary solver options. A dictionary selects the backend's
+            stationary Liouvillian.
 
         Returns
         -------
@@ -545,12 +695,17 @@ class VNA:
         order: int,
         options: dict | None,
     ) -> OutputCorrelationResult:
+        workflow = require_workflow(self.chip, f"VNA.g{order}()")
         output_port = _resolve_exposure(self.chip, output)
         input_port = output_port if input is None else _resolve_exposure(self.chip, input)
         delay_values, _ = _axis_values(delays)
         if not contains_tracer(delay_values) and np.any(np.asarray(delay_values) < 0):
             raise ValueError("Stationary output correlations require non-negative delays.")
-        operating = self._stationary_output(output_port, options)
+        sector, reason = self._sector_output(workflow, tuple(dict.fromkeys((output_port, input_port))), options,
+                                             delay_values)
+        if sector is not None:
+            return _sector_correlation(sector, order, output_port, input_port, delay_values)
+        operating = self._stationary_output(output_port, options, reason=reason)
         engine, state, tones = operating.engine, operating.state, operating.tones
         backend = self.chip.backend
         operators = port_operators(engine, backend)
@@ -558,20 +713,8 @@ class VNA:
         xp = backend.array_module
         rho = xp.asarray(backend.to_array(state.state), dtype=complex)
         runs = {item.key: item.reference.outbound for item in engine.slh.external_channels}
-        if engine.slh.output_network is not None or has_amplifier(runs[output_port]) or has_amplifier(runs[input_port]):
-            raise NotImplementedError(
-                "Normalized g1 and g2 through an amplifier require a detection bandwidth for its "
-                "broadband added noise. Request the correlation at a reference plane before the amplifier."
-            )
-
-        thermal = any(channel.input_occupation is not None or any(
-            (isinstance(element, ReferenceLoss) and element.occupation is not None)
-            or (isinstance(element, ReferenceFilter) and element.loss_occupation is not None)
-            for element in (*channel.reference.inbound, *channel.reference.outbound))
-            for channel in engine.slh.channels)
-        if thermal:
-            raise NotImplementedError("Normalized g1 and g2 with thermal network fields require a detection "
-                                      "bandwidth. Use measure().statistics() for integrated second moments.")
+        _require_detectable(runs, [(channel.input_occupation, channel.reference) for channel in engine.slh.channels],
+                            output_port, input_port, mixed=engine.slh.output_network is not None)
 
         def plane_field(key: str) -> Any:
             factor = cw_transfer(runs[key], _output_carrier(engine, key, tones), xp)
@@ -617,7 +760,6 @@ class VNA:
             if order == 1
             else input_intensity * output_intensity
         )
-        same_port = input_port == output_port
         raw = xp.conj(raw)
         return OutputCorrelationResult(
             order=order,
@@ -629,21 +771,16 @@ class VNA:
             input_intensity=input_intensity,
             output_intensity=output_intensity,
             steady_state=state,
-            normalization=(
-                "G1(tau) / G1(0)"
-                if order == 1 and same_port
-                else "G1(output, input; tau) / sqrt(I_output I_input)"
-                if order == 1
-                else "G2(tau) / G1(0)^2"
-                if same_port
-                else "G2(output, input; tau) / (I_output I_input)"
-            ),
+            normalization=_normalization(order, input_port == output_port),
+            diagnostics=operating.diagnostics,
         )
 
     def _stationary_output(
         self,
         output_label: str,
         options: dict | None,
+        *,
+        reason: str = "The backend's stationary Liouvillian solves the output statistics.",
     ) -> _OperatingPoint:
         """Solve stationary output statistics in the applicable reference frames.
 
@@ -651,25 +788,52 @@ class VNA:
         output plane's own reference frequency does.
         """
         tones = self._tone_values({})
-        frames = tuple((label, frequency) for label, frequency, _ in tones) or (
+        engine = resolve_stationary_engine(self.chip, self._output_frames(output_label, tones))
+        driven_engine = add_port_inputs(engine, self.chip.backend, tones)
+        return _solve_engine(self.chip, driven_engine, tones, options, reason=reason)
+
+    def _output_frames(self, output_label: str, tones: tuple[tuple[str, Any, Any], ...]) -> tuple[tuple[str, Any], ...]:
+        """Return the tone frequencies, or the output's reference frequency without tones."""
+        return tuple((label, frequency) for label, frequency, _ in tones) or (
             (output_label, _exposure_reference_frequency(self.chip, output_label)),
         )
-        engine = resolve_stationary_engine(self.chip, frames)
-        driven_engine = add_port_inputs(engine, self.chip.backend, tones)
-        return _solve_engine(self.chip, driven_engine, tones, options)
+
+    def _sector_output(
+        self, workflow: Any, labels: tuple[str, ...], options: dict | None, grid: Any,
+    ) -> tuple["_SectorOutput | None", str]:
+        """Return the sector plan of a stationary output workflow, or ``None``, and the reason.
+
+        ``labels`` lists the output first. ``grid`` holds the offsets or delays,
+        which the host solve needs as concrete values.
+        """
+        tones = self._tone_values({})
+        model, reason = plan_sectors(
+            self.chip, workflow, labels=labels, inputs=tuple(port for port, _, _ in tones),
+            frequencies=tuple(frequency for _, frequency, _ in tones), options=options,
+            concrete=not contains_tracer((tones, grid)))
+        if model is None:
+            return None, reason
+        from quchip.engine.assembly import _prepare_engine_assembly
+
+        frames = self._output_frames(labels[0], tones)
+        plan, resolution = stationary_frame_plan(self.chip, frames)
+        _, frame = _prepare_engine_assembly(self.chip, plan, self.chip.approximation, resolution=resolution)
+        return _SectorOutput(model, reason, workflow.name, float(frames[0][1]),
+                             tuple(complex(amplitude) for _, _, amplitude in tones), frame), reason
 
 
     def _linear_sweep(
         self, chips: list[Any], frequencies: Any, labels: tuple[str, ...]
-    ) -> tuple[list[Any], list[Mapping[str, Any]]] | None:
-        """Solve every chip point in mode space, or return ``None`` if any point is ineligible."""
+    ) -> tuple[list[Any], list[Mapping[str, Any]]] | str:
+        """Solve every chip point in mode space, or return why a point needs the stationary route."""
         matrices: list[Any] = []
         diagnostics: list[Mapping[str, Any]] = []
         for chip in chips:
             built = try_build_weak_probe_problem(chip, frequencies, plane_labels=labels)
             if built is None:
-                return None
-            problem, route = built
+                return weak_probe_reason(chip, labels)
+            problem, name = built
+            route = SolveRoute(name, WEAK_PROBE[name], len(problem.mode_labels), array_name(chip.backend))
             solved = chip.backend.linear_response(problem)
             indices = list(problem.plane_indices)
             transfer = (
@@ -679,13 +843,41 @@ class VNA:
             matrices.append(chip.backend.array_module.asarray(transfer * solved.responses))
             diagnostics.extend(
                 _LazyDiagnostics({
-                    "solver": route,
+                    "solver": name,
+                    "route": route,
                     "mode_count": len(problem.mode_labels),
                     "residual": solved.residuals[index],
                     "condition_number": lambda index=index, condition=solved._condition_numbers: condition()[index],
                 })
                 for index in range(len(frequencies))
             )
+        return matrices, diagnostics
+
+    def _conditional_sweep(
+        self, chips: list[Any], frequencies: Any, labels: tuple[str, ...], reference: tuple[int, ...],
+    ) -> tuple[list[Any], list[Mapping[str, Any]]]:
+        """Solve a fixed-reference response at each parameter point."""
+        matrices: list[Any] = []
+        diagnostics: list[Mapping[str, Any]] = []
+        for chip in chips:
+            problem, metadata = build_conditional_response(chip, frequencies, labels, reference)
+            vacuum = isinstance(problem, LinearResponseProblem)
+            metadata["route"] = SolveRoute(
+                metadata["solver"], _VACUUM_REFERENCE if vacuum else _FROZEN_REFERENCE,
+                metadata["mode_count"] if vacuum else metadata["coherence_count"], array_name(chip.backend))
+            solved = chip.backend.linear_response(problem) if vacuum else chip.backend.coherence_response(problem)
+            indices = list(problem.plane_indices)
+            transfer = problem.outbound_transfer[:, indices, None] * problem.inbound_transfer[:, None, indices]
+            matrices.append(transfer * solved.responses)
+
+            def condition(index: int, value: Any = solved._condition_numbers) -> Any:
+                values = value()
+                return None if values is None else values[index]
+
+            diagnostics.extend(_LazyDiagnostics({
+                **metadata, "residual": solved.residuals[index],
+                "condition_number" if vacuum else "block_condition_number": partial(condition, index),
+            }) for index in range(len(frequencies)))
         return matrices, diagnostics
 
     def _chip_at(self, params: dict[str, Any]) -> Any:
@@ -768,11 +960,13 @@ def _operating_point(
     options: dict | None,
     *,
     guess: Any | None = None,
+    reason: str,
 ) -> _OperatingPoint:
     """Solve the pumped stationary state with every selected plane framed at ``frequency``.
 
     ``guess`` is the operating state at another probe frequency; the backend
-    may reuse it when it remains stationary in these frames.
+    may reuse it when it remains stationary in these frames. ``reason``
+    explains the route in the diagnostics.
     """
     engine = resolve_stationary_engine(
         chip,
@@ -780,12 +974,12 @@ def _operating_point(
         + tuple((label, frequency) for label in labels),
     )
     operating_engine = add_port_inputs(engine, chip.backend, tones)
-    return _solve_engine(chip, operating_engine, tones, options, guess=guess)
+    return _solve_engine(chip, operating_engine, tones, options, guess=guess, reason=reason)
 
 
 def _solve_engine(
     chip: Any, engine: EngineResult, tones: tuple[tuple[str, Any, Any], ...], options: dict | None,
-    *, guess: Any | None = None,
+    *, guess: Any | None = None, reason: str,
 ) -> _OperatingPoint:
     problem = SteadyStateProblem(
         chip=chip,
@@ -796,7 +990,8 @@ def _solve_engine(
         options={} if options is None else options,
     )
     prepared = problem.backend.prepare_stationary(engine)
-    return _OperatingPoint(prepared, solve_steadystate_problem(problem, prepared=prepared, guess=guess), tones)
+    return _OperatingPoint(prepared, solve_steadystate_problem(problem, prepared=prepared, guess=guess, reason=reason),
+                           tones)
 
 
 def _stationary_output_backgrounds(
@@ -830,13 +1025,17 @@ def _small_signal_matrix(
     operating: _OperatingPoint,
     labels: tuple[str, ...],
     frequency: Any,
+    *,
+    offset: Any = 0.0,
 ) -> tuple[Any, Any]:
     """Return the selected-port ``S_ji(f)`` and phase-conjugating ``T_ji(f)`` matrices.
 
     Rows are output ports and columns are input ports. Around a phase-sensitive
     operating point the linear response is ``delta <b_out> = S delta beta + T
     conj(delta beta)``; one shifted-Liouvillian factorization serves both source
-    sets for all input columns.
+    sets for all input columns. ``offset`` is the probe frequency relative to
+    the stationary frame, in GHz. At nonzero offset the conjugate input lies
+    at the opposite Fourier frequency and contributes no same-carrier ``T``.
     """
     engine = operating.engine
     backend = operating.prepared.backend
@@ -865,7 +1064,7 @@ def _small_signal_matrix(
         engine,
         tuple(sources),
         tuple((channel.key, channels[channel.key]) for channel in engine.slh.channels),
-        (0.0,),
+        (offset,),
         prepared=operating.prepared,
     )
     inbound = xp.stack([cw_transfer(external[i].reference.inbound, frequency, xp) for i in indices])
@@ -881,7 +1080,8 @@ def _small_signal_matrix(
     gain = outbound[:, None]
     return (
         gain * inbound[None, :] * (mixing @ (direct + gather("normal"))),
-        gain * xp.conj(inbound)[None, :] * (mixing @ gather("conjugate")),
+        xp.where(xp.asarray(offset) == 0.0,
+                 gain * xp.conj(inbound)[None, :] * (mixing @ gather("conjugate")), 0.0),
     )
 
 
@@ -951,3 +1151,161 @@ def _plane_means(
 def _output_field_matrix(operator: CanonicalOperator, incoming: Any, xp: Any) -> Any:
     coupling = xp.asarray(operator.to_dense(), dtype=complex)
     return xp.asarray(incoming) * xp.eye(coupling.shape[0], dtype=complex) + coupling
+
+
+@dataclass(frozen=True)
+class _SectorOutput:
+    """The sector model of a stationary output workflow, with its coherent inputs at one carrier frequency."""
+
+    model: Any
+    reason: str
+    method: str
+    frequency: float
+    amplitudes: tuple[complex, ...]
+    frame: Any
+
+
+def _sector_solve(sector: _SectorOutput, measure: Any, change: Any, quantities: str,
+                  stacklevel: int) -> tuple[int, Any, str, Any]:
+    """Solve on the chip's cutoff, or on an automatic one, and measure the stationary state.
+
+    Returns the kept cutoff, the solve with its measured values, the choice
+    of the cutoff and the check of an automatic one.
+    """
+    from quchip.analysis.measurement import _embed
+
+    model = sector.model
+
+    def solve(cutoff: int, lower: Any) -> Any:
+        guess = None if lower is None else _embed(lower[0].state, model.size(cutoff))
+        solved = model.stationary(cutoff, sector.frequency, sector.amplitudes, guess)
+        return solved, measure(cutoff, solved.state)
+
+    if model.sectors.cutoff is not None:
+        return model.sectors.cutoff, solve(model.sectors.cutoff, None), "explicit", None
+    cutoff, results, check = automatic_cutoff(
+        model.max_total, solve, lambda lower, upper: change(lower[1], upper[1]), states=model.size,
+        fits=lambda total: fits_memory(model.required_memory(total)))
+    if check is not None:
+        warn_cutoff(sector.method, cutoff, model.size(cutoff), check, quantities, stacklevel=stacklevel)
+    return cutoff, results, "automatic", check
+
+
+def _sector_spectrum(sector: _SectorOutput, output_port: str, offsets: Any) -> OutputSpectrumResult:
+    """Return the output spectrum of a sector solve, in the frame of the coherent inputs."""
+    model, frequency, amplitudes = sector.model, sector.frequency, sector.amplitudes
+    grid = np.asarray(offsets, dtype=float)
+
+    def source(pair: tuple[Any, Any]) -> Any:
+        white, excess = pair
+        return normal_spectrum(white + excess, np)
+
+    def measure(cutoff: int, state: Any) -> tuple[Any, ...]:
+        excess, info = model.quadrature_spectrum(cutoff, frequency, amplitudes, state, grid)
+        components, _ = propagate_noise(model.fields, model.scattering, None, excess, (output_port,), frequency,
+                                        grid, np)
+        added = sum((source(pair) for name, pair in components.items() if name != "device.correlations"),
+                    np.zeros(len(grid)))
+        field = model.field(cutoff, frequency, amplitudes, output_port)
+        intensity = float(np.real((field.conj().T @ field).multiply(state.T).sum()))
+        coherent = abs(complex(field.multiply(state.T).sum())) ** 2
+        return source(components["device.correlations"]), added, intensity, coherent, info
+
+    # The warning names the caller of VNA.output_spectrum().
+    cutoff, (solved, (signal, added, intensity, coherent, info)), choice, check = _sector_solve(
+        sector, measure, _spectrum_change, "spectra and photon fluxes", stacklevel=4)
+    diagnostics = {**sector_diagnostics(model, cutoff, solved, sector.reason, choice, check), **info}
+    xp = model.chip.backend.array_module
+    return OutputSpectrumResult(
+        port=output_port,
+        frequencies=offsets,
+        total_fluctuation_spectrum=xp.asarray(signal + added),
+        signal_fluctuation_spectrum=xp.asarray(signal),
+        added_noise_spectrum=xp.asarray(added),
+        signal_photon_flux=xp.asarray(intensity),
+        signal_coherent_flux=xp.asarray(coherent),
+        signal_incoherent_flux=xp.asarray(intensity - coherent),
+        steady_state=model.steady_state(cutoff, solved, sector.frame, diagnostics),
+        diagnostics=_LazyDiagnostics(diagnostics),
+    )
+
+
+def _spectrum_change(lower: tuple[Any, ...], upper: tuple[Any, ...]) -> float:
+    """Compare two spectrum solves at each offset, and their total and coherent photon fluxes.
+
+    The fluxes share the floor of the total flux, which bounds the coherent one.
+    """
+    return max(largest_change(list(lower[0]), list(upper[0])), largest_change(list(lower[1]), list(upper[1])),
+               largest_change(lower[2:4], upper[2:4]))
+
+
+def _correlation_change(lower: tuple[Any, ...], upper: tuple[Any, ...]) -> float:
+    """Compare two correlation solves at each delay, and each of their two intensities."""
+    return max(largest_change(list(lower[0]), list(upper[0])), largest_change(lower[1:2], upper[1:2]),
+               largest_change(lower[2:3], upper[2:3]))
+
+
+def _sector_correlation(sector: _SectorOutput, order: int, output_port: str, input_port: str,
+                        delays: Any) -> OutputCorrelationResult:
+    """Return a normalized output correlation of a sector solve, in the frame of the coherent inputs."""
+    model, frequency, amplitudes = sector.model, sector.frequency, sector.amplitudes
+    references = model.response.references
+    _require_detectable({key: reference.outbound for key, reference in zip(model.keys, references, strict=True)},
+                        [(None, reference) for reference in references], output_port, input_port, mixed=False)
+    grid = np.asarray(delays, dtype=float)
+
+    def measure(cutoff: int, state: Any) -> tuple[Any, float, float]:
+        values = model.correlation(cutoff, frequency, amplitudes, state, order, output_port, input_port, grid)
+        if values[1] <= 0 or values[2] <= 0:
+            raise ValueError("Normalized output correlations require nonzero output intensity.")
+        return values
+
+    # The warning names the caller of VNA.g1() or VNA.g2().
+    cutoff, (solved, (raw, input_intensity, output_intensity)), choice, check = _sector_solve(
+        sector, measure, _correlation_change, "correlations and intensities", stacklevel=5)
+    raw = np.conj(raw)
+    denominator = np.sqrt(input_intensity * output_intensity) if order == 1 else input_intensity * output_intensity
+    diagnostics = sector_diagnostics(model, cutoff, solved, sector.reason, choice, check)
+    xp = model.chip.backend.array_module
+    return OutputCorrelationResult(
+        order=order,
+        input_port=input_port,
+        output_port=output_port,
+        delays=delays,
+        values=xp.asarray(raw / denominator),
+        unnormalized=xp.asarray(raw),
+        input_intensity=xp.asarray(input_intensity),
+        output_intensity=xp.asarray(output_intensity),
+        steady_state=model.steady_state(cutoff, solved, sector.frame, diagnostics),
+        normalization=_normalization(order, input_port == output_port),
+        diagnostics=_LazyDiagnostics(diagnostics),
+    )
+
+
+def _require_detectable(runs: Mapping[str, Any], channels: Sequence[tuple[Any, Any]], output_port: str,
+                        input_port: str, *, mixed: bool) -> None:
+    """Raise when normalized g1 and g2 need a detection bandwidth.
+
+    ``runs`` maps each external channel to its outbound reference run, and
+    ``channels`` holds the input occupation and the reference of every channel.
+    """
+    if mixed or has_amplifier(runs[output_port]) or has_amplifier(runs[input_port]):
+        raise NotImplementedError(
+            "Normalized g1 and g2 through an amplifier require a detection bandwidth for its "
+            "broadband added noise. Request the correlation at a reference plane before the amplifier."
+        )
+    thermal = any(occupation is not None or any(
+        (isinstance(element, ReferenceLoss) and element.occupation is not None)
+        or (isinstance(element, ReferenceFilter) and element.loss_occupation is not None)
+        for element in (*reference.inbound, *reference.outbound))
+        for occupation, reference in channels)
+    if thermal:
+        raise NotImplementedError("Normalized g1 and g2 with thermal network fields require a detection "
+                                  "bandwidth. Use measure().statistics() for integrated second moments.")
+
+
+def _normalization(order: int, same_port: bool) -> str:
+    """Return the normalization convention of an output correlation."""
+    if order == 1:
+        return "G1(tau) / G1(0)" if same_port else "G1(output, input; tau) / sqrt(I_output I_input)"
+    return "G2(tau) / G1(0)^2" if same_port else "G2(output, input; tau) / (I_output I_input)"

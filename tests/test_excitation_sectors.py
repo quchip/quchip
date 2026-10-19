@@ -7,10 +7,11 @@ import numpy as np
 import pytest
 
 from quchip.chip.effective import EffectiveTerms
-from quchip.chip.sw import _exact_eigensystem, excitation_sectors
+from quchip.chip.sw import _exact_eigensystem
 from quchip.declarative.dissipation import CollapseChannel
 from quchip.declarative.expr import declared_excitation_changes
-from quchip.engine.bands import _decompose_product_canonical_bands, concrete_excitation_changes
+from quchip.engine.bands import _decompose_product_canonical_bands
+from quchip.engine.excitation import concrete_excitation_changes, excitation_sectors
 from quchip.engine.ir import CanonicalOperator
 
 pytestmark = pytest.mark.unit

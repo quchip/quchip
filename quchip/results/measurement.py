@@ -8,7 +8,7 @@ from typing import Any, Mapping
 
 import numpy as np
 
-from quchip.analysis.field_statistics import block_diagonal, normal_spectrum, quadrature_transfer
+from quchip.engine.field_statistics import block_diagonal, normal_spectrum, quadrature_transfer
 from quchip.utils.constants import TWO_PI, hbar
 from quchip.results.input_output import MeanFieldResponseResult
 from quchip.utils.jax_utils import array_namespace, contains_tracer, is_jax_array, select_array_module
@@ -261,7 +261,7 @@ class VNAMeasurement(MeanFieldResponseResult):
     photon_numbers: Any
     mode_frequencies: Any
     conventions: tuple[str, ...] = (
-        "b=I+jQ; engineering e^{+jωt}, j = −i; frequencies in GHz; time in ns",
+        "b=I+jQ, engineering e^{+jωt}, j=i. Frequencies in GHz, time in ns.",
         "Physical normal-order spectra; detector vacuum added by the receiver",
         "Independent stationary experiments across sweep points",
         "Gaussian sampling uses second moments, not full photon statistics",

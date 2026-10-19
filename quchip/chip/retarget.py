@@ -120,21 +120,16 @@ def lookup_retarget_rule(drive_type: type, target_type: type, result_kind: str) 
 def _flux_edge_pump_rule(line: Any, ctx: RetargetContext) -> RetargetResult:
     """FluxDrive on an eliminated coupler → one baseband ParametricDrive per emitted edge.
 
-    The flux line was a knob on the eliminated mode's frequency; each edge
-    the elimination emitted responds to that knob with its own linearized
-    weight, ``δJ_ab(t) = (∂J_ab/∂ω_c) · δω_c(t)``. The conversion realizes
-    exactly that: the first emitted pair's pump keeps the original label (a
-    static, emission-order choice — never a comparison of traced weights),
-    every further edge gets a pump labeled ``{label}_{a}_{b}`` fed a
-    unit-amplitude ``Crosstalk`` copy of the scheduled signal, and every
-    pump line carries its own ``Gain(∂J_ab/∂ω_c)``. One replayed
-    ``schedule(label, ...)`` call therefore drives every edge at the correct
-    relative weight, with each weight a plain traced factor (no ratios).
-    All lines are baseband (the FluxDrive envelope carries δω_c(t) in GHz;
-    each pump envelope carries δJ_ab(t)), so the replayed call needs no freq
-    argument. Copies precede gains in the transform tuple: a ``Gain`` on a
-    copy-fed line is a no-op until the copy has landed on it. Small-signal:
-    exact to first order in δω_c, valid for δω_c ≪ Δ.
+    The flux line modulates the removed mode's frequency in GHz.
+    Each emitted edge receives its second-order gain ``dJ_ab/domega_c``.
+    The first pump keeps the original line label. Further pumps receive
+    unit-amplitude crosstalk copies before their own gains apply.
+    This order preserves relative weights without dividing traced values.
+
+    The conversion is linear in frequency modulation and second order in
+    dispersive coupling, including for exact elimination. It requires
+    modulation small compared with detuning and holds charge elements fixed.
+    Survivor Lamb-shift modulation is omitted.
     """
     from quchip.control.drive import ParametricDrive
     from quchip.control.signal import Crosstalk, Gain

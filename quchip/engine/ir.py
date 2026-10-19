@@ -48,7 +48,7 @@ from quchip.utils.jax_utils import (
 from quchip.utils.constants import TWO_PI
 
 if TYPE_CHECKING:
-    from quchip.chip.dressing import BareProductReference
+    from quchip.engine.dressing import BareProductReference
     from quchip.control.envelopes import Envelope
     from quchip.control.signal import SignalKey
     from quchip.engine.frames import FramePlan
@@ -1495,9 +1495,12 @@ class ResolvedSLH:
 class DroppedTerm:
     """Advisory record for a Hamiltonian term elided by an approximation.
 
-    Compare a dropped band's amplitude with its oscillation frequency to assess
-    RWA validity. The leading Bloch-Siegert correction scales as
-    amplitude²/frequency. Numeric fields use ordinary GHz and can be traced.
+    For static interactions, ``amplitude`` and ``frequency`` identify the
+    entry with the largest ``|V|²/|E_col - E_row|`` in isolated energy
+    coordinates. This perturbative scale is a heuristic, not an error bound.
+    A nonzero entry at zero detuning is resonant. Its scale is infinite.
+    A zero amplitude contributes no shift. Numeric fields use ordinary GHz
+    and can be traced. The selected entry can change as parameters vary.
 
     Parameters
     ----------
@@ -1507,28 +1510,31 @@ class DroppedTerm:
     operator : str
         Human-readable operator string (for example ``"a_q0 · a_q1"``).
     reason : str
-        Short reason (for example ``"counter-rotating under RWA"``).
+        Short reason (for example ``"discarded by RWA band selection"``).
     band_weights : tuple[int, ...] | None
-        Excitation-change weights of the dropped band, one per endpoint mode in
-        the owner's declared order (for example ``(-1, -1)`` for ``a·b``).
+        Energy-index weights ``column - row``, one per supported device in
+        the owner's declared order (for example ``(1, 1)`` for ``a·b``).
+        Lowering has positive weight, opposite to the level change.
         ``None`` when not applicable.
     amplitude : Any | None
-        Static prefactor of the dropped term in GHz (for example the coupling
-        ``g``), possibly traced. ``None`` when the prefactor is time-dependent
-        (drive envelopes) or unknown.
+        Magnitude of the selected static matrix element in GHz, possibly
+        traced. ``None`` for time-dependent terms or unknown amplitudes.
     frequency : Any | None
-        Positive oscillation frequency of the dropped band in the assembly
-        frame, in GHz, possibly traced. ``None`` until resolved (assembly fills
-        it from the frame and ``band_weights``).
+        Absolute bare-energy detuning of that same entry in GHz, independent
+        of the frame and possibly traced. Zero denotes resonance.
+        ``None`` when unknown, including general time-dependent terms.
+    frame_frequency : Any | None
+        Absolute frame carrier in GHz, possibly traced. For a scheduled
+        drive this includes its dropped signal partner. ``None`` when unknown.
+        This carrier is not a physical transition detuning.
     """
-    # Static `band_weights` let assembly derive the frequency from the frame.
-
     source: str
     operator: str
     reason: str
     band_weights: tuple[int, ...] | None = None
     amplitude: Any = None
     frequency: Any = None
+    frame_frequency: Any = None
 
 
 @dataclass(frozen=True)
@@ -1590,7 +1596,10 @@ class EngineResult:
     coherent_inputs : tuple
         Captured coherent source bindings used to assemble those terms.
     dims : tuple of int
-        Solver Hilbert-space dimensions in chip device order.
+        Solver dimensions. A compact solve uses one coordinate axis. Physical
+        dimensions remain in excitation_space and in the public result.
+    excitation_space : object or None
+        Captured exact excitation coordinate map. None denotes product coordinates.
     metadata : dict
         Advisory solver hints, with frequencies in GHz and time scales in ns.
     dropped_terms : tuple of DroppedTerm
@@ -1621,6 +1630,7 @@ class EngineResult:
     approximation: Any = None
     dynamical_supports: tuple[tuple[str, ...], ...] = ()
     dissipation: bool = True
+    excitation_space: Any = field(default=None, repr=False, compare=False)
     _dressing_context: _ResolvedDressingContext | None = field(
         default=None,
         repr=False,
@@ -1661,7 +1671,9 @@ class EngineResult:
         Unlike :meth:`Chip.dress <quchip.Chip.dress>`, this method analyzes the
         selected frame and approximation stored in this snapshot. A snapshot
         with dynamic Hamiltonian terms requires ``at_time``. The result is an
-        instantaneous eigensystem, not a Floquet analysis.
+        instantaneous eigensystem, not a Floquet analysis. A compact pulse
+        snapshot analyzes only its retained invariant space. Its eigenstates
+        use those compact solver coordinates.
 
         Parameters
         ----------
@@ -1672,7 +1684,7 @@ class EngineResult:
         labeling : str, default="DE"
             Bare-to-dressed assignment strategy.
         """
-        from quchip.chip.analysis import dress_engine_result
+        from quchip.engine.dressing import dress_engine_result
 
         return dress_engine_result(
             self,
@@ -1752,7 +1764,7 @@ class EngineResult:
                     for term in self.collapse_terms
                 ),
                 tuple(
-                    (term.amplitude, term.frequency)
+                    (term.amplitude, term.frequency, term.frame_frequency)
                     for term in self.dropped_terms
                 ),
                 tuple(
@@ -1819,7 +1831,7 @@ class EngineResult:
     def dropped_terms_summary(self) -> str:
         """Format :attr:`dropped_terms` as a multi-line human-readable string.
 
-        Traced ``amplitude`` / ``frequency`` values print as ``traced`` and are
+        Traced numeric values print as ``traced`` and are
         not concretized.
         """
         if not self.dropped_terms:
@@ -1833,7 +1845,10 @@ class EngineResult:
         for term in self.dropped_terms:
             extras = [
                 f"{name} {_fmt(value)}"
-                for name, value in (("amp", term.amplitude), ("freq", term.frequency))
+                for name, value in (
+                    ("amp", term.amplitude), ("detuning", term.frequency),
+                    ("carrier", term.frame_frequency if term.frequency is None else None),
+                )
                 if value is not None
             ]
             detail = f"{term.reason}; {', '.join(extras)}" if extras else term.reason
@@ -1885,12 +1900,6 @@ class HamiltonianTemplate:
     coherent_terms: tuple[Any, ...] = ()            # tuple[assembly.CompiledCoherentTerm, ...]
     reference_drive_ops: tuple[Any, ...] = ()       # tuple[DriveOp, ...]
     delivered_keys: frozenset[SignalKey] = frozenset()
-    #: Single-tone weight-zero bands dropped structurally under RWA during engine assembly.
-    #: time (:func:`~quchip.engine.assembly._compile_drive_terms`).
-    #: The drop decision needs no drive frequency; resolving each entry into
-    #: a :class:`DroppedTerm` does, so this stays a pointer
-    #: (``tuple[assembly._StructuralDrop, ...]``) until instantiation.
-    weight_zero_drops: tuple[Any, ...] = ()
 
 
 # ── Frame Types ─────────────────────────────────────────────────────
@@ -1912,21 +1921,25 @@ def _is_scalar_like(value: Any) -> bool:
 class ResolvedFrame:
     """Resolved per-device frame information.
 
-    Describes the rotating-frame transformation applied uniformly to
-    the chip:
+    Describes the rotating-frame transformation applied uniformly to the
+    chip. The static Hamiltonian gets the counter-term ``−Σᵢ ω_frame,ᵢ nᵢ``,
+    and solves and results keep states in this integration frame.
 
-    * ``frequencies[label]``: the per-device integration-frame frequency
-      ``ω_frame`` in GHz. The static Hamiltonian gets the counter-term
-      ``−Σᵢ ω_frame,ᵢ nᵢ``.
-    * ``demod_freqs[label] = reference_freq − ω_frame``: the demodulation
-      frequency used after the solve to rotate expectations back into the
-      user's control frame. ``reference_freq`` is the device attribute (see
-      :attr:`~quchip.devices.base.BaseDevice.reference_freq`). It defaults to
-      the dressed drive frequency when not set explicitly.
-    * ``mode``: one of ``"lab"`` / ``"rotating"`` / ``"auto"`` / ``"float"`` /
-      ``"dict"``.
-    * ``plan``: the :class:`~quchip.engine.frames.FramePlan` selected for
-      ``"auto"``, or ``None`` for an explicit frame.
+    Attributes
+    ----------
+    frequencies : dict
+        Integration-frame frequency ``ω_frame`` of each device label, in GHz.
+    demod_freqs : dict
+        ``reference_freq − ω_frame`` of each device label, in GHz. After the
+        solve, this frequency rotates expectations back into the user's
+        control frame. ``reference_freq`` is the device attribute (see
+        :attr:`~quchip.devices.base.BaseDevice.reference_freq`), which
+        defaults to the dressed drive frequency.
+    mode : str
+        One of ``"lab"``, ``"rotating"``, ``"auto"``, ``"float"`` and ``"dict"``.
+    plan : FramePlan or None
+        The :class:`~quchip.engine.frames.FramePlan` selected for ``"auto"``,
+        or None for an explicit frame.
     """
 
     frequencies: dict[str, Any]
@@ -2138,6 +2151,43 @@ class LinearResponseProblem:
     inbound_transfer: Any
     outbound_transfer: Any
     field_channels: tuple[FieldChannel, ...] = ()
+
+
+@dataclass(frozen=True)
+class CoherenceResponseProblem:
+    """Frequency response on adjacent excitation-sector coherences.
+
+    Attributes
+    ----------
+    frequencies : array_like
+        Probe frequencies in GHz.
+    hamiltonians : tuple of array_like
+        Sector Hamiltonians in rad/ns, ordered by excitation number from zero.
+    lowering : tuple of array_like
+        Channel blocks from N to N-1, shaped (channels, d[N-1], d[N]).
+        Entry zero is unused and has zero rows.
+    conserving : tuple of array_like
+        Number-conserving channel blocks, shaped (conserving_channels, d[N], d[N]).
+    sources : tuple of array_like
+        Negative probe commutators on (N,N-1), shaped (d[N], d[N-1], inputs).
+        Entry zero is unused and has zero columns.
+    scattering : array_like
+        Complete instantaneous SLH scattering matrix.
+    plane_indices : tuple of int
+        Selected external channels in input and output order.
+    inbound_transfer, outbound_transfer : array_like
+        Reference-plane transfer factors, shaped (frequencies, channels).
+    """
+
+    frequencies: Any
+    hamiltonians: tuple[Any, ...]
+    lowering: tuple[Any, ...]
+    conserving: tuple[Any, ...]
+    sources: tuple[Any, ...]
+    scattering: Any
+    plane_indices: tuple[int, ...]
+    inbound_transfer: Any
+    outbound_transfer: Any
 
 
 @dataclass(frozen=True)

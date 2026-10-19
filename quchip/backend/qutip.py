@@ -35,8 +35,8 @@ from qutip.solver.mesolve import MESolver
 from qutip.solver.sesolve import SESolver
 from scipy import sparse
 
-from quchip.backend._memory import require_memory
-from quchip.backend._response import linear_response, stationary_condition_number
+from quchip.utils.memory import dense_bytes, fits_memory, require_memory, sparse_lu_bytes
+from quchip.backend._response import coherence_response, linear_response, stationary_condition_number
 from quchip.utils.values import DeferredValue
 from quchip.backend._dims import (
     default_solver_steps,
@@ -50,6 +50,7 @@ from quchip.backend.containers import (
     PreparedHamiltonian,
     PreparedStationary,
     LinearResponseSolverResult,
+    CoherenceResponseSolverResult,
     SolverResult,
     SteadyStateSolverResult,
 )
@@ -59,7 +60,7 @@ from quchip.engine.ir import (
     evaluate_signal_program,
     signal_window_bounds,
 )
-from quchip.utils.jax_utils import maybe_concrete_scalar
+from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
 
 
 @dataclass(frozen=True)
@@ -201,7 +202,9 @@ _SPARSE_SUPEROPERATOR_PEAK_COPIES = 3
 
 
 def _operator_parts(operator: Any) -> list[Qobj]:
-    """Return the constant operators of a ``Qobj`` or ``QobjEvo``."""
+    """Return the constant operators of a ``Qobj``, a ``QobjEvo``, or a sequence of them."""
+    if isinstance(operator, (list, tuple)):
+        return [part for item in operator for part in _operator_parts(item)]
     if isinstance(operator, qutip.QobjEvo):
         return [part[0] if isinstance(part, list) else part for part in operator.to_list()]
     return [operator]
@@ -382,6 +385,7 @@ def _assemble_qobjevo(static_rhs: Qobj | None, op_signal_pairs: Any, sample_tlis
     terms: list[Any] = [] if static_rhs is None else [static_rhs]
     groups: dict[tuple, tuple[Qobj, Any, list[Any]]] = {}
     for op, signal in op_signal_pairs:
+        QuTiPBackend._validate_input(signal)
         key = _qobj_key(op)
         for band in decompose_carrier_bands(signal):
             freq = maybe_concrete_scalar(band.freq)
@@ -676,6 +680,19 @@ def _annihilates(liouvillian: sparse.csr_matrix, state: Any) -> bool:
     return bool(np.linalg.norm(liouvillian @ vector) <= _STATIONARY_REUSE_EPS * np.finfo(float).eps * scale)
 
 
+def _require_lu_memory(matrix: Any) -> None:
+    """Raise before SuperLU factorizes a stationary generator whose factors cannot fit in memory."""
+    size = matrix.shape[0]
+    # The estimate never exceeds a dense matrix, so the pattern needs no analysis when one fits.
+    if fits_memory(dense_bytes(size, size)):
+        return
+    require_memory(
+        sparse_lu_bytes(matrix),
+        task=f"Factorizing the {size} × {size} stationary generator",
+        remedy="Reduce the device cutoffs. This estimate is low; the factors usually need more memory.",
+    )
+
+
 def _direct_steady_state(liouvillian: sparse.csr_matrix, dims: Sequence[int]) -> Qobj | None:
     """Solve as ``qutip.steadystate``'s default direct method does, without its option scope.
 
@@ -698,7 +715,9 @@ def _direct_steady_state(liouvillian: sparse.csr_matrix, dims: Sequence[int]) ->
     )
     target = np.zeros(size, dtype=complex)
     target[0] = weight
-    vector = sparse.linalg.spsolve((liouvillian + trace).tocsr(), target)
+    constrained = (liouvillian + trace).tocsr()
+    _require_lu_memory(constrained)
+    vector = sparse.linalg.spsolve(constrained, target)
     rho = vector.reshape(n, n, order="F")
     return Qobj(0.5 * (rho + rho.conj().T), dims=[list(dims), list(dims)], isherm=True)
 
@@ -707,6 +726,9 @@ def _direct_steady_state(liouvillian: sparse.csr_matrix, dims: Sequence[int]) ->
 # (10 s by default), and that respawn costs ~3 s on the next sweep. Sweeps in an
 # interactive session arrive minutes apart, so the pool is kept warm for an hour.
 _POOL_IDLE_TIMEOUT_S = 3600
+# Each loky worker imports quchip, QuTiP and JAX, which takes about 190 MB
+# before its first problem.
+_WORKER_BYTES = 190 * 10**6
 
 
 def _warmup_noop(_idx: Any = None) -> None:
@@ -733,6 +755,8 @@ class QuTiPBackend(Backend):
     # Batches smaller than this run sequentially in-process: the loky pool's
     # fork/import/IPC overhead dominates a handful of fast QuTiP solves.
     _PARALLEL_MIN_BATCH = 8
+    # Worker count of the reusable loky pool that this process started, or zero.
+    _pool_workers = 0
 
     def __init__(self) -> None:
         # Per-(kind, dim) memo of the Fock-space operator factories. These are
@@ -751,6 +775,12 @@ class QuTiPBackend(Backend):
     @property
     def array_module(self) -> Any:
         return np
+
+    @staticmethod
+    def _validate_input(value: Any) -> None:
+        """Reject traced values when lowering to QuTiP's concrete representation."""
+        if contains_tracer(value):
+            raise ValueError("JAX tracing requires backend='dynamiqs'. This calculation uses 'qutip'.")
 
     def to_array(self, op: Operator) -> Any:
         if isinstance(op, Qobj):
@@ -808,11 +838,34 @@ class QuTiPBackend(Backend):
         return self._cached_op("identity", n, qutip.qeye)
 
     def from_array(self, data: Any, dims: list[list[int]] | None = None) -> Operator:
+        self._validate_input(data)
         if isinstance(data, Qobj):
             return data if dims is None or data.dims == dims else Qobj(data.data, dims=dims)
         if hasattr(data, "to_jax"):
             data = np.asarray(data.to_jax(), dtype=complex)
         return Qobj(data, dims=dims)
+
+    def compact_operator(self, rows: Any, columns: Any, values: Any, size: int) -> Operator:
+        from quchip.engine.ir import CanonicalOperator
+
+        matrix = sparse.csr_matrix((np.asarray(values, dtype=complex), (rows, columns)), shape=(size, size))
+        matrix.eliminate_zeros()
+        return self.from_canonical_operator(CanonicalOperator.from_csr(
+            matrix.data, matrix.indices, matrix.indptr, shape=matrix.shape, dims=(size,), basis="fock",
+            subsystem_labels=("0",),
+        ))
+
+    def compact_operators_fit(self, size: int, count: int) -> bool:
+        # CSR operators keep only their entries, which the generator's entries bound.
+        return True
+
+    def linear_combination(self, terms: Sequence[tuple[Any, Operator]]) -> Operator:
+        self._validate_input(terms)
+        return super().linear_combination(terms)
+
+    def _collapse_operators(self, engine_result: Any) -> list[Operator]:
+        self._validate_input([term.rate for term in engine_result.collapse_terms])
+        return super()._collapse_operators(engine_result)
 
     def to_canonical_operator(self, op: Operator) -> Any:
         from quchip.engine.ir import CanonicalOperator
@@ -874,6 +927,18 @@ class QuTiPBackend(Backend):
 
     def expect(self, op: Operator, state: State) -> complex:
         return qutip.expect(op, state)
+
+    def expect_over_time(self, op: Operator, stacked_states: Any) -> Any:
+        if not (isinstance(op, Qobj) and isinstance(op.data, qutip.data.CSR)):
+            return super().expect_over_time(op, stacked_states)
+        # A CSR operator acts on the stacked states without a dense copy.
+        matrix = op.data_as("csr_matrix")
+        states = np.asarray(self.to_array(stacked_states), dtype=complex)
+        if self._is_ket_stack(states):
+            psi = states[..., 0]
+            return np.einsum("ti,ti->t", psi.conj(), (matrix @ psi.T).T)
+        entries = matrix.tocoo()
+        return np.einsum("k,tk->t", entries.data, states[:, entries.col, entries.row])
 
     def ptrace(self, state: State, keep: int | list[int], dims: list[int]) -> State:
         # QuTiP's Qobj.ptrace needs the correct composite dims. Rebuild when the
@@ -1091,6 +1156,41 @@ class QuTiPBackend(Backend):
             rhs, self.coerce_state(problem.initial_state, dims=problem.engine_result.dims), problem.tlist, **kwargs)
         return SolverResult(times=problem.tlist, solver=problem.solver, native=native)
 
+    def trajectory_view(
+        self, native: Any, problem: Any, *, index: int | None, states: bool, deterministic: bool,
+    ) -> tuple[Any, Any, Any]:
+        if index is None:
+            values = native.average_expect
+            history = native.average_states if states else None
+            final = native.average_final_state if states else None
+        else:
+            runs = native.deterministic_trajectories if deterministic else native.trajectories
+            if not runs:
+                raise RuntimeError("Individual runs require native keep_runs_results=True.")
+            run = runs[index]
+            values, history, final = run.expect, run.states if states else None, run.final_state if states else None
+        return values, history or None, final
+
+    def trajectory_records(self, native: Any, problem: Any) -> tuple[Any, str]:
+        sampling = problem.options.get("store_measurement", "")
+        if problem.solver not in ("ssesolve", "smesolve") or not sampling:
+            raise ValueError("Records need ssesolve or smesolve with the native option store_measurement "
+                             "'start', 'middle' or 'end'.")
+        return np.asarray(native.measurement, dtype=float), "end" if sampling is True else sampling
+
+    def trajectory_clicks(self, native: Any, problem: Any) -> tuple[list[Any], Any, Any, Any]:
+        if problem.solver != "mcsolve":
+            raise ValueError("Clicks need a jump solver: mcsolve.")
+        events = [(np.asarray(times, dtype=float), np.asarray(which, dtype=int))
+                  for times, which in zip(native.col_times, native.col_which)]
+        weights = np.asarray(native.runs_weights, dtype=float)
+        return events, weights, float(sum(native.deterministic_weights)), np.zeros(len(events), dtype=bool)
+
+    def trajectory_run_expect(self, native: Any, problem: Any) -> list[Any]:
+        if problem.e_ops and not native.runs_expect:
+            raise RuntimeError("Per-run values require native keep_runs_results=True.")
+        return list(native.runs_expect)
+
     def sesolve(
         self,
         H: Any,
@@ -1235,12 +1335,28 @@ class QuTiPBackend(Backend):
             ),
         )
 
+    def stationary_bytes(self, engine_result: Any) -> int:
+        """Return the estimated bytes of the sparse LU factors of a stationary generator.
+
+        The method builds the generator again. The estimate is low, as
+        :func:`~quchip.utils.memory.sparse_lu_bytes` says.
+
+        Parameters
+        ----------
+        engine_result : EngineResult
+            Captured static Hamiltonian and collapse channels.
+        """
+        return sparse_lu_bytes(self._scipy_liouvillian(self._stationary_liouvillian(engine_result)))
+
     def _stationary_condition_number(self, engine_result: Any) -> float:
         liouvillian = self._scipy_liouvillian(self._stationary_liouvillian(engine_result)).toarray()
         return float(stationary_condition_number(liouvillian, math.prod(engine_result.dims), xp=np))
 
     def linear_response(self, problem: Any) -> LinearResponseSolverResult:
         return linear_response(problem, xp=np)
+
+    def coherence_response(self, problem: Any) -> CoherenceResponseSolverResult:
+        return coherence_response(problem, xp=np)
 
     def stationary_resolvent(
         self,
@@ -1271,6 +1387,8 @@ class QuTiPBackend(Backend):
             shape=(size, size),
         )
         base = keep @ matrix + trace_row
+        # The frequency shift adds only diagonal entries, which every envelope holds.
+        _require_lu_memory(base)
         native_observables = tuple(
             (label, self.from_canonical_operator(operator))
             for label, operator in observables
@@ -1349,6 +1467,7 @@ class QuTiPBackend(Backend):
         problems: list[Any],
         *,
         progress: bool = True,
+        max_workers: int | None = None,
     ) -> list[SolverResult] | None:
         r"""Solve large, structurally heterogeneous problem lists through loky workers.
 
@@ -1358,6 +1477,9 @@ class QuTiPBackend(Backend):
             Problems that cannot be merged into one structural batch.
         progress
             Display solver progress if the backend supports it.
+        max_workers
+            Worker processes. ``None`` chooses the count, and ``1`` solves in
+            this process.
 
         Returns
         -------
@@ -1374,7 +1496,8 @@ class QuTiPBackend(Backend):
         return self._parallel_map(
             task=self.solve_problem,
             items=problems,
-            n_jobs=-1,
+            max_workers=max_workers,
+            point_bytes=max(self._point_bytes(problem) for problem in problems),
             progress=progress,
             desc="Sweep (independent)",
         )
@@ -1410,7 +1533,7 @@ class QuTiPBackend(Backend):
         return self._parallel_map(
             task=lambda problem: solve(**problem),
             items=problems,
-            n_jobs=n_jobs,
+            max_workers=None if n_jobs in (-1, None) else n_jobs,
             progress=progress,
             desc=f"Sweep ({solver_fn})",
         )
@@ -1524,7 +1647,9 @@ class QuTiPBackend(Backend):
             tlist=batch.tlist,
         )
 
-    def solve_batch(self, batch: Any, *, progress: bool = True) -> list[SolverResult]:
+    def solve_batch(
+        self, batch: Any, *, progress: bool = True, max_workers: int | None = None,
+    ) -> list[SolverResult]:
         r"""Solve a :class:`SolveBatch`, with the ``QobjEvo`` for each element built in loky workers.
 
         Parameters
@@ -1533,6 +1658,10 @@ class QuTiPBackend(Backend):
             Captured problems and batch parameter values.
         progress : bool, default True
             Request a batch progress display.
+        max_workers : int or None, default None
+            Worker processes. ``None`` takes the CPU count that loky reports,
+            which honors ``LOKY_MAX_CPU_COUNT``, or fewer when the available
+            memory cannot hold them. ``1`` solves in this process.
 
         Returns
         -------
@@ -1545,7 +1674,7 @@ class QuTiPBackend(Backend):
         """
         if any(problem.stochastic for problem in batch.problems):
             return self._parallel_map(task=self.solve_problem, items=list(batch.problems),
-                                      n_jobs=1, progress=progress, desc="quchip trajectories")
+                                      max_workers=1, progress=progress, desc="quchip trajectories")
         if batch.batch_size == 0:
             return []
 
@@ -1604,14 +1733,16 @@ class QuTiPBackend(Backend):
             )
             return getattr(self, task.solver_name)(**kwargs)
 
-        reference_solver = tasks[0].solver_name
-
+        reference = tasks[0]
+        operators = ([op for op in (reference.static_rhs, *reference.dynamic_qobjs) if op is not None],
+                     reference.c_ops)
         return self._parallel_map(
             task=build_and_solve,
             items=tasks,
-            n_jobs=-1,
+            max_workers=max_workers,
+            point_bytes=self._point_bytes(batch.problems[0], operators),
             progress=progress,
-            desc=f"Sweep ({reference_solver})",
+            desc=f"Sweep ({reference.solver_name})",
         )
 
     # ------------------------------------------------------------------
@@ -1658,10 +1789,11 @@ class QuTiPBackend(Backend):
         Parameters
         ----------
         n_jobs : int, default -1
-            Worker count. ``-1`` selects all CPUs.
+            Worker count. ``-1`` takes the CPU count that loky reports.
         """
         try:
-            executor = self._get_executor(n_jobs)
+            workers = self._worker_count(None if n_jobs in (-1, None) else n_jobs, 0)
+            executor = self._get_executor(workers)
         except (ModuleNotFoundError, ImportError) as exc:
             warnings.warn(
                 f"QuTiP sweep warmup unavailable ({exc!r}); the loky pool will "
@@ -1669,31 +1801,73 @@ class QuTiPBackend(Backend):
                 stacklevel=2,
             )
             return
-        workers = getattr(executor, "_max_workers", None) or (os.cpu_count() or 1)
         list(executor.map(_warmup_noop, range(workers)))
 
-    @staticmethod
-    def _get_executor(n_jobs: int) -> Any:
-        """Return the process-wide reusable loky executor.
+    def _point_bytes(self, problem: Any, operators: tuple[Any, Sequence[Any]] | None = None) -> int:
+        """Estimate the memory that one batch point needs in a worker, besides the worker's imports.
 
-        ``reuse=True`` hands back the same live pool across sweeps; the long
-        idle timeout avoids loky's ~10 s-default respawn, which otherwise
-        stalls the following sweep by ~3 s. Worker count follows ``n_jobs``
-        (``-1``/``None`` → all cores), clamped to at least one.
+        The estimate counts the saved states and, for a master equation whose
+        native Hamiltonian parts and collapse operators are given, the peak of
+        its Liouvillian assembly.
+        """
+        dimension = math.prod(problem.engine_result.dims)
+        solver = problem.solver_name(self)
+        state = dense_bytes(dimension) if solver == "sesolve" else dense_bytes(dimension, dimension)
+        saved = {"final": 1, "none": 0}.get(problem.states, len(problem.tlist))
+        if solver == "mesolve" and operators is not None:
+            return saved * state + _superoperator_peak_bytes(*operators)
+        return saved * state
+
+    @staticmethod
+    def _worker_count(max_workers: int | None, point_bytes: int) -> int:
+        """Return the pool size for a batch whose points each need ``point_bytes`` in a worker.
+
+        An explicit count that cannot fit in the available memory raises
+        :class:`MemoryError`. The default, the CPU count that loky reports,
+        drops with a warning to the largest count that fits.
+        """
+        from loky import cpu_count
+
+        def required(count: int) -> int:
+            # Workers of the running pool have their imports already.
+            started = max(0, count - QuTiPBackend._pool_workers)
+            return count * point_bytes + started * _WORKER_BYTES
+
+        if max_workers is not None:
+            if max_workers > 1:
+                require_memory(required(max_workers), task=f"A batch on {max_workers} worker processes",
+                               remedy="Pass a smaller max_workers.")
+            return max_workers
+        workers = cpu_count()
+        if fits_memory(required(workers)):
+            return workers
+        fitting = next((count for count in range(workers - 1, 0, -1) if fits_memory(required(count))), 1)
+        warnings.warn(
+            f"The batch runs on {fitting} of {workers} worker processes, because each needs about "
+            f"{(point_bytes + _WORKER_BYTES) / 1e9:.2f} GB and the available memory holds no more. "
+            "Pass max_workers to choose the count.",
+            stacklevel=2,
+        )
+        return fitting
+
+    @staticmethod
+    def _get_executor(workers: int) -> Any:
+        """Return the process-wide reusable loky executor with ``workers`` processes.
+
+        ``reuse=True`` hands back the same live pool across sweeps, resized when
+        the count changes; the long idle timeout avoids loky's ~10 s-default
+        respawn, which otherwise stalls the following sweep by ~3 s.
         """
         from loky import get_reusable_executor
 
-        workers = os.cpu_count() if n_jobs in (-1, None) else n_jobs
-        workers = max(1, int(workers or 1))
-        return get_reusable_executor(
-            max_workers=workers,
-            reuse=True,
-            timeout=_POOL_IDLE_TIMEOUT_S,
-        )
+        executor = get_reusable_executor(max_workers=workers, reuse=True, timeout=_POOL_IDLE_TIMEOUT_S)
+        QuTiPBackend._pool_workers = workers
+        return executor
 
     @staticmethod
     def _shutdown_executor() -> None:
         """Shut down the pool (best-effort) so a poisoned reused pool self-heals next sweep."""
+        QuTiPBackend._pool_workers = 0
         try:
             from loky import get_reusable_executor
 
@@ -1706,18 +1880,20 @@ class QuTiPBackend(Backend):
         *,
         task: Callable[[Any], SolverResult],
         items: list[Any],
-        n_jobs: int,
+        max_workers: int | None,
+        point_bytes: int = 0,
         progress: bool,
         desc: str,
     ) -> list[SolverResult]:
         """Run *task* over *items*, picking the cheapest dispatch path.
 
-        Small batches (``< _PARALLEL_MIN_BATCH``) run sequentially in-process —
-        the loky pool's fork/import/IPC overhead dominates a handful of fast
-        QuTiP solves. Larger batches dispatch through the process-wide reusable
-        loky executor. Worker-pool failures may use sequential execution;
-        failures raised by an individual solve retain their point index and
-        propagate without retrying the numerical work.
+        Small batches (``< _PARALLEL_MIN_BATCH``) and ``max_workers=1`` run
+        sequentially in-process — the loky pool's fork/import/IPC overhead
+        dominates a handful of fast QuTiP solves. Larger batches dispatch
+        through the process-wide reusable loky executor, sized by
+        :meth:`_worker_count`. Worker-pool failures may use sequential
+        execution; failures raised by an individual solve retain their point
+        index and propagate without retrying the numerical work.
         """
         from tqdm import tqdm
 
@@ -1732,11 +1908,14 @@ class QuTiPBackend(Backend):
             iterator = tqdm(enumerate(items), total=len(items), desc=desc) if progress else enumerate(items)
             return [indexed_task(entry) for entry in iterator]
 
-        if n_jobs == 1 or len(items) < self._PARALLEL_MIN_BATCH:
+        if max_workers == 1 or len(items) < self._PARALLEL_MIN_BATCH:
             return sequential()
 
         try:
-            executor = self._get_executor(n_jobs)
+            workers = self._worker_count(max_workers, point_bytes)
+            if workers == 1:
+                return sequential()
+            executor = self._get_executor(workers)
         except (ModuleNotFoundError, ImportError) as exc:
             warnings.warn(
                 f"QuTiP batched solve parallelism unavailable ({exc!r}); "

@@ -55,10 +55,8 @@ def resolve_drive_program(
     """Combine one authored signal with its operator-frame phase."""
     frame = Carrier(freq=TWO_PI * frame_frequency, sign=-1)
     filters_signal = approximation.filters_terms if filter_signal_bands is None else filter_signal_bands
-    if not filters_signal or not has_carrier:
+    if not filters_signal or not has_carrier or weight == 0:
         return Multiply((program, frame))
-    if weight == 0:
-        raise ValueError("Carrier-driven weight-zero bands must be eliminated before resolution.")
 
     if isinstance(program, (RealPart, ImagPart)):
         bands = program.bands()

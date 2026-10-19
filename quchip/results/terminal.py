@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from itertools import product
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 import numpy as np
 
@@ -12,6 +12,9 @@ from quchip.results.receiver import gaussian_samples, validate_samples
 from quchip.utils.jax_utils import contains_tracer, select_array_module
 from quchip.utils.labeling import resolve_label
 from quchip.utils.values import copy_value
+
+if TYPE_CHECKING:
+    from quchip.engine.reference import FieldChannel
 
 
 def _namespace(*values: Any) -> Any:
@@ -102,7 +105,6 @@ class IQReadout:
         noise_frequencies : array_like or None, optional
             Two-sided offsets in GHz. ``None`` uses the standard grid.
         """
-        from quchip.analysis.field_noise import ReadoutWiring
         wiring = ReadoutWiring.capture(chip.resolve().slh, chip.backend.array_module)
         return wiring.iq_readout(output, means=means, frequency=frequency, receiver=receiver,
                                  noise_frequencies=noise_frequencies)
@@ -137,6 +139,65 @@ class IQReadout:
         centered = centers - (weights @ centers)[..., None, :]
         return xp.sum(weights[..., :, None, None] * (
             self.iq_covariance + centered[..., :, :, None] * centered[..., :, None, :]), axis=-3)
+
+
+@dataclass(frozen=True)
+class ReadoutWiring:
+    """Capture only field references and downstream mixing, without quantum operators."""
+
+    fields: tuple[FieldChannel, ...]
+    exposed: tuple[str, ...]
+    graph: Any
+    array_module: Any
+
+    @classmethod
+    def capture(cls, slh: Any, array_module: Any) -> ReadoutWiring:
+        """Keep the solved wiring independently of later component edits."""
+        from quchip.engine.reference import FieldChannel
+
+        return cls(tuple(FieldChannel(c.key, c.reference, c.input_occupation) for c in slh.channels),
+                   tuple(c.key for c in slh.external_channels), slh.output_network, array_module)
+
+    def iq_readout(self, output: Any, *, means: Any, frequency: Any, receiver: Any,
+                   noise_frequencies: Any = None) -> Any:
+        """Propagate conditional coherent boundary templates and downstream noise."""
+        from quchip.engine.field_statistics import propagate_noise
+        from quchip.engine.output_network import pad_mixing
+        from quchip.engine.reference import cw_transfer
+        from quchip.results.receiver import _engineering_iq, integrate_noise, noise_grid
+        from quchip.utils.jax_utils import is_jax_array, is_jax_namespace
+
+        label = resolve_label(output)
+        if label not in self.exposed:
+            raise ValueError(f"Unknown exposed output {label!r}; available: {self.exposed}.")
+        templates = {resolve_label(k): v for k, v in means.items()} if isinstance(means, Mapping) else {label: means}
+        if not templates or any(k not in self.exposed for k in templates):
+            raise ValueError("Conditional fields must name captured exposed boundary channels.")
+        xp = select_array_module(is_jax_namespace(self.array_module)
+                                 or any(is_jax_array(v) for v in templates.values())
+                                 or contains_tracer((frequency, receiver.integration_time, tuple(templates.values()))))
+        if not contains_tracer(frequency) and (np.ndim(frequency) or not np.isfinite(frequency)):
+            raise ValueError("Readout frequency must be a finite scalar in GHz.")
+        arrays = {k: xp.conj(xp.asarray(v, dtype=complex)) for k, v in templates.items()}
+        first = next(iter(arrays.values()))
+        if first.ndim != 1 or len(first) < 1 or any(a.shape != first.shape for a in arrays.values()):
+            raise ValueError("Conditional fields must be equal-length vectors ordered by physical outcome.")
+        selected = next(i for i, c in enumerate(self.fields) if c.key == label)
+        fields = xp.stack([arrays.get(c.key, xp.zeros_like(first)) for c in self.fields], axis=-1)
+        mixing = xp.eye(len(self.fields)) if self.graph is None else pad_mixing(
+            self.graph.evaluate(frequency, xp)[0], len(self.fields), xp)
+        gain = cw_transfer(self.fields[selected].reference.outbound, frequency, xp)
+        centers = xp.conj((fields @ mixing.T)[..., selected] * gain)
+        offsets = xp.asarray(noise_grid(noise_frequencies))
+        size = 2 * (len(self.fields) if self.graph is not None else 1)
+        components, delays = propagate_noise(
+            self.fields, xp.eye(len(self.fields)), self.graph,
+            xp.zeros((len(offsets), size, size), dtype=complex), (label,), frequency, offsets, xp,
+            include_inputs=False)
+        components = {name: (_engineering_iq(white, xp), _engineering_iq(excess, xp))
+                      for name, (white, excess) in components.items()}
+        covariance, budget, dc_gain = integrate_noise(xp.zeros(1), offsets, components, delays, receiver)
+        return IQReadout(centers * dc_gain, covariance, budget)
 
 
 @dataclass(frozen=True)
@@ -330,11 +391,22 @@ def measure_result(result: Any, devices: tuple[Any, ...], *, t: Any = None,
         return StateMeasurement(labels, outcomes, probabilities)
     backend = result._backend
     selected = [result._resolve_device_idx(label)[0] for label in labels]
-    state = result.state(t)
+    space = getattr(result, "_excitation_space", None)
+    if space is None:
+        state = result.state(t)
+        dims = tuple(result.dims)
+    else:
+        from math import prod
+        from quchip.utils.memory import dense_bytes, require_memory
+        dims = tuple(result.dims[axis] for axis in selected)
+        require_memory(dense_bytes(prod(dims), prod(dims), copies=4), task="Joint measurement coordinates",
+                       remedy="Measure fewer devices at a time.")
+        raw = result._raw_final_state() if t is None else result._raw_state_at(t)
+        state = space.reduced(raw, backend, selected)
+        selected = list(range(len(labels)))
     array = backend.to_array(state)
     xp = _namespace(array, basis)
     ket = backend.is_ket(state)
-    dims = tuple(result.dims)
     tensor = xp.asarray(array).reshape(dims if ket else dims + dims)
     if isinstance(basis, str):
         if basis not in ("energy", "solver"):

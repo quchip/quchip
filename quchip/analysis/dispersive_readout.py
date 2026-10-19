@@ -1,65 +1,39 @@
-"""Closed-form dispersive-readout analysis: pointer states, SNR, assignment error.
+"""Calculate steady-state dispersive pointer states and detected information.
 
-Maps a qubit–resonator pair's dispersive parameters (the dispersive pull
-``chi`` and the resonator linewidth ``kappa``), a readout drive, and an
-integration time to steady-state figures of merit. It runs no solver and puts
-no resonator in the Hilbert space. This module composes with
-:func:`quchip.chip.transformations.eliminate`, which reports ``chi``/``kappa``
-for each surviving qubit::
+The model is a linear resonator with vacuum energy loss and fixed qubit state.
+It excludes ring-up transients, thermal noise, and measurement-induced qubit T1.
+``kappa`` is the total energy linewidth. ``kappa_detected`` is the observed
+part, before detector efficiency. Elimination's intrinsic downward-decay
+summary is not a general linewidth or detected rate.
 
-    res = eliminate(chip, "readout_res")
-    ro = analyze_dispersive_readout(
-        chi=res.effective_params["q0"]["chi"],
-        kappa=res.effective_params["q0"]["kappa"],
-        tau=500.0, n_photons=2.0,
-    )
-    ro.snr, ro.assignment_error
+For drive detuning ``delta_j = 2pi*(delta_r + j*chi_eff)``,
+``alpha_j = -i*eps/(kappa/2 + i*delta_j)``. The ground-state photon number is
+``nbar_0 = |alpha_0|²``. The dephasing rate is
+``Gamma_m = kappa*|alpha_1-alpha_0|²/2``. Heterodyne detection gives
+``SNR = |alpha_1-alpha_0|*sqrt(2*efficiency*kappa_detected*tau)``.
 
-Physics (driven, damped linear resonator, steady state of
-``d⟨a⟩/dt = −(iδ + κ/2)⟨a⟩ − iε``):
+``chi`` is the full pull ``f_r|1-f_r|0`` in GHz. With
+``Z=|0><0|-|1><1|``, the angular coefficient of ``Z*n_r`` is ``-pi*chi``.
+The small-pull limit is ``8*(pi*chi)²*nbar_0/kappa`` divided by
+``1+(4pi*delta_r/kappa)²``. It reduces to the usual expression on resonance.
 
-    delta_r ≡ f_r|0 − f_drive            drive placement  [GHz]  (Δ_r = ω_r − ω_d)
-    δ_j   = 2π·(delta_r + chi_eff·j)     resonator−drive detuning, qubit in |j⟩  [rad/ns]
-    α_j   = −i·ε / (κ/2 + i·δ_j)         coherent pointer state
-    n̄_j  = |α_j|²                        steady-state photons (emergent)
-    σ     = 1/√(2κτ)                     integrated vacuum-noise blob width
-    SNR   = |α₁ − α₀|·√(2κτ)
-    p_err = ½·erfc(SNR/(2√2))            two equal Gaussians, optimal discriminant
-    Γ_m   = κ·|α₁ − α₀|²/2               measurement-induced dephasing  [1/ns]
-
-χ convention: ``chi`` is the *full* pull
-``χ_pull ≡ f_r(qubit |1⟩) − f_r(qubit |0⟩)`` in GHz, which is **2×** the
-σ_z-convention χ of ``H_disp = (ω_r + χσ_z)a†a``. In the small-χ limit,
-``Γ_m → 8·χ_σz²·n̄/κ`` with ``χ_σz = π·chi`` in rad/ns.
-
-Unit convention: the public inputs ``chi`` and ``delta_r`` are in GHz (ordinary
-frequency). ``kappa`` is a rate in 1/ns, ``tau`` is in ns, and ``eps`` is in
-rad/ns. The GHz→rad/ns conversions (2π) occur once, at the public boundary of
-:func:`analyze_dispersive_readout`.
-
-All calculations are closed-form algebra in the inputs' array namespace, so the
-result is JAX-traceable and differentiable end-to-end. ``jax.grad`` of
-``result.snr`` with respect to any chip parameter works when ``chi``/``kappa``
-come from a traced :func:`eliminate`.
-
-Approximations (declared explicitly): steady state only (no ring-up transient),
-linear resonator, 2nd-order dispersive coupling, no measurement-induced qubit
-T1. The optional strong-drive correction ``chi_eff = chi/(1 + n̄₀/n_crit)``
-applies only when you give ``n_crit``.
+The optional ``chi/(1+nbar_0/n_crit)`` interpolation is phenomenological.
+It does not extend dispersive theory into a controlled strong-drive regime.
+For a two-level Jaynes-Cummings model, ``n_crit=Delta²/(4g²)`` uses the resolved
+exchange matrix element. Multilevel dispersive limits depend on both qubit
+transition detunings and the occupied levels.
 
 References
 ----------
-Koch et al., *Charge-insensitive qubit design derived from the Cooper pair
-box*, PRA 76, 042319 (2007), §IV — dispersive χ for the transmon.
-Gambetta et al., *Qubit-photon interactions in a cavity: Measurement-induced
-dephasing and number splitting*, PRA 74, 042318 (2006) — Γ_m.
-Krantz et al., *A quantum engineer's guide to superconducting qubits*,
-Appl. Phys. Rev. 6, 021318 (2019), §V — dispersive readout, SNR, p_err.
-Blais et al., *Circuit quantum electrodynamics*, RMP 93, 025005 (2021) —
-general cQED readout theory, n_crit.
+Koch et al., PRA 76, 042319 (2007), section III B:
+https://arxiv.org/abs/cond-mat/0703002.
+Gambetta et al., PRA 74, 042318 (2006):
+https://arxiv.org/abs/cond-mat/0602322.
+Krantz et al., Applied Physics Reviews 6, 021318 (2019), section V:
+https://arxiv.org/abs/1904.06560.
+Blais et al., RMP 93, 025005 (2021), section III.3:
+https://arxiv.org/abs/2005.12667.
 """
-# The module-local GHz→rad/ns conversions are distinct from the engine's 2π
-# boundary for Hamiltonian assembly.
 
 from __future__ import annotations
 
@@ -96,7 +70,7 @@ class DispersiveReadoutResult:
     given, ``validity`` holds ``{"n_over_ncrit", "below_ncrit"}``, and
     otherwise is empty. Under jit/grad, ``below_ncrit`` is a *traced* boolean,
     so read it outside the traced region or branch with ``jnp.where``. Here,
-    ``chi`` is χ_pull (``f_r|1 − f_r|0``, 2× the σ_z-convention χ).
+    ``chi`` is the full pull ``f_r|1 − f_r|0`` in GHz.
 
     Attributes
     ----------
@@ -105,10 +79,10 @@ class DispersiveReadoutResult:
     photon_numbers
         Steady-state photons ``|α_j|²``, shape ``(levels,)``.
     sigma
-        Integrated vacuum-noise blob width ``1/√(2κτ)`` (dimensionless,
-        α-plane units).
+        Integrated vacuum-noise width in the cavity amplitude plane. It is
+        ``1/sqrt(2*efficiency*kappa_detected*tau)``, or infinity without detection.
     snr
-        ``|α₁ − α₀|·√(2κτ)``.
+        Pointer separation divided by ``sigma``.
     assignment_error
         ``½·erfc(SNR/(2√2))``, the optimal linear discriminant between two
         equal Gaussians.
@@ -165,39 +139,46 @@ def analyze_dispersive_readout(
     delta_r: Any = 0.0,
     n_crit: Any = None,
     levels: int = 2,
+    kappa_detected: Any = None,
+    efficiency: Any = 1.0,
 ) -> DispersiveReadoutResult:
     """Calculate closed-form steady-state readout figures of merit from ``(chi, kappa)``.
 
     Parameters
     ----------
     chi
-        Dispersive pull χ_pull ``= f_r(qubit |1⟩) − f_r(qubit |0⟩)`` in GHz, 2×
-        the σ_z-convention χ. Get it from
-        ``eliminate(...).effective_params[qubit]["chi"]``.
+        Full pull ``f_r|1-f_r|0`` in ordinary GHz. Its signed Pauli coefficient
+        is ``-chi/2`` for ``Z=|0><0|-|1><1|``. Elimination reports this full pull.
     kappa
-        Resonator linewidth (rate) in 1/ns, e.g. ``effective_params[...]["kappa"]``.
+        Positive total resonator energy linewidth in 1/ns, including observed
+        and unobserved vacuum loss. Exclude pure dephasing. Elimination's
+        intrinsic downward-decay diagnostic is not a general replacement.
     tau
-        Integration time in ns.
+        Positive integration time in ns.
     n_photons
-        Target steady-state photon number with the qubit in |0⟩. Give exactly
-        one of ``n_photons`` and ``eps``. With ``n_photons``, the drive rate is
-        ``ε = √(n̄₀·((κ/2)² + δ₀²))``.
+        Nonnegative ground-state steady photon number, or None. Give exactly
+        one of ``n_photons`` and ``eps``. This sets
+        ``eps=sqrt(n_photons*((kappa/2)**2+(2*pi*delta_r)**2))``.
     eps
-        Readout drive rate in rad/ns (power-user path; exactly one of
-        ``n_photons`` and ``eps``).
+        Complex drive rate in rad/ns, or None. Give exactly one of ``eps`` and
+        ``n_photons``. It is the coefficient driving the cavity amplitude.
     delta_r
-        Detuning of the qubit-in-ground resonator from the drive,
-        ``delta_r = f_r|0 − f_drive`` in GHz, i.e. ``Δ_r = ω_r − ω_d`` in the
-        literature. ``0.0`` drives on the qubit-in-ground resonance. Positive
-        values put the drive *below* ``f_r|0``.
+        Real ``f_r|0-f_drive`` in GHz. The default zero drives the ground-state
+        cavity resonance. Positive values place the drive below resonance.
     n_crit
-        Critical photon number ``Δ²/(4g²)``. If given, the function applies the
-        strong-drive collapse ``chi_eff = chi/(1 + n̄₀/n_crit)``, and
-        ``validity`` reports ``n_over_ncrit``/``below_ncrit``.
+        Positive critical-occupation estimate, or None by default. When given,
+        apply the phenomenological interpolation ``chi/(1+nbar_0/n_crit)``.
+        Report ``n_over_ncrit`` and ``below_ncrit`` without certifying validity.
     levels
-        Number of qubit levels with pointer states. It is a static Python int
-        because it sets the array shapes. A value of 3 includes ``|f⟩``. Level
-        ``j`` has the linear-dispersive pull ``chi·j``.
+        Static Python integer of at least two, default two. Level ``j`` has
+        the assumed pull ``j*chi``. Higher conditional frequencies are not
+        derived from a multilevel Hamiltonian.
+    kappa_detected
+        Observed energy-loss rate in 1/ns, between zero and ``kappa``.
+        None defaults to ``kappa``, representing complete collection.
+    efficiency
+        Detection efficiency between zero and one, default one. Zero gives
+        zero SNR, infinite ``sigma``, and assignment error one half.
 
     Returns
     -------
@@ -206,9 +187,10 @@ def analyze_dispersive_readout(
     Raises
     ------
     ValueError
-        If you give both or neither of ``n_photons`` and ``eps``. This is a
-        *static* check of argument presence, never a comparison of traced
-        values.
+        If drive arguments are ambiguous, ``levels`` is invalid, or concrete
+        numerical values are nonfinite or outside their stated domains.
+        Numerical domain checks are skipped for tracers. Callers must keep
+        traced inputs within the same physical domains.
 
     Examples
     --------
@@ -216,13 +198,38 @@ def analyze_dispersive_readout(
     >>> ro = analyze_dispersive_readout(chi=0.002, kappa=0.005, tau=500.0, n_photons=2.0)
     >>> snr, p_err = ro.snr, ro.assignment_error
 
-    Usually, you get ``chi`` and ``kappa`` from
-    ``eliminate(chip, "readout_res").effective_params[qubit]``.
+    Specify total and detected loss from the physical cavity and receiver.
+    For example, ``kappa_detected=0.004`` with ``kappa=0.005`` leaves
+    ``0.001/ns`` unobserved.
     """
     if (n_photons is None) == (eps is None):
         raise ValueError("Provide exactly one of n_photons (target photons) or eps (drive rate, rad/ns).")
 
-    given = tuple(v for v in (chi, kappa, tau, n_photons, eps, delta_r, n_crit) if v is not None)
+    if not isinstance(levels, int) or isinstance(levels, bool) or levels < 2:
+        raise ValueError("levels must be a Python integer of at least two.")
+    if kappa_detected is None:
+        kappa_detected = kappa
+    domains = (
+        ("kappa", kappa, True), ("tau", tau, True), ("n_crit", n_crit, True),
+        ("n_photons", n_photons, False), ("kappa_detected", kappa_detected, False),
+        ("efficiency", efficiency, False),
+    )
+    for name, value, positive in domains:
+        if value is None or contains_tracer(value):
+            continue
+        array = np.asarray(value)
+        if not np.isrealobj(array) or np.any(~np.isfinite(array)) or np.any(array <= 0 if positive else array < 0):
+            raise ValueError(f"{name} must be finite and {'positive' if positive else 'nonnegative'}.")
+    if not contains_tracer(efficiency) and np.any(np.asarray(efficiency) > 1):
+        raise ValueError("efficiency must not exceed one.")
+    if not contains_tracer((kappa_detected, kappa)) and np.any(np.asarray(kappa_detected) > np.asarray(kappa)):
+        raise ValueError("kappa_detected must not exceed kappa.")
+    for name, value in (("chi", chi), ("delta_r", delta_r), ("eps", eps)):
+        if value is not None and not contains_tracer(value) and np.any(~np.isfinite(np.asarray(value))):
+            raise ValueError(f"{name} must be finite.")
+
+    given = tuple(v for v in (chi, kappa, tau, n_photons, eps, delta_r, n_crit, kappa_detected, efficiency)
+                  if v is not None)
     xp: Any = np
     if any(is_jax_array(v) for v in given) or contains_tracer(given):
         import jax.numpy as jnp
@@ -242,9 +249,9 @@ def analyze_dispersive_readout(
         "Steady-state pointer states only: ring-up transients not modeled.",
         "Linear resonator, 2nd-order dispersive approximation.",
         "Measurement-induced qubit T1 not modeled.",
+        "Vacuum energy-loss channels and coherent pointer states assumed.",
     ]
-    # n_crit presence is a static shape/structure decision; the correction
-    # itself stays traced.
+    # Argument presence is static. The interpolation remains traced.
     if n_crit is None:
         chi_eff = chi
         validity: dict[str, Any] = {}
@@ -252,18 +259,21 @@ def analyze_dispersive_readout(
         n_over_ncrit = n_0 / n_crit
         chi_eff = chi / (1.0 + n_over_ncrit)
         validity = {"n_over_ncrit": n_over_ncrit, "below_ncrit": n_over_ncrit < 1.0}
-        notes.append("Strong-drive correction applied: chi_eff = chi/(1 + n̄₀/n_crit).")
+        notes.append("Phenomenological interpolation applied: chi_eff = chi/(1 + n̄₀/n_crit).")
 
     j = xp.arange(levels)
     delta_j = TWO_PI * (delta_r + chi_eff * j)
     alpha = -1j * eps / (half_kappa + 1j * delta_j)
 
     separation = xp.abs(alpha[1] - alpha[0])
-    snr = separation * xp.sqrt(2.0 * kappa * tau)
+    collected = efficiency * kappa_detected
+    snr = separation * xp.sqrt(2.0 * collected * tau)
+    variance_rate = xp.where(collected > 0, 2.0 * collected * tau, 1.0)
+    sigma = xp.where(collected > 0, 1.0 / xp.sqrt(variance_rate), xp.inf)
     return DispersiveReadoutResult(
         pointer_states=alpha,
         photon_numbers=xp.abs(alpha) ** 2,
-        sigma=1.0 / xp.sqrt(2.0 * kappa * tau),
+        sigma=sigma,
         snr=snr,
         assignment_error=0.5 * _erfc(snr / (2.0 * np.sqrt(2.0)), xp),
         dephasing_rate=kappa * separation**2 / 2.0,

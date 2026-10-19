@@ -20,7 +20,8 @@ two shipped strategies, :class:`SchriefferWolffMethod` and
 from __future__ import annotations
 
 from dataclasses import dataclass
-from functools import cached_property
+from collections.abc import Callable
+from functools import cached_property, partial
 from typing import Any, ClassVar
 
 from jax.scipy.linalg import expm
@@ -30,6 +31,7 @@ import scipy.linalg
 from quchip.chip.sw import (
     _exact_eigensystem,
     bare_index,
+    degeneracy_error,
     exact_mode_subspace,
     exact_pair_parameters,
     extract_pair_parameters,
@@ -39,6 +41,21 @@ from quchip.chip.sw import (
     sylvester_generator,
 )
 from quchip.utils.jax_utils import concrete_array_module, contains_tracer
+
+
+def _sw_dressed_transition(h: Any, lowering: Any, rows: np.ndarray, *, error: Any = None) -> tuple[Any, Any]:
+    """Read a second-order pole and unitary first-order weight on the supplied transition-state support."""
+    xp = concrete_array_module(h, lowering)
+    selected = np.isin(np.arange(h.shape[0]), rows)
+    energies = xp.real(xp.diagonal(h))
+    # Include every intermediate state coupled to either transition state, including Q-Q paths.
+    interaction = xp.where(selected[:, None] | selected[None, :], h, 0.0)
+    s = interaction_generator(energies, interaction, error=error)
+    corrected = energies[rows] + xp.real(xp.sum(s[rows, :] * h[:, rows].T, axis=1))
+    rotation = expm(-s) if contains_tracer(s) else scipy.linalg.expm(-s)
+    states = rotation[:, rows]
+    weight = xp.abs(states[:, 0].conj() @ xp.asarray(lowering) @ states[:, 1]) ** 2
+    return corrected[1] - corrected[0], weight
 
 
 @dataclass(frozen=True)
@@ -84,7 +101,7 @@ class DeviceReductionContext:
     @cached_property
     def s(self) -> Any:
         """Return the SW generator, computed once per reduction on request."""
-        return sylvester_generator(self.h, self.p_mask)[0]
+        return sylvester_generator(self.h, self.p_mask, error=degeneracy_error(self.labels, self.dims))[0]
 
     @cached_property
     def sw_embedding(self) -> Any:
@@ -185,6 +202,19 @@ class ReductionMethod:
         """Top virtual-state attribution of the pair's mediated exchange, or ``None``."""
         raise NotImplementedError
 
+    def pathway_source(self, ctx: DeviceReductionContext) -> Callable[[int, int], list] | None:
+        """Attribution of any retained element to virtual states, or ``None`` when the route has none.
+
+        The function takes two product-state indices of ``ctx`` and returns
+        ``(index, amount)`` pairs. The elimination result keeps it, so it
+        holds only the arrays it reads.
+        """
+        return None
+
+    def label_margins(self, ctx: DeviceReductionContext) -> dict | None:
+        """Margins of the route's dressed-state labeling checks, or ``None`` when it has none."""
+        return None
+
     def dropped_suffix(self) -> str:
         """Trailing clause of the ``"Dropped: ..."`` note: the physics this route omits."""
         raise NotImplementedError
@@ -210,18 +240,8 @@ class SchriefferWolffMethod(ReductionMethod):
 
     def dressed_transition(self, ctx: DeviceReductionContext, lowering: Any) -> tuple[Any, Any]:
         """Compute second-order energies and a unitary first-order transition weight."""
-        xp = concrete_array_module(ctx.h, lowering)
         rows = np.array([bare_index(ctx.labels, ctx.dims), bare_index(ctx.labels, ctx.dims, ctx.mode_label)])
-        selected = np.isin(np.arange(ctx.h.shape[0]), rows)
-        energies = xp.real(xp.diagonal(ctx.h))
-        # Include every intermediate state coupled to either transition state, including Q-Q paths.
-        interaction = xp.where(selected[:, None] | selected[None, :], ctx.h, 0.0)
-        s = interaction_generator(energies, interaction)
-        corrected = energies[rows] + xp.real(xp.sum(s[rows, :] * ctx.h[:, rows].T, axis=1))
-        rotation = expm(-s) if contains_tracer(s) else scipy.linalg.expm(-s)
-        states = rotation[:, rows]
-        weight = xp.abs(states[:, 0].conj() @ xp.asarray(lowering) @ states[:, 1]) ** 2
-        return corrected[1] - corrected[0], weight
+        return _sw_dressed_transition(ctx.h, lowering, rows, error=degeneracy_error(ctx.labels, ctx.dims))
 
     def pair_parameters(self, ctx: DeviceReductionContext) -> dict:
         h_eff = self.retained_hamiltonian(ctx)
@@ -235,6 +255,9 @@ class SchriefferWolffMethod(ReductionMethod):
         i_idx = bare_index(ctx.labels, ctx.dims, a)
         j_idx = bare_index(ctx.labels, ctx.dims, b)
         return pathway_attribution(ctx.h, ctx.s, ctx.p_mask, i_idx, j_idx)
+
+    def pathway_source(self, ctx: DeviceReductionContext) -> Callable[[int, int], list] | None:
+        return partial(pathway_attribution, ctx.h, None, ctx.p_mask)
 
     def dropped_suffix(self) -> str:
         return ", higher-order (>2) corrections."
@@ -267,6 +290,9 @@ class ExactReduction(ReductionMethod):
 
     def pathways(self, ctx: DeviceReductionContext, pair_params: dict, a: str, b: str) -> list | None:
         return None
+
+    def label_margins(self, ctx: DeviceReductionContext) -> dict | None:
+        return ctx.exact.label_margins
 
     def dropped_suffix(self) -> str:
         return "."

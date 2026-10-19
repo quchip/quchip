@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from quchip.approximations import RWA
-
 from dataclasses import replace
 
 import numpy as np
@@ -175,38 +173,6 @@ def test_symbolic_drive_channel_reaches_engine_without_custom_dispatch():
     assert r"f_{drive,0}\!\left(t\right)" in result.latex()
 
 
-class TestWeightZeroRwaDrop:
-    """A carrier-driven weight-zero band has an explicit audit record."""
-
-    def test_dropped_term_records_band_weights_zero(self):
-        """The audit record for a carrier-driven weight-zero drop preserves its frequency."""
-        from quchip.engine.assembly import _weight_zero_dropped_term
-
-        record = _weight_zero_dropped_term(source="d0", device_label="q0", drive_freq=-5.0)
-        assert record.band_weights == (0,)
-        assert record.frequency == pytest.approx(5.0)
-        assert record.source == "d0"
-
-    def test_dropped_term_raises_when_carrier_is_none(self):
-        from quchip.engine.assembly import _weight_zero_dropped_term
-
-        with pytest.raises(ValueError, match="carrier frequency"):
-            _weight_zero_dropped_term(source="d0", device_label="q0", drive_freq=None)
-
-    def test_drive_coefficient_rejects_a_bypassed_weight_zero_drop(self):
-        from quchip.engine.ir import Constant, RealPart
-        from quchip.engine.approximations import resolve_drive_program
-
-        with pytest.raises(ValueError, match="weight-zero"):
-            resolve_drive_program(
-                RWA(),
-                RealPart(Constant(1.0 + 0j)),
-                weight=0,
-                frame_frequency=0.0,
-                has_carrier=True,
-            )
-
-
 class TestRelativeBandPruning:
     """decompose_bands drops a band by relative Frobenius norm, not an absolute cutoff."""
 
@@ -365,10 +331,12 @@ class TestSolveBatchPointRetention:
         from quchip.engine.ir import DroppedTerm, SolveBatch, SolveProblem
 
         record_a = DroppedTerm(
-            source="d0", operator="drive band w=+0 on q0", reason="test", band_weights=(0,), frequency=5.0
+            source="d0", operator="drive band w=+0 on q0", reason="test", band_weights=(0,),
+            frequency=5.0, frame_frequency=10.0,
         )
         record_b = DroppedTerm(
-            source="d0", operator="drive band w=+0 on q0", reason="test", band_weights=(0,), frequency=6.0
+            source="d0", operator="drive band w=+0 on q0", reason="test", band_weights=(0,),
+            frequency=6.0, frame_frequency=11.0,
         )
         problem_a = SolveProblem(
             chip=None,
@@ -383,3 +351,5 @@ class TestSolveBatchPointRetention:
         batch = SolveBatch(chip=None, problems=(problem_a, problem_b))
         assert batch.element(0).engine_result.dropped_terms[0].frequency == pytest.approx(5.0)
         assert batch.element(1).engine_result.dropped_terms[0].frequency == pytest.approx(6.0)
+        assert batch.element(0).engine_result.dropped_terms[0].frame_frequency == pytest.approx(10.0)
+        assert batch.element(1).engine_result.dropped_terms[0].frame_frequency == pytest.approx(11.0)

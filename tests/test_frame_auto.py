@@ -7,17 +7,17 @@ from typing import Any
 import numpy as np
 import pytest
 
-from quchip import Chip, PortNetwork, QuantumSequence, Resonator
+from quchip import Chip, Coupling, PortNetwork, QuantumSequence, Resonator
 from quchip.chip.couplings import Capacitive
 from quchip.control.drive import ChargeDrive
 from quchip.control.drives_two_photon import TwoPhotonDrive
-from quchip.control.envelopes import Square
+from quchip.control.envelopes import Gaussian, Square
 from quchip.control.equipment import ControlEquipment
 from quchip.control.field import CoherentInput
 from quchip.control.signal import Crosstalk, Gain
 from quchip.devices.kerr_cavity import KerrCavity
 from quchip.devices.transmon.duffing import DuffingTransmon
-from quchip.approximations import Exact
+from quchip.approximations import Exact, RWA
 from quchip.engine.frames import FramePlan
 from quchip.engine.input_output import resolve_stationary_engine
 
@@ -74,12 +74,13 @@ def test_auto_frame_keeps_isolated_modes_at_their_own_reference() -> None:
     assert plan.clusters == (("a",), ("b",))
 
 
-def test_auto_frame_makes_two_photon_drive_static_at_half_its_frequency() -> None:
+@pytest.mark.parametrize("approximation", [RWA(), Exact()])
+def test_auto_frame_makes_two_photon_drive_static_at_half_its_frequency(approximation: Any) -> None:
     """A two-photon tone at f pins its cavity to f/2 so a^2 + a^dag^2 stops oscillating."""
     cavity = KerrCavity(freq=5.0, kerr=0.02, levels=8, label="cav")
     cavity.reference_freq = 5.0
     pump = TwoPhotonDrive(target=cavity)
-    chip = Chip([cavity], frame="auto")
+    chip = Chip([cavity], frame="auto", approximation=approximation)
     chip.connect(ControlEquipment(lines=[pump]))
     sequence = QuantumSequence(chip)
     sequence.schedule(pump, envelope=Square(duration=30.0, amplitude=0.05), freq=10.2)
@@ -149,7 +150,8 @@ def test_strict_planning_keeps_the_stationary_route_errors() -> None:
         resolve_stationary_engine(chip, (("pa", 5.0), ("pa", 5.4)))
 
 
-def test_auto_frame_traced_tone_frequency_stays_traced() -> None:
+@pytest.mark.parametrize("approximation", [RWA(), Exact()])
+def test_auto_frame_traced_tone_frequency_stays_traced(approximation: Any) -> None:
     """A jitted tone frequency flows into the planned frame without concretization."""
     jax = pytest.importorskip("jax")
     chip, drive_1, _ = _pair(backend="dynamiqs")
@@ -157,11 +159,12 @@ def test_auto_frame_traced_tone_frequency_stays_traced() -> None:
     def frame_of(freq: Any) -> Any:
         sequence = QuantumSequence(chip)
         sequence.schedule(drive_1, envelope=Square(duration=40.0, amplitude=0.01), freq=freq)
-        plan = sequence.resolve().resolved_frame.plan
+        plan = sequence.resolve(approximation=approximation).resolved_frame.plan
         assert plan is not None
         return plan.frequencies["q2"]
 
     assert float(jax.jit(frame_of)(jax.numpy.asarray(5.1))) == pytest.approx(5.1)
+    assert float(jax.grad(frame_of)(jax.numpy.asarray(5.1))) == pytest.approx(1.0)
 
 
 def test_describe_reports_the_planned_frame() -> None:
@@ -306,7 +309,110 @@ def test_resolve_plans_with_the_requested_approximation() -> None:
     exact = chip.resolve(approximation=Exact()).resolved_frame.plan
     assert default is not None and exact is not None
     assert default.frequencies == {"q1": 5.0, "q2": 5.0}
-    assert exact.frequencies == {"q1": 0.0, "q2": 0.0} and exact.residuals == ()
+    assert exact.frequencies == default.frequencies
+    assert exact.pins == (("q1", 5.0),)
+    (residual,) = exact.residuals
+    assert residual.frequency == 10.0 and residual.weight is None
+    assert chip.resolve(frame="lab", approximation=Exact()).resolved_frame.frequencies == {"q1": 0.0, "q2": 0.0}
+
+
+def _exact_pi_pulse(frame: Any = "auto") -> QuantumSequence:
+    """Build the coupled-transmon pulse whose old automatic frame changed with the solve window."""
+    first = DuffingTransmon(freq=4.912, anharmonicity=-0.214, levels=3, label="q1")
+    second = DuffingTransmon(freq=5.268, anharmonicity=-0.206, levels=3, label="q2")
+    chip = Chip([first, second], [Capacitive(first, second, g=0.004, label="c12")],
+                frame=frame, approximation=Exact())
+    line = ChargeDrive(target=first, label="d1")
+    chip.connect(ControlEquipment(lines=[line]))
+    sequence = QuantumSequence(chip)
+    sequence.schedule(line, envelope=Gaussian(duration=24.0, sigmas=2, amplitude=0.0348), freq=4.9119)
+    return sequence
+
+
+@pytest.mark.parametrize("exchange_first", [False, True])
+def test_exact_auto_frame_follows_tone_and_exchange_across_solve_windows(
+    monkeypatch: pytest.MonkeyPatch, exchange_first: bool,
+) -> None:
+    """Counter-rotating partners cannot displace tones or exchange bands as their weights grow."""
+    if exchange_first:
+        from quchip.engine import assembly
+
+        records = assembly.coupling_band_records
+        monkeypatch.setattr(assembly, "coupling_band_records",
+                            lambda *args: sorted(records(*args), key=lambda record: sum(record.charges) != 0))
+    sequence = _exact_pi_pulse()
+    for stop in (24.0, 300.0, 500.0, 2000.0):
+        problem = sequence.build_problem(np.array([0.0, stop]))
+        plan = problem.resolved_frame.plan
+        assert plan is not None
+        assert plan.frequencies == {"q1": 4.9119, "q2": 4.9119}
+        assert len(plan.tones) == 1 and plan.tones[0].source == "d1 → q1"
+        assert plan.pins == () and plan.clusters == (("q1", "q2"),)
+        (residual,) = plan.residuals
+        assert residual.source == "c12"
+        assert residual.frequency == pytest.approx(9.8238)
+        # Each adjoint band has largest entry 2g; their weights add.
+        assert residual.weight == pytest.approx(2 * (2 * 0.004) ** 2 * stop)
+
+
+@pytest.mark.parametrize("reference", [0.0, 5.0])
+def test_non_exchange_couplings_follow_reference_pins(reference: float) -> None:
+    """A retained a²b† band stays residual unless independently chosen references make it static."""
+    first = Resonator(freq=5.0, levels=3, label="a")
+    second = Resonator(freq=5.4, levels=3, label="b")
+    first.reference_freq = second.reference_freq = reference
+
+    def conversion(a: Any, b: Any, backend: Any) -> Any:
+        lower = a.lowering_operator()
+        band = backend.tensor(backend.matmul(lower, lower), backend.dag(b.lowering_operator()))
+        return band + backend.dag(band)
+
+    chip = Chip([first, second], [Coupling(first, second, g=0.01, interaction=conversion)], frame="auto",
+                approximation=RWA(keep_bands={(2, -1), (-2, 1)}))
+    engine = chip.resolve()
+    plan = engine.resolved_frame.plan
+    assert plan is not None
+    assert plan.frequencies == {"a": reference, "b": reference}
+    assert plan.pins == (("a", reference), ("b", reference))
+    if reference == 0.0:
+        assert plan.residuals == () and not engine.dynamic_terms
+    else:
+        assert len(plan.residuals) == 1 and plan.residuals[0].frequency == reference
+        assert engine.dynamic_terms
+
+
+def test_exact_auto_hamiltonian_is_the_rotated_complete_lab_hamiltonian() -> None:
+    """Automatic planning retains every Exact term with the unitary's phases and frame subtraction."""
+    sequence = _exact_pi_pulse()
+    automatic = sequence.resolve()
+    lab = sequence.resolve(frame="lab")
+    offsets = 4.9119 * np.add.outer(np.arange(3), np.arange(3)).ravel()
+    for time in (0.0, 7.3, 32.0):
+        unitary = np.exp(-2j * np.pi * time * offsets)
+        matrix = np.asarray(lab.hamiltonian().matrix(t=time))
+        expected = unitary.conj()[:, None] * matrix * unitary[None, :] - np.diag(offsets)
+        # Both paths are finite matrix algebra in GHz; only roundoff differs.
+        np.testing.assert_allclose(automatic.hamiltonian().matrix(t=time), expected, rtol=0, atol=1e-12)
+
+
+@pytest.mark.validation
+def test_exact_auto_population_matches_a_converged_lab_reference() -> None:
+    """The automatic frame resolves a long driven Exact solve at least as well as the explicit rotating frame."""
+    times = np.linspace(0.0, 500.0, 301)
+
+    def population(frame: str, options: dict[str, float] | None = None) -> float:
+        result = _exact_pi_pulse(frame).simulate(times, states="final", options=options)
+        return float(abs(np.asarray(result.final_state.full())[3, 0]) ** 2)
+
+    reference = population("lab", {"atol": 1e-14, "rtol": 1e-12})
+    refined = population("lab", {"atol": 1e-15, "rtol": 1e-13})
+    reference_error = abs(reference - refined)
+    # Tightening both lab-frame tolerances resolves a 1e-9 population budget,
+    # below 1% of the explicit rotating frame's ~2e-7 default integration error.
+    assert reference_error < 1e-9
+    auto_error = abs(population("auto") - refined)
+    rotating_error = abs(population("rotating") - refined)
+    assert auto_error <= rotating_error + 2 * reference_error
 
 
 def test_build_problem_accepts_a_frame_and_uses_the_solve_window() -> None:

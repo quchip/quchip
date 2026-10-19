@@ -155,3 +155,21 @@ def test_traced_analysis_stays_inside_its_trace() -> None:
     np.testing.assert_allclose(float(value), expected[0], rtol=1e-12)
     np.testing.assert_allclose(float(slope), (expected[1] - expected[2]) / 2e-5, rtol=1e-6)
     np.testing.assert_allclose(float(again), expected[3], rtol=1e-12)
+
+
+@pytest.mark.unit
+def test_resolved_small_gap_keeps_its_analytic_eigenvector_derivative():
+    """A resolved small gap retains its inverse-gap response in forward and reverse mode."""
+    gap = 1e-10
+    direction = jnp.array([[0., 1., 0.], [1., 0., 0.], [0., 0., 0.]])
+
+    def expectation(coupling):
+        matrix = jnp.diag(jnp.array([0., gap, 1.])) + coupling * direction
+        _, vectors = _differentiable_eigenpairs(matrix, 1)
+        state = vectors[:, 0]
+        return jnp.real(state.conj() @ direction @ state)
+
+    # First-order perturbation theory gives d<X01>/dg = -2/gap at g=0.
+    expected = -2.0 / gap
+    assert float(jax.jacfwd(expectation)(0.0)) == pytest.approx(expected, rel=1e-12)
+    assert float(jax.jit(jax.grad(expectation))(0.0)) == pytest.approx(expected, rel=1e-12)

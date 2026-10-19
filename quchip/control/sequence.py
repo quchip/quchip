@@ -91,6 +91,7 @@ if TYPE_CHECKING:
     from quchip.chip.transformations.active_patch import ActivePatchResult
     from quchip.declarative.expr import PhysicsExpr
     from quchip.engine.ir import FrameSpec, SolveBatch, SolveProblem
+    from quchip.results.propagator import PropagatorResult
     from quchip.results.results import SimulationBatchResult, SimulationResult
 
 
@@ -217,6 +218,12 @@ class QuantumSequence:
         # floors, and virtual-Z phase frames are reconstructed on demand by
         # ``_replay`` — there is no live cursor state to drift from the replay.
         self._entries: list[_PulseEntry | _DelayEntry | _BarrierEntry | _FrameShiftEntry] = []
+        # Control lines and devices of the chip that the entries were written
+        # for, which this chip lacks, e.g. those that an active patch removed.
+        # Replay keeps their cursors and frames, so delays, barriers and
+        # virtual-Z entries on them keep their timing and have no other effect.
+        self._removed_lines: tuple[tuple[str, str], ...] = ()
+        self._removed_devices: tuple[str, ...] = ()
 
     def _device_drives(self, device_label: str) -> list[BaseDrive]:
         self._chip.device_map[device_label]
@@ -778,17 +785,12 @@ class QuantumSequence:
         each pulse's frame.
         """
         overrides = {} if overrides is None else dict(overrides)
-        cursors: dict[tuple[str, str], Any] = {}
-        equipment = self._chip.control_equipment
-        if equipment is not None:
-            for line in equipment.lines:
-                assert line.target_label is not None
-                cursors[(line.target_label, line.label)] = 0.0
+        cursors: dict[tuple[str, str], Any] = dict.fromkeys(self._line_keys(), 0.0)
         for entry in self._entries:
             if isinstance(entry, _PulseEntry) and entry.coherent_input is not None:
                 cursors[(entry.target_label, entry.drive_label)] = 0.0
         floors: dict[str, Any] = {}
-        phases: dict[str, Any] = {dev.label: 0.0 for dev in self._chip.devices}
+        phases: dict[str, Any] = dict.fromkeys(self._device_labels(), 0.0)
         drive_ops: list[ControlOp] = []
 
         for entry_index, entry in enumerate(self._entries):
@@ -1177,7 +1179,9 @@ class QuantumSequence:
             grid != actual_tlist for grid in point_tlists
         )
         if parameter_axes or different_intervals or self._auto_frames_differ(expanded, actual_tlist, approximation):
-            problems: list[Any] = []
+            # Every point proves its exact space from the union of all initial states.
+            all_states = [overrides.get((None, "initial_state"), initial_state) for _, overrides in expanded]
+            builders: list[Any] = []
             for (coord, overrides), point_tlist in zip(expanded, point_tlists):
                 parameter_bindings = {
                     field: value
@@ -1193,8 +1197,9 @@ class QuantumSequence:
 
                 variant = self.with_params(parameter_bindings)
                 drive_ops = variant._materialize_drive_ops(entry_overrides)
-                problems.append(
-                    build_solve_problem(
+                builders.append(
+                    functools.partial(
+                        build_solve_problem,
                         variant._chip,
                         drive_ops,
                         point_tlist.bounds if isinstance(point_tlist, AutomaticTimeGrid) else point_tlist,
@@ -1205,9 +1210,15 @@ class QuantumSequence:
                         approximation=approximation,
                         states=states,
                         dissipation=dissipation,
+                        _initial_states=all_states,
                     )
                 )
                 params_store[coord] = self._point_params(axes, coord)
+
+            problems = [build() for build in builders]
+            if len({tuple(problem.engine_result.dims) for problem in problems}) > 1:
+                # The points proved different exact spaces. One product space keeps the batch homogeneous.
+                problems = [build(_product_space=True) for build in builders]
 
             from quchip.engine.ir import SolveBatch
 
@@ -1234,6 +1245,7 @@ class QuantumSequence:
             approximation=approximation,
             states=states,
             dissipation=dissipation,
+            initial_states=[overrides.get((None, "initial_state"), initial_state) for _, overrides in expanded],
         )
         template = compile_hamiltonian_template(
             self._chip,
@@ -1352,19 +1364,22 @@ class QuantumSequence:
         e_ops : dict, optional
             Named observables to evaluate.
         initial_state : object or mapping, optional
-            ``None`` uses the eigenstate of the solve's undriven static lab-frame Hamiltonian, as
-            kept by its approximation, that is assigned to the all-ground label. Its overlap with
-            the bare product is made real and nonnegative before it is expressed in the solve frame
-            at ``tlist[0]``. With ordinary couplings, this is the bare product under the default
-            RWA. When the solve uses the chip's approximation, it is the same physical state as
-            ``chip.state()`` before the frame transform. Kept bands, effective terms, or network
-            Hamiltonian terms that couple the vacuum can also dress an RWA start. At a nonzero
-            rotating-frame start time, the frame transform is applied at ``tlist[0]``, so the state
-            need not match the lab-frame vector returned by ``chip.state()``. Mappings and
-            configured string shorthand give product states in the resolved local bases. QuTiP
-            ``Qobj`` and dynamiqs ``QArray`` kets or density matrices use resolved solver
-            coordinates. Arrays, symbolic expressions, and callables are authored-space kets
-            projected onto kept levels.
+            A label of local energy levels, such as ``{"q0": 1}``, or configured string
+            shorthand names its dressed state: the eigenstate of the solve's undriven static
+            lab-frame Hamiltonian, as kept by its approximation and excitation cutoff, that is
+            assigned to the label. Its overlap with the bare product is made real and
+            nonnegative, and it is placed in the solve frame at ``tlist[0]`` as the label target
+            of ``overlap()``. ``None`` and ``{}`` give the all-ground label. With ordinary
+            couplings under the default RWA, that state is the bare vacuum. When the solve uses
+            the chip's approximation, a label start is the same physical state as
+            ``chip.state()`` before the frame transform. At a nonzero rotating-frame start time,
+            the frame transform is applied at ``tlist[0]``, so the state need not match the
+            lab-frame vector returned by ``chip.state()``. ``chip.bare_state(...)`` gives a bare
+            product, and a mapping with a local ket raises. QuTiP ``Qobj`` and dynamiqs
+            ``QArray`` kets or density matrices use resolved solver coordinates. Arrays,
+            symbolic expressions, and callables are authored-space kets projected onto kept
+            levels. A ``CompactState`` reuses captured excitation coordinates and requires the
+            same local energy bases.
         backend : object or {"qutip", "dynamiqs"}, optional
             Per-call backend override.
         partition : bool, default=True
@@ -1434,6 +1449,7 @@ class QuantumSequence:
         dissipation: bool = True,
         run_args: dict | None = None,
         duration: Any | None = None,
+        max_workers: int | None = None,
     ) -> "SimulationBatchResult":
         """Build and solve a batched sweep over pulse or sequence parameters.
 
@@ -1456,6 +1472,11 @@ class QuantumSequence:
             Include declared collapse channels.
         duration : float, optional
             Positive end time in ns when ``tlist`` is omitted.
+        max_workers : int or None, default=None
+            Worker processes for a backend that solves points in parallel,
+            such as QuTiP. ``None`` takes the CPU count that loky reports,
+            which honors ``LOKY_MAX_CPU_COUNT``, or fewer when the available
+            memory cannot hold them. ``1`` solves in this process.
 
         Returns
         -------
@@ -1483,10 +1504,117 @@ class QuantumSequence:
                 dissipation=dissipation,
             )
             result = self._chip.solve_many(
-                problem_batch, progress=progress,
+                problem_batch, progress=progress, max_workers=max_workers,
             )
         return result
-    def active_patch(self, *, hops: int = 1, method: str = "sw", local: bool = False) -> "ActivePatchResult":
+
+    def subspace_propagator(
+        self,
+        devices: str | BaseDevice | Sequence[str | BaseDevice],
+        levels: Sequence[int] = (0, 1),
+        *,
+        frame: str = "dressed",
+        tlist: Any | None = None,
+        duration: Any | None = None,
+        solver: str | None = None,
+        options: dict | None = None,
+        backend: Any | None = None,
+        approximation: Approximation | None = None,
+        dissipation: bool | None = None,
+        progress: bool = False,
+        max_workers: int | None = None,
+    ) -> "PropagatorResult":
+        """Return the propagator of this sequence on the dressed states of a product of levels.
+
+        The inputs are the labels that give each selected device one of
+        ``levels`` and every other device level 0, in the order of
+        ``itertools.product(levels, repeat=len(devices))``. One batch starts
+        each input in its dressed state and projects every final state on the
+        label target of every input, as
+        :meth:`~quchip.results.results.SimulationResult.amplitude_array`
+        does. The record converts the matrix to ``frame``. The dressed frame
+        takes the dressed frequencies and the dressed ground energy from the
+        static model of the solve, with its approximation and excitation
+        cutoff. The solve leaves out collapse channels, so the matrix is the
+        propagator of the Hamiltonian alone.
+
+        Parameters
+        ----------
+        devices : device object, str, or sequence of them
+            Selected devices, in the order of the levels of each label.
+        levels : sequence of int, default=(0, 1)
+            Levels of each selected device.
+        frame : {"dressed", "lab", "integration"}, default="dressed"
+            Frame of the returned matrix.
+        tlist, duration, solver, options, backend, approximation
+            As for :meth:`simulate`. The propagator runs from ``tlist[0]`` to ``tlist[-1]``.
+        dissipation : bool or None, default=None
+            ``None`` leaves out the chip's collapse channels and warns when it
+            has any. ``False`` leaves them out without a warning. ``True``
+            raises, because the matrix cannot include them. The result's
+            :attr:`~quchip.results.propagator.PropagatorResult.omitted_channels`
+            names the channels that the solve left out.
+        progress : bool, default=False
+            Show backend batch progress when supported.
+        max_workers : int or None, default=None
+            As for :meth:`simulate_batch`.
+
+        Returns
+        -------
+        PropagatorResult
+            Matrix, labels, leakage of each input, frame frequencies, and the batch of solves.
+
+        Raises
+        ------
+        ValueError
+            If ``dissipation`` is ``True``, ``frame`` is unknown, or a device
+            or level is missing or repeated.
+        """
+        import itertools
+        import warnings
+
+        from quchip.results.propagator import FRAMES, subspace_propagator
+
+        if dissipation:
+            raise ValueError(
+                "subspace_propagator() returns the propagator of the Hamiltonian alone, so it cannot include the "
+                "collapse channels. Use dissipation=False to leave them out without a warning, or simulate() for "
+                "the evolution with them."
+            )
+        if frame not in FRAMES:
+            raise ValueError(f"frame must be one of {FRAMES}; got {frame!r}.")
+        selected = (devices,) if isinstance(devices, (str, BaseDevice)) else tuple(devices)
+        names = tuple(resolve_label(device) for device in selected)
+        if not names or len(set(names)) != len(names):
+            raise ValueError("Select at least one device, and each device once.")
+        labels = tuple(itertools.product(tuple(levels), repeat=len(names)))
+        if not labels or len(set(levels)) != len(tuple(levels)):
+            raise ValueError("levels must name at least one level, and each level once.")
+        with self._scoped_backend(backend):
+            problem_batch = self.build_batch(
+                self.vary("initial_state", [dict(zip(names, label)) for label in labels]),
+                tlist=tlist,
+                duration=duration,
+                solver=solver,
+                options=options,
+                approximation=approximation,
+                states="final",
+                dissipation=False,
+            )
+            omitted = tuple(channel.key for channel in problem_batch.problems[0].engine_result.slh.channels)
+            if omitted and dissipation is None:
+                warnings.warn(
+                    f"subspace_propagator() solves without the collapse channels {list(omitted)}, so the "
+                    "matrix is the propagator of the Hamiltonian alone. Pass dissipation=False to leave them "
+                    "out without this warning.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            batch = self._chip.solve_many(problem_batch, progress=progress, max_workers=max_workers)
+        return subspace_propagator(batch, names, labels, frame, omitted)
+
+    def active_patch(self, *, hops: int = 1, method: str = "sw", local: bool = False,
+                     order: Any | None = None) -> "ActivePatchResult":
         """Reduce the chip to this schedule's active patch (spectators eliminated).
 
         Convenience for :func:`quchip.chip.transformations.active_patch`;
@@ -1500,12 +1628,16 @@ class QuantumSequence:
         method : {"sw", "exact"}, default="sw"
             Reduction method forwarded to each elimination.
         local : bool, default=False
-            Forwarded to each elimination. Each step then reads only the
-            patch around the eliminated device.
+            Forwarded to each elimination. Each step then computes its
+            generator on the patch around the eliminated device.
+        order : sequence of devices or labels, optional
+            Spectators to eliminate, in this order. By default, quchip chooses
+            the order as :func:`~quchip.chip.transformations.eliminate_spectators`
+            does.
         """
         from quchip.chip.transformations import active_patch as _active_patch
 
-        return _active_patch(self, hops=hops, method=method, local=local)
+        return _active_patch(self, hops=hops, method=method, local=local, order=order)
 
     @staticmethod
     def _scoped_backend(backend: Any | None):
@@ -1522,11 +1654,32 @@ class QuantumSequence:
         """Return an independently editable model and pulse schedule."""
         return self._copy_with_chip(self._chip.clone())
 
+    def _line_keys(self) -> tuple[tuple[str, str], ...]:
+        """Return the ``(target, line)`` cursor keys that replay starts at zero."""
+        keys = list(self._removed_lines)
+        equipment = self._chip.control_equipment
+        for line in () if equipment is None else equipment.lines:
+            assert line.target_label is not None
+            keys.append((line.target_label, line.label))
+        return tuple(keys)
+
+    def _device_labels(self) -> tuple[str, ...]:
+        """Return the device labels whose virtual-Z frames replay tracks."""
+        return (*self._removed_devices, *(device.label for device in self._chip.devices))
+
     def _copy_with_chip(self, chip: Chip) -> "QuantumSequence":
-        """Copy authored schedule entries onto an already independent chip."""
+        """Copy authored schedule entries onto an already independent chip.
+
+        Lines and devices that ``chip`` lacks keep their timing and frames in
+        the replay of the copy.
+        """
         cloned = copy.copy(self)
         cloned._chip = chip
         cloned._entries = copy.deepcopy(self._entries)
+        equipment = chip.control_equipment
+        kept_lines = set() if equipment is None else {(line.target_label, line.label) for line in equipment.lines}
+        cloned._removed_lines = tuple(key for key in self._line_keys() if key not in kept_lines)
+        cloned._removed_devices = tuple(label for label in self._device_labels() if label not in chip.device_map)
         return cloned
 
     @property

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
 from typing import Any
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 
 from quchip.approximations import Approximation
+from quchip.backend import _backend_context
 from quchip.chip.ports import Port
 from quchip.declarative.expr import PhysicsExpr, _bound_values, _walk_expr, materialize_expr
 from quchip.devices.base import BaseDevice
@@ -17,11 +20,17 @@ from quchip.engine.ir import LinearResponseProblem
 from quchip.engine.output_network import pad_mixing
 from quchip.engine.reference import ReferencePlane, cw_transfer
 from quchip.utils.constants import TWO_PI
-from quchip.utils.jax_utils import maybe_concrete_scalar
+from quchip.utils.jax_utils import concrete_array_module, maybe_concrete_scalar, raise_if
+
+# Two ill-conditioned poles closer than this multiple of their round-off are not resolved.
+_POLE_RESOLUTION = 100.0
 
 
 class _UnsupportedLinearModel(Exception):
-    """Signal that a valid chip requires the general stationary solver."""
+    """Signal that a valid chip requires the general stationary solver.
+
+    The message, when there is one, says which part of the model the route does not support.
+    """
 
 
 def is_linear_mode(device: Any, backend: Any) -> bool:
@@ -31,9 +40,10 @@ def is_linear_mode(device: Any, backend: Any) -> bool:
     if not isinstance(device.local_space(), FockSpace) or device._time_terms():
         return False
     try:
+        with _backend_context(backend):
+            authored = device.unresolved_hamiltonian()
         _add_hamiltonian_expr(backend.array_module.zeros((1, 1), dtype=complex),
-                              device.unresolved_hamiltonian(), Exact(),
-                              {device.label: 0}, backend, local=True)
+                              authored, Exact(), {device.label: 0}, backend, local=True)
     except _UnsupportedLinearModel:
         return False
     return True
@@ -47,7 +57,8 @@ def try_build_linear_response_problem(
 ) -> LinearResponseProblem | None:
     """Return a compact passive-linear problem, or ``None`` for fallback."""
     try:
-        return _build_linear_response_problem(chip, frequencies, plane_labels=plane_labels)
+        with _backend_context(chip.backend):
+            return _build_linear_response_problem(chip, frequencies, plane_labels=plane_labels)
     except _UnsupportedLinearModel:
         return None
 
@@ -70,7 +81,8 @@ def try_build_weak_probe_problem(
     if problem is not None:
         return problem, "linear_response"
     try:
-        return _build_vacuum_response_problem(chip, frequencies, plane_labels=plane_labels), "vacuum_response"
+        with _backend_context(chip.backend):
+            return _build_vacuum_response_problem(chip, frequencies, plane_labels=plane_labels), "vacuum_response"
     except _UnsupportedLinearModel:
         return None
 
@@ -92,27 +104,280 @@ def _build_vacuum_response_problem(
     ``c* L_1 - |c|²/2 - (L†L)_1 / 2`` to that block. Every block comes from the
     terms' local operators, so the full product space is never formed.
     """
-    from quchip.chip.effective import authored_excitation_changes, conserves_excitation_number
-    from quchip.engine.sectors import SectorModel
+    model = _sector_response_model(chip, plane_labels)
+    sectors, xp = model.sectors, chip.backend.array_module
+    labels = tuple(device.label for device in chip.devices)
+    excited = np.argmax(sectors.space(1).levels, axis=1)
+    order = np.argsort(excited, kind="stable")
+    identity = xp.eye(order.size, dtype=complex)
+    block = TWO_PI * (xp.asarray(sectors.hamiltonian(1)) - xp.asarray(sectors.hamiltonian(0))[0, 0] * identity)
+    rows = []
+    for index in range(len(model.channels)):
+        shift = model.channel_block(index, 0, 0)[0, 0]
+        kept = model.channel_block(index, 1, 1)
+        block = block + 1j * (
+            xp.conj(shift) * kept - 0.5 * xp.abs(shift) ** 2 * identity - 0.5 * kept.conj().T @ kept
+        )
+        rows.append(model.channel_block(index, 0, 1)[0])
+    inbound, outbound = model.transfers(frequencies)
+    problem = LinearResponseProblem(
+        frequencies=frequencies,
+        mode_labels=tuple(labels[index] for index in excited[order]),
+        hamiltonian=block[np.ix_(order, order)],
+        couplings=xp.stack(rows)[:, order],
+        scattering=model.scattering,
+        plane_indices=model.plane_indices,
+        inbound_transfer=inbound,
+        outbound_transfer=outbound,
+    )
+
+    return _with_mode_responses(problem, model, order)
+
+
+def vacuum_drift(chip: Any) -> tuple[tuple[str, ...], Any] | None:
+    """Return the mode labels and the drift ``-iH - C†C/2`` of the vacuum response, or ``None``.
+
+    The modes are the one-excitation states of the devices, followed by the
+    retained poles. ``None`` means that the chip has no vacuum one-excitation
+    model.
+    """
+    try:
+        problem = _build_vacuum_response_problem(chip, np.zeros(1), plane_labels=())
+    except _UnsupportedLinearModel:
+        return None
+    return problem.mode_labels, response_drift(problem)
+
+
+def response_drift(problem: LinearResponseProblem) -> Any:
+    """Return the drift ``A = -iH - C†C/2`` of a weak-probe problem, in rad/ns.
+
+    The backends solve ``S(f) = S_d + C (-i 2π f - A)^-1 (-C† S_d)`` with this
+    drift, so its eigenvalues are the poles of the response.
+    """
+    xp = concrete_array_module(problem.hamiltonian, problem.couplings)
+    couplings = xp.asarray(problem.couplings, dtype=complex)
+    return -1j * xp.asarray(problem.hamiltonian, dtype=complex) - 0.5 * couplings.conj().T @ couplings
+
+
+@dataclass(frozen=True)
+class ResponsePoles:
+    """Eigensystem of a weak-probe drift, with the poles in increasing frequency.
+
+    Attributes
+    ----------
+    values : array_like
+        Eigenvalues ``λ_p`` of the drift in rad/ns. They stay differentiable on
+        a fixed structure away from degenerate poles.
+    vectors : array_like
+        Right eigenvectors as columns, with the derivative stopped, for
+        discrete choices and checks.
+    inverse : array_like
+        Inverse of ``vectors``. Its rows are the left eigenvectors.
+    drift : array_like
+        The drift ``A`` in rad/ns.
+    """
+
+    values: Any
+    vectors: Any
+    inverse: Any
+    drift: Any
+
+    def modes(self) -> tuple[Any, Any]:
+        """Return the right eigenvectors and their inverse in the order of ``values``.
+
+        A JAX derivative that reaches them through the drift raises, because
+        JAX does not differentiate the eigenvectors of a general matrix.
+        """
+        if concrete_array_module(self.drift) is np:
+            return self.vectors, self.inverse
+        return _undifferentiated_eigenvectors(self.vectors, self.inverse, self.drift)
+
+
+@jax.custom_jvp
+def _undifferentiated_eigenvectors(vectors: Any, inverse: Any, drift: Any) -> tuple[Any, Any]:
+    return vectors, inverse
+
+
+@_undifferentiated_eigenvectors.defjvp
+def _undifferentiated_eigenvectors_jvp(primals: Any, tangents: Any) -> Any:
+    raise NotImplementedError("The composition and the residues of the poles need eigenvector derivatives, "
+                              "which JAX does not define for a general matrix.")
+
+
+def _one_to_one(targets: Any, candidates: Any) -> Any:
+    """Return, for each target in order, the index of the nearest candidate that no earlier target took."""
+    xp = concrete_array_module(targets, candidates)
+    taken = xp.zeros(candidates.shape[0], dtype=bool)
+    picks = []
+    for target in targets:
+        pick = xp.argmin(xp.where(taken, xp.inf, xp.abs(candidates - target)))
+        picks.append(pick)
+        taken = taken | (xp.arange(candidates.shape[0]) == pick)
+    return xp.stack(picks)
+
+
+def response_poles(problem: LinearResponseProblem) -> ResponsePoles:
+    """Return the poles of a weak-probe response, the eigenvalues of its drift.
+
+    The eigensolves subtract the mean frequency of the drift, which keeps the
+    pole splittings accurate. They keep its damping, so adding the mean back
+    does not cancel digits of a narrow linewidth. Two ill-conditioned poles that are too close to
+    resolve raise. This happens near an exceptional point, where two poles
+    merge.
+    """
+    drift = response_drift(problem)
+    xp = concrete_array_module(drift)
+    count = drift.shape[0]
+    center = 1j * xp.imag(xp.trace(drift)) / count
+    shifted = drift - center * xp.eye(count)
+    fixed = shifted if xp is np else jax.lax.stop_gradient(shifted)
+    fxp = concrete_array_module(fixed)
+    found, vectors = fxp.linalg.eig(fixed)
+    values = found
+    if xp is not np:
+        values = jnp.linalg.eigvals(shifted)
+        # Pair each differentiable eigenvalue with one fixed eigenpair. Repeated eigenvalues take distinct ones.
+        nearest = _one_to_one(jax.lax.stop_gradient(values), found)
+        found, vectors = found[nearest], vectors[:, nearest]
+    order = fxp.argsort(-fxp.imag(found))
+    found, vectors, values = found[order], vectors[:, order], values[order]
+    inverse = fxp.linalg.inv(vectors)
+    # A perturbation of the drift moves each eigenvalue by its condition number times its size.
+    condition = fxp.linalg.norm(inverse, axis=1) * fxp.linalg.norm(vectors, axis=0)
+    limit = (_POLE_RESOLUTION * np.finfo(float).eps * fxp.linalg.norm(fixed)
+             * (condition[:, None] + condition[None, :]))
+    meeting = ((fxp.abs(found[:, None] - found[None, :]) <= limit)
+               & (fxp.minimum(condition[:, None], condition[None, :]) > 10.0) & ~fxp.eye(count, dtype=bool))
+    frequencies = -fxp.imag(found + (center if xp is np else jax.lax.stop_gradient(center))) / TWO_PI
+    raise_if(fxp.any(meeting), _unresolved_poles, meeting, frequencies)
+    return ResponsePoles(values=values + center, vectors=vectors, inverse=inverse, drift=drift)
+
+
+def _unresolved_poles(meeting: Any, frequencies: Any) -> ValueError:
+    pairs = np.argwhere(np.triu(np.asarray(meeting), 1))
+    places = ", ".join(f"{float(np.asarray(frequencies)[i]):.9g}" for i in sorted({int(i) for i, _ in pairs}))
+    return ValueError(
+        f"Poles of the weak-probe response near {places} GHz are ill-conditioned and too close to resolve "
+        "reliably. This happens near an exceptional point, where two poles merge."
+    )
+
+
+def _with_mode_responses(problem: LinearResponseProblem, model: Any, order: Any) -> LinearResponseProblem:
+    """Compose removed harmonic poles at their original port locations in mode space.
+
+    For one pole, elimination of its amplitude gives
+    ``S(f) = I - v v† / (sum(|v|²)/2 + kappa_i/2 - i 2π(f-f_r))``.
+    Keeping this one scalar unknown in the frequency solve composes the full
+    rank-one response, including reflections and later scattering. It does not
+    add a device or a quantum state to the reduced chip.
+    """
+    sectors = model.sectors
+    chip, compiled = sectors.chip, sectors.network
+    network = chip.port_network
+    modes = network._mode_responses
+    if not modes:
+        return problem
+    backend = chip.backend
+    xp = backend.array_module
+    count, added = len(problem.mode_labels), len(modes)
+    size = count + added
+    raw = {}
+    for port in network.ports:
+        matrix, support = sectors.port_couplings()[port.label]
+        kept = xp.asarray(sectors.block(matrix, support, 0, 1))[0, order]
+        amplitude = xp.sqrt(xp.asarray(_scalar_value(port.rate_value(chip), backend))) * xp.exp(
+            1j * xp.asarray(_scalar_value(port.phase, backend)))
+        poles = xp.stack([amplitude * xp.sqrt(xp.asarray(_scalar_value(mode.weight, backend)))
+                          if port.label in mode.ports else xp.asarray(0j) for mode in modes])
+        raw[port.label] = xp.concatenate((kept, poles))
+    h = xp.pad(problem.hamiltonian, ((0, added), (0, added)))
+    frequencies = xp.asarray([_scalar_value(mode.freq, backend) for mode in modes])
+    internal_rates = xp.asarray([_scalar_value(mode.internal_rate, backend) for mode in modes])
+    # Internal loss damps only the pole amplitude. The diagonal -i kappa_i/2
+    # gives the drift of an unread loss channel and stays differentiable at zero loss.
+    h = h + xp.diag(xp.concatenate((xp.zeros(count), TWO_PI * frequencies - 0.5j * internal_rates)))
+    # The retained block already contains the network Hamiltonian. Add only
+    # the new rows and columns of each series-product term.
+    for downstream, upstream, coefficient in compiled.generated_pairs:
+        product = xp.outer(xp.conj(raw[downstream]), coefficient * raw[upstream])
+        term = (product - product.conj().T) / (2j)
+        h = h + term - xp.pad(term[:count, :count], ((0, added), (0, added)))
+    exposed = xp.stack([
+        sum((coefficient * raw[source] for source, coefficient in entry.coupling.items()),
+            start=xp.zeros(size, dtype=complex)) for entry in compiled.channels
+    ])
+    hidden = xp.pad(problem.couplings[len(compiled.channels):], ((0, 0), (0, added)))
+    return replace(
+        problem, mode_labels=(*problem.mode_labels, *(mode.label for mode in modes)),
+        hamiltonian=h, couplings=xp.concatenate((exposed, hidden), axis=0),
+    )
+
+
+@dataclass(frozen=True)
+class _SectorResponseModel:
+    """Sector operators and the compiled vacuum-input boundary shared by weak probes."""
+
+    sectors: Any
+    channels: list[list[tuple[Any, Any, tuple[int, ...]]]]
+    scattering: Any
+    plane_indices: tuple[int, ...]
+    references: list[Any]
+    conserving_indices: tuple[int, ...]
+    keys: tuple[str, ...] = ()
+
+    def channel_block(self, index: int, row_total: int, column_total: int) -> Any:
+        xp = self.sectors.chip.backend.array_module
+        shape = (self.sectors.space(row_total).size, self.sectors.space(column_total).size)
+        return sum(
+            (xp.asarray(coefficient) * xp.asarray(self.sectors.block(matrix, support, row_total, column_total))
+             for coefficient, matrix, support in self.channels[index]),
+            start=xp.zeros(shape, dtype=complex),
+        )
+
+    def transfers(self, frequencies: Any) -> tuple[Any, Any]:
+        xp = self.sectors.chip.backend.array_module
+        values = xp.atleast_1d(xp.asarray(frequencies, dtype=float))
+
+        def columns(runs: list[Any]) -> Any:
+            return xp.stack([xp.broadcast_to(cw_transfer(run, values, xp), values.shape) for run in runs], axis=1)
+
+        return (columns([reference.inbound for reference in self.references]),
+                columns([reference.outbound for reference in self.references]))
+
+
+def _sector_response_model(chip: Any, plane_labels: tuple[str, ...]) -> _SectorResponseModel:
+    """Assemble every channel on its local support and require a conserving vacuum-input model.
+
+    A chip without a port network keeps only its device channels, and then
+    ``plane_labels`` must be empty.
+    """
+    from quchip.engine.excitation import authored_excitation_changes, lowers_by_one
 
     network = chip.port_network
-    if (network is None or chip.dynamic_contributions()
-            or not conserves_excitation_number(chip, chip.approximation)):
-        raise _UnsupportedLinearModel
+    if network is None and plane_labels:
+        raise _UnsupportedLinearModel("The chip has no port network.")
+    if chip.dynamic_contributions():
+        raise _UnsupportedLinearModel("The chip has time-dependent contributions.")
+    sectors = chip.analysis._sector_model()
+    if sectors is None:
+        raise _UnsupportedLinearModel("The static model does not conserve the total excitation N.")
     backend = chip.backend
     labels = tuple(device.label for device in chip.devices)
-    sectors = SectorModel(chip)
     channels: list[list[tuple[Any, Any, tuple[int, ...]]]] = []
     hidden_keys: list[str] = []
     occurrences: dict[str, int] = {}
+    conserving_indices = []
     for operator, rate, support, source, name, _paths, owner in sectors.contributions:
+        operator_labels = tuple(labels[index] for index in support) if support else labels
+        changes = authored_excitation_changes(operator, operator_labels, backend, sectors.bases)
         if maybe_concrete_scalar(_scalar_value(rate, backend)) != 0.0:
-            operator_labels = tuple(labels[index] for index in support) if support else labels
-            changes = authored_excitation_changes(operator, operator_labels, backend, sectors.bases)
-            lowering = changes is not None and changes <= {1}
-            if not lowering and (changes != {0} or isinstance(owner, Port)):
-                raise _UnsupportedLinearModel
+            if not lowers_by_one(changes) and (changes != {0} or isinstance(owner, Port)):
+                raise _UnsupportedLinearModel(
+                    f"Channel {name!r} of {source!r} does not lower N by one" + (
+                        "." if isinstance(owner, Port) else " or conserve it."))
         if not isinstance(owner, Port):
+            if changes == {0}:
+                conserving_indices.append(len(channels))
             # Hidden channels keep the keys and order of the resolved SLH model.
             channels.append([(1.0, sectors.channel_operator(operator, rate, support), support)])
             key = f"hidden.{source}.{name}"
@@ -120,65 +385,30 @@ def _build_vacuum_response_problem(
             hidden_keys.append(key if occurrences[key] == 1 else f"{key}#{occurrences[key]}")
 
     compiled = sectors.network
-    if compiled.output_network is not None:
-        raise _UnsupportedLinearModel
-    if any(field.input_occupation is not None and maybe_concrete_scalar(field.input_occupation) != 0.0
-           for field in network._field_channels(compiled)):
-        raise _UnsupportedLinearModel
-    ports = sectors.port_couplings()
-    channels[:0] = [[(coefficient, *ports[source]) for source, coefficient in entry.coupling.items()]
-                    for entry in compiled.channels]
+    entries = () if compiled is None else compiled.channels
+    if compiled is not None and compiled.output_network is not None:
+        raise _UnsupportedLinearModel("An output network mixes the outputs.")
+    if network is not None and any(
+            field.input_occupation is not None and maybe_concrete_scalar(field.input_occupation) != 0.0
+            for field in network._field_channels(compiled)):
+        raise _UnsupportedLinearModel("An input carries thermal noise.")
+    if entries:
+        ports = sectors.port_couplings()
+        channels[:0] = [[(coefficient, *ports[source]) for source, coefficient in entry.coupling.items()]
+                        for entry in entries]
 
     xp = backend.array_module
-
-    def channel_block(terms: list[tuple[Any, Any, tuple[int, ...]]], row_total: int, column_total: int) -> Any:
-        shape = (sectors.space(row_total).size, sectors.space(column_total).size)
-        return sum(
-            (xp.asarray(coefficient) * xp.asarray(sectors.block(matrix, support, row_total, column_total))
-             for coefficient, matrix, support in terms),
-            start=xp.zeros(shape, dtype=complex),
-        )
-
-    # The one-excitation states, in device order.
-    excited = np.argmax(sectors.space(1).levels, axis=1)
-    order = np.argsort(excited, kind="stable")
-    identity = xp.eye(order.size, dtype=complex)
-    block = TWO_PI * (xp.asarray(sectors.hamiltonian(1)) - xp.asarray(sectors.hamiltonian(0))[0, 0] * identity)
-    rows = []
-    for terms in channels:
-        shift = channel_block(terms, 0, 0)[0, 0]
-        kept = channel_block(terms, 1, 1)
-        block = block + 1j * (
-            xp.conj(shift) * kept - 0.5 * xp.abs(shift) ** 2 * identity - 0.5 * kept.conj().T @ kept
-        )
-        rows.append(channel_block(terms, 0, 1)[0])
-
-    keys = (*(entry.exposure.label for entry in compiled.channels), *hidden_keys)
-    external = tuple(entry.exposure.label for entry in compiled.channels if not entry.exposure._hidden)
+    keys = (*(entry.exposure.label for entry in entries), *hidden_keys)
+    external = tuple(entry.exposure.label for entry in entries if not entry.exposure._hidden)
     if any(label not in external for label in plane_labels):
         raise ValueError(f"Unknown linear-response exposure. Available exposures: {list(external)}")
     plane_indices = tuple(keys.index(label) for label in plane_labels)
-    frequency_values = xp.asarray(frequencies, dtype=float)
-    references = [entry.reference for entry in compiled.channels] + [ReferencePlane()] * len(hidden_keys)
+    references = [entry.reference for entry in entries] + [ReferencePlane()] * len(hidden_keys)
     scattering = (pad_mixing(xp.asarray(compiled.scattering, dtype=complex), len(keys), xp)
-                  if compiled.channels else xp.eye(len(keys), dtype=complex))
+                  if entries else xp.eye(len(keys), dtype=complex))
 
-    def transfer_columns(runs: list[Any]) -> Any:
-        return xp.stack(
-            [xp.broadcast_to(cw_transfer(run, frequency_values, xp), frequency_values.shape) for run in runs],
-            axis=1,
-        )
-
-    return LinearResponseProblem(
-        frequencies=frequencies,
-        mode_labels=tuple(labels[index] for index in excited[order]),
-        hamiltonian=block[np.ix_(order, order)],
-        couplings=xp.stack(rows)[:, order],
-        scattering=scattering,
-        plane_indices=plane_indices,
-        inbound_transfer=transfer_columns([reference.inbound for reference in references]),
-        outbound_transfer=transfer_columns([reference.outbound for reference in references]),
-    )
+    return _SectorResponseModel(sectors, channels, scattering, plane_indices, references,
+                                tuple(len(entries) + i for i in conserving_indices), keys)
 
 
 def _build_linear_response_problem(
@@ -190,7 +420,8 @@ def _build_linear_response_problem(
     network = chip.port_network
     if network is None:
         raise _UnsupportedLinearModel
-    if chip.dynamic_contributions() or chip.effective_terms:
+    # Retained mode responses enter only the vacuum weak-probe composition.
+    if chip.dynamic_contributions() or chip.effective_terms or network._mode_responses:
         raise _UnsupportedLinearModel
 
     labels = tuple(device.label for device in chip.devices)
@@ -351,8 +582,8 @@ def _port_coupling_vector(port: Port, chip: Any, mode_index: dict[str, int], bac
     else:
         raise _UnsupportedLinearModel
     return (
-        xp.exp(1j * xp.asarray(port.phase))
-        * xp.sqrt(xp.asarray(port.rate_value(chip)))
+        xp.exp(1j * xp.asarray(_scalar_value(port.phase, backend)))
+        * xp.sqrt(xp.asarray(_scalar_value(port.rate_value(chip), backend)))
         * vector
     )
 
@@ -438,12 +669,17 @@ def _scalar_value(
     *,
     bindings: dict[str, Any] | None = None,
 ) -> Any:
-    if not isinstance(expression, PhysicsExpr):
-        return expression
-    allowed = {"literal", "parameter", "function", "add", "sub", "mul", "scale", "pow"}
-    if any(node.labels or node.kind not in allowed for node in _walk_expr(expression)):
-        raise _UnsupportedLinearModel
-    return materialize_expr(expression, backend, bindings=bindings)
+    value = expression
+    if isinstance(expression, PhysicsExpr):
+        allowed = {"literal", "parameter", "function", "add", "sub", "mul", "scale", "pow"}
+        if any(node.labels or node.kind not in allowed for node in _walk_expr(expression)):
+            raise _UnsupportedLinearModel
+        value = materialize_expr(expression, backend, bindings=bindings)
+    # Compact response arrays consume scalars without constructing native operators.
+    validate = getattr(backend, "_validate_input", None)
+    if validate is not None:
+        validate(value)
+    return value
 
 
 def _add_entry(array: Any, row: int, column: int | None, value: Any) -> Any:

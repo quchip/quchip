@@ -33,8 +33,9 @@ def _eigenpairs_jvp(
     The rule Hermitianizes ``dH`` and evaluates
     ``dλ_i = <v_i|dH|v_i>`` and
     ``dv_i = Σ_{j≠i} v_j <v_j|dH|v_i> / (λ_i − λ_j)`` over the full
-    eigensystem. Gaps at or below ``1e-9·(λ_max − λ_min)`` contribute zero;
-    the tolerance is independent of the energy origin. The nested
+    eigensystem. Gaps at or below ``N eps (λ_max − λ_min)`` contribute zero.
+    Here, ``N`` is the dimension and ``eps`` is the eigenvalue dtype precision.
+    The tolerance is independent of the energy origin. The nested
     ``where`` also keeps the reciprocal off the masked branch. The diagonal
     connection is zero, fixing the parallel-transport gauge
     ``v_i† dv_i = 0``, and eigenvalue tangents are real.
@@ -63,7 +64,7 @@ def _masked_connection(values: Any, vectors: Any, dmatrix: Any, energies: Any, c
     hermitian = 0.5 * (dmatrix + dmatrix.conj().T)
     overlaps = vectors.conj().T @ hermitian @ columns
     gaps = energies[None, :] - values[:, None]
-    tolerance = 1e-9 * (values[-1] - values[0])
+    tolerance = values.shape[0] * jnp.finfo(values.dtype).eps * (values[-1] - values[0])
     resolved = jnp.abs(gaps) > tolerance
     inverse_gaps = jnp.where(resolved, 1.0 / jnp.where(resolved, gaps, 1.0), 0.0)
     return overlaps, vectors @ (inverse_gaps * overlaps)
@@ -195,21 +196,72 @@ class BasisRecord:
         return jnp.asarray((vectors * indices) @ vectors.conj().T)
 
 
+def _diagonal_eigenpairs(hamiltonian: Any, levels: int, label: str | None = None) -> tuple[Any, Any]:
+    """Return the lowest ``levels`` eigenpairs of a Hamiltonian that is diagonal by construction.
+
+    The coordinate axes are the eigenvectors. Plain evaluation sorts the
+    energies, and equal energies keep their authored order. Traced energies
+    keep the authored order, so the energy vectors stay concrete. Execution
+    checks that the first ``levels`` authored levels are the lowest, in energy
+    order, and raises an error otherwise.
+    """
+    axes = np.eye(hamiltonian.shape[0], dtype=complex)
+    if not contains_tracer(hamiltonian):
+        values = np.real(np.diagonal(np.asarray(hamiltonian)))
+        order = np.argsort(values, kind="stable")[:levels]
+        return jnp.asarray(values[order]), jnp.asarray(axes[:, order])
+    energies = jnp.real(jnp.diagonal(hamiltonian))
+    kept = energies[:levels]
+    reordered = jnp.any(jnp.diff(kept) < 0)
+    if levels < len(axes):
+        reordered = reordered | (jnp.max(kept) > jnp.min(energies[levels:]))
+    jax.debug.callback(partial(_reject_reordered_levels, label), reordered)
+    # If the check is skipped, results that read these energies become NaN.
+    return jnp.where(reordered, jnp.nan, kept), jnp.asarray(axes[:, :levels])
+
+
+def _reject_reordered_levels(label: str | None, reordered: Any) -> None:
+    if np.any(reordered):
+        owner = "a diagonal local Hamiltonian" if label is None else f"device {label!r}"
+        raise ValueError(
+            f"Traced values put the energy levels of {owner} out of their authored order. "
+            "Under JAX tracing, quchip keeps that order, while plain evaluation sorts the levels by energy. "
+            "Keep the retained levels lowest and in energy order, for example with fewer levels or with an "
+            "eigenbasis truncation below a turnover. Alternatively, evaluate without JAX transformations."
+        )
+
+
 def resolve_local_basis(
     hamiltonian: Any,
     *,
     basis: Literal["native", "eigen"] = "native",
     levels: int | None = None,
+    authored_hamiltonian: Any = None,
 ) -> BasisRecord:
-    """Resolve one fixed local solver basis from a static authored Hamiltonian."""
+    """Resolve one fixed local solver basis from a static authored Hamiltonian.
+
+    ``authored_hamiltonian`` is the authored form of ``hamiltonian``. The
+    record keeps it, and its algebra can prove a diagonal matrix.
+    """
+    from quchip.declarative.expr import PhysicsExpr, _authored_entry_support
+    from quchip.utils.values import copy_value
+
     shape = getattr(hamiltonian, "shape", None)
     if shape is None or len(shape) != 2 or shape[0] != shape[1]:
         raise ValueError(f"Local Hamiltonian must be square, got shape {shape}.")
     native_dim = shape[0]
+    support = _authored_entry_support(authored_hamiltonian)
+    diagonal = (support is not None and support.shape == (native_dim, native_dim)
+                and not np.any(support & ~np.eye(native_dim, dtype=bool)))
+    labels = authored_hamiltonian.labels if isinstance(authored_hamiltonian, PhysicsExpr) else ()
+    label = labels[0] if len(labels) == 1 else None
+    eigenpairs = partial(_diagonal_eigenpairs, label=label) if diagonal else _lowest_eigenpairs
+    authored = (authored_hamiltonian if isinstance(authored_hamiltonian, PhysicsExpr)
+                else copy_value(authored_hamiltonian, readonly=True))
     if basis == "native":
         if levels is not None:
             raise ValueError("levels is only valid when basis='eigen'.")
-        energies, energy_vectors = _lowest_eigenpairs(hamiltonian, native_dim)
+        energies, energy_vectors = eigenpairs(hamiltonian, native_dim)
         return BasisRecord(
             kind="native",
             vectors=jnp.asarray(np.eye(native_dim, dtype=hamiltonian.dtype)),
@@ -217,6 +269,7 @@ def resolve_local_basis(
             energy_vectors=energy_vectors,
             native_dim=native_dim,
             resolved_dim=native_dim,
+            authored_hamiltonian=authored,
         )
     if basis != "eigen":
         raise ValueError(f"basis must be 'native' or 'eigen', got {basis!r}.")
@@ -224,7 +277,7 @@ def resolve_local_basis(
         raise ValueError("levels is required when basis='eigen'.")
     if levels < 1 or levels > native_dim:
         raise ValueError(f"levels must be between 1 and {native_dim}, got {levels}.")
-    energies, vectors = _lowest_eigenpairs(hamiltonian, levels)
+    energies, vectors = eigenpairs(hamiltonian, levels)
     return BasisRecord(
         kind="eigen",
         vectors=vectors,
@@ -232,6 +285,7 @@ def resolve_local_basis(
         energy_vectors=vectors,
         native_dim=native_dim,
         resolved_dim=levels,
+        authored_hamiltonian=authored,
     )
 
 
@@ -241,8 +295,13 @@ def resolve_device_basis(
     basis: Literal["native", "eigen"],
     levels: int | None = None,
 ) -> BasisRecord:
-    """Resolve a device from its exact authored static Hamiltonian."""
+    """Resolve a device from its exact authored static Hamiltonian.
+
+    Concrete device values give a concrete record, also inside a JAX trace.
+    """
     from quchip.declarative.expr import materialize_array
 
-    matrix = materialize_array(device.unresolved_hamiltonian())
-    return resolve_local_basis(matrix, basis=basis, levels=levels)
+    with jax.ensure_compile_time_eval():
+        authored = device.unresolved_hamiltonian()
+        matrix = materialize_array(authored)
+        return resolve_local_basis(matrix, basis=basis, levels=levels, authored_hamiltonian=authored)

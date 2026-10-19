@@ -7,8 +7,12 @@ from typing import Any
 
 import numpy as np
 
-from quchip.analysis.field_statistics import proper_spectrum, quadrature_spectrum
-from quchip.analysis.field_noise import propagate_noise
+from quchip.engine.field_statistics import propagate_noise, proper_spectrum, quadrature_spectrum
+from quchip.engine.routes import (
+    WORKFLOWS, SolveRoute, array_name, automatic_cutoff, largest_change, plan_sectors, sector_diagnostics, warn_cutoff,
+)
+from quchip.utils.memory import fits_memory
+from quchip.cutoff import active_cutoff
 from quchip.results.receiver import _engineering_iq, noise_grid
 from quchip.engine.ir import LinearResponseProblem
 from quchip.devices.spaces import FockSpace
@@ -17,10 +21,16 @@ from quchip.engine.reference import (
     FieldChannel, cw_transfer,
 )
 from quchip.results.measurement import VNAMeasurement
-from quchip.results.input_output import MeanFieldResponseResult
+from quchip.results.input_output import MeanFieldResponseResult, _LazyDiagnostics
 from quchip.sweep import Sweep, ZippedSweep, _iter_axis_points
 from quchip.utils.jax_utils import contains_tracer
 from quchip.utils.labeling import resolve_label
+
+
+# The noise comparison runs when N <= K + 1 has at most this many states.
+_NOISE_CHECK_STATES = 1024
+_HARMONIC = ("The chip is passive and harmonic, so its mode equations give the response and the noise without a "
+             "Fock truncation.")
 
 
 @dataclass(frozen=True)
@@ -36,15 +46,19 @@ class _Acquisition:
 
 def capture_modes(chip: Any, operating: Any, modes: tuple[str, ...]) -> tuple[Any, Any, Any]:
     """Read authored Fock-mode observables in the solved stationary frames."""
-    from quchip.chip.observables import prepare_local_op
+    from quchip.engine.observables import prepare_local_op
 
     backend = chip.backend
     xp = backend.array_module
+    space = operating.engine.excitation_space
+    labels = tuple(device.label for device in chip.devices)
     amplitudes, numbers, frequencies = [], [], []
     for label in modes:
         device = chip.device_map[label]
         basis = operating.engine.bases[label]
-        state = operating.state.reduced_state(label)
+        # Under an excitation cutoff, the state holds only the retained labels.
+        state = (operating.state.reduced_state(label) if space is None
+                 else space.reduced(operating.state.state, backend, (labels.index(label),)))
         amplitudes.append(backend.expect(prepare_local_op(device, "a", basis, backend), state))
         numbers.append(xp.real(backend.expect(prepare_local_op(device, "n", basis, backend), state)))
         frequencies.append(operating.engine.resolved_frame.frequencies[label])
@@ -90,8 +104,9 @@ def capture_linear(
                                          labels, frequency, offsets, xp)
     mode_amplitudes = solved.mode_amplitudes[len(offsets)//2, :, probe] * incoming * amplitude
     numbers = xp.abs(mode_amplitudes)**2 + xp.real(xp.diag(solved.mode_covariance))
+    route = SolveRoute("linear_response", _HARMONIC, len(problem.mode_labels), array_name(backend))
     return _Acquisition(mean, components, delays,
-                        {"solver": "linear_response", "mode_count": len(problem.mode_labels),
+                        {"solver": route.name, "route": route, "mode_count": len(problem.mode_labels),
                          "residual": xp.max(solved.residuals)},
                         mode_amplitudes, numbers, xp.full((len(problem.mode_labels),), frequency))
 
@@ -143,29 +158,48 @@ def _acquire(
     xp = vna.chip.backend.array_module
     modes = tuple(device.label for device in vna.chip.devices
                   if isinstance(device.local_space(), FockSpace)) if noise else ()
-    captured: list[_Acquisition] = []
     incident, parameters = [], []
     points: list[Any] = []
+    concrete_grid = not contains_tracer((frequency_values, amplitude_values))
+    method = "VNA.measure()" if noise else "VNA.finite_power()"
+    workflow = WORKFLOWS[method]
     for _, params in variation_points:
-        chip = vna._chip_at(params)
+        chip, pumps = vna._chip_at(params), vna._tone_values(params)
+        cutoff = active_cutoff(chip)
+        # Under a cutoff, the projected model is not the harmonic chip, so the harmonic route does not apply.
         linear = (try_build_linear_response_problem(chip, frequency_values, plane_labels=labels)
-                  if noise and not vna._tones and options is None else None)
+                  if noise and not vna._tones and options is None and cutoff is None else None)
         if linear is not None and not contains_tracer((linear.hamiltonian, linear.couplings)):
             couplings = np.asarray(linear.couplings)
             drift = -1j*np.asarray(linear.hamiltonian)-couplings.conj().T@couplings/2
             if np.any(np.linalg.eigvals(drift).real >= 0):
                 raise ValueError("A stationary harmonic measurement requires all modes to decay.")
-        points.extend((chip, linear, params, amplitude, frequency)
-                      for amplitude in amplitude_values for frequency in frequency_values)
-    if progress:
-        from tqdm import tqdm
-        points = tqdm(points, desc="VNA measurement" if noise else "VNA power")
-    for chip, linear, params, amplitude, frequency in points:
-        if noise:
-            parameters.append(dict(chip.parameters))
-        tones = vna._tone_values(params) + ((input_label, frequency, xp.conj(amplitude)),)
+        sector, reason = None, _HARMONIC
         if linear is None:
-            operating = _operating_point(chip, tones, frequency, (), options)
+            # Pumps share the frame of the probe only at their own frequency.
+            sector, reason = plan_sectors(
+                chip, workflow, labels=labels, inputs=(input_label, *(port for port, _, _ in pumps)), modes=modes,
+                frequencies=(*frequency_values, *(frequency for _, frequency, _ in pumps)) if pumps else (),
+                options=options, concrete=concrete_grid and not contains_tracer(pumps))
+        points.extend((chip, linear, sector, pumps, amplitude, frequency, reason)
+                      for amplitude in amplitude_values for frequency in frequency_values)
+    captured: list[Any] = [None] * len(points)
+    sector_points = [index for index, point in enumerate(points) if point[2] is not None]
+    if sector_points:
+        solved = _sector_acquire([points[index] for index in sector_points], labels=labels, offsets=offsets,
+                                 noise=noise, progress=progress, method=method, xp=xp)
+        for index, acquired in zip(sector_points, solved, strict=True):
+            captured[index] = acquired
+    remaining = [index for index, point in enumerate(points) if point[2] is None]
+    iterator: Any = remaining
+    if progress and remaining:
+        from tqdm import tqdm
+        iterator = tqdm(remaining, desc="VNA measurement" if noise else "VNA power")
+    for index in iterator:
+        chip, linear, _, pumps, amplitude, frequency, reason = points[index]
+        tones = pumps + ((input_label, frequency, xp.conj(amplitude)),)
+        if linear is None:
+            operating = _operating_point(chip, tones, frequency, (), options, reason=reason)
             mean = _plane_means(operating.engine, operating.state.state, chip.backend, labels, tones, frequency)
             components, output_delays = (capture_noise(operating, chip.backend, labels, frequency, xp.asarray(offsets))
                                          if noise else ({}, None))
@@ -176,7 +210,10 @@ def _acquire(
         else:
             acquired = capture_linear(
                 linear, chip.backend, labels, input_label, frequency, xp.conj(amplitude), xp.asarray(offsets))
-        captured.append(acquired)
+        captured[index] = acquired
+    for chip, _, _, _, amplitude, _, _ in points:
+        if noise:
+            parameters.append(dict(chip.parameters))
         incident.append(xp.asarray(amplitude))
     response = dict(
         ports=labels, input=resolve_label(input_label),
@@ -208,3 +245,123 @@ def _acquire(
         photon_numbers=xp.stack([point.photon_numbers for point in captured]).reshape((*shape, len(modes))),
         mode_frequencies=xp.stack([point.mode_frequencies for point in captured]).reshape((*shape, len(modes))),
     )
+
+
+@dataclass(frozen=True)
+class _SectorPoint:
+    """One sector solve at one grid point, in the physics convention."""
+
+    solve: Any
+    mean: Any
+    mode_amplitudes: Any
+    photon_numbers: Any
+    excess: Any
+    noise: dict[str, Any]
+
+
+def _sector_pass(entries: list[Any], cutoff: int, *, offsets: Any, noise: bool, guesses: list[_SectorPoint] | None,
+                 progress: bool, method: str) -> list[_SectorPoint]:
+    """Solve every grid point on ``N <= cutoff``, starting from nearby solutions."""
+    iterator: Any = range(len(entries))
+    if progress:
+        from tqdm import tqdm
+        iterator = tqdm(iterator, desc=f"{method} N<={cutoff}")
+    points: list[_SectorPoint] = []
+    previous: tuple[Any, Any] | None = None
+    for index in iterator:
+        chip, _, model, pumps, amplitude, frequency, _ = entries[index]
+        frequency = float(frequency)
+        internal = (complex(np.conj(amplitude)), *(complex(value) for _, _, value in pumps))
+        guess = None
+        if guesses is not None:
+            guess = _embed(guesses[index].solve.state, model.size(cutoff))
+        elif previous is not None and previous[0] is chip:
+            guess = previous[1]
+        solved = model.stationary(cutoff, frequency, internal, guess)
+        amplitudes, numbers = model.mode_values(cutoff, solved.state)
+        excess, info = (model.quadrature_spectrum(cutoff, frequency, internal, solved.state, offsets) if noise
+                        else (None, {}))
+        points.append(_SectorPoint(solved, model.means(cutoff, frequency, internal, solved.state),
+                                   amplitudes, numbers, excess, info))
+        previous = (chip, solved.state)
+    return points
+
+
+def _embed(state: Any, size: int) -> Any:
+    """Return a state on a smaller cutoff as a state on ``size`` labels, which list it first."""
+    embedded = np.zeros((size, size), dtype=complex)
+    embedded[:state.shape[0], :state.shape[1]] = state
+    return embedded
+
+
+def _sector_change(lower: list[_SectorPoint], upper: list[_SectorPoint], noise: bool) -> float:
+    """Compare the means, mode observables and, optionally, the noise spectra of two cutoffs."""
+    changes = [largest_change([p.mean for p in lower], [p.mean for p in upper]),
+               largest_change([p.mode_amplitudes for p in lower], [p.mode_amplitudes for p in upper]),
+               largest_change([p.photon_numbers for p in lower], [p.photon_numbers for p in upper])]
+    if noise:
+        changes.append(largest_change([spectrum for p in lower for spectrum in p.excess],
+                                      [spectrum for p in upper for spectrum in p.excess]))
+    return max(changes)
+
+
+def _sector_acquire(entries: list[Any], *, labels: tuple[str, ...], offsets: Any, noise: bool,
+                    progress: bool, method: str, xp: Any) -> list[_Acquisition]:
+    """Acquire grid points on excitation sectors at the chip's cutoff, or at an automatic one."""
+    models = [entry[2] for entry in entries]
+    first = models[0]
+    fixed = first.sectors.cutoff
+
+    def solve(cutoff: int, lower: list[_SectorPoint] | None) -> list[_SectorPoint]:
+        # A comparison above the noise limit compares the means and mode observables only.
+        spectra = noise and (lower is None or first.size(cutoff) <= _NOISE_CHECK_STATES)
+        return _sector_pass(entries, cutoff, offsets=offsets, noise=spectra, guesses=lower, progress=progress,
+                            method=method)
+
+    def complete(cutoff: int, points: list[_SectorPoint]) -> list[_SectorPoint]:
+        if not noise or points[0].excess is not None:
+            return points
+        return _sector_pass(entries, cutoff, offsets=offsets, noise=True, guesses=points, progress=progress,
+                            method=method)
+
+    if fixed is not None:
+        cutoff, choice, check = fixed, "explicit", None
+        points = solve(cutoff, None)
+    else:
+        unique = {id(model): model for model in models}.values()
+        choice = "automatic"
+        cutoff, points, check = automatic_cutoff(
+            first.max_total, solve, lambda lower, upper: _sector_change(lower, upper, upper[0].excess is not None),
+            complete=complete, states=first.size,
+            fits=lambda total: all(fits_memory(model.required_memory(total)) for model in unique))
+        if check is not None:
+            quantities = "means" + (", mode amplitudes and photon numbers" if first.modes else "")
+            note = ""
+            if noise and check.status == "passed":
+                if check.states <= _NOISE_CHECK_STATES:
+                    quantities = quantities.replace(" and ", ", ") + " and noise spectra"
+                else:
+                    note = (f" The noise spectra were not compared, because N <= {check.compared_with} has "
+                            f"{check.states:,} states (the comparison limit is {_NOISE_CHECK_STATES:,}).")
+            warn_cutoff(method, cutoff, first.size(cutoff), check, quantities, note=note,
+                        stacklevel=5 if noise else 4)
+    acquired = []
+    for entry, point in zip(entries, points, strict=True):
+        _, _, model, _, _, frequency, reason = entry
+        components: dict[str, tuple[Any, Any]] = {}
+        delays = None
+        frames: np.ndarray = np.zeros(0)
+        if noise:
+            components, delays = propagate_noise(model.fields, model.scattering, None, point.excess, labels,
+                                                 float(frequency), np.asarray(offsets), np)
+            components = {name: (xp.asarray(white), xp.asarray(excess)) for name, (white, excess) in components.items()}
+            # Every mode is solved in the probe frame.
+            frames = np.full(len(model.modes), float(frequency))
+        diagnostics = {**sector_diagnostics(model, cutoff, point.solve, reason, choice, check), **point.noise}
+        if check is not None:
+            diagnostics["cutoff_check"]["noise_compared"] = (noise and check.status == "passed"
+                                                             and check.states <= _NOISE_CHECK_STATES)
+        acquired.append(_Acquisition(xp.asarray(point.mean), components, None if delays is None else xp.asarray(delays),
+                                     _LazyDiagnostics(diagnostics), xp.asarray(point.mode_amplitudes),
+                                     xp.asarray(point.photon_numbers), xp.asarray(frames)))
+    return acquired

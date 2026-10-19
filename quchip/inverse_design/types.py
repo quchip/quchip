@@ -117,6 +117,16 @@ class FitADressResult:
         Jacobian, the intermediate entries include finite-difference probes and
         accepted solver iterates. For a monotone best-so-far convergence curve,
         use ``numpy.minimum.accumulate(history)``.
+    history_params
+        One ``{parameter_name: value}`` dict per :attr:`history` entry, named
+        like :attr:`final_params`. The first entry equals
+        :attr:`initial_params` and the last entry equals :attr:`final_params`.
+    history_residuals
+        Array of shape ``(len(history), len(final_targets))``. Each row holds
+        the observed minus the target value of each target (GHz) at that
+        :attr:`history` entry, in :attr:`final_targets` order. The sum of the
+        squared residuals, each divided by ``max(abs(target), 1e-9)``, is the
+        matching :attr:`history` entry.
     initial_targets
         One :class:`ObservableReport` per target, evaluated on the
         optimizer's initial candidate.
@@ -163,6 +173,8 @@ class FitADressResult:
     final_params: dict[str, float]
     solver_info: dict[str, Any]
     parameter_reports: tuple[FitParameterReport, ...] = ()
+    history_params: tuple[dict[str, float], ...] = ()
+    history_residuals: Any = None
 
     @property
     def converged(self) -> bool | None:

@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any
 from quchip.engine.ir import StateStorage
-from quchip.engine.sampling import AutomaticTimeGrid, interval_bounds
+from quchip.engine.sampling import AutomaticTimeGrid
 
 
 def _uses_field_boundary(drive_ops: list, e_ops: dict | None) -> bool:
@@ -52,8 +52,18 @@ def maybe_simulate_partitioned(
     approximation: Any | None,
     states: StateStorage | None = None,
     dissipation: bool = True,
+    context: Any,
 ) -> Any | None:
-    """Solve each component when the chip splits. ``None`` declines to the joint path."""
+    """Solve each component when the chip splits. ``None`` declines to the joint path.
+
+    ``context`` is the joint solve's prepared context, whose resolved model
+    decides the split.
+    """
+    from quchip.cutoff import active_cutoff
+
+    # The global excitation budget couples devices that no term couples.
+    if active_cutoff(chip) is not None:
+        return None
     if initial_state is not None and not isinstance(initial_state, Mapping):
         return None
     # Field inputs and outputs are defined at the complete network reference
@@ -63,10 +73,8 @@ def maybe_simulate_partitioned(
     if _uses_field_boundary(drive_ops, e_ops):
         return None
     from quchip.chip.partition import partition_chip
-    from quchip.engine.frames import resolve_for_operations
 
-    resolved = resolve_for_operations(chip, drive_ops, approximation=approximation,
-                                      solve_window=interval_bounds(tlist))
+    resolved = context._base_result
 
     part = partition_chip(
         chip,

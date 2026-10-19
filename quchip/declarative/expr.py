@@ -790,6 +790,35 @@ def declared_excitation_changes(expr: Any) -> frozenset[int] | None:
     return None
 
 
+def _authored_entry_support(expr: Any) -> np.ndarray | None:
+    """Return a bound on the nonzero entries of authored operator algebra, or ``None``.
+
+    Scalar coefficients do not change the bound, so it also holds for traced values.
+    """
+    import jax
+
+    from quchip.utils.jax_utils import contains_tracer
+
+    if isinstance(expr, PhysicsExpr):
+        if expr.kind == "scale":
+            return _authored_entry_support(expr.args[1])
+        if expr.kind in ("add", "sub", "matmul", "tensor"):
+            left, right = (_authored_entry_support(arg) for arg in expr.args)
+            if left is None or right is None:
+                return None
+            if expr.kind in ("add", "sub"):
+                return left | right
+            return left @ right if expr.kind == "matmul" else np.kron(left, right)
+        if expr.kind not in ("op", "matrix") or contains_tracer(expr.numeric_values()):
+            return None
+        with jax.ensure_compile_time_eval():
+            expr = materialize_array(expr)
+    if contains_tracer(expr):
+        return None
+    values = np.asarray(expr)
+    return values != 0 if values.ndim == 2 else None
+
+
 def is_energy_diagonal(expr: Any, bases: Mapping[str, Any]) -> bool:
     """Return whether authored algebra guarantees zero energy-change weight in captured bases."""
     from quchip.devices.spaces import ChargeSpace, FockSpace, PhaseGridSpace
@@ -867,11 +896,16 @@ def materialize_expr(
             name, space = node.args
             return space.operator(name, backend)
         if node.kind == "level":
+            import jax
+
             from quchip.engine.basis import resolve_local_basis
 
             record = _matching_local_basis(node, local_bases, values)
             if record is None:
-                record = resolve_local_basis(materialize_array(node.args[0], bindings=values))
+                # Concrete authored values give a concrete basis, also inside a JAX trace.
+                with jax.ensure_compile_time_eval():
+                    record = resolve_local_basis(materialize_array(node.args[0], bindings=values),
+                                                 authored_hamiltonian=node.args[0])
             if record.kind == "native" and record.energy_to_solver() is None:
                 return backend.number(record.native_dim)
             return backend.from_array(record.authored_level_operator(),
@@ -932,6 +966,10 @@ class _ArrayLowerer:
     @staticmethod
     def from_array(value: Any, dims: Any = None) -> Any:
         del dims
+        if hasattr(value, "to_jax"):
+            value = value.to_jax()
+        elif hasattr(value, "full"):
+            value = value.full()
         return concrete_array_module(value).asarray(value, dtype=complex)
 
     @staticmethod

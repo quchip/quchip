@@ -4,6 +4,7 @@ from __future__ import annotations
 
 
 import numpy as np
+import pytest
 
 from quchip import Chip, ControlEquipment, DuffingTransmon, Square
 from quchip.control.drive import FluxDrive
@@ -126,3 +127,51 @@ def test_flux_drive_nonzero_initial_state():
     assert p1[-1] > 0.98, (
         f"FluxDrive diagonal coupling should preserve |1> population, but P(|1>) at t=50 is {p1[-1]:.4f}"
     )
+
+
+@pytest.mark.parametrize("frequency", [None, 0.0, 0.1])
+def test_longitudinal_drive_retains_dc_and_oscillating_phase(frequency):
+    """A longitudinal tone changes level energies by its full real waveform."""
+    from quchip import QuantumSequence
+
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=3, label="q")
+    drive = FluxDrive(q)
+    chip = Chip([q], frame="rotating")
+    chip.wire(drive)
+    sequence = QuantumSequence(chip)
+    sequence.schedule(drive, envelope=Square(duration=10.0, amplitude=0.02), freq=frequency)
+    static = np.asarray(chip.hamiltonian().matrix(t=0.0))
+    driven = sequence.hamiltonian()
+    for time in (0.0, 1.0, 2.0):
+        modulation = 0.02 * np.cos(2 * np.pi * (frequency or 0.0) * time)
+        expected = static + np.diag(np.arange(3) * modulation)
+        np.testing.assert_allclose(driven.matrix(t=time), expected, atol=1e-13)
+
+
+@pytest.mark.validation
+@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
+def test_longitudinal_phase_matches_integrated_frequency(backend):
+    """A longitudinal tone gives the analytic relative phase without changing populations."""
+    from quchip import QuantumSequence
+
+    if backend == "dynamiqs":
+        pytest.importorskip("dynamiqs")
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=2, label="q")
+    drive = FluxDrive(q)
+    chip = Chip([q], frame={"q": 5.0}, backend=backend)
+    chip.wire(drive)
+    sequence = QuantumSequence(chip)
+    amplitude, frequency, duration = 0.02, 0.1, 3.0
+    sequence.schedule(drive, envelope=Square(duration=duration, amplitude=amplitude), freq=frequency)
+    initial = (chip.backend.basis(2, 0) + chip.backend.basis(2, 1)) / np.sqrt(2)
+    options = {"atol": 1e-10, "rtol": 1e-9}
+    if backend == "dynamiqs":
+        import dynamiqs as dq
+
+        options = {"method": dq.method.Tsit5(atol=1e-10, rtol=1e-9)}
+    result = sequence.simulate(tlist=[0.0, duration], initial_state=initial, states="final", options=options)
+    state = np.asarray(chip.backend.to_array(result.final_state)).ravel()
+    phase = amplitude * np.sin(2 * np.pi * frequency * duration) / frequency
+    expected = np.array([1.0, np.exp(-1j * phase)]) / np.sqrt(2)
+    # Integrating the sinusoidal frequency gives this phase; tolerance exceeds solver settings.
+    np.testing.assert_allclose(np.outer(state, state.conj()), np.outer(expected, expected.conj()), atol=2e-8)

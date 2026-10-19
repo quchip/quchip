@@ -117,8 +117,9 @@ valid: True
 
 ## Differentiate a spectral fitting objective
 
-The second residual uses the common sigma-z convention
-$\chi_{\sigma_z}=\left(E_{11}-E_{10}-E_{01}+E_{00}\right)/2$.
+The second residual uses quchip's ground-positive convention,
+$Z=|0\rangle\langle0|-|1\rangle\langle1|$, with
+$\chi_Z=-\left(E_{11}-E_{10}-E_{01}+E_{00}\right)/2$.
 `dispersive_shift()` itself returns the full pull in the numerator.
 
 ```python
@@ -138,13 +139,13 @@ chip = Chip(
 
 names = ("q.freq", "q.anharmonicity", "qr.g")
 theta = jnp.array([5.0, -0.25, 0.05])
-target = jnp.array([5.05, -0.0010])  # [f01, chi_sigma_z] in GHz
+target = jnp.array([5.05, 0.0010])  # [f01, chi_z] in GHz
 
 
 def residual(values):
     rebound = chip.with_params(dict(zip(names, values)))
-    chi_sigma_z = rebound.dispersive_shift("q", "r") / 2
-    observables = jnp.stack([rebound.freq("q"), chi_sigma_z])
+    chi_z = -rebound.dispersive_shift("q", "r") / 2
+    observables = jnp.stack([rebound.freq("q"), chi_z])
     return observables - target
 
 
@@ -160,7 +161,7 @@ Output:
 gradient: [-1.02434723e-01  8.49096110e-07  5.10899915e-03]
 Jacobian:
  [[ 9.99376169e-01  0.00000000e+00 -4.99376169e-02]
- [-1.30585777e-04  4.92846075e-04 -5.53077679e-03]]
+ [ 1.30585777e-04 -4.92846075e-04  5.53077679e-03]]
 ```
 
 [Continue with gradients and parameter fitting](differentiability.md).

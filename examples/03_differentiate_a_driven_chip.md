@@ -25,9 +25,10 @@ to fit measured spectroscopy.
 A scalar fitting objective has a gradient and a vector residual has a Jacobian, and
 both go through the same public `Chip.with_params()` call.
 
-The second observable uses the sigma-z convention
-$\chi_{\sigma_z}=\mathrm{dispersive\_shift}/2$. The scalar method returns the
-full pull $E_{11}-E_{10}-E_{01}+E_{00}$.
+The second observable is the coefficient of $Z n_r$, with
+$Z=|0\rangle\langle0|-|1\rangle\langle1|$ and
+$\chi_Z=-\mathrm{dispersive\_shift}/2$.
+The scalar method returns the full pull $E_{11}-E_{10}-E_{01}+E_{00}$.
 
 ```python
 import jax
@@ -54,13 +55,13 @@ the resolved curve with its local tangent.
 ```python
 names = ["q.freq", "q.anharmonicity", "qr.g"]
 theta = jnp.array([5.0, -0.25, 0.05])
-target = jnp.array([5.05, -0.0010])
+target = jnp.array([5.05, 0.0010])  # [f01, chi_z] in GHz
 
 
 def observables(th):
     c = chip.with_params(dict(zip(names, th)))
-    chi_sigma_z = c.dispersive_shift("q", "r") / 2
-    return jnp.stack([jnp.asarray(c.freq("q")), jnp.asarray(chi_sigma_z)])
+    chi_z = -c.dispersive_shift("q", "r") / 2
+    return jnp.stack([jnp.asarray(c.freq("q")), jnp.asarray(chi_z)])
 
 
 def residual(th):
@@ -97,7 +98,7 @@ static_figure, static_axes = plt.subplots(1, 2, figsize=(9.2, 3.8), layout="cons
 for observable_index, (axis, ylabel, scale) in enumerate(
     zip(
         static_axes,
-        (r"$f_{01}$ (GHz)", r"$\chi_{\sigma_z}$ (MHz)"),
+        (r"$f_{01}$ (GHz)", r"$\chi_Z$ (MHz)"),
         (1.0, 1.0e3),
         strict=True,
     )
@@ -405,7 +406,7 @@ print(
 Output:
 
 ```text
-RESULT experimental_statics={"fit_success":true,"holdout_median_absolute_error_mhz":0.880613406288866,"holdout_points":133,"holdout_rmse_mhz":6.967105516086357,"initial_E_C_E_J_E_L":[0.72,4.4,0.68],"iterations":17,"published_E_C_E_J_E_L":[0.8652719648666846,3.8217399868188027,0.8215798519627777],"recovered_E_C_E_J_E_L":[0.8704199128839761,3.8203629832283665,0.8208603168362608],"relative_parameter_error":[0.005949514402774777,-0.0003603080259738819,-0.0008757945132148889],"training_points":20}
+RESULT experimental_statics={"fit_success":true,"holdout_median_absolute_error_mhz":0.8806168653689994,"holdout_points":133,"holdout_rmse_mhz":6.967105550535916,"initial_E_C_E_J_E_L":[0.72,4.4,0.68],"iterations":17,"published_E_C_E_J_E_L":[0.8652719648666846,3.8217399868188027,0.8215798519627777],"recovered_E_C_E_J_E_L":[0.8704199134602235,3.8203629719093892,0.8208603213336979],"relative_parameter_error":[0.005949515068747334,-0.00036031098770789575,-0.0008757890390822424],"training_points":20}
 ```
 
 <!-- executed-output:end -->
@@ -663,6 +664,9 @@ The traced calculation keeps the device graph, Hilbert-space dimensions, and
 RWA band selection fixed. dynamiqs supports this automatic-differentiation
 path. QuTiP remains available for ordinary solves and sweeps but does not
 give gradients. Near degenerate subspaces, be careful with eigenvector
-derivatives. Gradients inherit the solver tolerances, local-basis
-truncation, frame, approximation, and loss scaling of the forward
-calculation.
+derivatives. Devices that are diagonal by construction, such as
+`DuffingTransmon`, keep their authored level order under tracing. A traced
+call raises when its values put those levels out of energy order, for example
+when a transmon spectrum turns over within its levels. Gradients inherit the
+solver tolerances, local-basis truncation, frame, approximation, and loss
+scaling of the forward calculation.

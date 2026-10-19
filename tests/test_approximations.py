@@ -54,12 +54,13 @@ def test_sequence_problem_override_uses_one_strategy_without_mutation():
 
 
 def test_rwa_explicit_bands_replace_the_default_selection_and_round_trip():
-    strategy = RWA(keep_bands={(1, 1)})
+    strategy = RWA(keep_bands={(1, 1), (-1, -1)})
     chip = _coupled_chip(strategy)
 
     matrix = np.asarray(chip.resolve().hamiltonian().matrix(t=0.0))
 
     assert matrix[0, 3] == pytest.approx(-0.03)
+    np.testing.assert_allclose(matrix, matrix.conj().T, atol=1e-14)
     assert matrix[1, 2] == pytest.approx(0.0)
     assert Chip.from_dict(chip.to_dict()).approximation == strategy
 
@@ -75,6 +76,9 @@ def test_rwa_explicit_bands_replace_the_default_selection_and_round_trip():
 
 
 def test_rwa_rejects_invalid_explicit_band_sets():
+    """Explicit selections must be integral, nonempty, and closed under adjoints."""
+    with pytest.raises(ValueError, match="adjoint"):
+        RWA(keep_bands={(1, 1)})
     with pytest.raises(TypeError, match="integer tuples"):
         RWA(keep_bands={(0, 1.0)})
     with pytest.raises(ValueError, match="at least one"):
@@ -85,5 +89,5 @@ def test_excitation_number_conservation_follows_the_retained_bands():
     """Only approximations whose retained bands all have zero total weight conserve excitation number."""
     assert RWA().conserves_excitation_number()
     assert RWA(keep_bands={(1, -1), (-1, 1)}).conserves_excitation_number()
-    assert not RWA(keep_bands={(1, -1), (1, 1)}).conserves_excitation_number()
+    assert not RWA(keep_bands={(1, -1), (-1, 1), (1, 1), (-1, -1)}).conserves_excitation_number()
     assert not Exact().conserves_excitation_number()

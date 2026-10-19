@@ -5,7 +5,7 @@ import pytest
 from quchip import RWA, VNA, Capacitive, Chip, DuffingTransmon, PortNetwork, Resonator, fit_a_dress
 
 
-def _ring(n, *, rate=0.01):
+def _ring(n, *, rate=0.01, backend="qutip"):
     """n transmons in a ring, a coupling resonator between neighbours and one readout port per transmon."""
     qubits = [DuffingTransmon(freq=5.32 - 0.07 * i, anharmonicity=-0.26, levels=3, label=f"q{i}") for i in range(n)]
     couplers = [Resonator(freq=6.30 + 0.02 * i, levels=2, label=f"c{i}") for i in range(n)]
@@ -17,7 +17,8 @@ def _ring(n, *, rate=0.01):
     network = PortNetwork(label="readout")
     for readout in readouts:
         network.port(readout.label, target=readout, rate=rate)
-    return Chip([*qubits, *couplers, *readouts], couplings, port_network=network, frame=5.2, approximation=RWA())
+    return Chip([*qubits, *couplers, *readouts], couplings, port_network=network,
+                frame=5.2, approximation=RWA(), backend=backend)
 
 
 def test_24_mode_ring_is_analysed_from_its_one_excitation_block():
@@ -60,3 +61,30 @@ def test_fit_limit_applies_to_the_largest_diagonalized_sector():
     assert result.chip.dressed_anharmonicity("q1") == pytest.approx(-0.22, abs=1e-10)
     with pytest.raises(ValueError, match="diagonalizes a matrix of dimension 3, exceeding max_hilbert_dim=2"):
         fit_a_dress(chip, constraints=constraints, max_hilbert_dim=2)
+
+
+@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])
+def test_24_device_ring_fits_a_frequency_and_reads_drive_elements(backend):
+    """The full 24-device RWA ring fits a bare frequency against an independent 24-state target."""
+    from quchip import ChargeDrive
+
+    if backend == "dynamiqs":
+        pytest.importorskip("dynamiqs")
+    chip = _ring(8, backend=backend)
+    chip.wire(ChargeDrive(chip.devices[0], label="xy"))
+    labels = [device.label for device in chip.devices]
+    block = np.diag([device.freq for device in chip.devices])
+    block[0, 0] += 0.02
+    for edge in chip.couplings:
+        a, b = labels.index(edge.device_a_label), labels.index(edge.device_b_label)
+        block[a, b] = block[b, a] = edge.g
+    values, vectors = np.linalg.eigh(block)
+    column = np.argmax(abs(vectors[0]))
+    constraints = {device.label: {"freq": None, "anharmonicity": None} for device in chip.devices}
+    constraints.update({edge.label: {"cross_kerr": None, "exchange_rate": None} for edge in chip.couplings})
+    constraints["q0"]["freq"] = values[column]
+    result = fit_a_dress(chip, constraints=constraints, vary={"q0": ["freq"]}, max_hilbert_dim=24)
+    assert result.solver_info["jacobian"] == ("jax" if backend == "dynamiqs" else "finite-difference")
+    fitted = result.chip
+    assert fitted["q0"].freq == pytest.approx(chip["q0"].freq + 0.02, abs=1e-9)
+    assert abs(fitted.drive_matrix_elements("q0")["xy"]) == pytest.approx(abs(vectors[0, column]), abs=1e-10)

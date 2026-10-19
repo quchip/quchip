@@ -21,6 +21,7 @@ dependencies = [
     "matplotlib",
     "tqdm",
     "loky",
+    "psutil",
     "jax",
 ]
 
@@ -50,6 +51,7 @@ markers = [
     "unit: small deterministic component and API-contract checks",
     "e2e: daily integration and physics workflows",
     "validation: expensive numerical, gradient, and exhaustive checks",
+    "release: notebook re-execution and other checks that run only before a release",
     "core: root-directory tests (legacy location marker, not a runtime guarantee)",
     "physics_sentinel: compact simulation-backed regression coverage for critical physics invariants",
     "extended: slower long-tail coverage outside the default developer loop",

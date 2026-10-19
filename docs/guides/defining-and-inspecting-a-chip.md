@@ -30,6 +30,7 @@ Frame    : lab
 Approx.  : RWA
 Dressed  : not computed
 Hilbert  : 4 x 5 = 20 levels
+Sectors  : N conserved; dressed queries with N <= 2 diagonalize at most 3 states
 
 Devices (2)
 ───────────
@@ -43,6 +44,11 @@ Couplings (1)
 qr : q ↔ r
     g = 0.05 GHz
 ```
+
+The `Sectors` line shows that this RWA model conserves the total excitation
+number $N$, the sum of the device levels. Dressed queries therefore diagonalize
+one small block for each $N$ instead of all 20 levels.
+`chip.excitation_structure()` lists the terms that decide this.
 
 ## Read dressed observables
 
@@ -63,9 +69,11 @@ Resonator frequency: 7.001249 GHz
 Conditional resonator pull: -0.277 MHz
 ```
 
-The full conditional pull is $E_{11}-E_{10}-E_{01}+E_{00}$. Its half is the
-usual $\chi$ in the sigma-z dispersive Hamiltonian. `chip.kerr_matrix()` collects
-these full pulls off-diagonal and dressed anharmonicities on the diagonal.
+The full conditional pull is $E_{11}-E_{10}-E_{01}+E_{00}$.
+For quchip's $Z=|0\rangle\langle0|-|1\rangle\langle1|$, the coefficient
+of $Z n_r$ is negative half this pull: $\chi_Z=-\mathrm{dispersive\_shift}/2$.
+`chip.kerr_matrix()` collects full pulls off-diagonal and dressed
+anharmonicities on the diagonal.
 
 ## Change a parameter
 
@@ -102,12 +110,14 @@ Output:
 
 ```text
 2 term(s) dropped:
-  [qr] coupling band (Δa=-1, Δb=-1) on q·r  (counter-rotating under RWA; amp 0.173205 GHz, freq 12 GHz)
-  [qr] coupling band (Δa=+1, Δb=+1) on q·r  (counter-rotating under RWA; amp 0.173205 GHz, freq 12 GHz)
+  [qr] coupling band (-1, -1) on q·r  (discarded by RWA band selection; amp 0.173205 GHz, detuning 11.5 GHz)
+  [qr] coupling band (+1, +1) on q·r  (discarded by RWA band selection; amp 0.173205 GHz, detuning 11.5 GHz)
 ```
 
-The dropped terms create or annihilate two excitations, and their
-oscillation frequencies are much larger than their matrix elements here.
+The dropped terms create or annihilate two excitations. Each record shows
+the matrix element with the largest `|V|²/ΔE` and its bare-energy detuning.
+Here the detunings are much larger than the matrix elements. Band weights
+use `column - row`, so lowering has positive weight.
 See the [physics reference](../physics.md) for frame and approximation
 conventions.
 
@@ -160,6 +170,11 @@ bare parameters (GHz):
 ```
 
 </details>
+
+`fit.history` holds the normalized loss at each parameter vector that the
+solver evaluated. `fit.history_params` and `fit.history_residuals` hold the
+parameters and the target residuals in GHz at the same points, so you can
+follow a fit without running it again.
 
 Continue with [spectra and parameter sweeps](statics-and-parameter-studies.md)
 to sweep the coupled spectrum. For imported or custom models, see

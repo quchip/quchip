@@ -60,7 +60,7 @@ def test_inverse_sqrt_handles_an_ill_conditioned_repeated_gram_spectrum():
     eigenvalues = jnp.asarray([1.0, 1.0, 1e-2, 1e-2, 1e-4, 1e-4, 1e-8, 1e-8])
     gram = jnp.diag(eigenvalues)
 
-    inverse_sqrt = _inverse_sqrt_hermitian(gram)
+    inverse_sqrt, _ = _inverse_sqrt_hermitian(gram)
     residual = inverse_sqrt @ gram @ inverse_sqrt - jnp.eye(gram.shape[0])
 
     assert float(jnp.linalg.norm(residual, ord=2)) < 1e-9

@@ -3,6 +3,11 @@ name: benchmark
 on:
   workflow_dispatch:
     inputs:
+      suite:
+        description: Benchmark to run
+        type: choice
+        options: [closed-system, conditional-response]
+        default: closed-system
       base_ref:
         description: Comparison commit or ref (relative to the selected branch)
         type: string
@@ -12,11 +17,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: benchmark-${{ github.ref }}
+  group: benchmark-${{ github.ref }}-${{ inputs.suite }}
   cancel-in-progress: true
 
 jobs:
   closed-system:
+    if: ${{ inputs.suite != 'conditional-response' }}
     name: closed-system overhead
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -106,3 +112,57 @@ jobs:
           fi
           printf '\n[Download JSON, environment, samples, and plots](%s)\n' \
             "${{ steps.upload.outputs.artifact-url }}" >> "$GITHUB_STEP_SUMMARY"
+
+  conditional-response:
+    if: ${{ inputs.suite == 'conditional-response' }}
+    name: conditional response before and after
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      JAX_ENABLE_X64: "true"
+      XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+      MPLCONFIGDIR: /tmp/quchip-matplotlib
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            ci-constraints-3.11.txt
+      - name: Install benchmark environment
+        run: |
+          uv venv --python 3.11
+          uv pip install -e '.[dynamiqs]' -c ci-constraints-3.11.txt
+      - name: Record environment and comparison source
+        env:
+          BASE_REF: ${{ inputs.base_ref }}
+        run: |
+          base_sha=$(git rev-parse --verify "${BASE_REF}^{commit}")
+          git worktree add --detach "$RUNNER_TEMP/quchip-response-base" "$base_sha"
+          mkdir -p benchmark-output
+          {
+            uv run --no-sync python --version
+            uv pip freeze
+            uname -a
+            lscpu
+          } > benchmark-output/environment.txt
+      - name: Measure base and head sequentially
+        run: |
+          uv run --no-sync python benchmarks/conditional_response.py \
+            --source "$RUNNER_TEMP/quchip-response-base" --out benchmark-output/base.json
+          uv run --no-sync python benchmarks/conditional_response.py \
+            --source "$GITHUB_WORKSPACE" --out benchmark-output/head.json
+      - name: Upload timing samples and environment
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: conditional-response-${{ github.run_id }}-${{ github.run_attempt }}
+          path: benchmark-output
+          retention-days: 90
