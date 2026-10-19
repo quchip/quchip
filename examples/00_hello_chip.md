@@ -173,17 +173,16 @@ of the dressed frequencies and the leakage of each input out of these
 states. On the 0→1 transition, the charge operator Q of the line has the
 dressed matrix element ⟨1|Q|0⟩ ≈ −i. A real π pulse therefore aims at iY up
 to a global phase. `fidelity()` gives the average gate fidelity, which counts
-the leakage. A propagator describes the Hamiltonian alone, so remove the
-resonator loss for this study. On the lossy chip, the call warns that it
-leaves the loss out.
+the leakage. A propagator describes the Hamiltonian alone, so the call
+leaves out the resonator loss. With `dissipation=False`, it does so without
+a warning.
 
 ```python
-closed_chip = chip.with_params({"r.internal_quality_factor": None})
 gates = {}
 for name, pulse in zip(("Short", "Long"), drive_pulses):
-    gate_sequence = QuantumSequence(closed_chip)
+    gate_sequence = QuantumSequence(chip)
     _ = gate_sequence.schedule(qubit_line, envelope=pulse, freq=f01)
-    gates[name] = gate_sequence.subspace_propagator(qubit)
+    gates[name] = gate_sequence.subspace_propagator(qubit, dissipation=False)
 
 iy = np.array([[0, 1], [-1, 0]])
 for name, gate in gates.items():
