@@ -12,9 +12,6 @@ lab frame,
 
 where ``f_i`` are the integration-frame frequencies and ``n_i`` the level
 indices. The integration frame therefore changes only cost and accuracy.
-:meth:`Propagator.computational` expresses the gate on dressed computational
-states in the frame that rotates with each device's dressed frequency.
-
 A :class:`PropagatorResult` holds the propagator on the dressed states of a
 product of levels, from one ket solve per input.
 """
@@ -22,7 +19,7 @@ product of levels, from one ket solve per input.
 from __future__ import annotations
 
 import itertools
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any
@@ -31,7 +28,6 @@ import numpy as np
 
 from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import contains_tracer
-from quchip.utils.labeling import resolve_label
 
 FRAMES = ("dressed", "lab", "integration")
 
@@ -105,15 +101,7 @@ class PropagatorResult:
         target : array_like, shape (d, d)
             Unitary target in the frame and label order of this record.
         """
-        xp = _namespace(self.matrix, target)
-        matrix = xp.asarray(self.matrix)
-        target = xp.asarray(target, dtype=complex)
-        dimension = matrix.shape[0]
-        if target.shape != matrix.shape:
-            raise ValueError(f"The target has shape {target.shape}; the propagator has shape {matrix.shape}.")
-        kept = xp.real(xp.sum(xp.conj(matrix) * matrix))
-        overlap = xp.abs(xp.sum(xp.conj(target) * matrix)) ** 2
-        return (kept + overlap) / (dimension * (dimension + 1))
+        return average_fidelity(self.matrix, target)
 
 
 def _namespace(*values: Any) -> Any:
@@ -169,6 +157,33 @@ def _label_frame(batch: Any, devices: tuple[str, ...], labels: tuple[tuple[int, 
     return results, vectors, frequencies, ground, shifts, (first.times[0], first.times[-1])
 
 
+def average_fidelity(matrix: Any, target: Any) -> Any:
+    """Return the average gate fidelity of a propagator block against a unitary target.
+
+    For a target V of dimension d, the average over pure inputs in the
+    block's states is ``(Tr(M†M) + |Tr(V†M)|²) / (d(d + 1))``, with M the
+    block (Pedersen, Møller and Mølmer, Phys. Lett. A 367, 47 (2007)).
+    Leakage lowers ``Tr(M†M)``, so it lowers the fidelity. The global phase
+    of M does not change it.
+
+    Parameters
+    ----------
+    matrix : array_like, shape (d, d)
+        Propagator block, with final states in rows and initial states in columns.
+    target : array_like, shape (d, d)
+        Unitary target in the frame and state order of ``matrix``.
+    """
+    xp = _namespace(matrix, target)
+    matrix = xp.asarray(matrix)
+    target = xp.asarray(target, dtype=complex)
+    if target.shape != matrix.shape:
+        raise ValueError(f"The target has shape {target.shape}; the propagator has shape {matrix.shape}.")
+    dimension = matrix.shape[0]
+    kept = xp.real(xp.sum(xp.conj(matrix) * matrix))
+    overlap = xp.abs(xp.sum(xp.conj(target) * matrix)) ** 2
+    return (kept + overlap) / (dimension * (dimension + 1))
+
+
 def subspace_propagator(batch: Any, devices: tuple[str, ...], labels: tuple[tuple[int, ...], ...], frame: str,
                         omitted_channels: tuple[str, ...]) -> PropagatorResult:
     """Return the propagator of a batch whose points start in the dressed states of ``labels``.
@@ -219,30 +234,6 @@ def subspace_propagator(batch: Any, devices: tuple[str, ...], labels: tuple[tupl
     )
 
 
-def average_fidelity(block: Any, ideal: Any) -> float:
-    """Return the average gate fidelity of a block against an ideal unitary, global phase removed.
-
-    The value is ``(Tr M M† + |Tr M|²) / (d (d + 1))`` with ``M = ideal† V``
-    (Pedersen, Møller and Mølmer, Phys. Lett. A 367, 47 (2007)). Leakage
-    lowers ``Tr M M†``.
-
-    Parameters
-    ----------
-    block : array_like
-        ``(2^n, 2^n)`` block ``V`` on the computational states.
-    ideal : array_like
-        ``(2^n, 2^n)`` target unitary in the same qubit order.
-    """
-    ideal = np.asarray(ideal, dtype=complex)
-    matrix = np.asarray(block)
-    if matrix.shape != ideal.shape:
-        raise ValueError(f"The block has shape {matrix.shape}; the ideal has shape {ideal.shape}.")
-    product = ideal.conj().T @ matrix
-    dimension = ideal.shape[0]
-    return float((np.trace(product @ product.conj().T).real + abs(np.trace(product)) ** 2)
-                 / (dimension * (dimension + 1)))
-
-
 def solver_levels(engine_result: Any) -> np.ndarray:
     """Return the level index of every device for each solver coordinate, shape ``(d, devices)``.
 
@@ -263,44 +254,6 @@ def _frame_phases(levels: np.ndarray, frequencies: np.ndarray, time: Any, xp: An
     """Diagonal of ``R(t) = exp(-2πi t Σ f_i n_i)`` on the solver coordinates."""
     generator = levels @ frequencies
     return xp.exp(-2j * np.pi * time * xp.asarray(generator))
-
-
-@dataclass(frozen=True, eq=False)
-class ComputationalBlock:
-    """A propagator restricted to dressed computational states.
-
-    Attributes
-    ----------
-    matrix : array
-        ``(2^n, k)`` amplitudes ``<b| V |input>`` in the computational frame, with
-        the first qubit most significant. For a full propagator, ``k = 2^n``.
-    leaked : array
-        ``(d, k)`` amplitudes of each output outside the computational states,
-        in solver coordinates and the lab frame.
-    leakage : array
-        Population of each output outside the computational states.
-    qubits : tuple of str
-        Qubit labels in matrix order.
-    """
-
-    matrix: Any
-    leaked: Any
-    leakage: Any
-    qubits: tuple[str, ...]
-
-    def fidelity(self, ideal: Any) -> float:
-        """Return the average gate fidelity against an ideal unitary, global phase removed.
-
-        The value is ``(Tr M M† + |Tr M|²) / (d (d + 1))`` with ``M = ideal† V``
-        (Pedersen, Møller and Mølmer, Phys. Lett. A 367, 47 (2007)). Leakage
-        lowers ``Tr M M†``.
-
-        Parameters
-        ----------
-        ideal : array_like
-            ``(2^n, 2^n)`` target unitary in the same qubit order.
-        """
-        return average_fidelity(self.matrix, ideal)
 
 
 @dataclass(frozen=True, eq=False)
@@ -433,151 +386,3 @@ class Propagator:
         if self.inputs is not None:
             return xp.conj(end)[:, None] * self.matrix
         return xp.conj(end)[:, None] * self.matrix * start[None, :]
-
-    def computational(self, qubits: Sequence[Any]) -> ComputationalBlock:
-        """Express a unitary propagator on dressed computational states.
-
-        The computational states hold each listed qubit in dressed level 0 or 1
-        and every other device in dressed level 0, with the first qubit most
-        significant. Their phases follow ``chip.state()``. The frame removes
-        each device's dressed precession, so an idle interval leaves only the
-        static ZZ phases:
-
-        .. math::
-
-            V = W_c^\\dagger e^{2\\pi i F t_1} U(t_1, t_0) e^{-2\\pi i F t_0} W_c,
-            \\qquad F = \\sum_i f_i \\tilde n_i,
-
-        with ``f_i = chip.freq(i)`` and ``ñ_i`` the dressed level label. A full
-        propagator gives the square block on the computational inputs. A
-        propagator computed from ``columns`` gives ``<b| e^{2πiF t1} U |input>``
-        for its own inputs, with the input frame phase applied when the inputs
-        are these computational states.
-
-        Parameters
-        ----------
-        qubits : sequence of str or device
-            Computational qubits in matrix order.
-        """
-        if self.kind != "unitary":
-            raise ValueError("computational() needs a unitary propagator; pass dissipation=False.")
-        names = tuple(resolve_label(qubit) for qubit in qubits)
-        columns, energies = computational_states(self._problem, names, self.levels)
-        if self.inputs is None:
-            return project_computational(self.matrix @ columns, columns, energies, self.t0, self.t1, names)
-        inputs = np.asarray(self.inputs)
-        same = inputs.shape == np.shape(columns) and np.allclose(inputs, np.asarray(columns), atol=1e-12)
-        return project_computational(self.matrix, columns, energies, self.t0 if same else None, self.t1, names)
-
-
-def project_computational(
-    image: Any, columns: Any, energies: Any, t0: Any, t1: Any, qubits: Sequence[str]
-) -> ComputationalBlock:
-    """Project lab-frame output states onto dressed computational states.
-
-    Parameters
-    ----------
-    image : array
-        ``(d, k)`` lab-frame states at ``t1`` in solver coordinates.
-    columns, energies : array
-        Computational kets and frame frequencies from :func:`computational_states`.
-    t0 : float or None
-        Start time whose input frame phase ``exp(-2πi e t0)`` multiplies each
-        output, or ``None`` when the inputs are not the computational states.
-    t1 : float
-        End time of the outputs.
-    qubits : sequence of str
-        Qubit labels in matrix order.
-    """
-    xp = np if isinstance(image, np.ndarray) else _array_module(image)
-    block = xp.conj(columns).T @ image
-    leaked = image - columns @ block
-    if t0 is not None:
-        start = xp.exp(-2j * np.pi * energies * t0)
-        block = block * start[None, :]
-        leaked = leaked * start[None, :]
-    block = xp.exp(2j * np.pi * energies * t1)[:, None] * block
-    leakage = xp.real(xp.sum(xp.conj(leaked) * leaked, axis=0))
-    return ComputationalBlock(matrix=block, leaked=leaked, leakage=leakage, qubits=tuple(qubits))
-
-
-def _array_module(value: Any) -> Any:
-    """Return ``jax.numpy`` for JAX arrays and NumPy otherwise."""
-    if type(value).__module__.startswith("jax"):
-        import jax.numpy as jnp
-
-        return jnp
-    return np
-
-
-def computational_states(
-    problem: Any, qubits: Sequence[str], levels: np.ndarray, background: Mapping[str, int] | None = None
-) -> tuple[Any, Any]:
-    """Return dressed computational kets in solver coordinates and their frame frequencies.
-
-    Each ket is ``chip.compact_state(label, dressed=True)`` scattered onto the
-    solver coordinates, so the gauge matches ``chip.state()``. The frequency of
-    a state is ``Σ_i f_i ñ_i`` with ``f_i = chip.freq(i)`` over its dressed label.
-
-    Parameters
-    ----------
-    problem : SolveProblem
-        Problem whose chip and coordinates define the states.
-    qubits : sequence of str
-        Computational qubit labels, first most significant.
-    levels : numpy.ndarray
-        ``(d, devices)`` level index of each solver coordinate.
-    background : mapping or None, default None
-        Dressed levels of other devices, which are otherwise in level 0.
-    """
-    chip = problem.chip
-    xp = problem.backend.array_module
-    labels = [device.label for device in chip.devices]
-    unknown = [label for label in qubits if label not in labels]
-    if unknown:
-        raise ValueError(f"Unknown qubits {unknown}. Devices: {labels}.")
-    if len(set(qubits)) != len(qubits):
-        raise ValueError(f"Qubits must be distinct, got {list(qubits)}.")
-    positions = {tuple(row): index for index, row in enumerate(levels.tolist())}
-    background = dict(background or {})
-    overlap = set(background) & set(qubits)
-    if overlap:
-        raise ValueError(f"Background levels repeat computational qubits {sorted(overlap)}.")
-    columns = []
-    energies = []
-    product_space = problem.engine_result.excitation_space is None
-    conserving = not product_space or _conserves(chip)
-    for bits in itertools.product((0, 1), repeat=len(qubits)):
-        mapping = {**background, **dict(zip(qubits, bits))}
-        if not conserving:
-            # Without excitation conservation, the dressed state spans the whole product space.
-            columns.append(xp.asarray(np.asarray(chip.state(mapping).full()).reshape(-1)))
-            energies.append(sum(float(chip.freq(label)) * level for label, level in mapping.items()))
-            continue
-        state = chip.compact_state(mapping, dressed=True)
-        values = xp.asarray(state.values).reshape(-1)
-        rows = []
-        for row in np.asarray(state.space.levels).tolist():
-            index = positions.get(tuple(row))
-            if index is None:
-                raise ValueError(
-                    f"The dressed state {mapping} reaches the label {tuple(row)}, which the solve does not retain."
-                )
-            rows.append(index)
-        column = xp.zeros(levels.shape[0], dtype=complex)
-        column = column.at[np.array(rows)].set(values) if hasattr(column, "at") else _scatter(column, rows, values)
-        columns.append(column)
-        energies.append(sum(float(chip.freq(label)) * level for label, level in mapping.items()))
-    return xp.stack(columns, axis=1), xp.asarray(energies)
-
-
-def _conserves(chip: Any) -> bool:
-    """True when the chip's static Hamiltonian conserves the total excitation number."""
-    from quchip.chip.effective import conserves_excitation_number
-
-    return bool(conserves_excitation_number(chip, chip.approximation))
-
-
-def _scatter(column: Any, rows: list[int], values: Any) -> Any:
-    column[np.array(rows)] = values
-    return column

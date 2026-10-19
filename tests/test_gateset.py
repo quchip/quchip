@@ -26,7 +26,7 @@ from quchip.gateset.cache import covariance, split_pieces
 from quchip.gateset.calibration import _Residual, average_fidelity, error_generator
 from quchip.gateset.ideals import FALLBACK_RULES, IDEALS, RULES, embed, ideal_unitary
 from quchip.gateset.native import ResolvedKnob, bind_pulses, resolve_knob
-from quchip.results.propagator import project_computational
+from quchip.gateset.blocks import project_computational
 
 
 def two_transmons(df: float = 0.2, approximation=None, **noise):

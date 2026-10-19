@@ -506,7 +506,7 @@ def report(
     leakage = np.real(np.sum(np.conj(outcome.leaked) * outcome.leaked, axis=0))
     receipt = _identifiability_receipt(outcome.jacobian, outcome.names, np.ones(len(outcome.names)))
     receipt["jacobian_step_change"] = outcome.jacobian_step_change
-    fidelity = average_fidelity(block, ideal)
+    fidelity = float(average_fidelity(block, ideal))
     if at_bound:
         status = "at_bound"
     elif receipt["rank_deficient"] or receipt["jacobian_condition_number"] > condition_limit:

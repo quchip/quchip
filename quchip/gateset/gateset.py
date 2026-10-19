@@ -17,7 +17,8 @@ from quchip.gateset.cache import (Delivered, GatePropagator, Idle, Piece, covari
 from quchip.gateset.calibration import GateCalibration, fit_block, report
 from quchip.gateset.ideals import IDEALS, canonical_name, embed, ideal_unitary, rule_table
 from quchip.gateset.native import NativeGate, bind_pulses
-from quchip.results.propagator import average_fidelity, computational_states, project_computational, solver_levels
+from quchip.gateset.blocks import computational_states, project_computational
+from quchip.results.propagator import average_fidelity, solver_levels
 from quchip.utils.labeling import resolve_label
 
 if TYPE_CHECKING:
@@ -109,7 +110,7 @@ class CircuitUnitary:
             ideal circuit.
         """
         target = self.ideal if ideal is None else np.asarray(ideal, dtype=complex)
-        return average_fidelity(self.computational, target)
+        return float(average_fidelity(self.computational, target))
 
 
 @dataclass
@@ -712,7 +713,7 @@ class GateSet:
                 if reference is None:
                     reference = matrix
                 worst = max(worst, float(np.abs(matrix - reference).max()))
-                errors.append(1.0 - average_fidelity(correction[:, None] * matrix, calibration.ideal))
+                errors.append(1.0 - float(average_fidelity(correction[:, None] * matrix, calibration.ideal)))
             calibration.placement_sensitivity = worst
             calibration.placement_infidelity = (min(errors), max(errors))
         for count in (1, 4, 20) if entry.covariant else (1, 4):

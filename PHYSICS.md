@@ -3354,19 +3354,24 @@ expectation of each run without weights. See
 ### 17.1 Propagators and the computational frame
 
 `QuantumSequence.propagator()` returns the lab-frame propagator
-`U(t1, t0)` on solver coordinates, also when the solve runs in the rotating
-frame: `U_lab = R(t1) U_solver R(t0)^†` with `R(t) = exp(-2πi t Σ_i f_i n_i)`.
-`Propagator.computational(qubits)` expresses it on the dressed computational
-states `W_c` of `chip.state()` and removes each device's dressed precession:
+`U(t1, t0)` on solver coordinates from one solve, also when the solve runs in
+the rotating frame: `U_lab = R(t1) U_solver R(t0)^†` with
+`R(t) = exp(-2πi t Σ_i f_i n_i)`. With collapse channels it returns the
+superoperator on column-stacked density matrices. The gate set projects the
+propagator on the dressed computational states `W_c` of `chip.state()` and
+removes each device's dressed precession:
 
 ```text
 V = W_c^† e^{2πi F t1} U(t1, t0) e^{-2πi F t0} W_c,    F = Σ_i f_i ñ_i,
 ```
 
-with `f_i = chip.freq(i)` and `ñ_i` the dressed level label. An idle interval
-then leaves only the static ZZ phases. The part of each output column outside
-`W_c` is the leakage of that input. A chip that does not conserve the
-excitation number uses `chip.state()` on the product space for `W_c`.
+with `f_i = chip.freq(i)` and `ñ_i` the dressed level label. This is the
+dressed frame of §9.4 without its ground-energy phase: `V` is the matrix of
+`subspace_propagator(qubits)` times `exp(-2πi E(0) (t1 - t0))`, from one solve
+instead of one solve per input. An idle interval leaves only the static ZZ
+phases. The part of each output column outside `W_c` is the leakage of that
+input. A chip that does not conserve the excitation number uses `chip.state()`
+on the product space for `W_c`.
 
 ### 17.2 Virtual Z and placement
 

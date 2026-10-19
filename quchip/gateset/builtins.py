@@ -30,9 +30,7 @@ def _charge_line(chip: "Chip", device: str, line: Any) -> str:
 
 def _unit_area(envelope: Any) -> float:
     """Return ``∫ Re E(t) dt`` of an envelope scaled to unit amplitude, in ns."""
-    unit = envelope.with_params({"amplitude": 1.0})
-    times = np.linspace(0.0, float(unit.duration), 20001)
-    return float(np.trapezoid(np.real(np.asarray(unit.value(times))), times))
+    return float(np.real(envelope.with_params({"amplitude": 1.0}).area()))
 
 
 def drag_sx(
