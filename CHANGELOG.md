@@ -243,9 +243,12 @@ This file records notable user-visible changes to quchip.
   pair of qubits gives `diag(1, 1, 1, exp(-2πiζT))` with the static ZZ `ζ`.
   The record gives the leakage of each input, and `fidelity(target)` returns
   the average gate fidelity, which counts that leakage. The solves leave out
-  collapse channels, with a warning.
+  collapse channels and warn. `dissipation=False` leaves them out without the
+  warning, and `dissipation=True` raises.
   ([#193](https://github.com/quchip/quchip/issues/193),
-  [#207](https://github.com/quchip/quchip/pull/207))
+  [#207](https://github.com/quchip/quchip/pull/207),
+  [#209](https://github.com/quchip/quchip/issues/209),
+  [#210](https://github.com/quchip/quchip/pull/210))
 - `Envelope.area()` returns the complex area of an envelope: closed forms for
   the built-in shapes, and Gauss-Legendre quadrature between the sampling
   times for other shapes, also under JAX tracing.

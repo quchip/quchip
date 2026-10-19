@@ -1994,8 +1994,10 @@ F = (Tr(M† M) + |Tr(V† M)|²) / (d (d + 1))
 ```
 
 for a unitary target `V` of dimension `d`. Leakage lowers `Tr(M† M)`, so it
-lowers `F`. The solves leave out declared collapse channels with a warning, and
+lowers `F`. The solves leave out declared collapse channels, and
 `omitted_channels` names them, so `M` is the propagator of the Hamiltonian.
+The call warns about these channels unless `dissipation=False`, and
+`dissipation=True` raises.
 On dynamiqs, the matrix and the fidelity are differentiable in chip and pulse
 parameters (§13).
 

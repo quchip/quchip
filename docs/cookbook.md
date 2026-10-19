@@ -268,7 +268,10 @@ columns, in the frame of the dressed frequencies. `frame="lab"` and
 probability that each input leaves the labels, and `fidelity()` counts it.
 Here the fidelity is 0.993. Off-resonant coupling to the third level gives an
 AC Stark shift and a coherent rotation error, while the final leakage is only
-about 2e-6. The amplitude is a first guess for a calibration.
+about 2e-6. The amplitude is a first guess for a calibration. On a chip with
+collapse channels, the call warns that the solves leave them out.
+`subspace_propagator(q, dissipation=False)` leaves them out without the
+warning, and `propagator.omitted_channels` still names them.
 
 ## Choose what to save
 
