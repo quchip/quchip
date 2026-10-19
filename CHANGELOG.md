@@ -366,7 +366,8 @@ This file records notable user-visible changes to quchip.
   frequency, and a traced sweep compiles one loop over its frequencies.
   Iterative blocks stop at convergence and check the residual of every
   response and derivative solve.
-  ([#124](https://github.com/quchip/quchip/pull/124),
+  ([#147](https://github.com/quchip/quchip/issues/147),
+  [#124](https://github.com/quchip/quchip/pull/124),
   [#154](https://github.com/quchip/quchip/pull/154),
   [#176](https://github.com/quchip/quchip/pull/176))
 - Labeled dressed queries, `drive_matrix_elements()`, weak-probe VNA and
