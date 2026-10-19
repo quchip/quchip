@@ -143,12 +143,13 @@ Bloch data: (3000, 201, 3); final |z| > 0.95: 0.748
 
 <!-- executed-output:end -->
 
-`paths-plus-z.npz` saves the array with axes `(shot, saved time, x/y/z)`. The file does not keep the
-states, because these three observables contain the qubit information used here. `dt=0.05` ns sets
-the native integration step, and the 5 ns save interval only sets the plot sampling. QuTiP runs the
-seeded trajectories across four worker processes. `run_expect()` reads one observable of every
-run as an array with axes `(shot, saved time)`. The 3,000-shot ensemble includes the four histories
-shown below.
+`dt=0.05` ns sets the native integration step, and the 5 ns save interval only
+sets the plot sampling. QuTiP runs the seeded trajectories across four worker
+processes. `run_expect()` reads one observable of every run as an array with
+axes `(shot, saved time)`. `paths-plus-z.npz` saves the stacked array with axes
+`(shot, saved time, x/y/z)`. The file does not keep the states, because these
+three observables contain the qubit information used here. The 3,000-shot
+ensemble includes the four histories shown below.
 
 ## Compare individual histories
 

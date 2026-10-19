@@ -20,7 +20,7 @@ New to quchip? Start with {doc}`your first chip <defining-and-inspecting-a-chip>
 ## Microwave networks
 
 - {doc}`Readout and fridge wiring <steady-state-and-vna>`:
-  calculate VNA traces and their resonances, and qubit readout with receiver
+  calculate VNA traces, their resonances, and qubit readout with receiver
   noise.
 
 ## Model reduction and fitting

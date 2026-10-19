@@ -2847,7 +2847,7 @@ quantum dynamics, irrespective of the readout model.
 Native jump and diffusive solvers evolve the captured Hamiltonian and declared
 channels. `with_monitoring` selects physical SLH couplings with their authored
 phases. At efficiency eta, QuTiP receives sqrt(eta) exp(-i phase) L and
-sqrt(1-eta) L, whose dissipators sum to D[L]. Dynamiqs receives L and eta through
+sqrt(1-eta) L, whose dissipators sum to D[L]. dynamiqs receives L and eta through
 its native SME interface. Pure SSE cannot omit unobserved loss.
 
 Native measurement records describe selected L in the integration frame, without
@@ -2869,15 +2869,15 @@ in 1/sqrt(ns). The homodyne noise `xi` has variance `1/Δt`. QuTiP heterodyne
 records `2 Re<c> + xi_X` and `2 Im<c> + xi_Y`, and each noise has variance
 `2/Δt`. QuTiP samples the signal at the start or the
 end of each interval, or takes the mean of both, as `store_measurement`
-selects. Dynamiqs divides the increment of the integrated record by `Δt`, so
+selects. dynamiqs divides the increment of the integrated record by `Δt`, so
 its signal is the mean over the interval. For a decaying coherent field with
 `L = a`, `eta = 1` and `<a>(0) = 1`, the interval `[0, 1]` ns gives the
 signals 2, 1.21306, 1.60653 and 1.57388 for the start, end, middle and mean.
 
 `clicks()` gives the click times and channels of each run with its sampling
 weight `w_r`. An ensemble mean is `Σ_r w_r x_r`, plus the no-click run with
-`no_click_weight` when QuTiP `improved_sampling` or Dynamiqs smart sampling
-solves that run apart. `full` marks a run that filled its Dynamiqs `nmaxclick`
+`no_click_weight` when QuTiP `improved_sampling` or dynamiqs smart sampling
+solves that run apart. `full` marks a run that filled its dynamiqs `nmaxclick`
 buffer, whose evolution can stop early. `run_expect(key)` gives the
 expectation of each run without weights.
 See [the solver guide](docs/guides/choosing-a-backend.md) and

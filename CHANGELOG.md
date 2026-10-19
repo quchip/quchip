@@ -299,10 +299,9 @@ This file records notable user-visible changes to quchip.
   then need blocks of 301 and 2600 states at `K = 3`. Labels and supplied states
   above the cutoff raise. `quchip.check_truncation(result)` reports the sampled
   population in the sectors that connect above the cutoff, as a heuristic.
-  `Chip.dress()`, VNA sweeps, output spectra and correlations, steady-state,
-  stochastic, elimination, local-fit and partition workflows raise for an
-  active cutoff. Compare results at increasing `K`, because convergence need
-  not be monotone.
+  `Chip.dress()`, `VNA.sweep()`, `VNA.resonances()`, stochastic, elimination,
+  local-fit and partition workflows raise for an active cutoff. Compare results
+  at increasing `K`, because convergence need not be monotone.
   ([#180](https://github.com/quchip/quchip/pull/180))
 - `VNA.finite_power()` and `VNA.measure()` solve a chip that conserves the
   total excitation on the product labels with `N <= K`, without the product

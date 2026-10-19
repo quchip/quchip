@@ -18,8 +18,9 @@ jupyter:
 # Pulses, leakage, and readout
 
 How does pulse duration change leakage, and how does the qubit state appear in
-resonator readout? Use one coupled model for both experiments. Frequencies are
-in GHz and times in ns.
+resonator readout? Use one coupled model for both experiments. Later sections
+read the pulses as gates and empty the resonator after readout. Frequencies
+are in GHz and times in ns.
 
 ## Declare the chip
 
@@ -137,8 +138,9 @@ plt.show()
 ```{figure} ../images/hello_qubit_drive_leakage.svg
 :alt: Short and long Gaussian envelopes with ground, excited, and leakage populations over time.
 
-Dashed grey curves show the drive envelopes. The short pulse populates |2⟩;
-the longer pulse leaves most population in |1⟩. [PDF](../images/hello_qubit_drive_leakage.pdf)
+Dashed grey curves show the drive envelopes. The short pulse populates |2⟩,
+and the longer pulse leaves most population in |1⟩.
+[PDF](../images/hello_qubit_drive_leakage.pdf)
 ```
 
 ```python
@@ -168,11 +170,12 @@ The smaller peak P2 shows why the longer pulse comes closer to the target.
 `subspace_propagator(qubit)` runs a pulse from each dressed qubit state, |0⟩
 and |1⟩, with the resonator empty. It returns the 2 × 2 matrix in the frame
 of the dressed frequencies and the leakage of each input out of these
-states. The charge line has a dressed matrix element close to −i on the 0→1
-transition, so a real π pulse aims at iY. `fidelity()` gives the average
-gate fidelity, which counts the leakage. A propagator describes the
-Hamiltonian alone, so remove the resonator loss for this study. On the lossy
-chip, the call warns that it leaves the loss out.
+states. On the 0→1 transition, the charge operator Q of the line has the
+dressed matrix element ⟨1|Q|0⟩ ≈ −i. A real π pulse therefore aims at iY up
+to a global phase. `fidelity()` gives the average gate fidelity, which counts
+the leakage. A propagator describes the Hamiltonian alone, so remove the
+resonator loss for this study. On the lossy chip, the call warns that it
+leaves the loss out.
 
 ```python
 closed_chip = chip.with_params({"r.internal_quality_factor": None})
@@ -199,9 +202,11 @@ Long: fidelity to iY = 0.988; leakage from |0⟩ = 4.3e-05
 
 <!-- executed-output:end -->
 
-The short pulse moves most of |0⟩ out of the qubit states. The long pulse leaks little, so most of its error is a
-coherent rotation error: the coupling to |2⟩ shifts the 0→1 transition
-during the pulse. The amplitude is a first guess for a calibration.
+The short pulse moves most of |0⟩ out of the qubit states. The long pulse
+leaks little, so most of its error is coherent. The drive also couples |1⟩ to
+|2⟩, which shifts the 0→1 transition during the pulse. The result is a nearly
+π rotation with a tilted axis and a small angle error. The amplitude is a
+first guess for a calibration.
 
 ## Read out the prepared qubit state
 
@@ -414,13 +419,14 @@ Excited-reference escape rate: 1.73e-05 /ns
 
 <!-- executed-output:end -->
 
-The carrier lies 7 kHz above the dip midpoint, under 1% of the 1 MHz
+The carrier lies 6.8 kHz above the dip midpoint, under 1% of the 1 MHz
 readout linewidth. `chip.freq()` diagonalizes the closed Hamiltonian, which
 treats the filter as a lossless mode. That mode puts the readout midpoint
 3.2 MHz below the dips. The filter's 230 MHz linewidth is much larger than
 its 20 MHz detuning from the readout, so the driven response keeps little of
-that pull. The excited reference escapes at the filtered qubit decay rate,
-1/(57.9 µs), which is slow on the readout timescale.
+that pull. The excited reference escapes at 1/(57.9 µs), the filtered T1 of
+the T1 guide. This total rate includes the intrinsic qubit decay and is slow
+on the readout timescale.
 
 Both pulses start at 100 ns and use the same carrier and hold amplitude
 (in √photons/ns). The square pulse stops at 900 ns. CLEAR uses two loading
@@ -446,10 +452,11 @@ for start, duration, scale in zip(segment_edges[:-1], np.diff(segment_edges), se
     )
 ```
 
-Prepare dressed |0,0,0⟩ and |1,0,0⟩ states of the resolved RWA model, and run each pulse on both
-preparations. Record the occupations and the readout field αᵣ = ⟨aᵣ⟩. The explicit time grid
-resolves the fast qubit–resonator exchange. The `matrix_form` solver option requires [QuTiP
-5.3+](https://qutip.readthedocs.io/en/qutip-5.3.x/apidoc/solver.html).
+Prepare dressed |0,0,0⟩ and |1,0,0⟩ states of the resolved RWA model, and
+run each pulse on both preparations. Record the occupations and the readout
+field αᵣ = ⟨aᵣ⟩. The explicit time grid resolves the fast qubit–resonator
+exchange. The `matrix_form` solver option requires
+[QuTiP 5.3+](https://qutip.readthedocs.io/en/qutip-5.3.x/apidoc/solver.html).
 
 ```python
 clear_times = np.linspace(0, 1900, 9501)
@@ -519,10 +526,11 @@ plt.show()
 :class: wide-figure
 :alt: Square and CLEAR input pulses above the readout, filter, and qubit occupations, showing passive decay versus active depletion.
 
-Ground-state preparation; occupations are averaged over 2 ns bins. CLEAR
-uses extra drive during loading and depletion. Its final segments remove
-readout photons much faster than waiting over the same 900–1300 ns interval.
-The small qubit occupation includes hybridization with the resonator.
+The qubit starts in its ground state, and occupations are averaged over
+2 ns bins. CLEAR uses extra drive during loading and depletion. Its final
+segments remove readout photons much faster than waiting over the same
+900–1300 ns interval. The small qubit occupation includes hybridization with
+the resonator.
 [PDF](../images/clear_populations.pdf)
 ```
 
@@ -564,9 +572,10 @@ plt.show()
 :class: wide-figure
 :alt: Readout IQ paths for both qubit preparations under square and CLEAR pulses, with the end of readout and end of depletion marked.
 
-Squares mark 900 ns; open circles mark 1300 ns. Dashed paths cover that
-interval. CLEAR brings both mean fields close to the origin. These paths
-show coherent-field cancellation; |⟨aᵣ⟩|² is not the total photon occupation.
+Squares mark 900 ns, and open circles mark 1300 ns. Dashed paths cover that
+interval. CLEAR brings both mean fields close to the origin. These paths show
+how the coherent field cancels. Their |⟨aᵣ⟩|² is not the total photon
+occupation.
 [PDF](../images/clear_iq.pdf)
 ```
 

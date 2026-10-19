@@ -53,9 +53,10 @@ frame. If a solve overrides the approximation, use the same choice for its
 carrier and state preparation. `chip.resolve(frame="lab", approximation=...)`
 gives a snapshot whose `dress()` returns the corresponding eigensystem.
 
-`dispersive_shift(q, r)` returns the full conditional resonator pull. Divide by
-negative two for the coefficient of `Z=|0><0|-|1><1|` times resonator number. `kerr_matrix()` collects full pulls
-off diagonal and dressed anharmonicities on the diagonal.
+`dispersive_shift(q, r)` returns the full conditional resonator pull. Divide
+by negative two for the coefficient of `Z=|0><0|-|1><1|` times resonator
+number. `kerr_matrix()` collects full pulls off diagonal and dressed
+anharmonicities on the diagonal.
 
 Inspect `unresolved_hamiltonian()` for the declared expression and
 `hamiltonian()` for the expression after basis, frame and approximation
@@ -141,14 +142,15 @@ frequency, linewidth = qubit.frequency, qubit.linewidth  # GHz and 1/ns
 rebuilt = resonances.scattering(frequencies)
 ```
 
-A label selects the pole whose composition that mode dominates; an index also
-works. The linewidth `κ = −2 Re λ` is the full response width in angular
-units. It includes port loss, internal loss, Purcell decay and dephasing.
-`rebuilt` equals `VNA(readout_chip).sweep(frequencies).matrix`, reference-plane
-transfers included. `resonances.dark` marks poles whose residues are
-negligible at the selected ports. The call covers the weak-probe routes of
-`VNA.sweep()` and raises for pumps. Inside `jax.jit`, select poles by index. Frequencies and
-linewidths have JAX derivatives; the composition and the residues do not.
+A label selects the pole whose composition that mode dominates, and an index
+also works. The linewidth `κ = −2 Re λ` is the full width at half maximum of
+the pole's Lorentzian in power, in angular units. It includes port loss, internal
+loss, Purcell decay, and dephasing. `rebuilt` equals
+`VNA(readout_chip).sweep(frequencies).matrix`, reference-plane transfers
+included. `resonances.dark` marks poles whose residues are negligible at the
+selected ports. The call covers the weak-probe routes of `VNA.sweep()` and
+raises for pumps. Inside `jax.jit`, select poles by index. Frequencies and
+linewidths have JAX derivatives, but the composition and the residues do not.
 
 ## Change parameters without rebuilding the example
 
@@ -257,14 +259,16 @@ fidelity = propagator.fidelity([[0, 1], [-1, 0]])
 element `m` of the line and the envelope area `A a`, with `θ = π` by default.
 On an isolated transmon, the charge drive has `m = -i` on the 0 → 1
 transition. The dressed element here is `-0.99969i`, so a real π pulse aims
-at `iY`.
+at `iY` up to a global phase.
+
 `subspace_propagator(q)` starts the dressed states of `q` in levels 0 and 1 as
 one batch. The matrix has the final label in rows and the initial label in
-columns, in the frame of the dressed frequencies. `propagator.leakage` gives
-the probability that each input leaves the labels, and `fidelity()` counts it.
+columns, in the frame of the dressed frequencies. `frame="lab"` and
+`frame="integration"` select the other frames. `propagator.leakage` gives the
+probability that each input leaves the labels, and `fidelity()` counts it.
 Here the fidelity is 0.993. Off-resonant coupling to the third level gives an
 AC Stark shift and a coherent rotation error, while the final leakage is only
-about 2e-6. The amplitude is a first guess for a calibration. `frame="lab"` and `frame="integration"` select the other frames.
+about 2e-6. The amplitude is a first guess for a calibration.
 
 ## Choose what to save
 
@@ -359,16 +363,17 @@ A label above the cutoff raises, and so does a supplied state with more than
 `1e-20` of its weight above the cutoff. quchip treats a smaller residue as
 basis-conversion round-off and drops it without renormalization. Pulse solves
 evolve the truncated model. Their default initial state is the truncated
-model's vacuum-assigned eigenvector. `check_truncation(result)[ExcitationCutoff(K)]`
-gives the maximum sampled population in the sectors that one step can move
-above the cutoff. This value is a warning heuristic, not an error bound.
+model's vacuum-assigned eigenvector.
+`check_truncation(result)[ExcitationCutoff(K)]` gives the maximum sampled
+population in the sectors that one step can move above the cutoff. This value
+is a warning heuristic, not an error bound.
 
 `steadystate()`, `VNA.finite_power()`, `VNA.measure()`,
-`VNA.output_spectrum()`, `VNA.g1()` and `VNA.g2()` solve the truncated model.
-`chip.dress()`, `VNA.sweep()`, stochastic trajectory solvers, `eliminate()`,
-`eliminate_spectators()`, `active_patch()`, `fit_a_dress(evaluator="local")`
-and `chip.partition()` raise for a limited chip. Use `chip.with_space(None)`
-for them.
+`VNA.output_spectrum()`, `VNA.g1()`, and `VNA.g2()` solve the truncated model.
+`chip.dress()`, `VNA.sweep()`, `VNA.resonances()`, stochastic trajectory
+solvers, `eliminate()`, `eliminate_spectators()`, `active_patch()`,
+`fit_a_dress(evaluator="local")`, and `chip.partition()` raise for a limited
+chip. Use `chip.with_space(None)` for them.
 
 Without a cutoff, the VNA workflows above truncate their own solve of a chip
 that conserves the total excitation and has more than 64 product states. They
@@ -430,8 +435,8 @@ calibration.
 
 | Common ambiguity | What to check |
 |---|---|
-| Field versus occupation | `abs(⟨a⟩)²` is the coherent part; `⟨a†a⟩` includes incoherent photons. |
-| Jump rate versus output flux | `jump_rate()` returns `⟨L†L⟩`; dephasing and absorption jumps are not emitted photons. |
+| Field versus occupation | `abs(⟨a⟩)²` is the coherent part. `⟨a†a⟩` also includes incoherent photons. |
+| Jump rate versus output flux | `jump_rate()` returns `⟨L†L⟩`. Dephasing and absorption jumps are not emitted photons. |
 | A dressed label near an avoided crossing | Inspect `assignment_overlaps` or `state_components()`. Lowering the overlap threshold does not improve the assignment. |
 | A small boundary population | Call `check_truncation(result)` explicitly, then increase local levels and compare the observable. The check covers only available samples. |
 | A smooth trace | Refine the output grid separately from the solver tolerances. |

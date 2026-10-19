@@ -66,13 +66,16 @@ guarantee. When you decrease repeated setup or solver work, keep
 independent numerical references, failure paths, and statistical sample
 sizes.
 
-Each collected test belongs to exactly one of these suites. Mark small test modules with
-`pytestmark = pytest.mark.unit`, expensive functions with `@pytest.mark.validation`, and checks
-that run only before a release with `@pytest.mark.release`. For an expensive parameter value, use
-`pytest.param(value, marks=pytest.mark.validation)`. Unmarked tests go into `e2e`, so new tests
-run in PR CI by default. Conflicting suite markers cause collection to fail. Keep meaningful cheap checks. Select validation candidates by cost and coverage overlap, but
-keep representative numerical oracles in E2E. Coverage overlap alone does not show that two tests
-check the same assertion.
+Each collected test belongs to exactly one of these suites. Mark small test
+modules with `pytestmark = pytest.mark.unit`, expensive functions with
+`@pytest.mark.validation`, and checks that run only before a release with
+`@pytest.mark.release`. For an expensive parameter value, use
+`pytest.param(value, marks=pytest.mark.validation)`. Unmarked tests go into
+`e2e`, so new tests run in PR CI by default. Conflicting suite markers cause
+collection to fail. Keep meaningful cheap checks. Select validation
+candidates by cost and coverage overlap, but keep representative numerical
+oracles in E2E. Coverage overlap alone does not show that two tests check the
+same assertion.
 
 The location markers `core`, `physics_sentinel`, `extended`, and `examples`
 stay available for focused work. They carry no runtime budget.
