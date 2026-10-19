@@ -31,7 +31,7 @@ open-system simulation, parameter sweeps, and JAX gradients.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://docs.quchip.org/_static/readme/guide_overview-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="https://docs.quchip.org/_static/readme/guide_overview.png">
-  <img src="https://docs.quchip.org/_static/readme/guide_overview.png" alt="Four quchip calculations: an avoided crossing of two transmons, the populations of a transmon during a short Gaussian pulse, a VNA trace sampled through fridge wiring, and fluxonium energies fitted to measured spectroscopy" width="1084">
+  <img src="https://docs.quchip.org/_static/readme/guide_overview.png" alt="Four quchip calculations: an avoided crossing of two transmons, the populations of a transmon during a short Gaussian pulse that leaks into the second excited state, a VNA trace sampled through fridge wiring, and fluxonium energies fitted to measured spectroscopy" width="1084">
 </picture>
 
 Each panel uses the model of one of the [guides](#guides). The

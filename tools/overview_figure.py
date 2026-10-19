@@ -229,7 +229,7 @@ def main() -> None:
     pulses.set(xlabel="Time (ns)", ylabel="Population", xlim=(0.0, pulse_times[-1]), ylim=(-0.02, 1.02),
                yticks=[0.0, 0.5, 1.0])
     pulses.legend(ncol=2, loc="upper right", handlelength=1.6, columnspacing=1.2)
-    heading(pulses, "Pulses", fr"A {duration:.1f} ns Gaussian $\pi$ pulse on a six-level transmon")
+    heading(pulses, "Pulses", fr"A {duration:.1f} ns Gaussian $\pi$ pulse leaks into $|2\rangle$")
 
     chain.plot(frequencies, 20 * np.log10(np.abs(sampled)), ".", color=ACCENT, ms=3.4, alpha=0.75)
     chain.plot(frequencies, 20 * np.log10(np.abs(steady_state)), color=INK, lw=1.6)
