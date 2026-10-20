@@ -500,10 +500,9 @@ reverse amplifier noise.
 
 ## Read a prepared qubit through the same line
 
-A Rabi calculation can stop after state preparation. To describe an omitted
-readout stage, supply the mean output field for each qubit state before the
-downstream output components. The fridge then sets the receiver gain and
-noise.
+A Rabi calculation can stop after state preparation. A separate weak-probe
+calculation then gives the mean output field for each qubit state, and the
+fridge sets the receiver gain and noise.
 
 This two-level qubit goes through one Rabi period. Its preparation is closed
 and uses `sesolve`, and the readout model below does not change that
@@ -522,32 +521,75 @@ rabi = QuantumSequence(rabi_chip)
 rabi.schedule(xy, envelope=Square(duration=40.0, amplitude=0.025), freq=5.0)
 
 result = rabi.simulate(tlist=np.linspace(0, 40, 81))
+```
 
+For the readout, couple the same qubit to r2 with g = 90 MHz. The
+qubit–resonator detuning is 1.5 GHz. A port network with only the bus
+coupler puts the reference plane at the chip. `when={q: state}` gives the
+conditional reflection of the bus, with the qubit held in that state.
+
+```python
+chip_plane = PortNetwork(label="chip_plane")
+chip_port = chip_plane.expose("chip_port", at=chip_plane.port(
+    "bus_coupler", target=bus, external_quality_factor=bus_qe))
+q_r2 = Capacitive(q, resonators[1], g=0.09, label="q_r2")
+qubit_chip = Chip([bus, *resonators, q], [*couplings, q_r2], port_network=chip_plane,
+                  approximation=RWA(), frame="rotating")
+
+qubit_vna = VNA(qubit_chip)
+probe = np.linspace(6.48, 6.52, 801)
+reflection = np.stack([qubit_vna.sweep(probe, when={q: state}).s(chip_port, chip_port)
+                       for state in (0, 1)])
+best = np.argmax(np.abs(reflection[1] - reflection[0]))
+readout_frequency = probe[best]
+qubit_pole = next(pole for pole in qubit_vna.resonances() if pole.dominant == "q")
+
+print("r2 dips:", np.round(probe[np.argmin(np.abs(reflection), axis=1)], 5), "GHz")
+print(f"readout at {readout_frequency:.5f} GHz, |r1 - r0| = {abs(reflection[1, best] - reflection[0, best]):.2f}")
+print(f"qubit Purcell T1 = {1e-3 / float(qubit_pole.linewidth):.1f} us")
+```
+
+Output:
+
+```text
+r2 dips: [6.5054  6.49455] GHz
+readout at 6.50075 GHz, |r1 - r0| = 1.61
+qubit Purcell T1 = 15.4 us
+```
+
+The qubit pulls r2 by ±5.4 MHz. The full pull of 10.9 MHz is equal to the
+r2 linewidth, so the two reflections are almost opposite at the midpoint.
+
+An incident field of 0.2/√ns at the chip puts about one photon in r2. The
+reflected field passes the circulator, the isolators, and their 1 dB
+insertion loss. The output filter, which has memory, starts the downstream
+output components. `IQReadout.from_wiring()` takes the means at that point,
+in $1/\sqrt{\mathrm{ns}}$, and adds the filter, cable, and amplifier noise,
+plus heterodyne vacuum, integrated for 1 μs.
+
+```python
+incident = 0.2
+means = reflection[:, best] * incident * 10**(-1 / 20)
 detector = IQReadout.from_wiring(
-    readout_chip, readout, frequency=6.5,
-    means=[-0.01+0.001875j, 0.01-0.001875j],
-    receiver=IQReceiver(integration_time=100_000),
+    readout_chip, readout, frequency=readout_frequency, means=means,
+    receiver=IQReceiver(integration_time=1_000),
 )
 
 measurement = result.measure(q, t=10.0)
 shots = measurement.sample(1000, readout=detector, seed=7)
 ```
 
-The supplied means are representative fields for outcomes 0 and 1, in
-$1/\sqrt{\mathrm{ns}}$, before the selected channel's downstream output
-components. They are defined at the output of the memoryless quantum network
-and summarize the readout interaction, so qubit populations alone cannot give
-them.
-The detector includes downstream filter, cable, and amplifier noise, plus
-heterodyne vacuum, integrated for 100 μs.
-
-`detector.contributions` gives the source covariance budget.
+`detector.contributions` gives the source covariance budget. The HEMT and
+the output cable contribute most of the noise.
 
 Both panels use this detector, and a midpoint threshold classifies the IQ
-shots. The overlap gives an error of approximately 16% for each outcome. So
-the recorded Rabi curve spans approximately 0.16–0.84, while the quantum
+shots. The overlap gives an error of approximately 8% for each outcome. So
+the recorded Rabi curve spans approximately 0.08–0.92, while the quantum
 population spans 0–1. The qubit starts in |0⟩, so this floor is a detection
-error.
+error. A longer window or a stronger tone separates the clouds further, but
+the qubit decays during the window. With the Purcell T1 above, about 6% of
+the |1⟩ shots decay within 1 μs. The sampled shots do not include that
+decay, and the coupling also omits the transmon's second excited state.
 
 <details>
 <summary>Plot the Rabi counts and IQ record</summary>
@@ -591,7 +633,7 @@ axes[1].set(xlabel=r"I ($1/\sqrt{\mathrm{ns}}$)", ylabel=r"Q ($1/\sqrt{\mathrm{n
             xlim=(-span, span), ylim=(-span, span))
 axes[1].set_aspect("equal", adjustable="box")
 axes[1].legend(fontsize=8, loc="upper center", ncol=2)
-figure.suptitle(r"Fridge output at 6.5 GHz $\cdot$ 100 $\mu$s integration", fontsize=12)
+figure.suptitle(rf"Fridge output at {readout_frequency:.4f} GHz $\cdot$ 1 $\mu$s integration", fontsize=12)
 
 figure.savefig("terminal_rabi.svg")
 plt.close(figure)
@@ -602,7 +644,7 @@ plt.close(figure)
 ```{figure} ../images/terminal_rabi.svg
 :alt: Rabi probability and thresholded counts through the fridge beside the same detector's overlapping IQ clouds.
 
-The output chain rotates and amplifies the supplied fields and broadens their
+The output chain rotates and amplifies the conditional fields and broadens their
 IQ distributions. Colors mark physical outcomes, and the threshold determines
 the recorded labels. [PDF](../images/terminal_rabi.pdf)
 ```
