@@ -546,7 +546,7 @@ qubit_pole = next(pole for pole in qubit_vna.resonances() if pole.dominant == "q
 
 print("r2 dips:", np.round(probe[np.argmin(np.abs(reflection), axis=1)], 5), "GHz")
 print(f"readout at {readout_frequency:.5f} GHz, |r1 - r0| = {abs(reflection[1, best] - reflection[0, best]):.2f}")
-print(f"qubit Purcell T1 = {1e-3 / float(qubit_pole.linewidth):.1f} us")
+print(f"qubit T1 through the resonators = {1e-3 / float(qubit_pole.linewidth):.1f} us")
 ```
 
 Output:
@@ -554,14 +554,23 @@ Output:
 ```text
 r2 dips: [6.5054  6.49455] GHz
 readout at 6.50075 GHz, |r1 - r0| = 1.61
-qubit Purcell T1 = 15.4 us
+qubit T1 through the resonators = 15.4 us
 ```
 
-The qubit pulls r2 by ±5.4 MHz. The full pull of 10.9 MHz is equal to the
-r2 linewidth, so the two reflections are almost opposite at the midpoint.
+The qubit pulls r2 by ±5.4 MHz. The full pull of 10.9 MHz is approximately
+equal to the r2 linewidth, so the two reflections are almost opposite near
+the midpoint of the dips. A two-level qubit gives this pull of ±g²/Δ. A
+transmon with α = −0.2 GHz at the same detuning gives a full pull of only
+about 1.3 MHz, because its second excited state partly cancels the shift.
 
-An incident field of 0.2/√ns at the chip puts about one photon in r2. The
-reflected field passes the circulator, the isolators, and their 1 dB
+The qubit decays through the resonator modes, mostly into the internal loss
+of r2. The broad bus passes little of the qubit's 5 GHz field to the line.
+
+An incident field of 0.2/√ns at the chip, approximately −128 dBm, puts about
+one photon in r2 in the linear response. At the source, this is
+approximately 200/√ns before the 60 dB of attenuation. The means scale the
+weak-probe reflection to this power, which the dispersive approximation
+allows well below the critical photon number (Δ/2g)² ≈ 69. The reflected field passes the circulator, the isolators, and their 1 dB
 insertion loss. The output filter, which has memory, starts the downstream
 output components. `IQReadout.from_wiring()` takes the means at that point,
 in $1/\sqrt{\mathrm{ns}}$, and adds the filter, cable, and amplifier noise,
@@ -587,9 +596,11 @@ shots. The overlap gives an error of approximately 8% for each outcome. So
 the recorded Rabi curve spans approximately 0.08–0.92, while the quantum
 population spans 0–1. The qubit starts in |0⟩, so this floor is a detection
 error. A longer window or a stronger tone separates the clouds further, but
-the qubit decays during the window. With the Purcell T1 above, about 6% of
-the |1⟩ shots decay within 1 μs. The sampled shots do not include that
-decay, and the coupling also omits the transmon's second excited state.
+the qubit decays during the window. With the T1 above, about 6% of the |1⟩
+shots decay within 1 μs, which moves their integrated field toward the |0⟩
+mean. The sampled shots do not include that decay. They also take the
+prepared populations as the dressed states of the coupled chip, a transfer
+that this calculation does not simulate.
 
 <details>
 <summary>Plot the Rabi counts and IQ record</summary>
