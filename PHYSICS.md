@@ -52,7 +52,7 @@ converts them to angular frequency.
 
 The domain layer stays in ordinary GHz. The `2π` enters once, where quchip
 builds a solver-facing generator: in
-[`quchip/engine/assembly.py`](quchip/engine/assembly.py) for time-domain
+[`quchip/engine/assembly.py`](https://github.com/quchip/quchip/blob/main/quchip/engine/assembly.py) for time-domain
 solves, and in the sector solvers for stationary states and weak-probe
 response (§6.5, §8.1). Rates are already in 1/ns and get no assembly `2π`. A component's intrinsic `2π`, such as a resonator's
 `κ = 2π f/Q`, belongs to its own physics.
@@ -118,7 +118,7 @@ filters, the bands that change the total excitation, and you never author it
 directly.
 
 A device declares its charge operator with `charge_coupling_operator()`, and
-`EndpointOps.charge` ([`quchip/declarative/ops.py`](quchip/declarative/ops.py))
+`EndpointOps.charge` ([`quchip/declarative/ops.py`](https://github.com/quchip/quchip/blob/main/quchip/declarative/ops.py))
 returns it. On a device without that method, the local space sets the
 operator: `a + a†` on a `FockSpace`, and `n` on a `ChargeSpace` or
 `PhaseGridSpace`. The built-in devices declare these operators:
@@ -189,7 +189,7 @@ scalars, labels and opaque JAX callables without forcing numerical values.
 
 ### 3.1 Duffing transmon
 
-Source: [`quchip/devices/transmon/duffing.py`](quchip/devices/transmon/duffing.py)
+Source: [`quchip/devices/transmon/duffing.py`](https://github.com/quchip/quchip/blob/main/quchip/devices/transmon/duffing.py)
 
 ```text
 H/h = f * n + (alpha / 2) * n * (n - I)
@@ -199,7 +199,7 @@ H/h = f * n + (alpha / 2) * n * (n - I)
 
 ### 3.2 Resonator
 
-Source: [`quchip/devices/resonator.py`](quchip/devices/resonator.py)
+Source: [`quchip/devices/resonator.py`](https://github.com/quchip/quchip/blob/main/quchip/devices/resonator.py)
 
 ```text
 H/h = f * n
@@ -212,11 +212,11 @@ operator `sqrt(2π * f / Q_internal) * a`.
 
 ### 3.2.1 Other built-in models
 
-Sources: [two-level qubit](quchip/devices/base.py),
-[charge transmon](quchip/devices/transmon/charge_basis.py),
-[fluxonium](quchip/devices/fluxonium.py),
-[flux-tunable transmon](quchip/devices/transmon/flux_tunable.py),
-[Kerr cavity](quchip/devices/kerr_cavity.py), and [local spaces](quchip/devices/spaces.py)
+Sources: [two-level qubit](https://github.com/quchip/quchip/blob/main/quchip/devices/base.py),
+[charge transmon](https://github.com/quchip/quchip/blob/main/quchip/devices/transmon/charge_basis.py),
+[fluxonium](https://github.com/quchip/quchip/blob/main/quchip/devices/fluxonium.py),
+[flux-tunable transmon](https://github.com/quchip/quchip/blob/main/quchip/devices/transmon/flux_tunable.py),
+[Kerr cavity](https://github.com/quchip/quchip/blob/main/quchip/devices/kerr_cavity.py), and [local spaces](https://github.com/quchip/quchip/blob/main/quchip/devices/spaces.py)
 
 The Hamiltonians below use ordinary GHz. Physical charge `n` and phase `phi`
 differ from an energy-level index.
@@ -263,7 +263,7 @@ supplies no omitted charge or flux operator.
 
 ### 3.3 Collapse operators
 
-Sources: [`quchip/devices/base.py`](quchip/devices/base.py), [`quchip/chip/baths.py`](quchip/chip/baths.py)
+Sources: [`quchip/devices/base.py`](https://github.com/quchip/quchip/blob/main/quchip/devices/base.py), [`quchip/chip/baths.py`](https://github.com/quchip/quchip/blob/main/quchip/chip/baths.py)
 
 The Markov master equation uses the [Lindblad dissipator][lindblad]:
 
@@ -329,11 +329,11 @@ local dissipation can fail in ultrastrong coupling ([Beaudoin et al.][beaudoin])
 
 ### 3.3.1 Accessible ports
 
-Sources: [`quchip/chip/ports.py`](quchip/chip/ports.py),
-[`quchip/control/field.py`](quchip/control/field.py),
-[`quchip/observables.py`](quchip/observables.py),
-[`quchip/engine/input_output.py`](quchip/engine/input_output.py),
-[`quchip/analysis/vna.py`](quchip/analysis/vna.py)
+Sources: [`quchip/chip/ports.py`](https://github.com/quchip/quchip/blob/main/quchip/chip/ports.py),
+[`quchip/control/field.py`](https://github.com/quchip/quchip/blob/main/quchip/control/field.py),
+[`quchip/observables.py`](https://github.com/quchip/quchip/blob/main/quchip/observables.py),
+[`quchip/engine/input_output.py`](https://github.com/quchip/quchip/blob/main/quchip/engine/input_output.py),
+[`quchip/analysis/vna.py`](https://github.com/quchip/quchip/blob/main/quchip/analysis/vna.py)
 
 A `Port` is an accessible Markovian channel. It owns a dimensionless operator
 `A_p`, an external rate `kappa_p`, and a reference-plane phase `phi_p`:
@@ -394,8 +394,8 @@ moments at the Markov boundary, before the outbound shift.
 
 ### 3.3.2 Field networks
 
-Sources: [`quchip/chip/port_network.py`](quchip/chip/port_network.py),
-[`quchip/engine/ir.py`](quchip/engine/ir.py)
+Sources: [`quchip/chip/port_network.py`](https://github.com/quchip/quchip/blob/main/quchip/chip/port_network.py),
+[`quchip/engine/ir.py`](https://github.com/quchip/quchip/blob/main/quchip/engine/ir.py)
 
 A `PortNetwork` composes accessible ports and instantaneous scalar scattering
 before the engine lowers the resolved SLH model. Series, concatenation and
@@ -542,7 +542,7 @@ plane before the amplifier.
 
 ### 3.3.3 Composition rules
 
-Source: [`quchip/engine/slh.py`](quchip/engine/slh.py)
+Source: [`quchip/engine/slh.py`](https://github.com/quchip/quchip/blob/main/quchip/engine/slh.py)
 
 For resolved triples `G1 = (S1, L1, H1)` and `G2 = (S2, L2, H2)`,
 the [Gough–James series and concatenation rules][series-product] and
@@ -570,7 +570,7 @@ are static terms of network origin.
 
 ### 3.4 Authored local spaces and solver bases
 
-Sources: [`quchip/devices/spaces.py`](quchip/devices/spaces.py), [`quchip/engine/basis.py`](quchip/engine/basis.py)
+Sources: [`quchip/devices/spaces.py`](https://github.com/quchip/quchip/blob/main/quchip/devices/spaces.py), [`quchip/engine/basis.py`](https://github.com/quchip/quchip/blob/main/quchip/engine/basis.py)
 
 Each device authors its Hamiltonian and named operators in a `LocalSpace`. The
 built-in realizations are `FockSpace`, `ChargeSpace`, `PhaseGridSpace` and
@@ -648,7 +648,7 @@ eigenstates of the coupled static chip.
 
 ### 4.1 What frame selection means
 
-Source: [`quchip/engine/frames.py`](quchip/engine/frames.py)
+Source: [`quchip/engine/frames.py`](https://github.com/quchip/quchip/blob/main/quchip/engine/frames.py)
 
 The public frame spec is one of `"lab"` (the chip default), `"rotating"`,
 `"auto"`, a shared float, or a per-device dict. The engine resolves the spec
@@ -786,7 +786,7 @@ error.
 
 ### 4.5 `reference_freq`: the readout and LO reference
 
-Source: [`quchip/devices/base.py`](quchip/devices/base.py)
+Source: [`quchip/devices/base.py`](https://github.com/quchip/quchip/blob/main/quchip/devices/base.py)
 
 `device.reference_freq` returns the authored override in GHz, or `None`. Each
 new chip calculation resolves `None` to that chip's dressed transition and
@@ -801,7 +801,7 @@ invalidates engine caches), and JAX-traceable, differentiable and sweepable.
 
 ## 5. Frame tracking in the engine
 
-Source: [`quchip/engine/assembly.py`](quchip/engine/assembly.py)
+Source: [`quchip/engine/assembly.py`](https://github.com/quchip/quchip/blob/main/quchip/engine/assembly.py)
 
 The engine does not rotate whole expressions symbolically. It tracks phases
 band by band, and this band decomposition is the frame-tracking mechanism.
@@ -878,7 +878,7 @@ owns the carrier, so every envelope supports it.
 
 ## 6. Approximation strategies
 
-Sources: [`quchip/approximations.py`](quchip/approximations.py), [`quchip/engine/approximations.py`](quchip/engine/approximations.py)
+Sources: [`quchip/approximations.py`](https://github.com/quchip/quchip/blob/main/quchip/approximations.py), [`quchip/engine/approximations.py`](https://github.com/quchip/quchip/blob/main/quchip/engine/approximations.py)
 
 The chip owns one explicit approximation strategy. `Exact()` keeps every term
 of the authored finite-dimensional Hamiltonian. `RWA()` applies the engine's
@@ -975,7 +975,7 @@ infer a first-order carrier partner.
 
 ### 6.2.1 Rotation angle of a resonant pulse
 
-Sources: [`quchip/control/envelopes.py`](quchip/control/envelopes.py), [`quchip/chip/analysis.py`](quchip/chip/analysis.py)
+Sources: [`quchip/control/envelopes.py`](https://github.com/quchip/quchip/blob/main/quchip/control/envelopes.py), [`quchip/chip/analysis.py`](https://github.com/quchip/quchip/blob/main/quchip/chip/analysis.py)
 
 Take a dressed transition `i -> f` with the drive matrix element
 `m = <f~|D|i~>` of §9.1, and a carrier at the transition frequency. In the
@@ -1024,7 +1024,7 @@ raises. The result is a starting point for a calibration.
 
 ### 6.3 Exact excitation spaces in pulse solves
 
-Source: [`quchip/engine/pulse_space.py`](quchip/engine/pulse_space.py)
+Source: [`quchip/engine/pulse_space.py`](https://github.com/quchip/quchip/blob/main/quchip/engine/pulse_space.py)
 
 Deterministic pulse solves use an exact excitation space when the initial
 support and the complete generator prove it invariant. The planner closes that
@@ -1079,8 +1079,8 @@ convention of §4.2, with no hidden phase transformation.
 
 ### 6.4 Excitation cutoffs
 
-Sources: [`quchip/cutoff.py`](quchip/cutoff.py), [`quchip/engine/sectors.py`](quchip/engine/sectors.py),
-[`quchip/engine/pulse_space.py`](quchip/engine/pulse_space.py)
+Sources: [`quchip/cutoff.py`](https://github.com/quchip/quchip/blob/main/quchip/cutoff.py), [`quchip/engine/sectors.py`](https://github.com/quchip/quchip/blob/main/quchip/engine/sectors.py),
+[`quchip/engine/pulse_space.py`](https://github.com/quchip/quchip/blob/main/quchip/engine/pulse_space.py)
 
 An approximation selects Hamiltonian terms, and a space policy selects the
 product energy labels that a calculation keeps. `ExcitationCutoff(max_total=K)`
@@ -1178,10 +1178,10 @@ conditions of §9.
 
 ### 6.5 Stationary states on excitation sectors
 
-Sources: [`quchip/engine/sector_stationary.py`](quchip/engine/sector_stationary.py),
-[`quchip/backend/_sector_stationary.py`](quchip/backend/_sector_stationary.py),
-[`quchip/analysis/measurement.py`](quchip/analysis/measurement.py),
-[`quchip/analysis/vna.py`](quchip/analysis/vna.py)
+Sources: [`quchip/engine/sector_stationary.py`](https://github.com/quchip/quchip/blob/main/quchip/engine/sector_stationary.py),
+[`quchip/backend/_sector_stationary.py`](https://github.com/quchip/quchip/blob/main/quchip/backend/_sector_stationary.py),
+[`quchip/analysis/measurement.py`](https://github.com/quchip/quchip/blob/main/quchip/analysis/measurement.py),
+[`quchip/analysis/vna.py`](https://github.com/quchip/quchip/blob/main/quchip/analysis/vna.py)
 
 `steadystate()`, `VNA.finite_power()`, `VNA.measure()`,
 `VNA.output_spectrum()`, `VNA.g1()` and `VNA.g2()` solve one stationary state
@@ -1314,7 +1314,7 @@ route (§6.6).
 
 ### 6.6 Solve routes
 
-Source: [`quchip/engine/routes.py`](quchip/engine/routes.py)
+Source: [`quchip/engine/routes.py`](https://github.com/quchip/quchip/blob/main/quchip/engine/routes.py)
 
 One planner chooses how each stationary calculation solves. Each result records
 the choice as a `SolveRoute` under `diagnostics["route"]`, and
@@ -1354,7 +1354,7 @@ out. Choose `RWA()` to remove structural first-order counter-rotating bands, or
 
 ## 8. Observables and demodulation
 
-Source: [`quchip/engine/observables.py`](quchip/engine/observables.py)
+Source: [`quchip/engine/observables.py`](https://github.com/quchip/quchip/blob/main/quchip/engine/observables.py)
 
 The engine decomposes dict-form `e_ops` into the same excitation bands as the
 frame logic. After the solve, it recombines them with the per-device
@@ -1766,7 +1766,7 @@ bandwidth, and the unfiltered correlation API rejects them.
 
 ## 9. Dressing
 
-Sources: [`quchip/chip/chip.py`](quchip/chip/chip.py), [`quchip/chip/analysis.py`](quchip/chip/analysis.py)
+Sources: [`quchip/chip/chip.py`](https://github.com/quchip/quchip/blob/main/quchip/chip/chip.py), [`quchip/chip/analysis.py`](https://github.com/quchip/quchip/blob/main/quchip/chip/analysis.py)
 
 `Chip.dress()` diagonalizes the static lab-frame Hamiltonian that
 `chip.approximation` keeps, assigns bare product states to dressed eigenstates
@@ -1877,7 +1877,7 @@ cutoff, and the full static model otherwise.
 
 ### 9.1 Dressed drive matrix elements
 
-Sources: [`quchip/chip/analysis.py`](quchip/chip/analysis.py), [`quchip/control/equipment.py`](quchip/control/equipment.py)
+Sources: [`quchip/chip/analysis.py`](https://github.com/quchip/quchip/blob/main/quchip/chip/analysis.py), [`quchip/control/equipment.py`](https://github.com/quchip/quchip/blob/main/quchip/control/equipment.py)
 
 For a drive line `j` with local Hamiltonian operator `D_j`, quchip defines the
 dressed matrix element
@@ -1968,7 +1968,7 @@ matching authored edge. For example, an isolated `KerrCavity` with
 
 ### 9.4 Subspace propagators
 
-Sources: [`quchip/results/propagator.py`](quchip/results/propagator.py), [`quchip/control/sequence.py`](quchip/control/sequence.py)
+Sources: [`quchip/results/propagator.py`](https://github.com/quchip/quchip/blob/main/quchip/results/propagator.py), [`quchip/control/sequence.py`](https://github.com/quchip/quchip/blob/main/quchip/control/sequence.py)
 
 `QuantumSequence.subspace_propagator(devices, levels=(0, 1))` takes the labels
 that give each selected device one of `levels` and every other device level 0.
@@ -2017,7 +2017,7 @@ differentiable in chip and pulse parameters (§13).
 
 ## 10. Adiabatic elimination and dispersive readout
 
-Sources: [`quchip/chip/transformations/`](quchip/chip/transformations/), [`quchip/chip/sw.py`](quchip/chip/sw.py), [`quchip/analysis/dispersive_readout.py`](quchip/analysis/dispersive_readout.py)
+Sources: [`quchip/chip/transformations/`](https://github.com/quchip/quchip/tree/main/quchip/chip/transformations), [`quchip/chip/sw.py`](https://github.com/quchip/quchip/blob/main/quchip/chip/sw.py), [`quchip/analysis/dispersive_readout.py`](https://github.com/quchip/quchip/blob/main/quchip/analysis/dispersive_readout.py)
 
 `eliminate(chip, target, method="sw"|"exact")` reduces a model, and the target
 type selects the reduction.
@@ -2817,7 +2817,7 @@ when `jax.jit` or `jax.grad` traces device parameters. Pass `order=` with the
 
 ## 11. Parametric edge control
 
-Sources: [`quchip/control/drive.py`](quchip/control/drive.py) (`ParametricDrive`), [`quchip/declarative/models.py`](quchip/declarative/models.py) (`parametric_interaction`), [`quchip/chip/retarget.py`](quchip/chip/retarget.py)
+Sources: [`quchip/control/drive.py`](https://github.com/quchip/quchip/blob/main/quchip/control/drive.py) (`ParametricDrive`), [`quchip/declarative/models.py`](https://github.com/quchip/quchip/blob/main/quchip/declarative/models.py) (`parametric_interaction`), [`quchip/chip/retarget.py`](https://github.com/quchip/quchip/blob/main/quchip/chip/retarget.py)
 
 ### 11.1 The pump contract
 
@@ -2867,7 +2867,7 @@ recorded. [Yan et al.][yan] give tunable-coupler context.
 The retargeted line keeps its label, and `schedule()` resolves drive-line
 labels in device → coupling → line order, so the same schedule call runs on
 the full and reduced chips.
-[`tests/physics_sentinel/test_eliminate_portability.py`](tests/physics_sentinel/test_eliminate_portability.py)
+[`tests/physics_sentinel/test_eliminate_portability.py`](https://github.com/quchip/quchip/blob/main/tests/physics_sentinel/test_eliminate_portability.py)
 applies identical schedules to both models and compares them with tolerances
 derived from the validity metrics (`g/Delta`, `delta_omega/Delta`).
 
@@ -2932,22 +2932,22 @@ accuracy. Other engine paths avoid implicit conversion to host arrays.
 
 To audit a physics path, start here:
 
-- units and assembly boundary: [`quchip/engine/assembly.py`](quchip/engine/assembly.py)
-- frame resolution: [`quchip/engine/frames.py`](quchip/engine/frames.py)
-- observable preparation and demodulation: [`quchip/engine/observables.py`](quchip/engine/observables.py)
-- dressing and public Hamiltonian APIs: [`quchip/chip/chip.py`](quchip/chip/chip.py)
-- adiabatic elimination and χ/κ reporting: [`quchip/chip/transformations/`](quchip/chip/transformations/)
-- Schrieffer-Wolff kernels and the exact reduction route: [`quchip/chip/sw.py`](quchip/chip/sw.py)
-- control-line retargeting across reductions: [`quchip/chip/retarget.py`](quchip/chip/retarget.py)
-- readout pointer states and figures of merit: [`quchip/analysis/dispersive_readout.py`](quchip/analysis/dispersive_readout.py)
+- units and assembly boundary: [`quchip/engine/assembly.py`](https://github.com/quchip/quchip/blob/main/quchip/engine/assembly.py)
+- frame resolution: [`quchip/engine/frames.py`](https://github.com/quchip/quchip/blob/main/quchip/engine/frames.py)
+- observable preparation and demodulation: [`quchip/engine/observables.py`](https://github.com/quchip/quchip/blob/main/quchip/engine/observables.py)
+- dressing and public Hamiltonian APIs: [`quchip/chip/chip.py`](https://github.com/quchip/quchip/blob/main/quchip/chip/chip.py)
+- adiabatic elimination and χ/κ reporting: [`quchip/chip/transformations/`](https://github.com/quchip/quchip/tree/main/quchip/chip/transformations)
+- Schrieffer-Wolff kernels and the exact reduction route: [`quchip/chip/sw.py`](https://github.com/quchip/quchip/blob/main/quchip/chip/sw.py)
+- control-line retargeting across reductions: [`quchip/chip/retarget.py`](https://github.com/quchip/quchip/blob/main/quchip/chip/retarget.py)
+- readout pointer states and figures of merit: [`quchip/analysis/dispersive_readout.py`](https://github.com/quchip/quchip/blob/main/quchip/analysis/dispersive_readout.py)
 
 Some constructions are specific to quchip, and these tests check their stated
 models and analytic comparisons, without certifying an error bound for
 arbitrary devices or operating points:
 
-- finite-temperature interference and receiver normalization (§8.2): [field-noise tests](tests/test_field_noise.py) and [receiver tests](tests/test_linear_measurement.py)
-- passive-section expansions and retained-order estimates (§10.5): [port-elimination tests](tests/test_eliminate_port_network.py)
-- local-reduction equivalence (§10.7), which follows by extending the patch generator with the outside identity: [local-reduction tests](tests/test_local_elimination.py)
+- finite-temperature interference and receiver normalization (§8.2): [field-noise tests](https://github.com/quchip/quchip/blob/main/tests/test_field_noise.py) and [receiver tests](https://github.com/quchip/quchip/blob/main/tests/test_linear_measurement.py)
+- passive-section expansions and retained-order estimates (§10.5): [port-elimination tests](https://github.com/quchip/quchip/blob/main/tests/test_eliminate_port_network.py)
+- local-reduction equivalence (§10.7), which follows by extending the patch generator with the outside identity: [local-reduction tests](https://github.com/quchip/quchip/blob/main/tests/test_local_elimination.py)
 
 ## 15. Measurement of saved states
 
