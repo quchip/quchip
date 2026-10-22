@@ -511,7 +511,8 @@ class GateSet:
         explore : bool or None, default None
             Override each native's ``explore`` flag.
         target : float, default 1e-3
-            Infidelity above which the status is ``"poor_fit"``.
+            Infidelity above which the status is ``"poor_fit"``, at start
+            time 0 or at the worst start time of ``placement_infidelity``.
         progress : bool, default False
             Print one line per native as it finishes.
 
@@ -580,8 +581,6 @@ class GateSet:
                 native.sequence, native.knobs = sequence, dict(knobs)
                 self._check_template(native)
             calibration = self._fit(native, max_nfev=max_nfev, explore=native.explore if explore is None else explore)
-            if calibration.status == "ok" and calibration.infidelity > target:
-                calibration.status = "poor_fit"
             calibration.dependencies = dependencies
         finally:
             self._calibrating.pop()
@@ -594,6 +593,10 @@ class GateSet:
         self._entries.pop(key, None)
         self._placed.clear()
         self._post_checks(native, calibration)
+        # A gate whose pieces use different carriers can miss the target at other start times.
+        worst = max((calibration.infidelity, *(calibration.placement_infidelity or ())))
+        if calibration.status == "ok" and worst > target:
+            calibration.status = "poor_fit"
         if calibration.status != "ok":
             warnings.warn(f"{native.name} on {native.qubits}: calibration status {calibration.status!r}.\n"
                           f"{calibration.summary()}", UserWarning, stacklevel=3)

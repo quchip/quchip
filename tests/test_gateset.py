@@ -581,8 +581,8 @@ def test_calibration_leaves_a_zero_amplitude_start():
     assert 1e-6 <= value <= 2e-6
 
 
-def test_status_flags_seeds_unconverged_fits_and_stale_composites():
-    """max_nfev=0 keeps the seed, a cut-off fit is unconverged, and an inner refit makes a composite stale."""
+def test_status_flags_mark_seeds_cut_off_fits_stale_composites_and_start_times():
+    """Seeds, cut-off fits, inner refits, and errors at other start times each set a status."""
     qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=2, label="q")
     chip = Chip([qubit])
     chip.wire(ChargeDrive(qubit, label="xy"))
@@ -613,6 +613,17 @@ def test_status_flags_seeds_unconverged_fits_and_stale_composites():
     assert "stale" in gates.describe()
     with pytest.warns(UserWarning, match="calibrated again"):
         gates.unitary([("X", "q")])
+    # A second pulse 10 MHz off the qubit turns its axis with the start time: good at 0, poor elsewhere.
+    seq = QuantumSequence(chip)
+    pulse = seq.schedule("xy", envelope=Square(duration=2.0, amplitude=0.125 / abs(element)), freq=chip.freq("q"),
+                         phase=-float(np.angle(element)))
+    seq.schedule("xy", envelope=Square(duration=2.0, amplitude=0.01 / abs(element)), freq=chip.freq("q") + 0.01,
+                 phase=-float(np.angle(element)))
+    gates = GateSet(chip, ["q"])
+    gates.add(NativeGate("SX", ("q",), seq, knobs={"amplitude": Knob(pulse, "amplitude")}, free_z=("q",)))
+    with pytest.warns(UserWarning, match="poor_fit"):
+        calibration = gates.calibrate()[("SX", ("q",))]
+    assert calibration.infidelity < 1e-3 < calibration.placement_infidelity[1]
 
 
 def test_automatic_cutoff_recalibrates_until_the_gate_converges():
