@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from importlib import import_module
 from itertools import product
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Mapping
@@ -157,6 +158,10 @@ class ReadoutWiring:
 
         return cls(tuple(FieldChannel(c.key, c.reference, c.input_occupation) for c in slh.channels),
                    tuple(c.key for c in slh.external_channels), slh.output_network, array_module)
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        # A module does not pickle, so the wiring stores its array namespace by name.
+        return _load_readout_wiring, (self.fields, self.exposed, self.graph, self.array_module.__name__)
 
     def iq_readout(self, output: Any, *, means: Any, frequency: Any, receiver: Any,
                    noise_frequencies: Any = None) -> Any:
@@ -437,3 +442,8 @@ def measure_result(result: Any, devices: tuple[Any, ...], *, t: Any = None,
         (int(np.prod([dims[i] for i in selected])), -1)).sum(axis=-1)
     outcomes = tuple(product(*(range(dims[i]) for i in selected)))
     return StateMeasurement(labels, outcomes, probabilities)
+
+
+def _load_readout_wiring(fields: Any, exposed: Any, graph: Any, array_module: str) -> ReadoutWiring:
+    """Rebuild pickled readout wiring with its named array namespace."""
+    return ReadoutWiring(fields, exposed, graph, import_module(array_module))

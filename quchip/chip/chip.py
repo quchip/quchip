@@ -330,6 +330,16 @@ class Chip:
         if frame != "lab":
             self.set_frame(frame)
 
+    def __getstate__(self) -> dict[str, Any]:
+        """Return the authored state without caches that the chip rebuilds on demand."""
+        state = self.__dict__.copy()
+        state.update(_analysis=None, _unresolved_hamiltonian_cache=None, _resolved_result_cache=None)
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        self.__dict__.update(state)
+        self._analysis = ChipAnalysis(self)
+
     # ------------------------------------------------------------------
     # Hamiltonian
     # ------------------------------------------------------------------

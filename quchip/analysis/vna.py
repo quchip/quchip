@@ -136,6 +136,22 @@ class _ToneAxis(Sweep):
         self.public_name = public_name
 
 
+@dataclass(frozen=True)
+class _PortTransfers:
+    """Reference-plane transfers of the selected ports at given probe frequencies."""
+
+    chip: Any
+    labels: tuple[str, ...]
+
+    def __call__(self, frequencies: Any) -> tuple[Any, Any]:
+        # The route does not depend on the probe frequencies, so the rebuilt problem exists.
+        rebuilt_problem = try_build_weak_probe_problem(self.chip, frequencies, plane_labels=self.labels)
+        assert rebuilt_problem is not None
+        rebuilt = rebuilt_problem[0]
+        indices = list(rebuilt.plane_indices)
+        return rebuilt.outbound_transfer[:, indices], rebuilt.inbound_transfer[:, indices]
+
+
 class VNA:
     """Small-signal scattering between selected instrument ports of one chip.
 
@@ -374,16 +390,6 @@ class VNA:
         route = SolveRoute(name, WEAK_PROBE[name], len(problem.mode_labels), array_name(self.chip.backend))
         system = response_poles(problem)
         xp = concrete_array_module(system.values)
-        chip = self.chip
-
-        def transfers(frequencies: Any) -> tuple[Any, Any]:
-            # The route does not depend on the probe frequencies, so the rebuilt problem exists.
-            rebuilt_problem = try_build_weak_probe_problem(chip, frequencies, plane_labels=labels)
-            assert rebuilt_problem is not None
-            rebuilt = rebuilt_problem[0]
-            indices = list(rebuilt.plane_indices)
-            return rebuilt.outbound_transfer[:, indices], rebuilt.inbound_transfer[:, indices]
-
         return ResonanceResult(
             frequencies=-xp.imag(system.values) / (2.0 * np.pi),
             linewidths=-2.0 * xp.real(system.values),
@@ -394,7 +400,7 @@ class VNA:
             route=route,
             _eigensystem=system,
             _problem=problem,
-            _transfers=transfers,
+            _transfers=_PortTransfers(self.chip, labels),
         )
 
     def finite_power(

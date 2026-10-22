@@ -1087,6 +1087,12 @@ class DynamiqsBackend(Backend):
 
     _jit_solve_cache: dict[Any, Any]
 
+    def __getstate__(self) -> dict[str, Any]:
+        """Return the backend state without compiled solvers, which rebuild on the next solve."""
+        state = self.__dict__.copy()
+        state.pop("_jit_solve_cache", None)
+        return state
+
     def _get_jit_solve_cache(self) -> dict[Any, Any]:
         cache = getattr(self, "_jit_solve_cache", None)
         if cache is None:

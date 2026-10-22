@@ -32,6 +32,10 @@ class _LazyDiagnostics(Mapping[str, Any]):
     def __contains__(self, key: object) -> bool:
         return key in self._values
 
+    def __reduce__(self) -> tuple[Any, ...]:
+        # Deferred calculations hold local closures, so pickling evaluates them first.
+        return _LazyDiagnostics, ({key: self[key] for key in self._values},)
+
 
 @dataclass(frozen=True)
 class SParameterResult:
