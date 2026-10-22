@@ -116,12 +116,20 @@ def _estimate_bare_g(
     lo, hi = seed_strength_bounds
     obs_lo, obs_hi = obs_at_strength(lo), obs_at_strength(hi)
     if not min(obs_lo, obs_hi) <= target_val <= max(obs_lo, obs_hi):
-        raise ValueError(
+        message = (
             f"Cannot seed a bare coupling strength for {coupling.label!r}'s target "
             f"{spec.kind}={target_val!r}: not bracketed by the observable at "
             f"seed_strength_bounds={seed_strength_bounds!r} "
             f"(observable(lo)={obs_lo!r}, observable(hi)={obs_hi!r})."
         )
+        if spec.source == "component default":
+            message += (
+                f" fit_a_dress read the declared {coupling.coupling_strength_name}={target_val!r} "
+                f"of {coupling.label!r} as a dressed {spec.kind} target in GHz. "
+                f"Pass the measured value with constraints={{{coupling.label!r}: {{{spec.kind!r}: <GHz>}}}}, "
+                f"or drop the target with constraints={{{coupling.label!r}: {{{spec.kind!r}: None}}}}."
+            )
+        raise ValueError(message)
     return brentq(lambda strength: obs_at_strength(strength) - target_val, lo, hi)
 
 

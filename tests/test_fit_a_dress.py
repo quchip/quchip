@@ -183,6 +183,26 @@ def test_estimate_bare_g_raises_when_target_is_not_bracketed() -> None:
     assert "1e-06, 0.25" in message
 
 
+def test_unbracketed_default_coupling_target_names_the_declared_value_and_overrides() -> None:
+    """An unreachable target read from a declared coupling strength names that source and both overrides."""
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+    r = Resonator(freq=7.0, levels=4, label="r")
+    desired = Chip([q, r], [Capacitive(q, r, g=0.05, label="qr")])
+
+    with pytest.raises(ValueError, match=r"declared g=0\.05 of 'qr' as a dressed cross_kerr target") as exc_info:
+        fit_a_dress(desired, constraints={"q": {"freq": 4.95}})
+
+    message = str(exc_info.value)
+    assert "seed_strength_bounds=(1e-06, 0.25)" in message
+    assert "constraints={'qr': {'cross_kerr': <GHz>}}" in message
+    assert "constraints={'qr': {'cross_kerr': None}}" in message
+
+    explicit = TargetSpec("cross_kerr", "qr", 0.05, "explicit")
+    with pytest.raises(ValueError, match="not bracketed") as explicit_info:
+        _estimate_bare_g(desired, desired.couplings[0], explicit)
+    assert "declared" not in str(explicit_info.value)
+
+
 def test_estimate_bare_g_solves_correct_root_for_a_decreasing_observable(monkeypatch: pytest.MonkeyPatch) -> None:
     """_estimate_bare_g finds the true root even when the observable DECREASES with coupling strength.
 
