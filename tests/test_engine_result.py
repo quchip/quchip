@@ -230,6 +230,20 @@ class TestTermTypes:
             result.hamiltonian().matrix()
         np.testing.assert_allclose(result.hamiltonian().matrix(t=0.0), 3.0 / (2.0 * np.pi) * np.eye(2))
 
+    @pytest.mark.unit
+    def test_matrix_without_t_names_the_rotating_terms(self):
+        """matrix() without t names each time-dependent term and its rotation rate in GHz."""
+        from quchip import Capacitive, Chip, DuffingTransmon, Resonator
+
+        q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+        r = Resonator(freq=7.0, levels=4, label="r")
+        chip = Chip([q, r], [Capacitive(q, r, g=0.05, label="qr")], frame="rotating")
+
+        with pytest.raises(ValueError, match=r"f_\{coupling,0\} rotating at 2\.0\d* GHz") as exc_info:
+            chip.hamiltonian().matrix()
+        assert "f_{coupling,1}" in str(exc_info.value)
+        assert "Pass t= in ns" in str(exc_info.value)
+
 
 class TestPolarScale:
     def test_polar_scale_with_nonzero_theta(self):

@@ -841,6 +841,31 @@ def is_energy_diagonal(expr: Any, bases: Mapping[str, Any]) -> bool:
     return diagonal(expr)
 
 
+def _time_dependent_terms(expr: PhysicsExpr) -> list[str]:
+    """Name each signal leaf with the nonzero carrier-band rates of its program in GHz."""
+    from quchip.engine.ir import SignalNode, decompose_carrier_bands
+    from quchip.utils.jax_utils import maybe_concrete_scalar
+
+    described = []
+    for node in _walk_expr(expr):
+        if node.kind != "signal":
+            continue
+        program, name = node.args
+        rates: list[float] = []
+        if isinstance(program, SignalNode):
+            for band in decompose_carrier_bands(program):
+                value = maybe_concrete_scalar(band.freq)
+                if value is None:
+                    continue
+                rate = round(abs(value) / (2.0 * np.pi), 9)
+                if rate > 0.0 and rate not in rates:
+                    rates.append(rate)
+        if rates:
+            name += " rotating at " + ", ".join(f"{rate:.6g}" for rate in sorted(rates)) + " GHz"
+        described.append(name)
+    return described
+
+
 def materialize_expr(
     expr: Any,
     backend: Any,
@@ -866,7 +891,11 @@ def materialize_expr(
             return values[node.args[0]]
         if node.kind == "signal":
             if t is None:
-                raise ValueError("t is required to materialize a time-dependent expression.")
+                raise ValueError(
+                    "t is required to materialize a time-dependent expression. "
+                    f"Time-dependent terms: {', '.join(_time_dependent_terms(expr))}. "
+                    "Pass t= in ns, e.g. matrix(t=0.0)."
+                )
             from quchip.engine.ir import evaluate_signal_program
 
             return evaluate_signal_program(node.args[0], t, xp=backend.array_module)
