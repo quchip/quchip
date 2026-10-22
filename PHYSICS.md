@@ -1125,8 +1125,8 @@ resonator of the `ExcitationCutoff` docstring example, it is +2.261 MHz at
 `K = 3` and -1.136 MHz at `K = 4`, against -1.137 MHz without a cutoff.
 
 Workflows that need the full product space or a local neighborhood raise under
-an active cutoff. They are `VNA.sweep()`, `VNA.resonances()`, stochastic
-trajectory solvers, `eliminate()`, `eliminate_spectators()`, `active_patch()`,
+an active cutoff. They are `VNA.sweep()`, `VNA.resonances()`, stochastic trajectory solvers,
+`eliminate()`, `eliminate_spectators()`, `active_patch()`,
 `fit_a_dress(evaluator="local")`, and `chip.partition()`. Each message names
 `chip.with_space(None)`. `steadystate()`, `VNA.finite_power()`,
 `VNA.measure()`, `VNA.output_spectrum()`, `VNA.g1()` and `VNA.g2()` solve the
@@ -1188,9 +1188,9 @@ keep their diagonals in the eigenbasis of each sector drift. Each real part is
 shifted to at most `-2 δ`, where `δ` is `1e-6` of the largest decay rate. The
 blocks are solved from the largest `N + M` downwards, because the jumps feed
 `X_NM` from `X_{N+1,M+1}`. A sector with more than 1024 labels, or with an
-ill-conditioned eigenbasis, uses the eigenbasis of its block of
-`H' = i (A - A†) / 2`. A solve whose relative residual stays above `1e-8`
-raises. The Krylov storage is checked against the available memory first.
+ill-conditioned eigenbasis, uses the eigenbasis of `H' = i (A - A†) / 2`, the Hamiltonian part of its
+drift. A solve whose relative residual stays above `1e-8` raises. The Krylov
+storage is checked against the available memory first.
 
 If the lowering channels empty every state of each sector `N >= 1`, the
 stationary state is unique. Each state then has a lowering jump, so the
