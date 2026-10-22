@@ -257,6 +257,24 @@ def test_reduced_pulse_coupling_derivative_in_per_device_frames():
     assert abs(float(derivative)) > 1e-3
 
 
+@pytest.mark.parametrize("method", ["sw", "exact"])
+def test_carried_jump_names_its_devices_and_the_frames_that_work(method):
+    """A carried jump with unequal band phases names its devices and the frames that give them one phase."""
+    q1 = DuffingTransmon(freq=5.0, anharmonicity=-.25, levels=3, T1=60_000., label="q1")
+    q2 = DuffingTransmon(freq=5.4, anharmonicity=-.25, levels=3, T1=60_000., label="q2")
+    bus = Resonator(freq=6.4, levels=3, label="b")
+    chip = Chip([q1, q2, bus], [Capacitive(q1, bus, g=.07), Capacitive(q2, bus, g=.07)],
+                approximation=RWA(), frame="rotating")
+    reduced = eliminate(chip, "b", method=method).chip
+    with pytest.raises(ValueError, match=r"'q1'/'thermal_emission'.*devices \['q1', 'q2'\]") as error:
+        reduced.resolve()
+    for phrase in ('frame="lab"', "common frame", 'frame="auto"', "Time-dependent collapse operators"):
+        assert phrase in str(error.value)
+    # The undriven exchange-coupled pair rotates together in the "auto" frame, so the carried jump is static.
+    frequencies = reduced.resolve(frame="auto").resolved_frame.frequencies
+    assert frequencies["q1"] == frequencies["q2"]
+
+
 @pytest.mark.optional_backend
 def test_sw_induced_loss_still_rejects_incompatible_frames():
     """The induced loss on the other survivor cannot share a phase in independent frames."""
