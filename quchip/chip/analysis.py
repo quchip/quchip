@@ -584,8 +584,9 @@ class ChipAnalysis:
                 reach = int(label[index]) + sum(1 for total in spent if total <= limit)
                 shown = {names[other]: int(level) for other, level in enumerate(label) if level}
                 causes.append(
-                    f"Label {shown} can mix at {_ORDERS.get(order, f'{order}th')} order in the couplings with "
-                    f"states that need level {dims[index]} of device {names[index]!r}, but {names[index]!r} keeps "
+                    f"Virtual paths through states that need level {dims[index]} of device {names[index]!r} can "
+                    f"contribute to the dressed energy of label {shown} at estimated "
+                    f"{_ORDERS.get(order, f'{order}th')} order in the couplings, but {names[index]!r} keeps "
                     f"{dims[index]} levels."
                 )
                 fixes.append(f"Set levels={reach + 1} or more on {names[index]!r} to remove this warning.")

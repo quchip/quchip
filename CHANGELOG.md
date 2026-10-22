@@ -645,10 +645,11 @@ This file records notable user-visible changes to quchip.
   order, and up to the order at which the excitations of the label first
   interact, such as sixth order for ZZ through two couplers in series. Under
   `Exact()`, steps that create excitations also count. Diagonal couplings,
-  such as `CrossKerr`, do not. The warning names the device and the `levels`
-  that remove it. Values do not change. Previously, a two-level `Resonator`
-  gave a dispersive shift of +9.98 MHz with no warning, against -0.99 MHz with
-  three levels. A `Qubit` is not a truncation and never warns.
+  such as `CrossKerr`, and couplings that the approximation removes do not.
+  Silence is not a convergence check. The warning names the device and the
+  `levels` that remove it. Values do not change. Previously, a two-level
+  `Resonator` gave a dispersive shift of +9.98 MHz with no warning, against
+  -0.99 MHz with three levels. A `Qubit` is not a truncation and never warns.
   ([#211](https://github.com/quchip/quchip/pull/211))
 - After an earlier `eliminate(..., method="exact")` step,
   `effective_params[...]["purcell_rate"]` and `["kappa"]` count the removed

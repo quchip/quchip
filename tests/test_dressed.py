@@ -392,7 +392,7 @@ def test_two_level_readout_warns_on_two_excitation_queries_and_keeps_the_truncat
     q2 = DuffingTransmon(freq=5.3, anharmonicity=-0.2, levels=3, label="q2")
     bus = Resonator(freq=6.5, levels=2, label="bus")
     bus_chip = Chip([q1, q2, bus], [Capacitive(q1, bus, g=0.05), Capacitive(q2, bus, g=0.05)])
-    with pytest.warns(UserWarning, match=r"fourth order.*device 'bus'.*'bus' keeps 2 levels"):
+    with pytest.warns(UserWarning, match=r"device 'bus'.*fourth order.*'bus' keeps 2 levels"):
         bus_chip.static_zz(q1, q2)
     q2 = DuffingTransmon(freq=5.3, anharmonicity=-0.2, levels=2, label="q2")
     bus = Resonator(freq=6.5, levels=3, label="bus")
@@ -467,10 +467,13 @@ def test_truncation_warning_reads_the_kept_bands_of_couplings_and_port_pairs() -
         return Chip([a, b], port_network=line, approximation=Exact())
 
     with pytest.warns(UserWarning, match=r"second order.*'a' keeps 2 levels.*levels=3 or more on 'a'"):
-        cascade(2).freq("a")
+        truncated = cascade(2).freq("a")
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        cascade(3).freq("a")
+        full = cascade(3).freq("a")
+    # The pair term has strength g = rate / (4 pi) in GHz, and the missing |2,1> lies f_a + f_b + alpha_a
+    # = 11.8 GHz above |1,0>, so the two-level transition is too high by 2 g^2 / 11.8 at second order.
+    assert float(truncated - full) == pytest.approx(2 * (0.01 / (4 * np.pi)) ** 2 / 11.8, rel=1e-3)
 
 
 @pytest.mark.unit
