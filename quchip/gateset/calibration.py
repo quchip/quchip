@@ -138,9 +138,9 @@ class GateCalibration:
         ``"ok"``, ``"at_bound"``, ``"weak_direction"``, ``"unconverged"``
         (the fit used all its evaluations), ``"solver_floor"``, ``"poor_fit"``
         (infidelity above the calibration target at start time 0, at the
-        worst start time of ``placement_infidelity``, or with one other qubit
-        in level 1), or ``"stale"`` (a native inside this composite was
-        calibrated again after it).
+        worst start time of ``placement_infidelity``, or in the state of
+        ``worst_spectators``), or ``"stale"`` (a native inside this composite
+        was calibrated again after it).
     sequence : QuantumSequence
         Calibrated pulses with the trailing ``vz`` entries.
     spectators : dict of str to float
@@ -150,6 +150,11 @@ class GateCalibration:
         Average gate fidelity of the gate's own block with every spectator in
         level 0, with the implemented corrections. ``None`` without
         spectators in the calibration block.
+    worst_spectators : tuple of (dict of str to int, float) or None
+        Computational state of the other gate-set qubits, as dressed levels 0
+        and 1, in which the gate's own block has its lowest average gate
+        fidelity, and that fidelity, with the implemented corrections.
+        ``None`` when the gate acts on every gate-set qubit.
     placement_infidelity : tuple of float or None
         Smallest and largest ``1 - F_avg`` over start times in [0, 100) ns, with
         the implemented corrections. A native whose pieces use different
@@ -198,6 +203,7 @@ class GateCalibration:
     spectators: dict[str, float] = field(default_factory=dict)
     placement_infidelity: tuple[float, float] | None = None
     ground_fidelity: float | None = None
+    worst_spectators: tuple[dict[str, int], float] | None = None
     repetitions: dict[int, float] = field(default_factory=dict)
     dependencies: dict[Any, int] = field(default_factory=dict)
     seconds: float = 0.0
@@ -235,6 +241,10 @@ class GateCalibration:
         if self.spectators:
             lines.append("  spectators in |1>: " + ", ".join(
                 f"{q} 1 - F = {1 - f:.2e}" for q, f in self.spectators.items()))
+        if self.worst_spectators is not None:
+            state, fidelity = self.worst_spectators
+            lines.append("  worst state of the other qubits: " + ", ".join(f"{q}={v}" for q, v in state.items())
+                         + f": 1 - F = {1 - fidelity:.2e}")
         if self.repetitions:
             lines.append("  repetitions: " + ", ".join(f"N={n} 1 - F = {v:.2e}"
                                                       for n, v in self.repetitions.items()))

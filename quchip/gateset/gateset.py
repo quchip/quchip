@@ -513,7 +513,7 @@ class GateSet:
         target : float, default 1e-3
             Infidelity above which the status is ``"poor_fit"``: at start
             time 0, at the worst start time of ``placement_infidelity``, or
-            with one other qubit in level 1, as in ``spectators``.
+            in the state of the other qubits of ``worst_spectators``.
         progress : bool, default False
             Print one line per native as it finishes.
 
@@ -594,10 +594,11 @@ class GateSet:
         self._entries.pop(key, None)
         self._placed.clear()
         self._post_checks(native, calibration)
-        # The gate must also meet the target at other start times and with any other qubit excited.
-        worst = max((calibration.infidelity, *(calibration.placement_infidelity or ()),
-                     *(1.0 - fidelity for fidelity in calibration.spectators.values())))
-        if calibration.status == "ok" and worst > target:
+        # The gate must also meet the target at other start times and in every state of the other qubits.
+        errors = [calibration.infidelity, *(calibration.placement_infidelity or ())]
+        if calibration.worst_spectators is not None:
+            errors.append(1.0 - calibration.worst_spectators[1])
+        if calibration.status == "ok" and max(errors) > target:
             calibration.status = "poor_fit"
         if calibration.status != "ok":
             warnings.warn(f"{native.name} on {native.qubits}: calibration status {calibration.status!r}.\n"
@@ -698,14 +699,19 @@ class GateSet:
     def _post_checks(self, native: NativeGate, calibration: GateCalibration) -> None:
         """Fill the spectator, placement, and repetition fields of a fresh calibration."""
         key = native.key
-        if calibration.block_qubits and len(calibration.block_qubits) > len(native.qubits):
-            block, _ = self._block(calibration.sequence, native.qubits, native.duration)
-            calibration.ground_fidelity = block.fidelity(native.ideal_matrix())
-        for spectator in self.qubits:
-            if spectator in native.qubits:
-                continue
-            block, _ = self._block(calibration.sequence, native.qubits, native.duration, background={spectator: 1})
-            calibration.spectators[spectator] = block.fidelity(native.ideal_matrix())
+        others = tuple(q for q in self.qubits if q not in native.qubits)
+        if others:
+            # The gate's own block in each computational state of the other qubits, from the composed gate.
+            composed = self.unitary([(native.name, native.qubits)], qubits=(*native.qubits, *others))
+            size, count = 2 ** len(native.qubits), 2 ** len(others)
+            blocks = np.asarray(composed.computational).reshape(size, count, size, count)
+            fidelities = [float(average_fidelity(blocks[:, b, :, b], native.ideal_matrix())) for b in range(count)]
+            if len(calibration.block_qubits) > len(native.qubits):
+                calibration.ground_fidelity = fidelities[0]
+            calibration.spectators = {q: fidelities[1 << (len(others) - 1 - i)] for i, q in enumerate(others)}
+            worst = int(np.argmin(fidelities))
+            calibration.worst_spectators = (
+                {q: (worst >> (len(others) - 1 - i)) & 1 for i, q in enumerate(others)}, fidelities[worst])
         entry = self._entry(key)
         block_qubits = calibration.block_qubits or native.qubits
         if entry.covariant:

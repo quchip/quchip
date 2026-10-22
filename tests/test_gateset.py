@@ -582,7 +582,7 @@ def test_calibration_leaves_a_zero_amplitude_start():
 
 
 def test_calibration_status_flags():
-    """Seeds, cut-off fits, inner refits, other start times, and an excited neighbor each set a status."""
+    """Seeds, cut-off fits, inner refits, other start times, and states of the other qubits each set a status."""
     qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=2, label="q")
     chip = Chip([qubit])
     chip.wire(ChargeDrive(qubit, label="xy"))
@@ -624,16 +624,19 @@ def test_calibration_status_flags():
     with pytest.warns(UserWarning, match="poor_fit"):
         calibration = gates.calibrate()[("SX", ("q",))]
     assert calibration.infidelity < 1e-3 < calibration.placement_infidelity[1]
-    # Fitted with q1 in |0>, the SX meets the target; the 1.3 MHz ZZ breaks it when q1 is in |1>.
-    q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.33, levels=3, label="q0")
-    q1 = DuffingTransmon(freq=5.1, anharmonicity=-0.33, levels=3, label="q1")
-    chip = Chip([q0, q1], couplings=[Capacitive(q0, q1, g=0.01, label="J")])
-    chip.wire(ChargeDrive(q0, label="xy0"), ChargeDrive(q1, label="xy1"))
-    gates = GateSet(chip, ["q0", "q1"], spectators="none")
-    gates.add(drag_sx(chip, "q0"))
+    # |101> meets |020> (f0 + f2 = 2 f1 + α): the middle SX is good unless both neighbors are excited.
+    qubits = [DuffingTransmon(freq=f, anharmonicity=-0.33, levels=3, label=f"q{i}")
+              for i, f in enumerate((4.95, 5.10, 4.92))]
+    chip = Chip(qubits, couplings=[Capacitive(qubits[0], qubits[1], g=0.003, label="J01"),
+                                   Capacitive(qubits[1], qubits[2], g=0.003, label="J12")])
+    chip.wire(*(ChargeDrive(q, label=f"xy{i}") for i, q in enumerate(qubits)))
+    gates = GateSet(chip, ["q0", "q1", "q2"], spectators="none")
+    gates.add(drag_sx(chip, "q1"))
     with pytest.warns(UserWarning, match="poor_fit"):
-        calibration = gates.calibrate()[("SX", ("q0",))]
-    assert calibration.infidelity < 1e-3 < 1 - calibration.spectators["q1"]
+        calibration = gates.calibrate()[("SX", ("q1",))]
+    assert calibration.infidelity < 1e-3 and max(1 - f for f in calibration.spectators.values()) < 1e-3
+    state, fidelity = calibration.worst_spectators
+    assert state == {"q0": 1, "q2": 1} and 1 - fidelity > 0.05
 
 
 def test_automatic_cutoff_recalibrates_until_the_gate_converges():

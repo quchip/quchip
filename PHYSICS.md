@@ -3466,12 +3466,14 @@ The report gives the error generator `H = i log U_P` of the polar part `U_P`
 of `M`, with Pauli coefficients `Tr(P H)/d` (a rotation `θ` about `P` gives
 `θ/2`). It also gives the leakage, the Jacobian condition number and its
 change under a ten times smaller step, knobs at a bound, the infidelity of
-the gate's own block with all spectators in `|0>` and with each spectator in
-`|1>` (both with the implemented corrections), and the infidelity after `N`
-repetitions. Over sampled start times in [0, 100) ns at fixed frame offsets,
-it gives the smallest and largest `1 - F_avg` with the implemented
-corrections. A reusable gate with one carrier changes with the start time by
-the conjugation by `C`, expressed in the computational frame. When the ideal
+the gate's own block with all spectators in `|0>`, with each other gate-set
+qubit in `|1>`, and in the computational state of the other qubits where it
+is largest (all with the implemented corrections, read from the composed gate
+on every gate-set qubit), and the infidelity after `N` repetitions. Over
+sampled start times in [0, 100) ns at fixed frame offsets, it gives the
+smallest and largest `1 - F_avg` with the implemented corrections. A
+reusable gate with one carrier changes with the start time by the
+conjugation by `C`, expressed in the computational frame. When the ideal
 commutes with it, as for the built-in SX and X, only the
 orientation of the coherent error changes and `F_avg` stays the same.
 Otherwise the operation itself changes with the start time: an SX on a 5 GHz

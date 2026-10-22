@@ -34,8 +34,8 @@ a warning:
 - `"unconverged"`: the fit used all `max_nfev` evaluations before it converged.
 - `"solver_floor"`: the error is close to the integrator's unitarity defect.
 - `"poor_fit"`: the infidelity is above the target (default `1e-3`) at start
-  time 0, at the worst start time of the placement check below, or with one
-  other qubit in `|1>`.
+  time 0, at the worst start time of the placement check below, or in the
+  worst state of the other qubits.
 - `"stale"`: a native inside this composite was calibrated again after it.
   The composite keeps the earlier pulses, and a circuit that uses it warns.
   Calibrate the composite again to use the new ones.
@@ -55,7 +55,8 @@ couple to them or that the gate's pulses reach through line crosstalk. The fit
 targets the ideal gate times the identity on these spectators, with a free
 virtual Z on every qubit of the block. Static ZZ and drive crosstalk during
 the gate are part of the error. The report also gives the error with all
-spectators in `|0>` and with each one in `|1>`. Pass
+spectators in `|0>`, with each other qubit in `|1>`, and in the state of the
+other qubits where it is largest. Pass
 `GateSet(..., spectators="none")` to fit with the other qubits in `|0>`.
 
 The fit places the gate at time 0. A gate with one carrier, such as the
