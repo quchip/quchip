@@ -466,6 +466,9 @@ def test_simulate_maps_the_final_state_into_the_computational_frame():
     loss = abs(ideal.conj() @ run.state) ** 2 - np.real(ideal.conj() @ lossy.state @ ideal)
     duration = gates.schedule(circuit).total_duration
     assert 0.2 * duration / 5000.0 < loss < duration / 4000.0
+    virtual = [("RZ", "q0", 0.4), ("RZ", "q1", -1.1)]
+    plus = np.full(4, 0.5)
+    assert np.abs(gates.simulate(virtual, plus).state - gates.ideal(virtual) @ plus).max() < 1e-12
 
 
 def test_auto_cutoff_keeps_the_gate_and_warns():

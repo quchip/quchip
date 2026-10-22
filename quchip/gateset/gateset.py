@@ -1156,6 +1156,13 @@ class GateSet:
         initial = np.asarray(initial, dtype=complex)
         correction = self._frame_correction(order, self._offsets(sequence)) * np.exp(1j * global_phase)
         mapping = correction[:, None] * np.exp(2j * np.pi * energies * duration)[:, None] * columns.conj().T
+        if duration <= 0.0:
+            # Only virtual gates: no time passes, so the frame correction is the whole circuit.
+            step = mapping @ columns
+            state = step @ initial if initial.ndim == 1 else step @ initial @ step.conj().T
+            populations = np.abs(state) ** 2 if initial.ndim == 1 else np.real(np.diag(state))
+            return CircuitRun(state=state, probabilities=self._probabilities(populations, order),
+                              leakage=float(1.0 - populations.sum()))
         open_system = dissipation and bool(_static_problem(self.solver_chip, dissipation=True)
                                            .engine_result.collapse_terms)
         if initial.ndim == 1 and not open_system:
