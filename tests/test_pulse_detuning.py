@@ -27,7 +27,7 @@ def test_detuning_sweeps_from_its_default_and_needs_a_carrier():
     chip = Chip([q], frame="rotating", approximation=RWA())
     chip.wire(ChargeDrive(q, label="xy"), FluxDrive(q, label="z"))
     seq = QuantumSequence(chip)
-    pulse = seq.charge("q", envelope=Square(duration=20.0, amplitude=0.01))
+    pulse = seq.charge("q", envelope=Square(duration=20.0, amplitude=0.01), freq=chip.freq(q))
     values, times = [0.0, 0.004], np.linspace(0.0, 20.0, 5)
 
     def hamiltonian(problem, t):
@@ -101,8 +101,8 @@ def test_detuning_gradient_matches_finite_differences():
     chip.wire(ChargeDrive(q, label="xy"))
     seq = QuantumSequence(chip)
     envelope = Gaussian(duration=20.0, sigmas=3, amplitude=0.0125)
-    seq.charge("q", envelope=envelope)
-    seq.charge("q", envelope=envelope, phase=0.4)
+    seq.charge("q", envelope=envelope, freq=chip.freq(q))
+    seq.charge("q", envelope=envelope, freq=chip.freq(q), phase=0.4)
     tlist = jnp.linspace(0.0, 65.0, 3)
     method = dq.method.Tsit5(rtol=1e-10, atol=1e-12)
 

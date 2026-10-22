@@ -73,7 +73,7 @@ class TestBuildSolveProblem:
         chip.wire(ChargeDrive(q), signal_chain=[BufferGain(factor)])
         envelope = Square(duration=10.0, amplitude=0.01)
         seq = QuantumSequence(chip)
-        seq.charge(q, envelope=envelope)
+        seq.charge(q, envelope=envelope, freq=chip.freq(q))
         times = np.linspace(0.0, 10.0, 21)
         problem = seq.build_problem(times)
         before = solve_problem(problem).population("q", 1)

@@ -32,8 +32,9 @@ def test_default_pulse_carrier_uses_the_sequence_chip_and_is_captured() -> None:
     first.wire(drive)
     second.wire(drive)
     seq_first, seq_second = QuantumSequence(first), QuantumSequence(second)
-    seq_first.charge(q, envelope=Square(duration=10.0, amplitude=0.02))
-    seq_second.charge(q, envelope=Square(duration=10.0, amplitude=0.02))
+    for seq in (seq_first, seq_second):
+        with pytest.warns(UserWarning, match="sets no freq"):
+            seq.charge(q, envelope=Square(duration=10.0, amplitude=0.02))
     f_first, f_second = first.freq(q), second.freq(q)
     assert seq_first.parameters["pulse.0.freq"] == pytest.approx(f_first)
     assert seq_second.parameters["pulse.0.freq"] == pytest.approx(f_second)
@@ -97,8 +98,8 @@ def test_shared_device_scheduling_uses_only_the_current_chips_wiring() -> None:
     second.wire(ChargeDrive(q, label="second"))
     for chip, label in ((first, "first"), (second, "second")):
         seq = QuantumSequence(chip)
-        seq.charge(q, envelope=Square(duration=10.0))
-        seq.schedule(q, envelope=Square(duration=5.0))
+        seq.charge(q, envelope=Square(duration=10.0), freq=5.0)
+        seq.schedule(q, envelope=Square(duration=5.0), freq=5.0)
         assert [op.drive_label for op in seq.scheduled_ops] == [label, label]
         assert seq.channel_cursors == {("q", label): 15.0}
 

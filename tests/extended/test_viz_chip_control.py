@@ -43,9 +43,9 @@ def _build_sequence() -> QuantumSequence:
     chip, q, r, q_charge, r_charge, q_flux = _build_control_chip()
     chip.connect(ControlEquipment(lines=[q_charge, r_charge, q_flux]))
     seq = QuantumSequence(chip)
-    seq.charge(q, envelope=Square(duration=10.0, amplitude=0.02))
-    seq.charge(q, envelope=Square(duration=6.0, amplitude=0.01), phase=0.2)
-    seq.charge(r, envelope=Square(duration=8.0, amplitude=0.03))
+    seq.charge(q, envelope=Square(duration=10.0, amplitude=0.02), freq=chip.freq(q))
+    seq.charge(q, envelope=Square(duration=6.0, amplitude=0.01), freq=chip.freq(q), phase=0.2)
+    seq.charge(r, envelope=Square(duration=8.0, amplitude=0.03), freq=chip.freq(r))
     seq.flux(q, envelope=Square(duration=4.0, amplitude=0.015))
     return seq
 

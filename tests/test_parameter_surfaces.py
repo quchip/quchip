@@ -77,7 +77,7 @@ def test_envelope_rebinding_checks_joint_constraints(batch):
     drive = ChargeDrive(chip["q"], label="xy")
     chip.wire(drive)
     seq = QuantumSequence(chip)
-    pulse = seq.schedule(drive, envelope=GaussianEdge(duration=20.0, edge_duration=5.0))
+    pulse = seq.schedule(drive, envelope=GaussianEdge(duration=20.0, edge_duration=5.0), freq=5.0)
     with pytest.raises(ValueError, match="edge_duration"):
         if batch:
             seq.build_batch(pulse.vary("edge_duration", [12.0]), tlist=np.linspace(0, 20, 21))

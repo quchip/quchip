@@ -10,6 +10,23 @@ This file records notable user-visible changes to quchip.
 
 #### Changes and migration
 
+- A pulse scheduled without `freq` on a charge, phase, or two-photon line takes
+  a carrier at the line's device and warns with the chosen value. Charge and
+  phase lines use `chip.freq(device)`, the dressed `0 -> 1` frequency, and a
+  two-photon line uses twice it. Previously, such a pulse had no carrier, so a
+  charge drive stayed about 5 GHz below a transmon and left it in `|0>`: a
+  20 ns Gaussian π pulse from `chip.rotation_amplitude()` gave `P1 = 5e-11`
+  without a warning, and now gives `0.99`. The new default is `freq="auto"`,
+  and its warning comes once per line in each sequence. Flux and coupling
+  drives, custom drives, and coherent inputs keep a baseband pulse. A custom
+  drive can set the class attribute `carrier_harmonic` to take an automatic
+  carrier. To keep a previous pulse without a carrier, pass `freq=None`.
+  `freq=0.0` stays a carrier at zero frequency. `QuantumSequence.charge()`
+  takes the same default and warning, and `charge(freq=None)` now gives a
+  pulse without a carrier, as `schedule(freq=None)` does. Previously,
+  `charge(freq=None)` used `chip.freq(target)`. If you passed `freq=None` to
+  `charge()` for that carrier, omit `freq`, or pass `freq=chip.freq(target)`
+  to keep it without the warning.
 - `eliminate(..., method="sw")` keys the exchange `pathways` by occupation
   tuples in the source chip's device order, as `analyze_static_zz()` does.
   Previously, the keys were flat product indices, such as `1` and `17` for

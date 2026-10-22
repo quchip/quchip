@@ -42,7 +42,11 @@ class TwoPhotonDrive(DeviceDrive):
     Schedule the drive at twice the cavity frequency
     (``freq = 2 * cavity.freq``) so the rotating-frame interaction is static:
     ``eps2(t) * (a_dag^2 + a^2)``. Kerr nonlinearity combined with the
-    two-photon drive creates and stabilises cat states.
+    two-photon drive creates and stabilises cat states. A pulse scheduled
+    without ``freq`` takes the carrier ``2 * chip.freq(cavity)``, the
+    zero-detuning Kerr-cat pump. It does not include pump-induced Stark
+    shifts. The weak ``0 -> 2`` transition differs by the Kerr shift:
+    pass ``freq=chip.transition_frequency(cavity, 0, 2)`` to drive it.
 
     The engine band-decomposes ``a^2 + a_dag^2`` into excitation weights
     Delta_n = +2 and Delta_n = -2 and combines them with the delivered
@@ -77,6 +81,7 @@ class TwoPhotonDrive(DeviceDrive):
     """
 
     _type_prefix: ClassVar[str] = "two_photon"
+    carrier_harmonic: ClassVar[int | None] = 2
 
     def hamiltonian(self, device: BaseDevice, signal: AnalyticSignal):
         """Return the two-photon coupling channel ``a^2 + a_dag^2``.

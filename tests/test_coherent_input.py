@@ -263,6 +263,7 @@ def test_coherent_and_direct_charge_drives_are_equivalent_when_calibrated() -> N
             duration=1.0,
             amplitude=beta * np.sqrt(rate) / (2.0 * np.pi),
         ),
+        freq=None,
     )
     field = QuantumSequence(chip)
     field.schedule(

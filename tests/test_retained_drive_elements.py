@@ -20,7 +20,7 @@ def _pair(*, backend="qutip"):
 
 def _driven(chip):
     sequence = QuantumSequence(chip)
-    sequence.schedule("d", envelope=Square(duration=1.0, amplitude=1.0))
+    sequence.schedule("d", envelope=Square(duration=1.0, amplitude=1.0), freq=None)
     return sequence
 
 

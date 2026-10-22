@@ -111,6 +111,17 @@ class BaseDrive(Registrable, registry_root=True, metaclass=KeywordOnlyDeclarativ
     **params : Any
         Numerical parameters declared by the concrete drive class.
 
+    Attributes
+    ----------
+    carrier_harmonic : int or None
+        Class-level carrier of a pulse scheduled without ``freq``. An integer
+        ``k`` gives the carrier ``k * chip.freq(target)``, which makes the
+        drive's weight-``k`` operator bands static in the rotating frame at
+        ``chip.freq(target)``. ``None``, the default, keeps such a pulse at
+        baseband. Set it only when the drive's signal mapping makes that band
+        co-rotating at a positive carrier. A coupling drive names no single
+        target transition and keeps ``None``.
+
     Examples
     --------
     >>> from quchip import DuffingTransmon, ChargeDrive
@@ -121,6 +132,7 @@ class BaseDrive(Registrable, registry_root=True, metaclass=KeywordOnlyDeclarativ
     """
 
     _type_prefix: ClassVar[str] = "drive"
+    carrier_harmonic: ClassVar[int | None] = None
 
     target: Any = constructor_field(default=None, kw_only=False)
     label: Any = constructor_field(default=None, kw_only=True)
@@ -436,7 +448,9 @@ class ChargeDrive(DeviceDrive):
     ``charge_coupling_operator()``, which capacitive couplings also use. It is
     :math:`i(\hat a - \hat a^\dagger)` on a Fock device. This is the standard
     transmon microwave drive (Koch et al., PRA 76, 042319 (2007); Krantz et
-    al., APR 6, 021318 (2019), Eq. 90).
+    al., APR 6, 021318 (2019), Eq. 90). A pulse scheduled without ``freq``
+    takes the carrier ``chip.freq(target)``, the dressed ``0 -> 1``
+    frequency.
 
     Examples
     --------
@@ -455,6 +469,7 @@ class ChargeDrive(DeviceDrive):
     """
 
     _type_prefix: ClassVar[str] = "charge"
+    carrier_harmonic: ClassVar[int | None] = 1
 
     def hamiltonian(self, device: Any, signal: AnalyticSignal) -> Any:
         """Return the charge-coupling Hamiltonian in the device-local basis.
@@ -491,6 +506,8 @@ class PhaseDrive(DeviceDrive):
     than quadrature) coupling. It is useful for modeling phase-noise channels
     or drives whose physical coupling is already referenced to the field
     quadrature. See Krantz et al. 2019, Sec. IV.A for the two conventions.
+    A pulse scheduled without ``freq`` takes the carrier
+    ``chip.freq(target)``.
 
     Parameters
     ----------
@@ -501,6 +518,8 @@ class PhaseDrive(DeviceDrive):
     """
 
     _type_prefix: ClassVar[str] = "phase"
+    carrier_harmonic: ClassVar[int | None] = 1
+
     def hamiltonian(self, device: Any, signal: AnalyticSignal) -> Any:
         """Return the phase-coupling Hamiltonian in the device-local basis.
 
@@ -534,7 +553,8 @@ class FluxDrive(DeviceDrive):
 
     The in-phase quadrature of the delivered signal modulates the device
     frequency through its flux-coupling operator (Koch et al. 2007, Sec. II;
-    Krantz et al. 2019, Sec. V.A on flux tunability).
+    Krantz et al. 2019, Sec. V.A on flux tunability). A pulse scheduled
+    without ``freq`` stays at baseband.
 
     Examples
     --------

@@ -25,8 +25,9 @@ Examples
 >>> q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3)
 >>> drive = ChargeDrive(target=q)
 >>> chip = Chip([q])
+>>> _ = chip.wire(drive)
 >>> seq = QuantumSequence(chip)
->>> _ = seq.schedule(q, envelope=Gaussian(duration=20.0, amplitude=0.05))
+>>> _ = seq.schedule(q, envelope=Gaussian(duration=20.0, amplitude=0.05), freq=chip.freq(q))
 >>> seq.total_duration
 20.0
 """
@@ -35,10 +36,11 @@ from __future__ import annotations
 
 import copy
 import functools
+import warnings
 from dataclasses import dataclass, replace
 from collections.abc import Collection, Mapping, Sequence
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
@@ -137,6 +139,17 @@ def _require_positive_duration(duration: Any) -> None:
         raise ValueError(f"Delay duration must be > 0, got {duration}")
 
 
+def _is_automatic(freq: Any) -> bool:
+    """Return whether ``freq`` asks for the carrier that the line's drive class declares."""
+    return isinstance(freq, str) and freq == "auto"
+
+
+def _require_carrier_spec(freq: Any) -> None:
+    """Reject a string ``freq`` other than ``"auto"``."""
+    if isinstance(freq, str) and not _is_automatic(freq):
+        raise ValueError(f"freq must be a carrier frequency in GHz, None, or 'auto', got {freq!r}.")
+
+
 def _cursor_max(values: Collection[Any]) -> Any:
     """Return the maximum of cursor *values*, tracing-safe under ``jax.jit``.
 
@@ -224,6 +237,8 @@ class QuantumSequence:
         # virtual-Z entries on them keep their timing and have no other effect.
         self._removed_lines: tuple[tuple[str, str], ...] = ()
         self._removed_devices: tuple[str, ...] = ()
+        # Lines whose automatic carrier this sequence has already reported.
+        self._carrier_lines: set[str] = set()
 
     def _device_drives(self, device_label: str) -> list[BaseDrive]:
         self._chip.device_map[device_label]
@@ -300,7 +315,7 @@ class QuantumSequence:
         if frame is None:
             return default
         if freq is None:
-            raise ValueError("A frame requires a carrier: a pulse without freq has no carrier phase for vz() to shift.")
+            raise ValueError("A frame requires a carrier: a baseband pulse has no carrier phase for vz() to shift.")
         label = resolve_label(frame)
         if label not in self._chip.device_map:
             raise ValueError(
@@ -321,7 +336,7 @@ class QuantumSequence:
         drive: BaseDrive,
         *,
         envelope: Envelope,
-        freq: float | None,
+        freq: Any,
         start_time: float | None = None,
         phase: float = 0.0,
         frame: str | BaseDevice | None = None,
@@ -340,6 +355,8 @@ class QuantumSequence:
                     f"Available couplings: {list(self._chip.coupling_map.keys())}"
                 )
             default_frame = None
+            if _is_automatic(freq):
+                freq = None
         else:
             target_label = drive.target_label
             assert target_label is not None
@@ -349,6 +366,8 @@ class QuantumSequence:
                     f"Available devices: {list(self._chip.device_map.keys())}"
                 )
             default_frame = target_label
+            if _is_automatic(freq):
+                freq = self._automatic_carrier(drive, target_label)
         self._entries.append(
             _PulseEntry(
                 target_label=target_label,
@@ -362,6 +381,44 @@ class QuantumSequence:
             )
         )
         return PulseHandle(self, len(self._entries) - 1)
+
+    def _automatic_carrier(self, drive: BaseDrive, device_label: str) -> Any:
+        """Return the carrier of a ``freq="auto"`` pulse on a device line, or ``None`` for baseband.
+
+        A drive class that sets ``carrier_harmonic = k`` gets
+        ``k * chip.freq(device)``. The first such pulse on each line of this
+        sequence warns with the chosen value.
+        """
+        harmonic = drive.carrier_harmonic
+        if harmonic is None:
+            return None
+        try:
+            dressed = self._chip.freq(device_label)
+        except ValueError as error:
+            raise ValueError(
+                f"The pulse on line {drive.label!r} sets no freq, and its carrier needs chip.freq({device_label!r}): "
+                f"{error} Pass freq= to set the carrier, or freq=None for a pulse without a carrier."
+            ) from error
+        carrier = dressed if harmonic == 1 else harmonic * dressed
+        if drive.label not in self._carrier_lines:
+            self._carrier_lines.add(drive.label)
+            if harmonic == 1:
+                expression, meaning = f"chip.freq({device_label!r})", "the dressed 0 -> 1 frequency"
+            else:
+                expression = f"{harmonic} * chip.freq({device_label!r})"
+                meaning = f"{harmonic} times the dressed 0 -> 1 frequency"
+            value = maybe_concrete_scalar(carrier)
+            if value is not None:
+                expression += f" = {value:.6g} GHz"
+            # Hops: _automatic_carrier -> _schedule_on_drive -> schedule() or charge() -> caller.
+            warnings.warn(
+                f"The pulse on line {drive.label!r} sets no freq, so its carrier is {expression}, "
+                f"{meaning} of {device_label!r}. Pass freq= to set the carrier, or freq=None for a pulse "
+                "without a carrier.",
+                UserWarning,
+                stacklevel=4,
+            )
+        return carrier
 
     def _schedule_on_coherent_input(
         self,
@@ -400,7 +457,7 @@ class QuantumSequence:
         target: str | ControlEndpoint | BaseDevice | BaseCoupling,
         *,
         envelope: Envelope,
-        freq: float | None = None,
+        freq: float | Literal["auto"] | None = "auto",
         start_time: float | None = None,
         phase: float = 0.0,
         frame: str | BaseDevice | None = None,
@@ -436,10 +493,27 @@ class QuantumSequence:
 
         envelope : Envelope
             Pulse envelope.
-        freq : float, optional
-            Optional carrier frequency in GHz. Omitting it leaves the signal
-            carrier-free. Drive-specific conveniences can supply their own
-            explicit default, such as :meth:`charge` using ``chip.freq(device)``.
+        freq : float, None, or "auto", default="auto"
+            Carrier frequency in GHz. ``"auto"`` takes the carrier from the
+            line's drive class: ``carrier_harmonic`` times the dressed
+            ``0 -> 1`` frequency ``chip.freq(device)``. Charge and phase
+            drives use ``chip.freq(device)``, and a two-photon drive uses
+            twice it, the zero-detuning Kerr-cat pump. quchip warns with the
+            chosen value once per line in each sequence. When
+            ``chip.freq(device)`` has no reliable dressed assignment, as for
+            identical coupled devices, the pulse needs an explicit ``freq``,
+            and scheduling it raises. Drives without a
+            declared or inherited ``carrier_harmonic``, such as flux and
+            coupling drives, and coherent inputs stay at baseband. ``None``
+            gives a baseband pulse on every line: the envelope without
+            carrier modulation, through the drive's authored I/Q mapping.
+            ``0.0`` is a carrier at zero frequency, which
+            follows :meth:`vz` and which ``RWA()`` splits into partners. The
+            automatic carrier is evaluated when the pulse is scheduled: it
+            follows traced parameters only when the scheduling runs inside
+            the differentiated function, and rebinding the sequence leaves it
+            unchanged. An explicit ``freq`` that does not depend on the
+            parameters fixes the carrier.
         start_time : float, optional
             Pulse start time in ns. Defaults to the current cursor; earlier
             times are rejected.
@@ -452,7 +526,7 @@ class QuantumSequence:
             the drive line targets. Coupling-drive and coherent-input pulses
             have no default frame. A cross-resonance tone on the control's line
             names the target device, because its phase sets the axis of the
-            target's conditional rotation. A frame requires ``freq``.
+            target's conditional rotation. A frame requires a carrier.
         detuning : float, optional
             Carrier offset ``δ`` in GHz, referenced to the pulse start ``t0``.
             The pulse delivers ``E(t - t0) exp(i phase) exp(-2πi freq t)
@@ -462,13 +536,15 @@ class QuantumSequence:
             instead, with phase ``phase - 2π δ t0`` relative to the frame at
             ``f``. ``None`` adds no offset term. ``pulse.<index>.detuning``
             rebinds, sweeps, and differentiates like ``freq``. A detuning
-            requires ``freq``.
+            requires a carrier.
         """
+        _require_carrier_spec(freq)
         if isinstance(target, CoherentInput):
             return self._schedule_on_coherent_input(
                 target,
                 envelope=envelope,
-                freq=freq,
+                # Only "auto" passed the check above, and a coherent input has no automatic carrier.
+                freq=None if isinstance(freq, str) else freq,
                 start_time=start_time,
                 phase=phase,
                 frame=frame,
@@ -494,7 +570,7 @@ class QuantumSequence:
         target: str | BaseDevice,
         *,
         envelope: Envelope,
-        freq: float | None = None,
+        freq: float | Literal["auto"] | None = "auto",
         phase: float = 0.0,
         frame: str | BaseDevice | None = None,
         detuning: float | None = None,
@@ -507,8 +583,10 @@ class QuantumSequence:
             Driven device.
         envelope : Envelope
             Pulse envelope; time parameters are in ns and amplitudes in GHz.
-        freq : float or None, default=None
-            Carrier frequency in GHz; ``None`` uses ``chip.freq(target)``.
+        freq : float, None, or "auto", default="auto"
+            Carrier frequency in GHz. ``"auto"`` uses ``chip.freq(target)``,
+            the dressed ``0 -> 1`` frequency, and warns as :meth:`schedule`
+            does. ``None`` gives a pulse without a carrier.
         phase : float, default=0.0
             Carrier phase in radians.
         frame : str or BaseDevice or None, default=None
@@ -518,11 +596,10 @@ class QuantumSequence:
             Carrier offset in GHz, referenced to the pulse start. See
             :meth:`schedule`.
         """
+        _require_carrier_spec(freq)
         label = resolve_label(target)
         self._validate_target(label)
         drive = self._find_drive_by_type(label, ChargeDrive)
-        if freq is None:
-            freq = self._chip.freq(label)
         return self._schedule_on_drive(
             drive, envelope=envelope, freq=freq, phase=phase, frame=frame, detuning=detuning,
         )
@@ -1680,6 +1757,7 @@ class QuantumSequence:
         kept_lines = set() if equipment is None else {(line.target_label, line.label) for line in equipment.lines}
         cloned._removed_lines = tuple(key for key in self._line_keys() if key not in kept_lines)
         cloned._removed_devices = tuple(label for label in self._device_labels() if label not in chip.device_map)
+        cloned._carrier_lines = set(self._carrier_lines)
         return cloned
 
     @property

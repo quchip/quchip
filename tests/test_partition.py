@@ -81,7 +81,7 @@ def test_partition_subchip_schedules_without_duplicate_drive_error():
     _, part = _partitioned_disconnected_chip(with_lines=True)
     sub0 = part.components[0].chip
     seq = QuantumSequence(sub0)
-    handle = seq.charge("q0", envelope=Gaussian(amplitude=0.01, sigmas=3, duration=20.0))
+    handle = seq.charge("q0", envelope=Gaussian(amplitude=0.01, sigmas=3, duration=20.0), freq=sub0.freq("q0"))
     assert handle is not None
 
 

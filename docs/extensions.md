@@ -130,6 +130,8 @@ from quchip import DeviceDrive
 
 
 class ChargeLikeDrive(DeviceDrive):
+    carrier_harmonic = 1
+
     def hamiltonian(self, target, signal):
         return signal.i * target.charge_coupling_operator()
 
@@ -152,8 +154,15 @@ class IQDrive(DeviceDrive):
 ```
 
 Override `signal(pulse, target)` only when constructing the scheduled analytic
-signal itself needs drive-specific physics. Carriers are optional for every
-drive. Approximation choices belong to the chip and engine, not the drive.
+signal itself needs drive-specific physics. Approximation choices belong to the
+chip and engine, not the drive.
+
+The class attribute `carrier_harmonic` sets the carrier of a pulse scheduled
+without `freq`. With `carrier_harmonic = k`, the carrier is
+`k * chip.freq(target)`, and quchip warns with the chosen value. Set it only
+when that carrier makes the drive's weight-`k` bands co-rotating, as
+`ChargeLikeDrive` does above. A drive without it, such as `IQDrive`, keeps
+such a pulse at baseband. `freq=None` gives a baseband pulse on every line.
 
 Declare drive values with `parameter()` and structural choices with
 `setting()`. Constructors and serialization are synthesized. Define a scheduled
