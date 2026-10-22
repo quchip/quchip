@@ -50,6 +50,15 @@ python -m pytest -m validation --durations=20
 python -m pytest
 ```
 
+The `release` suite executes each example notebook again and compares its
+textual outputs with the committed ones. It takes several minutes, and
+neither CI nor `python -m pytest` runs it. Run it before a release, as
+[Releases](#releases) describes:
+
+```bash
+python -m pytest -m release --durations=10
+```
+
 Validation runs in one pytest process, even in pre-merge CI. Measure
 changes with this sequential command, because parallel wall time does not
 show that a suite is cheaper. Five minutes is the target, not a measured CI
@@ -57,13 +66,16 @@ guarantee. When you decrease repeated setup or solver work, keep
 independent numerical references, failure paths, and statistical sample
 sizes.
 
-Each collected test belongs to exactly one of these suites. Mark small test modules with
-`pytestmark = pytest.mark.unit` and expensive functions with `@pytest.mark.validation`. For an
-expensive parameter value, use `pytest.param(value, marks=pytest.mark.validation)`. Unmarked tests
-go into `e2e`, so new tests run in PR CI by default. Conflicting suite markers cause collection to
-fail. Keep meaningful cheap checks. Select validation candidates by cost and coverage overlap, but
-keep representative numerical oracles in E2E. Coverage overlap alone does not show that two tests
-check the same assertion.
+Each collected test belongs to exactly one of these suites. Mark small test
+modules with `pytestmark = pytest.mark.unit`, expensive functions with
+`@pytest.mark.validation`, and checks that run only before a release with
+`@pytest.mark.release`. For an expensive parameter value, use
+`pytest.param(value, marks=pytest.mark.validation)`. Unmarked tests go into
+`e2e`, so new tests run in PR CI by default. Conflicting suite markers cause
+collection to fail. Keep meaningful cheap checks. Select validation
+candidates by cost and coverage overlap, but keep representative numerical
+oracles in E2E. Coverage overlap alone does not show that two tests check the
+same assertion.
 
 The location markers `core`, `physics_sentinel`, `extended`, and `examples`
 stay available for focused work. They carry no runtime budget.
@@ -145,7 +157,7 @@ The [guides](docs/guides/index.md) and [cookbook](docs/cookbook.md) explain how 
 
 Readable Jupytext Markdown is the canonical source. Commit its executed `.ipynb` partner with the `python3` kernel, identical code cells, and inspected outputs. Use standard fenced Python cells, not percent-format scripts.
 
-Notebook outputs stay in the executed `.ipynb`. Save only figures selected for the website under `docs/images/`. Include the canonical Markdown from its page under `docs/guides/`. Figures load `docs/_static/quchip.mplstyle` and save a single light `.svg`. Then `python3 tools/theme_figures.py` derives the `-dark.svg`, `.pdf`, and README `-dark.png` variants and rejects colors outside the palette.
+Notebook outputs stay in the executed `.ipynb`. Save only figures selected for the website under `docs/images/`. Include the canonical Markdown from its page under `docs/guides/`. Figures load `docs/_static/quchip.mplstyle` and save a single light `.svg`. Then `python3 tools/theme_figures.py` derives the `-dark.svg`, `.pdf`, and README `-dark.png` variants and rejects colors outside the palette. It also copies each README pair to `docs/_static/readme/`, where the README links to it. `python3 tools/overview_figure.py` redraws the overview figure of the README and the documentation front page from the models of four guides.
 
 From the repository root, replace `<name>` with the example stem and run:
 
@@ -160,6 +172,8 @@ jupytext --to md --test-strict examples/<name>.ipynb
 ```
 
 The diff must be empty and the strict round trip must pass. Before you commit, inspect the executed notebook. Setup cells stay silent, stdout contains only intended receipts, and each intended figure appears once. Run the focused example test and the project checks above.
+
+Re-execute each notebook whose printed results your change alters. Before each release, the `release` suite executes every notebook again and compares its textual outputs with the committed ones.
 
 ## Physics conventions
 
@@ -209,6 +223,10 @@ Changes and migration. Fixes describe the affected case and the correction, and
 flag numerical consequences. Deprecations identify the replacement and the
 planned removal release. Keep migration steps in the release entry, unless a
 longer guide is necessary.
+
+Before you mark the release PR ready for review, run `python -m pytest -m release`.
+If a notebook fails, find the change that moved its output and confirm that it
+is intended. Then re-execute and commit the notebook.
 
 Before you tag, review the full change set since the previous published tag.
 Move `Unreleased` into the dated entry, and run

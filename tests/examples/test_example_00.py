@@ -52,3 +52,22 @@ def test_executed_receipts_record_leakage_and_readout() -> None:
     assert readout["solver"] == "mesolve"
     assert readout["final_iq_separation"] > 0.01
     assert np.isfinite(readout["conditional_resonator_frequencies_ghz"]).all()
+
+
+def test_executed_outputs_read_the_pulses_as_gates() -> None:
+    """The short pulse leaks most of |0⟩, and the long pulse keeps a coherent rotation error."""
+    output = _stream_output(nbformat.read(EXAMPLE_IPYNB, as_version=4))
+    gates = {
+        name: (float(fidelity), float(leakage))
+        for name, fidelity, leakage in re.findall(
+            r"^(Short|Long): fidelity to iY = (\S+); leakage from \|0⟩ = (\S+)$", output, re.MULTILINE,
+        )
+    }
+    assert gates.keys() == {"Short", "Long"}
+    short_fidelity, short_leakage = gates["Short"]
+    long_fidelity, long_leakage = gates["Long"]
+    assert short_leakage > 0.5
+    assert long_leakage < 1e-3
+    # Without leakage, the error of the long pulse stays inside the qubit states.
+    assert 1.0 - long_fidelity > 10 * long_leakage
+    assert short_fidelity < long_fidelity

@@ -302,10 +302,9 @@ This file records notable user-visible changes to quchip.
   then need blocks of 301 and 2600 states at `K = 3`. Labels and supplied states
   above the cutoff raise. `quchip.check_truncation(result)` reports the sampled
   population in the sectors that connect above the cutoff, as a heuristic.
-  `Chip.dress()`, VNA sweeps, output spectra and correlations, steady-state,
-  stochastic, elimination, local-fit and partition workflows raise for an
-  active cutoff. Compare results at increasing `K`, because convergence need
-  not be monotone.
+  `Chip.dress()`, `VNA.sweep()`, `VNA.resonances()`, stochastic, elimination,
+  local-fit and partition workflows raise for an active cutoff. Compare results
+  at increasing `K`, because convergence need not be monotone.
   ([#180](https://github.com/quchip/quchip/pull/180))
 - `VNA.finite_power()` and `VNA.measure()` solve a chip that conserves the
   total excitation on the product labels with `N <= K`, without the product
@@ -367,7 +366,8 @@ This file records notable user-visible changes to quchip.
   frequency, and a traced sweep compiles one loop over its frequencies.
   Iterative blocks stop at convergence and check the residual of every
   response and derivative solve.
-  ([#124](https://github.com/quchip/quchip/pull/124),
+  ([#147](https://github.com/quchip/quchip/issues/147),
+  [#124](https://github.com/quchip/quchip/pull/124),
   [#154](https://github.com/quchip/quchip/pull/154),
   [#176](https://github.com/quchip/quchip/pull/176))
 - Labeled dressed queries, `drive_matrix_elements()`, weak-probe VNA and
@@ -754,6 +754,30 @@ This file records notable user-visible changes to quchip.
 
 #### Documentation and examples
 
+- The model reduction guide removes a readout from a two-way hanger feedline,
+  moved from the Purcell study. It describes the time-domain limits, the
+  return-path validity entry, one-port reference sections,
+  `eliminate(..., local=True)`, `eliminate_spectators()` and the exchange
+  pathways of an elimination step. An idle ring of 24 three-level transmons
+  evolves from a bare excitation in 24 of its 3²⁴ states and matches an
+  independent hopping propagator. On the driven chain,
+  `ExcitationCutoff(max_total=2)` matches the full solve to the solver
+  tolerance.
+  ([#164](https://github.com/quchip/quchip/pull/164))
+- The pulses guide sets its π amplitudes with `chip.rotation_amplitude()`
+  and reads both pulses as gates with `subspace_propagator()`. It checks the
+  CLEAR carrier against the conditional weak-probe reflection,
+  `VNA.sweep(..., when=...)`. The readout guide reads the resonances from the
+  poles of the response with `VNA.resonances()`, and the measurement guide
+  reads each run with `run_expect()`. The cookbook adds pulse `detuning=` and
+  `frame=`, and its conditional readout snippet uses a declared chip. The
+  backends guide describes exact excitation spaces, the excitation cutoff and
+  how each backend stores compact operators. The gradients guide states the
+  level-order check for traced devices. The first-chip guide describes the
+  fit history fields. The README gives χ_Z with ground-positive Z and prints
+  the values of its example chip. The README and the documentation front page
+  open with an overview figure that uses the models of four guides.
+  ([#164](https://github.com/quchip/quchip/pull/164))
 - `PHYSICS.md` §10.4 identifies the Löwdin map of
   `eliminate(..., method="exact")` with the canonical Schrieffer–Wolff
   rotation to all orders, provided the kept/dressed overlap block is
@@ -784,6 +808,10 @@ This file records notable user-visible changes to quchip.
 
 #### Development
 
+- An opt-in `release` test suite executes each example notebook again and
+  compares its textual outputs with the committed notebook. Run it before a
+  release with `python -m pytest -m release`.
+  ([#164](https://github.com/quchip/quchip/pull/164))
 - `CONTRIBUTING.md` documents the release-note format, and the pull request
   template uses checkboxes for AI assistance.
   ([#75](https://github.com/quchip/quchip/pull/75),
