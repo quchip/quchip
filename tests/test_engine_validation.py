@@ -77,6 +77,39 @@ class TestResolveDrivesValidation:
         with pytest.raises(ValueError, match="not connected"):
             _resolve_drives(chip, [op])
 
+    def test_unwired_line_names_the_drive_target_and_wire_call(self):
+        """A DriveOp on a line the chip never wired names the line, its target, and chip.wire()."""
+        from quchip.chip.chip import Chip
+        from quchip.control.drive import ChargeDrive
+        from quchip.control.envelopes import Square
+        from quchip.devices.transmon.duffing import DuffingTransmon
+        from quchip.engine.ir import DriveOp
+        from quchip.engine.assembly import _resolve_drives
+
+        q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
+        q1 = DuffingTransmon(freq=5.2, anharmonicity=-0.25, levels=3, label="q1")
+        chip = Chip([q0, q1])
+        op = DriveOp(
+            target_label="q0",
+            envelope=Square(duration=20.0, amplitude=0.01),
+            freq=5.0,
+            start_time=0.0,
+            drive_label="xy",
+        )
+        with pytest.raises(ValueError, match=r"Drive 'xy' targets 'q0'.*Call chip\.wire\(xy\) before solving"):
+            _resolve_drives(chip, [op])
+
+        d1 = ChargeDrive(q1, label="d1")
+        chip.wire(d1)
+        with pytest.raises(ValueError, match=r"Drive 'xy' targets 'q0'.*\['d1'\].*chip\.wire\(d1, xy\)"):
+            _resolve_drives(chip, [op])
+
+        from quchip.control.signal import Gain
+
+        chip.wire(d1, signal_chain=[Gain(d1, 0.5)])
+        with pytest.raises(ValueError, match=r"the signal chain.*chip\.wire\(d1, xy, signal_chain=\[\.\.\.\]\)"):
+            _resolve_drives(chip, [op])
+
     def test_mismatched_target_raises(self):
         """A DriveOp targeting a label other than its drive's wired target raises ValueError."""
         from quchip.chip.chip import Chip

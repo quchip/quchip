@@ -1483,13 +1483,22 @@ def _resolve_drives(
                 f"Devices: {list(chip.device_map.keys())}; couplings: {list(chip.coupling_map.keys())}."
             )
 
+        line_label = drive_op.drive_label
         if equipment is None:
-            raise ValueError("Chip has no control equipment configured.")
-        drive = next((d for d in equipment.lines if d.label == drive_op.drive_label), None)
-        if drive is None:
             raise ValueError(
-                f"No drive with label '{drive_op.drive_label}' found in equipment. "
-                f"Available: {[d.label for d in equipment.lines]}"
+                f"Drive '{line_label}' targets '{label}', but the chip has no wired lines. "
+                f"Call chip.wire({line_label}) before solving."
+            )
+        drive = next((d for d in equipment.lines if d.label == line_label), None)
+        if drive is None:
+            wired = [d.label for d in equipment.lines]
+            call = ", ".join([*wired, str(line_label)])
+            replaced = "the wired lines"
+            if equipment.signal_chain:
+                replaced, call = "the wired lines and the signal chain", f"{call}, signal_chain=[...]"
+            raise ValueError(
+                f"Drive '{line_label}' targets '{label}', but the chip does not wire it. Wired lines: {wired}. "
+                f"chip.wire() replaces {replaced}, so pass them all, e.g. chip.wire({call}), before solving."
             )
 
         if drive.target_label is None:
