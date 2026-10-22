@@ -130,7 +130,13 @@ class EliminationResult:
         Survivor noise remains separately owned. The source is not mutated.
     effective_params
         Per-survivor ``lamb_shift``, ``freq_after``, ``chi`` (GHz), and
-        ``purcell_rate``, ``kappa`` (1/ns). The Purcell rate summarizes the
+        ``purcell_rate``, ``kappa`` (1/ns). ``lamb_shift`` is ``freq_after``
+        minus the survivor's 0-to-1 transition on the diagonal of the incoming
+        Hamiltonian. With ``method="sw"``, ``freq_after`` is that transition on
+        the diagonal of the retained Hamiltonian, so it holds only the shift
+        through the removed mode. With ``method="exact"``, it is the labeled
+        dressed transition, so it also holds the dressing by couplings that
+        stay on the chip. The Purcell rate summarizes the
         first downward transition, summed over the removed device's channels.
         ``kappa`` is its isolated 1-to-0 rate. These diagnostics do not replace
         the retained jumps. ``chi`` is the full conditional mode-frequency
