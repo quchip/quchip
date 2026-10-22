@@ -96,11 +96,11 @@ def test_residual_norm_is_the_pedersen_infidelity_plus_a_phase_term():
     embedded[:4, :4] = ideal
     image = full @ embedded
     block, leaked = image[:4], np.vstack([np.zeros((4, 4)), image[4:]])
-    knob = ResolvedKnob("x", (("pulse.0.amplitude", 1.0),), (0.0,), 0.0, 1.0, -np.inf, np.inf, True)
+    knob = ResolvedKnob("x", (("pulse.0.amplitude", 1.0),), (0.0,), 0.0, 1.0, -np.inf, np.inf)
     residual = _Residual(lambda x: (block, leaked, 0.0), ideal, np.zeros((4, 0)), [knob])
     product = ideal.conj().T @ block
     gamma = float(np.angle(np.trace(product)))
-    r = residual(np.array([gamma]))
+    r = residual(np.array([0.0, gamma]))
     expected = 1 - average_fidelity(block, ideal) + (4 - abs(np.trace(product))) ** 2 / 20
     assert abs(float(r @ r) - expected) < 1e-14
     assert np.sum(np.abs(leaked) ** 2) > 1e-5
@@ -406,7 +406,8 @@ def test_drag_sx_calibrates_to_the_leakage_floor():
     assert calibration.knobs["beta"].value == pytest.approx(1 / (4 * np.pi * 0.33), rel=0.05)
     assert set(calibration.knobs) == {"amplitude", "beta"}
     assert calibration.solves < 120
-    assert set(calibration.spectators) == {"q1"} and calibration.placement_sensitivity < 1e-9
+    low, high = calibration.placement_infidelity
+    assert set(calibration.spectators) == {"q1"} and high - low < 1e-12
     assert calibration.repetitions[1] == pytest.approx(calibration.infidelity, rel=0.2, abs=1e-9)
     text = gates.describe()
     assert "SX" in text and "q0" in text
@@ -575,6 +576,37 @@ def test_calibration_leaves_a_zero_amplitude_start():
         warnings.simplefilter("ignore")
         value = tight.calibrate(max_nfev=5)[("SX", ("q",))].knobs["duration"].value
     assert 1e-6 <= value <= 2e-6
+
+
+def test_status_flags_unconverged_fits_and_stale_composites():
+    """A fit cut off by max_nfev reads unconverged, and a composite turns stale when its inner native is refitted."""
+    qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=2, label="q")
+    chip = Chip([qubit])
+    chip.wire(ChargeDrive(qubit, label="xy"))
+    element = complex(chip.drive_matrix_elements("q")["xy"])
+    seq = QuantumSequence(chip)
+    pulse = seq.schedule("xy", envelope=Square(duration=2.0, amplitude=0.1 / abs(element)), freq=chip.freq("q"),
+                         phase=-float(np.angle(element)))
+    gates = GateSet(chip, ["q"])
+    gates.add(NativeGate("SX", ("q",), seq, knobs={"amplitude": Knob(pulse, "amplitude")}, free_z=("q",)))
+
+    def build(gates):
+        twice = QuantumSequence(chip)
+        twice.extend(gates.schedule([("SX", "q"), ("SX", "q")]))
+        return twice, {}
+
+    gates.add(NativeGate.composite("X", ("q",), build, free_z=("q",)))
+    with pytest.warns(UserWarning, match="unconverged"):
+        assert gates.calibrate("SX", max_nfev=1)[("SX", ("q",))].status == "unconverged"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        gates.calibrate()
+        assert gates.calibration("X", "q").status != "stale"
+        gates.calibrate("SX")
+    assert gates.calibration("X", "q").status == "stale"
+    assert "stale" in gates.describe()
+    with pytest.warns(UserWarning, match="calibrated again"):
+        gates.unitary([("X", "q")])
 
 
 def test_automatic_cutoff_recalibrates_until_the_gate_converges():

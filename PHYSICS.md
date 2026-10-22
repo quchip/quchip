@@ -3469,10 +3469,10 @@ change under a ten times smaller step, knobs at a bound, the infidelity of
 the gate's own block with all spectators in `|0>` and with each spectator in
 `|1>` (both with the implemented corrections), and the infidelity after `N`
 repetitions. Over sampled start times in [0, 100) ns at fixed frame offsets,
-it gives the largest entrywise change of `V` and the smallest and largest
-`1 - F_avg` with the implemented corrections. For a reusable gate with one
-carrier, the change is the conjugation by `C`, expressed in the computational
-frame. When the ideal commutes with it, as for the built-in SX and X, only the
+it gives the smallest and largest `1 - F_avg` with the implemented
+corrections. A reusable gate with one carrier changes with the start time by
+the conjugation by `C`, expressed in the computational frame. When the ideal
+commutes with it, as for the built-in SX and X, only the
 orientation of the coherent error changes and `F_avg` stays the same.
 Otherwise the operation itself changes with the start time: an SX on a 5 GHz
 qubit driven at `freq = 4.99` with `detuning = 0.01` has its axis turned by

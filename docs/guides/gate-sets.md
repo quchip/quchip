@@ -31,8 +31,12 @@ a warning:
 
 - `"at_bound"`: a knob ends at a bound, so the optimum is outside the range.
 - `"weak_direction"`: the fit does not determine some knob combination.
+- `"unconverged"`: the fit used all `max_nfev` evaluations before it converged.
 - `"solver_floor"`: the error is close to the integrator's unitarity defect.
 - `"poor_fit"`: the infidelity is above the target (default `1e-3`).
+- `"stale"`: a native inside this composite was calibrated again after it.
+  The composite keeps the earlier pulses, and a circuit that uses it warns.
+  Calibrate the composite again to use the new ones.
 
 `gates.calibration("ZX90", ("q0", "q1")).summary()` prints the full report.
 

@@ -75,8 +75,6 @@ class KnobResult:
         True when the value sits on a bound.
     change : float
         ``(value - initial) / scale``.
-    fixed : bool
-        True when calibration kept the template value.
     """
 
     initial: float
@@ -86,7 +84,6 @@ class KnobResult:
     scale: float
     at_bound: bool
     change: float
-    fixed: bool
 
 
 @dataclass(eq=False)
@@ -138,8 +135,10 @@ class GateCalibration:
     options, frame, cutoff
         Solver settings of the calibration.
     status : str
-        ``"ok"``, ``"at_bound"``, ``"weak_direction"``, ``"solver_floor"``,
-        ``"poor_fit"`` (infidelity above the calibration target), or ``"stale"``.
+        ``"ok"``, ``"at_bound"``, ``"weak_direction"``, ``"unconverged"``
+        (the fit used all its evaluations), ``"solver_floor"``, ``"poor_fit"``
+        (infidelity above the calibration target), or ``"stale"`` (a native
+        inside this composite was calibrated again after it).
     sequence : QuantumSequence
         Calibrated pulses with the trailing ``vz`` entries.
     spectators : dict of str to float
@@ -149,15 +148,8 @@ class GateCalibration:
         Average gate fidelity of the gate's own block with every spectator in
         level 0, with the implemented corrections. ``None`` without
         spectators in the calibration block.
-    placement_sensitivity : float or None
-        Sampled largest entrywise change of the dressed computational block
-        over start times in [0, 100) ns at fixed frame offsets. On a reusable
-        gate the cache applies this change exactly. When the ideal commutes
-        with the placement rotation, only the orientation of the coherent
-        error changes; otherwise the operation itself changes with the start
-        time, for example when a carrier is away from its qubit's frequency.
     placement_infidelity : tuple of float or None
-        Smallest and largest ``1 - F_avg`` over the same start times, with
+        Smallest and largest ``1 - F_avg`` over start times in [0, 100) ns, with
         the implemented corrections. A native whose pieces use different
         carriers, such as the echoed cross-resonance gate, turns each piece
         with its own carrier, so its error can change with the start time.
@@ -202,7 +194,6 @@ class GateCalibration:
     status: str
     sequence: Any = None
     spectators: dict[str, float] = field(default_factory=dict)
-    placement_sensitivity: float | None = None
     placement_infidelity: tuple[float, float] | None = None
     ground_fidelity: float | None = None
     repetitions: dict[int, float] = field(default_factory=dict)
@@ -228,7 +219,7 @@ class GateCalibration:
             f"unitarity defect = {self.unitarity_defect:.1e}",
         ]
         for name, knob in self.knobs.items():
-            flags = " (fixed)" if knob.fixed else " (at bound)" if knob.at_bound else ""
+            flags = " (at bound)" if knob.at_bound else ""
             lines.append(f"  {name:>18s} = {knob.value:+.6g}  from {knob.initial:+.6g}, "
                          f"{knob.change:+.2f} scales{flags}")
         for qubit, phase in self.free_z.items():
@@ -245,8 +236,6 @@ class GateCalibration:
         if self.repetitions:
             lines.append("  repetitions: " + ", ".join(f"N={n} 1 - F = {v:.2e}"
                                                       for n, v in self.repetitions.items()))
-        if self.placement_sensitivity is not None:
-            lines.append(f"  placement sensitivity = {self.placement_sensitivity:.2e}")
         if self.placement_infidelity is not None:
             low, high = self.placement_infidelity
             lines.append(f"  start times in [0, 100) ns: 1 - F = {low:.2e} to {high:.2e}")
@@ -275,6 +264,7 @@ class FitOutcome:
     names: list[str]
     seconds: float
     jacobian_step_change: float = 0.0
+    converged: bool = True
 
 
 class _Residual:
@@ -293,19 +283,17 @@ class _Residual:
         self.d = ideal.shape[0]
         self.initial = np.array([knob.initial for knob in knobs], dtype=float)
         self.scale = np.array([knob.scale for knob in knobs], dtype=float)
-        self.free = np.array([i for i, knob in enumerate(knobs) if not knob.fixed], dtype=int)
+        self.n_knobs = len(knobs)
         self.cache: dict[bytes, tuple[np.ndarray, np.ndarray, float]] = {}
         self.solves = 0
         self.best = np.inf
         self.history: list[tuple[int, float]] = []
-        self.lower = np.full(self.free.size, -np.inf)
-        self.upper = np.full(self.free.size, np.inf)
+        self.lower = np.full(self.n_knobs, -np.inf)
+        self.upper = np.full(self.n_knobs, np.inf)
         self.step = DIFF_STEP
 
     def values(self, z: np.ndarray) -> np.ndarray:
-        x = self.initial.copy()
-        x[self.free] = self.initial[self.free] + self.scale[self.free] * z[: self.free.size]
-        return x
+        return self.initial + self.scale * z[: self.n_knobs]
 
     def block(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
         key = np.asarray(x, dtype=float).tobytes()
@@ -321,7 +309,7 @@ class _Residual:
         return np.concatenate([diff.real.ravel(), diff.imag.ravel(), leak.real.ravel(), leak.imag.ravel()])
 
     def __call__(self, z: np.ndarray) -> np.ndarray:
-        n_free = self.free.size
+        n_free = self.n_knobs
         n_phases = self.z_bits.shape[1]
         before = self.solves
         block, leaked, _ = self.block(self.values(z))
@@ -339,7 +327,7 @@ class _Residual:
     def jacobian(self, z: np.ndarray, step: float | None = None) -> np.ndarray:
         """Return ``∂r/∂z``: forward differences for the knobs, exact columns for the phases."""
         step = self.step if step is None else step
-        n_free = self.free.size
+        n_free = self.n_knobs
         n_phases = self.z_bits.shape[1]
         phases, gamma = z[n_free:n_free + n_phases], float(z[-1])
         block, leaked, _ = self.block(self.values(z))
@@ -424,27 +412,26 @@ def fit_block(
     """
     began = time.perf_counter()
     residual = _Residual(evaluate, ideal, z_bits, knobs)
-    free = residual.free
+    n_knobs = len(knobs)
     n_phases = z_bits.shape[1]
-    lower = np.array([knobs[i].lower for i in free], dtype=float)
-    upper = np.array([knobs[i].upper for i in free], dtype=float)
-    initial = residual.initial[free]
-    scale = residual.scale[free]
+    lower = np.array([knob.lower for knob in knobs], dtype=float)
+    upper = np.array([knob.upper for knob in knobs], dtype=float)
+    initial, scale = residual.initial, residual.scale
     lb = np.concatenate([(lower - initial) / scale, np.full(n_phases + 1, -np.inf)])
     ub = np.concatenate([(upper - initial) / scale, np.full(n_phases + 1, np.inf)])
 
     def start_vector(values: np.ndarray) -> np.ndarray:
-        u = (np.asarray(values, dtype=float)[free] - initial) / scale
+        u = (np.asarray(values, dtype=float) - initial) / scale
         block, leaked, _ = residual.block(residual.values(np.concatenate([u, np.zeros(n_phases + 1)])))
         return np.concatenate([u, residual.phase_start(block, leaked)])
 
-    residual.lower = lb[: free.size]
-    residual.upper = ub[: free.size]
+    residual.lower = lb[:n_knobs]
+    residual.upper = ub[:n_knobs]
     vectors = [(start_vector(values), provenance) for values, provenance in starts]
-    if explore and free.size:
+    if explore and n_knobs:
         best_start = min(vectors, key=lambda item: float(np.sum(residual(item[0]) ** 2)))
         found = minimize(lambda z: float(np.sum(residual(z) ** 2)), best_start[0], method="Nelder-Mead",
-                         bounds=list(zip(lb, ub)), options={"maxfev": 40 * (free.size + 1), "xatol": 1e-6,
+                         bounds=list(zip(lb, ub)), options={"maxfev": 40 * (n_knobs + 1), "xatol": 1e-6,
                                                             "fatol": 1e-12})
         values = residual.values(found.x)
         vectors.append((start_vector(values), "explore"))
@@ -459,20 +446,21 @@ def fit_block(
     result, provenance = best
     values = residual.values(result.x)
     block, leaked, defect = residual.block(values)
-    phases = result.x[free.size:free.size + n_phases]
-    names = [knobs[i].name for i in free] + [f"z {name}" for name in phase_names] + ["global phase"]
+    phases = result.x[n_knobs:n_knobs + n_phases]
+    names = [knob.name for knob in knobs] + [f"z {name}" for name in phase_names] + ["global phase"]
     jacobian = residual.jacobian(result.x)
     change = 0.0
-    if free.size:
+    if n_knobs:
         finer = residual.jacobian(result.x, step=residual.step / 10)
-        norms = np.linalg.norm(jacobian[:, :free.size], axis=0)
-        differences = np.linalg.norm(finer[:, :free.size] - jacobian[:, :free.size], axis=0)
+        norms = np.linalg.norm(jacobian[:, :n_knobs], axis=0)
+        differences = np.linalg.norm(finer[:, :n_knobs] - jacobian[:, :n_knobs], axis=0)
         change = float(np.max(differences / np.maximum(norms, np.finfo(float).tiny)))
     history = np.array(residual.history, dtype=float).reshape(-1, 2)
     return FitOutcome(values=values, phases=np.asarray(phases, dtype=float), global_phase=float(result.x[-1]),
                       block=block, leaked=leaked, defect=defect, cost=float(2 * result.cost), solves=residual.solves,
                       seed=provenance, history=history, jacobian=jacobian, names=names,
-                      seconds=time.perf_counter() - began, jacobian_step_change=change)
+                      seconds=time.perf_counter() - began, jacobian_step_change=change,
+                      converged=bool(result.status != 0))
 
 
 def report(
@@ -494,11 +482,11 @@ def report(
     at_bound = False
     for knob, value in zip(knobs, outcome.values):
         tolerance = 1e-6 * knob.scale
-        hit = (not knob.fixed) and (value - knob.lower < tolerance or knob.upper - value < tolerance)
+        hit = value - knob.lower < tolerance or knob.upper - value < tolerance
         at_bound = at_bound or hit
         knob_results[knob.name] = KnobResult(initial=knob.initial, value=float(value), lower=knob.lower,
                                              upper=knob.upper, scale=knob.scale, at_bound=bool(hit),
-                                             change=float((value - knob.initial) / knob.scale), fixed=knob.fixed)
+                                             change=float((value - knob.initial) / knob.scale))
     z = np.exp(1j * (z_bits @ outcome.phases))
     block = z[:, None] * outcome.block
     product = ideal.conj().T @ block
@@ -511,6 +499,8 @@ def report(
         status = "at_bound"
     elif receipt["rank_deficient"] or receipt["jacobian_condition_number"] > condition_limit:
         status = "weak_direction"
+    elif not outcome.converged:
+        status = "unconverged"
     elif 1.0 - fidelity < 10 * outcome.defect:
         status = "solver_floor"
     else:

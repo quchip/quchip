@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
@@ -42,15 +41,12 @@ class Knob:
         1 MHz for ``freq`` and ``detuning``, 0.1 rad for ``phase``,
         ``max(|x0|, 0.1 ns)`` for envelope times, and ``max(|x0|, 1e-3)``
         otherwise.
-    fixed : bool, default False
-        Keep the template value during calibration.
     """
 
     ref: Any
     field: str | None = None
     bounds: tuple[float | None, float | None] | None = None
     scale: float | None = None
-    fixed: bool = False
 
 
 @dataclass(frozen=True)
@@ -71,8 +67,6 @@ class ResolvedKnob:
         Fit scale.
     lower, upper : float
         Bounds, ``-inf`` or ``inf`` when open.
-    fixed : bool
-        Whether calibration keeps the template value.
     """
 
     name: str
@@ -82,7 +76,6 @@ class ResolvedKnob:
     scale: float
     lower: float
     upper: float
-    fixed: bool
 
     def bindings(self, value: float) -> dict[str, float]:
         """Return the pulse-field values for one knob value."""
@@ -105,8 +98,8 @@ def _target_path(ref: Any, field: str | None, sequence: "QuantumSequence") -> st
         available = [key for key in sequence.parameters if key.startswith("pulse.")]
         if not (len(parts) == 3 and parts[0] == "pulse" and parts[1].isdigit()):
             raise ValueError(
-                f"Gate knobs move pulse fields, and {path!r} is not one. Rebind chip parameters with "
-                f"GateSet.with_chip(). Pulse paths: {available}."
+                f"Gate knobs move pulse fields, and {path!r} is not one. To recalibrate after a chip change, "
+                f"build the gate set on the changed chip. Pulse paths: {available}."
             )
         if path not in sequence.parameters:
             raise KeyError(f"Unknown sequence parameter path {path!r}. Pulse paths: {available}.")
@@ -170,7 +163,7 @@ def resolve_knob(name: str, knob: Knob, sequence: "QuantumSequence") -> Resolved
         raise ValueError(f"Knob {name!r} needs a positive scale.")
     if not lower <= initial <= upper:
         raise ValueError(f"Knob {name!r} starts at {initial:g}, outside its bounds [{lower:g}, {upper:g}].")
-    return ResolvedKnob(name, tuple(pairs), template, initial, scale, lower, upper, bool(knob.fixed))
+    return ResolvedKnob(name, tuple(pairs), template, initial, scale, lower, upper)
 
 
 def bind_pulses(sequence: "QuantumSequence", bindings: Mapping[str, Any]) -> "QuantumSequence":
@@ -343,10 +336,6 @@ class NativeGate:
         if self.sequence is None:
             raise ValueError(f"Composite native {self.name} has no sequence before it is built.")
         return [resolve_knob(name, knob, self.sequence) for name, knob in self.knobs.items()]
-
-    def copy(self) -> "NativeGate":
-        """Return a copy that shares the template sequence."""
-        return copy.copy(self)
 
     def __repr__(self) -> str:
         kind = "composite " if self.is_composite else ""

@@ -585,6 +585,9 @@ class GateSet:
         self._versions[key] = self._versions.get(key, 0) + 1
         calibration.version = self._versions[key]
         self._calibrations[key] = calibration
+        for other in self._calibrations.values():
+            if other.dependencies.get(key, calibration.version) != calibration.version:
+                other.status = "stale"
         self._entries.pop(key, None)
         self._placed.clear()
         self._post_checks(native, calibration)
@@ -701,20 +704,14 @@ class GateSet:
             columns, energies = self._states(block_qubits)
             total = solver_levels(self._lab_problem().engine_result).sum(axis=1)
             correction = self._frame_correction(block_qubits, self._offsets(calibration.sequence))
-            reference = None
-            worst = 0.0
             errors = []
             # Start times spread over 100 ns without a common period, so no carrier aliases them.
             for start in np.concatenate([[0.0], 100.0 * ((np.arange(1, 21) * 0.6180339887498949) % 1.0)]):
                 placed = entry.placed(float(start), {}, total, self._idle_of())
                 block = project_computational(placed @ columns, columns, energies, float(start),
                                               float(start) + entry.duration, block_qubits)
-                matrix = np.asarray(block.matrix)
-                if reference is None:
-                    reference = matrix
-                worst = max(worst, float(np.abs(matrix - reference).max()))
-                errors.append(1.0 - float(average_fidelity(correction[:, None] * matrix, calibration.ideal)))
-            calibration.placement_sensitivity = worst
+                errors.append(1.0 - float(average_fidelity(correction[:, None] * np.asarray(block.matrix),
+                                                           calibration.ideal)))
             calibration.placement_infidelity = (min(errors), max(errors))
         for count in (1, 4, 20) if entry.covariant else (1, 4):
             composed = self.unitary([(native.name, native.qubits)] * count, qubits=block_qubits)
@@ -946,7 +943,11 @@ class GateSet:
             if not self._calibrating:
                 raise KeyError(f"{key[0]} on {key[1]} is not calibrated; run calibrate() first.")
             self._calibrate(key, max_nfev=200, explore=None)
-        return self._calibrations[key]
+        calibration = self._calibrations[key]
+        if calibration.status == "stale":
+            warnings.warn(f"{key[0]} on {key[1]} holds natives that were calibrated again after it; its pulses "
+                          "keep the earlier ones. Calibrate it again to use the new ones.", UserWarning, stacklevel=4)
+        return calibration
 
     def _offsets(self, sequence: Any) -> dict[str, float]:
         from quchip.control.sequence import _FrameShiftEntry
@@ -1196,8 +1197,6 @@ class GateSet:
                              "uncalibrated")
                 continue
             status = calibration.status
-            if any(self._versions.get(dep, 0) != version for dep, version in calibration.dependencies.items()):
-                status = "stale"
             lines.append(f"{native.name:>8s} {','.join(native.qubits):>12s} {native.duration:7.1f} "
                          f"{calibration.infidelity:10.2e} {calibration.leakage:9.1e}  {status}")
         return "\n".join(lines)
