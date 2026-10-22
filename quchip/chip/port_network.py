@@ -27,7 +27,7 @@ from quchip.engine.reference import (
     has_colored_noise,
     source_occupation,
 )
-from quchip.utils.jax_utils import contains_tracer, select_array_module
+from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar, select_array_module
 from quchip.utils.labeling import auto_label, resolve_label
 from quchip.utils.values import copy_value
 from quchip.utils.deprecation import warn_renamed
@@ -1338,12 +1338,13 @@ class PortNetwork:
 
         compiled = self._compile() if _compiled is None else _compiled
         operators = {label: port_channels[label].coupling for label in expected}
+        port_devices = {port.label: tuple(resolve_label(target) for target in port._targets) for port in self._ports}
         channels: list[SLHChannel] = []
         for entry, field_channel in zip(compiled.channels, self._field_channels(compiled), strict=True):
             exposure, mapping = entry.exposure, entry.coupling
             input_occupation = field_channel.input_occupation
             frame_frequency = self._common_frame_frequency(
-                mapping, port_channels, boundary=f"exposure {exposure.label!r}"
+                mapping, port_channels, boundary=f"exposure {exposure.label!r}", port_devices=port_devices,
             )
             coupling = self._materialize_coupling(mapping, operators, key=exposure.label)
             if (
@@ -2540,6 +2541,7 @@ class PortNetwork:
         channels: Mapping[str, Any],
         *,
         boundary: str,
+        port_devices: Mapping[str, tuple[str, ...]],
     ) -> Any:
         """Return one carrier for a statically composed output channel; ``None`` without coupling."""
         sources = cls._active_mapping_sources(mapping)
@@ -2553,11 +2555,23 @@ class PortNetwork:
             )
             for source in sources[1:]
         ):
+            devices = list(dict.fromkeys(label for source in sources for label in port_devices[source]))
+            carriers = [maybe_concrete_scalar(channels[source].collapse.frame_frequency) for source in sources]
+            if any(carrier is None for carrier in carriers):
+                reason = (
+                    "their frame frequencies are not statically known to be equal. "
+                    "Traced frequencies must share the same traced value."
+                )
+            else:
+                rates = ", ".join(
+                    f"{source!r} at {carrier:.6g} GHz" for source, carrier in zip(sources, carriers, strict=True)
+                )
+                reason = f"their channels rotate at different frequencies: {rates}."
             raise ValueError(
-                f"PortNetwork cannot statically compose {boundary} from ports {list(sources)}: their "
-                "rotating-frame frequencies are not statically known to be equal (traced frequencies must "
-                "share the same traced value). Use the lab/common frame; time-dependent collapse channels "
-                "are not implemented."
+                f"PortNetwork cannot statically compose {boundary} from ports {list(sources)} on devices "
+                f"{devices}. In the selected frame, {reason} Use frame=\"lab\" or a common frame for these "
+                "devices. frame=\"auto\" can also compose it when it gives them one frequency, as it does "
+                "for devices on one cascade. Time-dependent collapse channels are not supported."
             )
         return reference
 

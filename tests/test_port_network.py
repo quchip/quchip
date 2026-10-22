@@ -174,8 +174,33 @@ def test_cascade_rejects_mixed_rotating_frame_frequencies() -> None:
         frame={"a": 5.0, "b": 6.0},
     )
 
-    with pytest.raises(ValueError, match="not statically known to be equal"):
+    with pytest.raises(ValueError, match="rotate at different frequencies"):
         chip.resolve()
+
+
+def test_feedline_exposure_names_its_devices_and_the_frames_that_work() -> None:
+    """An exposure across readouts in unequal frames names the devices and the frames that can compose it."""
+
+    def feedline_chip(frame: Any) -> Chip:
+        r1 = Resonator(freq=7.0, levels=2, label="r1")
+        r2 = Resonator(freq=7.2, levels=2, label="r2")
+        line = PortNetwork(label="feedline")
+        rate = 2 * np.pi * 1e-3 / 2
+        right = [line.port(f"{mode.label}_right", target=mode, rate=rate) for mode in (r1, r2)]
+        left = [line.port(f"{mode.label}_left", target=mode, rate=rate) for mode in (r1, r2)]
+        line.cascade(*right)
+        line.cascade(*reversed(left))
+        line.expose("in", input=right[0], output=left[0])
+        line.expose("out", input=left[-1], output=right[-1])
+        return Chip([r1, r2], port_network=line, frame=frame)
+
+    with pytest.raises(ValueError, match=r"statically compose exposure 'in'.*devices \['r2', 'r1'\]") as error:
+        feedline_chip("rotating").resolve()
+    for phrase in ("different frequencies", 'frame="auto"', "common frame", 'frame="lab"'):
+        assert phrase in str(error.value)
+    # The cascade constraint gives both readouts one "auto" frequency.
+    frequencies = feedline_chip("auto").resolve().resolved_frame.frequencies
+    assert frequencies["r1"] == frequencies["r2"]
 
 
 def test_phase_component_enters_series_coupling_and_generated_hamiltonian() -> None:
