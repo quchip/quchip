@@ -638,6 +638,36 @@ This file records notable user-visible changes to quchip.
   ([#200](https://github.com/quchip/quchip/issues/200),
   [#205](https://github.com/quchip/quchip/pull/205))
 
+- Dressed label queries, such as `dispersive_shift()`, `freq(..., when=...)`,
+  `static_zz()` and `kerr_matrix()`, warn when a label's excitation sector
+  needs more levels than a truncated device keeps. The warning names the device
+  and the `levels` that remove it. Values do not change. Previously, a
+  two-level `Resonator` gave a dispersive shift of +9.98 MHz with no warning,
+  against -0.99 MHz with three levels. A `Qubit` is not a truncation and never
+  warns.
+  ([#211](https://github.com/quchip/quchip/pull/211))
+- After an earlier `eliminate(..., method="exact")` step,
+  `effective_params[...]["purcell_rate"]` and `["kappa"]` count the removed
+  mode's own loss channels. Previously, both read 0.0, because the channel acted
+  on several devices in the retained coordinates. The retained channels did not
+  change.
+  ([#211](https://github.com/quchip/quchip/pull/211))
+- Chips with a port network, sequences that hold them, `SimulationResult`,
+  `SParameterResult` and `ResonanceResult` pickle and load. Previously,
+  `pickle.dumps` raised on each of them. A loaded chip rebuilds its caches on
+  demand.
+  ([#211](https://github.com/quchip/quchip/pull/211))
+- Error messages name the cause and the fix in five cases. `fit_a_dress()` says
+  when it read a coupling's declared strength as a dressed `cross_kerr` target.
+  A solve that meets an unwired line names `chip.wire(...)`. `matrix()` without
+  `t` names the time-dependent terms and their rotation frequencies. A carried
+  collapse channel or a feedline exposure that a frame cannot compose names
+  its devices and the frames that work, such as `frame="auto"`.
+  ([#211](https://github.com/quchip/quchip/pull/211))
+- `Chip.describe()` prints `T1`, `T2` and `thermal_occupation` once for each
+  device. Previously, a device that declares them printed them twice.
+  ([#211](https://github.com/quchip/quchip/pull/211))
+
 #### Performance
 
 - On QuTiP, exact excitation spaces and `ExcitationCutoff` solves store each
@@ -781,6 +811,17 @@ This file records notable user-visible changes to quchip.
 - `PHYSICS.md` §4.2 describes result frames and dressed label targets, §6.5
   the sector routes of `steadystate()` and the output statistics, §6.6 the
   route record, and §9 the dressed meaning of level labels. ([#205](https://github.com/quchip/quchip/pull/205))
+
+- The `effective_params` docstring of `EliminationResult` states what
+  `lamb_shift` and `freq_after` mean under each method. `method="sw"` reports
+  the shift through the removed mode. `method="exact"` reports the labeled
+  dressed transition, which includes couplings that stay on the chip.
+  ([#211](https://github.com/quchip/quchip/pull/211))
+- `PHYSICS.md` lists `VNA.resonances()` among the workflows that raise under a
+  cutoff, names the fallback basis of the sector preconditioner, and corrects
+  two stale source references. The README no longer describes the removed
+  quchip.org walkthrough.
+  ([#211](https://github.com/quchip/quchip/pull/211))
 
 #### Development
 
