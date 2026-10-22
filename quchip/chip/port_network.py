@@ -2569,9 +2569,10 @@ class PortNetwork:
                 reason = f"their channels rotate at different frequencies: {rates}."
             raise ValueError(
                 f"PortNetwork cannot statically compose {boundary} from ports {list(sources)} on devices "
-                f"{devices}. In the selected frame, {reason} Use frame=\"lab\" or a common frame for these "
-                "devices. frame=\"auto\" can also compose it when it gives them one frequency, as it does "
-                "for devices on one cascade. Time-dependent collapse channels are not supported."
+                f"{devices}. In the selected frame, {reason} Use frame=\"lab\". When the ports change the "
+                "total excitation number by the same amount, as lowering ports do, a common frame for these "
+                "devices also works, and frame=\"auto\" gives one to devices on one cascade. Time-dependent "
+                "collapse channels are not supported."
             )
         return reference
 

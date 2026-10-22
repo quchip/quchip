@@ -98,7 +98,7 @@ def test_effective_channel_with_unequal_total_changes_needs_the_lab_frame():
     jump = np.kron(lowering, np.eye(2)) + np.kron(np.eye(2), lowering.T)
     terms = EffectiveTerms(("a", "b"), (2, 2), np.zeros((4, 4)), channels=(CollapseChannel(jump, 0.03, "mixed"),))
     chip = Chip(_devices()[:2], effective_terms=[terms])
-    with pytest.raises(ValueError, match=r'common frame cannot give them one phase\. Use frame="lab"'):
+    with pytest.raises(ValueError, match=r'no nonzero common frame gives them one phase\. Use frame="lab"'):
         chip.resolve(frame=5.0)
     chip.resolve(frame="lab")
 

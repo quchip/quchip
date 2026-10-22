@@ -889,8 +889,8 @@ def _band_phase_error(source: str, bands: tuple[Any, ...], frequencies: tuple[An
         )
     else:
         advice = (
-            "The bands change the total excitation number by different amounts, so a common frame cannot "
-            'give them one phase. Use frame="lab".'
+            "The bands change the total excitation number by different amounts, so no nonzero common frame "
+            'gives them one phase. Use frame="lab".'
         )
     return ValueError(
         f"{source} has operator bands with different phases in the selected frame. "
