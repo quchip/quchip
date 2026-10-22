@@ -639,18 +639,24 @@ This file records notable user-visible changes to quchip.
   [#205](https://github.com/quchip/quchip/pull/205))
 
 - Dressed label queries, such as `dispersive_shift()`, `freq(..., when=...)`,
-  `static_zz()` and `kerr_matrix()`, warn when the couplings mix a label, at
-  second or fourth order, with states beyond the levels of a truncated device.
-  The warning names the device and the `levels` that remove it. Values do not
-  change. Previously, a two-level `Resonator` gave a dispersive shift of
-  +9.98 MHz with no warning, against -0.99 MHz with three levels. A `Qubit` is
-  not a truncation and never warns.
+  `static_zz()` and `kerr_matrix()`, warn when the couplings mix a label with
+  states beyond the levels of a truncated device. The check counts coupling
+  steps for dispersive, nondegenerate couplings. It warns at second and fourth
+  order, and up to the order at which the excitations of the label first
+  interact, such as sixth order for ZZ through two couplers in series. Under
+  `Exact()`, steps that create excitations also count. Diagonal couplings,
+  such as `CrossKerr`, do not. The warning names the device and the `levels`
+  that remove it. Values do not change. Previously, a two-level `Resonator`
+  gave a dispersive shift of +9.98 MHz with no warning, against -0.99 MHz with
+  three levels. A `Qubit` is not a truncation and never warns.
   ([#211](https://github.com/quchip/quchip/pull/211))
 - After an earlier `eliminate(..., method="exact")` step,
   `effective_params[...]["purcell_rate"]` and `["kappa"]` count the removed
   mode's own loss channels. Previously, both read 0.0, because the channel acted
-  on several devices in the retained coordinates. The retained channels did not
-  change.
+  on several devices in the retained coordinates. On every route, they now
+  count only the channels that the mode declares, as `PHYSICS.md` states.
+  Previously, `local=False` also counted a retained channel that acted on the
+  mode alone. The retained channels did not change.
   ([#211](https://github.com/quchip/quchip/pull/211))
 - Chips with a port network, sequences that hold them, `SimulationResult`,
   `SParameterResult` and `ResonanceResult` pickle and load. Previously,
