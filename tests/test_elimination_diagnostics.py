@@ -1,4 +1,4 @@
-"""Labeling margins and typed errors of eliminate() (#198), and its virtual-state pathways (#199)."""
+"""Labeling margins and typed errors of eliminate() (#198), its virtual-state pathways (#199), and loss diagnostics."""
 
 import itertools
 
@@ -172,3 +172,30 @@ def test_pathways_reject_other_routes_and_states_outside_the_retained_space():
         result.pathways({"qx": 1})
     with pytest.raises(ValueError, match="Level 3 of 'qa' is outside its 3 levels"):
         result.pathways({"qa": 3})
+
+
+@pytest.mark.unit
+def test_readout_loss_diagnostics_survive_an_earlier_exact_elimination():
+    """After an exact bus step, the readout's Purcell rate and kappa agree with the values after an SW bus step."""
+    from quchip import RWA
+
+    q1 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q1")
+    q2 = DuffingTransmon(freq=5.4, anharmonicity=-0.25, levels=3, label="q2")
+    bus = Resonator(freq=6.4, levels=3, label="bus")
+    readout = Resonator(freq=7.0, levels=3, internal_quality_factor=200_000, label="r1")
+    chip = Chip([q1, q2, bus, readout],
+                [Capacitive(q1, bus, g=0.07), Capacitive(q2, bus, g=0.07), Capacitive(q1, readout, g=0.08)],
+                approximation=RWA())
+    kappa = 2 * np.pi * 7.0 / 200_000
+    for method, local in (("sw", False), ("exact", False), ("sw", True)):
+        reference, actual = (
+            eliminate(eliminate(chip, "bus", method=first).chip, "r1", method=method, local=local)
+            .effective_params["q1"] for first in ("sw", "exact"))
+        # The two bus routes give retained coordinates that differ at relative order (g/Delta)^2 = (0.07/1.4)^2
+        # = 2.5e-3. The tolerance allows four times that.
+        np.testing.assert_allclose(float(actual["kappa"]), kappa, rtol=1e-2)
+        np.testing.assert_allclose(float(actual["purcell_rate"]), float(reference["purcell_rate"]), rtol=1e-2)
+        # The Purcell rate is kappa (g/Delta)^2 = kappa (0.08/2.0)^2 at leading order. The bus shift of q1, about
+        # 3.5 MHz, changes it by 3.5e-3, and the next order in g/Delta by 3 (0.08/2.0)^2 = 4.8e-3. The tolerance
+        # allows about twice their sum.
+        np.testing.assert_allclose(float(actual["purcell_rate"]), kappa * (0.08 / 2.0) ** 2, rtol=2e-2)

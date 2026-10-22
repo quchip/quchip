@@ -1151,7 +1151,11 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
         internal_rate = internal_rate - 2.0 * rate * _real(adjoint[0, row])
 
     def inherit_channel(channel: CollapseChannel, support_labels: tuple[str, ...], name: str,
-                        omitted: tuple[str, ...]) -> None:
+                        omitted: tuple[str, ...], *, owned: bool) -> None:
+        # The loss diagnostics sum the channels of the removed mode. After an
+        # earlier exact step, such a channel acts in retained coordinates on
+        # several devices, so its support alone does not identify it.
+        diagnosed = support_labels == (mode_label,) or (owned and set(support_labels) <= set(labels))
         rate = materialize_expr(channel.rate, chip.backend)
         changes = None
         if sectors is not None:
@@ -1162,7 +1166,7 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
                   tuple(chip[label].local_space().dimension for label in support_labels), rate, name, changes,
                   omitted)
             add_internal_loss(channel.operator, support_labels, rate, bases=chip_bases)
-        if local and support_labels != (mode_label,):
+        if local and not diagnosed:
             return
         in_energy, transformed = transform_operator(channel.operator, support_labels)
         if not local:
@@ -1176,13 +1180,15 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
             responses = omitted_by(support_labels, omitted)
             if responses:
                 channel_responses[name] = responses
-        if support_labels == (mode_label,):
+        if diagnosed:
             p_index = np.flatnonzero(ctx.p_mask)
             ground = basis_row(p_index, labels, dims)
+            excited = bare_index(list(support_labels), tuple(dims[labels.index(label)] for label in support_labels),
+                                  mode_label)
             for survivor in touching_labels:
                 row = basis_row(p_index, labels, dims, survivor)
                 effective_params[survivor]["purcell_rate"] += rate * abs(transformed[ground, row]) ** 2
-                effective_params[survivor]["kappa"] += rate * abs(in_energy[0, 1]) ** 2
+                effective_params[survivor]["kappa"] += rate * abs(in_energy[0, excited]) ** 2
 
     mode_owner = chip[mode_label] if local else numeric_mode
     for operator, rate, support, owner_label, name, _paths, owner in contributions:
@@ -1191,7 +1197,8 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
                               else contribution_labels)
             inherit_channel(CollapseChannel(operator, rate, name), support_labels,
                             name if owner is mode_owner else f"{owner_label}.{name}",
-                            owner.omitted_responses.get(name, ()) if isinstance(owner, EffectiveTerms) else ())
+                            owner.omitted_responses.get(name, ()) if isinstance(owner, EffectiveTerms) else (),
+                            owned=owner is mode_owner)
     if local:
         # Retained channels are stored in the coordinates before this step.
         for terms in chip.effective_terms:
