@@ -578,8 +578,8 @@ def test_calibration_leaves_a_zero_amplitude_start():
     assert 1e-6 <= value <= 2e-6
 
 
-def test_status_flags_unconverged_fits_and_stale_composites():
-    """A fit cut off by max_nfev reads unconverged, and a composite turns stale when its inner native is refitted."""
+def test_status_flags_seeds_unconverged_fits_and_stale_composites():
+    """max_nfev=0 keeps the seed, a cut-off fit is unconverged, and an inner refit makes a composite stale."""
     qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=2, label="q")
     chip = Chip([qubit])
     chip.wire(ChargeDrive(qubit, label="xy"))
@@ -596,6 +596,9 @@ def test_status_flags_unconverged_fits_and_stale_composites():
         return twice, {}
 
     gates.add(NativeGate.composite("X", ("q",), build, free_z=("q",)))
+    with pytest.warns(UserWarning, match="poor_fit"):
+        seeded = gates.calibrate("SX", max_nfev=0)[("SX", ("q",))]
+    assert seeded.knobs["amplitude"].value == seeded.knobs["amplitude"].initial
     with pytest.warns(UserWarning, match="unconverged"):
         assert gates.calibrate("SX", max_nfev=1)[("SX", ("q",))].status == "unconverged"
     with warnings.catch_warnings():

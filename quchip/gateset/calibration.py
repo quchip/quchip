@@ -405,6 +405,8 @@ def fit_block(
         Knob vectors to start from.
     max_nfev : int
         Bound on residual evaluations of each fit, finite differences excluded.
+        ``0`` skips the knob search: the best start keeps its knobs, and only
+        the phases are fitted.
     explore : bool
         Run a Nelder-Mead stage on ``|r|²`` before the fits.
     phase_names : sequence of str
@@ -428,39 +430,43 @@ def fit_block(
     residual.lower = lb[:n_knobs]
     residual.upper = ub[:n_knobs]
     vectors = [(start_vector(values), provenance) for values, provenance in starts]
-    if explore and n_knobs:
+    if explore and n_knobs and max_nfev:
         best_start = min(vectors, key=lambda item: float(np.sum(residual(item[0]) ** 2)))
         found = minimize(lambda z: float(np.sum(residual(z) ** 2)), best_start[0], method="Nelder-Mead",
                          bounds=list(zip(lb, ub)), options={"maxfev": 40 * (n_knobs + 1), "xatol": 1e-6,
                                                             "fatol": 1e-12})
         values = residual.values(found.x)
         vectors.append((start_vector(values), "explore"))
-    best = None
+    best: tuple[np.ndarray, float, bool, str] | None = None
     for vector, provenance in vectors:
         vector = np.clip(vector, lb, ub)
-        result = least_squares(residual, vector, jac=residual.jacobian, method="trf", bounds=(lb, ub),
-                               x_scale=1.0, xtol=1e-12, ftol=1e-14, gtol=1e-14, max_nfev=max_nfev)
-        if best is None or result.cost < best[0].cost:
-            best = (result, provenance)
+        if max_nfev == 0:
+            r = residual(vector)
+            x, cost, converged = vector, 0.5 * float(r @ r), True
+        else:
+            result = least_squares(residual, vector, jac=residual.jacobian, method="trf", bounds=(lb, ub),
+                                   x_scale=1.0, xtol=1e-12, ftol=1e-14, gtol=1e-14, max_nfev=max_nfev)
+            x, cost, converged = result.x, float(result.cost), bool(result.status != 0)
+        if best is None or cost < best[1]:
+            best = (x, cost, converged, provenance)
     assert best is not None
-    result, provenance = best
-    values = residual.values(result.x)
+    x, cost, converged, provenance = best
+    values = residual.values(x)
     block, leaked, defect = residual.block(values)
-    phases = result.x[n_knobs:n_knobs + n_phases]
+    phases = x[n_knobs:n_knobs + n_phases]
     names = [knob.name for knob in knobs] + [f"z {name}" for name in phase_names] + ["global phase"]
-    jacobian = residual.jacobian(result.x)
+    jacobian = residual.jacobian(x)
     change = 0.0
     if n_knobs:
-        finer = residual.jacobian(result.x, step=residual.step / 10)
+        finer = residual.jacobian(x, step=residual.step / 10)
         norms = np.linalg.norm(jacobian[:, :n_knobs], axis=0)
         differences = np.linalg.norm(finer[:, :n_knobs] - jacobian[:, :n_knobs], axis=0)
         change = float(np.max(differences / np.maximum(norms, np.finfo(float).tiny)))
     history = np.array(residual.history, dtype=float).reshape(-1, 2)
-    return FitOutcome(values=values, phases=np.asarray(phases, dtype=float), global_phase=float(result.x[-1]),
-                      block=block, leaked=leaked, defect=defect, cost=float(2 * result.cost), solves=residual.solves,
+    return FitOutcome(values=values, phases=np.asarray(phases, dtype=float), global_phase=float(x[-1]),
+                      block=block, leaked=leaked, defect=defect, cost=2 * cost, solves=residual.solves,
                       seed=provenance, history=history, jacobian=jacobian, names=names,
-                      seconds=time.perf_counter() - began, jacobian_step_change=change,
-                      converged=bool(result.status != 0))
+                      seconds=time.perf_counter() - began, jacobian_step_change=change, converged=converged)
 
 
 def report(

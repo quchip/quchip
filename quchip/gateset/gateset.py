@@ -504,7 +504,10 @@ class GateSet:
             Natives to calibrate. Empty means all. Natives inside a selected
             composite run first when they are uncalibrated or stale.
         max_nfev : int, default 200
-            Bound on residual evaluations of each fit.
+            Bound on residual evaluations of each fit. ``0`` skips the knob
+            search: each knob keeps its best start, the template value or a
+            seed, and only the virtual-Z phases are fitted. The templates of
+            the built-in natives hold closed-form seeds from the chip.
         explore : bool or None, default None
             Override each native's ``explore`` flag.
         target : float, default 1e-3

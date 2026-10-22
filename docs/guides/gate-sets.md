@@ -40,6 +40,12 @@ a warning:
 
 `gates.calibration("ZX90", ("q0", "q1")).summary()` prints the full report.
 
+`gates.calibrate(max_nfev=0)` skips the knob search. Each native keeps its
+template values, which for the built-in natives are closed-form seeds from the
+chip, and the fit sets only the virtual-Z phases. On the chip above, the seeds
+give SX and X errors within a factor of three of the calibrated ones and a ZX90
+error near `4e-3`, so calibration matters most for the two-qubit gate.
+
 ## What the fit targets
 
 The calibration block holds the gate's qubits and the gate-set qubits that
