@@ -149,8 +149,6 @@ Report bugs and model requests through [GitHub Issues](https://github.com/quchip
 
 The accompanying paper is [quchip: A Differentiable Toolkit for Modeling Quantum Devices](https://arxiv.org/abs/2607.17081) (arXiv:2607.17081).
 
-The [interactive walkthrough](https://quchip.org) takes one five-device model through declaration, crosstalk identification and correction, adiabatic reduction from 576 to 16 dimensions, and gradient-based recovery of four directed crosstalk parameters.
-
 If you use quchip, cite:
 
 ```bibtex
