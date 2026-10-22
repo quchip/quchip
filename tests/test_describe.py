@@ -63,6 +63,19 @@ def test_chip_describe_reports_composition_with_units() -> None:
     assert "3 x 8 = 24 levels" in text
 
 
+def test_chip_describe_prints_each_declared_value_once() -> None:
+    """describe() prints each device and coupling parameter, including T1, T2 and thermal_occupation, once."""
+    q = DuffingTransmon(
+        freq=5.0, anharmonicity=-0.25, levels=3, T1=50_000.0, T2=30_000.0, thermal_occupation=0.01, label="q"
+    )
+    r = Resonator(freq=7.0, levels=4, T1=10_000.0, label="r")
+    chip = Chip([q, r], [Capacitive(q, r, g=0.07, label="qr")], frame="rotating")
+    text = chip.describe()
+
+    for entry in ("T1 = 50000 ns", "T2 = 30000 ns", "thermal_occupation = 0.01", "T1 = 10000 ns", "g = 0.07 GHz"):
+        assert text.count(entry) == 1, entry
+
+
 def test_sequence_describe_lists_pulses_and_other_entries() -> None:
     """describe() reports pulse count, timing windows (delay-shifted), a frame other than the target, and delays."""
     chip, drv, q, r = _demo_chip()
