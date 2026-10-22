@@ -781,6 +781,11 @@ This file records notable user-visible changes to quchip.
 - `PHYSICS.md` §4.2 describes result frames and dressed label targets, §6.5
   the sector routes of `steadystate()` and the output statistics, §6.6 the
   route record, and §9 the dressed meaning of level labels. ([#205](https://github.com/quchip/quchip/pull/205))
+- `PHYSICS.md` opens with a short orientation and a table of its main
+  conventions, and uses one symbol for each quantity. It corrects statements
+  in §1, §6.4, §8, §11 and §13 that no longer matched the code, among them the
+  default frame. On docs.quchip.org, its source links now point to GitHub, and
+  table rows render whole. ([#212](https://github.com/quchip/quchip/pull/212))
 
 #### Development
 
