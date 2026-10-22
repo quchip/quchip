@@ -187,7 +187,8 @@ class SectorGenerator:
                     and np.linalg.norm(vectors) * np.linalg.norm(candidate) <= _CONDITION_LIMIT * size):
                 basis, inverse = vectors, candidate
         if basis is None or inverse is None:
-            # The Hermitian part keeps a unitary basis, and the diagonal of the drift approximates it.
+            # The Hamiltonian 0.5j (drift - drift^H) has a unitary eigenbasis. The preconditioner approximates
+            # the drift by its diagonal in that basis.
             _, basis = np.linalg.eigh(0.5j * (drift - drift.conj().T))
             inverse = basis.conj().T
             values = np.einsum("ij,ij->j", inverse.T, drift @ basis)

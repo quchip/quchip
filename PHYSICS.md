@@ -1125,8 +1125,8 @@ resonator of the `ExcitationCutoff` docstring example, it is +2.261 MHz at
 `K = 3` and -1.136 MHz at `K = 4`, against -1.137 MHz without a cutoff.
 
 Workflows that need the full product space or a local neighborhood raise under
-an active cutoff. They are `VNA.sweep()`, stochastic trajectory solvers,
-`eliminate()`, `eliminate_spectators()`, `active_patch()`,
+an active cutoff. They are `VNA.sweep()`, `VNA.resonances()`, stochastic
+trajectory solvers, `eliminate()`, `eliminate_spectators()`, `active_patch()`,
 `fit_a_dress(evaluator="local")`, and `chip.partition()`. Each message names
 `chip.with_space(None)`. `steadystate()`, `VNA.finite_power()`,
 `VNA.measure()`, `VNA.output_spectrum()`, `VNA.g1()` and `VNA.g2()` solve the
@@ -1188,9 +1188,9 @@ keep their diagonals in the eigenbasis of each sector drift. Each real part is
 shifted to at most `-2 δ`, where `δ` is `1e-6` of the largest decay rate. The
 blocks are solved from the largest `N + M` downwards, because the jumps feed
 `X_NM` from `X_{N+1,M+1}`. A sector with more than 1024 labels, or with an
-ill-conditioned eigenbasis, uses the eigenbasis of the Hermitian part of its
-drift. A solve whose relative residual stays above `1e-8` raises. The Krylov
-storage is checked against the available memory first.
+ill-conditioned eigenbasis, uses the eigenbasis of its block of
+`H' = i (A - A†) / 2`. A solve whose relative residual stays above `1e-8`
+raises. The Krylov storage is checked against the available memory first.
 
 If the lowering channels empty every state of each sector `N >= 1`, the
 stationary state is unique. Each state then has a lowering jump, so the
@@ -2687,7 +2687,7 @@ Pass `order=` with the `eliminated_labels` of a call without tracing.
 
 ## 11. Parametric Edge Control
 
-Sources: [`quchip/control/drive.py`](quchip/control/drive.py) (`ParametricDrive`), [`quchip/engine/assembly.py`](quchip/engine/assembly.py) (`EDGE_PUMP`), [`quchip/chip/retarget.py`](quchip/chip/retarget.py)
+Sources: [`quchip/control/drive.py`](quchip/control/drive.py) (`ParametricDrive`), [`quchip/engine/assembly.py`](quchip/engine/assembly.py), [`quchip/declarative/models.py`](quchip/declarative/models.py) (`CouplingModel.parametric_interaction`), [`quchip/chip/retarget.py`](quchip/chip/retarget.py)
 
 ### 11.1 The pump contract
 
@@ -2754,7 +2754,7 @@ Band decomposition, coefficient construction, observable recombination, and the 
 
 The following operations require concrete Python values:
 
-- `Chip.dress()` returns a concrete dict-based view and is not traceable. The bare→dressed assignment itself is discrete and piecewise. Traced callers use `Chip.energy()`, `Chip.freq(target, when=...)`, `Chip.dispersive_shift()`, or `Chip.kerr_matrix()`. These methods route through `label_eigensystem` in the pure-JAX kernel in `quchip/chip/dressing.py`. The labeled energy lookup stays differentiable away from label discontinuities. `track_path` is a separate continuation utility that follows labels through a stacked eigensystem along a parameter sweep.
+- `Chip.dress()` returns a concrete dict-based view and is not traceable. The bare→dressed assignment itself is discrete and piecewise. Traced callers use `Chip.energy()`, `Chip.freq(target, when=...)`, `Chip.dispersive_shift()`, or `Chip.kerr_matrix()`. These methods route through `label_eigensystem` in the pure-JAX kernel in `quchip/engine/dressing.py`. The labeled energy lookup stays differentiable away from label discontinuities. `track_path` is a separate continuation utility that follows labels through a stacked eigensystem along a parameter sweep.
 - Human-facing serialization and diagnostics coerce to Python scalars.
 
 Local eigenvector derivatives use first-order Hermitian perturbation theory.
