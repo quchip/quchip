@@ -173,6 +173,19 @@ def _kerr_coefficient(
     return excited((index_a, 1), (index_b, 1)) - excited((index_a, 1)) - excited((index_b, 1)) + e0
 
 
+def _unreliable_assignment(overlap: Any, margin: Any) -> str | None:
+    """Return ``overlap=..., margin=...`` when a dressed label assignment is unreliable, else ``None``.
+
+    An overlap below one half or a margin of at most 1e-8 makes the assignment
+    unreliable. A traced overlap or margin is not checked.
+    """
+    overlap = maybe_concrete_scalar(overlap)
+    margin = maybe_concrete_scalar(margin)
+    if overlap is None or margin is None or (overlap >= 0.5 and margin > 1e-8):
+        return None
+    return f"overlap={overlap:.6g}, margin={margin:.6g}"
+
+
 def _reported(entry: tuple[Any, list[str]], advise: bool) -> Any:
     """Return a cached static model. With ``advise``, warn once with each advisory it still holds."""
     model, advisories = entry
@@ -788,6 +801,26 @@ class ChipAnalysis:
             frequencies[device.label] = lookup(tuple(excited))[0] - ground_energy
         return frequencies
 
+    def _unreliable_references(self, *, _local_resolution: Any | None = None) -> list[tuple[str, str]]:
+        """Name each dressed ``0 -> 1`` reference whose label assignment is unreliable, with its overlap and margin.
+
+        A device with an explicit ``reference_freq`` needs no assignment. The
+        ground state comes first when its own assignment is unreliable.
+        """
+        devices = self._chip.devices
+        if all(device.reference_freq is not None for device in devices):
+            return []
+        lookup = self._labeled_lookup(_local_resolution=_local_resolution, _advise=False)
+        ground = (0,) * len(devices)
+        notes = []
+        if (unreliable := _unreliable_assignment(*lookup(ground)[1:])) is not None:
+            notes.append(("the ground state", unreliable))
+        for index, device in enumerate(devices):
+            excited = ground[:index] + (1,) + ground[index + 1:]
+            if device.reference_freq is None and (unreliable := _unreliable_assignment(*lookup(excited)[1:])):
+                notes.append((repr(device.label), unreliable))
+        return notes
+
     def dressed_index(
         self,
         device_states: Mapping[str | BaseDevice, int] | None = None,
@@ -1349,14 +1382,10 @@ class ChipAnalysis:
         energies = []
         for label in (lower_tuple, upper_tuple):
             energy, overlap, margin = lookup(label)
-            overlap = maybe_concrete_scalar(overlap)
-            margin = maybe_concrete_scalar(margin)
-            if overlap is not None and margin is not None and (
-                overlap < 0.5 or margin <= 1e-8
-            ):
+            unreliable = _unreliable_assignment(overlap, margin)
+            if unreliable is not None:
                 raise ValueError(
-                    "Dressed transition assignment is unreliable for bare label "
-                    f"{label}: overlap={overlap:.6g}, margin={margin:.6g}. "
+                    f"Dressed transition assignment is unreliable for bare label {label}: {unreliable}. "
                     "Inspect chip.dress().assignment_overlaps or choose a better-resolved model."
                 )
             energies.append(energy)
@@ -1390,6 +1419,16 @@ class ChipAnalysis:
         concrete frequencies as ``-Σ_i ω_ref,i n̂_i``. The method thus shows
         what the solver will solve without running it.
 
+        A chip without a frame reports the frame of a solve without pulses,
+        and warns with the choice, as that solve does. That frame is the
+        rotating frame. When a collapse or port operator of the chip does not
+        fit it, it is the frame that ``"auto"`` plans, or the lab frame when
+        that frame does not fit either, and the warning gives the reason. The
+        plan of a sequence also weighs its pulse tones, so a solve with pulses
+        can plan other frequencies, or use the lab frame when its plan does not
+        fit. When a dressed ``0 -> 1`` reference has an unreliable label
+        assignment, the method raises with the solve's error.
+
         Values are returned as the frame resolver produces them. They are
         concrete Python floats in ``"lab"``, ``"rotating"``, or scalar modes,
         and can be JAX tracers in ``dict`` mode when the user wired a traced
@@ -1400,9 +1439,17 @@ class ChipAnalysis:
         # (`quchip.engine.frames.resolve_frame`). The assembler performs the
         # subtraction in `assembly._build_static_h0`.
         from quchip.engine.frames import resolve_frame
+        from quchip.engine.problem import prepare_solve_problem_context, warn_default_frame
 
-        resolved = resolve_frame(self._chip, self._chip.frame)
-        return dict(resolved.frequencies)
+        if self._chip.frame is not None:
+            return dict(resolve_frame(self._chip, self._chip.frame).frequencies)
+        # Collapse and port operators show whether a frame fits them only during assembly.
+        notes: list[Any] = []
+        context = prepare_solve_problem_context(self._chip, np.array([0.0, 1.0]), _default_frame_notes=notes)
+        frequencies = dict(context.resolved_frame.frequencies)
+        (mode, reason), = notes
+        warn_default_frame(mode, reason, [frequencies], subject="a solve")
+        return frequencies
 
     def state(
         self,

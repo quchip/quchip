@@ -92,7 +92,10 @@ def describe_chip(chip: "Chip") -> str:
 
     title = "Chip" if chip.label is None else f"Chip {chip.label!r}"
     lines += _section(title, "═")
-    frame = chip.frame if isinstance(chip.frame, str) else format_value(chip.frame)
+    if chip.frame is None:
+        frame = "None (lab for statics, rotating for solves)"
+    else:
+        frame = chip.frame if isinstance(chip.frame, str) else format_value(chip.frame)
     lines.append(f"Frame    : {frame}")
     if frame == "auto":
         from quchip.engine.frames import plan_frame

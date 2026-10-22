@@ -48,7 +48,9 @@ preceding `dress()` call is not needed.
 Dressed queries and default solves share `chip.approximation`. The default
 `RWA()` drops counter-rotating bands in both. Construct the chip with
 `approximation=Exact()` to keep them. Dressed queries always use the lab
-frame. If a solve overrides the approximation, use the same choice for its
+frame. Pulse solves on a chip without a frame, such as this one, use the
+rotating frame and warn with that choice. Pass `frame=` to `Chip()` to choose
+a frame. If a solve overrides the approximation, use the same choice for its
 carrier and state preparation. `chip.resolve(frame="lab", approximation=...)`
 gives a snapshot whose `dress()` returns the corresponding eigensystem.
 

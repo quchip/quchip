@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from quchip.chip.chip import Chip
 
 
-def _serialize_frame(raw_frame: Any) -> str | float | dict[str, float]:
+def _serialize_frame(raw_frame: Any) -> str | float | dict[str, float] | None:
     """Normalize a chip frame spec into a JSON-safe value."""
     if isinstance(raw_frame, dict):
         return {str(k): float(v) for k, v in raw_frame.items()}

@@ -44,6 +44,22 @@ from quchip.utils.jax_utils import array_namespace, contains_tracer, maybe_concr
 from quchip.utils.labeling import resolve_label
 
 
+class IncompatibleFrameError(ValueError):
+    """Raised when a static operator has bands with different phases in the selected frame."""
+
+
+def static_frame(chip: "Chip", frame: Any = None) -> Any:
+    """Return the frame of a static calculation: ``frame``, else the chip's frame, else ``"lab"``.
+
+    A chip without a frame keeps its static calculations in the lab frame.
+    Time-domain solves choose their own frame for such a chip; see
+    :func:`quchip.engine.problem.prepare_solve_problem_context`.
+    """
+    if frame is not None:
+        return frame
+    return "lab" if chip.frame is None else chip.frame
+
+
 def same_frequency(first: Any, second: Any) -> bool:
     """Return whether two frequencies are provably identical without concretizing tracers.
 
@@ -796,7 +812,7 @@ def resolve_for_operations(
     the bounds are ``(0, last pulse end)``.
     """
     strategy = chip.approximation if approximation is None else require_approximation(approximation)
-    frame_spec = chip.frame if frame is None else frame
+    frame_spec = static_frame(chip, frame)
     if not (isinstance(frame_spec, str) and frame_spec == "auto"):
         return chip.resolve(frame=frame_spec, approximation=strategy)
     resolution = planning_resolution(chip)
@@ -837,7 +853,7 @@ def plan_for_operations(
 
 def resolve_frame(
     chip: Chip,
-    frame_spec: FrameSpec,
+    frame_spec: FrameSpec | None,
     *,
     reference_frequencies: Mapping[str, Any] | None = None,
     local_resolution: Any | None = None,
@@ -854,7 +870,9 @@ def resolve_frame(
 
     Missing references resolve from this chip's dressed transitions. Explicit
     references bypass that calculation; reading a device setting does no work.
+    ``None`` resolves the static frame of :func:`static_frame`.
     """
+    frame_spec = static_frame(chip, frame_spec)
     devices = chip.devices
     labels = [dev.label for dev in devices]
     references = (

@@ -73,9 +73,11 @@ from quchip.engine.assembly import (
 from quchip.engine.frames import resolve_for_operations
 from quchip.engine.sampling import AutomaticTimeGrid, interval_bounds, sample_problems
 from quchip.engine.problem import (
+    build_default_frame_problems,
     build_solve_batch_from_results,
     build_solve_problem,
     prepare_solve_problem_context,
+    warn_default_frame,
 )
 from quchip.utils.jax_utils import (
     array_namespace,
@@ -956,6 +958,11 @@ class QuantumSequence:
             Engine approximation override. ``None`` uses the chip default.
         frame : FrameSpec, optional
             Integration-frame override; defaults to the chip's declared frame.
+            On a chip without a frame, the solve uses ``"rotating"`` and warns.
+            When an operator does not fit the rotating frame, the solve uses
+            the frame that ``"auto"`` plans, or the lab frame when that frame
+            does not fit either. When a device has no reliably assigned
+            dressed ``0 -> 1`` frequency, the solve raises.
             ``"auto"`` derives constraints from delivered scheduled signals and
             weights them over ``tlist[-1] - tlist[0]``.
         dissipation : bool, default=True
@@ -995,7 +1002,9 @@ class QuantumSequence:
         Parameters
         ----------
         frame : FrameSpec or None, default=None
-            Resolution frame, or ``None`` to use the chip default.
+            Resolution frame, or ``None`` to use the chip's frame. A chip
+            without a frame resolves in the lab frame, as its static
+            calculations do.
         approximation : Approximation or None, default=None
             Engine approximation, or ``None`` to use the chip default.
         """
@@ -1178,7 +1187,34 @@ class QuantumSequence:
         different_intervals = tlist is None and any(
             grid != actual_tlist for grid in point_tlists
         )
-        if parameter_axes or different_intervals or self._auto_frames_differ(expanded, actual_tlist, approximation):
+        per_point = parameter_axes or different_intervals or self._auto_frames_differ(
+            expanded, actual_tlist, approximation
+        )
+        if not per_point:
+            reference_drive_ops = self._materialize_drive_ops()
+            default_frame: list[Any] | None = [] if self._chip.frame is None else None
+            context = prepare_solve_problem_context(
+                self._chip,
+                actual_tlist,
+                solver=solver,
+                options=options, run_args=run_args,
+                e_ops=e_ops,
+                drive_ops=reference_drive_ops,
+                approximation=approximation,
+                states=states,
+                dissipation=dissipation,
+                initial_states=[overrides.get((None, "initial_state"), initial_state) for _, overrides in expanded],
+                _default_frame_notes=default_frame,
+            )
+            if default_frame:
+                (mode, reason), = default_frame
+                # Whether the rotating frame fits does not depend on pulses, but the plan of "auto" and its fit do.
+                per_point = mode != "rotating" and self._auto_frames_differ(
+                    expanded, actual_tlist, approximation, planned=True
+                )
+                if not per_point:
+                    warn_default_frame(mode, reason, [context.resolved_frame.frequencies])
+        if per_point:
             # Every point proves its exact space from the union of all initial states.
             all_states = [overrides.get((None, "initial_state"), initial_state) for _, overrides in expanded]
             builders: list[Any] = []
@@ -1215,7 +1251,10 @@ class QuantumSequence:
                 )
                 params_store[coord] = self._point_params(axes, coord)
 
-            problems = [build() for build in builders]
+            if self._chip.frame is None:
+                problems, builders = build_default_frame_problems(builders)
+            else:
+                problems = [build() for build in builders]
             if len({tuple(problem.engine_result.dims) for problem in problems}) > 1:
                 # The points proved different exact spaces. One product space keeps the batch homogeneous.
                 problems = [build(_product_space=True) for build in builders]
@@ -1234,19 +1273,6 @@ class QuantumSequence:
                 axes=tuple(_axis_metadata(axis) for axis in axes),
             )
 
-        reference_drive_ops = self._materialize_drive_ops()
-        context = prepare_solve_problem_context(
-            self._chip,
-            actual_tlist,
-            solver=solver,
-            options=options, run_args=run_args,
-            e_ops=e_ops,
-            drive_ops=reference_drive_ops,
-            approximation=approximation,
-            states=states,
-            dissipation=dissipation,
-            initial_states=[overrides.get((None, "initial_state"), initial_state) for _, overrides in expanded],
-        )
         template = compile_hamiltonian_template(
             self._chip,
             reference_drive_ops,
@@ -1285,14 +1311,18 @@ class QuantumSequence:
             shape=shape,
             axes=tuple(_axis_metadata(axis) for axis in axes),
         )
-    def _auto_frames_differ(self, expanded: Any, tlist: Any, approximation: Approximation | None) -> bool:
+    def _auto_frames_differ(
+        self, expanded: Any, tlist: Any, approximation: Approximation | None, *, planned: bool = False
+    ) -> bool:
         """Return whether entry-axis values produce distinct or traced ``"auto"`` frames.
 
         A true result sends the batch through per-point problem construction.
+        ``planned`` compares the plans on a chip without a frame whose solves
+        do not fit the rotating frame.
         """
         from quchip.engine.frames import plan_for_operations
 
-        if not (isinstance(self._chip.frame, str) and self._chip.frame == "auto"):
+        if not (planned or (isinstance(self._chip.frame, str) and self._chip.frame == "auto")):
             return False
         strategy = self._chip.approximation if approximation is None else require_approximation(approximation)
         window = interval_bounds(tlist)
@@ -1409,6 +1439,16 @@ class QuantumSequence:
 
         Notes
         -----
+        The solve uses the chip's frame. On a chip without a frame, it uses
+        the rotating frame and warns. When a collapse or port operator does
+        not fit the rotating frame, the solve uses the frame that ``"auto"``
+        plans, or the lab frame when that frame does not fit either. When a
+        device has no reliably assigned dressed ``0 -> 1`` frequency, the
+        solve raises and asks for a frame. A batch checks every point and
+        solves all of them in the first of these frames that fits each point.
+        In the planned frame, each point gets its own plan, as with
+        ``frame="auto"``.
+
         A per-call ``backend`` outranks the chip and process defaults, and
         foreign-native initial states are coerced at the solve boundary. Python
         evaluates an inline ``initial_state=chip.state(...)`` before this scope

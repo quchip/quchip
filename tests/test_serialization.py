@@ -47,7 +47,7 @@ def _assert_json_primitives(value: Any) -> None:
     raise AssertionError(f"Non-JSON-safe value encountered: {value!r}")
 
 
-def _build_chip(frame: str | float | dict[str, float] = "rotating") -> Chip:
+def _build_chip(frame: str | float | dict[str, float] | None = "rotating") -> Chip:
     q = DuffingTransmon(
         freq=5.0,
         anharmonicity=-0.25,
@@ -215,10 +215,10 @@ def test_envelope_round_trip_is_json_safe() -> None:
 
 @pytest.mark.parametrize(
     "frame",
-    ["lab", "rotating", 4.75, {"q": 4.9, "r": 6.8}],
+    [None, "lab", "rotating", 4.75, {"q": 4.9, "r": 6.8}],
 )
 def test_chip_round_trip_preserves_topology_and_frame(
-    frame: str | float | dict[str, float],
+    frame: str | float | dict[str, float] | None,
 ) -> None:
     """A chip's to_dict/from_dict round trip preserves topology and every frame form."""
     chip = _build_chip(frame=frame)

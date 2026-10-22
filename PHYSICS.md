@@ -603,6 +603,7 @@ Source: [`quchip/engine/frames.py`](quchip/engine/frames.py)
 
 The public frame spec is one of:
 
+- `None`, the chip default: no frame
 - `"lab"`
 - `"rotating"`
 - `"auto"`
@@ -610,6 +611,48 @@ The public frame spec is one of:
 - a per-device dict
 
 The engine resolves that spec into an ordinary frequency `f_ref,i` in GHz for each device.
+
+A chip without a frame keeps its static calculations in the lab frame:
+`chip.resolve()`, `chip.hamiltonian()`, dressed analysis, and steady states.
+Its time-domain solves use `"rotating"` and warn with that choice. The
+rotating frame does not fit every chip. Some operators have bands with
+different phases in it. Examples are the jump that an eliminated bus carries
+onto two transmons (§10.5), a collective decay of two detuned devices, and a
+port network that composes ports at different frequencies. A solve on such a
+chip uses the frame that `"auto"` plans (§4.4), and the warning gives its
+frequencies and the reason. That frame gives one frequency to devices on one
+network cascade, and usually to devices that share an exchange coupling, so it
+fits an operator whose devices are tied in this way. When it does not fit
+either, the solve uses the lab frame. Both keep every band of the operator.
+The planned frame is usually the faster and more accurate one. Take two
+readout resonators on one hanger feedline, driven for 150 ns and solved for
+200 ns. With the planned frame, the solve took 0.11 s, and the population
+error at QuTiP's default tolerances was 5.0e-8. In the lab frame, it took
+2.8 s, and the error was 2.9e-6. A batch checks every point and solves all
+points in the first of the rotating, planned, and lab frames that fits each
+of them. In the planned frame, each point gets its own plan, as with
+`"auto"`.
+
+The rotating frame also needs a dressed `0 -> 1` frequency for each device.
+Identical coupled devices, such as a resonant pair, have no reliable label
+assignment for it (§9), so the chip has no device frequency to rotate at. A
+solve on such a chip raises and asks for a frame: `"auto"` gives
+exchange-coupled devices one frequency, and `"lab"` needs no reference. A
+`reference_freq` on each of these devices also gives the rotating frame its
+frequencies. A frame set on the chip, or passed as `frame=` to
+`build_problem()`, applies without a warning.
+
+The default was `"lab"` before. A lab-frame solve must resolve the phase of
+each device at its transition frequency. Take a transmon with `T1` and a
+five-level resonator, 15 states in total, driven by a 20 ns pulse and solved
+for 100 ns with automatic sampling. In the lab frame, the solve saved 124,057
+density matrices and took 2.8 s and 1.76 GB of peak memory. In the rotating
+frame, it saved 9,100 in 0.43 s and 0.33 GB. At QuTiP's default tolerances,
+the final `P1` error was 1.0e-4 in the lab frame and 3.5e-6 in the rotating
+frame. Under `Exact()`, the counter-rotating bands stay time dependent in the
+rotating frame, and that solve is also the more accurate one. Expectation
+values do not depend on the frame (§8), but stored states and
+measurement records do (§4.2 and §16).
 
 ### 4.2 What transform the engine is using
 
@@ -632,7 +675,10 @@ A label `initial_state`, or an omitted one, is the dressed state `|d_k>` of
 `psi_solve(t0) = target_k(t0)`, so its label amplitude starts at 1. A ket
 `initial_state` is an integration-frame vector at `t0` and is not moved. A
 nonzero rotating-frame start therefore need not equal the lab-frame vector
-that `chip.state()` returns.
+that `chip.state()` returns. On a chip without a frame, the ket is a vector
+of the frame that the warning names. When a batch solves a point in another
+frame than the point's own solve would use, it maps the ket into the batch
+frame at `t0`, so the point starts in the same physical state.
 
 Each result records its integration frame as `result.frame`, a
 `ResolvedFrame` with the frequencies `f_ref,i`. `state()`, `state_at()`,
@@ -664,12 +710,14 @@ propagator and converts it to the dressed or lab frame (§9.4).
 - an explicit `device.reference_freq` gives that frequency
 - when the setting is `None`, the calculation uses the chip's dressed `0 -> 1` transition
 
-This rule defines the frame-subtraction frequencies `f_ref,i`.
+This rule defines the frame-subtraction frequencies `f_ref,i`. A time-domain
+solve on a chip without a frame uses this frame (§4.1).
 
 ### 4.4 What `"auto"` chooses
 
-`"auto"` is opt-in. The chip default stays `"lab"`, and `"rotating"` keeps the
-meaning above. `Chip.resolve(frame="auto", approximation=...)` uses the
+`"auto"` is opt-in. A chip without a frame solves in `"rotating"`, which keeps
+the meaning above, and uses the `"auto"` plan only when the rotating frame does
+not fit it (§4.1). `Chip.resolve(frame="auto", approximation=...)` uses the
 requested approximation. With `Exact()` and no tones, it follows exchange
 constraints and device references. Counter-rotating bands do not force
 the lab frame. Use `frame="lab"` to keep the static lab Hamiltonian.
@@ -1346,10 +1394,10 @@ observables (`<a>`, `<sigma_x>`) come back as the non-oscillatory demodulated en
 readout produces. This envelope is slow, and it turns at `Δ = omega - f_ref` when the reference
 is detuned. Diagonal observables (populations) are frame-invariant.
 
-In the default `"rotating"` mode, the integration frame *is* the reference frame, so demodulation
-is a no-op and `result.expect` equals `Tr(O·rho)` on the states that `result.states` returns. The
-raw, un-demodulated band sum (the observable in the integration frame) stays available on each
-`ObservableTrace` as `.raw`.
+In the `"rotating"` frame, the default of a solve on a chip without a frame (§4.1), the
+integration frame *is* the reference frame, so demodulation is a no-op and `result.expect` equals
+`Tr(O·rho)` on the states that `result.states` returns. The raw, un-demodulated band sum (the
+observable in the integration frame) stays available on each `ObservableTrace` as `.raw`.
 
 ### 8.1 Stationary solves and scattering
 

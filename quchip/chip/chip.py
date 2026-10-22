@@ -37,7 +37,7 @@ from quchip.control.signal import Crosstalk, SignalTransform
 from quchip.declarative.expr import PhysicsExpr
 from quchip.devices.base import BaseDevice
 from quchip.engine.dressing import DressedResult
-from quchip.engine.frames import FramePlan
+from quchip.engine.frames import FramePlan, static_frame
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
 from quchip.utils.labeling import LabelKeyedDict, resolve_label
 from quchip.utils.values import TracedKey, scoped_entry, scoped_hit
@@ -177,10 +177,16 @@ class Chip:
         :meth:`connect`.
     label : str, optional
         Human-readable chip label.
-    frame : FrameSpec
+    frame : FrameSpec or None, default=None
         Initial frame specification:
 
-        - ``"lab"``: all reference frequencies are 0 GHz (default).
+        - ``None``: no frame. Static calculations use the lab frame, and
+          time-domain solves use ``"rotating"`` and warn. When a collapse or
+          port operator does not fit the rotating frame, a solve uses the
+          frame that ``"auto"`` plans, or the lab frame when that frame does
+          not fit either, and warns. When a device has no reliably assigned
+          dressed ``0 -> 1`` frequency, a solve raises and asks for a frame.
+        - ``"lab"``: all reference frequencies are 0 GHz.
         - ``"rotating"``: a per-device rotating frame at the dressed drive
           frequencies.
         - ``"auto"``: per-device frequencies that quchip chooses from retained
@@ -228,7 +234,7 @@ class Chip:
         couplings: list[BaseCoupling] | None = None,
         control_equipment: ControlEquipment | None = None,
         label: str | None = None,
-        frame: FrameSpec = "lab",
+        frame: FrameSpec | None = None,
         approximation: Approximation = RWA(),
         basis: Literal["native", "eigen"] = "native",
         backend: str | Backend | None = None,
@@ -293,7 +299,7 @@ class Chip:
             raise ValueError(f"basis must be 'native' or 'eigen', got {basis!r}")
         self._basis = basis
         tuple(d.resolved_dimension(basis) for d in devices)
-        self._frame_spec: FrameSpec = "lab"
+        self._frame_spec: FrameSpec | None = None
         self._approximation = require_approximation(approximation)
         self._space = require_space(space)
         if control_equipment is not None:
@@ -327,7 +333,7 @@ class Chip:
         self._unresolved_hamiltonian_cache: tuple[Any, Any, PhysicsExpr] | None = None
         self._resolved_result_cache: tuple[Any, Any, EngineResult] | None = None
 
-        if frame != "lab":
+        if frame is not None:
             self.set_frame(frame)
 
     # ------------------------------------------------------------------
@@ -418,9 +424,10 @@ class Chip:
     ) -> EngineResult:
         """Return a frozen engine contract without mutating chip intent.
 
-        ``frame=None`` uses :attr:`frame`. An explicit frame resolves only this
-        snapshot. ``approximation=None`` uses the chip default. Neither
-        override mutates chip intent.
+        ``frame=None`` uses :attr:`frame`, or the lab frame when the chip has
+        no frame. An explicit frame resolves only this snapshot.
+        ``approximation=None`` uses the chip default. Neither override mutates
+        chip intent.
 
         Parameters
         ----------
@@ -443,7 +450,7 @@ class Chip:
 
         from quchip.declarative.parameters import component_fingerprint
 
-        frame_spec = self.frame if frame is None else frame
+        frame_spec = static_frame(self, frame)
         strategy = self.approximation if approximation is None else require_approximation(approximation)
         equipment = self.control_equipment
         control_lines = () if equipment is None else equipment.lines
@@ -802,8 +809,8 @@ class Chip:
         return get_default_backend()
 
     @property
-    def frame(self) -> FrameSpec:
-        """Current frame specification (see :meth:`set_frame`)."""
+    def frame(self) -> FrameSpec | None:
+        """Current frame specification, or ``None`` when no frame is set (see :meth:`set_frame`)."""
         return self._frame_spec
 
     @property
@@ -1168,11 +1175,17 @@ class Chip:
     # Frame management
     # ------------------------------------------------------------------
 
-    def set_frame(self, frame: FrameSpec) -> None:
+    def set_frame(self, frame: FrameSpec | None) -> None:
         """Set the frame that the simulation inputs use.
 
         Supported values:
 
+        - ``None``: no frame. Static calculations use the lab frame, and
+          time-domain solves use ``"rotating"`` and warn. When a collapse or
+          port operator does not fit the rotating frame, a solve uses the
+          frame that ``"auto"`` plans, or the lab frame when that frame does
+          not fit either, and warns. When a device has no reliably assigned
+          dressed ``0 -> 1`` frequency, a solve raises and asks for a frame.
         - ``"lab"``: all reference frequencies are 0.0 GHz.
         - ``"rotating"``: per-device references use the dressed drive frequencies.
         - ``"auto"``: quchip plans per-device frequencies from retained
@@ -1186,9 +1199,13 @@ class Chip:
 
         Parameters
         ----------
-        frame : {"lab", "rotating", "auto"}, scalar-like, or mapping
+        frame : {"lab", "rotating", "auto"}, scalar-like, mapping, or None
             Frame specification. Frequencies are in GHz.
         """
+        if frame is None:
+            self._frame_spec = None
+            return
+
         if isinstance(frame, str):
             if frame not in ("lab", "rotating", "auto"):
                 raise ValueError(f"frame string must be one of 'lab', 'rotating', or 'auto', got {frame!r}")
@@ -1798,7 +1815,8 @@ class Chip:
         print(f"Chip: {label}")
         print(f"- devices: {len(self._devices)}")
         print(f"- couplings: {len(self._couplings)}")
-        print(f"- frame: {self._frame_spec!r}")
+        frame = "None (lab for statics, rotating for solves)" if self._frame_spec is None else repr(self._frame_spec)
+        print(f"- frame: {frame}")
         print(f"- approximation: {type(self._approximation).__name__}")
         print(f"- space: {'full product' if self._space is None else self._space}")
         print(f"- dressed: {'yes' if self.is_dressed else 'no'}")

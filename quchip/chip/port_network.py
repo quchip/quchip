@@ -2553,7 +2553,9 @@ class PortNetwork:
             )
             for source in sources[1:]
         ):
-            raise ValueError(
+            from quchip.engine.frames import IncompatibleFrameError
+
+            raise IncompatibleFrameError(
                 f"PortNetwork cannot statically compose {boundary} from ports {list(sources)}: their "
                 "rotating-frame frequencies are not statically known to be equal (traced frequencies must "
                 "share the same traced value). Use the lab/common frame; time-dependent collapse channels "

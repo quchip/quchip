@@ -899,7 +899,9 @@ def _common_band_frame_frequency(bands: tuple[Any, ...], frequencies: tuple[Any,
         or not np.allclose(coefficients, reference[1], atol=1e-10, rtol=1e-10)
         for constant, coefficients in signatures[1:]
     ):
-        raise ValueError(
+        from quchip.engine.frames import IncompatibleFrameError
+
+        raise IncompatibleFrameError(
             f"{source} has operator bands with different phases in the selected frame. "
             "Use a common frame compatible with the operator, or the lab frame; "
             "time-dependent collapse operators are not supported."

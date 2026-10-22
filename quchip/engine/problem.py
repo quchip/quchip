@@ -15,7 +15,9 @@ Collapse operators enter the standard Lindblad master equation
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import functools
+import warnings
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -40,13 +42,135 @@ from quchip.engine.ir import (
     _aggregate_batch_metadata,
 )
 from quchip.engine.assembly import build_engine_result
-from quchip.engine.frames import resolve_for_operations
+from quchip.engine.dressing import user_stacklevel
+from quchip.engine.frames import FrameMap, IncompatibleFrameError, resolve_for_operations
 from quchip.engine.observables import decompose_eops
 from quchip.engine.sampling import AutomaticTimeGrid, sample_problems
-from quchip.utils.jax_utils import contains_tracer
+from quchip.utils.jax_utils import array_namespace, contains_tracer, maybe_concrete_scalar
 
 if TYPE_CHECKING:
     from quchip.chip.chip import Chip
+
+_ROTATING_DEFAULT = (
+    "The chip sets no frame, so {subject} uses the rotating frame: each device turns at its reference_freq, "
+    "by default its dressed 0 -> 1 frequency. Expectation values do not depend on the frame. Stored states are "
+    "rotating-frame states, and result.state(..., frame='lab') converts them. Set Chip(frame=...) or "
+    "chip.set_frame() to choose a frame and silence this warning."
+)
+ROTATING_DEFAULT_WARNING = _ROTATING_DEFAULT.format(subject="this solve")
+
+
+def _name_list(names: Sequence[str]) -> str:
+    """Join names as ``'a', 'b' and 'c'``, and shorten more than four to three and a count."""
+    shown = list(names) if len(names) <= 4 else [*names[:3], f"{len(names) - 3} more"]
+    return shown[0] if len(shown) == 1 else ", ".join(shown[:-1]) + f" and {shown[-1]}"
+
+
+def _frame_summary(frequencies: Mapping[str, Any]) -> str:
+    """Name the devices at each frame frequency, such as ``'r1' and 'r2' at 7 GHz``."""
+    groups: dict[float, list[str]] = {}
+    for label, frequency in frequencies.items():
+        concrete = maybe_concrete_scalar(frequency)
+        if concrete is None:
+            return "traced frequencies"
+        groups.setdefault(float(concrete), []).append(repr(label))
+    return "; ".join(f"{_name_list(labels)} at {frequency:.6g} GHz" for frequency, labels in groups.items())
+
+
+# A solve on a chip without a frame uses the first of these frames that fits it, and a batch the first that fits
+# every point.
+DEFAULT_FRAME_ORDER = ("rotating", "auto", "lab")
+
+
+def default_frame_warning(
+    mode: str, reason: str | None, frequencies: Sequence[Mapping[str, Any]], *, subject: str = "this solve"
+) -> str:
+    """Return the warning that names the solve frame of a chip without a frame, given each point's frequencies."""
+    if mode == "rotating":
+        return _ROTATING_DEFAULT.format(subject=subject)
+    if mode == "auto":
+        summaries = {_frame_summary(point) for point in frequencies}
+        summary = summaries.pop() if len(summaries) == 1 else "frequencies that differ between the batch points"
+        choice = (
+            f"the rotating frame does not fit it, so {subject} uses the frame that frame='auto' plans, with {summary}."
+        )
+    else:
+        choice = (
+            f"neither the rotating frame nor the frame that frame='auto' plans fits it, so {subject} uses the lab "
+            "frame."
+        )
+    return (
+        f"The chip sets no frame, and {choice} {reason} Set Chip(frame=...) or chip.set_frame() to choose a frame "
+        "and silence this warning."
+    )
+
+
+def warn_default_frame(
+    mode: str, reason: str | None, frequencies: Sequence[Mapping[str, Any]], *, subject: str = "this solve"
+) -> None:
+    """Warn with :func:`default_frame_warning` at the first caller outside quchip."""
+    warnings.warn(default_frame_warning(mode, reason, frequencies, subject=subject), UserWarning,
+                  stacklevel=user_stacklevel())
+
+
+def _choose_default_frame(chip: Chip, resolve: Any, resolution: Any) -> tuple[str, str | None, Any]:
+    """Resolve a chip without a frame in the first frame of :data:`DEFAULT_FRAME_ORDER` that fits it.
+
+    Returns the frame mode, the reason for a fallback (``None`` for the
+    rotating frame), and the output of ``resolve``. Raises when a dressed
+    ``0 -> 1`` reference of the rotating frame has no reliable label
+    assignment.
+    """
+    if unreliable := chip.analysis._unreliable_references(_local_resolution=resolution):
+        names = [name for name, _ in unreliable]
+        raise ValueError(
+            "The chip sets no frame, and the rotating frame of a solve needs the dressed 0 -> 1 frequency of each "
+            f"device, but the dressed label assignment is unreliable for {_name_list(names)} ({names[0]}: "
+            f"{unreliable[0][1]}). Choose a frame with Chip(frame='lab') or chip.set_frame('lab'). frame='auto' "
+            "may also work: it gives exchange-coupled devices one frequency. A reference_freq on each of these "
+            "devices gives the rotating frame its frequencies instead."
+        )
+    try:
+        return "rotating", None, resolve("rotating")
+    except IncompatibleFrameError as error:
+        reason = str(error)
+    try:
+        return "auto", reason, resolve("auto")
+    except IncompatibleFrameError as error:
+        # The planner sets frames from couplings, cascades and tones, but not from collapse operators.
+        return "lab", str(error), resolve("lab")
+
+
+def build_default_frame_problems(builders: Sequence[Any]) -> tuple[list[SolveProblem], list[Any]]:
+    """Build batch points of a chip without a frame, all in one frame, and warn once.
+
+    Each builder is a partial :func:`build_solve_problem`. Every point checks
+    the frames of :data:`DEFAULT_FRAME_ORDER`, and the batch uses the first
+    frame that fits every point. A point that its own solve would put in an
+    earlier frame reads its initial state in that frame, so it starts in the
+    same physical state. Returns the problems and the builders bound to the
+    batch frame.
+    """
+    notes: list[Any] = []
+    problems = [build(_default_frame_notes=notes) for build in builders]
+
+    def bind(mode: str) -> list[Any]:
+        return [functools.partial(build, frame=mode,
+                                  _initial_state_frame=None if note[0] == mode else problem.resolved_frame)
+                for build, note, problem in zip(builders, notes, problems, strict=True)]
+
+    mode, reason = max(notes, key=lambda note: DEFAULT_FRAME_ORDER.index(note[0]))
+    bound = bind(mode)
+    try:
+        rebuilt = [problem if note[0] == mode else build()
+                   for problem, note, build in zip(problems, notes, bound, strict=True)]
+    except IncompatibleFrameError as error:
+        # The frame that "auto" plans at one point need not fit the operators of another point.
+        mode, reason, bound = "lab", str(error), bind("lab")
+        rebuilt = [problem if note[0] == mode else build()
+                   for problem, note, build in zip(problems, notes, bound, strict=True)]
+    warn_default_frame(mode, reason, [problem.resolved_frame.frequencies for problem in rebuilt])
+    return rebuilt, bound
 
 
 @dataclass(frozen=True)
@@ -110,6 +234,7 @@ def prepare_solve_problem_context(
     run_args: dict | None = None,
     initial_states: list[Any] | None = None,
     _product_space: bool = False,
+    _default_frame_notes: list[Any] | None = None,
 ) -> SolveProblemContext:
     """Resolve the frame and keep authored observables and state specifications.
 
@@ -118,7 +243,14 @@ def prepare_solve_problem_context(
     supply an explicit state do not pay for unused state construction.
 
     ``frame`` overrides the chip's declared frame. For ``"auto"``, the solve
-    window ``tlist[-1] - tlist[0]`` gives the duration used for weights.
+    window ``tlist[-1] - tlist[0]`` gives the duration used for weights. When
+    neither sets a frame, the solve uses ``"rotating"`` and warns. If a collapse
+    or port operator does not fit that frame, the solve uses the frame that
+    ``"auto"`` plans, or the lab frame when that frame does not fit either, and
+    warns. If a dressed ``0 -> 1`` reference has an unreliable label
+    assignment, the solve raises and asks for a frame. A list passed as
+    ``_default_frame_notes`` receives the chosen mode and the reason instead of
+    the warning.
 
     ``tlist`` defines the actual interval. Scheduled signals keep their absolute
     times, including operations partly or fully outside this interval.
@@ -156,18 +288,26 @@ def prepare_solve_problem_context(
         # Under a cutoff, batch points that prove different spaces all keep every label with N <= K.
         space, reason, boundary = plan_pulse_space(chip, drive_ops or [], initial_states or [None], resolution,
                                                    strategy, dissipation, whole=_product_space)
-    if space is None:
-        base_result = resolve_for_operations(
-            chip, drive_ops or [], frame=frame, approximation=strategy,
-            solve_window=(tlist_arr[0], tlist_arr[-1]),
-        )
+    def resolve(frame_spec: Any) -> tuple[Any, Any]:
+        if space is None:
+            return resolve_for_operations(
+                chip, drive_ops or [], frame=frame_spec, approximation=strategy,
+                solve_window=(tlist_arr[0], tlist_arr[-1]),
+            ), resolution
+        spec = plan_for_operations(chip, frame_spec, drive_ops or [], approximation=strategy,
+                                   solve_window=(tlist_arr[0], tlist_arr[-1]), _resolution=resolution)
+        prepared, resolved_frame = _prepare_engine_assembly(chip, spec, strategy, resolution=resolution)
+        return build_engine_result(chip, [], resolved_frame=resolved_frame, approximation=strategy,
+                                   _local_resolution=replace(prepared, space=space)), prepared
+
+    if frame is not None or chip.frame is not None:
+        base_result, resolution = resolve(chip.frame if frame is None else frame)
     else:
-        spec = plan_for_operations(chip, chip.frame if frame is None else frame, drive_ops or [],
-                                   approximation=strategy, solve_window=(tlist_arr[0], tlist_arr[-1]),
-                                   _resolution=resolution)
-        resolution, resolved_frame = _prepare_engine_assembly(chip, spec, strategy, resolution=resolution)
-        base_result = build_engine_result(chip, [], resolved_frame=resolved_frame, approximation=strategy,
-                                          _local_resolution=replace(resolution, space=space))
+        mode, why, (base_result, resolution) = _choose_default_frame(chip, resolve, resolution)
+        if _default_frame_notes is None:
+            warn_default_frame(mode, why, [base_result.resolved_frame.frequencies])
+        else:
+            _default_frame_notes.append((mode, why))
     base_result = replace(base_result, metadata={**base_result.metadata, "excitation_reduction": {
         "exact": space is not None, "reason": reason,
         "full_dimension": prod(resolution.dims), "dimension": prod(base_result.dims),
@@ -351,6 +491,29 @@ def _initial_state(chip, spec, result, start):
     return materialize_state_spec(chip, spec, result.bases)
 
 
+def _reframe_state(chip, state, result, frame, start):
+    """Map a ket or density matrix of ``frame`` at ``start`` into the solve frame of ``result``.
+
+    A level label is a dressed state in every frame and needs no map.
+    """
+    if maybe_concrete_scalar(start) == 0.0:
+        return state
+    backend = chip.backend
+    values = backend.to_array(state)
+    space = result.excitation_space
+    labels = tuple(device.label for device in chip.devices)
+    bases = result.bases if space is None else space.bases
+    xp = array_namespace(values)
+    source = FrameMap.create(frame, labels, bases, xp, space=space)
+    target = FrameMap.create(result.resolved_frame, labels, bases, xp, space=space)
+    dims = [space.size] if space is not None else list(result.dims)
+    if values.shape[-1] == 1:
+        values = target.kets(source.kets(values[:, 0], start, to_lab=True), start)[:, None]
+        return backend.from_array(values, dims=[dims, [1] * len(dims)])
+    values = target.operators(source.operators(values, start, to_lab=True), start)
+    return backend.from_array(values, dims=[dims, dims])
+
+
 def _require_product_state(context, result):
     """Raise before a dissipative product-space solve evolves a density matrix that cannot fit."""
     dissipative = context.dissipation and bool(result.slh.collapse_terms)
@@ -380,6 +543,8 @@ def build_solve_problem(
     run_args: dict | None = None,
     _initial_states: list[Any] | None = None,
     _product_space: bool = False,
+    _default_frame_notes: list[Any] | None = None,
+    _initial_state_frame: Any = None,
 ) -> SolveProblem:
     """Resolve, assemble, and package a frozen :class:`SolveProblem`.
 
@@ -390,7 +555,9 @@ def build_solve_problem(
 
     ``frame`` overrides the chip's declared frame and follows the same
     operation-aware ``"auto"`` resolution as
-    :func:`prepare_solve_problem_context`.
+    :func:`prepare_solve_problem_context`. ``_initial_state_frame`` is the
+    resolved frame that a ket or density matrix ``initial_state`` is a vector
+    of, when it is not the solve frame.
     """
     context = prepare_solve_problem_context(
         chip,
@@ -405,11 +572,12 @@ def build_solve_problem(
         dissipation=dissipation,
         initial_states=[initial_state] if _initial_states is None else _initial_states,
         _product_space=_product_space,
+        _default_frame_notes=_default_frame_notes,
     )
-    return _problem_from_context(context, drive_ops, initial_state)
+    return _problem_from_context(context, drive_ops, initial_state, state_frame=_initial_state_frame)
 
 
-def _problem_from_context(context, drive_ops, initial_state):
+def _problem_from_context(context, drive_ops, initial_state, *, state_frame=None):
     """Instantiate one solve request on a prepared context."""
     engine_result = build_engine_result(
         context.chip,
@@ -421,10 +589,13 @@ def _problem_from_context(context, drive_ops, initial_state):
     engine_result = replace(engine_result, dissipation=context.dissipation)
     _require_product_state(context, engine_result)
     e_ops_solver, e_ops_meta = _prepare_context_eops(context, engine_result)
+    state = _initial_state(context.chip, initial_state, engine_result, context.tlist[0])
+    if state_frame is not None and not (initial_state is None or isinstance(initial_state, (Mapping, str))):
+        state = _reframe_state(context.chip, state, engine_result, state_frame, context.tlist[0])
     problem = SolveProblem(
         chip=context.chip,
         engine_result=engine_result,
-        initial_state=_initial_state(context.chip, initial_state, engine_result, context.tlist[0]),
+        initial_state=state,
         tlist=context.tlist,
         e_ops=e_ops_solver,
         e_ops_meta=e_ops_meta,

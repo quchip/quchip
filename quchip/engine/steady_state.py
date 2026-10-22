@@ -143,7 +143,9 @@ def _vacuum_result(chip: Any, e_ops: dict | None, model: Any, frame: Any, route:
     from quchip.engine.pulse_space import PulseSpace
 
     backend, bases = chip.backend, model.sectors.bases
-    _, resolved_frame = _prepare_engine_assembly(chip, chip.frame if frame is None else frame, chip.approximation)
+    from quchip.engine.frames import static_frame
+
+    _, resolved_frame = _prepare_engine_assembly(chip, static_frame(chip, frame), chip.approximation)
     # A one-label density matrix reads as a ket in some backends, so the space keeps N = 1 as well.
     space = PulseSpace.create(model.dims, tuple(device.label for device in chip.devices), (0, 1), bases)
     vacuum = np.zeros((space.size, space.size), dtype=complex)

@@ -26,7 +26,7 @@ Output:
 ```text
 Chip
 ════
-Frame    : lab
+Frame    : None (lab for statics, rotating for solves)
 Approx.  : RWA
 Dressed  : not computed
 Hilbert  : 4 x 5 = 20 levels

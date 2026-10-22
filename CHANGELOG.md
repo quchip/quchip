@@ -10,6 +10,35 @@ This file records notable user-visible changes to quchip.
 
 #### Changes and migration
 
+- A time-domain solve on a chip without a frame uses the rotating frame and
+  warns with that choice. `Chip(frame=None)` is the new default, and static
+  calculations keep the lab frame: `chip.resolve()`, `chip.hamiltonian()`,
+  dressed analysis and steady states. Previously, `Chip()` set
+  `frame="lab"`, so a solve resolved each device's phase at its transition
+  frequency. A transmon with `T1` and a resonator, 15 states, driven for
+  20 ns and solved for 100 ns with automatic sampling, took 2.8 s and
+  1.76 GB. It now takes 0.43 s and 0.33 GB, and its `P1` error at QuTiP's
+  default tolerances falls from 1.0e-4 to 3.5e-6. Expectation values do not
+  depend on the frame. Stored states and trajectory measurement records are
+  now in the rotating frame, and `result.state(..., frame="lab")` converts a
+  state. A ket `initial_state` is an integration-frame vector at `tlist[0]`,
+  so when `tlist[0]` is not zero it is now a vector of the frame that the
+  warning names. When a collapse or port operator does not fit the rotating
+  frame, the solve uses the frame that `frame="auto"` plans and warns with
+  its frequencies. Examples are a reduced chip whose eliminated bus carries
+  each transmon's jump onto the other, and two readouts on one feedline.
+  When the planned frame does not fit either, the solve uses the lab frame.
+  A batch checks every point and solves all of them in the first of these
+  frames that fits each point. In the planned frame, each point gets its own
+  plan, as with `frame="auto"`, and each point starts in the same physical
+  state as its own solve. When a device has no reliably assigned dressed
+  `0 -> 1` frequency, as in a resonant pair of identical devices, the solve
+  raises, names the devices, and asks for a frame such as
+  `Chip(frame="lab")`. `chip.frame` is `None` on a chip without a frame.
+  `chip.frame_info()` returns the frequencies of the frame that a solve
+  without pulses would use and warns with that choice and its reason, or
+  raises as the solve does. To keep the previous behavior, pass
+  `Chip(frame="lab")`. A saved chip keeps its saved frame.
 - `eliminate(..., method="sw")` keys the exchange `pathways` by occupation
   tuples in the source chip's device order, as `analyze_static_zz()` does.
   Previously, the keys were flat product indices, such as `1` and `17` for

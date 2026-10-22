@@ -239,7 +239,8 @@ def test_collective_decay_bright_state_decays_at_twice_the_channel_rate():
         decay_rate=rate,
         label="shared_line",
     )
-    chip = Chip([a, b], couplings=[coupling])
+    # The identical transmons have no reliable dressed 0 -> 1 labels, so the solve needs a frame.
+    chip = Chip([a, b], couplings=[coupling], frame="lab")
     bright = (
         chip.bare_state({a: 1, b: 0}) + chip.bare_state({a: 0, b: 1})
     ) / np.sqrt(2.0)

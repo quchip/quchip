@@ -86,7 +86,8 @@ def maybe_simulate_partitioned(
         return None
 
     from quchip.chip.partition import split_drive_ops, split_e_ops, split_state_mapping
-    from quchip.engine import build_problem, solve_problem
+    from quchip.engine import solve_problem
+    from quchip.engine.problem import build_solve_problem
     from quchip.results.partitioned import PartitionedSimulationResult
 
     per_ops = split_drive_ops(part, chip, drive_ops)
@@ -98,10 +99,12 @@ def maybe_simulate_partitioned(
 
     automatic = isinstance(tlist, AutomaticTimeGrid)
     times = tlist.bounds if automatic else tlist
+    # Components of a chip without a frame keep the frame that the joint context chose.
+    frame = context.resolved_frame.mode if chip.frame is None else None
     problems = [
-        build_problem(comp.chip, ops_i, times, solver=solver, options=options, run_args=run_args,
-                      e_ops=eops_i or None, initial_state=state_i,
-                      approximation=approximation, states=states, dissipation=dissipation)
+        build_solve_problem(comp.chip, ops_i, times, solver=solver, options=options, run_args=run_args,
+                            e_ops=eops_i or None, initial_state=state_i, approximation=approximation,
+                            frame=frame, states=states, dissipation=dissipation)
         for comp, ops_i, eops_i, state_i in zip(part.components, per_ops, per_eops, per_state)
     ]
     if automatic:

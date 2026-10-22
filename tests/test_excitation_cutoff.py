@@ -314,7 +314,8 @@ def test_cascade_at_the_one_excitation_cutoff_matches_the_exact_space():
     first, second = network.port("p1", target=r1, rate=rate), network.port("p2", target=r2, rate=rate)
     network.cascade(first, second)
     network.expose("out", input=first.input, output=second.output)
-    chip = Chip([r1, r2], port_network=network)
+    # The identical resonators have no reliable dressed 0 -> 1 labels, so the solve needs a frame.
+    chip = Chip([r1, r2], port_network=network, frame="lab")
     tlist = np.linspace(0.0, 40.0, 81)
     for dissipation in (False, True):
         unrestricted, limited = (
@@ -333,7 +334,7 @@ def test_raising_ports_keep_the_exchange_through_a_label_above_the_cutoff():
     second = network.port("pd", target=d, rate=rate, operator="a_dag")
     network.cascade(first, second)
     network.expose("out", input=first.input, output=second.output)
-    chip = Chip([u, d], port_network=network, space=ExcitationCutoff(1))
+    chip = Chip([u, d], port_network=network, space=ExcitationCutoff(1), frame="lab")
     tlist = np.linspace(0.0, 40.0, 41)
     result = QuantumSequence(chip).simulate(tlist=tlist, initial_state=chip.compact_state({"d": 1}, dressed=False),
                                             dissipation=False, options=tolerances("qutip"))
@@ -455,7 +456,8 @@ def test_state_of_a_large_cutoff_chip_raises_before_the_product_vector():
 @pytest.mark.unit
 def test_compact_operators_are_stored_sparse_on_qutip():
     """On QuTiP, every compact operator is CSR, so its memory follows its entries instead of the dimension squared."""
-    limited = pair(loss=True).with_space(ExcitationCutoff(3))
+    # The lab frame keeps the counter-rotating coupling static, so the model has six terms.
+    limited = pair(loss=True, frame="lab").with_space(ExcitationCutoff(3))
     engine = schedule(limited).build_problem(np.linspace(0.0, 16.0, 5), solver="mesolve").engine_result
     terms = (*engine.static_terms, *engine.dynamic_terms, *engine.collapse_terms)
     assert len(terms) == 6 and all(term.operator.layout == "csr" for term in terms)
@@ -470,7 +472,8 @@ def test_a_dense_compact_operator_that_cannot_fit_raises(monkeypatch):
 
     devices = [Resonator(freq=0.25, levels=3, label=f"r{i}") for i in range(4)]
     chain = [Capacitive(a, b, g=0.01) for a, b in zip(devices, devices[1:])]
-    chip = Chip(devices, couplings=chain, approximation=Exact(), backend="dynamiqs").with_space(ExcitationCutoff(3))
+    chip = Chip(devices, couplings=chain, approximation=Exact(), backend="dynamiqs", frame="lab")
+    chip = chip.with_space(ExcitationCutoff(3))
     sequence, tlist = QuantumSequence(chip), np.linspace(0.0, 3.0, 7)
     # The first build keeps the dressed excitation classes, whose eigenvectors need more memory than one operator.
     sequence.build_problem(tlist, initial_state={"r0": 1})

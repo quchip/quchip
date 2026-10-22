@@ -1008,7 +1008,8 @@ def _cascade_exchange(rate: Any, route: str, *, backend: str = "qutip", giant_at
         network.cascade(near, network.phase_shift("phi", phase=np.pi), far)
         network.expose("feedline", input=near.input, output=far.output)
         devices.append(atom)
-    engine = _engine(Chip(devices, port_network=network, backend=backend), route, {"r1": 1})
+    # The identical resonators have no reliable dressed 0 -> 1 labels, so the solve needs a frame.
+    engine = _engine(Chip(devices, port_network=network, backend=backend, frame="lab"), route, {"r1": 1})
     hamiltonian = sum(term.coefficient * term.operator.to_dense() for term in engine.static_terms)
     rest = (0,) * (len(devices) - 2)
     return hamiltonian[_row(engine, (0, 1, *rest)), _row(engine, (1, 0, *rest))]

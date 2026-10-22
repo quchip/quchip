@@ -22,7 +22,8 @@ def test_cascade_without_dissipation_keeps_its_exchange():
     first, second = network.port("p1", target=r1, rate=rate), network.port("p2", target=r2, rate=rate)
     network.cascade(first, second)
     network.expose("out", input=first.input, output=second.output)
-    chip = Chip([r1, r2], port_network=network)
+    # The identical resonators have no reliable dressed 0 -> 1 labels, so the solve needs a frame.
+    chip = Chip([r1, r2], port_network=network, frame="lab")
     sequence = QuantumSequence(chip)
     times = np.linspace(0.0, 40.0, 81)
     # The bare product exchanges. The degenerate dressed states are its symmetric combinations.
@@ -568,7 +569,7 @@ def test_full_pulse_route_counts_stored_operator_entries(monkeypatch):
 
     devices = [Resonator(freq=0.25, levels=3, label=f"r{i}") for i in range(6)]
     chain = [Capacitive(a, b, g=0.01) for a, b in zip(devices, devices[1:])]
-    chip = Chip(devices, couplings=chain, approximation=RWA())
+    chip = Chip(devices, couplings=chain, approximation=RWA(), frame="lab")
     chip.wire(ChargeDrive(devices[0], label="xy"))
     sequence = QuantumSequence(chip)
     sequence.schedule("xy", envelope=Square(duration=1, amplitude=0.01), freq=0.25)
@@ -593,7 +594,7 @@ def test_low_memory_moves_only_dense_compact_operators_to_the_product_route(monk
         options = {"atol": 1e-11, "rtol": 1e-10}
     devices = [Resonator(freq=0.25, levels=3, label=f"r{i}") for i in range(4)]
     chain = [Capacitive(a, b, g=0.01) for a, b in zip(devices, devices[1:])]
-    chip = Chip(devices, couplings=chain, approximation=Exact(), backend=backend)
+    chip = Chip(devices, couplings=chain, approximation=Exact(), backend=backend, frame="lab")
     sequence = QuantumSequence(chip)
     kwargs = dict(tlist=np.linspace(0, 3, 7), initial_state=chip.bare_state(r0=1), dissipation=False, options=options)
     compact = sequence.simulate(**kwargs)
