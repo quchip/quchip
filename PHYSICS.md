@@ -1223,10 +1223,10 @@ GMRES solves for `Δ`, and a solve whose relative residual stays above `1e-8`
 raises.
 
 If the lowering channels empty every state of each sector `N >= 1`, the
-stationary state is unique. Each state then has a lowering jump, so the
-support of every stationary state holds the vacuum, and two stationary states
-with orthogonal supports cannot exist. This holds for any Hamiltonian, probe
-and conserving channels. The solver compares the smallest eigenvalue of
+stationary state is unique. Each state then has a lowering jump, so the support
+of every stationary state holds the vacuum, and two stationary states with
+orthogonal supports cannot exist. This holds for any Hamiltonian, probe and
+conserving channels. The solver compares the smallest eigenvalue of
 `sum_k L_k† L_k` in each sector with `δ`, which is `1e-6` of the largest decay
 rate. Above 1024 labels, it uses a lower bound of that eigenvalue: the larger
 of the Gershgorin bound and the smallest diagonal entry of the single-device
@@ -1235,8 +1235,9 @@ channels. Without a drive the vacuum is stationary, so when this test passes,
 `N <= 1`. The frame map `U(t)` keeps `|0><0|`, so the vacuum is also the
 stationary state of a frame in which the resolved Hamiltonian is not static,
 where the backend's solve raises. When the test fails, `steadystate()` solves
-the backend's stationary Liouvillian. The `steady_state` of the output
-statistics reports `nullity=1` when the test passes and `None` when it fails.
+the backend's stationary Liouvillian. On the sector route, the `steady_state`
+of an `output_spectrum()`, `g1()` or `g2()` result reports `nullity=1` when the
+test passes and `None` when it fails.
 
 When a sector fails this test, a dark state is possible, and the solver starts
 again from a fixed generic full-rank state. The equations do not fix the
