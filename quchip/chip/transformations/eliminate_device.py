@@ -1152,10 +1152,10 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
 
     def inherit_channel(channel: CollapseChannel, support_labels: tuple[str, ...], name: str,
                         omitted: tuple[str, ...], *, owned: bool) -> None:
-        # The loss diagnostics sum the channels of the removed mode. After an
-        # earlier exact step, such a channel acts in retained coordinates on
-        # several devices, so its support alone does not identify it.
-        diagnosed = support_labels == (mode_label,) or (owned and set(support_labels) <= set(labels))
+        # The loss diagnostics sum the channels that the removed mode declares.
+        # After an earlier exact step, such a channel acts in retained
+        # coordinates on several devices, so its support does not identify it.
+        diagnosed = owned and set(support_labels) <= set(labels)
         rate = materialize_expr(channel.rate, chip.backend)
         changes = None
         if sectors is not None:

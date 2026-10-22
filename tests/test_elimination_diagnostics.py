@@ -199,3 +199,22 @@ def test_readout_loss_diagnostics_survive_an_earlier_exact_elimination():
         # 3.5 MHz, changes it by 3.5e-3, and the next order in g/Delta by 3 (0.08/2.0)^2 = 4.8e-3. The tolerance
         # allows about twice their sum.
         np.testing.assert_allclose(float(actual["purcell_rate"]), kappa * (0.08 / 2.0) ** 2, rtol=2e-2)
+
+
+@pytest.mark.unit
+def test_readout_loss_diagnostics_count_only_the_channels_the_readout_declares():
+    """A retained channel on the readout alone stays out of kappa and the Purcell rate on every route."""
+    from quchip import CollapseChannel, EffectiveTerms
+
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+    readout = Resonator(freq=7.0, levels=3, internal_quality_factor=200_000, label="r")
+    lowering = np.diag(np.sqrt([1.0, 2.0]), 1)
+    extra = EffectiveTerms(("r",), (3,), np.zeros((3, 3)), channels=(CollapseChannel(lowering, 0.01, "extra"),))
+    chip = Chip([q, readout], [Capacitive(q, readout, g=0.08)], effective_terms=[extra])
+    kappa = 2 * np.pi * 7.0 / 200_000
+    for method, local in (("sw", False), ("exact", False), ("sw", True)):
+        params = eliminate(chip, "r", method=method, local=local).effective_params["q"]
+        np.testing.assert_allclose(float(params["kappa"]), kappa, rtol=1e-12)
+        # The Purcell rate is kappa (g/Delta)^2 = kappa (0.08/2.0)^2 at leading order; the next order in g/Delta
+        # changes it by 3 (0.08/2.0)^2 = 4.8e-3.
+        np.testing.assert_allclose(float(params["purcell_rate"]), kappa * (0.08 / 2.0) ** 2, rtol=1e-2)

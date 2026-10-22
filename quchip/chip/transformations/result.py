@@ -136,7 +136,8 @@ class EliminationResult:
         the diagonal of the retained Hamiltonian, so it holds only the shift
         through the removed mode. With ``method="exact"``, it is the labeled
         dressed transition, so it also holds the dressing by couplings that
-        stay on the chip. The Purcell rate summarizes the
+        stay on the chip. The two methods report different quantities, not
+        two estimates of one shift. The Purcell rate summarizes the
         first downward transition, summed over the removed device's channels.
         ``kappa`` is its isolated 1-to-0 rate. These diagnostics do not replace
         the retained jumps. ``chi`` is the full conditional mode-frequency
