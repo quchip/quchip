@@ -68,6 +68,10 @@ _CUTOFF_SPECTRUM_ERROR = (
     "excitation cutoff, and this chip keeps only N <= {max_total}. Use label queries such as chip.energy(), "
     "chip.freq(), chip.state() or chip.compact_state(), or chip.with_space(None) for the full product space."
 )
+# Perturbative orders as words, for the truncation advisory.
+_ORDERS = {2: "second", 4: "fourth", 6: "sixth", 8: "eighth", 10: "tenth", 12: "twelfth"}
+
+
 @dataclass(frozen=True)
 class KerrMatrix:
     """Labeled dressed self-Kerr and cross-Kerr coefficients in GHz.
@@ -213,6 +217,7 @@ class ChipAnalysis:
         self._sector_cache: tuple[Any, Any, tuple[SectorModel | None, list[str]]] | None = None
         self._engine_result_cache: tuple[Any, Any, tuple[EngineResult, list[str]]] | None = None
         self._label_cache: tuple[Any, Any, Any] | None = None
+        self._moves_cache: tuple[Any, Any, tuple[list[dict[int, int]], list[int | None]]] | None = None
         self._bare_labels_cache: tuple[
             tuple[tuple[int, ...], ...], dict[tuple[int, ...], int]
         ] | None = None
@@ -469,6 +474,8 @@ class ChipAnalysis:
         model = self._sector_model(_local_resolution=_local_resolution, _advise=_advise)
         entry: Callable[[tuple[int, ...]], tuple[Any, Any, Any]]
         if model is not None:
+            bases = model.bases
+
             def sector_entry(label: tuple[int, ...]) -> tuple[Any, Any, Any]:
                 label = self._sector_label(label)
                 system = model.eigensystem(sum(label))
@@ -478,6 +485,7 @@ class ChipAnalysis:
             entry = sector_entry
         else:
             engine_result = self.engine_result(_local_resolution=_local_resolution, _advise=_advise)
+            bases = engine_result.bases
             eigenvalues, _, _, labeling = self._compute_array_labeled(engine_result)
 
             def full_entry(label: tuple[int, ...]) -> tuple[Any, Any, Any]:
@@ -486,7 +494,7 @@ class ChipAnalysis:
                 return energy, labeling.overlaps[row], labeling.margins[row]
 
             entry = full_entry
-        check = self._truncation_check() if _advise else None
+        check = self._truncation_check(bases) if _advise else None
         if check is None:
             return entry
 
@@ -500,22 +508,32 @@ class ChipAnalysis:
 
         return checked_entry
 
-    def _truncation_check(self) -> Callable[[tuple[int, ...]], str | None] | None:
+    def _truncation_check(self, bases: Mapping[str, Any]) -> Callable[[tuple[int, ...]], str | None] | None:
         """Return a check for labels that mix with states beyond the levels of a truncated device.
 
-        A coupling moves one excitation between its devices. A bare state that
-        needs ``k`` such steps to put a truncated device in its first missing
-        level enters the dressed energy of the label at order ``2k`` in the
-        couplings. The check warns for ``k <= 2``, the order of Lamb and
-        dispersive shifts and of ZZ through a bus. It reads only labels,
-        dimensions and couplings, so it is safe at trace time. It returns
-        ``None`` when no device can warn.
+        The check is an advisory for nondegenerate, dispersive couplings. Two
+        devices are one step apart when a kept static term that is not
+        diagonal in the energy basis acts on both. To fill the first missing
+        level of a truncated device, a bare state takes excitations from the
+        label, each at the cost of its distance to the device. Without RWA, a
+        kept term can also create an excitation. That step counts twice,
+        because its energy denominator holds a sum of frequencies. A bare
+        state ``k`` steps from the label enters its dressed energy first at
+        order ``2k`` in the couplings. The check warns when the cheapest such
+        state costs at most two steps, the order of Lamb and dispersive shifts
+        and of ZZ through a bus, or at most the largest distance between two
+        excited devices of the label, the order at which they first interact.
+        It does not test the native basis of a device, such as a charge range.
+        It reads only operator structure, so it is safe at trace time. It
+        returns ``None`` when no device can warn.
         """
-        devices = self._chip.devices
+        from quchip.engine.excitation import keeps_zero_total_only
+
+        chip = self._chip
         names = self._device_labels()
         dims = self._semantic_dims()
         truncated = []
-        for index, device in enumerate(devices):
+        for index, device in enumerate(chip.devices):
             try:
                 boundary = device.truncation_boundary()
             except NotImplementedError:
@@ -524,40 +542,47 @@ class ChipAnalysis:
                 truncated.append(index)
         if not truncated:
             return None
-        position = {name: index for index, name in enumerate(names)}
-        neighbors: list[set[int]] = [set() for _ in devices]
-        for coupling in self._chip.couplings:
-            a, b = position.get(coupling.device_a_label), position.get(coupling.device_b_label)
-            if a is not None and b is not None and a != b:
-                neighbors[a].add(b)
-                neighbors[b].add(a)
-        # The coupling steps from each other device to each truncated device, up to two.
-        steps: dict[int, dict[int, int]] = {}
-        for index in truncated:
-            near = dict.fromkeys(neighbors[index], 1)
-            for other in neighbors[index]:
-                for far in neighbors[other]:
-                    near.setdefault(far, 2)
-            near.pop(index, None)
-            steps[index] = near
+        # Without terms that create excitations, the label holds every excitation that a missing level needs.
+        creates = not keeps_zero_total_only(chip.approximation) or bool(chip.effective_terms) \
+            or chip.port_network is not None
+        moves: tuple[list[dict[int, int]], list[int | None]] | None = None
+
+        def structure() -> tuple[list[dict[int, int]], list[int | None]]:
+            nonlocal moves
+            if moves is None:
+                signature = self._analysis_signature()
+                if not scoped_hit(self._moves_cache, signature):
+                    self._moves_cache = scoped_entry(signature, self._excitation_moves(bases), traced=False)
+                moves = self._moves_cache[2]
+            return moves
 
         def check(label: tuple[int, ...]) -> str | None:
+            excited = [index for index, level in enumerate(label) if level]
             causes: list[str] = []
             fixes: list[str] = []
             for index in truncated:
-                moves = sorted(step for other, step in steps[index].items() for _ in range(int(label[other])))
-                reach, used = int(label[index]), 0
-                for step in moves:
-                    if used + step > 2:
-                        break
-                    reach, used = reach + 1, used + step
-                if reach < dims[index]:
+                need = dims[index] - int(label[index])
+                if not creates and sum(int(label[other]) for other in excited if other != index) < need:
                     continue
-                order = "second" if sum(moves[:dims[index] - int(label[index])]) == 1 else "fourth"
+                distances, created = structure()
+                limit = max([2, *(distances[first].get(second, 0) for first in excited for second in excited)])
+                # The cost and the number of steps of each excitation that can reach the device, cheapest first.
+                cost = created[index]
+                units = sorted([
+                    *((distances[index][other],) * 2 for other in excited if other != index
+                      and other in distances[index] for _ in range(int(label[other]))),
+                    *([] if cost is None else [(cost, cost - 1)] * (need + limit)),
+                ])
+                spent = list(itertools.accumulate(step for step, _ in units))
+                if len(units) < need or spent[need - 1] > limit:
+                    continue
+                order = 2 * sum(steps for _, steps in units[:need])
+                reach = int(label[index]) + sum(1 for total in spent if total <= limit)
                 shown = {names[other]: int(level) for other, level in enumerate(label) if level}
                 causes.append(
-                    f"Label {shown} mixes at {order} order in the couplings with states that need level "
-                    f"{dims[index]} of device {names[index]!r}, but {names[index]!r} keeps {dims[index]} levels."
+                    f"Label {shown} mixes at {_ORDERS.get(order, f'{order}th')} order in the couplings with states "
+                    f"that need level {dims[index]} of device {names[index]!r}, but {names[index]!r} keeps "
+                    f"{dims[index]} levels."
                 )
                 fixes.append(f"Set levels={reach + 1} or more on {names[index]!r} to remove this warning.")
             if not causes:
@@ -566,6 +591,59 @@ class ChipAnalysis:
                     f"and can differ from the untruncated one. {' '.join(fixes)}")
 
         return check
+
+    def _excitation_moves(self, bases: Mapping[str, Any]) -> tuple[list[dict[int, int]], list[int | None]]:
+        """Return the step distances between devices and the cost of a created excitation on each device.
+
+        ``distances[d][x]`` counts the steps between devices ``x`` and ``d``.
+        A static term that is not diagonal in the energy basis links each pair
+        of its devices, and so does a generated port pair. A term that keeps a
+        change of the total excitation number creates excitations on its
+        devices. ``created[d]`` is the cost of such an excitation on ``d``:
+        two steps for its creation plus its distance to ``d``.
+        """
+        from quchip.declarative.expr import is_energy_diagonal
+        from quchip.engine.assembly import _interaction_contributions
+        from quchip.engine.excitation import authored_excitation_changes, keeps_zero_total_only
+
+        chip = self._chip
+        position = {name: index for index, name in enumerate(self._device_labels())}
+        supports: list[set[int]] = []
+        sources: set[int] = set()
+        for term in _interaction_contributions(chip):
+            expression = term.expression()
+            if is_energy_diagonal(expression, bases):
+                continue
+            support = {position[label] for label in term.labels}
+            supports.append(support)
+            if term.retained or not keeps_zero_total_only(chip.approximation):
+                changes = authored_excitation_changes(expression, term.labels, chip.backend, bases)
+                if changes is None or any(changes):
+                    sources |= support
+        network = chip.port_network
+        if network is not None:
+            targets = {port.label: port.resolve_targets(chip) for port in network.ports}
+            for downstream, upstream, _ in network._active_generated_pairs():
+                supports.append({position[label] for label in (*targets[downstream], *targets[upstream])})
+        neighbors: list[set[int]] = [set() for _ in position]
+        for support in supports:
+            for index in support:
+                neighbors[index] |= support - {index}
+        distances: list[dict[int, int]] = []
+        for start in range(len(neighbors)):
+            found, frontier = {start: 0}, [start]
+            while frontier:
+                following = []
+                for index in frontier:
+                    for other in neighbors[index]:
+                        if other not in found:
+                            found[other] = found[index] + 1
+                            following.append(other)
+                frontier = following
+            distances.append(found)
+        created = [min((2 + found[source] for source in sources if source in found), default=None)
+                   for found in distances]
+        return distances, created
 
     def _energy_lookup(self) -> Callable[[tuple[int, ...]], Any]:
         """Return a map from a bare label to its dressed energy in GHz."""

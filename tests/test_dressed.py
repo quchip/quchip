@@ -401,10 +401,43 @@ def test_two_level_readout_warns_on_two_excitation_queries_and_keeps_the_truncat
         bus_chip.static_zz(q1, q2)
 
 
+def _coupler_chain(qubit_levels: int) -> tuple[Chip, DuffingTransmon, DuffingTransmon]:
+    """Return two transmons that interact through two couplers in series, so their ZZ starts at sixth order."""
+    q1 = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=qubit_levels, label="q1")
+    c1 = Resonator(freq=6.4, levels=3, label="c1")
+    c2 = Resonator(freq=6.8, levels=3, label="c2")
+    q2 = DuffingTransmon(freq=5.3, anharmonicity=-0.2, levels=qubit_levels, label="q2")
+    couplings = [Capacitive(q1, c1, g=0.1), Capacitive(c1, c2, g=0.1), Capacitive(c2, q2, g=0.1)]
+    return Chip([q1, c1, c2, q2], couplings), q1, q2
+
+
+@pytest.mark.unit
+def test_truncation_warning_follows_counter_rotating_steps_and_long_interaction_paths() -> None:
+    """Exact() reaches a missing level by pair creation, and distant excitations widen the checked orders."""
+    from quchip import Exact
+
+    def exact_pair(qubit_levels: int) -> Chip:
+        q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=qubit_levels, label="q")
+        r = Resonator(freq=7.0, levels=5, label="r")
+        return Chip([q, r], [Capacitive(q, r, g=0.105)], approximation=Exact())
+
+    with pytest.warns(UserWarning, match=r"second order.*'q' keeps 2 levels.*levels=3 or more on 'q'"):
+        truncated = exact_pair(2).freq("q")
+    # Pair creation couples |1,0> directly to the missing |2,1>, which moves f01 by about 1.9 MHz.
+    assert float(truncated - exact_pair(3).freq("q")) == pytest.approx(1.865e-3, abs=1e-5)
+    # The ZZ of two couplers in series starts at sixth order, the order at which the missing level 2 of a
+    # two-level transmon enters. That level changes the ZZ by a factor of two.
+    chain, q1, q2 = _coupler_chain(2)
+    with pytest.warns(UserWarning, match=r"sixth order.*'q1' keeps 2 levels.*levels=3 or more on 'q1'"):
+        truncated = chain.static_zz(q1, q2)
+    full, q1, q2 = _coupler_chain(3)
+    assert float(truncated) / float(full.static_zz(q1, q2)) == pytest.approx(0.465, abs=0.01)
+
+
 @pytest.mark.unit
 def test_converged_or_single_excitation_queries_do_not_warn_about_truncation() -> None:
     """Queries that reach no missing level of a truncated device within two coupling steps stay silent."""
-    from quchip import Qubit
+    from quchip import CrossKerr, Exact, Qubit
 
     def filtered_readout(filter_levels: int) -> tuple[Chip, DuffingTransmon, Resonator]:
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=3, label="q")
@@ -430,5 +463,17 @@ def test_converged_or_single_excitation_queries_do_not_warn_about_truncation() -
         # A two-level filter behind the readout misses only states three steps away, at sixth order.
         two_level, q, r = filtered_readout(2)
         truncated = two_level.freq(r, when={q: 1})
+        # A diagonal coupling moves no excitation, so the missing level 2 of r never mixes in.
+        q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=3, label="q")
+        r = Resonator(freq=7.0, levels=2, label="r")
+        diagonal = Chip([q, r], [CrossKerr(q, r, chi=-0.001)])
+        assert float(diagonal.freq(q, when={r: 1})) == pytest.approx(4.999, abs=1e-12)
+        # Under Exact(), a missing level 3 of a three-level transmon needs pair creation and one more step.
+        q1 = DuffingTransmon(freq=5.326, anharmonicity=-0.261, levels=3, label="q1")
+        q2 = DuffingTransmon(freq=5.192, anharmonicity=-0.263, levels=3, label="q2")
+        bus = Resonator(freq=6.3, levels=3, label="bus")
+        exact = Chip([q1, q2, bus], [Capacitive(q1, bus, g=0.03), Capacitive(q2, bus, g=0.03)],
+                     approximation=Exact())
+        exact.freq(q1, when={q2: 1})
     three_level, q, r = filtered_readout(3)
     assert float(truncated) == pytest.approx(float(three_level.freq(r, when={q: 1})), abs=1e-7)

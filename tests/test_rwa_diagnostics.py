@@ -142,10 +142,12 @@ def test_cold_approximation_override_does_not_warn_for_reference_policy(conservi
     assert not caught
     assert all(term.band_weights not in {(2, -1), (-2, 1)} for term in result.dropped_terms)
     assert abs(np.asarray(result.hamiltonian().matrix())[1, 4]) == pytest.approx(0.01)
-    # Public analysis uses the chip policy, so it reports the advisory that the reference lookup kept.
+    # Public analysis uses the chip policy, so it reports the advisory that the reference lookup kept. A chip
+    # policy that keeps pair bands also mixes |0,1> with |1,2>, beyond the two levels of b, and warns about it.
     with pytest.warns(UserWarning, match="nonzero resonant entry") as caught:
         frequencies = chip.freq()
-    assert len(caught) == 1
+    assert len([w for w in caught if "nonzero resonant entry" in str(w.message)]) == 1
+    assert any("'b' keeps 2 levels" in str(w.message) for w in caught) is not conserving
     # Reference frequencies still follow the chip policy, not the snapshot override.
     # Both read the same cached dressed energies.
     for label, frequency in frequencies.items():
