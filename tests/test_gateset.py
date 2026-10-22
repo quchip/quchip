@@ -581,8 +581,8 @@ def test_calibration_leaves_a_zero_amplitude_start():
     assert 1e-6 <= value <= 2e-6
 
 
-def test_status_flags_mark_seeds_cut_off_fits_stale_composites_and_start_times():
-    """Seeds, cut-off fits, inner refits, and errors at other start times each set a status."""
+def test_calibration_status_flags():
+    """Seeds, cut-off fits, inner refits, other start times, and an excited neighbor each set a status."""
     qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=2, label="q")
     chip = Chip([qubit])
     chip.wire(ChargeDrive(qubit, label="xy"))
@@ -624,6 +624,16 @@ def test_status_flags_mark_seeds_cut_off_fits_stale_composites_and_start_times()
     with pytest.warns(UserWarning, match="poor_fit"):
         calibration = gates.calibrate()[("SX", ("q",))]
     assert calibration.infidelity < 1e-3 < calibration.placement_infidelity[1]
+    # Fitted with q1 in |0>, the SX meets the target; the 1.3 MHz ZZ breaks it when q1 is in |1>.
+    q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.33, levels=3, label="q0")
+    q1 = DuffingTransmon(freq=5.1, anharmonicity=-0.33, levels=3, label="q1")
+    chip = Chip([q0, q1], couplings=[Capacitive(q0, q1, g=0.01, label="J")])
+    chip.wire(ChargeDrive(q0, label="xy0"), ChargeDrive(q1, label="xy1"))
+    gates = GateSet(chip, ["q0", "q1"], spectators="none")
+    gates.add(drag_sx(chip, "q0"))
+    with pytest.warns(UserWarning, match="poor_fit"):
+        calibration = gates.calibrate()[("SX", ("q0",))]
+    assert calibration.infidelity < 1e-3 < 1 - calibration.spectators["q1"]
 
 
 def test_automatic_cutoff_recalibrates_until_the_gate_converges():

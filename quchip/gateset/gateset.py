@@ -511,8 +511,9 @@ class GateSet:
         explore : bool or None, default None
             Override each native's ``explore`` flag.
         target : float, default 1e-3
-            Infidelity above which the status is ``"poor_fit"``, at start
-            time 0 or at the worst start time of ``placement_infidelity``.
+            Infidelity above which the status is ``"poor_fit"``: at start
+            time 0, at the worst start time of ``placement_infidelity``, or
+            with one other qubit in level 1, as in ``spectators``.
         progress : bool, default False
             Print one line per native as it finishes.
 
@@ -593,8 +594,9 @@ class GateSet:
         self._entries.pop(key, None)
         self._placed.clear()
         self._post_checks(native, calibration)
-        # A gate whose pieces use different carriers can miss the target at other start times.
-        worst = max((calibration.infidelity, *(calibration.placement_infidelity or ())))
+        # The gate must also meet the target at other start times and with any other qubit excited.
+        worst = max((calibration.infidelity, *(calibration.placement_infidelity or ()),
+                     *(1.0 - fidelity for fidelity in calibration.spectators.values())))
         if calibration.status == "ok" and worst > target:
             calibration.status = "poor_fit"
         if calibration.status != "ok":
