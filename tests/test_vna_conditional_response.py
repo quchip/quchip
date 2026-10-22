@@ -162,7 +162,8 @@ def test_ef_transition_and_cutoffs_control_the_conditional_pull():
     larger = readout_chip(g=.02, levels=4, T1=None, T2=None)
     np.testing.assert_allclose(response, VNA(larger).sweep(frequencies, when={"q": 1}).matrix, atol=1e-11)
     two_level = readout_chip(g=.02, q_levels=2, T1=None, T2=None)
-    two_level_pull = float(two_level.freq("r", when={"q": 1})) - ground_frequency
+    with pytest.warns(UserWarning, match="'q' keeps 2 levels"):
+        two_level_pull = float(two_level.freq("r", when={"q": 1})) - ground_frequency
     assert two_level_pull == pytest.approx(2 * .02**2 / (5. - 6.), rel=.003)
     optimum = minimize_scalar(lambda f: abs(VNA(chip).sweep(f, when={"q": 1}).matrix[0, 0])**2,
                               bounds=(excited_frequency - .0005, excited_frequency + .0005),

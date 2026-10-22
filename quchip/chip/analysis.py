@@ -45,6 +45,7 @@ from quchip.engine.dressing import (
     gauge_phases,
     labeled_eigensystem,
     materialize_dressed_result,
+    user_stacklevel,
     warn_weak_assignment,
 )
 from quchip.chip.states import normalize_device_state_mapping
@@ -461,9 +462,11 @@ class ChipAnalysis:
 
         A chip that conserves the total energy-level index diagonalizes only the
         sector of each requested label. Other chips diagonalize their complete
-        static model once.
+        static model once. With ``_advise``, the first label whose excitation
+        count exceeds a truncated device warns once for this lookup.
         """
         model = self._sector_model(_local_resolution=_local_resolution, _advise=_advise)
+        entry: Callable[[tuple[int, ...]], tuple[Any, Any, Any]]
         if model is not None:
             def sector_entry(label: tuple[int, ...]) -> tuple[Any, Any, Any]:
                 label = self._sector_label(label)
@@ -471,16 +474,88 @@ class ChipAnalysis:
                 row = system.space.row(label)
                 return system.energy(label), system.labeling.overlaps[row], system.labeling.margins[row]
 
-            return sector_entry
-        engine_result = self.engine_result(_local_resolution=_local_resolution, _advise=_advise)
-        eigenvalues, _, _, labeling = self._compute_array_labeled(engine_result)
+            entry = sector_entry
+        else:
+            engine_result = self.engine_result(_local_resolution=_local_resolution, _advise=_advise)
+            eigenvalues, _, _, labeling = self._compute_array_labeled(engine_result)
 
-        def full_entry(label: tuple[int, ...]) -> tuple[Any, Any, Any]:
-            row = self._bare_label_index(label)
-            energy = self._eigenvalue_of_label(label, precomputed=(eigenvalues, labeling))
-            return energy, labeling.overlaps[row], labeling.margins[row]
+            def full_entry(label: tuple[int, ...]) -> tuple[Any, Any, Any]:
+                row = self._bare_label_index(label)
+                energy = self._eigenvalue_of_label(label, precomputed=(eigenvalues, labeling))
+                return energy, labeling.overlaps[row], labeling.margins[row]
 
-        return full_entry
+            entry = full_entry
+        check = self._truncation_check() if _advise else None
+        if check is None:
+            return entry
+
+        def checked_entry(label: tuple[int, ...]) -> tuple[Any, Any, Any]:
+            nonlocal check
+            result = entry(label)
+            if check is not None and (message := check(tuple(label))) is not None:
+                check = None
+                warnings.warn(message, UserWarning, stacklevel=user_stacklevel())
+            return result
+
+        return checked_entry
+
+    def _truncation_check(self) -> Callable[[tuple[int, ...]], str | None] | None:
+        """Return a check for labels whose excitation sector needs more levels than a truncated device keeps.
+
+        A device warns when it truncates a larger model and keeps at most ``N``
+        levels. ``N`` is the label's total level on the device's connected
+        component of the static coupling graph. The check reads only labels,
+        dimensions and couplings, so it is safe at trace time. It returns
+        ``None`` when no device can warn.
+        """
+        devices = self._chip.devices
+        names = self._device_labels()
+        dims = self._semantic_dims()
+        truncated = []
+        for index, device in enumerate(devices):
+            try:
+                boundary = device.truncation_boundary()
+            except NotImplementedError:
+                boundary = None
+            if boundary is not None:
+                truncated.append(index)
+        if not truncated:
+            return None
+        component = list(range(len(devices)))
+
+        def root(index: int) -> int:
+            while component[index] != index:
+                index = component[index]
+            return index
+
+        position = {name: index for index, name in enumerate(names)}
+        for coupling in self._chip.couplings:
+            a, b = position.get(coupling.device_a_label), position.get(coupling.device_b_label)
+            if a is not None and b is not None:
+                component[root(a)] = root(b)
+        roots = [root(index) for index in range(len(devices))]
+
+        def check(label: tuple[int, ...]) -> str | None:
+            totals: dict[int, int] = {}
+            for index, level in enumerate(label):
+                totals[roots[index]] = totals.get(roots[index], 0) + int(level)
+            short = [index for index in truncated if dims[index] <= totals[roots[index]]]
+            if not short:
+                return None
+            shown = {names[index]: int(level) for index, level in enumerate(label) if level}
+            causes = " ".join(
+                f"Label {shown} has {totals[roots[index]]} excitations on device {names[index]!r} "
+                f"and the devices coupled to it, but {names[index]!r} keeps {dims[index]} levels."
+                for index in short
+            )
+            fixes = " ".join(
+                f"Set levels={totals[roots[index]] + 1} or more on {names[index]!r} to remove this warning."
+                for index in short
+            )
+            return (f"{causes} The dressed value belongs to this truncated model "
+                    f"and can differ from the untruncated one. {fixes}")
+
+        return check
 
     def _energy_lookup(self) -> Callable[[tuple[int, ...]], Any]:
         """Return a map from a bare label to its dressed energy in GHz."""

@@ -352,3 +352,67 @@ def test_cached_qutip_kerr_values_remain_accessible_inside_jit():
     chip = Chip([q, r], [Capacitive(q, r, g=0.08)], backend="qutip")
     expected = float(chip.dispersive_shift("q", "r"))
     assert jax.jit(lambda scale: chip.dispersive_shift("q", "r") * scale)(2.0) == pytest.approx(2 * expected)
+
+
+def _readout_pair(readout_levels: int, readout_type=Resonator) -> tuple[Chip, DuffingTransmon, Resonator]:
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=3, label="q")
+    r = readout_type(freq=7.0, levels=readout_levels, label="r")
+    return Chip([q, r], [Capacitive(q, r, g=0.105)]), q, r
+
+
+def _two_level_readout_pull() -> float:
+    """Return the cross-Kerr of a three-level transmon and a two-level readout under RWA."""
+    one = np.linalg.eigvalsh([[5.0, 0.105], [0.105, 7.0]])
+    two = np.linalg.eigvalsh([[9.8, np.sqrt(2) * 0.105], [np.sqrt(2) * 0.105, 12.0]])
+    # |1,0> is the lower one-excitation state and |1,1> is the upper two-excitation state.
+    return two[1] - one[0] - one[1]
+
+
+@pytest.mark.unit
+def test_two_level_readout_warns_on_two_excitation_queries_and_keeps_the_truncated_value() -> None:
+    """A two-excitation query on a two-level readout warns once and returns the truncated-model value."""
+    import jax
+
+    chip, q, r = _readout_pair(2)
+    with pytest.warns(UserWarning, match=r"'r' keeps 2 levels.*levels=3 or more on 'r'") as record:
+        shift = chip.dispersive_shift(q, r)
+    assert len([w for w in record if "keeps 2 levels" in str(w.message)]) == 1
+    assert float(shift) == pytest.approx(_two_level_readout_pull(), abs=1e-12)
+    with pytest.warns(UserWarning, match=r"'r' keeps 2 levels"):
+        pulled = chip.freq(r, when={q: 1})
+    assert float(pulled - chip.freq(r)) == pytest.approx(_two_level_readout_pull(), abs=1e-12)
+    with pytest.warns(UserWarning, match=r"'r' keeps 2 levels") as record:
+        matrix = chip.kerr_matrix()
+    assert len([w for w in record if "keeps 2 levels" in str(w.message)]) == 1
+    assert float(matrix[q, r]) == pytest.approx(_two_level_readout_pull(), abs=1e-12)
+    with pytest.warns(UserWarning, match=r"'r' keeps 2 levels"):
+        traced = jax.jit(lambda scale: chip.dispersive_shift(q, r) * scale)(2.0)
+    assert float(traced) == pytest.approx(2 * _two_level_readout_pull(), abs=1e-12)
+    q1 = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=3, label="q1")
+    q2 = DuffingTransmon(freq=5.3, anharmonicity=-0.2, levels=3, label="q2")
+    bus = Resonator(freq=6.5, levels=2, label="bus")
+    bus_chip = Chip([q1, q2, bus], [Capacitive(q1, bus, g=0.05), Capacitive(q2, bus, g=0.05)])
+    with pytest.warns(UserWarning, match=r"device 'bus'.*'bus' keeps 2 levels"):
+        bus_chip.static_zz(q1, q2)
+
+
+@pytest.mark.unit
+def test_converged_or_single_excitation_queries_do_not_warn_about_truncation() -> None:
+    """Queries whose excitation sectors fit every truncated device stay silent."""
+    from quchip import Qubit
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        chip, q, r = _readout_pair(3)
+        chip.dispersive_shift(q, r)
+        chip.freq(r, when={q: 1})
+        two_level, q, r = _readout_pair(2)
+        two_level.freq(q)
+        two_level.freq()
+        qubit = Qubit(freq=5.0, label="q")
+        r = Resonator(freq=7.0, levels=3, label="r")
+        Chip([qubit, r], [Capacitive(qubit, r, g=0.105)]).dispersive_shift(qubit, r)
+        q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=3, label="q")
+        r = Resonator(freq=7.0, levels=3, label="r")
+        spectator = Resonator(freq=8.0, levels=2, label="spectator")
+        Chip([q, r, spectator], [Capacitive(q, r, g=0.105)]).dispersive_shift(q, r)
