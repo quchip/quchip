@@ -792,9 +792,12 @@ Source: [`quchip/devices/base.py`](https://github.com/quchip/quchip/blob/main/qu
 `device.reference_freq` returns the authored override in GHz, or `None`. Each
 new chip calculation resolves `None` to that chip's dressed transition and
 captures the value in its frame record. An explicit value fixes the frame and
-readout reference across model changes. Off the dressed transition `f_01`, a
-residual detuning `Δ = f_01 - f_ref` stays in `H0` and causes idle Ramsey
-precession.
+readout reference across model changes. When `f_ref` is off the dressed
+transition `f_01`, the demodulated `0 -> 1` coherence of an idle device turns
+as `exp(-i 2π Δ t)` with `Δ = f_01 - f_ref`. This is idle Ramsey precession.
+The integration frame subtracts `f_frame n` from the Hamiltonian (§4.2), and
+demodulation removes the rest, `f_ref - f_frame` (§8). Under `"rotating"` the
+Hamiltonian takes all of `f_ref`, and under `"lab"` the demodulation does.
 
 The reference is a frame and readout reference only and does not detune
 drives. The drive carrier is a separate choice, so a real LO error must also
@@ -1365,9 +1368,10 @@ demodulation frequencies `ResolvedFrame.demod_freqs = f_ref - f_frame`.
 `result.expect` is therefore a co-rotating readout: observables are reported in
 each device's `reference_freq` frame, whatever the solver's integration frame.
 Transverse observables (`<a>`, `<sigma_x>`) come back as the slow demodulated
-envelope that a lab readout produces, which turns at `Δ = f_01 - f_ref` when
-the reference is detuned from the dressed transition `f_01`. Diagonal
-observables (populations) are frame-invariant.
+envelope that a lab readout produces. Each coherence in it turns at its own
+transition frequency minus `f_ref`: the dressed `0 -> 1` coherence at
+`Δ = f_01 - f_ref`, and in a multilevel device the `1 -> 2` coherence at
+`f_12 - f_ref`. Diagonal observables (populations) are frame-invariant.
 
 Under `"rotating"`, the integration frame is the reference frame, so
 demodulation is a no-op and `result.expect` equals `Tr(O·rho)` on the states
@@ -2335,14 +2339,18 @@ authored coordinates. The projection records those unchanged tensor factors,
 and serialization keeps them. Operators within the generator's support keep
 their complete induced components and require compatible frame phases. The
 second-order term can matter even when the first-order term is zero. Take two
-qubits at 5.00 and 5.40 GHz, each with a finite T1, on a 6.40 GHz bus with
-`g = 70 MHz`, and eliminate the bus. The T1 jump of the first qubit is
+transmon qubits at 5.00 and 5.40 GHz, each with a finite T1, on a 6.40 GHz bus
+with `g = 70 MHz`, and eliminate the bus. The T1 jump of the first qubit is
 proportional to its lowering operator `c = a_1`, and `P [S, c] P` is zero. The
-second-order term adds `-(1/2)(g/Δ_1)(g/Δ_2) a_2 ≈ -1.75e-3 a_2`, where `a_2`
-lowers the second qubit and `Δ_i` is the detuning of qubit `i` from the bus.
-This part carries only a 3e-6 share of the rate. The two parts of the jump
-still turn at different frequencies under `"rotating"`, so the reduced chip
-refuses that frame. It runs under `"auto"`, `"lab"` or a common frame.
+second-order term adds a part that lowers the second qubit. On the vacuum and
+one-excitation states, the carried jump is about `0.99875 a_1 - 0.00175 a_2`.
+Here `-0.00175 = -(1/2)(g/Δ_1)(g/Δ_2)`, with `Δ_i` the bare detuning of qubit
+`i` from the bus. The transmon anharmonicity changes the higher elements: from
+`|11>` to `|10>`, the part is `-0.00122`. The part is small, but the cross
+terms of the dissipator, such as `a_1 rho a_2†`, are linear in it. It also
+makes the jump collective. Its two parts turn at different frequencies under
+`"rotating"`, so the reduced chip refuses that frame. It runs under `"auto"`,
+`"lab"` or a common frame.
 
 #### Reflection sections
 
