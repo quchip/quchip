@@ -435,6 +435,45 @@ def test_truncation_warning_follows_counter_rotating_steps_and_long_interaction_
 
 
 @pytest.mark.unit
+def test_truncation_warning_reads_the_kept_bands_of_couplings_and_port_pairs() -> None:
+    """A coupling that RWA removes links nothing, and a port pair that creates excitations counts."""
+    from quchip import Coupling, Exact, PortNetwork, RWA
+
+    def pairs(a, b, backend):
+        lower = backend.tensor(a.lowering_operator(), b.lowering_operator())
+        return lower + backend.tensor(backend.dag(a.lowering_operator()), backend.dag(b.lowering_operator()))
+
+    def pair_chip(approximation: RWA | Exact) -> Chip:
+        q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=3, label="q")
+        r = Resonator(freq=7.0, levels=2, label="r")
+        return Chip([q, r], [Coupling(q, r, g=0.05, interaction=pairs)], approximation=approximation)
+
+    with pytest.warns(UserWarning, match="vanishes entirely under RWA") as record:
+        frequency = pair_chip(RWA()).freq("q", when={"r": 1})
+    assert float(frequency) == pytest.approx(5.0, abs=1e-12)
+    assert not [w for w in record if "keeps 2 levels" in str(w.message)]
+    with pytest.warns(UserWarning, match=r"second order.*'r' keeps 2 levels"):
+        pair_chip(Exact()).freq("q", when={"r": 1})
+
+    def cascade(levels: int) -> Chip:
+        a = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=levels, label="a")
+        b = Resonator(freq=7.0, levels=3, label="b")
+        line = PortNetwork(label="line")
+        # The generated pair L_b^dagger L_a = 0.01 b^dagger a^dagger creates an excitation on each device.
+        up = line.port("a_out", target=a, rate=0.01, operator="a_dag")
+        down = line.port("b_in", target=b, rate=0.01)
+        line.cascade(up, down)
+        line.expose("probe", input=up, output=down)
+        return Chip([a, b], port_network=line, approximation=Exact())
+
+    with pytest.warns(UserWarning, match=r"second order.*'a' keeps 2 levels.*levels=3 or more on 'a'"):
+        cascade(2).freq("a")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        cascade(3).freq("a")
+
+
+@pytest.mark.unit
 def test_converged_or_single_excitation_queries_do_not_warn_about_truncation() -> None:
     """Queries that reach no missing level of a truncated device within two coupling steps stay silent."""
     from quchip import CrossKerr, Exact, Qubit

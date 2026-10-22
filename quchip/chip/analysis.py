@@ -511,21 +511,25 @@ class ChipAnalysis:
     def _truncation_check(self, bases: Mapping[str, Any]) -> Callable[[tuple[int, ...]], str | None] | None:
         """Return a check for labels that mix with states beyond the levels of a truncated device.
 
-        The check is an advisory for nondegenerate, dispersive couplings. Two
-        devices are one step apart when a kept static term that is not
-        diagonal in the energy basis acts on both. To fill the first missing
-        level of a truncated device, a bare state takes excitations from the
-        label, each at the cost of its distance to the device. Without RWA, a
-        kept term can also create an excitation. That step counts twice,
-        because its energy denominator holds a sum of frequencies. A bare
-        state ``k`` steps from the label enters its dressed energy first at
-        order ``2k`` in the couplings. The check warns when the cheapest such
-        state costs at most two steps, the order of Lamb and dispersive shifts
-        and of ZZ through a bus, or at most the largest distance between two
-        excited devices of the label, the order at which they first interact.
-        It does not test the native basis of a device, such as a charge range.
-        It reads only operator structure, so it is safe at trace time. It
-        returns ``None`` when no device can warn.
+        The check is an advisory for nondegenerate, dispersive couplings. For
+        single-excitation exchange, a shortest path of ``k`` interaction steps
+        from a label to a bare state gives the earliest possible correction to
+        the dressed energy of the label, at order ``2k`` in the couplings.
+        Cancellations can remove it. A support graph estimates these paths:
+        two devices are one step apart when a static term that the
+        approximation keeps can move an excitation between them. To fill the
+        first missing level of a truncated device, a path takes excitations
+        from the label, each at the cost of its distance to the device.
+        Without RWA, a kept term can also create an excitation. That step is
+        first order in the couplings, but its energy denominator holds a sum
+        of frequencies, so the check gives it an empirical cost of two. The
+        check warns when the cheapest path costs at most two, the order of
+        Lamb and dispersive shifts and of ZZ through a bus, or at most the
+        largest distance between two excited devices of the label, the order
+        at which they first interact. The message gives the order of that
+        path. The check does not test the native basis of a device, such as a
+        charge range. It reads only operator structure, so it is safe at
+        trace time. It returns ``None`` when no device can warn.
         """
         from quchip.engine.excitation import keeps_zero_total_only
 
@@ -580,8 +584,8 @@ class ChipAnalysis:
                 reach = int(label[index]) + sum(1 for total in spent if total <= limit)
                 shown = {names[other]: int(level) for other, level in enumerate(label) if level}
                 causes.append(
-                    f"Label {shown} mixes at {_ORDERS.get(order, f'{order}th')} order in the couplings with states "
-                    f"that need level {dims[index]} of device {names[index]!r}, but {names[index]!r} keeps "
+                    f"Label {shown} can mix at {_ORDERS.get(order, f'{order}th')} order in the couplings with "
+                    f"states that need level {dims[index]} of device {names[index]!r}, but {names[index]!r} keeps "
                     f"{dims[index]} levels."
                 )
                 fixes.append(f"Set levels={reach + 1} or more on {names[index]!r} to remove this warning.")
@@ -596,11 +600,16 @@ class ChipAnalysis:
         """Return the step distances between devices and the cost of a created excitation on each device.
 
         ``distances[d][x]`` counts the steps between devices ``x`` and ``d``.
-        A static term that is not diagonal in the energy basis links each pair
-        of its devices, and so does a generated port pair. A term that keeps a
-        change of the total excitation number creates excitations on its
-        devices. ``created[d]`` is the cost of such an excitation on ``d``:
-        two steps for its creation plus its distance to ``d``.
+        A static term links each pair of its devices when the approximation
+        can keep a band of it that leaves the total excitation number
+        unchanged, and a generated port pair links the devices of its two
+        ports in the same way. A term or pair that can keep a band that
+        changes the total creates excitations on its devices. ``created[d]``
+        is the cost of such an excitation on ``d``: two for its creation, plus
+        its distance to ``d``. The bands come from the total changes of each
+        term, so a term that adds a diagonal part to bands that change the
+        total also links its devices. A term with unknown changes links and
+        creates.
         """
         from quchip.declarative.expr import is_energy_diagonal
         from quchip.engine.assembly import _interaction_contributions
@@ -610,21 +619,34 @@ class ChipAnalysis:
         position = {name: index for index, name in enumerate(self._device_labels())}
         supports: list[set[int]] = []
         sources: set[int] = set()
+
+        def add(labels: Sequence[str], changes: frozenset[int] | set[int] | None, filtered: bool) -> None:
+            # An approximation that keeps only zero totals removes every band that changes the total.
+            support = {position[label] for label in labels}
+            if changes is None or 0 in changes:
+                supports.append(support)
+            if not filtered and (changes is None or any(changes)):
+                sources.update(support)
+
         for term in _interaction_contributions(chip):
             expression = term.expression()
-            if is_energy_diagonal(expression, bases):
-                continue
-            support = {position[label] for label in term.labels}
-            supports.append(support)
-            if term.retained or not keeps_zero_total_only(chip.approximation):
-                changes = authored_excitation_changes(expression, term.labels, chip.backend, bases)
-                if changes is None or any(changes):
-                    sources |= support
+            if not is_energy_diagonal(expression, bases):
+                add(term.labels, authored_excitation_changes(expression, term.labels, chip.backend, bases),
+                    not term.retained and keeps_zero_total_only(chip.approximation))
         network = chip.port_network
         if network is not None:
-            targets = {port.label: port.resolve_targets(chip) for port in network.ports}
-            for downstream, upstream, _ in network._active_generated_pairs():
-                supports.append({position[label] for label in (*targets[downstream], *targets[upstream])})
+            pairs = network._active_generated_pairs()
+            ports = {port.label: port for port in network.ports}
+            port_changes = {}
+            for label in {label for downstream, upstream, _ in pairs for label in (downstream, upstream)}:
+                ((channel, _paths),) = ports[label]._collapse_channels_with_paths(chip)
+                port_changes[label] = authored_excitation_changes(
+                    channel.operator, ports[label].resolve_targets(chip), chip.backend, bases)
+            for downstream, upstream, _ in pairs:
+                # A generated pair L_down^dagger L_up changes the total by up - down.
+                up, down = port_changes[upstream], port_changes[downstream]
+                add((*ports[downstream].resolve_targets(chip), *ports[upstream].resolve_targets(chip)),
+                    None if up is None or down is None else {u - d for u in up for d in down}, False)
         neighbors: list[set[int]] = [set() for _ in position]
         for support in supports:
             for index in support:
