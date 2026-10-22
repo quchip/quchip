@@ -374,7 +374,7 @@ def test_two_level_readout_warns_on_two_excitation_queries_and_keeps_the_truncat
     import jax
 
     chip, q, r = _readout_pair(2)
-    with pytest.warns(UserWarning, match=r"'r' keeps 2 levels.*levels=3 or more on 'r'") as record:
+    with pytest.warns(UserWarning, match=r"second order.*'r' keeps 2 levels.*levels=3 or more on 'r'") as record:
         shift = chip.dispersive_shift(q, r)
     assert len([w for w in record if "keeps 2 levels" in str(w.message)]) == 1
     assert float(shift) == pytest.approx(_two_level_readout_pull(), abs=1e-12)
@@ -392,14 +392,25 @@ def test_two_level_readout_warns_on_two_excitation_queries_and_keeps_the_truncat
     q2 = DuffingTransmon(freq=5.3, anharmonicity=-0.2, levels=3, label="q2")
     bus = Resonator(freq=6.5, levels=2, label="bus")
     bus_chip = Chip([q1, q2, bus], [Capacitive(q1, bus, g=0.05), Capacitive(q2, bus, g=0.05)])
-    with pytest.warns(UserWarning, match=r"device 'bus'.*'bus' keeps 2 levels"):
+    with pytest.warns(UserWarning, match=r"fourth order.*device 'bus'.*'bus' keeps 2 levels"):
+        bus_chip.static_zz(q1, q2)
+    q2 = DuffingTransmon(freq=5.3, anharmonicity=-0.2, levels=2, label="q2")
+    bus = Resonator(freq=6.5, levels=3, label="bus")
+    bus_chip = Chip([q1, q2, bus], [Capacitive(q1, bus, g=0.05), Capacitive(q2, bus, g=0.05)])
+    with pytest.warns(UserWarning, match=r"fourth order.*'q2' keeps 2 levels.*levels=3 or more on 'q2'"):
         bus_chip.static_zz(q1, q2)
 
 
 @pytest.mark.unit
 def test_converged_or_single_excitation_queries_do_not_warn_about_truncation() -> None:
-    """Queries whose excitation sectors fit every truncated device stay silent."""
+    """Queries that reach no missing level of a truncated device within two coupling steps stay silent."""
     from quchip import Qubit
+
+    def filtered_readout(filter_levels: int) -> tuple[Chip, DuffingTransmon, Resonator]:
+        q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=3, label="q")
+        r = Resonator(freq=7.0, levels=4, label="r")
+        f = Resonator(freq=7.02, levels=filter_levels, label="f")
+        return Chip([q, r, f], [Capacitive(q, r, g=0.105), Capacitive(r, f, g=0.0077)]), q, r
 
     with warnings.catch_warnings():
         warnings.simplefilter("error")
@@ -416,3 +427,8 @@ def test_converged_or_single_excitation_queries_do_not_warn_about_truncation() -
         r = Resonator(freq=7.0, levels=3, label="r")
         spectator = Resonator(freq=8.0, levels=2, label="spectator")
         Chip([q, r, spectator], [Capacitive(q, r, g=0.105)]).dispersive_shift(q, r)
+        # A two-level filter behind the readout misses only states three steps away, at sixth order.
+        two_level, q, r = filtered_readout(2)
+        truncated = two_level.freq(r, when={q: 1})
+    three_level, q, r = filtered_readout(3)
+    assert float(truncated) == pytest.approx(float(three_level.freq(r, when={q: 1})), abs=1e-7)

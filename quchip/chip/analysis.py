@@ -462,8 +462,9 @@ class ChipAnalysis:
 
         A chip that conserves the total energy-level index diagonalizes only the
         sector of each requested label. Other chips diagonalize their complete
-        static model once. With ``_advise``, the first label whose excitation
-        count exceeds a truncated device warns once for this lookup.
+        static model once. With ``_advise``, the first label that mixes with
+        states beyond the levels of a truncated device warns once for this
+        lookup.
         """
         model = self._sector_model(_local_resolution=_local_resolution, _advise=_advise)
         entry: Callable[[tuple[int, ...]], tuple[Any, Any, Any]]
@@ -500,11 +501,13 @@ class ChipAnalysis:
         return checked_entry
 
     def _truncation_check(self) -> Callable[[tuple[int, ...]], str | None] | None:
-        """Return a check for labels whose excitation sector needs more levels than a truncated device keeps.
+        """Return a check for labels that mix with states beyond the levels of a truncated device.
 
-        A device warns when it truncates a larger model and keeps at most ``N``
-        levels. ``N`` is the label's total level on the device's connected
-        component of the static coupling graph. The check reads only labels,
+        A coupling moves one excitation between its devices. A bare state that
+        needs ``k`` such steps to put a truncated device in its first missing
+        level enters the dressed energy of the label at order ``2k`` in the
+        couplings. The check warns for ``k <= 2``, the order of Lamb and
+        dispersive shifts and of ZZ through a bus. It reads only labels,
         dimensions and couplings, so it is safe at trace time. It returns
         ``None`` when no device can warn.
         """
@@ -521,39 +524,46 @@ class ChipAnalysis:
                 truncated.append(index)
         if not truncated:
             return None
-        component = list(range(len(devices)))
-
-        def root(index: int) -> int:
-            while component[index] != index:
-                index = component[index]
-            return index
-
         position = {name: index for index, name in enumerate(names)}
+        neighbors: list[set[int]] = [set() for _ in devices]
         for coupling in self._chip.couplings:
             a, b = position.get(coupling.device_a_label), position.get(coupling.device_b_label)
-            if a is not None and b is not None:
-                component[root(a)] = root(b)
-        roots = [root(index) for index in range(len(devices))]
+            if a is not None and b is not None and a != b:
+                neighbors[a].add(b)
+                neighbors[b].add(a)
+        # The coupling steps from each other device to each truncated device, up to two.
+        steps: dict[int, dict[int, int]] = {}
+        for index in truncated:
+            near = dict.fromkeys(neighbors[index], 1)
+            for other in neighbors[index]:
+                for far in neighbors[other]:
+                    near.setdefault(far, 2)
+            near.pop(index, None)
+            steps[index] = near
 
         def check(label: tuple[int, ...]) -> str | None:
-            totals: dict[int, int] = {}
-            for index, level in enumerate(label):
-                totals[roots[index]] = totals.get(roots[index], 0) + int(level)
-            short = [index for index in truncated if dims[index] <= totals[roots[index]]]
-            if not short:
+            causes: list[str] = []
+            fixes: list[str] = []
+            for index in truncated:
+                moves = sorted(step for other, step in steps[index].items() for _ in range(int(label[other])))
+                reach, used = int(label[index]), 0
+                for step in moves:
+                    if used + step > 2:
+                        break
+                    reach, used = reach + 1, used + step
+                if reach < dims[index]:
+                    continue
+                order = "second" if sum(moves[:dims[index] - int(label[index])]) == 1 else "fourth"
+                shown = {names[other]: int(level) for other, level in enumerate(label) if level}
+                causes.append(
+                    f"Label {shown} mixes at {order} order in the couplings with states that need level "
+                    f"{dims[index]} of device {names[index]!r}, but {names[index]!r} keeps {dims[index]} levels."
+                )
+                fixes.append(f"Set levels={reach + 1} or more on {names[index]!r} to remove this warning.")
+            if not causes:
                 return None
-            shown = {names[index]: int(level) for index, level in enumerate(label) if level}
-            causes = " ".join(
-                f"Label {shown} has {totals[roots[index]]} excitations on device {names[index]!r} "
-                f"and the devices coupled to it, but {names[index]!r} keeps {dims[index]} levels."
-                for index in short
-            )
-            fixes = " ".join(
-                f"Set levels={totals[roots[index]] + 1} or more on {names[index]!r} to remove this warning."
-                for index in short
-            )
-            return (f"{causes} The dressed value belongs to this truncated model "
-                    f"and can differ from the untruncated one. {fixes}")
+            return (f"{' '.join(causes)} The dressed value belongs to this truncated model "
+                    f"and can differ from the untruncated one. {' '.join(fixes)}")
 
         return check
 

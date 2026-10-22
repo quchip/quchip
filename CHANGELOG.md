@@ -639,12 +639,12 @@ This file records notable user-visible changes to quchip.
   [#205](https://github.com/quchip/quchip/pull/205))
 
 - Dressed label queries, such as `dispersive_shift()`, `freq(..., when=...)`,
-  `static_zz()` and `kerr_matrix()`, warn when a label's excitation sector
-  needs more levels than a truncated device keeps. The warning names the device
-  and the `levels` that remove it. Values do not change. Previously, a
-  two-level `Resonator` gave a dispersive shift of +9.98 MHz with no warning,
-  against -0.99 MHz with three levels. A `Qubit` is not a truncation and never
-  warns.
+  `static_zz()` and `kerr_matrix()`, warn when the couplings mix a label, at
+  second or fourth order, with states beyond the levels of a truncated device.
+  The warning names the device and the `levels` that remove it. Values do not
+  change. Previously, a two-level `Resonator` gave a dispersive shift of
+  +9.98 MHz with no warning, against -0.99 MHz with three levels. A `Qubit` is
+  not a truncation and never warns.
   ([#211](https://github.com/quchip/quchip/pull/211))
 - After an earlier `eliminate(..., method="exact")` step,
   `effective_params[...]["purcell_rate"]` and `["kappa"]` count the removed
