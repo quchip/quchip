@@ -2286,6 +2286,7 @@ margin. A failed check, like the SW degeneracy check, raises
 `EliminationError`, a `ValueError` that names the route, the check and the
 labels or levels involved. Inside `jax.jit`, the checks run in a host callback,
 and the error reaches the caller as a JAX runtime error with the same text.
+
 ### 10.5 Collapse transforms and validity metrics
 
 #### Jump operators
@@ -2296,12 +2297,15 @@ reduced frame:
 ```text
 c_eff = B† c B
 B_sw = exp(-S) P
-c_eff,sw = P(c+[S,c])P + O(S²)      (leading expansion only)
+c_eff,sw = P exp(S) c exp(-S) P = P (c + [S, c] + (1/2)[S, [S, c]] + ...) P
 ```
 
-For the exact route, `B = V_selected (S^(-1/2) W)†` uses the same selected
-eigenvectors and overlap matrix as the retained Hamiltonian. It is isometric
-and independent of arbitrary eigenvector phases.
+Here `S` is the anti-Hermitian SW generator of §10.3, so `B_sw† = P exp(S)`.
+quchip applies the full exponential, not its first-order expansion. For the
+exact route, `B = V_selected (S^(-1/2) W)†`, with the overlap matrix `S = W W†`
+of §10.4. It uses the same selected eigenvectors and overlap matrix as the
+retained Hamiltonian, and it is isometric and independent of arbitrary
+eigenvector phases.
 
 For intrinsic mode loss, the inherited (Purcell) diagnostic sums
 `rate * |<0|L_eff|1_survivor>|^2` over the eliminated device's declared
@@ -2329,7 +2333,16 @@ changes uses the entries of its retained matrix.
 A surviving operator outside the SW generator's proven support keeps its
 authored coordinates. The projection records those unchanged tensor factors,
 and serialization keeps them. Operators within the generator's support keep
-their complete induced components and require compatible frame phases.
+their complete induced components and require compatible frame phases. The
+second-order term can matter even when the first-order term is zero. Take two
+qubits at 5.00 and 5.40 GHz, each with a finite T1, on a 6.40 GHz bus with
+`g = 70 MHz`, and eliminate the bus. The T1 jump of the first qubit is
+proportional to its lowering operator `c = a_1`, and `P [S, c] P` is zero. The
+second-order term adds `-(1/2)(g/Δ_1)(g/Δ_2) a_2 ≈ -1.75e-3 a_2`, where `a_2`
+lowers the second qubit and `Δ_i` is the detuning of qubit `i` from the bus.
+This part carries only a 3e-6 share of the rate. The two parts of the jump
+still turn at different frequencies under `"rotating"`, so the reduced chip
+refuses that frame. It runs under `"auto"`, `"lab"` or a common frame.
 
 #### Reflection sections
 
