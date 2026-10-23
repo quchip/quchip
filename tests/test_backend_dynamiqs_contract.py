@@ -374,3 +374,22 @@ def test_matmul_matches_operator_arithmetic(dynamiqs_backend) -> None:
 
         ours, reference = jax.jit(traced)(0.7)
         npt.assert_allclose(np.asarray(ours), np.asarray(reference), rtol=0, atol=1e-14)
+
+
+def test_batch_over_a_carrier_that_includes_zero_matches_qutip(dynamiqs_backend) -> None:
+    """A freq axis through 0.0 changes the simplified signal tree at that point; dynamiqs still stacks it."""
+    from quchip import ChargeDrive, DuffingTransmon, Gaussian, QuantumSequence, RWA
+
+    def populations(backend: str) -> np.ndarray:
+        q = DuffingTransmon(freq=0.05, anharmonicity=-0.01, levels=3, label="q")
+        chip = Chip([q], frame="lab", approximation=RWA(), backend=backend)
+        chip.wire(ChargeDrive(q, label="xy"))
+        sequence = QuantumSequence(chip)
+        pulse = sequence.schedule("xy", envelope=Gaussian(duration=20.0, amplitude=0.02), freq=0.05)
+        batch = sequence.simulate_batch(pulse.vary("freq", [0.0, 0.05, 0.0]), tlist=np.linspace(0.0, 20.0, 5),
+                                        progress=False)
+        return np.array([result.population("q", 1) for result in batch])
+
+    expected = populations("qutip")
+    assert expected[1, -1] > 0.1 and expected[0, -1] != pytest.approx(expected[1, -1], abs=1e-3)
+    npt.assert_allclose(populations("dynamiqs"), expected, atol=1e-5)  # QuTiP samples envelopes at 40 points/ns

@@ -737,6 +737,12 @@ This file records notable user-visible changes to quchip.
   pump with phase π/2, not π, and left `P(vacuum)` at 0.50 instead of 1.00.
   One-photon drives, coherent inputs, and pulses in another device's frame
   keep θ.
+- A dynamiqs batch over a pulse carrier that includes `freq=0.0` runs. In the
+  lab frame under `RWA()`, a zero carrier and the frame cancel, so that point
+  had another signal structure, and
+  `simulate_batch(pulse.vary("freq", [0.0, 0.05]))` raised "Heterogeneous
+  signal pytree". QuTiP already ran this batch. `freq=0.0` stays a carrier at
+  zero frequency.
 
 #### Performance
 

@@ -67,6 +67,7 @@ from quchip.backend.protocol import Backend, Operator, State, _is_unit  # noqa: 
 from quchip.engine.ir import (  # noqa: E402
     Add,
     ScalarModulation,
+    Scale,
     _aggregate_batch_metadata,
     evaluate_signal_program,
     signal_window_bounds,
@@ -300,6 +301,34 @@ def _signal_discontinuities(signal: Any) -> Any:
     """Flatten absolute pulse edges across native batch points for Diffrax."""
     edges = [jnp.ravel(edge) for bounds in signal_window_bounds(signal) for edge in bounds]
     return jnp.concatenate(edges) if edges else None
+
+
+def _stack_slot_signals(signals: list[Any]) -> Any:
+    """Stack one dynamic slot's signal programs across batch points along a leading axis.
+
+    Assembly simplifies each point's program by value, so carriers that cancel
+    at one point, such as a zero-frequency carrier in the lab frame, give that
+    point another tree. Each tree then gets its own stacked program, weighted by
+    a 0/1 mask over the points that have it, and the slot is their sum.
+    """
+    if len(signals) == 1:
+        return signals[0]
+    # PyTreeDef defines runtime __eq__ and __hash__ (pybind11 value equality).
+    structures = [jtu.tree_structure(signal) for signal in signals]
+    groups: dict[Any, list[int]] = {}
+    for index, structure in enumerate(structures):
+        groups.setdefault(structure, []).append(index)
+    if len(groups) == 1:
+        return jtu.tree_map(lambda *xs: jnp.stack(xs), *signals)
+    parts = []
+    for members in groups.values():
+        chosen = set(members)
+        filled = [signal if index in chosen else signals[members[0]] for index, signal in enumerate(signals)]
+        mask = jnp.asarray([1.0 if index in chosen else 0.0 for index in range(len(signals))],
+                           dtype=jnp.complex128)
+        # The factor is a stacked leaf, as every batched signal leaf is.
+        parts.append(Scale(child=jtu.tree_map(lambda *xs: jnp.stack(xs), *filled), factor=mask))  # type: ignore[arg-type]
+    return Add(tuple(parts))
 
 
 class _SignalCallable(eqx.Module):
@@ -1503,21 +1532,10 @@ class DynamiqsBackend(Backend):
                     [cached_native(term.operator) for term in terms]
                 )
             slot_signals = tuple(map(_summed_modulation, zip(*(batch.signals_for(member) for member in group))))
-            ref_td = slot_signals[0]
-            if not isinstance(ref_td, ScalarModulation):
+            if not all(isinstance(td, ScalarModulation) for td in slot_signals):
                 raise ValueError(f"dynamiqs prepare_batch only supports ScalarModulation (slot {slot}).")
-            ref_struct = jtu.tree_structure(ref_td)
-            for td in slot_signals[1:]:
-                # PyTreeDef defines runtime __eq__/__ne__ (pybind11 value equality);
-                # jax's stubs omit a mypy-visible signature for it.
-                if jtu.tree_structure(td) != ref_struct:  # type: ignore[operator]
-                    raise ValueError(f"Heterogeneous signal pytree at slot {slot}; cannot stack.")
-            stacked_td = (
-                ref_td if len(slot_signals) == 1
-                else jtu.tree_map(lambda *xs: jnp.stack(xs), *slot_signals)
-            )
             dynamic_operators.append(op)
-            dynamic_signals.append(stacked_td.signal)
+            dynamic_signals.append(_stack_slot_signals([td.signal for td in slot_signals]))
 
         return DeferredBatch(
             shared=_DynamiqsBatchHamiltonian(
