@@ -743,6 +743,12 @@ This file records notable user-visible changes to quchip.
   `simulate_batch(pulse.vary("freq", [0.0, 0.05]))` raised "Heterogeneous
   signal pytree". QuTiP already ran this batch. `freq=0.0` stays a carrier at
   zero frequency.
+- An explicit `frame="rotating"` warns when a device's dressed `0 -> 1`
+  reference has no reliable label assignment, and names `frame="auto"`. The
+  frame does not change. Two identical transmons with `g = 10 MHz` took
+  references of 5.01 and 4.99 GHz without a warning, and their idle exchange
+  then had an error of 9e-7 against 2e-13 in the lab frame. A chip without a
+  frame already raises on the same check.
 
 #### Performance
 

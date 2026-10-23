@@ -344,6 +344,30 @@ def resolve_reference_frequencies(chip: Any, *, local_resolution: Any = None) ->
     }
 
 
+def _warn_unreliable_references(chip: Any, local_resolution: Any) -> None:
+    """Warn when the rotating frame takes a dressed reference whose label assignment is unreliable.
+
+    A chip without a frame raises on the same check before it solves in the
+    rotating frame. An explicit ``frame="rotating"`` keeps the frame and warns.
+    """
+    import warnings
+
+    from quchip.engine.dressing import user_stacklevel
+    from quchip.engine.problem import _name_list
+
+    if not (unreliable := chip.analysis._unreliable_references(_local_resolution=local_resolution)):
+        return
+    names = [name for name, _ in unreliable]
+    warnings.warn(
+        "frame='rotating' uses the dressed 0 -> 1 frequency of each device, but the dressed label assignment is "
+        f"unreliable for {_name_list(names)} ({names[0]}: {unreliable[0][1]}), so the frame frequencies of these "
+        "devices are not well defined and a solve can lose accuracy. frame='auto' gives exchange-coupled devices "
+        "one frequency. frame='lab', or a reference_freq on each of these devices, also avoids the assignment.",
+        UserWarning,
+        stacklevel=user_stacklevel(),
+    )
+
+
 @_compile_time
 def plan_frame(
     chip: "Chip",
@@ -902,6 +926,7 @@ def resolve_frame(
         elif frame_spec == "rotating":
             mode = "rotating"
             frequencies = dict(references)
+            _warn_unreliable_references(chip, local_resolution)
         elif frame_spec == "auto":
             mode = "auto"
             plan = plan_frame(

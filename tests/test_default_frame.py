@@ -231,6 +231,25 @@ def test_a_solve_without_a_frame_raises_when_a_reference_has_no_reliable_assignm
 
 
 @pytest.mark.unit
+def test_an_explicit_rotating_frame_warns_when_a_reference_has_no_reliable_assignment() -> None:
+    """frame='rotating' keeps its frame on a resonant pair, warns with the same check, and names frame='auto'."""
+    chip = _resonant_pair()
+    chip.set_frame("rotating")
+    with pytest.warns(UserWarning) as record:
+        problem = QuantumSequence(chip).build_problem(TIMES)
+    messages = [str(warning.message) for warning in record]
+    assert len(messages) == 1 and record[0].filename == __file__
+    assert "the dressed label assignment is unreliable for 'a' and 'b' ('a': overlap=" in messages[0]
+    assert "frame='auto' gives exchange-coupled devices one frequency." in messages[0]
+    assert problem.resolved_frame.mode == "rotating"
+    for reliable in (_resonant_pair(reference_freq=5.0), _pair(frame="rotating")[0]):
+        reliable.set_frame("rotating")
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            QuantumSequence(reliable).build_problem(TIMES)
+
+
+@pytest.mark.unit
 def test_a_batch_without_a_frame_checks_every_point() -> None:
     """One point that needs the lab frame moves the whole batch to it, and one unreliable point raises."""
     _, sequence = _pair(bath=True, coupled=False)
