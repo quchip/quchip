@@ -749,6 +749,11 @@ This file records notable user-visible changes to quchip.
   references of 5.01 and 4.99 GHz without a warning, and their idle exchange
   then had an error of 9e-7 against 2e-13 in the lab frame. A chip without a
   frame already raises on the same check.
+- Steady-state results and `VNA.finite_power()` results pickle and load.
+  Previously, `pickle.dumps` raised on their read-only mappings and on the
+  deferred memory estimate of the stationary route. Every read-only mapping
+  in quchip records now pickles as a copy, and a deferred value pickles its
+  calculated value.
 
 #### Performance
 

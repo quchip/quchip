@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import copy
+import copyreg
+import functools
+from types import MappingProxyType
 from typing import Any, Callable, TypeGuard, TypeVar
 from dataclasses import dataclass, field
 
@@ -116,7 +119,11 @@ def scoped_hit(entry: tuple[Any, Any, _T] | None, key: Any) -> TypeGuard[tuple[A
 
 @dataclass(eq=False)
 class DeferredValue:
-    """Evaluate captured inputs on demand; cache only concrete values."""
+    """Evaluate captured inputs on demand; cache only concrete values.
+
+    Pickling evaluates the value and stores it, because the captured inputs
+    are often local closures.
+    """
 
     evaluate: Callable[[], Any] = field(repr=False)
     _value: Any = field(default=None, init=False, repr=False)
@@ -130,3 +137,24 @@ class DeferredValue:
                 self._value = value
             return value
         return self._value
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        return DeferredValue, (functools.partial(_identity, self()),)
+
+
+def _identity(value: _T) -> _T:
+    return value
+
+
+def _mapping_view(mapping: dict) -> MappingProxyType:
+    return MappingProxyType(mapping)
+
+
+def _reduce_mapping_view(view: MappingProxyType) -> tuple[Any, ...]:
+    # The mappingproxy type has no importable name, so a module function rebuilds the view.
+    return _mapping_view, (dict(view),)
+
+
+# Frozen records keep their mappings as read-only views. Each view pickles as a
+# view of a copy of its mapping.
+copyreg.pickle(MappingProxyType, _reduce_mapping_view)

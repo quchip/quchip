@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pickle
+from types import MappingProxyType
 
 import numpy as np
 import pytest
@@ -18,6 +19,7 @@ from quchip import (
     QuantumSequence,
     Resonator,
 )
+from quchip.utils.values import DeferredValue
 
 
 def _round_trip(value):
@@ -94,3 +96,41 @@ def test_resonance_result_pickles(chip) -> None:
     assert loaded.mode_labels == result.mode_labels and loaded.ports == result.ports
     frequencies = np.linspace(6.99, 7.01, 5)
     np.testing.assert_allclose(loaded.scattering(frequencies), result.scattering(frequencies), atol=1e-12)
+
+
+def test_steady_state_result_pickles() -> None:
+    """A loaded steady state keeps its state, expectations, statistics, and route."""
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q", T1=50_000.0)
+    r = Resonator(freq=7.0, levels=4, label="r", T1=1e4)
+    chip = Chip([q, r], [Capacitive(q, r, g=0.07, label="qr")])
+    result = chip.steadystate(e_ops={r: ["a", "n"]})
+    loaded = _round_trip(result)
+    np.testing.assert_allclose(loaded._backend.to_array(loaded.state), result._backend.to_array(result.state),
+                               atol=1e-14)
+    for index in (0, 1):
+        np.testing.assert_allclose(loaded.expect(r, index), result.expect(r, index), atol=1e-14)
+    assert dict(loaded.stats) == dict(result.stats)
+    assert loaded.diagnostics["route"].peak_bytes == result.diagnostics["route"].peak_bytes
+    np.testing.assert_allclose(loaded.condition_number, result.condition_number, rtol=1e-12)
+
+
+@pytest.mark.parametrize("options", [None, {}])
+def test_finite_power_result_pickles(chip, options) -> None:
+    """A finite-power result loads with the same output means and the memory estimate of its route."""
+    result = VNA(chip).finite_power(np.array([6.995, 7.0]), np.array([0.01]), options=options)
+    loaded = _round_trip(result)
+    np.testing.assert_allclose(loaded.values, result.values, atol=1e-14)
+    for before, after in zip(result.diagnostics, loaded.diagnostics, strict=True):
+        assert after["route"].name == before["route"].name
+        assert after["route"].peak_bytes == before["route"].peak_bytes
+
+
+@pytest.mark.unit
+def test_frozen_mappings_and_deferred_values_pickle_by_value() -> None:
+    """A read-only mapping view loads as a view, and a deferred value loads its value without its closure."""
+    view = _round_trip(MappingProxyType({"a": 1, "b": (2, 3)}))
+    assert isinstance(view, MappingProxyType) and view == {"a": 1, "b": (2, 3)}
+    calls = []
+    deferred = DeferredValue(lambda: calls.append(1) or 4.5)
+    loaded = _round_trip(deferred)
+    assert loaded() == 4.5 and calls == [1]
