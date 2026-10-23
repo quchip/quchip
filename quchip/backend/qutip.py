@@ -105,6 +105,14 @@ _MIN_ENVELOPE_SAMPLES = 1001
 # Window cost scales with pulse width, not idle-span length; the floor resolves sub-ns pulses.
 _WINDOW_SUBGRID_POINTS_PER_NS = 40.0
 _MIN_WINDOW_INTERIOR_SAMPLES = 41
+# QuTiP's own default for its adaptive integrators.
+_QUTIP_DEFAULT_RTOL = 1e-6
+# A window that needs more samples uses the exact callable: about 4 MB per window at this cap.
+_MAX_WINDOW_SAMPLES = 100_000
+
+
+class _OversizedWindow(NotImplementedError):
+    """A window whose linear interpolant would need more than ``_MAX_WINDOW_SAMPLES`` samples."""
 # Zero-valued margins expose each discontinuity; a sparse skeleton covers the remaining zero plateau.
 _WINDOW_EDGE_PADDING_NS = 1.0
 _CANONICAL_BASE_SKELETON_POINTS = 3
@@ -120,10 +128,53 @@ def _collect_window_bounds(signal: Any) -> list[tuple[float, float]]:
     return bounds
 
 
-def _local_window_subgrid(start: float, stop: float) -> np.ndarray:
-    """Resolve a window with exact edge nodes, at least 41 interior points, and zero-valued margins."""
+def _window_interior_samples(envelope: Any, start: float, stop: float, rtol: float) -> int:
+    """Return the samples that keep a window's linear interpolant within ``rtol`` of its peak.
+
+    Linear interpolation with step h is off by at most ``h² max|f''| / 8``.
+    Setting that to ``rtol max|f|`` gives ``h = sqrt(8 rtol max|f| / max|f''|)``.
+    Second differences on a probe grid at the base rate estimate ``max|f''|``,
+    leaving out the stencils that straddle an envelope feature, such as a step.
+    The base rate of 40 points/ns, with at least 41 points, is the minimum.
+    """
     width = stop - start
-    interior_n = max(int(np.ceil(width * _WINDOW_SUBGRID_POINTS_PER_NS)) + 1, _MIN_WINDOW_INTERIOR_SAMPLES)
+    base = max(int(np.ceil(width * _WINDOW_SUBGRID_POINTS_PER_NS)) + 1, _MIN_WINDOW_INTERIOR_SAMPLES)
+    # The window edges are left out: the envelope can jump there.
+    probe = np.linspace(start, stop, base)[1:-1]
+    values = _sample_coeff_array(envelope, probe)
+    peak = float(np.max(np.abs(values)))
+    if peak == 0.0:
+        return base
+    step = probe[1] - probe[0]
+    curvature = np.abs(values[2:] - 2 * values[1:-1] + values[:-2]) / step**2
+    from quchip.engine.sampling import signal_features
+
+    for local, offsets in signal_features(envelope):
+        for time in local + offsets[-1]:
+            curvature[(probe[:-2] < time) & (time < probe[2:])] = 0.0
+    largest = float(np.max(curvature)) if curvature.size else 0.0
+    if largest == 0.0:
+        return base
+    needed = width / np.sqrt(8 * rtol * peak / largest)
+    return max(base, int(np.ceil(needed)) + 1) if np.isfinite(needed) else _MAX_WINDOW_SAMPLES + 1
+
+
+def _window_sample_counts(envelope: Any, base_grid: Any, rtol: float) -> list[tuple[float, float, int]]:
+    """Return each window of an envelope, clipped to the solve span, with its interior sample count."""
+    base = np.asarray(base_grid, dtype=float)
+    lo, hi = base[0], base[-1]
+    counts = []
+    for start, stop in _collect_window_bounds(envelope):
+        clipped_start, clipped_stop = max(start, lo), min(stop, hi)
+        if clipped_stop > clipped_start:
+            counts.append((clipped_start, clipped_stop,
+                           _window_interior_samples(envelope, clipped_start, clipped_stop, rtol)))
+    return counts
+
+
+def _local_window_subgrid(start: float, stop: float, interior_n: int) -> np.ndarray:
+    """Resolve a window with exact edge nodes, *interior_n* interior points, and zero-valued margins."""
+    width = stop - start
     interior = np.linspace(start, stop, interior_n)
 
     pad = min(_WINDOW_EDGE_PADDING_NS, max(width, 1e-9))
@@ -150,28 +201,29 @@ def _bracketed_feature_times(local: np.ndarray, offsets: tuple[float, ...]) -> n
     return np.concatenate([times - gap, times, times + gap])
 
 
-def _augmented_sample_grid(envelope: Any, base_grid: Any) -> np.ndarray:
+def _augmented_sample_grid(envelope: Any, base_grid: Any, rtol: float = _QUTIP_DEFAULT_RTOL) -> np.ndarray:
     """Return the base grid for an envelope without windows.
 
     Otherwise, combine the solve-span skeleton, the bracketed feature times and
-    the local window subgrids. Window accuracy must not depend on output-tlist
-    density or idle-span length.
+    the local window subgrids, whose rate follows ``rtol``. Window accuracy
+    must not depend on output-tlist density or idle-span length. Raises
+    :class:`_OversizedWindow` when a window needs more than
+    ``_MAX_WINDOW_SAMPLES`` samples.
     """
-    bounds = _collect_window_bounds(envelope)
+    if not _collect_window_bounds(envelope):
+        return np.asarray(base_grid, dtype=float)
     base = np.asarray(base_grid, dtype=float)
-    if not bounds:
-        return base
     lo, hi = base[0], base[-1]
     from quchip.engine.sampling import signal_features
 
+    counts = _window_sample_counts(envelope, base, rtol)
+    if any(count > _MAX_WINDOW_SAMPLES for _, _, count in counts):
+        raise _OversizedWindow
     pieces = [np.linspace(lo, hi, _CANONICAL_BASE_SKELETON_POINTS)]
     # Feature times include every window edge, so a pulse edge and an envelope
     # step listed in sampling_times() stay sharp, including at a grid endpoint.
     pieces.extend(_bracketed_feature_times(local, offsets) for local, offsets in signal_features(envelope))
-    for start, stop in bounds:
-        clipped_start, clipped_stop = max(start, lo), min(stop, hi)
-        if clipped_stop > clipped_start:
-            pieces.append(_local_window_subgrid(clipped_start, clipped_stop))
+    pieces.extend(_local_window_subgrid(start, stop, count) for start, stop, count in counts)
     grid = np.unique(np.concatenate(pieces))
     return grid[(grid >= lo) & (grid <= hi)]
 
@@ -287,14 +339,15 @@ _MAX_STATIC_HILBERT_DIM = 64
 _MAX_STATIC_LIOUVILLIAN_DIM = 1024
 
 
-def _envelope_coefficient(envelope: Any, sample_tlist: Any) -> Any:
+def _envelope_coefficient(envelope: Any, sample_tlist: Any, rtol: float = _QUTIP_DEFAULT_RTOL) -> Any:
     """Sample windowed envelopes locally with linear interpolation to avoid edge ringing.
-    Use the base grid otherwise, or an exact callable when no concrete grid is available."""
+    Use the base grid otherwise, or an exact callable when no concrete grid is available
+    or a window needs too many samples."""
     if sample_tlist is None:
         return qutip.coefficient(_coeff_callable(envelope))
     bounds = _collect_window_bounds(envelope)
     try:
-        grid = _augmented_sample_grid(envelope, sample_tlist)
+        grid = _augmented_sample_grid(envelope, sample_tlist, rtol)
     except NotImplementedError:
         return qutip.coefficient(_coeff_callable(envelope))
     arr = _sample_coeff_array(envelope, grid)
@@ -305,6 +358,42 @@ def _envelope_coefficient(envelope: Any, sample_tlist: Any) -> Any:
             order=_WINDOWED_COEFFICIENT_ORDER,
         )
     return qutip.coefficient(np.asarray(arr, dtype=complex), tlist=np.asarray(grid, dtype=float))
+
+
+def _task_rtol(task: Any) -> float:
+    rtol = task.options.get("rtol")
+    return _QUTIP_DEFAULT_RTOL if rtol is None else float(rtol)
+
+
+def _warn_callable_windows(signals: Sequence[Any], sample_tlist: Any, rtol: float) -> None:
+    """Warn once when a pulse window needs more linear samples than the cap and so uses the exact callable."""
+    if sample_tlist is None:
+        return
+    oversized: list[tuple[float, float, int]] = []
+    for signal in signals:
+        # Assembly rejects a traced signal with its own error.
+        if contains_tracer(signal):
+            continue
+        for band in decompose_carrier_bands(signal):
+            try:
+                counts = _window_sample_counts(band.envelope, sample_tlist, rtol)
+            except NotImplementedError:
+                continue
+            oversized.extend(entry for entry in counts if entry[2] > _MAX_WINDOW_SAMPLES)
+    if not oversized:
+        return
+    start, stop, count = oversized[0]
+    others = f", and {len(oversized) - 1} more windows," if len(oversized) > 1 else ""
+    from quchip.engine.dressing import user_stacklevel
+
+    warnings.warn(
+        f"At rtol={rtol:g}, the QuTiP backend needs {count} linear samples for the pulse window from {start:g} to "
+        f"{stop:g} ns, more than {_MAX_WINDOW_SAMPLES}, so this window{others} uses the exact envelope as a "
+        "Python callable. The result keeps its accuracy, but each solver step costs more. A looser rtol, or the "
+        "dynamiqs backend, avoids it.",
+        UserWarning,
+        stacklevel=user_stacklevel(),
+    )
 
 
 def _carrier_coefficient(freq: Any) -> Any:
@@ -318,7 +407,8 @@ def _carrier_coefficient(freq: Any) -> Any:
     return qutip.coefficient(_carrier)
 
 
-def _summed_envelope_coefficient(envelopes: Sequence[Any], sample_tlist: Any) -> Any:
+def _summed_envelope_coefficient(envelopes: Sequence[Any], sample_tlist: Any,
+                                 rtol: float = _QUTIP_DEFAULT_RTOL) -> Any:
     """Return one coefficient equal to the sum of the envelopes' own coefficients.
 
     Linear interpolants of windowed envelopes add exactly on the union of
@@ -327,14 +417,14 @@ def _summed_envelope_coefficient(envelopes: Sequence[Any], sample_tlist: Any) ->
     grid keep their exact callables.
     """
     if sample_tlist is None or len(envelopes) == 1:
-        parts = [_envelope_coefficient(envelope, sample_tlist) for envelope in envelopes]
+        parts = [_envelope_coefficient(envelope, sample_tlist, rtol) for envelope in envelopes]
     else:
         parts = []
         linear: list[tuple[np.ndarray, np.ndarray]] = []
         cubic: list[tuple[np.ndarray, np.ndarray]] = []
         for envelope in envelopes:
             try:
-                grid = np.asarray(_augmented_sample_grid(envelope, sample_tlist), dtype=float)
+                grid = np.asarray(_augmented_sample_grid(envelope, sample_tlist, rtol), dtype=float)
             except NotImplementedError:
                 parts.append(qutip.coefficient(_coeff_callable(envelope)))
                 continue
@@ -374,13 +464,15 @@ def _qobj_key(op: Qobj) -> tuple:
     return (repr(op.dims), type(op.data).__name__, *payload)
 
 
-def _assemble_qobjevo(static_rhs: Qobj | None, op_signal_pairs: Any, sample_tlist: Any) -> qutip.QobjEvo:
+def _assemble_qobjevo(static_rhs: Qobj | None, op_signal_pairs: Any, sample_tlist: Any,
+                      rtol: float = _QUTIP_DEFAULT_RTOL) -> qutip.QobjEvo:
     """Combine an optional static operator and dynamic entries into a QobjEvo.
 
     Carrier bands acting through equal operators at one concrete frequency
     share a coefficient, ``(Σ_k envelope_k(t))·exp(i·freq·t)``, so a solver
     step applies each operator once per carrier frequency however many
-    pulses and crosstalk paths drive it.
+    pulses and crosstalk paths drive it. ``rtol`` sets the sample rate of
+    windowed envelopes.
     """
     terms: list[Any] = [] if static_rhs is None else [static_rhs]
     groups: dict[tuple, tuple[Qobj, Any, list[Any]]] = {}
@@ -391,7 +483,7 @@ def _assemble_qobjevo(static_rhs: Qobj | None, op_signal_pairs: Any, sample_tlis
             freq = maybe_concrete_scalar(band.freq)
             groups.setdefault((key, id(band) if freq is None else freq), (op, band.freq, []))[2].append(band.envelope)
     for op, freq, envelopes in groups.values():
-        coefficient = _summed_envelope_coefficient(envelopes, sample_tlist)
+        coefficient = _summed_envelope_coefficient(envelopes, sample_tlist, rtol)
         if maybe_concrete_scalar(freq) != 0.0:
             coefficient = coefficient * _carrier_coefficient(freq)
         terms.append([op, coefficient])
@@ -1128,7 +1220,7 @@ class QuTiPBackend(Backend):
             if {"store_states", "store_final_state"} & options.keys():
                 raise ValueError("Conflicting states and native storage options.")
             options.update(store_states=problem.states == "all", store_final_state=problem.states == "final")
-        rhs = self.prepare_hamiltonian(problem.engine_result, problem.tlist).rhs
+        rhs = self._prepare_problem_hamiltonian(problem).rhs
         from copy import deepcopy
 
         kwargs = dict(e_ops=problem.e_ops, options=options, **problem.run_args)
@@ -1542,10 +1634,16 @@ class QuTiPBackend(Backend):
     # Typed batched-IR surface
     # ------------------------------------------------------------------
 
+    def _prepare_problem_hamiltonian(self, problem: Any) -> PreparedHamiltonian:
+        """Lower one problem, sampling windowed envelopes at the rate its ``rtol`` needs."""
+        return self.prepare_hamiltonian(problem.engine_result, problem.tlist, rtol=problem.options.get("rtol"))
+
     def prepare_hamiltonian(
         self,
         description: Any,
         tlist: Any | None = None,
+        *,
+        rtol: float | None = None,
     ) -> PreparedHamiltonian:
         r"""Convert a :class:`EngineResult` into a ``Qobj`` or ``QobjEvo``.
 
@@ -1561,6 +1659,9 @@ class QuTiPBackend(Backend):
             Captured engine Hamiltonian and channels in solver units.
         tlist : array_like
             Requested save times in ns, used by native time-dependent lowering.
+        rtol : float or None, optional
+            Solver relative tolerance that sets the sample rate of windowed
+            envelopes. ``None`` takes QuTiP's default, ``1e-6``.
 
         Returns
         -------
@@ -1582,11 +1683,11 @@ class QuTiPBackend(Backend):
             return PreparedHamiltonian(rhs=static_rhs, metadata=metadata)
 
         sample_tlist = self._resolve_envelope_sample_tlist(tlist)
-        op_signal_pairs = (
-            (self._canonical_to_qobj(operator), signal)
-            for operator, signal in self._scalar_dynamic_terms(description)
-        )
-        rhs = _assemble_qobjevo(static_rhs, op_signal_pairs, sample_tlist)
+        rtol = _QUTIP_DEFAULT_RTOL if rtol is None else float(rtol)
+        pairs = [(self._canonical_to_qobj(operator), signal)
+                 for operator, signal in self._scalar_dynamic_terms(description)]
+        _warn_callable_windows([signal for _, signal in pairs], sample_tlist, rtol)
+        rhs = _assemble_qobjevo(static_rhs, pairs, sample_tlist, rtol)
         return PreparedHamiltonian(rhs=rhs, metadata=metadata)
 
     def prepare_batch(self, batch: Any) -> DeferredBatch:
@@ -1716,12 +1817,17 @@ class QuTiPBackend(Backend):
                 )
             )
 
+        # Workers do not report warnings, so the main process names the windows that use callables.
+        # The points of one batch share their options.
+        _warn_callable_windows([signal.signal for task in tasks for signal in task.dynamic_signals],
+                               sample_tlist, _task_rtol(tasks[0]))
+
         def build_and_solve(task: _QuTiPBatchTask) -> SolverResult:
             op_signal_pairs = (
                 (operator, signal.signal)
                 for operator, signal in zip(task.dynamic_qobjs, task.dynamic_signals)
             )
-            rhs = _assemble_qobjevo(task.static_rhs, op_signal_pairs, sample_tlist)
+            rhs = _assemble_qobjevo(task.static_rhs, op_signal_pairs, sample_tlist, _task_rtol(task))
             kwargs = self._element_solver_kwargs(
                 task.solver_name,
                 rhs,

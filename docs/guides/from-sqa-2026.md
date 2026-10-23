@@ -81,7 +81,7 @@ print("final excited-state population:", result.population("q", 1)[-1])
 Output:
 
 ```text
-final excited-state population: 0.7450817911512911
+final excited-state population: 0.7450815056101074
 ```
 
 [Continue with dynamics, pulses, observables, and readout](dynamics-pulses-and-readout.md).

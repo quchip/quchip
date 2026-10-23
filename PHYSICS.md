@@ -3002,6 +3002,18 @@ each device for its collapse operators. Devices, couplings and drives supply
 the domain-specific physics, and the engine handles their shared frame and RWA
 bookkeeping.
 
+Backends keep every carrier analytic. dynamiqs evaluates each envelope
+exactly. QuTiP interpolates each windowed envelope linearly on samples, with
+exact nodes at the window edges and at the envelope's own features. Linear
+interpolation with step `h` is off by at most `h² max|f''| / 8`, so QuTiP
+samples each window with `h = sqrt(8 rtol max|f| / max|f''|)`, with `rtol` the
+solver's (default `1e-6`) and `max|f''|` estimated from second differences of
+the samples. The rate is never below 40 points/ns. For a Gaussian,
+`max|f''| / max|f| = 1/σ²`, so `h = σ sqrt(8 rtol)`. A window that would need
+more than 100,000 samples, such as a 12 ns Gaussian at `rtol = 1e-10`, uses
+the exact envelope as a Python callable instead, and quchip warns. Under JAX
+tracing of the times, QuTiP also uses the callable.
+
 ## 13. JAX traceability boundaries
 
 Band decomposition, coefficient construction, observable recombination and

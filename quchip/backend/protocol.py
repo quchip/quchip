@@ -1078,6 +1078,10 @@ class Backend(ABC):
         _ = dims
         return state
 
+    def _prepare_problem_hamiltonian(self, problem: "SolveProblem") -> "PreparedHamiltonian":
+        """Lower one problem's Hamiltonian; a backend whose lowering reads solver options overrides this."""
+        return self.prepare_hamiltonian(problem.engine_result, problem.tlist)
+
     def solve_problem(self, problem: "SolveProblem") -> SolverResult:
         r"""Lower and solve a :class:`SolveProblem` (the single-element entry point).
 
@@ -1097,7 +1101,7 @@ class Backend(ABC):
         """
         if problem.stochastic:
             raise NotImplementedError(f"{type(self).__name__} does not implement native solver {problem.solver!r}.")
-        prepared = self.prepare_hamiltonian(problem.engine_result, problem.tlist)
+        prepared = self._prepare_problem_hamiltonian(problem)
         tlist_arr, c_ops, solver, opts, e_ops_arg = self._resolve_solve_config(
             problem, prepared
         )

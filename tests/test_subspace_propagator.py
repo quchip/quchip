@@ -183,6 +183,8 @@ def test_a_chip_with_a_port_gives_its_propagator_without_a_warning():
     times = np.array([0.0, 20.0])
     with warnings.catch_warnings():
         warnings.simplefilter("error")
+        # At this rtol, QuTiP evaluates the pulse window exactly and says so.
+        warnings.filterwarnings("ignore", message="At rtol=1e-12, the QuTiP backend needs")
         record = sequence.subspace_propagator("q", tlist=times, options=TIGHT, dissipation=False)
     assert record.omitted_channels == ("out", "hidden.r.internal_photon_loss")
     lossless = sequence.with_params({"r.internal_quality_factor": None})

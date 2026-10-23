@@ -761,6 +761,15 @@ This file records notable user-visible changes to quchip.
   saved. The new `final_population()` on `SimulationResult` and
   `SimulationBatchResult` returns the final-time population and needs only
   the final state.
+- On the QuTiP backend, a pulse envelope reaches the accuracy of the solver's
+  `rtol`. QuTiP sampled each windowed envelope at 40 points/ns whatever the
+  tolerance, so a Gaussian π pulse kept an error in `P1` of 4.1e-6 at 12 ns
+  and 8.6e-5 at 4 ns, also at `rtol = 1e-10`. The sample step now follows
+  `h = sqrt(8 rtol max|f| / max|f''|)`, never below 40 points/ns. At QuTiP's
+  default `rtol = 1e-6`, the errors fall to 1.0e-6 and 3.1e-7 at the same
+  cost, and at `rtol = 1e-8` to 9.4e-9 and 1.6e-8. A window that would need
+  more than 100,000 samples uses the exact envelope as a callable and warns.
+  QuTiP outputs can move at the 1e-6 level.
 
 #### Performance
 
