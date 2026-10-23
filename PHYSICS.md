@@ -3543,7 +3543,10 @@ space has more than 64 states, the gate set selects
 raises `K` until each template block and its leakage change by less than
 `1e-6` at `K + 1`. After calibration it compares each calibrated gate at `K`
 and `K + 1`; when one changes by more, it raises `K` and calibrates again from
-the fitted knobs, up to the full product space. Under the RWA the cutoff
+the fitted knobs, up to the full product space. Both checks use the block with
+the other gate-set qubits in level 0 and again with all of them in level 1. A
+cached gate acts on every register state, and the second context holds the
+most excitations, so it comes closest to the cutoff. Under the RWA the cutoff
 projector commutes with `N`, so the placement rule of section 17.2 still holds.
 
 [koch]: https://arxiv.org/abs/cond-mat/0703002

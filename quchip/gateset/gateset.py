@@ -165,8 +165,9 @@ class GateSet:
         Otherwise it keeps the full product space up to 64 states and above
         that picks ``ExcitationCutoff(n + 1)`` for ``n`` qubits, raising the
         cutoff until the calibrated gates change by less than
-        ``cutoff_tolerance`` at the next cutoff, with a warning. ``None``
-        forces the full product space.
+        ``cutoff_tolerance`` at the next cutoff, with the other qubits in
+        level 0 and in level 1, with a warning. ``None`` forces the full
+        product space.
     cutoff_tolerance : float, default 1e-6
         Largest change of a gate's computational amplitudes or leakage
         accepted when the cutoff is raised by one.
@@ -751,10 +752,8 @@ class GateSet:
                 native = self._natives[key]
                 assert native.sequence is not None
                 block_qubits = (*native.qubits, *self.spectators_of(native))
-                left, _ = self._block(native.sequence, block_qubits, native.duration, chip=current)
-                right, _ = self._block(native.sequence, block_qubits, native.duration, chip=larger)
-                difference = max(difference, float(np.abs(np.asarray(left.matrix) - np.asarray(right.matrix)).max()),
-                                 float(np.abs(np.asarray(left.leakage) - np.asarray(right.leakage)).max()))
+                difference = max(difference, self._cutoff_change(native.sequence, block_qubits, native.duration,
+                                                                 current, larger))
             if difference <= self.cutoff_tolerance:
                 break
             cutoff += 1
@@ -786,10 +785,7 @@ class GateSet:
             native = self._natives[key]
             calibration = self._calibrations[key]
             block_qubits = calibration.block_qubits or native.qubits
-            left, _ = self._block(calibration.sequence, block_qubits, native.duration)
-            right, _ = self._block(calibration.sequence, block_qubits, native.duration, chip=larger)
-            difference = max(float(np.abs(np.asarray(left.matrix) - np.asarray(right.matrix)).max()),
-                             float(np.abs(np.asarray(left.leakage) - np.asarray(right.leakage)).max()))
+            difference = self._cutoff_change(calibration.sequence, block_qubits, native.duration, None, larger)
             calibration.cutoff_difference = difference
             if difference > self.cutoff_tolerance:
                 failing.append(key)
@@ -806,6 +802,23 @@ class GateSet:
             warnings.warn(f"{names} changed by {worst:.1e} at the next excitation cutoff; recalibrating in {where}.",
                           UserWarning, stacklevel=3)
         return failing
+
+    def _cutoff_change(self, sequence: "QuantumSequence", block_qubits: Sequence[str], duration: float,
+                       current: "Chip | None", larger: "Chip") -> float:
+        """Largest change of a block and its leakage from ``current`` to ``larger``.
+
+        The other gate-set qubits are in level 0 and then all in level 1.
+        The second context holds the most excitations of any register
+        state, so it comes closest to the cutoff.
+        """
+        others = [q for q in self.qubits if q not in block_qubits]
+        change = 0.0
+        for background in ({}, dict.fromkeys(others, 1)) if others else ({},):
+            left, _ = self._block(sequence, block_qubits, duration, background=background, chip=current)
+            right, _ = self._block(sequence, block_qubits, duration, background=background, chip=larger)
+            change = max(change, float(np.abs(np.asarray(left.matrix) - np.asarray(right.matrix)).max()),
+                         float(np.abs(np.asarray(left.leakage) - np.asarray(right.leakage)).max()))
+        return change
 
     # ------------------------------------------------------------------- cache
 

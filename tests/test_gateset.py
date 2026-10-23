@@ -661,8 +661,9 @@ def test_automatic_cutoff_recalibrates_until_the_gate_converges():
     assert calibration.cutoff_difference is None or calibration.cutoff_difference <= gates.cutoff_tolerance
 
 
-def test_cutoff_checks_include_excited_spectators():
-    """The cutoff rises until the joint block with an excited spectator matches the full space."""
+@pytest.mark.parametrize("spectators", ["all", "none"])
+def test_cutoff_checks_include_excited_spectators(spectators):
+    """The cutoff rises until the gate with the other qubit excited matches the full space, in or out of the block."""
     from quchip import Square
     from quchip.gateset import Seed
 
@@ -674,7 +675,7 @@ def test_cutoff_checks_include_excited_spectators():
     seq = QuantumSequence(chip)
     pulse = seq.schedule("xy", envelope=Square(duration=2.0, amplitude=0.0), freq=chip.freq("q"),
                          phase=-float(np.angle(element)))
-    gates = GateSet(chip, ["q", "s"], spectators="all")
+    gates = GateSet(chip, ["q", "s"], spectators=spectators)
     gates.add(NativeGate("SX", ("q",), seq, knobs={"amplitude": Knob(pulse, "amplitude", scale=0.1)}, ideal="SX",
                          free_z=("q",), seeds=(Seed({"amplitude": 0.1}, "test"),)))
     with pytest.warns(UserWarning, match="recalibrating"):

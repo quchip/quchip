@@ -170,7 +170,8 @@ class GateCalibration:
         Calibration count of this native in its gate set.
     cutoff_difference : float or None
         Largest change of the block or leakage at the next excitation cutoff,
-        for an automatic cutoff.
+        with the other gate-set qubits in level 0 and in level 1, for an
+        automatic cutoff.
     block_qubits : tuple of str
         Qubits of the fitted block: the gate's qubits, then its spectators.
         ``block`` and ``ideal`` use this order, and ``fidelity`` and
