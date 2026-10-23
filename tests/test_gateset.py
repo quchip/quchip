@@ -140,6 +140,15 @@ def test_error_generator_puts_the_error_after_the_ideal_gate():
 
 
 @pytest.mark.unit
+def test_zero_idle_adds_nothing():
+    """IDLE(0), which qutip-qip allows, adds no delay; a negative IDLE still raises."""
+    gates = GateSet(two_transmons(), ["q0", "q1"])
+    assert gates.schedule([("IDLE", "q0", 0.0), ("RZ", "q0", 0.3)]).total_duration == 0.0
+    with pytest.raises(ValueError, match="must be > 0"):
+        gates.schedule([("IDLE", "q0", -1.0)])
+
+
+@pytest.mark.unit
 def test_knobs_resolve_handles_paths_and_ties():
     """Handles after a leading vz resolve to their entry; ties move every value by its factor."""
     chip = two_transmons()

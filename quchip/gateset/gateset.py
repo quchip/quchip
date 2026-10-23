@@ -983,7 +983,8 @@ class GateSet:
             if kind == "RZ":
                 sequence.vz(item[1], -item[2])
             elif kind == "IDLE":
-                sequence.delay(item[1], item[2])
+                if item[2] != 0:
+                    sequence.delay(item[1], item[2])
             elif kind == "GLOBALPHASE":
                 global_phase += item[1]
             else:
