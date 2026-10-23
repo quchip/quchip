@@ -737,23 +737,27 @@ This file records notable user-visible changes to quchip.
   pump with phase π/2, not π, and left `P(vacuum)` at 0.50 instead of 1.00.
   One-photon drives, coherent inputs, and pulses in another device's frame
   keep θ.
+  ([#216](https://github.com/quchip/quchip/pull/216))
 - A dynamiqs batch over a pulse carrier that includes `freq=0.0` runs. In the
   lab frame under `RWA()`, a zero carrier and the frame cancel, so that point
   had another signal structure, and
   `simulate_batch(pulse.vary("freq", [0.0, 0.05]))` raised "Heterogeneous
   signal pytree". QuTiP already ran this batch. `freq=0.0` stays a carrier at
   zero frequency.
+  ([#216](https://github.com/quchip/quchip/pull/216))
 - An explicit `frame="rotating"` warns when a device's dressed `0 -> 1`
   reference has no reliable label assignment, and names `frame="auto"`. The
   frame does not change. Two identical transmons with `g = 10 MHz` took
   references of 5.01 and 4.99 GHz without a warning, and their idle exchange
   then had an error of 9e-7 against 2e-13 in the lab frame. A chip without a
   frame already raises on the same check.
+  ([#216](https://github.com/quchip/quchip/pull/216))
 - Steady-state results and `VNA.finite_power()` results pickle and load.
   Previously, `pickle.dumps` raised on their read-only mappings and on the
   deferred memory estimate of the stationary route. Every read-only mapping
   in quchip records now pickles as a copy, and a deferred value pickles its
   calculated value.
+  ([#216](https://github.com/quchip/quchip/pull/216))
 - `SimulationResult.population()` works on a result saved with
   `states="final"` and holds only the final value, so
   `population(q, 1)[-1]` reads it with either storage choice. Previously, it
@@ -761,6 +765,7 @@ This file records notable user-visible changes to quchip.
   saved. The new `final_population()` on `SimulationResult` and
   `SimulationBatchResult` returns the final-time population and needs only
   the final state.
+  ([#216](https://github.com/quchip/quchip/pull/216))
 - On the QuTiP backend, a pulse envelope reaches the accuracy of the solver's
   `rtol`. QuTiP sampled each windowed envelope at 40 points/ns whatever the
   tolerance, so a Gaussian π pulse kept an error in `P1` of 4.1e-6 at 12 ns
@@ -770,6 +775,7 @@ This file records notable user-visible changes to quchip.
   cost, and at `rtol = 1e-8` to 9.4e-9 and 1.6e-8. A window that would need
   more than 100,000 samples uses the exact envelope as a callable and warns.
   QuTiP outputs can move at the 1e-6 level.
+  ([#216](https://github.com/quchip/quchip/pull/216))
 
 #### Performance
 
