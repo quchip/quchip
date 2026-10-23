@@ -173,6 +173,47 @@ def test_a_solve_without_a_frame_uses_the_lab_frame_when_no_planned_frame_fits()
 
 
 @pytest.mark.unit
+def test_a_solve_without_dissipation_keeps_the_rotating_frame() -> None:
+    """Channels that a solve leaves out need not fit its frame, in a single solve and in both batch paths."""
+    _, sequence = _pair(bath=True)
+    axes = [sequence.vary("q.freq", [5.0, 5.1]), sequence.vary("pulse.0.amplitude", [0.01, 0.02])]
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        problems = [sequence.build_problem(TIMES, dissipation=False)]
+        for axis in axes:
+            problems += sequence.build_batch(axis, tlist=TIMES, dissipation=False).problems
+        problems.append(_reduced_bus_pair()[1].build_problem(TIMES, dissipation=False))
+    assert [problem.resolved_frame.mode for problem in problems] == ["rotating"] * 6
+    assert [str(warning.message) for warning in caught] == [ROTATING_DEFAULT_WARNING] * 4
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert sequence.build_problem(TIMES, frame="rotating", dissipation=False).resolved_frame.mode == "rotating"
+        for build in (lambda frame: _pair(frame, bath=True), _reduced_bus_pair):
+            assert build(frame="rotating")[1].build_problem(TIMES, dissipation=False).resolved_frame.mode == "rotating"
+    # A dissipative solve on the same chip still checks its channels.
+    with pytest.warns(UserWarning, match=AUTO_FALLBACK):
+        assert sequence.build_problem(TIMES).resolved_frame.mode == "auto"
+
+
+@pytest.mark.e2e
+def test_subspace_propagator_keeps_the_rotating_frame_on_a_chip_with_a_collective_bath() -> None:
+    """The propagator leaves the channels out, so a collective bath changes neither its frame nor its matrix."""
+    propagators = []
+    for bath in (True, False):
+        _, sequence = _pair(bath=bath)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            propagators.append(sequence.subspace_propagator("q", duration=20.0))
+        messages = [str(warning.message) for warning in caught]
+        assert len(messages) == 2 and messages[0] == ROTATING_DEFAULT_WARNING
+        assert messages[1].startswith("subspace_propagator() solves without the collapse channels")
+    with_bath, without_bath = propagators
+    assert [result.frame.mode for result in with_bath.batch] == ["rotating", "rotating"]
+    assert "hidden.loss.collective_decay" in with_bath.omitted_channels
+    np.testing.assert_allclose(with_bath.matrix, without_bath.matrix, rtol=0, atol=1e-12)
+
+
+@pytest.mark.unit
 def test_a_solve_without_a_frame_raises_when_a_reference_has_no_reliable_assignment() -> None:
     """A resonant pair has no dressed 0 -> 1 reference per device, unless each device sets reference_freq."""
     chip = _resonant_pair()

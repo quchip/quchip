@@ -966,7 +966,8 @@ class QuantumSequence:
             ``"auto"`` derives constraints from delivered scheduled signals and
             weights them over ``tlist[-1] - tlist[0]``.
         dissipation : bool, default=True
-            Include authored collapse channels when true.
+            Include authored collapse channels when true. Channels that the
+            solve leaves out do not need to fit its frame.
 
         Returns
         -------
@@ -1442,9 +1443,10 @@ class QuantumSequence:
         The solve uses the chip's frame. On a chip without a frame, it uses
         the rotating frame and warns. When a collapse or port operator does
         not fit the rotating frame, the solve uses the frame that ``"auto"``
-        plans, or the lab frame when that frame does not fit either. When a
-        device has no reliably assigned dressed ``0 -> 1`` frequency, the
-        solve raises and asks for a frame. A batch checks every point and
+        plans, or the lab frame when that frame does not fit either. A solve
+        with ``dissipation=False`` leaves the collapse channels out, so only
+        port operators need to fit. When a device has no reliably assigned
+        dressed ``0 -> 1`` frequency, the solve raises and asks for a frame. A batch checks every point and
         solves all of them in the first of these frames that fits each point.
         In the planned frame, each point gets its own plan, as with
         ``frame="auto"``.

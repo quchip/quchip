@@ -666,6 +666,14 @@ This file records notable user-visible changes to quchip.
   or an installed psutil, every check accepted every request.
   ([#200](https://github.com/quchip/quchip/issues/200),
   [#205](https://github.com/quchip/quchip/pull/205))
+- A solve with `dissipation=False` no longer checks the collapse channels
+  that it leaves out against its frame. Previously, such a channel raised
+  when it did not fit the frame: a collective decay of two detuned devices
+  refused `frame="rotating"` even without dissipation. On a chip without a
+  frame, these solves and `subspace_propagator()` now use the rotating frame
+  instead of a fallback. Ports still need to fit the frame, because drives
+  through a port and the Hamiltonian of a cascade stay in the solve.
+  ([#214](https://github.com/quchip/quchip/pull/214))
 
 #### Performance
 

@@ -610,8 +610,15 @@ def _collect_collapse_terms(
     resolved_frame: "ResolvedFrame",
     backend: Backend,
     resolution: _SystemResolution,
+    *,
+    check_frames: bool = True,
 ) -> tuple[tuple[CollapseTerm, ...], tuple[tuple[str, ...], ...]]:
-    """Canonicalize every collapse channel and attach accessible-port metadata."""
+    """Canonicalize every collapse channel and attach accessible-port metadata.
+
+    ``check_frames=False`` skips the frame check of channels that a solve
+    without dissipation leaves out. Ports keep their check, because the port
+    network composes their frame frequencies.
+    """
     labels = tuple(device.label for device in chip.devices)
     terms: list[CollapseTerm] = []
     supports: list[tuple[str, ...]] = []
@@ -641,7 +648,8 @@ def _collect_collapse_terms(
             # retained-coordinate effective channels.
             # Support-free channels (baths) already span the whole chip.
             check_support = support or tuple(range(len(labels)))
-            if (retained_coordinates or len(check_support) > 1) and not _is_concrete_zero(resolved_rate):
+            if (check_frames and (retained_coordinates or len(check_support) > 1)
+                    and not _is_concrete_zero(resolved_rate)):
                 frequencies = tuple(resolved_frame.frequencies[labels[index]] for index in check_support)
                 if not all(maybe_concrete_scalar(frequency) == 0.0 for frequency in frequencies):
                     from quchip.engine.excitation import authored_excitation_changes
@@ -2070,6 +2078,7 @@ def compile_hamiltonian_template(
     _local_resolution: _SystemResolution | None = None,
     _base_result: EngineResult | None = None,
     _advisories: list[str] | None = None,
+    _check_collapse_frames: bool = True,
 ) -> HamiltonianTemplate:
     """Compile the invariant Hamiltonian skeleton (H₀, couplings, pre-embedded drive bands).
 
@@ -2175,6 +2184,7 @@ def compile_hamiltonian_template(
         resolved_frame,
         backend,
         resolution,
+        check_frames=_check_collapse_frames,
     )
     slh = ResolvedSLH.from_terms(
         static_terms=static_terms,
@@ -2320,6 +2330,7 @@ def build_engine_result(
     _local_resolution: _SystemResolution | None = None,
     _base_result: EngineResult | None = None,
     _advisories: list[str] | None = None,
+    _check_collapse_frames: bool = True,
 ) -> EngineResult:
     """Compile the template and instantiate one engine-result variant.
 
@@ -2353,6 +2364,7 @@ def build_engine_result(
         _local_resolution=_local_resolution,
         _base_result=_base_result,
         _advisories=_advisories,
+        _check_collapse_frames=_check_collapse_frames,
     )
     return instantiate_engine_result(template, drive_ops, chip)
 

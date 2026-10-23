@@ -631,7 +631,11 @@ error at QuTiP's default tolerances was 5.0e-8. In the lab frame, it took
 2.8 s, and the error was 2.9e-6. A batch checks every point and solves all
 points in the first of the rotating, planned, and lab frames that fits each
 of them. In the planned frame, each point gets its own plan, as with
-`"auto"`.
+`"auto"`. A solve with `dissipation=False` leaves the collapse channels out,
+so they do not need to fit its frame. On a chip with a collective bath, such
+a solve and `subspace_propagator()` use the rotating frame. Ports still need
+to fit, because drives through a port and the Hamiltonian that a cascade
+generates (§3.3.2) stay in a solve without dissipation.
 
 The rotating frame also needs a dressed `0 -> 1` frequency for each device.
 Identical coupled devices, such as a resonant pair, have no reliable label
@@ -2305,7 +2309,8 @@ It does not replace a collective jump by independent T1 channels. `EffectiveTerm
 captured in authored coordinates and use the ordinary basis and frame compiler without
 a second band-removal approximation. A static collective jump requires one removable
 global phase in the selected frame. Unequal band phases require a compatible common
-frame or the lab frame.
+frame or the lab frame. A solve with `dissipation=False` leaves the jump out, so it
+skips this check.
 
 Reducing an excitation-conserving model records each retained channel's total level
 change in `EffectiveTerms.excitation_changes`. A projected surviving operator keeps

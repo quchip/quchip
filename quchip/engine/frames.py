@@ -804,22 +804,25 @@ def resolve_for_operations(
     frame: Any = None,
     approximation: Any = None,
     solve_window: Any = None,
+    _check_collapse_frames: bool = True,
 ) -> Any:
     """Resolve ``chip`` with an operation-aware ``"auto"`` frame when requested.
 
     ``approximation`` selects the retained bands. ``solve_window`` supplies the
     solve's ``(start, stop)`` bounds for signal-energy weights; when omitted,
-    the bounds are ``(0, last pulse end)``.
+    the bounds are ``(0, last pulse end)``. ``_check_collapse_frames=False``
+    serves a solve without dissipation, which leaves the collapse channels out.
     """
     strategy = chip.approximation if approximation is None else require_approximation(approximation)
     frame_spec = static_frame(chip, frame)
     if not (isinstance(frame_spec, str) and frame_spec == "auto"):
-        return chip.resolve(frame=frame_spec, approximation=strategy)
+        return chip._resolve(frame=frame_spec, approximation=strategy, _check_collapse_frames=_check_collapse_frames)
     resolution = planning_resolution(chip)
     spec = plan_for_operations(
         chip, frame_spec, operations, approximation=strategy, solve_window=solve_window, _resolution=resolution,
     )
-    return chip._resolve(frame=spec, approximation=strategy, _resolution=resolution)
+    return chip._resolve(frame=spec, approximation=strategy, _resolution=resolution,
+                         _check_collapse_frames=_check_collapse_frames)
 
 
 def plan_for_operations(

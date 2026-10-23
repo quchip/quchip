@@ -288,17 +288,19 @@ def prepare_solve_problem_context(
         # Under a cutoff, batch points that prove different spaces all keep every label with N <= K.
         space, reason, boundary = plan_pulse_space(chip, drive_ops or [], initial_states or [None], resolution,
                                                    strategy, dissipation, whole=_product_space)
+    # A solve without dissipation leaves the collapse channels out, so they need not fit its frame.
     def resolve(frame_spec: Any) -> tuple[Any, Any]:
         if space is None:
             return resolve_for_operations(
                 chip, drive_ops or [], frame=frame_spec, approximation=strategy,
-                solve_window=(tlist_arr[0], tlist_arr[-1]),
+                solve_window=(tlist_arr[0], tlist_arr[-1]), _check_collapse_frames=dissipation,
             ), resolution
         spec = plan_for_operations(chip, frame_spec, drive_ops or [], approximation=strategy,
                                    solve_window=(tlist_arr[0], tlist_arr[-1]), _resolution=resolution)
         prepared, resolved_frame = _prepare_engine_assembly(chip, spec, strategy, resolution=resolution)
         return build_engine_result(chip, [], resolved_frame=resolved_frame, approximation=strategy,
-                                   _local_resolution=replace(prepared, space=space)), prepared
+                                   _local_resolution=replace(prepared, space=space),
+                                   _check_collapse_frames=dissipation), prepared
 
     if frame is not None or chip.frame is not None:
         base_result, resolution = resolve(chip.frame if frame is None else frame)

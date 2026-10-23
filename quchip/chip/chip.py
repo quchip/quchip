@@ -440,9 +440,13 @@ class Chip:
 
     def _resolve(
         self, *, frame: FrameSpec | None = None, approximation: Approximation | None = None,
-        _resolution: Any = None,
+        _resolution: Any = None, _check_collapse_frames: bool = True,
     ) -> EngineResult:
-        """Resolve with optional preparation supplied by frame planning."""
+        """Resolve with optional preparation supplied by frame planning.
+
+        ``_check_collapse_frames=False`` serves a solve without dissipation,
+        which leaves the collapse channels out.
+        """
         from quchip.engine.assembly import (
             _prepare_engine_assembly,
             build_engine_result,
@@ -456,6 +460,7 @@ class Chip:
         control_lines = () if equipment is None else equipment.lines
         try:
             signature = (
+                _check_collapse_frames,
                 id(self.backend),
                 strategy,
                 self.basis,
@@ -533,6 +538,7 @@ class Chip:
             resolved_frame=resolved_frame,
             approximation=strategy,
             _local_resolution=local_resolution,
+            _check_collapse_frames=_check_collapse_frames,
         )
         if signature is not None:
             # A traced resolution is reused only inside the JAX trace that produced it.
