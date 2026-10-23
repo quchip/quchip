@@ -847,6 +847,12 @@ class SimulationResult:
     def population(self, device: str | BaseDevice, level: int = 0) -> Any:
         """Return occupation of a captured isolated energy level in native arrays.
 
+        The result has one value per saved state. A solve with
+        ``states="final"`` saves only the final state, so the result then holds
+        one value, the final one, and ``population(device, level)[-1]`` reads
+        it with either storage choice. :meth:`final_population` returns that
+        value as a scalar.
+
         Parameters
         ----------
         device : device object or str
@@ -854,6 +860,28 @@ class SimulationResult:
         level : int, default=0
             Zero-based isolated energy level.
         """
+        if not self._states and self._final_state is not None:
+            return self._population_over(self._backend.stack_states([self._final_state]), device, level)
+        return self._population_over(self._stacked_states(), device, level)
+
+    def final_population(self, device: str | BaseDevice, level: int = 0) -> Any:
+        """Return occupation of a captured isolated energy level at the final time.
+
+        It reads the final state, so it works with ``states="all"`` and
+        ``states="final"``.
+
+        Parameters
+        ----------
+        device : device object or str
+            Captured device.
+        level : int, default=0
+            Zero-based isolated energy level.
+        """
+        stacked = self._backend.stack_states([self._raw_final_state()])
+        return self._population_over(stacked, device, level)[0]
+
+    def _population_over(self, stacked: Any, device: str | BaseDevice, level: int) -> Any:
+        """Return the population of one level for each state of a native stacked array."""
         backend = self._backend
         xp = backend.array_module
         dev_idx, label = self._resolve_device_idx(device)
@@ -864,7 +892,7 @@ class SimulationResult:
             )
 
         if self._excitation_space is not None:
-            diags = backend.populations_over_time(self._stacked_states())
+            diags = backend.populations_over_time(stacked)
             selected = self._excitation_space.levels[:, dev_idx] == level
             return xp.real(diags @ xp.asarray(selected, dtype=float))
         basis = self._bases.get(label)
@@ -872,10 +900,10 @@ class SimulationResult:
             vector = xp.asarray(basis.energy_state(level))
             projector = backend.from_array(xp.outer(vector, vector.conj()), dims=[[dev_dim], [dev_dim]])
             embedded = backend.embed(projector, dev_idx, self.dims)
-            return xp.real(backend.expect_over_time(embedded, self._stacked_states()))
+            return xp.real(backend.expect_over_time(embedded, stacked))
 
         # Marginalize the other devices without enumerating product-basis labels.
-        diags = backend.populations_over_time(self._stacked_states())
+        diags = backend.populations_over_time(stacked)
         axes = tuple(index + 1 for index in range(len(self.dims)) if index != dev_idx)
         marginal = xp.sum(diags.reshape((len(diags), *self.dims)), axis=axes)
         return xp.real(marginal @ xp.asarray(np.arange(dev_dim) == level, dtype=float))
@@ -1203,6 +1231,20 @@ class SimulationBatchResult(BatchResult[SimulationResult]):
             result._final_projection(target, amplitude=amplitude, frame=frame)
             for result, target in zip(self._results, targets)
         ])
+
+    def final_population(self, device: str | BaseDevice, level: int = 0) -> Any:
+        """Return final-time populations of one isolated energy level on the natural sweep grid.
+
+        Each result reads its final state, so ``states="final"`` suffices.
+
+        Parameters
+        ----------
+        device : device object or str
+            Captured device.
+        level : int, default=0
+            Zero-based isolated energy level.
+        """
+        return self._reshape([result.final_population(device, level) for result in self._results])
 
     def final_overlap_magnitudes(self, targets: list[Any] | tuple[Any, ...], *, frame: Frame = "integration") -> Any:
         """Return final target-state populations without histories.

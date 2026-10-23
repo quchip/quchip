@@ -754,6 +754,13 @@ This file records notable user-visible changes to quchip.
   deferred memory estimate of the stationary route. Every read-only mapping
   in quchip records now pickles as a copy, and a deferred value pickles its
   calculated value.
+- `SimulationResult.population()` works on a result saved with
+  `states="final"` and holds only the final value, so
+  `population(q, 1)[-1]` reads it with either storage choice. Previously, it
+  raised "Full state history is unavailable" although the final state was
+  saved. The new `final_population()` on `SimulationResult` and
+  `SimulationBatchResult` returns the final-time population and needs only
+  the final state.
 
 #### Performance
 

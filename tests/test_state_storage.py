@@ -69,6 +69,26 @@ def test_final_state_lookup_requires_a_retained_time(backend):
 
 
 @pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
+def test_populations_read_the_final_state_when_only_it_is_saved(backend):
+    """population() holds the final value alone under states="final"; final_population() reads it either way."""
+    seq, q = _sequence(backend)
+    times = [0.0, 1.0, 2.0]
+    history = seq.simulate(tlist=times, initial_state={"q": 1}, states="all")
+    final = seq.simulate(tlist=times, initial_state={"q": 1}, states="final")
+    expected = history.population(q, 1)[-1]
+    assert float(expected) == pytest.approx(np.exp(-0.2), abs=2e-6)
+    np.testing.assert_allclose(final.population(q, 1), [expected], atol=1e-12)
+    for result in (history, final):
+        assert float(result.final_population(q, 1)) == pytest.approx(float(expected), abs=1e-12)
+        assert float(result.final_population("q", 0)) == pytest.approx(1 - float(expected), abs=1e-12)
+    batch = seq.simulate_batch(seq.vary("initial_state", [{"q": 1}, {"q": 0}]), tlist=times, states="final")
+    np.testing.assert_allclose(batch.final_population(q, 1), [expected, 0.0], atol=1e-12)
+    np.testing.assert_allclose(batch.population(q, 1, reduce="last"), [expected, 0.0], atol=1e-12)
+    with pytest.raises(RuntimeError, match='states="all"'):
+        seq.simulate(tlist=times, states="none").population(q, 1)
+
+
+@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
 @pytest.mark.parametrize("noisy", [False, True])
 def test_batch_final_projections_do_not_require_histories(backend, noisy):
     seq, _ = _sequence(backend)

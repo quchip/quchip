@@ -240,8 +240,10 @@ counts = result.measure(q).sample(1024, seed=7).counts()
 `tlist` sets the actual start and end times: `[20, 30]` starts evolution at
 20 ns. It does not simulate the first 20 ns and discard them.
 
-Use `states="final"` when only the final state matters. `states="none"` saves
-only requested expectation traces. Later state measurements require saved
+Use `states="final"` when only the final state matters. Then
+`result.population(q, level=1)` holds only the final value, and
+`result.final_population(q, level=1)` returns it with either choice.
+`states="none"` saves only requested expectation traces. Later state measurements require saved
 states. `observable_at()` can select or interpolate a saved trace. State
 queries use saved times and do not interpolate quantum states.
 
