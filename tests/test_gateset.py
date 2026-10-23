@@ -21,7 +21,7 @@ from quchip import (
     Resonator,
     Square,
 )
-from quchip.gateset import GateSet, Knob, NativeGate, drag_sx
+from quchip.gateset import GateSet, Knob, NativeGate, cross_resonance, drag_sx
 from quchip.gateset.cache import covariance, split_pieces
 from quchip.gateset.calibration import _Residual, average_fidelity, error_generator
 from quchip.gateset.ideals import FALLBACK_RULES, IDEALS, PAULIS, RULES, embed, ideal_unitary
@@ -469,6 +469,24 @@ def test_cached_circuit_matches_the_direct_schedule_solve():
     assert overlapping.solves > 0
     direct = gates.schedule(circuit).propagator(frame="rotating", options=gates.options, dissipation=False)
     assert np.abs(overlapping.full - np.asarray(direct.matrix)).max() < 2e-5
+
+
+def test_cached_cross_resonance_matches_direct_solves_at_later_starts():
+    """A CR tone drives q0 at q1's frequency; the cache turns it with that carrier, not with q0's frame."""
+    chip = two_transmons(df=0.1)
+    gates = GateSet(chip, ["q0", "q1"])
+    gates.add(cross_resonance(chip, "q0", "q1", duration=120.0, echo=False))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        gates.calibrate(max_nfev=0)
+    idles = [("IDLE", "q0", 7.1), ("IDLE", "q1", 7.1)]
+    circuit = [("RZ", "q0", 0.4), ("RZ", "q1", -1.1), *idles, ("ZX90", ("q0", "q1")), *idles[:1],
+               ("ZX90", ("q0", "q1"))]
+    composed = gates.unitary(circuit, policy="serial")
+    direct = gates.schedule(circuit, policy="serial").propagator(frame="rotating", options=gates.options,
+                                                                 dissipation=False)
+    assert composed.solves == 0
+    assert np.abs(composed.full - np.asarray(direct.matrix)).max() < 2e-5
 
 
 def test_simulate_maps_the_final_state_into_the_computational_frame():
