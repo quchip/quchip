@@ -420,7 +420,8 @@ This file records notable user-visible changes to quchip.
   cross-resonance ZX90 gates; `NativeGate` and `Knob` declare your own. Each
   fit targets the ideal gate on a block that includes coupled spectator
   qubits, with free virtual Z phases, and reports the infidelity, leakage,
-  error generator, knob bounds, and fit identifiability. `GateSet.unitary()`
+  the generator of the error after the ideal gate, knob bounds, and fit
+  identifiability. `GateSet.unitary()`
   reuses each gate's propagator at new start times and frames when its
   Hamiltonian allows it, and `GateSet.simulate()` solves the circuit's
   schedule with noise. On a chip above 64 states, gate-set solves pick and

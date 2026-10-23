@@ -3462,9 +3462,12 @@ a fixed step of `1e-4` in the scaled knobs, shortened to the distance to a
 bound when both bounds are closer, and the phase columns are exact.
 The calibrated sequence ends with `vz(q, -φ_q)`.
 
-The report gives the error generator `H = i log U_P` of the polar part `U_P`
-of `M`, with Pauli coefficients `Tr(P H)/d` (a rotation `θ` about `P` gives
-`θ/2`). It also gives the leakage, the Jacobian condition number and its
+The report gives the error after the ideal gate, as cycle benchmarking and
+cycle error reconstruction define it. Its generator is `H = i log U_P`, where
+`U_P` is the polar part of `Z(φ) V (U ⊗ I)^† = (U ⊗ I) M (U ⊗ I)^†`, and its
+Pauli coefficients are `Tr(P H)/d` (a rotation `θ` about `P` gives `θ/2`).
+The error before the gate, the polar part of `M`, has the same eigenphases
+and worst-case distance. It also gives the leakage, the Jacobian condition number and its
 change under a ten times smaller step, knobs at a bound, the infidelity of
 the gate's own block with all spectators in `|0>`, with each other gate-set
 qubit in `|1>`, and in the computational state of the other qubits where it

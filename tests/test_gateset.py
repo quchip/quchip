@@ -24,7 +24,7 @@ from quchip import (
 from quchip.gateset import GateSet, Knob, NativeGate, drag_sx
 from quchip.gateset.cache import covariance, split_pieces
 from quchip.gateset.calibration import _Residual, average_fidelity, error_generator
-from quchip.gateset.ideals import FALLBACK_RULES, IDEALS, RULES, embed, ideal_unitary
+from quchip.gateset.ideals import FALLBACK_RULES, IDEALS, PAULIS, RULES, embed, ideal_unitary
 from quchip.gateset.native import ResolvedKnob, bind_pulses, resolve_knob
 from quchip.gateset.blocks import project_computational
 
@@ -111,11 +111,32 @@ def test_error_generator_and_distance_of_a_known_over_rotation():
     """An SX over-rotated by ε about X has generator coefficient ε/2 on X and distance sin(ε/2)."""
     epsilon = 3e-3
     over = expm(-0.5j * epsilon * IDEALS["X"])
-    generator, distance = error_generator(IDEALS["SX"].conj().T @ over @ IDEALS["SX"])
+    generator, distance = error_generator(over @ IDEALS["SX"], IDEALS["SX"])
     assert abs(generator["X"] - epsilon / 2) < 1e-12
     assert abs(generator["Y"]) < 1e-12 and abs(generator["Z"]) < 1e-12
     assert abs(distance - np.sin(epsilon / 2)) < 1e-12
     assert abs(1 - average_fidelity(over @ IDEALS["SX"], IDEALS["SX"]) - (2 / 3) * np.sin(epsilon / 2) ** 2) < 1e-15
+
+
+@pytest.mark.unit
+def test_error_generator_puts_the_error_after_the_ideal_gate():
+    """A Z error after SX reads as Z, and as Y before the gate; the two readings differ by the ideal."""
+    epsilon = 3e-3
+    block = expm(-0.5j * epsilon * IDEALS["Z"]) @ IDEALS["SX"]
+    after, _ = error_generator(block, IDEALS["SX"])
+    before, _ = error_generator(IDEALS["SX"].conj().T @ block, np.eye(2))
+    assert after["Z"] == pytest.approx(epsilon / 2, abs=1e-12) and abs(after["Y"]) < 1e-12
+    assert before["Y"] == pytest.approx(epsilon / 2, abs=1e-12) and abs(before["Z"]) < 1e-12
+    hermitian = np.random.default_rng(3).normal(size=(4, 4, 2)) @ np.array([1.0, 1.0j])
+    block = expm(-1e-2j * (hermitian + hermitian.conj().T)) @ IDEALS["CX"]
+    after, distance = error_generator(block, IDEALS["CX"])
+    before, same = error_generator(IDEALS["CX"].conj().T @ block, np.eye(4))
+
+    def matrix(components):
+        return sum(value * np.kron(PAULIS[name[0]], PAULIS[name[1]]) for name, value in components.items())
+
+    assert np.abs(matrix(after) - IDEALS["CX"] @ matrix(before) @ IDEALS["CX"].conj().T).max() < 1e-12
+    assert distance == pytest.approx(same, abs=1e-14)
 
 
 @pytest.mark.unit

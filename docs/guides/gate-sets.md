@@ -26,7 +26,7 @@ print(gates.describe())
 ```
 
 Each calibration reports the average gate infidelity, the leakage, the fitted
-knobs, the error generator, and a status. A status other than `"ok"` comes with
+knobs, the generator of the error after the ideal gate, and a status. A status other than `"ok"` comes with
 a warning:
 
 - `"at_bound"`: a knob ends at a bound, so the optimum is outside the range.

@@ -39,15 +39,17 @@ from quchip.inverse_design.fit import _identifiability_receipt
 DIFF_STEP = 1e-4
 
 
-def error_generator(product: np.ndarray) -> tuple[dict[str, float], float]:
+def error_generator(block: np.ndarray, ideal: np.ndarray) -> tuple[dict[str, float], float]:
     """Return the Pauli coefficients of ``i log U`` and the worst-case distance of ``U``.
 
-    ``U`` is the unitary polar factor of ``product = U_ideal† Z V`` with its
-    global phase removed. A rotation by θ about a Pauli axis has the
-    coefficient θ/2. The distance is ``sin(Δ/2)``, where Δ is the smallest arc
-    that holds the eigenphases of ``U``, and 1 when Δ ≥ π.
+    ``U`` is the unitary polar factor of ``block U_ideal†`` with its global
+    phase removed: the error after the ideal gate, ``block ≈ U U_ideal``, as in
+    cycle benchmarking. The error before the gate is ``U_ideal† U U_ideal``. A
+    rotation by θ about a Pauli axis has the coefficient θ/2. The distance is
+    ``sin(Δ/2)``, where Δ is the smallest arc that holds the eigenphases of
+    ``U``, and 1 when Δ ≥ π.
     """
-    left, _, right = np.linalg.svd(product)
+    left, _, right = np.linalg.svd(block @ ideal.conj().T)
     unitary = left @ right
     unitary = unitary * np.exp(-1j * np.angle(np.trace(unitary)))
     generator = 1j * logm(unitary)
@@ -122,7 +124,8 @@ class GateCalibration:
         Ideal unitary.
     error_generator : dict of str to float
         Pauli coefficients, in rad, of ``i log U``, with ``U`` the unitary polar
-        factor of ``U_ideal† Z(φ) V`` without its global phase.
+        factor of ``Z(φ) V U_ideal†`` without its global phase: the error after
+        the ideal gate.
     worst_case_distance : float
         ``sin(Δ/2)`` from the eigenphase arc of ``U``. For a unitary error it
         equals the diamond distance.
@@ -234,7 +237,7 @@ class GateCalibration:
         for qubit, phase in self.free_z.items():
             lines.append(f"  {'z ' + qubit:>18s} = {phase:+.6f} rad")
         largest = sorted(self.error_generator.items(), key=lambda item: -abs(item[1]))[:3]
-        lines.append("  error generator (rad): " + ", ".join(f"{k} {v:+.2e}" for k, v in largest))
+        lines.append("  error generator after the gate (rad): " + ", ".join(f"{k} {v:+.2e}" for k, v in largest))
         lines.append(f"  worst-case distance = {self.worst_case_distance:.2e}; Jacobian condition = "
                      f"{self.identifiability.get('jacobian_condition_number', float('nan')):.2e}")
         if self.ground_fidelity is not None:
@@ -508,8 +511,7 @@ def report(
                                              change=float((value - knob.initial) / knob.scale))
     z = np.exp(1j * (z_bits @ outcome.phases))
     block = z[:, None] * outcome.block
-    product = ideal.conj().T @ block
-    generator, distance = error_generator(product)
+    generator, distance = error_generator(block, ideal)
     leakage = np.real(np.sum(np.conj(outcome.leaked) * outcome.leaked, axis=0))
     receipt = _identifiability_receipt(outcome.jacobian, outcome.names, np.ones(len(outcome.names)))
     receipt["jacobian_step_change"] = outcome.jacobian_step_change
