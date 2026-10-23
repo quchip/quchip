@@ -39,6 +39,7 @@ This file records notable user-visible changes to quchip.
   without pulses would use and warns with that choice and its reason, or
   raises as the solve does. To keep the previous behavior, pass
   `Chip(frame="lab")`. A saved chip keeps its saved frame.
+  ([#214](https://github.com/quchip/quchip/pull/214))
 - `eliminate(..., method="sw")` keys the exchange `pathways` by occupation
   tuples in the source chip's device order, as `analyze_static_zz()` does.
   Previously, the keys were flat product indices, such as `1` and `17` for
