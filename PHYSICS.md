@@ -3535,8 +3535,8 @@ rule, idle intervals use the eigensystem of the static lab Hamiltonian, and
 overlapping gates are solved together once per placement. With a line delay,
 gates that follow each other on the delayed line overlap and are solved
 together. The composed unitary matches a direct solve of the same schedule to
-the solver tolerance. With QuTiP, linear envelope sampling (section 6.3) limits
-the agreement to about `1e-6`.
+the solver tolerance. With QuTiP, the linear interpolation of sampled envelopes
+limits the agreement to about `1e-6`.
 
 ### 17.6 Excitation cutoff
 
