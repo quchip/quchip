@@ -27,6 +27,7 @@ This file records notable user-visible changes to quchip.
   `charge(freq=None)` used `chip.freq(target)`. If you passed `freq=None` to
   `charge()` for that carrier, omit `freq`, or pass `freq=chip.freq(target)`
   to keep it without the warning.
+  ([#213](https://github.com/quchip/quchip/pull/213))
 - `eliminate(..., method="sw")` keys the exchange `pathways` by occupation
   tuples in the source chip's device order, as `analyze_static_zz()` does.
   Previously, the keys were flat product indices, such as `1` and `17` for
