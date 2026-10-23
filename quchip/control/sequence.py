@@ -110,6 +110,9 @@ class _PulseEntry:
     coherent_input: CoherentInput | None = None
     frame: str | None = None
     detuning: Any = None
+    # Multiple of the frame's virtual-Z phase that the carrier takes: the line's carrier_harmonic
+    # when the frame is the line's target, else 1.
+    frame_harmonic: int = 1
 
 
 @dataclass(frozen=True)
@@ -370,6 +373,9 @@ class QuantumSequence:
             default_frame = target_label
             if _is_automatic(freq):
                 freq = self._automatic_carrier(drive, target_label)
+        pulse_frame = self._pulse_frame(frame, freq, default_frame)
+        harmonic = drive.carrier_harmonic
+        frame_harmonic = harmonic if harmonic is not None and pulse_frame == drive.target_label else 1
         self._entries.append(
             _PulseEntry(
                 target_label=target_label,
@@ -378,8 +384,9 @@ class QuantumSequence:
                 freq=freq,
                 requested_start_time=start_time,
                 phase=phase,
-                frame=self._pulse_frame(frame, freq, default_frame),
+                frame=pulse_frame,
                 detuning=self._pulse_detuning(detuning, freq),
+                frame_harmonic=frame_harmonic,
             )
         )
         return PulseHandle(self, len(self._entries) - 1)
@@ -743,6 +750,12 @@ class QuantumSequence:
         matches the standard software-Z trick for transmons (McKay et al., PRA
         96, 022330 (2017)). Baseband flux pulses are not affected.
 
+        A line whose drive class sets ``carrier_harmonic = k`` takes ``k *
+        angle`` when the pulse's frame is the line's target, because its
+        co-rotating operator changes the excitation number by ``k``. A
+        two-photon pump after ``vz(cavity, θ)`` thus takes ``2θ``. Other drives,
+        coherent inputs, and pulses in another device's frame take ``angle``.
+
         Parameters
         ----------
         target : str or BaseDevice
@@ -942,9 +955,10 @@ class QuantumSequence:
                 freq = overrides.get((entry_index, "freq"), entry.freq)
                 phase = overrides.get((entry_index, "phase"), entry.phase)
                 detuning = self._pulse_detuning(overrides.get((entry_index, "detuning"), entry.detuning), freq)
-                # A carrier follows its frame's virtual-Z phase. A baseband pulse has no carrier phase.
+                # A carrier follows its frame's virtual-Z phase, k times for a harmonic-k line in its
+                # target's frame. A baseband pulse has no carrier phase.
                 frame = None if freq is None else entry.frame
-                phase_offset = phase if frame is None else phase + phases[frame]
+                phase_offset = phase if frame is None else phase + entry.frame_harmonic * phases[frame]
                 if entry.coherent_input is None:
                     drive_ops.append(
                         DriveOp(

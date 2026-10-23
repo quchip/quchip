@@ -730,6 +730,13 @@ This file records notable user-visible changes to quchip.
 - `Chip.describe()` prints `T1`, `T2` and `thermal_occupation` once for each
   device. Previously, a device that declares them printed them twice.
   ([#211](https://github.com/quchip/quchip/pull/211))
+- `vz(device, θ)` turns a later `TwoPhotonDrive` pump on `device` by 2θ, and
+  in general a pulse on a line whose drive sets `carrier_harmonic = k` by kθ
+  when its frame is the line's target. Previously, every carrier pulse took
+  θ. A virtual Z of π/2 between two squeezing pumps then acted like a second
+  pump with phase π/2, not π, and left `P(vacuum)` at 0.50 instead of 1.00.
+  One-photon drives, coherent inputs, and pulses in another device's frame
+  keep θ.
 
 #### Performance
 

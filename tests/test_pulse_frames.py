@@ -15,10 +15,12 @@ from quchip import (
     PhaseDrive,
     PortNetwork,
     QuantumSequence,
+    Resonator,
     RWA,
     Square,
     SquareWithGaussianEdges,
     TunableCapacitive,
+    TwoPhotonDrive,
 )
 from quchip.analysis import analyze_cr_susceptibility
 from quchip.control.field import CoherentInput
@@ -95,3 +97,58 @@ def test_vz_before_a_cross_resonance_gate_keeps_basis_state_populations():
     assert reference[0, 1] > 0.1  # the pulses rotate the target out of |00>
     for device in ("q0", "q1"):
         np.testing.assert_allclose(populations(device), reference, atol=1e-6)
+
+
+def _two_photon_sequence(levels: int, *extra: Resonator) -> QuantumSequence:
+    cavity = Resonator(freq=5.0, levels=levels, label="cav")
+    chip = Chip([cavity, *extra], frame="rotating", approximation=RWA(), backend="qutip")
+    chip.wire(TwoPhotonDrive(cavity, label="pump"), ChargeDrive(cavity, label="xy"))
+    return QuantumSequence(chip)
+
+
+@pytest.mark.unit
+def test_vz_shifts_a_two_photon_pump_by_twice_the_angle():
+    """A harmonic-2 line takes 2θ in its target's frame; one-photon lines and other frames take θ."""
+    seq = _two_photon_sequence(4, Resonator(freq=6.0, levels=2, label="aux"))
+    seq.vz("cav", 0.3)
+    seq.vz("aux", 0.05)
+    pulse = Square(duration=10.0, amplitude=0.01)
+    seq.schedule("pump", envelope=pulse, freq=10.0, phase=0.1)
+    seq.schedule("xy", envelope=pulse, freq=5.0, phase=0.1)
+    seq.schedule("pump", envelope=pulse, freq=12.0, frame="aux")
+    seq.vz("cav", 0.2)
+    seq.schedule("pump", envelope=pulse, freq=10.0)
+    assert [op.phase_offset for op in seq.scheduled_ops] == pytest.approx([0.7, 0.4, 0.05, 1.0])
+
+
+def test_vz_between_two_photon_pumps_reverses_the_squeeze():
+    """Under RWA, pump, vz(π/2), pump equals pump, pump(phase=π): the second pump undoes the first."""
+    pulse = Square(duration=40.0, amplitude=0.002)
+
+    def final_state(angle, phase):
+        seq = _two_photon_sequence(levels=8)
+        seq.schedule("pump", envelope=pulse, freq=10.0)
+        seq.vz("cav", angle)
+        seq.schedule("pump", envelope=pulse, freq=10.0, phase=phase)
+        result = seq.simulate(tlist=[0.0, 80.0], states="final", options={"atol": 1e-10, "rtol": 1e-8})
+        return result.final_state.full().ravel()
+
+    virtual = final_state(np.pi / 2, 0.0)
+    np.testing.assert_allclose(virtual, final_state(0.0, np.pi), rtol=0, atol=1e-8)
+    assert abs(virtual[0]) ** 2 == pytest.approx(1.0, abs=1e-8)
+
+
+@pytest.mark.validation
+def test_vz_turns_the_squeezing_axis_by_twice_the_angle():
+    """vz(θ) then a weak resonant pump gives <a^2> = -i exp(2iθ) sinh r cosh r with r = 2π A T (GHz units)."""
+    squeezing, duration, angle = 0.2, 20.0, np.pi / 8
+    seq = _two_photon_sequence(levels=15)
+    seq.vz("cav", angle)
+    seq.schedule("pump", envelope=Square(duration=duration, amplitude=squeezing / (2 * np.pi * duration)),
+                 freq=10.0)
+    result = seq.simulate(tlist=[0.0, duration], states="final", options={"atol": 1e-12, "rtol": 1e-10})
+    state = result.final_state.full().ravel()
+    lowering = np.diag(np.sqrt(np.arange(1, 15)), 1)
+    moment = state.conj() @ lowering @ lowering @ state
+    expected = -1j * np.exp(2j * angle) * np.sinh(squeezing) * np.cosh(squeezing)
+    assert moment == pytest.approx(expected, abs=1e-7)

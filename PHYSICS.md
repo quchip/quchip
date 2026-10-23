@@ -938,6 +938,18 @@ phase sets the axis of the target's conditional rotation, so the pulse names
 the target as its frame with `frame=`. Baseband pulses have no carrier and
 follow no frame.
 
+A pulse whose frame is its line's target takes kθ instead of θ, where k is the
+drive's `carrier_harmonic`. With `U = exp(iθ n)` on the target, the co-rotating
+term `ε exp(iφ) a†^k + h.c.` goes to the same term with phase `φ + kθ`, so a
+`TwoPhotonDrive` pump after `vz(cavity, θ)` takes 2θ. This equivalence holds
+for the co-rotating Hamiltonian under `RWA()`. Under `Exact()` the
+counter-rotating partner does not transform the same way, and transmon
+operators with higher excitation-number bands also break it. Drives without a
+declared `carrier_harmonic`, coherent inputs, and pulses in another device's
+frame keep the θ shift. Such a pulse can need more, for example a two-photon
+pump made by doubling another device's reference; add the missing phase
+explicitly.
+
 A pulse's `detuning` δ offsets its carrier from `freq`, referenced to the pulse
 start `t0`. The delivered complex signal, whose real part drives the line
 (§6.2), is
