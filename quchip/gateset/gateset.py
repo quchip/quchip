@@ -53,6 +53,11 @@ def _defect(propagator: Any) -> float:
     return 0.0 if defect is None else float(defect)
 
 
+def _most_at_once(windows: Sequence[tuple[float, float]]) -> int:
+    """Return the largest number of ``(start, stop)`` windows open at one time."""
+    return max((sum(start <= time < stop - 1e-12 for start, stop in windows) for time, _ in windows), default=0)
+
+
 def _static_problem(chip: "Chip", dissipation: bool = False) -> Any:
     """Return the lab-frame problem of the chip's own terms on its product space."""
     from quchip.engine.problem import build_solve_problem
@@ -166,8 +171,9 @@ class GateSet:
         that picks ``ExcitationCutoff(n + 1)`` for ``n`` qubits, raising the
         cutoff until the calibrated gates change by less than
         ``cutoff_tolerance`` at the next cutoff, with the other qubits in
-        level 0 and in level 1, with a warning. ``None`` forces the full
-        product space.
+        level 0 and in level 1. :meth:`unitary` and :meth:`simulate` solve
+        ``m`` gates at once with ``m - 1`` more excitations. A warning
+        states each choice. ``None`` forces the full product space.
     cutoff_tolerance : float, default 1e-6
         Largest change of a gate's computational amplitudes or leakage
         accepted when the cutoff is raised by one.
@@ -223,6 +229,7 @@ class GateSet:
         self._delivered: dict[Any, Delivered] = {}
         self._model_reason: str | None = None
         self._warm: dict[tuple[str, tuple[str, ...]], dict[str, float]] = {}
+        self._overlap_spaces: dict[int, tuple[Any, np.ndarray]] = {}
 
     # ------------------------------------------------------------------ setup
 
@@ -414,7 +421,34 @@ class GateSet:
         self._entries.clear()
         self._placed.clear()
         self._delivered.clear()
+        self._overlap_spaces.clear()
         self._model_reason = None
+
+    def _overlap_space(self, count: int) -> tuple["Chip", np.ndarray | None]:
+        """Return the chip of a solve with ``count`` gates at once, and the solver coordinates in it.
+
+        Each drive adds a transient excitation, so an automatic cutoff rises
+        by one for each gate after the first. The ``(D', D)`` embedding puts
+        the solver coordinates into the larger space; it is ``None`` when the
+        solver chip is kept.
+        """
+        if count <= 1 or self.cutoff is None or self._space_request != "auto" or self.chip.space is not None:
+            return self.solver_chip, None
+        from quchip.cutoff import ExcitationCutoff
+
+        maximum = sum(int(d) - 1 for d in self.chip.dims)
+        cutoff = min(self.cutoff + count - 1, maximum)
+        if cutoff not in self._overlap_spaces:
+            chip = self.chip if cutoff == maximum else self.chip.with_space(ExcitationCutoff(max_total=cutoff))
+            outer = {tuple(row): i for i, row in enumerate(solver_levels(_static_problem(chip).engine_result))}
+            inner = solver_levels(self._lab_problem().engine_result)
+            embedding = np.zeros((len(outer), len(inner)))
+            embedding[[outer[tuple(row)] for row in inner], np.arange(len(inner))] = 1.0
+            self._overlap_spaces[cutoff] = (chip, embedding)
+            where = "on the full product space" if cutoff == maximum else f"with ExcitationCutoff(max_total={cutoff})"
+            warnings.warn(f"{count} gates at once solve {where}: an automatic cutoff rises by one excitation for "
+                          f"each gate after the first.", UserWarning, stacklevel=3)
+        return self._overlap_spaces[cutoff]
 
     def _on_solver(self, sequence: "QuantumSequence", chip: "Chip | None" = None) -> "QuantumSequence":
         target = self.solver_chip if chip is None else chip
@@ -1034,8 +1068,9 @@ class GateSet:
 
         Gates whose pieces are covariant reuse their cached propagator at any
         start time and frame. Overlapping gates and non-covariant gates run
-        one solve per placement. Idle intervals use the static lab
-        Hamiltonian's eigensystem.
+        one solve per placement; under an automatic cutoff, ``m`` gates at
+        once solve with ``m - 1`` more excitations. Idle intervals use the
+        static lab Hamiltonian's eigensystem.
 
         Parameters
         ----------
@@ -1089,10 +1124,13 @@ class GateSet:
                                                                              for k, v in item[3].items())))
                                   for item in segment)
                 if cache_key not in self._placed:
-                    propagator = solver_sequence.propagator(tlist=[start, stop], frame=self.frame,
-                                                            options=self.options, dissipation=False,
-                                                            backend=self.backend)
-                    self._placed[cache_key] = np.asarray(propagator.matrix)
+                    chip, embedding = self._overlap_space(_most_at_once([item[:2] for item in segment]))
+                    # In a larger space, solve the solver coordinates and keep their components.
+                    target = solver_sequence if embedding is None else self._on_solver(sequence, chip)
+                    propagator = target.propagator(tlist=[start, stop], columns=embedding, frame=self.frame,
+                                                   options=self.options, dissipation=False, backend=self.backend)
+                    matrix = np.asarray(propagator.matrix)
+                    self._placed[cache_key] = matrix if embedding is None else embedding.T @ matrix
                     solves += 1
                 matrix = self._placed[cache_key]
             result = matrix @ result
@@ -1145,8 +1183,10 @@ class GateSet:
     ) -> CircuitRun:
         """Simulate a circuit's pulse schedule and return the computational state.
 
-        The schedule runs with the gate-set solver settings. The final state
-        is mapped into the computational frame with the virtual-Z correction.
+        The schedule runs with the gate-set solver settings. Under an
+        automatic cutoff, a schedule with up to ``m`` gates at once solves
+        with ``m - 1`` more excitations. The final state is mapped into the
+        computational frame with the virtual-Z correction.
 
         Parameters
         ----------
@@ -1165,10 +1205,17 @@ class GateSet:
         """
         order = self.qubits if qubits is None else tuple(resolve_label(q) for q in qubits)
         circuit = list(circuit)
-        sequence, _, global_phase = self._compile(circuit, policy)
+        sequence, placements, global_phase = self._compile(circuit, policy)
         solver_sequence = self._on_solver(sequence)
-        duration = self._span(list(solver_sequence.scheduled_ops), float(sequence.total_duration))
-        columns, energies = self._states(order)
+        ops = list(solver_sequence.scheduled_ops)
+        duration = self._span(ops, float(sequence.total_duration))
+        windows = [(min(float(op.start_time) for op in ops[first:first + count]),
+                    max(float(op.start_time) + float(op.envelope.duration) for op in ops[first:first + count]))
+                   for _, first, count in placements if count]
+        chip, embedding = self._overlap_space(_most_at_once(windows))
+        if embedding is not None:
+            solver_sequence = self._on_solver(sequence, chip)
+        columns, energies = self._states(order, chip=None if embedding is None else chip)
         dimension = 2 ** len(order)
         if initial is None:
             initial = "0" * len(order)
@@ -1187,8 +1234,7 @@ class GateSet:
             populations = np.abs(state) ** 2 if initial.ndim == 1 else np.real(np.diag(state))
             return CircuitRun(state=state, probabilities=self._probabilities(populations, order),
                               leakage=float(1.0 - populations.sum()))
-        open_system = dissipation and bool(_static_problem(self.solver_chip, dissipation=True)
-                                           .engine_result.collapse_terms)
+        open_system = dissipation and bool(_static_problem(chip, dissipation=True).engine_result.collapse_terms)
         if initial.ndim == 1 and not open_system:
             propagator = solver_sequence.propagator(tlist=[0.0, duration], columns=columns @ initial[:, None],
                                                     frame=self.frame, options=self.options, dissipation=False,

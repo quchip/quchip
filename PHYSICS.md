@@ -3549,6 +3549,15 @@ cached gate acts on every register state, and the second context holds the
 most excitations, so it comes closest to the cutoff. Under the RWA the cutoff
 projector commutes with `N`, so the placement rule of section 17.2 still holds.
 
+Each drive adds a transient excitation to the state it acts on, so gates that
+run at the same time need more headroom than one gate. On a chain of four
+transmons at `K = n + 2`, one echoed CR gate matches the full space to `3e-8`,
+but two at once differ by `5e-6`, and four 10 ns X gates at once by `8e-4`.
+Under an automatic cutoff, `unitary()` and `simulate()` solve a window with
+`m` gates at once at `K + m - 1`, capped at the full product space.
+`unitary()` keeps the components of the result on the `K` space. No gate runs
+at the edges of the window, so the transient excitations have returned there.
+
 [koch]: https://arxiv.org/abs/cond-mat/0703002
 [vool]: https://arxiv.org/abs/1610.03438
 [rasmussen]: https://arxiv.org/abs/2103.01225

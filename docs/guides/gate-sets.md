@@ -123,6 +123,8 @@ calibrated natives, so it follows their calibration.
 When the chip's product space has more than 64 states and the chip sets no
 space policy, gate-set solves use an excitation cutoff. The gate set starts at
 one excitation above the number of gate-set qubits and raises the cutoff until
-the gates stop changing, with the other qubits in `|0>` and in `|1>`. A
-warning states the cutoff. Pass `space=ExcitationCutoff(max_total=K)` to fix
-it, or `space=None` for the full product space.
+the gates stop changing, with the other qubits in `|0>` and in `|1>`. Each
+drive adds a transient excitation, so `unitary()` and `simulate()` solve gates
+that run at the same time with one more excitation for each gate after the
+first. A warning states each cutoff. Pass `space=ExcitationCutoff(max_total=K)`
+to use one cutoff for every solve, or `space=None` for the full product space.

@@ -686,6 +686,28 @@ def test_cutoff_checks_include_excited_spectators(spectators):
     assert np.abs(np.asarray(cut.matrix) - np.asarray(full.matrix)).max() < 1e-6
 
 
+def test_gates_at_once_solve_with_one_more_excitation_each():
+    """Two short SX at once from |11> reach |22>, above the cutoff that holds each gate; the layer solves above it."""
+    q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=3, label="q0")
+    q1 = DuffingTransmon(freq=5.3, anharmonicity=-0.2, levels=3, label="q1")
+    chip = Chip([q0, q1, Resonator(freq=7.0, levels=8, label="r")])
+    chip.wire(ChargeDrive(q0, label="xy0"), ChargeDrive(q1, label="xy1"))
+    gates = GateSet(chip, ["q0", "q1"])
+    gates.add(drag_sx(chip, "q0", duration=4.0))
+    gates.add(drag_sx(chip, "q1", duration=4.0))
+    with pytest.warns(UserWarning, match=r"ExcitationCutoff\(max_total=3\)"):
+        gates.calibrate(max_nfev=0)
+    assert gates.cutoff == 3
+    # The qubits do not interact, so the layer is the product of the two gates alone.
+    alone = gates.unitary([("SX", "q0")]).computational @ gates.unitary([("SX", "q1")]).computational
+    layer = [("SX", "q0"), ("SX", "q1")]
+    with pytest.warns(UserWarning, match=r"2 gates at once solve with ExcitationCutoff\(max_total=4\)"):
+        together = gates.unitary(layer)
+    assert np.abs(together.computational - alone).max() < 1e-6
+    run = gates.simulate(layer, "11", dissipation=False)
+    assert np.abs(run.state - alone[:, 3]).max() < 1e-6
+
+
 @pytest.mark.validation
 def test_echoed_cross_resonance_calibrates_a_cx():
     """The echoed ZX90 gives a CX with 1 - F < 1e-3; its error changes with start time, and the SX error does not."""

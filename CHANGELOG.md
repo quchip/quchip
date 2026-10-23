@@ -424,7 +424,8 @@ This file records notable user-visible changes to quchip.
   reuses each gate's propagator at new start times and frames when its
   Hamiltonian allows it, and `GateSet.simulate()` solves the circuit's
   schedule with noise. On a chip above 64 states, gate-set solves pick and
-  raise an excitation cutoff with a warning.
+  raise an excitation cutoff with a warning, and gates that run at the same
+  time solve with one more excitation for each gate after the first.
 - `QuantumSequence.propagator()` returns the lab-frame propagator of a
   schedule from one solve, or its superoperator when the chip has collapse
   channels. `QuantumSequence.extend()` appends another sequence.
