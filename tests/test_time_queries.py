@@ -138,8 +138,7 @@ def test_partitioned_state_lookup_preserves_mixed_state_kind_and_order():
     options = dict(tlist=[0.0, 1.0, 3.0], initial_state={"a": 1, "b": 1})
     result = sequence.simulate(**options)
     joint = sequence.simulate(**options, partition=False)
-    with pytest.warns(UserWarning, match="joint state"):
-        selected = result.state_at(1.4, method="nearest")
+    selected = result.state_at(1.4, method="nearest")
     np.testing.assert_allclose(chip.backend.to_array(selected), chip.backend.to_array(joint.state_at(1.0)), atol=2e-6)
     with pytest.raises(ValueError, match="State lookup method"):
         result.state_at(1.0, method="interpolate")

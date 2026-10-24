@@ -111,7 +111,7 @@ def solve_steadystate_problem(
     problem: SteadyStateProblem, *, prepared: PreparedStationary | None = None, guess: Any | None = None,
     reason: str = "The request names the backend's stationary Liouvillian.",
 ) -> SteadyStateResult:
-    """Solve an already assembled stationary problem and enforce uniqueness.
+    """Solve an already assembled stationary problem, and raise when the backend reports a nullity other than one.
 
     ``guess`` is a native stationary state of a related problem. The backend
     can reuse it when it is also stationary here. ``reason`` explains the

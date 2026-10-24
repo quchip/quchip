@@ -28,8 +28,9 @@ This file records notable user-visible changes to quchip.
 - The dynamiqs `steadystate()` counts the Liouvillian nullity only up to
   `diagnostic_max_dimension` (default 16), as the QuTiP backend does. Above
   it, the singular value decomposition, which cost about ten times the solve,
-  does not run: `nullity` is `None` and a nonunique kernel no longer gives a
-  NaN state. Pass a larger `diagnostic_max_dimension` to keep the check. A
+  does not run: `nullity` is `None`, and the solve gives no uniqueness
+  guarantee, so a nonunique kernel no longer gives a NaN state. Pass a larger
+  `diagnostic_max_dimension` to keep the check. A
   `D = 24` steady state takes about 0.05–0.1 s instead of 0.5–0.8 s.
 - A QuTiP batch falls back to one process only when a worker process stops.
   Other pool errors, such as a pickling failure, now raise instead of

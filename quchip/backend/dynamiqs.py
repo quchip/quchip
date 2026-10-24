@@ -973,7 +973,10 @@ class DynamiqsBackend(Backend):
         to that Hilbert dimension, a singular value decomposition of the
         Liouvillian counts its nullity, and a nonunique stationary kernel gives
         a NaN state. Above it, the decomposition, which costs about ten times
-        the solve, does not run and the nullity is ``None``.
+        the solve, does not run and the nullity is ``None``: the solve gives
+        no uniqueness guarantee, a singular system can return NaN or Inf, and
+        a nearly singular one an unreliable state. ``rank_tolerance`` applies
+        only when ``diagnostic_max_dimension`` is at least the dimension.
         """
         options = dict(problem.options)
         method = options.pop("method", "direct")
