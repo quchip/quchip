@@ -409,11 +409,6 @@ class ParameterNamespace:
         self._fields = fields
 
     def __getattr__(self, name: str) -> PhysicsExpr:
-        if name == "thermal_population" and "thermal_occupation" in self._fields:
-            from quchip.utils.deprecation import warn_renamed
-
-            warn_renamed(name, "thermal_occupation")
-            name = "thermal_occupation"
         try:
             spec = self._fields[name]
         except KeyError as exc:

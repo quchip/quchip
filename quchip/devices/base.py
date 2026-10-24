@@ -33,8 +33,7 @@ import jax.numpy as jnp
 from quchip.backend import get_default_backend
 from quchip.backend.protocol import Operator, State
 from quchip.declarative.dissipation import CollapseChannel
-from quchip.declarative.parameters import UNBOUND, parameter
-from quchip.utils.deprecation import warn_renamed
+from quchip.declarative.parameters import parameter
 from quchip.utils.jax_utils import maybe_concrete_scalar
 from quchip.utils.labeling import auto_label
 from quchip.utils.registry import Registrable
@@ -224,13 +223,7 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         T1: float | None = None,
         T2: float | None = None,
         thermal_occupation: float | None = None,
-        thermal_population: Any = UNBOUND,
     ) -> None:
-        if thermal_population is not UNBOUND:
-            if thermal_occupation is not None:
-                raise TypeError("Pass thermal_occupation only, not both thermal occupation names.")
-            warn_renamed("thermal_population", "thermal_occupation")
-            thermal_occupation = thermal_population
         if index(levels) < 2:
             raise ValueError(f"levels must be >= 2, got {levels}")
         self.levels = levels
@@ -258,37 +251,12 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         # every public write runs `_validate_param_write` before the attribute
         # lands. The JAX pytree `_unflatten` path uses `object.__setattr__` and
         # bypasses `__setattr__`.
-        if name == "thermal_population":
-            warn_renamed(name, "thermal_occupation")
-            name = "thermal_occupation"
         if getattr(self, "_tracking_enabled", False):
             if name == "label":
                 raise AttributeError("Device label is fixed at construction; create a replacement device.")
             if not name.startswith("_"):
                 self._validate_param_write(name, value)
         super().__setattr__(name, value)
-
-    @property
-    def thermal_population(self) -> Any:
-        """Deprecated alias for the bath's mean thermal occupation."""
-        warn_renamed("thermal_population", "thermal_occupation")
-        return self.thermal_occupation
-
-    @thermal_population.setter
-    def thermal_population(self, value: Any) -> None:
-        warn_renamed("thermal_population", "thermal_occupation")
-        self.thermal_occupation = value
-
-    @staticmethod
-    def _normalize_parameter_names(values: Mapping[str, Any]) -> dict[str, Any]:
-        """Read legacy thermal occupation inputs without duplicating parameter state."""
-        values = dict(values)
-        if "thermal_population" in values:
-            if "thermal_occupation" in values:
-                raise TypeError("Pass thermal_occupation only, not both thermal occupation names.")
-            warn_renamed("thermal_population", "thermal_occupation")
-            values["thermal_occupation"] = values.pop("thermal_population")
-        return values
 
     def _validate_param_write(self, name: str, value: Any) -> None:
         """Constructor-grade validation for one post-construction write.
@@ -467,9 +435,6 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         value : Any
             Replacement value.
         """
-        if name == "thermal_population":
-            warn_renamed(name, "thermal_occupation")
-            name = "thermal_occupation"
         tunable = self.tunable_params()
         if name in tunable:
             self.set_tunable_param(name, value)
@@ -489,7 +454,7 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         values : mapping[str, Any]
             Parameter names and replacement values, applied atomically.
         """
-        values = self._normalize_parameter_names(values)
+        values = dict(values)
         if not values:
             return
         from quchip.utils.jax_utils import contains_tracer

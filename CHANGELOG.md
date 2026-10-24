@@ -10,6 +10,13 @@ This file records notable user-visible changes to quchip.
 
 #### Changes and migration
 
+- quchip 0.5 removes the names that 0.4 deprecated. Use `thermal_occupation`
+  for `thermal_population` (in constructors, `with_params()`, `set_noise()`,
+  declared parameters, symbolic noise and saved device dictionaries),
+  `jump_rate()` for `collapse_flux()`, `port()` for `side()`,
+  `external_port()` and `external_ports` for `exposure()` and `exposures`,
+  and `NetworkPort` and `ComponentPort` for `FieldExposure` and `FieldSide`.
+  The `check_truncation()` result methods stay until 0.6.
 - A pulse scheduled without `freq` on a charge, phase, or two-photon line takes
   a carrier at the line's device and warns with the chosen value. Charge and
   phase lines use `chip.freq(device)`, the dressed `0 -> 1` frequency, and a
