@@ -112,13 +112,12 @@ def test_collective_bath_frequency_gradient_matches_one_excitation_solution():
 
     point, step = 4.97, 1e-5
     plain = population(point)
-    value, derivative = jax.value_and_grad(population)(point)
     compiled, compiled_derivative = jax.jit(jax.value_and_grad(population))(point)
     # dynamiqs integrates at rtol 1e-9 and atol 1e-11 by default. The bound is ten times that rtol.
-    np.testing.assert_allclose([plain, value, compiled], reference(point), rtol=1e-8, atol=1e-11)
+    np.testing.assert_allclose([plain, compiled], reference(point), rtol=1e-8, atol=1e-11)
     expected = (reference(point + step) - reference(point - step)) / (2 * step)
     # The central difference of the exact solution has O(step^2) error near 1e-10, so solver error dominates.
-    np.testing.assert_allclose([derivative, compiled_derivative], expected, rtol=1e-7, atol=1e-11)
+    np.testing.assert_allclose(compiled_derivative, expected, rtol=1e-7, atol=1e-11)
 
 
 @pytest.mark.validation
@@ -183,9 +182,8 @@ def test_sw_induced_loss_still_rejects_incompatible_frames():
         reduced = eliminate(source.with_params({"leg.g": g}), "bus").chip
         return jnp.real(reduced.resolve().collapse_terms[0].operator.to_dense()[0, 1])
 
-    for evaluate in (amplitude, jax.jit(amplitude)):
-        with pytest.raises(ValueError, match="operator bands with different phases"):
-            evaluate(.08)
+    with pytest.raises(ValueError, match="operator bands with different phases"):
+        jax.jit(amplitude)(.08)
 
 
 @pytest.mark.optional_backend

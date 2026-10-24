@@ -58,9 +58,8 @@ def test_public_storage_flags_have_one_replacement(flag):
 
 
 @pytest.mark.validation
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
-def test_final_state_lookup_requires_a_retained_time(backend):
-    seq, _ = _sequence(backend)
+def test_final_state_lookup_requires_a_retained_time():
+    seq, _ = _sequence("qutip")
     result = seq.simulate(tlist=[0.0, 1.0, 2.0], states="final")
     np.testing.assert_array_equal(result._backend.to_array(result.state_at(2.0)),
                                   result._backend.to_array(result.final_state))

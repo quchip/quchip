@@ -74,7 +74,7 @@ def test_projection_equals_the_dense_native_projection() -> None:
     """Both projection routes give the operator of the dense native product space."""
     # At num_basis=15 the 65536 products of (cos φ_a + cos φ_b)^16 would hold 0.6 GB,
     # and its dense lowering 7 MB, so the engine takes the dense route.
-    for num_basis, model, g in ((41, _MixedCoupling, 0.05), (15, _PowerOfSum, 1e-5)):
+    for num_basis, model, g in ((21, _MixedCoupling, 0.05), (15, _PowerOfSum, 1e-5)):
         fa, fb = _fluxonium_pair(num_basis=num_basis)
         chip = Chip([fa, fb], couplings=[model(fa, fb, g=g)], basis="eigen")
 

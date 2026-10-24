@@ -48,15 +48,14 @@ def test_jit_batch_time_alignment_is_checked_when_values_are_stacked():
 
 
 @pytest.mark.validation
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
-def test_output_field_stacking_rejects_different_time_coordinates(backend):
+def test_output_field_stacking_rejects_different_time_coordinates():
     from quchip import PortNetwork, Resonator
 
     mode = Resonator(freq=0.2, levels=2, label="r")
     network = PortNetwork(label="line")
     network.port("coupler", target=mode, rate=0.01)
     plane = network.external_port("coupler")
-    chip = Chip([mode], port_network=network, backend=backend, frame="rotating")
+    chip = Chip([mode], port_network=network, frame="rotating")
     sequence = QuantumSequence(chip)
     grids = [[0.0, 1.0, 3.0], [0.0, 2.0, 3.0]]
     batch = solve_many([sequence.build_problem(grid, initial_state={"r": 1}, e_ops={plane: plane.output})

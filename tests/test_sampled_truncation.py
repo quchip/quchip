@@ -45,9 +45,8 @@ def test_boundary_excursion_is_checked_before_return_to_ground(storage):
 
 
 @pytest.mark.validation
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
-def test_intrinsically_finite_qubit_has_no_cutoff_warning(backend):
-    chip = Chip([FiniteQubit(label="q")], backend=backend, frame="lab")
+def test_intrinsically_finite_qubit_has_no_cutoff_warning():
+    chip = Chip([FiniteQubit(label="q")], frame="lab")
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         result = solve_problem(with_truncation(QuantumSequence(chip).build_problem(

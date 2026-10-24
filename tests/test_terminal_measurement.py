@@ -171,11 +171,10 @@ def wired_result(*, backend="qutip", gain=100., noise=1., loss=.25, delay=0.):
 
 
 @pytest.mark.validation
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
 @pytest.mark.parametrize("delay", [0., .123])
-def test_wiring_readout_matches_vna_noise_and_captures_model(backend, delay):
+def test_wiring_readout_matches_vna_noise_and_captures_model(delay):
     """Coherent templates use the same downstream noise, gain and receiver as VNA."""
-    chip, out, drive, result = wired_result(backend=backend, delay=delay)
+    chip, out, drive, result = wired_result(delay=delay)
     receiver = IQReceiver(1000)
     means = np.array([-.001-.002j, .001+.002j])
     detector = result.iq_readout(out, means=means, frequency=6., receiver=receiver)

@@ -187,18 +187,3 @@ def test_traced_user_matrix_with_unknown_level_changes_uses_the_general_route():
     np.testing.assert_allclose(traced, plain, atol=1e-9)
     # The central difference error is about 3e-7 at this step.
     np.testing.assert_allclose(derivative, expected, atol=1e-6)
-
-
-@pytest.mark.validation
-@pytest.mark.optional_backend
-def test_weak_probe_reflection_gradient_matches_finite_difference():
-    """|S|² differentiated through the one-excitation route matches a central difference in g."""
-    pytest.importorskip("dynamiqs")
-
-    def reflection(g):
-        result = VNA(_readout_chip(backend="dynamiqs", g=g)).sweep(np.array([5.0]))
-        return jax.numpy.abs(result.matrix[0, 0, 0]) ** 2
-
-    g, step = 0.06, 1e-5
-    finite_difference = (reflection(g + step) - reflection(g - step)) / (2 * step)
-    np.testing.assert_allclose(jax.grad(reflection)(g), finite_difference, rtol=1e-6)

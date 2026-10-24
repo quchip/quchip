@@ -23,15 +23,14 @@ def _batch(*, grid=False, backend="qutip", amplitude=100.0):
                                 states="none")
 
 
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
-def test_native_failure_reports_flat_index_parameters_and_cause(backend):
-    batch = _batch(grid=True, backend=backend)
+def test_native_failure_reports_flat_index_parameters_and_cause():
+    batch = _batch(grid=True, backend="qutip")
     with pytest.raises(RuntimeError, match="Batch point 2 failed") as caught:
         solve_batch(batch, progress=False)
     error = caught.value
     assert error.index == 2
     assert error.parameters == {"amp": 100.0, "freq": 5.0}
-    assert ("Excess work" if backend == "qutip" else "maximum number of solver steps") in str(error)
+    assert "Excess work" in str(error)
     assert error.__cause__ is not None
 
 

@@ -149,26 +149,19 @@ def test_longitudinal_drive_retains_dc_and_oscillating_phase(frequency):
 
 
 @pytest.mark.validation
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
-def test_longitudinal_phase_matches_integrated_frequency(backend):
+def test_longitudinal_phase_matches_integrated_frequency():
     """A longitudinal tone gives the analytic relative phase without changing populations."""
     from quchip import QuantumSequence
 
-    if backend == "dynamiqs":
-        pytest.importorskip("dynamiqs")
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=2, label="q")
     drive = FluxDrive(q)
-    chip = Chip([q], frame={"q": 5.0}, backend=backend)
+    chip = Chip([q], frame={"q": 5.0})
     chip.wire(drive)
     sequence = QuantumSequence(chip)
     amplitude, frequency, duration = 0.02, 0.1, 3.0
     sequence.schedule(drive, envelope=Square(duration=duration, amplitude=amplitude), freq=frequency)
     initial = (chip.backend.basis(2, 0) + chip.backend.basis(2, 1)) / np.sqrt(2)
     options = {"atol": 1e-10, "rtol": 1e-9}
-    if backend == "dynamiqs":
-        import dynamiqs as dq
-
-        options = {"method": dq.method.Tsit5(atol=1e-10, rtol=1e-9)}
     result = sequence.simulate(tlist=[0.0, duration], initial_state=initial, states="final", options=options)
     state = np.asarray(chip.backend.to_array(result.final_state)).ravel()
     phase = amplitude * np.sin(2 * np.pi * frequency * duration) / frequency

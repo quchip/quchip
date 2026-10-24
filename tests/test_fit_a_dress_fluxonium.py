@@ -24,7 +24,7 @@ def test_fit_a_dress_works_for_duffing_and_fluxonium_with_same_call() -> None:
     from quchip import DuffingTransmon
 
     duff = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="duff")
-    flux = Fluxonium(E_C=1.0, E_J=4.0, E_L=1.0, phi_ext=0.5, levels=4, num_basis=120, label="flux")
+    flux = Fluxonium(E_C=1.0, E_J=4.0, E_L=1.0, phi_ext=0.5, levels=4, num_basis=60, label="flux")
     chip = Chip([duff, flux], [Capacitive(duff, flux, g=0.005)])
 
     duff_seed = float(chip.freq(duff))

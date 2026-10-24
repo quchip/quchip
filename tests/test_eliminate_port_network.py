@@ -310,8 +310,7 @@ def test_local_section_includes_spectator_dressing(shared, effective) -> None:
 
 @pytest.mark.validation
 @pytest.mark.optional_backend
-@pytest.mark.parametrize("g", [0.0, 0.12])
-def test_local_spectator_section_derivatives_match_analytic_rotation(g) -> None:
+def test_local_spectator_section_derivatives_match_analytic_rotation() -> None:
     """A traced spectator coupling retains the pole and weight curvature, including at zero coupling."""
     pytest.importorskip("dynamiqs")
 
@@ -321,8 +320,9 @@ def test_local_spectator_section_derivatives_match_analytic_rotation(g) -> None:
         return jnp.array([reduced.parameters[prefix + key] for key in ("freq", "external_rate")])
 
     difference = 1 / 9.0 - 1 / 9.7
-    actual = jax.jit(jax.jacfwd(jax.jacfwd(section_values)))(jnp.asarray(g))
-    expected = [2 * difference, -0.06 * difference**2 * np.cos(2 * g * difference)]
+    g = np.array([0.0, 0.12])
+    actual = jax.jit(jax.vmap(jax.jacfwd(jax.jacfwd(section_values))))(jnp.asarray(g))
+    expected = np.stack([np.full_like(g, 2 * difference), -0.06 * difference**2 * np.cos(2 * g * difference)], axis=1)
     # The traced section evaluates these closed forms, so its derivatives differ only by round-off.
     # The measured error is below 1e-13 relative, well inside both tolerances.
     np.testing.assert_allclose(actual, expected, rtol=1e-9, atol=1e-13)

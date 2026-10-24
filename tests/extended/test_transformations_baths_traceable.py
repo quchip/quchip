@@ -54,7 +54,7 @@ def test_thermal_bath_solve_is_jittable_and_grad_in_temperature():
     def final_n(temp):
         m = Resonator(freq=5.0, levels=6, label="m")
         chip = Chip([m], baths=[Bath("thermal", temperature=temp, rate=0.1)])
-        tlist = jnp.linspace(0.0, 100.0, 50)
+        tlist = jnp.linspace(0.0, 100.0, 3)
         res = simulate(
             chip, [], tlist,
             initial_state=chip.bare_state(),

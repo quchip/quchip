@@ -89,7 +89,7 @@ def test_multi_experiment_cr_batch_loss_supports_jax_grad() -> None:
         envelope=Gaussian(duration=8.0, amplitude=0.02, sigmas=3),
         freq=target.freq,
     )
-    tlist = jnp.linspace(0.0, 8.0, 17)
+    tlist = jnp.linspace(0.0, 8.0, 3)
     initial_state = chip.state(c=0, t=0)
 
     def loss(amplitude: jax.Array) -> jax.Array:

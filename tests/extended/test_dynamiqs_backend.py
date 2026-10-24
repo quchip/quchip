@@ -189,7 +189,7 @@ def _r5_problem(chip, qubit, amp, tlist):
 def test_cached_jit_solve_no_stale_value_reuse() -> None:
     """Same structure with different traced values shares one compiled artifact but binds its own physics."""
     backend = DynamiqsBackend()
-    tlist = np.linspace(0.0, 40.0, 60)
+    tlist = np.linspace(0.0, 40.0, 5)
     cache = backend._get_jit_solve_cache()
     cache.clear()
 

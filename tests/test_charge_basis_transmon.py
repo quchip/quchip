@@ -75,7 +75,7 @@ def test_jax_grad_through_E_J():
     def f01(E_J):
         return ChargeBasisTransmon(E_C=0.2, E_J=E_J, levels=3).freq
 
-    grad = jax.grad(f01)(20.0)
+    grad = jax.jit(jax.grad(f01))(20.0)
     assert np.isfinite(float(grad)) and float(grad) != 0.0
     step = 1e-4
     reference = (f01(20.0 + step) - f01(20.0 - step)) / (2 * step)

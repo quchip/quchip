@@ -31,7 +31,7 @@ def test_grad_through_effective_hamiltonian_is_finite():
         chip = _two_qubit_chip(g)
         return jnp.real(effective_hamiltonian(chip, ["q0", "q1"]).h_eff[1, 2])
 
-    derivative = jax.grad(exchange)(jnp.float64(0.01))
+    derivative = jax.jit(jax.grad(exchange))(jnp.float64(0.01))
 
     assert jnp.isfinite(derivative)
     step = 1e-5

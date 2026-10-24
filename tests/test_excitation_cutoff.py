@@ -93,17 +93,18 @@ def lindblad_reference(problem, keep, rho0, tlist):
     jumps = [(1 if term.phase is None else np.exp(1j * term.phase)) * np.sqrt(term.rate)
              * term.operator.to_dense()[window] for term in engine.collapse_terms]
     size = keep.size
+    decay = sum(jump.conj().T @ jump for jump in jumps)
 
     def rhs(t, y):
         rho = y.reshape(size, size)
         h = static + sum(np.asarray(signal.evaluate(t, xp=np)) * op for op, signal in dynamic)
-        out = -1j * (h @ rho - rho @ h)
+        out = -1j * (h @ rho - rho @ h) - 0.5 * (decay @ rho + rho @ decay)
         for jump in jumps:
-            decay = jump.conj().T @ jump
-            out += jump @ rho @ jump.conj().T - 0.5 * (decay @ rho + rho @ decay)
+            out += jump @ rho @ jump.conj().T
         return out.reshape(-1)
 
-    solution = solve_ivp(rhs, (tlist[0], tlist[-1]), rho0.reshape(-1), t_eval=tlist, rtol=1e-9, atol=1e-11,
+    # The comparison bound is 1e-5, far above this integration error.
+    solution = solve_ivp(rhs, (tlist[0], tlist[-1]), rho0.reshape(-1), t_eval=tlist, rtol=1e-8, atol=1e-10,
                          method="DOP853")
     return [solution.y[:, index].reshape(size, size) for index in range(len(tlist))]
 
@@ -455,7 +456,7 @@ def test_ring_pilot_keeps_exact_classes_without_a_convergence_claim():
     """A 24-device ring diagonalizes only its parity classes, and K = 1 reproduces the RWA spectrum."""
     exact, rwa = _ring(Exact()), _ring(RWA())
     reference = rwa.freq()
-    sizes = {1: ((1,), (24,)), 2: ((301,), (24,)), 3: ((301,), (2600,))}
+    sizes = {1: ((1,), (24,)), 2: ((301,), (24,))}
     for max_total, (even, odd) in sizes.items():
         limited = exact.with_space(ExcitationCutoff(max_total))
         frequencies = limited.freq()

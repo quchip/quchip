@@ -103,7 +103,7 @@ def test_local_basis_gradient_ignores_degeneracy_confined_to_discarded_levels() 
         projected = basis.transform_operator(operator)
         return basis.energies[1] + jnp.real(projected[0, 0])
 
-    gradient = jax.grad(observable)(0.3)
+    gradient = jax.jit(jax.grad(observable))(0.3)
     finite_difference = (observable(0.300001) - observable(0.299999)) / 0.000002
 
     assert jnp.isfinite(gradient)

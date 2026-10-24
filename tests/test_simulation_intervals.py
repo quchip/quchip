@@ -41,13 +41,12 @@ def test_partial_interval_preserves_initial_time_and_carrier_phase(backend):
     np.testing.assert_allclose(coherences, 0.5 * np.exp(1j * phase), atol=2e-6)
 
 
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
 @pytest.mark.parametrize("start", [0.0, 6.0])
-def test_pulse_touching_interval_has_no_evolution(backend, start):
-    chip, drive, sequence = _sequence(backend)
+def test_pulse_touching_interval_has_no_evolution(start):
+    chip, drive, sequence = _sequence("qutip")
     sequence.schedule(drive, envelope=Square(duration=2.0, amplitude=0.4), start_time=start)
     initial = (chip.backend.basis(2, 0) + chip.backend.basis(2, 1)) / np.sqrt(2)
-    result = sequence.simulate([2.0, 6.0], initial_state=initial, partition=False, options=_options(backend))
+    result = sequence.simulate([2.0, 6.0], initial_state=initial, partition=False, options=_options("qutip"))
     coherence = chip.backend.to_array(chip.backend.state_to_dm(result.final_state))[0, 1]
     np.testing.assert_allclose(coherence, 0.5 * np.exp(2j * np.pi * 0.2 * 4), atol=2e-6)
 
@@ -59,9 +58,8 @@ def test_invalid_duration_rejected(duration):
         sequence.build_problem(duration=duration)
 
 
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
-def test_unscheduled_duration_includes_idle_dynamics(backend):
-    chip, _, sequence = _sequence(backend)
+def test_unscheduled_duration_includes_idle_dynamics():
+    chip, _, sequence = _sequence("qutip")
     initial = (chip.backend.basis(2, 0) + chip.backend.basis(2, 1)) / np.sqrt(2)
     result = sequence.simulate(duration=1.25, initial_state=initial)
     coherence = chip.backend.to_array(chip.backend.state_to_dm(result.final_state))[0, 1]

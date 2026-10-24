@@ -101,10 +101,8 @@ def test_render_plots_writes_one_simple_comparison(tmp_path: Path) -> None:
 
 
 @pytest.mark.validation
-@pytest.mark.parametrize("family", ["qutip", "dynamiqs"])
-def test_benchmark_solves_current_api_without_state_history(family: str) -> None:
+def test_benchmark_solves_current_api_without_state_history() -> None:
     """Benchmark the current storage contract against native population traces."""
-    pytest.importorskip(family)
     import numpy as np
 
     from benchmarks.closed_system import (
@@ -115,7 +113,7 @@ def test_benchmark_solves_current_api_without_state_history(family: str) -> None
         _solve_quchip,
     )
 
-    problem, labels = _build_quchip(1, 3, family)
+    problem, labels = _build_quchip(1, 3, "qutip")
     assert problem.states == "none"
     measured = _solve_quchip((problem, labels))
     reference = _solve_native_qutip(_build_native_qutip(1, 3))

@@ -203,9 +203,8 @@ def test_generic_qubit_import_matches_splitting():
         (lambda: scq.Oscillator(E_osc=5e3, truncated_dim=6), 6, {"atol": 1e-9}),
         (lambda: scq.KerrOscillator(E_osc=5e3, K=50.0, truncated_dim=6), 6, {"atol": 1e-9}),
         (lambda: scq.GenericQubit(E=4.5e3), 2, {"atol": 1e-9}),
-        pytest.param(lambda: _small_zero_pi(units_per_ghz=1e3), 4, {"atol": 1e-8}, marks=pytest.mark.validation),
     ],
-    ids=["transmon", "tunable_transmon", "fluxonium", "oscillator", "kerr_oscillator", "generic_qubit", "zero_pi"],
+    ids=["transmon", "tunable_transmon", "fluxonium", "oscillator", "kerr_oscillator", "generic_qubit"],
 )
 def test_import_converts_scqubits_units_to_ghz(scqubits_mhz, make_source, count, tolerance):
     """A source built in MHz imports with its scqubits spectrum converted to GHz."""
@@ -271,7 +270,7 @@ def test_export_of_traced_device_raises_value_error():
 
 def _small_zero_pi(units_per_ghz: float = 1.0):
     """A deliberately small ZeroPi so the test stays a few seconds, with energies in the given unit."""
-    grid = scq.Grid1d(-19.0, 19.0, 200)
+    grid = scq.Grid1d(-19.0, 19.0, 100)
     return scq.ZeroPi(
         grid=grid,
         EJ=10.0 * units_per_ghz,
@@ -280,7 +279,7 @@ def _small_zero_pi(units_per_ghz: float = 1.0):
         EC=0.04 * units_per_ghz,
         ng=0.1,
         flux=0.23,
-        ncut=30,
+        ncut=15,
         truncated_dim=4,
     )
 

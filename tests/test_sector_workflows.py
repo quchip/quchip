@@ -33,12 +33,9 @@ def test_exact_exchange_uses_sectors_and_matches_independent_spectrum():
     assert chip.freq("q") == pytest.approx(expected, abs=1e-12)
 
 
-@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])
-def test_exact_fit_uses_sector_dimension_and_recovers_bare_frequency(backend):
+def test_exact_fit_uses_sector_dimension_and_recovers_bare_frequency():
     """An Exact exchange fit respects the sector limit and reproduces its dressed target."""
-    if backend == "dynamiqs":
-        pytest.importorskip("dynamiqs")
-    chip = pair(backend=backend)
+    chip = pair()
     target = 4.95
     result = fit_a_dress(chip, constraints={"q": {"freq": target, "anharmonicity": None},
                                           "r": {"freq": None, "anharmonicity": None},

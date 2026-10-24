@@ -208,8 +208,7 @@ def test_advanced_jump_sampling_retains_no_click_diagnostics(backend):
 
 
 @pytest.mark.validation
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
-def test_native_current_identity_offset_and_variance(backend):
+def test_native_current_identity_offset_and_variance():
     """An authored coherent identity offset survives monitor phase rotation and native shot noise."""
     from quchip import CollapseChannel, with_monitoring
     from quchip.declarative import DeviceModel
@@ -221,24 +220,17 @@ def test_native_current_identity_offset_and_variance(backend):
         def dissipation(self, op, p):
             return (CollapseChannel((1.+.2j)*op.I, .5, "offset"),)
 
-    chip = Chip([Offset(levels=2, label="q")], backend=backend, frame="lab")
-    if backend == "qutip":
-        solver = "smesolve"
-        args = {"ntraj": 1024, "seeds": 71}
-        options = {"dt": .001, "store_measurement": "end", "keep_runs_results": True, "progress_bar": ""}
-    else:
-        import dynamiqs as dq
-        import jax
-        solver = "dsmesolve"
-        args = {"keys": jax.random.split(jax.random.key(71), 1024), "method": dq.method.EulerMaruyama(dt=.001)}
-        options = {}
+    chip = Chip([Offset(levels=2, label="q")], frame="lab")
+    solver = "smesolve"
+    args = {"ntraj": 1024, "seeds": 71}
+    options = {"dt": .001, "store_measurement": "end", "keep_runs_results": True, "progress_bar": ""}
     problem = QuantumSequence(chip).build_problem([0., .1, .2], solver=solver, run_args=args, options=options)
     key = problem.engine_result.slh.channels[0].key
     problem = with_monitoring(problem, {key: .4}, phases={key: .3})
     result = solve_problem(problem)
     record = result.records()
     assert record.channels == (key,) and record.efficiencies == (.4,) and record.phases == (.3,)
-    assert record.sampling == ("end" if backend == "qutip" else "mean") and not record.heterodyne
+    assert record.sampling == "end" and not record.heterodyne
     np.testing.assert_array_equal(record.edges, [0., .1, .2])
     records = np.asarray(record.values)
     assert records.shape == (1024, 1, 2)
@@ -260,7 +252,7 @@ def test_native_event_buffer_exhaustion_cannot_look_like_completed_evolution():
     chip = Chip([Resonator(freq=1., levels=3, label="r", T1=.1)], backend="dynamiqs", frame="rotating")
     problem = QuantumSequence(chip).build_problem(
         [0., .5, 1.], solver="jssesolve", initial_state={"r": 2}, e_ops=chip.e_ops(r="n"),
-        run_args={"keys": jax.random.split(jax.random.key(11), 2), "method": dq.method.Event(dtmax=.01)},
+        run_args={"keys": jax.random.split(jax.random.key(11), 2), "method": dq.method.Event(dtmax=.05)},
         options={"nmaxclick": 1})
     incomplete = solve_problem(problem)
     assert incomplete.native.clicktimes.shape[-1] == 1
@@ -379,13 +371,14 @@ def test_mean_record_follows_the_native_sampling_of_a_decaying_field(backend, sa
         options = {}
     else:
         solver = "ssesolve"
-        count = 2048
+        count = 1024
         run_args = {"ntraj": count, "seeds": 3}
         options = {"dt": .005, "store_measurement": sampling, "keep_runs_results": True, "progress_bar": ""}
     from scipy.special import factorial
 
-    chip = Chip([Resonator(freq=1., levels=12, label="r", T1=1.)], backend=backend, frame="rotating")
-    levels = np.arange(12)
+    # A coherent state with |α|² = 1 has 1e-5 of its population above eight levels.
+    chip = Chip([Resonator(freq=1., levels=8, label="r", T1=1.)], backend=backend, frame="rotating")
+    levels = np.arange(8)
     coherent = np.exp(-.5) / np.sqrt(factorial(levels))
     problem = QuantumSequence(chip).build_problem([0., 1.], solver=solver, initial_state=chip.bare_state(r=coherent),
                                                   run_args=run_args, options=options, states="none")

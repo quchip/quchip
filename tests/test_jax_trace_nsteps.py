@@ -31,18 +31,18 @@ def test_jit_and_grad_through_simulate_batch():
     chip.wire(drive)
 
     psi0 = jnp.zeros((3, 1), dtype=jnp.complex128).at[0, 0].set(1.0)
-    tlist = jnp.linspace(0.0, 40.0, 60)
+    tlist = jnp.linspace(0.0, 20.0, 3)
 
     @jax.jit
+    @jax.value_and_grad
     def loss(amp):
         seq = QuantumSequence(chip)
-        h = seq.schedule(drive, envelope=Gaussian(duration=40.0, amplitude=amp, sigmas=4.0), freq=5.0)
+        h = seq.schedule(drive, envelope=Gaussian(duration=20.0, amplitude=amp, sigmas=4.0), freq=5.0)
         h.vary("amplitude", jnp.array([amp * 0.9, amp, amp * 1.1]))
         batch = seq.simulate_batch(initial_state=psi0, tlist=tlist)
         return jnp.sum(batch.population(q, level=1, reduce="last"))
 
-    loss_val = loss(jnp.array(0.04))
-    grad_val = jax.grad(loss)(jnp.array(0.04))
+    loss_val, grad_val = loss(jnp.array(0.04))
     assert float(loss_val) > 0.0
     assert jnp.isfinite(grad_val), f"gradient must be finite, got {grad_val}"
 

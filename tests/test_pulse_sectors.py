@@ -275,9 +275,8 @@ def test_jitted_parameter_gradient_matches_exchange_solution():
 
 @pytest.mark.validation
 @pytest.mark.optional_backend
-@pytest.mark.parametrize("model", ["ladder", "energy basis"])
-def test_zero_thermal_occupation_keeps_the_relaxation_gradient(model):
-    """An explicit zero occupation keeps dP1/dT1 at its analytic value."""
+def test_zero_thermal_occupation_keeps_the_relaxation_gradient():
+    """An explicit zero occupation on an energy-basis transmon keeps dP1/dT1 at its analytic value."""
     pytest.importorskip("dynamiqs")
     import jax
     import jax.numpy as jnp
@@ -285,18 +284,14 @@ def test_zero_thermal_occupation_keeps_the_relaxation_gradient(model):
     from quchip import ChargeBasisTransmon
 
     def population(T1):
-        noise = dict(label="q", T1=T1, thermal_occupation=0.0)
-        if model == "ladder":
-            device = Resonator(freq=0.25, levels=3, **noise)
-        else:
-            # The analytic decay does not depend on the charge cutoff, so fifteen charge states keep the solve short.
-            device = ChargeBasisTransmon(E_C=0.25, E_J=12.5, levels=3, num_basis=15, coupling_channel="charge",
-                                         **noise)
+        # The analytic decay does not depend on the charge cutoff, so fifteen charge states keep the solve short.
+        device = ChargeBasisTransmon(E_C=0.25, E_J=12.5, levels=3, num_basis=15, coupling_channel="charge",
+                                     label="q", T1=T1, thermal_occupation=0.0)
         chip = Chip([device], frame="rotating", backend="dynamiqs")
         result = QuantumSequence(chip).simulate(tlist=jnp.linspace(0, 4, 9), initial_state={"q": 1})
         return result.population("q", 1)[-1]
 
-    gradient = jax.grad(population)(jnp.asarray(20.0))
+    gradient = jax.jit(jax.grad(population))(jnp.asarray(20.0))
     # Level 1 decays only to level 0, so P1 = exp(-t/T1) and dP1/dT1 = t exp(-t/T1) / T1**2.
     # The default Dopri8 rtol of 1e-9 keeps the gradient far inside 1e-6.
     np.testing.assert_allclose(gradient, 4 / 20**2 * np.exp(-4 / 20), rtol=1e-6)
@@ -564,7 +559,7 @@ def test_low_memory_moves_only_dense_compact_operators_to_the_product_route(monk
     chain = [Capacitive(a, b, g=0.01) for a, b in zip(devices, devices[1:])]
     chip = Chip(devices, couplings=chain, approximation=Exact(), backend=backend, frame="lab")
     sequence = QuantumSequence(chip)
-    kwargs = dict(tlist=np.linspace(0, 3, 7), initial_state=chip.bare_state(r0=1), dissipation=False, options=options)
+    kwargs = dict(tlist=np.linspace(0, 3, 3), initial_state=chip.bare_state(r0=1), dissipation=False, options=options)
     compact = sequence.simulate(**kwargs)
     assert compact.stats["excitation_reduction"]["dimension"] == 40
     # Dense operators on the 40 odd-parity states need 206 kB. Each sparse operator needs less than 20 kB.

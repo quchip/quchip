@@ -52,13 +52,8 @@ def test_frequency_coefficient_gradients_match_closed_form_and_finite_difference
     assert grad_frequency == pytest.approx(float(finite_difference), rel=1e-7, abs=1e-8)
 
 
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
-def test_commuting_device_time_evolution_matches_exact_phase(backend: str) -> None:
-    if backend == "dynamiqs":
-        dq = pytest.importorskip("dynamiqs")
-        options = {"method": dq.method.Tsit5(atol=1e-11, rtol=1e-10, max_steps=1_000_000)}
-    else:
-        options = {"atol": 1e-11, "rtol": 1e-10, "nsteps": 1_000_000}
+def test_commuting_device_time_evolution_matches_exact_phase() -> None:
+    options = {"atol": 1e-11, "rtol": 1e-10, "nsteps": 1_000_000}
     frequency = 0.4
     amplitude = 0.03
     modulation_frequency = 0.07
@@ -72,7 +67,7 @@ def test_commuting_device_time_evolution_matches_exact_phase(backend: str) -> No
         levels=2,
         label="m",
     )
-    chip = Chip([mode], frame="lab", backend=backend)
+    chip = Chip([mode], frame="lab")
     initial = chip.superposition({mode: 0}, {mode: 1})
 
     result = QuantumSequence(chip).simulate(

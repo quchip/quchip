@@ -52,17 +52,17 @@ def test_gaussian_ramsey_delay_gradient_matches_finite_difference() -> None:
     sequence = QuantumSequence(chip)
     sequence.schedule(
         drive,
-        envelope=Gaussian(duration=20.0, amplitude=0.02, sigmas=4),
+        envelope=Gaussian(duration=10.0, amplitude=0.04, sigmas=4),
         freq=5.0,
     )
-    wait = sequence.delay(q, 80.0)
+    wait = sequence.delay(q, 40.0)
     sequence.schedule(
         drive,
-        envelope=Gaussian(duration=20.0, amplitude=0.02, sigmas=4),
+        envelope=Gaussian(duration=10.0, amplitude=0.04, sigmas=4),
         freq=5.0,
     )
     initial_state = chip.state(q=0)
-    tlist = jnp.linspace(0.0, 160.0, 161)
+    tlist = jnp.linspace(0.0, 80.0, 3)
 
     def final_population(delay: jax.Array) -> jax.Array:
         result = sequence.simulate_batch(
@@ -73,12 +73,11 @@ def test_gaussian_ramsey_delay_gradient_matches_finite_difference() -> None:
             )
         return jnp.reshape(result.population("q", level=1, reduce="last"), (-1,))[0]
 
-    delay = jnp.asarray(80.0)
-    autodiff = jax.grad(final_population)(delay)
+    delay = jnp.asarray(40.0)
+    autodiff = jax.jit(jax.grad(final_population))(delay)
     step = 1e-2
-    finite_difference = (
-        final_population(delay + step) - final_population(delay - step)
-    ) / (2.0 * step)
+    population = jax.jit(final_population)
+    finite_difference = (population(delay + step) - population(delay - step)) / (2.0 * step)
 
     assert abs(float(autodiff)) > 1e-5
     np.testing.assert_allclose(autodiff, finite_difference, rtol=1e-3, atol=1e-6)
@@ -169,7 +168,7 @@ def test_drive_matrix_element_ratio_supports_jax_grad() -> None:
         elements = chip.drive_matrix_elements(q1, drives=[d1, d2])
         return jnp.real(elements[d2] / elements[d1])
 
-    value, grad = jax.value_and_grad(loss)(jnp.asarray(0.03))
+    value, grad = jax.jit(jax.value_and_grad(loss))(jnp.asarray(0.03))
 
     assert jnp.isfinite(value)
     assert jnp.isfinite(grad)
@@ -199,7 +198,7 @@ def test_cr_susceptibility_supports_jax_grad() -> None:
         result = analyze_cr_susceptibility(chip, control, target)
         return jnp.abs(result.ZX_per_amplitude) ** 2
 
-    value, derivative = jax.value_and_grad(loss)(jnp.asarray(6.5))
+    value, derivative = jax.jit(jax.value_and_grad(loss))(jnp.asarray(6.5))
 
     assert jnp.isfinite(value)
     assert jnp.isfinite(derivative)

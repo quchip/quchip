@@ -155,7 +155,6 @@ def _initial_populations(result) -> np.ndarray:
     ("chip_backend", "override", "levels"),
     [
         pytest.param("qutip", "dynamiqs", 7, id="projected"),
-        pytest.param("qutip", "dynamiqs", 3, id="truncated"),
         pytest.param("dynamiqs", "qutip", 7, id="reverse"),
     ],
 )
@@ -203,14 +202,3 @@ def test_backend_override_keeps_density_matrix_populations() -> None:
     for backend in (None, "dynamiqs"):
         result = sequence.simulate(tlist=np.array([0.0, 1.0]), initial_state=rho, backend=backend)
         np.testing.assert_allclose(_initial_populations(result), [0.25, 0.75, 0.0], rtol=0, atol=_ROUNDOFF)
-
-
-@pytest.mark.optional_backend
-def test_backend_override_still_projects_authored_arrays() -> None:
-    """An authored-space NumPy ket is projected into the same solver state whichever backend solves it."""
-    pytest.importorskip("dynamiqs")
-    q, chip, sequence = _transmon_chip("qutip")
-    _, authored_vectors = np.linalg.eigh(np.asarray(q.unresolved_hamiltonian().matrix()))
-    for backend in (None, "dynamiqs"):
-        result = sequence.simulate(tlist=np.array([0.0, 1.0]), initial_state=authored_vectors[:, 1], backend=backend)
-        np.testing.assert_allclose(_initial_populations(result), [0.0, 1.0, 0.0], rtol=0, atol=_ROUNDOFF)

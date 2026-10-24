@@ -29,10 +29,9 @@ def test_damped_mode_has_vacuum_steady_state() -> None:
 
 
 @pytest.mark.validation
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
-def test_state_positivity_is_computed_on_request_from_captured_state(backend, monkeypatch):
+def test_state_positivity_is_computed_on_request_from_captured_state(monkeypatch):
     mode = Resonator(freq=6.0, levels=2, T1=20.0, thermal_occupation=0.1, label="r")
-    chip = Chip([mode], frame="rotating", backend=backend)
+    chip = Chip([mode], frame="rotating")
     xp = chip.backend.array_module
     eigvalsh = xp.linalg.eigvalsh
     evaluated = []

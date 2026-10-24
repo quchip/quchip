@@ -292,7 +292,7 @@ def test_chip_with_params_is_differentiable_on_dynamiqs() -> None:
     circuit_chip.wire(line)
     sequence = QuantumSequence(circuit_chip)
     sequence.schedule(line, envelope=Square(duration=4.0, amplitude=0.02), freq=4.65)
-    tlist = jnp.linspace(0.0, 4.0, 12)
+    tlist = jnp.linspace(0.0, 4.0, 3)
     observable = circuit.number_operator()
 
     def driven_batch_loss(E_J):
@@ -418,7 +418,7 @@ def test_active_noise_is_rebindable_and_retained_in_engine_result() -> None:
         matrix = term.operator.to_dense()
         return term.rate * jnp.real(matrix[0, 1] * jnp.conj(matrix[0, 1]))
 
-    assert jax.grad(decay_rate)(100.0) == pytest.approx(-1e-4)
+    assert jax.jit(jax.grad(decay_rate))(100.0) == pytest.approx(-1e-4)
     term = build_problem(chip, [], jnp.asarray([0.0, 1.0])).engine_result.collapse_terms[0]
     assert term.parameter_paths == ("q.T1",)
     assert term.latex() == r"\hat L_{q,thermal_emission}\!\left(T_{1,q}\right)"

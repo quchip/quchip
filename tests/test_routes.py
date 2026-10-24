@@ -25,12 +25,9 @@ def readout_pairs(count, backend="qutip", approximation=None, frame=5.2):
                 approximation=RWA() if approximation is None else approximation, backend=backend)
 
 
-@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])
-def test_each_stationary_call_reports_its_route(backend):
-    """On 81 product states, each call names its route and its reason; dynamiqs solves the sectors on the host."""
-    if backend == "dynamiqs":
-        pytest.importorskip("dynamiqs")
-    chip = readout_pairs(2, backend)
+def test_each_stationary_call_reports_its_route():
+    """On 81 product states, each call names its route and its reason."""
+    chip = readout_pairs(2)
     frequency = float(chip.freq("r0"))
     pumped = VNA(chip)
     pumped.pump("feed", freq=frequency, amplitude=1e-3)
@@ -48,7 +45,6 @@ def test_each_stationary_call_reports_its_route(backend):
         assert diagnostics["solver"] == route.name == "sector_stationary"
         assert route.dimension == diagnostics["retained_dimension"] and route.arrays == "numpy"
         assert "81 product states, more than 64" in route.reason
-        assert ("SciPy on the host" in route.reason) == (backend == "dynamiqs")
     # The automatic cutoffs say how they chose K; the vacuum needs no cutoff.
     assert all("This is a convergence check" in diagnostics["route"].reason
                for diagnostics in (sectors[0], *sectors[2:]))

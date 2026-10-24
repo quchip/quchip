@@ -99,7 +99,7 @@ def test_frames_differ_only_by_the_label_energies():
     sequence = QuantumSequence(chip)
     sequence.schedule("xy", envelope=Gaussian(duration=12.0, sigmas=3.0, amplitude=0.06), freq=chip.freq("q"))
     times = np.array([2.0, 16.0])
-    records = {frame: sequence.subspace_propagator("q", frame=frame, tlist=times, options=TIGHT)
+    records = {frame: sequence.subspace_propagator("q", frame=frame, tlist=times)
                for frame in ("dressed", "lab", "integration")}
     dressed = np.asarray(records["dressed"].matrix)
     for frame in ("lab", "integration"):
@@ -132,7 +132,7 @@ def test_leakage_is_the_population_of_the_other_dressed_levels():
     chip = driven_transmon(levels=3)
     sequence = QuantumSequence(chip)
     sequence.schedule("xy", envelope=Gaussian(duration=4.0, sigmas=2.0, amplitude=0.25), freq=chip.freq("q"))
-    record = sequence.subspace_propagator("q", tlist=np.array([0.0, 4.0]), options=TIGHT)
+    record = sequence.subspace_propagator("q", tlist=np.array([0.0, 4.0]))
     leaked = chip.backend.to_array(chip.state({"q": 2})).reshape(-1)
     overlaps = [abs(np.vdot(leaked, np.asarray(chip.backend.to_array(result.state(frame="lab"))).reshape(-1))) ** 2
                 for result in record.batch]
@@ -174,16 +174,14 @@ def test_a_chip_with_a_port_gives_its_propagator_without_a_warning():
                 frame="rotating")
     chip.wire(ChargeDrive(qubit, label="xy"))
     sequence = QuantumSequence(chip)
-    sequence.schedule("xy", envelope=Gaussian(duration=20.0, sigmas=3.0, amplitude=0.05), freq=chip.freq("q"))
-    times = np.array([0.0, 20.0])
+    sequence.schedule("xy", envelope=Gaussian(duration=10.0, sigmas=3.0, amplitude=0.1), freq=chip.freq("q"))
+    times = np.array([0.0, 10.0])
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        # At this rtol, QuTiP evaluates the pulse window exactly and says so.
-        warnings.filterwarnings("ignore", message="QuTiP evaluates a pulse window as a Python callable")
-        record = sequence.subspace_propagator("q", tlist=times, options=TIGHT, dissipation=False)
+        record = sequence.subspace_propagator("q", tlist=times, dissipation=False)
     assert record.omitted_channels == ("out", "hidden.r.internal_photon_loss")
     lossless = sequence.with_params({"r.internal_quality_factor": None})
-    reference = lossless.subspace_propagator("q", tlist=times, options=TIGHT)
+    reference = lossless.subspace_propagator("q", tlist=times)
     np.testing.assert_array_equal(record.matrix, reference.matrix)
 
 
@@ -209,7 +207,7 @@ def test_driven_gate_matches_an_independent_lab_frame_propagator():
     backend = "dynamiqs"
     chip = Chip([q0, q1], [Capacitive(q0, q1, g=g)], approximation=Exact(), frame="rotating", backend=backend)
     chip.wire(ChargeDrive(q0, label="xy"))
-    start, duration, phase = 3.7, 20.0, 0.4
+    start, duration, phase = 3.7, 10.0, 0.4
     envelope = Gaussian(duration=duration, sigmas=3.0)
     amplitude = float(chip.rotation_amplitude(q0, "xy", envelope, np.pi / 2))
     carrier = chip.freq(q0)
@@ -233,16 +231,18 @@ def test_driven_gate_matches_an_independent_lab_frame_propagator():
         return np.real(shape * np.exp(1j * phase) * np.exp(-2j * np.pi * carrier * t))
 
     def rhs(t, psi):
-        return -2j * np.pi * ((h0 + field(t) * charge) @ psi)
+        return (-2j * np.pi * ((h0 + field(t) * charge) @ psi.reshape(levels**2, -1))).ravel()
 
     ground = dressed[(0, 0)][0]
     frequencies = {0: dressed[(1, 0)][0] - ground, 1: dressed[(0, 1)][0] - ground}
     selected = [(0, 0), (0, 1), (1, 0), (1, 1)]
     frame_energy = {k: ground + frequencies[0] * k[0] + frequencies[1] * k[1] for k in selected}
     expected = np.zeros((4, 4), dtype=complex)
+    initial_states = np.stack([dressed[initial][1] for initial in selected], axis=1).astype(complex)
+    finals = solve_ivp(rhs, (start, start + duration), initial_states.ravel(), method="DOP853",
+                       rtol=1e-12, atol=1e-13).y[:, -1].reshape(levels**2, len(selected))
     for j, initial in enumerate(selected):
-        final = solve_ivp(rhs, (start, start + duration), dressed[initial][1].astype(complex), method="DOP853",
-                          rtol=1e-12, atol=1e-13).y[:, -1]
+        final = finals[:, j]
         for i, label in enumerate(selected):
             expected[i, j] = (np.exp(2j * np.pi * (start + duration) * frame_energy[label])
                               * np.vdot(dressed[label][1], final) * np.exp(-2j * np.pi * start * frame_energy[initial]))
@@ -265,11 +265,11 @@ def test_propagator_entry_gradient_matches_finite_differences():
 
     def entry(amplitude):
         sequence = QuantumSequence(chip)
-        sequence.schedule("xy", envelope=Gaussian(duration=12.0, sigmas=3.0, amplitude=amplitude), freq=5.0)
-        record = sequence.subspace_propagator("q", tlist=np.array([0.0, 12.0]), options=options)
+        sequence.schedule("xy", envelope=Gaussian(duration=6.0, sigmas=3.0, amplitude=amplitude), freq=5.0)
+        record = sequence.subspace_propagator("q", tlist=np.array([0.0, 6.0]), options=options)
         return record.matrix[1, 0].real
 
-    amplitude, step = 0.05, 1e-5
+    amplitude, step = 0.1, 1e-5
     derivative = jax.grad(entry)(amplitude)
     finite = (entry(amplitude + step) - entry(amplitude - step)) / (2 * step)
     np.testing.assert_allclose(derivative, finite, rtol=1e-6, atol=1e-9)

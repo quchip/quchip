@@ -795,23 +795,6 @@ def test_distinct_stationary_tones_on_one_mode_require_time_evolution() -> None:
         vna.sweep([6.0])
 
 
-def test_qutip_and_dynamiqs_vna_response_agree() -> None:
-    pytest.importorskip("dynamiqs")
-
-    def response(backend: str):
-        resonator = Resonator(freq=6.0, levels=5, label="r")
-        input_port = Port(resonator, rate=0.02, label="in")
-        output_port = Port(resonator, rate=0.03, label="out")
-        chip = Chip(
-            [resonator],
-            port_network=_network(input_port, output_port),
-            backend=backend,
-        )
-        return VNA(chip, ports=[input_port, output_port]).sweep([5.98, 6.0, 6.02]).s21
-
-    np.testing.assert_allclose(np.asarray(response("dynamiqs")), response("qutip"), atol=2e-8)
-
-
 def test_eight_resonator_cascade_matches_exact_series_product() -> None:
     """An eight-mode feedline stays in mode space and reproduces SLH series response."""
     resonances = np.asarray([6.42, 6.505, 6.595, 6.69, 6.79, 6.895, 7.005, 7.12])

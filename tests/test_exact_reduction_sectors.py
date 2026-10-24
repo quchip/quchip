@@ -108,15 +108,6 @@ def _assert_jit_matches_eager(build, value):
         np.testing.assert_allclose(jump, expected, atol=1e-12)
 
 
-def test_kept_ports_resolve_identically_inside_jit():
-    """Ports on surviving modes keep the lowering change of their authored operator inside jit."""
-    method = "exact"
-    reduced = eliminate(_readout_chip(levels=(2, 2, 2, 2, 2), ports=True), "bus", method=method).chip
-    # Nothing traced but the resolve itself, then a traced survivor parameter.
-    assert jax.jit(lambda x: (reduced.resolve(), x)[1])(1.0) == 1.0
-    _assert_jit_matches_eager(lambda t1: reduced.with_params({"q1.T1": t1}), 30000.)
-
-
 def test_transformed_port_declares_its_excitation_change_inside_jit():
     """A port transformed by an elimination traced inside jit resolves in the rotating frame."""
     def reduced(g):

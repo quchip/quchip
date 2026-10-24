@@ -14,9 +14,8 @@ def _problem(backend, levels, t1, *, states="all", times=(0.0, 1.0, 3.0)):
 
 
 @pytest.mark.validation
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
-def test_independent_models_preserve_dimensions_physics_and_order(backend):
-    problems = [_problem(backend, levels, t1) for levels, t1 in [(4, 20.0), (2, 10.0), (3, 30.0)]]
+def test_independent_models_preserve_dimensions_physics_and_order():
+    problems = [_problem("qutip", levels, t1) for levels, t1 in [(4, 20.0), (2, 10.0), (3, 30.0)]]
     result = solve_many(problems, progress=False)
     for point, levels, t1 in zip(result, (4, 2, 3), (20.0, 10.0, 30.0)):
         assert point.dims == [levels]

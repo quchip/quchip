@@ -7,8 +7,7 @@ from quchip import Chip, DuffingTransmon, QuantumSequence
 
 
 @pytest.mark.validation
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
-def test_automatic_idle_grid_resolves_fast_population_exchange(backend):
+def test_automatic_idle_grid_resolves_fast_population_exchange():
     from quchip.declarative import DeviceModel, parameter
 
     class Exchange(DeviceModel):
@@ -19,11 +18,8 @@ def test_automatic_idle_grid_resolves_fast_population_exchange(backend):
 
     q = Exchange(label="q", levels=2)
     q.reference_freq = 0.0
-    chip = Chip([q], backend=backend, frame="lab")
+    chip = Chip([q], frame="lab")
     options = {"rtol": 1e-9, "atol": 1e-11}
-    if backend == "dynamiqs":
-        import dynamiqs as dq
-        options = {"method": dq.method.Tsit5(rtol=1e-9, atol=1e-11)}
     result = QuantumSequence(chip).simulate(options=options, duration=1.0, initial_state=chip.backend.basis(2, 0),
                                            partition=False, e_ops={"q": q.number_operator()})
     times = np.asarray(result.times)

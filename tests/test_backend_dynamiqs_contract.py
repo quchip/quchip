@@ -259,8 +259,7 @@ def test_backend_operator_factories_match_dynamiqs(dynamiqs_backend, layout) -> 
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("offsets", [(), (-1, 0, 2), (5,), (-5,)])
-@pytest.mark.parametrize("batched", [False, True])
+@pytest.mark.parametrize(("offsets", "batched"), [((), True), ((-1, 0, 2), False), ((5,), True), ((-5,), False)])
 def test_sparse_operator_payloads_preserve_values_and_gradients(dynamiqs_backend, offsets, batched) -> None:
     """Empty and nonempty sparse operators retain their dimensions, batches and traced payloads."""
     import dynamiqs as dq

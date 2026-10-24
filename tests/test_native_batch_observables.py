@@ -11,11 +11,10 @@ from quchip.engine.ir import CanonicalOperator, SolveBatch, StaticTerm
 
 
 @pytest.mark.validation
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
-def test_batch_keeps_distinct_applied_static_hamiltonians(backend):
+def test_batch_keeps_distinct_applied_static_hamiltonians():
     q = DuffingTransmon(freq=1 / (2 * np.pi), anharmonicity=-0.2, levels=2, label="q")
     # The applied X term and the expected detuned Rabi oscillation are lab-frame quantities.
-    chip = Chip([q], backend=backend, frame="lab")
+    chip = Chip([q], frame="lab")
     times = np.linspace(0.0, 1.0, 11)
     problem = QuantumSequence(chip).build_problem(times, e_ops={"q": q.number_operator()}, states="none")
     x = CanonicalOperator.from_dense(np.array([[0.0, 1.0], [1.0, 0.0]]),

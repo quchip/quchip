@@ -23,7 +23,7 @@ def test_jax_grad_through_E_J():
     def f01(E_J):
         return Fluxonium(E_C=1.0, E_J=E_J, E_L=1.0, phi_ext=0.5, levels=3, num_basis=200).freq
 
-    grad = jax.grad(f01)(4.0)
+    grad = jax.jit(jax.grad(f01))(4.0)
     assert np.isfinite(float(grad))
 
 

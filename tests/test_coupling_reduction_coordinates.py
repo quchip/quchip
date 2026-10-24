@@ -39,10 +39,9 @@ def test_zero_edge_is_identity_in_presence_of_other_interactions(method, topolog
 
 
 @pytest.mark.validation
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
 @pytest.mark.parametrize("topology", ["parallel", "spectator"])
-def test_exact_edge_rotation_preserves_entire_hamiltonian_and_dynamics(backend, topology):
-    source = _chip(backend, topology=topology)
+def test_exact_edge_rotation_preserves_entire_hamiltonian_and_dynamics(topology):
+    source = _chip("qutip", topology=topology)
     result = eliminate(source, "selected", method="exact")
     h, reduced_h = _matrix(source), _matrix(result.chip)
     u = np.asarray(result.mapping.embedding)

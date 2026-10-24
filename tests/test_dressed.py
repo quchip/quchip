@@ -152,7 +152,7 @@ def test_traced_default_ground_state_keeps_the_phase_of_a_fallback_anchor() -> N
     assert abs(eager[0]) < 1e-12
     assert float(jnp.real(eager[1])) > 0.5
     assert abs(float(jnp.imag(eager[1]))) < 1e-12
-    _, tangent = jax.jvp(ground, (0.3,), (1.0,))
+    _, tangent = jax.jit(lambda phi: jax.jvp(ground, (phi,), (1.0,)))(0.3)
     central = (ground(0.3 + 1e-6) - ground(0.3 - 1e-6)) / 2e-6
     np.testing.assert_allclose(tangent, central, atol=1e-8)
 
