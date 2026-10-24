@@ -1380,9 +1380,15 @@ holds all ports at one grid point. There `|.|` is the Euclidean norm, or the
 Frobenius norm of the IQ matrix at one noise offset. This joint criterion does
 not check a port whose values are much smaller than the others' to its own
 size. If any change is above `1e-6`, `K` increases by one. The result is the
-solve at `K`, not at `K + 1`. One warning per call gives `K`, the retained
-dimension and the result of the check. If `K + 1` does not fit in memory, the
-check does not run, and the warning says so. If `K` reaches the largest total,
+solve at `K + 1`, the larger cutoff of the passing pair, which is already
+solved. In `measure()`, when the noise spectra were not compared, it is the
+solve at `K`, which has them. `measure()` with noise first runs the ladder on
+the means and mode values alone, which are cheap, and starts the full ladder
+at the smaller cutoff of the first pair whose means agree. A full pass needs
+the means to pass, so this start keeps the same pair. One warning per call
+gives the kept cutoff and the result of the check. If `K + 1` does not fit in
+memory, the check does not run, the result is the solve at `K`, and the
+warning says so. If `K` reaches the largest total,
 the solve is exact and the call does not warn. `options={}` solves the
 backend's stationary Liouvillian, on the full product space when there is no
 cutoff.

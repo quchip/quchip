@@ -104,7 +104,7 @@ def assert_same_measurement(actual, expected, *, rtol):
 
 def cutoff_warnings(caught):
     """Return the automatic-cutoff warnings among ``caught``."""
-    return [item for item in caught if "not on the full product space" in str(item.message)]
+    return [item for item in caught if "kept the automatic excitation cutoff" in str(item.message)]
 
 
 def test_complete_space_matches_the_product_space(monkeypatch):
@@ -297,7 +297,7 @@ def test_a_solve_that_does_not_converge_raises(monkeypatch):
 
 
 def test_automatic_cutoff_finds_population_shelved_above_the_first_cutoff():
-    """N <= 2 never reaches the shelving jump; the comparison with K + 1 raises K until the means agree."""
+    """N <= 2 never reaches the shelving jump; the comparison of adjacent cutoffs raises K until the means agree."""
     chip, frequencies, beta = shelving_chip(), 6.0 + np.array([-0.004, 0.0, 0.004]), 0.02
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -306,9 +306,9 @@ def test_automatic_cutoff_finds_population_shelved_above_the_first_cutoff():
     first = VNA(chip.with_space(ExcitationCutoff(max_total=2))).finite_power(frequencies, beta)
     (warning,) = cutoff_warnings(caught)
     diagnostics = automatic.diagnostics[0]
-    assert diagnostics["cutoff_choice"] == "automatic" and diagnostics["excitation_cutoff"] == 4
-    assert diagnostics["cutoff_check"]["status"] == "passed" and diagnostics["cutoff_check"]["compared_with"] == 5
-    assert "N <= 4" in str(warning.message) and "N <= 5" in str(warning.message)
+    assert diagnostics["cutoff_choice"] == "automatic" and diagnostics["excitation_cutoff"] == 5
+    assert diagnostics["cutoff_check"]["status"] == "passed" and diagnostics["cutoff_check"]["compared_with"] == 4
+    assert "N <= 5:" in str(warning.message) and "N <= 4 changes" in str(warning.message)
     assert warning.filename == __file__
     assert np.max(np.abs(np.asarray(first.values) - np.asarray(product.values))) > 0.1 * beta
     np.testing.assert_allclose(automatic.values, product.values, rtol=0, atol=1e-6 * beta)
@@ -367,7 +367,7 @@ def test_the_output_checks_compare_every_offset_and_delay():
     cutoff, _, check = routes.automatic_cutoff(4, lambda total, lower: spectra[total - 2],
                                                vna_analysis._spectrum_change, fits=lambda total: True,
                                                states=lambda total: total)
-    assert cutoff == 3 and check.status == "passed"
+    assert cutoff == 4 and check.status == "passed"
     assert vna_analysis._correlation_change((peak, 1.0, 2.0), (shifted, 1.0, 2.0)) > routes.CUTOFF_TOLERANCE
     # Each intensity sets its own scale, so a small output intensity is compared with itself.
     assert vna_analysis._correlation_change((peak, 1.0, 1e-6), (peak, 1.0, 1e-6 * (1 + 1e-5))) > 1e-6
@@ -393,13 +393,13 @@ def test_automatic_cutoff_warns_once_at_the_call(monkeypatch, method, case):
     (warning,) = cutoff_warnings(caught)
     text, check = str(warning.message), result.diagnostics[0]["cutoff_check"]
     assert warning.filename == __file__
-    assert f"N <= {result.diagnostics[0]['excitation_cutoff']}," in text
+    cutoff = result.diagnostics[0]["excitation_cutoff"]
     if case == "memory":
-        assert check["status"] == "not run" and "not verified" in text
+        assert check["status"] == "not run" and f"N <= {cutoff}, not verified" in text
     else:
-        assert check["status"] == "passed" and check["change"] <= 1e-6
-        assert ("noise spectra by at most" in text) == (method == "measure" and case == "passed")
-        assert ("noise spectra were not compared" in text) == (method == "measure" and case == "noise")
+        assert check["status"] == "passed" and check["change"] <= 1e-6 and f"N <= {cutoff}:" in text
+        assert ("and noise spectra by at most" in text) == (method == "measure" and case == "passed")
+        assert ("noise spectra not compared" in text) == (method == "measure" and case == "noise")
 
 
 def test_modes_are_reported_in_the_probe_frame_of_the_solve():
@@ -442,7 +442,7 @@ def test_an_explicit_cutoff_with_heating_solves_the_compact_model():
 
 @pytest.mark.validation
 def test_two_readout_pairs_match_the_product_space_with_an_automatic_cutoff():
-    """On 81 product states, the automatic route keeps N <= 3 at beta = 0.03 and matches the full solve."""
+    """On 81 product states, the automatic route keeps N <= 4 at beta = 0.03 and matches the full solve."""
     chip, beta = readout_pairs(2), 0.03
     frequency = float(chip.freq("r0")) + 0.0015
     with warnings.catch_warnings(record=True) as caught:
@@ -451,7 +451,7 @@ def test_two_readout_pairs_match_the_product_space_with_an_automatic_cutoff():
     product = VNA(chip).finite_power(frequency, beta, options={})
     (warning,) = cutoff_warnings(caught)
     check = automatic.diagnostics[0]["cutoff_check"]
-    assert automatic.diagnostics[0]["excitation_cutoff"] == 3 and "N <= 3" in str(warning.message)
+    assert automatic.diagnostics[0]["excitation_cutoff"] == 4 and "N <= 4:" in str(warning.message)
     assert check["status"] == "passed" and check["change"] <= 1e-6
     np.testing.assert_allclose(automatic.values, product.values, rtol=0, atol=1e-6 * beta)
 
