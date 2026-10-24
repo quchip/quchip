@@ -536,7 +536,7 @@ class QuantumSequence:
             pulse is the same in that frame at every ``t0``. A carrier at
             ``freq = f + δ`` without ``detuning`` is a fixed oscillator
             instead, with phase ``phase - 2π δ t0`` relative to the frame at
-            ``f``. ``None`` adds no offset term. ``pulse.<index>.detuning``
+            ``f``. ``None`` adds no offset term. ``pulse.<n>.detuning``
             rebinds, sweeps, and differentiates like ``freq``. A detuning
             requires a carrier.
         """
@@ -1137,7 +1137,7 @@ class QuantumSequence:
 
         parts = field.split(".", 2)
         if len(parts) == 3 and parts[0] == "pulse" and parts[1].isdigit():
-            index = int(parts[1])
+            index = self._pulse_entry_indices()[int(parts[1])]
             entry = self._entries[index]
             entry_field = parts[2]
             return BatchAxis(
@@ -1797,14 +1797,22 @@ class QuantumSequence:
         cloned._carrier_lines = set(self._carrier_lines)
         return cloned
 
+    def _pulse_entry_indices(self) -> list[int]:
+        """Return the entry index of each pulse, so ``pulse.<n>`` names the n-th pulse."""
+        return [index for index, entry in enumerate(self._entries) if isinstance(entry, _PulseEntry)]
+
     @property
     def parameters(self) -> Mapping[str, Any]:
-        """Chip and scheduled-pulse values available to :meth:`with_params`."""
+        """Chip and scheduled-pulse values available to :meth:`with_params`.
+
+        ``pulse.<n>`` names the n-th scheduled pulse, counted from zero.
+        Virtual-Z shifts, delays and barriers do not count, so they do not
+        move the paths of later pulses.
+        """
         values = dict(self._chip.parameters)
-        for index, entry in enumerate(self._entries):
-            if not isinstance(entry, _PulseEntry):
-                continue
-            prefix = f"pulse.{index}"
+        pulses = [entry for entry in self._entries if isinstance(entry, _PulseEntry)]
+        for number, entry in enumerate(pulses):
+            prefix = f"pulse.{number}"
             pulse_values = {
                 f"{prefix}.freq": entry.freq,
                 f"{prefix}.phase": entry.phase,
@@ -1844,7 +1852,8 @@ class QuantumSequence:
         Parameters
         ----------
         bindings : mapping[str, Any]
-            Chip parameter paths or ``pulse.<index>`` fields and new values.
+            Chip parameter paths or ``pulse.<n>`` fields of the n-th pulse and
+            new values.
         """
         available = self.parameters
         unknown = set(bindings) - set(available)
@@ -1856,10 +1865,11 @@ class QuantumSequence:
 
         pulse_bindings: dict[int, dict[str, Any]] = {}
         chip_bindings: dict[str, Any] = {}
+        pulses = self._pulse_entry_indices()
         for path, value in bindings.items():
             parts = path.split(".", 2)
             if len(parts) == 3 and parts[0] == "pulse" and parts[1].isdigit():
-                pulse_bindings.setdefault(int(parts[1]), {})[parts[2]] = value
+                pulse_bindings.setdefault(pulses[int(parts[1])], {})[parts[2]] = value
             else:
                 chip_bindings[path] = value
         cloned = self._copy_with_chip(self._chip.with_params(chip_bindings))

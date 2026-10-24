@@ -227,6 +227,31 @@ def test_sequence_parameters_rebind_chip_and_pulse_values_directly(monkeypatch) 
         sequence.vary("basis", ["native", "eigen"])
 
 
+def test_pulse_paths_count_pulses_so_frame_shifts_delays_and_barriers_do_not_move_them() -> None:
+    chip = _chip()
+    drive = ChargeDrive(chip["q"], label="xy")
+    chip.wire(drive)
+    sequence = QuantumSequence(chip)
+    sequence.vz(chip["q"], 0.5)
+    sequence.delay(chip["q"], 10.0)
+    sequence.schedule(drive, envelope=Gaussian(duration=20.0, amplitude=0.02), freq=5.0)
+    sequence.barrier(chip["q"])
+    sequence.vz(chip["q"], 0.25)
+    sequence.schedule(drive, envelope=Gaussian(duration=20.0, amplitude=0.03), freq=5.0)
+
+    pulses = sorted({path.split(".")[1] for path in sequence.parameters if path.startswith("pulse.")})
+    assert pulses == ["0", "1"]
+    assert sequence.parameters["pulse.0.amplitude"] == 0.02
+    assert sequence.parameters["pulse.1.amplitude"] == 0.03
+    rebound = sequence.with_params({"pulse.0.amplitude": 0.04, "pulse.1.phase": 0.3})
+    assert rebound.parameters["pulse.0.amplitude"] == 0.04
+    assert rebound.parameters["pulse.1.amplitude"] == 0.03
+    assert rebound.parameters["pulse.1.phase"] == 0.3
+    batch = sequence.build_batch(sequence.vary("pulse.1.amplitude", [0.01, 0.05]), tlist=np.linspace(0.0, 50.0, 6))
+    assert batch.params_at(1)["pulse.1.amplitude"] == 0.05
+    assert [float(op.envelope.amplitude) for op in rebound._materialize_drive_ops()] == [0.04, 0.03]
+
+
 def test_sequence_reserves_scheduled_pulse_parameter_namespace() -> None:
     device = DuffingTransmon(freq=5.0, anharmonicity=-0.2, label="pulse.3")
 

@@ -279,6 +279,14 @@ This file records notable user-visible changes to quchip.
   in `stats["workers"]`.
   ([#196](https://github.com/quchip/quchip/issues/196),
   [#205](https://github.com/quchip/quchip/pull/205))
+- `pulse.<n>` parameter paths name the n-th scheduled pulse. Virtual-Z
+  shifts, delays and barriers no longer count, so `vz()` or `delay()` does not
+  move the paths of later pulses in `parameters`, `with_params()` and
+  `vary()`. Sequences without such entries keep their paths. In a sequence
+  with a `vz()`, `delay()` or `barrier()` before a pulse, renumber the paths:
+  after `vz()`, `delay()` and one pulse, `pulse.2.amplitude` is now
+  `pulse.0.amplitude`. ([#217](https://github.com/quchip/quchip/issues/217),
+  [#221](https://github.com/quchip/quchip/pull/221))
 
 #### New features
 
