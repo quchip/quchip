@@ -1385,7 +1385,8 @@ solved. In `measure()`, when the noise spectra were not compared, it is the
 solve at `K`, which has them. `measure()` with noise first runs the ladder on
 the means and mode values alone, which are cheap, and starts the full ladder
 at the smaller cutoff of the first pair whose means agree. A full pass needs
-the means to pass, so this start keeps the same pair. One warning per call
+the means to pass, so this start keeps the same first passing pair for
+converged solves. One warning per call
 gives the kept cutoff and the result of the check. If `K + 1` does not fit in
 memory, the check does not run, the result is the solve at `K`, and the
 warning says so. If `K` reaches the largest total,
