@@ -11,7 +11,7 @@ from quchip.declarative.models import DeviceModel
 from quchip.declarative.ops import LocalOps
 from quchip.declarative.parameters import UNBOUND, Scalar, parameter
 from quchip.declarative.dissipation import CollapseChannel
-from quchip.devices.base import _energy_basis_dissipation
+from quchip.devices.base import _energy_basis_dissipation, _validate_relaxation
 from quchip.devices.spaces import PhaseGridSpace
 
 
@@ -123,16 +123,8 @@ class Fluxonium(DeviceModel):
             levels=levels,
             native_dimension=num_basis,
         )
-        if collapse_model not in ("fermi_golden", "ladder"):
-            raise ValueError(
-                f"collapse_model must be 'fermi_golden' or 'ladder', got {collapse_model!r}"
-            )
-        if coupling_channel not in (None, "charge", "flux"):
-            raise ValueError("coupling_channel must be 'charge', 'flux', or None.")
-        if collapse_model == "fermi_golden" and noise.get("T1") is not None and coupling_channel is None:
-            raise ValueError("coupling_channel is required when T1 uses matrix-element relaxation.")
-        if collapse_rate_threshold < 0:
-            raise ValueError("collapse_rate_threshold must be non-negative.")
+        _validate_relaxation(collapse_model, coupling_channel, noise.get("T1"), collapse_rate_threshold,
+                             ("charge", "flux"))
 
         self.num_basis = num_basis
         self.phi_max = phi_max
