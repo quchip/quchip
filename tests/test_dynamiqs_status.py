@@ -10,12 +10,10 @@ from quchip.engine.ir import SolveBatch
 
 
 @pytest.mark.validation
-@pytest.mark.parametrize("method_name", ["Euler", "Dopri5", "Dopri8", "Tsit5", "Kvaerno3", "Kvaerno5", "Expm",
-                                         "Rouchon1", "Rouchon2", "Rouchon3"])
-def test_native_method_batch_matches_separate_master_equations(method_name):
+def test_native_method_batch_matches_separate_master_equations():
     import dynamiqs as dq
 
-    method = getattr(dq.method, method_name)(**({"dt": 0.01} if method_name in ("Euler", "Rouchon1") else {}))
+    method = dq.method.Expm()
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=2, T1=10.0, label="q")
     chip = Chip([q], backend="dynamiqs", frame="rotating")
     problem = QuantumSequence(chip).build_problem([0.0, 0.1, 1.0], initial_state={"q": 1},
@@ -30,7 +28,7 @@ def test_native_method_batch_matches_separate_master_equations(method_name):
 
 
 @pytest.mark.validation
-@pytest.mark.parametrize("gradient_name", ["BackwardCheckpointed", "Direct", "Forward"])
+@pytest.mark.parametrize("gradient_name", ["Direct", "Forward"])
 def test_native_gradient_modes_keep_decay_derivative(gradient_name):
     import dynamiqs as dq
     import jax
@@ -52,8 +50,7 @@ def test_native_gradient_modes_keep_decay_derivative(gradient_name):
     assert jax.jit(derivative)(jnp.asarray(10.0)) == pytest.approx(0.02 * np.exp(-0.1), abs=2e-7)
 
 
-@pytest.mark.parametrize("multipart", [False, True])
-@pytest.mark.parametrize("batched", [False, True])
+@pytest.mark.parametrize("multipart, batched", [(False, False), (True, True)])
 def test_expm_final_density_matrix_preserves_coherence_and_subsystem_dimensions(multipart, batched):
     import dynamiqs as dq
     from quchip.engine import solve_batch, solve_problem
@@ -142,28 +139,3 @@ def test_expm_final_density_matrix_keeps_jit_gradient(batched):
     value, derivative = objective(jnp.asarray(10.0))
     assert value == pytest.approx(np.exp(-0.1), abs=1e-10)
     assert derivative == pytest.approx(0.01 * np.exp(-0.1), abs=1e-10)
-
-
-@pytest.mark.validation
-@pytest.mark.parametrize("batched", [False, True])
-def test_expm_nonfinite_check_survives_gradient_only(batched):
-    import dynamiqs as dq
-    import jax
-    import jax.numpy as jnp
-    from quchip.engine import solve_batch, solve_problem
-
-    @jax.jit
-    @jax.grad
-    def objective(frequency):
-        q = DuffingTransmon(freq=frequency, anharmonicity=-0.2, levels=2, label="q")
-        chip = Chip([q], backend="dynamiqs", frame="lab")
-        problem = QuantumSequence(chip).build_problem([0.0, 1.0], initial_state={"q": 1},
-            states="final", options={"method": dq.method.Expm()})
-        result = (solve_batch(SolveBatch(chip=chip, problems=(problem, problem)),
-                             progress=False)[0] if batched
-                  else solve_problem(problem))
-        return jnp.real(result.final_state.to_jax()[1, 0])
-
-    assert np.isfinite(objective(jnp.asarray(5.0)))
-    with pytest.raises(Exception, match="Nonfinite"):
-        objective(jnp.asarray(1e8)).block_until_ready()

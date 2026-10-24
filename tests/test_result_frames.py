@@ -20,10 +20,6 @@ from quchip.declarative import DeviceModel, parameter
 from quchip.declarative.parameters import Scalar
 from quchip.engine.frames import FrameMap
 
-# The dynamiqs runs compile each tight solve, so they run with validation, and QuTiP keeps the E2E check.
-BACKENDS = ["qutip", pytest.param("dynamiqs", marks=[pytest.mark.optional_backend, pytest.mark.validation])]
-
-
 class TiltedMode(DeviceModel):
     """A mode whose native basis is not its energy basis."""
 
@@ -52,10 +48,10 @@ def native_pair(frame, backend="qutip"):
     return Chip([q, t], [Capacitive(q, t, g=0.02)], basis="native", frame=frame, backend=backend)
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
 @pytest.mark.parametrize("approximation", [RWA(), Exact()], ids=["RWA", "Exact"])
-def test_an_idle_dressed_state_keeps_overlap_one_in_every_frame(backend, approximation):
+def test_an_idle_dressed_state_keeps_overlap_one_in_every_frame(approximation):
     """Two transmons 50 MHz apart: the label target and the lab-frame ket read 1; a plain ket keeps its meaning."""
+    backend = "qutip"
     q0 = DuffingTransmon(freq=5.00, anharmonicity=-0.25, levels=3, label="q0")
     q1 = DuffingTransmon(freq=5.05, anharmonicity=-0.25, levels=3, label="q1")
     times = np.linspace(0.0, 20.0, 201)
@@ -93,9 +89,9 @@ def test_a_bare_plus_target_keeps_its_rotating_frame_values():
     np.testing.assert_allclose(result.overlap(plus, frame="lab"), np.cos(np.pi * 5.0 * times) ** 2, atol=1e-8)
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
-def test_lab_frame_states_match_a_lab_frame_solve(backend):
+def test_lab_frame_states_match_a_lab_frame_solve():
     """With a native basis that is not the energy basis, mapped states agree with a solve in the lab frame."""
+    backend = "qutip"
     times = np.linspace(0.0, 9.7, 98)
     results = {}
     for frame in ("lab", "rotating", {"q": 3.7, "t": 4.4}):

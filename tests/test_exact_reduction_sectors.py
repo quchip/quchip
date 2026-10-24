@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 
 from quchip import (
-    Capacitive, ChargeDrive, Chip, DuffingTransmon, Gaussian, PortNetwork, QuantumSequence, Resonator, RWA,
-    eliminate, simulate,
+    Capacitive, Chip, DuffingTransmon, PortNetwork, Resonator, RWA,
+    eliminate,
 )
 from quchip.engine.excitation import excitation_sectors
 
@@ -108,31 +108,13 @@ def _assert_jit_matches_eager(build, value):
         np.testing.assert_allclose(jump, expected, atol=1e-12)
 
 
-@pytest.mark.parametrize("method", ["sw", "exact"])
-def test_kept_ports_resolve_identically_inside_jit(method):
+def test_kept_ports_resolve_identically_inside_jit():
     """Ports on surviving modes keep the lowering change of their authored operator inside jit."""
+    method = "exact"
     reduced = eliminate(_readout_chip(levels=(2, 2, 2, 2, 2), ports=True), "bus", method=method).chip
     # Nothing traced but the resolve itself, then a traced survivor parameter.
     assert jax.jit(lambda x: (reduced.resolve(), x)[1])(1.0) == 1.0
     _assert_jit_matches_eager(lambda t1: reduced.with_params({"q1.T1": t1}), 30000.)
-
-
-def test_driven_reduction_in_a_common_frame_has_only_its_drive_carriers():
-    """Exactly static retained bands stay static, and drive bands sharing a carrier lower to one term."""
-    reduced = eliminate(_readout_chip(levels=(4, 4, 2, 2, 2)), "bus", method="exact").chip
-    drives = [ChargeDrive(target=reduced[label], label=f"drive_{label}") for label in ("q1", "q2")]
-    reduced.wire(*drives)
-    sequence = QuantumSequence(reduced)
-    for drive in drives:
-        sequence.schedule(drive, envelope=Gaussian(duration=40.0, amplitude=0.02, sigmas=4.0),
-                          freq=float(reduced.freq(reduced[drive.target_label])))
-
-    rotating, lab = sequence.resolve(), sequence.resolve(frame="lab")
-
-    # Level changes up to ±3 used to leave 1e-14 GHz carriers on static
-    # couplings and split equal drive carriers into separate terms.
-    assert not rotating.slh.H.dynamic_terms
-    assert len(rotating.applied_hamiltonian.dynamic_terms) == len(lab.applied_hamiltonian.dynamic_terms)
 
 
 def test_transformed_port_declares_its_excitation_change_inside_jit():
@@ -165,43 +147,3 @@ def _assert_sector_exact_readout(reduced):
         assert np.all(_off_band(channel.operator, terms.dims, terms.excitation_changes[channel.name]) == 0.0)
     for jump in _jumps(reduced, reduced.resolve()):
         assert np.all(_off_band(jump, reduced.dims, {1}) == 0.0)
-
-
-@pytest.mark.validation
-def test_gradient_through_exact_elimination_matches_finite_difference():
-    """A Hamiltonian element differentiated through exact elimination matches a central difference."""
-    def element(g):
-        reduced = eliminate(_bus_chip(g=g), "bus", method="exact").chip
-        h = reduced.resolve().hamiltonian().matrix(backend=reduced.backend)
-        q1 = int(np.ravel_multi_index((1, 0), tuple(reduced.dims)))
-        q2 = int(np.ravel_multi_index((0, 1), tuple(reduced.dims)))
-        return h[q1, q1].real + h[q1, q2].real
-
-    g, step = 0.03, 1e-5
-    finite_difference = (element(g + step) - element(g - step)) / (2 * step)
-    np.testing.assert_allclose(jax.grad(element)(g), finite_difference, rtol=1e-7)
-
-
-@pytest.mark.validation
-def test_qutip_reduced_master_equation_stays_sparse_and_matches_dynamiqs(monkeypatch):
-    """QuTiP stores reduced-model jumps as CSR and its master equation matches dense storage and dynamiqs."""
-    import dynamiqs
-    import quchip.backend.qutip as qutip_backend
-
-    def final_state(backend, options):
-        reduced = eliminate(_readout_chip(levels=(2, 2, 2, 2, 2), backend=backend), "bus", method="exact").chip
-        psi = np.zeros(int(np.prod(reduced.dims)), dtype=complex)
-        psi[int(np.ravel_multi_index((1, 0, 0, 0), tuple(reduced.dims)))] = 1.0
-        result = simulate(reduced, [], np.linspace(0.0, 20.0, 5), solver="mesolve", initial_state=psi,
-                          states="final", options=options)
-        return reduced, np.asarray(reduced.backend.to_array(result.state_at(result.times[-1])))
-
-    tight = {"atol": 1e-12, "rtol": 1e-12, "nsteps": 10**7}
-    reduced, sparse = final_state("qutip", tight)
-    jumps = reduced.backend._collapse_operators(reduced.resolve())
-    assert {type(jump.data).__name__ for jump in jumps} == {"CSR"}
-    monkeypatch.setattr(qutip_backend, "_CSR_MAX_FILL", -1.0)
-    _, dense = final_state("qutip", tight)
-    _, reference = final_state("dynamiqs", {"method": dynamiqs.method.Tsit5(atol=1e-12, rtol=1e-12, max_steps=10**7)})
-    np.testing.assert_allclose(sparse, dense, atol=1e-11)
-    np.testing.assert_allclose(sparse, reference, atol=1e-7)

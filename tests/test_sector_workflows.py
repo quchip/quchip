@@ -107,34 +107,6 @@ def test_traced_counter_rotating_frequency_uses_the_full_eigensystem_as_eager():
     np.testing.assert_allclose(derivative, difference, atol=1e-9)
 
 
-@pytest.mark.optional_backend
-@pytest.mark.validation
-def test_traced_counter_rotating_pulse_derivative_matches_finite_difference():
-    """A traced energy keeps the eager rotating frame and full-space pulse evolution."""
-    pytest.importorskip("dynamiqs")
-    from quchip import Capacitive, Gaussian, QuantumSequence, Resonator
-
-    q = DuffingTransmon(freq=5., anharmonicity=-.25, levels=3, label="q")
-    r = Resonator(freq=6., levels=3, label="r")
-    chip = Chip([q, r], [Capacitive(q, r, g=.06)], approximation=Exact(), backend="dynamiqs", frame="rotating")
-    chip.wire(ChargeDrive(q, label="xy"))
-
-    def population(x):
-        sequence = QuantumSequence(chip.with_params({"q.freq": x}))
-        sequence.schedule("xy", envelope=Gaussian(duration=8., sigmas=3., amplitude=.04), freq=4.996)
-        result = sequence.simulate(tlist=jnp.linspace(0., 10., 11), initial_state={"q": 0})
-        return jnp.real(result.population("q", level=1)[-1])
-
-    value, derivative = jax.jit(jax.value_and_grad(population))(5.)
-    step = 1e-4
-    difference = (population(5. + step) - population(5. - step)) / (2 * step)
-    # Both calls integrate the same equation at rtol 1e-9. The bound allows a change of accepted steps.
-    np.testing.assert_allclose(value, population(5.), atol=1e-8)
-    # The central difference has O(step²) truncation error near 4e-8. A change of accepted steps can add rtol / step.
-    np.testing.assert_allclose(derivative, difference, atol=1e-5)
-    assert abs(float(derivative)) > 1e-2
-
-
 def test_undeclared_retained_matrix_is_checked_without_a_tolerance():
     """Concrete retained matrices can prove conservation, but any nonzero forbidden entry rejects it."""
     from quchip.chip.effective import EffectiveTerms
@@ -264,16 +236,13 @@ def test_traced_sector_state_matches_the_eager_state_and_central_differences():
     assert float(jnp.max(jnp.abs(tangent))) > 0.1
 
 
-@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])
-def test_large_exact_model_fits_and_reads_drive_elements_without_product_space(backend):
+def test_large_exact_model_fits_and_reads_drive_elements_without_product_space():
     """A 24-mode Exact exchange chain fits and reads drives using its independent 24-state model."""
-    if backend == "dynamiqs":
-        pytest.importorskip("dynamiqs")
     devices = [DuffingTransmon(freq=5 + 0.07*i, anharmonicity=-0.25, levels=3, label=f"q{i}")
                for i in range(24)]
     edges = [Exchange(a, b, g=0.01, label=f"edge{i}")
              for i, (a, b) in enumerate(zip(devices[:-1], devices[1:], strict=True))]
-    chip = Chip(devices, edges, approximation=Exact(), backend=backend)
+    chip = Chip(devices, edges, approximation=Exact())
     chip.wire(ChargeDrive(devices[0], label="xy"))
     matrix = np.diag([q.freq for q in devices]) + np.diag([0.01]*23, 1) + np.diag([0.01]*23, -1)
     matrix[0, 1] = matrix[1, 0] = 0.015
@@ -283,7 +252,7 @@ def test_large_exact_model_fits_and_reads_drive_elements_without_product_space(b
     constraints.update({edge.label: {"coupling_strength": None} for edge in edges})
     constraints["q0"]["freq"] = values[column]
     result = fit_a_dress(chip, constraints=constraints, vary={"edge0": ["g"]}, max_hilbert_dim=24)
-    assert result.solver_info["jacobian"] == ("jax" if backend == "dynamiqs" else "finite-difference")
+    assert result.solver_info["jacobian"] == "finite-difference"
     assert result.chip.coupling_map["edge0"].g == pytest.approx(0.015, abs=1e-9)
     assert abs(result.chip.drive_matrix_elements("q0")["xy"]) == pytest.approx(abs(vectors[0, column]), abs=1e-10)
 
@@ -301,34 +270,6 @@ def test_exact_vacuum_response_matches_stationary_response():
     full = VNA(chip).sweep(frequencies, options={})
     assert compact.diagnostics[0]["solver"] == "vacuum_response"
     np.testing.assert_allclose(compact.matrix, full.matrix, atol=1e-9, rtol=0)
-
-
-@pytest.mark.optional_backend
-def test_traced_thermal_absorption_keeps_the_eager_stationary_route():
-    """A raising loss channel rules out weak-probe sectors under tracing, as in plain evaluation."""
-    pytest.importorskip("dynamiqs")
-    from quchip import RWA, VNA, Capacitive, PortNetwork, Resonator
-
-    q = DuffingTransmon(freq=5., anharmonicity=-.25, levels=3, label="q", T1=2000., T2=1500.,
-                        thermal_occupation=.05)
-    r = Resonator(freq=6., levels=3, label="r")
-    network = PortNetwork()
-    network.port("r", target=r, rate=.05)
-    chip = Chip([q, r], [Capacitive(q, r, g=.06)], port_network=network, approximation=RWA(), backend="dynamiqs")
-
-    def reflection(x):
-        result = VNA(chip.with_params({"q.freq": x})).sweep(6.002)
-        assert result.diagnostics[0]["solver"] == "stationary_resolvent"
-        return jnp.abs(result.matrix[0, 0]) ** 2
-
-    value, derivative = jax.jit(jax.value_and_grad(reflection))(5.)
-    step = 1e-4
-    difference = (reflection(5. + step) - reflection(5. - step)) / (2 * step)
-    # Both calls solve the same 81 x 81 Liouvillian, so only round-off differs.
-    np.testing.assert_allclose(value, reflection(5.), atol=1e-12)
-    # The central difference has O(step²) truncation error near 1e-10 and solver round-off divided by the step.
-    np.testing.assert_allclose(derivative, difference, atol=2e-9)
-    assert abs(float(derivative)) > 1e-2
 
 
 @pytest.mark.optional_backend

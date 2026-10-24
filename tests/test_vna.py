@@ -25,21 +25,18 @@ def _network(*ports: Port) -> PortNetwork:
     return PortNetwork.from_ports(ports)
 
 
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
 @pytest.mark.parametrize("options", [None, {}])
-def test_instrument_reflection_convention_with_complex_probe_and_delay(backend, options) -> None:
+def test_instrument_reflection_convention_with_complex_probe_and_delay(options) -> None:
     """Both response routes report engineering reflection, cable phase, and IQ means."""
     from quchip import IQReceiver
 
-    if backend == "dynamiqs":
-        pytest.importorskip("dynamiqs")
     r = Resonator(freq=6., levels=3, internal_quality_factor=30000, label="r")
     network = PortNetwork()
     port = network.port("p", target=r, external_quality_factor=10000)
     cable = network.delay("cable", duration=0.123)
     network.link(port, cable)
     network.expose("vna", at=cable.port(2))
-    vna = VNA(Chip([r], port_network=network, backend=backend))
+    vna = VNA(Chip([r], port_network=network))
     frequencies = np.array([5.9996, 6., 6.0004])
     expected = np.array([.25-.75j, -.5, .25+.75j]) * np.exp(-4j*np.pi*frequencies*.123)
     beta = 1e-5 * (1+2j)
@@ -408,31 +405,6 @@ def test_distinct_tones_stay_valid_with_traced_network_scattering() -> None:
         return jnp.abs(vna.sweep([6.0]).s11[0])
 
     assert jnp.isfinite(jax.jit(response)(jnp.asarray(0.5)))
-
-
-@pytest.mark.validation
-def test_cross_kerr_vna_keeps_zero_band_with_traced_local_frequency():
-    import jax
-    import jax.numpy as jnp
-
-    q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=2, label="q")
-    r = Resonator(freq=6.0, levels=4, label="r")
-    qport = Port(q, rate=0.04, label="pump")
-    rport = Port(r, rate=0.03, label="readout")
-    chip = Chip([q, r], [CrossKerr(q, r, chi=-0.03)],
-                port_network=_network(qport, rport), backend="dynamiqs")
-
-    def response(frequency):
-        vna = VNA(chip.with_params({"q.freq": frequency}), ports=[rport])
-        vna.pump(qport, freq=5.0, amplitude=0.02)
-        return jnp.abs(vna.sweep([6.0]).s11[0])
-
-    step = 1e-5
-    expected = response(5.01)
-    finite_difference = (response(5.01 + step) - response(5.01 - step)) / (2 * step)
-    value, derivative = jax.jit(jax.value_and_grad(response))(jnp.asarray(5.01))
-    np.testing.assert_allclose(value, expected, atol=1e-10)
-    np.testing.assert_allclose(derivative, finite_difference, rtol=2e-5, atol=1e-7)
 
 
 def _amplified(

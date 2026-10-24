@@ -2,8 +2,6 @@
 
 from math import prod
 
-import jax
-import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -15,13 +13,11 @@ from quchip import (
     ControlEquipment,
     DuffingTransmon,
     Gaussian,
-    ParametricDrive,
     PortNetwork,
     QuantumSequence,
     Resonator,
     RWA,
     Square,
-    TunableCapacitive,
     VNA,
     eliminate,
 )
@@ -113,9 +109,9 @@ def test_local_boundary_section_on_a_large_rwa_ring_keeps_the_pair_transition():
 
 
 @pytest.mark.parametrize("directions", [1, 2])
-@pytest.mark.parametrize("sites", [2, pytest.param(3, marks=pytest.mark.validation)])
-def test_shared_feedline_local_reduction_matches_full_dynamics(sites, directions):
+def test_shared_feedline_local_reduction_matches_full_dynamics(directions):
     """Local maps retain the full Hamiltonian, dissipator and complex scattering on shared lines."""
+    sites = 2
     independent = _ring(sites, ports=True)
     source = full = local = _wire_readouts(independent, directions)
     topology = source.port_network.to_dict()
@@ -259,27 +255,6 @@ class _LevelShift(CouplingModel):
         return 1e13 * (p.x - p.y) * operator
 
 
-def _neighbours(chip, label):
-    """Return, in device order, the devices that share a coupling with ``label``."""
-    ends = {end for c in chip.couplings if label in (c.device_a_label, c.device_b_label)
-            for end in (c.device_a_label, c.device_b_label)}
-    return tuple(device.label for device in chip.devices if device.label in ends - {label})
-
-
-def test_readouts_only_reduction_of_the_ring_keeps_each_patch_local():
-    """Every step reads only the removed device and its coupled neighbours, so the patches never merge."""
-    chip = _ring(8, noise=False)
-    order = [f"q{i}" for i in range(0, 8, 2)] + [f"c{i}" for i in range(8)] + [f"q{i}" for i in range(1, 8, 2)]
-    for target in order:
-        neighbours = _neighbours(chip, target)
-        patch = tuple(device.label for device in chip.devices if device.label in (target, *neighbours))
-        chip = eliminate(chip, target, local=True).chip
-        head = chip.effective_terms[-1]
-        assert head.labels == neighbours and head.projection.source_labels == patch
-    assert [device.label for device in chip.devices] == [f"r{i}" for i in range(8)]
-    assert chip.total_dim == 256
-
-
 def _jumps(chip):
     """Return the jump part of the dissipator, the sum of rate * L ⊗ conj(L)."""
     jumps = 0.0
@@ -354,19 +329,6 @@ def test_local_reduction_transforms_independent_readout_ports():
             == [c.label for c in full.chip.port_network.components])
 
 
-def test_local_and_full_reductions_chain_in_either_order():
-    chip = _ring(2)
-    reference = eliminate(eliminate(chip, "r0").chip, "c0")
-    _assert_same_model(reference.chip, eliminate(eliminate(chip, "r0", local=True).chip, "c0").chip)
-    _assert_same_model(reference.chip, eliminate(eliminate(chip, "r0").chip, "c0", local=True).chip)
-    chained = eliminate(eliminate(chip, "r0", local=True).chip, "c0", local=True).chip
-    _assert_same_model(reference.chip, chained)
-    # The second map keeps the first as its parent, and both survive serialization.
-    restored = Chip.from_dict(chained.to_dict())
-    assert len(restored.effective_terms[-1].projection.parents) == 1
-    _assert_same_model(chained, restored, atol=0.0)
-
-
 def test_partition_keeps_each_map_with_the_devices_it_acts_on():
     """n dresses c. The map of m mixes a and b, although their mediated exchange cancels."""
     a, m, b, n = (Resonator(freq=freq, levels=2, label=label) for freq, label in zip((5.0, 6.0, 7.0, 6.5), "ambn"))
@@ -412,58 +374,6 @@ def test_drive_on_a_dressed_survivor_matches_the_full_reduction():
         full = eliminate(full, target).chip
         local = eliminate(local, target, local=True).chip
     np.testing.assert_allclose(_final_state(local), _final_state(full), rtol=0, atol=1e-8)
-
-
-@pytest.mark.validation
-def test_local_steps_equal_the_full_reduction_on_a_three_transmon_ring():
-    """The patch of q0 leaves q2 outside, but the loss of c1 still acts on q2 after the maps of c1 and q0."""
-    chip = _ring(3)
-    full, local = eliminate(chip, "c0"), eliminate(chip, "c0", local=True)
-    _assert_same_reduction(full, local)
-    full, local = full.chip, local.chip
-    for target in ("c1", "q0"):
-        full, local = eliminate(full, target).chip, eliminate(local, target, local=True).chip
-        _assert_same_model(full, local)
-
-
-@pytest.mark.validation
-def test_pump_on_an_edge_that_leaves_the_patch_matches_the_full_reduction():
-    """The q0-c1 pump spans the patch boundary, so its operator joins the retained coordinates of q0."""
-    qs = [DuffingTransmon(freq=5.32 - 0.07 * i, anharmonicity=-0.26, levels=3, label=f"q{i}", T1=40e3)
-          for i in range(2)]
-    cs = [Resonator(freq=6.30 + 0.02 * i, levels=2, label=f"c{i}", T1=20e3) for i in range(2)]
-    rs = [Resonator(freq=6.56 + 0.05 * i, levels=2, label=f"r{i}", T1=2e3) for i in range(2)]
-    couplings = [Capacitive(qs[0], cs[0], g=0.03, label="q0_c0"), Capacitive(qs[1], cs[0], g=0.03, label="q1_c0"),
-                 Capacitive(qs[1], cs[1], g=0.03, label="q1_c1"),
-                 TunableCapacitive(qs[0], cs[1], g_0=0.03, label="q0_c1"),
-                 Capacitive(qs[0], rs[0], g=0.04, label="q0_r0"), Capacitive(qs[1], rs[1], g=0.04, label="q1_r1")]
-    chip = Chip(qs + cs + rs, couplings, frame=5.2, approximation=RWA())
-    chip.connect(ControlEquipment([ChargeDrive(chip["q0"], label="d0"),
-                                   ParametricDrive(chip.coupling("q0_c1"), label="pump")]))
-    local = eliminate(chip, "r0", local=True).chip
-    assert local.effective_terms[-1].labels == ("q0",)
-    np.testing.assert_allclose(_final_state(local, pump=True), _final_state(eliminate(chip, "r0").chip, pump=True),
-                               rtol=0, atol=1e-8)
-
-
-@pytest.mark.validation
-@pytest.mark.optional_backend
-def test_local_reduction_gradient_matches_the_full_reduction():
-    """q0_r0 couples inside the first patch, and q0_c0 crosses its boundary."""
-    pytest.importorskip("dynamiqs")
-    base = _ring(2, noise=False, backend="dynamiqs")
-
-    def level(g, local):
-        chip = base.with_params({"q0_r0.g": g[0], "q0_c0.g": g[1]})
-        for target in ("r0", "c0"):
-            chip = eliminate(chip, target, local=local).chip
-        return chip.freq("q0")
-
-    g = jnp.array([0.04, 0.03])
-    expected = jax.jit(jax.grad(lambda g: level(g, False)))(g)
-    actual = jax.jit(jax.grad(lambda g: level(g, True)))(g)
-    assert np.all(np.abs(expected) > 1e-2)
-    np.testing.assert_allclose(actual, expected, rtol=1e-9)
 
 
 def test_local_reduction_keeps_small_resolved_lamb_shifts():

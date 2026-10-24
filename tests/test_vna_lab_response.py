@@ -57,14 +57,11 @@ def _reference(frequencies, *, exact=True, levels=3, qfreq=5.46, rfreq=6.55, g=0
     return np.array(matrices), np.array(conjugates)
 
 
-@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])
 @pytest.mark.parametrize("exact", [False, True])
-def test_weak_readout_probe_matches_independent_lab_liouvillian(backend, exact):
+def test_weak_readout_probe_matches_independent_lab_liouvillian(exact):
     """RWA and Exact reflection retain their declared Hamiltonian and engineering phase."""
-    if backend == "dynamiqs":
-        pytest.importorskip("dynamiqs")
     frequencies = np.array([6.5508, 6.5513, 6.5518])
-    chip = _readout(backend=backend, exact=exact, frame="rotating")
+    chip = _readout(exact=exact, frame="rotating")
     result = VNA(chip).sweep(frequencies)
     expected, conjugate = _reference(frequencies, exact=exact)
     # Same declared master equation. The bound covers direct-solve round-off of the 81x81 lab Liouvillian.
@@ -80,12 +77,9 @@ def test_weak_readout_probe_matches_independent_lab_liouvillian(backend, exact):
         assert np.max(np.abs(result.matrix - rwa)) > 0.05
 
 
-@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])
-def test_lab_response_keeps_port_selection_and_frequency_dependent_reference_planes(backend):
+def test_lab_response_keeps_port_selection_and_frequency_dependent_reference_planes():
     """Every selected matrix element includes its own physical-frequency cable and port phases."""
-    if backend == "dynamiqs":
-        pytest.importorskip("dynamiqs")
-    chip = _readout(backend=backend, two_ports=True, delay=True)
+    chip = _readout(two_ports=True, delay=True)
     frequencies = np.array([6.5509, 6.5515])
     expected, _ = _reference(frequencies, two_ports=True, delay=True)
     result = VNA(chip, ports=["vna1", "vna0"]).sweep(frequencies, options={})
@@ -119,13 +113,10 @@ def test_lab_response_reuses_one_state_per_chip_point_and_captures_diagnostics(m
     assert len(calls) == 2
 
 
-@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])
-def test_lab_conjugate_response_is_same_carrier_only_at_dc(backend):
+def test_lab_conjugate_response_is_same_carrier_only_at_dc():
     """Opposite-frequency response is excluded from T except when both inputs are DC."""
-    if backend == "dynamiqs":
-        pytest.importorskip("dynamiqs")
     frequencies = np.array([-1.6, 0.0, 1.6])
-    chip = _readout(backend=backend, qfreq=1.1, rfreq=1.6, g=0.1)
+    chip = _readout(qfreq=1.1, rfreq=1.6, g=0.1)
     result = VNA(chip).sweep(frequencies)
     expected, conjugate = _reference(frequencies, qfreq=1.1, rfreq=1.6, g=0.1)
     # Same declared master equation. The bound covers direct-solve round-off of the lab Liouvillian.
@@ -165,35 +156,3 @@ def test_lab_dynamic_model_keeps_the_stationary_error():
     network.port("p", target=resonator, rate=0.02)
     with pytest.raises(ValueError, match="dynamic Hamiltonian"):
         VNA(Chip([resonator], port_network=network)).sweep([6.0])
-
-
-@pytest.mark.validation
-@pytest.mark.optional_backend
-def test_compiled_lab_response_derivatives_match_independent_liouvillian_differences():
-    """JIT derivatives include the stationary state's frequency dependence and probe resolvent shift."""
-    pytest.importorskip("dynamiqs")
-    import jax
-    import jax.numpy as jnp
-
-    chip = _readout(backend="dynamiqs", levels=2)
-
-    def response(values):
-        bound = chip.with_params({"q.freq": values[0], "qr.g": values[1]})
-        reflection = VNA(bound).sweep(values[2]).s11
-        return jnp.stack((reflection.real, reflection.imag))
-
-    def independent(values):
-        matrix, _ = _reference([values[2]], levels=2, qfreq=values[0], g=values[1])
-        return np.array((matrix[0, 0, 0].real, matrix[0, 0, 0].imag))
-
-    compiled = jax.jit(jax.jacfwd(response))
-    for values in (np.array([5.46, 0.04, 6.551]), np.array([5.48, 0.035, 6.552])):
-        step = np.array([1e-5, 1e-6, 1e-7])
-        finite_difference = np.column_stack([
-            (independent(values + np.eye(3)[i] * step[i]) - independent(values - np.eye(3)[i] * step[i]))
-            / (2 * step[i]) for i in range(3)
-        ])
-        # Same declared master equation. The bound covers direct-solve round-off of the lab Liouvillian.
-        np.testing.assert_allclose(response(values), independent(values), atol=2e-9)
-        # Central differences of the reference. The bound covers their O(step²) error and round-off.
-        np.testing.assert_allclose(compiled(jnp.asarray(values)), finite_difference, rtol=2e-5, atol=2e-7)

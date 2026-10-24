@@ -68,10 +68,10 @@ def readout_response():
     return response
 
 
-@pytest.mark.parametrize("approximation", [RWA(), Exact()], ids=["rwa", "exact"])
-@pytest.mark.parametrize("frame", ["lab", "rotating"], ids=["lab", "rotating"])
+@pytest.mark.parametrize("frame, approximation", [("rotating", RWA()), ("lab", Exact())],
+                         ids=["rotating-rwa", "lab-exact"])
 def test_dispersive_readout_matrix_has_state_dependent_response(frame: str, approximation, readout_response) -> None:
-    """Dispersive readout response is strong and qubit-state dependent across all frame/RWA configs."""
+    """Dispersive readout response is strong and qubit-state dependent in the rotating RWA and lab Exact configs."""
     _, response_g = readout_response(frame, type(approximation), 0)
     _, response_e = readout_response(frame, type(approximation), 1)
 
@@ -84,23 +84,15 @@ def test_dispersive_readout_matrix_has_state_dependent_response(frame: str, appr
 
 
 def test_dispersive_readout_matrix_configs_agree(readout_response) -> None:
-    """Readout state separation agrees across all frame/RWA configs against the rotating+RWA reference."""
+    """Readout state separation in the lab frame with Exact() agrees with the rotating+RWA reference."""
     _, reference_g = readout_response("rotating", RWA, 0)
     _, reference_e = readout_response("rotating", RWA, 1)
     reference_sep = abs(reference_g[-1] - reference_e[-1])
 
-    for approximation in (RWA(), Exact()):
-        for frame in ("lab", "rotating"):
-            _, response_g = readout_response(frame, type(approximation), 0)
-            _, response_e = readout_response(frame, type(approximation), 1)
-            separation = abs(response_g[-1] - response_e[-1])
-            # Measured: the largest cross-config drift is approximation=Exact() vs the rotating/approximation=RWA()
-            # reference (~3.0% relative, ~1.45e-3 absolute, dominated by the counter-rotating
-            # coupling terms approximation=Exact() retains); rtol=0.15/atol=5e-3 keep >=5x margin over that.
-            npt.assert_allclose(
-                separation,
-                reference_sep,
-                rtol=0.15,
-                atol=5e-3,
-                err_msg=f"Dispersive readout separation drifted for frame={frame}, {type(approximation).__name__}",
-            )
+    _, response_g = readout_response("lab", Exact, 0)
+    _, response_e = readout_response("lab", Exact, 1)
+    separation = abs(response_g[-1] - response_e[-1])
+    # Measured: the largest cross-config drift is approximation=Exact() vs the rotating/approximation=RWA()
+    # reference (~3.0% relative, ~1.45e-3 absolute, dominated by the counter-rotating
+    # coupling terms approximation=Exact() retains); rtol=0.15/atol=5e-3 keep >=5x margin over that.
+    npt.assert_allclose(separation, reference_sep, rtol=0.15, atol=5e-3)

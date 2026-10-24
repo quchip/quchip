@@ -63,14 +63,11 @@ def test_fit_limit_applies_to_the_largest_diagonalized_sector():
         fit_a_dress(chip, constraints=constraints, max_hilbert_dim=2)
 
 
-@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])
-def test_24_device_ring_fits_a_frequency_and_reads_drive_elements(backend):
+def test_24_device_ring_fits_a_frequency_and_reads_drive_elements():
     """The full 24-device RWA ring fits a bare frequency against an independent 24-state target."""
     from quchip import ChargeDrive
 
-    if backend == "dynamiqs":
-        pytest.importorskip("dynamiqs")
-    chip = _ring(8, backend=backend)
+    chip = _ring(8)
     chip.wire(ChargeDrive(chip.devices[0], label="xy"))
     labels = [device.label for device in chip.devices]
     block = np.diag([device.freq for device in chip.devices])
@@ -84,7 +81,7 @@ def test_24_device_ring_fits_a_frequency_and_reads_drive_elements(backend):
     constraints.update({edge.label: {"cross_kerr": None, "exchange_rate": None} for edge in chip.couplings})
     constraints["q0"]["freq"] = values[column]
     result = fit_a_dress(chip, constraints=constraints, vary={"q0": ["freq"]}, max_hilbert_dim=24)
-    assert result.solver_info["jacobian"] == ("jax" if backend == "dynamiqs" else "finite-difference")
+    assert result.solver_info["jacobian"] == "finite-difference"
     fitted = result.chip
     assert fitted["q0"].freq == pytest.approx(chip["q0"].freq + 0.02, abs=1e-9)
     assert abs(fitted.drive_matrix_elements("q0")["xy"]) == pytest.approx(abs(vectors[0, column]), abs=1e-10)

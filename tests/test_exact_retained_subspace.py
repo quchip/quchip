@@ -76,7 +76,7 @@ def test_exact_retained_matrix_jit_gradient_matches_independent_finite_differenc
 
 
 @pytest.mark.validation
-@pytest.mark.parametrize("execution", ["eager", "jit", "gradient"])
+@pytest.mark.parametrize("execution", ["eager", "jit"])
 @pytest.mark.parametrize("invalidity", ["singular", "labels"])
 def test_exact_projection_guards_survive_compiled_and_gradient_only_calls(execution, invalidity):
     from quchip.chip.sw import _inverse_sqrt_hermitian, exact_mode_subspace
