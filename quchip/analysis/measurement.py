@@ -18,6 +18,7 @@ from quchip.results.receiver import _engineering_iq, noise_grid
 from quchip.engine.ir import LinearResponseProblem
 from quchip.devices.spaces import FockSpace
 from quchip.engine.linear_response import try_build_linear_response_problem
+from quchip.engine.sector_stationary import padded
 from quchip.engine.reference import (
     FieldChannel, cw_transfer,
 )
@@ -258,6 +259,8 @@ class _SectorPoint:
     photon_numbers: Any
     excess: Any
     noise: dict[str, Any]
+    # Noise solutions that start the noise solves of the next cutoff; None when they did not fit in memory.
+    responses: Any = None
 
 
 def _sector_pass(entries: list[Any], cutoff: int, *, offsets: Any, noise: bool, guesses: list[_SectorPoint] | None,
@@ -275,24 +278,23 @@ def _sector_pass(entries: list[Any], cutoff: int, *, offsets: Any, noise: bool, 
         internal = (complex(np.conj(amplitude)), *(complex(value) for _, _, value in pumps))
         guess = None
         if guesses is not None:
-            guess = _embed(guesses[index].solve.state, model.size(cutoff))
+            guess = padded(guesses[index].solve.state, model.size(cutoff))
         elif previous is not None and previous[0] is chip:
             guess = previous[1]
         solved = model.stationary(cutoff, frequency, internal, guess)
         amplitudes, numbers = model.mode_values(cutoff, solved.state)
-        excess, info = (model.quadrature_spectrum(cutoff, frequency, internal, solved.state, offsets) if noise
-                        else (None, {}))
+        excess, info, responses = None, {}, None
+        if noise:
+            starts = None if guesses is None else guesses[index].responses
+            excess, info, responses = model.quadrature_spectrum(cutoff, frequency, internal, solved.state, offsets,
+                                                                starts)
+            # Kept with room to spare, since the next cutoff solves beside them.
+            if not fits_memory(4 * sum(response.nbytes for port in responses for response in port)):
+                responses = None
         points.append(_SectorPoint(solved, model.means(cutoff, frequency, internal, solved.state),
-                                   amplitudes, numbers, excess, info))
+                                   amplitudes, numbers, excess, info, responses))
         previous = (chip, solved.state)
     return points
-
-
-def _embed(state: Any, size: int) -> Any:
-    """Return a state on a smaller cutoff as a state on ``size`` labels, which list it first."""
-    embedded = np.zeros((size, size), dtype=complex)
-    embedded[:state.shape[0], :state.shape[1]] = state
-    return embedded
 
 
 def _sector_change(lower: list[_SectorPoint], upper: list[_SectorPoint], noise: bool) -> float:

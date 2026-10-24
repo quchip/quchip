@@ -315,7 +315,7 @@ class SectorGenerator:
         # The vacuum carries the zeroth order, so the iteration resolves the probe's correction.
         rhs = target - operator(vacuum.reshape(-1))
         restart = self.restart()
-        start = None if guess is None else _useful(operator, rhs, guess.reshape(-1) - vacuum.reshape(-1))
+        start = None if guess is None else _best_start(operator, rhs, [guess.reshape(-1) - vacuum.reshape(-1)])
         solved = _gmres(operator, precondition, rhs, start, restart)
         if self.dark:
             # The equations do not fix the weight on a second stationary state, so a generic start usually ends
@@ -340,9 +340,13 @@ class SectorGenerator:
         state = solved.state.reshape(dimension, dimension) + vacuum
         return SectorSolve(state, solved.iterations, solved.residual)
 
-    def resolvent(self, frequency: float, drive: Any, source: np.ndarray, offsets: Any,
-                  observables: Any) -> tuple[np.ndarray, int, float, float]:
+    def resolvent(self, frequency: float, drive: Any, source: np.ndarray, offsets: Any, observables: Any,
+                  starts: Any = None) -> tuple[np.ndarray, int, float, float, list[np.ndarray]]:
         """Return ``Tr(O Y)`` for ``(G + i 2π f) Y = source`` with ``Tr Y = 0`` at each offset ``f``.
+
+        Each offset starts from the solution at the previous offset or from
+        its entry of ``starts``, whichever has the smaller residual, and from
+        zero when neither beats it.
 
         Parameters
         ----------
@@ -356,13 +360,16 @@ class SectorGenerator:
             Offsets in GHz.
         observables : sequence of sparse matrix
             Observables ``O``.
+        starts : sequence of numpy.ndarray or None, optional
+            A start ``Y`` for each offset, such as the solutions on a smaller
+            cutoff placed in this basis.
 
         Returns
         -------
         tuple
             Values with shape ``(len(offsets), len(observables))``, the largest
-            iteration count, the largest relative residual and the largest
-            ``|Tr Y|``.
+            iteration count, the largest relative residual, the largest
+            ``|Tr Y|`` and the solution ``Y`` at each offset.
         """
         rhs = np.array(source, dtype=complex).reshape(-1)
         rhs[0] = 0.0
@@ -370,10 +377,12 @@ class SectorGenerator:
         iterations, residual, trace = 0, 0.0, 0.0
         previous = None
         restart = self.restart()
+        states = []
         for index, offset in enumerate(np.asarray(offsets, dtype=float)):
             shift = 2j * np.pi * offset
             operator = self.operator(frequency, drive, shift)
-            start = None if previous is None else _useful(operator, rhs, previous)
+            candidates = [previous, None if starts is None else np.asarray(starts[index]).reshape(-1)]
+            start = _best_start(operator, rhs, [guess for guess in candidates if guess is not None])
             solved = _gmres(operator, self.preconditioner(frequency, shift), rhs, start, restart)
             response = solved.state.reshape(self.dimension, self.dimension)
             values[index] = [observable.multiply(response.T).sum() for observable in observables]
@@ -381,7 +390,8 @@ class SectorGenerator:
             residual = max(residual, solved.residual)
             trace = max(trace, abs(np.trace(response)))
             previous = solved.state
-        return values, iterations, residual, trace
+            states.append(solved.state)
+        return values, iterations, residual, trace, states
 
     def lindbladian(self, frequency: float, drive: Any) -> LinearOperator:
         """Return ``X -> G X`` and its adjoint, without the trace constraint of :meth:`operator`.
@@ -503,9 +513,15 @@ def _difference(first: np.ndarray, second: np.ndarray) -> float:
     return float(np.linalg.norm(second - first)) / (float(np.linalg.norm(first)) or 1.0)
 
 
-def _useful(operator: Callable[[np.ndarray], np.ndarray], rhs: np.ndarray, guess: np.ndarray) -> np.ndarray | None:
-    """Return ``guess`` if its residual is smaller than that of zero, else ``None``."""
-    return guess if np.linalg.norm(rhs - operator(guess)) < np.linalg.norm(rhs) else None
+def _best_start(operator: Callable[[np.ndarray], np.ndarray], rhs: np.ndarray,
+                guesses: list[np.ndarray]) -> np.ndarray | None:
+    """Return the guess with the smallest residual if it is smaller than that of zero, else ``None``."""
+    best, smallest = None, np.linalg.norm(rhs)
+    for guess in guesses:
+        norm = np.linalg.norm(rhs - operator(guess))
+        if norm < smallest:
+            best, smallest = guess, norm
+    return best
 
 
 def _gmres(operator: Callable[[np.ndarray], np.ndarray], precondition: Callable[[np.ndarray], np.ndarray],

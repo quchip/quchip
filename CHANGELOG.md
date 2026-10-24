@@ -937,6 +937,12 @@ This file records notable user-visible changes to quchip.
   ([#191](https://github.com/quchip/quchip/issues/191),
   [#203](https://github.com/quchip/quchip/issues/203),
   [#205](https://github.com/quchip/quchip/pull/205))
+- `VNA.measure()` with an automatic cutoff starts each cutoff's noise solves
+  from the solutions at the previous cutoff, as its stationary solves already
+  did. The kept cutoff and the values stay the same to the solver tolerance.
+  On a 4-level transmon with a 20-level resonator, 5 probe frequencies and 5
+  noise offsets, the call takes TIMING. The solutions are kept only while they
+  fit in memory. ([#221](https://github.com/quchip/quchip/pull/221))
 
 #### Compatibility
 

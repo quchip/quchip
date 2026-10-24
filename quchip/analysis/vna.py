@@ -1178,12 +1178,12 @@ def _sector_solve(sector: _SectorOutput, measure: Any, change: Any, quantities: 
     Returns the kept cutoff, the solve with its measured values, the choice
     of the cutoff and the check of an automatic one.
     """
-    from quchip.analysis.measurement import _embed
+    from quchip.engine.sector_stationary import padded
 
     model = sector.model
 
     def solve(cutoff: int, lower: Any) -> Any:
-        guess = None if lower is None else _embed(lower[0].state, model.size(cutoff))
+        guess = None if lower is None else padded(lower[0].state, model.size(cutoff))
         solved = model.stationary(cutoff, sector.frequency, sector.amplitudes, guess)
         return solved, measure(cutoff, solved.state)
 
@@ -1207,7 +1207,7 @@ def _sector_spectrum(sector: _SectorOutput, output_port: str, offsets: Any) -> O
         return normal_spectrum(white + excess, np)
 
     def measure(cutoff: int, state: Any) -> tuple[Any, ...]:
-        excess, info = model.quadrature_spectrum(cutoff, frequency, amplitudes, state, grid)
+        excess, info, _ = model.quadrature_spectrum(cutoff, frequency, amplitudes, state, grid)
         components, _ = propagate_noise(model.fields, model.scattering, None, excess, (output_port,), frequency,
                                         grid, np)
         added = sum((source(pair) for name, pair in components.items() if name != "device.correlations"),
