@@ -389,7 +389,7 @@ def test_export_fluxonium_warns_cross_basis():
     res = Resonator(freq=6.0, levels=4, label="osc")
     chip = Chip([flx, res], couplings=[Capacitive(flx, res, g=0.02)], approximation=Exact())
 
-    with pytest.warns(UserWarning, match="cross-discretization"):
+    with pytest.warns(UserWarning, match="agree only to discretization accuracy"):
         assert isinstance(to_scqubits(chip), scq.HilbertSpace)
 
     # The transmon+resonator export shares scqubits' bases and must stay silent.

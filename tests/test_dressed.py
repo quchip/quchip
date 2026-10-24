@@ -392,7 +392,7 @@ def test_two_level_readout_warns_on_two_excitation_queries_and_keeps_the_truncat
     q2 = DuffingTransmon(freq=5.3, anharmonicity=-0.2, levels=3, label="q2")
     bus = Resonator(freq=6.5, levels=2, label="bus")
     bus_chip = Chip([q1, q2, bus], [Capacitive(q1, bus, g=0.05), Capacitive(q2, bus, g=0.05)])
-    with pytest.warns(UserWarning, match=r"device 'bus'.*fourth order.*'bus' keeps 2 levels"):
+    with pytest.warns(UserWarning, match=r"level 2 of 'bus'.*fourth order.*'bus' keeps 2 levels"):
         bus_chip.static_zz(q1, q2)
     q2 = DuffingTransmon(freq=5.3, anharmonicity=-0.2, levels=2, label="q2")
     bus = Resonator(freq=6.5, levels=3, label="bus")

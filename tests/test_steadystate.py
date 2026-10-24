@@ -198,6 +198,24 @@ def test_dynamiqs_traced_nonunique_solve_returns_invalid_state() -> None:
     assert jnp.isnan(traced_trace_error(jnp.asarray(1.0)))
 
 
+@pytest.mark.optional_backend
+@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
+def test_uniqueness_is_checked_up_to_the_diagnostic_dimension(backend) -> None:
+    """At D = 17, cap 16 reports an unknown nullity; cap 17 finds 1 for damping and 17 for pure dephasing."""
+    if backend == "dynamiqs":
+        pytest.importorskip("dynamiqs")
+    damped = Chip([Resonator(freq=6.0, levels=17, label="r", T1=10.0)], frame="rotating", backend=backend)
+    assert damped.steadystate().nullity is None
+    checked = damped.steadystate(e_ops={"r": "n"}, options={"diagnostic_max_dimension": 17})
+    assert int(checked.nullity) == 1
+    # Amplitude damping without a bath leaves the vacuum.
+    assert abs(complex(np.asarray(checked.expect("r")))) < 1e-10
+    dephased = Chip([Resonator(freq=6.0, levels=17, label="r", T2=10.0)], frame="rotating", backend=backend)
+    assert dephased.steadystate().nullity is None
+    with pytest.raises(ValueError, match="nullity 17"):
+        dephased.steadystate(options={"diagnostic_max_dimension": 17})
+
+
 def test_thermal_mode_matches_truncated_bose_distribution() -> None:
     """A thermal bath produces the Bose distribution after finite-level truncation."""
     frequency = 5.0
