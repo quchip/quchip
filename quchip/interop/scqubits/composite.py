@@ -44,6 +44,7 @@ from quchip.interop.base import export_object
 from quchip.interop.eigenbasis import EigenbasisDevice
 from quchip.interop.scqubits.devices import _units_per_ghz
 from quchip.utils.jax_utils import maybe_concrete_scalar
+from quchip.utils.stack import user_stacklevel
 
 _SUPPORTED_EXPORT_COUPLINGS = "Capacitive, TunableCapacitive, CrossKerr, or product-form Coupling"
 
@@ -304,11 +305,10 @@ def _warn_if_cross_basis(device: Any, subsys: Any) -> None:
     native_dim = int(np.asarray(eigenvectors()).shape[0])
     if native_dim != subsys.hilbertdim():
         warnings.warn(
-            f"Exported device {device.label!r} diagonalizes a native basis of a different "
-            f"dimension than its scqubits subsystem, which rebuilds the spectrum in a different "
-            f"native basis; the two composites agree only to the cross-discretization level.",
+            f"scqubits rebuilds {device.label!r} in a native basis of another dimension, so the two spectra agree "
+            "only to discretization accuracy.",
             UserWarning,
-            stacklevel=3,
+            stacklevel=user_stacklevel(),
         )
 
 
@@ -412,12 +412,8 @@ def export_chip(chip: Chip, **opts: Any) -> Any:
     if chip.baths:
         dropped.append("chip-level baths")
     if dropped:
-        warnings.warn(
-            f"scqubits models neither drives nor dissipation; dropping {' and '.join(dropped)} "
-            f"from the exported HilbertSpace.",
-            UserWarning,
-            stacklevel=2,
-        )
+        warnings.warn(f"scqubits models neither drives nor dissipation, so the export drops {' and '.join(dropped)}.",
+                      UserWarning, stacklevel=user_stacklevel())
 
     subsystems = []
     for device in chip.devices:

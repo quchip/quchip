@@ -22,6 +22,7 @@ import numpy as np
 from quchip.chip.partition import _line_device_labels
 from quchip.utils.jax_utils import contains_tracer
 from quchip.utils.labeling import resolve_label
+from quchip.utils.stack import user_stacklevel
 
 if TYPE_CHECKING:
     from quchip.chip.chip import Chip
@@ -91,12 +92,8 @@ def _warn_on_poor_validity(step: "EliminationResult", target: str, caller: str) 
             else:
                 name = next(key for key in entry if key != "is_valid")
                 problem = f"leaves '{coupling_label}' with {name}={entry[name]!r}, which needs < 0.1"
-            warnings.warn(
-                f"{caller}: eliminating '{target}' {problem}; proceeding "
-                "anyway — inspect this step's effective_params and validity before use.",
-                UserWarning,
-                stacklevel=2,
-            )
+            warnings.warn(f"{caller}: eliminating '{target}' {problem}. Check this step's effective_params and "
+                          "validity before use.", UserWarning, stacklevel=user_stacklevel())
 
 
 class _EliminationChain:

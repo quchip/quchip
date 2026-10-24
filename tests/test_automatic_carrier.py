@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import warnings
 
 import numpy as np
@@ -29,8 +30,12 @@ from quchip import (
 from quchip.control.field import CoherentInput
 
 
+CARRIER_WARNING = ("A pulse without freq gets a carrier at its device's dressed 0 -> 1 frequency, chip.freq(device) "
+                   "(twice it on a two-photon line). Pass freq= to set it, or freq=None for no carrier.")
+
+
 def _carrier_warnings(caught: list[warnings.WarningMessage]) -> list[str]:
-    return [str(item.message) for item in caught if "sets no freq" in str(item.message)]
+    return [str(item.message) for item in caught if str(item.message) == CARRIER_WARNING]
 
 
 @pytest.mark.unit
@@ -63,17 +68,10 @@ def test_a_pulse_without_freq_takes_the_carrier_its_drive_class_declares() -> No
                                rtol=0, atol=0)
     assert carriers[3:6] == [None, None, None]
     assert [op.frame for op in seq.scheduled_ops[:3]] == ["q", "q", "cav"]
-    tail = "Pass freq= to set the carrier, or freq=None for a pulse without a carrier."
-    assert _carrier_warnings(caught) == [
-        f"The pulse on line 'xy' sets no freq, so its carrier is chip.freq('q') = {dressed:.6g} GHz, the dressed "
-        f"0 -> 1 frequency of 'q'. {tail}",
-        f"The pulse on line 'ph' sets no freq, so its carrier is chip.freq('q') = {dressed:.6g} GHz, the dressed "
-        f"0 -> 1 frequency of 'q'. {tail}",
-        f"The pulse on line 'pump2' sets no freq, so its carrier is 2 * chip.freq('cav') = {2 * cavity:.6g} GHz, "
-        f"2 times the dressed 0 -> 1 frequency of 'cav'. {tail}",
-    ]
+    # One warning per line with an automatic carrier.
+    assert _carrier_warnings(caught) == [CARRIER_WARNING] * 3
     # Each new sequence reports its own lines once.
-    with pytest.warns(UserWarning, match="line 'xy' sets no freq"):
+    with pytest.warns(UserWarning, match=re.escape(CARRIER_WARNING)):
         QuantumSequence(chip).schedule("xy", envelope=pulse)
     # The two-photon carrier makes the ±2 bands static in the cavity's dressed frame.
     plan = seq.resolve(frame="auto").resolved_frame.plan
@@ -98,11 +96,8 @@ def test_charge_takes_the_carrier_and_the_warning_of_schedule() -> None:
     carriers = [op.freq for op in seq.scheduled_ops]
     np.testing.assert_allclose(carriers[:2], [dressed, dressed], rtol=0, atol=0)
     assert carriers[2] is None
-    assert _carrier_warnings(caught) == [
-        f"The pulse on line 'xy' sets no freq, so its carrier is chip.freq('q') = {dressed:.6g} GHz, the dressed "
-        "0 -> 1 frequency of 'q'. Pass freq= to set the carrier, or freq=None for a pulse without a carrier."
-    ]
-    assert [item.filename for item in caught if "sets no freq" in str(item.message)] == [__file__]
+    assert _carrier_warnings(caught) == [CARRIER_WARNING]
+    assert [item.filename for item in caught if str(item.message) == CARRIER_WARNING] == [__file__]
     with pytest.raises(ValueError, match="freq must be a carrier frequency in GHz, None, or 'auto'"):
         seq.charge(q, envelope=pulse, freq="dressed")
 

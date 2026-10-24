@@ -223,9 +223,8 @@ the probability that each input leaves the labels, and `fidelity()` counts it.
 Here the fidelity is 0.993. Off-resonant coupling to the third level gives an
 AC Stark shift and a coherent rotation error, while the final leakage is only
 about 2e-6. The amplitude is a first guess for a calibration. `frame="lab"` and `frame="integration"` select the other frames.
-On a chip with collapse channels, the call warns that the solves leave them
-out. `subspace_propagator(q, dissipation=False)` leaves them out without the
-warning, and `propagator.omitted_channels` still names them.
+On a chip with collapse channels, the solves leave them out, and
+`propagator.omitted_channels` names them.
 
 ## Choose what to save
 

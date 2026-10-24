@@ -42,6 +42,7 @@ from quchip.engine.ir import (
 from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import array_namespace, contains_tracer, maybe_concrete_scalar
 from quchip.utils.labeling import resolve_label
+from quchip.utils.stack import user_stacklevel
 
 
 class IncompatibleFrameError(ValueError):
@@ -352,7 +353,6 @@ def _warn_unreliable_references(chip: Any, local_resolution: Any) -> None:
     """
     import warnings
 
-    from quchip.engine.dressing import user_stacklevel
     from quchip.engine.problem import _name_list
 
     if not (unreliable := chip.analysis._unreliable_references(_local_resolution=local_resolution)):
