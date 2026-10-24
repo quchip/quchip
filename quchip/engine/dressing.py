@@ -24,6 +24,7 @@ from jax import lax
 
 from quchip.backend import EigensystemData
 from quchip.utils.jax_utils import concrete_array_module, contains_tracer
+from quchip.utils.stack import user_stacklevel
 
 if TYPE_CHECKING:
     from quchip.engine.ir import EngineResult
@@ -311,34 +312,39 @@ def _labeling_arrays(
     return indices, chosen_overlaps, margins, duplicates
 
 
-STATE_OVERLAP_WARNING = 0.9
+# One rule for the quality of a dressed label assignment, from the squared overlap of the label's bare
+# product with its assigned dressed state and the margin to the runner-up. An overlap above one half makes the
+# assignment unique; below it, or at a vanishing margin, frequencies and frame references raise. Below
+# WEAK_OVERLAP, state queries warn once per chip analysis.
+WEAK_OVERLAP = 0.9
+AMBIGUOUS_OVERLAP = 0.5
+AMBIGUOUS_MARGIN = 1e-8
 
 
-def user_stacklevel() -> int:
-    """Return the ``warnings.warn`` stack level of the first caller outside quchip.
+def ambiguous_assignment(overlap: Any, margin: Any) -> str | None:
+    """Return ``overlap=..., margin=...`` when a dressed label assignment is ambiguous, else ``None``.
 
-    The caller of this function calls ``warnings.warn`` directly.
+    A traced overlap or margin is not checked.
     """
-    import os
-    import sys
-    from types import FrameType
+    from quchip.utils.jax_utils import maybe_concrete_scalar
 
-    package = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    frame: FrameType | None = sys._getframe(2)
-    level = 2
-    while frame is not None and os.path.abspath(frame.f_code.co_filename).startswith(package + os.sep):
-        frame, level = frame.f_back, level + 1
-    return level
+    overlap = maybe_concrete_scalar(overlap)
+    margin = maybe_concrete_scalar(margin)
+    if overlap is None or margin is None or (overlap >= AMBIGUOUS_OVERLAP and margin > AMBIGUOUS_MARGIN):
+        return None
+    return f"overlap={overlap:.6g}, margin={margin:.6g}"
 
 
-def warn_weak_assignment(label: tuple[int, ...], overlap: Any) -> None:
-    """Warn when the dressed state assigned to a label keeps less than 0.9 of its bare product.
+def warn_weak_assignment(analysis: Any, label: tuple[int, ...], overlap: Any) -> None:
+    """Warn, once per chip analysis, when a queried label keeps less than :data:`WEAK_OVERLAP` of its bare product.
 
     Every query that selects the dressed state of a label calls this. A traced
     overlap does not warn. The warning names the first caller outside quchip.
 
     Parameters
     ----------
+    analysis : ChipAnalysis
+        Analysis of the chip, which records that it warned.
     label : tuple of int
         Product label of local energy levels.
     overlap : scalar
@@ -347,11 +353,13 @@ def warn_weak_assignment(label: tuple[int, ...], overlap: Any) -> None:
     from quchip.utils.jax_utils import maybe_concrete_scalar
 
     value = maybe_concrete_scalar(overlap)
-    if value is None or value >= STATE_OVERLAP_WARNING:
+    if value is None or value >= WEAK_OVERLAP or analysis._weak_label_warned:
         return
+    analysis._weak_label_warned = True
     warnings.warn(
-        f"Dressed state label {tuple(label)} has assignment overlap {value:.3f} (< {STATE_OVERLAP_WARNING:.3f}); "
-        "the label names the assigned dressed eigenstate. Use chip.bare_state(...) for the product state.",
+        f"Dressed label {tuple(int(level) for level in label)} keeps less than 90% of its bare product state, so it "
+        "names a hybridized eigenstate. chip.dress().assignment_overlaps lists every label; chip.bare_state() "
+        "gives the product.",
         UserWarning,
         stacklevel=user_stacklevel(),
     )
@@ -593,11 +601,7 @@ class DressedResult:
     @property
     def eigenstates(self) -> Any:
         """Backend eigenstate kets, materialized lazily from the eigensystem."""
-        if self._eigensystem is None:
-            raise RuntimeError(
-                "DressedResult was constructed without an EigensystemData; "
-                "eigenstates are unavailable."
-            )
+        assert self._eigensystem is not None, "DressedResult holds its eigensystem"
         return self._eigensystem.eigenstates
 
 
@@ -638,10 +642,8 @@ def materialize_dressed_result(
         # Fixed text, so the default warning filter shows it once per call
         # site instead of once per sweep point.
         warnings.warn(
-            "Strong hybridization detected during dressed-state assignment; "
-            f"bare labels with overlap below {overlap_threshold} are approximate. "
-            "Inspect DressedResult.hybridized_labels and "
-            "DressedResult.assignment_overlaps for the affected states.",
+            "Some dressed labels keep less than overlap_threshold of their bare product state; "
+            "DressedResult.hybridized_labels lists them.",
             UserWarning,
             stacklevel=warning_stacklevel,
         )
@@ -754,8 +756,7 @@ def labeled_eigensystem(engine_result: "EngineResult", backend: Any) -> tuple[An
     from quchip.engine.assembly import _analysis_matrix_ghz
 
     context = engine_result._dressing_context
-    if context is None:
-        raise RuntimeError("Resolved analysis is missing its captured dressing reference.")
+    assert context is not None, "a resolved analysis captures its dressing reference"
     dims = list(engine_result.dims)
     _require_eigensystem_memory(dims)
     eigensystem = backend.eigensystem_data(

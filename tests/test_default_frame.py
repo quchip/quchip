@@ -22,17 +22,12 @@ from quchip import (
     eliminate,
 )
 from quchip.engine.frames import IncompatibleFrameError
-from quchip.engine.problem import ROTATING_DEFAULT_WARNING
+from quchip.engine.problem import DEFAULT_FRAME_WARNINGS
 
 TIMES = np.linspace(0.0, 40.0, 5)
-AUTO_FALLBACK = re.escape(
-    "The chip sets no frame, and the rotating frame does not fit it, so this solve uses the frame that frame='auto' "
-    "plans, with "
-)
-LAB_FALLBACK = re.escape(
-    "The chip sets no frame, and neither the rotating frame nor the frame that frame='auto' plans fits it, so this "
-    "solve uses the lab frame."
-)
+ROTATING_DEFAULT_WARNING = DEFAULT_FRAME_WARNINGS["rotating"]
+AUTO_FALLBACK = re.escape(DEFAULT_FRAME_WARNINGS["auto"])
+LAB_FALLBACK = re.escape(DEFAULT_FRAME_WARNINGS["lab"])
 UNRELIABLE = re.escape(
     "The chip sets no frame, and the rotating frame of a solve needs the dressed 0 -> 1 frequency of each device, but "
     "the dressed label assignment is unreliable for 'a' and 'b' ('a': overlap="
@@ -89,14 +84,13 @@ def _resonant_pair(reference_freq=None):
 
 @pytest.mark.unit
 def test_a_chip_without_a_frame_keeps_lab_frame_statics() -> None:
-    """Statics resolve in the lab frame, and frame_info() reports the rotating frame of later solves and warns so."""
+    """Statics resolve in the lab frame, and frame_info() reports the rotating frame of later solves silently."""
     chip, _ = _pair()
     assert chip.frame is None
     assert chip.resolve().resolved_frame.mode == "lab"
-    with pytest.warns(UserWarning) as record:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
         assert chip.frame_info() == pytest.approx({"q": chip.freq("q"), "r": chip.freq("r")})
-    assert [str(warning.message) for warning in record] == [ROTATING_DEFAULT_WARNING.replace("this solve", "a solve")]
-    assert record[0].filename == __file__
     assert "Frame    : None (lab for statics, rotating for solves)" in chip.describe()
     chip.set_frame("lab")
     with warnings.catch_warnings():
@@ -145,14 +139,9 @@ def test_a_solve_without_a_frame_uses_the_auto_frame_when_an_operator_cannot_rot
         problem = sequence.build_problem(TIMES)
     frequencies = problem.resolved_frame.frequencies
     assert problem.resolved_frame.mode == "auto" and frequencies[devices[0]] == frequencies[devices[1]]
-    assert len(record) == 1 and source in str(record[0].message)
-    # frame_info() reports the same frame and reason for a solve without pulses.
-    with pytest.warns(UserWarning, match=AUTO_FALLBACK.replace("this", "a")) as info:
-        assert chip.frame_info() == pytest.approx(dict(frequencies))
-    assert len(info) == 1 and source in str(info[0].message)
-    assert f"plans, with {devices[0]!r} and {devices[1]!r} at {float(frequencies[devices[0]]):.6g} GHz. " in str(
-        record[0].message
-    )
+    assert len(record) == 1
+    # frame_info() reports the same frame for a solve without pulses.
+    assert chip.frame_info() == pytest.approx(dict(frequencies))
     with pytest.raises(IncompatibleFrameError, match=re.escape(source)):
         build(frame="rotating")[1].build_problem(TIMES)
 
@@ -164,10 +153,8 @@ def test_a_solve_without_a_frame_uses_the_lab_frame_when_no_planned_frame_fits()
     with pytest.warns(UserWarning, match=LAB_FALLBACK) as record:
         problem = sequence.build_problem(TIMES)
     assert problem.resolved_frame.mode == "lab"
-    assert len(record) == 1 and "'collective_decay' has operator bands with different phases" in str(record[0].message)
-    with pytest.warns(UserWarning, match=LAB_FALLBACK.replace("this", "a")) as info:
-        assert chip.frame_info() == {"q": 0.0, "r": 0.0}
-    assert "'collective_decay' has operator bands with different phases" in str(info[0].message)
+    assert len(record) == 1
+    assert chip.frame_info() == {"q": 0.0, "r": 0.0}
     with pytest.raises(IncompatibleFrameError, match="has operator bands with different phases"):
         sequence.build_problem(TIMES, frame="auto")
 
@@ -204,9 +191,7 @@ def test_subspace_propagator_keeps_the_rotating_frame_on_a_chip_with_a_collectiv
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             propagators.append(sequence.subspace_propagator("q", duration=20.0))
-        messages = [str(warning.message) for warning in caught]
-        assert len(messages) == 2 and messages[0] == ROTATING_DEFAULT_WARNING
-        assert messages[1].startswith("subspace_propagator() solves without the collapse channels")
+        assert [str(warning.message) for warning in caught] == [ROTATING_DEFAULT_WARNING]
     with_bath, without_bath = propagators
     assert [result.frame.mode for result in with_bath.batch] == ["rotating", "rotating"]
     assert "hidden.loss.collective_decay" in with_bath.omitted_channels
@@ -239,8 +224,9 @@ def test_an_explicit_rotating_frame_warns_when_a_reference_has_no_reliable_assig
         problem = QuantumSequence(chip).build_problem(TIMES)
     messages = [str(warning.message) for warning in record]
     assert len(messages) == 1 and record[0].filename == __file__
-    assert "the dressed label assignment is unreliable for 'a' and 'b' ('a': overlap=" in messages[0]
-    assert "frame='auto' gives exchange-coupled devices one frequency." in messages[0]
+    assert "no well-defined frequency for 'a' and 'b': their dressed 0 -> 1 label assignment is ambiguous ('a': " \
+        "overlap=" in messages[0]
+    assert "Use frame='auto'" in messages[0]
     assert problem.resolved_frame.mode == "rotating"
     for reliable in (_resonant_pair(reference_freq=5.0), _pair(frame="rotating")[0]):
         reliable.set_frame("rotating")
@@ -257,7 +243,7 @@ def test_a_batch_without_a_frame_checks_every_point() -> None:
     with pytest.warns(UserWarning, match=LAB_FALLBACK) as record:
         batch = sequence.build_batch(sequence.vary("bath.loss.rate", [0.0, 1e-3]), tlist=TIMES)
     assert [problem.resolved_frame.mode for problem in batch.problems] == ["lab", "lab"]
-    assert len(record) == 1 and "'loss'/'collective_decay' has operator bands" in str(record[0].message)
+    assert len(record) == 1
     sequence = QuantumSequence(_resonant_pair())
     with pytest.raises(ValueError, match=UNRELIABLE):
         sequence.build_batch(sequence.vary("b.freq", [5.2, 5.0]), tlist=TIMES)
@@ -285,7 +271,7 @@ def test_a_carrier_axis_in_the_planned_frame_plans_each_point() -> None:
     """Each point of a carrier sweep gets its own plan, as on a chip with frame="auto"."""
     carriers = [6.9, 7.0, 7.15]
     _, sequence = _hanger()
-    with pytest.warns(UserWarning, match=AUTO_FALLBACK + "frequencies that differ between the batch points") as record:
+    with pytest.warns(UserWarning, match=AUTO_FALLBACK) as record:
         batch = sequence.build_batch(sequence.vary("pulse.0.freq", carriers), tlist=TIMES)
     assert len(record) == 1
     _, planned = _hanger("auto")
@@ -311,8 +297,7 @@ def _strongly_driven_pair():
 def test_pulses_can_move_a_solve_from_the_planned_frame_to_the_lab_frame() -> None:
     """frame_info() reports the solve without pulses, and a batch checks its own points, not the sequence as written."""
     chip, sequence = _strongly_driven_pair()
-    with pytest.warns(UserWarning, match=AUTO_FALLBACK.replace("this", "a")):
-        assert chip.frame_info() == pytest.approx({"q": 4.99875078, "r": 4.99875078})
+    assert chip.frame_info() == pytest.approx({"q": 4.99875078, "r": 4.99875078})
     with pytest.warns(UserWarning, match=LAB_FALLBACK):
         assert sequence.build_problem(TIMES).resolved_frame.mode == "lab"
     amplitudes = [sequence.vary(f"pulse.{index}.amplitude", [1e-4, 2e-4]) for index in (0, 1)]

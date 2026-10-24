@@ -953,8 +953,8 @@ class DynamiqsBackend(Backend):
         prepared : PreparedStationary or None, default None
             Matching prepared generator. ``None`` builds it.
         guess : QArray or None, default None
-            Accepted for the backend protocol. The solve and its uniqueness
-            check always run, so the state stays differentiable.
+            Accepted for the backend protocol. The solve always runs, so the
+            state stays differentiable.
 
         Returns
         -------
@@ -967,15 +967,25 @@ class DynamiqsBackend(Backend):
 
         Notes
         -----
-        ``problem.options`` accepts only ``method="direct"`` and
-        ``rank_tolerance`` (singular-value cutoff, default automatic). A nonunique
-        stationary kernel gives a NaN state, so inspect the returned nullity.
+        ``problem.options`` accepts ``method="direct"``, ``rank_tolerance``
+        (singular-value cutoff, default automatic) and
+        ``diagnostic_max_dimension`` (default 16), as the QuTiP backend does. Up
+        to that Hilbert dimension, a singular value decomposition of the
+        Liouvillian counts its nullity, and a nonunique stationary kernel gives
+        a NaN state. Above it, the decomposition, which costs about ten times
+        the solve, does not run and the nullity is ``None``: the solve gives
+        no uniqueness guarantee, a singular system can return NaN or Inf, and
+        a nearly singular one an unreliable state. ``rank_tolerance`` applies
+        only when ``diagnostic_max_dimension`` is at least the dimension.
         """
         options = dict(problem.options)
         method = options.pop("method", "direct")
         if method != "direct":
             raise ValueError("Dynamiqs steady states support only method='direct'.")
         rank_tolerance = options.pop("rank_tolerance", None)
+        diagnostic_max_dimension = int(options.pop("diagnostic_max_dimension", 16))
+        if diagnostic_max_dimension < 0:
+            raise ValueError("diagnostic_max_dimension must be non-negative.")
         if options:
             raise ValueError(
                 "Unknown Dynamiqs steady-state options: " + ", ".join(sorted(options))
@@ -991,20 +1001,14 @@ class DynamiqsBackend(Backend):
         target = target.at[-1].set(1.0)
         state_vector = jnp.linalg.solve(constrained, target)
 
-        singular_values = jnp.linalg.svd(liouvillian, compute_uv=False)
-        if rank_tolerance is None:
-            rank_tolerance = (
-                max(liouvillian.shape)
-                * jnp.finfo(jnp.float64).eps
-                * singular_values[0]
-            )
-        nullity = jnp.sum(singular_values <= rank_tolerance)
         state_array = jnp.reshape(state_vector, (dimension, dimension)).T
-        state_array = jnp.where(
-            nullity == 1,
-            state_array,
-            jnp.full_like(state_array, jnp.nan + 0.0j),
-        )
+        nullity = None
+        if dimension <= diagnostic_max_dimension:
+            singular_values = jnp.linalg.svd(liouvillian, compute_uv=False)
+            if rank_tolerance is None:
+                rank_tolerance = max(liouvillian.shape) * jnp.finfo(jnp.float64).eps * singular_values[0]
+            nullity = jnp.sum(singular_values <= rank_tolerance)
+            state_array = jnp.where(nullity == 1, state_array, jnp.full_like(state_array, jnp.nan + 0.0j))
         state = dq.asqarray(state_array, dims=tuple(problem.engine_result.dims))
         residual = jnp.linalg.norm(liouvillian @ state_vector)
         expectations = None
@@ -1014,7 +1018,8 @@ class DynamiqsBackend(Backend):
         return SteadyStateSolverResult(
             state=state,
             expect=expectations,
-            stats={"method": method, "uniqueness_enforced": True},
+            stats={"method": method, "uniqueness_checked": nullity is not None,
+                   "diagnostic_max_dimension": diagnostic_max_dimension},
             residual=residual,
             nullity=nullity,
             _condition_number=DeferredValue(partial(self._stationary_condition_number, problem.engine_result)),

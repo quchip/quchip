@@ -9,7 +9,8 @@ import numpy as np
 
 from quchip.engine.field_statistics import propagate_noise, proper_spectrum, quadrature_spectrum
 from quchip.engine.routes import (
-    WORKFLOWS, SolveRoute, array_name, automatic_cutoff, largest_change, plan_sectors, sector_diagnostics, warn_cutoff,
+    WORKFLOWS, SolveRoute, array_name, automatic_cutoff, largest_change, plan_sectors,
+    sector_diagnostics, warn_cutoff,
 )
 from quchip.utils.memory import fits_memory
 from quchip.cutoff import active_cutoff
@@ -27,7 +28,7 @@ from quchip.utils.jax_utils import contains_tracer
 from quchip.utils.labeling import resolve_label
 
 
-# The noise comparison runs when N <= K + 1 has at most this many states.
+# The noise comparison runs when the larger cutoff of a pair has at most this many states.
 _NOISE_CHECK_STATES = 1024
 _HARMONIC = ("The chip is passive and harmonic, so its mode equations give the response and the noise without a "
              "Fock truncation.")
@@ -330,10 +331,23 @@ def _sector_acquire(entries: list[Any], *, labels: tuple[str, ...], offsets: Any
     else:
         unique = {id(model): model for model in models}.values()
         choice = "automatic"
+
+        def fits(total: int) -> bool:
+            return all(fits_memory(model.required_memory(total)) for model in unique)
+
+        start = None
+        if noise:
+            # The means settle no later than the noise spectra, so the full ladder starts at the lower
+            # cutoff of the first pair whose means agree.
+            kept, _, means = automatic_cutoff(
+                first.max_total, lambda cutoff, lower: _sector_pass(
+                    entries, cutoff, offsets=offsets, noise=False, guesses=lower, progress=progress, method=method),
+                lambda lower, upper: _sector_change(lower, upper, False), states=first.size, fits=fits)
+            start = kept - 1 if means is not None and means.status == "passed" else kept
         cutoff, points, check = automatic_cutoff(
             first.max_total, solve, lambda lower, upper: _sector_change(lower, upper, upper[0].excess is not None),
-            complete=complete, states=first.size,
-            fits=lambda total: all(fits_memory(model.required_memory(total)) for model in unique))
+            complete=complete, partial=lambda points: noise and points[0].excess is None, states=first.size,
+            fits=fits, start=start)
         if check is not None:
             quantities = "means" + (", mode amplitudes and photon numbers" if first.modes else "")
             note = ""
@@ -341,10 +355,8 @@ def _sector_acquire(entries: list[Any], *, labels: tuple[str, ...], offsets: Any
                 if check.states <= _NOISE_CHECK_STATES:
                     quantities = quantities.replace(" and ", ", ") + " and noise spectra"
                 else:
-                    note = (f" The noise spectra were not compared, because N <= {check.compared_with} has "
-                            f"{check.states:,} states (the comparison limit is {_NOISE_CHECK_STATES:,}).")
-            warn_cutoff(method, cutoff, first.size(cutoff), check, quantities, note=note,
-                        stacklevel=5 if noise else 4)
+                    note = f" (noise spectra not compared above {_NOISE_CHECK_STATES:,} states)"
+            warn_cutoff(method, cutoff, check, quantities, note=note)
     acquired = []
     for entry, point in zip(entries, points, strict=True):
         _, _, model, _, _, frequency, reason = entry

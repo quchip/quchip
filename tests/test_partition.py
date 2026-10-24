@@ -174,8 +174,8 @@ def test_partitioned_result_local_access():
     assert "2 components" in repr(combined)
 
 
-def test_partitioned_result_cross_product_and_states_warn():
-    """A correlator's expect() is the product of its two factors; .states warns about the joint state."""
+def test_partitioned_result_cross_product_and_states():
+    """A correlator's expect() is the product of its two factors, and .states builds the joint states."""
     from quchip.chip.partition import CrossEop, LocalEop
     from quchip.results.partitioned import PartitionedSimulationResult
 
@@ -184,8 +184,7 @@ def test_partitioned_result_cross_product_and_states_warn():
     combined = PartitionedSimulationResult(results, part, plan)
     expected = np.asarray(results[0].expect("q0")) * np.asarray(results[1].expect("q2"))
     assert np.allclose(combined.expect(("q0", "q2")), expected)
-    with pytest.warns(UserWarning, match="joint"):
-        _ = combined.states
+    assert len(combined.states) == len(combined.times)
 
 
 def _driven_disconnected_chip():
@@ -275,8 +274,7 @@ def test_final_state_mixed_ket_and_dm_components_promotes_to_joint_dm():
     assert backend.is_ket(result.components[1].final_state)
     assert not backend.is_ket(result.components[0].final_state)
 
-    with pytest.warns(UserWarning, match="joint"):
-        final = result.final_state
+    final = result.final_state
 
     assert not backend.is_ket(final)
     arr = np.asarray(backend.to_array(final), dtype=complex)
@@ -349,8 +347,7 @@ def test_partitioned_final_state_matches_joint_in_interleaved_device_order():
 
     backend = joint._backend
     joint_arr = np.asarray(backend.to_array(joint.final_state))
-    with pytest.warns(UserWarning, match="joint"):
-        split_final = split.final_state
+    split_final = split.final_state
     split_arr = np.asarray(backend.to_array(split_final))
     # Both solves integrate the identical physics (the chip factorizes
     # exactly along its independence graph), but as two separate ODE

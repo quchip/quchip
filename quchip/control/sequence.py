@@ -90,6 +90,7 @@ from quchip.utils.jax_utils import (
 )
 from quchip.utils.labeling import resolve_label
 from quchip.utils.values import copy_value
+from quchip.utils.stack import user_stacklevel
 
 if TYPE_CHECKING:
     from quchip.chip.transformations.active_patch import ActivePatchResult
@@ -396,7 +397,7 @@ class QuantumSequence:
 
         A drive class that sets ``carrier_harmonic = k`` gets
         ``k * chip.freq(device)``. The first such pulse on each line of this
-        sequence warns with the chosen value.
+        sequence warns.
         """
         harmonic = drive.carrier_harmonic
         if harmonic is None:
@@ -411,21 +412,12 @@ class QuantumSequence:
         carrier = dressed if harmonic == 1 else harmonic * dressed
         if drive.label not in self._carrier_lines:
             self._carrier_lines.add(drive.label)
-            if harmonic == 1:
-                expression, meaning = f"chip.freq({device_label!r})", "the dressed 0 -> 1 frequency"
-            else:
-                expression = f"{harmonic} * chip.freq({device_label!r})"
-                meaning = f"{harmonic} times the dressed 0 -> 1 frequency"
-            value = maybe_concrete_scalar(carrier)
-            if value is not None:
-                expression += f" = {value:.6g} GHz"
-            # Hops: _automatic_carrier -> _schedule_on_drive -> schedule() or charge() -> caller.
+            # Fixed text, so the default filter shows it once per call site, not once per chip in a loop.
             warnings.warn(
-                f"The pulse on line {drive.label!r} sets no freq, so its carrier is {expression}, "
-                f"{meaning} of {device_label!r}. Pass freq= to set the carrier, or freq=None for a pulse "
-                "without a carrier.",
+                "A pulse without freq gets a carrier at its device's dressed 0 -> 1 frequency, chip.freq(device) "
+                "(twice it on a two-photon line). Pass freq= to set it, or freq=None for no carrier.",
                 UserWarning,
-                stacklevel=4,
+                stacklevel=user_stacklevel(),
             )
         return carrier
 
@@ -1299,13 +1291,13 @@ class QuantumSequence:
                 _default_frame_notes=default_frame,
             )
             if default_frame:
-                (mode, reason), = default_frame
+                (mode, _), = default_frame
                 # Whether the rotating frame fits does not depend on pulses, but the plan of "auto" and its fit do.
                 per_point = mode != "rotating" and self._auto_frames_differ(
                     expanded, actual_tlist, approximation, planned=True
                 )
                 if not per_point:
-                    warn_default_frame(mode, reason, [context.resolved_frame.frequencies])
+                    warn_default_frame(mode)
         if per_point:
             # Every point proves its exact space from the union of all initial states.
             all_states = [overrides.get((None, "initial_state"), initial_state) for _, overrides in expanded]
@@ -1653,7 +1645,7 @@ class QuantumSequence:
         options: dict | None = None,
         backend: Any | None = None,
         approximation: Approximation | None = None,
-        dissipation: bool | None = None,
+        dissipation: bool = False,
         progress: bool = False,
         max_workers: int | None = None,
     ) -> "PropagatorResult":
@@ -1681,10 +1673,10 @@ class QuantumSequence:
             Frame of the returned matrix.
         tlist, duration, solver, options, backend, approximation
             As for :meth:`simulate`. The propagator runs from ``tlist[0]`` to ``tlist[-1]``.
-        dissipation : bool or None, default=None
-            ``None`` leaves out the chip's collapse channels and warns when it
-            has any. ``False`` leaves them out without a warning. ``True``
-            raises, because the matrix cannot include them. The result's
+        dissipation : bool, default=False
+            ``False`` leaves out the chip's collapse channels, so the matrix is
+            the propagator of the Hamiltonian alone. ``True`` raises, because
+            the matrix cannot include them. The result's
             :attr:`~quchip.results.propagator.PropagatorResult.omitted_channels`
             names the channels that the solve left out.
         progress : bool, default=False
@@ -1704,16 +1696,12 @@ class QuantumSequence:
             or level is missing or repeated.
         """
         import itertools
-        import warnings
 
         from quchip.results.propagator import FRAMES, subspace_propagator
 
         if dissipation:
-            raise ValueError(
-                "subspace_propagator() returns the propagator of the Hamiltonian alone, so it cannot include the "
-                "collapse channels. Use dissipation=False to leave them out without a warning, or simulate() for "
-                "the evolution with them."
-            )
+            raise ValueError("subspace_propagator() gives the propagator of the Hamiltonian alone, so it cannot "
+                             "include collapse channels. Use simulate() for the evolution with them.")
         if frame not in FRAMES:
             raise ValueError(f"frame must be one of {FRAMES}; got {frame!r}.")
         selected = (devices,) if isinstance(devices, (str, BaseDevice)) else tuple(devices)
@@ -1735,14 +1723,6 @@ class QuantumSequence:
                 dissipation=False,
             )
             omitted = tuple(channel.key for channel in problem_batch.problems[0].engine_result.slh.channels)
-            if omitted and dissipation is None:
-                warnings.warn(
-                    f"subspace_propagator() solves without the collapse channels {list(omitted)}, so the "
-                    "matrix is the propagator of the Hamiltonian alone. Pass dissipation=False to leave them "
-                    "out without this warning.",
-                    UserWarning,
-                    stacklevel=2,
-                )
             batch = self._chip.solve_many(problem_batch, progress=progress, max_workers=max_workers)
         return subspace_propagator(batch, names, labels, frame, omitted)
 

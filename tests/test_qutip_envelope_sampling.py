@@ -89,7 +89,7 @@ def test_a_window_over_the_sample_cap_uses_the_exact_envelope_and_warns(monkeypa
         population = _excited_population(sequence, q, 27.0, {"rtol": 1e-8, "atol": 1e-10})
     messages = [str(item.message) for item in record]
     assert len(messages) == 1 and record[0].filename == __file__
-    assert "linear samples for the pulse window from 5 to 17 ns, more than 1000" in messages[0]
+    assert "evaluates a pulse window as a Python callable" in messages[0] and "exceed 1,000" in messages[0]
     assert abs(population - reference) < 1e-7
 
 
@@ -104,5 +104,5 @@ def test_a_batch_warns_once_for_its_windows_over_the_cap(monkeypatch):
     with pytest.warns(UserWarning) as record:
         sequence.simulate_batch(pulse.vary("amplitude", [0.01, 0.02]), tlist=np.array([0.0, 12.0]),
                                 options={"rtol": 1e-8}, max_workers=1, progress=False)
-    messages = [str(item.message) for item in record if "linear samples" in str(item.message)]
-    assert len(messages) == 1 and "more windows, uses the exact envelope" in messages[0]
+    messages = [str(item.message) for item in record if "as a Python callable" in str(item.message)]
+    assert len(messages) == 1

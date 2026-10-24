@@ -330,11 +330,7 @@ class EigensystemData:
         # later trace.
         if self._states_cache is not None:
             return self._states_cache
-        if self._states_builder is None:
-            raise RuntimeError(
-                "EigensystemData has neither a primed states cache nor a "
-                "states builder; cannot materialize eigenstates."
-            )
+        assert self._states_builder is not None, "EigensystemData holds a states cache or a builder"
         states = self._states_builder()
         from quchip.utils.jax_utils import contains_tracer
 

@@ -45,7 +45,7 @@ from quchip.engine.dressing import (
     gauge_phases,
     labeled_eigensystem,
     materialize_dressed_result,
-    user_stacklevel,
+    ambiguous_assignment,
     warn_weak_assignment,
 )
 from quchip.chip.states import normalize_device_state_mapping
@@ -53,6 +53,7 @@ from quchip.devices.base import BaseDevice, _validate_level_pair
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
 from quchip.utils.values import TracedKey, scoped_entry, scoped_hit
 from quchip.utils.labeling import LabelKeyedDict, bare_label_from_mapping, resolve_label, top_components
+from quchip.utils.stack import user_stacklevel
 
 if TYPE_CHECKING:
     from quchip.approximations import Approximation
@@ -178,24 +179,11 @@ def _kerr_coefficient(
     return excited((index_a, 1), (index_b, 1)) - excited((index_a, 1)) - excited((index_b, 1)) + e0
 
 
-def _unreliable_assignment(overlap: Any, margin: Any) -> str | None:
-    """Return ``overlap=..., margin=...`` when a dressed label assignment is unreliable, else ``None``.
-
-    An overlap below one half or a margin of at most 1e-8 makes the assignment
-    unreliable. A traced overlap or margin is not checked.
-    """
-    overlap = maybe_concrete_scalar(overlap)
-    margin = maybe_concrete_scalar(margin)
-    if overlap is None or margin is None or (overlap >= 0.5 and margin > 1e-8):
-        return None
-    return f"overlap={overlap:.6g}, margin={margin:.6g}"
-
-
 def _reported(entry: tuple[Any, list[str]], advise: bool) -> Any:
     """Return a cached static model. With ``advise``, warn once with each advisory it still holds."""
     model, advisories = entry
     while advise and advisories:
-        warnings.warn(advisories.pop(0), UserWarning, stacklevel=3)
+        warnings.warn(advisories.pop(0), UserWarning, stacklevel=user_stacklevel())
     return model
 
 
@@ -222,6 +210,7 @@ class ChipAnalysis:
 
     def __init__(self, chip: "Chip") -> None:
         self._chip = chip
+        self._weak_label_warned = False
         self._dressed_result: DressedResult | None = None
         self._dressed_signature: tuple[Any, ...] | None = None
         # Cache entries are (key, trace scope, value); see quchip.utils.values.scoped_entry.
@@ -319,8 +308,7 @@ class ChipAnalysis:
 
     def _semantic_amplitudes(self, eigenvectors: Any, engine_result: EngineResult) -> Any:
         context = engine_result._dressing_context
-        if context is None:
-            raise RuntimeError("Resolved analysis is missing its captured dressing reference.")
+        assert context is not None, "a resolved analysis captures its dressing reference"
         return reference_amplitudes(context.reference, eigenvectors)
 
     def _canonical_bare_labels(self) -> tuple[tuple[int, ...], ...]:
@@ -597,16 +585,14 @@ class ChipAnalysis:
                 reach = int(label[index]) + sum(1 for total in spent if total <= limit)
                 shown = {names[other]: int(level) for other, level in enumerate(label) if level}
                 causes.append(
-                    f"Virtual paths through states that need level {dims[index]} of device {names[index]!r} can "
-                    f"contribute to the dressed energy of label {shown} at estimated "
-                    f"{_ORDERS.get(order, f'{order}th')} order in the couplings, but {names[index]!r} keeps "
+                    f"Virtual paths through level {dims[index]} of {names[index]!r} can shift the dressed energy "
+                    f"of {shown} at about {_ORDERS.get(order, f'{order}th')} order, but {names[index]!r} keeps "
                     f"{dims[index]} levels."
                 )
-                fixes.append(f"Set levels={reach + 1} or more on {names[index]!r} to remove this warning.")
+                fixes.append(f"Set levels={reach + 1} or more on {names[index]!r}.")
             if not causes:
                 return None
-            return (f"{' '.join(causes)} The dressed value belongs to this truncated model "
-                    f"and can differ from the untruncated one. {' '.join(fixes)}")
+            return f"{' '.join(causes)} {' '.join(fixes)}"
 
         return check
 
@@ -752,7 +738,7 @@ class ChipAnalysis:
         xp = backend.array_module
         position = self._bare_label_index(label)
         index = labeling.indices[position]
-        warn_weak_assignment(label, labeling.overlaps[position])
+        warn_weak_assignment(self, label, labeling.overlaps[position])
         column = xp.asarray(vectors)[:, index]
         if static._contains_tracer():
             # JAX's eigh derivative can be NaN at an unrelated exact tie.
@@ -957,7 +943,7 @@ class ChipAnalysis:
             raise KeyError(
                 f"State label {label_t} not found in state map. Available (first 10): {available}"
             ) from None
-        warn_weak_assignment(label_t, dressed.assignment_overlaps[label_t])
+        warn_weak_assignment(self, label_t, dressed.assignment_overlaps[label_t])
         return dressed.eigenstates[eigen_idx]
 
     def _sector_state(self, model: SectorModel, label: tuple[int, ...]) -> Any:
@@ -968,7 +954,7 @@ class ChipAnalysis:
         """
         system = model.eigensystem(sum(label))
         row = system.space.row(label)
-        warn_weak_assignment(label, system.labeling.overlaps[row])
+        warn_weak_assignment(self, label, system.labeling.overlaps[row])
         vectors = system.eigenvectors
         xp = jnp if contains_tracer((vectors, system.labeling.indices)) else np
         column = model.embed(system.space.totals, xp.asarray(vectors)[:, system.labeling.indices[row]])
@@ -999,11 +985,11 @@ class ChipAnalysis:
         lookup = self._labeled_lookup(_local_resolution=_local_resolution, _advise=False)
         ground = (0,) * len(devices)
         notes = []
-        if (unreliable := _unreliable_assignment(*lookup(ground)[1:])) is not None:
+        if (unreliable := ambiguous_assignment(*lookup(ground)[1:])) is not None:
             notes.append(("the ground state", unreliable))
         for index, device in enumerate(devices):
             excited = ground[:index] + (1,) + ground[index + 1:]
-            if device.reference_freq is None and (unreliable := _unreliable_assignment(*lookup(excited)[1:])):
+            if device.reference_freq is None and (unreliable := ambiguous_assignment(*lookup(excited)[1:])):
                 notes.append((repr(device.label), unreliable))
         return notes
 
@@ -1568,7 +1554,7 @@ class ChipAnalysis:
         energies = []
         for label in (lower_tuple, upper_tuple):
             energy, overlap, margin = lookup(label)
-            unreliable = _unreliable_assignment(overlap, margin)
+            unreliable = ambiguous_assignment(overlap, margin)
             if unreliable is not None:
                 raise ValueError(
                     f"Dressed transition assignment is unreliable for bare label {label}: {unreliable}. "
@@ -1605,12 +1591,11 @@ class ChipAnalysis:
         concrete frequencies as ``-Σ_i ω_ref,i n̂_i``. The method thus shows
         what the solver will solve without running it.
 
-        A chip without a frame reports the frame of a solve without pulses,
-        and warns with the choice, as that solve does. That frame is the
-        rotating frame. When a collapse or port operator of the chip does not
-        fit it, it is the frame that ``"auto"`` plans, or the lab frame when
-        that frame does not fit either, and the warning gives the reason. The
-        plan of a sequence also weighs its pulse tones, so a solve with pulses
+        A chip without a frame reports, without a warning, the frame of a
+        solve without pulses. That frame is the rotating frame. When a
+        collapse or port operator of the chip does not fit it, it is the frame
+        that ``"auto"`` plans, or the lab frame when that frame does not fit
+        either. The plan of a sequence also weighs its pulse tones, so a solve with pulses
         can plan other frequencies, or use the lab frame when its plan does not
         fit. When a dressed ``0 -> 1`` reference has an unreliable label
         assignment, the method raises with the solve's error.
@@ -1625,17 +1610,14 @@ class ChipAnalysis:
         # (`quchip.engine.frames.resolve_frame`). The assembler performs the
         # subtraction in `assembly._build_static_h0`.
         from quchip.engine.frames import resolve_frame
-        from quchip.engine.problem import prepare_solve_problem_context, warn_default_frame
+        from quchip.engine.problem import prepare_solve_problem_context
 
         if self._chip.frame is not None:
             return dict(resolve_frame(self._chip, self._chip.frame).frequencies)
         # Collapse and port operators show whether a frame fits them only during assembly.
         notes: list[Any] = []
         context = prepare_solve_problem_context(self._chip, np.array([0.0, 1.0]), _default_frame_notes=notes)
-        frequencies = dict(context.resolved_frame.frequencies)
-        (mode, reason), = notes
-        warn_default_frame(mode, reason, [frequencies], subject="a solve")
-        return frequencies
+        return dict(context.resolved_frame.frequencies)
 
     def state(
         self,

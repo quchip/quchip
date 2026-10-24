@@ -437,8 +437,8 @@ class VNA:
         ``chip.with_space(ExcitationCutoff(max_total=K))``, ``K`` is the chip's.
         Without a cutoff, a chip with more than 64 product states starts at
         ``K = 2``, compares the result with ``K + 1`` at every grid point, raises
-        ``K`` until the change is below ``1e-6`` relative, and warns which ``K``
-        it kept. This is a convergence check, not an error bound. ``options``
+        ``K`` until the change is below ``1e-6`` relative, keeps ``K + 1``, and
+        warns which cutoff it kept. This is a convergence check, not an error bound. ``options``
         other than ``None`` solve the backend's stationary Liouvillian. Each
         entry of ``diagnostics`` records the route and its reason under
         ``"route"``.
@@ -526,7 +526,8 @@ class VNA:
         An excitation-conserving chip solves on the product states with
         ``N <= K``, as :meth:`finite_power` describes. Without a cutoff, the
         automatic check also compares the noise spectra on the requested offset
-        grid when the ``K + 1`` space has at most 1024 states.
+        grid when the ``K + 1`` space has at most 1024 states, and otherwise
+        keeps ``K``.
 
         Parameters
         ----------
@@ -1171,8 +1172,7 @@ class _SectorOutput:
     frame: Any
 
 
-def _sector_solve(sector: _SectorOutput, measure: Any, change: Any, quantities: str,
-                  stacklevel: int) -> tuple[int, Any, str, Any]:
+def _sector_solve(sector: _SectorOutput, measure: Any, change: Any, quantities: str) -> tuple[int, Any, str, Any]:
     """Solve on the chip's cutoff, or on an automatic one, and measure the stationary state.
 
     Returns the kept cutoff, the solve with its measured values, the choice
@@ -1193,7 +1193,7 @@ def _sector_solve(sector: _SectorOutput, measure: Any, change: Any, quantities: 
         model.max_total, solve, lambda lower, upper: change(lower[1], upper[1]), states=model.size,
         fits=lambda total: fits_memory(model.required_memory(total)))
     if check is not None:
-        warn_cutoff(sector.method, cutoff, model.size(cutoff), check, quantities, stacklevel=stacklevel)
+        warn_cutoff(sector.method, cutoff, check, quantities)
     return cutoff, results, "automatic", check
 
 
@@ -1217,9 +1217,8 @@ def _sector_spectrum(sector: _SectorOutput, output_port: str, offsets: Any) -> O
         coherent = abs(complex(field.multiply(state.T).sum())) ** 2
         return source(components["device.correlations"]), added, intensity, coherent, info
 
-    # The warning names the caller of VNA.output_spectrum().
     cutoff, (solved, (signal, added, intensity, coherent, info)), choice, check = _sector_solve(
-        sector, measure, _spectrum_change, "spectra and photon fluxes", stacklevel=4)
+        sector, measure, _spectrum_change, "spectra and photon fluxes")
     diagnostics = {**sector_diagnostics(model, cutoff, solved, sector.reason, choice, check), **info}
     xp = model.chip.backend.array_module
     return OutputSpectrumResult(
@@ -1266,9 +1265,8 @@ def _sector_correlation(sector: _SectorOutput, order: int, output_port: str, inp
             raise ValueError("Normalized output correlations require nonzero output intensity.")
         return values
 
-    # The warning names the caller of VNA.g1() or VNA.g2().
     cutoff, (solved, (raw, input_intensity, output_intensity)), choice, check = _sector_solve(
-        sector, measure, _correlation_change, "correlations and intensities", stacklevel=5)
+        sector, measure, _correlation_change, "correlations and intensities")
     raw = np.conj(raw)
     denominator = np.sqrt(input_intensity * output_intensity) if order == 1 else input_intensity * output_intensity
     diagnostics = sector_diagnostics(model, cutoff, solved, sector.reason, choice, check)

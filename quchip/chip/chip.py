@@ -157,6 +157,13 @@ def _frame_cache_value(frame: Any, *, traced: bool = False) -> Any:
     return _concrete_cache_value(frame, traced=traced)
 
 
+def _require_unique_drive_labels(lines: Any) -> None:
+    """Raise when two drive lines share a label."""
+    duplicates = [label for label, count in Counter(line.label for line in lines).items() if count > 1]
+    if duplicates:
+        raise ValueError(f"Drive labels must be unique; {duplicates} repeat.")
+
+
 class Chip:
     """Composite quantum system: devices + couplings + (optional) control.
 
@@ -303,14 +310,7 @@ class Chip:
         self._approximation = require_approximation(approximation)
         self._space = require_space(space)
         if control_equipment is not None:
-            drive_duplicates = [
-                lbl for lbl, n in Counter(d.label for d in control_equipment.lines).items() if n > 1
-            ]
-            if drive_duplicates:
-                raise ValueError(
-                    f"Duplicate drive labels in equipment: {drive_duplicates}. "
-                    "Each drive must have a unique label."
-                )
+            _require_unique_drive_labels(control_equipment.lines)
         self._control_equipment = control_equipment
         self._analysis = ChipAnalysis(self)
 
@@ -1050,7 +1050,7 @@ class Chip:
                 raise ValueError(f"Unknown device {label!r}; this chip has {sorted(self._device_map)}")
             if label in resolved:
                 raise ValueError(f"Device {label!r} appears more than once in the noise config")
-            resolved[label] = self._device_map[label]._normalize_parameter_names(params)
+            resolved[label] = dict(params)
 
         # Validate the complete target state before writing anything.
         new_baths = list(baths) if baths else []
@@ -1222,9 +1222,11 @@ class Chip:
             self._frame_spec = None
             return
 
+        from quchip.engine.frames import invalid_frame_spec
+
         if isinstance(frame, str):
             if frame not in ("lab", "rotating", "auto"):
-                raise ValueError(f"frame string must be one of 'lab', 'rotating', or 'auto', got {frame!r}")
+                raise invalid_frame_spec(frame)
             self._frame_spec = frame
             return
 
@@ -1236,10 +1238,7 @@ class Chip:
             self._frame_spec = {resolve_label(key): value for key, value in frame.items()}
             return
 
-        raise TypeError(
-            f"frame must be 'lab', 'rotating', 'auto', a scalar-like frequency, or "
-            f"dict[str|BaseDevice, scalar-like], got {type(frame).__name__}"
-        )
+        raise invalid_frame_spec(frame)
 
     # ------------------------------------------------------------------
     # Dressed-state analysis — delegates to ChipAnalysis
@@ -1760,15 +1759,6 @@ class Chip:
         from quchip.utils.values import copy_value
 
         bindings = dict(bindings)
-        for device in self._devices:
-            prefix = f"{device.label}."
-            legacy = prefix + "thermal_population"
-            if legacy in bindings:
-                canonical = prefix + "thermal_occupation"
-                local = {"thermal_population": bindings.pop(legacy)}
-                if canonical in bindings:
-                    local["thermal_occupation"] = bindings[canonical]
-                bindings[canonical] = device._normalize_parameter_names(local)["thermal_occupation"]
         targets = self._parameter_targets()
         unknown = set(bindings) - set(targets)
         if unknown:
@@ -2172,13 +2162,7 @@ class Chip:
                 )
             connected_lines = self._control_equipment.lines
 
-        duplicates = [lbl for lbl, count in Counter(d.label for d in connected_lines).items() if count > 1]
-        if duplicates:
-            raise ValueError(
-                f"Duplicate drive labels in equipment: {duplicates}. "
-                "Each drive must have a unique label."
-            )
-
+        _require_unique_drive_labels(connected_lines)
         if signal_chain:
             drive_labels = {d.label for d in connected_lines}
             for transform in signal_chain:
@@ -2238,14 +2222,7 @@ class Chip:
         control_equipment : ControlEquipment
             Complete classical control wiring to attach.
         """
-        drive_duplicates = [
-            lbl for lbl, n in Counter(d.label for d in control_equipment.lines).items() if n > 1
-        ]
-        if drive_duplicates:
-            raise ValueError(
-                f"Duplicate drive labels in equipment: {drive_duplicates}. "
-                "Each drive must have a unique label."
-            )
+        _require_unique_drive_labels(control_equipment.lines)
         for drive in control_equipment.lines:
             if isinstance(drive, CouplingDrive):
                 target_label = drive.target_label

@@ -23,7 +23,7 @@ import math
 import multiprocessing
 import os
 import warnings
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import BrokenExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, Callable, Sequence
@@ -61,6 +61,7 @@ from quchip.engine.ir import (
     signal_window_bounds,
 )
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
+from quchip.utils.stack import user_stacklevel
 
 
 @dataclass(frozen=True)
@@ -272,6 +273,13 @@ def _pairs_reaching(magnitudes: np.ndarray, atol: float) -> int:
     return int(ordered.size**2 - partners.sum())
 
 
+def _dense_superoperator_bytes(hamiltonian_parts: Sequence[Qobj]) -> int:
+    """Return the peak bytes of a Liouvillian assembly from dense inputs."""
+    dimension = int(hamiltonian_parts[0].shape[0])
+    copies = _DENSE_SUPEROPERATOR_PEAK_COPIES + _DENSE_SUPEROPERATOR_COPIES_PER_PART * (len(hamiltonian_parts) - 1)
+    return copies * 16 * dimension**4
+
+
 def _superoperator_peak_bytes(hamiltonian: Any, collapse_ops: Sequence[Any]) -> int:
     """Estimate QuTiP's peak memory while assembling a Lindblad superoperator.
 
@@ -285,8 +293,7 @@ def _superoperator_peak_bytes(hamiltonian: Any, collapse_ops: Sequence[Any]) -> 
     hamiltonian_parts = _operator_parts(hamiltonian)
     collapse_parts = [_operator_parts(op) for op in collapse_ops]
     dimension = int(hamiltonian_parts[0].shape[0])
-    copies = _DENSE_SUPEROPERATOR_PEAK_COPIES + _DENSE_SUPEROPERATOR_COPIES_PER_PART * (len(hamiltonian_parts) - 1)
-    dense = copies * 16 * dimension**4
+    dense = _dense_superoperator_bytes(hamiltonian_parts)
     parts = [*hamiltonian_parts, *(part for group in collapse_parts for part in group)]
     if any(isinstance(part.data, qutip.data.Dense) for part in parts):
         return dense
@@ -320,7 +327,11 @@ def _superoperator_peak_bytes(hamiltonian: Any, collapse_ops: Sequence[Any]) -> 
 
 def _require_superoperator_memory(hamiltonian: Any, collapse_ops: Sequence[Any], *, task: str, remedy: str) -> None:
     """Raise before QuTiP assembles a Liouvillian that cannot fit in memory."""
-    dimension = int(_operator_parts(hamiltonian)[0].shape[0])
+    parts = _operator_parts(hamiltonian)
+    dimension = int(parts[0].shape[0])
+    # The dense bound is an upper bound that needs no operator scan.
+    if fits_memory(_dense_superoperator_bytes(parts)):
+        return
     require_memory(
         _superoperator_peak_bytes(hamiltonian, collapse_ops),
         task=f"{task} at Hilbert dimension D = {dimension}",
@@ -339,16 +350,19 @@ _MAX_STATIC_HILBERT_DIM = 64
 _MAX_STATIC_LIOUVILLIAN_DIM = 1024
 
 
-def _envelope_coefficient(envelope: Any, sample_tlist: Any, rtol: float = _QUTIP_DEFAULT_RTOL) -> Any:
+def _envelope_coefficient(envelope: Any, sample_tlist: Any, rtol: float = _QUTIP_DEFAULT_RTOL,
+                          oversized: list[bool] | None = None) -> Any:
     """Sample windowed envelopes locally with linear interpolation to avoid edge ringing.
     Use the base grid otherwise, or an exact callable when no concrete grid is available
-    or a window needs too many samples."""
+    or a window needs too many samples. Such a window appends to ``oversized``."""
     if sample_tlist is None:
         return qutip.coefficient(_coeff_callable(envelope))
     bounds = _collect_window_bounds(envelope)
     try:
         grid = _augmented_sample_grid(envelope, sample_tlist, rtol)
-    except NotImplementedError:
+    except NotImplementedError as error:
+        if oversized is not None and isinstance(error, _OversizedWindow):
+            oversized.append(True)
         return qutip.coefficient(_coeff_callable(envelope))
     arr = _sample_coeff_array(envelope, grid)
     if bounds:
@@ -365,11 +379,10 @@ def _task_rtol(task: Any) -> float:
     return _QUTIP_DEFAULT_RTOL if rtol is None else float(rtol)
 
 
-def _warn_callable_windows(signals: Sequence[Any], sample_tlist: Any, rtol: float) -> None:
-    """Warn once when a pulse window needs more linear samples than the cap and so uses the exact callable."""
+def _oversized_windows(signals: Sequence[Any], sample_tlist: Any, rtol: float) -> bool:
+    """Return whether a pulse window needs more linear samples than the cap, so it uses the exact callable."""
     if sample_tlist is None:
-        return
-    oversized: list[tuple[float, float, int]] = []
+        return False
     for signal in signals:
         # Assembly rejects a traced signal with its own error.
         if contains_tracer(signal):
@@ -379,18 +392,17 @@ def _warn_callable_windows(signals: Sequence[Any], sample_tlist: Any, rtol: floa
                 counts = _window_sample_counts(band.envelope, sample_tlist, rtol)
             except NotImplementedError:
                 continue
-            oversized.extend(entry for entry in counts if entry[2] > _MAX_WINDOW_SAMPLES)
-    if not oversized:
-        return
-    start, stop, count = oversized[0]
-    others = f", and {len(oversized) - 1} more windows," if len(oversized) > 1 else ""
-    from quchip.engine.dressing import user_stacklevel
+            if any(count > _MAX_WINDOW_SAMPLES for _, _, count in counts):
+                return True
+    return False
 
+
+def _warn_callable_windows() -> None:
+    """Warn that a pulse window uses the exact envelope callable."""
     warnings.warn(
-        f"At rtol={rtol:g}, the QuTiP backend needs {count} linear samples for the pulse window from {start:g} to "
-        f"{stop:g} ns, more than {_MAX_WINDOW_SAMPLES}, so this window{others} uses the exact envelope as a "
-        "Python callable. The result keeps its accuracy, but each solver step costs more. A looser rtol, or the "
-        "dynamiqs backend, avoids it.",
+        f"QuTiP evaluates a pulse window as a Python callable, because at this rtol its linear samples would "
+        f"exceed {_MAX_WINDOW_SAMPLES:,}. The result is exact but slower; a looser rtol or the dynamiqs backend is "
+        "faster.",
         UserWarning,
         stacklevel=user_stacklevel(),
     )
@@ -408,7 +420,7 @@ def _carrier_coefficient(freq: Any) -> Any:
 
 
 def _summed_envelope_coefficient(envelopes: Sequence[Any], sample_tlist: Any,
-                                 rtol: float = _QUTIP_DEFAULT_RTOL) -> Any:
+                                 rtol: float = _QUTIP_DEFAULT_RTOL, oversized: list[bool] | None = None) -> Any:
     """Return one coefficient equal to the sum of the envelopes' own coefficients.
 
     Linear interpolants of windowed envelopes add exactly on the union of
@@ -417,7 +429,7 @@ def _summed_envelope_coefficient(envelopes: Sequence[Any], sample_tlist: Any,
     grid keep their exact callables.
     """
     if sample_tlist is None or len(envelopes) == 1:
-        parts = [_envelope_coefficient(envelope, sample_tlist, rtol) for envelope in envelopes]
+        parts = [_envelope_coefficient(envelope, sample_tlist, rtol, oversized) for envelope in envelopes]
     else:
         parts = []
         linear: list[tuple[np.ndarray, np.ndarray]] = []
@@ -425,7 +437,9 @@ def _summed_envelope_coefficient(envelopes: Sequence[Any], sample_tlist: Any,
         for envelope in envelopes:
             try:
                 grid = np.asarray(_augmented_sample_grid(envelope, sample_tlist, rtol), dtype=float)
-            except NotImplementedError:
+            except NotImplementedError as error:
+                if oversized is not None and isinstance(error, _OversizedWindow):
+                    oversized.append(True)
                 parts.append(qutip.coefficient(_coeff_callable(envelope)))
                 continue
             samples = _sample_coeff_array(envelope, grid)
@@ -465,14 +479,14 @@ def _qobj_key(op: Qobj) -> tuple:
 
 
 def _assemble_qobjevo(static_rhs: Qobj | None, op_signal_pairs: Any, sample_tlist: Any,
-                      rtol: float = _QUTIP_DEFAULT_RTOL) -> qutip.QobjEvo:
+                      rtol: float = _QUTIP_DEFAULT_RTOL, oversized: list[bool] | None = None) -> qutip.QobjEvo:
     """Combine an optional static operator and dynamic entries into a QobjEvo.
 
     Carrier bands acting through equal operators at one concrete frequency
     share a coefficient, ``(Σ_k envelope_k(t))·exp(i·freq·t)``, so a solver
     step applies each operator once per carrier frequency however many
     pulses and crosstalk paths drive it. ``rtol`` sets the sample rate of
-    windowed envelopes.
+    windowed envelopes, and a window over the sample cap appends to ``oversized``.
     """
     terms: list[Any] = [] if static_rhs is None else [static_rhs]
     groups: dict[tuple, tuple[Qobj, Any, list[Any]]] = {}
@@ -483,7 +497,7 @@ def _assemble_qobjevo(static_rhs: Qobj | None, op_signal_pairs: Any, sample_tlis
             freq = maybe_concrete_scalar(band.freq)
             groups.setdefault((key, id(band) if freq is None else freq), (op, band.freq, []))[2].append(band.envelope)
     for op, freq, envelopes in groups.values():
-        coefficient = _summed_envelope_coefficient(envelopes, sample_tlist, rtol)
+        coefficient = _summed_envelope_coefficient(envelopes, sample_tlist, rtol, oversized)
         if maybe_concrete_scalar(freq) != 0.0:
             coefficient = coefficient * _carrier_coefficient(freq)
         terms.append([op, coefficient])
@@ -1686,8 +1700,10 @@ class QuTiPBackend(Backend):
         rtol = _QUTIP_DEFAULT_RTOL if rtol is None else float(rtol)
         pairs = [(self._canonical_to_qobj(operator), signal)
                  for operator, signal in self._scalar_dynamic_terms(description)]
-        _warn_callable_windows([signal for _, signal in pairs], sample_tlist, rtol)
-        rhs = _assemble_qobjevo(static_rhs, pairs, sample_tlist, rtol)
+        oversized: list[bool] = []
+        rhs = _assemble_qobjevo(static_rhs, pairs, sample_tlist, rtol, oversized)
+        if oversized:
+            _warn_callable_windows()
         return PreparedHamiltonian(rhs=rhs, metadata=metadata)
 
     def prepare_batch(self, batch: Any) -> DeferredBatch:
@@ -1783,11 +1799,7 @@ class QuTiPBackend(Backend):
         tlist_arr = self.array_module.asarray(batch.tlist, dtype=float)
 
         shared = prepared.shared
-        if not isinstance(shared, _QuTiPBatchShared):
-            raise RuntimeError(
-                "QuTiPBackend.solve_batch requires DeferredBatch.shared to be a "
-                f"_QuTiPBatchShared instance, got {type(shared).__name__}."
-            )
+        assert isinstance(shared, _QuTiPBatchShared)
         sample_tlist = shared.sample_tlist
 
         tasks: list[_QuTiPBatchTask] = []
@@ -1819,8 +1831,9 @@ class QuTiPBackend(Backend):
 
         # Workers do not report warnings, so the main process names the windows that use callables.
         # The points of one batch share their options.
-        _warn_callable_windows([signal.signal for task in tasks for signal in task.dynamic_signals],
-                               sample_tlist, _task_rtol(tasks[0]))
+        if _oversized_windows([signal.signal for task in tasks for signal in task.dynamic_signals],
+                              sample_tlist, _task_rtol(tasks[0])):
+            _warn_callable_windows()
 
         def build_and_solve(task: _QuTiPBatchTask) -> SolverResult:
             op_signal_pairs = (
@@ -1900,12 +1913,9 @@ class QuTiPBackend(Backend):
         try:
             workers = self._worker_count(None if n_jobs in (-1, None) else n_jobs, 0)
             executor = self._get_executor(workers)
-        except (ModuleNotFoundError, ImportError) as exc:
-            warnings.warn(
-                f"QuTiP sweep warmup unavailable ({exc!r}); the loky pool will "
-                "spin up lazily on the first sweep instead.",
-                stacklevel=2,
-            )
+        except ImportError as exc:
+            warnings.warn(f"warmup() did nothing: loky is unavailable ({exc}).", UserWarning,
+                          stacklevel=user_stacklevel())
             return
         list(executor.map(_warmup_noop, range(workers)))
 
@@ -1930,7 +1940,8 @@ class QuTiPBackend(Backend):
 
         An explicit count that cannot fit in the available memory raises
         :class:`MemoryError`. The default, the CPU count that loky reports,
-        drops with a warning to the largest count that fits.
+        drops to the largest count that fits. Each result records the count
+        in ``stats["workers"]``.
         """
         from loky import cpu_count
 
@@ -1947,14 +1958,7 @@ class QuTiPBackend(Backend):
         workers = cpu_count()
         if fits_memory(required(workers)):
             return workers
-        fitting = next((count for count in range(workers - 1, 0, -1) if fits_memory(required(count))), 1)
-        warnings.warn(
-            f"The batch runs on {fitting} of {workers} worker processes, because each needs about "
-            f"{(point_bytes + _WORKER_BYTES) / 1e9:.2f} GB and the available memory holds no more. "
-            "Pass max_workers to choose the count.",
-            stacklevel=2,
-        )
-        return fitting
+        return next((count for count in range(workers - 1, 0, -1) if fits_memory(required(count))), 1)
 
     @staticmethod
     def _get_executor(workers: int) -> Any:
@@ -1997,9 +2001,10 @@ class QuTiPBackend(Backend):
         sequentially in-process — the loky pool's fork/import/IPC overhead
         dominates a handful of fast QuTiP solves. Larger batches dispatch
         through the process-wide reusable loky executor, sized by
-        :meth:`_worker_count`. Worker-pool failures may use sequential
-        execution; failures raised by an individual solve retain their point
-        index and propagate without retrying the numerical work.
+        :meth:`_worker_count`. A pool that loses a worker process falls back
+        to sequential execution; failures raised by an individual solve retain
+        their point index and propagate without retrying the numerical work.
+        Each result records its worker count in ``stats["workers"]``.
         """
         from tqdm import tqdm
 
@@ -2012,7 +2017,12 @@ class QuTiPBackend(Backend):
 
         def sequential() -> list[SolverResult]:
             iterator = tqdm(enumerate(items), total=len(items), desc=desc) if progress else enumerate(items)
-            return [indexed_task(entry) for entry in iterator]
+            return recorded([indexed_task(entry) for entry in iterator], 1)
+
+        def recorded(results: list[SolverResult], workers: int) -> list[SolverResult]:
+            for result in results:
+                result.stats["workers"] = workers
+            return results
 
         if max_workers == 1 or len(items) < self._PARALLEL_MIN_BATCH:
             return sequential()
@@ -2022,28 +2032,18 @@ class QuTiPBackend(Backend):
             if workers == 1:
                 return sequential()
             executor = self._get_executor(workers)
-        except (ModuleNotFoundError, ImportError) as exc:
-            warnings.warn(
-                f"QuTiP batched solve parallelism unavailable ({exc!r}); "
-                "falling back to sequential execution.",
-                stacklevel=2,
-            )
+        except ImportError as exc:
+            warnings.warn(f"Batch runs in one process: loky is unavailable ({exc}). Install loky to run it in "
+                          "parallel.", UserWarning, stacklevel=user_stacklevel())
             return sequential()
 
         try:
             mapped = executor.map(indexed_task, enumerate(items))
-            if progress:
-                return list(tqdm(mapped, total=len(items), desc=desc))
-            return list(mapped)
-        except BatchSolveError:
-            raise
-        except Exception as exc:
+            return recorded(list(tqdm(mapped, total=len(items), desc=desc) if progress else mapped), workers)
+        except BrokenExecutor as exc:
             self._shutdown_executor()
-            warnings.warn(
-                f"QuTiP batched solve parallelism unavailable ({exc!r}); "
-                "falling back to sequential execution.",
-                stacklevel=2,
-            )
+            warnings.warn(f"Batch reran in one process after a worker process stopped ({exc}). Pass "
+                          "max_workers=1 to skip the pool.", UserWarning, stacklevel=user_stacklevel())
             return sequential()
 
     # ------------------------------------------------------------------

@@ -223,9 +223,8 @@ the probability that each input leaves the labels, and `fidelity()` counts it.
 Here the fidelity is 0.993. Off-resonant coupling to the third level gives an
 AC Stark shift and a coherent rotation error, while the final leakage is only
 about 2e-6. The amplitude is a first guess for a calibration. `frame="lab"` and `frame="integration"` select the other frames.
-On a chip with collapse channels, the call warns that the solves leave them
-out. `subspace_propagator(q, dissipation=False)` leaves them out without the
-warning, and `propagator.omitted_channels` still names them.
+On a chip with collapse channels, the solves leave them out, and
+`propagator.omitted_channels` names them.
 
 ## Choose what to save
 
@@ -335,8 +334,8 @@ for them.
 
 Without a cutoff, the VNA workflows above truncate their own solve of a chip
 that conserves the total excitation and has more than 64 product states. They
-start at `K = 2`, compare every grid point with `K + 1`, and warn which `K`
-they kept. Set the cutoff on the chip to choose `K`, or pass `options={}` to
+start at `K = 2`, compare every grid point with `K + 1` until they agree,
+and warn which cutoff they kept. Set the cutoff on the chip to choose `K`, or pass `options={}` to
 solve the full product space. An undriven `steadystate()` of such a chip
 returns the vacuum when the lowering channels prove it unique.
 `result.diagnostics["route"]` names the route that each call took and why.

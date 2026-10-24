@@ -102,6 +102,7 @@ from quchip.engine.bands import (
     embed_on_support,
     prune_zero_diagonals,
 )
+from quchip.utils.stack import user_stacklevel
 
 if TYPE_CHECKING:
     from quchip.chip.chip import Chip
@@ -702,9 +703,7 @@ def _collect_collapse_terms(
             terms.append(term)
             if port is not None:
                 port_counts[id(port)] += 1
-    for port in chip.ports:
-        if port_counts[id(port)] != 1:
-            raise RuntimeError(f"Port {port.label!r} must resolve to exactly one collapse term.")
+    assert all(port_counts[id(port)] == 1 for port in chip.ports), "each port resolves to one collapse term"
     return tuple(terms), tuple(supports)
 
 
@@ -1256,9 +1255,8 @@ def _dropped_band_advisory(
         pair = sorted({weights, tuple(-weight for weight in weights)})
         detail = "a nonzero resonant entry" if np.isinf(score) else "a larger entrywise |V|²/ΔE than the retained bands"
         return (
-            f"RWA() drops band(s) {', '.join(map(str, pair))} on {source!r} with {detail}. "
-            "This bare-energy diagnostic is a heuristic, not an error bound. "
-            "Compare with Exact() or list every band to keep in RWA(keep_bands=...)."
+            f"RWA() drops band(s) {', '.join(map(str, pair))} on {source!r} with {detail} (a bare-energy "
+            "heuristic). Compare with Exact(), or keep them with RWA(keep_bands=...)."
         )
     return None
 
@@ -1268,7 +1266,7 @@ def _report_advisory(message: str | None, advisories: list[str] | None) -> None:
     if message is None:
         return
     if advisories is None:
-        warnings.warn(message, UserWarning, stacklevel=4)
+        warnings.warn(message, UserWarning, stacklevel=user_stacklevel())
     else:
         advisories.append(message)
 

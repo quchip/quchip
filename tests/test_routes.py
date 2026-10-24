@@ -98,8 +98,8 @@ def test_product_routes_name_what_rules_out_the_sectors():
 
 
 @pytest.mark.unit
-def test_the_automatic_cutoff_keeps_the_first_converged_k():
-    """K rises while K + 1 changes the results, and the check records why it stopped."""
+def test_the_automatic_cutoff_keeps_the_larger_cutoff_of_the_first_converged_pair():
+    """K rises while K + 1 changes the results, K + 1 is kept, and the check records why it stopped."""
     values = {2: 1.0, 3: 1.1, 4: 1.1 + 1e-8, 5: 1.1 + 1e-8}
     calls = []
 
@@ -111,9 +111,13 @@ def test_the_automatic_cutoff_keeps_the_first_converged_k():
         return abs(lower - upper) / max(abs(lower), abs(upper))
 
     cutoff, result, check = automatic_cutoff(9, solve, change, fits=lambda total: True, states=lambda total: 10 * total)
-    assert (cutoff, result) == (3, 1.1) and calls == [(2, None), (3, 1.0), (4, 1.1)]
-    assert check.status == "passed" and check.compared_with == 4 and check.change <= CUTOFF_TOLERANCE
+    assert (cutoff, result) == (4, 1.1 + 1e-8) and calls == [(2, None), (3, 1.0), (4, 1.1)]
+    assert check.status == "passed" and check.compared_with == 3 and check.change <= CUTOFF_TOLERANCE
     assert check.states == 40
+    # Results solved in part keep the smaller cutoff of the pair, and a later start skips the cutoffs below it.
+    cutoff, result, check = automatic_cutoff(9, solve, change, fits=lambda total: True, states=lambda total: total,
+                                             partial=lambda result: True, start=3)
+    assert (cutoff, result, check.compared_with) == (3, 1.1, 4) and calls[3:] == [(3, None), (4, 1.1)]
     # A comparison that does not fit in memory does not run, and the record says so.
     cutoff, _, check = automatic_cutoff(9, solve, change, fits=lambda total: total < 4, states=lambda total: total)
     assert cutoff == 3 and check.status == "not run" and check.change is None

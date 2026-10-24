@@ -342,19 +342,6 @@ class SimulationResult:
             return flux
         return self._jump_rate_cache[name]
 
-    def collapse_flux(self, key: Any) -> Any:
-        """Deprecated alias for :meth:`jump_rate`.
-
-        Parameters
-        ----------
-        key : channel object or str
-            Resolved channel key.
-        """
-        from quchip.utils.deprecation import warn_renamed
-
-        warn_renamed("collapse_flux()", "jump_rate()")
-        return self.jump_rate(key)
-
     def collapse_integral(self, key: Any) -> Any:
         """Return the cumulative expected jump count for one channel.
 
@@ -1193,21 +1180,6 @@ class SimulationBatchResult(BatchResult[SimulationResult]):
             Reduction along the time axis.
         """
         return self._trace_values([r.jump_rate(key) for r in self._results], reduce)
-
-    def collapse_flux(self, key: Any, *, reduce: str | None = None) -> Any:
-        """Deprecated alias for :meth:`jump_rate`.
-
-        Parameters
-        ----------
-        key : channel object or str
-            Resolved channel key.
-        reduce : {None, "last", "max", "mean"}, optional
-            Reduction along the time axis.
-        """
-        from quchip.utils.deprecation import warn_renamed
-
-        warn_renamed("collapse_flux()", "jump_rate()")
-        return self.jump_rate(key, reduce=reduce)
 
     def collapse_integral(self, key: Any, *, reduce: str | None = None) -> Any:
         """Return the cumulative jump counts of one channel on the natural sweep grid.

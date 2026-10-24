@@ -22,10 +22,11 @@ import numpy as np
 
 from quchip.utils.jax_utils import contains_tracer
 from quchip.utils.values import DeferredValue
+from quchip.utils.stack import user_stacklevel
 
 # Above this many product states, a conserving chip without a cutoff solves on sectors.
 AUTOMATIC_SECTOR_STATES = 64
-# The automatic cutoff starts here and compares K with K + 1.
+# The automatic cutoff starts here and compares adjacent cutoffs.
 FIRST_CUTOFF = 2
 # Relative change allowed between K and K + 1, and the floor as a fraction of each quantity's largest value.
 CUTOFF_TOLERANCE = 1e-6
@@ -219,9 +220,9 @@ def cutoff_reason(cutoff: int, check: "CutoffCheck | None") -> str:
     if check is None:
         return f" The solve keeps N <= {cutoff}, which holds every label."
     if check.status == "passed":
-        return (f" The solve keeps N <= {cutoff}, because N <= {check.compared_with} changed the results by "
-                f"{check.change:.1e}, within the tolerance {CUTOFF_TOLERANCE:.0e}. This is a convergence check, "
-                "not an error bound.")
+        return (f" The solve keeps N <= {cutoff}, because it changed the results of N <= {check.compared_with} "
+                f"by {check.change:.1e}, within the tolerance {CUTOFF_TOLERANCE:.0e}. This is a convergence "
+                "check, not an error bound.")
     return (f" The solve keeps N <= {cutoff}, and the comparison with N <= {check.compared_with} did not run, "
             "because it does not fit in the available memory.")
 
@@ -304,18 +305,19 @@ def static_route(chip: Any, structure: Any) -> SolveRoute:
 
 @dataclass(frozen=True)
 class CutoffCheck:
-    """Comparison of an automatic cutoff ``K`` with ``K + 1`` over a whole grid.
+    """Comparison of two adjacent cutoffs over a whole grid, which settles an automatic cutoff.
 
     Attributes
     ----------
     status : {"passed", "not run"}
-        ``"not run"`` means that ``N <= K + 1`` did not fit in memory.
+        ``"not run"`` means that the larger cutoff did not fit in memory.
     compared_with : int
-        The larger cutoff ``K + 1``.
+        The other cutoff of the pair: one below the kept cutoff when the
+        check passed and kept the larger one, else one above it.
     change : float or None
         Largest relative change, or ``None`` when the comparison did not run.
     states : int
-        Number of labels with ``N <= K + 1``.
+        Number of labels at the larger cutoff of the pair.
     """
 
     status: str
@@ -332,11 +334,13 @@ class CutoffCheck:
 def automatic_cutoff(
     maximum: int, solve: Callable[[int, Any], Any], change: Callable[[Any, Any], float], *,
     fits: Callable[[int], bool], states: Callable[[int], int],
-    complete: Callable[[int, Any], Any] | None = None,
+    complete: Callable[[int, Any], Any] | None = None, partial: Callable[[Any], bool] | None = None,
+    start: int | None = None,
 ) -> tuple[int, Any, CutoffCheck | None]:
-    """Raise ``K`` from :data:`FIRST_CUTOFF` until ``N <= K + 1`` changes the results by at most the tolerance.
+    """Raise ``K`` from ``start`` until ``N <= K + 1`` changes the results by at most the tolerance.
 
-    This is a convergence check, not an error bound.
+    The larger cutoff of the passing pair is kept, since its results are
+    already solved. This is a convergence check, not an error bound.
 
     Parameters
     ----------
@@ -353,7 +357,12 @@ def automatic_cutoff(
         ``states(K)`` returns the number of labels with ``N <= K``.
     complete : callable, optional
         ``complete(K, results)`` completes results that a comparison solved in
-        part, when ``K`` becomes the kept cutoff.
+        part, when ``K`` becomes the next lower cutoff.
+    partial : callable, optional
+        ``partial(results)`` says whether a comparison solved the results in
+        part. A passing pair then keeps its smaller cutoff.
+    start : int or None, default None
+        First cutoff of the ladder. ``None`` takes :data:`FIRST_CUTOFF`.
 
     Returns
     -------
@@ -361,7 +370,7 @@ def automatic_cutoff(
         The kept cutoff, its results, and the check, which is ``None`` when the
         kept cutoff holds every label.
     """
-    cutoff = min(FIRST_CUTOFF, maximum)
+    cutoff = min(FIRST_CUTOFF if start is None else start, maximum)
     lower = solve(cutoff, None)
     while cutoff < maximum:
         upper = cutoff + 1
@@ -373,7 +382,10 @@ def automatic_cutoff(
             return cutoff, lower, CutoffCheck("not run", upper, None, states(upper))
         value = change(lower, candidate)
         if value <= CUTOFF_TOLERANCE:
-            return cutoff, lower, CutoffCheck("passed", upper, value, states(upper))
+            if partial is not None and partial(candidate):
+                return cutoff, lower, CutoffCheck("passed", upper, value, states(upper))
+            # The largest total holds every label, so the kept solve is exact.
+            return upper, candidate, None if upper == maximum else CutoffCheck("passed", cutoff, value, states(upper))
         cutoff, lower = upper, candidate if complete is None else complete(upper, candidate)
     return cutoff, lower, None
 
@@ -390,20 +402,13 @@ def largest_change(lower: Sequence[Any], upper: Sequence[Any]) -> float:
     return change
 
 
-def warn_cutoff(method: str, cutoff: int, size: int, check: CutoffCheck, quantities: str, *,
-                note: str = "", stacklevel: int = 2) -> None:
+def warn_cutoff(method: str, cutoff: int, check: CutoffCheck, quantities: str, *, note: str = "") -> None:
     """Warn which truncation an automatic route kept and what its check found."""
-    text = (f"{method} solved the stationary states on the {size:,} product states with total excitation "
-            f"N <= {cutoff}, not on the full product space.")
     if check.status == "passed":
-        text += (f" Solving with N <= {check.compared_with} changed the {quantities} by at most "
-                 f"{check.change:.1e} (tolerance {CUTOFF_TOLERANCE:.0e}) at every grid point, as a norm of the "
-                 f"change over the larger norm plus {CUTOFF_FLOOR / CUTOFF_TOLERANCE:.0e} of the largest norm on "
-                 "the grid.")
-        text += note
+        text = (f"{method} kept the automatic excitation cutoff N <= {cutoff}: N <= {check.compared_with} changes the "
+                f"{quantities} by at most {CUTOFF_TOLERANCE:.0e}{note}.")
     else:
-        text += (f" The comparison with N <= {check.compared_with} ({check.states:,} states) did not run, because "
-                 "it does not fit in the available memory, so this truncation is not verified.")
-    text += (" Use chip.with_space(ExcitationCutoff(max_total=K)) to set the truncation, or options={} to solve "
-             "on the full product space.")
-    warnings.warn(text, UserWarning, stacklevel=stacklevel + 1)
+        text = (f"{method} kept the automatic excitation cutoff N <= {cutoff}, not verified: N <= "
+                f"{check.compared_with} does not fit in memory.")
+    text += " Use chip.with_space(ExcitationCutoff(max_total=K)) to set K."
+    warnings.warn(text, UserWarning, stacklevel=user_stacklevel())

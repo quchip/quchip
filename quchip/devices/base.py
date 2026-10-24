@@ -33,8 +33,7 @@ import jax.numpy as jnp
 from quchip.backend import get_default_backend
 from quchip.backend.protocol import Operator, State
 from quchip.declarative.dissipation import CollapseChannel
-from quchip.declarative.parameters import UNBOUND, parameter
-from quchip.utils.deprecation import warn_renamed
+from quchip.declarative.parameters import parameter
 from quchip.utils.jax_utils import maybe_concrete_scalar
 from quchip.utils.labeling import auto_label
 from quchip.utils.registry import Registrable
@@ -224,13 +223,7 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         T1: float | None = None,
         T2: float | None = None,
         thermal_occupation: float | None = None,
-        thermal_population: Any = UNBOUND,
     ) -> None:
-        if thermal_population is not UNBOUND:
-            if thermal_occupation is not None:
-                raise TypeError("Pass thermal_occupation only, not both thermal occupation names.")
-            warn_renamed("thermal_population", "thermal_occupation")
-            thermal_occupation = thermal_population
         if index(levels) < 2:
             raise ValueError(f"levels must be >= 2, got {levels}")
         self.levels = levels
@@ -258,37 +251,12 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         # every public write runs `_validate_param_write` before the attribute
         # lands. The JAX pytree `_unflatten` path uses `object.__setattr__` and
         # bypasses `__setattr__`.
-        if name == "thermal_population":
-            warn_renamed(name, "thermal_occupation")
-            name = "thermal_occupation"
         if getattr(self, "_tracking_enabled", False):
             if name == "label":
                 raise AttributeError("Device label is fixed at construction; create a replacement device.")
             if not name.startswith("_"):
                 self._validate_param_write(name, value)
         super().__setattr__(name, value)
-
-    @property
-    def thermal_population(self) -> Any:
-        """Deprecated alias for the bath's mean thermal occupation."""
-        warn_renamed("thermal_population", "thermal_occupation")
-        return self.thermal_occupation
-
-    @thermal_population.setter
-    def thermal_population(self, value: Any) -> None:
-        warn_renamed("thermal_population", "thermal_occupation")
-        self.thermal_occupation = value
-
-    @staticmethod
-    def _normalize_parameter_names(values: Mapping[str, Any]) -> dict[str, Any]:
-        """Read legacy thermal occupation inputs without duplicating parameter state."""
-        values = dict(values)
-        if "thermal_population" in values:
-            if "thermal_occupation" in values:
-                raise TypeError("Pass thermal_occupation only, not both thermal occupation names.")
-            warn_renamed("thermal_population", "thermal_occupation")
-            values["thermal_occupation"] = values.pop("thermal_population")
-        return values
 
     def _validate_param_write(self, name: str, value: Any) -> None:
         """Constructor-grade validation for one post-construction write.
@@ -313,22 +281,10 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
             candidate = {field: getattr(self, field, None) for field in _NOISE_FIELDS}
             candidate[name] = value
             _validate_noise_params(**candidate)
-        if name == "collapse_model" and value not in ("fermi_golden", "ladder"):
-            raise ValueError(
-                f"collapse_model must be 'fermi_golden' or 'ladder', got {value!r}"
-            )
-        if name in ("T1", "collapse_model", "coupling_channel") and hasattr(
-            self, "collapse_model"
-        ):
-            model = value if name == "collapse_model" else self.collapse_model
-            t1 = value if name == "T1" else self.T1
-            channel = value if name == "coupling_channel" else getattr(
-                self, "coupling_channel", None
-            )
-            if model == "fermi_golden" and t1 is not None and channel is None:
-                raise ValueError(
-                    "coupling_channel is required when T1 uses matrix-element relaxation."
-                )
+        if name in ("T1", "collapse_model", "coupling_channel") and hasattr(self, "collapse_model"):
+            current = {"T1": self.T1, "collapse_model": self.collapse_model,
+                       "coupling_channel": getattr(self, "coupling_channel", None), name: value}
+            _validate_relaxation(current["collapse_model"], current["coupling_channel"], current["T1"])
 
     # -- Bare-parameter introspection (inverse design / autodiff) ------------
 
@@ -467,9 +423,6 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         value : Any
             Replacement value.
         """
-        if name == "thermal_population":
-            warn_renamed(name, "thermal_occupation")
-            name = "thermal_occupation"
         tunable = self.tunable_params()
         if name in tunable:
             self.set_tunable_param(name, value)
@@ -489,7 +442,7 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
         values : mapping[str, Any]
             Parameter names and replacement values, applied atomically.
         """
-        values = self._normalize_parameter_names(values)
+        values = dict(values)
         if not values:
             return
         from quchip.utils.jax_utils import contains_tracer
@@ -1252,6 +1205,21 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
             f"{type(self).__name__}(label={self.label!r}, "
             f"freq={getattr(self, 'freq', None)!r}, levels={self.levels})"
         )
+
+
+def _validate_relaxation(
+    collapse_model: Any, coupling_channel: Any, T1: Any, collapse_rate_threshold: Any = 0.0,
+    channels: tuple[str, ...] | None = None,
+) -> None:
+    """Check the relaxation options of an energy-basis device; ``channels=None`` skips the channel names."""
+    if collapse_model not in ("fermi_golden", "ladder"):
+        raise ValueError(f"collapse_model must be 'fermi_golden' or 'ladder', got {collapse_model!r}.")
+    if channels is not None and coupling_channel not in (None, *channels):
+        raise ValueError(f"coupling_channel must be one of {channels} or None, got {coupling_channel!r}.")
+    if collapse_model == "fermi_golden" and T1 is not None and coupling_channel is None:
+        raise ValueError("coupling_channel is required when T1 uses matrix-element relaxation.")
+    if collapse_rate_threshold < 0:
+        raise ValueError("collapse_rate_threshold must be non-negative.")
 
 
 def _validate_noise_params(

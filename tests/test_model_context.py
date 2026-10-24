@@ -33,7 +33,7 @@ def test_default_pulse_carrier_uses_the_sequence_chip_and_is_captured() -> None:
     second.wire(drive)
     seq_first, seq_second = QuantumSequence(first), QuantumSequence(second)
     for seq in (seq_first, seq_second):
-        with pytest.warns(UserWarning, match="sets no freq"):
+        with pytest.warns(UserWarning, match="A pulse without freq"):
             seq.charge(q, envelope=Square(duration=10.0, amplitude=0.02))
     f_first, f_second = first.freq(q), second.freq(q)
     assert seq_first.parameters["pulse.0.freq"] == pytest.approx(f_first)

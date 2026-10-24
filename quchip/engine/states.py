@@ -20,6 +20,7 @@ import numpy as np
 from quchip.backend.protocol import State
 from quchip.engine.pulse_space import PulseSpace
 from quchip.utils.jax_utils import array_namespace, maybe_concrete_scalar
+from quchip.utils.stack import user_stacklevel
 
 if TYPE_CHECKING:
     from quchip.chip.chip import Chip
@@ -101,10 +102,8 @@ def bare_local_kets(
             projected_norm = backend.array_module.linalg.norm(projected)
             lost = maybe_concrete_scalar(authored_norm**2 - projected_norm**2)
             if lost is not None and lost > 1e-10:
-                warnings.warn(
-                    f"Projection discarded {lost:.3g} of the state norm on {dev.label!r}.",
-                    stacklevel=2,
-                )
+                warnings.warn(f"The basis of {dev.label!r} keeps all but {lost:.3g} of this state's norm. Raise "
+                              "its levels to keep more.", UserWarning, stacklevel=user_stacklevel())
             kets.append(
                 backend.from_array(
                     projected,
@@ -272,10 +271,8 @@ def materialize_state_spec(
     projected_norm = xp.linalg.norm(projected)
     lost = maybe_concrete_scalar(authored_norm**2 - projected_norm**2)
     if lost is not None and lost > 1e-10:
-        warnings.warn(
-            f"Projection discarded {lost:.3g} of the initial-state norm.",
-            stacklevel=2,
-        )
+        warnings.warn(f"The resolved basis keeps all but {lost:.3g} of the initial state's norm. Raise the device "
+                      "levels to keep more.", UserWarning, stacklevel=user_stacklevel())
     return backend.from_array(projected, dims=[list(resolved_dims), [1]])
 
 
@@ -410,7 +407,7 @@ def compact_state(chip, *components, dressed=True):
         else:
             system = model.eigensystem(sum(levels))
             row = system.space.row(levels)
-            warn_weak_assignment(levels, system.labeling.overlaps[row])
+            warn_weak_assignment(chip._analysis, levels, system.labeling.overlaps[row])
             eigenvector = xp.asarray(system.eigenvectors)[:, system.labeling.indices[row]]
             indices = np.asarray([space.rows[label] for label in system.space.labels])
             contribution = xp.asarray(np.eye(space.size)[:, indices]) @ eigenvector
@@ -513,7 +510,7 @@ def sector_label_ket(chip, model, space, levels):
     system = model.eigensystem(sum(levels))
     row = system.space.row(tuple(levels))
     index = system.labeling.indices[row]
-    warn_weak_assignment(levels, system.labeling.overlaps[row])
+    warn_weak_assignment(chip._analysis, levels, system.labeling.overlaps[row])
     traced = contains_tracer((system.eigenvalues, system.eigenvectors, index))
     xp = jnp if traced else chip.backend.array_module
     column = xp.asarray(system.eigenvectors)[:, index]

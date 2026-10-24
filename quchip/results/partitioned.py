@@ -8,16 +8,9 @@ that the partition avoided.
 
 from __future__ import annotations
 
-import warnings
 from typing import Any
 
 from quchip.utils.labeling import resolve_label
-
-_JOINT_WARNING = (
-    "Materializing the joint state of a partitioned result rebuilds the full "
-    "tensor-product space the partition avoided."
-)
-
 
 class PartitionedSimulationResult:
     """Result of one partitioned solve: K component results plus a key plan.
@@ -291,7 +284,6 @@ class PartitionedSimulationResult:
         per-step list of joint kets is well-defined only when every component
         stayed pure.
         """
-        warnings.warn(_JOINT_WARNING, UserWarning, stacklevel=2)
         backend = self._results[0]._backend
         from math import prod
         from quchip.utils.memory import dense_bytes, require_memory
@@ -338,7 +330,6 @@ class PartitionedSimulationResult:
         return self._joint_state([r.state_at(t, method=method, frame=frame) for r in self._results])
 
     def _joint_state(self, states: list) -> Any:
-        warnings.warn(_JOINT_WARNING, UserWarning, stacklevel=3)
         backend = self._results[0]._backend
         from math import prod
         from quchip.utils.memory import dense_bytes, require_memory

@@ -24,8 +24,9 @@ class SteadyStateResult:
         coordinates of ``excitation_space`` when that is set.
     residual : scalar
         Residual norm of the stationary equation.
-    nullity : scalar
-        Null-space dimension of the trace-constrained generator.
+    nullity : scalar or None
+        Null-space dimension of the Liouvillian, or ``None`` when the backend
+        did not check it.
     dims : tuple of int
         Hilbert-space dimensions in chip order. With ``excitation_space``,
         they are the dimensions of its product space.

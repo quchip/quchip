@@ -10,8 +10,34 @@ This file records notable user-visible changes to quchip.
 
 #### Changes and migration
 
+- quchip 0.5 removes the names that 0.4 deprecated. Use `thermal_occupation`
+  for `thermal_population` (in constructors, `with_params()`, `set_noise()`,
+  declared parameters, symbolic noise and saved device dictionaries),
+  `jump_rate()` for `collapse_flux()`, `port()` for `side()`,
+  `external_port()` and `external_ports` for `exposure()` and `exposures`,
+  and `NetworkPort` and `ComponentPort` for `FieldExposure` and `FieldSide`.
+  The `check_truncation()` result methods stay until 0.6.
+- Warnings are shorter, name the one action that sets or silences them, and
+  point at the caller's line. The default-frame and automatic-carrier
+  warnings have fixed text, so Python shows each once per line of code
+  instead of once per chip in a loop. A dressed label that keeps less than
+  90% of its bare product state warns once per chip, not at every query, and
+  `chip.freq()` and frame references still raise for an ambiguous label
+  (overlap below one half or a vanishing margin). Partitioned results no
+  longer warn when they build the joint state; the memory guard stays.
+- The dynamiqs `steadystate()` counts the Liouvillian nullity only up to
+  `diagnostic_max_dimension` (default 16), as the QuTiP backend does. Above
+  it, the singular value decomposition, which cost about ten times the solve,
+  does not run: `nullity` is `None`, and the solve gives no uniqueness
+  guarantee: a singular system can return NaN or Inf, and a nearly singular
+  one an unreliable state. Pass a larger
+  `diagnostic_max_dimension` to keep the check. A
+  `D = 24` steady state takes about 0.05–0.1 s instead of 0.5–0.8 s.
+- A QuTiP batch falls back to one process only when a worker process stops.
+  Other pool errors, such as a pickling failure, now raise instead of
+  rerunning the batch.
 - A pulse scheduled without `freq` on a charge, phase, or two-photon line takes
-  a carrier at the line's device and warns with the chosen value. Charge and
+  a carrier at the line's device and warns. Charge and
   phase lines use `chip.freq(device)`, the dressed `0 -> 1` frequency, and a
   two-photon line uses twice it. Previously, such a pulse had no carrier, so a
   charge drive stayed about 5 GHz below a transmon and left it in `|0>`: a
@@ -42,8 +68,7 @@ This file records notable user-visible changes to quchip.
   state. A ket `initial_state` is an integration-frame vector at `tlist[0]`,
   so when `tlist[0]` is not zero it is now a vector of the frame that the
   warning names. When a collapse or port operator does not fit the rotating
-  frame, the solve uses the frame that `frame="auto"` plans and warns with
-  its frequencies. Examples are a reduced chip whose eliminated bus carries
+  frame, the solve uses the frame that `frame="auto"` plans and warns. Examples are a reduced chip whose eliminated bus carries
   each transmon's jump onto the other, and two readouts on one feedline.
   When the planned frame does not fit either, the solve uses the lab frame.
   A batch checks every point and solves all of them in the first of these
@@ -54,8 +79,7 @@ This file records notable user-visible changes to quchip.
   raises, names the devices, and asks for a frame such as
   `Chip(frame="lab")`. `chip.frame` is `None` on a chip without a frame.
   `chip.frame_info()` returns the frequencies of the frame that a solve
-  without pulses would use and warns with that choice and its reason, or
-  raises as the solve does. To keep the previous behavior, pass
+  without pulses would use, without a warning, or raises as the solve does. To keep the previous behavior, pass
   `Chip(frame="lab")`. A saved chip keeps its saved frame.
   ([#214](https://github.com/quchip/quchip/pull/214))
 - `eliminate(..., method="sw")` keys the exchange `pathways` by occupation
@@ -212,7 +236,8 @@ This file records notable user-visible changes to quchip.
   `options=None` solve a chip that conserves the total excitation and has more
   than 64 product states on the labels with `N <= K`, and they warn which `K`
   they kept. When `K + 1` fits in memory, they compare the results with it at
-  a tolerance of `1e-6`, and the warning says whether this check ran. The
+  a tolerance of `1e-6`, keep `K + 1`, and the warning says whether this
+  check ran. The
   check does not bound the error against the full product space. Pass
   `options={}` to keep the full product-space solve.
   ([#156](https://github.com/quchip/quchip/issues/156),
@@ -249,8 +274,9 @@ This file records notable user-visible changes to quchip.
   [#205](https://github.com/quchip/quchip/pull/205))
 - QuTiP batches take their default worker count from loky's `cpu_count()`,
   which follows `LOKY_MAX_CPU_COUNT`, CPU affinity and container limits,
-  instead of `os.cpu_count()`. The default pool shrinks, with a warning, to the
-  number of workers that the available memory holds.
+  instead of `os.cpu_count()`. The default pool shrinks to the number of
+  workers that the available memory holds, and each result records its count
+  in `stats["workers"]`.
   ([#196](https://github.com/quchip/quchip/issues/196),
   [#205](https://github.com/quchip/quchip/pull/205))
 
@@ -291,8 +317,8 @@ This file records notable user-visible changes to quchip.
   pair of qubits gives `diag(1, 1, 1, exp(-2πiζT))` with the static ZZ `ζ`.
   The record gives the leakage of each input, and `fidelity(target)` returns
   the average gate fidelity, which counts that leakage. The solves leave out
-  collapse channels and warn. `dissipation=False` leaves them out without the
-  warning, and `dissipation=True` raises.
+  collapse channels, which `omitted_channels` names, and `dissipation=True`
+  raises.
   ([#193](https://github.com/quchip/quchip/issues/193),
   [#207](https://github.com/quchip/quchip/pull/207),
   [#209](https://github.com/quchip/quchip/issues/209),
@@ -363,7 +389,8 @@ This file records notable user-visible changes to quchip.
   truncates. With `chip.with_space(ExcitationCutoff(max_total=K))`, `K` is the
   chip's. Without a cutoff, a chip with more than 64 product states starts at
   `K = 2`, compares every grid point with `K + 1`, raises `K` until the change
-  is at most `1e-6` of each value, and warns which `K` it kept. A truncation
+  is at most `1e-6` of each value, keeps `K + 1`, and warns which cutoff it
+  kept. A truncation
   that leaves more than one stationary state raises. Two
   transmon-readout pairs take 0.06 s instead of 18 s for two grid points, and
   12 pairs keep 325 of 3²⁴ product states at `K = 2`. Under a cutoff, a chip
@@ -779,6 +806,10 @@ This file records notable user-visible changes to quchip.
 
 #### Performance
 
+- `VNA.measure()` with noise and an automatic cutoff settles the means first
+  and starts the noise comparison at the first agreeing pair, which keeps the
+  same cutoff and skips the noise solves below it: 49 s instead of 55 s for a
+  four-level transmon and a 20-level resonator at five frequencies.
 - On QuTiP, exact excitation spaces and `ExcitationCutoff` solves store each
   compact operator as CSR instead of a dense matrix of the compact dimension.
   A dense backend, such as dynamiqs, checks each dense compact operator
