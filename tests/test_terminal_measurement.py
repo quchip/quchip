@@ -1,9 +1,11 @@
 """Terminal detector models preserve quantum preparation and joint Born statistics."""
+import warnings
+
 import numpy as np
 import pytest
 
 from quchip import (
-    ChargeDrive, Chip, DeviceModel, DuffingTransmon, IQReadout, IQReceiver,
+    Capacitive, ChargeDrive, Chip, DeviceModel, DuffingTransmon, IQReadout, IQReceiver,
     PortNetwork, QuantumSequence, Resonator, Square, VNA, parameter,
 )
 from quchip.results import SimulationBatchResult
@@ -168,6 +170,18 @@ def wired_result(*, backend="qutip", gain=100., noise=1., loss=.25, delay=0.):
     chip = Chip([r], port_network=net, frame="rotating", backend=backend)
     result = QuantumSequence(chip).simulate(tlist=[0., 1.], states="final")
     return chip, out, drive, result
+
+
+def test_wiring_readout_ignores_the_frame_of_the_chip():
+    """The wiring does not depend on the frame, so an ambiguous rotating frame does not warn."""
+    a, b = Resonator(freq=6.5, levels=2, label="a"), Resonator(freq=6.5, levels=2, label="b")
+    net = PortNetwork()
+    out = net.expose("out", at=net.port("p", target=a, rate=.04))
+    chip = Chip([a, b], [Capacitive(a, b, g=.05)], port_network=net, frame="rotating")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        detector = IQReadout.from_wiring(chip, out, means=[-.01, .01], frequency=6.5, receiver=IQReceiver(1000))
+    np.testing.assert_allclose(detector.means, [-.01, .01], atol=1e-15)
 
 
 @pytest.mark.validation

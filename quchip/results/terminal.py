@@ -106,7 +106,8 @@ class IQReadout:
         noise_frequencies : array_like or None, optional
             Two-sided offsets in GHz. ``None`` uses the standard grid.
         """
-        wiring = ReadoutWiring.capture(chip.resolve().slh, chip.backend.array_module)
+        # The wiring does not depend on the frame, so the lab frame skips the chip's frame checks.
+        wiring = ReadoutWiring.capture(chip.resolve(frame="lab").slh, chip.backend.array_module)
         return wiring.iq_readout(output, means=means, frequency=frequency, receiver=receiver,
                                  noise_frequencies=noise_frequencies)
 
