@@ -281,22 +281,10 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
             candidate = {field: getattr(self, field, None) for field in _NOISE_FIELDS}
             candidate[name] = value
             _validate_noise_params(**candidate)
-        if name == "collapse_model" and value not in ("fermi_golden", "ladder"):
-            raise ValueError(
-                f"collapse_model must be 'fermi_golden' or 'ladder', got {value!r}"
-            )
-        if name in ("T1", "collapse_model", "coupling_channel") and hasattr(
-            self, "collapse_model"
-        ):
-            model = value if name == "collapse_model" else self.collapse_model
-            t1 = value if name == "T1" else self.T1
-            channel = value if name == "coupling_channel" else getattr(
-                self, "coupling_channel", None
-            )
-            if model == "fermi_golden" and t1 is not None and channel is None:
-                raise ValueError(
-                    "coupling_channel is required when T1 uses matrix-element relaxation."
-                )
+        if name in ("T1", "collapse_model", "coupling_channel") and hasattr(self, "collapse_model"):
+            current = {"T1": self.T1, "collapse_model": self.collapse_model,
+                       "coupling_channel": getattr(self, "coupling_channel", None), name: value}
+            _validate_relaxation(current["collapse_model"], current["coupling_channel"], current["T1"])
 
     # -- Bare-parameter introspection (inverse design / autodiff) ------------
 
@@ -1217,6 +1205,21 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
             f"{type(self).__name__}(label={self.label!r}, "
             f"freq={getattr(self, 'freq', None)!r}, levels={self.levels})"
         )
+
+
+def _validate_relaxation(
+    collapse_model: Any, coupling_channel: Any, T1: Any, collapse_rate_threshold: Any = 0.0,
+    channels: tuple[str, ...] | None = None,
+) -> None:
+    """Check the relaxation options of an energy-basis device; ``channels=None`` skips the channel names."""
+    if collapse_model not in ("fermi_golden", "ladder"):
+        raise ValueError(f"collapse_model must be 'fermi_golden' or 'ladder', got {collapse_model!r}.")
+    if channels is not None and coupling_channel not in (None, *channels):
+        raise ValueError(f"coupling_channel must be one of {channels} or None, got {coupling_channel!r}.")
+    if collapse_model == "fermi_golden" and T1 is not None and coupling_channel is None:
+        raise ValueError("coupling_channel is required when T1 uses matrix-element relaxation.")
+    if collapse_rate_threshold < 0:
+        raise ValueError("collapse_rate_threshold must be non-negative.")
 
 
 def _validate_noise_params(

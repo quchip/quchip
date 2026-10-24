@@ -103,7 +103,7 @@ def test_from_frequency_roundtrip_in_transmon_regime():
 
 def test_from_frequency_warns_below_charge_qubit_threshold():
     """from_frequency warns when the inverted E_J/E_C ratio falls below the transmon regime."""
-    with pytest.warns(UserWarning, match="below transmon regime"):
+    with pytest.warns(UserWarning, match="below the transmon regime"):
         ChargeBasisTransmon.from_frequency(freq=2.0, anharmonicity=-0.5)
 
 

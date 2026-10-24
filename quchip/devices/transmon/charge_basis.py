@@ -11,9 +11,10 @@ from quchip.declarative.models import DeviceModel
 from quchip.declarative.ops import LocalOps
 from quchip.declarative.parameters import UNBOUND, Scalar, parameter
 from quchip.declarative.dissipation import CollapseChannel
-from quchip.devices.base import _energy_basis_dissipation
+from quchip.devices.base import _energy_basis_dissipation, _validate_relaxation
 from quchip.devices.spaces import ChargeSpace
 from quchip.utils.jax_utils import maybe_concrete_scalar
+from quchip.utils.stack import user_stacklevel
 
 
 class ChargeBasisTransmon(DeviceModel):
@@ -109,16 +110,7 @@ class ChargeBasisTransmon(DeviceModel):
             levels=levels,
             native_dimension=num_basis,
         )
-        if collapse_model not in ("fermi_golden", "ladder"):
-            raise ValueError(
-                f"collapse_model must be 'fermi_golden' or 'ladder', got {collapse_model!r}"
-            )
-        if coupling_channel not in (None, "charge"):
-            raise ValueError("ChargeBasisTransmon only supports coupling_channel='charge'.")
-        if collapse_model == "fermi_golden" and noise.get("T1") is not None and coupling_channel is None:
-            raise ValueError("coupling_channel is required when T1 uses matrix-element relaxation.")
-        if collapse_rate_threshold < 0:
-            raise ValueError("collapse_rate_threshold must be non-negative.")
+        _validate_relaxation(collapse_model, coupling_channel, noise.get("T1"), collapse_rate_threshold, ("charge",))
 
         self.num_basis = num_basis
         self.basis = basis
@@ -260,11 +252,9 @@ class ChargeBasisTransmon(DeviceModel):
         E_J = (freq + E_C) ** 2 / (8.0 * E_C)
         ratio = maybe_concrete_scalar(E_J / E_C)
         if ratio is not None and ratio < 20.0:
-            warnings.warn(
-                f"from_frequency gives E_J/E_C approximately {ratio:.1f}, below transmon "
-                "regime; use explicit E_C and E_J when this approximation is unsuitable.",
-                stacklevel=2,
-            )
+            warnings.warn(f"from_frequency() gives E_J/E_C = {ratio:.1f}, below the transmon regime (20), where its "
+                          "formulas lose accuracy. Pass E_C and E_J instead.", UserWarning,
+                          stacklevel=user_stacklevel())
         return cls(
             E_C=E_C,
             E_J=E_J,
