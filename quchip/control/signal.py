@@ -29,7 +29,7 @@ import numpy as np
 import copy
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 from quchip.declarative.expr import PhysicsExpr
 from quchip.engine.ir import (
@@ -245,6 +245,11 @@ class SignalTransform(Registrable, ABC, registry_root=True, metaclass=KeywordOnl
 
     Implement ``apply`` and declare ``serializable=True`` on classes whose
     fields can be saved. Import the extension before loading its instances.
+    Set the class attribute ``linear_time_invariant = True`` only when
+    ``apply`` is linear and time-invariant, so that a tone leaves it as the
+    same tone times a complex transfer. Calibration seeds such as
+    :meth:`~quchip.chip.analysis.ChipAnalysis.rotation_amplitude` need that
+    transfer and refuse other transforms.
 
     Parameters
     ----------
@@ -253,6 +258,7 @@ class SignalTransform(Registrable, ABC, registry_root=True, metaclass=KeywordOnl
     """
 
     _serializable = False
+    linear_time_invariant: ClassVar[bool] = False
 
     def __init_subclass__(cls, *, serializable: bool = False, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
@@ -353,6 +359,8 @@ class Delay(SignalTransform, serializable=True):
         Delay in ns; positive values shift the signal later.
     """
 
+    linear_time_invariant = True
+
     line: str = setting()
     delta_t: float = parameter()
 
@@ -389,6 +397,8 @@ class Gain(SignalTransform, serializable=True):
     factor : complex
         Dimensionless amplitude and phase multiplier.
     """
+
+    linear_time_invariant = True
 
     line: str = setting()
     factor: complex = parameter()
@@ -444,6 +454,8 @@ class Crosstalk(SignalTransform, serializable=True):
     delay : float
         Time shift of the leaked signal relative to the source, ns.
     """
+
+    linear_time_invariant = True
 
     source: str = setting()
     victim: str = setting()

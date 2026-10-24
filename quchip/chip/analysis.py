@@ -1164,22 +1164,7 @@ class ChipAnalysis:
                     raise ValueError(f"Drive label '{label}' is ambiguous across {len(matches)} wired lines")
                 selected.append(matches[0])
 
-        if isinstance(transition, (str, BaseDevice)):
-            _, device = self._chip._resolve_device_index(transition)
-            initial_label = self._state_label_from_mapping({})
-            final_label = self._state_label_from_mapping({device: 1})
-        elif (
-            isinstance(transition, tuple)
-            and len(transition) == 2
-            and isinstance(transition[0], Mapping)
-            and isinstance(transition[1], Mapping)
-        ):
-            initial_label = self._state_label_from_mapping(transition[0])
-            final_label = self._state_label_from_mapping(transition[1])
-        else:
-            raise TypeError(
-                "transition must be a device reference or an (initial_mapping, final_mapping) pair"
-            )
+        initial_label, final_label = self._transition_labels(transition)
 
         sectors = self._sector_model()
         xp = self._chip.backend.array_module
@@ -1247,6 +1232,22 @@ class ChipAnalysis:
             elements[drive.label] = xp.vdot(final, acted)
         return elements
 
+    def _transition_labels(self, transition: Any) -> tuple[tuple[int, ...], tuple[int, ...]]:
+        """Return the initial and final bare labels of a device shorthand or an ``(initial, final)`` pair."""
+        if isinstance(transition, (str, BaseDevice)):
+            _, device = self._chip._resolve_device_index(transition)
+            return self._state_label_from_mapping({}), self._state_label_from_mapping({device: 1})
+        if (
+            isinstance(transition, tuple)
+            and len(transition) == 2
+            and isinstance(transition[0], Mapping)
+            and isinstance(transition[1], Mapping)
+        ):
+            return self._state_label_from_mapping(transition[0]), self._state_label_from_mapping(transition[1])
+        raise TypeError(
+            "transition must be a device reference or an (initial_mapping, final_mapping) pair"
+        )
+
     def rotation_amplitude(
         self,
         transition: str | BaseDevice | tuple[Mapping[str | BaseDevice, int], Mapping[str | BaseDevice, int]],
@@ -1258,13 +1259,20 @@ class ChipAnalysis:
 
         On resonance under ``RWA()``, in the two-level limit, a pulse whose
         envelope keeps one phase rotates the transition by
-        ``θ = 2π |m| |A a|``, where m is the dressed matrix element of the
-        line from :meth:`drive_matrix_elements` and ``A a`` the
+        ``θ = 2π |Σ_l m_l H_l(f)| |A a|``. Here ``m_l`` is the dressed matrix
+        element of line ``l`` from :meth:`drive_matrix_elements`, ``H_l(f)``
+        the complex transfer of the signal chain from the scheduled line to
+        line ``l`` at the transition frequency ``f``, and ``A a`` the
         :meth:`~quchip.control.envelopes.Envelope.area` of the envelope at
-        amplitude A. The method returns ``A = θ / (2π |m| |a|)``. Leakage to
-        other levels, detuning, counter-rotating terms under ``Exact()``, and
-        a phase that changes during the pulse all change the rotation, so the
-        value is a starting point for a calibration, not a calibrated gate.
+        amplitude A. The method returns ``A = θ / (2π |Σ_l m_l H_l| |a|)``.
+        On a line without transforms, ``H`` is 1 on that line alone. A gain
+        scales ``H``, a delay turns its phase by ``2π f Δt``, and crosstalk
+        adds the victim lines, so a delayed path and a direct path to one
+        device add as phasors. Leakage to other levels, detuning,
+        counter-rotating terms under ``Exact()``, a phase that changes during
+        the pulse, and delays comparable to the envelope all change the
+        rotation, so the value is a starting point for a calibration, not a
+        calibrated gate.
 
         Parameters
         ----------
@@ -1280,29 +1288,34 @@ class ChipAnalysis:
         Raises
         ------
         ValueError
-            If a signal-chain transform or crosstalk acts on the line, or if the
-            matrix element or the area per unit amplitude is zero.
+            If a transform that acts on the pulse does not declare
+            ``linear_time_invariant``, or if the combined matrix element or
+            the area per unit amplitude is zero.
         TypeError
             If the envelope has no ``amplitude`` field.
         """
         label = resolve_label(line)
-        equipment = self._chip.control_equipment
-        acting = [] if equipment is None else [
-            type(transform).__name__ for transform in equipment.signal_chain if label in transform.referenced_lines()
-        ]
-        if acting:
-            raise ValueError(
-                f"Line '{label}' has the signal-chain transforms {acting}. rotation_amplitude() takes the "
-                "amplitude at the device, so it supports only a line without transforms."
-            )
         if "amplitude" not in envelope.parameter_values():
             raise TypeError(f"{type(envelope).__name__} has no amplitude field to scale.")
-        element = self.drive_matrix_elements(transition, drives=[label])[label]
+        equipment = self._chip.control_equipment
+        if equipment is None or not equipment.signal_chain:
+            transfer: dict[str, Any] = {label: 1.0}
+        else:
+            initial, final = self._transition_labels(transition)
+            energy = self._energy_lookup()
+            transfer = equipment.tone_transfer(label, energy(final) - energy(initial))
+        reached = [name for name, value in transfer.items()
+                   if contains_tracer(value) or maybe_concrete_scalar(abs(value)) != 0.0]
+        elements = self.drive_matrix_elements(transition, drives=reached)
+        element = sum(elements[name] * transfer[name] for name in reached)
         unit = envelope.with_params({"amplitude": 1.0}).area()
         xp = jnp if contains_tracer((element, unit, angle)) else np
         strength = 2.0 * np.pi * xp.abs(element) * xp.abs(unit)
-        if maybe_concrete_scalar(strength) == 0.0:
-            raise ValueError(f"Line '{label}' cannot drive this transition: |m| |area| is zero.")
+        # Paths that cancel leave only rounding, which counts as zero.
+        scale = 2.0 * np.pi * sum(xp.abs(elements[name] * transfer[name]) for name in reached) * xp.abs(unit)
+        margin = maybe_concrete_scalar(strength - 1e-12 * scale)
+        if margin is not None and margin <= 0.0:
+            raise ValueError(f"Line '{label}' cannot drive this transition: |Σ m H| |area| is zero.")
         return angle / strength
 
     def state_components(

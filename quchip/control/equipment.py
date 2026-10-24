@@ -42,6 +42,8 @@ class CrosstalkMatrix(SignalTransform, serializable=True):
     entries form one linear mixing stage and do not recursively leak each
     other's output. Matrix entries keep end-to-end JAX traceability.
     """
+
+    linear_time_invariant = True
     # Matrix entries go directly into the signal-program IR
     # (`PolarScale`/`Shift`), which is what keeps end-to-end JAX traceability.
 
@@ -210,6 +212,49 @@ class ControlEquipment:
         for transform in self._signal_chain:
             built = transform.apply(built)
         return built
+
+    def tone_transfer(self, line: str, frequency: Any) -> dict[str, Any]:
+        """Return the complex transfer of a tone at ``frequency`` from ``line`` to each line it reaches.
+
+        The tone ``exp(-2πi f t)`` on ``line`` passes through the whole signal
+        chain, and the value on each reached line at ``t = 0`` is that line's
+        transfer ``H(f)``. A transform that acts on the tone must declare
+        ``linear_time_invariant``, since only then is the output the same tone
+        times ``H(f)``.
+
+        Parameters
+        ----------
+        line : str
+            Label of the line that plays the tone.
+        frequency : scalar
+            Tone frequency in GHz.
+
+        Raises
+        ------
+        ValueError
+            If a transform that acts on the tone is not linear and time-invariant.
+        """
+        import jax.numpy as jnp
+
+        from quchip.control.signal import AnalyticSignal
+        from quchip.engine.ir import Carrier
+        from quchip.utils.constants import TWO_PI
+
+        signals: SignalMap = {(line, 0): AnalyticSignal(Carrier(freq=TWO_PI * frequency, sign=-1), carrier=frequency)}
+        for transform in self._signal_chain:
+            reached = {key[0] for key in signals}
+            if not transform.linear_time_invariant and reached & set(transform.referenced_lines()):
+                raise ValueError(
+                    f"{type(transform).__name__} acts on the signal of line {line!r} but does not declare "
+                    "linear_time_invariant, so the chain has no single transfer at the drive frequency."
+                )
+            signals = transform.apply(signals)
+        transfer: dict[str, Any] = {}
+        for (label, _), signal in signals.items():
+            # JAX evaluates traced transform parameters as well as concrete ones.
+            value = signal.evaluate(0.0, xp=jnp)
+            transfer[label] = value if label not in transfer else transfer[label] + value
+        return transfer
 
     @property
     def crosstalks(self) -> list[Crosstalk]:

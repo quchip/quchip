@@ -213,6 +213,8 @@ fidelity = propagator.fidelity([[0, 1], [-1, 0]])
 
 `rotation_amplitude()` solves `θ = 2π |m| |A a|` for the dressed matrix
 element `m` of the line and the envelope area `A a`, with `θ = π` by default.
+On a line with gains, delays or crosstalk, `m` is the sum of each reached
+line's element times its transfer at the transition frequency.
 On an isolated transmon, the charge drive has `m = -i` on the 0 → 1
 transition. The dressed element here is `-0.99969i`, so a real π pulse aims
 at `iY`.

@@ -586,6 +586,18 @@ This file records notable user-visible changes to quchip.
   such as `warnings.filterwarnings("ignore", category=AutoChoiceWarning)`
   silences a group. Renamed APIs keep `DeprecationWarning`.
   ([#221](https://github.com/quchip/quchip/pull/221))
+- `chip.rotation_amplitude()` works on lines with signal-chain transforms and
+  crosstalk. It passes a tone at the dressed transition frequency through the
+  chain and sums each reached line's matrix element times its transfer, so a
+  gain `g` divides the seed by `|g|` and delayed or crosstalk paths to one
+  device add as phasors. Previously, any transform on the line raised. A
+  transform must set the new class attribute
+  `SignalTransform.linear_time_invariant` to take part; `Gain`, `Delay`,
+  `Crosstalk`, `CrosstalkMatrix` and `CableLoss` set it, and a transform
+  without it still raises. `ControlEquipment.tone_transfer(line, frequency)`
+  returns the transfer to each line.
+  ([#218](https://github.com/quchip/quchip/issues/218),
+  [#221](https://github.com/quchip/quchip/pull/221))
 
 #### Fixes
 

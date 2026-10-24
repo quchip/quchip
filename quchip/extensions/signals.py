@@ -22,6 +22,8 @@ class CableLoss(SignalTransform, serializable=True):
         by ``10**(-loss_db/20)``.
     """
 
+    linear_time_invariant = True
+
     line: str = setting()
     loss_db: Any = parameter()
 

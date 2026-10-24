@@ -1122,9 +1122,18 @@ sampling times, with `0` and `τ` added. The quadrature is traceable, and its
 accuracy depends on how well the sampling times resolve the envelope.
 
 `Chip.rotation_amplitude(transition, line, envelope, angle=π)` returns
-`A = θ / (2π |m| |a|)`, where `a` is the area at unit amplitude. It takes the
-amplitude at the device, so a line with signal-chain transforms or crosstalk
-raises. The result is a starting point for a calibration.
+`A = θ / (2π |Σ_l m_l H_l(f)| |a|)`, where `a` is the area at unit amplitude,
+`m_l` the dressed matrix element of line `l`, and `H_l(f)` the transfer of the
+signal chain from the scheduled line to line `l` at the dressed transition
+frequency `f`. A line without transforms has `H = 1` on itself alone. With
+`s_l = H_l s` and `s ∝ exp(-2πi f t)`, the resonant raising term of
+`Σ_l Re(s_l) D_l` is `(A/2) Σ_l H_l m_l`, without a conjugate on `H_l`. The
+method finds `H` by passing the tone `exp(-2πi f t)` through the chain: a gain
+`g` gives `g`, a delay `Δt` gives `exp(2πi f Δt)`, and crosstalk adds
+`β exp(iθ) exp(2πi f Δt)` on the victim line. Every transform that acts on
+the tone must declare `linear_time_invariant`, else the method raises. A delay
+comparable to the envelope makes the drive phase change during the pulse, so
+the seed is rougher there. The result is a starting point for a calibration.
 
 ### 6.3 Exact excitation spaces in pulse solves
 
