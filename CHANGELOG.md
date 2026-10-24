@@ -810,6 +810,9 @@ This file records notable user-visible changes to quchip.
   more than 2,000,000 samples uses the exact envelope as a callable and warns.
   QuTiP outputs can move at the 1e-6 level.
   ([#216](https://github.com/quchip/quchip/pull/216))
+- `IQReadout.from_wiring()` no longer warns about the chip's frame. It reads
+  only the output wiring, which does not depend on the frame, so it resolves
+  the chip in the lab frame. ([#221](https://github.com/quchip/quchip/pull/221))
 
 #### Performance
 
