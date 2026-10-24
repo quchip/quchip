@@ -1290,11 +1290,7 @@ class PortNetwork:
             raise ValueError("PortNetwork requires at least one quantum coupling port.")
         port_channels = {channel.collapse.label: channel for channel in base.external_channels}
         expected = [port.label for port in self._ports]
-        if set(port_channels) != set(expected) or len(port_channels) != len(expected):
-            raise RuntimeError(
-                "PortNetwork channels do not match assembled chip ports; "
-                f"network={expected}, assembled={list(port_channels)}."
-            )
+        assert set(port_channels) == set(expected) and len(port_channels) == len(expected)
 
         compiled = self._compile() if _compiled is None else _compiled
         operators = {label: port_channels[label].coupling for label in expected}
@@ -2547,8 +2543,7 @@ class PortNetwork:
     ) -> Any:
         from quchip.engine.ir import CanonicalOperator
 
-        if not operators:
-            raise RuntimeError("A PortNetwork cannot resolve without quantum coupling ports.")
+        assert operators, "a resolved PortNetwork has quantum coupling ports"
         first = next(iter(operators.values()))
         prefer_jax = contains_tracer((
             tuple(mapping.values()), tuple(operator.values for operator in operators.values())

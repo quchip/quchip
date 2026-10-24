@@ -703,9 +703,7 @@ def _collect_collapse_terms(
             terms.append(term)
             if port is not None:
                 port_counts[id(port)] += 1
-    for port in chip.ports:
-        if port_counts[id(port)] != 1:
-            raise RuntimeError(f"Port {port.label!r} must resolve to exactly one collapse term.")
+    assert all(port_counts[id(port)] == 1 for port in chip.ports), "each port resolves to one collapse term"
     return tuple(terms), tuple(supports)
 
 

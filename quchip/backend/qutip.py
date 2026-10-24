@@ -1799,11 +1799,7 @@ class QuTiPBackend(Backend):
         tlist_arr = self.array_module.asarray(batch.tlist, dtype=float)
 
         shared = prepared.shared
-        if not isinstance(shared, _QuTiPBatchShared):
-            raise RuntimeError(
-                "QuTiPBackend.solve_batch requires DeferredBatch.shared to be a "
-                f"_QuTiPBatchShared instance, got {type(shared).__name__}."
-            )
+        assert isinstance(shared, _QuTiPBatchShared)
         sample_tlist = shared.sample_tlist
 
         tasks: list[_QuTiPBatchTask] = []
