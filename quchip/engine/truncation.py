@@ -11,6 +11,7 @@ from quchip.engine.bands import local_mode_bands
 from quchip.engine.observables import BandMeta, recombine_expect
 from quchip.utils.values import copy_value
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
+from quchip.utils.stack import user_stacklevel
 
 DEFAULT_TRUNCATION_THRESHOLD = 1e-3
 
@@ -293,7 +294,7 @@ def check_truncation(result: Any, *, threshold: float = DEFAULT_TRUNCATION_THRES
 def _check_result(result: Any, threshold: float) -> dict[Any, Any]:
     plan, traces = evaluate_boundaries(result)
     for reason in plan.unavailable:
-        warnings.warn(f"Truncation diagnostic unavailable: {reason}", UserWarning, stacklevel=3)
+        warnings.warn(f"Truncation diagnostic unavailable: {reason}", UserWarning, stacklevel=user_stacklevel())
     xp = result._backend.array_module
     observed: dict[Any, Any] = {}
     maxima = tuple(xp.maximum(0.0, xp.max(trace)) for trace in traces)
@@ -301,9 +302,9 @@ def _check_result(result: Any, threshold: float) -> dict[Any, Any]:
     traced = contains_tracer(maxima)
     if traced:
         warnings.warn(
-            "Truncation boundary populations are traced; warning thresholds cannot be evaluated here. "
-            "Check the concrete result afterward.",
-            UserWarning, stacklevel=3,
+            "Truncation boundary populations are traced, so the thresholds are not checked. Check the concrete "
+            "result.",
+            UserWarning, stacklevel=user_stacklevel(),
         )
     sampling = result.stats.get("truncation_sampling", "saved time grid")
     for check, maximum in zip(plan.checks, maxima, strict=True):
@@ -313,7 +314,7 @@ def _check_result(result: Any, threshold: float) -> dict[Any, Any]:
                 f"Device {check.label!r}: maximum sampled {check.boundary.description} population "
                 f"({sampling}) {float(maximum):.3g} > threshold {threshold:.3g}. "
                 f"{check.boundary.convergence_hint} This is a sampling heuristic, not an error bound.",
-                UserWarning, stacklevel=3,
+                UserWarning, stacklevel=user_stacklevel(),
             )
     if excitation:
         from quchip.cutoff import ExcitationCutoff
@@ -326,7 +327,7 @@ def _check_result(result: Any, threshold: float) -> dict[Any, Any]:
                 f"Excitation cutoff N <= {plan.excitation[0]}: maximum sampled population in sectors that "
                 f"connect above the cutoff ({sampling}) {float(maximum):.3g} > threshold {threshold:.3g}. "
                 "Raise max_total and compare observables. This is a sampling heuristic, not an error bound.",
-                UserWarning, stacklevel=3,
+                UserWarning, stacklevel=user_stacklevel(),
             )
     return observed
 

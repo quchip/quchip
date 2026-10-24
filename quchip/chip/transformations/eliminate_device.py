@@ -84,6 +84,7 @@ from quchip.declarative.parameters import Scalar, parameter
 from quchip.devices.protocols import FrequencyControlled
 from quchip.devices.spaces import FockSpace
 from quchip.utils.labeling import LabelKeyedDict, resolve_label
+from quchip.utils.stack import user_stacklevel
 
 if TYPE_CHECKING:
     from quchip.chip.chip import Chip
@@ -370,13 +371,11 @@ def _transport_note(chip: "Chip", mode_label: str) -> str:
     support = supports[label]
     states = prod(dims[x] for x in support)
     if 16 * states**2 >= _TRANSPORT_WARNING_BYTES:
-        # Hops: _transport_note -> reduce_device -> reduce_local -> eliminate -> caller.
         warnings.warn(
             f"eliminate({mode_label!r}, local=True): an operator on {label!r} now acts on {len(support)} "
-            f"devices in retained coordinates ({states:,} states, {16 * states**2 / 2**20:,.0f} MiB as a dense "
-            "matrix). Drives, observables and channels on it pass through these maps. Another elimination "
-            "order can keep it smaller; eliminate_spectators() chooses one.",
-            UserWarning, stacklevel=5,
+            f"devices ({states:,} states, {16 * states**2 / 2**20:,.0f} MiB as a dense matrix). "
+            "eliminate_spectators() chooses an order that keeps it smaller.",
+            UserWarning, stacklevel=user_stacklevel(),
         )
     return (f"An operator on {label!r} acts on {list(support)} in retained coordinates ({states} states), "
             "the widest of any device.")

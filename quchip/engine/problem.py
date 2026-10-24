@@ -20,6 +20,7 @@ import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
+from types import MappingProxyType
 
 import numpy as np
 
@@ -42,22 +43,24 @@ from quchip.engine.ir import (
     _aggregate_batch_metadata,
 )
 from quchip.engine.assembly import build_engine_result
-from quchip.engine.dressing import user_stacklevel
 from quchip.engine.frames import FrameMap, IncompatibleFrameError, resolve_for_operations
 from quchip.engine.observables import decompose_eops
 from quchip.engine.sampling import AutomaticTimeGrid, sample_problems
 from quchip.utils.jax_utils import array_namespace, contains_tracer, maybe_concrete_scalar
+from quchip.utils.stack import user_stacklevel
 
 if TYPE_CHECKING:
     from quchip.chip.chip import Chip
 
-_ROTATING_DEFAULT = (
-    "The chip sets no frame, so {subject} uses the rotating frame: each device turns at its reference_freq, "
-    "by default its dressed 0 -> 1 frequency. Expectation values do not depend on the frame. Stored states are "
-    "rotating-frame states, and result.state(..., frame='lab') converts them. Set Chip(frame=...) or "
-    "chip.set_frame() to choose a frame and silence this warning."
-)
-ROTATING_DEFAULT_WARNING = _ROTATING_DEFAULT.format(subject="this solve")
+# Fixed texts, so the default warning filter shows each once per call site.
+DEFAULT_FRAME_WARNINGS: Mapping[str, str] = MappingProxyType({
+    "rotating": ("The chip sets no frame, so this solve uses the rotating frame at each device's reference_freq "
+                 "(by default its dressed 0 -> 1 frequency). Set Chip(frame=...) to choose a frame."),
+    "auto": ("The chip sets no frame, and a collapse or port operator does not fit the rotating frame, so this "
+             "solve uses the frame that frame='auto' plans. Set Chip(frame=...) to choose a frame."),
+    "lab": ("The chip sets no frame, and a collapse or port operator fits neither the rotating frame nor the "
+            "frame='auto' plan, so this solve uses the lab frame. Set Chip(frame=...) to choose a frame."),
+})
 
 
 def _name_list(names: Sequence[str]) -> str:
@@ -66,51 +69,14 @@ def _name_list(names: Sequence[str]) -> str:
     return shown[0] if len(shown) == 1 else ", ".join(shown[:-1]) + f" and {shown[-1]}"
 
 
-def _frame_summary(frequencies: Mapping[str, Any]) -> str:
-    """Name the devices at each frame frequency, such as ``'r1' and 'r2' at 7 GHz``."""
-    groups: dict[float, list[str]] = {}
-    for label, frequency in frequencies.items():
-        concrete = maybe_concrete_scalar(frequency)
-        if concrete is None:
-            return "traced frequencies"
-        groups.setdefault(float(concrete), []).append(repr(label))
-    return "; ".join(f"{_name_list(labels)} at {frequency:.6g} GHz" for frequency, labels in groups.items())
-
-
 # A solve on a chip without a frame uses the first of these frames that fits it, and a batch the first that fits
 # every point.
 DEFAULT_FRAME_ORDER = ("rotating", "auto", "lab")
 
 
-def default_frame_warning(
-    mode: str, reason: str | None, frequencies: Sequence[Mapping[str, Any]], *, subject: str = "this solve"
-) -> str:
-    """Return the warning that names the solve frame of a chip without a frame, given each point's frequencies."""
-    if mode == "rotating":
-        return _ROTATING_DEFAULT.format(subject=subject)
-    if mode == "auto":
-        summaries = {_frame_summary(point) for point in frequencies}
-        summary = summaries.pop() if len(summaries) == 1 else "frequencies that differ between the batch points"
-        choice = (
-            f"the rotating frame does not fit it, so {subject} uses the frame that frame='auto' plans, with {summary}."
-        )
-    else:
-        choice = (
-            f"neither the rotating frame nor the frame that frame='auto' plans fits it, so {subject} uses the lab "
-            "frame."
-        )
-    return (
-        f"The chip sets no frame, and {choice} {reason} Set Chip(frame=...) or chip.set_frame() to choose a frame "
-        "and silence this warning."
-    )
-
-
-def warn_default_frame(
-    mode: str, reason: str | None, frequencies: Sequence[Mapping[str, Any]], *, subject: str = "this solve"
-) -> None:
-    """Warn with :func:`default_frame_warning` at the first caller outside quchip."""
-    warnings.warn(default_frame_warning(mode, reason, frequencies, subject=subject), UserWarning,
-                  stacklevel=user_stacklevel())
+def warn_default_frame(mode: str) -> None:
+    """Warn which frame a solve on a chip without a frame uses, at the first caller outside quchip."""
+    warnings.warn(DEFAULT_FRAME_WARNINGS[mode], UserWarning, stacklevel=user_stacklevel())
 
 
 def _choose_default_frame(chip: Chip, resolve: Any, resolution: Any) -> tuple[str, str | None, Any]:
@@ -159,17 +125,17 @@ def build_default_frame_problems(builders: Sequence[Any]) -> tuple[list[SolvePro
                                   _initial_state_frame=None if note[0] == mode else problem.resolved_frame)
                 for build, note, problem in zip(builders, notes, problems, strict=True)]
 
-    mode, reason = max(notes, key=lambda note: DEFAULT_FRAME_ORDER.index(note[0]))
+    mode, _ = max(notes, key=lambda note: DEFAULT_FRAME_ORDER.index(note[0]))
     bound = bind(mode)
     try:
         rebuilt = [problem if note[0] == mode else build()
                    for problem, note, build in zip(problems, notes, bound, strict=True)]
-    except IncompatibleFrameError as error:
+    except IncompatibleFrameError:
         # The frame that "auto" plans at one point need not fit the operators of another point.
-        mode, reason, bound = "lab", str(error), bind("lab")
+        mode, bound = "lab", bind("lab")
         rebuilt = [problem if note[0] == mode else build()
                    for problem, note, build in zip(problems, notes, bound, strict=True)]
-    warn_default_frame(mode, reason, [problem.resolved_frame.frequencies for problem in rebuilt])
+    warn_default_frame(mode)
     return rebuilt, bound
 
 
@@ -307,7 +273,7 @@ def prepare_solve_problem_context(
     else:
         mode, why, (base_result, resolution) = _choose_default_frame(chip, resolve, resolution)
         if _default_frame_notes is None:
-            warn_default_frame(mode, why, [base_result.resolved_frame.frequencies])
+            warn_default_frame(mode)
         else:
             _default_frame_notes.append((mode, why))
     base_result = replace(base_result, metadata={**base_result.metadata, "excitation_reduction": {

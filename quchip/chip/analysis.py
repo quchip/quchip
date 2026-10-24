@@ -45,7 +45,6 @@ from quchip.engine.dressing import (
     gauge_phases,
     labeled_eigensystem,
     materialize_dressed_result,
-    user_stacklevel,
     warn_weak_assignment,
 )
 from quchip.chip.states import normalize_device_state_mapping
@@ -53,6 +52,7 @@ from quchip.devices.base import BaseDevice, _validate_level_pair
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
 from quchip.utils.values import TracedKey, scoped_entry, scoped_hit
 from quchip.utils.labeling import LabelKeyedDict, bare_label_from_mapping, resolve_label, top_components
+from quchip.utils.stack import user_stacklevel
 
 if TYPE_CHECKING:
     from quchip.approximations import Approximation
@@ -195,7 +195,7 @@ def _reported(entry: tuple[Any, list[str]], advise: bool) -> Any:
     """Return a cached static model. With ``advise``, warn once with each advisory it still holds."""
     model, advisories = entry
     while advise and advisories:
-        warnings.warn(advisories.pop(0), UserWarning, stacklevel=3)
+        warnings.warn(advisories.pop(0), UserWarning, stacklevel=user_stacklevel())
     return model
 
 
@@ -1605,12 +1605,11 @@ class ChipAnalysis:
         concrete frequencies as ``-Σ_i ω_ref,i n̂_i``. The method thus shows
         what the solver will solve without running it.
 
-        A chip without a frame reports the frame of a solve without pulses,
-        and warns with the choice, as that solve does. That frame is the
-        rotating frame. When a collapse or port operator of the chip does not
-        fit it, it is the frame that ``"auto"`` plans, or the lab frame when
-        that frame does not fit either, and the warning gives the reason. The
-        plan of a sequence also weighs its pulse tones, so a solve with pulses
+        A chip without a frame reports, without a warning, the frame of a
+        solve without pulses. That frame is the rotating frame. When a
+        collapse or port operator of the chip does not fit it, it is the frame
+        that ``"auto"`` plans, or the lab frame when that frame does not fit
+        either. The plan of a sequence also weighs its pulse tones, so a solve with pulses
         can plan other frequencies, or use the lab frame when its plan does not
         fit. When a dressed ``0 -> 1`` reference has an unreliable label
         assignment, the method raises with the solve's error.
@@ -1625,17 +1624,14 @@ class ChipAnalysis:
         # (`quchip.engine.frames.resolve_frame`). The assembler performs the
         # subtraction in `assembly._build_static_h0`.
         from quchip.engine.frames import resolve_frame
-        from quchip.engine.problem import prepare_solve_problem_context, warn_default_frame
+        from quchip.engine.problem import prepare_solve_problem_context
 
         if self._chip.frame is not None:
             return dict(resolve_frame(self._chip, self._chip.frame).frequencies)
         # Collapse and port operators show whether a frame fits them only during assembly.
         notes: list[Any] = []
         context = prepare_solve_problem_context(self._chip, np.array([0.0, 1.0]), _default_frame_notes=notes)
-        frequencies = dict(context.resolved_frame.frequencies)
-        (mode, reason), = notes
-        warn_default_frame(mode, reason, [frequencies], subject="a solve")
-        return frequencies
+        return dict(context.resolved_frame.frequencies)
 
     def state(
         self,
