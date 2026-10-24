@@ -18,7 +18,7 @@ measurement records.
 | --- | --- | --- |
 | Units | Frequency and `E/h` in ordinary GHz, time in ns, temperature in mK. Hamiltonian assembly applies `2π` once. | §1 |
 | Rates | Lindblad rates in 1/ns. Backend lowering applies `sqrt(rate)` once. | §3.3 |
-| Charge operator | `Q = i(a − a†)` on the built-in Fock devices, and `Capacitive` is `g Q_a Q_b`. | §2.2 |
+| Charge sign | `[φ, n] = +i` on every built-in device: `Q = i(a† − a)` and `P = a + a†` on the Fock devices. `Capacitive` is `g Q_a Q_b`. | §2.2, cross-walk |
 | Pauli operators | They act on the two lowest isolated energy states, with `Z = \|0><0\| − \|1><1\|`. | §2.1 |
 | Level labels | `{"q": 1}` names a dressed eigenstate of the static chip. `chip.bare_state(q=1)` is the bare product. | §2.1, §9 |
 | Dressed-state phase | The amplitude on the assigned bare state is real and nonnegative. | §9 |
@@ -31,6 +31,32 @@ measurement records.
 | Time convention | Physics `exp(−iωt)` inside quchip. VNA results use the engineering `exp(+jωt)`, with `j = i`. | §8.1 |
 | Dispersive shift | The full pull `χ = f_r\|1 − f_r\|0 = E(1,1) − E(1,0) − E(0,1) + E(0,0)`. | §10.1 |
 | Kerr matrix | Off the diagonal the full pull (static ZZ), on the diagonal the dressed anharmonicity. | §9.3 |
+| Virtual Z | `vz(θ)` adds θ to the phase of later pulses. It acts as `exp(+iθZ/2) = R_z(−θ)`. | §5.3, cross-walk |
+
+### Cross-walk to common references
+
+The table compares quchip with Krantz et al. ([Krantz][krantz]), Koch et al.
+([Koch][koch]), Blais et al. ([Blais][blais]), Vool and Devoret
+([Vool][vool]), Rasmussen et al. ([Rasmussen][rasmussen]) and scqubits.
+Equation numbers refer to the arXiv versions. Frequencies are in ordinary
+GHz on both sides, so a reference written with angular frequency ω compares
+through `ω = 2π f`.
+
+| Topic | quchip | References | Relation |
+| --- | --- | --- | --- |
+| Charge sign | `[φ, n] = +i`. Fock devices: `Q = i(a† − a)`, `P = a + a†`. Charge basis: `e^{iφ}` raises `n`. Phase grid: `n = −i ∂/∂φ`. | Krantz Eqs. 12 and 77, Koch Eq. 3.4, Blais Eqs. 23–24, Vool Eqs. 3.13–3.14 and scqubits use `+i`. Rasmussen Eqs. 45, 48 and 58b use `−i`, with `n` counting Cooper pairs of charge `−2e`. | Same sign as Krantz, Koch, Blais, Vool and scqubits. quchip's `Q` and `P` carry no zero-point factors, and on a truncated Fock space `[P, Q] = 2i` except on the top level. |
+| Dispersive shift | `chi_pull = E(1,1) − E(1,0) − E(0,1) + E(0,0)` (§10.1). | Koch Eq. 3.8 and Krantz Eq. 145 write `χ σ_z a†a`. Blais Eq. 50 writes the cross-Kerr `χ_ab a†a b†b`. | `chi_pull = 2χ_Koch = 2χ_Krantz = χ_ab`, with the same sign, within the dispersive approximation of each reference. |
+| σ_z sign | `Z = \|0><0\| − \|1><1\|`, so `chi_Z = −chi_pull/2` (§10.1). | Krantz §IV agrees. Koch Eq. 3.8, Krantz Eqs. 19 and 145 and Blais Eq. B13 give the excited state `σ_z = +1`. | `chi_Z` has the opposite sign of their χ. |
+| Kerr cavity | `KerrCavity` is `f n − K n(n − 1)` (§3.2.1). | Blais Eq. 50 writes the self-Kerr `(K/2) a†² a²`. | `K = −K_Blais/2`. |
+| I/Q channels | The field is `Re[s e^{−iωt}] = I cos ωt + Q sin ωt` (§6.2). | Krantz Eqs. 85–88 put I on the sine. | quchip's I channel is the cosine. |
+| Virtual Z | `vz(θ)` adds θ to the phase of every later pulse in the frame (§5.3). | McKay et al. ([McKay][mckay]) and Krantz Eqs. 96–99 use the same recipe. | For transverse pulses at a positive carrier under `RWA()`, with `R_z(θ) = exp(−iθZ/2)`, `vz(θ)` acts on the qubit as `exp(+iθZ/2) = R_z(−θ)`, and the later pulses track the frame. Use `vz(−θ)` for `R_z(θ)`. A negative carrier conjugates the envelope phase (§6.2) and reverses this. |
+| Drive matrix element | `m = <1~\|Q\|0~>` with the dressed-state phase rule of §9. | Krantz Eq. 77 gives `+i` times the zero-point charge. | `m = +i` on the isolated `0 -> 1` transition of an unscaled Fock device. The isolated elements are imaginary on `Fluxonium` and real on `ChargeBasisTransmon`, whose charge operator and eigenvectors are real, and their sign depends on the transition. The same pulse phase therefore turns about different axes on different device kinds (§6.2.1). Rotation angles do not change. |
+
+From parity-invariant initial states, such as energy eigenstates, populations
+under a charge drive alone, or through charge couplings alone, do not depend
+on the sign of `[φ, n]`. The sign changes observable physics when
+one device couples through both charge and phase, for example through
+`ChargePhaseDrive`, or through a `ChargeDrive` and a `PhaseDrive` on one device.
 
 ## 1. Units and the 2π convention
 
@@ -105,10 +131,10 @@ and the engine apply the RWA to its bands, not the coupling (§6.1).
 
 `Capacitive` is `g * Q_a Q_b`, where `Q` is each endpoint's charge operator,
 the same operator that `ChargeDrive` uses. Between two Fock devices,
-`Q = i(a − a†)`, and
+`Q = i(a† − a)`, and
 
 ```text
-full: g * i(a − a†) * i(b − b†)
+full: g * i(a† − a) * i(b† − b)
     = g * (a†b + ab†) − g * (ab + a†b†)
 ```
 
@@ -121,12 +147,15 @@ A device declares its charge operator with `charge_coupling_operator()`, and
 `EndpointOps.charge` ([`quchip/declarative/ops.py`](https://github.com/quchip/quchip/blob/main/quchip/declarative/ops.py))
 returns it. On a device without that method, the local space sets the
 operator: `a + a†` on a `FockSpace`, and `n` on a `ChargeSpace` or
-`PhaseGridSpace`. The built-in devices declare these operators:
+`PhaseGridSpace`. The `FockSpace` fallback is the phase quadrature. For an
+excitation-conserving device Hamiltonian, `a → −ia` maps it to the charge
+`i(a† − a)`, so couplings that use only this operator give the same physics.
+The built-in devices declare these operators, all with `[φ, n] = +i`:
 
 | Device | Charge operator `Q` |
 | --- | --- |
-| `DuffingTransmon`, `Resonator`, `KerrCavity`, `Qubit` | `i(a − a†)` |
-| `FluxTunableTransmon` | `s(Φ) i(a − a†)` |
+| `DuffingTransmon`, `Resonator`, `KerrCavity`, `Qubit` | `i(a† − a)` |
+| `FluxTunableTransmon` | `s(Φ) i(a† − a)` |
 | `ChargeBasisTransmon`, `Fluxonium` | `n` |
 | `EigenbasisDevice` | the supplied `charge_operator` |
 
@@ -876,7 +905,7 @@ In the chosen frame, that band gets phase
 exp(-i 2π w * f_frame * t)
 ```
 
-With this phase, the engine knows which part of `a + a†`, `i(a - a†)`, or an
+With this phase, the engine knows which part of `a + a†`, `i(a† - a)`, or an
 observable still rotates.
 
 ### 5.2 Two-device couplings
@@ -932,7 +961,11 @@ sequence keeps it.
 Each carrier pulse follows the phase reference of one device, its frame.
 `QuantumSequence.vz(device, θ)` emits no pulse. It adds θ to the phase of every
 later carrier pulse in that device's frame, on any line ([McKay et
-al.][mckay]). The frame defaults to the device that the pulse's line drives. A
+al.][mckay]). For a transverse pulse at a positive carrier under `RWA()`,
+`pulse(φ + θ) = R_z(θ) pulse(φ) R_z(−θ)` with `R_z(θ) = exp(−iθZ/2)`, so
+`vz(θ)` acts on the qubit as `exp(+iθZ/2) = R_z(−θ)`, and the later pulses
+track the rotated frame. A gate `R_z(θ)` is `vz(−θ)`. A negative carrier
+conjugates the envelope phase (§6.2) and reverses the sign. The frame defaults to the device that the pulse's line drives. A
 cross-resonance tone runs on the control's line at the target's frequency. Its
 phase sets the axis of the target's conditional rotation, so the pulse names
 the target as its frame with `frame=`. Baseband pulses have no carrier and
@@ -1054,14 +1087,19 @@ either sign of `f_drive`. Since `cos(-ωt + φ) = cos(ωt - φ)`, a carrier at
 carrier keeps the same partner through a 0/1 weight on both bands.
 
 `ChargePhaseDrive` (in `quchip.extensions`) maps `I` to the charge operator
-and `Q` to the phase operator, `H = I Q_c + Q P`, where `s = I + iQ` is the
+and `Q` to the phase operator, `H = I Q_c − Q P`, where `s = I + iQ` is the
 delivered analytic signal, envelope and carrier together. With the Fock
-operators `Q_c = i(a - a†)` and `P = a + a†` this is `i(s* a - s a†)`: a positive
+operators `Q_c = i(a† - a)` and `P = a + a†` this is `i(s a† - s* a)`: a positive
 carrier drives the resonant sideband at twice the rate of `ChargeDrive`, with
-the same phase convention, and the drive has no counter-rotating term. The
-other sideband cancels only where `<u|Q_c|l> = -i <u|P|l>` on every upward
-transition. Charge-basis transmons and fluxonia couple both sidebands with
-their own weights, and flux-tunable transmons generally do too.
+the same phase convention, and the drive has no counter-rotating term. In
+general an upward transition `l -> u` couples to `s` with the weight
+`(<u|Q_c|l> + i<u|P|l>)/2` and to `s*` with `(<u|Q_c|l> − i<u|P|l>)/2`. For
+`H = 4E_C n² + V(φ)` and `P = φ`, the commutator `[H, φ] = −8iE_C n` gives
+`<u|n|l> = +i (E_u − E_l)/(8E_C) <u|φ|l>`, so with `[φ, n] = +i` the resonant
+weight is the larger one on every upward transition. The other sideband
+cancels only where `<u|Q_c|l> = +i <u|P|l>`. Charge-basis transmons and
+fluxonia couple both sidebands with their own weights, and flux-tunable
+transmons generally do too.
 
 Weight-zero bands keep the complete real signal, including DC and oscillating
 longitudinal modulation, with no raising and lowering split. For longitudinal
@@ -1099,10 +1137,12 @@ phase of `s` stays constant, the pulse rotates the transition by
 
 about the axis `(cos α, sin α, 0)`, with `α = arg(s m)` and `|i~>` at `+z`. On
 the `0 -> 1` transition of an isolated Duffing transmon, the charge drive has
-`m = -i`, so a real π pulse gives `iY` and an envelope phase of `π/2` gives
-`-iX`. Dressing changes `m` slightly, and other transitions have other
-elements, such as `m = -i√2` for `1 -> 2`. When the phase changes during the
-pulse, as for DRAG with a nonzero `beta`, time ordering first contributes at
+`m = i`, so a real π pulse gives `−iY` and an envelope phase of `π/2` gives
+`iX`. Dressing changes `m` slightly, and other transitions have other
+elements, such as `m = i√2` for `1 -> 2`. The phase of `m` depends on the
+device kind. On an isolated `ChargeBasisTransmon`, whose charge operator and
+eigenvectors are real, `m` is real, and a real π pulse of positive amplitude
+gives `−i sgn(m) X`. When the phase changes during the pulse, as for DRAG with a nonzero `beta`, time ordering first contributes at
 second Magnus order. The area alone then does not set the gate. Detuning,
 leakage to other levels and the counter-rotating terms of `Exact()` also change
 the rotation.
@@ -3186,6 +3226,8 @@ expectation of each run without weights. See
 
 
 [koch]: https://arxiv.org/abs/cond-mat/0703002
+[vool]: https://arxiv.org/abs/1610.03438
+[rasmussen]: https://arxiv.org/abs/2103.01225
 [fluxonium-ref]: https://arxiv.org/abs/0906.0831
 [lindblad]: https://doi.org/10.1007/BF01608499
 [input-output]: https://doi.org/10.1103/PhysRevA.31.3761
