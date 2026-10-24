@@ -9,7 +9,7 @@ import numpy as np
 
 from quchip.engine.field_statistics import propagate_noise, proper_spectrum, quadrature_spectrum
 from quchip.engine.routes import (
-    FIRST_CUTOFF, WORKFLOWS, SolveRoute, array_name, automatic_cutoff, largest_change, plan_sectors,
+    WORKFLOWS, SolveRoute, array_name, automatic_cutoff, largest_change, plan_sectors,
     sector_diagnostics, warn_cutoff,
 )
 from quchip.utils.memory import fits_memory
@@ -335,7 +335,7 @@ def _sector_acquire(entries: list[Any], *, labels: tuple[str, ...], offsets: Any
         def fits(total: int) -> bool:
             return all(fits_memory(model.required_memory(total)) for model in unique)
 
-        start = FIRST_CUTOFF
+        start = None
         if noise:
             # The means settle no later than the noise spectra, so the full ladder starts at the lower
             # cutoff of the first pair whose means agree.
