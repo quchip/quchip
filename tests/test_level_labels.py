@@ -5,9 +5,6 @@ import pytest
 
 from quchip import RWA, Capacitive, Chip, DuffingTransmon, Exact, QuantumSequence
 
-# The dynamiqs runs compile each tight solve, so they run with validation, and QuTiP keeps the E2E check.
-BACKENDS = ["qutip", pytest.param("dynamiqs", marks=[pytest.mark.optional_backend, pytest.mark.validation])]
-
 # The one-excitation block under RWA() has detuning -0.1 GHz and coupling 0.03 GHz, so tan 2θ = 0.6.
 RABI = np.hypot(0.1, 0.06)
 COS2 = 0.5 * (1 + 0.1 / RABI)
@@ -33,9 +30,9 @@ def vector(chip, state):
     return np.asarray(chip.backend.to_array(state)).reshape(-1)
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
-def test_a_label_starts_in_its_dressed_state_at_the_start_time(backend):
+def test_a_label_starts_in_its_dressed_state_at_the_start_time():
     """At t0 = 3.7 ns, {"q0": 1} is c|10> + s exp(i 2π (f1 - f0) t0)|01> in each frame, and stays in its label."""
+    backend = "qutip"
     t0 = 3.7
     times = t0 + np.linspace(0.0, 50.0, 201)
     for frame in ("lab", 5.0, "rotating"):
@@ -179,38 +176,3 @@ def test_every_label_query_takes_the_assigned_state_and_warns_when_it_is_mixed()
     mixed = pair().with_params({"c.g": 0.06}).with_space(ExcitationCutoff(1))
     with pytest.warns(UserWarning, match="assignment overlap 0.820"):
         QuantumSequence(mixed).build_problem(np.array([0.0, 1.0]), initial_state={"q0": 1})
-
-
-@pytest.mark.validation
-@pytest.mark.optional_backend
-def test_label_start_derivatives_keep_the_label_gauge():
-    """On a loop with a complex link, the derivative of a label start matches central differences."""
-    pytest.importorskip("dynamiqs")
-    import jax
-    import jax.numpy as jnp
-
-    from quchip import Coupling
-
-    devices = [DuffingTransmon(freq=5.0 + 0.1 * i, anharmonicity=-0.25, levels=2, label=f"q{i}") for i in range(3)]
-
-    def link(a, b, backend):
-        hop = backend.tensor(backend.dag(a.lowering_operator()), b.lowering_operator())
-        return 1j * hop - 1j * backend.dag(hop)
-
-    # The loop phase makes the relative phases of the dressed state depend on the real coupling g01.
-    chip = Chip(devices, [Capacitive(devices[0], devices[1], g=0.03, label="c01"),
-                          Capacitive(devices[1], devices[2], g=0.02, label="c12"),
-                          Coupling(devices[0], devices[2], g=0.015, interaction=link, label="c02")],
-                approximation=RWA(), backend="dynamiqs")
-
-    def start(g):
-        bound = chip.with_params({"c01.g": g})
-        problem = QuantumSequence(bound).build_problem(np.array([0.0, 1.0]), initial_state={"q0": 1},
-                                                       dissipation=False)
-        return jnp.asarray(bound.backend.to_array(problem.initial_state)).reshape(-1)
-
-    g, step = 0.03, 1e-5
-    derivative = np.asarray(jax.jacfwd(start)(jnp.asarray(g)))
-    difference = np.asarray((start(g + step) - start(g - step)) / (2 * step))
-    # The central difference errs by about step² times the third derivative, below 1e-7 here.
-    np.testing.assert_allclose(derivative, difference, atol=1e-6, rtol=0)

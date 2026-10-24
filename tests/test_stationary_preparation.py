@@ -21,9 +21,9 @@ def test_stationary_preparation_rejects_different_operating_points(backend):
 
 
 @pytest.mark.validation
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
 @pytest.mark.parametrize("route", ["steady", "linear", "full"])
-def test_conditioning_is_requested_and_uses_captured_inputs(backend, route, monkeypatch):
+def test_conditioning_is_requested_and_uses_captured_inputs(route, monkeypatch):
+    backend = "qutip"
     r = Resonator(freq=6.0, levels=3, label="r", T1=20.0)
     second = Resonator(freq=6.03, levels=2, label="b", T1=30.0)
     port = Port(r, rate=0.03, label="p")

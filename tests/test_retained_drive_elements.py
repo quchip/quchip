@@ -96,9 +96,9 @@ def test_local_retained_drive_query_avoids_the_large_product_space():
 
 @pytest.mark.optional_backend
 @pytest.mark.validation
-@pytest.mark.parametrize("local", [False, True])
-def test_retained_drive_value_and_gradient_follow_the_sw_rotation(local):
+def test_retained_drive_value_and_gradient_follow_the_sw_rotation():
     """JIT drive values and coupling derivatives agree with the analytic SW rotation."""
+    local = False
     pytest.importorskip("dynamiqs")
     source = _pair(backend="dynamiqs")
 

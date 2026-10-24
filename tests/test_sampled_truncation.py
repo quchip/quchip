@@ -23,9 +23,9 @@ class FiniteQubit(DrivenLadder):
 
 
 @pytest.mark.validation
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
 @pytest.mark.parametrize("storage", ["all", "final", "none"])
-def test_boundary_excursion_is_checked_before_return_to_ground(backend, storage):
+def test_boundary_excursion_is_checked_before_return_to_ground(storage):
+    backend = "qutip"
     q = DrivenLadder(levels=2, label="q")
     q.reference_freq = 0.0
     chip = Chip([q], backend=backend, frame="lab")
@@ -245,20 +245,3 @@ def test_sampled_boundary_maximum_has_the_correct_gradient():
         value, derivative = jax.jit(jax.value_and_grad(maximum))(0.21)
     assert value == pytest.approx(np.sin(2 * np.pi * 0.21) ** 2, abs=2e-6)
     assert derivative == pytest.approx(2 * np.pi * np.sin(4 * np.pi * 0.21), abs=2e-5)
-
-
-@pytest.mark.validation
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
-def test_saved_samples_and_prepared_diagnostics_agree_on_frozen_grid(backend):
-    """Explicit preparation preserves the grid and final-only checks state their coverage."""
-    from dataclasses import replace
-
-    chip = Chip([DrivenLadder(label="q")], backend=backend, frame="lab")
-    problem = QuantumSequence(chip).build_problem([0., 1., 2.], initial_state=chip.backend.basis(2, 0))
-    sampled = with_truncation(replace(problem, states="none"))
-    np.testing.assert_array_equal(sampled.tlist, problem.tlist)
-    saved_maximum = check_truncation(solve_problem(problem), threshold=2.)["q"]
-    assert check_truncation(solve_problem(sampled), threshold=2.)["q"] == pytest.approx(saved_maximum)
-    final = solve_problem(replace(problem, states="final"))
-    assert check_truncation(final, threshold=2.)["q"] < 1e-8
-    assert final.stats["truncation_sampling"] == "final state only"

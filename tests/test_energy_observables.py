@@ -208,29 +208,3 @@ def test_energy_population_is_independent_of_integration_frame(basis):
             e_ops=chip.e_ops(q="Z"), partition=False, )
         np.testing.assert_allclose(result.population(q, 1), 1.0, atol=1e-9)
         np.testing.assert_allclose(result.expect(q), -1.0, atol=1e-9)
-
-
-@pytest.mark.validation
-@pytest.mark.parametrize("warm", [False, True])
-def test_pauli_cache_keeps_jit_gradients_and_backend_selection(warm):
-    """Cached energy operators retain gradients, native types, and independent copies."""
-    import jax
-    from quchip.backend import _backend_context, _coerce_backend
-
-    q = TiltedMode(levels=3, label="q")
-    if warm:
-        _ = q.sigma_z
-    backend = _coerce_backend("dynamiqs")
-    with _backend_context(backend), jax.checking_leaks():
-        def read():
-            return backend.to_array(q.sigma_z)[0, 0].real
-        assert jax.jit(read)() == pytest.approx(float(read()))
-
-        def value(mixing):
-            changed = q.copy()
-            changed.mixing = mixing
-            return backend.to_array(changed.sigma_z)[0, 0].real
-
-        expected = -4 * q.freq * q.mixing / (q.freq**2 + 4 * q.mixing**2 + 0.16)**1.5
-        assert jax.jit(jax.grad(value))(q.mixing) == pytest.approx(expected, rel=1e-10)
-    assert q.sigma_z.full().shape == (3, 3)

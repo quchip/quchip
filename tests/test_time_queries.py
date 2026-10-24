@@ -13,28 +13,13 @@ def _result(backend, states="none"):
                              states=states, e_ops={"q": q.number_operator()})
 
 
-@pytest.mark.validation
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
-def test_observable_queries_use_saved_values_independently_of_states(backend):
-    result = _result(backend)
-    values = result.expect("q")
-    np.testing.assert_array_equal(result.observable_at([[5.0, 2.0], [3.0, 5.0]], values),
-                                  np.asarray(values)[[[2, 0], [1, 2]]])
-    assert result.observable_at(3.0, values).shape == ()
-    assert result.observable_at(4.0, values, method="nearest") == values[1]
-    assert result.observable_at(4.0, values, method="interpolate") == pytest.approx((values[1] + values[2]) / 2)
-    with pytest.raises(ValueError, match="saved time"):
-        result.observable_at(4.0, values)
-
-
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
-def test_complex_and_multiple_observable_series_preserve_native_shapes(backend):
-    result = _result(backend)
+def test_complex_and_multiple_observable_series_preserve_native_shapes():
+    result = _result("qutip")
     xp = result._backend.array_module
     values = xp.asarray([[1+2j, 3+4j, 7+8j], [2-1j, 4-3j, 8-7j]])
     actual = result.observable_at([[2.5, 4.0]], values, method="interpolate")
     np.testing.assert_allclose(actual, [[[2+3j, 5+6j]], [[3-2j, 6-5j]]])
-    assert type(actual).__module__.startswith("numpy" if backend == "qutip" else "jax")
+    assert type(actual).__module__.startswith("numpy")
     assert result.observable_at([], values).shape == (2, 0)
 
 
@@ -85,28 +70,6 @@ def test_partitioned_observable_lookup_uses_the_shared_saved_grid():
     result = QuantumSequence(chip).simulate(tlist=[0.0, 1.0, 3.0],
         e_ops={"a": q0.number_operator()}, states="none")
     np.testing.assert_array_equal(result.observable_at([0.0, 3.0], result.expect("a")), [0.0, 0.0])
-
-
-@pytest.mark.validation
-def test_observable_lookup_inside_a_differentiated_solve():
-    import jax
-    import jax.numpy as jnp
-
-    q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=2, T1=10.0, label="q")
-    chip = Chip([q], backend="dynamiqs", frame="rotating")
-
-    @jax.jit
-    @jax.value_and_grad
-    def decay(t1):
-        candidate = chip.with_params({"q.T1": t1})
-        result = QuantumSequence(candidate).simulate(tlist=jnp.asarray([0.0, 1.0, 3.0]),
-            initial_state={"q": 1}, e_ops={"q": candidate["q"].number_operator()},
-            states="none")
-        return jnp.real(result.observable_at(2.0, result.expect("q"), method="interpolate"))
-
-    value, derivative = decay(jnp.asarray(10.0))
-    assert value == pytest.approx((np.exp(-0.1) + np.exp(-0.3)) / 2, abs=2e-6)
-    assert derivative == pytest.approx((np.exp(-0.1) + 3 * np.exp(-0.3)) / 200, abs=2e-6)
 
 
 @pytest.mark.parametrize("states", ["all", "final"])

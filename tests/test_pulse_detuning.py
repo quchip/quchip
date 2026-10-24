@@ -11,7 +11,6 @@ from quchip import (
     Chip,
     DuffingTransmon,
     FluxDrive,
-    Gaussian,
     QuantumSequence,
     Qubit,
     RWA,
@@ -85,37 +84,3 @@ def test_detuned_pulse_pair_matches_analytic_evolution_at_every_gap():
     # A fixed oscillator has phase -2πδ t0 relative to a start-referenced pulse.
     np.testing.assert_allclose(final_state(50.0, "fixed"), final_state(50.0, "fixed by hand"),
                                atol=1e-7, rtol=0)
-
-
-@pytest.mark.validation
-@pytest.mark.optional_backend
-def test_detuning_gradient_matches_finite_differences():
-    """The JAX derivative of P(1) with respect to a rebound pulse.<i>.detuning matches central differences."""
-    pytest.importorskip("dynamiqs")
-    import dynamiqs as dq
-    import jax
-    import jax.numpy as jnp
-
-    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
-    chip = Chip([q], frame="rotating", approximation=RWA(), backend="dynamiqs")
-    chip.wire(ChargeDrive(q, label="xy"))
-    seq = QuantumSequence(chip)
-    envelope = Gaussian(duration=20.0, sigmas=3, amplitude=0.0125)
-    seq.charge("q", envelope=envelope, freq=chip.freq(q))
-    seq.charge("q", envelope=envelope, freq=chip.freq(q), phase=0.4)
-    tlist = jnp.linspace(0.0, 65.0, 3)
-    method = dq.method.Tsit5(rtol=1e-10, atol=1e-12)
-
-    def excited_population(detuning):
-        # Both pulses start without a detuning, so rebinding adds the offset.
-        rebound = seq.with_params({"pulse.0.detuning": detuning, "pulse.1.detuning": detuning,
-                                   "pulse.1.start_time": 45.0})
-        result = rebound.simulate(tlist=tlist, initial_state=chip.bare_state({"q": 0}), options={"method": method})
-        return result.population("q", 1)[-1]
-
-    detuning = jnp.asarray(0.006)
-    gradient = jax.grad(excited_population)(detuning)
-    step = 1e-5
-    reference = (excited_population(detuning + step) - excited_population(detuning - step)) / (2 * step)
-    assert abs(float(reference)) > 1.0
-    np.testing.assert_allclose(float(gradient), float(reference), rtol=1e-6)

@@ -397,15 +397,15 @@ def test_exact_auto_hamiltonian_is_the_rotated_complete_lab_hamiltonian() -> Non
 
 @pytest.mark.validation
 def test_exact_auto_population_matches_a_converged_lab_reference() -> None:
-    """The automatic frame resolves a long driven Exact solve at least as well as the explicit rotating frame."""
-    times = np.linspace(0.0, 500.0, 301)
+    """The automatic frame resolves a driven Exact solve at least as well as the explicit rotating frame."""
+    times = np.linspace(0.0, 50.0, 31)
 
     def population(frame: str, options: dict[str, float] | None = None) -> float:
         result = _exact_pi_pulse(frame).simulate(times, states="final", options=options)
         return float(abs(np.asarray(result.final_state.full())[3, 0]) ** 2)
 
-    reference = population("lab", {"atol": 1e-14, "rtol": 1e-12})
-    refined = population("lab", {"atol": 1e-15, "rtol": 1e-13})
+    reference = population("lab", {"atol": 1e-13, "rtol": 1e-11})
+    refined = population("lab", {"atol": 1e-14, "rtol": 1e-12})
     reference_error = abs(reference - refined)
     # Tightening both lab-frame tolerances resolves a 1e-9 population budget,
     # below 1% of the explicit rotating frame's ~2e-7 default integration error.

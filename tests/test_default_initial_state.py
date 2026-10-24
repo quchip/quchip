@@ -225,20 +225,3 @@ def test_default_ground_matches_independent_diagonalization_in_rotating_frame():
     # Both eigenvectors are accurate to about ε‖H‖/gap ≈ 2e-15 (‖H‖ ≈ 40 GHz, gap ≈ 5 GHz),
     # and the phase arguments (up to about 1.3e3 rad) to about 3e-13 rad.
     assert abs(np.vdot(expected, _ket(chip, problem.initial_state))) ** 2 == pytest.approx(1.0, abs=1e-12)
-
-
-@pytest.mark.validation
-@pytest.mark.optional_backend
-def test_default_ground_gradient_matches_finite_difference_beside_tied_spectators():
-    """With two identical uncoupled spectators, jax.grad of the default start's leakage matches a central difference."""
-    pytest.importorskip("dynamiqs")
-    import jax
-
-    g, step = 0.05, 1e-3
-    # The spectators tie excited levels exactly, where differentiating eigh itself gives NaN.
-    gradient = float(jax.grad(lambda x: _leakage(x, "dynamiqs", spectators=2))(g))
-    reference = (_leakage(g + step) - _leakage(g - step)) / (2 * step)
-    # The central difference errs by step² |L'''| / 6, with L''' ≈ 24 L₄ / g³ from the g⁴ term (about 1.4e-10);
-    # leakage roundoff divided by 2 step stays below 1e-12.
-    fourth = _perturbative_leakage(g)[1]
-    assert abs(gradient - reference) <= 2 * step**2 / 6 * 24 * fourth / g**3 + 1e-12

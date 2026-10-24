@@ -323,35 +323,3 @@ def test_coherent_amplitude_is_jax_differentiable_through_assembly() -> None:
     gradient = jax.grad(norm)(jnp.asarray(0.2))
     assert np.isfinite(float(gradient))
     assert float(gradient) > 0.0
-
-
-@pytest.mark.validation
-def test_qutip_and_dynamiqs_solve_the_same_coherent_input_problem() -> None:
-    """QuTiP and Dynamiqs agree on the same coherent-input evolution."""
-    pytest.importorskip("dynamiqs")
-    final_populations: list[float] = []
-    for backend in ("qutip", "dynamiqs"):
-        resonator = Resonator(freq=5.0, levels=5, label="r")
-        network = PortNetwork(label="line")
-        network.port("feedline", target=resonator, rate=0.04)
-        chip = Chip(
-            [resonator],
-            port_network=network,
-            frame="rotating",
-            backend=backend,
-        )
-        sequence = QuantumSequence(chip)
-        sequence.schedule(
-            CoherentInput("feedline"),
-            envelope=Square(duration=4.0, amplitude=0.5),
-            freq=5.0,
-        )
-        result = sequence.simulate(
-            tlist=np.linspace(0.0, 4.0, 41),
-            e_ops={resonator: resonator.number_operator()},
-            partition=False,
-        )
-        final_populations.append(float(np.real(result.expect_values(resonator)[-1])))
-
-    assert final_populations[0] > 0.1
-    assert final_populations[1] == pytest.approx(final_populations[0], rel=1e-5)

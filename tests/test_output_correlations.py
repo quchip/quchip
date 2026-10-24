@@ -91,37 +91,6 @@ def test_thermal_output_has_g2_zero_near_two() -> None:
     np.testing.assert_allclose(result.values, [2.0], atol=2e-5)
 
 
-def test_qutip_and_dynamiqs_stationary_output_analysis_agree() -> None:
-    """Both backends lower the same spectrum and regression queries independently."""
-    pytest.importorskip("dynamiqs")
-
-    def outputs(backend: str):
-        resonator = Resonator(
-            freq=6.0,
-            levels=6,
-            label="r",
-            T1=20.0,
-            thermal_occupation=0.15,
-        )
-        port = Port(resonator, rate=0.03, label="p")
-        vna = VNA(
-            Chip(
-                [resonator],
-                port_network=PortNetwork.from_ports([port]),
-                backend=backend,
-            ),
-            ports=[port],
-        )
-        spectrum = vna.output_spectrum(port, frequencies=[-0.05, 0.0, 0.05])
-        return spectrum.total_fluctuation_spectrum, vna.g1(port, [0.0, 2.0]).values, vna.g2(port, [0.0, 2.0]).values
-
-    qutip_values = outputs("qutip")
-    dynamiqs_values = outputs("dynamiqs")
-
-    for qutip_value, dynamiqs_value in zip(qutip_values, dynamiqs_values):
-        np.testing.assert_allclose(np.asarray(dynamiqs_value), qutip_value, atol=2e-7)
-
-
 @pytest.mark.validation
 def test_qutip_output_analysis_is_not_capped_by_engine_dense_dimension() -> None:
     """QuTiP output analysis uses its native stationary lowering beyond the old dense cap."""

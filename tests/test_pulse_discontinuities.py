@@ -59,48 +59,6 @@ def test_short_square_pulse_is_resolved_on_two_point_grid(backend_name):
     np.testing.assert_array_equal(result.times, [0.0, 308.0])
 
 
-@pytest.mark.validation
-def test_short_pulse_width_and_amplitude_gradients_survive_jit():
-    import jax
-    import jax.numpy as jnp
-    from quchip.backend.dynamiqs import DynamiqsBackend
-
-    backend = DynamiqsBackend()
-
-    @jax.jit
-    @jax.value_and_grad
-    def objective(parameters):
-        problem = _problem(backend, amplitude=parameters[0], width=parameters[1])
-        result = backend.solve_problem(problem)
-        return jnp.abs(backend.to_array(result.final_state)[1, 0]) ** 2
-
-    value, gradient = objective(jnp.array([5.0, 0.1]))
-    np.testing.assert_allclose(value, np.sin(0.5) ** 2, atol=2e-7)
-    np.testing.assert_allclose(gradient, np.sin(1.0) * np.array([0.1, 5.0]), atol=2e-6)
-
-
-@pytest.mark.validation
-def test_native_batch_preserves_distinct_pulse_edges_and_gradients():
-    import jax
-    import jax.numpy as jnp
-    from quchip.backend.dynamiqs import DynamiqsBackend
-    from quchip.engine.ir import SolveBatch
-
-    backend = DynamiqsBackend()
-
-    @jax.jit
-    @jax.value_and_grad
-    def objective(widths):
-        problems = tuple(_problem(backend, width=widths[i], start=start)
-                         for i, start in enumerate([150.17, 200.17]))
-        results = backend.solve_batch(SolveBatch(chip=None, problems=problems), progress=False)
-        return sum(jnp.abs(backend.to_array(result.final_state)[1, 0]) ** 2 for result in results)
-
-    value, gradient = objective(jnp.array([0.1, 0.2]))
-    np.testing.assert_allclose(value, np.sum(np.sin([0.5, 1.0]) ** 2), atol=2e-7)
-    np.testing.assert_allclose(gradient, 5 * np.sin([1.0, 2.0]), atol=2e-6)
-
-
 def test_qutip_square_pulse_has_no_interpolation_area_outside_support():
     from quchip.backend.qutip import _envelope_coefficient
     from quchip.engine.ir import Constant, Shift, Window

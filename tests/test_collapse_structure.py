@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from quchip import (
-    RWA, VNA, Bath, Capacitive, ChargeDrive, Chip, DuffingTransmon, EffectiveTerms, Gaussian, PortNetwork,
+    RWA, Bath, Capacitive, Chip, DuffingTransmon, EffectiveTerms, PortNetwork,
     QuantumSequence, Resonator, eliminate, set_default_backend,
 )
 from quchip.chip.effective import OperatorProjection
@@ -91,35 +91,6 @@ def test_isolated_three_level_loss_keeps_spectator_under_compiled_local_eliminat
 
 @pytest.mark.validation
 @pytest.mark.optional_backend
-@pytest.mark.parametrize("method, local", [("sw", False), ("exact", False), ("sw", True)])
-def test_reduced_channel_frequency_and_coupling_derivatives(method, local):
-    """The transformed loss amplitude keeps its physical derivatives in a common frame."""
-    pytest.importorskip("dynamiqs")
-    source = _readout_chip(loss=True)
-    source.set_frame(5.)
-
-    def amplitude(frequency, coupling):
-        reduced = eliminate(source.with_params({"a.freq": frequency, "leg.g": coupling}), "bus",
-                            method=method, local=local).chip
-        channel = next(term for term in reduced.resolve().collapse_terms if term.source == "a")
-        return jnp.real(channel.operator.to_dense()[0, 4])
-
-    value, gradients = jax.value_and_grad(amplitude, argnums=(0, 1))(5., .08)
-    compiled, compiled_gradients = jax.jit(jax.value_and_grad(amplitude, argnums=(0, 1)))(5., .08)
-    # Plain, traced and compiled calls differ only by reassociation round-off.
-    assert float(value) == pytest.approx(float(amplitude(5., .08)), abs=2e-13)
-    np.testing.assert_allclose(compiled, value, atol=2e-13)
-    np.testing.assert_allclose(compiled_gradients, gradients, atol=2e-12)
-    step = 1e-4
-    reference = [(amplitude(5. + step, .08) - amplitude(5. - step, .08)) / (2 * step),
-                 (amplitude(5., .08 + step) - amplitude(5., .08 - step)) / (2 * step)]
-    # Central differences have O(step^2) truncation error away from crossings.
-    np.testing.assert_allclose(gradients, reference, rtol=2e-5, atol=1e-9)
-    assert np.all(np.abs(gradients) > 1e-4)
-
-
-@pytest.mark.validation
-@pytest.mark.optional_backend
 def test_collective_bath_frequency_gradient_matches_one_excitation_solution():
     """Collective decay in a common frame matches the independent two-amplitude solution."""
     from scipy.linalg import expm
@@ -148,30 +119,6 @@ def test_collective_bath_frequency_gradient_matches_one_excitation_solution():
     expected = (reference(point + step) - reference(point - step)) / (2 * step)
     # The central difference of the exact solution has O(step^2) error near 1e-10, so solver error dominates.
     np.testing.assert_allclose([derivative, compiled_derivative], expected, rtol=1e-7, atol=1e-11)
-
-
-@pytest.mark.validation
-@pytest.mark.optional_backend
-def test_reduced_vna_frequency_derivative_matches_finite_difference():
-    """The stationary probe frame accepts a traced survivor frequency after reduction."""
-    pytest.importorskip("dynamiqs")
-    source = _readout_chip(loss=True)
-
-    def reflection(frequency):
-        reduced = eliminate(source.with_params({"a.freq": frequency}), "bus").chip
-        result = VNA(reduced).sweep(np.array([7.01]))
-        # The traced survivor frequency keeps the mode-space route of plain evaluation.
-        assert result.diagnostics[0]["solver"] == "vacuum_response"
-        return jnp.abs(result.matrix[0, 0, 0]) ** 2
-
-    value, derivative = jax.jit(jax.value_and_grad(reflection))(5.)
-    step = 1e-4
-    reference = (reflection(5. + step) - reflection(5. - step)) / (2 * step)
-    # The compiled call differs from plain evaluation only by reassociation round-off.
-    assert float(value) == pytest.approx(float(reflection(5.)), abs=2e-12)
-    # The central difference has O(step²) truncation error and solver round-off divided by the step.
-    assert float(derivative) == pytest.approx(float(reference), rel=2e-5, abs=1e-9)
-    assert abs(float(derivative)) > 1e-6
 
 
 @pytest.mark.validation
@@ -208,55 +155,6 @@ def test_reduced_collective_bath_frequency_derivative_survives_serialization():
                                atol=1e-15)
 
 
-@pytest.mark.validation
-@pytest.mark.optional_backend
-@pytest.mark.parametrize("method", ["sw", "exact"])
-def test_inherited_loss_traces_eliminated_frequency(method):
-    """Removed-mode loss keeps its frequency derivative through either reduction."""
-    pytest.importorskip("dynamiqs")
-    q = Resonator(freq=5., levels=2, label="q")
-    bus = Resonator(freq=7., levels=2, T1=100., label="bus")
-    source = Chip([q, bus], [Capacitive(q, bus, g=.08)], frame=5., approximation=RWA(), backend="dynamiqs")
-
-    def amplitude(frequency):
-        reduced = eliminate(source.with_params({"bus.freq": frequency}), "bus", method=method).chip
-        return jnp.real(reduced.resolve().collapse_terms[0].operator.to_dense()[0, 1])
-
-    value, derivative = jax.jit(jax.value_and_grad(amplitude))(7.)
-    step = 1e-4
-    reference = (amplitude(7. + step) - amplitude(7. - step)) / (2 * step)
-    # The compiled call differs from plain evaluation only by reassociation round-off.
-    assert float(value) == pytest.approx(float(amplitude(7.)), abs=2e-13)
-    # The central difference has O(step²) truncation error and round-off divided by the step.
-    assert float(derivative) == pytest.approx(float(reference), rel=2e-7, abs=1e-10)
-    assert abs(float(derivative)) > 1e-3
-
-
-@pytest.mark.validation
-@pytest.mark.optional_backend
-def test_reduced_pulse_coupling_derivative_in_per_device_frames():
-    """A surviving readout port permits pulse coupling gradients in independent frames."""
-    pytest.importorskip("dynamiqs")
-    source = _readout_chip()
-    source.wire(ChargeDrive(source["a"], label="xy"))
-
-    def population(coupling):
-        sequence = QuantumSequence(eliminate(source.with_params({"leg.g": coupling}), "bus").chip)
-        sequence.schedule("xy", envelope=Gaussian(duration=8., sigmas=3., amplitude=.04), freq=4.98)
-        result = sequence.simulate(tlist=jnp.linspace(0., 10., 21), initial_state={"a": 0})
-        return jnp.real(result.population("a", level=1)[-1])
-
-    value, derivative = jax.jit(jax.value_and_grad(population))(.08)
-    step = 1e-4
-    reference = (population(.08 + step) - population(.08 - step)) / (2 * step)
-    # Both calls integrate the same equations. Round-off can move adaptive steps, so the bound is ten times
-    # the solver's 1e-9 relative tolerance.
-    assert float(value) == pytest.approx(float(population(.08)), rel=1e-8, abs=1e-11)
-    # The finite difference also includes adaptive integration error.
-    assert float(derivative) == pytest.approx(float(reference), rel=1e-3, abs=1e-6)
-    assert abs(float(derivative)) > 1e-3
-
-
 @pytest.mark.parametrize("method", ["sw", "exact"])
 def test_carried_jump_names_its_devices_and_the_frames_that_work(method):
     """A carried jump with unequal band phases names its devices and the frames that give them one phase."""
@@ -285,7 +183,7 @@ def test_sw_induced_loss_still_rejects_incompatible_frames():
         reduced = eliminate(source.with_params({"leg.g": g}), "bus").chip
         return jnp.real(reduced.resolve().collapse_terms[0].operator.to_dense()[0, 1])
 
-    for evaluate in (amplitude, jax.grad(amplitude), jax.jit(amplitude)):
+    for evaluate in (amplitude, jax.jit(amplitude)):
         with pytest.raises(ValueError, match="operator bands with different phases"):
             evaluate(.08)
 

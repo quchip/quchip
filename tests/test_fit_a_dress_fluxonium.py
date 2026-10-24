@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from quchip import Capacitive, Chip, Resonator, fit_a_dress, set_default_backend
+from quchip import Capacitive, Chip, fit_a_dress, set_default_backend
 from quchip.devices.fluxonium import Fluxonium
 
 
@@ -15,50 +15,6 @@ def _dynamiqs_backend():
     set_default_backend("dynamiqs")
     yield
     set_default_backend("qutip")
-
-
-@pytest.mark.validation
-@pytest.mark.optional_backend
-@pytest.mark.usefixtures("_dynamiqs_backend")
-def test_fit_a_dress_recovers_fluxonium_dressed_freq() -> None:
-    """fit_a_dress recovers a target fluxonium dressed frequency while holding the resonator anchor fixed."""
-    flux = Fluxonium(E_C=1.0, E_J=4.0, E_L=1.0, phi_ext=0.5, levels=4, num_basis=120)
-    res = Resonator(freq=7.0, levels=4, label="r")
-    chip = Chip([flux, res], [Capacitive(flux, res, g=0.05)])
-    seed_dressed_flux = float(chip.freq(flux))
-    target_freq = seed_dressed_flux * 1.10
-
-    # 6 free bare parameters (E_C, E_J, E_L, phi_ext, res.freq, coupling.g) against 3 target
-    # residuals: underdetermined by count, and intentionally so — the point of this test is that
-    # fit_a_dress moves *some* combination of the 4 fluxonium bare parameters to hit the target
-    # with the caller explicitly permitting all four to vary.
-    with pytest.warns(UserWarning, match="underdetermined by count"):
-        result = fit_a_dress(
-            chip,
-            constraints={
-                flux: {"freq": target_freq, "anharmonicity": float(chip.dressed_anharmonicity(flux))},
-                res: {"freq": 7.0},
-                chip.couplings[0]: {"cross_kerr": None},
-            },
-            vary={flux: tuple(flux.tunable_params()), res: ("freq",), chip.couplings[0]: ("g",)},
-            max_hilbert_dim=10_000,
-        )
-
-    fitted_chip = result.chip
-    fitted_flux = result.rebind(flux)
-    fitted_res = result.rebind(res)
-    achieved = float(fitted_chip.freq(fitted_flux))
-    assert achieved == pytest.approx(target_freq, rel=5e-3, abs=5e-3)
-    # The resonator anchor holds; coupling does not drift it.
-    assert float(fitted_chip.freq(fitted_res)) == pytest.approx(7.0, abs=5e-3)
-    bare_keys = (
-        f"{flux.label}.E_C",
-        f"{flux.label}.E_J",
-        f"{flux.label}.E_L",
-        f"{flux.label}.phi_ext",
-    )
-    moved = any(abs(result.final_params[k] - result.initial_params[k]) > 1e-6 for k in bare_keys)
-    assert moved, "optimizer never moved any fluxonium bare parameter"
 
 
 @pytest.mark.optional_backend

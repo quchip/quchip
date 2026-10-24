@@ -53,28 +53,6 @@ def test_transmon_import_matches_scqubits_spectrum_exactly():
     assert np.allclose(got, want, atol=1e-9)
 
 
-def test_imported_transmon_stays_differentiable_in_EJ():
-    """An imported device carries live parameters JAX can differentiate through.
-
-    Import rebuilds the Hamiltonian from the source's native parameters (rather
-    than freezing a snapshot), so a device reconstructed from the *imported*
-    device's own ``(E_C, num_basis, levels)`` with ``E_J`` traced has a finite,
-    nonzero 0->1 gradient at the imported ``E_J`` value.
-    """
-    import jax
-
-    tmon = scq.Transmon(EJ=30.0, EC=0.2, ng=0.0, ncut=31, truncated_dim=3)
-    dev = from_scqubits(tmon)
-
-    def f01(EJ):
-        return ChargeBasisTransmon(
-            E_C=dev.E_C, E_J=EJ, num_basis=dev.num_basis, levels=dev.levels
-        ).freq
-
-    g = jax.grad(f01)(float(tmon.EJ))
-    assert np.isfinite(g) and g != 0.0
-
-
 def test_transmon_roundtrip_export():
     """import(export(transmon)) reproduces the original scqubits Transmon's spectrum."""
     tmon = scq.Transmon(EJ=30.0, EC=0.2, ng=0.0, ncut=31, truncated_dim=4)

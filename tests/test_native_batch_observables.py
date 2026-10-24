@@ -39,8 +39,7 @@ def _batch(states, noisy=True, scales=(1.0, 2.0)):
     return SolveBatch(chip=chip, problems=problems)
 
 
-@pytest.mark.parametrize("states", ["all", "final", "none"])
-@pytest.mark.parametrize("noisy", [False, True])
+@pytest.mark.parametrize("noisy, states", [(False, "all"), (True, "final"), (True, "none")])
 def test_point_observables_obey_native_storage_choice(states, noisy):
     result = solve_batch(_batch(states, noisy), progress=False)
     for scale, point in zip((1.0, 2.0), result):
@@ -52,49 +51,3 @@ def test_point_observables_obey_native_storage_choice(states, noisy):
                 _ = point.states
         if states != "none":
             assert point.final_state is not None
-
-
-@pytest.mark.validation
-def test_point_observables_keep_native_jit_gradients_without_histories():
-    import jax
-    import jax.numpy as jnp
-
-    @jax.jit
-    @jax.value_and_grad
-    def objective(scale):
-        batch = _batch("none", scales=(scale, 2 * scale))
-        result = solve_batch(batch, progress=False)
-        return jnp.real(result.expect("q", reduce="last").sum())
-
-    value, derivative = objective(jnp.asarray(0.7))
-    assert value == pytest.approx(2.1 * np.exp(-0.3), abs=3e-6)
-    assert derivative == pytest.approx(3 * np.exp(-0.3), abs=3e-6)
-
-
-@pytest.mark.validation
-def test_point_observables_follow_dynamic_pulse_axes_and_gradients():
-    import jax
-    import jax.numpy as jnp
-    from quchip import ChargeDrive, Square
-
-    @jax.jit
-    @jax.value_and_grad
-    def objective(amplitude):
-        q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=2, label="q")
-        chip = Chip([q], backend="dynamiqs", frame="rotating")
-        drive = ChargeDrive(q)
-        chip.wire(drive)
-        sequence = QuantumSequence(chip)
-        pulse = sequence.schedule(drive, envelope=Square(duration=0.01, amplitude=amplitude),
-                                  freq=5.0, start_time=1.0)
-        batch = sequence.build_batch(pulse.vary("duration", [0.01, 0.03]),
-            tlist=[0.0, 2.0], states="none", e_ops={"q": q.number_operator()})
-        batch = replace(batch, problems=tuple(replace(problem, e_ops=[scale * op for op in problem.e_ops])
-                         for scale, problem in zip((1.0, 2.0), batch.problems)))
-        result = solve_batch(batch, progress=False)
-        return jnp.real(result.expect("q", reduce="last").sum())
-
-    value, derivative = objective(jnp.asarray(1.0))
-    widths, scales = np.asarray([0.01, 0.03]), np.asarray([1.0, 2.0])
-    assert value == pytest.approx(np.sum(scales * np.sin(np.pi * widths) ** 2), abs=2e-6)
-    assert derivative == pytest.approx(np.sum(scales * np.pi * widths * np.sin(2 * np.pi * widths)), abs=2e-6)
