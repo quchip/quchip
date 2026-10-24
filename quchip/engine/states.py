@@ -407,7 +407,7 @@ def compact_state(chip, *components, dressed=True):
         else:
             system = model.eigensystem(sum(levels))
             row = system.space.row(levels)
-            warn_weak_assignment(levels, system.labeling.overlaps[row])
+            warn_weak_assignment(chip._analysis, levels, system.labeling.overlaps[row])
             eigenvector = xp.asarray(system.eigenvectors)[:, system.labeling.indices[row]]
             indices = np.asarray([space.rows[label] for label in system.space.labels])
             contribution = xp.asarray(np.eye(space.size)[:, indices]) @ eigenvector
@@ -510,7 +510,7 @@ def sector_label_ket(chip, model, space, levels):
     system = model.eigensystem(sum(levels))
     row = system.space.row(tuple(levels))
     index = system.labeling.indices[row]
-    warn_weak_assignment(levels, system.labeling.overlaps[row])
+    warn_weak_assignment(chip._analysis, levels, system.labeling.overlaps[row])
     traced = contains_tracer((system.eigenvalues, system.eigenvectors, index))
     xp = jnp if traced else chip.backend.array_module
     column = xp.asarray(system.eigenvectors)[:, index]
