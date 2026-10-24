@@ -303,7 +303,7 @@ class TestDroppedTerms:
             assert dt.source == "cap_q0_q1"
             assert "RWA band selection" in dt.reason
             # amplitude = the dropped band's largest matrix element — for the
-            # a†b† / ab bands of g·i(a-a†)·i(b-b†) on 3-level ladders that is
+            # a†b† / ab bands of g·i(a†-a)·i(b†-b) on 3-level ladders that is
             # g·√2·√2 = 2g. Its bare detuning includes both anharmonicities.
             assert dt.amplitude == pytest.approx(0.02, rel=1e-12)
             assert dt.frequency == pytest.approx(9.7, abs=1e-12)

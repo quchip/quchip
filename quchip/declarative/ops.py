@@ -121,6 +121,10 @@ class LocalOps:
         same charge. Without such a device, the local space sets the operator:
         ``a + a†`` on a ``FockSpace``, ``n`` on a ``ChargeSpace`` or
         ``PhaseGridSpace``, and the space's ``"charge"`` operator otherwise.
+        The ``FockSpace`` fallback is the phase quadrature, not the charge
+        ``i(a† − a)`` of the built-in Fock devices. When the device Hamiltonian
+        conserves the excitation number, couplings that use only this operator
+        give the same physics, because ``a → −i a`` maps one to the other.
         """
         declared = getattr(self.device, "charge_coupling_operator", None)
         if declared is not None:

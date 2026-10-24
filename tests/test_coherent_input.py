@@ -236,7 +236,7 @@ def test_unknown_exposure_is_rejected_at_schedule_time() -> None:
 
 
 def test_coherent_and_direct_charge_drives_are_equivalent_when_calibrated() -> None:
-    """Calibrated charge and port drives produce the same Hamiltonian term."""
+    """A port drive i(β* L − β L†) equals a calibrated charge drive of the opposite sign, since Q = i(a† − a)."""
     rate = 0.04
     beta = 0.3
     transmon = DuffingTransmon(
@@ -261,7 +261,7 @@ def test_coherent_and_direct_charge_drives_are_equivalent_when_calibrated() -> N
         charge,
         envelope=Square(
             duration=1.0,
-            amplitude=beta * np.sqrt(rate) / (2.0 * np.pi),
+            amplitude=-beta * np.sqrt(rate) / (2.0 * np.pi),
         ),
         freq=None,
     )

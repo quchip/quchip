@@ -80,17 +80,17 @@ def two_lines(*transforms, second=ChargeDrive):
 
 @pytest.mark.unit
 def test_the_seed_passes_gain_and_adds_crosstalk_paths_as_phasors():
-    """#218: a gain divides the seed by |g|. With m = -i on a charge line and m = 1 on a phase line, a crosstalk
-    transfer of i cancels the drive (-i + i = 0) and -i doubles it; conjugating the transfer would swap the two."""
+    """#218: a gain divides the seed by |g|. With m = i on a charge line and m = 1 on a phase line, a crosstalk
+    transfer of -i cancels the drive (i - i = 0) and i doubles it; conjugating the transfer would swap the two."""
     bare = float(two_lines().rotation_amplitude("q", "xy", Square(duration=20.0)))
     gained = two_lines(Gain("xy", 0.5j)).rotation_amplitude("q", "xy", Square(duration=20.0))
     np.testing.assert_allclose(gained, bare / 0.5, rtol=1e-12)
     np.testing.assert_allclose(two_lines(Gain("xy2", 3.0)).rotation_amplitude("q", "xy", Square(duration=20.0)), bare,
                                rtol=1e-12)
     with pytest.raises(ValueError, match="cannot drive this transition"):
-        two_lines(Crosstalk("xy", "xy2", beta=1.0, theta=np.pi / 2), second=PhaseDrive).rotation_amplitude(
+        two_lines(Crosstalk("xy", "xy2", beta=1.0, theta=-np.pi / 2), second=PhaseDrive).rotation_amplitude(
             "q", "xy", Square(duration=20.0))
-    doubled = two_lines(Crosstalk("xy", "xy2", beta=1.0, theta=-np.pi / 2), second=PhaseDrive)
+    doubled = two_lines(Crosstalk("xy", "xy2", beta=1.0, theta=np.pi / 2), second=PhaseDrive)
     np.testing.assert_allclose(doubled.rotation_amplitude("q", "xy", Square(duration=20.0)), bare / 2, rtol=1e-12)
 
 
@@ -114,7 +114,7 @@ def test_a_seed_through_a_delay_and_crosstalk_inverts_the_transmon():
 @pytest.mark.optional_backend
 def test_drag_quadrature_changes_the_rotation_as_an_independent_integration_predicts():
     """With β = 1 ns the π amplitude no longer inverts the transition. P1 matches a SciPy integration of
-    H̃/ħ = π(s m σ₊ + s* m* σ₋), with m = −i and s = I + iβ dI/dt. dynamiqs evaluates the envelope exactly."""
+    H̃/ħ = π(s m σ₊ + s* m* σ₋), with m = i and s = I + iβ dI/dt. dynamiqs evaluates the envelope exactly."""
     dq = pytest.importorskip("dynamiqs")
     chip = transmon(backend="dynamiqs")
     duration, beta = 20.0, 1.0

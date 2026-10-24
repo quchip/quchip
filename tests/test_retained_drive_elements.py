@@ -47,7 +47,7 @@ def test_reduced_drive_query_matches_the_pulse_operator_and_mixing_angle(backend
     assert element == pytest.approx(_pulse_operator(chip)[1, 0], abs=1e-12)
     # The SW map rotates by g/Delta; exact reduction uses the two-mode mixing angle.
     angle = 0.5 * np.arctan(2 * 0.1 / 2.0) if reduction == "exact" else 0.1 / 2.0
-    assert element == pytest.approx(-1j * np.cos(angle), abs=1e-12)
+    assert element == pytest.approx(1j * np.cos(angle), abs=1e-12)
 
 
 @pytest.mark.parametrize("approximation", [RWA(), Exact()])
@@ -76,7 +76,7 @@ def test_retained_drive_can_act_on_separated_survivors_with_a_conditioned_specta
     assert query == pytest.approx(np.vdot(final, _pulse_operator(chip) @ initial), abs=1e-12)
     # Independent coordinate-map reference, including the untouched spectator between q and r.
     a = np.diag(np.sqrt([1.0, 2.0]), 1)
-    authored = np.kron(1j * (a - a.T), np.eye(18))
+    authored = np.kron(1j * (a.T - a), np.eye(18))
     embedding = np.asarray(reduced.mapping.embedding)
     retained = embedding.conj().T @ authored @ embedding
     assert query == pytest.approx(np.vdot(final, retained @ initial), abs=1e-12)
@@ -91,7 +91,7 @@ def test_local_retained_drive_query_avoids_the_large_product_space():
     source.wire(ChargeDrive(devices[0], label="d"))
     chip = eliminate(source, "bus", local=True).chip
     assert chip.total_dim == 3**24
-    assert chip.drive_matrix_elements("q0")["d"] == pytest.approx(-1j * np.cos(0.1 / 2.0), abs=1e-12)
+    assert chip.drive_matrix_elements("q0")["d"] == pytest.approx(1j * np.cos(0.1 / 2.0), abs=1e-12)
 
 
 @pytest.mark.optional_backend

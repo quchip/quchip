@@ -55,9 +55,9 @@ class Capacitive(CouplingModel):
     charge operator. A device declares ``Q`` with
     ``charge_coupling_operator()``, the operator that
     :class:`~quchip.control.drive.ChargeDrive` also uses. Between Fock devices,
-    ``Q = i(a − a†)``:
+    ``Q = i(a† − a)``:
 
-    - Full form:   ``H_int = g · i(a − a†) · i(b − b†) = g · (a†b + a b†) − g · (a b + a†b†)``
+    - Full form:   ``H_int = g · i(a† − a) · i(b† − b) = g · (a†b + a b†) − g · (a b + a†b†)``
     - Band-RWA form: ``H_int = g · (a†b + a b†)`` (derived, not authored)
 
     The coupling authors only the full form. :class:`~quchip.RWA` keeps its
@@ -174,7 +174,7 @@ class TunableCapacitive(CouplingModel):
         H_{\text{int}} \;=\; g_0\,\hat Q_a\hat Q_b
 
     where :math:`\hat Q` is each endpoint's charge operator, as in
-    :class:`Capacitive` (:math:`i(\hat a - \hat a^\dagger)` for a Fock model).
+    :class:`Capacitive` (:math:`i(\hat a^\dagger - \hat a)` for a Fock model).
     The engine applies any requested RWA after local-basis materialization.
     :math:`g_0` is the static coupling strength in GHz and can be a JAX tracer
     that flows through :func:`jax.grad` without concretization.

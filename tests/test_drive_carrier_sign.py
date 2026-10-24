@@ -60,7 +60,7 @@ def _final_population(drive_class, freq, amplitude, approximation):
 
 @pytest.mark.parametrize("approximation", [RWA(), Exact()], ids=["rwa", "exact"])
 def test_charge_phase_drive_takes_half_the_charge_drive_pi_amplitude_at_a_positive_carrier(approximation):
-    """The I/Q drive is i(s* a - s a†): the resonant sideband at twice ChargeDrive's rate, and nothing at -f."""
+    """The I/Q drive is i(s a† - s* a): the resonant sideband at twice ChargeDrive's rate, and nothing at -f."""
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
     chip = Chip([q], frame="rotating")
     chip.wire(ChargeDrive(q, label="xy"))

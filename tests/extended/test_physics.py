@@ -498,7 +498,7 @@ class TestVacuumRabi:
 class TestRabiFrequency:
     """Verify Rabi frequency from the coupling-operator matrix element.
 
-    For a ChargeDrive with coupling operator H_c = i(a - a†), the matrix
+    For a ChargeDrive with coupling operator H_c = i(a† - a), the matrix
     element |⟨0|H_c|1⟩| = 1.0 in the Fock basis. The on-resonance Rabi
     formula gives P(|1⟩) = sin²(π · Ω · |⟨0|H_c|1⟩| · t).
 
@@ -508,7 +508,7 @@ class TestRabiFrequency:
 
     def test_rabi_frequency_from_matrix_element(self) -> None:
         """Rabi oscillation frequency matches Ω × |⟨0|H_c|1⟩|, giving P(|1⟩) = sin²(π·Ω·mel·t)."""
-        # <0|i(a-a†)|1> = i, so |<0|H_c|1>| = mel = 1.0.
+        # <0|i(a†-a)|1> = -i, so |<0|H_c|1>| = mel = 1.0.
         omega = 0.02  # drive amplitude in GHz
         q = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=4, label="q")
         chip = Chip([q])
@@ -522,7 +522,7 @@ class TestRabiFrequency:
             AnalyticSignal(Constant(1.0)),
         ).matrix(t=0.0, backend=backend)
         mel = abs(complex(H_c[0, 1]))
-        npt.assert_allclose(mel, 1.0, atol=1e-10, err_msg=f"|⟨0|i(a-a†)|1⟩| = {mel}, expected 1.0")
+        npt.assert_allclose(mel, 1.0, atol=1e-10, err_msg=f"|⟨0|i(a†-a)|1⟩| = {mel}, expected 1.0")
 
         d = ChargeDrive(target=q)
         chip.connect(ControlEquipment(lines=[d]))

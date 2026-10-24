@@ -210,7 +210,7 @@ def test_sparse_compact_diagnostics_preserve_resonance_and_mask(levels, strength
         assert "nonzero resonant entry" in str(caught[0].message)
         assert "(2, -1)" in str(caught[0].message)
     lowering = np.diag(np.sqrt([1, 2]), k=1)
-    full = strength * np.kron(charge, 1j * (lowering - lowering.T))
+    full = strength * np.kron(charge, 1j * (lowering.T - lowering))
     excitations = (np.arange(levels)[:, None] + np.arange(3)[None, :]).reshape(-1)
     expected = full * (excitations[:, None] == excitations[None, :])
     assert len(terms) == 1

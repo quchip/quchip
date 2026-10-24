@@ -57,12 +57,12 @@ def test_detuned_pulse_pair_matches_analytic_evolution_at_every_gap():
     pulse = Square(duration=duration, amplitude=amplitude)
     options = {"atol": 1e-11, "rtol": 1e-9}
 
-    # In the qubit frame, H01 = iπ A exp(2πi δτ). Transforming with
-    # R(τ) = diag(1, exp(-2πi δτ)) gives Hc = π A i(a-a†) - 2π δ n.
+    # In the qubit frame, H01 = -iπ A exp(2πi δτ). Transforming with
+    # R(τ) = diag(1, exp(-2πi δτ)) gives Hc = π A i(a†-a) - 2π δ n.
     # The propagator R(T) exp(-i Hc T) is exact for the declared two-level RWA.
     number = np.diag([0.0, 1.0])
     rotating = np.diag([1.0, np.exp(-2j * np.pi * detuning * duration)])
-    constant = np.pi * amplitude * np.array([[0, 1j], [-1j, 0]]) - 2 * np.pi * detuning * number
+    constant = np.pi * amplitude * np.array([[0, -1j], [1j, 0]]) - 2 * np.pi * detuning * number
     propagator = rotating @ expm(-1j * constant * duration)
     reference = propagator @ propagator @ np.array([1.0, 0.0])
 

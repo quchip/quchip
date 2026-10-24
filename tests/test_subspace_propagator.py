@@ -116,9 +116,9 @@ def test_frames_differ_only_by_the_label_energies():
 
 
 def test_resonant_pulse_rotation_axes():
-    """On a two-level transmon, a real π pulse gives iY, because the charge drive has m = −i; phase π/2 gives −iX."""
+    """On a two-level transmon, a real π pulse gives −iY, because the charge drive has m = i; phase π/2 gives iX."""
     chip = driven_transmon()
-    targets = {0.0: np.array([[0, 1], [-1, 0]]), np.pi / 2: np.array([[0, -1j], [-1j, 0]])}
+    targets = {0.0: np.array([[0, -1], [1, 0]]), np.pi / 2: np.array([[0, 1j], [1j, 0]])}
     for phase, target in targets.items():
         sequence = QuantumSequence(chip)
         sequence.schedule("xy", envelope=Square(duration=20.0, amplitude=0.025), freq=chip.freq("q"), phase=phase)
@@ -154,7 +154,7 @@ def test_collapse_channels_are_left_out_without_a_warning():
         record = sequence.subspace_propagator("q", tlist=times, options=TIGHT)
         quiet = sequence.subspace_propagator("q", tlist=times, options=TIGHT, dissipation=False)
     assert len(record.omitted_channels) == 1
-    np.testing.assert_allclose(record.matrix, [[0, 1], [-1, 0]], rtol=0, atol=1e-8)
+    np.testing.assert_allclose(record.matrix, [[0, -1], [1, 0]], rtol=0, atol=1e-8)
     assert quiet.omitted_channels == record.omitted_channels
     np.testing.assert_array_equal(quiet.matrix, record.matrix)
     with pytest.raises(ValueError, match="propagator of the Hamiltonian alone"):
@@ -186,11 +186,11 @@ def test_a_chip_with_a_port_gives_its_propagator_without_a_warning():
 
 
 def lab_hamiltonian(f, alpha, g, levels):
-    """H/h of two Duffing transmons with the full charge coupling g Q₀Q₁, Q = i(a − a†), in GHz."""
+    """H/h of two Duffing transmons with the full charge coupling g Q₀Q₁, Q = i(a† − a), in GHz."""
     a = np.diag(np.sqrt(np.arange(1, levels)), 1)
     n = np.diag(np.arange(levels))
     eye = np.eye(levels)
-    charge = 1j * (a - a.T)
+    charge = 1j * (a.T - a)
     local = [fi * n + ai / 2 * n @ (n - eye) for fi, ai in zip(f, alpha)]
     h0 = np.kron(local[0], eye) + np.kron(eye, local[1]) + g * np.kron(charge, charge)
     return h0, np.kron(charge, eye)

@@ -278,7 +278,7 @@ class FluxTunableTransmon(FockDevice):
         return PhysicsExpr.from_function(_charge_scale, p.flux_bias, p.asymmetry, labels=(), dims=(), name="s")
 
     def charge_coupling_operator(self) -> PhysicsExpr:
-        """Return the charge operator ``s(Φ) i(a − a†)``.
+        """Return the charge operator ``s(Φ) i(a† − a)``.
 
         Notes
         -----
