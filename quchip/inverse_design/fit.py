@@ -55,6 +55,7 @@ from quchip.inverse_design.subsystems import (
 )
 from quchip.inverse_design.types import FitADressResult, FitParameterReport, ObservableReport
 from quchip.utils.labeling import resolve_label
+from quchip.utils.warning_categories import AccuracyWarning
 
 # Largest total energy-level index that each target kind reads from the dressed spectrum.
 _TARGET_LEVEL_SUMS = {"freq": 1, "exchange_rate": 1, "anharmonicity": 2, "cross_kerr": 2}
@@ -578,7 +579,7 @@ def fit_a_dress(
 
     Warns
     -----
-    UserWarning
+    AccuracyWarning
         An explicit ``vary`` plan is underdetermined by the target count or by
         the final scaled-Jacobian rank. A nonconverged automatic fit also
         returns its candidate with a warning when the final Jacobian does not
@@ -658,7 +659,7 @@ def fit_a_dress(
         )
         if automatic_desired_plan:
             raise ValueError(message)
-        warnings.warn(message, UserWarning, stacklevel=2)
+        warnings.warn(message, AccuracyWarning, stacklevel=2)
 
     names, x0 = _pack_initial_params(
         chip,
@@ -778,7 +779,7 @@ def fit_a_dress(
         )
         if automatic_desired_plan and result.status > 0:
             raise ValueError(message)
-        warnings.warn(message, UserWarning, stacklevel=2)
+        warnings.warn(message, AccuracyWarning, stacklevel=2)
 
     # Reconstruct observed values at start/end by inverting the residual scaling.
     initial_vec = r0 * scales + targets_arr

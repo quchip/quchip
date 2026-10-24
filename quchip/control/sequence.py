@@ -91,6 +91,7 @@ from quchip.utils.jax_utils import (
 from quchip.utils.labeling import resolve_label
 from quchip.utils.values import copy_value
 from quchip.utils.stack import user_stacklevel
+from quchip.utils.warning_categories import AutoChoiceWarning
 
 if TYPE_CHECKING:
     from quchip.chip.transformations.active_patch import ActivePatchResult
@@ -416,7 +417,7 @@ class QuantumSequence:
             warnings.warn(
                 "A pulse without freq gets a carrier at its device's dressed 0 -> 1 frequency, chip.freq(device) "
                 "(twice it on a two-photon line). Pass freq= to set it, or freq=None for no carrier.",
-                UserWarning,
+                AutoChoiceWarning,
                 stacklevel=user_stacklevel(),
             )
         return carrier

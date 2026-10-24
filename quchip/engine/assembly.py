@@ -103,6 +103,7 @@ from quchip.engine.bands import (
     prune_zero_diagonals,
 )
 from quchip.utils.stack import user_stacklevel
+from quchip.utils.warning_categories import AccuracyWarning
 
 if TYPE_CHECKING:
     from quchip.chip.chip import Chip
@@ -1266,7 +1267,7 @@ def _report_advisory(message: str | None, advisories: list[str] | None) -> None:
     if message is None:
         return
     if advisories is None:
-        warnings.warn(message, UserWarning, stacklevel=user_stacklevel())
+        warnings.warn(message, AccuracyWarning, stacklevel=user_stacklevel())
     else:
         advisories.append(message)
 

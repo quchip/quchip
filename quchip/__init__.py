@@ -153,6 +153,7 @@ from quchip.results.receiver import IQReceiver
 from quchip.results.measurement import VNAMeasurement, VNAMeasurementStatistics, VNAMeasurementSamples
 from quchip.sweep import SpectrumSweep, Sweep, ZippedSweep
 from quchip.utils.constants import Phi_0, hbar, k_B
+from quchip.utils.warning_categories import AccuracyWarning, AutoChoiceWarning, QuchipWarning
 
 _LAZY_INTEROP_EXPORTS = {
     "from_scqubits": ("quchip.interop.scqubits", "from_scqubits"),
@@ -294,6 +295,10 @@ __all__ = [
     "get_default_backend",
     "set_default_backend",
     "enable_compilation_cache",
+    # Warning categories
+    "QuchipWarning",
+    "AutoChoiceWarning",
+    "AccuracyWarning",
     # Constants
     "k_B",
     "hbar",

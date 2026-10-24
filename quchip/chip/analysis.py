@@ -54,6 +54,7 @@ from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
 from quchip.utils.values import TracedKey, scoped_entry, scoped_hit
 from quchip.utils.labeling import LabelKeyedDict, bare_label_from_mapping, resolve_label, top_components
 from quchip.utils.stack import user_stacklevel
+from quchip.utils.warning_categories import AccuracyWarning
 
 if TYPE_CHECKING:
     from quchip.approximations import Approximation
@@ -183,7 +184,7 @@ def _reported(entry: tuple[Any, list[str]], advise: bool) -> Any:
     """Return a cached static model. With ``advise``, warn once with each advisory it still holds."""
     model, advisories = entry
     while advise and advisories:
-        warnings.warn(advisories.pop(0), UserWarning, stacklevel=user_stacklevel())
+        warnings.warn(advisories.pop(0), AccuracyWarning, stacklevel=user_stacklevel())
     return model
 
 
@@ -504,7 +505,7 @@ class ChipAnalysis:
             result = entry(label)
             if check is not None and (message := check(tuple(label))) is not None:
                 check = None
-                warnings.warn(message, UserWarning, stacklevel=user_stacklevel())
+                warnings.warn(message, AccuracyWarning, stacklevel=user_stacklevel())
             return result
 
         return checked_entry

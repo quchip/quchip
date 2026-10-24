@@ -45,6 +45,7 @@ from quchip.interop.eigenbasis import EigenbasisDevice
 from quchip.interop.scqubits.devices import _units_per_ghz
 from quchip.utils.jax_utils import maybe_concrete_scalar
 from quchip.utils.stack import user_stacklevel
+from quchip.utils.warning_categories import AccuracyWarning
 
 _SUPPORTED_EXPORT_COUPLINGS = "Capacitive, TunableCapacitive, CrossKerr, or product-form Coupling"
 
@@ -307,7 +308,7 @@ def _warn_if_cross_basis(device: Any, subsys: Any) -> None:
         warnings.warn(
             f"scqubits rebuilds {device.label!r} in a native basis of another dimension, so the two spectra agree "
             "only to discretization accuracy.",
-            UserWarning,
+            AccuracyWarning,
             stacklevel=user_stacklevel(),
         )
 
@@ -355,7 +356,7 @@ def export_chip(chip: Chip, **opts: Any) -> Any:
 
     Chip-level control equipment and baths have no scqubits counterpart,
     because scqubits models neither drives nor dissipation. The export drops
-    them with one :class:`UserWarning` that names the dropped items.
+    them with one :class:`~quchip.AccuracyWarning` that names the dropped items.
 
     Parameters
     ----------
@@ -413,7 +414,7 @@ def export_chip(chip: Chip, **opts: Any) -> Any:
         dropped.append("chip-level baths")
     if dropped:
         warnings.warn(f"scqubits models neither drives nor dissipation, so the export drops {' and '.join(dropped)}.",
-                      UserWarning, stacklevel=user_stacklevel())
+                      AccuracyWarning, stacklevel=user_stacklevel())
 
     subsystems = []
     for device in chip.devices:

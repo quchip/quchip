@@ -48,6 +48,7 @@ from quchip.engine.observables import decompose_eops, require_eops_mapping
 from quchip.engine.sampling import AutomaticTimeGrid, sample_problems
 from quchip.utils.jax_utils import array_namespace, contains_tracer, maybe_concrete_scalar
 from quchip.utils.stack import user_stacklevel
+from quchip.utils.warning_categories import AutoChoiceWarning
 
 if TYPE_CHECKING:
     from quchip.chip.chip import Chip
@@ -76,7 +77,7 @@ DEFAULT_FRAME_ORDER = ("rotating", "auto", "lab")
 
 def warn_default_frame(mode: str) -> None:
     """Warn which frame a solve on a chip without a frame uses, at the first caller outside quchip."""
-    warnings.warn(DEFAULT_FRAME_WARNINGS[mode], UserWarning, stacklevel=user_stacklevel())
+    warnings.warn(DEFAULT_FRAME_WARNINGS[mode], AutoChoiceWarning, stacklevel=user_stacklevel())
 
 
 def _choose_default_frame(chip: Chip, resolve: Any, resolution: Any) -> tuple[str, str | None, Any]:

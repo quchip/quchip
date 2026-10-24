@@ -562,6 +562,13 @@ This file records notable user-visible changes to quchip.
   count that does not fit in memory raises `MemoryError`.
   ([#196](https://github.com/quchip/quchip/issues/196),
   [#205](https://github.com/quchip/quchip/pull/205))
+- quchip warnings have categories. `QuchipWarning`, a `UserWarning`, holds
+  `AutoChoiceWarning` for notices about automatic choices (frame, carrier,
+  cutoff, solver fallbacks) and `AccuracyWarning` for advice that a result can
+  be inaccurate (truncation, approximation, dressed labels, fits). One filter
+  such as `warnings.filterwarnings("ignore", category=AutoChoiceWarning)`
+  silences a group. Renamed APIs keep `DeprecationWarning`.
+  ([#221](https://github.com/quchip/quchip/pull/221))
 
 #### Fixes
 

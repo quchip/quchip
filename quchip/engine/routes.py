@@ -23,6 +23,7 @@ import numpy as np
 from quchip.utils.jax_utils import contains_tracer
 from quchip.utils.values import DeferredValue
 from quchip.utils.stack import user_stacklevel
+from quchip.utils.warning_categories import AutoChoiceWarning
 
 # Above this many product states, a conserving chip without a cutoff solves on sectors.
 AUTOMATIC_SECTOR_STATES = 64
@@ -411,4 +412,4 @@ def warn_cutoff(method: str, cutoff: int, check: CutoffCheck, quantities: str, *
         text = (f"{method} kept the automatic excitation cutoff N <= {cutoff}, not verified: N <= "
                 f"{check.compared_with} does not fit in memory.")
     text += " Use chip.with_space(ExcitationCutoff(max_total=K)) to set K."
-    warnings.warn(text, UserWarning, stacklevel=user_stacklevel())
+    warnings.warn(text, AutoChoiceWarning, stacklevel=user_stacklevel())

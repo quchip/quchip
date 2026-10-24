@@ -15,6 +15,7 @@ from quchip.devices.base import _energy_basis_dissipation, _validate_relaxation
 from quchip.devices.spaces import ChargeSpace
 from quchip.utils.jax_utils import maybe_concrete_scalar
 from quchip.utils.stack import user_stacklevel
+from quchip.utils.warning_categories import AccuracyWarning
 
 
 class ChargeBasisTransmon(DeviceModel):
@@ -253,7 +254,7 @@ class ChargeBasisTransmon(DeviceModel):
         ratio = maybe_concrete_scalar(E_J / E_C)
         if ratio is not None and ratio < 20.0:
             warnings.warn(f"from_frequency() gives E_J/E_C = {ratio:.1f}, below the transmon regime (20), where its "
-                          "formulas lose accuracy. Pass E_C and E_J instead.", UserWarning,
+                          "formulas lose accuracy. Pass E_C and E_J instead.", AccuracyWarning,
                           stacklevel=user_stacklevel())
         return cls(
             E_C=E_C,

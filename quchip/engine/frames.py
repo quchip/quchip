@@ -43,6 +43,7 @@ from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import array_namespace, contains_tracer, maybe_concrete_scalar
 from quchip.utils.labeling import resolve_label
 from quchip.utils.stack import user_stacklevel
+from quchip.utils.warning_categories import AccuracyWarning
 
 
 def invalid_frame_spec(frame: Any) -> Exception:
@@ -370,7 +371,7 @@ def _warn_unreliable_references(chip: Any, local_resolution: Any) -> None:
         f"frame='rotating' has no well-defined frequency for {_name_list(names)}: their dressed 0 -> 1 label "
         f"assignment is ambiguous ({names[0]}: {unreliable[0][1]}). Use frame='auto', frame='lab', or a "
         "reference_freq on each.",
-        UserWarning,
+        AccuracyWarning,
         stacklevel=user_stacklevel(),
     )
 

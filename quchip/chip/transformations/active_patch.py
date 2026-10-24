@@ -6,7 +6,7 @@ energies set (PHYSICS.md §10.8). :func:`active_patch` keeps the devices that a
 schedule touches, plus ``hops`` coupling-graph steps, and eliminates the other
 spectators in the same way. The activity analysis does not rank devices by
 amplitude, detuning, or an error bound. The results record per-step
-Schrieffer-Wolff validity, and a poor fold emits a ``UserWarning``.
+Schrieffer-Wolff validity, and a poor fold emits an ``AccuracyWarning``.
 """
 # `_warn_on_poor_validity` emits the warning for a poor fold.
 
@@ -23,6 +23,7 @@ from quchip.chip.partition import _line_device_labels
 from quchip.utils.jax_utils import contains_tracer
 from quchip.utils.labeling import resolve_label
 from quchip.utils.stack import user_stacklevel
+from quchip.utils.warning_categories import AccuracyWarning
 
 if TYPE_CHECKING:
     from quchip.chip.chip import Chip
@@ -93,7 +94,7 @@ def _warn_on_poor_validity(step: "EliminationResult", target: str, caller: str) 
                 name = next(key for key in entry if key != "is_valid")
                 problem = f"leaves '{coupling_label}' with {name}={entry[name]!r}, which needs < 0.1"
             warnings.warn(f"{caller}: eliminating '{target}' {problem}. Check this step's effective_params and "
-                          "validity before use.", UserWarning, stacklevel=user_stacklevel())
+                          "validity before use.", AccuracyWarning, stacklevel=user_stacklevel())
 
 
 class _EliminationChain:

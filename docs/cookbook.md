@@ -407,3 +407,22 @@ automatically. Use `dissipation=False` only for an intentional closed-system
 comparison. See {doc}`Backends and solvers <guides/choosing-a-backend>` for
 integration settings and {doc}`Gradients and parameter fitting <guides/differentiability>`
 for checks on derivatives.
+
+## Filter warnings
+
+quchip warnings are `QuchipWarning`s in two groups. `AutoChoiceWarning` tells
+you which frame, carrier, cutoff or fallback quchip chose for you. Pass the
+setting explicitly to remove it. `AccuracyWarning` tells you that a result can
+be inaccurate, for example because of a truncation, an approximation or a weak
+fit. Renamed APIs keep `DeprecationWarning`.
+
+```python
+import warnings
+
+from quchip import AutoChoiceWarning
+
+warnings.filterwarnings("ignore", category=AutoChoiceWarning)
+```
+
+This filter removes the notices about automatic choices and keeps the accuracy
+advice. Filter `QuchipWarning` to remove both groups.

@@ -62,6 +62,7 @@ from quchip.engine.ir import (
 )
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
 from quchip.utils.stack import user_stacklevel
+from quchip.utils.warning_categories import AutoChoiceWarning, QuchipWarning
 
 
 @dataclass(frozen=True)
@@ -403,7 +404,7 @@ def _warn_callable_windows() -> None:
         f"QuTiP evaluates a pulse window as a Python callable, because at this rtol its linear samples would "
         f"exceed {_MAX_WINDOW_SAMPLES:,}. The result is exact but slower; a looser rtol or the dynamiqs backend is "
         "faster.",
-        UserWarning,
+        AutoChoiceWarning,
         stacklevel=user_stacklevel(),
     )
 
@@ -1914,7 +1915,7 @@ class QuTiPBackend(Backend):
             workers = self._worker_count(None if n_jobs in (-1, None) else n_jobs, 0)
             executor = self._get_executor(workers)
         except ImportError as exc:
-            warnings.warn(f"warmup() did nothing: loky is unavailable ({exc}).", UserWarning,
+            warnings.warn(f"warmup() did nothing: loky is unavailable ({exc}).", QuchipWarning,
                           stacklevel=user_stacklevel())
             return
         list(executor.map(_warmup_noop, range(workers)))
@@ -2034,7 +2035,7 @@ class QuTiPBackend(Backend):
             executor = self._get_executor(workers)
         except ImportError as exc:
             warnings.warn(f"Batch runs in one process: loky is unavailable ({exc}). Install loky to run it in "
-                          "parallel.", UserWarning, stacklevel=user_stacklevel())
+                          "parallel.", AutoChoiceWarning, stacklevel=user_stacklevel())
             return sequential()
 
         try:
@@ -2043,7 +2044,7 @@ class QuTiPBackend(Backend):
         except BrokenExecutor as exc:
             self._shutdown_executor()
             warnings.warn(f"Batch reran in one process after a worker process stopped ({exc}). Pass "
-                          "max_workers=1 to skip the pool.", UserWarning, stacklevel=user_stacklevel())
+                          "max_workers=1 to skip the pool.", AutoChoiceWarning, stacklevel=user_stacklevel())
             return sequential()
 
     # ------------------------------------------------------------------

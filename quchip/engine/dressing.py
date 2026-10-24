@@ -25,6 +25,7 @@ from jax import lax
 from quchip.backend import EigensystemData
 from quchip.utils.jax_utils import concrete_array_module, contains_tracer
 from quchip.utils.stack import user_stacklevel
+from quchip.utils.warning_categories import AccuracyWarning
 
 if TYPE_CHECKING:
     from quchip.engine.ir import EngineResult
@@ -360,7 +361,7 @@ def warn_weak_assignment(analysis: Any, label: tuple[int, ...], overlap: Any) ->
         f"Dressed label {tuple(int(level) for level in label)} keeps less than 90% of its bare product state, so it "
         "names a hybridized eigenstate. chip.dress().assignment_overlaps lists every label; chip.bare_state() "
         "gives the product.",
-        UserWarning,
+        AccuracyWarning,
         stacklevel=user_stacklevel(),
     )
 
@@ -644,7 +645,7 @@ def materialize_dressed_result(
         warnings.warn(
             "Some dressed labels keep less than overlap_threshold of their bare product state; "
             "DressedResult.hybridized_labels lists them.",
-            UserWarning,
+            AccuracyWarning,
             stacklevel=warning_stacklevel,
         )
 

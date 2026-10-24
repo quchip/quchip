@@ -21,6 +21,7 @@ from quchip.backend.protocol import State
 from quchip.engine.pulse_space import PulseSpace
 from quchip.utils.jax_utils import array_namespace, maybe_concrete_scalar
 from quchip.utils.stack import user_stacklevel
+from quchip.utils.warning_categories import AccuracyWarning
 
 if TYPE_CHECKING:
     from quchip.chip.chip import Chip
@@ -103,7 +104,7 @@ def bare_local_kets(
             lost = maybe_concrete_scalar(authored_norm**2 - projected_norm**2)
             if lost is not None and lost > 1e-10:
                 warnings.warn(f"The basis of {dev.label!r} keeps all but {lost:.3g} of this state's norm. Raise "
-                              "its levels to keep more.", UserWarning, stacklevel=user_stacklevel())
+                              "its levels to keep more.", AccuracyWarning, stacklevel=user_stacklevel())
             kets.append(
                 backend.from_array(
                     projected,
@@ -272,7 +273,7 @@ def materialize_state_spec(
     lost = maybe_concrete_scalar(authored_norm**2 - projected_norm**2)
     if lost is not None and lost > 1e-10:
         warnings.warn(f"The resolved basis keeps all but {lost:.3g} of the initial state's norm. Raise the device "
-                      "levels to keep more.", UserWarning, stacklevel=user_stacklevel())
+                      "levels to keep more.", AccuracyWarning, stacklevel=user_stacklevel())
     return backend.from_array(projected, dims=[list(resolved_dims), [1]])
 
 
