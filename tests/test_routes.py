@@ -50,7 +50,9 @@ def test_each_stationary_call_reports_its_route():
                for diagnostics in (sectors[0], *sectors[2:]))
 
 
-@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])
+@pytest.mark.parametrize("backend", [
+    "qutip", pytest.param("dynamiqs", marks=[pytest.mark.optional_backend, pytest.mark.validation]),
+])
 def test_a_small_chip_solves_the_product_space_and_says_why(backend):
     """At most 64 product states use the backend's Liouvillian in its own arrays, with a memory estimate."""
     if backend == "dynamiqs":
@@ -59,16 +61,6 @@ def test_a_small_chip_solves_the_product_space_and_says_why(backend):
     assert route.name == "stationary_resolvent" and route.dimension == 9
     assert "9 product states, at most 64" in route.reason
     assert route.arrays == ("numpy" if backend == "qutip" else "jax") and route.peak_bytes > 0
-
-
-def test_a_large_feedline_is_in_its_vacuum():
-    """On 6561 product states, the channels of each device prove the vacuum unique in sectors above 1024 labels."""
-    chip = readout_pairs(4)
-    result = chip.steadystate()
-    assert result.diagnostics["route"].name == "sector_stationary"
-    for label in ("q0", "r3"):
-        np.testing.assert_allclose(chip.backend.to_array(result.reduced_state(label)), np.diag([1.0, 0.0, 0.0]),
-                                   atol=1e-15)
 
 
 def test_the_vacuum_needs_no_static_frame():

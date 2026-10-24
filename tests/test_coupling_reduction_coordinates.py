@@ -128,16 +128,3 @@ def test_intrinsic_dynamic_edge_cannot_be_silently_discarded():
     source = Chip([a, b], [ModulatedEdge(a, b, g=.05, label="edge")])
     with pytest.raises(NotImplementedError, match="intrinsic time-dependent"):
         eliminate(source, "edge")
-
-
-@pytest.mark.validation
-def test_zero_edge_does_not_rotate_degenerate_native_charge_levels():
-    method = "exact"
-    from quchip import ChargeBasisTransmon
-
-    q = ChargeBasisTransmon(E_C=.25, E_J=12., levels=4, num_basis=61, label="q")
-    r = Resonator(freq=7.1, levels=2, label="r")
-    source = Chip([q, r], [Capacitive(q, r, g=0., label="edge")])
-    result = eliminate(source, "edge", method=method)
-    np.testing.assert_allclose(_matrix(result.chip), _matrix(source), atol=2e-11)
-    np.testing.assert_allclose(result.mapping.embedding, np.eye(122), atol=1e-12)

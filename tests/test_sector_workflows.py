@@ -79,6 +79,7 @@ def test_counter_rotating_support_is_not_declared_conserving_at_zero_strength():
         assert not chip.excitation_structure().conserves
 
 
+@pytest.mark.validation
 @pytest.mark.optional_backend
 def test_traced_counter_rotating_frequency_uses_the_full_eigensystem_as_eager():
     """A traced frequency keeps the full eigensystem that plain evaluation uses for counter-rotating terms."""

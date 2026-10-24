@@ -25,7 +25,7 @@ def test_unknown_operator_is_rejected_during_resolution(chip_qr):
         decompose_eops(chip.e_ops(q="bogus"), chip, get_default_backend())
 
 
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
+@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.validation)])
 def test_zero_observables_preserve_authored_coordinates(backend):
     from quchip import QuantumSequence, solve_many
 
@@ -47,6 +47,7 @@ def test_zero_observables_preserve_authored_coordinates(backend):
     np.testing.assert_allclose(result.expect(("q", "r")), [[0, 0], [2, 2]], atol=1e-8)
 
 
+@pytest.mark.validation
 def test_observable_list_coordinates_and_gradient_at_zero():
     import jax
     import jax.numpy as jnp

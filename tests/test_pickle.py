@@ -62,7 +62,9 @@ def test_sequence_pickles_and_simulates_the_same(sequence) -> None:
     np.testing.assert_allclose(loaded.simulate(duration=30.0).population("q", 1), expected, atol=1e-10)
 
 
-@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])
+@pytest.mark.parametrize("backend", [
+    "qutip", pytest.param("dynamiqs", marks=[pytest.mark.optional_backend, pytest.mark.validation]),
+])
 def test_simulation_result_pickles(sequence, backend) -> None:
     """A simulation result loads with the same populations and final state on each backend."""
     if backend == "dynamiqs":

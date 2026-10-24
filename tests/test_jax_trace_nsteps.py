@@ -7,6 +7,7 @@ from quchip.approximations import RWA
 import pytest
 
 
+@pytest.mark.validation
 @pytest.mark.optional_backend
 def test_jit_and_grad_through_simulate_batch():
     """seq.simulate_batch() stays JIT-able because the operator fingerprint avoids concretizing operator values."""

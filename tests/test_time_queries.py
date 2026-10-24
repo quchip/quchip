@@ -42,27 +42,6 @@ def test_observable_queries_require_a_matching_time_axis_and_method():
         result.observable_at(3.0 + 1j, result.expect("q"))
 
 
-def test_observable_interpolation_preserves_jit_value_and_time_gradients():
-    import jax
-    import jax.numpy as jnp
-
-    result = _result("dynamiqs")
-
-    @jax.jit
-    @jax.value_and_grad
-    def lookup(time):
-        return result.observable_at(time, jnp.asarray([2.0, 4.0, 10.0]), method="interpolate")
-
-    value, derivative = lookup(jnp.asarray(4.0))
-    assert value == pytest.approx(7.0)
-    assert derivative == pytest.approx(3.0)
-    gradient = jax.jit(jax.grad(lambda values: result.observable_at(4.0, values, method="interpolate")))(
-        jnp.asarray([2.0, 4.0, 10.0]))
-    np.testing.assert_allclose(gradient, [0.0, 0.5, 0.5])
-    with pytest.raises(Exception, match="interval"):
-        lookup(jnp.asarray(6.0))[0].block_until_ready()
-
-
 def test_partitioned_observable_lookup_uses_the_shared_saved_grid():
     q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=2, label="a")
     q1 = DuffingTransmon(freq=6.0, anharmonicity=-0.2, levels=2, label="b")

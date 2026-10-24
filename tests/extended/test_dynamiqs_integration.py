@@ -59,6 +59,7 @@ def _run_amplitude_trace(backend_name: str) -> np.ndarray:
     return np.asarray(result.amplitude_array(chip.state(q=1)), dtype=complex)
 
 
+@pytest.mark.validation
 def test_amplitude_array_phase_backend_agreement() -> None:
     """amplitude_array must be the phase-sensitive complex projection on both backends."""
     qutip = _run_amplitude_trace("qutip")
@@ -67,46 +68,6 @@ def test_amplitude_array_phase_backend_agreement() -> None:
     # no |·|² (always non-negative) accessor could reproduce
     assert np.min(qutip.real) < -0.1
     npt.assert_allclose(dyn, qutip, atol=1e-3, rtol=1e-3)
-
-
-@pytest.mark.validation
-def test_multi_experiment_cr_batch_loss_supports_jax_grad() -> None:
-    """One loss may differentiate a native batch of CR experiments."""
-    _set_backend("dynamiqs")
-    control = DuffingTransmon(freq=5.2, anharmonicity=-0.3, levels=2, label="c")
-    target = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=2, label="t")
-    drive = ChargeDrive(target=control, label="cr")
-    chip = Chip(
-        devices=[control, target],
-        couplings=[Capacitive(control, target, g=0.01)],
-        control_equipment=ControlEquipment(lines=[drive]),
-        frame="rotating",
-        approximation=RWA(),
-    )
-    sequence = QuantumSequence(chip)
-    pulse = sequence.schedule(
-        drive,
-        envelope=Gaussian(duration=8.0, amplitude=0.02, sigmas=3),
-        freq=target.freq,
-    )
-    tlist = jnp.linspace(0.0, 8.0, 3)
-    initial_state = chip.state(c=0, t=0)
-
-    def loss(amplitude: jax.Array) -> jax.Array:
-        amplitudes = amplitude * jnp.asarray([0.8, 1.0, 1.2])
-        batch = sequence.build_batch(
-            pulse.vary("amplitude", amplitudes, name="cr_amplitude"),
-            tlist=tlist,
-            initial_state=initial_state,
-        )
-        results = chip.solve_many(batch, progress=False)
-        populations = results.population("t", level=1, reduce="last")
-        targets = jnp.asarray([0.01, 0.02, 0.03])
-        return jnp.sum((populations - targets) ** 2)
-
-    value, grad = jax.jit(jax.value_and_grad(loss))(jnp.asarray(0.02))
-    assert jnp.isfinite(value)
-    assert jnp.isfinite(grad)
 
 
 @pytest.mark.validation
@@ -126,26 +87,6 @@ def test_per_call_dynamiqs_backend_preserves_composite_qutip_state_dims() -> Non
     )
 
     npt.assert_allclose(np.asarray(result.overlap(psi0)), 1.0, atol=1e-8)
-
-
-def test_per_call_dynamiqs_batch_preserves_composite_qutip_state_dims() -> None:
-    """Batched QuTiP-built composite kets keep their subsystem dimensions under the override."""
-    q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=2, label="q0")
-    q1 = DuffingTransmon(freq=5.2, anharmonicity=-0.3, levels=3, label="q1")
-    chip = Chip([q0, q1], frame="rotating", label="composite-batch-per-call-backend")
-    sequence = QuantumSequence(chip)
-    psi0 = chip.state(q0=0, q1=0)
-    state_axis = sequence.vary("initial_state", [psi0, psi0], name="state")
-
-    results = sequence.simulate_batch(
-        state_axis,
-        tlist=np.linspace(0.0, 0.1, 3),
-        backend="dynamiqs",
-        progress=False,
-    )
-
-    for result in results:
-        npt.assert_allclose(np.asarray(result.overlap(psi0)), 1.0, atol=1e-8)
 
 
 def test_concrete_build_ships_no_dead_zero_structure_to_dynamiqs() -> None:

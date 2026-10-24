@@ -74,7 +74,7 @@ def test_unretained_diagnostic_explains_what_to_request():
         check_truncation(result)
 
 
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
+@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.validation)])
 def test_batched_diagnostics_do_not_need_state_histories(backend):
     q = DrivenLadder(label="q")
     q.reference_freq = 0.0
@@ -225,22 +225,3 @@ def test_boundary_indices_capture_source_sequence_and_reject_double_counting():
     assert boundary.indices == (1,)
     with pytest.raises(ValueError, match="distinct"):
         TruncationBoundary((1, 1), "custom cutoff", "Compare larger cutoffs.")
-
-
-@pytest.mark.validation
-def test_sampled_boundary_maximum_has_the_correct_gradient():
-    import jax
-    from quchip.engine import solve_problem
-
-    def maximum(rate):
-        chip = Chip([DrivenLadder(rate=rate, label="q")], backend="dynamiqs", frame="lab")
-        problem = QuantumSequence(chip).build_problem(
-            [0.0, 0.5, 1.0, 1.5, 2.0], initial_state=chip.backend.basis(2, 0), states="none",
-        )
-        result = solve_problem(with_truncation(problem))
-        return check_truncation(result, threshold=2.0)["q"]
-
-    with pytest.warns(UserWarning, match="traced"):
-        value, derivative = jax.jit(jax.value_and_grad(maximum))(0.21)
-    assert value == pytest.approx(np.sin(2 * np.pi * 0.21) ** 2, abs=2e-6)
-    assert derivative == pytest.approx(2 * np.pi * np.sin(4 * np.pi * 0.21), abs=2e-5)

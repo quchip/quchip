@@ -67,7 +67,7 @@ def test_final_state_lookup_requires_a_retained_time():
         result.state_at(1.0)
 
 
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
+@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.validation)])
 def test_populations_read_the_final_state_when_only_it_is_saved(backend):
     """population() holds the final value alone under states="final"; final_population() reads it either way."""
     seq, q = _sequence(backend)
@@ -87,7 +87,7 @@ def test_populations_read_the_final_state_when_only_it_is_saved(backend):
         seq.simulate(tlist=times, states="none").population(q, 1)
 
 
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
+@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.validation)])
 @pytest.mark.parametrize("noisy", [False, True])
 def test_batch_final_projections_do_not_require_histories(backend, noisy):
     seq, _ = _sequence(backend)

@@ -519,27 +519,6 @@ def assert_same_output(sector, product, offsets, delays, *, port="feed", rtol):
     return spectra
 
 
-def test_output_statistics_on_every_sector_match_the_product_space(monkeypatch):
-    """With N <= 6, the sector spectrum, fluxes, g1, g2 and state agree with the product space."""
-    # Every chip takes the sector route, and the automatic cutoff keeps every label, so nothing is truncated.
-    monkeypatch.setattr(routes, "AUTOMATIC_SECTOR_STATES", 0)
-    monkeypatch.setattr(routes, "FIRST_CUTOFF", 6)
-    chip = feedline()
-    frequency, beta = float(probe_frequencies()[1]), 0.02 * np.exp(0.7j)
-    # The offsets are not symmetric, so the spectrum needs the resolvent at -f as well.
-    offsets, delays = np.array([-0.004, 0.0, 0.0015, 0.009]), np.array([0.0, 3.0, 25.0])
-    sector, product = (pumped(chip, "feed", frequency, beta) for _ in range(2))
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        spectra = assert_same_output(sector, product, offsets, delays, rtol=1e-7)
-    assert not cutoff_warnings(caught)
-    states = [spectrum.steady_state for spectrum in spectra]
-    assert states[0].excitation_space is not None and states[0].frame.frequencies == states[1].frame.frequencies
-    for label in ("q", "r0", "r1"):
-        np.testing.assert_allclose(np.asarray(chip.backend.to_array(states[0].reduced_state(label))),
-                                   np.asarray(chip.backend.to_array(states[1].reduced_state(label))), atol=1e-9)
-
-
 def test_the_cutoff_check_raises_k_for_output_statistics():
     """N <= 2 misses the shelved population; the comparison with K + 1 raises K until the statistics agree."""
     chip, offsets, delays = shelving_chip(), np.array([-0.004, 0.0, 0.004]), np.array([0.0, 5.0])

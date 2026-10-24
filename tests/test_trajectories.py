@@ -88,7 +88,9 @@ def test_native_arguments_cannot_replace_assembled_physics():
     assert result.native.options["method"] != "diag"
 
 
-@pytest.mark.parametrize("backend, pure", [("qutip", True), ("qutip", False), ("dynamiqs", False)])
+@pytest.mark.parametrize("backend, pure", [
+    ("qutip", True), ("qutip", False), pytest.param("dynamiqs", False, marks=pytest.mark.validation),
+])
 def test_diffusive_native_parity_and_state_invariants(backend, pure):
     """Diffusive adapters preserve native records, pure SSE states, and SME trace."""
     from quchip import with_monitoring
@@ -180,7 +182,7 @@ def test_monitored_generator_preserves_distinct_noncommuting_channels():
         assert np.linalg.eigvalsh(state.full()).min() >= -1e-12
 
 
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
+@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.validation)])
 def test_advanced_jump_sampling_retains_no_click_diagnostics(backend):
     """Native weighted averages and deterministic no-click cutoff samples remain available."""
     _, problem = jump_problem(backend, storage="none", count=8)
@@ -289,7 +291,9 @@ def native_trajectory_arguments(solver, count, seed):
     return {"keys": keys, "method": dq.method.EulerMaruyama(dt=.001)}, {}
 
 
-@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])
+@pytest.mark.parametrize("backend", [
+    "qutip", pytest.param("dynamiqs", marks=[pytest.mark.optional_backend, pytest.mark.validation]),
+])
 def test_records_clicks_and_run_values_share_one_layout(backend):
     """#194: records, clicks and per-run expectations have the same shapes and labels on both backends."""
     from quchip import with_monitoring

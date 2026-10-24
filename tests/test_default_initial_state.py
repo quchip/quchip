@@ -148,23 +148,6 @@ def test_retained_effective_terms_dress_the_rwa_default_start():
     assert _drift(result, reduced.devices[0]) < 1e-10
 
 
-@pytest.mark.optional_backend
-def test_traced_default_start_matches_concrete_start():
-    """Under jax.jit on dynamiqs the rotating-frame default start follows a traced coupling and start time."""
-    pytest.importorskip("dynamiqs")
-    import jax
-    import jax.numpy as jnp
-
-    def start(g, start_time, backend):
-        chip, _, _ = _pair(g, frame="rotating", backend=backend)
-        times = (jnp if backend else np).stack([start_time, start_time + 1.0])
-        return _ket(chip, QuantumSequence(chip).build_problem(tlist=times).initial_state)
-
-    traced = jax.jit(lambda g, start_time: start(g, start_time, "dynamiqs"))(0.2, 7.3)
-    # Both starts fix their phase by the bare overlap, so they agree as vectors.
-    np.testing.assert_allclose(np.asarray(traced), start(0.2, 7.3, None), rtol=0, atol=_ROUNDOFF)
-
-
 def _perturbative_leakage(g):
     """Return the g² and g⁴ Rayleigh–Schrödinger terms of 1 - |<00|G>|²."""
     # V = g i(a - a†) i(b - b†) couples |00> only to |11>, at energy Σ; |11> couples

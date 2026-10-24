@@ -29,8 +29,8 @@ def test_kerr_matrix_jits_and_gradients_flow_through_values_and_lookup() -> None
     coupling = jnp.asarray(0.05)
 
     matrix = jax.jit(_matrix)(coupling)
-    values_gradient = jax.grad(lambda g: _matrix(g).values[0, 1])(coupling)
-    lookup_gradient = jax.grad(lambda g: _matrix(g)["q", "r"])(coupling)
+    values_gradient = jax.jit(jax.grad(lambda g: _matrix(g).values[0, 1]))(coupling)
+    lookup_gradient = jax.jit(jax.grad(lambda g: _matrix(g)["q", "r"]))(coupling)
 
     assert matrix.labels == ("q", "r")
     assert matrix.values.shape == (2, 2)

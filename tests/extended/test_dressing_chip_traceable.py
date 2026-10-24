@@ -34,6 +34,7 @@ def _build_chip(freq_q: jnp.ndarray | float, g: jnp.ndarray | float = 0.05) -> C
 
 
 class TestCacheUnderTracing:
+    @pytest.mark.validation
     def test_dress_rejects_tracing(self) -> None:
         """``Chip.dress()`` builds a concrete dict view and must reject tracers."""
         chip = _build_chip(freq_q=5.0)

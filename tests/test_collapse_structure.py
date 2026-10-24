@@ -46,6 +46,7 @@ def test_sw_spectator_port_keeps_its_operator_after_serialization():
         np.testing.assert_allclose(actual, expected, atol=2e-14)
 
 
+@pytest.mark.validation
 @pytest.mark.optional_backend
 def test_sw_spectator_port_accepts_traced_coupling():
     """A spectator port keeps its single phase when the SW rotation is differentiated."""

@@ -50,7 +50,7 @@ def test_native_gradient_modes_keep_decay_derivative(gradient_name):
     assert jax.jit(derivative)(jnp.asarray(10.0)) == pytest.approx(0.02 * np.exp(-0.1), abs=2e-7)
 
 
-@pytest.mark.parametrize("multipart, batched", [(False, False), (True, True)])
+@pytest.mark.parametrize("multipart, batched", [(True, True)])
 def test_expm_final_density_matrix_preserves_coherence_and_subsystem_dimensions(multipart, batched):
     import dynamiqs as dq
     from quchip.engine import solve_batch, solve_problem

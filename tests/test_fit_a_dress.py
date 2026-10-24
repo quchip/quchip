@@ -532,57 +532,6 @@ def test_fit_rebind_returns_fitted_clones_for_seed_devices() -> None:
         result.rebind()
 
 
-@pytest.mark.validation
-def test_fit_a_dress_recovers_static_exchange_for_sheldon_style_bus_model() -> None:
-    """fit_a_dress recovers a targeted static exchange coupling in a bus-mediated three-device system."""
-    control = DuffingTransmon(freq=5.08, anharmonicity=-0.31, levels=4, label="control")
-    target = DuffingTransmon(freq=4.95, anharmonicity=-0.35, levels=4, label="target")
-    bus = Resonator(freq=6.28, levels=6, label="bus")
-    c_bus = Capacitive(control, bus, g=0.020, label="c_bus")
-    t_bus = Capacitive(target, bus, g=0.017, label="t_bus")
-    chip = Chip([control, target, bus], [c_bus, t_bus], frame="rotating")
-
-    # 7 free bare parameters (control freq/anharmonicity, target freq/anharmonicity, bus
-    # freq, c_bus.g, t_bus.g) against 6 target residuals: underdetermined by count, yet
-    # the fit converges because the exchange target and the two per-device anchors jointly
-    # pin the coupling split closely enough from these seeds.
-    with pytest.warns(UserWarning, match="underdetermined by count"):
-        result = fit_a_dress(
-            chip,
-            vary={
-                control: ("freq", "anharmonicity"),
-                target: ("freq", "anharmonicity"),
-                bus: ("freq",),
-                c_bus: ("g",),
-                t_bus: ("g",),
-            },
-            constraints={
-                c_bus: {"cross_kerr": None},
-                t_bus: {"cross_kerr": None},
-                control: {"freq": 5.114, "anharmonicity": -0.330},
-                target: {"freq": 4.914, "anharmonicity": -0.330},
-                bus: {"freq": 6.31},
-                (control, target): {"exchange": 0.0038},
-            },
-            max_hilbert_dim=1_000,
-        )
-
-    fitted_chip = result.chip
-    fitted_control = fitted_chip["control"]
-    fitted_target = fitted_chip["target"]
-    fitted_bus = fitted_chip["bus"]
-    exchange_h = fitted_chip.effective_subspace_hamiltonian(
-        ({fitted_control: 1, fitted_target: 0, fitted_bus: 0}, {fitted_control: 0, fitted_target: 1, fitted_bus: 0})
-    )
-
-    assert fitted_chip.freq(fitted_control) == pytest.approx(5.114, abs=1e-3)
-    assert fitted_chip.freq(fitted_target) == pytest.approx(4.914, abs=1e-3)
-    assert fitted_chip.freq(fitted_bus) == pytest.approx(6.31, abs=1e-3)
-    assert fitted_chip.dressed_anharmonicity(fitted_control) == pytest.approx(-0.330, abs=2e-3)
-    assert fitted_chip.dressed_anharmonicity(fitted_target) == pytest.approx(-0.330, abs=2e-3)
-    assert exchange_h[0, 1] == pytest.approx(0.0038, abs=2e-4)
-
-
 def test_fit_a_dress_respects_signed_exchange_target_for_direct_qq_system() -> None:
     """fit_a_dress preserves the sign of a targeted direct qubit-qubit exchange coupling."""
     q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")

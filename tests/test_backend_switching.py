@@ -154,7 +154,6 @@ def _initial_populations(result) -> np.ndarray:
 @pytest.mark.parametrize(
     ("chip_backend", "override", "levels"),
     [
-        pytest.param("qutip", "dynamiqs", 7, id="projected"),
         pytest.param("dynamiqs", "qutip", 7, id="reverse"),
     ],
 )

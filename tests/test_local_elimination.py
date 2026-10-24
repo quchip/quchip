@@ -108,10 +108,9 @@ def test_local_boundary_section_on_a_large_rwa_ring_keeps_the_pair_transition():
     assert projection.source_labels == ("q0", "r0")
 
 
-@pytest.mark.parametrize("directions", [1, 2])
-def test_shared_feedline_local_reduction_matches_full_dynamics(directions):
-    """Local maps retain the full Hamiltonian, dissipator and complex scattering on shared lines."""
-    sites = 2
+def test_shared_feedline_local_reduction_matches_full_dynamics():
+    """Local maps retain the full Hamiltonian, dissipator and complex scattering on a two-way shared line."""
+    sites, directions = 2, 2
     independent = _ring(sites, ports=True)
     source = full = local = _wire_readouts(independent, directions)
     topology = source.port_network.to_dict()

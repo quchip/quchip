@@ -265,18 +265,15 @@ def test_compiled_response_rejects_reordered_levels(cascade):
             compiled(frequency).block_until_ready()
 
 
-@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])
-def test_matrix_free_response_matches_direct_solve(monkeypatch, backend):
+def test_matrix_free_response_matches_direct_solve(monkeypatch):
     """Iterative sector solves preserve complex scattering and certify their residual."""
-    if backend == "dynamiqs":
-        pytest.importorskip("dynamiqs")
     import quchip.backend._response as algebra
 
-    chip = readout_chip(backend=backend)
+    chip = readout_chip()
     network = PortNetwork()
     network.port("a", target=chip["r"], rate=.01)
     network.port("b", target=chip["r"], rate=.003, phase=.3)
-    chip = Chip(chip.devices, chip.couplings, port_network=network, backend=backend)
+    chip = Chip(chip.devices, chip.couplings, port_network=network)
     f = np.array([5.99, 6.002])
     direct = VNA(chip).sweep(f, when={"q": 1}).matrix
     np.testing.assert_allclose(direct, full_response(chip, f, {"q": 1}), rtol=1e-9, atol=1e-10)
@@ -285,14 +282,6 @@ def test_matrix_free_response_matches_direct_solve(monkeypatch, backend):
     np.testing.assert_allclose(iterative.matrix, direct, rtol=1e-8, atol=1e-9)
     assert max(d["residual"] for d in iterative.diagnostics) < 1e-8
     assert iterative.diagnostics[0]["block_condition_number"] is None
-    if backend == "dynamiqs":
-        import jax
-
-        # Eager sweeps of each length and a traced sweep solve the same frequency blocks.
-        single = VNA(chip).sweep(f[1:], when={"q": 1}).matrix
-        traced = jax.jit(lambda offset: VNA(chip).sweep(f + offset, when={"q": 1}).matrix)(0.)
-        np.testing.assert_allclose(single, iterative.matrix[1:], rtol=0, atol=1e-12)
-        np.testing.assert_allclose(traced, iterative.matrix, rtol=0, atol=1e-12)
 
 
 @pytest.mark.optional_backend

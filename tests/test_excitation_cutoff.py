@@ -283,7 +283,7 @@ def test_driven_dissipative_solve_matches_a_sliced_lindblad_reference():
         check_truncation(result, threshold=0.0)
 
 
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
+@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.validation)])
 def test_cutoff_check_finds_the_boundary_rows_when_it_runs(backend):
     """A request keeps the cutoff and its boundary totals, but no compact rows or matrices.
 

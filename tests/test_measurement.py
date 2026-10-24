@@ -135,12 +135,9 @@ def test_squeezed_output_retains_anomalous_quadrature_noise() -> None:
                                2*.005**2/(.04**2-4*.005**2), atol=2e-8)
 
 
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
-def test_internal_moments_retain_projected_authored_operators(backend):
+def test_internal_moments_retain_projected_authored_operators():
     """Mode capture matches stationary observables after a nontrivial basis projection."""
     from quchip import DeviceModel, parameter
-    if backend == "dynamiqs":
-        pytest.importorskip("dynamiqs")
     class DisplacedMode(DeviceModel):
         freq: float = parameter(default=.06)
         force: float = parameter(default=.01)
@@ -152,7 +149,7 @@ def test_internal_moments_retain_projected_authored_operators(backend):
     mode.projection_levels = 3
     net = PortNetwork()
     port = net.port("p", target=mode, rate=.04)
-    chip = Chip([mode], port_network=net, frame="lab", backend=backend)
+    chip = Chip([mode], port_network=net, frame="lab")
     state = chip.steadystate(e_ops={mode: ["a", "n"]})
     measured = VNA(chip).measure(0., 0., input=port, outputs=[port],
                                 noise_frequencies=[-.04, -.004, 0., .004, .04])

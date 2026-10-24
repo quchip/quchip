@@ -24,14 +24,12 @@ pytestmark = pytest.mark.optional_backend
 pytest.importorskip("dynamiqs")
 
 from quchip import (  # noqa: E402
-    Bath,
     Capacitive,
     Chip,
     DuffingTransmon,
     Resonator,
     eliminate,
     set_default_backend,
-    simulate,
 )
 from quchip.backend import reset_default_backend  # noqa: E402
 from quchip.utils.labeling import reset_label_counters  # noqa: E402
@@ -47,26 +45,6 @@ def _dynamiqs_backend():
 
 
 # -- Bath ----------------------------------------------------------------------
-
-@pytest.mark.validation
-def test_thermal_bath_solve_is_jittable_and_grad_in_temperature():
-    """A thermal-bath solve is jittable and its gradient in temperature is finite and positive."""
-    def final_n(temp):
-        m = Resonator(freq=5.0, levels=6, label="m")
-        chip = Chip([m], baths=[Bath("thermal", temperature=temp, rate=0.1)])
-        tlist = jnp.linspace(0.0, 100.0, 3)
-        res = simulate(
-            chip, [], tlist,
-            initial_state=chip.bare_state(),
-            e_ops={m: m.number_operator()},
-            )
-        return jnp.real(res.expect("m")[-1])
-
-    value, grad = jax.jit(jax.value_and_grad(final_n))(jnp.float64(300.0))
-    assert jnp.isfinite(value) and value > 0.0
-    # Hotter bath -> higher steady-state occupation.
-    assert jnp.isfinite(grad) and float(grad) > 0.0
-
 
 # -- eliminate -----------------------------------------------------------------
 

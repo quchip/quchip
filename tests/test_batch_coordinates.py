@@ -16,7 +16,7 @@ def _batch(backend, times):
                       progress=False)
 
 
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
+@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.validation)])
 @pytest.mark.parametrize("second", [[0.0, 0.5, 2.0], [0.0, 1.0, 2.0, 3.0]])
 def test_batch_trace_stacking_rejects_different_time_coordinates(backend, second):
     batch = _batch(backend, [[0.0, 1.0, 2.0], second])

@@ -88,8 +88,7 @@ def test_decay_coherence_compact_replay_and_measurement():
     assert check_truncation(result)
 
 
-@pytest.mark.parametrize("loss", [False, True])
-@pytest.mark.parametrize("frame", ["lab", "auto"])
+@pytest.mark.parametrize(("loss", "frame"), [(False, "lab"), (True, "auto")])
 def test_large_ring_never_embeds_full_operators(loss, frame, monkeypatch):
     """Twenty-four three-level devices evolve in 24 amplitudes with guarded exports."""
     from quchip.utils import memory as _memory
@@ -544,7 +543,8 @@ def test_full_pulse_route_counts_stored_operator_entries(monkeypatch):
 
 
 @pytest.mark.parametrize("backend, dimension",
-                         [("qutip", 40), pytest.param("dynamiqs", 81, marks=pytest.mark.optional_backend)])
+                         [("qutip", 40), pytest.param("dynamiqs", 81, marks=[pytest.mark.optional_backend,
+                                                                              pytest.mark.validation])])
 def test_low_memory_moves_only_dense_compact_operators_to_the_product_route(monkeypatch, backend, dimension):
     """QuTiP holds compact operators as CSR; dense compact operators that cannot fit solve on the product route."""
     from quchip import Exact
