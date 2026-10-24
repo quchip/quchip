@@ -193,10 +193,10 @@ class TestDressedStates:
         assert 0.35 < result.assignment_overlaps[(3, 0)] < 0.4
 
         hybridization_warnings = [
-            warning for warning in captured if "Strong hybridization detected" in str(warning.message)
+            warning for warning in captured if "keep less than overlap_threshold" in str(warning.message)
         ]
         assert len(hybridization_warnings) == 1
-        assert "assignment_overlaps" in str(hybridization_warnings[0].message)
+        assert "hybridized_labels" in str(hybridization_warnings[0].message)
 
     def test_overlap_threshold_controls_hybridization_flags(self) -> None:
         """Relaxing overlap_threshold drops labels from hybridized_labels."""

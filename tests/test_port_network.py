@@ -952,7 +952,7 @@ def test_cascaded_degenerate_modes_solve_and_transfer_the_excitation() -> None:
 def test_state_warns_when_the_cascade_hybridizes_the_requested_label() -> None:
     """Degenerate cascaded modes dress into a 50/50 pair; state() says so and points to bare_state."""
     chip = _cascaded_pair()
-    with pytest.warns(UserWarning, match=r"assignment overlap 0\.500.*bare_state"):
+    with pytest.warns(UserWarning, match=r"label \(1, 0\) keeps less than 90%.*bare_state"):
         dressed = chip.state({"a": 1, "b": 0})
     index = np.ravel_multi_index((1, 0), (2, 2))
     populations = np.abs(np.asarray(chip.backend.to_array(dressed)).ravel()) ** 2
@@ -1094,7 +1094,7 @@ def test_connecting_a_network_invalidates_the_dressed_cache() -> None:
     chip.connect_network(network)
 
     assert chip.dress().assignment_overlaps[(1, 0)] == pytest.approx(0.5, abs=1e-6)
-    with pytest.warns(UserWarning, match="assignment overlap 0.500"):
+    with pytest.warns(UserWarning, match=r"label \(1, 0\) keeps less than 90%"):
         chip.state({"a": 1, "b": 0})
 
 

@@ -1,5 +1,7 @@
 """A level label names its dressed state as an initial state, as a target and in a superposition."""
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -161,23 +163,24 @@ def test_a_traced_local_ket_keeps_the_support_of_integer_levels():
 # The 1e-12 GHz pair terms also raise the round-off conservation advisory.
 @pytest.mark.filterwarnings("ignore:The total excitation number N changes only")
 def test_every_label_query_takes_the_assigned_state_and_warns_when_it_is_mixed():
-    """Near a degeneracy a label starts in the state of chip.state(), and a weak assignment warns on each path."""
+    """Near a degeneracy a label starts in the state of chip.state(), and a weak assignment warns once per chip."""
     from quchip import ExcitationCutoff
 
     q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
     q1 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q1")
     # At g = 1e-12 GHz the bare |10> nearly solves H, but the resonant dressed states are equal mixtures.
     chip = Chip([q0, q1], [Capacitive(q0, q1, g=1e-12, label="c")], approximation=Exact())
-    with pytest.warns(UserWarning, match="assignment overlap 0.50"):
+    with pytest.warns(UserWarning, match=r"label \(1, 0\) keeps less than 90%"):
         problem = QuantumSequence(chip).build_problem(np.array([0.0, 1.0]), initial_state={"q0": 1})
-    with pytest.warns(UserWarning, match="assignment overlap 0.50"):
+    with warnings.catch_warnings():
+        warnings.filterwarnings("error", message="Dressed label")
         expected = vector(chip, chip.state(q0=1))
     start = vector(chip, problem.initial_state)
     np.testing.assert_allclose(start, expected, atol=1e-14, rtol=0)
     assert abs(start[3]) ** 2 == pytest.approx(0.5, abs=0.01)
     # Under a cutoff, the label takes the block of its class, and its overlap of 0.820 warns there too.
     mixed = pair().with_params({"c.g": 0.06}).with_space(ExcitationCutoff(1))
-    with pytest.warns(UserWarning, match="assignment overlap 0.820"):
+    with pytest.warns(UserWarning, match=r"label \(1, 0\) keeps less than 90%"):
         QuantumSequence(mixed).build_problem(np.array([0.0, 1.0]), initial_state={"q0": 1})
 
 
