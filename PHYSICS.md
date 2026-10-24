@@ -10,7 +10,7 @@ Sections 1–7 describe how quchip builds and resolves a model. Sections 8–11
 describe what it computes: observables, stationary response, dressed
 quantities, model reductions and parametric control. Sections 12–16 state the
 engine's assumptions, the limits of JAX tracing, source pointers and
-measurement records.
+measurement records. Section 17 describes propagators, gate sets and circuits.
 
 ## Conventions at a glance
 
@@ -3351,12 +3351,15 @@ expectation of each run without weights. See
 
 ## 17. Gate sets and propagators
 
+Sources: [`quchip/results/propagator.py`](https://github.com/quchip/quchip/blob/main/quchip/results/propagator.py), [`quchip/gateset/`](https://github.com/quchip/quchip/tree/main/quchip/gateset)
+
 ### 17.1 Propagators and the computational frame
 
 `QuantumSequence.propagator()` returns the lab-frame propagator
 `U(t1, t0)` on solver coordinates from one solve, also when the solve runs in
 the rotating frame: `U_lab = R(t1) U_solver R(t0)^†` with
-`R(t) = exp(-2πi t Σ_i f_i n_i)`. With collapse channels it returns the
+`R(t) = exp(-2πi t Σ_i f_frame,i n_i)`, with the integration-frame
+frequencies `f_frame,i` of §4.1. With collapse channels it returns the
 superoperator on column-stacked density matrices. The gate set projects the
 propagator on the dressed computational states `W_c` of `chip.state()` and
 removes each device's dressed precession:
@@ -3485,7 +3488,7 @@ qubit driven at `freq = 4.99` with `detuning = 0.01` has its axis turned by
 gate whose pieces use different carriers turns each piece with its own
 carrier, so its error can change with the start time even when the intended
 action of each piece commutes with its own rotation. For two transmons
-100 MHz apart with `g = 3 MHz`, the echoed CR of section 17.4 has
+100 MHz apart with `g = 3 MHz`, the echoed CR of §17.4 has
 `1 - F_avg = 5.0e-5` at its calibration start and between `3.7e-5` and
 `1.4e-4` over the sampled starts. Its dominant observed harmonic has a
 period of `1/(2 Δf) = 5 ns`, which fits interference between the errors of
@@ -3517,7 +3520,7 @@ X fit with `spectators="none"` next to a neighbor 100 MHz away with
 (40 ns, ±3σ) give `1.9e-6`.
 
 `cross_resonance()` drives the control at the target frequency. With the
-susceptibility coefficients of section 9.2, the seeds are
+susceptibility coefficients of §9.2, the seeds are
 `A = 1/(4 h |C_Z/A| ∫E dt)` for `h` halves and phase `-arg(C_Z/A)`. The target
 cancellation tone is `-(C_I/A) A e^{iφ}/C_t`, with `C_t` the target line's
 `0 -> 1` element averaged over the control states. The echoed form runs CR+,
@@ -3535,8 +3538,8 @@ rule, idle intervals use the eigensystem of the static lab Hamiltonian, and
 overlapping gates are solved together once per placement. With a line delay,
 gates that follow each other on the delayed line overlap and are solved
 together. The composed unitary matches a direct solve of the same schedule to
-the solver tolerance. With QuTiP, the linear interpolation of sampled envelopes
-limits the agreement to about `1e-6`.
+the solver tolerance. With QuTiP, the linear interpolation of windowed
+envelopes adds an error that the solver's `rtol` sets (§12).
 
 ### 17.6 Excitation cutoff
 
@@ -3550,7 +3553,7 @@ the fitted knobs, up to the full product space. Both checks use the block with
 the other gate-set qubits in level 0 and again with all of them in level 1. A
 cached gate acts on every register state, and the second context holds the
 most excitations, so it comes closest to the cutoff. Under the RWA the cutoff
-projector commutes with `N`, so the placement rule of section 17.2 still holds.
+projector commutes with `N`, so the placement rule of §17.2 still holds.
 
 Each drive adds a transient excitation to the state it acts on, so gates that
 run at the same time need more headroom than one gate. On a chain of four
