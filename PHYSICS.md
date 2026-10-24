@@ -1399,8 +1399,8 @@ a conserving jump can move population into a sector above the cutoff. Take a
 resonator with `0.05 / ns` port decay and a jump `a³ b†³` at the same rate into
 a slow mode `b`. At `K = 2`, `N = 2` holds a weight of `5e-4`. The resonant
 ratio is `-0.997` there and `-0.814` in the full space, because the jump fills
-`N = 3`. The automatic route keeps `K = 4`, at `7.8e-8 |beta|` from the full
-solve.
+`N = 3`. The automatic route passes at the pair `K = 4, 5` and keeps `K = 5`,
+at `2e-10 |beta|` from the full solve.
 
 Diagnostics report `excitation_cutoff`, `cutoff_choice` (`"explicit"` or
 `"automatic"`), `retained_dimension`, the weight on each total, and the

@@ -364,7 +364,7 @@ def test_the_output_checks_compare_every_offset_and_delay():
     # At the second sample, the change is 5e-7 over the floor, 1e-3 of the peak.
     spectra = [(peak, zeros, 1.0, 0.5), (shifted, zeros, 1.0, 0.5), (shifted, zeros, 1.0, 0.5)]
     assert vna_analysis._spectrum_change(*spectra[:2]) == pytest.approx(5e-7 / (5e-7 + 1e-3))
-    cutoff, _, check = routes.automatic_cutoff(4, lambda total, lower: spectra[total - 2],
+    cutoff, _, check = routes.automatic_cutoff(5, lambda total, lower: spectra[total - 2],
                                                vna_analysis._spectrum_change, fits=lambda total: True,
                                                states=lambda total: total)
     assert cutoff == 4 and check.status == "passed"

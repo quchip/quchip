@@ -335,7 +335,7 @@ def automatic_cutoff(
     maximum: int, solve: Callable[[int, Any], Any], change: Callable[[Any, Any], float], *,
     fits: Callable[[int], bool], states: Callable[[int], int],
     complete: Callable[[int, Any], Any] | None = None, partial: Callable[[Any], bool] | None = None,
-    start: int = FIRST_CUTOFF,
+    start: int | None = None,
 ) -> tuple[int, Any, CutoffCheck | None]:
     """Raise ``K`` from ``start`` until ``N <= K + 1`` changes the results by at most the tolerance.
 
@@ -361,8 +361,8 @@ def automatic_cutoff(
     partial : callable, optional
         ``partial(results)`` says whether a comparison solved the results in
         part. A passing pair then keeps its smaller cutoff.
-    start : int, default FIRST_CUTOFF
-        First cutoff of the ladder.
+    start : int or None, default None
+        First cutoff of the ladder. ``None`` takes :data:`FIRST_CUTOFF`.
 
     Returns
     -------
@@ -370,7 +370,7 @@ def automatic_cutoff(
         The kept cutoff, its results, and the check, which is ``None`` when the
         kept cutoff holds every label.
     """
-    cutoff = min(start, maximum)
+    cutoff = min(FIRST_CUTOFF if start is None else start, maximum)
     lower = solve(cutoff, None)
     while cutoff < maximum:
         upper = cutoff + 1
@@ -384,7 +384,8 @@ def automatic_cutoff(
         if value <= CUTOFF_TOLERANCE:
             if partial is not None and partial(candidate):
                 return cutoff, lower, CutoffCheck("passed", upper, value, states(upper))
-            return upper, candidate, CutoffCheck("passed", cutoff, value, states(upper))
+            # The largest total holds every label, so the kept solve is exact.
+            return upper, candidate, None if upper == maximum else CutoffCheck("passed", cutoff, value, states(upper))
         cutoff, lower = upper, candidate if complete is None else complete(upper, candidate)
     return cutoff, lower, None
 
