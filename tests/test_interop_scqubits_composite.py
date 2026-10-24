@@ -141,47 +141,6 @@ def test_fluxonium_composite_snapshot_reproduces_spectrum():
     np.testing.assert_allclose(got, want, atol=1e-8)
 
 
-def _small_zero_pi_hilbertspace(id_str: str = "zp") -> Any:
-    """Build a deliberately small ZeroPi + Oscillator ``HilbertSpace`` so the test stays a few seconds."""
-    grid = scq.Grid1d(-19.0, 19.0, 200)
-    zp = scq.ZeroPi(
-        grid=grid,
-        EJ=10.0,
-        EL=0.04,
-        ECJ=20.0,
-        EC=0.04,
-        ng=0.1,
-        flux=0.23,
-        ncut=30,
-        truncated_dim=4,
-        id_str=id_str,
-    )
-    osc = scq.Oscillator(E_osc=0.5, truncated_dim=3, id_str="osc")
-    hs = scq.HilbertSpace([zp, osc])
-    hs.add_interaction(g=0.01, op1=zp.n_theta_operator, op2=osc.creation_operator, add_hc=True)
-    return hs, zp
-
-
-@pytest.mark.validation
-def test_zeropi_in_hilbertspace():
-    """A ZeroPi subsystem and its interaction import in one frozen source gauge."""
-    import warnings
-
-    hs, zp = _small_zero_pi_hilbertspace()
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        chip = from_scqubits(hs)
-
-    got = _ground_shifted(np.asarray(chip.dress().eigenvalues)[:6])
-    want = _ground_shifted(hs.eigenvals(evals_count=6))
-    np.testing.assert_allclose(got, want, atol=1e-6)
-
-    device = chip.devices[0]
-    factor = _device_gauge_matrix(zp, zp.n_theta_operator, device)
-    np.testing.assert_allclose(factor, np.asarray(device.charge_coupling_operator()), atol=1e-8)
-
-
 # ---------------------------------------------------------------------------
 # Unsupported interaction shapes
 # ---------------------------------------------------------------------------

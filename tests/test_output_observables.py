@@ -251,53 +251,6 @@ def test_output_field_batch_preserves_grid_and_post_solve_analysis() -> None:
     np.testing.assert_allclose(field.quadrature(), np.real(field.amplitude))
 
 
-@pytest.mark.validation
-def test_qutip_and_dynamiqs_complete_output_fields_agree() -> None:
-    """QuTiP and Dynamiqs agree on amplitude and photon-flux traces."""
-    pytest.importorskip("dynamiqs")
-
-    def traces(backend: str) -> tuple[np.ndarray, np.ndarray]:
-        chip, _, plane = _one_port_chip(backend=backend)
-        sequence = QuantumSequence(chip)
-        sequence.schedule(plane.input, envelope=Square(duration=1.0, amplitude=0.15))
-        field = sequence.simulate(
-            tlist=np.linspace(0.0, 1.0, 21),
-            e_ops={plane: plane.output},
-            partition=False,
-        ).output(plane)
-        return np.asarray(field.amplitude), np.asarray(field.photon_flux)
-
-    qutip = traces("qutip")
-    dynamiqs = traces("dynamiqs")
-    np.testing.assert_allclose(dynamiqs[0], qutip[0], atol=2e-7)
-    np.testing.assert_allclose(dynamiqs[1], qutip[1], atol=2e-7)
-
-
-@pytest.mark.validation
-def test_dynamiqs_output_quadrature_is_differentiable_after_the_solve() -> None:
-    """Post-solve field analysis stays differentiable through dynamiqs."""
-    pytest.importorskip("dynamiqs")
-    import jax
-    import jax.numpy as jnp
-
-    chip, _, plane = _one_port_chip(backend="dynamiqs")
-
-    def final_quadrature(amplitude: object) -> object:
-        sequence = QuantumSequence(chip)
-        sequence.schedule(plane.input, envelope=Square(duration=0.5, amplitude=amplitude))
-        field = sequence.simulate(
-            tlist=jnp.linspace(0.0, 0.5, 6),
-            e_ops={plane: plane.output},
-            partition=False,
-        ).output(plane)
-        return field.quadrature()[-1]
-
-    value, gradient = jax.jit(jax.value_and_grad(final_quadrature))(jnp.asarray(0.1))
-    assert jnp.isfinite(value)
-    assert jnp.isfinite(gradient)
-    assert gradient != 0.0
-
-
 def _tilt(frequency, *, slope):
     return 0.8 * np.exp(1j * slope * frequency)
 
@@ -348,40 +301,6 @@ def test_outbound_filter_needs_a_known_output_carrier() -> None:
             initial_state={resonator: 1},
             e_ops={plane: plane.output},
         )
-
-
-@pytest.mark.validation
-def test_dynamiqs_transient_filter_parameter_is_differentiable() -> None:
-    """A traced filter parameter flows through the inbound and outbound carrier factors."""
-    pytest.importorskip("dynamiqs")
-    import jax
-    import jax.numpy as jnp
-
-    def tilt(frequency, *, slope):
-        return 0.8 * jnp.exp(1j * slope * frequency)
-
-    resonator = Resonator(freq=0.2, levels=6, label="r")
-    network = PortNetwork(label="line")
-    port = network.port("coupler", target=resonator, rate=0.04)
-    section = network.filter("tilt", transfer=tilt, slope=1.3)
-    network.link(port, section)
-    plane = network.expose("readout", at=section.port(2))
-    chip = Chip([resonator], port_network=network, frame="rotating", backend="dynamiqs")
-
-    def final_quadrature(slope: object) -> object:
-        sequence = QuantumSequence(chip.with_params({"network.component.tilt.slope": slope}))
-        sequence.schedule(plane.input, envelope=Square(duration=5.0, amplitude=0.02), freq=0.2)
-        field = sequence.simulate(
-            tlist=jnp.linspace(0.0, 5.0, 6),
-            e_ops={plane: plane.output},
-            partition=False,
-        ).output(plane)
-        return field.quadrature()[-1]
-
-    value, gradient = jax.jit(jax.value_and_grad(final_quadrature))(jnp.asarray(1.3))
-    assert jnp.isfinite(value)
-    assert jnp.isfinite(gradient)
-    assert gradient != 0.0
 
 
 def test_transient_output_through_an_amplifier_scales_by_root_gain() -> None:

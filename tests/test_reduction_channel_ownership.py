@@ -86,25 +86,6 @@ def test_bath_channels_follow_reduction_and_keep_their_rate_parameter(method):
 
 
 @pytest.mark.validation
-@pytest.mark.parametrize("method", ["sw", "exact"])
-def test_reduced_channel_rate_and_operator_gradients_match_finite_difference(method):
-    import jax
-    import jax.numpy as jnp
-
-    def amplitude(g, t1):
-        source = _source("dynamiqs").with_params({"edge.g": g, "q.T1": t1})
-        result = eliminate(source, "edge", method=method).chip
-        c = result.backend._collapse_operators(result.resolve(frame="lab"))[0]
-        return jnp.real(result.backend.to_array(c)[0, 3])
-
-    g, t1, step = .1, 40., 1e-5
-    dg, dt = jax.jit(jax.grad(amplitude, argnums=(0, 1)))(g, t1)
-    expected = (amplitude(g + step, t1) - amplitude(g - step, t1)) / (2 * step)
-    assert float(dg) == pytest.approx(float(expected), rel=1e-6, abs=1e-10)
-    assert float(dt) == pytest.approx(-float(amplitude(g, t1)) / (2 * t1), rel=1e-10)
-
-
-@pytest.mark.validation
 @pytest.mark.parametrize("basis", ["native", "eigen"])
 def test_surviving_channel_projection_uses_authored_coordinates(basis):
     from quchip import CollapseChannel

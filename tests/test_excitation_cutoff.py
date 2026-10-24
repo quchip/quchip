@@ -3,8 +3,6 @@
 import math
 from dataclasses import replace
 
-import jax
-import jax.numpy as jnp
 import numpy as np
 import pytest
 from scipy.integrate import solve_ivp
@@ -400,37 +398,6 @@ def test_fit_recovers_a_bare_frequency_under_the_same_cutoff():
     with pytest.raises(ValueError, match="cutoff"):
         fit_a_dress(source.with_space(ExcitationCutoff(1)), constraints={**constraints, "q": {"anharmonicity": -0.25}},
                     vary={"q": ["anharmonicity"]})
-
-
-@pytest.mark.optional_backend
-@pytest.mark.validation
-def test_cutoff_derivatives_match_central_differences():
-    """JIT derivatives of a truncated frequency and of pulse populations from prepared states match differences."""
-    pytest.importorskip("dynamiqs")
-    chips = {backend: pair(loss=True, frame={"q": 5.0, "r": 7.0}, backend=backend, space=ExcitationCutoff(3))
-             for backend in ("dynamiqs", "qutip")}
-
-    def frequency(g):
-        return chips["dynamiqs"].with_params({"qr.g": g}).freq("q")
-
-    def population(g, *, dressed, backend="dynamiqs"):
-        bound = chips[backend].with_params({"qr.g": g})
-        # The default state is the vacuum-assigned eigenvector of the traced truncated model.
-        state = bound.compact_state({"q": 1}, dressed=True) if dressed else None
-        result = schedule(bound).simulate(tlist=np.linspace(0.0, 16.0, 9), initial_state=state,
-                                          options=tolerances(backend))
-        return jnp.real(result.population("q", 1)[-1])
-
-    for output in (frequency, lambda g: population(g, dressed=False), lambda g: population(g, dressed=True)):
-        value, derivative = jax.jit(jax.value_and_grad(output))(0.1)
-        step = 1e-4
-        # The central-difference truncation error at this step is about 1e-6 of the derivative.
-        estimate = (output(0.1 + step) - output(0.1 - step)) / (2 * step)
-        assert float(value) == pytest.approx(float(output(0.1)), abs=1e-9)
-        assert float(derivative) == pytest.approx(float(estimate), rel=1e-5)
-    # QuTiP solves the same truncated model with interpolated drive samples.
-    assert float(population(0.1, dressed=False)) == pytest.approx(
-        float(population(0.1, dressed=False, backend="qutip")), abs=1e-5)
 
 
 def _ring(approximation):

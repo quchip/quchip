@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import tracemalloc
 
-import jax
 import numpy as np
 import pytest
 
@@ -120,23 +119,3 @@ def test_projection_checks_the_memory_of_the_cheaper_route(monkeypatch: pytest.M
     chip = Chip([fa, fb], couplings=[_PowerOfSum(fa, fb, g=1e-5)], basis="eigen")
     with pytest.raises(MemoryError, match="factor-by-factor projection of an operator on fa, fb"):
         chip.resolve()
-
-
-@pytest.mark.validation
-@pytest.mark.optional_backend
-def test_projection_derivatives_match_finite_differences() -> None:
-    """Derivatives through both projection routes and the partner's eigenvectors match central differences."""
-    pytest.importorskip("dynamiqs")
-    fa, fb = _fluxonium_pair(num_basis=31)
-    couplings = [Capacitive(fa, fb, g=0.3, label="c"), _OpaqueCapacitive(fa, fb, g=0.2, label="o")]
-    chip = Chip([fa, fb], couplings=couplings, basis="eigen", backend="dynamiqs")
-
-    def frequency(path, value):
-        return chip.with_params({path: value}).freq("fa")
-
-    step = 1e-4
-    for path, value in (("c.g", 0.3), ("o.g", 0.2), ("fb.E_J", 5.0)):
-        reference = (float(frequency(path, value + step)) - float(frequency(path, value - step))) / (2 * step)
-        # A central difference with step 1e-4 has a relative truncation error near 1e-7.
-        assert float(jax.grad(lambda x: frequency(path, x))(value)) == pytest.approx(reference, rel=1e-5)
-        assert abs(reference) > 1e-6

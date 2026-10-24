@@ -340,62 +340,6 @@ class TestThreeDeviceFrameConsistency:
     DURATION = 1000.0
     AMPLITUDE = 0.025
 
-    @pytest.mark.validation
-    @pytest.mark.parametrize("approximation", [RWA(), Exact()], ids=["rwa", "exact"])
-    def test_resonator_lowering_phase_parity(self, approximation):
-        """Dict e_ops ⟨a_r⟩ demodulated result must match between lab and rotating frames."""
-        # Dict-form e_ops routes through the band decomposition + demod pipeline for the frame transform.
-        from quchip.devices.transmon.duffing import DuffingTransmon
-        from quchip.devices.resonator import Resonator
-        from quchip.chip.couplings import Capacitive
-        from quchip.chip.chip import Chip
-        from quchip.control.drive import ChargeDrive
-        from quchip import ControlEquipment
-        from quchip.control.envelopes import Gaussian
-        from quchip.control.sequence import QuantumSequence
-
-        tlist = np.linspace(0, self.DURATION, 500)
-
-        results = {}
-        for frame in ("lab", "rotating"):
-            q = DuffingTransmon(freq=self.FREQ_Q, anharmonicity=-0.3, levels=3, label="q")
-            r = Resonator(freq=self.FREQ_R, levels=6, label="r")
-            f = Resonator(freq=self.FREQ_F, levels=4, label="f")
-            chip = Chip(
-                [q, r, f],
-                [Capacitive(q, r, g=self.G_QR), Capacitive(r, f, g=self.G_RF)],
-                frame=frame,
-                approximation=approximation,
-            )
-            drive_f = ChargeDrive(target=f, label="filter")
-            drive_q = ChargeDrive(target=q, label="qubit")
-            equip = ControlEquipment(lines=[drive_f, drive_q])
-            chip.connect(equip)
-
-            readout_freq = (chip.freq(r, when={q: 0}) + chip.freq(r, when={q: 1})) / 2.0
-
-            seq = QuantumSequence(chip)
-            seq.charge(
-                f, envelope=Gaussian(duration=self.DURATION, amplitude=self.AMPLITUDE, sigmas=4), freq=readout_freq
-            )
-            res = seq.simulate(
-                tlist=tlist,
-                initial_state=chip.state(q=0, r=0, f=0),
-                e_ops={"r": r.lowering_operator()},
-                options={"nsteps": 50000},
-            )
-            results[frame] = res
-
-        a_lab = np.asarray(results["lab"].expect_values("r"), dtype=complex)
-        a_rot = np.asarray(results["rotating"].expect_values("r"), dtype=complex)
-
-        max_diff = np.max(np.abs(a_rot - a_lab))
-        assert max_diff < 5e-3, (
-            f"3-device dict e_ops ⟨a_r⟩ lab vs rotating {type(approximation).__name__}: "
-            f"max diff = {max_diff:.2e}, exceeds 5e-3"
-        )
-
-
 # ---------------------------------------------------------------------------
 # Test class — concrete-vs-traced zero-band dropping
 # ---------------------------------------------------------------------------

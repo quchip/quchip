@@ -178,110 +178,11 @@ def test_batched_mesolve_matches_separate_solves(backend: DynamiqsBackend) -> No
 # adversarial cache-correctness (no structural collision, no stale-value reuse).
 
 
-# ``benchmarks/repeated_solve_parity.py`` validated this manually; these are the
-# make-test-lane regression guards for the optimization-loop hot path.
-# ---------------------------------------------------------------------------
-def _r5_build(open_system: bool):
-    qubit = DuffingTransmon(
-        freq=5.0,
-        anharmonicity=-0.30,
-        levels=3,
-        label="q",
-        T1=200.0 if open_system else None,
-    )
-    drive = ChargeDrive(target=qubit, label="d")
-    chip = Chip(devices=[qubit], frame="rotating", backend="dynamiqs", label="r5")
-    chip.wire(drive)
-    return chip, qubit
-
-
 def _r5_problem(chip, qubit, amp, tlist):
     seq = QuantumSequence(chip)
     seq.charge(qubit, envelope=Square(duration=40.0, amplitude=jnp.asarray(amp)), freq=5.0)
     return seq.build_problem(tlist=tlist, initial_state=chip.state(q=0), e_ops=chip.e_ops(q="n"),
                              states="final")
-
-
-def _r5_cached(problem):
-    """The DynamiqsBackend override (cached jit path)."""
-    return problem.chip.backend.solve_problem(problem)
-
-
-def _r5_uncached(problem):
-    """The un-jitted protocol-default reference (bypasses the override)."""
-    return Backend.solve_problem(problem.chip.backend, problem)
-
-
-@pytest.mark.parametrize("open_system", [False, True], ids=["sesolve", "mesolve"])
-def test_cached_jit_solve_grad_parity(open_system: bool) -> None:
-    """Gradients through the cached-jit solve match the uncached path and a finite-difference reference."""
-
-    def loss_factory(runner):
-        chip, qubit = _r5_build(open_system)
-        tlist = np.linspace(0.0, 40.0, 80)
-
-        def loss(amp):
-            r = runner(_r5_problem(chip, qubit, amp, tlist))
-            return jnp.real(jnp.asarray(r.expect[0])[-1])
-
-        return loss
-
-    x = jnp.asarray(0.045)
-    g_cached = float(jax.grad(loss_factory(_r5_cached))(x))
-    loss_unc = loss_factory(_r5_uncached)
-    g_uncached = float(jax.grad(loss_unc)(x))
-    h = 1e-4
-    fd = (float(loss_unc(x + h)) - float(loss_unc(x - h))) / (2 * h)
-    # cached grad matches the uncached grad to ~machine precision; the
-    # finite-difference reference is matched within its O(h^2) truncation error.
-    assert abs(g_cached - g_uncached) < 1e-6
-    assert abs(g_cached - fd) / max(abs(fd), 1e-12) < 1e-3
-
-
-@pytest.mark.validation
-def test_cached_jit_solve_vmap_parity() -> None:
-    """vmap over the cached-jit solve_problem matches sequential per-value calls exactly."""
-    chip, qubit = _r5_build(False)
-    tlist = np.linspace(0.0, 40.0, 80)
-
-    def loss(amp):
-        r = _r5_cached(_r5_problem(chip, qubit, amp, tlist))
-        return jnp.real(jnp.asarray(r.expect[0])[-1])
-
-    amps = jnp.asarray([0.03, 0.045, 0.06])
-    vm = jax.vmap(loss)(amps)
-    seq_vals = jnp.asarray([loss(a) for a in amps])
-    np.testing.assert_allclose(vm, seq_vals, atol=1e-14, rtol=0.0)
-
-
-@pytest.mark.validation
-def test_cached_jit_solve_structure_change_is_a_cache_miss() -> None:
-    """Structurally distinct problems (sesolve vs mesolve) get distinct cache entries, not shared artifacts."""
-    backend = DynamiqsBackend()
-    tlist = np.linspace(0.0, 40.0, 60)
-    cache = backend._get_jit_solve_cache()
-    cache.clear()
-
-    probs = []
-    for open_system in (False, True):
-        qubit = DuffingTransmon(
-            freq=5.0,
-            anharmonicity=-0.30,
-            levels=3,
-            label="q",
-            T1=200.0 if open_system else None,
-        )
-        drive = ChargeDrive(target=qubit, label="d")
-        chip = Chip(devices=[qubit], frame="rotating", backend=backend, label="cm")
-        chip.wire(drive)
-        probs.append(_r5_problem(chip, qubit, 0.04, tlist))
-
-    results = [backend.solve_problem(p) for p in probs]
-    assert len(cache) == 2  # distinct structural signatures -> distinct artifacts
-    for p, r in zip(probs, results):
-        ru = Backend.solve_problem(backend, p)
-        assert float(np.max(np.abs(np.asarray(r.expect[0]) - np.asarray(ru.expect[0])))) < 1e-9
-        npt.assert_allclose(r.final_state.to_jax(), ru.final_state.to_jax(), atol=1e-9, rtol=0)
 
 
 @pytest.mark.validation

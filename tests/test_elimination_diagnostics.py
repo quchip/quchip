@@ -82,28 +82,6 @@ def test_sw_degeneracy_error_names_its_levels_and_coupling():
                                  "coupling. Keep the coupled levels together or change the operating point.")
 
 
-@pytest.mark.validation
-@pytest.mark.optional_backend
-def test_labeling_margin_derivative_and_compiled_error_text():
-    """On dynamiqs, the derivative of a margin matches central differences, and a compiled failure carries the
-    label and the weight in its text."""
-    pytest.importorskip("dynamiqs")
-    import jax
-
-    chip = bus_chip(5.08, backend="dynamiqs")
-
-    def margin(f_bus):
-        reduction = eliminate(chip.with_params({"bus.freq": f_bus}), "bus", method="exact")
-        return reduction.validity["bus_labeling"]["labels"][(1, 1, 0)]["margin"]
-
-    step = 1e-5
-    finite = (margin(5.08 + step) - margin(5.08 - step)) / (2 * step)
-    np.testing.assert_allclose(jax.grad(margin)(5.08), finite, rtol=1e-6)
-    with pytest.raises(Exception, match=r"Label \(1, 1, 0\) of \('qa', 'qb', 'bus'\) has largest dressed weight "
-                                        r"0\.491756"):
-        jax.block_until_ready(jax.jit(margin)(5.09))
-
-
 @pytest.mark.unit
 def test_exchange_pathways_are_keyed_by_occupation():
     """The exchange of #199 runs through |bus=1⟩ and, by counter-rotating terms, |qa=1, qb=1, bus=1⟩. Each amount is

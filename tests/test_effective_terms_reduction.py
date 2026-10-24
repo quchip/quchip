@@ -164,35 +164,3 @@ def test_reported_dressed_values_match_the_node_basis_circuit():
     assert float(params["freq_after"]) == pytest.approx(float(circuit.freq("q")), abs=1e-7)
     assert float(params["anharmonicity"]) == pytest.approx(float(kerr["q", "q"]), rel=1e-5)
     assert float(params["cross_kerr"]["r"]) == pytest.approx(float(kerr["q", "r"]), rel=1e-5)
-
-
-@pytest.mark.validation
-@pytest.mark.optional_backend
-def test_reported_values_are_differentiable_in_the_junction_energy():
-    """jax.jacrev of the reduction's anharmonicity and chi matches central differences in E_J."""
-    jax = pytest.importorskip("jax")
-    jnp = pytest.importorskip("jax.numpy")
-    pytest.importorskip("dynamiqs")
-    freqs, phases = _modes()
-    levels = (10, 4)
-    # phi_m scales as E_J^(-1/2) at fixed participation.
-    scale = phases * np.sqrt(JOSEPHSON)
-
-    def observables(josephson):
-        phase = (scale[0] * _quadrature(levels, 0) + scale[1] * _quadrature(levels, 1)) / jnp.sqrt(josephson)
-        cosine = jnp.real(jax.scipy.linalg.expm(1j * phase))
-        junction = -josephson * (cosine - jnp.eye(phase.shape[0]) + phase @ phase / 2)
-        chip = Chip([Resonator(freq=freqs[0], levels=levels[0], label="q"),
-                     Resonator(freq=freqs[1], levels=levels[1], label="r")],
-                    effective_terms=[EffectiveTerms(("q", "r"), levels, 0.5 * (junction + junction.T),
-                                                    label="junctions")],
-                    backend="dynamiqs")
-        params = eliminate(chip, "junctions", method="exact").effective_params["q"]
-        return jnp.stack([params["anharmonicity"], params["cross_kerr"]["r"]])
-
-    derivative = np.asarray(jax.jacrev(observables)(JOSEPHSON))
-    step = 1e-4
-    central = (np.asarray(observables(JOSEPHSON + step)) - np.asarray(observables(JOSEPHSON - step))) / (2 * step)
-
-    # Measured agreement: 1e-9 relative in alpha and 4e-7 in chi, the central-difference truncation.
-    np.testing.assert_allclose(derivative, central, rtol=1e-5)

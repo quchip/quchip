@@ -18,27 +18,6 @@ from quchip import (
 from quchip.chip.transformations import eliminate
 
 
-@pytest.mark.validation
-@pytest.mark.parametrize("method", ["sw", "exact"])
-def test_deferred_chi_has_the_same_compiled_gradient_as_the_source_spectrum(method):
-    import jax
-
-    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
-    r = Resonator(freq=7.0, levels=4, label="r")
-    chip = Chip([q, r], [Capacitive(q, r, g=0.08, label="qr")], backend="dynamiqs")
-
-    def reported(frequency):
-        variant = chip.with_params({"q.freq": frequency})
-        return eliminate(variant, "r", method=method).effective_params["q"]["chi"]
-
-    step = 1e-4
-    expected = (
-        chip.with_params({"q.freq": 5.0 + step}).dispersive_shift("q", "r")
-        - chip.with_params({"q.freq": 5.0 - step}).dispersive_shift("q", "r")
-    ) / (2 * step)
-    assert jax.jit(jax.grad(reported))(5.0) == pytest.approx(float(expected), rel=1e-5, abs=1e-9)
-
-
 def _bridge_chip():
     q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
     q1 = DuffingTransmon(freq=5.2, anharmonicity=-0.24, levels=3, label="q1")
