@@ -228,7 +228,7 @@ class SectorProbeModel:
         return tuple(float(np.sum(diagonal[offsets[n]:offsets[n + 1]])) for n in range(cutoff + 1))
 
     def quadrature_spectrum(self, cutoff: int, frequency: float, amplitudes: Any, state: np.ndarray,
-                            offsets: Any, starts: Any = None) -> tuple[np.ndarray, dict[str, Any], list[Any]]:
+                            offsets: Any, starts: Any = None) -> tuple[np.ndarray, dict[str, Any], list[Any] | None]:
         """Return the normally ordered excess IQ spectrum of the selected ports, and its resolvent solutions.
 
         It follows :func:`quchip.engine.field_statistics.quadrature_spectrum`
