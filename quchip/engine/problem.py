@@ -44,7 +44,7 @@ from quchip.engine.ir import (
 )
 from quchip.engine.assembly import build_engine_result
 from quchip.engine.frames import FrameMap, IncompatibleFrameError, resolve_for_operations
-from quchip.engine.observables import decompose_eops
+from quchip.engine.observables import decompose_eops, require_eops_mapping
 from quchip.engine.sampling import AutomaticTimeGrid, sample_problems
 from quchip.utils.jax_utils import array_namespace, contains_tracer, maybe_concrete_scalar
 from quchip.utils.stack import user_stacklevel
@@ -228,8 +228,7 @@ def prepare_solve_problem_context(
     tlist_arr = backend.array_module.asarray(tlist.bounds if automatic else tlist, dtype=float)
     _validate_tlist(tlist_arr)
 
-    if e_ops is not None and not isinstance(e_ops, dict):
-        raise TypeError("e_ops must be dict or None")
+    require_eops_mapping(e_ops)
     from math import prod
     from quchip.engine.assembly import _resolve_system, _prepare_engine_assembly
     from quchip.engine.frames import plan_for_operations
