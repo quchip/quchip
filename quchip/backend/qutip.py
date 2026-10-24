@@ -1266,7 +1266,7 @@ class QuTiPBackend(Backend):
     def solve_propagator(self, problem: Any, columns: Any = None) -> Any:
         if problem.stochastic:
             raise ValueError("Propagators use the deterministic solvers, not trajectory solvers.")
-        prepared = self.prepare_hamiltonian(problem.engine_result, problem.tlist)
+        prepared = self._prepare_problem_hamiltonian(problem)
         tlist, collapse_ops, _solver, options, _e_ops = self._resolve_solve_config(problem, prepared)
         rhs = self._coerce_solver_rhs(prepared.rhs)
         options = {**self._runner_options(options), "store_states": False, "store_final_state": True}

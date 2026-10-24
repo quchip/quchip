@@ -1674,8 +1674,9 @@ class QuantumSequence:
             ``(d, k)`` lab-frame input states at the first time, in solver
             coordinates, or a sequence of native kets. Closed systems only.
         frame : FrameSpec or None, default=None
-            Integration frame. ``None`` uses the chip's frame. A rotating frame
-            is usually faster and more accurate for carrier pulses.
+            Integration frame. ``None`` uses the chip's frame, or the rotating
+            frame with a warning on a chip without one. A rotating frame is
+            usually faster and more accurate for carrier pulses.
         options : dict or None, default=None
             Backend solver options, such as tolerances.
         approximation : Approximation or None, default=None

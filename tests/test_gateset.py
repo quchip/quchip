@@ -367,7 +367,7 @@ def test_covariance_check_is_structural():
     # pulse fails, and a longitudinal one passes.
     mixed = QuantumSequence(chip)
     mixed.schedule("xy0", envelope=Gaussian(duration=20.0, amplitude=0.0), freq=5.0)
-    mixed.schedule("xy1", envelope=Gaussian(duration=20.0, amplitude=0.0))
+    mixed.schedule("xy1", envelope=Gaussian(duration=20.0, amplitude=0.0), freq=None)
     pair = list(mixed.scheduled_ops)
     transverse = Delivered((0.0, 20.0), (DeliveredTerm(frozenset({1}), ""),))
     longitudinal = Delivered((0.0, 20.0), (DeliveredTerm(frozenset({0}), ""),))
