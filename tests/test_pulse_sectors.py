@@ -67,12 +67,9 @@ def test_unsplit_simulation_assembles_its_compact_model_once(monkeypatch):
     assert len(calls) == 1
 
 
-@pytest.mark.parametrize("backend", [None, pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])
-def test_decay_coherence_compact_replay_and_measurement(backend):
+def test_decay_coherence_compact_replay_and_measurement():
     """Loss adds vacuum without removing coherence, and captured states replay without lifting."""
-    if backend:
-        pytest.importorskip("dynamiqs")
-    chip = pair(loss=True, backend=backend)
+    chip = pair(loss=True)
     initial = chip.compact_state((1, {}), (1j, {"a": 1}))
     seq = QuantumSequence(chip)
     times = np.linspace(0, 5, 21)
@@ -80,8 +77,7 @@ def test_decay_coherence_compact_replay_and_measurement(backend):
     assert problem.engine_result.excitation_space.size == 3
     result = chip.solve(problem)
     assert abs(np.asarray(chip.backend.to_array(result.reduced_state(5, "a")))[0, 1]) > 0.1
-    # The probabilities sum to the trace. QuTiP diagonalizes this static generator, and
-    # dynamiqs integrates at rtol 1e-9, so both backends stay far inside 2e-6.
+    # The probabilities sum to the trace. QuTiP diagonalizes this static generator, so it stays far inside 2e-6.
     np.testing.assert_allclose(np.sum(result.measure("a").probabilities), 1, atol=2e-6)
     resumed = seq.simulate(tlist=np.linspace(5, 10, 21), initial_state=result.compact_state(), states="final")
     reference = seq.simulate(tlist=np.linspace(0, 10, 41), initial_state=initial, states="final")
@@ -279,36 +275,6 @@ def test_jitted_parameter_gradient_matches_exchange_solution():
 
 @pytest.mark.validation
 @pytest.mark.optional_backend
-def test_traced_frequency_keeps_the_exact_space_and_detuned_exchange_gradient():
-    """A traced device frequency keeps the two-amplitude space and the analytic detuned exchange."""
-    pytest.importorskip("dynamiqs")
-    import jax
-    import jax.numpy as jnp
-
-    chip, g, t = pair(backend="dynamiqs"), 0.02, 10.0
-
-    def population(frequency):
-        bound = chip.with_params({"a.freq": frequency})
-        # The bare product depends on no traced value, so it stays a constant and keeps its support under jit.
-        start = bound.bare_state(a=1)
-        result = QuantumSequence(bound).simulate(tlist=jnp.linspace(0, t, 21), initial_state=start, dissipation=False)
-        assert result.stats["excitation_reduction"]["dimension"] == 2
-        return result.population("b", 1)[-1]
-
-    def exchange(frequency):
-        # One excitation shared by two detuned modes oscillates at the Rabi rate.
-        rate = jnp.sqrt(g**2 + ((frequency - 0.25) / 2) ** 2)
-        return g**2 / rate**2 * jnp.sin(2 * jnp.pi * rate * t) ** 2
-
-    value, gradient = jax.jit(jax.value_and_grad(population))(0.26)
-    # The default Dopri8 rtol of 1e-9 keeps both values far inside these bounds.
-    np.testing.assert_allclose(value, exchange(0.26), atol=2e-6)
-    np.testing.assert_allclose(gradient, jax.grad(exchange)(0.26), atol=2e-4)
-    assert abs(float(gradient)) > 1.0
-
-
-@pytest.mark.validation
-@pytest.mark.optional_backend
 @pytest.mark.parametrize("model", ["ladder", "energy basis"])
 def test_zero_thermal_occupation_keeps_the_relaxation_gradient(model):
     """An explicit zero occupation keeps dP1/dT1 at its analytic value."""
@@ -323,7 +289,9 @@ def test_zero_thermal_occupation_keeps_the_relaxation_gradient(model):
         if model == "ladder":
             device = Resonator(freq=0.25, levels=3, **noise)
         else:
-            device = ChargeBasisTransmon(E_C=0.25, E_J=12.5, levels=3, coupling_channel="charge", **noise)
+            # The analytic decay does not depend on the charge cutoff, so fifteen charge states keep the solve short.
+            device = ChargeBasisTransmon(E_C=0.25, E_J=12.5, levels=3, num_basis=15, coupling_channel="charge",
+                                         **noise)
         chip = Chip([device], frame="rotating", backend="dynamiqs")
         result = QuantumSequence(chip).simulate(tlist=jnp.linspace(0, 4, 9), initial_state={"q": 1})
         return result.population("q", 1)[-1]

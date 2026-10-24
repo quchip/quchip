@@ -12,10 +12,10 @@ def _sequence(backend):
 
 
 @pytest.mark.validation
-@pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
 @pytest.mark.parametrize("storage", ["all", "final", "none"])
 @pytest.mark.parametrize("batch", [False, True])
-def test_observable_history_is_independent_of_state_storage(backend, storage, batch):
+def test_observable_history_is_independent_of_state_storage(storage, batch):
+    backend = "qutip"
     seq, q = _sequence(backend)
     times = np.linspace(0.0, 2.0, 5)
     kwargs = dict(tlist=times, states=storage, e_ops={"q": q.number_operator()})

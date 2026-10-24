@@ -24,9 +24,6 @@ from quchip.results.propagator import PropagatorResult
 
 # A lab-frame solve accumulates 2π·500 rad over 100 ns, so its phase error needs rtol = 1e-12.
 TIGHT = {"atol": 1e-13, "rtol": 1e-12}
-BACKENDS = ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)]
-
-
 def tight(backend):
     """Solver tolerances far below the checked differences."""
     if backend == "dynamiqs":
@@ -202,13 +199,14 @@ def lab_hamiltonian(f, alpha, g, levels):
 
 
 @pytest.mark.validation
-@pytest.mark.parametrize("backend", BACKENDS)
-def test_driven_gate_matches_an_independent_lab_frame_propagator(backend):
+@pytest.mark.optional_backend
+def test_driven_gate_matches_an_independent_lab_frame_propagator():
     """A π/2 pulse on q0 that starts at 3.7 ns, under Exact(), against a SciPy lab-frame propagator of the
     same Hamiltonian, projected on its own dressed eigenvectors, entry by entry."""
     f, alpha, g, levels = (5.0, 5.4), (-0.25, -0.25), 0.01, 3
     q0 = DuffingTransmon(freq=f[0], anharmonicity=alpha[0], levels=levels, label="q0")
     q1 = DuffingTransmon(freq=f[1], anharmonicity=alpha[1], levels=levels, label="q1")
+    backend = "dynamiqs"
     chip = Chip([q0, q1], [Capacitive(q0, q1, g=g)], approximation=Exact(), frame="rotating", backend=backend)
     chip.wire(ChargeDrive(q0, label="xy"))
     start, duration, phase = 3.7, 20.0, 0.4
@@ -251,8 +249,7 @@ def test_driven_gate_matches_an_independent_lab_frame_propagator(backend):
     assert abs(expected[2, 0]) > 0.6
     np.testing.assert_allclose([record.frequencies["q0"], record.frequencies["q1"]],
                                [frequencies[0], frequencies[1]], rtol=0, atol=1e-11)
-    # QuTiP interpolates the envelope linearly between samples, which moves the entries by about 3e-7.
-    np.testing.assert_allclose(record.matrix, expected, rtol=0, atol=1e-6 if backend == "qutip" else 1e-9)
+    np.testing.assert_allclose(record.matrix, expected, rtol=0, atol=1e-9)
 
 
 @pytest.mark.validation

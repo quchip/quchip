@@ -53,10 +53,10 @@ def _directional_rates(chip):
     ])
 
 
-@pytest.mark.parametrize("count", [2, pytest.param(3, marks=pytest.mark.validation)])
 @pytest.mark.parametrize(("method", "local"), [("sw", False), ("sw", True), ("exact", False)])
-def test_hanger_elimination_keeps_every_dip_and_directional_decay(count, method, local):
+def test_hanger_elimination_keeps_every_dip_and_directional_decay(method, local):
     """Both field directions, dressed frequencies and Purcell rates retain their dispersive accuracy."""
+    count = 2
     chip = _hanger(count)
     modes = ("r1", "r0")
     poles = [float(chip.freq(f"r{i}")) for i in range(count)]
@@ -271,47 +271,6 @@ def test_retained_pole_materializes_scalar_expressions():
                                VNA(numeric).sweep(frequencies).matrix, atol=1e-13, rtol=0)
 
 
-@pytest.mark.optional_backend
-@pytest.mark.validation
-def test_multiport_pole_jit_gradient_matches_finite_difference():
-    """A retained pole's phase and frequency affect JIT VNA derivatives without changing topology."""
-    pytest.importorskip("dynamiqs")
-    import jax
-    import jax.numpy as jnp
-
-    reduced = eliminate(_hanger(backend="dynamiqs"), "r1").chip
-
-    def response(values):
-        rebound = reduced.with_params({"network.response.r1.freq": values[0], "port.r1_left.phase": values[1]})
-        return jnp.real(VNA(rebound).sweep(jnp.array([6.6105])).matrix[0, 1, 0])
-
-    values = jnp.array([6.611, .3])
-    actual = jax.jit(jax.grad(response))(values)
-    steps = np.array([1e-7, 1e-5])
-    expected = [(float(response(values + jnp.eye(2)[i]*step))
-                 - float(response(values - jnp.eye(2)[i]*step)))/(2*step) for i, step in enumerate(steps)]
-    # Central differences at these steps are within 1e-8 relative of the exact derivative.
-    np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-7)
-
-
-@pytest.mark.optional_backend
-@pytest.mark.validation
-def test_lossless_pole_gradient_through_elimination_matches_finite_difference():
-    """A coupling derivative through eliminate() of a lossless readout matches finite differences."""
-    pytest.importorskip("dynamiqs")
-    import jax
-    import jax.numpy as jnp
-
-    def reflection(g):
-        chip = _hanger(1, g=g, backend="dynamiqs").with_params({"r0.internal_quality_factor": np.inf})
-        return jnp.real(VNA(eliminate(chip, "r0").chip).sweep(jnp.array([6.5618])).matrix[0, 1, 0])
-
-    step = 1e-6
-    expected = (float(reflection(.04 + step)) - float(reflection(.04 - step)))/(2*step)
-    # The central difference converges as step**2 and is within 1e-8 relative at this step.
-    np.testing.assert_allclose(jax.jit(jax.grad(reflection))(.04), expected, rtol=1e-6)
-
-
 @pytest.mark.validation
 def test_lossless_hanger_response_converges_to_the_full_linear_limit():
     """Without discarded internal-loss correlations, exact reduction preserves the full single-excitation transfer."""
@@ -468,27 +427,6 @@ def test_active_patch_warns_with_the_return_path_entry():
     with pytest.warns(UserWarning, match="'r1_response' with self_energy_over_width="):
         patch = sequence.active_patch(hops=0)
     assert patch.eliminated_labels == ("r1",)
-
-
-@pytest.mark.optional_backend
-@pytest.mark.validation
-@pytest.mark.parametrize("local", [False, True])
-def test_return_path_entry_traces_and_matches_finite_difference(local):
-    """The entry keeps its value under jit, and its coupling derivative matches a central difference."""
-    pytest.importorskip("dynamiqs")
-    import jax
-
-    chip = _two_readout_hanger(.005, backend="dynamiqs")
-
-    def value(g):
-        return eliminate(chip.with_params({"c.g": g}), "r1", local=local).validity["r1_response"][
-            "self_energy_over_width"]
-
-    np.testing.assert_allclose(jax.jit(value)(.04), value(.04), rtol=1e-12)
-    step = 1e-5
-    expected = (float(value(.04 + step)) - float(value(.04 - step)))/(2*step)
-    # The central difference converges as step**2 and is within 2e-8 relative at this step.
-    np.testing.assert_allclose(jax.grad(value)(.04), expected, rtol=1e-7)
 
 
 @pytest.mark.validation

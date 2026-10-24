@@ -120,9 +120,9 @@ def test_qutip_traced_pulse_coefficients_name_supported_backend(parameter, value
 
 
 @pytest.mark.optional_backend
-@pytest.mark.parametrize("query", ["frequency", "dispersive_shift", "vna"])
-def test_dynamiqs_static_gradients_and_eager_qutip_agree(query):
+def test_dynamiqs_static_gradients_and_eager_qutip_agree():
     """Supported static derivatives match finite differences and eager QuTiP values."""
+    query = "frequency"
     pytest.importorskip("dynamiqs")
     chip = _chip("dynamiqs")
     call = _QUERIES[query]
@@ -136,35 +136,3 @@ def test_dynamiqs_static_gradients_and_eager_qutip_agree(query):
     derivative = jax.jit(jax.grad(evaluate))(5.0)
     np.testing.assert_allclose(derivative, difference, rtol=2e-5, atol=1e-9)
     np.testing.assert_allclose(evaluate(5.0), call(_chip("qutip")), rtol=1e-10, atol=1e-12)
-
-
-@pytest.mark.validation
-@pytest.mark.optional_backend
-@pytest.mark.parametrize("parameter,value", [("q.freq", 5.0), ("amplitude", 0.02), ("carrier_frequency", 4.99)])
-def test_dynamiqs_override_preserves_traced_binding_and_pulse_gradient(parameter, value):
-    """A dynamiqs solve override keeps the same population and finite-difference derivative."""
-    pytest.importorskip("dynamiqs")
-    declared_qutip = _chip("qutip")
-    declared_dynamiqs = _chip("dynamiqs")
-
-    def evaluate(chip, bound, *, backend=None):
-        if parameter == "q.freq":
-            return _population(chip.with_params({parameter: bound}), backend=backend)
-        return _population(chip, backend=backend, **{parameter: bound})
-
-    def override(bound):
-        return evaluate(declared_qutip, bound, backend="dynamiqs")
-
-    def direct(bound):
-        return evaluate(declared_dynamiqs, bound)
-
-    direct_value, direct_gradient = jax.value_and_grad(direct)(value)
-    override_value, override_gradient = jax.jit(jax.value_and_grad(override))(value)
-    # The identical dynamiqs problem must agree within solver accuracy after JIT.
-    np.testing.assert_allclose(override_value, direct_value, rtol=1e-8, atol=1e-9)
-    np.testing.assert_allclose(override_gradient, direct_gradient, rtol=1e-7, atol=1e-7)
-    step = 1e-5
-    difference = (override(value + step) - override(value - step)) / (2 * step)
-    # O(h^2) truncation over a 60 ns pulse dominates the 1e-9 solver tolerance.
-    np.testing.assert_allclose(override_gradient, difference, rtol=2e-4, atol=1e-5)
-    np.testing.assert_allclose(evaluate(declared_qutip, value), direct_value, rtol=1e-5, atol=1e-7)

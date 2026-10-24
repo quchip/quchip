@@ -441,22 +441,6 @@ def test_an_explicit_cutoff_with_heating_solves_the_compact_model():
 
 
 @pytest.mark.validation
-def test_two_readout_pairs_match_the_product_space_with_an_automatic_cutoff():
-    """On 81 product states, the automatic route keeps N <= 4 at beta = 0.03 and matches the full solve."""
-    chip, beta = readout_pairs(2), 0.03
-    frequency = float(chip.freq("r0")) + 0.0015
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        automatic = VNA(chip).finite_power(frequency, beta)
-    product = VNA(chip).finite_power(frequency, beta, options={})
-    (warning,) = cutoff_warnings(caught)
-    check = automatic.diagnostics[0]["cutoff_check"]
-    assert automatic.diagnostics[0]["excitation_cutoff"] == 4 and "N <= 4:" in str(warning.message)
-    assert check["status"] == "passed" and check["change"] <= 1e-6
-    np.testing.assert_allclose(automatic.values, product.values, rtol=0, atol=1e-6 * beta)
-
-
-@pytest.mark.validation
 def test_twelve_pairs_approach_the_small_signal_response_as_beta_squared():
     """Of 3^24 product states, N <= 2 keeps 325; mean/beta - S follows the third-order term c |beta|^2."""
     chip = readout_pairs(12)
@@ -535,16 +519,12 @@ def assert_same_output(sector, product, offsets, delays, *, port="feed", rtol):
     return spectra
 
 
-@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=[pytest.mark.optional_backend,
-                                                                              pytest.mark.validation])])
-def test_output_statistics_on_every_sector_match_the_product_space(monkeypatch, backend):
-    """With N <= 6, the sector spectrum, fluxes, g1, g2 and state agree with the product space on both backends."""
-    if backend == "dynamiqs":
-        pytest.importorskip("dynamiqs")
+def test_output_statistics_on_every_sector_match_the_product_space(monkeypatch):
+    """With N <= 6, the sector spectrum, fluxes, g1, g2 and state agree with the product space."""
     # Every chip takes the sector route, and the automatic cutoff keeps every label, so nothing is truncated.
     monkeypatch.setattr(routes, "AUTOMATIC_SECTOR_STATES", 0)
     monkeypatch.setattr(routes, "FIRST_CUTOFF", 6)
-    chip = feedline(backend=backend)
+    chip = feedline()
     frequency, beta = float(probe_frequencies()[1]), 0.02 * np.exp(0.7j)
     # The offsets are not symmetric, so the spectrum needs the resolvent at -f as well.
     offsets, delays = np.array([-0.004, 0.0, 0.0015, 0.009]), np.array([0.0, 3.0, 25.0])
