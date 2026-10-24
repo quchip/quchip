@@ -58,4 +58,6 @@ jobs:
       # Validation completes the separately required unit and E2E suites.
       # Collection enforces exactly one of those three suites for each test.
       - name: Validation tests
+        # The suite takes about 6 minutes on hosted runners. The limit catches a hung solve.
+        timeout-minutes: 15
         run: uv run --no-sync pytest -m validation --durations=20
