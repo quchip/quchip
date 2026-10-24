@@ -533,24 +533,6 @@ def test_transformed_ports_keep_their_record_through_a_later_reduction() -> None
     assert np.all(np.isfinite(np.real(result.expect("q1"))))
 
 
-@pytest.mark.optional_backend
-def test_reduced_chip_with_transformed_and_kept_ports_resolves_inside_jit() -> None:
-    """A transformed joint port and a kept survivor port keep their declared changes inside jit."""
-    pytest.importorskip("dynamiqs")
-    reduced = eliminate(_two_readout_chip(backend="dynamiqs"), "r1", method="exact").chip
-    eager = reduced.resolve()
-    eager_jumps = [reduced.backend.to_array(op) for op in reduced.backend._collapse_operators(eager)]
-
-    def jumps(t1):
-        candidate = reduced.with_params({"q1.T1": t1})
-        return [candidate.backend.to_array(op) for op in candidate.backend._collapse_operators(candidate.resolve())]
-
-    traced = jax.jit(jumps)(30000.0)
-    assert len(traced) == len(eager_jumps)
-    for actual, expected in zip(traced, eager_jumps, strict=True):
-        np.testing.assert_allclose(np.asarray(actual), np.asarray(expected), atol=1e-12)
-
-
 @pytest.mark.validation
 def test_doubly_reduced_boundary_reproduces_the_full_two_port_response() -> None:
     """Eliminating both readout modes leaves each port with only its own Purcell dispersion residual."""

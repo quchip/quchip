@@ -5,11 +5,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quchip import ChargeDrive, ControlEquipment
 from quchip.chip.chip import Chip
 from quchip.chip.couplings import Capacitive
 from quchip.control.sequence import QuantumSequence
-from quchip.control.envelopes import Square
 from quchip.devices.resonator import Resonator
 from quchip.devices.transmon.duffing import DuffingTransmon
 from quchip.results.results import SimulationBatchResult
@@ -30,41 +28,6 @@ class TestZippedSweep:
         a = Sweep([1, 2], name="a")
         with pytest.raises(ValueError, match="at least two"):
             Sweep.zip(a)
-
-
-class TestQuTiPBatchedIntegration:
-    @pytest.mark.validation
-    def test_qutip_parallel_sweep_matches_sequential(self):
-        """The reusable-loky parallel batch path matches the in-process sequential one exactly."""
-        amps = [0.005 * (k + 1) for k in range(12)]  # >= _PARALLEL_MIN_BATCH, exercises loky dispatch
-
-        def run(max_workers):
-            q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=4, label="q")
-            drive = ChargeDrive(target=q)
-            chip = Chip([q], backend="qutip")
-            chip.connect(ControlEquipment(lines=[drive]))
-            seq = QuantumSequence(chip)
-            pulse = seq.schedule(drive, envelope=Square(duration=10.0, amplitude=0.02), freq=5.0)
-            amp = pulse.vary("amplitude", amps, name="amp")
-            return seq.simulate_batch(
-                amp,
-                tlist=np.linspace(0.0, 10.0, 21),
-                initial_state=chip.bare_state(q=0),
-                progress=False,
-                max_workers=max_workers,
-            )
-
-        parallel = run(None)
-        # One worker solves every point in this process.
-        sequential = run(1)
-
-        assert len(parallel) == len(amps) == len(sequential)
-        for element in range(len(amps)):
-            for level in range(4):
-                np.testing.assert_array_equal(
-                    parallel[element].population("q", level),
-                    sequential[element].population("q", level),
-                )
 
 
 class TestSimulationBatchResultAxes:

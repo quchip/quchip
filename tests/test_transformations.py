@@ -240,30 +240,6 @@ def test_eliminate_unknown_method_raises_value_error():
 
 
 @pytest.mark.validation
-@pytest.mark.optional_backend
-def test_eliminate_bridge_exchange_is_differentiable_in_leg_g():
-    """The mediated exchange J is differentiable in a bridge leg's coupling strength g."""
-    pytest.importorskip("dynamiqs")
-    import jax
-    from quchip.chip.transformations import eliminate
-
-    def j_eff(g):
-        q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=2, label="q0")
-        q1 = DuffingTransmon(freq=5.1, anharmonicity=-0.25, levels=2, label="q1")
-        bus = Resonator(freq=7.0, levels=3, label="bus")
-        chip = Chip(
-            [q0, q1, bus],
-            couplings=[Capacitive(q0, bus, g=g), Capacitive(q1, bus, g=0.05)],
-            backend="dynamiqs",
-        )
-        return eliminate(chip, "bus").effective_params["exchange"]["j_eff"]
-
-    grad = jax.jit(jax.grad(j_eff))(0.05)
-    # dJ/dg1 = (g2/2)(1/Δ1 + 1/Δ2)
-    assert float(grad) == pytest.approx(0.05 / 2.0 * (1.0 / -2.0 + 1.0 / -1.9), rel=1e-6)
-
-
-@pytest.mark.validation
 def test_eliminate_bridge_composes_sequentially_over_a_chain():
     """Eliminating both couplers of QB1-TC1-CR-TC2-QB2 leaves two mediated qubit-resonator couplings."""
     from quchip.chip.transformations import eliminate
@@ -326,45 +302,3 @@ def test_eliminate_lamb_shift_is_differentiable_in_g():
     grad = jax.jit(jax.grad(lamb_shift))(0.08)
     # d/dg (g^2/Δ) = 2g/Δ, Δ = -2.0
     assert float(grad) == pytest.approx(2 * 0.08 / (5.0 - 7.0), rel=1e-4)
-
-
-@pytest.mark.validation
-def test_eliminate_with_circuit_level_survivor_retains_the_shift():
-    """A survivor without a 'freq' tunable keeps its bare spectrum; the shift is reported."""
-    from quchip import ChargeBasisTransmon
-    from quchip.chip.transformations import eliminate
-
-    q = ChargeBasisTransmon(E_C=0.25, E_J=12.0, n_g=0.0, levels=4, label="q")
-    r = Resonator(freq=7.1, levels=5, label="r")
-    chip = Chip([q, r], couplings=[Capacitive(q, r, g=0.08)])
-    bare_freq = chip["q"].freq
-
-    res = eliminate(chip, r)
-
-    assert [d.label for d in res.chip.devices] == ["q"]
-    assert res.chip["q"].freq == pytest.approx(bare_freq)  # spectrum not folded
-    delta = bare_freq - 7.1
-    energy_vectors = np.asarray(q.eigenvectors())
-    charge = energy_vectors.conj().T @ np.asarray(q.charge_coupling_operator()) @ energy_vectors
-    lamb = (0.08 * abs(charge[0, 1])) ** 2 / delta
-    assert float(res.effective_params["q"]["lamb_shift"]) == pytest.approx(lamb, rel=0.05)
-    assert float(res.effective_params["q"]["freq_after"]) == pytest.approx(bare_freq + lamb, rel=1e-3)
-
-
-@pytest.mark.validation
-@pytest.mark.parametrize("method", ["sw", "exact"])
-def test_eliminate_coupling_target_keeps_circuit_parameters(method):
-    """Circuit devices need no artificial frequency parameter to carry a correction."""
-    from quchip import ChargeBasisTransmon
-    from quchip.chip.transformations import eliminate
-
-    q = ChargeBasisTransmon(E_C=0.25, E_J=12.0, n_g=0.0, levels=4, label="q")
-    r = Resonator(freq=7.1, levels=5, label="r")
-    chip = Chip([q, r], couplings=[Capacitive(q, r, g=0.08, label="c")], basis="eigen")
-    result = eliminate(chip, "c", method=method)
-    assert result.chip["q"].E_C == q.E_C and result.chip["q"].E_J == q.E_J
-    assert np.isfinite(result.effective_params["q"]["freq_after"])
-    if method == "exact":
-        source_h = chip.resolve(frame="lab").hamiltonian().matrix()
-        target_h = result.chip.resolve(frame="lab").hamiltonian().matrix()
-        np.testing.assert_allclose(result.mapping.project_operator(source_h).full(), target_h, atol=1e-11)

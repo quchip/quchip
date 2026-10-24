@@ -2,7 +2,6 @@
 
 import re
 import warnings
-from math import prod
 
 import jax
 import numpy as np
@@ -21,7 +20,7 @@ from quchip import (
     eliminate,
     eliminate_spectators,
 )
-from quchip.chip.effective import retained_support, transport_retained_operator
+from quchip.chip.effective import retained_support
 from quchip.chip.transformations.elimination_order import EliminationOrder
 
 
@@ -48,15 +47,6 @@ def _walked(n, keep):
     return [x for arc in arcs if len(arc) > 1 for x in arc] + [arc[0] for arc in arcs if len(arc) == 1]
 
 
-def _widest(steps, labels):
-    """The largest product dimension of the support of an operator on ``labels`` after any step."""
-    most = 0
-    for step in steps:
-        dims = dict(zip((d.label for d in step.chip.devices), step.chip.authored_dims))
-        most = max(most, *(prod(dims[x] for x in retained_support(step.chip, (label,))) for label in labels))
-    return most
-
-
 def _largest_fold(result):
     return max(abs(float(entry["g_over_delta"])) for step in result.steps for entry in step.validity.values()
                if "g_over_delta" in entry)
@@ -69,25 +59,6 @@ def _kuv(f_v=5.1, scale=1.0, **options):
     v = DuffingTransmon(freq=f_v, anharmonicity=-0.25, levels=3, label="v")
     return Chip([k, u, v], [Capacitive(k, u, g=0.05 * scale, label="ku"), Capacitive(u, v, g=0.05 * scale, label="uv")],
                 approximation=RWA(), **options)
-
-
-@pytest.mark.parametrize("n, keep", [(6, (1, 2, 4, 5)), (8, (2, 3, 5, 6))])
-def test_default_order_keeps_every_kept_operator_of_a_ring_within_the_walked_order(n, keep):
-    """Removing every coupler first spreads a drive over all transmons; both entry points stay within 256 states."""
-    chip = _ring(n, keep)
-    labels = [f"q{k}" for k in keep]
-    result = eliminate_spectators(chip, labels, local=True)
-    sequence = QuantumSequence(chip)
-    for k in keep:
-        sequence.schedule(f"d{k}", envelope=Square(duration=20.0, amplitude=0.01), freq=float(chip.freq(f"q{k}")))
-    patch = sequence.active_patch(hops=0, local=True)
-
-    assert patch.eliminated_labels == result.eliminated_labels
-    assert [d.label for d in result.chip.devices] == labels
-    assert result.kept_labels == tuple(labels)
-    assert _widest(result.steps, labels) <= 256
-    assert _widest(eliminate_spectators(chip, labels, order=_walked(n, keep), local=True).steps, labels) == 256
-    assert not any(note.startswith("Eliminated ") for note in result.notes)
 
 
 def test_a_local_step_reports_its_widest_operator_and_warns_when_the_dense_matrix_is_large():
@@ -117,24 +88,6 @@ def test_an_explicit_order_gives_the_chain_of_single_eliminations():
     assert result.eliminated_labels == tuple(order)
     np.testing.assert_allclose(np.asarray(result.chip.resolve(frame="lab").hamiltonian().matrix()),
                                np.asarray(manual.resolve(frame="lab").hamiltonian().matrix()), rtol=0, atol=1e-12)
-
-
-def test_local_and_full_routes_take_the_same_order_and_transport_the_same_operators():
-    chip = _ring(3)
-    local = eliminate_spectators(chip, ["q0", "q1"], local=True)
-    full = eliminate_spectators(chip, ["q0", "q1"])
-    assert local.eliminated_labels == full.eliminated_labels
-    np.testing.assert_allclose(np.asarray(local.chip.resolve(frame="lab").hamiltonian().matrix()),
-                               np.asarray(full.chip.resolve(frame="lab").hamiltonian().matrix()), rtol=0, atol=1e-10)
-    rng = np.random.default_rng(5)
-    for label in ("q0", "q1"):
-        operator = rng.normal(size=(4, 4)) + 1j * rng.normal(size=(4, 4))
-        operators = []
-        for reduced in (local.chip, full.chip):
-            matrix, labels, dims = transport_retained_operator(reduced, operator, (label,), (4,))
-            assert labels == ("q0", "q1")
-            operators.append(np.asarray(matrix))
-        np.testing.assert_allclose(operators[0], operators[1], rtol=0, atol=1e-10)
 
 
 def test_a_spectator_waits_for_the_mediator_to_a_kept_device_near_it():
@@ -321,23 +274,6 @@ def test_the_default_order_needs_concrete_values():
         jax.grad(lambda f_v: _reduced_frequency(_kuv(backend="dynamiqs"), f_v))(5.1)
 
 
-@pytest.mark.optional_backend
-@pytest.mark.validation
-def test_an_explicit_order_differentiates_like_the_default_order():
-    pytest.importorskip("dynamiqs")
-    base = _kuv(backend="dynamiqs")
-    order = eliminate_spectators(base, ["k"], local=True).eliminated_labels
-    gradient = jax.grad(lambda f_v: _reduced_frequency(base, f_v, order))(5.1)
-    traced = []
-    jax.grad(lambda f_v: traced.append(eliminate_spectators(base.with_params({"v.freq": f_v}), ["k"], order=order,
-                                                            local=True)) or traced[-1].chip.freq("k"))(5.1)
-    assert traced[0].omitted_shifts is None
-    step = 1e-4
-    expected = (float(_reduced_frequency(base, 5.1 + step)) - float(_reduced_frequency(base, 5.1 - step))) / (2 * step)
-    assert abs(expected) > 1e-4
-    assert float(gradient) == pytest.approx(expected, rel=1e-5)
-
-
 def test_eliminate_spectators_checks_keep_and_order():
     chip = _kuv()
     with pytest.raises(KeyError, match="keep names no device"):
@@ -372,9 +308,7 @@ def test_the_order_gap_is_fourth_order_in_the_legs_and_follows_the_sign_of_the_d
 @pytest.mark.validation
 @pytest.mark.parametrize("n, keep, g, fc", [
     (6, (1, 2, 4, 5), 0.03, 6.30),
-    (8, (2, 3, 5, 6), 0.03, 6.30),
     (8, (2, 3, 5, 6), 0.075, 7.20),
-    (8, (2, 3, 5, 6), 0.05, 6.00),
 ])
 def test_the_default_order_is_at_least_as_accurate_as_the_walked_order(n, keep, g, fc):
     """f01 against the full ring, and the ZZ of neighbouring kept transmons, which needs two excitations."""

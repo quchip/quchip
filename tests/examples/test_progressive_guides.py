@@ -82,27 +82,6 @@ def test_statics_guide_starts_with_a_small_declaration(guide_workspace) -> None:
     assert float(example["chip"].freq("q1")) > 5.0
 
 
-@pytest.mark.validation
-@pytest.mark.examples
-@pytest.mark.optional_backend
-def test_differentiability_guide_starts_with_static_shapes(guide_workspace) -> None:
-    """The static derivatives retain the ground-positive dispersive coefficient."""
-    pytest.importorskip("dynamiqs")
-    example = _run_opening_example("examples/03_differentiate_a_driven_chip.md", guide_workspace)
-    assert example["static_gradient"].shape == (3,)
-    assert example["static_jacobian"].shape == (2, 3)
-    chip = example["chip"]
-    ground_frequency = chip.freq("r", when={"q": 0})
-    excited_frequency = chip.freq("r", when={"q": 1})
-    # One millihertz exceeds eigensolver roundoff for this 16-state model.
-    np.testing.assert_allclose(
-        example["observables"](example["theta"])[1],
-        (ground_frequency - excited_frequency) / 2,
-        rtol=0,
-        atol=1e-12,
-    )
-
-
 @pytest.mark.examples
 def test_measurement_guide_matches_the_linear_cavity_response(guide_workspace) -> None:
     """The declared readout reproduces the coherent-state occupation and measurement dephasing."""

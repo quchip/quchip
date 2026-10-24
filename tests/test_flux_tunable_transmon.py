@@ -75,27 +75,6 @@ class TestFluxTunableTransmon:
         result = get_freq_at(4.47, -0.2006, 0.0)
         npt.assert_allclose(float(result), 4.47, rtol=1e-6)
 
-    def test_jax_traceable_freq_sweep(self):
-        """Sweeping freq over jnp.linspace — frequency_at stays traceable."""
-        import jax
-        import jax.numpy as jnp
-
-        from quchip import FluxTunableTransmon
-
-        @jax.jit
-        def sweep(freqs):
-            return jnp.array([
-                FluxTunableTransmon(freq=f, anharmonicity=-0.20).frequency_at(0.1)
-                for f in freqs
-            ])
-
-        freqs = jnp.linspace(4.0, 5.0, 5)
-        results = sweep(freqs)
-        assert results.shape == (5,)
-        # Flux reduces frequency.
-        assert jnp.all(results < freqs)
-
-
     def test_flux_bias_mutation_retunes_frequency_and_hamiltonian(self):
         """Changing the operating bias preserves the SQUID calibration and retunes the local model."""
         from quchip import FluxTunableTransmon

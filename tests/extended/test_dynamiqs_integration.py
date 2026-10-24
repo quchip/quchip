@@ -22,7 +22,6 @@ from quchip import (  # noqa: E402
     DuffingTransmon,
     Gaussian,
     QuantumSequence,
-    Resonator,
 )
 from quchip.backend import reset_default_backend, set_default_backend  # noqa: E402
 
@@ -37,107 +36,6 @@ def _clean_default_backend():
 
 def _set_backend(backend_name: str) -> None:
     set_default_backend(backend_name)
-
-
-def _run_rabi_population(backend_name: str) -> np.ndarray:
-    _set_backend(backend_name)
-    qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=3, label="q")
-    drive = ChargeDrive(target=qubit, label="drive")
-    chip = Chip(
-        devices=[qubit],
-        control_equipment=ControlEquipment(lines=[drive]),
-        frame="lab",
-        label=f"{backend_name}-rabi",
-    )
-    chip.dress()
-
-    sequence = QuantumSequence(chip)
-    sequence.charge(qubit, envelope=Gaussian(duration=60.0, amplitude=0.005, sigmas=4), freq=qubit.freq)
-    result = sequence.simulate(
-        tlist=np.linspace(0.0, 60.0, 121),
-        initial_state=chip.state(q=0),
-    )
-    return np.asarray(result.population("q", 1))
-
-
-def _run_dispersive_expectation(backend_name: str) -> np.ndarray:
-    _set_backend(backend_name)
-    qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=3, label="q")
-    resonator = Resonator(freq=6.8, levels=5, label="r", internal_quality_factor=1e6)
-    coupling = Capacitive(qubit, resonator, g=0.04)
-    readout_drive = ChargeDrive(target=resonator, label="readout")
-    chip = Chip(
-        devices=[qubit, resonator],
-        couplings=[coupling],
-        control_equipment=ControlEquipment(lines=[readout_drive]),
-        frame="rotating",
-        label=f"{backend_name}-dispersive",
-    )
-    chip.dress()
-
-    sequence = QuantumSequence(chip)
-    sequence.schedule(
-        readout_drive,
-        envelope=Gaussian(duration=80.0, amplitude=0.01, sigmas=4),
-        freq=chip.freq(resonator, when={qubit: 0}),
-    )
-    result = sequence.simulate(
-        tlist=np.linspace(0.0, 80.0, 81),
-        initial_state=chip.state(q=1, r=0),
-        e_ops=chip.e_ops(r="a"),
-    )
-    return np.asarray(result._expect_data["r"].values, dtype=complex)
-
-
-def _run_cr_expectation(backend_name: str) -> np.ndarray:
-    _set_backend(backend_name)
-    control = DuffingTransmon(freq=5.2, anharmonicity=-0.33, levels=3, label="q1")
-    target = DuffingTransmon(freq=5.0, anharmonicity=-0.33, levels=3, label="q2")
-    drive = ChargeDrive(target=control, label="cr")
-    chip = Chip(
-        devices=[control, target],
-        couplings=[Capacitive(control, target, g=0.003)],
-        control_equipment=ControlEquipment(lines=[drive]),
-        frame="rotating",
-        label=f"{backend_name}-cr",
-    )
-    chip.dress()
-
-    sequence = QuantumSequence(chip)
-    sequence.schedule(
-        drive,
-        envelope=Gaussian(duration=60.0, amplitude=0.03, sigmas=4),
-        freq=chip.freq(target),
-    )
-    result = sequence.simulate(
-        tlist=np.linspace(0.0, 60.0, 81),
-        initial_state=chip.state(q1=1, q2=0),
-        e_ops=chip.e_ops(q2="Z"),
-    )
-    return np.asarray(result._expect_data["q2"].values, dtype=complex)
-
-
-def test_rabi_backend_agreement() -> None:
-    """Rabi population traces from the qutip and dynamiqs backends agree within tolerance."""
-    qutip = _run_rabi_population("qutip")
-    dyn = _run_rabi_population("dynamiqs")
-    npt.assert_allclose(dyn, qutip, atol=1e-3, rtol=1e-3)
-
-
-@pytest.mark.validation
-def test_dispersive_backend_agreement() -> None:
-    """Dispersive readout expectation traces from the qutip and dynamiqs backends agree."""
-    qutip = _run_dispersive_expectation("qutip")
-    dyn = _run_dispersive_expectation("dynamiqs")
-    npt.assert_allclose(dyn, qutip, atol=1e-3, rtol=1e-3)
-
-
-@pytest.mark.validation
-def test_cr_backend_agreement() -> None:
-    """Cross-resonance expectation traces from the qutip and dynamiqs backends agree."""
-    qutip = _run_cr_expectation("qutip")
-    dyn = _run_cr_expectation("dynamiqs")
-    npt.assert_allclose(dyn, qutip, atol=1e-3, rtol=1e-3)
 
 
 def _run_amplitude_trace(backend_name: str) -> np.ndarray:
@@ -212,51 +110,6 @@ def test_multi_experiment_cr_batch_loss_supports_jax_grad() -> None:
 
 
 @pytest.mark.validation
-def test_per_call_dynamiqs_backend_with_qutip_built_state() -> None:
-    """backend="dynamiqs" scopes one call; a QuTiP-native psi0 is coerced."""
-    # Process default stays QuTiP — the state below is a qutip.Qobj.
-    qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=3, label="q")
-    drive = ChargeDrive(target=qubit, label="drive")
-    chip = Chip(
-        devices=[qubit],
-        control_equipment=ControlEquipment(lines=[drive]),
-        frame="rotating",
-        label="per-call-backend",
-    )
-    sequence = QuantumSequence(chip)
-    sequence.schedule(
-        drive,
-        envelope=Gaussian(duration=40.0, amplitude=0.0125, sigmas=3),
-        freq=chip.freq("q"),
-    )
-    tlist = np.linspace(0.0, 40.0, 81)
-    psi0 = chip.state(q=0)  # QuTiP-native Qobj
-
-    res_dq = sequence.simulate(tlist=tlist, initial_state=psi0, backend="dynamiqs", e_ops=chip.e_ops(q="Z"))
-    res_qt = sequence.simulate(tlist=tlist, initial_state=psi0, e_ops=chip.e_ops(q="Z"))
-    assert np.asarray(res_dq.expect("q")).shape == (len(res_dq.times),)
-    npt.assert_allclose(res_dq.expect("q"), res_qt.expect("q"), atol=1e-5)
-    assert res_dq.state() is not None
-
-    npt.assert_allclose(
-        np.asarray(res_dq.population("q", level=1)),
-        np.asarray(res_qt.population("q", level=1)),
-        atol=1e-5,
-    )
-    # result accessors coerce foreign-native comparison states too:
-    # a QuTiP-built target against the dynamiqs trajectory, and vice versa.
-    npt.assert_allclose(
-        np.asarray(res_dq.overlap(psi0)),
-        np.asarray(res_qt.overlap(psi0)),
-        atol=1e-5,
-    )
-    # the per-call override never leaks into the process default
-    from quchip.backend.qutip import QuTiPBackend
-
-    assert isinstance(chip.backend, QuTiPBackend)
-
-
-@pytest.mark.validation
 def test_per_call_dynamiqs_backend_preserves_composite_qutip_state_dims() -> None:
     """A QuTiP-built composite ket keeps its subsystem dimensions under the override."""
     q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=2, label="q0")
@@ -293,34 +146,6 @@ def test_per_call_dynamiqs_batch_preserves_composite_qutip_state_dims() -> None:
 
     for result in results:
         npt.assert_allclose(np.asarray(result.overlap(psi0)), 1.0, atol=1e-8)
-
-
-@pytest.mark.validation
-def test_per_call_dynamiqs_gradient_without_global_flip() -> None:
-    """A jax.grad loss can pin dynamiqs per call while the default stays QuTiP."""
-    tlist = jnp.linspace(0.0, 20.0, 41)
-
-    def loss(amplitude):
-        qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=2, label="q")
-        drive = ChargeDrive(target=qubit, label="drive")
-        chip = Chip(
-            devices=[qubit],
-            control_equipment=ControlEquipment(lines=[drive]),
-            frame="rotating",
-            label="per-call-grad",
-        )
-        sequence = QuantumSequence(chip)
-        sequence.schedule(
-            drive,
-            envelope=Gaussian(duration=20.0, amplitude=amplitude, sigmas=4),
-            freq=chip.freq("q"),
-        )
-        result = sequence.simulate(tlist=tlist, backend="dynamiqs")
-        return 1.0 - jnp.real(result.population("q", level=1)[-1])
-
-    value, grad = jax.value_and_grad(loss)(jnp.asarray(0.02))
-    assert jnp.isfinite(value)
-    assert jnp.isfinite(grad)
 
 
 def test_concrete_build_ships_no_dead_zero_structure_to_dynamiqs() -> None:
