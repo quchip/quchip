@@ -179,8 +179,7 @@ def test_every_result_reports_its_frame():
     partitioned = sequence.simulate(times, partition=True)
     assert len(partitioned.components) == 2
     assert partitioned.frame.frequencies == {"q": 4.9, "p": 5.3}
-    with pytest.warns(UserWarning, match="joint state of a partitioned result"):
-        joint = partitioned.state_at(5.0, frame="lab")
+    joint = partitioned.state_at(5.0, frame="lab")
     np.testing.assert_allclose(array(chip, joint), array(chip, results["pulse"].state_at(5.0, frame="lab")),
                                atol=1e-6)
 

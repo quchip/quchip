@@ -24,6 +24,7 @@ from jax import lax
 
 from quchip.backend import EigensystemData
 from quchip.utils.jax_utils import concrete_array_module, contains_tracer
+from quchip.utils.stack import user_stacklevel
 
 if TYPE_CHECKING:
     from quchip.engine.ir import EngineResult
@@ -312,23 +313,6 @@ def _labeling_arrays(
 
 
 STATE_OVERLAP_WARNING = 0.9
-
-
-def user_stacklevel() -> int:
-    """Return the ``warnings.warn`` stack level of the first caller outside quchip.
-
-    The caller of this function calls ``warnings.warn`` directly.
-    """
-    import os
-    import sys
-    from types import FrameType
-
-    package = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    frame: FrameType | None = sys._getframe(2)
-    level = 2
-    while frame is not None and os.path.abspath(frame.f_code.co_filename).startswith(package + os.sep):
-        frame, level = frame.f_back, level + 1
-    return level
 
 
 def warn_weak_assignment(label: tuple[int, ...], overlap: Any) -> None:

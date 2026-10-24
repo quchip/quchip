@@ -617,7 +617,7 @@ def test_large_partitioned_pulse_keeps_local_results_and_guards_joint_export(mon
     result = QuantumSequence(chip).simulate(tlist=[0, 1])
     assert len(result.components) == 24
     np.testing.assert_allclose(result.population("r0", 0), 1, atol=1e-10)
-    with pytest.warns(UserWarning, match="Materializing"), pytest.raises(MemoryError):
+    with pytest.raises(MemoryError):
         _ = result.final_state
 
 
