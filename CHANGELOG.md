@@ -773,7 +773,7 @@ This file records notable user-visible changes to quchip.
   `h = sqrt(8 rtol max|f| / max|f''|)`, never below 40 points/ns. At QuTiP's
   default `rtol = 1e-6`, the errors fall to 1.0e-6 and 3.1e-7 at the same
   cost, and at `rtol = 1e-8` to 9.4e-9 and 1.6e-8. A window that would need
-  more than 100,000 samples uses the exact envelope as a callable and warns.
+  more than 2,000,000 samples uses the exact envelope as a callable and warns.
   QuTiP outputs can move at the 1e-6 level.
   ([#216](https://github.com/quchip/quchip/pull/216))
 

@@ -107,8 +107,8 @@ _WINDOW_SUBGRID_POINTS_PER_NS = 40.0
 _MIN_WINDOW_INTERIOR_SAMPLES = 41
 # QuTiP's own default for its adaptive integrators.
 _QUTIP_DEFAULT_RTOL = 1e-6
-# A window that needs more samples uses the exact callable: about 4 MB per window at this cap.
-_MAX_WINDOW_SAMPLES = 100_000
+# A window that needs more samples uses the exact callable: about 80 MB per window at this cap.
+_MAX_WINDOW_SAMPLES = 2_000_000
 
 
 class _OversizedWindow(NotImplementedError):
