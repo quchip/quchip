@@ -2325,7 +2325,7 @@ def instantiate_engine_result(
                     operator=(f"{compiled.origin} band w={compiled.weight:+d} on {item.target.label} (fast partner)"),
                     reason="counter-rotating drive component under RWA",
                     band_weights=(compiled.weight,),
-                    frame_frequency=abs(item.signal.carrier
+                    frame_frequency=abs(abs(item.signal.carrier)
                                         + (1 if compiled.weight > 0 else -1) * compiled.device_frame_freq),
                 )
             )

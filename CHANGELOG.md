@@ -287,6 +287,15 @@ This file records notable user-visible changes to quchip.
   after `vz()`, `delay()` and one pulse, `pulse.2.amplitude` is now
   `pulse.0.amplitude`. ([#217](https://github.com/quchip/quchip/issues/217),
   [#221](https://github.com/quchip/quchip/pull/221))
+- `ChargePhaseDrive` now drives a transition at a positive carrier, as
+  `ChargeDrive` does, and takes the automatic carrier `chip.freq(target)`.
+  Its Hamiltonian is `I·Q_c + Q·P` instead of `I·Q_c - Q·P`. On a Fock device
+  this is `i(s* a - s a†)`, the resonant sideband at twice the rate of
+  `ChargeDrive` with no counter-rotating term, so its π amplitude is half
+  that of `ChargeDrive`. Previously, a 20 ns Gaussian at ChargeDrive's π
+  amplitude and +5 GHz left a 5 GHz transmon in `|0>`, and only a negative
+  carrier drove it. To keep a previous schedule, negate `freq`.
+  ([#221](https://github.com/quchip/quchip/pull/221))
 
 #### New features
 
@@ -821,6 +830,14 @@ This file records notable user-visible changes to quchip.
 - `IQReadout.from_wiring()` no longer warns about the chip's frame. It reads
   only the output wiring, which does not depend on the frame, so it resolves
   the chip in the lab frame. ([#221](https://github.com/quchip/quchip/pull/221))
+- Under `RWA()`, a pulse with a negative carrier keeps the signal band that
+  co-rotates with its transition. Previously, `RWA()` picked the band by
+  position and kept the counter-rotating one, so a `ChargeDrive` π pulse at
+  `freq=-5.0` left a 5 GHz transmon in `|0>` (P1 = 0.99 under `Exact()`).
+  A carrier at `-f` now drives as at `+f` with the conjugate phase, also when
+  the carrier is traced, and the dropped-term record gives the partner at
+  `|f| + f_transition`. A zero carrier keeps its conventional half.
+  ([#221](https://github.com/quchip/quchip/pull/221))
 
 #### Performance
 

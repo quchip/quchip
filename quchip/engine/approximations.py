@@ -5,8 +5,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Callable
 
 from quchip.approximations import Approximation
-from quchip.engine.ir import Add, Carrier, ImagPart, Multiply, RealPart, SignalProgram
+from quchip.engine.ir import Add, Carrier, ImagPart, Multiply, RealPart, Scale, SignalProgram
 from quchip.utils.constants import TWO_PI
+from quchip.utils.jax_utils import maybe_concrete_scalar
 
 if TYPE_CHECKING:
     from quchip.backend.protocol import Backend, Operator
@@ -59,12 +60,31 @@ def resolve_drive_program(
         return Multiply((program, frame))
 
     if isinstance(program, (RealPart, ImagPart)):
+        # A band co-rotates with a weight-w operator band when w and its frequency have one sign, for either sign
+        # of the carrier. The bands come in (+f, -f) halves; a zero carrier keeps the conventional half.
         bands = program.bands()
-        selected = bands[1::2] if weight > 0 else bands[0::2]
-        children = tuple(Multiply((band.envelope, Carrier(freq=band.freq, sign=1), frame)) for band in selected)
+        conventional = [index % 2 == (1 if weight > 0 else 0) for index in range(len(bands))]
+        frequencies = [maybe_concrete_scalar(band.freq) for band in bands]
+        if all(value is not None for value in frequencies):
+            kept = [band for band, value, half in zip(bands, frequencies, conventional)
+                    if value is not None and (weight * value > 0.0 or (value == 0.0 and half))]
+            children = tuple(Multiply((band.envelope, Carrier(freq=band.freq, sign=1), frame)) for band in kept)
+        else:
+            children = tuple(
+                Multiply((Scale(band.envelope, _co_rotating(weight, band.freq, half)), Carrier(freq=band.freq, sign=1),
+                          frame))
+                for band, half in zip(bands, conventional)
+            )
         return children[0] if len(children) == 1 else Add(children)
 
     # Exact preserves nonlinear signal expressions. RWA cannot infer a
     # first-order carrier partner from an arbitrary nonlinear expression, so
     # it leaves the authored program intact.
     return Multiply((program, frame))
+
+
+def _co_rotating(weight: int, frequency: Any, conventional: bool) -> Any:
+    """Return 1 for a traced band that :func:`resolve_drive_program` keeps, else 0."""
+    import jax.numpy as jnp
+
+    return jnp.where(weight * frequency > 0.0, 1.0, jnp.where(frequency == 0.0, float(conventional), 0.0))
