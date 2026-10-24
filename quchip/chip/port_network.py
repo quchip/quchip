@@ -30,7 +30,6 @@ from quchip.engine.reference import (
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar, select_array_module
 from quchip.utils.labeling import auto_label, resolve_label
 from quchip.utils.values import copy_value
-from quchip.utils.deprecation import warn_renamed
 
 if TYPE_CHECKING:
     from quchip.control.field import CoherentInput
@@ -115,17 +114,6 @@ class SLHComponent:
         if label not in self.sides:
             raise KeyError(f"No port {label!r} on component {self.label!r}; available: {list(self.sides)}")
         return ComponentPort(self.input_terminal(label), self.output_terminal(label))
-
-    def side(self, name: str | int) -> "ComponentPort":
-        """Deprecated alias for :meth:`port`.
-
-        Parameters
-        ----------
-        name : str or int
-            Physical side name.
-        """
-        warn_renamed("component.side()", "component.port()")
-        return self.port(name)
 
     @property
     def inputs(self) -> tuple[FieldTerminal, ...]:
@@ -363,17 +351,6 @@ class IncludedNetwork:
             raise ValueError(f"Interface {name!r} of block {self.prefix!r} is asymmetric; use input() and output().")
         return component.port(input_key[1])
 
-    def side(self, name: str) -> ComponentPort:
-        """Deprecated alias for :meth:`port`.
-
-        Parameters
-        ----------
-        name : str
-            Symmetric template external-port name.
-        """
-        warn_renamed("block.side()", "block.port()")
-        return self.port(name)
-
     def _interface(self, name: str) -> tuple[TerminalKey, TerminalKey]:
         if name not in self._interfaces:
             raise KeyError(f"No interface {name!r} in block {self.prefix!r}; available: {list(self._interfaces)}")
@@ -556,23 +533,6 @@ class PortNetwork:
     def external_ports(self) -> tuple[NetworkPort, ...]:
         """Return the external network ports in channel order."""
         return tuple(exposure for exposure in self._effective_exposures() if not exposure._hidden)
-
-    @property
-    def exposures(self) -> tuple[NetworkPort, ...]:
-        """Deprecated alias for :attr:`external_ports`."""
-        warn_renamed("network.exposures", "network.external_ports")
-        return self.external_ports
-
-    def exposure(self, exposure: str | NetworkPort) -> NetworkPort:
-        """Deprecated alias for :meth:`external_port`.
-
-        Parameters
-        ----------
-        exposure : str or NetworkPort
-            External reference plane.
-        """
-        warn_renamed("network.exposure()", "network.external_port()")
-        return self.external_port(exposure)
 
     def external_port(self, exposure: str | NetworkPort) -> NetworkPort:
         """Return one external network port by object or label.
@@ -2812,8 +2772,3 @@ class PortNetwork:
 
 
 __all__ = ["PortNetwork"]
-
-
-# Compatibility class names; remove in quchip 0.5.
-FieldExposure = NetworkPort
-FieldSide = ComponentPort

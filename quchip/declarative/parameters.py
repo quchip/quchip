@@ -269,12 +269,9 @@ def _synthesize_init(
     initializer: Callable[..., None],
     *,
     doc: str | None = None,
-    normalize_kwargs: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
 ) -> Any:
     """Bind a declared signature before delegating to its owning initializer."""
     def __init__(self: Any, *args: Any, **kwargs: Any) -> None:
-        if normalize_kwargs is not None:
-            kwargs = normalize_kwargs(kwargs)
         bound = signature.bind(self, *args, **kwargs)
         bound.apply_defaults()
         initializer(**bound.arguments)
