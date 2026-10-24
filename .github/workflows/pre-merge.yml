@@ -36,6 +36,12 @@ jobs:
        (needs.changes.outputs.full_ci == 'true' &&
         (github.event_name != 'pull_request' || !github.event.pull_request.draft)))
     runs-on: ubuntu-latest
+    # JAX keeps compiled programs here between runs; compilation is most of the suite's time.
+    env:
+      JAX_COMPILATION_CACHE_DIR: ${{ github.workspace }}/.jax-cache
+      JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS: "0"
+      JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES: "-1"
+      JAX_COMPILATION_CACHE_MAX_SIZE: "500000000"
     steps:
       - name: Require a valid change classification
         env:
@@ -55,6 +61,13 @@ jobs:
             ci-constraints-*.txt
       - run: uv venv --python 3.11
       - run: uv pip install -e '.[test,dynamiqs]' -c ci-constraints-3.11.txt
+      # Each run saves a new entry and restores the latest one for the same locked dependencies.
+      - uses: actions/cache@v4
+        with:
+          path: .jax-cache
+          key: jax-${{ github.job }}-py3.11-${{ hashFiles('ci-constraints-3.11.txt') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            jax-${{ github.job }}-py3.11-${{ hashFiles('ci-constraints-3.11.txt') }}-
       # Validation completes the separately required unit and E2E suites.
       # Collection enforces exactly one of those three suites for each test.
       - name: Validation tests

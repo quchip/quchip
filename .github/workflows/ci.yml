@@ -84,6 +84,12 @@ jobs:
       matrix:
         python: ["3.11", "3.12"]
     runs-on: ubuntu-latest
+    # JAX keeps compiled programs here between runs; compilation is most of the suite's time.
+    env:
+      JAX_COMPILATION_CACHE_DIR: ${{ github.workspace }}/.jax-cache
+      JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS: "0"
+      JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES: "-1"
+      JAX_COMPILATION_CACHE_MAX_SIZE: "500000000"
     # Keep both required matrix check names even for lightweight changes.
     steps:
       - name: Lightweight change
@@ -102,6 +108,14 @@ jobs:
         if: ${{ needs.changes.outputs.full_ci == 'true' }}
       - run: uv pip install -e '.[test,dynamiqs]' -c ci-constraints-${{ matrix.python }}.txt
         if: ${{ needs.changes.outputs.full_ci == 'true' }}
+      # Each run saves a new entry and restores the latest one for the same locked dependencies.
+      - uses: actions/cache@v4
+        if: ${{ needs.changes.outputs.full_ci == 'true' }}
+        with:
+          path: .jax-cache
+          key: jax-${{ github.job }}-py${{ matrix.python }}-${{ hashFiles(format('ci-constraints-{0}.txt', matrix.python)) }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            jax-${{ github.job }}-py${{ matrix.python }}-${{ hashFiles(format('ci-constraints-{0}.txt', matrix.python)) }}-
       - name: Unit tests
         if: ${{ needs.changes.outputs.full_ci == 'true' }}
         timeout-minutes: 2
