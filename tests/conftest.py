@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+# Most of the suite's time is XLA compilation of small programs that run once. Cheap code generation
+# keeps the results and cuts that time. XLA reads the flags when its first backend starts.
+os.environ.setdefault("XLA_FLAGS", "--xla_backend_optimization_level=0 --xla_llvm_disable_expensive_passes=true")
 
 import pytest
 
