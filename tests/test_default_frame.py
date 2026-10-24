@@ -224,8 +224,9 @@ def test_an_explicit_rotating_frame_warns_when_a_reference_has_no_reliable_assig
         problem = QuantumSequence(chip).build_problem(TIMES)
     messages = [str(warning.message) for warning in record]
     assert len(messages) == 1 and record[0].filename == __file__
-    assert "the dressed label assignment is unreliable for 'a' and 'b' ('a': overlap=" in messages[0]
-    assert "frame='auto' gives exchange-coupled devices one frequency." in messages[0]
+    assert "no well-defined frequency for 'a' and 'b': their dressed 0 -> 1 label assignment is ambiguous ('a': " \
+        "overlap=" in messages[0]
+    assert "Use frame='auto'" in messages[0]
     assert problem.resolved_frame.mode == "rotating"
     for reliable in (_resonant_pair(reference_freq=5.0), _pair(frame="rotating")[0]):
         reliable.set_frame("rotating")

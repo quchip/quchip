@@ -10,7 +10,7 @@ import numpy as np
 
 from quchip.backend.containers import PreparedStationary
 from quchip.engine.ir import SteadyStateProblem
-from quchip.engine.observables import decompose_eops
+from quchip.engine.observables import decompose_eops, require_eops_mapping
 from quchip.engine.routes import WORKFLOWS, liouvillian_route, plan_sectors, require_workflow, sector_route
 from quchip.results.steady_state import (
     SteadyStateBatchResult,
@@ -38,8 +38,7 @@ def build_steadystate_problem(
     retained labels.
     """
     require_workflow(chip, "steadystate()")
-    if e_ops is not None and not isinstance(e_ops, dict):
-        raise TypeError("e_ops must be dict or None")
+    require_eops_mapping(e_ops)
     engine_result = chip.resolve(frame=frame, approximation=approximation)
     if engine_result.dynamic_terms:
         raise ValueError(
@@ -83,8 +82,7 @@ def steadystate(
     from quchip.observables import is_output_field
 
     require_workflow(chip, "steadystate()")
-    if e_ops is not None and not isinstance(e_ops, dict):
-        raise TypeError("e_ops must be dict or None")
+    require_eops_mapping(e_ops)
     workflow = WORKFLOWS["steadystate()"]
     if approximation is not None and approximation != chip.approximation:
         reason = "An approximation other than the chip's selects the backend's stationary Liouvillian."

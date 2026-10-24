@@ -45,6 +45,14 @@ from quchip.utils.labeling import resolve_label
 from quchip.utils.stack import user_stacklevel
 
 
+def invalid_frame_spec(frame: Any) -> Exception:
+    """Return the error for a frame specification that is none of the accepted forms."""
+    if isinstance(frame, str):
+        return ValueError(f"frame must be 'lab', 'rotating' or 'auto', got {frame!r}.")
+    return TypeError("frame must be 'lab', 'rotating', 'auto', a frequency in GHz, or a dict of them keyed by device, "
+                     f"got {type(frame).__name__}.")
+
+
 class IncompatibleFrameError(ValueError):
     """Raised when a static operator has bands with different phases in the selected frame."""
 
@@ -359,10 +367,9 @@ def _warn_unreliable_references(chip: Any, local_resolution: Any) -> None:
         return
     names = [name for name, _ in unreliable]
     warnings.warn(
-        "frame='rotating' uses the dressed 0 -> 1 frequency of each device, but the dressed label assignment is "
-        f"unreliable for {_name_list(names)} ({names[0]}: {unreliable[0][1]}), so the frame frequencies of these "
-        "devices are not well defined and a solve can lose accuracy. frame='auto' gives exchange-coupled devices "
-        "one frequency. frame='lab', or a reference_freq on each of these devices, also avoids the assignment.",
+        f"frame='rotating' has no well-defined frequency for {_name_list(names)}: their dressed 0 -> 1 label "
+        f"assignment is ambiguous ({names[0]}: {unreliable[0][1]}). Use frame='auto', frame='lab', or a "
+        "reference_freq on each.",
         UserWarning,
         stacklevel=user_stacklevel(),
     )
@@ -939,7 +946,7 @@ def resolve_frame(
             )
             frequencies = dict(plan.frequencies)
         else:
-            raise ValueError(f"Unknown frame string. Expected 'lab', 'rotating', or 'auto', got {frame_spec!r}")
+            raise invalid_frame_spec(frame_spec)
     elif _is_scalar_like(frame_spec):
         mode = "float"
         frequencies = {label: frame_spec for label in labels}
@@ -948,10 +955,7 @@ def resolve_frame(
         normalized = {resolve_label(key): value for key, value in frame_spec.items()}
         frequencies = {label: normalized.get(label, 0.0) for label in labels}
     else:
-        raise TypeError(
-            "frame_spec must be 'lab', 'rotating', 'auto', a scalar-like frequency, or a "
-            f"dict[str|BaseDevice, scalar-like], got {type(frame_spec).__name__}"
-        )
+        raise invalid_frame_spec(frame_spec)
 
     demod_freqs = {label: references[label] - frequencies[label] for label in labels}
 

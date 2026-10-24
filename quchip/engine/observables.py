@@ -127,6 +127,12 @@ def _resolve_eop_key(key: Any) -> EOpKey:
     return resolve_label(key)
 
 
+def require_eops_mapping(e_ops: Any) -> None:
+    """Raise unless ``e_ops`` is a dict of observables or ``None``."""
+    if e_ops is not None and not isinstance(e_ops, dict):
+        raise TypeError(f"e_ops must be a dict of observables or None, got {type(e_ops).__name__}.")
+
+
 def decompose_eops(
     e_ops_dict: Mapping[EOpKey, Any],
     chip: Chip,
