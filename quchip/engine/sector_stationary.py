@@ -22,6 +22,7 @@ from quchip.engine.excitation import sector_levels, sector_size
 from quchip.engine.sectors import _level_pairs
 from quchip.utils.constants import TWO_PI
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
+from quchip.utils.memory import dense_bytes, fits_memory
 
 
 class SectorProbeModel:
@@ -236,8 +237,9 @@ class SectorProbeModel:
         covers every offset and its negative. Only an exact negative reuses a
         point, so an exactly symmetric grid needs no extra solves. The third
         value holds the solution ``Y`` of each port at each solved offset, as
-        square matrices; passing it as ``starts`` on a larger cutoff starts
-        each solve there from it.
+        square matrices, or ``None`` when they would not fit in memory with
+        room to spare. Passing it as ``starts`` on a larger cutoff starts each
+        solve there from it.
         """
         _, channels, _ = self.operators(cutoff)
         generator, drive = self.generator(cutoff), self.drive(frequency, amplitudes)
@@ -257,16 +259,17 @@ class SectorProbeModel:
         solved_values = np.zeros((len(grid), count, count, 2), dtype=complex)
         iterations, residual, trace = 0, 0.0, 0.0
         size = self.size(cutoff)
-        responses = []
+        # The next cutoff solves beside the kept solutions, so they must fit with room to spare.
+        keep = fits_memory(4 * dense_bytes(len(grid) * count, size, size))
+        responses: list[Any] | None = [] if keep else None
         for p, index in enumerate(indices):
             lowering = channels[index]
             mean = lowering.multiply(state.T).sum()
             source = lowering @ state - mean * state
-            # The labels of a smaller cutoff come first, so its solutions extend by zeros.
-            embedded = None if starts is None else [padded(start, size) for start in starts[p]]
-            solved, steps, error, drift, states = generator.resolvent(frequency, drive, source, grid, observables,
-                                                                      embedded)
-            responses.append([vector.reshape(size, size) for vector in states])
+            solved, steps, error, drift, states = generator.resolvent(
+                frequency, drive, source, grid, observables, None if starts is None else starts[p], keep)
+            if responses is not None:
+                responses.append([vector.reshape(size, size) for vector in states])
             solved_values[:, :, p, :] = solved.reshape(len(grid), count, 2)
             iterations, residual, trace = max(iterations, steps), max(residual, error), max(trace, drift)
         values, reverse = solved_values[:len(offsets)], solved_values[mirror]
@@ -338,10 +341,3 @@ def sector_probe_model(chip: Any, labels: tuple[str, ...], inputs: tuple[str, ..
     if sectors.classes is not None and any(len(group) > 1 for group in sectors.classes):
         return None, "The static model does not conserve the total excitation N."
     return SectorProbeModel(chip, response, labels, inputs, modes), "The static model conserves N."
-
-
-def padded(matrix: np.ndarray, size: int) -> np.ndarray:
-    """Return a square matrix on a smaller cutoff as a matrix on ``size`` labels, which list it first."""
-    padded = np.zeros((size, size), dtype=complex)
-    padded[:matrix.shape[0], :matrix.shape[1]] = matrix
-    return padded

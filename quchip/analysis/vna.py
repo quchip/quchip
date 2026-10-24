@@ -1178,7 +1178,7 @@ def _sector_solve(sector: _SectorOutput, measure: Any, change: Any, quantities: 
     Returns the kept cutoff, the solve with its measured values, the choice
     of the cutoff and the check of an automatic one.
     """
-    from quchip.engine.sector_stationary import padded
+    from quchip.backend._sector_stationary import padded
 
     model = sector.model
 

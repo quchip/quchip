@@ -26,8 +26,8 @@ class ChargePhaseDrive(DeviceDrive):
     other sideband cancels only on a device whose upward matrix elements obey
     :math:`\langle u|\hat Q|l\rangle = -i\langle u|\hat P|l\rangle`, such as
     an unscaled Fock device. On other devices, for example a charge-basis
-    transmon or a fluxonium, both sidebands couple with the device's own
-    weights. A pulse scheduled without ``freq`` takes the carrier
+    transmon or a fluxonium, both sidebands generally couple with the
+    device's own weights. A pulse scheduled without ``freq`` takes the carrier
     ``chip.freq(target)``.
 
     Parameters

@@ -1054,13 +1054,14 @@ either sign of `f_drive`. Since `cos(-ωt + φ) = cos(ωt - φ)`, a carrier at
 carrier keeps the same partner through a 0/1 weight on both bands.
 
 `ChargePhaseDrive` (in `quchip.extensions`) maps `I` to the charge operator
-and `Q` to the phase operator, `H = I Q_c + Q P`. With the Fock operators
-`Q_c = i(a - a†)` and `P = a + a†` this is `i(s* a - s a†)`: a positive
+and `Q` to the phase operator, `H = I Q_c + Q P`, where `s = I + iQ` is the
+delivered analytic signal, envelope and carrier together. With the Fock
+operators `Q_c = i(a - a†)` and `P = a + a†` this is `i(s* a - s a†)`: a positive
 carrier drives the resonant sideband at twice the rate of `ChargeDrive`, with
 the same phase convention, and the drive has no counter-rotating term. The
 other sideband cancels only where `<u|Q_c|l> = -i <u|P|l>` on every upward
-transition. Charge-basis transmons, fluxonia and flux-tunable transmons
-couple both sidebands with their own weights.
+transition. Charge-basis transmons and fluxonia couple both sidebands with
+their own weights, and flux-tunable transmons generally do too.
 
 Weight-zero bands keep the complete real signal, including DC and oscillating
 longitudinal modulation, with no raising and lowering split. For longitudinal
@@ -1131,9 +1132,10 @@ frequency `f`. A line without transforms has `H = 1` on itself alone. With
 method finds `H` by passing the tone `exp(-2πi f t)` through the chain: a gain
 `g` gives `g`, a delay `Δt` gives `exp(2πi f Δt)`, and crosstalk adds
 `β exp(iθ) exp(2πi f Δt)` on the victim line. Every transform that acts on
-the tone must declare `linear_time_invariant`, else the method raises. A delay
-comparable to the envelope makes the drive phase change during the pulse, so
-the seed is rougher there. The result is a starting point for a calibration.
+the tone must declare `linear_time_invariant`, else the method raises.
+Differential delays between interfering paths, or dispersive filtering, can
+make the effective drive phase vary during the pulse, so the seed is rougher
+there. The result is a starting point for a calibration.
 
 ### 6.3 Exact excitation spaces in pulse solves
 

@@ -348,9 +348,9 @@ def test_the_noise_solve_takes_each_missing_negative_offset(monkeypatch):
     offsets = np.array([-0.02000000000001, -0.01, 0.0, 0.01, 0.02])
     grids, resolvent = [], sector_solver.SectorGenerator.resolvent
 
-    def record(self, frequency, drive, source, grid, observables, starts=None):
+    def record(self, frequency, drive, source, grid, observables, *args):
         grids.append(np.asarray(grid))
-        return resolvent(self, frequency, drive, source, grid, observables, starts)
+        return resolvent(self, frequency, drive, source, grid, observables, *args)
 
     monkeypatch.setattr(sector_solver.SectorGenerator, "resolvent", record)
     VNA(feedline(space=ExcitationCutoff(max_total=2))).measure(6.5, 0.01, noise_frequencies=offsets)
@@ -363,8 +363,8 @@ def test_noise_solves_start_from_the_previous_cutoff_and_keep_its_values(monkeyp
     iterations = {True: 0, False: 0}
 
     def run(warm):
-        def record(self, frequency, drive, source, grid, observables, starts=None):
-            return resolvent(self, frequency, drive, source, grid, observables, starts if warm else None)
+        def record(self, frequency, drive, source, grid, observables, starts=None, keep=False):
+            return resolvent(self, frequency, drive, source, grid, observables, starts if warm else None, keep)
 
         def count(*args, **kwargs):
             solved = gmres(*args, **kwargs)
@@ -379,7 +379,8 @@ def test_noise_solves_start_from_the_previous_cutoff_and_keep_its_values(monkeyp
 
     warm, cold = run(True), run(False)
     assert warm.diagnostics[0]["excitation_cutoff"] == cold.diagnostics[0]["excitation_cutoff"]
-    # Both solves stop at a relative residual of 1e-12; the slow shelving mode amplifies that to about 2e-9.
+    # Both solves stop at a relative residual of 1e-12; the slow shelving mode amplifies that to about 2e-9, and
+    # each differs from a dense solve by about 1e-9 in the cutoff comparison.
     assert_same_measurement(warm, cold, rtol=1e-8)
     assert iterations[True] < iterations[False]
 

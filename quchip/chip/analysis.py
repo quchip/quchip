@@ -1270,9 +1270,9 @@ class ChipAnalysis:
         adds the victim lines, so a delayed path and a direct path to one
         device add as phasors. Leakage to other levels, detuning,
         counter-rotating terms under ``Exact()``, a phase that changes during
-        the pulse, and delays comparable to the envelope all change the
-        rotation, so the value is a starting point for a calibration, not a
-        calibrated gate.
+        the pulse, and differential delays between interfering paths all
+        change the rotation, so the value is a starting point for a
+        calibration, not a calibrated gate.
 
         Parameters
         ----------

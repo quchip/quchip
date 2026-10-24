@@ -341,7 +341,7 @@ class SectorGenerator:
         return SectorSolve(state, solved.iterations, solved.residual)
 
     def resolvent(self, frequency: float, drive: Any, source: np.ndarray, offsets: Any, observables: Any,
-                  starts: Any = None) -> tuple[np.ndarray, int, float, float, list[np.ndarray]]:
+                  starts: Any = None, keep: bool = False) -> tuple[np.ndarray, int, float, float, list[np.ndarray]]:
         """Return ``Tr(O Y)`` for ``(G + i 2π f) Y = source`` with ``Tr Y = 0`` at each offset ``f``.
 
         Each offset starts from the solution at the previous offset or from
@@ -361,15 +361,17 @@ class SectorGenerator:
         observables : sequence of sparse matrix
             Observables ``O``.
         starts : sequence of numpy.ndarray or None, optional
-            A start ``Y`` for each offset, such as the solutions on a smaller
-            cutoff placed in this basis.
+            A start ``Y`` for each offset, such as the solution on a smaller
+            cutoff, whose labels this basis lists first.
+        keep : bool, default False
+            Whether to return the solution at each offset.
 
         Returns
         -------
         tuple
             Values with shape ``(len(offsets), len(observables))``, the largest
             iteration count, the largest relative residual, the largest
-            ``|Tr Y|`` and the solution ``Y`` at each offset.
+            ``|Tr Y|`` and, with ``keep``, the solution ``Y`` at each offset.
         """
         rhs = np.array(source, dtype=complex).reshape(-1)
         rhs[0] = 0.0
@@ -381,7 +383,7 @@ class SectorGenerator:
         for index, offset in enumerate(np.asarray(offsets, dtype=float)):
             shift = 2j * np.pi * offset
             operator = self.operator(frequency, drive, shift)
-            candidates = [previous, None if starts is None else np.asarray(starts[index]).reshape(-1)]
+            candidates = [previous, None if starts is None else padded(starts[index], self.dimension).reshape(-1)]
             start = _best_start(operator, rhs, [guess for guess in candidates if guess is not None])
             solved = _gmres(operator, self.preconditioner(frequency, shift), rhs, start, restart)
             response = solved.state.reshape(self.dimension, self.dimension)
@@ -390,7 +392,8 @@ class SectorGenerator:
             residual = max(residual, solved.residual)
             trace = max(trace, abs(np.trace(response)))
             previous = solved.state
-            states.append(solved.state)
+            if keep:
+                states.append(solved.state)
         return values, iterations, residual, trace, states
 
     def lindbladian(self, frequency: float, drive: Any) -> LinearOperator:
@@ -511,6 +514,13 @@ def _smallest_rate(block: Any) -> float:
 def _difference(first: np.ndarray, second: np.ndarray) -> float:
     """Return the norm of the difference of two corrections, relative to the first one unless it is zero."""
     return float(np.linalg.norm(second - first)) / (float(np.linalg.norm(first)) or 1.0)
+
+
+def padded(matrix: np.ndarray, size: int) -> np.ndarray:
+    """Return a square matrix on a smaller cutoff as a matrix on ``size`` labels, which list it first."""
+    result = np.zeros((size, size), dtype=complex)
+    result[:matrix.shape[0], :matrix.shape[1]] = matrix
+    return result
 
 
 def _best_start(operator: Callable[[np.ndarray], np.ndarray], rhs: np.ndarray,

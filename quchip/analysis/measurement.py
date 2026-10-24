@@ -18,7 +18,7 @@ from quchip.results.receiver import _engineering_iq, noise_grid
 from quchip.engine.ir import LinearResponseProblem
 from quchip.devices.spaces import FockSpace
 from quchip.engine.linear_response import try_build_linear_response_problem
-from quchip.engine.sector_stationary import padded
+from quchip.backend._sector_stationary import padded
 from quchip.engine.reference import (
     FieldChannel, cw_transfer,
 )
@@ -288,9 +288,6 @@ def _sector_pass(entries: list[Any], cutoff: int, *, offsets: Any, noise: bool, 
             starts = None if guesses is None else guesses[index].responses
             excess, info, responses = model.quadrature_spectrum(cutoff, frequency, internal, solved.state, offsets,
                                                                 starts)
-            # Kept with room to spare, since the next cutoff solves beside them.
-            if not fits_memory(4 * sum(response.nbytes for port in responses for response in port)):
-                responses = None
         points.append(_SectorPoint(solved, model.means(cutoff, frequency, internal, solved.state),
                                    amplitudes, numbers, excess, info, responses))
         previous = (chip, solved.state)
