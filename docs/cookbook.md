@@ -240,8 +240,8 @@ rates = channel.error([[0, 1], [-1, 0]]).pauli_rates()
 `d²` pure states and returns a superoperator on the same labels and frames.
 `infidelity()` is the error in quchip's frame, with ideal preparation and
 measurement, and it counts leakage. `eigenvalue_infidelity()` is a spectral
-score that a small frame rotation of the gate does not change; give
-`average_leakage()` beside it. `error(target)` is the map after the ideal
+score that a fixed unitary conjugation of the gate and target leaves
+unchanged; give `average_leakage()` beside it. `error(target)` is the map after the ideal
 gate, and `pauli_rates()` gives the Pauli weights of its twirl. Here the
 infidelity is 7.0e-3, mostly the coherent error of the first-guess pulse,
 which tilts its rotation axis (`rates["X"]` is 1.0e-2). The eigenvalue
