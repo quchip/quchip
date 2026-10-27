@@ -98,8 +98,7 @@ back to draft, a running validation workflow stops.
 
 Together, the required fast and pre-merge checks cover the full suite, and they
 do not repeat the fast tests on Python 3.11. Documentation, workflow changes, and
-release metadata use lightweight validation. A version-only edit to
-`quchip/__init__.py` is release metadata. Other source changes, tests, executable
+release metadata use lightweight validation. Source changes, tests, executable
 examples (including Markdown), tooling, and repository rules must use test lanes.
 If the change list is unreadable, classification fails.
 
@@ -191,6 +190,14 @@ Keep pull requests small and focused. Explain the physical or user-visible chang
 Before you start a large change or add a device, coupling, drive, envelope, or noise model, open an issue. Include the model Hamiltonian, assumptions, intended use, and a reference when available. This lets contributors agree on the scope before implementation.
 
 ## Releases
+
+setuptools-scm derives the package version from the latest `v*` tag. A tagged
+commit builds that version, and a later commit builds a development version,
+such as `0.5.1.dev3+g1234abc`. A checkout without tags, such as a shallow
+clone, builds `0.1.dev...`, so workflows that build or install the package use
+`fetch-depth: 0`. A source tree that is not installed reports `0+unknown`.
+Tag the release commit on `main`, so that later commits on `main` descend from
+the tag.
 
 Keep release notes in `CHANGELOG.md` under `## [version] - YYYY-MM-DD`.
 Each entry has two parts:

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77.0.3", "setuptools-scm"]
+requires = ["setuptools>=77.0.3", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -42,8 +42,7 @@ Repository = "https://github.com/quchip/quchip"
 Issues = "https://github.com/quchip/quchip/issues"
 Paper = "https://arxiv.org/abs/2607.17081"
 
-[tool.setuptools.dynamic]
-version = {attr = "quchip.__version__"}
+[tool.setuptools_scm]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

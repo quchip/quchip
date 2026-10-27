@@ -10,8 +10,8 @@ sys.path.insert(0, os.path.abspath("_ext"))
 project = "quchip"
 author = "Ibraheem AlYousef"
 copyright = "2026, Ibraheem AlYousef"
-version = quchip.__version__
 release = quchip.__version__
+version = release.split("+")[0]
 
 extensions = [
     "sphinx.ext.autodoc",

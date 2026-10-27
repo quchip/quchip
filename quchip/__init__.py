@@ -21,8 +21,14 @@ del _jax
 
 import os  # noqa: E402
 from importlib import import_module  # noqa: E402
+from importlib import metadata as _metadata  # noqa: E402
 
-__version__ = "0.4.0"
+# setuptools-scm derives the version from the git tag at install time.
+try:
+    __version__ = _metadata.version("quchip")
+except _metadata.PackageNotFoundError:  # a source checkout that is not installed
+    __version__ = "0+unknown"
+del _metadata
 
 from quchip.analysis import (  # noqa: E402
     CRHamiltonianResult,

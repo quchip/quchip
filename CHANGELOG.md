@@ -4,9 +4,49 @@ This file records notable user-visible changes to quchip.
 
 ## Unreleased
 
+## [0.5.0] - 2026-10-19 <a id="quchip-0-5-0"></a>
+
+### 0.5 series highlights
+
+The 0.5 series extends simulations and model reduction to large chips, and adds
+gate and pole analysis of pulses and readout:
+
+- Pulse solves on QuTiP and dynamiqs evolve in an exact excitation space when
+  quchip can prove one, and dressed queries diagonalize only the sectors they
+  need. A ring of 24 three-level transmons with one excitation evolves in 24
+  states instead of 3²⁴.
+- `ExcitationCutoff(max_total=K)` keeps the states with at most `K`
+  excitations. On large conserving chips, finite-power VNA calls, output
+  spectra and correlation functions choose `K` themselves, compare it with
+  `K + 1`, and warn which cutoff they kept.
+- `eliminate_spectators(chip, keep)` reduces a chip to the kept devices, one
+  Schrieffer–Wolff step at a time. With `local=True`, each step works on a
+  patch around the removed device. Removed readouts keep their dressed VNA
+  response on their own port, on a shared feedline, and on a two-way hanger
+  feedline. `pathways()` attributes each retained element to virtual states.
+- `VNA.sweep(..., when={q: 1})` gives the weak-probe response conditioned on a
+  qubit state, with every declared loss channel. `VNA.resonances()` returns the
+  poles of the weak-probe response with their linewidths, mode composition and
+  residues.
+- `subspace_propagator()` reads a pulse sequence as a closed-system gate on
+  dressed qubit states, with the leakage of each input and the average gate
+  fidelity. `chip.rotation_amplitude()` gives a first-guess amplitude from the
+  envelope area. Pulse `detuning=` and `frame=` keep calibrated rotation axes
+  when pulses move or use cross-resonance control.
+- Flux-tunable transmons scale their charge and phase operators with the
+  static bias, in couplings, drives, observables and ports.
+
+A level label such as `{"q0": 1}` now names the dressed state in every
+workflow, also as an initial state. Pulse solves on a chip without a frame
+use the rotating frame, and a pulse without `freq` on a charge, phase or
+two-photon line takes a carrier at its device. Every built-in device uses the
+textbook charge sign `[φ, n] = +i`, so charge-drive matrix elements on Fock
+devices change sign. Changes and migration below describes these rules and
+every other change that can need action when you upgrade.
+
 ### Changes since 0.4.0
 
-[Full comparison: v0.4.0 → main](https://github.com/quchip/quchip/compare/v0.4.0...main).
+[Full comparison: v0.4.0 → v0.5.0](https://github.com/quchip/quchip/compare/v0.4.0...v0.5.0).
 
 #### Changes and migration
 
@@ -17,6 +57,7 @@ This file records notable user-visible changes to quchip.
   `external_port()` and `external_ports` for `exposure()` and `exposures`,
   and `NetworkPort` and `ComponentPort` for `FieldExposure` and `FieldSide`.
   The `check_truncation()` result methods stay until 0.6.
+  ([#219](https://github.com/quchip/quchip/pull/219))
 - Warnings are shorter, name the one action that sets or silences them, and
   point at the caller's line. The default-frame and automatic-carrier
   warnings have fixed text, so Python shows each once per line of code
@@ -25,6 +66,7 @@ This file records notable user-visible changes to quchip.
   `chip.freq()` and frame references still raise for an ambiguous label
   (overlap below one half or a vanishing margin). Partitioned results no
   longer warn when they build the joint state; the memory guard stays.
+  ([#219](https://github.com/quchip/quchip/pull/219))
 - The dynamiqs `steadystate()` counts the Liouvillian nullity only up to
   `diagnostic_max_dimension` (default 16), as the QuTiP backend does. Above
   it, the singular value decomposition, which cost about ten times the solve,
@@ -33,9 +75,10 @@ This file records notable user-visible changes to quchip.
   one an unreliable state. Pass a larger
   `diagnostic_max_dimension` to keep the check. A
   `D = 24` steady state takes about 0.05–0.1 s instead of 0.5–0.8 s.
+  ([#219](https://github.com/quchip/quchip/pull/219))
 - A QuTiP batch falls back to one process only when a worker process stops.
   Other pool errors, such as a pickling failure, now raise instead of
-  rerunning the batch.
+  rerunning the batch. ([#219](https://github.com/quchip/quchip/pull/219))
 - A pulse scheduled without `freq` on a charge, phase, or two-photon line takes
   a carrier at the line's device and warns. Charge and
   phase lines use `chip.freq(device)`, the dressed `0 -> 1` frequency, and a
@@ -250,7 +293,6 @@ This file records notable user-visible changes to quchip.
   an `ExcitationCutoff`, a request now records only the cutoff and its boundary
   totals for the check, and the check finds the compact rows when it runs.
   ([#188](https://github.com/quchip/quchip/pull/188))
-
 - On a chip that conserves the total excitation `N` and has more than 64
   product states or an `ExcitationCutoff`, `steadystate()` returns the vacuum
   without a Liouvillian solve when the lowering channels prove it unique. The
@@ -278,7 +320,8 @@ This file records notable user-visible changes to quchip.
   workers that the available memory holds, and each result records its count
   in `stats["workers"]`.
   ([#196](https://github.com/quchip/quchip/issues/196),
-  [#205](https://github.com/quchip/quchip/pull/205))
+  [#205](https://github.com/quchip/quchip/pull/205),
+  [#219](https://github.com/quchip/quchip/pull/219))
 - `pulse.<n>` parameter paths name the n-th scheduled pulse. Virtual-Z
   shifts, delays and barriers no longer count, so `vz()` or `delay()` does not
   move the paths of later pulses in `parameters`, `with_params()` and
@@ -374,7 +417,7 @@ This file records notable user-visible changes to quchip.
   [#207](https://github.com/quchip/quchip/pull/207))
 - `TrajectoryResult.records()`, `clicks()` and `run_expect(key)` read the
   measurement currents, click events and per-run expectations of QuTiP and
-  Dynamiqs in one layout. Records have shape `(runs, channels, intervals)` and
+  dynamiqs in one layout. Records have shape `(runs, channels, intervals)` and
   name their native sampling. Click records keep the sampling weight of each
   run, the no-click weight and a full-buffer flag. `result.native` does not
   change.
@@ -561,7 +604,6 @@ This file records notable user-visible changes to quchip.
   probes, as `history` does.
   ([#152](https://github.com/quchip/quchip/issues/152),
   [#168](https://github.com/quchip/quchip/pull/168))
-
 - Every stationary result records its numerical route under
   `diagnostics["route"]`. The `SolveRoute` gives the route, the reason for it,
   the dimension that it solves on, its array library and an estimate of its
@@ -757,7 +799,6 @@ This file records notable user-visible changes to quchip.
   feature times. Pulse edges at zero no longer cause interpolation overflow
   warnings when the solve starts before zero.
   ([#104](https://github.com/quchip/quchip/pull/104))
-
 - QuTiP stationary solves estimate the memory of their LU factors before they
   factorize, and raise `MemoryError` when it does not fit. Previously, they
   checked only the generator. On three transmon-readout pairs, whose factors
@@ -779,7 +820,6 @@ This file records notable user-visible changes to quchip.
   instead of a fallback. Ports still need to fit the frame, because drives
   through a port and the Hamiltonian of a cascade stay in the solve.
   ([#214](https://github.com/quchip/quchip/pull/214))
-
 - Dressed label queries, such as `dispersive_shift()`, `freq(..., when=...)`,
   `static_zz()` and `kerr_matrix()`, warn when the couplings mix a label with
   states beyond the levels of a truncated device. The check counts coupling
@@ -880,6 +920,7 @@ This file records notable user-visible changes to quchip.
   and starts the noise comparison at the first agreeing pair, which keeps the
   same cutoff and skips the noise solves below it: 49 s instead of 55 s for a
   four-level transmon and a 20-level resonator at five frequencies.
+  ([#219](https://github.com/quchip/quchip/pull/219))
 - On QuTiP, exact excitation spaces and `ExcitationCutoff` solves store each
   compact operator as CSR instead of a dense matrix of the compact dimension.
   A dense backend, such as dynamiqs, checks each dense compact operator
@@ -953,7 +994,6 @@ This file records notable user-visible changes to quchip.
   `steadystate_batch()` over 40 points runs 5.4 times faster, and
   `VNA.finite_power()` over 44 points runs 3.2 times faster.
   ([#85](https://github.com/quchip/quchip/pull/85))
-
 - On two transmon-readout pairs with 81 product states, `VNA.output_spectrum()`
   takes 0.07 s instead of 86.7 s on QuTiP, and 0.11 s instead of 144.7 s on
   dynamiqs. On dynamiqs, `chip.steadystate()` takes 0.6 s instead of 124 s.
@@ -985,7 +1025,6 @@ This file records notable user-visible changes to quchip.
   raises `NotImplementedError`, so a custom backend must implement it to
   support `VNA.sweep(..., when=...)`. The QuTiP and dynamiqs backends
   implement it. ([#124](https://github.com/quchip/quchip/pull/124))
-
 - psutil is a required dependency.
   ([#200](https://github.com/quchip/quchip/issues/200),
   [#205](https://github.com/quchip/quchip/pull/205))
@@ -1049,7 +1088,6 @@ This file records notable user-visible changes to quchip.
   readout comparison uses `Exact()`, because counter-rotating terms contribute
   strongly to its dispersive shift.
   ([#88](https://github.com/quchip/quchip/pull/88))
-
 - `PHYSICS.md` §4.2 describes result frames and dressed label targets, §6.5
   the sector routes of `steadystate()` and the output statistics, §6.6 the
   route record, and §9 the dressed meaning of level labels. ([#205](https://github.com/quchip/quchip/pull/205))
@@ -1058,7 +1096,6 @@ This file records notable user-visible changes to quchip.
   in §1, §6.4, §8, §11 and §13 that no longer matched the code, among them the
   default frame. On docs.quchip.org, its source links now point to GitHub, and
   table rows render whole. ([#212](https://github.com/quchip/quchip/pull/212))
-
 - The `effective_params` docstring of `EliminationResult` states what
   `lamb_shift` and `freq_after` mean under each method. `method="sw"` reports
   the shift through the removed mode. `method="exact"` reports the labeled
@@ -1079,6 +1116,12 @@ This file records notable user-visible changes to quchip.
   template uses checkboxes for AI assistance.
   ([#75](https://github.com/quchip/quchip/pull/75),
   [#89](https://github.com/quchip/quchip/pull/89))
+- Source archives leave out `AGENTS.md`, the repository instructions for
+  coding agents. ([#121](https://github.com/quchip/quchip/pull/121))
+- The package version comes from the git tag through setuptools-scm. An
+  install of a commit after a release reports a development version, such as
+  `0.5.1.dev3+g1234abc`, instead of the last release.
+  ([#121](https://github.com/quchip/quchip/pull/121))
 - `tools/theme_figures.py` renders a PDF or dark PNG only when its light SVG
   changed. `--force` renders every figure.
   ([#88](https://github.com/quchip/quchip/pull/88))
@@ -1090,6 +1133,9 @@ This file records notable user-visible changes to quchip.
   [#201](https://github.com/quchip/quchip/issues/201),
   [#204](https://github.com/quchip/quchip/issues/204),
   [#205](https://github.com/quchip/quchip/pull/205))
+- The local test run takes about 6 minutes instead of 24. Tests that repeat
+  checks made elsewhere are removed, and CI test steps take timeouts from
+  measured suite times. ([#220](https://github.com/quchip/quchip/pull/220))
 
 ## [0.4.0] - 2026-09-29 <a id="quchip-0-4-0"></a>
 
