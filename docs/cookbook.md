@@ -14,6 +14,7 @@ Frequencies are in GHz, times in ns, temperatures in mK and decay rates in
 | A pulse or an idle interval | `QuantumSequence.simulate()` |
 | Related pulse experiments | `sequence.simulate_batch()` |
 | A gate on dressed computational states | `sequence.subspace_propagator()` |
+| A gate with T1, T2 and other collapse channels | `sequence.subspace_channel()` |
 | Steady-state populations or fields | `chip.steadystate()` |
 | Small-signal S parameters | `VNA.sweep()` |
 | The frequency and linewidth of each resonance | `VNA(chip).resonances()` |
@@ -228,6 +229,27 @@ about 2e-6. The amplitude is a first guess for a calibration. `frame="lab"` and 
 On a chip with collapse channels, the solves leave them out, and
 `propagator.omitted_channels` names them.
 
+```python
+noisy = gate.with_params({"q.T1": 50e3, "q.T2": 40e3})
+channel = noisy.subspace_channel(q)
+infidelity = channel.infidelity([[0, -1], [1, 0]])
+rates = channel.error([[0, -1], [1, 0]]).pauli_rates()
+```
+
+`subspace_channel()` keeps the collapse channels. For `d` labels it solves
+`d²` pure states and returns a superoperator on the same labels and frames.
+`infidelity()` is the error in quchip's frame, with ideal preparation and
+measurement, and it counts leakage. `eigenvalue_infidelity()` is a spectral
+score that a fixed unitary conjugation of the gate and target leaves
+unchanged; give `average_leakage()` beside it. `error(target)` is the map
+after the ideal gate, and `pauli_rates()` gives the Pauli weights of its
+twirl. Here the
+infidelity is 7.0e-3, mostly the coherent error of the first-guess pulse,
+which tilts its rotation axis (`rates["X"]` is 1.0e-2). The eigenvalue
+infidelity is 2.8e-4: the dominant coherent part is a π pulse about a
+tilted axis, which keeps its eigenvalues. Add `levels=(0, 1, 2)` to follow
+leakage and `seepage()`.
+
 ## Choose what to save
 
 ```python
@@ -401,7 +423,7 @@ calibration.
 | A smooth trace | Refine the output grid separately from the solver tolerances. |
 | An exact reduction near a crossing | Follow `validity["<mode>_labeling"]["margin"]` along the sweep. A failed check raises `EliminationError` with the label and its weight. |
 | The origin of a mediated shift | `result.pathways({"q": 1})` lists the virtual states of an SW reduction. The amounts sum to the second-order part of the element. |
-| A gate fidelity | `fidelity()` counts leakage. `omitted_channels` names the collapse channels that the propagator leaves out. |
+| A gate fidelity | `fidelity()` counts leakage. `omitted_channels` names the collapse channels that the propagator leaves out; `subspace_channel()` keeps them. |
 
 QuTiP is the default. Choose dynamiqs for JAX gradients and compiled batches.
 The initial state and declared dissipation select `sesolve` or `mesolve`

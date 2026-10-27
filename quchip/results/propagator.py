@@ -101,6 +101,51 @@ def _namespace(*values: Any) -> Any:
     return np
 
 
+def _label_frame(batch: Any, devices: tuple[str, ...], labels: tuple[tuple[int, ...], ...], frame: str) -> Any:
+    """Return the solves, the label targets at T, and the record frame of a batch that starts in ``labels``.
+
+    The targets are integration-frame vectors at the last saved time T. Label
+    k gets the shift ``E_k − F_k`` from the integration-frame energy F_k to
+    the record frame's energy E_k.
+    """
+    if frame not in FRAMES:
+        raise ValueError(f"frame must be one of {FRAMES}; got {frame!r}.")
+    results = tuple(batch)
+    if len(results) < len(labels):
+        raise ValueError(f"Expected at least {len(labels)} solves, got {len(results)}.")
+    first = results[0]
+    targets = first._label_targets
+    if targets is None or first.device_info is None:
+        raise RuntimeError("These results have no captured chip for label targets; they were not created by a solve.")
+    backend = first._backend
+    order = tuple(label for label, _ in first.device_info)
+    end = first.times[-1:]
+    vectors = []
+    for levels in labels:
+        fixed, moving = first._resolve_target(dict(zip(devices, levels)), "integration", end)
+        vectors.append(backend.to_array(fixed).reshape(-1) if moving is None else moving[0])
+
+    frame_map = first._frame_map()
+    positions = [order.index(device) for device in devices]
+    integration = {device: frame_map.frequencies[position] for device, position in zip(devices, positions)}
+    if frame == "integration":
+        frequencies, ground = integration, 0.0
+    elif frame == "lab":
+        frequencies, ground = {device: 0.0 for device in devices}, 0.0
+    else:
+        vacuum = (0,) * len(order)
+        ground = targets.energy(vacuum)
+        frequencies = {}
+        for device, position in zip(devices, positions):
+            excited = list(vacuum)
+            excited[position] = 1
+            frequencies[device] = targets.energy(tuple(excited)) - ground
+    # The integration frame gives label k the energy Σᵢ fᵢ kᵢ; the record's frame replaces it with its own.
+    shifts = [ground + sum(frequencies[device] * level - integration[device] * level
+                           for device, level in zip(devices, levels)) for levels in labels]
+    return results, vectors, frequencies, ground, shifts, (first.times[0], first.times[-1])
+
+
 def subspace_propagator(batch: Any, devices: tuple[str, ...], labels: tuple[tuple[int, ...], ...], frame: str,
                         omitted_channels: tuple[str, ...]) -> PropagatorResult:
     """Return the propagator of a batch whose points start in the dressed states of ``labels``.
@@ -122,51 +167,19 @@ def subspace_propagator(batch: Any, devices: tuple[str, ...], labels: tuple[tupl
     omitted_channels : tuple of str
         Collapse channels that the solves left out.
     """
-    if frame not in FRAMES:
-        raise ValueError(f"frame must be one of {FRAMES}; got {frame!r}.")
-    results = tuple(batch)
+    results, vectors, frequencies, ground, shifts, (start, stop) = _label_frame(batch, devices, labels, frame)
     if len(results) != len(labels):
         raise ValueError(f"Expected {len(labels)} solves, got {len(results)}.")
-    first = results[0]
-    targets = first._label_targets
-    if targets is None or first.device_info is None:
-        raise RuntimeError("These results have no captured chip for label targets; they were not created by a solve.")
-    backend = first._backend
-    order = tuple(label for label, _ in first.device_info)
-    end = first.times[-1:]
-    vectors, finals = [], []
-    for levels, result in zip(labels, results):
+    backend = results[0]._backend
+    finals = []
+    for result in results:
         if not backend.is_ket(result._raw_final_state()):
             raise TypeError("A propagator needs ket solves.")
-        fixed, moving = first._resolve_target(dict(zip(devices, levels)), "integration", end)
-        vectors.append(backend.to_array(fixed).reshape(-1) if moving is None else moving[0])
         finals.append(backend.to_array(result._raw_final_state()).reshape(-1))
     xp = _namespace(vectors, finals)
     amplitudes = xp.conj(xp.stack(vectors)) @ xp.stack(finals).T
     leakage = 1.0 - xp.sum(xp.abs(amplitudes) ** 2, axis=0)
-
-    frame_map = first._frame_map()
-    positions = [order.index(device) for device in devices]
-    integration = {device: frame_map.frequencies[position] for device, position in zip(devices, positions)}
-    if frame == "integration":
-        frequencies, ground = integration, 0.0
-    elif frame == "lab":
-        frequencies, ground = {device: 0.0 for device in devices}, 0.0
-    else:
-        vacuum = (0,) * len(order)
-        ground = targets.energy(vacuum)
-        frequencies = {}
-        for device, position in zip(devices, positions):
-            excited = list(vacuum)
-            excited[position] = 1
-            frequencies[device] = targets.energy(tuple(excited)) - ground
-    # The integration frame gives label k the energy Σᵢ fᵢ kᵢ; the record's frame replaces it with its own.
-    shift = xp.stack([
-        xp.asarray(ground + sum(frequencies[device] * level - integration[device] * level
-                                for device, level in zip(devices, levels)), dtype=float)
-        for levels in labels
-    ])
-    start, stop = first.times[0], first.times[-1]
+    shift = xp.stack([xp.asarray(value, dtype=float) for value in shifts])
     matrix = (xp.exp(1j * TWO_PI * stop * shift)[:, None] * amplitudes
               * xp.exp(-1j * TWO_PI * start * shift)[None, :])
     return PropagatorResult(
