@@ -953,10 +953,11 @@ declared or inherited `carrier_harmonic`, such as flux and coupling drives, and
 coherent inputs keep a baseband pulse. `freq=None` gives a baseband pulse on
 every line: the envelope without carrier modulation, through the drive's
 authored I/Q mapping. `freq=0.0` is a carrier at zero frequency. It follows its
-frame, and `RWA()` splits it into partners (§6.2). The automatic carrier is
-evaluated when the pulse is scheduled. It follows traced parameters only when
-the scheduling runs inside the differentiated function, and rebinding a
-sequence keeps it.
+frame: on a charge line its carrier phase `p`, from `phase=` and `vz()`,
+scales a real envelope by `cos p`, and `RWA()` keeps both of its partners
+(§6.2). The automatic carrier is evaluated when the pulse is scheduled. It
+follows traced parameters only when the scheduling runs inside the
+differentiated function, and rebinding a sequence keeps it.
 
 Each carrier pulse follows the phase reference of one device, its frame.
 `QuantumSequence.vz(device, θ)` emits no pulse. It adds θ to the phase of every
@@ -1086,6 +1087,31 @@ either sign of `f_drive`. Since `cos(-ωt + φ) = cos(ωt - φ)`, a carrier at
 `-f` drives the same transition as `+f` with the conjugate phase. A traced
 carrier keeps the same partner through a 0/1 weight on both bands.
 
+A signal band at exactly zero frequency has no counter-rotating partner: both
+halves of `Re s(t)` are equally resonant. `RWA()` keeps both, so a pulse whose
+carrier is zero (`freq=0.0` with no detuning, or `freq + detuning = 0`) gets
+the complete real field `Re s(t)` on each retained excitation band, the same
+drive term as `Exact()`. Static bands and operator bands that `RWA()` removes
+stay removed. On a line that drives with `Re s(t)`, such as `ChargeDrive` or
+`TwoPhotonDrive`, an envelope `A(t) + iB(t)` with carrier phase `p` gives the
+real waveform `A cos p − B sin p`. The phase `p` adds `phase=`, the
+accumulated `vz()` and, for `freq + detuning = 0`, the term `2π δ t₀` of a
+detuning `δ` at the pulse start `t₀`. A real envelope at `p = 0` gives the
+`freq=None` pulse, and at `p = π/2` the pulse does not drive. A phase change
+at zero frequency changes the waveform and is not a Z rotation. Lines with
+another I/Q mapping, such as `ChargePhaseDrive`, keep their own map. The rule
+is the same for concrete and traced frequencies and in batches.
+
+A carrier near zero but not zero keeps one partner, so under `RWA()` the
+Hamiltonian jumps at `f_drive = 0`. On a 50 MHz mode, a Gaussian pulse of
+20 ns and amplitude 0.02 gives `P1 = 0.276` at `freq=0.0` and `0.085` at
+`freq=1e-6`. At exactly zero, a JAX derivative with respect to the carrier
+holds the selection fixed; the derivative of the RWA Hamiltonian itself is
+not defined there. The dropped partner is detuned from its transition by
+about the transition frequency, so the RWA holds only when that detuning is
+much larger than the drive's matrix elements and bandwidth. When it is not,
+use `Exact()`, whose result is continuous through zero.
+
 `ChargePhaseDrive` (in `quchip.extensions`) maps `I` to the charge operator
 and `Q` to the phase operator, `H = I Q_c − Q P`, where `s = I + iQ` is the
 delivered analytic signal, envelope and carrier together. With the Fock
@@ -1102,12 +1128,9 @@ fluxonia couple both sidebands with their own weights, and flux-tunable
 transmons generally do too.
 
 Weight-zero bands keep the complete real signal, including DC and oscillating
-longitudinal modulation, with no raising and lowering split. For longitudinal
-bands, `freq=0` and a carrier-free signal (`freq=None`) agree when they
-deliver the same real envelope: no detuning and no virtual-Z phase. For a
-linear quadrature drive on other bands, they differ under `RWA()`. It keeps
-one partner of a zero-frequency carrier, but the complete real field of a
-carrier-free signal.
+longitudinal modulation, with no raising and lowering split. On every band,
+`freq=0` and a carrier-free signal (`freq=None`) agree when they deliver the
+same real envelope: no detuning and no carrier phase.
 
 `FluxDrive` uses the target's `flux_coupling_operator()`. Duffing and
 flux-tunable transmons use the energy-level index. Fluxonium uses phase, which

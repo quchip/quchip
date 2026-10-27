@@ -167,26 +167,27 @@ def test_a_pulse_without_freq_drives_the_dressed_transition() -> None:
 
 
 def test_baseband_pulse_keeps_the_complete_real_field_under_rwa() -> None:
-    """Under RWA, a freq=None pulse on a 50 MHz mode evolves as under Exact(); a zero carrier keeps one partner."""
-    def excited(approximation, freq):
+    """Under RWA, a freq=None or freq=0.0 pulse on a 50 MHz mode evolves as under Exact()."""
+    def excited(approximation, freq, phase=0.0):
         q = DuffingTransmon(freq=0.05, anharmonicity=0.0, levels=3, label="q")
         chip = Chip([q], approximation=approximation)
         chip.wire(ChargeDrive(q, label="xy"))
         seq = QuantumSequence(chip)
-        seq.schedule("xy", envelope=Gaussian(duration=20.0, amplitude=0.02), freq=freq)
+        seq.schedule("xy", envelope=Gaussian(duration=20.0, amplitude=0.02), freq=freq, phase=phase)
         return float(np.real(seq.simulate(tlist=np.linspace(0.0, 20.0, 3)).population(q, 1)[-1]))
 
     # Both solves integrate the same Hamiltonian, so they agree to the solver tolerance.
     baseband = excited(RWA(), None)
     np.testing.assert_allclose(baseband, excited(Exact(), None), rtol=1e-6)
     assert baseband == pytest.approx(0.2757, abs=1e-3)
-    # RWA() splits Re s(t) of a zero carrier into two partners of equal frequency and keeps one.
-    assert excited(RWA(), 0.0) == pytest.approx(0.0850, abs=1e-3)
+    # Both partners of a zero carrier are resonant, so RWA() keeps the real drive A(t) cos φ of Exact().
+    np.testing.assert_allclose(excited(RWA(), 0.0), baseband, rtol=1e-6)
+    assert excited(RWA(), 0.0, phase=np.pi / 2) < 1e-12
 
 
 @pytest.mark.optional_backend
 def test_zero_freq_is_the_same_carrier_eagerly_and_under_jit() -> None:
-    """freq=0.0 builds the same zero-frequency carrier whether or not jax.jit traces it."""
+    """freq=0.0 builds the same zero-frequency carrier eagerly, under jax.jit, and in a batch through zero."""
     pytest.importorskip("dynamiqs")
     import jax
 
@@ -201,5 +202,28 @@ def test_zero_freq_is_the_same_carrier_eagerly_and_under_jit() -> None:
 
     eager = float(np.real(excited(0.0)))
     np.testing.assert_allclose(float(np.real(jax.jit(excited)(0.0))), eager, rtol=0, atol=1e-10)
-    # RWA() keeps one partner of the zero carrier, as in the qutip check above.
-    assert eager == pytest.approx(0.0850, abs=1e-3)
+    # RWA() keeps the complete real drive of the zero carrier, as in the qutip check above.
+    assert eager == pytest.approx(0.2757, abs=1e-3)
+
+
+@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])
+def test_carrier_batch_through_zero_matches_single_solves(backend) -> None:
+    """A carrier axis through 0.0 keeps both partners at zero and one elsewhere, as single solves do."""
+    pytest.importorskip(backend)
+    q = DuffingTransmon(freq=0.05, anharmonicity=0.0, levels=3, label="q")
+    chip = Chip([q], backend=backend, frame="rotating", approximation=RWA())
+    chip.wire(ChargeDrive(q, label="xy"))
+
+    def sequence(freq):
+        seq = QuantumSequence(chip)
+        return seq, seq.schedule("xy", envelope=Gaussian(duration=20.0, amplitude=0.02), freq=freq)
+
+    times = np.linspace(0.0, 20.0, 3)
+    seq, pulse = sequence(0.0)
+    batch = seq.simulate_batch(pulse.vary("freq", [-0.01, 0.0, 0.01], name="f"), tlist=times, progress=False,
+                               max_workers=1)
+    swept = np.real(np.asarray(batch.population(q, level=1, reduce="last")))
+    single = [float(np.real(sequence(freq)[0].simulate(tlist=times).population(q, 1)[-1])) for freq in (0.0, 0.01)]
+    # A real envelope at zero phase gives cos(2πft), even in f, so the ±0.01 GHz points agree.
+    np.testing.assert_allclose(swept, [single[1], single[0], single[1]], rtol=0, atol=1e-8)
+    assert single[0] == pytest.approx(0.2757, abs=1e-3)
