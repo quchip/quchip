@@ -624,6 +624,17 @@ This file records notable user-visible changes to quchip.
 
 #### Fixes
 
+- Under `RWA()`, a pulse with a zero carrier (`freq=0.0`, or
+  `freq + detuning = 0`) keeps its complete real drive, as under `Exact()`.
+  Both partners of a zero-frequency band are resonant, but `RWA()` kept one,
+  so the drive had half its amplitude at phase 0 and did not go to zero at
+  phase `π/2`. On a 50 MHz mode, a 20 ns Gaussian pulse of amplitude 0.02
+  gave `P1 = 0.085` with `freq=0.0` and `0.276` with `freq=None`; both now
+  give `0.276`. A zero carrier still follows `phase=` and `vz()`: on a
+  charge line its carrier phase `p` scales a real envelope by `cos p`. A
+  carrier near zero
+  but not zero keeps one partner under `RWA()`; use `Exact()` there.
+  ([#224](https://github.com/quchip/quchip/pull/224))
 - Every calculation evaluates a generic `Coupling` with the chip's backend.
   Previously, `resolve()`, `eliminate()`, `chip.state()` and `chip.freq()` used
   the process default backend, so on a dynamiqs chip while QuTiP was the

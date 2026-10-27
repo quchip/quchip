@@ -509,8 +509,11 @@ class QuantumSequence:
             coupling drives, and coherent inputs stay at baseband. ``None``
             gives a baseband pulse on every line: the envelope without
             carrier modulation, through the drive's authored I/Q mapping.
-            ``0.0`` is a carrier at zero frequency, which
-            follows :meth:`vz` and which ``RWA()`` splits into partners. The
+            ``0.0`` is a carrier at zero frequency. It follows :meth:`vz`
+            and ``phase``: on a charge line its carrier phase ``p`` scales a
+            real envelope by ``cos p``, and ``RWA()`` keeps its complete real
+            field, as ``Exact()`` does. A carrier near zero but not zero keeps
+            one partner under ``RWA()``; use ``Exact()`` there. The
             automatic carrier is evaluated when the pulse is scheduled: it
             follows traced parameters only when the scheduling runs inside
             the differentiated function, and rebinding the sequence leaves it
