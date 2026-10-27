@@ -17,7 +17,7 @@ def test_dressed_queries_follow_retained_hamiltonian(approximation):
     a = np.diag(np.sqrt([1.0, 2.0]), 1)
     h = np.diag((np.array([0, 5, 9.75])[:, None] + np.array([0, 6.8, 13.3])).ravel())
     exchange = np.kron(a.T, a) + np.kron(a, a.T)
-    # The charge product i(a - a†) i(b - b†) carries -g on the counter-rotating terms.
+    # The charge product i(a† - a) i(b† - b) carries -g on the counter-rotating terms.
     counter = -(np.kron(a, a) + np.kron(a.T, a.T))
     if isinstance(approximation, Exact):
         h += 0.08 * (exchange + counter)
@@ -33,7 +33,7 @@ def test_dressed_queries_follow_retained_hamiltonian(approximation):
     assert chip.dispersive_shift(q, r) == pytest.approx(pull, abs=1e-12)
     assert chip.kerr_matrix()[q, r] == pytest.approx(pull, abs=1e-12)
     assert abs(np.vdot(chip.backend.to_array(chip.state(q=1)).ravel(), excited)) == pytest.approx(1, abs=1e-12)
-    element = excited @ np.kron(1j * (a - a.T), np.eye(3)) @ ground
+    element = excited @ np.kron(1j * (a.T - a), np.eye(3)) @ ground
     assert abs(chip.drive_matrix_elements(q)[drive]) == pytest.approx(abs(element), abs=1e-12)
     np.testing.assert_allclose(chip.dress().eigenvalues, values, atol=1e-12)
     chip.set_frame("rotating")

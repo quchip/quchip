@@ -2314,16 +2314,20 @@ def instantiate_engine_result(
                 tag=compiled.tag,
             )
         )
+        concrete_carrier = maybe_concrete_scalar(item.signal.carrier)
         if (
             compiled.filter_signal_bands
             and item.signal.carrier is not None
             and compiled.weight != 0
+            and concrete_carrier != 0.0
         ):
+            # A zero carrier keeps both partners, so the RWA drops none; a traced carrier may still be zero.
             fresh_dropped.append(
                 DroppedTerm(
                     source=item.drive.label,
                     operator=(f"{compiled.origin} band w={compiled.weight:+d} on {item.target.label} (fast partner)"),
-                    reason="counter-rotating drive component under RWA",
+                    reason=("counter-rotating drive component under RWA" if concrete_carrier is not None
+                            else "counter-rotating drive component under RWA, none at a zero carrier"),
                     band_weights=(compiled.weight,),
                     frame_frequency=abs(abs(item.signal.carrier)
                                         + (1 if compiled.weight > 0 else -1) * compiled.device_frame_freq),

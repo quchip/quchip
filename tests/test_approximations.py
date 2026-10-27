@@ -33,7 +33,7 @@ def test_resolution_override_does_not_mutate_chip_default():
     assert exact.approximation == Exact()
     assert default.approximation == RWA()
     assert chip.approximation == RWA()
-    # The charge operators i(a - a†) give the counter-rotating element -g.
+    # The charge operators i(a† - a) give the counter-rotating element -g.
     assert np.asarray(exact.hamiltonian().matrix(t=0.0))[0, 3] == pytest.approx(-0.03)
     assert np.asarray(default.hamiltonian().matrix(t=0.0))[0, 3] == pytest.approx(0.0)
 

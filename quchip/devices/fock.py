@@ -45,9 +45,9 @@ class FockDevice(DeviceModel):
         ...
 
     def charge_coupling_operator(self) -> PhysicsExpr:
-        """Return the conventional charge quadrature ``i(a - a†)``."""
+        """Return the charge quadrature ``i(a† − a)`` of the textbook sign ``[φ, n] = +i``."""
         op = self._local_ops()
-        return 1j * (op.a - op.adag)
+        return 1j * (op.adag - op.a)
 
     def phase_coupling_operator(self) -> PhysicsExpr:
         """Return the conventional phase quadrature ``a + a†``."""

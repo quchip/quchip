@@ -187,7 +187,7 @@ class ChargeSpace(LocalSpace):
         elif name == "cos_phi":
             value = 0.5 * (plus + minus)
         elif name == "sin_phi":
-            value = (plus - minus) / (2j)
+            value = (minus - plus) / (2j)
         elif name == "I":
             value = jnp.eye(self.num_basis, dtype=jnp.complex128)
         else:

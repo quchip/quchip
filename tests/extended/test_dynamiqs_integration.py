@@ -39,7 +39,7 @@ def _set_backend(backend_name: str) -> None:
 
 
 def _run_amplitude_trace(backend_name: str) -> np.ndarray:
-    """Phase-sensitive ⟨1|ψ(t)⟩ under a resonant charge drive; the rotation drives it real-negative."""
+    """Phase-sensitive ⟨1|ψ(t)⟩ under a resonant charge drive of phase π (m = i) drives it real-negative."""
     # amplitude_array must return the complex projection, not |<1|psi>|^2 (always
     # non-negative, would fail to reproduce the sign as the drive populates |1>).
     _set_backend(backend_name)
@@ -54,7 +54,8 @@ def _run_amplitude_trace(backend_name: str) -> np.ndarray:
     chip.dress()
 
     sequence = QuantumSequence(chip)
-    sequence.charge(qubit, envelope=Gaussian(duration=60.0, amplitude=0.01, sigmas=4), freq=qubit.freq)
+    sequence.charge(qubit, envelope=Gaussian(duration=60.0, amplitude=0.01, sigmas=4), freq=qubit.freq,
+                    phase=np.pi)
     result = sequence.simulate(tlist=np.linspace(0.0, 60.0, 121), initial_state=chip.state(q=0))
     return np.asarray(result.amplitude_array(chip.state(q=1)), dtype=complex)
 

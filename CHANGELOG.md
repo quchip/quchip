@@ -287,15 +287,38 @@ This file records notable user-visible changes to quchip.
   after `vz()`, `delay()` and one pulse, `pulse.2.amplitude` is now
   `pulse.0.amplitude`. ([#217](https://github.com/quchip/quchip/issues/217),
   [#221](https://github.com/quchip/quchip/pull/221))
+- Every built-in device now uses the textbook charge sign `[φ, n] = +i`, as
+  Krantz et al. (2019), Koch et al. (2007), Blais et al. (2021) and scqubits
+  do. The Fock devices (`DuffingTransmon`, `Resonator`, `KerrCavity`, `Qubit`)
+  and `FluxTunableTransmon` use `Q = i(a† − a)` instead of `i(a − a†)`, and
+  the charge basis of `ChargeBasisTransmon` has `e^{iφ}` raise `n`, which
+  flips its `sin φ` phase operator. `Fluxonium` and the scqubits imports
+  already used this sign. From energy eigenstates, populations under a charge
+  drive alone or charge couplings alone do not change. Drive matrix elements
+  on the Fock devices change sign, for example `m = i` instead of `−i` on the
+  `0 -> 1` transition of a Duffing transmon, so a real π pulse gives `−iY`
+  instead of `iY`. The cross-resonance coefficients `IX_per_amplitude` and
+  `ZX_per_amplitude` between these devices change sign together. To keep a
+  calibrated gate, add π to the phase of its `ChargeDrive` pulses on these
+  devices. A `PhaseDrive` on a `ChargeBasisTransmon` changes sign in the same
+  way, and at `n_g ≠ 0` its populations can also change, because the sign flip
+  is then not a symmetry of the device. The relative sign between a
+  `CoherentInput` port drive and a `ChargeDrive` flips. `PHYSICS.md` gained a
+  cross-walk from quchip's conventions to these references.
+  ([#222](https://github.com/quchip/quchip/pull/222))
 - `ChargePhaseDrive` now drives a transition at a positive carrier, as
-  `ChargeDrive` does, and takes the automatic carrier `chip.freq(target)`.
-  Its Hamiltonian is `I·Q_c + Q·P` instead of `I·Q_c - Q·P`. On a Fock device
-  this is `i(s* a - s a†)`, the resonant sideband at twice the rate of
-  `ChargeDrive` with no counter-rotating term, so its π amplitude is half
-  that of `ChargeDrive`. Previously, a 20 ns Gaussian at ChargeDrive's π
-  amplitude and +5 GHz left a 5 GHz transmon in `|0>`, and only a negative
-  carrier drove it. To keep a previous schedule, negate `freq`.
-  ([#221](https://github.com/quchip/quchip/pull/221))
+  `ChargeDrive` does, and takes the automatic carrier `chip.freq(target)`. Its
+  Hamiltonian stays `I·Q_c − Q·P`, but with the textbook charge sign above it
+  is `i(s a† − s* a)` on a Fock device: the resonant sideband at twice the
+  rate of `ChargeDrive` with no counter-rotating term, so its π amplitude is
+  half that of `ChargeDrive`. It now also accepts devices whose operators are
+  matrices, such as `ChargeBasisTransmon` and `Fluxonium`, where the resonant
+  sideband is the stronger of two. Previously, a 20 ns Gaussian at
+  ChargeDrive's π amplitude and +5 GHz left a 5 GHz transmon in `|0>`, and
+  only a negative carrier drove it. To keep the Hamiltonian of a 0.4 schedule
+  on a Fock device, negate `freq` and replace the pulse phase φ by π − φ.
+  ([#221](https://github.com/quchip/quchip/pull/221),
+  [#222](https://github.com/quchip/quchip/pull/222))
 
 #### New features
 
@@ -611,6 +634,17 @@ This file records notable user-visible changes to quchip.
 
 #### Fixes
 
+- Under `RWA()`, a pulse with a zero carrier (`freq=0.0`, or
+  `freq + detuning = 0`) keeps its complete real drive, as under `Exact()`.
+  Both partners of a zero-frequency band are resonant, but `RWA()` kept one,
+  so the drive had half its amplitude at phase 0 and did not go to zero at
+  phase `π/2`. On a 50 MHz mode, a 20 ns Gaussian pulse of amplitude 0.02
+  gave `P1 = 0.085` with `freq=0.0` and `0.276` with `freq=None`; both now
+  give `0.276`. A zero carrier still follows `phase=` and `vz()`: on a
+  charge line its carrier phase `p` scales a real envelope by `cos p`. A
+  carrier near zero
+  but not zero keeps one partner under `RWA()`; use `Exact()` there.
+  ([#224](https://github.com/quchip/quchip/pull/224))
 - Every calculation evaluates a generic `Coupling` with the chip's backend.
   Previously, `resolve()`, `eliminate()`, `chip.state()` and `chip.freq()` used
   the process default backend, so on a dynamiqs chip while QuTiP was the

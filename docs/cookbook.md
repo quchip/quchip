@@ -209,16 +209,16 @@ amplitude = chip.rotation_amplitude(q, xy, shape)
 gate = QuantumSequence(chip)
 gate.schedule(xy, envelope=Gaussian(duration=20.0, sigmas=3.0, amplitude=amplitude), freq=chip.freq(q))
 propagator = gate.subspace_propagator(q)
-fidelity = propagator.fidelity([[0, 1], [-1, 0]])
+fidelity = propagator.fidelity([[0, -1], [1, 0]])
 ```
 
 `rotation_amplitude()` solves `θ = 2π |m| |A a|` for the dressed matrix
 element `m` of the line and the envelope area `A a`, with `θ = π` by default.
 On a line with gains, delays or crosstalk, `m` is the sum of each reached
 line's element times its transfer at the transition frequency.
-On an isolated transmon, the charge drive has `m = -i` on the 0 → 1
-transition. The dressed element here is `-0.99969i`, so a real π pulse aims
-at `iY`.
+On an isolated transmon, the charge drive has `m = i` on the 0 → 1
+transition. The dressed element here is `0.99969i`, so a real π pulse aims
+at `−iY`.
 `subspace_propagator(q)` starts the dressed states of `q` in levels 0 and 1 as
 one batch. The matrix has the final label in rows and the initial label in
 columns, in the frame of the dressed frequencies. `propagator.leakage` gives
@@ -232,8 +232,8 @@ On a chip with collapse channels, the solves leave them out, and
 ```python
 noisy = gate.with_params({"q.T1": 50e3, "q.T2": 40e3})
 channel = noisy.subspace_channel(q)
-infidelity = channel.infidelity([[0, 1], [-1, 0]])
-rates = channel.error([[0, 1], [-1, 0]]).pauli_rates()
+infidelity = channel.infidelity([[0, -1], [1, 0]])
+rates = channel.error([[0, -1], [1, 0]]).pauli_rates()
 ```
 
 `subspace_channel()` keeps the collapse channels. For `d` labels it solves
@@ -241,12 +241,14 @@ rates = channel.error([[0, 1], [-1, 0]]).pauli_rates()
 `infidelity()` is the error in quchip's frame, with ideal preparation and
 measurement, and it counts leakage. `eigenvalue_infidelity()` is a spectral
 score that a fixed unitary conjugation of the gate and target leaves
-unchanged; give `average_leakage()` beside it. `error(target)` is the map after the ideal
-gate, and `pauli_rates()` gives the Pauli weights of its twirl. Here the
+unchanged; give `average_leakage()` beside it. `error(target)` is the map
+after the ideal gate, and `pauli_rates()` gives the Pauli weights of its
+twirl. Here the
 infidelity is 7.0e-3, mostly the coherent error of the first-guess pulse,
 which tilts its rotation axis (`rates["X"]` is 1.0e-2). The eigenvalue
 infidelity is 2.8e-4: the dominant coherent part is a π pulse about a
-tilted axis, which keeps its eigenvalues. Add `levels=(0, 1, 2)` to follow leakage and `seepage()`.
+tilted axis, which keeps its eigenvalues. Add `levels=(0, 1, 2)` to follow
+leakage and `seepage()`.
 
 ## Choose what to save
 

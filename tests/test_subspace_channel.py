@@ -18,8 +18,8 @@ GAMMA_PHI = 1 / T2 - 1 / (2 * T1)  # the 0-1 coherence decays at γ₁/2 + γ_φ
 X = np.array([[0, 1], [1, 0]], dtype=complex)
 Y = np.array([[0, -1j], [1j, 0]], dtype=complex)
 Z = np.diag([1.0, -1.0]).astype(complex)
-# On the charge drive, a real pulse turns about +Y: a π/2 pulse aims at exp(iπY/4) (see test_subspace_propagator).
-SY = (np.eye(2) + 1j * Y) / np.sqrt(2)
+# On the charge drive, a real pulse turns about −Y: a π/2 pulse aims at exp(−iπY/4) (see test_subspace_propagator).
+SY = (np.eye(2) - 1j * Y) / np.sqrt(2)
 
 
 def transmon(levels=3, t1=None, t2=None, backend=None):

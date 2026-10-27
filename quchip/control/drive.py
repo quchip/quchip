@@ -437,7 +437,7 @@ class CouplingDrive(BaseDrive):
 class ChargeDrive(DeviceDrive):
     r"""Microwave charge drive on a transmon-like device.
 
-    Contributes the standard charge-coupling Hamiltonian
+    Contributes the charge-coupling Hamiltonian
 
     .. math::
 
@@ -446,10 +446,12 @@ class ChargeDrive(DeviceDrive):
     with :math:`\epsilon(t)` the in-phase quadrature of the complete delivered
     classical signal. :math:`\hat Q` is the device's
     ``charge_coupling_operator()``, which capacitive couplings also use. It is
-    :math:`i(\hat a - \hat a^\dagger)` on a Fock device. This is the standard
-    transmon microwave drive (Koch et al., PRA 76, 042319 (2007); Krantz et
-    al., APR 6, 021318 (2019), Eq. 90). A pulse scheduled without ``freq``
-    takes the carrier ``chip.freq(target)``, the dressed ``0 -> 1``
+    :math:`i(\hat a^\dagger - \hat a)` on a Fock device, the charge operator of
+    Krantz et al., APR 6, 021318 (2019), Eq. 77, with the sign
+    :math:`[\varphi, n] = +i` of Koch et al., PRA 76, 042319 (2007), Eq. 3.4.
+    The in-phase quadrature multiplies :math:`\cos\omega t`, where Krantz et
+    al. put the I channel on the sine (Eqs. 85–88). A pulse scheduled without
+    ``freq`` takes the carrier ``chip.freq(target)``, the dressed ``0 -> 1``
     frequency.
 
     Examples
