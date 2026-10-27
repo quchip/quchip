@@ -91,12 +91,13 @@ from quchip.utils.jax_utils import (
 from quchip.utils.labeling import resolve_label
 from quchip.utils.values import copy_value
 from quchip.utils.stack import user_stacklevel
-from quchip.utils.warning_categories import AutoChoiceWarning
+from quchip.utils.warning_categories import AutoChoiceWarning, QuchipWarning
 
 if TYPE_CHECKING:
     from quchip.chip.transformations.active_patch import ActivePatchResult
     from quchip.declarative.expr import PhysicsExpr
     from quchip.engine.ir import FrameSpec, SolveBatch, SolveProblem
+    from quchip.results.channel import ChannelResult
     from quchip.results.propagator import PropagatorResult
     from quchip.results.results import SimulationBatchResult, SimulationResult
 
@@ -1677,7 +1678,7 @@ class QuantumSequence:
         dissipation : bool, default=False
             ``False`` leaves out the chip's collapse channels, so the matrix is
             the propagator of the Hamiltonian alone. ``True`` raises, because
-            the matrix cannot include them. The result's
+            the matrix cannot include them; :meth:`subspace_channel` does. The result's
             :attr:`~quchip.results.propagator.PropagatorResult.omitted_channels`
             names the channels that the solve left out.
         progress : bool, default=False
@@ -1696,22 +1697,14 @@ class QuantumSequence:
             If ``dissipation`` is ``True``, ``frame`` is unknown, or a device
             or level is missing or repeated.
         """
-        import itertools
-
         from quchip.results.propagator import FRAMES, subspace_propagator
 
         if dissipation:
             raise ValueError("subspace_propagator() gives the propagator of the Hamiltonian alone, so it cannot "
-                             "include collapse channels. Use simulate() for the evolution with them.")
+                             "include collapse channels. Use subspace_channel() for the gate with them.")
         if frame not in FRAMES:
             raise ValueError(f"frame must be one of {FRAMES}; got {frame!r}.")
-        selected = (devices,) if isinstance(devices, (str, BaseDevice)) else tuple(devices)
-        names = tuple(resolve_label(device) for device in selected)
-        if not names or len(set(names)) != len(names):
-            raise ValueError("Select at least one device, and each device once.")
-        labels = tuple(itertools.product(tuple(levels), repeat=len(names)))
-        if not labels or len(set(levels)) != len(tuple(levels)):
-            raise ValueError("levels must name at least one level, and each level once.")
+        names, labels = self._subspace_labels(devices, levels)
         with self._scoped_backend(backend):
             problem_batch = self.build_batch(
                 self.vary("initial_state", [dict(zip(names, label)) for label in labels]),
@@ -1726,6 +1719,121 @@ class QuantumSequence:
             omitted = tuple(channel.key for channel in problem_batch.problems[0].engine_result.slh.channels)
             batch = self._chip.solve_many(problem_batch, progress=progress, max_workers=max_workers)
         return subspace_propagator(batch, names, labels, frame, omitted)
+
+    def subspace_channel(
+        self,
+        devices: str | BaseDevice | Sequence[str | BaseDevice],
+        levels: Sequence[int] = (0, 1),
+        *,
+        frame: str = "dressed",
+        tlist: Any | None = None,
+        duration: Any | None = None,
+        solver: str | None = None,
+        options: dict | None = None,
+        backend: Any | None = None,
+        approximation: Approximation | None = None,
+        progress: bool = False,
+        max_workers: int | None = None,
+    ) -> "ChannelResult":
+        """Return the channel of this sequence, with collapse channels, on the dressed states of a product of levels.
+
+        The labels are those of :meth:`subspace_propagator`: each selected
+        device takes one of ``levels`` and every other device level 0. For d
+        labels, one batch solves d² pure inputs with the chip's collapse
+        channels: each dressed label state and, for each pair of labels, two
+        superpositions of them. Linearity gives the image of every
+        ``|d_i⟩⟨d_j|``. The final states are projected on the label targets,
+        and the record converts the superoperator to ``frame`` on both sides,
+        as :meth:`subspace_propagator` does for its matrix. Population that
+        leaves the labels, such as an excited spectator, counts as leakage.
+        Population that moves between the labels, such as the thermal
+        excitation of a selected qubit, stays in the channel.
+
+        Parameters
+        ----------
+        devices : device object, str, or sequence of them
+            Selected devices, in the order of the levels of each label.
+        levels : sequence of int, default=(0, 1)
+            Levels of each selected device. Add level 2, for example, to follow
+            leakage and seepage.
+        frame : {"dressed", "lab", "integration"}, default="dressed"
+            Frame of the returned superoperator.
+        tlist, duration, solver, options, backend, approximation
+            As for :meth:`simulate`. The channel runs from ``tlist[0]`` to ``tlist[-1]``.
+        progress : bool, default=False
+            Show backend batch progress when supported.
+        max_workers : int or None, default=None
+            As for :meth:`simulate_batch`.
+
+        Returns
+        -------
+        ChannelResult
+            Superoperator, labels, leakage of each input, frame frequencies,
+            included collapse channels, and the batch of solves.
+
+        Raises
+        ------
+        ValueError
+            If ``frame`` is unknown, a device or level is missing or repeated,
+            or ``solver`` selects trajectories.
+
+        Warns
+        -----
+        QuchipWarning
+            If the chip has no collapse channels. :meth:`subspace_propagator`
+            then gives the same gate with d solves instead of d².
+        """
+        import itertools
+
+        from quchip.engine.ir import SolveBatch
+        from quchip.results.channel import subspace_channel
+        from quchip.results.propagator import FRAMES
+
+        if frame not in FRAMES:
+            raise ValueError(f"frame must be one of {FRAMES}; got {frame!r}.")
+        names, labels = self._subspace_labels(devices, levels)
+        with self._scoped_backend(backend):
+            label_batch = self.build_batch(
+                self.vary("initial_state", [dict(zip(names, label)) for label in labels]),
+                tlist=tlist,
+                duration=duration,
+                solver=solver,
+                options=options,
+                approximation=approximation,
+                states="final",
+                dissipation=True,
+            )
+            problems = list(label_batch.problems)
+            if problems[0].stochastic:
+                raise ValueError("A channel needs the master equation; trajectory solvers give conditioned states.")
+            channels = tuple(channel.key for channel in problems[0].engine_result.slh.channels)
+            if not channels:
+                warnings.warn("The chip has no collapse channels; subspace_propagator() gives this gate with "
+                              "fewer solves.", QuchipWarning, stacklevel=user_stacklevel())
+            native = problems[0].backend
+            half = 2**-0.5
+            for i, j in itertools.combinations(range(len(labels)), 2):
+                first, second = problems[i].initial_state, problems[j].initial_state
+                for phase in (1.0, 1j):
+                    state = native.linear_combination([(half, first), (half * phase, second)])
+                    problems.append(replace(problems[i], initial_state=state))
+            pure_inputs = SolveBatch(chip=label_batch.chip, problems=tuple(problems), shape=(len(problems),))
+            batch = self._chip.solve_many(pure_inputs, progress=progress, max_workers=max_workers)
+        return subspace_channel(batch, names, labels, frame, channels)
+
+    @staticmethod
+    def _subspace_labels(devices: Any, levels: Sequence[int]) -> tuple[tuple[str, ...], tuple[tuple[int, ...], ...]]:
+        """Return the selected device labels and every product of ``levels`` on them."""
+        import itertools
+
+        selected = (devices,) if isinstance(devices, (str, BaseDevice)) else tuple(devices)
+        names = tuple(resolve_label(device) for device in selected)
+        if not names or len(set(names)) != len(names):
+            raise ValueError("Select at least one device, and each device once.")
+        labels = tuple(itertools.product(tuple(levels), repeat=len(names)))
+        if not labels or len(set(levels)) != len(tuple(levels)):
+            raise ValueError("levels must name at least one level, and each level once.")
+        return names, labels
 
     def active_patch(self, *, hops: int = 1, method: str = "sw", local: bool = False,
                      order: Any | None = None) -> "ActivePatchResult":

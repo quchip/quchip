@@ -335,11 +335,21 @@ This file records notable user-visible changes to quchip.
   The record gives the leakage of each input, and `fidelity(target)` returns
   the average gate fidelity, which counts that leakage. The solves leave out
   collapse channels, which `omitted_channels` names, and `dissipation=True`
-  raises.
+  raises and points to `subspace_channel()`.
   ([#193](https://github.com/quchip/quchip/issues/193),
   [#207](https://github.com/quchip/quchip/pull/207),
   [#209](https://github.com/quchip/quchip/issues/209),
   [#210](https://github.com/quchip/quchip/pull/210))
+- `sequence.subspace_channel(devices, levels=(0, 1))` returns the gate with
+  the chip's collapse channels as a `ChannelResult`: a superoperator on the
+  same dressed labels and frames, from `d²` pure-state master-equation
+  solves. It gives the infidelity in quchip's frame, with ideal preparation
+  and measurement, and the eigenvalue infidelity, a spectral score that a
+  frame tilt does not change, with the average leakage beside it. Labels may
+  include leakage levels, and `seepage()` reads them. `error(target)` returns
+  the error map after the ideal gate, with its Pauli transfer matrix, Pauli
+  fidelities, Pauli rates and twirl. PHYSICS.md §9.5 gives the definitions.
+  ([#223](https://github.com/quchip/quchip/pull/223))
 - `Envelope.area()` returns the complex area of an envelope: closed forms for
   the built-in shapes, and Gauss-Legendre quadrature between the sampling
   times for other shapes, also under JAX tracing.

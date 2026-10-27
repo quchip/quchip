@@ -31,6 +31,7 @@ measurement records.
 | Time convention | Physics `exp(−iωt)` inside quchip. VNA results use the engineering `exp(+jωt)`, with `j = i`. | §8.1 |
 | Dispersive shift | The full pull `χ = f_r\|1 − f_r\|0 = E(1,1) − E(1,0) − E(0,1) + E(0,0)`. | §10.1 |
 | Kerr matrix | Off the diagonal the full pull (static ZZ), on the diagonal the dressed anharmonicity. | §9.3 |
+| Gate error | The error map acts after the ideal gate: `Λ = E ∘ U`. Channels act on column-stacked density matrices. | §9.5 |
 
 ## 1. Units and the 2π convention
 
@@ -2137,8 +2138,108 @@ F = (Tr(M† M) + |Tr(V† M)|²) / (d (d + 1))
 for a unitary target `V` of dimension `d`. Leakage lowers `Tr(M† M)`, so it
 lowers `F`. The solves leave out declared collapse channels, and
 `omitted_channels` names them, so `M` is the propagator of the Hamiltonian.
-`dissipation=True` raises. On dynamiqs, the matrix and the fidelity are
+`dissipation=True` raises; §9.5 gives the channel with them. On dynamiqs, the matrix and the fidelity are
 differentiable in chip and pulse parameters (§13).
+
+### 9.5 Subspace channels
+
+Sources: [`quchip/results/channel.py`](https://github.com/quchip/quchip/blob/main/quchip/results/channel.py), [`quchip/control/sequence.py`](https://github.com/quchip/quchip/blob/main/quchip/control/sequence.py)
+
+`QuantumSequence.subspace_channel(devices, levels=(0, 1))` gives the gate
+with the chip's collapse channels, ports included. The labels are those of
+§9.4. For `d` labels, one batch of master-equation solves starts `d²` pure
+states, all built in the frame and space of the dissipative solve: each
+dressed label state `|i⟩`, and for each pair `i < j` the states
+`|+⟩ = (|i⟩ + |j⟩)/√2` and `|+i⟩ = (|i⟩ + i|j⟩)/√2`. Linearity gives
+
+```text
+Λ(|i⟩⟨j|) = Λ(|+⟩⟨+|) + i Λ(|+i⟩⟨+i|) − (1 + i)/2 (Λ(|i⟩⟨i|) + Λ(|j⟩⟨j|)),    Λ(|j⟩⟨i|) = Λ(|i⟩⟨j|)†
+```
+
+The final density matrices are projected on the label targets of §4.2, and
+the frame of §9.4 acts on both sides, with `Δ_k = E_k − F_k`:
+
+```text
+Λ[(i,j),(k,l)] = exp(i 2π T (Δ_i − Δ_j)) ⟨target_i|ρ_out(k,l)|target_j⟩ exp(−i 2π t0 (Δ_k − Δ_l))
+```
+
+The ground energy cancels. `superoperator[i + d j, k + d l]` holds this
+entry, so it acts on column-stacked density matrices. Trajectory solvers
+give conditioned states and raise. Unselected devices start in level 0, and
+population that leaves the labels, such as an excited spectator or a level
+above the labels, is lost from the record. `leakage[k]` is that loss for
+input `k`. Population that moves between labels, such as the thermal
+excitation of a selected qubit, stays in the channel as a computational
+error. A channel solved at one start time is not moved to another by frame
+conjugation. Under RWA, a delayed gate keeps its channel up to such a
+conjugation only when the whole generator is covariant under the time
+shift, and RWA does not guarantee that: several carriers, coupled devices or
+baths can break it.
+
+The computational labels `C` are those with every level in `{0, 1}`, and
+`d_C` is their number. Every number below uses the block `Λ_C` of the
+channel on them (Wood and Gambetta, PRA 97, 032306 (2018)):
+
+```text
+average leakage    L = 1 − Tr[P_C Λ(P_C)]/d_C
+seepage              = Tr[P_C Λ(P_L)]/d_L          (labels L with a level above 1, the C ← L block)
+process fidelity   F_e = Tr(S_U† S_Λ_C)/d_C²,      S_U = conj(U) ⊗ U
+infidelity         1 − F_avg = (d_C (1 − F_e) + L)/(d_C + 1)
+```
+
+The infidelity is the error in quchip's frame, with ideal preparation and
+measurement in the dressed states. Leaked population counts as zero overlap,
+and the block is not renormalized. Transitions into labeled leakage levels
+count in `L`. A frame tilt of the gate counts as error here, for example
+`Rz(a) U Rz(a)` for a quarter turn `U`, which at first order only tilts the
+gate against preparation and measurement. For `U = I` the same error is a
+genuine rotation `Rz(2a)`.
+
+`eigenvalue_infidelity(U)` is a spectral score, not an operational
+fidelity. It pairs the eigenvalues `λ` of `S_Λ_C` with the eigenvalues `μ`
+of `S_U` by a minimum-weight matching of `|λ − μ|`, and returns
+`d_C (1 − |Σ conj(μ) λ|/d_C²)/(d_C + 1)`, as pyGSTi's
+`eigenvalue_avg_gate_infidelity`. A fixed change of basis within `C`,
+applied to both the channel and the target, keeps it, so the quarter-turn
+tilts above drop out at first order. A change of the record's frame that
+differs at the start and the end is not such a change, and it can change
+the score. Leakage is not added, but it lowers
+the eigenvalues: a uniform loss `ℓ` gives `d_C ℓ/(d_C + 1)`. Report the
+average leakage beside it. Randomized benchmarking need not agree with
+either number: with coherent errors it can exceed both or see axis errors
+between gates that neither number shows.
+
+`error(U)` returns the map after the ideal gate, `E = Λ_C ∘ U†`, so that
+`Λ_C = E ∘ U`. With levels 0 and 1 on each of `n` devices, the Pauli
+transfer matrix uses unnormalized Pauli products `P`, first device most
+significant (pyGSTi's `pp` basis):
+
+```text
+R[a, b] = Tr(P_a Λ(P_b))/2ⁿ,    f(P) = R[P, P],    p(P) = 4⁻ⁿ Σ_Q (−1)^⟨P,Q⟩ f(Q)
+```
+
+where `⟨P,Q⟩ = 1` when `P` and `Q` anticommute. The twirl
+`4⁻ⁿ Σ_P S_P S_Λ S_P` keeps the diagonal of `R`, and `p(P)` are the Pauli
+weights of the twirled map. On a leaky map they sum to `f(I…I) = 1 − L`.
+For ideal Pauli layers and a cycle whose channel does not change from one
+repetition to the next, the twirled error map is the Pauli channel that
+randomized compiling and cycle benchmarking see.
+
+For a qubit with `T1` and `T2`, the jump operators `√γ₁ a` and `√(2γ_φ) n`
+with `γ₁ = 1/T1` and `γ_φ = 1/T2 − 1/(2 T1)` give, over an idle time `D`,
+
+```text
+p_X = p_Y = (1 − e^(−γ₁D))/4,    p_Z = (1 + e^(−γ₁D) − 2 e^(−(γ₁/2 + γ_φ)D))/4
+```
+
+To first order in the rates, a gate of duration `T` on `n` qubits that stay
+in their computational levels has `1 − F_avg = d/(2(d + 1)) T Σ_q (γ₁,q + γ_φ,q)`
+with `d = 2ⁿ`, relative to the closed evolution, whatever the gate (Abad et
+al., PRL 129, 150504 (2022)).
+Transient population of higher levels changes this at order `γ ∫ p₂ dt`.
+On dynamiqs, the superoperator, the infidelity and the Pauli quantities are
+differentiable in chip and pulse parameters (§13). The eigenvalue
+infidelity uses NumPy.
 
 ## 10. Adiabatic elimination and dispersive readout
 
