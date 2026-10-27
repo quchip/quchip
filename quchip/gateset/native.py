@@ -91,7 +91,8 @@ def _target_path(ref: Any, field: str | None, sequence: "QuantumSequence") -> st
         if field is None:
             raise ValueError("A knob on a pulse handle needs a field, such as 'amplitude'.")
         ref._resolve_entry()
-        return f"pulse.{ref._entry_index}.{ref._normalize_field(field)}"
+        number = sequence._pulse_entry_indices().index(ref._entry_index)
+        return f"pulse.{number}.{ref._normalize_field(field)}"
     if isinstance(ref, str):
         path = ref if field is None else f"{ref}.{field}"
         parts = path.split(".", 2)
@@ -118,9 +119,8 @@ def _default_scale_and_lower(sequence: "QuantumSequence", path: str, value: floa
         return max(abs(value), 0.1), 0.0
     from quchip.control.sequence import _PulseEntry
 
-    entry = sequence._entries[int(index)]
-    if not isinstance(entry, _PulseEntry):
-        raise KeyError(f"pulse.{index} is not a pulse entry.")
+    entry = sequence._entries[sequence._pulse_entry_indices()[int(index)]]
+    assert isinstance(entry, _PulseEntry)
     envelope = entry.envelope
     declaration = parameter_fields(type(envelope)).get(field.removeprefix("envelope."))
     floor = 0.1 if declaration is not None and declaration.unit == "ns" else 1e-3
@@ -175,14 +175,14 @@ def bind_pulses(sequence: "QuantumSequence", bindings: Mapping[str, Any]) -> "Qu
     from quchip.control.sequence import _PulseEntry
 
     bound = sequence._copy_with_chip(sequence._chip)
+    pulses = bound._pulse_entry_indices()
     grouped: dict[int, dict[str, Any]] = {}
     for path, value in bindings.items():
         _, index, field = path.split(".", 2)
-        grouped.setdefault(int(index), {})[field] = value
+        grouped.setdefault(pulses[int(index)], {})[field] = value
     for position, updates in grouped.items():
         entry = bound._entries[position]
-        if not isinstance(entry, _PulseEntry):
-            raise KeyError(f"pulse.{position} is not a pulse entry.")
+        assert isinstance(entry, _PulseEntry)
         envelope_updates = {
             field.removeprefix("envelope."): value for field, value in updates.items() if field not in _PULSE_FIELDS
         }

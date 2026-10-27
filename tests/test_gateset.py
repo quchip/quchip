@@ -150,7 +150,7 @@ def test_zero_idle_adds_nothing():
 
 @pytest.mark.unit
 def test_knobs_resolve_handles_paths_and_ties():
-    """Handles after a leading vz resolve to their entry; ties move every value by its factor."""
+    """Handles after a leading vz resolve to their pulse number; ties move every value by its factor."""
     chip = two_transmons()
     seq = QuantumSequence(chip)
     seq.vz("q0", 0.1)
@@ -158,21 +158,21 @@ def test_knobs_resolve_handles_paths_and_ties():
                          freq=5.0)
     second = seq.schedule("xy0", envelope=Gaussian(duration=20.0, amplitude=0.04), freq=5.0, phase=np.pi)
     amplitude = resolve_knob("amplitude", Knob(first, "amplitude"), seq)
-    assert amplitude.targets == (("pulse.1.amplitude", 1.0),)
+    assert amplitude.targets == (("pulse.0.amplitude", 1.0),)
     assert amplitude.scale == pytest.approx(0.04) and amplitude.lower == -np.inf
     detuning = resolve_knob("detuning", Knob(first, "detuning"), seq)
     assert detuning.initial == 0.0 and detuning.scale == 1e-3
-    duration = resolve_knob("duration", Knob("pulse.1.duration"), seq)
+    duration = resolve_knob("duration", Knob("pulse.0.duration"), seq)
     assert duration.lower == 0.0 and duration.scale == 20.0
     tie = resolve_knob("phase", Knob([((first, "phase"), 1.0), ((second, "phase"), -1.0)]), seq)
     bound = bind_pulses(seq, tie.bindings(0.3))
     assert bound._chip is chip
-    assert bound.parameters["pulse.1.phase"] == pytest.approx(0.3)
-    assert bound.parameters["pulse.2.phase"] == pytest.approx(np.pi - 0.3)
+    assert bound.parameters["pulse.0.phase"] == pytest.approx(0.3)
+    assert bound.parameters["pulse.1.phase"] == pytest.approx(np.pi - 0.3)
     with pytest.raises(ValueError, match="pulse fields"):
         resolve_knob("g", Knob("J.g"), seq)
     with pytest.raises(KeyError, match="Pulse paths"):
-        resolve_knob("x", Knob("pulse.0.amplitude"), seq)
+        resolve_knob("x", Knob("pulse.2.amplitude"), seq)
     other = QuantumSequence(chip)
     with pytest.raises(ValueError, match="another sequence"):
         resolve_knob("x", Knob(first, "amplitude"), other)

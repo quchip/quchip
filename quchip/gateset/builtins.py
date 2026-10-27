@@ -49,9 +49,9 @@ def drag_sx(
     The pulse runs at ``freq=chip.freq(qubit)`` with ``phase=-arg(m)``, where
     ``m`` is the qubit's dressed ``0 -> 1`` drive matrix element on the line,
     so it rotates about +X. The knobs are the amplitude and, for devices with
-    more than two levels, the DRAG coefficient β. The seeds are the amplitude
-    ``A = θ / (2π |m| ∫E dt)`` and ``β = 1 / (4π |α|)``, with α the dressed
-    anharmonicity.
+    more than two levels, the DRAG coefficient β. The amplitude seed comes
+    from :meth:`~quchip.chip.chip.Chip.rotation_amplitude`, and the β seed is
+    ``1 / (4π |α|)``, with α the dressed anharmonicity.
 
     Parameters
     ----------
@@ -93,7 +93,7 @@ def drag_sx(
     if levels > 2:
         beta = 1.0 / (4 * np.pi * abs(float(chip.dressed_anharmonicity(label))))
     envelope = GaussianDRAG(duration=duration, sigmas=sigmas, amplitude=1.0, beta=0.0)
-    amplitude = angle / (2 * np.pi * abs(element) * _unit_area(envelope))
+    amplitude = float(chip.rotation_amplitude(label, line_label, envelope, angle))
     sequence = QuantumSequence(chip)
     pulse = sequence.schedule(
         line_label,

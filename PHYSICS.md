@@ -3507,7 +3507,8 @@ the isolated calibration's fidelity.
 
 `drag_sx()` schedules one `GaussianDRAG` pulse at the dressed qubit frequency
 with phase `-arg m`, where `m` is the dressed `0 -> 1` element of the line. The
-seeds are the amplitude `A = θ/(2π |m| ∫E dt)` and `β = 1/(4π |α|)`. The
+seeds are `β = 1/(4π |α|)` and the amplitude of `Chip.rotation_amplitude()`,
+`A = θ/(2π |m| |∫E dt|)` on a line without transforms (§6.2.1). The
 knobs are the amplitude and `β`, which keeps the fit small. The pulse
 detuning is an optional knob, bounded to ±5 MHz. It can lower the joint error,
 for example by centering the carrier between the frequencies that a spectator

@@ -249,7 +249,8 @@ class SignalTransform(Registrable, ABC, registry_root=True, metaclass=KeywordOnl
     ``apply`` is linear and time-invariant, so that a tone leaves it as the
     same tone times a complex transfer. Calibration seeds such as
     :meth:`~quchip.chip.analysis.ChipAnalysis.rotation_amplitude` need that
-    transfer and refuse other transforms.
+    transfer and refuse other transforms. Gate sets reuse a gate propagator at
+    a new start time only when every transform of the chain declares it.
 
     Parameters
     ----------
