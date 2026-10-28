@@ -1,8 +1,10 @@
 # Readout and fridge wiring
 
-Measure three resonators through a common bus and a fridge readout line, then
-sample the VNA trace at two integration times. Frequencies are in GHz, times
-in ns, temperatures in mK, and decay rates in `1/ns`. Run the cells in order.
+Measure three resonators through a common bus and a fridge readout line. Read
+their resonances from the response, sample the VNA trace at two integration
+times, and read a prepared qubit through the same line. Frequencies are in
+GHz, times in ns, temperatures in mK, and decay rates in `1/ns`. Run the
+cells in order.
 
 ## Couple the resonators to a bus
 
@@ -103,9 +105,10 @@ The filters have half-power edges at 4 and 8 GHz. The output filter's
 sees a vacuum source, with thermal attenuators downstream. The resonators'
 intrinsic loss baths are vacuum too.
 
-Connect the input chain to circulator port 1, the bus to port 2, and the receiver chain to port 3.
-Name the external network ports `drive` for the source and `readout` for the receiver. Each port
-defines a reference plane, where the port's incoming and outgoing fields are specified.
+Connect the input chain to circulator port 1, the bus to port 2, and the
+receiver chain to port 3. Name the external network ports `drive` for the
+source and `readout` for the receiver. Each port defines a reference plane,
+where the port's incoming and outgoing fields are specified.
 
 ```python
 fridge.link(input_filter, att_4k, att_cp, att_mxc, circ.port(1))
@@ -232,8 +235,8 @@ plt.close(fig)
 ```{figure} ../images/fridge_wiring.svg
 :alt: Fridge wiring with staged input attenuation, a circulator feeding three resonators through a bus, and an isolated, filtered return line to the HEMT and room amplifier.
 
-The drive descends the blue line; the reflected field returns along the red
-line. The three resonators couple to the bus at the mixing chamber.
+The drive descends the blue line, and the reflected field returns along the
+red line. The three resonators couple to the bus at the mixing chamber.
 [PDF](../images/fridge_wiring.pdf)
 ```
 
@@ -281,15 +284,60 @@ plt.close(fig)
 ```{figure} ../images/fridge_s21.svg
 :alt: Three resolved resonances in the source-to-receiver response, with magnitude in red and unwrapped phase in blue.
 
-S21 at the room-temperature instrument ports. The 60 dB amplifier gain balances
-the 60 dB input attenuation; isolator and cable loss give an approximately
-−3 dB background. The three resonances add dips and phase windings.
+S21 at the room-temperature instrument ports. The 60 dB amplifier gain
+balances the 60 dB input attenuation, and isolator and cable loss give a
+background of about −3 dB. The three resonances add dips and phase windings.
 [PDF](../images/fridge_s21.pdf)
 ```
 
-`steady_state` is the steady-state response of the full setup, including the bus,
-resonators, losses, filters, and amplifier gain. Added amplifier noise increases
-the fluctuation level but does not change this curve.
+`steady_state` is the steady-state response of the full setup, including the
+bus, resonators, losses, filters, and amplifier gain. Added amplifier noise
+increases the fluctuation level but does not change this curve.
+
+## Read the resonances from the poles
+
+`vna.resonances()` gives the poles of the same small-signal response, without
+a fit. Each pole has a lab-frame frequency, a linewidth κ, and a weight on
+each mode. `dominant` names the mode with the largest weight. κ is the full
+width at half maximum of the pole's own Lorentzian in power. A measured dip
+also contains the background and the other poles, so its width can differ
+from κ.
+
+```python
+poles = vna.resonances()
+for pole in poles:
+    print(f"{pole.dominant}: {float(pole.frequency):.5f} GHz, "
+          f"kappa/2pi = {1e3 * float(pole.linewidth) / (2 * np.pi):.2f} MHz")
+```
+
+Output:
+
+```text
+r1: 6.39902 GHz, kappa/2pi = 18.44 MHz
+r2: 6.49995 GHz, kappa/2pi = 10.84 MHz
+bus: 6.50025 GHz, kappa/2pi = 963.84 MHz
+r3: 6.60078 GHz, kappa/2pi = 15.28 MHz
+```
+
+The bus and the other resonators pull r1 down by 1.0 MHz and r3 up by
+0.8 MHz. The linewidths are 1–4% above the nominal 17.8, 10.7, and 14.8 MHz.
+Each nominal value adds the internal loss to the second-order external rate
+of the formula above, for one resonator alone. The poles include the
+couplings to all orders and the exchange through the shared bus.
+
+<details>
+<summary>Check the poles against the sweep</summary>
+
+`poles.scattering()` rebuilds S from the poles and their residues, with the
+reference planes of the ports. It agrees with the swept S21 to round-off.
+
+```python
+# Axes: frequency, output, input, with the ports in the order (drive, readout).
+rebuilt = poles.scattering(frequencies)[:, 1, 0]
+assert np.max(np.abs(rebuilt - steady_state)) < 1e-10
+```
+
+</details>
 
 ## Sample a VNA trace
 
@@ -343,9 +391,10 @@ plt.close(fig)
 ```{figure} ../images/fridge_measurement.svg
 :alt: Magnitude and phase of all three resonances, comparing the steady state with sampled IQ at 1 ms and 100 ms integration.
 
-Solid lines show the steady state; red points are sampled IQ. The phase is
-shown on the steady-state curve's unwrapped branch. Longer integration reduces the scatter
-in both magnitude and phase. [PDF](../images/fridge_measurement.pdf)
+Solid lines show the steady state, and red points are sampled IQ. The phase
+is shown on the unwrapped branch of the steady-state curve. Longer
+integration reduces the scatter in both magnitude and phase.
+[PDF](../images/fridge_measurement.pdf)
 ```
 
 The measurement also keeps the output noise spectrum. Use `noise_spectrum()`
@@ -441,21 +490,19 @@ the captured arrays.
 Stationary harmonic calculations use mode-space equations without a Fock
 cutoff, and nonlinear devices use the density-matrix solver. On a chip that
 conserves the total excitation and has more than 64 product states, the
-solver keeps the states with at most `K` excitations and warns which `K` it
-kept. Sampling
-describes stationary Gaussian field moments. Colored thermal noise into the
-chip needs an explicit dynamical filter or bath model. This setup does not
-include amplifier saturation, finite reverse isolation, or reverse amplifier
-noise.
+solver keeps only the states with at most `K` excitations. It warns which `K`
+it kept. Sampling describes stationary Gaussian field moments. Colored thermal
+noise into the chip needs an explicit dynamical filter or bath model. This
+setup does not include amplifier saturation, finite reverse isolation, or
+reverse amplifier noise.
 
 </details>
 
 ## Read a prepared qubit through the same line
 
-A Rabi calculation can stop after state preparation. To describe an omitted
-readout stage, supply the mean output field for each qubit state before the
-downstream output components. The fridge then sets the receiver gain and
-noise.
+A Rabi calculation can stop after state preparation. A separate weak-probe
+calculation then gives the mean output field for each qubit state, and the
+fridge sets the receiver gain and noise.
 
 This two-level qubit goes through one Rabi period. Its preparation is closed
 and uses `sesolve`, and the readout model below does not change that
@@ -474,31 +521,86 @@ rabi = QuantumSequence(rabi_chip)
 rabi.schedule(xy, envelope=Square(duration=40.0, amplitude=0.025), freq=5.0)
 
 result = rabi.simulate(tlist=np.linspace(0, 40, 81))
+```
 
+For the readout, couple the same qubit to r2 with g = 90 MHz. The
+qubit–resonator detuning is 1.5 GHz. A port network with only the bus
+coupler puts the reference plane at the chip. `when={q: state}` gives the
+conditional reflection of the bus, with the qubit held in that state.
+
+```python
+chip_plane = PortNetwork(label="chip_plane")
+chip_port = chip_plane.expose("chip_port", at=chip_plane.port(
+    "bus_coupler", target=bus, external_quality_factor=bus_qe))
+q_r2 = Capacitive(q, resonators[1], g=0.09, label="q_r2")
+qubit_chip = Chip([bus, *resonators, q], [*couplings, q_r2], port_network=chip_plane,
+                  approximation=RWA(), frame="rotating")
+
+qubit_vna = VNA(qubit_chip)
+probe = np.linspace(6.48, 6.52, 801)
+reflection = np.stack([qubit_vna.sweep(probe, when={q: state}).s(chip_port, chip_port)
+                       for state in (0, 1)])
+best = np.argmax(np.abs(reflection[1] - reflection[0]))
+readout_frequency = probe[best]
+qubit_pole = next(pole for pole in qubit_vna.resonances() if pole.dominant == "q")
+
+print("r2 dips:", np.round(probe[np.argmin(np.abs(reflection), axis=1)], 5), "GHz")
+print(f"readout at {readout_frequency:.5f} GHz, |r1 - r0| = {abs(reflection[1, best] - reflection[0, best]):.2f}")
+print(f"qubit T1 through the resonators = {1e-3 / float(qubit_pole.linewidth):.1f} us")
+```
+
+Output:
+
+```text
+r2 dips: [6.5054  6.49455] GHz
+readout at 6.50075 GHz, |r1 - r0| = 1.61
+qubit T1 through the resonators = 15.4 us
+```
+
+The qubit pulls r2 by ±5.4 MHz. The full pull of 10.9 MHz is approximately
+equal to the r2 linewidth, so the two reflections are almost opposite near
+the midpoint of the dips. A two-level qubit gives this pull of ±g²/Δ. A
+transmon with α = −0.2 GHz at the same detuning gives a full pull of only
+about 1.3 MHz, because its second excited state partly cancels the shift.
+
+The qubit decays through the resonator modes, mostly into the internal loss
+of r2. The broad bus passes little of the qubit's 5 GHz field to the line.
+
+An incident field of 0.2/√ns at the chip, approximately −128 dBm, puts about
+one photon in r2 in the linear response. At the source, this is
+approximately 200/√ns before the 60 dB of attenuation. The means scale the
+weak-probe reflection to this power, which the dispersive approximation
+allows well below the critical photon number (Δ/2g)² ≈ 69. The reflected field passes the circulator, the isolators, and their 1 dB
+insertion loss. The output filter, which has memory, starts the downstream
+output components. `IQReadout.from_wiring()` takes the means at that point,
+in $1/\sqrt{\mathrm{ns}}$, and adds the filter, cable, and amplifier noise,
+plus heterodyne vacuum, integrated for 1 μs.
+
+```python
+incident = 0.2
+means = reflection[:, best] * incident * 10**(-1 / 20)
 detector = IQReadout.from_wiring(
-    readout_chip, readout, frequency=6.5,
-    means=[-0.01+0.001875j, 0.01-0.001875j],
-    receiver=IQReceiver(integration_time=100_000),
+    readout_chip, readout, frequency=readout_frequency, means=means,
+    receiver=IQReceiver(integration_time=1_000),
 )
 
 measurement = result.measure(q, t=10.0)
 shots = measurement.sample(1000, readout=detector, seed=7)
 ```
 
-The supplied means are representative fields for outcomes 0 and 1, in
-$1/\sqrt{\mathrm{ns}}$, before the selected channel's downstream output
-components. They are defined at the output of the memoryless quantum network and
-summarize the readout interaction, so qubit populations alone cannot give them.
-The detector includes downstream filter, cable, and amplifier noise, plus
-heterodyne vacuum, integrated for 100 μs.
-
-`detector.contributions` gives the source covariance budget.
+`detector.contributions` gives the source covariance budget. The HEMT and
+the output cable contribute most of the noise.
 
 Both panels use this detector, and a midpoint threshold classifies the IQ
-shots. The overlap gives an error of approximately 16% for each outcome. So
-the recorded Rabi curve spans approximately 0.16–0.84, while the quantum
+shots. The overlap gives an error of approximately 8% for each outcome. So
+the recorded Rabi curve spans approximately 0.08–0.92, while the quantum
 population spans 0–1. The qubit starts in |0⟩, so this floor is a detection
-error.
+error. A longer window or a stronger tone separates the clouds further, but
+the qubit decays during the window. With the T1 above, about 6% of the |1⟩
+shots decay within 1 μs, which moves their integrated field toward the |0⟩
+mean. The sampled shots do not include that decay. They also take the
+prepared populations as the dressed states of the coupled chip, a transfer
+that this calculation does not simulate.
 
 <details>
 <summary>Plot the Rabi counts and IQ record</summary>
@@ -542,7 +644,7 @@ axes[1].set(xlabel=r"I ($1/\sqrt{\mathrm{ns}}$)", ylabel=r"Q ($1/\sqrt{\mathrm{n
             xlim=(-span, span), ylim=(-span, span))
 axes[1].set_aspect("equal", adjustable="box")
 axes[1].legend(fontsize=8, loc="upper center", ncol=2)
-figure.suptitle(r"Fridge output at 6.5 GHz $\cdot$ 100 $\mu$s integration", fontsize=12)
+figure.suptitle(rf"Fridge output at {readout_frequency:.4f} GHz $\cdot$ 1 $\mu$s integration", fontsize=12)
 
 figure.savefig("terminal_rabi.svg")
 plt.close(figure)
@@ -553,22 +655,23 @@ plt.close(figure)
 ```{figure} ../images/terminal_rabi.svg
 :alt: Rabi probability and thresholded counts through the fridge beside the same detector's overlapping IQ clouds.
 
-The output chain rotates and amplifies the supplied fields and broadens their
-IQ distributions. Colors mark physical outcomes; the threshold determines
+The output chain rotates and amplifies the conditional fields and broadens their
+IQ distributions. Colors mark physical outcomes, and the threshold determines
 the recorded labels. [PDF](../images/terminal_rabi.pdf)
 ```
 
-`result.measure()` works with kets or density matrices and uses the local energy bases that the
-simulation saved. Pass several devices for joint outcomes, or pass `t=` for an exact saved state.
-Final measurement works with `states="final"`. Different measurement times represent separate
-terminated experiments.
+`result.measure()` works with kets or density matrices and uses the local
+energy bases that the simulation saved. Pass several devices for joint
+outcomes, or pass `t=` for an exact saved state. Final measurement works with
+`states="final"`. Different measurement times represent separate terminated
+experiments.
 
-If a simulation already includes the fridge, `result.iq_readout(...)` reuses the
-wiring saved with it. `IQReadout.from_wiring(...)` resolves the current wiring
-without quantum evolution. Both assume coherent fields at the quantum-network
-output and vacuum in unspecified input channels. Thermal input fields and
-correlations with the devices need a field calculation or a detector calibration
-that includes them. In that case, use a calibrated
+If a simulation already includes the fridge, `result.iq_readout(...)` reuses
+the wiring saved with it. `IQReadout.from_wiring(...)` resolves the current
+wiring without quantum evolution. Both assume coherent fields at the
+quantum-network output and vacuum in unspecified input channels. Thermal
+input fields and correlations with the devices need a field calculation or a
+detector calibration that includes them. In that case, use a calibrated
 `IQReadout(means, iq_covariance)` directly, and do not add the same apparatus
 noise again.
 

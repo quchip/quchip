@@ -13,8 +13,12 @@ from pathlib import Path
 
 import jupytext
 import matplotlib
+import nbformat
 import numpy as np
 import pytest
+from nbconvert.preprocessors import ExecutePreprocessor
+
+from tools.sync_example_outputs import DEFAULT_PAIRS, render_cell_outputs
 
 
 matplotlib.use("Agg")
@@ -24,13 +28,18 @@ EXECUTED_BLOCK_RE = re.compile(
     r"```python\n(.*?)\n```(?:\n\nOutput:\n\n```text\n(.*?)\n```)?",
     re.DOTALL,
 )
+# An imaginary unit after a number stays in the template, so real and imaginary values stay distinct.
 NUMBER_RE = re.compile(
     r"(?<![A-Za-z_])[-+]?(?:(?:\d+\.\d*)|(?:\.\d+)|(?:\d+))"
-    r"(?:[eE][-+]?\d+)?(?![A-Za-z_])"
+    r"(?:[eE][-+]?\d+)?(?=j(?![A-Za-z_])|(?![A-Za-z_]))"
 )
 GUIDE_OUTPUT_RTOL = 1e-10
 # Two hertz for GHz-valued receipts, below the guide's displayed precision.
 GUIDE_OUTPUT_ATOL = 2e-9
+DYNAMIQS_NOTEBOOKS = {"03_differentiate_a_driven_chip"}
+LOCAL_PATH_RE = re.compile(r"/Users/|/home/|/private/|/tmp/|[A-Za-z]:\\|site-packages")
+README_EXAMPLE_RE = re.compile(r"```python\n(.*?)\n```\n\n```text\n(.*?)\n```", re.DOTALL)
+README_FIGURE_RE = re.compile(r"https://docs\.quchip\.org/_static/readme/([\w.-]+\.png)")
 
 
 @pytest.fixture
@@ -108,6 +117,51 @@ def test_committed_markdown_contains_current_notebook_outputs() -> None:
         assert "<!-- executed-output:start -->" in path.read_text(encoding="utf-8")
 
 
+def test_committed_notebooks_show_no_warnings_or_local_paths() -> None:
+    """A warning prints the path of its source file, so its output differs between machines."""
+    for stem in DEFAULT_PAIRS:
+        notebook = nbformat.read(ROOT / "examples" / f"{stem}.ipynb", as_version=4)
+        for index, cell in enumerate((cell for cell in notebook.cells if cell.cell_type == "code"), start=1):
+            stderr = "".join(
+                "".join(output.get("text", "")) for output in cell.outputs if output.get("name") == "stderr"
+            )
+            assert not stderr, f"{stem} code cell {index} writes to stderr:\n{stderr}"
+            rendered = render_cell_outputs(cell)
+            assert LOCAL_PATH_RE.search(rendered) is None, f"{stem} code cell {index} shows a local path"
+
+
+def test_rendered_output_does_not_depend_on_stream_flushes() -> None:
+    """The kernel can split one printed text into several stream outputs."""
+    text = ["K = 1: 8.9e-04\n", "K = 2: 2.7e-06\n"]
+    split = nbformat.v4.new_code_cell(outputs=[nbformat.v4.new_output("stream", text=line) for line in text])
+    whole = nbformat.v4.new_code_cell(outputs=[nbformat.v4.new_output("stream", text="".join(text))])
+    assert render_cell_outputs(split) == render_cell_outputs(whole)
+
+
+def test_readme_example_reproduces_its_output() -> None:
+    """The README chip prints the frequencies that the README shows."""
+    examples = README_EXAMPLE_RE.findall((ROOT / "README.md").read_text(encoding="utf-8"))
+    assert len(examples) == 1
+    code, expected = examples[0]
+    captured = io.StringIO()
+    with contextlib.redirect_stdout(captured):
+        exec(compile(code, str(ROOT / "README.md"), "exec"), {"__name__": "__readme__"})
+    _assert_output_matches(captured.getvalue(), expected)
+
+
+def test_readme_figures_are_current_copies_of_the_docs_figures() -> None:
+    """The README links to copies in docs/_static/readme, which tools/theme_figures.py refreshes."""
+    published = ROOT / "docs" / "_static" / "readme"
+    linked = README_FIGURE_RE.findall((ROOT / "README.md").read_text(encoding="utf-8"))
+    assert linked
+    for name in linked:
+        assert (published / name).exists(), f"the README links to a missing figure: {name}"
+    for copy in sorted(published.glob("*.png")):
+        source = ROOT / "docs" / "images" / copy.name
+        if source.exists():
+            assert copy.read_bytes() == source.read_bytes(), f"{copy.name} differs from docs/images"
+
+
 @pytest.mark.examples
 @pytest.mark.parametrize("guide", ["defining-and-inspecting-a-chip", "steady-state-and-vna", "slh-networks"])
 @pytest.mark.validation
@@ -127,6 +181,31 @@ def test_guide_outputs_match_a_fresh_execution(guide: str, guide_workspace) -> N
                 with contextlib.redirect_stdout(captured):
                     exec(compile(code, f"{path}#cell-{index}", "exec"), namespace)
             _assert_output_matches(captured.getvalue(), expected)
+
+
+@pytest.mark.examples
+@pytest.mark.parametrize(
+    "stem",
+    [pytest.param(stem, marks=pytest.mark.optional_backend) if stem in DYNAMIQS_NOTEBOOKS else stem
+     for stem in DEFAULT_PAIRS],
+)
+@pytest.mark.release
+def test_notebook_outputs_match_a_fresh_execution(stem: str, guide_workspace) -> None:
+    """Each example notebook executes again and reproduces the textual outputs that its guide shows."""
+    if stem in DYNAMIQS_NOTEBOOKS:
+        pytest.importorskip("dynamiqs")
+    path = ROOT / "examples" / f"{stem}.ipynb"
+    committed = nbformat.read(path, as_version=4)
+    fresh = nbformat.read(path, as_version=4)
+    # The same execution as the documented `jupyter nbconvert --execute` command.
+    ExecutePreprocessor(timeout=900, kernel_name="python3").preprocess(
+        fresh, {"metadata": {"path": str(guide_workspace / "examples")}},
+    )
+
+    committed_cells = [cell for cell in committed.cells if cell.cell_type == "code"]
+    fresh_cells = [cell for cell in fresh.cells if cell.cell_type == "code"]
+    for committed_cell, fresh_cell in zip(committed_cells, fresh_cells, strict=True):
+        _assert_output_matches(render_cell_outputs(fresh_cell), render_cell_outputs(committed_cell))
 
 
 @pytest.mark.examples

@@ -17,6 +17,7 @@ Frequencies are in GHz, times in ns, temperatures in mK and decay rates in
 | A gate with T1, T2 and other collapse channels | `sequence.subspace_channel()` |
 | Steady-state populations or fields | `chip.steadystate()` |
 | Small-signal S parameters | `VNA.sweep()` |
+| Readout responses for each qubit state | `VNA.sweep(..., when={q: 1})` |
 | The frequency and linewidth of each resonance | `VNA(chip).resonances()` |
 | A driven response with receiver noise | `VNA.measure()` |
 | Outcomes from a saved quantum state | `result.measure()` |
@@ -55,9 +56,10 @@ a frame. If a solve overrides the approximation, use the same choice for its
 carrier and state preparation. `chip.resolve(frame="lab", approximation=...)`
 gives a snapshot whose `dress()` returns the corresponding eigensystem.
 
-`dispersive_shift(q, r)` returns the full conditional resonator pull. Divide by
-negative two for the coefficient of `Z=|0><0|-|1><1|` times resonator number. `kerr_matrix()` collects full pulls
-off diagonal and dressed anharmonicities on the diagonal.
+`dispersive_shift(q, r)` returns the full conditional resonator pull. Divide
+by negative two for the coefficient of `Z=|0><0|-|1><1|` times resonator
+number. `kerr_matrix()` collects full pulls off diagonal and dressed
+anharmonicities on the diagonal.
 
 Inspect `unresolved_hamiltonian()` for the declared expression and
 `hamiltonian()` for the expression after basis, frame and approximation
@@ -103,12 +105,14 @@ frame in which the model is stationary.
 
 ## Compare conditional readout responses
 
-For a chip with a port network, use a dressed reference label:
+For a chip with a port network, such as `clear_chip` in the
+{doc}`pulses guide <guides/dynamics-pulses-and-readout>`, use a dressed
+reference label:
 
 ```python
 from quchip import VNA
 
-vna = VNA(readout_chip)
+vna = VNA(clear_chip)
 ground = vna.sweep(frequencies, when={"q": 0})
 excited = vna.sweep(frequencies, when={"q": 1})
 ```
@@ -141,14 +145,15 @@ frequency, linewidth = qubit.frequency, qubit.linewidth  # GHz and 1/ns
 rebuilt = resonances.scattering(frequencies)
 ```
 
-A label selects the pole whose composition that mode dominates; an index also
-works. The linewidth `κ = −2 Re λ` is the full response width in angular
-units. It includes port loss, internal loss, Purcell decay and dephasing.
-`rebuilt` equals `VNA(readout_chip).sweep(frequencies).matrix`, reference-plane
-transfers included. `resonances.dark` marks poles whose residues are
-negligible at the selected ports. The call covers the weak-probe routes of
-`VNA.sweep()` and raises for pumps. Inside `jax.jit`, select poles by index. Frequencies and
-linewidths have JAX derivatives; the composition and the residues do not.
+A label selects the pole whose composition that mode dominates, and an index
+also works. The linewidth `κ = −2 Re λ` is the full width at half maximum of
+the pole's Lorentzian in power, in angular units. It includes port loss, internal
+loss, Purcell decay, and dephasing. `rebuilt` equals
+`VNA(readout_chip).sweep(frequencies).matrix`, reference-plane transfers
+included. `resonances.dark` marks poles whose residues are negligible at the
+selected ports. The call covers the weak-probe routes of `VNA.sweep()` and
+raises for pumps. Inside `jax.jit`, select poles by index. Frequencies and
+linewidths have JAX derivatives, but the composition and the residues do not.
 
 ## Change parameters without rebuilding the example
 
@@ -201,6 +206,47 @@ A scheduled carrier stays fixed when device parameters change. Use the pulse's
 `freq` parameter to retune it. For independently built experiments, pass their
 `build_problem()` results to `solve_many()`.
 
+## Detune a pulse or choose its phase frame
+
+```python
+detuned = sequence.schedule(
+    xy, envelope=Gaussian(duration=20.0, amplitude=0.02, sigmas=3.0),
+    freq=chip.freq(q), detuning=0.002,
+)
+```
+
+`detuning` is a carrier offset in GHz, referenced to the pulse start. The
+pulse then has the same form in the frame at `freq` for every start time, so a
+detuned calibrated gate keeps its rotation axis when it moves. A carrier at
+`freq = f + δ` is a fixed oscillator instead. `pulse.<i>.detuning` rebinds,
+sweeps and differentiates like `freq`, also on a pulse scheduled without one.
+
+`sequence.vz(device, angle)` shifts the phase of later carrier pulses in the
+frame of `device`, on any line. A pulse follows the frame of the device that
+its line drives, unless `frame=` names another device. A cross-resonance tone
+drives the control qubit at the target frequency, and its phase sets the axis
+of the target rotation. Put it in the target's frame:
+
+```python
+from quchip import SquareWithGaussianEdges
+
+control = DuffingTransmon(freq=5.0, anharmonicity=-0.33, levels=3, label="control")
+target = DuffingTransmon(freq=5.1, anharmonicity=-0.33, levels=3, label="target")
+pair = Chip([control, target], [Capacitive(control, target, g=0.003, label="ct")])
+cr = ChargeDrive(control, label="cr")
+pair.wire(cr)
+
+cr_sequence = QuantumSequence(pair)
+cr_sequence.schedule(
+    cr, envelope=SquareWithGaussianEdges(duration=160.0, amplitude=0.01, edge_frac=0.375),
+    freq=pair.freq(target), frame=target,
+)
+```
+
+A cancellation tone on the target's own line follows the target's frame by
+default. `vz(target, ...)` then shifts both tones, and `vz(control, ...)`
+shifts neither.
+
 ## Read a gate on dressed states
 
 ```python
@@ -219,15 +265,17 @@ line's element times its transfer at the transition frequency.
 On an isolated transmon, the charge drive has `m = i` on the 0 → 1
 transition. The dressed element here is `0.99969i`, so a real π pulse aims
 at `−iY`.
+
 `subspace_propagator(q)` starts the dressed states of `q` in levels 0 and 1 as
 one batch. The matrix has the final label in rows and the initial label in
-columns, in the frame of the dressed frequencies. `propagator.leakage` gives
-the probability that each input leaves the labels, and `fidelity()` counts it.
+columns, in the frame of the dressed frequencies. `frame="lab"` and
+`frame="integration"` select the other frames. `propagator.leakage` gives the
+probability that each input leaves the labels, and `fidelity()` counts it.
 Here the fidelity is 0.993. Off-resonant coupling to the third level gives an
 AC Stark shift and a coherent rotation error, while the final leakage is only
-about 2e-6. The amplitude is a first guess for a calibration. `frame="lab"` and `frame="integration"` select the other frames.
-On a chip with collapse channels, the solves leave them out, and
-`propagator.omitted_channels` names them.
+about 2e-6. The amplitude is a first guess for a calibration. On a chip with
+collapse channels, the solves leave them out, and `propagator.omitted_channels`
+names them.
 
 ```python
 noisy = gate.with_params({"q.T1": 50e3, "q.T2": 40e3})
@@ -345,16 +393,17 @@ A label above the cutoff raises, and so does a supplied state with more than
 `1e-20` of its weight above the cutoff. quchip treats a smaller residue as
 basis-conversion round-off and drops it without renormalization. Pulse solves
 evolve the truncated model. Their default initial state is the truncated
-model's vacuum-assigned eigenvector. `result.check_truncation()[ExcitationCutoff(K)]`
-gives the maximum sampled population in the sectors that one step can move
-above the cutoff. This value is a warning heuristic, not an error bound.
+model's vacuum-assigned eigenvector.
+`check_truncation(result)[ExcitationCutoff(K)]` gives the maximum sampled
+population in the sectors that one step can move above the cutoff. This value
+is a warning heuristic, not an error bound.
 
 `steadystate()`, `VNA.finite_power()`, `VNA.measure()`,
-`VNA.output_spectrum()`, `VNA.g1()` and `VNA.g2()` solve the truncated model.
-`chip.dress()`, `VNA.sweep()`, stochastic trajectory solvers, `eliminate()`,
-`eliminate_spectators()`, `active_patch()`, `fit_a_dress(evaluator="local")`
-and `chip.partition()` raise for a limited chip. Use `chip.with_space(None)`
-for them.
+`VNA.output_spectrum()`, `VNA.g1()`, and `VNA.g2()` solve the truncated model.
+`chip.dress()`, `VNA.sweep()`, `VNA.resonances()`, stochastic trajectory
+solvers, `eliminate()`, `eliminate_spectators()`, `active_patch()`,
+`fit_a_dress(evaluator="local")`, and `chip.partition()` raise for a limited
+chip. Use `chip.with_space(None)` for them.
 
 Without a cutoff, the VNA workflows above truncate their own solve of a chip
 that conserves the total excitation and has more than 64 product states. They
@@ -416,10 +465,10 @@ calibration.
 
 | Common ambiguity | What to check |
 |---|---|
-| Field versus occupation | `abs(⟨a⟩)²` is the coherent part; `⟨a†a⟩` includes incoherent photons. |
-| Jump rate versus output flux | `jump_rate()` returns `⟨L†L⟩`; dephasing and absorption jumps are not emitted photons. |
+| Field versus occupation | `abs(⟨a⟩)²` is the coherent part. `⟨a†a⟩` also includes incoherent photons. |
+| Jump rate versus output flux | `jump_rate()` returns `⟨L†L⟩`. Dephasing and absorption jumps are not emitted photons. |
 | A dressed label near an avoided crossing | Inspect `assignment_overlaps` or `state_components()`. Lowering the overlap threshold does not improve the assignment. |
-| A small boundary population | Call `result.check_truncation()` explicitly, then increase local levels and compare the observable. The check covers only available samples. |
+| A small boundary population | Call `check_truncation(result)` explicitly, then increase local levels and compare the observable. The check covers only available samples. |
 | A smooth trace | Refine the output grid separately from the solver tolerances. |
 | An exact reduction near a crossing | Follow `validity["<mode>_labeling"]["margin"]` along the sweep. A failed check raises `EliminationError` with the label and its weight. |
 | The origin of a mediated shift | `result.pathways({"q": 1})` lists the virtual states of an SW reduction. The amounts sum to the second-order part of the element. |

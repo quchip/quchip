@@ -664,6 +664,9 @@ The traced calculation keeps the device graph, Hilbert-space dimensions, and
 RWA band selection fixed. dynamiqs supports this automatic-differentiation
 path. QuTiP remains available for ordinary solves and sweeps but does not
 give gradients. Near degenerate subspaces, be careful with eigenvector
-derivatives. Gradients inherit the solver tolerances, local-basis
-truncation, frame, approximation, and loss scaling of the forward
-calculation.
+derivatives. Devices that are diagonal by construction, such as
+`DuffingTransmon`, keep their authored level order under tracing. A traced
+call raises when its values put those levels out of energy order, for example
+when a transmon spectrum turns over within its levels. Gradients inherit the
+solver tolerances, local-basis truncation, frame, approximation, and loss
+scaling of the forward calculation.

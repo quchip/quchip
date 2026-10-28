@@ -5,26 +5,28 @@ microwave measurements, reductions and fitting.
 
 New to quchip? Start with {doc}`your first chip <defining-and-inspecting-a-chip>`.
 
-- {doc}`Extending quchip <../extensions>`: declare your own operators, models and controls.
-
 ## Spectra and dynamics
 
 - {doc}`Spectra and parameter sweeps <statics-and-parameter-studies>`:
   compare dressed observables and track states through avoided crossings.
 - {doc}`Pulses, leakage, and readout <dynamics-pulses-and-readout>`:
-  compare pulse bandwidth, leakage, and conditional resonator response.
+  compare pulse bandwidth and leakage, read the pulses as gates, and follow
+  the conditional resonator response.
 - {doc}`What happens during a qubit measurement? <continuous-measurement>`:
   follow single trajectories, map their density, and condition on an endpoint.
 
 ## Microwave networks
 
 - {doc}`Readout and fridge wiring <steady-state-and-vna>`:
-  calculate VNA traces and qubit readout with receiver noise.
+  calculate VNA traces, their resonances, and qubit readout with receiver
+  noise.
 
 ## Model reduction and fitting
 
 - {doc}`Model reduction <chip-transformations>`:
-  compare a reduced model with the full pulse simulation.
+  compare a reduced model with the full pulse simulation, remove a readout
+  from its feedline, solve in an exact excitation space, and truncate the
+  excitation number.
 - {doc}`Gradients and parameter fitting <differentiability>`:
   differentiate observables and fit shared model parameters.
 
@@ -35,6 +37,8 @@ from the talk.
 
 For studies of specific physical questions, see {doc}`../studies/index`.
 For API choices and common pitfalls, see the {doc}`cookbook <../cookbook>`.
+To declare your own operators, models and controls, see
+{doc}`Extending quchip <../extensions>`.
 
 ```{toctree}
 :hidden:

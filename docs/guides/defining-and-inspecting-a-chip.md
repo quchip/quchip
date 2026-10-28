@@ -171,6 +171,11 @@ bare parameters (GHz):
 
 </details>
 
+`fit.history` holds the normalized loss at each parameter vector that the
+solver evaluated. `fit.history_params` and `fit.history_residuals` hold the
+parameters and the target residuals in GHz at the same points, so you can
+follow a fit without running it again.
+
 Continue with [spectra and parameter sweeps](statics-and-parameter-studies.md)
 to sweep the coupled spectrum. For imported or custom models, see
 [scqubits interoperability](../api.md) and [extensions](../extensions.md).

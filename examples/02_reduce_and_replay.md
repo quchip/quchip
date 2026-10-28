@@ -19,7 +19,9 @@ jupyter:
 
 Can a smaller model reproduce the same pulse experiment? Drive the end of a
 four-transmon chain, keep its nearest neighbour, and compare the reduced
-model with the full chip. Frequencies are in GHz and times in ns.
+model with the full chip. Later sections remove a readout from its feedline,
+solve a 24-transmon ring in an exact excitation space, and truncate the
+excitation number of the driven chain. Frequencies are in GHz and times in ns.
 
 ## Declare the chain
 
@@ -107,7 +109,7 @@ plt.show()
 :alt: The full q0-q1-q2-q3 chain and its reduced q0-q1 model, both driven on q0.
 
 The reduced model has 9 basis states. The removed spectators contribute
-Hamiltonian corrections; labels show bare parameters.
+Hamiltonian corrections, and the labels show bare parameters.
 [PDF](../images/active_patch_topology.pdf)
 ```
 
@@ -173,7 +175,7 @@ plt.show()
 ```{figure} ../images/reduce_and_replay.svg
 :alt: Driven-qubit population on the full chip and reduced model, with their absolute difference below.
 
-The full and reduced trajectories overlap; the lower panel resolves their
+The full and reduced trajectories overlap, and the lower panel resolves their
 absolute difference. Values below 10⁻¹⁰ are floored for display only.
 [PDF](../images/reduce_and_replay.pdf)
 ```
@@ -218,12 +220,51 @@ notes:
 
 </details>
 
+`pathways()` attributes one element of the retained Hamiltonian to the
+virtual states of the chip that the step reduces. The second step shifts
+`q1` through one state, with the excitation on `q2`. Each state lists the
+levels of `q0`, `q1` and `q2`.
+
+```python
+for state, contribution in patch.steps[1].pathways({"q1": 1}):
+    print(f"{state}: {1e3 * contribution.real:.3f} MHz")
+```
+
+<!-- executed-output:start -->
+
+Output:
+
+```text
+(0, 0, 1): -0.412 MHz
+```
+
+<!-- executed-output:end -->
+
 To remove a specific device directly, use
 `eliminate(chip, "q3", method="sw")`, then inspect the returned `.chip` and
 `.describe()`. `method="exact"` uses the kept block of the diagonalized model
-instead of the second-order Schrieffer–Wolff approximation. Both methods use
-the declared finite Hilbert space. Eliminating a coupling keeps both
-endpoints.
+instead of the second-order Schrieffer–Wolff approximation. Its kept-block
+energies are exact to all orders in the retained Hamiltonian, but it does not
+restore bands that `RWA()` discarded. Both methods use the declared finite
+Hilbert space. Eliminating a coupling keeps both endpoints.
+
+On a large chip, `eliminate(chip, "q3", local=True)` computes the SW
+reduction from a patch around the device. The result matches the full
+reduction up to round-off omissions, which its notes report in GHz, and
+repeated local eliminations stay local.
+
+To keep a chosen set of devices, call `eliminate_spectators(chip, keep)`. It
+removes the spectators one `eliminate()` step at a time and returns every
+step. `active_patch()` uses the same default order, which here removes `q3`
+and then `q2`. When another spectator links a spectator to a kept device near
+it in frequency, the default order removes the linking spectator first. The
+chain then keeps the fourth-order exchange shift between the spectator and the
+kept device. Under `local=True`, the order also limits how far the operators
+of the kept devices spread. Pass `order=` to either function to set the steps.
+A device that stays on the chip, such as a kept coupler, can link a removed
+spectator to a kept device. Each SW step then estimates the shift that it
+omits from that kept device, and `omitted_shifts` holds these estimates in
+GHz.
 
 ## Check the reduction error
 
@@ -291,10 +332,341 @@ print(f"RESULT reduction={json.dumps(reduction_receipt, sort_keys=True, separato
 Output:
 
 ```text
-RESULT reduction={"active_labels":["q0","q1"],"all_folds_valid":true,"eliminated_labels":["q3","q2"],"figure":"../docs/images/reduce_and_replay.svg","full_dimension":81,"maximum_g_over_delta":0.03432606492529982,"maximum_population_residual":3.71427726397755e-06,"minimum_block_gap_ghz":0.3495885714285709,"original_chip_unchanged":true,"peak_full_population":0.7480171143273048,"reduced_dimension":9,"reduction_method":"sw","residual_tolerance":0.0058775348055535755,"same_schedule":true}
+RESULT reduction={"active_labels":["q0","q1"],"all_folds_valid":true,"eliminated_labels":["q3","q2"],"figure":"../docs/images/reduce_and_replay.svg","full_dimension":81,"maximum_g_over_delta":0.03432606492529982,"maximum_population_residual":3.7142772963960624e-06,"minimum_block_gap_ghz":0.3495885714285709,"original_chip_unchanged":true,"peak_full_population":0.7480171143273022,"reduced_dimension":9,"reduction_method":"sw","residual_tolerance":0.0058775348055535755,"same_schedule":true}
 ```
 
 <!-- executed-output:end -->
+
+</details>
+
+## Remove a readout from its feedline
+
+`eliminate()` also removes readout resonators that couple to a feedline. A
+hanger emits into both directions of its line. Give each readout two ports
+with half the external rate, and cascade the ports in opposite orders along
+the two directions. A one-way cascade gives an all-pass response in the
+lossless limit, so it does not describe the hanger notch.
+
+```python
+from quchip import VNA, PortNetwork, Resonator, eliminate
+
+readout_qubits = [
+    DuffingTransmon(freq=5.0, anharmonicity=-0.2, levels=3, T1=60_000.0, label="qa"),
+    DuffingTransmon(freq=5.3, anharmonicity=-0.2, levels=3, label="qb"),
+]
+readouts = [
+    Resonator(freq=7.0, levels=2, internal_quality_factor=200_000, label="ra"),
+    Resonator(freq=7.12, levels=2, internal_quality_factor=200_000, label="rb"),
+]
+readout_couplings = [
+    Capacitive(readout_qubits[0], readouts[0], g=0.105, label="qa_ra"),
+    Capacitive(readout_qubits[1], readouts[1], g=0.05, label="qb_rb"),
+]
+kappa_ext = 2 * np.pi * 0.001
+
+feedline = PortNetwork(label="hanger")
+right = [feedline.port(f"{mode.label}_right", target=mode, rate=kappa_ext / 2) for mode in readouts]
+left = [feedline.port(f"{mode.label}_left", target=mode, rate=kappa_ext / 2) for mode in readouts[::-1]]
+feedline.cascade(*right)
+feedline.cascade(*left)
+feedline.expose("right", input=right[0].input, output=right[-1].output)
+feedline.expose("left", input=left[0].input, output=left[-1].output)
+hanger = Chip([*readout_qubits, *readouts], readout_couplings, port_network=feedline, approximation=RWA())
+```
+
+Sweep both readout resonances, then remove `ra` with the exact method and
+sweep the reduced chip:
+
+```python
+probe_frequencies = np.concatenate(
+    [float(hanger.freq(mode)) + np.linspace(-0.003, 0.003, 101) for mode in readouts]
+)
+full_response = VNA(hanger).sweep(probe_frequencies)
+reduction = eliminate(hanger, readouts[0], method="exact")
+reduced_response = VNA(reduction.chip).sweep(probe_frequencies)
+s_difference = np.max(np.abs(full_response.matrix - reduced_response.matrix))
+
+print(f"Maximum complex S difference: {s_difference:.2g}")
+```
+
+<!-- executed-output:start -->
+
+Output:
+
+```text
+Maximum complex S difference: 6.8e-06
+```
+
+<!-- executed-output:end -->
+
+Rows and columns follow the exposure order, `right` then `left`.
+`matrix[..., 0, 0]` is the transmission of the rightward field, and
+`matrix[..., 1, 0]` is its reflection into the leftward field. The removed
+readout keeps one coupled response at its original position, so the line
+keeps its dip and its reflection into the opposite direction. Both
+transformed ports retain the qubits' directional Purcell decay.
+
+Time-domain dynamics omit this response. A time-domain input, output field, or
+measurement record on this feedline therefore raises `NotImplementedError`.
+Keep the readout mode for them. Other time-domain results, such as the decay
+of an excited `rb`, miss the return path of the response: `ra` scatters part
+of the field that `rb` emits back into `rb`. `reduction.validity["ra_response"]`
+compares the self-energy of this path with the damping of each kept emitter,
+at the emitter's frequency. It is a diagnostic, not an error bound, and
+`is_valid` requires a value below 0.1.
+
+```python
+return_path = reduction.validity["ra_response"]
+
+print(f"Return-path self-energy over width: {return_path['self_energy_over_width']:.2g}")
+```
+
+<!-- executed-output:start -->
+
+Output:
+
+```text
+Return-path self-energy over width: 0.0042
+```
+
+<!-- executed-output:end -->
+
+Here `rb` lies about 115 MHz from the removed pole, so the return path is
+0.4% of its damping.
+
+A readout with one port instead keeps its scattering as a reference section
+at its dressed transition. The section is `PortNetwork.mode_reflection(...)`
+when the port is alone on its plane, and `mode_transmission(...)` on a shared
+one-way feedline. The transformed ports act on every surviving device, so a
+later elimination can remove the next readout. A measurement record of that
+line, or of a loss channel on the removed readout, would omit the section, so
+it raises `NotImplementedError`. An output field applies the section at its
+carrier frequency, a narrowband approximation.
+
+This vacuum weak-probe calculation supports global SW, local SW, and global
+exact elimination. Inspect `reduction.notes` and `reduction.validity` before
+you use the reduced model. The retained response keeps the dispersive limits
+described in the [physics
+reference](../physics.md#105-collapse-transforms-and-validity-metrics). It
+also omits the share of survivor decay that dresses the pole. Here the T1 of
+`qa` damps the pole of `ra`, and this omitted damping sets the S difference
+above. Keep the readout mode for pumped, finite-power, noisy, or
+excited-reference field calculations. Unsupported port layouts raise
+`NotImplementedError`.
+
+<details>
+<summary>Check the field error and the return path</summary>
+
+The pole of `ra` carries a fraction of about $(g/\Delta)^2$ of `qa`, so the
+T1 of `qa` adds about $(g/\Delta)^2/T_1$ to its linewidth. At the dip, the
+reduced S parameters then differ by about $\kappa_e(g/\Delta)^2/(T_1\kappa^2)$,
+with $\kappa_e$ the external rate and $\kappa$ the loaded linewidth of `ra`.
+Corrections to this estimate are of relative order $(g/\Delta)^2$. Without
+the T1 of `qa`, the difference falls to 2e-8.
+
+The return path scales as $(\kappa_e/2)^2/(\Delta_p h_b)$. Here $\Delta_p$ is
+the angular detuning of `rb` from the dressed pole of `ra`, and $h_b$ is the
+amplitude damping of `rb`. The photon weight of the pole lowers it by a
+relative amount of about $(g/\Delta)^2$.
+
+```python
+mixing = (0.105 / (7.0 - 5.0))**2
+loaded_rate = kappa_ext + 2 * np.pi * float(readouts[0].freq) / 200_000
+omitted_damping_scale = kappa_ext * mixing / (float(readout_qubits[0].T1) * loaded_rate**2)
+assert abs(s_difference - omitted_damping_scale) < 10 * mixing * omitted_damping_scale
+
+pole_detuning = 2 * np.pi * abs(float(readouts[1].freq) - float(hanger.freq(readouts[0])))
+rb_damping = (kappa_ext + 2 * np.pi * float(readouts[1].freq) / 200_000) / 2
+return_path_estimate = (kappa_ext / 2)**2 / (pole_detuning * rb_damping)
+assert return_path["is_valid"]
+assert abs(return_path["self_energy_over_width"] - return_path_estimate) < 2 * mixing * return_path_estimate
+```
+
+</details>
+
+## Use an exact excitation space
+
+Some reductions are exact. When a chip conserves total excitation number, a
+one-excitation state stays in a small invariant space. quchip proves that
+space from the initial state and every retained operator, then solves in it
+without an excitation cutoff.
+
+Couple 24 identical transmons in a ring at 10 MHz and start with one
+excitation on `q0`. `compact_state(..., dressed=False)` prepares this bare
+state without building the 3²⁴-state product space. Without
+`dressed=False`, the label names a dressed eigenstate. The one-excitation
+eigenstates of the identical ring extend around it, so that state would keep
+constant populations, and quchip warns about its small assignment overlap.
+For the same reason, the default rotating frame has no dressed frequency for
+each transmon, so the ring sets `frame="lab"`.
+
+```python
+ring_size = 24
+ring_qubits = [
+    DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label=f"q{index}")
+    for index in range(ring_size)
+]
+ring_couplings = [
+    Capacitive(ring_qubits[index], ring_qubits[(index + 1) % ring_size], g=0.010, label=f"g{index}")
+    for index in range(ring_size)
+]
+ring = Chip(ring_qubits, ring_couplings, frame="lab", approximation=RWA())
+
+ring_times = np.linspace(0.0, 100.0, 201)
+bare_start = ring.compact_state({"q0": 1}, dressed=False)
+ring_result = QuantumSequence(ring).simulate(tlist=ring_times, initial_state=bare_start)
+
+for name, result in (("Driven chain", full_result), ("Idle ring", ring_result)):
+    space = result.stats["excitation_reduction"]
+    print(f"{name}: {space['dimension']} of {space['full_dimension']} states")
+```
+
+<!-- executed-output:start -->
+
+Output:
+
+```text
+Driven chain: 81 of 81 states
+Idle ring: 24 of 282429536481 states
+```
+
+<!-- executed-output:end -->
+
+The charge drive on the chain changes the excitation number, so its solve
+uses the full product space. The idle ring keeps its single excitation, and
+`stats["excitation_reduction"]` records the proof.
+
+In the one-excitation space, the RWA Hamiltonian is a 24 × 24 hopping matrix
+with `g` between ring neighbours. The common 5 GHz diagonal adds only a
+global phase. Its propagator gives an independent reference for every
+transmon's population.
+
+```python
+from scipy.linalg import expm
+
+hopping = 0.010 * (np.eye(ring_size, k=1) + np.eye(ring_size, k=-1))
+hopping[0, -1] = hopping[-1, 0] = 0.010
+reference = np.array([np.abs(expm(-2j * np.pi * hopping * t)[:, 0])**2 for t in ring_times]).T
+ring_population = np.array(
+    [np.asarray(ring_result.population(f"q{index}", 1)).real for index in range(ring_size)]
+)
+population_difference = np.max(np.abs(ring_population - reference))
+
+print(f"Maximum population difference: {population_difference:.1e}")
+```
+
+<!-- executed-output:start -->
+
+Output:
+
+```text
+Maximum population difference: 3.1e-13
+```
+
+<!-- executed-output:end -->
+
+The solve diagonalizes the constant 24-state generator, so the difference is
+floating-point roundoff. Decay adds the vacuum to the space. With T1 on every
+transmon, the master equation runs on 25 states:
+
+```python
+lossy_ring = ring.with_params({f"q{index}.T1": 20_000.0 for index in range(ring_size)})
+lossy_result = QuantumSequence(lossy_ring).simulate(
+    tlist=ring_times, initial_state=lossy_ring.compact_state({"q0": 1}, dressed=False),
+)
+
+print(f"Lossy ring: {lossy_result.solver} on {lossy_result.stats['excitation_reduction']['dimension']} states")
+```
+
+<!-- executed-output:start -->
+
+Output:
+
+```text
+Lossy ring: mesolve on 25 states
+```
+
+<!-- executed-output:end -->
+
+A transverse drive or thermal raising can require the full space, and
+stochastic solvers keep it. `chip.state()`, labeled dressed queries, the
+default initial state, weak-probe VNA sweeps, and `fit_a_dress()` also use
+only the excitation sectors they need, as the
+[cookbook](../cookbook.md#fit-a-large-conserving-model) describes. The
+finite-probe VNA workflows, such as `VNA.measure()`, truncate their own solve
+of a large conserving chip and check it at one more excitation, as
+[Truncate the total excitation](../cookbook.md#truncate-the-total-excitation)
+describes.
+
+<details>
+<summary>Check the exact spaces</summary>
+
+Diagonalizing a 24-state generator leaves roundoff far below `1e-10`.
+
+```python
+assert ring_result.stats["excitation_reduction"]["exact"]
+assert ring_result.stats["excitation_reduction"]["dimension"] == ring_size
+assert lossy_result.stats["excitation_reduction"]["dimension"] == ring_size + 1
+assert population_difference < 1e-10
+```
+
+</details>
+
+## Truncate the excitation number
+
+The driven chain above needs its full product space. On a larger chip, that
+space can be too large for the memory. `ExcitationCutoff(max_total=K)` keeps
+only the product states with at most `K` excitations. It changes the model,
+so compare results at increasing `K`. Here the full 81-state solve is the
+untruncated reference:
+
+```python
+from quchip import ExcitationCutoff
+
+cutoff_errors = {}
+for max_total in (1, 2):
+    limited_chip = chip.with_space(ExcitationCutoff(max_total=max_total))
+    limited_sequence = QuantumSequence(limited_chip)
+    _ = limited_sequence.schedule(
+        "q0-charge", envelope=Gaussian(duration=60.0, sigmas=3.0, amplitude=0.04 / 3),
+        freq=chip.freq(qubits[0]),
+    )
+    limited_result = limited_sequence.simulate(tlist=times)
+    limited_population = np.asarray(limited_result.population("q0", level=1)).real
+    cutoff_errors[max_total] = np.max(np.abs(limited_population - full_population))
+    dimension = limited_result.stats["excitation_reduction"]["dimension"]
+    print(f"Population error at K = {max_total} ({dimension} states): {cutoff_errors[max_total]:.1e}")
+```
+
+<!-- executed-output:start -->
+
+Output:
+
+```text
+Population error at K = 1 (5 states): 8.9e-04
+Population error at K = 2 (15 states): 2.7e-06
+```
+
+<!-- executed-output:end -->
+
+`K = 1` removes the second excitation that the pulse adds. Almost all of it
+is in the second excited level of `q0`, which reaches a population of 5e-4.
+At `K = 2`, integration error of the default solver dominates the
+difference, and tighter solver tolerances reduce it to 1e-8.
+`check_truncation(result)` reports the population next to the cutoff as a
+warning heuristic, not an error bound. The
+[cookbook](../cookbook.md#truncate-the-total-excitation) shows a static case
+where the error is not monotone in `K`.
+
+<details>
+<summary>Check the cutoff</summary>
+
+With QuTiP's default relative tolerance of 1e-6, integration error limits the
+comparison.
+
+```python
+assert cutoff_errors[2] < 1e-5
+```
 
 </details>
 

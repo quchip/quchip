@@ -3204,9 +3204,11 @@ samples each window with `h = sqrt(8 rtol max|f| / max|f''|)`, with `rtol` the
 solver's (default `1e-6`) and `max|f''|` estimated from second differences of
 the samples. The rate is never below 40 points/ns. For a Gaussian,
 `max|f''| / max|f| = 1/σ²`, so `h = σ sqrt(8 rtol)`. A window that would need
-more than 100,000 samples, such as a 12 ns Gaussian at `rtol = 1e-10`, uses
-the exact envelope as a Python callable instead, and quchip warns. Under JAX
-tracing of the times, QuTiP also uses the callable.
+more than 2,000,000 samples uses the exact envelope as a Python callable
+instead, and quchip warns. A Gaussian that spans ±3σ needs about 2.1 million
+samples at `rtol = 1e-12`, whatever its duration, and a flat 60 μs window
+needs 2.4 million at the base rate. Under JAX tracing of the times, QuTiP
+also uses the callable.
 
 ## 13. JAX traceability boundaries
 
