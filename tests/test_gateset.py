@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import warnings
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -730,6 +731,21 @@ def test_an_edited_chip_makes_its_gates_stale_until_they_are_calibrated_again():
         calibrated = gates.calibrate()
     assert calibrated[("SX", ("q",))].seed == "previous calibration"
     assert all(calibration.status != "stale" for calibration in calibrated.values())
+
+
+@pytest.mark.unit
+def test_report_channel_and_eigenvalue_infidelity():
+    """The report's channel maps rho to B rho B^dag, and its eigenvalue infidelity leaves out a fixed basis tilt."""
+    _, gates = one_qubit_set()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        calibration = gates.calibrate("SX")[("SX", ("q",))]
+    block, rho = calibration.block, np.array([[0.7, 0.2 - 0.1j], [0.2 + 0.1j, 0.3]])
+    mapped = calibration.channel.superoperator @ rho.reshape(-1, order="F")
+    assert np.allclose(mapped.reshape(2, 2, order="F"), block @ rho @ block.conj().T, atol=1e-12)
+    tilt = expm(-0.05j * PAULIS["Z"])
+    tilted = replace(calibration, block=tilt @ calibration.ideal @ tilt.conj().T)
+    assert 1 - average_fidelity(tilted.block, tilted.ideal) > 1e-4 and tilted.eigenvalue_infidelity < 1e-12
 
 
 def test_automatic_cutoff_recalibrates_until_the_gate_converges():

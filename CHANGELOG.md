@@ -430,7 +430,8 @@ This file records notable user-visible changes to quchip.
   circuit with uncalibrated gates calibrates them at their seeds, with a
   notice. When the chip changes in place, its calibrations become stale;
   calibrating again starts from the previous knobs and keeps them when the
-  fit converges within the target.
+  fit converges within the target. Reports also give the eigenvalue
+  infidelity and the gate's channel as a `ChannelResult`.
 - `QuantumSequence.propagator()` returns the lab-frame propagator of a
   schedule from one solve, or its superoperator when the chip has collapse
   channels. `QuantumSequence.extend()` appends another sequence.

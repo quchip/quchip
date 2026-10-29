@@ -42,6 +42,11 @@ a warning:
   warns. Calibrate it again.
 
 `gates.calibration("ZX90", ("q0", "q1")).summary()` prints the full report.
+For gates on up to five qubits it also gives the eigenvalue infidelity, the
+score that gate-set tomography reports. It leaves out small rotations that only
+tilt the gate against state preparation and measurement, so it can be much
+smaller than the average gate infidelity. `.channel` gives the gate as a
+`ChannelResult`.
 
 Calibrating a native again starts from its previous knobs. When that fit
 converges within the target, the gate set keeps it, so a gate that still fits

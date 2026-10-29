@@ -24,7 +24,7 @@ import itertools
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from scipy.linalg import logm
@@ -34,6 +34,9 @@ from quchip.gateset.ideals import pauli_components
 from quchip.gateset.native import ResolvedKnob
 from quchip.results.propagator import average_fidelity
 from quchip.inverse_design.fit import _identifiability_receipt
+
+if TYPE_CHECKING:
+    from quchip.results.channel import ChannelResult
 
 #: Finite-difference step of the scaled knobs.
 DIFF_STEP = 1e-4
@@ -221,12 +224,44 @@ class GateCalibration:
         """``1 - F_avg``."""
         return 1.0 - self.fidelity
 
+    @property
+    def channel(self) -> ChannelResult:
+        """Channel ``ρ ↦ B ρ B†`` of the calibrated block ``B`` on the computational states of ``block_qubits``.
+
+        Population that leaves the computational states is lost, so the
+        channel decreases the trace by :attr:`leakage_per_input`. The record
+        has no solves of its own: ``batch`` is ``None``.
+        """
+        from quchip.results.channel import ChannelResult
+
+        block = np.asarray(self.block)
+        qubits = self.block_qubits or self.qubits
+        duration = 0.0 if self.sequence is None else float(self.sequence.total_duration)
+        return ChannelResult(superoperator=np.kron(block.conj(), block),
+                             labels=tuple(itertools.product((0, 1), repeat=len(qubits))), devices=tuple(qubits),
+                             leakage=np.asarray(self.leakage_per_input), frame="dressed", frequencies={},
+                             times=(0.0, duration), channels=(), batch=None)
+
+    @property
+    def eigenvalue_infidelity(self) -> float:
+        """Eigenvalue infidelity of :attr:`channel` against the ideal; see :meth:`ChannelResult.eigenvalue_infidelity`.
+
+        A spectral score, not an operational fidelity. It leaves out small
+        rotations that only tilt the gate against preparation and
+        measurement, so it is close to what gate-set tomography reports,
+        while ``infidelity`` counts them.
+        """
+        return self.channel.eigenvalue_infidelity(self.ideal)
+
     def summary(self) -> str:
         """Return a text report."""
         spectators = [q for q in self.block_qubits if q not in self.qubits]
         joint = f" with spectators {', '.join(spectators)}" if spectators else ""
+        # The eigenvalue score diagonalizes the d² × d² channel; a block of up to five qubits keeps that quick.
+        spectral = (f", eigenvalue infidelity = {self.eigenvalue_infidelity:.3e}"
+                    if len(self.block_qubits or self.qubits) <= 5 else "")
         lines = [
-            f"{self.name} on {', '.join(self.qubits)}{joint}: 1 - F_avg = {self.infidelity:.3e}, "
+            f"{self.name} on {', '.join(self.qubits)}{joint}: 1 - F_avg = {self.infidelity:.3e}{spectral}, "
             f"leakage = {self.leakage:.2e}, status = {self.status}",
             f"  {self.solves} solves in {self.seconds:.1f} s from {self.seed}; |r|^2 = {self.cost:.3e}; "
             f"unitarity defect = {self.unitarity_defect:.1e}",
