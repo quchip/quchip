@@ -733,6 +733,30 @@ def test_an_edited_chip_makes_its_gates_stale_until_they_are_calibrated_again():
     assert all(calibration.status != "stale" for calibration in calibrated.values())
 
 
+def test_an_edited_chip_declares_the_built_in_natives_again():
+    """After a frequency edit, the built-in SX takes its carrier from the chip and calibrates as a new gate set does."""
+
+    def one_transmon(freq):
+        qubit = DuffingTransmon(freq=freq, anharmonicity=-0.33, levels=3, label="q")
+        chip = Chip([qubit])
+        chip.wire(ChargeDrive(qubit, label="xy"))
+        gates = GateSet(chip, ["q"])
+        gates.add(drag_sx(chip, "q"))
+        return qubit, gates
+
+    qubit, gates = one_transmon(5.0)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        gates.calibrate()
+        qubit.freq = 5.0003
+        edited = gates.calibrate()[("SX", ("q",))]
+        fresh = one_transmon(5.0003)[1].calibrate()[("SX", ("q",))]
+    low, high = edited.placement_infidelity
+    assert edited.status == "ok" and edited.seed == "previous calibration"
+    assert high - low < 1e-9
+    assert edited.knobs["beta"].value == pytest.approx(fresh.knobs["beta"].value, rel=1e-3)
+
+
 @pytest.mark.unit
 def test_report_channel_and_eigenvalue_infidelity():
     """The report's channel maps rho to B rho B^dag, and its eigenvalue infidelity leaves out a fixed basis tilt."""

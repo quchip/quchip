@@ -1087,6 +1087,13 @@ class GateSet:
             self._set_solver_chip(self.chip if space is None or self.chip.space is not None
                                   else self.chip.with_space(space))
         self._cutoff_checked = False
+        # The built-in natives take their carriers and seeds from the chip, so declare them again from the changed one.
+        for key, native in list(self._natives.items()):
+            if native._declare is not None:
+                declared = native._declare(self.chip)
+                if not declared.is_composite:
+                    self._check_template(declared)
+                self._natives[key] = declared
         stale = [key for key in self._calibrations if self._calibrated_on.get(key) != fingerprint]
         for key in stale:
             self._calibrations[key].status = "stale"

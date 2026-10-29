@@ -428,8 +428,9 @@ This file records notable user-visible changes to quchip.
   raise an excitation cutoff with a warning, and gates that run at the same
   time solve with one more excitation for each gate after the first. A
   circuit with uncalibrated gates calibrates them at their seeds, with a
-  notice. When the chip changes in place, its calibrations become stale;
-  calibrating again starts from the previous knobs and keeps them when the
+  notice. When the chip changes in place, its calibrations become stale, and
+  the built-in natives take their carriers and seeds from the changed chip.
+  Calibrating again starts from the previous knobs and keeps them when the
   fit converges within the target. Reports also give the eigenvalue
   infidelity and the gate's channel as a `ChannelResult`.
 - `QuantumSequence.propagator()` returns the lab-frame propagator of a

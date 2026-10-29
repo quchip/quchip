@@ -270,6 +270,9 @@ class NativeGate:
         self.explore = bool(explore)
         self._duration = duration
         self._build: Callable[[Any], tuple[Any, Mapping[str, Knob]]] | None = None
+        # Function of the chip that declares this native again. The built-in natives set it, so that a gate set
+        # can follow an in-place change of the chip with new carriers and seeds.
+        self._declare: Callable[[Any], NativeGate] | None = None
         self.ideal_matrix()
 
     @classmethod

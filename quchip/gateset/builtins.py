@@ -114,7 +114,10 @@ def drag_sx(
         ideal = "X"
     else:
         ideal = np.cos(angle / 2) * np.eye(2) - 1j * np.sin(angle / 2) * np.array([[0, 1], [1, 0]])
-    return NativeGate(name, (label,), sequence, knobs=knobs, ideal=ideal, free_z=(label,))
+    gate = NativeGate(name, (label,), sequence, knobs=knobs, ideal=ideal, free_z=(label,))
+    gate._declare = lambda changed: drag_sx(changed, label, line=line_label, duration=duration, sigmas=sigmas,
+                                             name=name, angle=angle, detuning=detuning)
+    return gate
 
 
 def _conditional_ix(chip: "Chip", control: str, target: str, line_label: str) -> complex:
@@ -199,6 +202,7 @@ def cross_resonance(
     zx, ix = complex(response.ZX_per_amplitude), complex(response.IX_per_amplitude)
     halves = 2 if echo else 1
     tone = duration / halves
+    edge_request = edge
     if edge is None:
         detuning = abs(float(chip.freq(control_label)) - float(chip.freq(target_label)))
         edge = 2 * sigmas * 6.0 / (2 * np.pi * detuning)
@@ -244,16 +248,20 @@ def cross_resonance(
         sequence = QuantumSequence(chip)
         pair = tones(sequence, +1.0)
         sequence.barrier(control_label, target_label)
-        return NativeGate(name, qubits, sequence, knobs=knobs_for([pair]), ideal="ZX90", free_z=qubits)
+        gate = NativeGate(name, qubits, sequence, knobs=knobs_for([pair]), ideal="ZX90", free_z=qubits)
+    else:
+        def build(gates: Any) -> tuple[QuantumSequence, dict[str, Knob]]:
+            sequence = QuantumSequence(chip)
+            plus = tones(sequence, +1.0)
+            sequence.extend(gates.schedule([("X", control_label)]))
+            sequence.barrier(control_label, target_label)
+            minus = tones(sequence, -1.0)
+            sequence.extend(gates.schedule([("X", control_label)]))
+            sequence.barrier(control_label, target_label)
+            return sequence, knobs_for([plus, minus])
 
-    def build(gates: Any) -> tuple[QuantumSequence, dict[str, Knob]]:
-        sequence = QuantumSequence(chip)
-        plus = tones(sequence, +1.0)
-        sequence.extend(gates.schedule([("X", control_label)]))
-        sequence.barrier(control_label, target_label)
-        minus = tones(sequence, -1.0)
-        sequence.extend(gates.schedule([("X", control_label)]))
-        sequence.barrier(control_label, target_label)
-        return sequence, knobs_for([plus, minus])
-
-    return NativeGate.composite(name, qubits, build, ideal="ZX90", free_z=qubits)
+        gate = NativeGate.composite(name, qubits, build, ideal="ZX90", free_z=qubits)
+    gate._declare = lambda changed: cross_resonance(
+        changed, control_label, target_label, duration=duration, line=cr_line, cancel=cancel, cancel_line=target_line,
+        echo=echo, edge=edge_request, sigmas=sigmas, name=name)
+    return gate
