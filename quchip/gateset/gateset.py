@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import itertools
+import json
 import warnings
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -20,6 +22,8 @@ from quchip.gateset.native import NativeGate, bind_pulses
 from quchip.gateset.blocks import computational_states, project_computational
 from quchip.results.propagator import average_fidelity, solver_levels
 from quchip.utils.labeling import resolve_label
+from quchip.utils.stack import user_stacklevel
+from quchip.utils.warning_categories import AutoChoiceWarning
 
 if TYPE_CHECKING:
     from quchip.chip.chip import Chip
@@ -230,6 +234,13 @@ class GateSet:
         self._model_reason: str | None = None
         self._warm: dict[tuple[str, tuple[str, ...]], dict[str, float]] = {}
         self._overlap_spaces: dict[int, tuple[Any, np.ndarray]] = {}
+        # Settings of the calibrations in progress, inherited by the natives that a composite needs.
+        self._settings: list[tuple[int, bool | None, float, bool]] = []
+        self._previous: dict[tuple[str, tuple[str, ...]], dict[str, float]] = {}
+        # Digest of the chip the derived state belongs to, and the digest each calibration used.
+        self._fingerprint: str | None = None
+        self._calibrated_on: dict[tuple[str, tuple[str, ...]], str | None] = {}
+        self._stale: dict[tuple[str, tuple[str, ...]], str] = {}
 
     # ------------------------------------------------------------------ setup
 
@@ -375,6 +386,7 @@ class GateSet:
             Gate qubits in gate order.
         """
         key = self._key(name, qubits)
+        self._sync_chip()
         if key not in self._calibrations:
             raise KeyError(f"{key[0]} on {key[1]} is not calibrated.")
         return self._calibrations[key]
@@ -537,7 +549,10 @@ class GateSet:
         ----------
         *selection : str, (name, qubits), or NativeGate
             Natives to calibrate. Empty means all. Natives inside a selected
-            composite run first when they are uncalibrated or stale.
+            composite run first, with the same settings, when they are
+            uncalibrated or stale. A native that was calibrated before also
+            starts from its previous knobs, so a gate that still fits stops
+            after a few solves.
         max_nfev : int, default 200
             Bound on residual evaluations of each fit. ``0`` skips the knob
             search: each knob keeps its best start, the template value or a
@@ -559,6 +574,9 @@ class GateSet:
             each native whose status is not ``"ok"``.
         """
         selected = keys = self._select(selection)
+        self._sync_chip()
+        self._previous = {key: {name: knob.value for name, knob in calibration.knobs.items()}
+                          for key, calibration in self._calibrations.items()}
         self._check_cutoff([key for key in keys if not self._natives[key].is_composite])
         while True:
             results = {}
@@ -568,6 +586,7 @@ class GateSet:
             failing = self._check_cutoff_after(list(results))
             if not failing:
                 self._warm.clear()
+                self._previous.clear()
                 return {key: results[key] for key in selected}
             # Recalibrate every calibrated native in the larger space, starting from its fitted knobs.
             self._warm = {key: {name: knob.value for name, knob in calibration.knobs.items()}
@@ -575,6 +594,7 @@ class GateSet:
             keys = sorted(set(keys) | set(self._calibrations), key=lambda k: self._natives[k].is_composite)
             self._calibrations.clear()
             self._versions.clear()
+            self._previous.clear()
 
     def _select(self, selection: Sequence[Any]) -> list[tuple[str, tuple[str, ...]]]:
         if not selection:
@@ -604,6 +624,7 @@ class GateSet:
             raise RecursionError(f"Composite natives form a cycle: {cycle}.")
         native = self._natives[key]
         self._calibrating.append(key)
+        self._settings.append((max_nfev, explore, target, progress))
         try:
             dependencies: dict[Any, int] = {}
             if native.is_composite:
@@ -616,16 +637,22 @@ class GateSet:
                 dependencies = {dep: self._versions.get(dep, 0) for dep in used}
                 native.sequence, native.knobs = sequence, dict(knobs)
                 self._check_template(native)
-            calibration = self._fit(native, max_nfev=max_nfev, explore=native.explore if explore is None else explore)
+            calibration = self._fit(native, max_nfev=max_nfev, explore=native.explore if explore is None else explore,
+                                    target=target)
             calibration.dependencies = dependencies
         finally:
             self._calibrating.pop()
+            self._settings.pop()
         self._versions[key] = self._versions.get(key, 0) + 1
         calibration.version = self._versions[key]
         self._calibrations[key] = calibration
-        for other in self._calibrations.values():
+        self._calibrated_on[key] = self._fingerprint
+        self._stale.pop(key, None)
+        for other_key, other in self._calibrations.items():
             if other.dependencies.get(key, calibration.version) != calibration.version:
                 other.status = "stale"
+                self._stale[other_key] = ("holds natives that were calibrated again after it; its pulses keep the "
+                                          "earlier ones. Calibrate it again to use the new ones.")
         self._entries.pop(key, None)
         self._placed.clear()
         self._post_checks(native, calibration)
@@ -637,7 +664,7 @@ class GateSet:
             calibration.status = "poor_fit"
         if calibration.status != "ok":
             warnings.warn(f"{native.name} on {native.qubits}: calibration status {calibration.status!r}.\n"
-                          f"{calibration.summary()}", UserWarning, stacklevel=3)
+                          f"{calibration.summary()}", UserWarning, stacklevel=user_stacklevel())
         if progress:
             print(calibration.summary().splitlines()[0])
         return calibration
@@ -682,7 +709,7 @@ class GateSet:
                     frontier.append(neighbor)
         return tuple(q for q in others if q in reached)
 
-    def _fit(self, native: NativeGate, *, max_nfev: int, explore: bool) -> GateCalibration:
+    def _fit(self, native: NativeGate, *, max_nfev: int, explore: bool, target: float) -> GateCalibration:
         template = native.sequence
         assert template is not None
         knobs = native.resolved_knobs()
@@ -719,8 +746,23 @@ class GateSet:
             for name, value in seed.values.items():
                 values[names.index(name)] = float(value)
             starts.append((values, seed.provenance))
-        outcome = fit_block(evaluate, ideal, z_bits, knobs, starts=starts, max_nfev=max_nfev, explore=explore,
-                            phase_names=free_z)
+        previous = self._previous.get(native.key)
+        if previous is not None and set(previous) == set(names):
+            starts.append((np.array([previous[name] for name in names], dtype=float), "previous calibration"))
+        outcome = None
+        if previous is not None and max_nfev and starts[-1][1] == "previous calibration":
+            # Check before refitting: a fit from the previous knobs that converges within the target is kept.
+            outcome = fit_block(evaluate, ideal, z_bits, knobs, starts=starts[-1:], max_nfev=max_nfev, explore=False,
+                                phase_names=free_z)
+            if not (outcome.converged and outcome.cost <= target):
+                checked = outcome
+                outcome = fit_block(evaluate, ideal, z_bits, knobs, starts=starts, max_nfev=max_nfev,
+                                    explore=explore, phase_names=free_z)
+                outcome.solves += checked.solves
+                outcome.seconds += checked.seconds
+        if outcome is None:
+            outcome = fit_block(evaluate, ideal, z_bits, knobs, starts=starts, max_nfev=max_nfev, explore=explore,
+                                phase_names=free_z)
         calibration = report(outcome, name=native.name, qubits=native.qubits, knobs=knobs, ideal=ideal,
                              z_bits=z_bits, phase_names=free_z, options=self.options, frame=self.frame,
                              cutoff=self.cutoff)
@@ -891,7 +933,10 @@ class GateSet:
         qubits : str, device, or sequence of them
             Gate qubits in gate order.
         """
-        return self._entry(self._key(name, qubits))
+        key = self._key(name, qubits)
+        self._sync_chip()
+        self._seed_missing([key])
+        return self._entry(key)
 
     # ---------------------------------------------------------------- circuits
 
@@ -974,11 +1019,15 @@ class GateSet:
 
         if policy not in ("asap", "serial"):
             raise ValueError(f"policy must be 'asap' or 'serial'; got {policy!r}.")
+        items = self._expand(circuit)
+        if not self._calibrating:
+            self._sync_chip()
+            self._seed_missing(item[1] for item in items if item[0] == "native")
         sequence = QuantumSequence(self.chip)
         placements: list[tuple[Any, int, int]] = []
         global_phase = 0.0
         count = 0
-        for item in self._expand(circuit):
+        for item in items:
             kind = item[0]
             if kind == "RZ":
                 sequence.vz(item[1], -item[2])
@@ -1001,15 +1050,52 @@ class GateSet:
         return sequence, placements, global_phase
 
     def _calibrated(self, key: tuple[str, tuple[str, ...]]) -> GateCalibration:
+        stale = key in self._calibrations and self._calibrations[key].status == "stale"
+        if self._calibrating and (key not in self._calibrations or stale):
+            max_nfev, explore, target, progress = self._settings[-1]
+            self._calibrate(key, max_nfev=max_nfev, explore=explore, target=target, progress=progress)
         if key not in self._calibrations:
-            if not self._calibrating:
-                raise KeyError(f"{key[0]} on {key[1]} is not calibrated; run calibrate() first.")
-            self._calibrate(key, max_nfev=200, explore=None)
+            raise KeyError(f"{key[0]} on {key[1]} is not calibrated; run calibrate() first.")
         calibration = self._calibrations[key]
         if calibration.status == "stale":
-            warnings.warn(f"{key[0]} on {key[1]} holds natives that were calibrated again after it; its pulses "
-                          "keep the earlier ones. Calibrate it again to use the new ones.", UserWarning, stacklevel=4)
+            warnings.warn(f"{key[0]} on {key[1]} {self._stale.get(key, 'is stale.')}", UserWarning,
+                          stacklevel=user_stacklevel())
         return calibration
+
+    def _seed_missing(self, keys: Iterable[tuple[str, tuple[str, ...]]]) -> None:
+        """Calibrate uncalibrated natives at their seeds, as ``calibrate(max_nfev=0)`` does, and say so."""
+        missing = [key for key in dict.fromkeys(keys) if key not in self._calibrations]
+        if not missing or self._calibrating:
+            return
+        names = ", ".join(f"{name} on {','.join(qubits)}" for name, qubits in missing)
+        warnings.warn(f"Not calibrated: {names}. quchip calibrates them at their seeds and fits only the virtual-Z "
+                      "phases, as calibrate(max_nfev=0) does. Run calibrate() to fit the knobs.", AutoChoiceWarning,
+                      stacklevel=user_stacklevel())
+        self.calibrate(*missing, max_nfev=0)
+
+    def _sync_chip(self) -> None:
+        """Follow an in-place change of the chip: reset what the gate set derived from it, and mark older gates."""
+        fingerprint = _chip_fingerprint(self.chip)
+        if fingerprint == self._fingerprint:
+            return
+        changed = self._fingerprint is not None
+        self._fingerprint = fingerprint
+        if not changed:
+            return
+        if self._solver_chip is not None:
+            space = self._solver_chip.space
+            self._set_solver_chip(self.chip if space is None or self.chip.space is not None
+                                  else self.chip.with_space(space))
+        self._cutoff_checked = False
+        stale = [key for key in self._calibrations if self._calibrated_on.get(key) != fingerprint]
+        for key in stale:
+            self._calibrations[key].status = "stale"
+            self._stale[key] = ("was calibrated before the chip changed; its pulses keep that calibration. "
+                                "Calibrate it again for the changed chip.")
+        if stale:
+            names = ", ".join(f"{name} on {','.join(qubits)}" for name, qubits in stale)
+            warnings.warn(f"The chip changed after calibration; stale: {names}. Calibrate them again.",
+                          UserWarning, stacklevel=user_stacklevel())
 
     def _offsets(self, sequence: Any) -> dict[str, float]:
         from quchip.control.sequence import _FrameShiftEntry
@@ -1268,6 +1354,7 @@ class GateSet:
 
     def describe(self) -> str:
         """Return one line per native: name, qubits, duration, infidelity, leakage, and status."""
+        self._sync_chip()
         lines = [f"GateSet on {', '.join(self.qubits)}; solver {self.frame} frame, "
                  f"{'product space' if self.cutoff is None else f'ExcitationCutoff({self.cutoff})'}"]
         lines.append(f"{'gate':>8s} {'qubits':>12s} {'ns':>7s} {'1 - F_avg':>10s} {'leakage':>9s}  status")
@@ -1284,3 +1371,8 @@ class GateSet:
 
     def __repr__(self) -> str:
         return f"GateSet(qubits={self.qubits}, natives={[f'{n}{q}' for n, q in self._natives]})"
+
+
+def _chip_fingerprint(chip: "Chip") -> str:
+    """Return a digest of the chip's declaration, so that an in-place change can be noticed."""
+    return hashlib.sha256(json.dumps(chip.to_dict(), sort_keys=True, default=repr).encode()).hexdigest()

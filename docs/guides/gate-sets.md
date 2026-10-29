@@ -36,17 +36,24 @@ a warning:
 - `"poor_fit"`: the infidelity is above the target (default `1e-3`) at start
   time 0, at the worst start time of the placement check below, or in the
   worst state of the other qubits.
-- `"stale"`: a native inside this composite was calibrated again after it.
-  The composite keeps the earlier pulses, and a circuit that uses it warns.
-  Calibrate the composite again to use the new ones.
+- `"stale"`: the chip changed after the calibration, for example through
+  `q0.freq = ...`, or a native inside this composite was calibrated again
+  after it. The gate keeps its earlier pulses, and a circuit that uses it
+  warns. Calibrate it again.
 
 `gates.calibration("ZX90", ("q0", "q1")).summary()` prints the full report.
+
+Calibrating a native again starts from its previous knobs. When that fit
+converges within the target, the gate set keeps it, so a gate that still fits
+costs a few solves.
 
 `gates.calibrate(max_nfev=0)` skips the knob search. Each native keeps its
 template values, which for the built-in natives are closed-form seeds from the
 chip, and the fit sets only the virtual-Z phases. On the chip above, the seeds
 give SX and X errors within a factor of three of the calibrated ones and a ZX90
-error near `4e-3`, so calibration matters most for the two-qubit gate.
+error near `4e-3`, so calibration matters most for the two-qubit gate. A
+circuit that uses an uncalibrated gate calibrates it this way, with a notice,
+so `gates.unitary(...)` also works before `calibrate()`.
 
 ## What the fit targets
 

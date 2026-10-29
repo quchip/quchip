@@ -142,8 +142,9 @@ class GateCalibration:
         (the fit used all its evaluations), ``"solver_floor"``, ``"poor_fit"``
         (infidelity above the calibration target at start time 0, at the
         worst start time of ``placement_infidelity``, or in the state of
-        ``worst_spectators``), or ``"stale"`` (a native inside this composite
-        was calibrated again after it).
+        ``worst_spectators``), or ``"stale"`` (the chip changed after the
+        calibration, or a native inside this composite was calibrated again
+        after it).
     sequence : QuantumSequence
         Calibrated pulses with the trailing ``vz`` entries.
     spectators : dict of str to float

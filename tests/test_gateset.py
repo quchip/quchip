@@ -18,6 +18,7 @@ from quchip import (
     Gaussian,
     GaussianDRAG,
     QuantumSequence,
+    AutoChoiceWarning,
     Resonator,
     Square,
 )
@@ -36,6 +37,27 @@ def two_transmons(df: float = 0.2, approximation=None, **noise):
     chip = Chip([q0, q1], couplings=[Capacitive(q0, q1, g=0.003, label="J")], **extra)
     chip.wire(ChargeDrive(q0, label="xy0"), ChargeDrive(q1, label="xy1"))
     return chip
+
+
+def one_qubit_set():
+    """Return a two-level qubit and a gate set with a square SX that starts 20% short and an X of two SX."""
+    qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=2, label="q")
+    chip = Chip([qubit])
+    chip.wire(ChargeDrive(qubit, label="xy"))
+    element = complex(chip.drive_matrix_elements("q")["xy"])
+    seq = QuantumSequence(chip)
+    pulse = seq.schedule("xy", envelope=Square(duration=2.0, amplitude=0.1 / abs(element)), freq=chip.freq("q"),
+                         phase=-float(np.angle(element)))
+    gates = GateSet(chip, ["q"])
+    gates.add(NativeGate("SX", ("q",), seq, knobs={"amplitude": Knob(pulse, "amplitude")}, free_z=("q",)))
+
+    def build(gates):
+        twice = QuantumSequence(chip)
+        twice.extend(gates.schedule([("SX", "q"), ("SX", "q")]))
+        return twice, {}
+
+    gates.add(NativeGate.composite("X", ("q",), build, free_z=("q",)))
+    return qubit, gates
 
 
 def same_up_to_phase(left, right):
@@ -631,22 +653,9 @@ def test_calibration_leaves_a_zero_amplitude_start():
 
 def test_calibration_status_flags():
     """Seeds, cut-off fits, inner refits, other start times, and states of the other qubits each set a status."""
-    qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=2, label="q")
-    chip = Chip([qubit])
-    chip.wire(ChargeDrive(qubit, label="xy"))
+    qubit, gates = one_qubit_set()
+    chip = gates.chip
     element = complex(chip.drive_matrix_elements("q")["xy"])
-    seq = QuantumSequence(chip)
-    pulse = seq.schedule("xy", envelope=Square(duration=2.0, amplitude=0.1 / abs(element)), freq=chip.freq("q"),
-                         phase=-float(np.angle(element)))
-    gates = GateSet(chip, ["q"])
-    gates.add(NativeGate("SX", ("q",), seq, knobs={"amplitude": Knob(pulse, "amplitude")}, free_z=("q",)))
-
-    def build(gates):
-        twice = QuantumSequence(chip)
-        twice.extend(gates.schedule([("SX", "q"), ("SX", "q")]))
-        return twice, {}
-
-    gates.add(NativeGate.composite("X", ("q",), build, free_z=("q",)))
     with pytest.warns(UserWarning, match="poor_fit"):
         seeded = gates.calibrate("SX", max_nfev=0)[("SX", ("q",))]
     assert seeded.knobs["amplitude"].value == seeded.knobs["amplitude"].initial
@@ -685,6 +694,42 @@ def test_calibration_status_flags():
     assert calibration.infidelity < 1e-3 and max(1 - f for f in calibration.spectators.values()) < 1e-3
     state, fidelity = calibration.worst_spectators
     assert state == {"q0": 1, "q2": 1} and 1 - fidelity > 0.05
+
+
+@pytest.mark.unit
+def test_uncalibrated_gates_run_at_their_seeds_with_a_notice():
+    """A circuit calibrates its uncalibrated gates, and the natives inside them, at their seeds, and says so."""
+    _, gates = one_qubit_set()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        implicit = gates.unitary([("X", "q")])
+    notices = [w for w in caught if issubclass(w.category, AutoChoiceWarning)]
+    assert len(notices) == 1 and "X on q" in str(notices[0].message) and notices[0].filename == __file__
+    amplitude = gates.calibration("SX", "q").knobs["amplitude"]
+    assert amplitude.value == amplitude.initial
+    _, explicit = one_qubit_set()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        explicit.calibrate(max_nfev=0)
+    assert abs(implicit.fidelity() - explicit.unitary([("X", "q")]).fidelity()) < 1e-12
+
+
+@pytest.mark.unit
+def test_an_edited_chip_makes_its_gates_stale_until_they_are_calibrated_again():
+    """An in-place change of the chip marks every calibration stale; calibrating again starts from the old knobs."""
+    qubit, gates = one_qubit_set()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        gates.calibrate()
+    qubit.freq = 5.001
+    with pytest.warns(UserWarning, match="chip changed"):
+        gates.unitary([("SX", "q")])
+    assert {gates.calibration(name, "q").status for name in ("SX", "X")} == {"stale"}
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        calibrated = gates.calibrate()
+    assert calibrated[("SX", ("q",))].seed == "previous calibration"
+    assert all(calibration.status != "stale" for calibration in calibrated.values())
 
 
 def test_automatic_cutoff_recalibrates_until_the_gate_converges():
