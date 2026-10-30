@@ -32,7 +32,9 @@ downstream operation.
 from __future__ import annotations
 
 import warnings
+import weakref
 from collections.abc import Mapping
+from functools import partial
 from numbers import Integral
 from typing import Any, Literal
 
@@ -44,7 +46,10 @@ from scipy.optimize import brentq, least_squares
 from quchip.analysis.effective_hamiltonian import effective_hamiltonian_between_states
 from quchip.backend import _backend_context
 from quchip.chip import Chip
+from quchip.chip.serialization import serialize_chip
 from quchip.cutoff import active_cutoff
+from quchip.declarative.models import CouplingModel, DeviceModel
+from quchip.declarative.parameters import parameter_fields
 from quchip.inverse_design.observables import (
     TargetSpec,
     build_dressed_target_specs,
@@ -251,21 +256,11 @@ def _pack_initial_params(
     return names, np.asarray(values, dtype=float)
 
 
-def _rebuild_candidate(chip: Chip, names: list[str], values: Any) -> Chip:
-    """Rebind the selected fit parameters on an isolated chip copy."""
-    return chip.with_params(dict(zip(names, values, strict=True)))
-
-
 def _working_chip(candidate: Chip, label: Any, evaluator: str) -> Chip:
     """Pick the full chip or a one-hop local neighborhood for this target."""
     if evaluator != "local":
         return candidate
     return build_local_subsystem(candidate, device_labels_for_local_eval(candidate, label))
-
-
-def _coupling_by_label(chip: Chip, label: Any):
-    """Return the coupling on *chip* with the given label."""
-    return next(c for c in chip.couplings if c.label == label)
 
 
 def _target_model(candidate: Chip, spec: TargetSpec, evaluator: str, max_hilbert_dim: int) -> Chip:
@@ -310,7 +305,7 @@ def _evaluate_spec(candidate: Chip, spec: TargetSpec, evaluator: str) -> Any:
                 working = _working_chip(candidate, spec.label, evaluator)
                 a, b = _pair_labels(spec.label, "cross_kerr")
                 return working.static_zz(a, b)
-            coupling = _coupling_by_label(candidate, spec.label)
+            coupling = candidate.coupling_map[spec.label]
             working = _working_chip(
                 candidate,
                 (coupling.device_a_label, coupling.device_b_label),
@@ -319,13 +314,13 @@ def _evaluate_spec(candidate: Chip, spec: TargetSpec, evaluator: str) -> Any:
             return working.static_zz(coupling.device_a_label, coupling.device_b_label)
         case "exchange_rate":
             if not isinstance(spec.label, tuple):
-                coupling = _coupling_by_label(candidate, spec.label)
+                coupling = candidate.coupling_map[spec.label]
                 label = (coupling.device_a_label, coupling.device_b_label)
             else:
                 label = spec.label
             return _static_exchange_rate(_working_chip(candidate, label, evaluator), label)
         case "coupling_strength":
-            return _coupling_by_label(candidate, spec.label).coupling_strength
+            return candidate.coupling_map[spec.label].coupling_strength
         case _:
             raise ValueError(f"Unknown spec kind {spec.kind!r}")
 
@@ -452,30 +447,42 @@ def _coerce_mapping(value: Mapping | None, name: str) -> dict:
     raise TypeError(f"{name} must be None or a Mapping, got {type(value).__name__}")
 
 
-def _jax_residual_functions(
-    chip: Chip,
-    names: list[str],
-    target_specs: tuple[TargetSpec, ...],
-    evaluator: str,
-    targets: np.ndarray,
-    scales: np.ndarray,
-    max_hilbert_dim: int = 10_000,
-):
-    """Return JAX residual functions for a JAX-backed chip, else ``None``."""
-    backend = chip.backend
-    if backend.array_module is not jnp:
-        return None
-    targets_jax = jnp.asarray(targets)
-    scales_jax = jnp.asarray(scales)
+class _FitStructure:
+    """A chip as a static ``jax.jit`` argument, keyed on its masked serialization and held weakly in JAX's caches."""
 
-    def residual(values):
-        with _backend_context(backend):
-            candidate = _rebuild_candidate(chip, names, values)
-            observed = jnp.stack([jnp.asarray(_evaluate_checked_spec(candidate, spec, evaluator, max_hilbert_dim))
-                                  for spec in target_specs])
-        return (observed - targets_jax) / scales_jax
+    def __init__(self, chip: Chip) -> None:
+        components: tuple[Any, ...] = (*chip.devices, *chip.couplings)
+        self.chip, self.backend, self.key = weakref.ref(chip), chip.backend, None
+        self.values = {f"{c.label}.{name}": getattr(c, name) for c in components for name in parameter_fields(type(c))}
+        if all(isinstance(component, (DeviceModel, CouplingModel)) for component in components):
+            data = serialize_chip(chip)
+            for record, component in zip((*data["devices"], *data["couplings"]), components, strict=True):
+                record.update(dict.fromkeys(parameter_fields(type(component))))
+            self.key = (self.backend, repr(data))
 
-    return jax.jit(residual), jax.jit(jax.jacrev(residual))
+    def __hash__(self) -> int:
+        return hash(self.key)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _FitStructure) and self.key == other.key
+
+
+def _fit_residuals(values, stored, targets, scales, structure, names, specs, evaluator, max_hilbert_dim):
+    """Normalized target residuals of *structure*'s chip with *stored* fields and trial *values*."""
+    candidate = structure.chip().clone()
+    for component in (*candidate.devices, *candidate.couplings):
+        for name in parameter_fields(type(component)):
+            object.__setattr__(component, name, stored[f"{component.label}.{name}"])
+    with _backend_context(structure.backend):
+        candidate = candidate.with_params(dict(zip(names, values, strict=True)))
+        observed = jnp.stack([jnp.asarray(_evaluate_checked_spec(candidate, spec, evaluator, max_hilbert_dim))
+                              for spec in specs])
+    return (observed - targets) / scales
+
+
+_STATIC = (4, 5, 6, 7, 8)
+_fit_programs = (jax.jit(_fit_residuals, static_argnums=_STATIC),
+                 jax.jit(jax.jacrev(_fit_residuals), static_argnums=_STATIC))
 
 
 def fit_a_dress(
@@ -693,7 +700,7 @@ def fit_a_dress(
     )
 
     def concrete_residuals(x: np.ndarray) -> np.ndarray:
-        candidate = _rebuild_candidate(chip, names, x)
+        candidate = chip.with_params(dict(zip(names, x, strict=True)))
         values = np.asarray([_evaluate_checked_spec(candidate, spec, evaluator, max_hilbert_dim)
                              for spec in target_specs], dtype=float)
         return (values - targets_arr) / scales
@@ -701,27 +708,19 @@ def fit_a_dress(
     jacobian_mode = "finite-difference"
     residuals = concrete_residuals
     jacobian: Any = "2-point"
-    try:
-        jax_functions = _jax_residual_functions(
-            chip,
-            names,
-            target_specs,
-            evaluator,
-            targets_arr,
-            scales,
-            max_hilbert_dim,
-        )
-    except ImportError:
-        jax_functions = None
-
-    if jax_functions is not None:
-        residual_jax, jacobian_jax = jax_functions
+    if chip.backend.array_module is jnp:
+        structure = _FitStructure(chip)
+        specs = tuple(TargetSpec(spec.kind, spec.label, 0.0) for spec in target_specs)
+        arguments = (structure.values, targets_arr, scales, structure, tuple(names), specs, evaluator, max_hilbert_dim)
+        fit_only = partial(_fit_residuals)  # An unkeyed chip compiles for this fit only.
+        residual_program, jacobian_program = _fit_programs if structure.key is not None else (
+            jax.jit(fit_only, static_argnums=_STATIC), jax.jit(jax.jacrev(fit_only), static_argnums=_STATIC))
 
         def residuals(x: np.ndarray) -> np.ndarray:
-            return np.asarray(residual_jax(jnp.asarray(x)), dtype=float)
+            return np.asarray(residual_program(x, *arguments), dtype=float)
 
         def jacobian(x: np.ndarray) -> np.ndarray:
-            return np.asarray(jacobian_jax(jnp.asarray(x)), dtype=float)
+            return np.asarray(jacobian_program(x, *arguments), dtype=float)
 
         jacobian_mode = "jax"
 
@@ -762,7 +761,7 @@ def fit_a_dress(
     else:
         history[-1] = final_loss
 
-    fitted_chip = _rebuild_candidate(chip, names, result.x)
+    fitted_chip = chip.with_params(dict(zip(names, result.x, strict=True)))
     identifiability = _identifiability_receipt(result.jac, names, parameter_scale)
     if identifiability["rank_deficient"]:
         weak_names = sorted(
