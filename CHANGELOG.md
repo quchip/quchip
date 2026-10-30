@@ -930,6 +930,8 @@ This file records notable user-visible changes to quchip.
   compile: 0.2 s instead of 1.5 s for two transmons and a resonator.
 - On dynamiqs, rebinding a pulse value declared as `np.float64` with a Python
   float, or the reverse, reuses the compiled solve instead of compiling it again.
+- Driven lossy QuTiP solves find each drive's Hermitian partner even where
+  `dag()` leaves a `-0.0`, so they take the faster packed master equation.
 - `VNA.measure()` with noise and an automatic cutoff settles the means first
   and starts the noise comparison at the first agreeing pair, which keeps the
   same cutoff and skips the noise solves below it: 49 s instead of 55 s for a

@@ -324,3 +324,27 @@ def test_pulse_train_shares_one_qutip_coefficient_per_operator_and_carrier():
         np.testing.assert_allclose(rhs(t).full(), expected, rtol=0.0, atol=1e-12)
     assert len(bands) > len(rhs.to_list()) - 1
     assert len(rhs.to_list()) == len(lowered(1)[3].to_list())
+
+
+def test_drive_adjoint_with_signed_zeros_solves_like_its_unsigned_twin(backend):
+    """A drive partner from ``dag()`` (``-0.0`` imaginary parts) gives the same lossy solve as an unsigned copy."""
+    import qutip
+
+    a = qutip.tensor(qutip.destroy(6), qutip.qeye(4))
+    b = qutip.tensor(qutip.qeye(6), qutip.destroy(4))
+    signed = a.dag()
+    unsigned = qutip.Qobj(signed.full() + 0.0, dims=signed.dims)
+    assert np.signbit(signed.full().imag).any() and not np.signbit(unsigned.full().imag).any()
+    drive = qutip.coefficient(lambda t: 0.3 * np.exp(0.9j * t) * np.sin(0.4 * t))
+    static = 0.2 * a.dag() * a + 0.04 * (a.dag() * b + b.dag() * a)
+    state = qutip.ket2dm(qutip.tensor(qutip.basis(6, 1), qutip.basis(4, 0)))
+    tlist = np.linspace(0.0, 6.0, 7)
+    options = {"method": "vern9", "rtol": 1e-10, "atol": 1e-12}
+    collapse = [0.15 * a, 0.1 * b]
+    finals = []
+    for partner in (signed, unsigned):
+        hamiltonian = qutip.QobjEvo([static, [a, drive], [partner, drive.conj()]])
+        expected = qutip.mesolve(hamiltonian, state, tlist, c_ops=collapse, options=options).final_state
+        finals.append(backend.mesolve(hamiltonian, state, tlist, c_ops=collapse, options=options).final_state)
+        np.testing.assert_allclose(finals[-1].full(), expected.full(), atol=1e-8)
+    np.testing.assert_allclose(finals[0].full(), finals[1].full(), atol=1e-8)

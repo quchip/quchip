@@ -468,17 +468,6 @@ def _summed_envelope_coefficient(envelopes: Sequence[Any], sample_tlist: Any,
     return total
 
 
-def _qobj_key(op: Qobj) -> tuple:
-    """Exact content key of an operator; equal operators stored differently may get different keys."""
-    payload: tuple[bytes, ...]
-    if isinstance(op.data, qutip.data.CSR):
-        matrix = op.data_as("csr_matrix")
-        payload = (matrix.indptr.tobytes(), matrix.indices.tobytes(), matrix.data.tobytes())
-    else:
-        payload = (np.ascontiguousarray(op.full()).tobytes(),)
-    return (repr(op.dims), type(op.data).__name__, *payload)
-
-
 def _assemble_qobjevo(static_rhs: Qobj | None, op_signal_pairs: Any, sample_tlist: Any,
                       rtol: float = _QUTIP_DEFAULT_RTOL, oversized: list[bool] | None = None) -> qutip.QobjEvo:
     """Combine an optional static operator and dynamic entries into a QobjEvo.
@@ -493,7 +482,7 @@ def _assemble_qobjevo(static_rhs: Qobj | None, op_signal_pairs: Any, sample_tlis
     groups: dict[tuple, tuple[Qobj, Any, list[Any]]] = {}
     for op, signal in op_signal_pairs:
         QuTiPBackend._validate_input(signal)
-        key = _qobj_key(op)
+        key = _canonical_key(op)
         for band in decompose_carrier_bands(signal):
             freq = maybe_concrete_scalar(band.freq)
             groups.setdefault((key, id(band) if freq is None else freq), (op, band.freq, []))[2].append(band.envelope)
@@ -506,12 +495,12 @@ def _assemble_qobjevo(static_rhs: Qobj | None, op_signal_pairs: Any, sample_tlis
 
 
 def _canonical_key(op: Qobj) -> tuple:
-    """Content key of an operator, equal for equal matrices however they are stored."""
+    """Content key of an operator, equal for equal matrices however stored and whatever the sign of a zero."""
     matrix = (op.data_as("csr_matrix") if isinstance(op.data, qutip.data.CSR) else sparse.csr_matrix(op.full())).copy()
     matrix.sum_duplicates()
     matrix.eliminate_zeros()
     return (repr(op.dims), matrix.indptr.astype(np.int64).tobytes(), matrix.indices.astype(np.int64).tobytes(),
-            matrix.data.tobytes())
+            (matrix.data + 0.0).tobytes())
 
 
 # Times at which a Hamiltonian's paired coefficients must be conjugate before
