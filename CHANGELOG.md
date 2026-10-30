@@ -10,6 +10,9 @@ This file records notable user-visible changes to quchip.
 
 #### Changes and migration
 
+- `FockSpace.matrix()`, `ChargeSpace.matrix()` and `PhaseGridSpace.matrix()` build on the host and
+  return read-only NumPy arrays (JAX arrays for a traced phase-grid `extent`); use `jnp.asarray(...)` where
+  JAX arrays are needed. Device `charge_coupling_operator()` and `phase_coupling_operator()` still return JAX.
 - quchip 0.5 removes the names that 0.4 deprecated. Use `thermal_occupation`
   for `thermal_population` (in constructors, `with_params()`, `set_noise()`,
   declared parameters, symbolic noise and saved device dictionaries),
