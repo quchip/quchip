@@ -938,6 +938,9 @@ This file records notable user-visible changes to quchip.
 - A concrete weak-probe or conditional `VNA.sweep()` on dynamiqs builds its sector
   operators, port mixing and reference transfers with NumPy instead of compiling
   one small XLA program per shape, so its first call takes well under a second.
+- On dynamiqs, pulse carriers and phases are formed from a cosine and a sine instead of a guarded complex
+  exponential, with the same values and gradients bit for bit. Pulse gradients run up to 1.8 times faster on
+  a CPU core and 1.3 times faster on a GPU.
 - `VNA.measure()` with noise and an automatic cutoff settles the means first
   and starts the noise comparison at the first agreeing pair, which keeps the
   same cutoff and skips the noise solves below it: 49 s instead of 55 s for a

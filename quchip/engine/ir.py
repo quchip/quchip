@@ -34,6 +34,8 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, cast
 
+import jax
+import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
 
@@ -310,7 +312,8 @@ class PolarScale(SignalNode):
 
     def evaluate(self, t: Any, *, xp: Any) -> Any:
         """Return the child value scaled by ``amplitude * exp(i * theta)``."""
-        return self.amplitude * xp.exp(1j * self.theta) * self.child.evaluate(t, xp=xp)
+        phase = _unit_phase(1j * self.theta) if is_jax_namespace(xp) else xp.exp(1j * self.theta)
+        return self.amplitude * phase * self.child.evaluate(t, xp=xp)
 
     def bands(self) -> tuple[CarrierBand, ...]:
         """Return the child bands with the polar scale folded into each envelope."""
@@ -478,8 +481,8 @@ class Carrier(SignalNode):
         xp : module
             NumPy-like array namespace.
         """
-        t_arr = xp.asarray(t, dtype=float)
-        return xp.exp(1j * self.sign * self.freq * t_arr)
+        phase = 1j * self.sign * self.freq * xp.asarray(t, dtype=float)
+        return _unit_phase(phase) if is_jax_namespace(xp) else xp.exp(phase)
 
     def bands(self) -> tuple[CarrierBand, ...]:
         """Return the single ``sign·freq`` band with a unit-constant envelope."""
@@ -487,6 +490,21 @@ class Carrier(SignalNode):
 
 
 SignalProgram: TypeAlias = SignalNode
+
+
+@jax.custom_jvp
+def _imaginary_exp(z: Any) -> Any:
+    """Return ``exp(z)`` for ``Re z = ±0`` from a cosine and a sine, with the bits of XLA's guarded exponential.
+
+    With ``exp(±0) = 1``, the guard for a zero ``Im z`` moves to the angle. The derivative is the one of ``exp``,
+    and one compiled program gives eager calls the bits of traced ones.
+    """
+    angle = jnp.where(jnp.imag(z) == 0, 0.0, jnp.imag(z))
+    return jax.lax.complex(jnp.cos(angle), jnp.sin(angle))
+
+
+_imaginary_exp.defjvp(lambda primals, tangents: (_imaginary_exp(*primals), tangents[0] * _imaginary_exp(*primals)))
+_unit_phase = jax.jit(_imaginary_exp)
 
 
 def _contains_carrier(node: SignalNode) -> bool:
@@ -657,17 +675,11 @@ def _shift_phase(freq: Any, delta_t: float) -> Any:
     Stays JAX-traceable when either the band frequency or the time shift is
     traced. NumPy is used only when both operands are concrete.
     """
-    from quchip.utils.jax_utils import maybe_concrete_scalar
-
     concrete_freq = maybe_concrete_scalar(freq)
     concrete_time = maybe_concrete_scalar(delta_t)
     if concrete_freq is not None and concrete_time is not None:
         return complex(np.exp(-1j * concrete_freq * concrete_time))
-    try:
-        import jax.numpy as jnp
-    except ImportError:  # pragma: no cover - JAX always present on traced paths
-        return np.exp(-1j * freq * delta_t)
-    return jnp.exp(-1j * freq * delta_t)
+    return _unit_phase(-1j * freq * delta_t)
 
 
 def _mul_envelope(a: SignalProgram, b: SignalProgram) -> SignalProgram:
