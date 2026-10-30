@@ -766,7 +766,7 @@ def _annihilates(liouvillian: sparse.csr_matrix, state: Any) -> bool:
     size = math.isqrt(liouvillian.shape[0])
     if not isinstance(state, Qobj) or not state.isoper or state.shape != (size, size):
         return False
-    vector = np.asarray(qutip.operator_to_vector(state).full(), dtype=complex).reshape(-1)
+    vector = state.full().reshape(-1, order="F")
     scale = float(abs(liouvillian).sum(axis=0).max()) * float(np.linalg.norm(vector))
     return bool(np.linalg.norm(liouvillian @ vector) <= _STATIONARY_REUSE_EPS * np.finfo(float).eps * scale)
 
@@ -804,11 +804,18 @@ def _direct_steady_state(liouvillian: sparse.csr_matrix, dims: Sequence[int]) ->
     trace = sparse.csr_matrix(
         (np.full(n, weight, dtype=complex), (np.zeros(n, dtype=int), np.arange(0, size, n + 1))), shape=(size, size),
     )
-    target = np.zeros(size, dtype=complex)
-    target[0] = weight
     constrained = (liouvillian + trace).tocsr()
-    _require_lu_memory(constrained)
-    vector = sparse.linalg.spsolve(constrained, target)
+    # Only the trace row's component (for a conserving chip, the elements of zero excitation difference) has a
+    # nonzero right-hand side. Others solve to zero, and a transposed one holds the conjugate matrix: solving one
+    # of each pair finds a singular one, and spsolve reports it, filling the whole state with NaN.
+    count, labels = sparse.csgraph.connected_components(constrained, directed=False)
+    transposed = labels[np.arange(size) % n * n + np.arange(size) // n]
+    partner = np.empty(count, dtype=labels.dtype)
+    partner[labels] = transposed
+    kept = labels <= partner[labels] if np.array_equal(partner[labels], transposed) else np.full(size, True)
+    _require_lu_memory(block := constrained[kept][:, kept])
+    vector = np.zeros(size, dtype=complex)
+    vector[kept] = sparse.linalg.spsolve(block, np.where(np.arange(size) == 0, weight, 0j)[kept])
     rho = vector.reshape(n, n, order="F")
     return Qobj(0.5 * (rho + rho.conj().T), dims=[list(dims), list(dims)], isherm=True)
 
@@ -1430,7 +1437,7 @@ class QuTiPBackend(Backend):
             if state is None:
                 state = qutip.steadystate(liouvillian, method=method, solver=solver, **options)
 
-        state_vector = np.asarray(qutip.operator_to_vector(state).full(), dtype=complex).reshape(-1)
+        state_vector = state.full().reshape(-1, order="F")
         residual = float(np.linalg.norm(sparse_liouvillian @ state_vector))
         dimension = state.shape[0]
         nullity = None
@@ -1500,13 +1507,7 @@ class QuTiPBackend(Backend):
         native_sources = [(label, self.from_canonical_operator(operator)) for label, operator in sources]
         dims = native_sources[0][1].dims
         dimension = math.prod(engine_result.dims)
-        targets = np.stack(
-            [
-                np.asarray(qutip.operator_to_vector(operator).full(), dtype=complex).reshape(-1)
-                for _, operator in native_sources
-            ],
-            axis=1,
-        )
+        targets = np.stack([operator.full().reshape(-1, order="F") for _, operator in native_sources], axis=1)
         targets[-1, :] = 0.0
         size = matrix.shape[0]
         keep = sparse.diags([1.0] * (size - 1) + [0.0], format="csr", dtype=complex)
@@ -1550,9 +1551,7 @@ class QuTiPBackend(Backend):
         liouvillian = self.prepare_stationary(engine_result, prepared=prepared).liouvillian
         matrix = self._scipy_liouvillian(liouvillian)
         initial_operator = self.from_canonical_operator(initial)
-        initial_vector = np.asarray(
-            qutip.operator_to_vector(initial_operator).full(), dtype=complex
-        ).reshape(-1)
+        initial_vector = initial_operator.full().reshape(-1, order="F")
         dimension = initial_operator.shape[0]
         native_observables = tuple(
             (label, self.from_canonical_operator(operator))
