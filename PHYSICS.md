@@ -10,7 +10,7 @@ Sections 1–7 describe how quchip builds and resolves a model. Sections 8–11
 describe what it computes: observables, stationary response, dressed
 quantities, model reductions and parametric control. Sections 12–16 state the
 engine's assumptions, the limits of JAX tracing, source pointers and
-measurement records.
+measurement records. Section 17 describes propagators, gate sets and circuits.
 
 ## Conventions at a glance
 
@@ -3348,6 +3348,256 @@ expectation of each run without weights. See
 [the solver guide](docs/guides/choosing-a-backend.md) and
 [Wiseman and Milburn, chapter 4][wiseman].
 
+
+## 17. Gate sets and propagators
+
+Sources: [`quchip/results/propagator.py`](https://github.com/quchip/quchip/blob/main/quchip/results/propagator.py), [`quchip/gateset/`](https://github.com/quchip/quchip/tree/main/quchip/gateset)
+
+### 17.1 Propagators and the computational frame
+
+`QuantumSequence.propagator()` returns the lab-frame propagator
+`U(t1, t0)` on solver coordinates from one solve, also when the solve runs in
+the rotating frame: `U_lab = R(t1) U_solver R(t0)^†` with
+`R(t) = exp(-2πi t Σ_i f_frame,i n_i)`, with the integration-frame
+frequencies `f_frame,i` of §4.1. With collapse channels it returns the
+superoperator on column-stacked density matrices. The gate set projects the
+propagator on the dressed computational states `W_c` of `chip.state()` and
+removes each device's dressed precession:
+
+```text
+V = W_c^† e^{2πi F t1} U(t1, t0) e^{-2πi F t0} W_c,    F = Σ_i f_i ñ_i,
+```
+
+with `f_i = chip.freq(i)` and `ñ_i` the dressed level label. This is the
+dressed frame of §9.4 without its ground-energy phase: `V` is the matrix of
+`subspace_propagator(qubits)` times `exp(-2πi E(0) (t1 - t0))`, from one solve
+instead of one solve per input. An idle interval leaves only the static ZZ
+phases. The part of each output column outside `W_c` is the leakage of that
+input. A chip that does not conserve the excitation number uses `chip.state()`
+on the product space for `W_c`.
+
+### 17.2 Virtual Z and placement
+
+`vz(q, θ)` shifts the phase of every later pulse in frame `q`. On a segment
+whose Hamiltonian is covariant (below), this equals conjugation by
+`exp(iθN)` with `N` the total excitation number. A circuit `RZ_q(λ)` is
+`vz(q, -λ)` and costs no time. A circuit ends with the correction
+`Π_q RZ_q(-F_q)`, where `F_q` sums the `vz` angles of frame `q`. This follows
+[McKay et al.][mckay].
+
+A gate solved once at start time 0 is reused at start time `τ` and frame offset
+`θ` as
+
+```text
+U_τ = C U_0 C^†,    C = exp(i(θ - 2π f_c τ) N),
+```
+
+where `f_c` is the carrier `freq` of the gate's pulses. Detunings are referenced
+to each pulse's start, so they do not enter `C`. The gate set lowers each pulse
+alone, after the signal chain, so it knows the delivered terms of every pulse
+and their time windows. Delays and crosstalk move and copy these windows. The
+gate splits into pieces where no delivered window is open, and a piece is
+reused when:
+
+- each static term conserves `N`, each collapse operator changes `N` by one
+  fixed charge, and the chip has no time-dependent terms of its own;
+- each transform of the signal chain declares `linear_time_invariant`, as the
+  built-in delays, gains, and crosstalk do, so the delivered field of a piece
+  is the sum of its pulses' fields and each moves with its pulse;
+- the carrier pulses of the piece share one `freq` `f_c` and one frame;
+- each delivered term of a pulse has one charge `q`. A term of a carrier
+  pulse turns by `exp(iqθ)` when the pulse phase turns by `θ`. A term of a
+  baseband pulse in a carrier piece has charge 0: `C` would turn a transverse
+  baseband term that a time shift and a `vz` leave unchanged;
+- the drive builds the pulse's signal with the shared `signal()`, and each
+  term is built from the pulse envelope, carriers, and the standard signal
+  algebra, with no coefficient of absolute time.
+
+Under the second, third, and last conditions, a carrier pulse that starts `τ`
+later gives the field of the same pulse with its phase turned by `-2π f_c τ`,
+moved by `τ`. The phase condition therefore also covers the start time. The
+gate set proves it on the structure of each delivered coefficient. It lowers
+each carrier pulse again with a stand-in for its phase. The stand-in has no
+arithmetic, comparison, hash, conversion, or truth value, so the lowering can
+only store it. It must reach each delivered tree only as the angle of a polar
+scale, and the tree must equal the first lowering everywhere else. Such a
+polar scale carries phase harmonic 1. A sum takes the union of its children's
+harmonics, a product adds them, a conjugate negates them, a real or imaginary
+part takes both signs, and an integer power adds them that many times. A term
+passes when its only harmonic is its charge `q`, which holds for every phase,
+amplitude, and envelope. A lowering that computes with the phase fails the
+term, even when the result is the same field: `E(t) cos φ` written as a scale
+factor fails, and `Re(e^{iφ} E(t))` is checked. A lowering that tests the
+phase value also fails, for example one that changes the field only at `φ =
+0`. It fails at every phase, before a placement reaches that value. The signal
+bands of a term do not settle this. At zero delivered frequency, `f_c + δ =
+0`, both sidebands of a pulse fall on one band, and a flux pulse then changes
+its amplitude, not its phase, when the phase turns.
+
+A chip without the RWA fails the first condition. A piece that fails is solved
+again at each new placement, and the report states the reason. A custom signal
+transform that clips or gates signals at fixed times fails the second
+condition, even when its signal nodes are of the standard kinds. A drive that
+overrides `signal()` fails the last condition, because the gate set cannot
+follow how its field moves with the start time. A drive that only defines its
+own `hamiltonian()` keeps reuse when its terms pass the phase check.
+
+### 17.3 Calibration residual
+
+A native gate has knobs (pulse fields with bounds and scales), an ideal
+unitary `U`, and free virtual-Z qubits. The calibration block holds the gate's
+qubits and, by default, the gate-set qubits that the gate's delivered pulses
+act on (signal-chain crosstalk included) or that a coupling path reaches
+without passing another gate-set qubit. The target is `U ⊗ I` on this joint
+block, and each spectator gets a free virtual Z, so static ZZ and drive
+crosstalk during the gate enter the objective. The fit minimizes `|r|²` over
+the knobs, a phase `φ_q` per free qubit, and a global phase `γ`:
+
+```text
+M = (U ⊗ I)^† Z(φ) V,    r = [(M - e^{iγ} I)/√(d+1), ℓ/√d],
+```
+
+where `ℓ` holds the leaked amplitudes. At the optimal `γ`,
+`|r|² = 1 - F_avg + (d - |Tr M|)²/(d(d+1))`. The second term is of higher
+order in the gate error, so near a good gate `|r|²` and `1 - F_avg` agree to
+leading order. The knob columns of the Jacobian are forward differences with
+a fixed step of `1e-4` in the scaled knobs, shortened to the distance to a
+bound when both bounds are closer, and the phase columns are exact.
+The calibrated sequence ends with `vz(q, -φ_q)`.
+
+The report gives the error after the ideal gate, as cycle benchmarking and
+cycle error reconstruction define it. Its generator is `H = i log U_P`, where
+`U_P` is the polar part of `Z(φ) V (U ⊗ I)^† = (U ⊗ I) M (U ⊗ I)^†`, and its
+Pauli coefficients are `Tr(P H)/d` (a rotation `θ` about `P` gives `θ/2`).
+The error before the gate, the polar part of `M`, has the same eigenphases
+and worst-case distance. It also gives the leakage, the Jacobian condition number and its
+change under a ten times smaller step, knobs at a bound, the infidelity of
+the gate's own block with all spectators in `|0>`, with each other gate-set
+qubit in `|1>`, and in the computational state of the other qubits where it
+is largest (all with the implemented corrections, read from the composed gate
+on every gate-set qubit), and the infidelity after `N` repetitions. Over
+sampled start times in [0, 100) ns at fixed frame offsets, it gives the
+smallest and largest `1 - F_avg` with the implemented corrections. A
+reusable gate with one carrier changes with the start time by the
+conjugation by `C`, expressed in the computational frame. When the ideal
+commutes with it, as for the built-in SX and X, only the
+orientation of the coherent error changes and `F_avg` stays the same.
+Otherwise the operation itself changes with the start time: an SX on a 5 GHz
+qubit driven at `freq = 4.99` with `detuning = 0.01` has its axis turned by
+90° when it starts 25 ns later, and its `F_avg` against SX drops to 0.5. A
+gate whose pieces use different carriers turns each piece with its own
+carrier, so its error can change with the start time even when the intended
+action of each piece commutes with its own rotation. For two transmons
+100 MHz apart with `g = 3 MHz`, the echoed CR of §17.4 has
+`1 - F_avg = 5.0e-5` at its calibration start and between `3.7e-5` and
+`1.4e-4` over the sampled starts. Its dominant observed harmonic has a
+period of `1/(2 Δf) = 5 ns`, which fits interference between the errors of
+the two CR halves, between which the echo flips the control; other error
+terms can have other periods. The cache applies these changes exactly; the
+fit at start 0 does not average over them. The `solver_floor`
+status is a heuristic: the integrator's unitarity defect does not bound a
+coherent phase error.
+
+The free spectator Z is a frame update in program order. A later pulse in the
+spectator's frame that overlaps the gate in time sees the update for its whole
+duration, so such overlapping gates are solved together and do not inherit
+the isolated calibration's fidelity.
+
+### 17.4 Built-in natives
+
+`drag_sx()` schedules one `GaussianDRAG` pulse at the dressed qubit frequency
+with phase `-arg m`, where `m` is the dressed `0 -> 1` element of the line. The
+seeds are `β = 1/(4π |α|)` and the amplitude of `Chip.rotation_amplitude()`,
+`A = θ/(2π |m| |∫E dt|)` on a line without transforms (§6.2.1). The
+knobs are the amplitude and `β`, which keeps the fit small. The pulse
+detuning is an optional knob, bounded to ±5 MHz. It can lower the joint error,
+for example by centering the carrier between the frequencies that a spectator
+ZZ shift gives, but near the optimum of `β` a detuning and a change of `β` act
+almost alike. With both knobs and a spectator in the block, the fit on two
+transmons 100 MHz apart moved to the detuning bound with `β ≈ ±10 ns`. For an
+X fit with `spectators="none"` next to a neighbor 100 MHz away with
+`g = 3 MHz`, scored with the neighbor in `|0>`, a 30 ns ±4σ pulse has
+`1 - F_avg = 1.5e-4`, mostly population left in the neighbor; the defaults
+(40 ns, ±3σ) give `1.9e-6`.
+
+`cross_resonance()` drives the control at the target frequency. The seeds are
+the complex amplitudes `a` of the CR tone and `c` of the target tone that solve
+
+```text
+z_a a + z_c c = 1/(4 h ∫E dt),        x_a a + x_c c = s N/∫E dt
+```
+
+for `h` halves. `z_a = C_Z/A` and `x_a = C_I/A` are the susceptibility
+coefficients of §9.2 for the CR line. `z_c = (t_0 - t_1)/2` and
+`x_c = (t_0 + t_1)/2` come from the target line's dressed `0 -> 1` elements
+with the control in 0 and in 1. The first equation sets the ZX angle to π/2
+over the gate. The template has `N = 0`, so the target tone cancels IX. The
+echoed form runs CR+, the calibrated X on the control, CR- with both tones
+shifted by π, and X again. The Gaussian edges have `σ = 6/(2π|Δ|)` for the
+control-target detuning `Δ`. The joints between the edges and the plateau
+leave a spectral tail at `Δ` that falls as `Δ⁻³`.
+
+Rotary seeds (Sundaresan et al., PRX Quantum 1, 020318 (2020)) have `N > 0` and
+`s = ±1`. The target tone then turns the target by `N` turns per half about the
+ZX axis, along it or against it. CR- reverses the tone, and IX commutes with ZX
+and with the X on the control, so the two turns cancel for any `N`. With `θ(t)
+= 2πN ∫_0^t E / ∫_0^T E` on one half, a static `ζ Z_t Z_s/4` between the target
+and a spectator gives a first-order term of size `(πζ/2) |∫ cos(θ(t) - θ(T)/2)
+dt|` in the error generator after the gate for that half. The sine part
+vanishes for a symmetric tone. The seeds take `N` at the zeros of this integral
+below a peak target-tone Rabi rate of `|α|/8` of the target, and the knob keeps
+the same bound. The zeros are whole turns for a square tone and lie between
+whole turns for Gaussian edges: `N = 0.72, 1.62, 2.59, 3.58, 4.58` for a 200 ns
+half with 47.7 ns edges. The ZX term adds ±1/8 turn per half with the control
+state, so the two control branches have different zeros and a residual of first
+order in `ζ` stays: the seeds reduce this term but do not remove it. In a model
+of the control, target, and spectator with only these IX, ZX, and ZZ terms and
+instantaneous echoes, the norm of the target-spectator part of the error
+generator at `N = 2.59` is 6% of its value at `N = 0`, and the part beyond
+first order falls as `ζ²`. The ZZ during the echo pulses, when the tones are
+off, also contributes. The first echo falls after the target has turned by `N`
+turns, so this part depends on `N` too, and it combines with the residual of
+the halves as a vector of error-generator coefficients, not by adding norms.
+The gate set solves each rotary seed once, with the virtual-Z phases fitted,
+fits from the template and from the two best seeds, and keeps the lowest cost.
+A calibration that runs again from fitted knobs and keeps them screens no
+seeds. `GateSet.standard()` adds the seeds when the target couples to another
+gate-set qubit, directly or through devices that are not gate-set qubits.
+
+### 17.5 Circuits
+
+A circuit compiles to one `QuantumSequence`. Each gate occupies its authored
+window, extended to its last delivered field when a line delays it. Gates whose
+windows do not overlap reuse their cached propagators through the placement
+rule, idle intervals use the eigensystem of the static lab Hamiltonian, and
+overlapping gates are solved together once per placement. With a line delay,
+gates that follow each other on the delayed line overlap and are solved
+together. The composed unitary matches a direct solve of the same schedule to
+the solver tolerance. With QuTiP, the linear interpolation of windowed
+envelopes adds an error that the solver's `rtol` sets (§12).
+
+### 17.6 Excitation cutoff
+
+Gate-set solves use the chip's space policy. Without one, and when the product
+space has more than 64 states, the gate set selects
+`ExcitationCutoff(max_total=K)` with `K = n + 1` for `n` gate-set qubits. It
+raises `K` until each template block and its leakage change by less than
+`1e-6` at `K + 1`. After calibration it compares each calibrated gate at `K`
+and `K + 1`; when one changes by more, it raises `K` and calibrates again from
+the fitted knobs, up to the full product space. Both checks use the block with
+the other gate-set qubits in level 0 and again with all of them in level 1. A
+cached gate acts on every register state, and the second context holds the
+most excitations, so it comes closest to the cutoff. Under the RWA the cutoff
+projector commutes with `N`, so the placement rule of §17.2 still holds.
+
+Each drive adds a transient excitation to the state it acts on, so gates that
+run at the same time need more headroom than one gate. On a chain of four
+transmons at `K = n + 2`, one echoed CR gate matches the full space to `3e-8`,
+but two at once differ by `5e-6`, and four 10 ns X gates at once by `8e-4`.
+Under an automatic cutoff, `unitary()` and `simulate()` solve a window with
+`m` gates at once at `K + m - 1`, capped at the full product space.
+`unitary()` keeps the components of the result on the `K` space. No gate runs
+at the edges of the window, so the transient excitations have returned there.
 
 [koch]: https://arxiv.org/abs/cond-mat/0703002
 [vool]: https://arxiv.org/abs/1610.03438

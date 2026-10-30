@@ -90,6 +90,7 @@ from quchip.control import (
     TwoPhotonDrive,
 )
 from quchip.control.sequence import QuantumSequence
+from quchip.gateset import GateCalibration, GateSet, Knob, NativeGate, cross_resonance, drag_sx  # noqa: E402
 from quchip.declarative import (
     CollapseChannel,
     CosineCoefficient,
@@ -138,6 +139,7 @@ from quchip.results import (
     ObservableTrace,
     PartitionedSimulationResult,
     ChannelResult,
+    Propagator,
     PropagatorResult,
     SimulationBatchResult,
     SimulationResult,
@@ -183,6 +185,7 @@ __all__ = [
     "MeasurementRecords",
     "ClickRecords",
     "ChannelResult",
+    "Propagator",
     "PropagatorResult",
     "IQReadout",
     "StateMeasurement",
@@ -195,6 +198,13 @@ __all__ = [
     "RWA",
     # Retained-space policies
     "ExcitationCutoff",
+    # Gate sets
+    "GateCalibration",
+    "GateSet",
+    "Knob",
+    "NativeGate",
+    "cross_resonance",
+    "drag_sx",
     # Declarative extension API
     "CollapseChannel",
     "EffectiveTerms",
