@@ -96,8 +96,8 @@ def _estimate_bare_g(
 
     Require the target to be bracketed by seed_strength_bounds; monotonicity
     is unnecessary for brentq. Preserve the coupling copy/rebind path, including
-    constructor-only state, and the parent backend. Set trials through the
-    coupling-strength interface. An unbracketed target raises, never saturates."""
+    constructor-only state. Trials are concrete, so they run on NumPy-backed QuTiP
+    whatever the chip's backend. An unbracketed target raises, never saturates."""
     target_val = float(spec.target)
     if target_val == 0.0:
         return 0.0
@@ -111,7 +111,7 @@ def _estimate_bare_g(
         frame=chip.frame,
         approximation=chip.approximation,
         basis=chip.basis,
-        backend=chip.backend,
+        backend="qutip",
         space=chip.space,
     )
 

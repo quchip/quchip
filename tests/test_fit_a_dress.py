@@ -124,36 +124,35 @@ def test_fit_a_dress_moves_crosskerr_chi_with_no_stray_g_attribute() -> None:
     assert "ck.g" not in result.final_params
 
 
-def test_estimate_bare_g_seed_subchip_preserves_chip_intent(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The coupling seed sub-chip preserves basis, approximation, and backend intent."""
+@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])
+@pytest.mark.parametrize("approximation", [Exact(), RWA()])
+def test_estimate_bare_g_seed_roots_the_chip_cross_kerr(backend: str, approximation) -> None:
+    """The coupling seed roots the chip's own cross-Kerr in its frame, basis and approximation."""
+    if backend == "dynamiqs":
+        pytest.importorskip("dynamiqs")
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=4, label="q")
     r = Resonator(freq=7.0, levels=10, label="r")
     coupling = Capacitive(q, r, g=0.01, label="c")
-    chip = Chip(
-        [q, r],
-        [coupling],
-        frame="rotating",
-        basis="eigen",
-        backend="qutip",
-        approximation=Exact(),
-    )
+    chip = Chip([q, r], [coupling], frame="rotating", basis="eigen", backend=backend, approximation=approximation)
 
-    real_chip = fit_module.Chip
-    captured: dict = {}
+    seed = _estimate_bare_g(chip, coupling, TargetSpec("cross_kerr", coupling.label, -2e-4))
 
-    def spy_chip(devices, couplings=None, **kwargs):
-        captured["backend"] = kwargs.get("backend")
-        captured["basis"] = kwargs.get("basis")
-        captured["approximation"] = kwargs.get("approximation")
-        return real_chip(devices, couplings, **kwargs)
+    assert float(chip.with_params({"c.g": seed}).static_zz("q", "r")) == pytest.approx(-2e-4, rel=1e-8)
 
-    monkeypatch.setattr(fit_module, "Chip", spy_chip)
 
-    _estimate_bare_g(chip, coupling, TargetSpec("cross_kerr", coupling.label, -2e-4))
-
-    assert captured["backend"] is chip.backend
-    assert captured["basis"] == "eigen"
-    assert captured["approximation"] == Exact()
+@pytest.mark.optional_backend
+def test_fit_a_dress_on_dynamiqs_matches_qutip() -> None:
+    """A seeded cross-Kerr fit converges to the same bare parameters on dynamiqs and QuTiP."""
+    pytest.importorskip("dynamiqs")
+    params = {}
+    for backend in ("qutip", "dynamiqs"):
+        q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+        r = Resonator(freq=7.0, levels=5, label="r")
+        chip = Chip([q, r], [Capacitive(q, r, g=-0.0004, label="qr")], backend=backend)
+        result = fit_a_dress(chip)
+        assert result.converged
+        params[backend] = result.final_params
+    assert params["dynamiqs"] == pytest.approx(params["qutip"], rel=1e-8)
 
 
 def test_local_fit_subsystem_inherits_chip_basis_policy() -> None:
