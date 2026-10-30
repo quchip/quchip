@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from functools import cached_property, lru_cache
+from functools import cached_property, lru_cache, reduce
 from math import prod
 from typing import Any
 
@@ -285,12 +285,9 @@ def _energy_matrix(node: Any, support: tuple[str, ...], backend: Any, bases: Map
                    remedy="Use factored operators or declare their excitation_changes.")
     with jax.ensure_compile_time_eval(), backend.eager_operators():
         matrix = backend.to_array(materialize_expr(node, backend, bindings=bindings, local_bases=bases))
-        vectors = records[0].energy_vectors
-        for record in records[1:]:
-            vectors = jnp.kron(vectors, record.energy_vectors)
-    if contains_tracer((matrix, vectors)):
+    if contains_tracer(matrix):
         return None
-    vectors = np.asarray(vectors, dtype=complex)
+    vectors = np.asarray(reduce(np.kron, [record.energy_vectors for record in records]), dtype=complex)
     values = vectors.conj().T @ np.asarray(matrix, dtype=complex) @ vectors
     return values, tuple(int(record.energy_vectors.shape[1]) for record in records)
 
