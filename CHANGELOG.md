@@ -1022,6 +1022,9 @@ This file records notable user-visible changes to quchip.
   11.4 s, with the same kept cutoff and noise spectra within 2e-13. The solutions are
   kept only while they fit in memory.
   ([#221](https://github.com/quchip/quchip/pull/221))
+- QuTiP pulse solves sample the built-in envelopes with NumPy when their
+  parameters are concrete, instead of compiling JAX operations, so the first
+  pulse solve in a session starts about 0.3 to 0.6 s sooner.
 
 #### Compatibility
 

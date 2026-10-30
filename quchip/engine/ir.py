@@ -201,7 +201,7 @@ class EnvelopeRef(SignalNode):
 
     def evaluate(self, t: Any, *, xp: Any) -> Any:
         """Return the referenced envelope's complex ``value(t)``."""
-        return xp.asarray(self.envelope.value(xp.asarray(t, dtype=float)), dtype=complex)
+        return self.envelope.sample(xp.asarray(t))
 
     def bands(self) -> tuple[CarrierBand, ...]:
         """Return the single zero-frequency band carrying this envelope."""

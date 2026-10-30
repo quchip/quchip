@@ -22,6 +22,15 @@ from quchip.control.envelopes import (
 
 pytestmark = pytest.mark.unit
 
+BUILT_INS = [
+    Square(duration=20.0, amplitude=0.3),
+    Gaussian(duration=20.0, sigmas=3.0, amplitude=0.7),
+    GaussianDRAG(duration=24.0, sigmas=2.5, amplitude=0.4, beta=1.3),
+    GaussianEdge(duration=60.0, edge_duration=12.0, sigmas=2.0, amplitude=0.2),
+    SquareWithGaussianEdges(duration=50.0, amplitude=0.1, edge_frac=0.2, sigmas=3.0),
+    LinearRamp(duration=60.0, ramp_duration=50.0, amplitude=4.0),
+]
+
 
 class TestSquare:
     """Tests for the constant-amplitude Square envelope."""
@@ -99,18 +108,28 @@ class TestSample:
         val = float(energy(t))
         assert val > 0.0
 
+    @pytest.mark.parametrize("jax_params", [False, True], ids=["floats", "jax"])
+    @pytest.mark.parametrize("envelope", BUILT_INS, ids=lambda envelope: type(envelope).__name__)
+    def test_numpy_times_match_jax_evaluation(self, envelope, jax_params):
+        """NumPy times give JAX's samples and feature times, with float or concrete JAX parameters."""
+        import jax.numpy as jnp
+
+        from quchip.engine.ir import EnvelopeRef
+        from quchip.engine.sampling import signal_features
+
+        if jax_params:
+            envelope = envelope.with_params({k: jnp.asarray(v) for k, v in envelope.parameter_values().items()})
+        knots = np.asarray(envelope.sampling_times())
+        t = np.unique(np.concatenate([np.linspace(0.0, float(envelope.duration), 401), knots]))
+        npt.assert_allclose(envelope.sample(t), np.asarray(envelope.value(jnp.asarray(t))), rtol=1e-14, atol=1e-15)
+        [(times, _)] = signal_features(EnvelopeRef(envelope))
+        npt.assert_allclose(times, knots, rtol=0, atol=1e-14)
+
 
 class TestArea:
     """The closed-form areas agree with independent quadrature, and the general quadrature traces."""
 
-    @pytest.mark.parametrize("envelope", [
-        Square(duration=20.0, amplitude=0.3),
-        Gaussian(duration=20.0, sigmas=3.0, amplitude=0.7),
-        GaussianDRAG(duration=24.0, sigmas=2.5, amplitude=0.4, beta=1.3),
-        GaussianEdge(duration=60.0, edge_duration=12.0, sigmas=2.0, amplitude=0.2),
-        SquareWithGaussianEdges(duration=50.0, amplitude=0.1, edge_frac=0.2, sigmas=3.0),
-        LinearRamp(duration=60.0, ramp_duration=50.0, amplitude=4.0),
-    ], ids=lambda envelope: type(envelope).__name__)
+    @pytest.mark.parametrize("envelope", BUILT_INS, ids=lambda envelope: type(envelope).__name__)
     def test_closed_forms_match_adaptive_quadrature(self, envelope):
         """Each closed form, and the general Gauss-Legendre rule, equals an adaptive integral of value()."""
         import warnings
