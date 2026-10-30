@@ -80,17 +80,15 @@ class _QuTiPBatchShared:
 
 
 @dataclass(frozen=True)
-class _QuTiPBatchTask:
-    """One compact point handed to a sequential or loky batch worker."""
+class _QuTiPBatchDynamics:
+    """The generator inputs of batch points that differ only in their initial state and ``e_ops``."""
 
     static_rhs: Qobj | None
     dynamic_qobjs: tuple[Qobj, ...]
     dynamic_signals: tuple[Any, ...]
-    initial_state: Any
     c_ops: tuple[Qobj, ...]
     solver_name: str
     options: dict[str, Any]
-    e_ops: tuple[Qobj, ...] | None
 
 
 def _coeff_callable(signal: Any) -> Callable[[float, Any], complex]:
@@ -1317,9 +1315,7 @@ class QuTiPBackend(Backend):
         e_ops: list[Operator] | None = None,
         options: dict[str, Any] | None = None,
     ) -> SolverResult:
-        runner = SESolver(self._coerce_solver_rhs(H), options=self._runner_options(options))
-        result = runner.run(psi0, tlist, e_ops=e_ops)
-        return self._wrap_result(result, solver="sesolve", extra_stats=self._solver_stats(runner))
+        return self._initial_value_solver("sesolve", H, tlist, None, options)(psi0, e_ops)
 
     def mesolve(
         self,
@@ -1330,25 +1326,39 @@ class QuTiPBackend(Backend):
         e_ops: list[Operator] | None = None,
         options: dict[str, Any] | None = None,
     ) -> SolverResult:
+        return self._initial_value_solver("mesolve", H, tlist, c_ops, options)(rho0, e_ops)
+
+    def _initial_value_solver(
+        self, solver: str, H: Any, tlist: Any, c_ops: list[Operator] | None, options: dict[str, Any] | None,
+    ) -> Callable[[State, list[Operator] | None], SolverResult]:
+        """Build a generator once; the returned function solves it from an initial state with ``e_ops``."""
         rhs = self._coerce_solver_rhs(H)
-        _require_superoperator_memory(
-            rhs, c_ops or [], task="QuTiP mesolve's D²×D² Liouvillian",
-            remedy="Use backend='dynamiqs', whose mesolve applies the Lindblad generator without "
-                   "forming it, or reduce the device cutoffs.",
-        )
         options = self._runner_options(options)
-        lifted = None if options.get("matrix_form") else _lindblad_generator(rhs, c_ops or [], tlist)
-        if lifted is None:
-            runner = MESolver(rhs, c_ops, options=options)
-        else:
-            # A superoperator collapse term joins the generator as its constant part.
-            generator, constant = lifted
-            if _packs_hermitian_state(rho0, options):
-                runner = _HermitianMESolver(generator, constant, options=options)
+        if solver == "mesolve":
+            _require_superoperator_memory(
+                rhs, c_ops or [], task="QuTiP mesolve's D²×D² Liouvillian",
+                remedy="Use backend='dynamiqs', whose mesolve applies the Lindblad generator without "
+                       "forming it, or reduce the device cutoffs.",
+            )
+        lifted = (None if solver == "sesolve" or options.get("matrix_form")
+                  else _lindblad_generator(rhs, c_ops or [], tlist))
+
+        def solve(state: State, e_ops: list[Operator] | None) -> SolverResult:
+            if solver == "sesolve":
+                runner = SESolver(rhs, options=options)
+            elif lifted is None:
+                runner = MESolver(rhs, c_ops, options=options)
             else:
-                runner = MESolver(generator, [constant], options=options)
-        result = runner.run(rho0, tlist, e_ops=e_ops)
-        return self._wrap_result(result, solver="mesolve", extra_stats=self._solver_stats(runner))
+                # A superoperator collapse term joins the generator as its constant part. MESolver
+                # adds it to a superoperator generator in place, so each runner takes a copy.
+                generator, constant = lifted[0].copy(), lifted[1]
+                packed = _packs_hermitian_state(state, options)
+                runner = (_HermitianMESolver(generator, constant, options=options) if packed
+                          else MESolver(generator, [constant], options=options))
+            result = runner.run(state, tlist, e_ops=e_ops)
+            return self._wrap_result(result, solver=solver, extra_stats=self._solver_stats(runner))
+
+        return solve
 
     def _stationary_liouvillian(self, engine_result: Any) -> Qobj:
         """Lower one static engine description to QuTiP's native stationary system."""
@@ -1814,57 +1824,45 @@ class QuTiPBackend(Backend):
         assert isinstance(shared, _QuTiPBatchShared)
         sample_tlist = shared.sample_tlist
 
-        tasks: list[_QuTiPBatchTask] = []
+        # Points that share operators, signals, collapse terms and options share one generator.
+        groups: dict[tuple, _QuTiPBatchDynamics] = {}
+        # One point: its generator inputs, initial state and e_ops.
+        tasks: list[tuple[_QuTiPBatchDynamics, Any, list[Qobj] | None]] = []
         for index, problem in enumerate(batch.problems):
             engine_result = problem.engine_result
-            c_ops = self._collapse_operators(engine_result)
             solver_name = problem.solver_name(self)
-            opts = self._resolve_problem_options(
-                problem,
-                metadata=engine_result.metadata,
-                tlist=tlist_arr,
-                solver_name=solver_name,
-            )
-            tasks.append(
-                _QuTiPBatchTask(
-                    static_rhs=shared.static_rhs[index],
-                    dynamic_qobjs=shared.dynamic_qobjs[index],
-                    dynamic_signals=shared.dynamic_signals[index],
-                    initial_state=self.coerce_state(
-                        problem.initial_state,
-                        dims=problem.engine_result.dims,
-                    ),
-                    c_ops=tuple(c_ops),
-                    solver_name=solver_name,
-                    options=dict(opts),
-                    e_ops=(tuple(problem.e_ops) if isinstance(problem.e_ops, list) else None),
-                )
-            )
+            opts = dict(self._resolve_problem_options(problem, metadata=engine_result.metadata, tlist=tlist_arr,
+                                                      solver_name=solver_name))
+            key = (id(shared.static_rhs[index]), tuple(map(id, shared.dynamic_qobjs[index])),
+                   tuple(map(id, shared.dynamic_signals[index])), tuple(map(id, engine_result.collapse_terms)),
+                   solver_name, repr(opts))
+            if key not in groups:
+                groups[key] = _QuTiPBatchDynamics(
+                    shared.static_rhs[index], shared.dynamic_qobjs[index], shared.dynamic_signals[index],
+                    tuple(self._collapse_operators(engine_result)), solver_name, opts)
+            initial_state = self.coerce_state(problem.initial_state, dims=engine_result.dims)
+            tasks.append((groups[key], initial_state, list(problem.e_ops) if isinstance(problem.e_ops, list) else None))
 
         # Workers do not report warnings, so the main process names the windows that use callables.
         # The points of one batch share their options.
-        if _oversized_windows([signal.signal for task in tasks for signal in task.dynamic_signals],
-                              sample_tlist, _task_rtol(tasks[0])):
+        if _oversized_windows([signal.signal for group in groups.values() for signal in group.dynamic_signals],
+                              sample_tlist, _task_rtol(tasks[0][0])):
             _warn_callable_windows()
 
-        def build_and_solve(task: _QuTiPBatchTask) -> SolverResult:
-            op_signal_pairs = (
-                (operator, signal.signal)
-                for operator, signal in zip(task.dynamic_qobjs, task.dynamic_signals)
-            )
-            rhs = _assemble_qobjevo(task.static_rhs, op_signal_pairs, sample_tlist, _task_rtol(task))
-            kwargs = self._element_solver_kwargs(
-                task.solver_name,
-                rhs,
-                task.initial_state,
-                tlist_arr,
-                e_ops=list(task.e_ops) if task.e_ops is not None else None,
-                c_ops=list(task.c_ops),
-                options=task.options,
-            )
-            return getattr(self, task.solver_name)(**kwargs)
+        # A sequential batch builds each group's generator once, and a worker builds it for each of its points.
+        built: list[Any] = [None, None]
 
-        reference = tasks[0]
+        def build_and_solve(task: tuple[_QuTiPBatchDynamics, Any, list[Qobj] | None]) -> SolverResult:
+            group, initial_state, e_ops = task
+            if built[0] is not group:
+                signals = (signal.signal for signal in group.dynamic_signals)
+                rhs = _assemble_qobjevo(group.static_rhs, zip(group.dynamic_qobjs, signals), sample_tlist,
+                                        _task_rtol(group))
+                built[:] = group, self._initial_value_solver(group.solver_name, rhs, tlist_arr,
+                                                             list(group.c_ops) or None, group.options)
+            return built[1](initial_state, None if e_ops is None else list(e_ops))
+
+        reference = tasks[0][0]
         operators = ([op for op in (reference.static_rhs, *reference.dynamic_qobjs) if op is not None],
                      reference.c_ops)
         return self._parallel_map(
