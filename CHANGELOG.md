@@ -932,6 +932,9 @@ This file records notable user-visible changes to quchip.
   float, or the reverse, reuses the compiled solve instead of compiling it again.
 - Driven lossy QuTiP solves find each drive's Hermitian partner even where
   `dag()` leaves a `-0.0`, so they take the faster packed master equation.
+- A concrete weak-probe or conditional `VNA.sweep()` on dynamiqs builds its sector
+  operators, port mixing and reference transfers with NumPy instead of compiling
+  one small XLA program per shape, so its first call takes well under a second.
 - `VNA.measure()` with noise and an automatic cutoff settles the means first
   and starts the noise comparison at the first agreeing pair, which keeps the
   same cutoff and skips the noise solves below it: 49 s instead of 55 s for a
