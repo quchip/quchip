@@ -2079,11 +2079,9 @@ class SolveProblem:
                     "c_ops", "sc_ops", "jump_ops"} & self.run_args.keys()
         if reserved:
             raise ValueError(f"run_args cannot override assembled inputs: {sorted(reserved)}")
-        object.__setattr__(self, "monitoring", _capture_solve_input(self.monitoring))
-        object.__setattr__(self, "run_args", _capture_solve_input(self.run_args))
-        object.__setattr__(self, "options", _capture_solve_input(options))
-        object.__setattr__(self, "tlist", _capture_solve_input(self.tlist))
-        object.__setattr__(self, "e_ops", _capture_solve_input(self.e_ops))
+        object.__setattr__(self, "options", options)
+        for name in ("monitoring", "run_args", "options", "tlist", "e_ops"):
+            object.__setattr__(self, name, _capture_solve_input(getattr(self, name)))
         if self.backend is None and self.chip is not None:
             object.__setattr__(self, "backend", self.chip.backend)
         if not self.device_info:
@@ -2100,10 +2098,10 @@ class SolveProblem:
 
 
 def _capture_solve_input(value: Any) -> Any:
-    """Copy mutable input containers and NumPy buffers, retaining native JAX values."""
+    """Copy mutable inputs and NumPy buffers, keep JAX values, and make Python scalars NumPy, strongly typed for jit."""
     from quchip.utils.values import copy_value
 
-    return copy_value(value, readonly=True)
+    return copy_value(np.asarray(value)[()] if type(value) in (float, complex) else value, readonly=True)
 
 
 @dataclass(frozen=True)

@@ -928,6 +928,8 @@ This file records notable user-visible changes to quchip.
 - `fit_a_dress()` on a JAX-backed chip compiles its residuals once per chip
   structure, so repeated fits, also with other parameter values, skip the
   compile: 0.2 s instead of 1.5 s for two transmons and a resonator.
+- On dynamiqs, rebinding a pulse value declared as `np.float64` with a Python
+  float, or the reverse, reuses the compiled solve instead of compiling it again.
 - `VNA.measure()` with noise and an automatic cutoff settles the means first
   and starts the noise comparison at the first agreeing pair, which keeps the
   same cutoff and skips the noise solves below it: 49 s instead of 55 s for a

@@ -411,3 +411,35 @@ def test_batch_over_a_carrier_that_includes_zero_matches_qutip(dynamiqs_backend)
     expected = populations("qutip")
     assert expected[1, -1] > 0.1 and expected[0, -1] != pytest.approx(expected[1, -1], abs=1e-3)
     npt.assert_allclose(populations("dynamiqs"), expected, atol=1e-5)  # QuTiP samples envelopes at 40 points/ns
+
+
+def test_rebind_between_numpy_and_python_floats_matches_a_fresh_build(dynamiqs_backend) -> None:
+    """A pulse amplitude rebound across np.float64 and float solves and differentiates like a fresh build."""
+    import jax
+    import jax.numpy as jnp
+    from quchip import ChargeDrive, DuffingTransmon, Gaussian, QuantumSequence
+
+    def build(amplitude):
+        q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+        chip = Chip([q], frame="rotating", backend=dynamiqs_backend)
+        chip.wire(ChargeDrive(q, label="xy"))
+        sequence = QuantumSequence(chip)
+        sequence.schedule("xy", envelope=Gaussian(duration=8.0, sigmas=3, amplitude=amplitude), freq=5.0)
+        return sequence
+
+    def population(sequence, amplitude=None):
+        if amplitude is not None:
+            sequence = sequence.with_params({"pulse.0.amplitude": amplitude})
+        result = sequence.simulate(tlist=np.linspace(0.0, 8.0, 5), initial_state={"q": 0}, dissipation=False)
+        return jnp.real(result.population("q", 1))
+
+    for declared, rebound in [(np.float64(0.04), 0.05), (0.04, np.float64(0.05))]:
+        sequence = build(declared)
+        population(sequence)
+        assert population(sequence, rebound)[-1] > 1e-3
+        npt.assert_allclose(population(sequence, rebound), population(build(rebound)), rtol=0, atol=1e-12)
+
+    gradient = jax.grad(lambda amplitude: population(sequence, amplitude)[-1])(0.05)
+    step = 1e-4
+    central = (population(sequence, 0.05 + step)[-1] - population(sequence, 0.05 - step)[-1]) / (2 * step)
+    npt.assert_allclose(gradient, central, rtol=1e-5)
