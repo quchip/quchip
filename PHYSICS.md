@@ -3520,15 +3520,44 @@ X fit with `spectators="none"` next to a neighbor 100 MHz away with
 `1 - F_avg = 1.5e-4`, mostly population left in the neighbor; the defaults
 (40 ns, ±3σ) give `1.9e-6`.
 
-`cross_resonance()` drives the control at the target frequency. With the
-susceptibility coefficients of §9.2, the seeds are
-`A = 1/(4 h |C_Z/A| ∫E dt)` for `h` halves and phase `-arg(C_Z/A)`. The target
-cancellation tone is `-(C_I/A) A e^{iφ}/C_t`, with `C_t` the target line's
-`0 -> 1` element averaged over the control states. The echoed form runs CR+,
-the calibrated X on the control, CR- with both tones shifted by π, and X again.
-The Gaussian edges have `σ = 6/(2π|Δ|)` for the control-target detuning `Δ`.
-The joints between the edges and the plateau leave a spectral tail at `Δ` that
-falls as `Δ⁻³`.
+`cross_resonance()` drives the control at the target frequency. The seeds are
+the complex amplitudes `a` of the CR tone and `c` of the target tone that solve
+
+```text
+z_a a + z_c c = 1/(4 h ∫E dt),        x_a a + x_c c = s N/∫E dt
+```
+
+for `h` halves. `z_a = C_Z/A` and `x_a = C_I/A` are the susceptibility
+coefficients of §9.2 for the CR line. `z_c = (t_0 - t_1)/2` and
+`x_c = (t_0 + t_1)/2` come from the target line's dressed `0 -> 1` elements
+with the control in 0 and in 1. The first equation sets the ZX angle to π/2
+over the gate. The template has `N = 0`, so the target tone cancels IX. The
+echoed form runs CR+, the calibrated X on the control, CR- with both tones
+shifted by π, and X again. The Gaussian edges have `σ = 6/(2π|Δ|)` for the
+control-target detuning `Δ`. The joints between the edges and the plateau
+leave a spectral tail at `Δ` that falls as `Δ⁻³`.
+
+Rotary seeds (Sundaresan et al., PRX Quantum 1, 020318 (2020)) have `N > 0`
+and `s = ±1`. The target tone then turns the target by `N` turns per half
+about the ZX axis, along it or against it. CR- reverses the tone, and IX
+commutes with ZX and with the X on the control, so the two turns cancel for
+any `N`. With `θ(t) = 2πN ∫_0^t E / ∫_0^T E` on one half, a static
+`ζ Z_t Z_s/4` between the target and a spectator gives a first-order term of
+size `(πζ/2) |∫ cos(θ(t) - θ(T)/2) dt|` in the error generator after the gate
+for that half. The sine part vanishes for a symmetric tone. The seeds take
+`N` at the zeros of this integral below a peak target-tone Rabi rate of
+`|α|/8` of the target, and the knob keeps the same bound. The zeros are whole turns for a square tone
+and lie between whole turns for Gaussian edges: `N = 0.72, 1.62, 2.59, 3.58,
+4.58` for a 200 ns half with 47.7 ns edges. The ZX term adds ±1/8 turn per half
+with the control state, so the two control branches have different zeros and
+a residual of first order in `ζ` stays. In a model of the control, target, and
+spectator with only these IX, ZX, and ZZ terms and instantaneous echoes, the
+norm of the error generator at `N = 2.59` is 6% of its value at `N = 0`. The
+ZZ during the echo pulses, when the tones are off, adds to it. The gate set
+solves each rotary seed once, with the virtual-Z phases fitted, fits from the
+template and from the two best seeds, and keeps the lowest cost. `GateSet.standard()` adds the seeds when the target couples to
+another gate-set qubit, directly or through devices that are not gate-set
+qubits.
 
 ### 17.5 Circuits
 

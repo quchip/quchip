@@ -440,6 +440,8 @@ def fit_block(
     max_nfev: int,
     explore: bool,
     phase_names: Sequence[str],
+    screened: Sequence[tuple[np.ndarray, str]] = (),
+    keep: int = 2,
 ) -> FitOutcome:
     """Fit knobs, free Z phases, and the global phase to the ideal.
 
@@ -463,6 +465,11 @@ def fit_block(
         Run a Nelder-Mead stage on ``|r|²`` before the fits.
     phase_names : sequence of str
         Labels of the free-Z qubits.
+    screened : sequence of (values, provenance), default ()
+        Knob vectors that cost one solve each, with only the phases fitted.
+        The ``keep`` best become starts; with ``max_nfev=0`` all compete.
+    keep : int, default 2
+        Number of screened vectors to fit from.
     """
     began = time.perf_counter()
     residual = _Residual(evaluate, ideal, z_bits, knobs)
@@ -482,6 +489,10 @@ def fit_block(
     residual.lower = lb[:n_knobs]
     residual.upper = ub[:n_knobs]
     vectors = [(start_vector(values), provenance) for values, provenance in starts]
+    if screened:
+        trials = [(np.clip(start_vector(values), lb, ub), provenance) for values, provenance in screened]
+        ranked = sorted(trials, key=lambda item: float(np.sum(residual(item[0]) ** 2)))
+        vectors.extend(ranked if max_nfev == 0 else ranked[:keep])
     if explore and n_knobs and max_nfev:
         best_start = min(vectors, key=lambda item: float(np.sum(residual(item[0]) ** 2)))
         found = minimize(lambda z: float(np.sum(residual(z) ** 2)), best_start[0], method="Nelder-Mead",

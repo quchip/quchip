@@ -207,10 +207,16 @@ class Seed:
         Knob values. Knobs that are not listed start at their template value.
     provenance : str
         Where the values come from, for the report.
+    screen : bool
+        Put the seed in the screened group. The gate set evaluates each
+        screened seed once, with only the virtual-Z phases fitted, and fits
+        from the two best. With ``max_nfev=0`` every screened seed competes
+        with the other starts.
     """
 
     values: Mapping[str, float]
     provenance: str = "user"
+    screen: bool = False
 
 
 class NativeGate:
@@ -234,7 +240,8 @@ class NativeGate:
         Qubits whose post-gate Z phases are calibrated. Each phase ``φ_q``
         becomes a trailing ``vz(q, -φ_q)``.
     seeds : sequence of Seed or mapping, default ()
-        Extra fit starts.
+        Extra fit starts. The gate set fits from each, or screens the ones
+        marked ``screen``.
     explore : bool, default False
         Run a Nelder-Mead search before the least-squares fits.
     duration : float or None, default None

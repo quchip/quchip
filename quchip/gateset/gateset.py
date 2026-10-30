@@ -271,6 +271,7 @@ class GateSet:
         x_duration: float | None = None,
         cr_duration: float | None = None,
         echo: bool = True,
+        rotary: bool | None = None,
         **options: Any,
     ) -> "GateSet":
         """Return a gate set with DRAG SX and X on each qubit and a ZX90 on each directed pair.
@@ -291,6 +292,11 @@ class GateSet:
             Total CR tone duration in ns. Required with pairs.
         echo : bool, default True
             Echo each CR with X pulses on the control.
+        rotary : bool or None, default None
+            Add the rotary seeds of :func:`~quchip.gateset.cross_resonance`
+            to each echoed ZX90. The default adds them when the target couples
+            to another gate-set qubit, directly or through devices that are
+            not gate-set qubits, and the gate set has spectators.
         **options
             Passed to :class:`GateSet`.
         """
@@ -306,7 +312,12 @@ class GateSet:
                               angle=np.pi, name="X"))
         for control, target in pairs:
             assert cr_duration is not None
-            gates.add(cross_resonance(chip, control, target, duration=cr_duration, echo=echo))
+            on = rotary
+            if on is None:
+                # A static ZZ between the target and a spectator is what the rotary tone averages out.
+                others = gates._reach([resolve_label(target)]) - {resolve_label(control)}
+                on = echo and gates.spectators != "none" and bool(others)
+            gates.add(cross_resonance(chip, control, target, duration=cr_duration, echo=echo, rotary=on))
         return gates
 
     def add(self, native: NativeGate) -> NativeGate:
@@ -687,6 +698,12 @@ class GateSet:
         for op in () if native.sequence is None else native.sequence.scheduled_ops:
             for term in self._delivered_of(op).terms:
                 sources |= term.devices
+        reached = {device for device in sources if device in others}
+        reached |= self._reach(device for device in sources if device not in reached)
+        return tuple(q for q in others if q in reached)
+
+    def _reach(self, starts: Iterable[str]) -> set[str]:
+        """Return the gate-set qubits that a coupling path from ``starts`` reaches without passing a gate-set qubit."""
         links: dict[str, set[str]] = {}
         for coupling in self.chip.couplings:
             a, b = getattr(coupling, "device_a_label", None), getattr(coupling, "device_b_label", None)
@@ -694,9 +711,9 @@ class GateSet:
                 continue
             links.setdefault(a, set()).add(b)
             links.setdefault(b, set()).add(a)
-        reached = {device for device in sources if device in others}
-        frontier = [device for device in sources if device not in reached]
-        seen = set(sources)
+        frontier = list(starts)
+        seen = set(frontier)
+        reached: set[str] = set()
         while frontier:
             device = frontier.pop()
             for neighbor in links.get(device, ()):
@@ -707,7 +724,7 @@ class GateSet:
                     reached.add(neighbor)
                 else:
                     frontier.append(neighbor)
-        return tuple(q for q in others if q in reached)
+        return reached
 
     def _fit(self, native: NativeGate, *, max_nfev: int, explore: bool, target: float) -> GateCalibration:
         template = native.sequence
@@ -738,6 +755,7 @@ class GateSet:
         warm = self._warm.get(native.key)
         if warm is not None and set(warm) == set(names):
             starts.append((np.array([warm[name] for name in names], dtype=float), "previous space"))
+        screened: list[tuple[np.ndarray, str]] = []
         for seed in native.seeds:
             unknown = set(seed.values) - set(names)
             if unknown:
@@ -745,7 +763,7 @@ class GateSet:
             values = initial.copy()
             for name, value in seed.values.items():
                 values[names.index(name)] = float(value)
-            starts.append((values, seed.provenance))
+            (screened if seed.screen else starts).append((values, seed.provenance))
         previous = self._previous.get(native.key)
         if previous is not None and set(previous) == set(names):
             starts.append((np.array([previous[name] for name in names], dtype=float), "previous calibration"))
@@ -757,12 +775,12 @@ class GateSet:
             if not (outcome.converged and outcome.cost <= target):
                 checked = outcome
                 outcome = fit_block(evaluate, ideal, z_bits, knobs, starts=starts, max_nfev=max_nfev,
-                                    explore=explore, phase_names=free_z)
+                                    explore=explore, phase_names=free_z, screened=screened)
                 outcome.solves += checked.solves
                 outcome.seconds += checked.seconds
         if outcome is None:
             outcome = fit_block(evaluate, ideal, z_bits, knobs, starts=starts, max_nfev=max_nfev, explore=explore,
-                                phase_names=free_z)
+                                phase_names=free_z, screened=screened)
         calibration = report(outcome, name=native.name, qubits=native.qubits, knobs=knobs, ideal=ideal,
                              z_bits=z_bits, phase_names=free_z, options=self.options, frame=self.frame,
                              cutoff=self.cutoff)

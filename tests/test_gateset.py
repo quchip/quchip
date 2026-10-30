@@ -18,10 +18,12 @@ from quchip import (
     FluxDrive,
     Gaussian,
     GaussianDRAG,
+    GaussianEdge,
     QuantumSequence,
     AutoChoiceWarning,
     Resonator,
     Square,
+    analyze_cr_susceptibility,
 )
 from quchip.gateset import GateSet, Knob, NativeGate, cross_resonance, drag_sx
 from quchip.gateset.cache import covariance, split_pieces
@@ -31,12 +33,26 @@ from quchip.gateset.native import ResolvedKnob, bind_pulses, resolve_knob
 from quchip.gateset.blocks import project_computational
 
 
-def two_transmons(df: float = 0.2, approximation=None, **noise):
+def two_transmons(df: float = 0.2, approximation=None, g: float = 0.003, **noise):
     q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.33, levels=3, label="q0", **noise)
     q1 = DuffingTransmon(freq=5.0 + df, anharmonicity=-0.33, levels=3, label="q1", **noise)
     extra = {} if approximation is None else {"approximation": approximation}
-    chip = Chip([q0, q1], couplings=[Capacitive(q0, q1, g=0.003, label="J")], **extra)
+    chip = Chip([q0, q1], couplings=[Capacitive(q0, q1, g=g, label="J")], **extra)
     chip.wire(ChargeDrive(q0, label="xy0"), ChargeDrive(q1, label="xy1"))
+    return chip
+
+
+def three_transmons(bus: bool = False):
+    """Return transmons at 5.0, 5.1, and 5.2 GHz in a chain with g = 3 MHz, or each on a 6.2 GHz bus with g = 60 MHz."""
+    qubits = [DuffingTransmon(freq=5.0 + 0.1 * i, anharmonicity=-0.33, levels=3, label=f"q{i}") for i in range(3)]
+    if bus:
+        resonator = Resonator(freq=6.2, levels=3, label="bus")
+        chip = Chip([*qubits, resonator],
+                    couplings=[Capacitive(q, resonator, g=0.06, label=f"g{i}") for i, q in enumerate(qubits)])
+    else:
+        chip = Chip(qubits, couplings=[Capacitive(qubits[0], qubits[1], g=0.003, label="J01"),
+                                       Capacitive(qubits[1], qubits[2], g=0.003, label="J12")])
+    chip.wire(*(ChargeDrive(q, label=f"xy{i}") for i, q in enumerate(qubits)))
     return chip
 
 
@@ -425,6 +441,85 @@ def test_covariance_check_is_structural():
 
 
 @pytest.mark.unit
+def test_rotary_seeds_turn_the_target_where_its_zz_with_a_spectator_averages_out():
+    """Each rotary seed keeps ZX at π/4 per half and turns the target by N turns, with ∫cos(θ - θ_T/2) dt = 0."""
+    from scipy.integrate import cumulative_trapezoid, trapezoid
+
+    from quchip.gateset.builtins import _rotary_turns
+
+    # On a square tone the rotary angle grows linearly, so the integral vanishes at whole turns.
+    assert np.allclose(_rotary_turns(Square(duration=200.0, amplitude=1.0), 4.5), [1, 2, 3, 4], atol=1e-6)
+    chip = three_transmons()
+    native = cross_resonance(chip, "q0", "q1", duration=400.0, edge=50.0, rotary=True)
+    assert len(native.seeds) >= 6 and all(seed.screen for seed in native.seeds)
+    times = np.linspace(0.0, 200.0, 40001)
+    shape = np.real(GaussianEdge(duration=200.0, edge_duration=50.0, sigmas=2.5, amplitude=1.0).sample(times))
+    running = cumulative_trapezoid(shape, times, initial=0.0)
+    area = running[-1]
+    response = analyze_cr_susceptibility(chip, "q0", "q1", drive="xy0")
+    line = next(item for item in chip.control_equipment.lines if item.label == "xy1")
+    q0, q1 = chip.device_map["q0"], chip.device_map["q1"]
+    t0 = complex(chip.drive_matrix_elements(({}, {q1: 1}), drives=[line])[line])
+    t1 = complex(chip.drive_matrix_elements(({q0: 1}, {q0: 1, q1: 1}), drives=[line])[line])
+    rate = abs(chip.dressed_anharmonicity("q1")) / 8
+    for seed in native.seeds:
+        cr = seed.values["cr_amplitude"] * np.exp(1j * seed.values["cr_phase"])
+        tone = seed.values["cancel_amplitude"] * np.exp(1j * seed.values["cancel_phase"])
+        assert abs((response.ZX_per_amplitude * cr + (t0 - t1) / 2 * tone) * area - 1 / 8) < 1e-9
+        turns = (response.IX_per_amplitude * cr + (t0 + t1) / 2 * tone) * area
+        assert abs(turns.imag) < 1e-9 and (turns.real > 0) == ("along" in seed.provenance)
+        n = abs(turns.real)
+        assert abs(n - round(n)) > 0.05
+        assert abs(trapezoid(np.cos(2 * np.pi * n * (running / area - 0.5)), times)) < 1e-6 * 200.0
+        assert abs(tone) * max(abs(t0), abs(t1)) < rate
+
+
+@pytest.mark.unit
+def test_standard_adds_rotary_seeds_when_the_target_has_a_spectator():
+    """On a chain, q0 -> q1 gets rotary seeds and q1 -> q2 does not; a bus is a coupling path."""
+    chip = three_transmons()
+    qubits = ["q0", "q1", "q2"]
+    gates = GateSet.standard(chip, qubits, pairs=[("q0", "q1"), ("q1", "q2")], cr_duration=400.0)
+    assert gates.native("ZX90", ("q0", "q1")).seeds and not gates.native("ZX90", ("q1", "q2")).seeds
+    forced = GateSet.standard(chip, qubits, pairs=[("q1", "q2")], cr_duration=400.0, rotary=True)
+    assert forced.native("ZX90", ("q1", "q2")).seeds
+    for options in ({"spectators": "none"}, {"echo": False}):
+        assert not GateSet.standard(chip, qubits, pairs=[("q0", "q1")], cr_duration=400.0,
+                                    **options).native("ZX90", ("q0", "q1")).seeds
+    on_bus = GateSet.standard(three_transmons(bus=True), qubits, pairs=[("q0", "q1")], cr_duration=400.0)
+    assert on_bus.native("ZX90", ("q0", "q1")).seeds
+    with pytest.raises(ValueError, match="echo"):
+        cross_resonance(chip, "q0", "q1", duration=400.0, echo=False, rotary=True)
+
+
+@pytest.mark.unit
+def test_screened_seeds_cost_one_solve_each_and_the_two_best_are_fitted():
+    """A screen solves each seed once. Without a knob search the best start wins; with one, the two best are fitted."""
+    from quchip.gateset.calibration import fit_block
+
+    x = np.array([[0, 1], [1, 0]], dtype=complex)
+
+    def rotation(values):
+        # X turned by an error b(k), with a local minimum b = 0.2 at k = 1 and b = 0 near k = 3.
+        k = values[0]
+        error = 0.2 + 0.5 * (k - 1) ** 2 * (k - 3) ** 2 - 0.2 * np.exp(-((k - 3) ** 2) / 0.1)
+        angle = np.pi + error
+        return np.cos(angle / 2) * np.eye(2) - 1j * np.sin(angle / 2) * x, np.zeros((1, 2)), 0.0
+
+    knob = ResolvedKnob("k", (("pulse.0.amplitude", 1.0),), (0.0,), 0.0, 1.0, -np.inf, np.inf)
+    # Screened errors b: 0.7, 0.27, 0.47 (on the wall of the deeper minimum), and 0.22.
+    screened = [(np.array([k]), f"k = {k}") for k in (2.0, 1.2, 2.5, 0.9)]
+    common = dict(starts=[(np.array([0.6]), "template")], explore=False, phase_names=(), screened=screened)
+    seeded = fit_block(rotation, x, np.zeros((2, 0)), [knob], max_nfev=0, **common)
+    # The template, four screened seeds, and the two Jacobians of the report.
+    assert seeded.seed == "k = 0.9" and seeded.solves == 7
+    two = fit_block(rotation, x, np.zeros((2, 0)), [knob], max_nfev=100, **common)
+    three = fit_block(rotation, x, np.zeros((2, 0)), [knob], max_nfev=100, keep=3, **common)
+    assert abs(two.values[0] - 1.0) < 1e-4 and two.cost > 1e-3
+    assert three.seed == "k = 2.5" and three.cost < 1e-12
+
+
+@pytest.mark.unit
 def test_coupled_spectators_include_qubits_that_line_crosstalk_reaches():
     """q2 has no coupling to q0, but crosstalk from q0's line drives it, so it joins the SX block."""
     from quchip.control.signal import Crosstalk
@@ -514,6 +609,50 @@ def test_cached_cross_resonance_matches_direct_solves_at_later_starts():
     idles = [("IDLE", "q0", 7.1), ("IDLE", "q1", 7.1)]
     circuit = [("RZ", "q0", 0.4), ("RZ", "q1", -1.1), *idles, ("ZX90", ("q0", "q1")), *idles[:1],
                ("ZX90", ("q0", "q1"))]
+    composed = gates.unitary(circuit, policy="serial")
+    direct = gates.schedule(circuit, policy="serial").propagator(frame="rotating", options=gates.options,
+                                                                 dissipation=False)
+    assert composed.solves == 0
+    assert np.abs(composed.full - np.asarray(direct.matrix)).max() < 2e-5
+
+
+def test_rotary_target_tone_turns_a_two_level_target_by_its_dressed_element():
+    """Alone for one half, a rotary seed's target tone turns the target by 2π t_0 c ∫E dt with the control in 0."""
+    q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.33, levels=3, label="q0")
+    q1 = DuffingTransmon(freq=5.1, anharmonicity=-0.33, levels=2, label="q1")
+    chip = Chip([q0, q1], couplings=[Capacitive(q0, q1, g=0.003, label="J")])
+    line = ChargeDrive(q1, label="xy1")
+    chip.wire(ChargeDrive(q0, label="xy0"), line)
+    t0 = complex(chip.drive_matrix_elements(({}, {q1: 1}), drives=[line])[line])
+    x, y = np.array([[0, 1], [1, 0]], dtype=complex), np.array([[0, -1j], [1j, 0]])
+    for seed in cross_resonance(chip, "q0", "q1", duration=400.0, edge=50.0, rotary=True).seeds[:2]:
+        amplitude, phase = seed.values["cancel_amplitude"], seed.values["cancel_phase"]
+        shape = GaussianEdge(duration=200.0, edge_duration=50.0, sigmas=2.5, amplitude=amplitude)
+        sequence = QuantumSequence(chip)
+        sequence.schedule("xy1", envelope=shape, freq=chip.freq("q1"), frame="q1", phase=phase)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            block = np.asarray(sequence.subspace_propagator(["q0", "q1"], tlist=[0.0, 200.0],
+                                                            options={"atol": 1e-12, "rtol": 1e-10}).matrix)
+        rotation = block[:2, :2] / np.sqrt(np.linalg.det(block[:2, :2]))
+        # The control stays in 0 and the target is resonant there, so the rotation is exact up to the dressing.
+        angle = 2 * np.pi * abs(t0) * float(np.real(shape.area()))
+        axis = np.angle(t0 * np.exp(1j * phase))
+        expected = np.cos(angle / 2) * np.eye(2) - 1j * np.sin(angle / 2) * (np.cos(axis) * x + np.sin(axis) * y)
+        assert min(np.abs(rotation - expected).max(), np.abs(rotation + expected).max()) < 1e-4
+
+
+def test_rotary_cross_resonance_starts_at_a_rotary_seed_and_caches_like_a_direct_solve():
+    """The screen picks a rotary start, and its strong target tone composes like a direct solve at other starts."""
+    chip = two_transmons(df=0.1, g=0.006)
+    gates = GateSet.standard(chip, ["q0", "q1"], pairs=[("q0", "q1")], cr_duration=200.0, rotary=True)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        calibration = gates.calibrate(("ZX90", ("q0", "q1")), max_nfev=0)[("ZX90", ("q0", "q1"))]
+    assert calibration.seed.startswith("rotary")
+    # Idles without a common period with the carriers place the gates at unrelated start times.
+    circuit = [("IDLE", "q0", 7.1), ("IDLE", "q1", 7.1), ("ZX90", ("q0", "q1")), ("IDLE", "q0", 13.3),
+               ("IDLE", "q1", 13.3), ("ZX90", ("q0", "q1"))]
     composed = gates.unitary(circuit, policy="serial")
     direct = gates.schedule(circuit, policy="serial").propagator(frame="rotating", options=gates.options,
                                                                  dissipation=False)

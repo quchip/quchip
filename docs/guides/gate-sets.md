@@ -55,7 +55,7 @@ converges within the target, the gate set keeps it, so a gate that still fits
 costs a few solves.
 
 `gates.calibrate(max_nfev=0)` skips the knob search. Each native keeps its
-template values, which for the built-in natives are closed-form seeds from the
+best start, which for the built-in natives is a closed-form seed from the
 chip, and the fit sets only the virtual-Z phases. On the chip above, the seeds
 give SX and X errors within a factor of three of the calibrated ones and a ZX90
 error near `4e-3`, so calibration matters most for the two-qubit gate. A
@@ -72,6 +72,20 @@ the gate are part of the error. The report also gives the error with all
 spectators in `|0>`, with each other qubit in `|1>`, and in the state of the
 other qubits where it is largest. Pass
 `GateSet(..., spectators="none")` to fit with the other qubits in `|0>`.
+
+Static ZZ between a CR target and another qubit adds an error during the CR
+tones that the echo does not remove. When the target couples to another
+gate-set qubit, directly or through a bus, `GateSet.standard()` gives the
+echoed ZX90 rotary starts. In each, the target tone also turns the target
+about the ZX axis by N turns per half, along the axis or against it, and the
+echo turns it back. N takes the values at which the ZZ with the other qubit
+averages out to first order over a half. With the Gaussian edges, these lie
+between whole turns. The calibration solves each start once, fits from the
+template and from the two best starts, and keeps the best fit.
+`calibration.seed` names the start. On a chain of three transmons 100 MHz
+apart with `g = 3 MHz`, the ZX90 on the first pair goes from `5.5e-3` to
+`1.6e-4`, with about three times the solves. Pass `rotary=True` or
+`rotary=False` to `GateSet.standard()` or `cross_resonance()` to choose.
 
 The fit places the gate at time 0. A gate with one carrier, such as the
 built-in SX and X, has the same error at every start time. The echoed CR uses
