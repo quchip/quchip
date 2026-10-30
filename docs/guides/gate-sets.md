@@ -51,8 +51,10 @@ smaller than the average gate infidelity. `.channel` gives the gate as a
 `ChannelResult`.
 
 Calibrating a native again starts from its previous knobs. When that fit
-converges within the target, the gate set keeps it, so a gate that still fits
-costs a few solves.
+converges within the target and at most doubles the previous error, the gate
+set keeps it and tries no other start, so a gate that still fits costs a few
+solves. Otherwise, and after `calibrate(max_nfev=0)`, every start competes,
+the previous knobs among them.
 
 `gates.calibrate(max_nfev=0)` skips the knob search. Each native keeps its
 best start, which for the built-in natives is a closed-form seed from the
@@ -78,9 +80,11 @@ tones that the echo does not remove. When the target couples to another
 gate-set qubit, directly or through a bus, `GateSet.standard()` gives the
 echoed ZX90 rotary starts. In each, the target tone also turns the target
 about the ZX axis by N turns per half, along the axis or against it, and the
-echo turns it back. N takes the values at which the ZZ with the other qubit
-averages out to first order over a half. With the Gaussian edges, these lie
-between whole turns. The calibration solves each start once, fits from the
+echo turns it back. N takes the values at which this turn alone would average
+the ZZ with the other qubit out to first order over a half. With the Gaussian
+edges, these lie between whole turns. The CR also turns the target, by an
+eighth of a turn per half in a direction set by the control, so the ZZ error
+is reduced, not removed. The calibration solves each start once, fits from the
 template and from the two best starts, and keeps the best fit.
 `calibration.seed` names the start. On a chain of three transmons 100 MHz
 apart with `g = 3 MHz`, the ZX90 on the first pair goes from `5.5e-3` to

@@ -236,7 +236,9 @@ class GateSet:
         self._overlap_spaces: dict[int, tuple[Any, np.ndarray]] = {}
         # Settings of the calibrations in progress, inherited by the natives that a composite needs.
         self._settings: list[tuple[int, bool | None, float, bool]] = []
-        self._previous: dict[tuple[str, tuple[str, ...]], dict[str, float]] = {}
+        # Knobs and cost of each calibration when a calibration starts; the cost is None after max_nfev=0.
+        self._previous: dict[tuple[str, tuple[str, ...]], tuple[dict[str, float], float | None]] = {}
+        self._seed_only: set[tuple[str, tuple[str, ...]]] = set()
         # Digest of the chip the derived state belongs to, and the digest each calibration used.
         self._fingerprint: str | None = None
         self._calibrated_on: dict[tuple[str, tuple[str, ...]], str | None] = {}
@@ -562,8 +564,11 @@ class GateSet:
             Natives to calibrate. Empty means all. Natives inside a selected
             composite run first, with the same settings, when they are
             uncalibrated or stale. A native that was calibrated before also
-            starts from its previous knobs, so a gate that still fits stops
-            after a few solves.
+            starts from its previous knobs. When that fit converges within
+            ``target`` and at most doubles the previous error, the gate set
+            keeps it, so a gate that still fits stops after a few solves.
+            Otherwise, and after a calibration with ``max_nfev=0``, every
+            start competes, the previous knobs among them.
         max_nfev : int, default 200
             Bound on residual evaluations of each fit. ``0`` skips the knob
             search: each knob keeps its best start, the template value or a
@@ -586,7 +591,8 @@ class GateSet:
         """
         selected = keys = self._select(selection)
         self._sync_chip()
-        self._previous = {key: {name: knob.value for name, knob in calibration.knobs.items()}
+        self._previous = {key: ({name: knob.value for name, knob in calibration.knobs.items()},
+                                None if key in self._seed_only else calibration.cost)
                           for key, calibration in self._calibrations.items()}
         self._check_cutoff([key for key in keys if not self._natives[key].is_composite])
         while True:
@@ -657,6 +663,10 @@ class GateSet:
         self._versions[key] = self._versions.get(key, 0) + 1
         calibration.version = self._versions[key]
         self._calibrations[key] = calibration
+        if max_nfev:
+            self._seed_only.discard(key)
+        else:
+            self._seed_only.add(key)
         self._calibrated_on[key] = self._fingerprint
         self._stale.pop(key, None)
         for other_key, other in self._calibrations.items():
@@ -764,15 +774,17 @@ class GateSet:
             for name, value in seed.values.items():
                 values[names.index(name)] = float(value)
             (screened if seed.screen else starts).append((values, seed.provenance))
-        previous = self._previous.get(native.key)
+        previous, previous_cost = self._previous.get(native.key, (None, None))
         if previous is not None and set(previous) == set(names):
             starts.append((np.array([previous[name] for name in names], dtype=float), "previous calibration"))
         outcome = None
-        if previous is not None and max_nfev and starts[-1][1] == "previous calibration":
-            # Check before refitting: a fit from the previous knobs that converges within the target is kept.
+        if previous_cost is not None and max_nfev and starts[-1][1] == "previous calibration":
+            # Check before refitting: a fit from fitted knobs is kept when it converges within the target and at
+            # most doubles the previous cost, or stays below ten times the solver's unitarity defect, as for the
+            # "solver_floor" status. Otherwise every start competes, the previous knobs among them.
             outcome = fit_block(evaluate, ideal, z_bits, knobs, starts=starts[-1:], max_nfev=max_nfev, explore=False,
                                 phase_names=free_z)
-            if not (outcome.converged and outcome.cost <= target):
+            if not (outcome.converged and outcome.cost <= min(target, max(2 * previous_cost, 10 * outcome.defect))):
                 checked = outcome
                 outcome = fit_block(evaluate, ideal, z_bits, knobs, starts=starts, max_nfev=max_nfev,
                                     explore=explore, phase_names=free_z, screened=screened)

@@ -211,7 +211,8 @@ class Seed:
         Put the seed in the screened group. The gate set evaluates each
         screened seed once, with only the virtual-Z phases fitted, and fits
         from the two best. With ``max_nfev=0`` every screened seed competes
-        with the other starts.
+        with the other starts. A calibration that runs again and keeps its
+        previous knobs screens no seeds.
     """
 
     values: Mapping[str, float]

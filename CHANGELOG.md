@@ -430,13 +430,15 @@ This file records notable user-visible changes to quchip.
   circuit with uncalibrated gates calibrates them at their seeds, with a
   notice. When the chip changes in place, its calibrations become stale, and
   the built-in natives take their carriers and seeds from the changed chip.
-  Calibrating again starts from the previous knobs and keeps them when the
-  fit converges within the target. Reports also give the eigenvalue
-  infidelity and the gate's channel as a `ChannelResult`. When a CR target
-  couples to another gate-set qubit, the echoed ZX90 also tries rotary
-  starts, in which the target tone turns the target where its static ZZ with
-  that qubit averages out to first order. On a chain of three transmons this
-  takes the ZX90 on the first pair from `5.5e-3` to `1.6e-4`.
+  Calibrating again starts from the previous knobs and keeps them when the fit
+  converges within the target and at most doubles the previous error;
+  otherwise, and after a seed-only calibration, every start competes. Reports
+  also give the eigenvalue infidelity and the gate's channel as a
+  `ChannelResult`. When a CR target couples to another gate-set qubit, the
+  echoed ZX90 also tries rotary starts, in which the target tone turns the
+  target so that most of its static ZZ with that qubit averages out. On a chain
+  of three transmons this takes the ZX90 on the first pair from `5.5e-3` to
+  `1.6e-4`.
 - `QuantumSequence.propagator()` returns the lab-frame propagator of a
   schedule from one solve, or its superoperator when the chip has collapse
   channels. `QuantumSequence.extend()` appends another sequence.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import warnings
 from dataclasses import replace
 
@@ -13,6 +14,7 @@ from quchip import (
     Capacitive,
     ChargeDrive,
     Chip,
+    CrossKerr,
     DuffingTransmon,
     Exact,
     FluxDrive,
@@ -20,12 +22,13 @@ from quchip import (
     GaussianDRAG,
     GaussianEdge,
     QuantumSequence,
+    Qubit,
     AutoChoiceWarning,
     Resonator,
     Square,
     analyze_cr_susceptibility,
 )
-from quchip.gateset import GateSet, Knob, NativeGate, cross_resonance, drag_sx
+from quchip.gateset import GateSet, Knob, NativeGate, Seed, cross_resonance, drag_sx
 from quchip.gateset.cache import covariance, split_pieces
 from quchip.gateset.calibration import _Residual, average_fidelity, error_generator
 from quchip.gateset.ideals import FALLBACK_RULES, IDEALS, PAULIS, RULES, embed, ideal_unitary
@@ -54,6 +57,23 @@ def three_transmons(bus: bool = False):
                                        Capacitive(qubits[1], qubits[2], g=0.003, label="J12")])
     chip.wire(*(ChargeDrive(q, label=f"xy{i}") for i, q in enumerate(qubits)))
     return chip
+
+
+def cr_turns(chip, area):
+    """Return the IX and ZX turns per half of q0 -> q1 tone amplitudes, and the target line's elements t0 and t1."""
+    response = analyze_cr_susceptibility(chip, "q0", "q1", drive="xy0")
+    line = next(item for item in chip.control_equipment.lines if item.label == "xy1")
+    q0, q1 = chip.device_map["q0"], chip.device_map["q1"]
+    t0 = complex(chip.drive_matrix_elements(({}, {q1: 1}), drives=[line])[line])
+    t1 = complex(chip.drive_matrix_elements(({q0: 1}, {q0: 1, q1: 1}), drives=[line])[line])
+
+    def turns(values):
+        cr = values["cr_amplitude"] * np.exp(1j * values["cr_phase"])
+        tone = values["cancel_amplitude"] * np.exp(1j * values["cancel_phase"])
+        return ((response.IX_per_amplitude * cr + (t0 + t1) / 2 * tone) * area,
+                (response.ZX_per_amplitude * cr + (t0 - t1) / 2 * tone) * area)
+
+    return turns, t0, t1
 
 
 def one_qubit_set():
@@ -447,8 +467,10 @@ def test_rotary_seeds_turn_the_target_where_its_zz_with_a_spectator_averages_out
 
     from quchip.gateset.builtins import _rotary_turns
 
-    # On a square tone the rotary angle grows linearly, so the integral vanishes at whole turns.
-    assert np.allclose(_rotary_turns(Square(duration=200.0, amplitude=1.0), 4.5), [1, 2, 3, 4], atol=1e-6)
+    # On a square tone the rotary angle grows linearly, so the integral vanishes at whole turns, also at the limit.
+    square = Square(duration=200.0, amplitude=1.0)
+    for most, zeros in ((4.5, [1, 2, 3, 4]), (1.02, [1]), (2.01, [1, 2]), (0.9, [])):
+        np.testing.assert_allclose(_rotary_turns(square, most), zeros, atol=1e-6)
     chip = three_transmons()
     native = cross_resonance(chip, "q0", "q1", duration=400.0, edge=50.0, rotary=True)
     assert len(native.seeds) >= 6 and all(seed.screen for seed in native.seeds)
@@ -456,22 +478,16 @@ def test_rotary_seeds_turn_the_target_where_its_zz_with_a_spectator_averages_out
     shape = np.real(GaussianEdge(duration=200.0, edge_duration=50.0, sigmas=2.5, amplitude=1.0).sample(times))
     running = cumulative_trapezoid(shape, times, initial=0.0)
     area = running[-1]
-    response = analyze_cr_susceptibility(chip, "q0", "q1", drive="xy0")
-    line = next(item for item in chip.control_equipment.lines if item.label == "xy1")
-    q0, q1 = chip.device_map["q0"], chip.device_map["q1"]
-    t0 = complex(chip.drive_matrix_elements(({}, {q1: 1}), drives=[line])[line])
-    t1 = complex(chip.drive_matrix_elements(({q0: 1}, {q0: 1, q1: 1}), drives=[line])[line])
+    turns_of, t0, t1 = cr_turns(chip, area)
     rate = abs(chip.dressed_anharmonicity("q1")) / 8
     for seed in native.seeds:
-        cr = seed.values["cr_amplitude"] * np.exp(1j * seed.values["cr_phase"])
-        tone = seed.values["cancel_amplitude"] * np.exp(1j * seed.values["cancel_phase"])
-        assert abs((response.ZX_per_amplitude * cr + (t0 - t1) / 2 * tone) * area - 1 / 8) < 1e-9
-        turns = (response.IX_per_amplitude * cr + (t0 + t1) / 2 * tone) * area
+        turns, zx = turns_of(seed.values)
+        assert abs(zx - 1 / 8) < 1e-9
         assert abs(turns.imag) < 1e-9 and (turns.real > 0) == ("along" in seed.provenance)
         n = abs(turns.real)
         assert abs(n - round(n)) > 0.05
         assert abs(trapezoid(np.cos(2 * np.pi * n * (running / area - 0.5)), times)) < 1e-6 * 200.0
-        assert abs(tone) * max(abs(t0), abs(t1)) < rate
+        assert seed.values["cancel_amplitude"] * max(abs(t0), abs(t1)) < rate
 
 
 @pytest.mark.unit
@@ -625,8 +641,11 @@ def test_rotary_target_tone_turns_a_two_level_target_by_its_dressed_element():
     chip.wire(ChargeDrive(q0, label="xy0"), line)
     t0 = complex(chip.drive_matrix_elements(({}, {q1: 1}), drives=[line])[line])
     x, y = np.array([[0, 1], [1, 0]], dtype=complex), np.array([[0, -1j], [1j, 0]])
-    for seed in cross_resonance(chip, "q0", "q1", duration=400.0, edge=50.0, rotary=True).seeds[:2]:
-        amplitude, phase = seed.values["cancel_amplitude"], seed.values["cancel_phase"]
+    seeds = cross_resonance(chip, "q0", "q1", duration=400.0, edge=50.0, rotary=True).seeds[:2]
+    tones = [(seed.values["cancel_amplitude"], seed.values["cancel_phase"]) for seed in seeds]
+    # The seeds turn the target about ±X. A third tone turns it about the axis at π/4, so the sign of Y counts.
+    tones.append((tones[0][0], np.pi / 4 - np.angle(t0)))
+    for amplitude, phase in tones:
         shape = GaussianEdge(duration=200.0, edge_duration=50.0, sigmas=2.5, amplitude=amplitude)
         sequence = QuantumSequence(chip)
         sequence.schedule("xy1", envelope=shape, freq=chip.freq("q1"), frame="q1", phase=phase)
@@ -856,11 +875,18 @@ def test_uncalibrated_gates_run_at_their_seeds_with_a_notice():
 
 @pytest.mark.unit
 def test_an_edited_chip_makes_its_gates_stale_until_they_are_calibrated_again():
-    """An in-place change of the chip marks every calibration stale; calibrating again starts from the old knobs."""
+    """An in-place change of the chip marks every calibration stale. Calibrating again keeps a fit from the old
+    knobs only while its error at most doubles; after a seed-only calibration, every start competes."""
     qubit, gates = one_qubit_set()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        gates.calibrate()
+        gates.calibrate(max_nfev=0)
+        first = gates.calibrate()[("SX", ("q",))]
+        again = gates.calibrate()[("SX", ("q",))]
+    # The seed-only knobs are the template's, which comes first among equal fits.
+    assert first.seed == "template" and again.seed == "previous calibration"
+    # A start of five quarter turns: with a detuned carrier, its stronger drive leaves less error.
+    gates.native("SX", "q").seeds = (Seed({"amplitude": 5 * again.knobs["amplitude"].value}, "five quarter turns"),)
     qubit.freq = 5.001
     with pytest.warns(UserWarning, match="chip changed"):
         gates.unitary([("SX", "q")])
@@ -868,7 +894,9 @@ def test_an_edited_chip_makes_its_gates_stale_until_they_are_calibrated_again():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         calibrated = gates.calibrate()
-    assert calibrated[("SX", ("q",))].seed == "previous calibration"
+    # The SX keeps its carrier, so a fit from the old knobs gives 1e-5, far above the previous error. Every start
+    # competes, and the longer one wins at 4e-7.
+    assert calibrated[("SX", ("q",))].seed == "five quarter turns"
     assert all(calibration.status != "stale" for calibration in calibrated.values())
 
 
@@ -1016,3 +1044,151 @@ def test_default_tolerances_follow_the_backend():
     left, _ = on_qutip._block(sequence, ("q0", "q1"), 40.0)
     right, _ = on_dynamiqs._block(sequence, ("q0", "q1"), 40.0)
     assert np.abs(np.asarray(left.matrix) - np.asarray(right.matrix)).max() < 1e-7
+
+
+def rotary_model(shape, ix, zx, zeta, window=0.0):
+    """Return the propagator on (control, target, spectator) of an IX/ZX/ZZ model of the echoed CR, solved exactly.
+
+    In each half the target turns by ``ix`` turns about X and by ``zx`` with the sign of Z_c, and the second half
+    reverses both. The control flips at once after each half, and ``ζ n_t n_s`` acts throughout, alone for
+    ``window`` ns after each half. For the control in c, the target thus turns by ``ix + s zx`` and then by
+    ``-ix + s zx`` turns, with ``s = (-1)^c``.
+    """
+    from scipy.integrate import solve_ivp
+
+    area = float(np.real(shape.area()))
+    number = np.diag([0.0, 1.0])
+    static = 2 * np.pi * zeta * np.kron(number, number)
+    idle = expm(-1j * static * window)
+    blocks = []
+    for sign in (1, -1):
+        u = np.eye(4, dtype=complex)
+        for turns in (ix + sign * zx, -ix + sign * zx):
+            def rhs(t, y, turns=turns):
+                drive = np.pi * turns / area * float(np.real(shape.sample(np.array([t]))[0]))
+                return (-1j * (drive * np.kron(PAULIS["X"], np.eye(2)) + static) @ y.reshape(4, 4)).ravel()
+
+            solved = solve_ivp(rhs, (0.0, shape.duration), u.ravel(), method="DOP853", rtol=1e-12, atol=1e-13)
+            u = idle @ solved.y[:, -1].reshape(4, 4)
+        blocks.append(u)
+    return np.block([[blocks[0], np.zeros((4, 4))], [np.zeros((4, 4)), blocks[1]]])
+
+
+THREE_QUBIT_PAULIS = ["".join(p) for p in itertools.product("IXYZ", repeat=3)][1:]
+# The terms that act on both the target and the spectator.
+TARGET_SPECTATOR = [i for i, label in enumerate(THREE_QUBIT_PAULIS) if label[1] != "I" and label[2] != "I"]
+
+
+@pytest.mark.validation
+def test_rotary_seeds_leave_six_percent_of_the_first_order_zz_in_an_ix_zx_zz_model():
+    """quchip solves the IX/ZX/ZZ model of the echoed CR at the seeds' exact turns to 1e-6 rad in each signed
+    error term. The error beyond first order in ζ falls as ζ², and at the 2.59-turn seeds the first-order
+    target-spectator part is 6% of the template's.
+
+    With instant echoes the control enters only as Z_c, so each control state is one run of a two-level target
+    with a cross-Kerr ``ζ n_t n_s`` to a two-level spectator.
+    """
+    from scipy.integrate import cumulative_trapezoid
+    from scipy.linalg import logm
+
+    chip = three_transmons()
+    shape = GaussianEdge(duration=200.0, edge_duration=50.0, sigmas=2.5, amplitude=1.0)
+    area = float(np.real(shape.area()))
+    turns_of, _, _ = cr_turns(chip, area)
+    # The template, and the seeds at 2.59 turns along ZX and against it.
+    seeds = cross_resonance(chip, "q0", "q1", duration=400.0, edge=50.0, rotary=True).seeds[4:6]
+    starts = [(0.0, 0.125), *((float(np.real(ix)), float(np.real(zx))) for ix, zx in map(turns_of, (
+        seed.values for seed in seeds)))]
+    assert abs(abs(starts[1][0]) - 2.59) < 0.01 and starts[1][0] * starts[2][0] < 0
+    ideal = np.kron(ideal_unitary("ZX90"), np.eye(2))
+    zeta = float(chip.dispersive_shift("q1", "q2"))
+
+    def coefficients(k):
+        return np.array([np.real(np.trace(np.kron(np.kron(PAULIS[a], PAULIS[b]), PAULIS[c]) @ k)) / 8
+                         for a, b, c in THREE_QUBIT_PAULIS])
+
+    def exact(ix, zx, zeta):
+        k = 1j * logm(rotary_model(shape, ix, zx, zeta) @ ideal.conj().T)
+        return coefficients((k + k.conj().T) / 2)
+
+    # The first-order generator after the gate, 2π ζ ∫ U0(T, t) n_t n_s U0(T, t)† dt, with U0 the target's turn.
+    times = np.linspace(0.0, 200.0, 20001)
+    weights = np.full(times.size, times[1])
+    weights[[0, -1]] /= 2
+    running = cumulative_trapezoid(np.real(shape.sample(times)), times, initial=0.0) / area
+    number = np.diag([0.0, 1.0])
+
+    def first_order(ix, zx, zeta):
+        k = np.zeros((8, 8), dtype=complex)
+        for c, sign in enumerate((1, -1)):
+            first, second = ix + sign * zx, -ix + sign * zx
+            left = 2 * np.pi * np.concatenate([first * (1 - running) + second, second * (1 - running)])
+            turn = np.cos(left / 2)[:, None, None] * np.eye(2) - 1j * np.sin(left / 2)[:, None, None] * PAULIS["X"]
+            inner = np.einsum("t,tij,jk,tlk->il", np.concatenate([weights, weights]), turn, number, turn.conj())
+            k[4 * c:4 * c + 4, 4 * c:4 * c + 4] = 2 * np.pi * zeta * np.kron(inner, number)
+        return coefficients(k)
+
+    for ix, zx in starts:
+        blocks = []
+        for sign in (1, -1):
+            target, spectator = Qubit(freq=5.1, label="t"), Qubit(freq=5.2, label="s")
+            model = Chip([target, spectator], couplings=[CrossKerr(target, spectator, chi=zeta, label="zz")],
+                         frame="rotating")
+            line = ChargeDrive(target, label="xy")
+            model.wire(line)
+            element = complex(model.drive_matrix_elements(({}, {target: 1}), drives=[line])[line])
+            sequence = QuantumSequence(model)
+            for turns in (ix + sign * zx, -ix + sign * zx):
+                sequence.schedule("xy", envelope=shape.with_params({"amplitude": abs(turns) / (abs(element) * area)}),
+                                  freq=model.freq("t"), frame="t", phase=float(np.angle(np.sign(turns) / element)))
+            blocks.append(np.asarray(sequence.subspace_propagator(["t", "s"], tlist=[0.0, 400.0],
+                                                                  options={"atol": 1e-11, "rtol": 1e-9}).matrix))
+        generator, _ = error_generator(np.block([[blocks[0], np.zeros((4, 4))], [np.zeros((4, 4)), blocks[1]]]),
+                                       ideal)
+        reference = exact(ix, zx, zeta)
+        assert np.abs(np.array([generator.get(label, 0.0) for label in THREE_QUBIT_PAULIS]) - reference).max() < 1e-6
+        beyond = np.linalg.norm(reference - first_order(ix, zx, zeta))
+        assert beyond / np.linalg.norm(exact(ix, zx, zeta / 2) - first_order(ix, zx, zeta / 2)) == pytest.approx(
+            4.0, abs=0.1)
+    template, *seeded = (np.linalg.norm(first_order(ix, zx, zeta)[TARGET_SPECTATOR]) for ix, zx in starts)
+    assert all(0.05 < norm / template < 0.07 for norm in seeded)
+
+
+@pytest.mark.validation
+def test_rotary_seeds_cut_the_zz_error_on_the_chain_as_the_ix_zx_zz_model_predicts():
+    """On the chain, the ZX90's target-spectator error at the template and at the 2.59-turn seeds is within 5% of
+    the IX/ZX/ZZ model with the 40 ns echoes as windows of ZZ alone, and the seeds cut it to about 11%."""
+    chip = three_transmons()
+    # The norms are compared at 5%, so the solves can use looser tolerances than the gate set's defaults.
+    gates = GateSet.standard(chip, ["q0", "q1", "q2"], pairs=[("q0", "q1")], cr_duration=400.0, rotary=False,
+                             options={"atol": 1e-10, "rtol": 1e-8})
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        gates.calibrate(("ZX90", ("q0", "q1")), max_nfev=0)
+    native = gates.native("ZX90", ("q0", "q1"))
+    knobs = native.resolved_knobs()
+    seeds = cross_resonance(chip, "q0", "q1", duration=400.0, rotary=True).seeds[4:6]
+    assert all("2.59" in seed.provenance for seed in seeds)
+    # The native's envelope, with the default edge from the dressed detuning.
+    edge = 2 * 2.5 * 6.0 / (2 * np.pi * abs(chip.freq("q0") - chip.freq("q1")))
+    shape = GaussianEdge(duration=200.0, edge_duration=edge, sigmas=2.5, amplitude=1.0)
+    turns_of, _, _ = cr_turns(chip, float(np.real(shape.area())))
+    ideal = np.kron(native.ideal_matrix(), np.eye(2))
+    z_bits = np.array(list(itertools.product((0, 1), repeat=3)), dtype=float)
+    zeta = float(chip.dispersive_shift("q1", "q2"))
+    window = gates.native("X", "q0").duration
+    full, model = [], []
+    for values in ({knob.name: knob.initial for knob in knobs}, *(seed.values for seed in seeds)):
+        bindings = {}
+        for knob in knobs:
+            bindings.update(knob.bindings(float(values[knob.name])))
+        block, _ = gates._block(bind_pulses(native.sequence, bindings), ("q0", "q1", "q2"), native.duration)
+        matrix, leaked = np.asarray(block.matrix), np.asarray(block.leaked)
+        phases = _Residual(None, ideal, z_bits, knobs).phase_start(matrix, leaked)[:-1]
+        generator, _ = error_generator(np.exp(1j * (z_bits @ phases))[:, None] * matrix, ideal)
+        full.append(np.linalg.norm([generator.get(THREE_QUBIT_PAULIS[i], 0.0) for i in TARGET_SPECTATOR]))
+        ix, zx = turns_of(values)
+        generator, _ = error_generator(rotary_model(shape, float(np.real(ix)), float(np.real(zx)), zeta, window), ideal)
+        model.append(np.linalg.norm([generator.get(THREE_QUBIT_PAULIS[i], 0.0) for i in TARGET_SPECTATOR]))
+    assert np.allclose(full, model, rtol=0.05, atol=0.0)
+    assert np.allclose(np.array(full[1:]) / full[0], np.array(model[1:]) / model[0], rtol=0.1, atol=0.0)

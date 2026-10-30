@@ -149,10 +149,15 @@ def _rotary_turns(envelope: Any, most: float) -> list[float]:
     def integral(turns: float) -> float:
         return float(trapezoid(np.cos(2 * np.pi * turns * centred), times))
 
-    grid = np.arange(0.05, most, 0.05)
+    if most <= 0:
+        return []
+    # A grid of at most 0.05 turns that ends at `most`, so a zero just below `most` is kept.
+    grid = np.linspace(0.0, most, int(np.ceil(most / 0.05)) + 1)
     values = [integral(float(turns)) for turns in grid]
-    return [float(brentq(integral, grid[i], grid[i + 1], xtol=1e-10))
-            for i in range(len(grid) - 1) if values[i] * values[i + 1] < 0]
+    roots = [float(turns) for turns, value in zip(grid, values) if value == 0.0]
+    roots += [float(brentq(integral, grid[i], grid[i + 1], xtol=1e-10))
+              for i in range(len(grid) - 1) if values[i] * values[i + 1] < 0]
+    return sorted(roots)
 
 
 def cross_resonance(
@@ -220,10 +225,12 @@ def cross_resonance(
         :class:`~quchip.gateset.Seed`). In each, the target tone also turns
         the target by N turns per half about the ZX axis, along it or against
         it, and the echo turns it back. N takes the values at which a static
-        ZZ between the target and a spectator averages out at first order over
-        a half, ``∫ cos(θ(t) - θ(T)/2) dt = 0`` with θ the rotary angle. These
-        are whole turns for a square tone and lie between whole turns for
-        shaped edges. The target tone's peak Rabi rate stays below ``|α|/8``
+        ZZ between the target and a spectator would average out at first order
+        over a half if only the rotary angle θ turned the target,
+        ``∫ cos(θ(t) - θ(T)/2) dt = 0``. These are whole turns for a square
+        tone and lie between whole turns for shaped edges. The ZX term turns
+        the two control branches by ±π/4 more per half, so part of the ZZ
+        stays. The target tone's peak Rabi rate stays below ``|α|/8``
         of the target, in the seeds and in the fit. Needs ``echo`` and
         ``cancel``.
     name : str, default "ZX90"
