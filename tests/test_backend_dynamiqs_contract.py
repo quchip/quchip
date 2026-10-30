@@ -259,12 +259,15 @@ def test_backend_operator_factories_match_dynamiqs(dynamiqs_backend, layout) -> 
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize(("offsets", "batched"), [((), True), ((-1, 0, 2), False), ((5,), True), ((-5,), False)])
+@pytest.mark.parametrize(
+    ("offsets", "batched"), [((), True), ((0,), False), ((-1, 0, 2), False), ((5,), True), ((-5,), False)],
+)
 def test_sparse_operator_payloads_preserve_values_and_gradients(dynamiqs_backend, offsets, batched) -> None:
-    """Empty and nonempty sparse operators retain their dimensions, batches and traced payloads."""
+    """Empty, diagonal, banded and padded sparse operators keep dynamiqs' structure, dimensions and payloads."""
     import dynamiqs as dq
     import jax
     import jax.numpy as jnp
+    import jax.tree_util as jtu
 
     from quchip.backend.dynamiqs import _dia_qarray
 
@@ -280,23 +283,38 @@ def test_sparse_operator_payloads_preserve_values_and_gradients(dynamiqs_backend
         diags = np.stack([diags, 2 * diags])
         expected = np.stack([expected, 2 * expected])
 
-    def matrix(scale):
+    def matrix(scale, dims=dims):
         operator = _dia_qarray(dims, offsets, scale * jnp.asarray(diags))
         assert operator.layout is dq.dia
         assert operator.dims == dims
         return operator.to_jax()
 
-    def constant_matrix(scale):
+    def constant_matrix(scale, dims=dims):
         with jax.ensure_compile_time_eval():
             operator = _dia_qarray(dims, offsets, diags)
         return scale * operator.to_jax()
 
-    # Concrete operators also occur inside compile-time evaluation during reductions.
-    npt.assert_allclose(np.asarray(jax.jit(constant_matrix)(0.7)), 0.7 * expected, atol=1e-14)
-    npt.assert_allclose(np.asarray(jax.jit(matrix)(0.7)), 0.7 * expected, atol=1e-14)
-    npt.assert_allclose(np.asarray(_dia_qarray(dims, offsets, diags).to_jax()), expected, atol=1e-14)
-    gradient = jax.grad(lambda scale: jnp.real(jnp.sum(matrix(scale))))(0.7)
-    npt.assert_allclose(gradient, expected.real.sum(), atol=1e-14)
+    def eager_constant_matrix(dims):
+        with jax.ensure_compile_time_eval():
+            return _dia_qarray(dims, offsets, diags).to_jax()
+
+    # Concrete operators also occur inside compile-time evaluation during reductions, eagerly and
+    # under JIT or grad. Each check takes its own dims, so it is the first to build its operator.
+    checks = [
+        (lambda d: jax.jit(constant_matrix, static_argnums=1)(0.7, d), 0.7 * expected),
+        (lambda d: jax.jit(matrix, static_argnums=1)(0.7, d), 0.7 * expected),
+        (lambda d: _dia_qarray(d, offsets, diags).to_jax(), expected),
+        (eager_constant_matrix, expected),
+        (lambda d: jax.grad(lambda scale: jnp.real(jnp.sum(matrix(scale, d))))(0.7), expected.real.sum()),
+        (lambda d: jax.grad(lambda scale: jnp.real(jnp.sum(constant_matrix(scale, d))))(0.7), expected.real.sum()),
+    ]
+    for shape, (compute, reference) in zip([(1, 6), (6, 1), (3, 2), (1, 2, 3), (3, 1, 2), (2, 3, 1)], checks):
+        npt.assert_allclose(np.asarray(compute(shape)), reference, atol=1e-14)
+    unbatched = diags[0] if batched else diags
+    eager = dq.sparsedia_from_dict(
+        {offset: row[max(offset, 0):n + min(offset, 0)] for offset, row in zip(offsets, unbatched)}, dims=dims,
+    ) if offsets else dq.zeros(*dims, layout=dq.dia)
+    assert jtu.tree_structure(_dia_qarray(dims, offsets, unbatched)) == jtu.tree_structure(eager)
 
 
 def test_dressed_frequency_gradient_matches_one_excitation_spectrum(dynamiqs_backend) -> None:
