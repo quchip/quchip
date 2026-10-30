@@ -284,6 +284,42 @@ def test_sequence_hamiltonian_is_the_resolved_result_view() -> None:
     )
 
 
+def _rotating_sequence(freq=5.0, g=0.02, amplitude=0.02):
+    chip = _chip().with_params({"q.freq": freq, "qr.g": g})
+    chip.set_frame("rotating")
+    drive = ChargeDrive(chip["q"], label="xy")
+    chip.wire(drive)
+    sequence = QuantumSequence(chip)
+    sequence.schedule(drive, envelope=Gaussian(duration=20.0, amplitude=amplitude, sigmas=3.0), freq=5.0)
+    return sequence, chip
+
+
+def _excited(sequence, chip):
+    result = sequence.simulate(tlist=np.linspace(0.0, 20.0, 11), initial_state=chip.state({"q": 0, "r": 0}),
+                               options={"rtol": 1e-10, "atol": 1e-12})
+    return np.asarray(result.population("q", 1)).real
+
+
+def test_rebinds_of_a_resolved_sequence_match_fresh_builds() -> None:
+    sequence, chip = _rotating_sequence()
+    original = _excited(sequence, chip)
+    pulse_rebound = sequence.with_params({"pulse.0.amplitude": 0.03})
+    chip_rebound = sequence.with_params({"q.freq": 5.01, "qr.g": 0.025})
+
+    pulse_fresh = _excited(*_rotating_sequence(amplitude=0.03))
+    np.testing.assert_allclose(_excited(pulse_rebound, chip), pulse_fresh, rtol=0, atol=1e-12)
+    fresh, fresh_chip = _rotating_sequence(freq=5.01, g=0.025)
+    rebound = _excited(chip_rebound, fresh_chip)
+    np.testing.assert_allclose(rebound, _excited(fresh, fresh_chip), rtol=0, atol=1e-12)
+    assert np.max(np.abs(rebound - original)) > 1e-3
+
+    # An edit to the source after rebinding re-resolves the source and leaves the rebound copy alone.
+    chip["q"].freq = 5.02
+    fresh, fresh_chip = _rotating_sequence(freq=5.02)
+    np.testing.assert_allclose(_excited(sequence, fresh_chip), _excited(fresh, fresh_chip), rtol=0, atol=1e-12)
+    np.testing.assert_allclose(_excited(pulse_rebound, _rotating_sequence()[1]), pulse_fresh, rtol=0, atol=1e-12)
+
+
 @pytest.mark.validation
 def test_chip_with_params_is_differentiable_on_dynamiqs() -> None:
     pytest.importorskip("dynamiqs")
