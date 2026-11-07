@@ -47,6 +47,8 @@ executing==2.2.1
     # via stack-data
 fastjsonschema==2.22.1
     # via nbformat
+filelock==4.2.9
+    # via quchip (pyproject.toml)
 fonttools==4.63.0
     # via matplotlib
 iniconfig==2.3.0
@@ -111,7 +113,6 @@ librt==0.15.0
 lineax==0.1.0
     # via
     #   diffrax
-    #   dynamiqs
     #   optimistix
 loky==3.5.6
     # via quchip (pyproject.toml)
