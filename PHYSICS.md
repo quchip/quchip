@@ -3595,9 +3595,10 @@ Each drive adds a transient excitation to the state it acts on, so gates that
 run at the same time need more headroom than one gate. On a chain of four
 transmons at `K = n + 2`, one echoed CR gate matches the full space to `3e-8`,
 but two at once differ by `5e-6`, and four 10 ns X gates at once by `8e-4`.
-Under an automatic cutoff, `unitary()` and `simulate()` solve a circuit with
-up to `m` gates at once in one piece at `K + m - 1`, capped at the full
-product space. Gates at once can end with population above `K`, for example
+Under an automatic cutoff, `unitary()` and `simulate()` count the gates at
+once from the windows of §17.5, which end at each gate's last delivered field,
+and solve a circuit with up to `m` of them in one piece at `K + m - 1`, capped
+at the full product space. Gates at once can end with population above `K`, for example
 in `|22>` after two strong pulses on levels without anharmonicity. Composed on
 the `K` space, each window would drop that population at its end, and the
 dropped amplitudes would add up over later windows. The extra excitation per

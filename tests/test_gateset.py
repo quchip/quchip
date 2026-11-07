@@ -1042,6 +1042,32 @@ def test_circuits_with_gates_at_once_solve_in_one_piece_above_the_cutoff():
             assert composed.leakage[3] == pytest.approx(run.leakage, abs=1e-7)
 
 
+def test_unitary_and_simulate_count_gates_at_once_by_their_delivered_fields():
+    """A 3 ns delay on q0's line makes serial gates on q0 and q1 overlap in their fields; both solves see it."""
+    from quchip.control.signal import Delay
+
+    q0 = DuffingTransmon(freq=5.0, anharmonicity=0.0, levels=3, label="q0")
+    q1 = DuffingTransmon(freq=5.2, anharmonicity=0.0, levels=3, label="q1")
+    chip = Chip([q0, q1, Resonator(freq=7.0, levels=9, label="r")], frame="rotating")
+    chip.wire(ChargeDrive(q0, label="xy0"), ChargeDrive(q1, label="xy1"), signal_chain=[Delay("xy0", delta_t=3.0)])
+    gates = GateSet(chip, ["q0", "q1"])
+    for qubit, line in (("q0", "xy0"), ("q1", "xy1")):
+        element = complex(chip.drive_matrix_elements(qubit)[line])
+        seq = QuantumSequence(chip)
+        pulse = seq.schedule(line, envelope=Square(duration=2.0, amplitude=0.125 / abs(element)),
+                             freq=chip.freq(qubit), phase=-float(np.angle(element)))
+        gates.add(NativeGate("A", (qubit,), seq, knobs={"amplitude": Knob(pulse, "amplitude")},
+                             ideal=expm(-0.25j * np.pi * PAULIS["X"]), free_z=()))
+    circuit = [("A", "q0"), ("A", "q1")]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        gates.calibrate(max_nfev=0)
+        composed = gates.unitary(circuit, policy="serial")
+        run = gates.simulate(circuit, "11", policy="serial", dissipation=False)
+    assert np.abs(composed.computational[:, 3] - run.state).max() < 1e-7
+    assert composed.leakage[3] == pytest.approx(run.leakage, abs=1e-7)
+
+
 @pytest.mark.validation
 def test_echoed_cross_resonance_calibrates_a_cx():
     """The echoed ZX90 gives a CX with 1 - F < 1e-3; its error changes with start time, and the SX error does not."""

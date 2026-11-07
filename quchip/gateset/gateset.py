@@ -511,6 +511,12 @@ class GateSet:
             self._delivered[key] = lower_pulse(self.solver_chip, op)
         return self._delivered[key]
 
+    def _window(self, key: tuple[str, tuple[str, ...]], placed: Sequence[Any]) -> tuple[float, float, list[Any]]:
+        """Return a placed gate's start and end, with its end at its last delivered field, and its template ops."""
+        template = list(self._on_solver(self._calibrations[key].sequence).scheduled_ops)
+        start = float(placed[0].start_time) - float(template[0].start_time)
+        return start, start + self._span(template, self._natives[key].duration), template
+
     def _span(self, ops: Sequence[Any], duration: float, start: float = 0.0) -> float:
         """Return the end of ``[start, start + duration]`` extended to the last delivered field."""
         stop = start + float(duration)
@@ -1225,15 +1231,15 @@ class GateSet:
         idle = self._idle_of()
         instances = []
         for key, first, count in placements:
-            template = list(self._on_solver(self._calibrations[key].sequence).scheduled_ops)
+            if not count:
+                continue
             placed = ops[first:first + count]
-            start = float(placed[0].start_time) - float(template[0].start_time) if count else None
+            start, stop, template = self._window(key, placed)
             offsets: dict[str, float] = {}
             for op, reference in zip(placed, template):
                 if op.frame is not None:
                     offsets[op.frame] = float(op.phase_offset) - float(reference.phase_offset)
-            if start is not None:
-                instances.append((start, start + self._span(template, self._natives[key].duration), key, offsets))
+            instances.append((start, stop, key, offsets))
         instances.sort(key=lambda item: item[0])
         segments: list[list[Any]] = []
         for instance in instances:
@@ -1329,7 +1335,8 @@ class GateSet:
 
         The schedule runs with the gate-set solver settings. Under an
         automatic cutoff, a schedule with up to ``m`` gates at once solves
-        with ``m - 1`` more excitations. The final state is mapped into the
+        with ``m - 1`` more excitations; as in :meth:`unitary`, a gate lasts
+        until its last delivered field. The final state is mapped into the
         computational frame with the virtual-Z correction.
 
         Parameters
@@ -1353,9 +1360,7 @@ class GateSet:
         solver_sequence = self._on_solver(sequence)
         ops = list(solver_sequence.scheduled_ops)
         duration = self._span(ops, float(sequence.total_duration))
-        windows = [(min(float(op.start_time) for op in ops[first:first + count]),
-                    max(float(op.start_time) + float(op.envelope.duration) for op in ops[first:first + count]))
-                   for _, first, count in placements if count]
+        windows = [self._window(key, ops[first:first + count])[:2] for key, first, count in placements if count]
         chip, embedding = self._overlap_space(_most_at_once(windows))
         if embedding is not None:
             solver_sequence = self._on_solver(sequence, chip)
