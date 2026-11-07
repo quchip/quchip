@@ -2,16 +2,11 @@
 
 from __future__ import annotations
 
-import re
-from pathlib import Path
-
-
-ROOT = Path(__file__).resolve().parents[1]
+from tests.extension_guide import guide_code
 
 
 def test_extension_guide_python_examples_execute_together():
-    text = (ROOT / "docs" / "extensions.md").read_text()
-    blocks = re.findall(r"```python\n(.*?)```", text, flags=re.DOTALL)
+    code = guide_code()
 
-    assert blocks
-    exec("\n\n".join(blocks), {})
+    assert code
+    exec(code, {})

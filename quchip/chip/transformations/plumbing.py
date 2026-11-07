@@ -31,7 +31,7 @@ def plan_stranded_lines(
 
     ``classify(line)`` returns ``None`` for a survivor or a ``StrandedLine``
     for a removed target. ``result_kind`` selects the rule (``edge``,
-    ``leaf-fold`` or ``crosskerr``). Missing rules raise the target's message.
+    ``leaf-fold``, ``coupling`` or ``effective``). Missing rules raise the target's message.
     Return surviving lines and ``(line, rule)`` pairs in source order. The
     rules are applied only after the reduced model and the emitted edges exist."""
     survivor_lines: list[Any] = []
@@ -65,13 +65,12 @@ def rebuild_chip(
     couplings: Any,
     port_replacements: dict[str, Any] | None = None,
     effective_terms: Any = None,
-    baths: Any = None,
 ) -> Any:
     """Rebuild the retained graph with the source's calculation settings.
 
     Keep the backend, basis, approximation, space policy, label and surviving state shorthand.
-    Filter per-device frames to retained labels. Copy baths and effective terms,
-    unless replacements are supplied. Removed port targets need explicit
+    Filter per-device frames to retained labels. Copy effective terms, unless
+    replacements are supplied. Removed port targets need explicit
     replacements. Control equipment is attached separately."""
     from quchip.chip.chip import Chip
 
@@ -103,7 +102,6 @@ def rebuild_chip(
         approximation=source_chip.approximation,
         basis=source_chip.basis,
         backend=source_chip._backend,
-        baths=[bath.copy() for bath in source_chip.baths] if baths is None else baths,
         port_network=network,
         effective_terms=source_chip.effective_terms if effective_terms is None else effective_terms,
         space=source_chip.space,

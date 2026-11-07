@@ -12,7 +12,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from quchip.chip.baths import Bath
 from quchip.chip.chip import Chip
 from quchip.chip.couplings import Capacitive
 from quchip.chip.effective import EffectiveTerms
@@ -35,7 +34,6 @@ def _demo_chip() -> tuple[Chip, ChargeDrive, DuffingTransmon, Resonator]:
     chip = Chip(
         [q, r],
         couplings=[Capacitive(q, r, g=0.060)],
-        baths=[Bath("thermal", [q], temperature=30.0)],
         frame="rotating",
         approximation=RWA(),
     )
@@ -45,7 +43,7 @@ def _demo_chip() -> tuple[Chip, ChargeDrive, DuffingTransmon, Resonator]:
 
 
 def test_chip_describe_reports_composition_with_units() -> None:
-    """describe() lists every device/coupling/drive/bath under its label with declared units."""
+    """describe() lists every device/coupling/drive under its label with declared units."""
     chip, drv, q, r = _demo_chip()
     text = chip.describe()
 
@@ -57,8 +55,6 @@ def test_chip_describe_reports_composition_with_units() -> None:
     assert "g = 0.06 GHz" in text
     assert "q ↔ r" in text
     assert f"{drv.label} — ChargeDrive → q" in text
-    assert "thermal on q" in text
-    assert "temperature = 30 mK" in text
     assert "rotating" in text
     assert "3 x 8 = 24 levels" in text
 
@@ -108,8 +104,8 @@ def test_describe_never_concretizes_traced_parameters() -> None:
     jax.jit(probe)(jnp.asarray(5.0))
 
 
-def test_chip_physics_notes_includes_chip_level_bath_and_edge_drive_entries() -> None:
-    """physics_notes() carries a chip-level local-Lindblad entry, bath notes, and edge-target drive notes."""
+def test_chip_physics_notes_includes_chip_level_and_edge_drive_entries() -> None:
+    """physics_notes() carries a chip-level local-Lindblad entry and edge-target drive notes."""
     from quchip.chip.couplings import TunableCapacitive
     from quchip.control.drive import ParametricDrive
     from quchip.control.equipment import ControlEquipment
@@ -122,32 +118,28 @@ def test_chip_physics_notes_includes_chip_level_bath_and_edge_drive_entries() ->
         [q0, q1],
         couplings=[coupling],
         control_equipment=ControlEquipment([pump]),
-        baths=[Bath("thermal", temperature=20.0, rate=1e-3)],
     )
 
     notes = chip.physics_notes()
 
     assert "chip" in notes
     assert notes["chip"]
-    assert all(f"bath:{bath.label}" in notes for bath in chip.baths)
     assert "drive:pump" in notes
 
 
 def test_chip_physics_notes_keys_are_collision_proof_across_kinds() -> None:
-    """A device, drive, and bath sharing a label with each other (and 'chip') never overwrite each other's entry."""
+    """A device and a drive sharing a label with each other (and 'chip') never overwrite each other's entry."""
     from quchip.control.drive import ChargeDrive
     from quchip.control.equipment import ControlEquipment
 
     device = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="chip")
     drive = ChargeDrive(device, label="chip")
-    bath = Bath("thermal", temperature=20.0, rate=1e-3, label="chip")
-    chip = Chip([device], control_equipment=ControlEquipment([drive]), baths=[bath])
+    chip = Chip([device], control_equipment=ControlEquipment([drive]))
 
     notes = chip.physics_notes()
 
-    assert notes.keys() >= {"chip", "device:chip", "drive:chip", "bath:chip"}
+    assert notes.keys() >= {"chip", "device:chip", "drive:chip"}
     assert notes["device:chip"] != notes["drive:chip"]
-    assert notes["drive:chip"] != notes["bath:chip"]
     # The synthetic chip-level entry is never shadowed by a component labeled "chip".
     assert notes["chip"]
 

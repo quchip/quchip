@@ -136,7 +136,7 @@ class TestArea:
         """A raised cosine has area A τ / 2, and the amplitude derivative of its area is τ / 2 under jit."""
         import jax
 
-        from quchip.extensions.envelopes import CosineEnvelope
+        from quchip import CosineEnvelope
 
         npt.assert_allclose(complex(CosineEnvelope(duration=30.0, amplitude=0.8).area()), 12.0, rtol=0, atol=1e-13)
         slope = jax.jit(jax.grad(lambda a: CosineEnvelope(duration=30.0, amplitude=a).area().real))(0.8)
