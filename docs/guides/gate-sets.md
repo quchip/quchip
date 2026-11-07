@@ -32,10 +32,17 @@ a warning:
 - `"at_bound"`: a knob ends at a bound, so the optimum is outside the range.
 - `"weak_direction"`: the fit does not determine some knob combination.
 - `"unconverged"`: the fit used all `max_nfev` evaluations before it converged.
-- `"solver_floor"`: the error is close to the integrator's unitarity defect.
+- `"solver_floor"`: the error is below ten times the integrator's unitarity
+  defect. This is a hint, not a bound: the defect does not measure coherent
+  phase errors of the solver.
 - `"poor_fit"`: the infidelity is above the target (default `1e-3`) at start
-  time 0, at the worst start time of the placement check below, or in the
-  worst state of the other qubits.
+  time 0, at the worst of the start times that the placement check samples,
+  or in the worst computational state of the other qubits. Each state of the
+  other qubits is scored on its own, so this conditional-state score does not
+  see phases that these qubits gather among themselves during the gate, such
+  as their own static ZZ. The joint-block score sees them only between
+  spectators in the block. Circuits see them all through `unitary()` and
+  `simulate()`.
 - `"stale"`: the chip changed after the calibration, for example through
   `q0.freq = ...`, or a native inside this composite was calibrated again
   after it. The gate keeps its earlier pulses, and a circuit that uses it
@@ -44,10 +51,12 @@ a warning:
   template, so declare it again when its carrier comes from the chip.
 
 `gates.calibration("ZX90", ("q0", "q1")).summary()` prints the full report.
-For gates on up to five qubits it also gives the eigenvalue infidelity, the
-score that gate-set tomography reports. It leaves out small rotations that only
-tilt the gate against state preparation and measurement, so it can be much
-smaller than the average gate infidelity. `.channel` gives the gate as a
+For gates on up to five qubits it also gives the eigenvalue infidelity, a
+spectral score that pyGSTi also reports. It compares eigenvalues only, so it
+does not see errors in the eigenvectors, such as a small tilt of the rotation
+axis, and it can be much smaller than the average gate infidelity. Some of
+these errors only tilt the gate against state preparation and measurement, but
+not all: an SY in place of an SX scores 0. `.channel` gives the gate as a
 `ChannelResult`.
 
 Calibrating a native again starts from its previous knobs. When that fit
@@ -115,8 +124,11 @@ print(run.probabilities)
 `unitary()` composes cached gate propagators, so a long circuit costs a few
 matrix products. Gates that overlap in time, gates on a chip without the RWA,
 gates whose pulses depend on absolute time, and gates on a drive that
-overrides `signal()` are solved directly, once per placement. `simulate()` solves the circuit's schedule, with the chip's
-collapse channels unless you pass `dissipation=False`.
+overrides `signal()` are solved directly, once per placement. Under an
+automatic excitation cutoff, a circuit with gates that overlap in time is
+solved in one piece (see Large chips). `simulate()` solves the circuit's
+schedule, with the chip's collapse channels unless you pass
+`dissipation=False`.
 
 The decomposition rules turn H, X, Y, Z, S, T, RX, RY, CX, CZ, and SWAP into
 the natives. A CX against the direction of the gate set's ZX90 gets an H on
@@ -156,10 +168,12 @@ When the chip's product space has more than 64 states and the chip sets no
 space policy, gate-set solves use an excitation cutoff. The gate set starts at
 one excitation above the number of gate-set qubits and raises the cutoff until
 the gates stop changing, with the other qubits in `|0>` and in `|1>`. Each
-drive adds a transient excitation, so `unitary()` and `simulate()` solve gates
-that run at the same time with one more excitation for each gate after the
-first. A warning states each cutoff. Pass `space=ExcitationCutoff(max_total=K)`
-to use one cutoff for every solve, or `space=None` for the full product space.
+drive adds a transient excitation, so `unitary()` and `simulate()` solve a
+circuit with gates that run at the same time in one piece, with one more
+excitation for each gate after the first. A warning states each cutoff. These
+rules are heuristics, not bounds. Pass
+`space=ExcitationCutoff(max_total=K)` to use one cutoff for every solve, or
+`space=None` for the full product space.
 
 ## Solver settings
 
