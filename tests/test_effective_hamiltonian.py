@@ -39,6 +39,16 @@ def test_pathway_sum_matches_half_commutator_element():
     assert abs(pathway_sum - expected) < 1e-12
 
 
+def test_static_zz_names_a_coupled_degeneracy():
+    """|1,1> and |2,0> share a bare energy and couple, so the pathway attribution names both levels."""
+    q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q0")
+    q1 = DuffingTransmon(freq=4.75, anharmonicity=-0.25, levels=3, label="q1")
+    chip = Chip([q0, q1], couplings=[Capacitive(q0, q1, g=0.01)])
+
+    with pytest.raises(ValueError, match=r"Levels \(1, 1\) and \(2, 0\) of \('q0', 'q1'\)"):
+        analyze_static_zz(chip, "q0", "q1")
+
+
 def test_effective_hamiltonian_eigenvalues_match_labeled_energies_list_form():
     chip = _two_qubit_chip()
     result = effective_hamiltonian(chip, ["q0", "q1"])

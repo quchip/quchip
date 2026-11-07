@@ -377,6 +377,9 @@ This file records notable user-visible changes to quchip.
   `jax.jit`.
   ([#198](https://github.com/quchip/quchip/issues/198),
   [#208](https://github.com/quchip/quchip/pull/208))
+- `analyze_static_zz()` reports a coupled degeneracy in its pathway
+  attribution with the same `EliminationError` as `eliminate()`, which names
+  the two levels and their coupling. Its results are unchanged.
 - `EliminationResult.pathways(final, initial)` attributes any element of an
   SW-retained Hamiltonian to virtual states, including dispersive and Lamb
   shifts. It takes level mappings such as `{"qa": 1}`.
