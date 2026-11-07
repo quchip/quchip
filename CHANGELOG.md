@@ -39,6 +39,17 @@ This file records notable user-visible changes to quchip.
   a chip's cross-resonance response, use `analyze_cr_susceptibility()` for the
   weak-drive `IX` and `ZX` terms per unit of drive amplitude, or calibrate the
   gate with `GateSet`.
+- quchip 0.5 removes the `quchip.extensions` module. Its reference classes
+  `FrequencyModulatedMode`, `LossyKerrCavity`, `ModulatedCapacitive`,
+  `CollectiveDecayCoupling`, `ChargePhaseDrive`, `LossyChargeDrive`,
+  `CableLoss` and `SpinHalf` are now code in the extensions guide, which the
+  tests run; copy the classes you use into your code. A saved chip that holds
+  one of them loads after you define the class and change each `type` entry
+  from `quchip.extensions.<module>.<Class>` to the new module path.
+  `CableLoss` takes keyword arguments, as other transforms do.
+  `CosineEnvelope` is now a built-in envelope: import it from `quchip`.
+  Saved `quchip.extensions.envelopes.CosineEnvelope` entries still load, and
+  its `area()` returns the closed form `A τ / 2`.
 - Warnings are shorter, name the one action that sets or silences them, and
   point at the caller's line. The default-frame and automatic-carrier
   warnings have fixed text, so Python shows each once per line of code
@@ -328,17 +339,18 @@ This file records notable user-visible changes to quchip.
   `CoherentInput` port drive and a `ChargeDrive` flips. `PHYSICS.md` gained a
   cross-walk from quchip's conventions to these references.
   ([#222](https://github.com/quchip/quchip/pull/222))
-- `ChargePhaseDrive` now drives a transition at a positive carrier, as
-  `ChargeDrive` does, and takes the automatic carrier `chip.freq(target)`. Its
-  Hamiltonian stays `I·Q_c − Q·P`, but with the textbook charge sign above it
-  is `i(s a† − s* a)` on a Fock device: the resonant sideband at twice the
-  rate of `ChargeDrive` with no counter-rotating term, so its π amplitude is
-  half that of `ChargeDrive`. It now also accepts devices whose operators are
-  matrices, such as `ChargeBasisTransmon` and `Fluxonium`, where the resonant
-  sideband is the stronger of two. Previously, a 20 ns Gaussian at
-  ChargeDrive's π amplitude and +5 GHz left a 5 GHz transmon in `|0>`, and
-  only a negative carrier drove it. To keep the Hamiltonian of a 0.4 schedule
-  on a Fock device, negate `freq` and replace the pulse phase φ by π − φ.
+- The extension guide's `ChargePhaseDrive` now drives a transition at a
+  positive carrier, as `ChargeDrive` does, and takes the automatic carrier
+  `chip.freq(target)`. Its Hamiltonian stays `I·Q_c − Q·P`, but with the
+  textbook charge sign above it is `i(s a† − s* a)` on a Fock device: the
+  resonant sideband at twice the rate of `ChargeDrive` with no
+  counter-rotating term, so its π amplitude is half that of `ChargeDrive`. It
+  now also accepts devices whose operators are matrices, such as
+  `ChargeBasisTransmon` and `Fluxonium`, where the resonant sideband is the
+  stronger of two. Previously, a 20 ns Gaussian at ChargeDrive's π amplitude
+  and +5 GHz left a 5 GHz transmon in `|0>`, and only a negative carrier drove
+  it. To keep the Hamiltonian of a 0.4 schedule on a Fock device, negate
+  `freq` and replace the pulse phase φ by π − φ.
   ([#221](https://github.com/quchip/quchip/pull/221),
   [#222](https://github.com/quchip/quchip/pull/222))
 
@@ -675,9 +687,10 @@ This file records notable user-visible changes to quchip.
   device add as phasors. Previously, any transform on the line raised. A
   transform must set the new class attribute
   `SignalTransform.linear_time_invariant` to take part; `Gain`, `Delay`,
-  `Crosstalk`, `CrosstalkMatrix` and `CableLoss` set it, and a transform
-  without it still raises. `ControlEquipment.tone_transfer(line, frequency)`
-  returns the transfer to each line.
+  `Crosstalk`, `CrosstalkMatrix` and the extension guide's `CableLoss` set it,
+  and a transform without it still raises.
+  `ControlEquipment.tone_transfer(line, frequency)` returns the transfer to
+  each line.
   ([#218](https://github.com/quchip/quchip/issues/218),
   [#221](https://github.com/quchip/quchip/pull/221))
 

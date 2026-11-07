@@ -18,7 +18,7 @@ from quchip.declarative.expr import ParameterNamespace
 from quchip.declarative.ops import LocalOps
 from quchip.declarative.parameters import Parameter
 from quchip.devices.spaces import FockSpace
-from quchip.extensions import CollectiveDecayCoupling, LossyChargeDrive
+from tests.extension_guide import CollectiveDecayCoupling, LossyChargeDrive
 
 
 def _transmon(label: str) -> DuffingTransmon:

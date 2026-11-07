@@ -28,7 +28,7 @@ from quchip import (
 )
 from quchip.control.envelopes import Envelope
 from quchip.devices.base import BaseDevice
-from quchip.extensions import FrequencyModulatedMode, ModulatedCapacitive
+from tests.extension_guide import FrequencyModulatedMode, ModulatedCapacitive
 from quchip.engine.ir import DriveOp
 
 

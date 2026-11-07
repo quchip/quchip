@@ -245,7 +245,7 @@ def test_closed_system_rejects_non_unique_stationary_manifold() -> None:
 
 def test_time_dependent_resolved_hamiltonian_is_rejected() -> None:
     """Stationary solving rejects component-owned time dependence and points to time evolution."""
-    from quchip.extensions import FrequencyModulatedMode
+    from tests.extension_guide import FrequencyModulatedMode
 
     mode = FrequencyModulatedMode(
         frequency=5.0,

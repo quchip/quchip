@@ -65,6 +65,7 @@ from quchip.chip import (
 from quchip.control import (
     ChargeDrive,
     ControlEquipment,
+    CosineEnvelope,
     CouplingDrive,
     Crosstalk,
     CrosstalkMatrix,
@@ -261,6 +262,7 @@ __all__ = [
     "ActivePatchResult",
     "active_patch",
     # Pulse envelopes
+    "CosineEnvelope",
     "Gaussian",
     "GaussianDRAG",
     "LinearRamp",

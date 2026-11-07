@@ -20,7 +20,7 @@ from quchip import (
     Square,
     eliminate,
 )
-from quchip.extensions import CollectiveDecayCoupling
+from tests.extension_guide import CollectiveDecayCoupling
 from quchip.engine.frames import IncompatibleFrameError
 from quchip.engine.problem import DEFAULT_FRAME_WARNINGS
 
