@@ -273,3 +273,41 @@ def test_steady_state_batch_preserves_sweep_shape_and_expectations() -> None:
     np.testing.assert_allclose(np.real(result.expect(mode)), [0.0, 0.09998, 0.19936], atol=8e-4)
     with pytest.raises(FrozenInstanceError):
         result._shape = (99,)
+
+
+def test_conserving_chip_above_the_diagnostic_cap_matches_a_dense_stationary_solve() -> None:
+    """A lossy, thermal, dephased chip conserving excitations matches a dense trace-constrained solve."""
+    from quchip import RWA, Capacitive, DuffingTransmon
+    from quchip.engine.steady_state import build_steadystate_problem
+
+    qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, T1=300.0, T2=200.0, label="q")
+    readout = Resonator(freq=5.3, levels=7, internal_quality_factor=500, thermal_occupation=0.3, label="r")
+    chip = Chip([qubit, readout], [Capacitive(qubit, readout, g=0.08)], approximation=RWA(), backend="qutip")
+    problem = build_steadystate_problem(chip)
+    constrained = problem.backend.prepare_stationary(problem.engine_result).liouvillian.full()
+    constrained[0] += np.eye(21).reshape(-1)
+    reference = np.linalg.solve(constrained, np.eye(21 * 21)[0]).reshape(21, 21, order="F")
+
+    result = chip.steadystate(e_ops={"r": "n"})
+
+    np.testing.assert_allclose(result.state.full(), reference, rtol=0, atol=1e-12)
+    assert float(np.real(result.expect("r"))) > 0.1
+    assert result.residual < 1e-12
+
+
+@pytest.mark.parametrize("bit_flip", [False, True])
+def test_non_unique_stationary_system_above_the_diagnostic_cap_is_reported_singular(bit_flip) -> None:
+    """Pure dephasing, or bit flips leaving only a coherence stationary, give no state rather than an arbitrary one."""
+    import qutip
+    from scipy.sparse.linalg import MatrixRankWarning
+
+    from quchip.backend.qutip import _direct_steady_state
+
+    mode = qutip.destroy(9)
+    liouvillian = qutip.liouvillian(qutip.tensor(qutip.qeye(2), mode.dag() * mode),
+                                    [qutip.tensor(qutip.sigmax(), qutip.qeye(9)), qutip.tensor(qutip.qeye(2), mode)])
+    with pytest.warns(MatrixRankWarning, match="singular"):
+        state = (_direct_steady_state(liouvillian.to("csr").data_as("csr_matrix"), [2, 9]) if bit_flip else
+                 Chip([Resonator(freq=6.0, levels=17, label="r", T2=10.0)], frame="rotating",
+                      backend="qutip").steadystate().state)
+    assert np.isnan(state.full()).all()

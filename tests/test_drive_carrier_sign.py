@@ -35,6 +35,31 @@ def test_rwa_keeps_the_co_rotating_band_for_a_concrete_or_traced_carrier(freq, e
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("sign", [-1, 1])
+def test_jax_carrier_has_the_bits_and_derivative_of_the_complex_exponential(sign):
+    """A JAX carrier equals jnp.exp(i·sign·f·t) and its derivative bit for bit, eagerly and under jit."""
+    rng = np.random.default_rng(7)
+    times = np.concatenate([[0.0, -0.0, 5e-324, -5e-324, np.pi, 1e16, 1e300, -np.inf], rng.uniform(-1e4, 1e4, 2000),
+                            10.0 ** rng.uniform(-320.0, 308.0, 2000) * rng.choice([-1.0, 1.0], 2000)])
+    clipped = np.clip(times[:-1], -1e3, 1e3)
+
+    def carrier(freq, t):
+        return Carrier(freq=freq, sign=sign).evaluate(t, xp=jnp)
+
+    def exact(freq, t):
+        return jnp.exp(1j * sign * freq * jnp.asarray(t, dtype=float))
+
+    for compiled in (lambda function: function, jax.jit):
+        new, old = compiled(carrier), compiled(exact)
+        for t in (times, *times[:300]):
+            np.testing.assert_array_equal(np.atleast_1d(new(1.0, t)).view(np.uint64),
+                                          np.atleast_1d(old(1.0, t)).view(np.uint64))
+        new, old = (compiled(jax.grad(lambda f, p=p: jnp.sum(jnp.real((0.3 + 0.7j) * p(f, clipped)))))
+                    for p in (carrier, exact))
+        assert all(new(freq) == old(freq) for freq in (0.0, 0.37, -12.5))
+
+
+@pytest.mark.unit
 def test_rwa_keeps_the_imaginary_part_of_a_zero_carrier():
     expected = 0.1 * np.exp(-2j * np.pi * 5.0 * TIMES)
     np.testing.assert_allclose(_kept(0.0, part=ImagPart), expected, atol=1e-15)

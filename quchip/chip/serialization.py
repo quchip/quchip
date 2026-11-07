@@ -174,4 +174,6 @@ def clone_chip(chip: "Chip") -> "Chip":
     )
     if chip.control_equipment is not None:
         cloned.connect(chip.control_equipment.copy(device_map, cloned.coupling_map))
+    if (entry := chip._resolved_result_cache) is not None and entry[1] is None:
+        cloned._resolved_result_cache = entry  # Keyed by the copied content; a traced entry stays with its trace.
     return cloned

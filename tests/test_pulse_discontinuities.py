@@ -109,6 +109,31 @@ def test_qutip_coefficient_of_a_pulse_at_zero_builds_from_negative_time_without_
     assert coefficient(1e-6) == pytest.approx(1.0, abs=1e-12)
 
 
+@pytest.mark.unit
+def test_jax_pulse_signal_matches_numpy_and_its_gradients_match_central_differences():
+    """A phased, shifted Gaussian pulse on carriers evaluates in JAX as in NumPy, with gradients from differences."""
+    import jax
+    import jax.numpy as jnp
+    from quchip import Gaussian
+    from quchip.engine.ir import Add, Carrier, EnvelopeRef, Multiply, PolarScale, Shift, Window, evaluate_signal_program
+    times = np.linspace(-1.0, 30.0, 311)  # Window edges are not differentiated, and no sample sits on one.
+
+    def values(params, xp=jnp):
+        amplitude, theta, start, freq = params
+        shape = EnvelopeRef(Gaussian(duration=20.0, sigmas=3.0, amplitude=amplitude))
+        pulse = PolarScale(Shift(Window(Multiply((shape, Carrier(freq))), 0.0, 20.0), start), 0.8, theta)
+        delayed = Shift(Shift(Window(shape, 0.0, 20.0), start), 0.3)
+        return evaluate_signal_program(Add((Multiply((pulse, Carrier(freq, sign=1))), delayed)), times, xp=xp)
+
+    def power(params):
+        return jnp.sum(jnp.abs(values(params)) ** 2)
+
+    params = np.array([0.05, 0.37, 1.25, 2.1])
+    np.testing.assert_allclose(jax.jit(values)(params), values(params, np), rtol=0, atol=1e-15)
+    differences = [(power(params + step) - power(params - step)) / 2e-6 for step in np.eye(4) * 1e-6]
+    np.testing.assert_allclose(jax.jit(jax.grad(power))(params), differences, rtol=1e-6)
+
+
 @pytest.mark.validation
 def test_native_batch_can_mix_absent_and_dense_static_terms():
     from dataclasses import replace
