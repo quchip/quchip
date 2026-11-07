@@ -294,7 +294,10 @@ def test_pointer_separation_approaches_the_conditional_vna_response():
         for delta_r in (0.0, kappa / (4 * np.pi)):
             ro = analyze_dispersive_readout(chip, "q", "r", tau=1.0, n_photons=1.0, output="p", delta_r=delta_r)
             drive = np.asarray([float(ro.resonator_frequencies[0]) - delta_r])
-            ground, excited = (complex(vna.sweep(drive, when={"q": j}).matrix[0, 0, 0]) for j in (0, 1))
+            sweeps = [vna.sweep(drive, when={"q": j}) for j in (0, 1)]
+            ground, excited = (complex(sweep.matrix[0, 0, 0]) for sweep in sweeps)
+            # The excited reference is frozen, so it must escape slowly: here by Purcell decay, about 1e-3 kappa.
+            assert float(sweeps[1].diagnostics[0]["reference_escape_rate"]) < 2e-3 * kappa
             alpha_0, alpha_1 = (complex(value) for value in ro.pointer_states[:2])
             contrast = abs(excited - ground) / abs(ground - direct)
             assert contrast == pytest.approx(abs(alpha_1 - alpha_0) / abs(alpha_0), rel=tolerance)
