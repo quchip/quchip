@@ -162,6 +162,65 @@ def test_nonlinearity_is_unchecked_when_the_resonator_is_truncated():
     assert "resonator keeps 4 levels" in ro.nonlinearity["reason"]
 
 
+def test_nonlinearity_keeps_the_resonator_levels_that_higher_qubit_levels_mix_with():
+    """The upper state |2, n+1> mixes down to |0, n+3>, so a drive on the level-2 resonance needs n+4 levels.
+
+    With 11 resonator levels, f_r|2(8) is 135 kHz off its converged value, although its dressed label is reliable.
+    """
+    rates = analyze_dispersive_readout(readout(resonator_levels=12), "q", "r", tau=500.0, n_photons=1.0, levels=3)
+    pull_2 = float(rates.resonator_frequencies[2] - rates.resonator_frequencies[0])
+    drive = dict(tau=500.0, eps=np.sqrt(2.0) * float(rates.kappa) / 2, delta_r=-pull_2, levels=3)
+    for levels, status in ((11, "unchecked"), (12, "checked")):
+        ro = analyze_dispersive_readout(readout(resonator_levels=levels), "q", "r", **drive)
+        assert float(ro.photon_numbers[2]) == pytest.approx(2.0, rel=1e-6)
+        assert ro.nonlinearity["status"] == status
+    assert ro.nonlinearity["photon_ranges"][2] == (0, 8)
+
+
+def test_detected_rate_follows_the_output_transfer_at_the_drive_frequency():
+    """The steady output oscillates at the drive frequency, so a reference notch there detects nothing.
+
+    The pointer states and the measurement-induced dephasing do not depend on the output path.
+    """
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=5, label="q")
+    r = Resonator(freq=6.5, levels=4, label="r")
+    network = PortNetwork(label="line")
+    reflection = network.port("r_port", target=r, rate=0.005)
+    notch = network.filter("notch", transfer=lambda frequency, center, width: (frequency - center) / (
+        frequency - center + 1j * width), center=6.5, width=0.001)
+    network.link(reflection, notch)
+    network.expose("p", at=notch.port(2))
+    chip = Chip([q, r], [Capacitive(q, r, g=0.05)], port_network=network, approximation=RWA())
+    f_0 = float(chip.transition_frequency("r", 0, 1, when={"q": 0}))
+
+    for offset, transmission in ((0.0, 0.0), (0.001, 0.5)):
+        arguments = dict(tau=500.0, n_photons=2.0, delta_r=f_0 - 6.5 - offset)
+        bare = analyze_dispersive_readout(chip, "q", "r", **arguments)
+        detected = analyze_dispersive_readout(chip, "q", "r", output="p", **arguments)
+        np.testing.assert_allclose(detected.pointer_states, bare.pointer_states, atol=1e-14)
+        assert float(detected.dephasing_rate) == pytest.approx(float(bare.dephasing_rate), rel=1e-14)
+        # The port is the resonator's only loss, so its share is all of kappa.
+        assert float(detected.kappa_detected) == pytest.approx(transmission * float(detected.kappa), rel=1e-10,
+                                                               abs=1e-18)
+    assert float(analyze_dispersive_readout(chip, "q", "r", output="p", tau=500.0, n_photons=2.0,
+                                            delta_r=f_0 - 6.5).snr) == pytest.approx(0.0, abs=1e-12)
+
+
+@pytest.mark.unit
+def test_readout_rejects_an_amplified_output():
+    """The SNR assumes vacuum noise, so an amplifier on the output plane raises instead of adding gain."""
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+    r = Resonator(freq=6.5, levels=4, label="r")
+    network = PortNetwork(label="line")
+    reflection = network.port("r_port", target=r, rate=0.005)
+    amplifier = network.amplifier("hemt", gain_db=20.0, added_noise=1.0)
+    network.link(reflection, amplifier)
+    network.expose("p", at=amplifier.port(2))
+    chip = Chip([q, r], [Capacitive(q, r, g=0.05)], port_network=network, approximation=RWA())
+    with pytest.raises(ValueError, match="passive output path"):
+        analyze_dispersive_readout(chip, "q", "r", tau=500.0, n_photons=2.0, output="p")
+
+
 @pytest.mark.unit
 def test_exactly_one_of_n_photons_and_eps_is_required():
     """Passing neither or both of n_photons/eps raises ValueError."""
@@ -281,10 +340,12 @@ def test_linewidths_match_the_two_mode_drift_for_reflection_hanger_and_reference
 
 @pytest.mark.validation
 def test_pointer_separation_approaches_the_conditional_vna_response():
-    """The conditional VNA response, which makes no dispersive expansion, approaches the pointer-state contrast.
+    """The pointer contrast agrees with the conditional VNA response, which makes no dispersive expansion.
 
-    For a weak probe, b_out(j) = S(f; j) β, so |S(f;1) - S(f;0)| / |S(f;0) - D| tends to |α₁ - α₀| / |α₀|. On
-    resonance, |S - D| = sqrt(κ_det κ_in)/(κ/2), which is 2 κ_det/κ for a reflection port.
+    For a weak probe, b_out(j) = S(f; j) β, so |S(f;1) - S(f;0)| / |S(f;0) - D| matches |α₁ - α₀| / |α₀| up to the
+    conditional linewidths, residues and other-pole terms that the single-κ closed form omits. The tolerances are
+    spot-agreement bounds, not asymptotic error bounds. On resonance, |S - D| = sqrt(κ_det κ_in)/(κ/2), which is
+    2 κ_det/κ for a reflection port.
     """
     for g, tolerance in ((0.05, 5e-3), (0.025, 1e-3)):
         chip = readout(g, internal_q=2e4, resonator_levels=4)
@@ -308,10 +369,11 @@ def test_pointer_separation_approaches_the_conditional_vna_response():
 
 @pytest.mark.validation
 def test_kappa_is_the_energy_linewidth_under_qubit_dephasing():
-    """Qubit dephasing broadens the resonator pole but not its energy decay, which kappa reports.
+    """Qubit dephasing broadens the resonator pole but leaves the initial energy decay rate, which kappa reports.
 
     At Δ = 1 GHz, g = 50 MHz, κ_r = 0.01/ns and γ_φ = 0.02/ns, the pole is 1% wider than the energy-loss rate. The
-    initial decay of the total excitation number from the dressed resonator state follows kappa.
+    initial decay of the total excitation number from the dressed resonator state follows kappa. Dephasing can still
+    move the excitation between the modes and change the later decay.
     """
     rates = {}
     for T2 in (None, 200.0, 50.0):

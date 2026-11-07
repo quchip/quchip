@@ -4,8 +4,8 @@ The inputs come from the chip. The dressed spectrum gives the conditional
 resonator frequencies ``f_r|j`` with the qubit in level ``j``. ``kappa`` is the
 energy linewidth of the resonator pole of the weak-probe drift
 ``A = -iH - C†C/2``, in which ``C`` keeps only the energy-loss channels, so it
-omits dephasing. ``kappa_detected`` is the part of ``kappa`` that leaves
-through the selected output port, before detector efficiency.
+omits dephasing. ``kappa_detected`` is the part of ``kappa`` that reaches the
+selected output port at the drive frequency, before detector efficiency.
 
 The model is one linear resonator mode with vacuum inputs and a fixed qubit
 state. For the drive detuning ``delta_j = 2pi*(delta_r + f_r|j - f_r|0)``,
@@ -47,9 +47,16 @@ from scipy.stats import poisson
 from quchip.analysis.vna import _PortTransfers, _resolve_exposure
 from quchip.devices.base import BaseDevice
 from quchip.engine.linear_response import response_poles, try_build_weak_probe_problem
+from quchip.engine.reference import has_amplifier, source_occupation
 from quchip.engine.routes import weak_probe_reason
 from quchip.utils.constants import TWO_PI
-from quchip.utils.jax_utils import concrete_array_module, contains_tracer, is_jax_namespace, raise_if
+from quchip.utils.jax_utils import (
+    concrete_array_module,
+    contains_tracer,
+    is_jax_namespace,
+    maybe_concrete_scalar,
+    raise_if,
+)
 
 if TYPE_CHECKING:
     from quchip.chip.chip import Chip
@@ -205,11 +212,13 @@ def analyze_dispersive_readout(
     output
         Exposed port of the chip's ``PortNetwork``, as a port or a label, or
         None. With a port, ``kappa_detected`` is the part of ``kappa`` that
-        reaches it, ``|t_out|²|c_out v|²/|v|²`` for the right eigenvector
-        ``v`` of the pole, the row ``c_out`` of the port's output field, and
-        the outbound transfer ``t_out`` of its reference plane at the pole.
-        A JAX derivative through it raises, because it needs the eigenvector.
-        None gives ``kappa_detected = kappa``, complete collection.
+        reaches it, ``|t_out(f_d)|²|c_out v|²/|v|²`` for the right
+        eigenvector ``v`` of the pole, the row ``c_out`` of the port's output
+        field, and the outbound transfer ``t_out`` of its reference plane at
+        the drive frequency ``f_d = f_r|0 - delta_r``. The output path must be
+        passive with vacuum noise. A JAX derivative through it raises, because
+        it needs the eigenvector. None gives ``kappa_detected = kappa``,
+        complete collection.
     efficiency
         Detection efficiency between zero and one, default one. Zero gives
         zero SNR, infinite ``sigma``, and assignment error one half.
@@ -226,9 +235,10 @@ def analyze_dispersive_readout(
     ValueError
         If drive arguments are ambiguous, ``levels`` is invalid, concrete
         numerical values are nonfinite or outside their stated domains, the
-        chip has no weak-probe route, or the pole nearest ``f_r|0`` is not the
-        resonator's. Numerical domain checks are skipped for tracers. Callers
-        must keep traced inputs within the same physical domains.
+        chip has no weak-probe route, the pole nearest ``f_r|0`` is not the
+        resonator's, or the output path holds an amplifier or a thermal load.
+        Numerical domain checks are skipped for tracers. Callers must keep
+        traced inputs within the same physical domains.
 
     Examples
     --------
@@ -267,7 +277,8 @@ def analyze_dispersive_readout(
     frequencies = [chip.transition_frequency(resonator_device, 0, 1, when={qubit_device: j}) for j in range(levels)]
     xp: Any = concrete_array_module(frequencies)
     frequencies = xp.stack([xp.asarray(value) for value in frequencies])
-    kappa, kappa_detected = _resonator_linewidths(chip, resonator_device.label, frequencies[0], output)
+    kappa, kappa_detected = _resonator_linewidths(chip, resonator_device.label, frequencies[0],
+                                                  frequencies[0] - delta_r, output)
 
     given = (frequencies, kappa, kappa_detected, tau, n_photons, eps, delta_r, efficiency)
     xp = concrete_array_module(*(value for value in given if value is not None))
@@ -286,16 +297,17 @@ def analyze_dispersive_readout(
     variance_rate = xp.where(collected > 0, 2.0 * collected * tau, 1.0)
     sigma = xp.where(collected > 0, 1.0 / xp.sqrt(variance_rate), xp.inf)
     notes = [
-        "Steady-state coherent pointer states of one isolated resonator mode with vacuum inputs; "
-        "ring-up transients are not modeled.",
+        "Steady-state coherent pointer states of one isolated resonator mode, with vacuum inputs and a "
+        "passive output path with vacuum loss; ring-up transients are not modeled.",
         "The damping is weak compared with the mode spacings.",
         "kappa omits the channels that conserve the excitation number, such as dephasing, "
         "which is assumed negligible.",
         "One kappa, with the qubit in level 0, serves every pointer state, and the output coupling "
         "does not depend on the qubit state.",
         "The pulls are the zero-photon pulls of the chip's Hamiltonian approximation and finite basis.",
-        "Ordinary, Purcell and measurement-induced qubit decay during the acquisition are not modeled.",
-        "The SNR and the assignment error compare levels 0 and 1 only.",
+        "Ordinary, Purcell and measurement-induced qubit decay during the acquisition is assumed negligible.",
+        "The SNR is that of heterodyne detection, and the assignment error discriminates levels 0 and 1 "
+        "with equal priors.",
     ]
     return DispersiveReadoutResult(
         pointer_states=alpha,
@@ -313,20 +325,25 @@ def analyze_dispersive_readout(
     )
 
 
-def _resonator_linewidths(chip: "Chip", resonator: str, frequency: Any, output: Any) -> tuple[Any, Any]:
+def _resonator_linewidths(chip: "Chip", resonator: str, frequency: Any, drive: Any,
+                          output: Any) -> tuple[Any, Any]:
     """Return the energy linewidth of the resonator pole and the part that reaches ``output``, in 1/ns.
 
     The pole is the eigenvalue of the dephasing-free weak-probe drift nearest
-    ``frequency``, and the resonator must dominate its right eigenvector.
+    ``frequency``, and the resonator must dominate its right eigenvector. The
+    steady output oscillates at the ``drive`` frequency, so the reference plane
+    transfers it there.
     """
     planes = () if output is None else (_resolve_exposure(chip, output),)
+    if planes:
+        _require_passive_output(chip, planes[0])
     built = try_build_weak_probe_problem(chip, np.zeros(1), plane_labels=planes, conserving=False)
     if built is None:
         raise ValueError("analyze_dispersive_readout() takes kappa from a weak-probe route of VNA.sweep(). "
                          f"{weak_probe_reason(chip, planes)}")
     problem = built[0]
     system = response_poles(problem)
-    xp = concrete_array_module(system.values, frequency)
+    xp = concrete_array_module(system.values, frequency, drive)
     pole_frequencies = -xp.imag(system.values) / TWO_PI
     index = xp.argmin(xp.abs(pole_frequencies - frequency))
     mode = problem.mode_labels.index(resonator)
@@ -342,8 +359,21 @@ def _resonator_linewidths(chip: "Chip", resonator: str, frequency: Any, output: 
     vector = vectors[:, index]
     row = xp.asarray(problem.couplings, dtype=complex)[problem.plane_indices[0]]
     emitted = xp.abs(row @ vector) ** 2 / xp.sum(xp.abs(vector) ** 2)
-    outbound, _ = _PortTransfers(chip, planes)(xp.reshape(pole_frequencies[index], (1,)))
+    outbound, _ = _PortTransfers(chip, planes)(xp.reshape(xp.asarray(drive, dtype=float), (1,)))
     return kappa, xp.abs(outbound[0, 0]) ** 2 * emitted
+
+
+def _require_passive_output(chip: "Chip", label: str) -> None:
+    """Raise when the reference run of ``label`` adds gain or noise, which the vacuum-noise SNR omits."""
+    run = next(item.reference.outbound for item in chip.resolve().slh.external_channels if item.key == label)
+    noisy = [element.label for element in run if (occupation := source_occupation(element)) is not None
+             and maybe_concrete_scalar(occupation) != 0]
+    if has_amplifier(run) or noisy:
+        raise ValueError(
+            f"analyze_dispersive_readout() needs a passive output path with vacuum noise, but the reference run of "
+            f"{label!r} holds an amplifier or a thermal load. Choose an output plane before them, or model the "
+            "receiver with IQReadout.from_wiring."
+        )
 
 
 def _shared_pole(resonator: str, labels: tuple[str, ...], frequency: Any, dominant: Any) -> ValueError:
@@ -359,24 +389,27 @@ def _nonlinearity(chip: "Chip", qubit: str, resonator: str, photons: Any, kappa:
         return {"status": "unchecked", "reason": "The check needs concrete values. Run it outside jax.jit."}
     ranges = tuple((int(poisson.ppf(_TAIL_TOLERANCE / 2, mean)), int(poisson.ppf(1 - _TAIL_TOLERANCE / 2, mean)))
                    if mean > 0 else (0, 0) for mean in np.asarray(photons, dtype=float))
-    top = max(high for _, high in ranges)
+    # The pull change compares levels 0 and 1 over both of their ranges.
+    shared = max(ranges[0][1], ranges[1][1])
+    tops = [shared, shared, *(high for _, high in ranges[2:])]
     index, _ = chip._resolve_device_index(resonator)
     dimension = chip.resolve().dims[index]
-    # The transition from n = top keeps one resonator level above it.
-    if top + 2 >= dimension:
+    # The upper state |j, n+1> mixes down to |0, n+j+1>, which the resonator must hold.
+    needed = max(top + level + 2 for level, top in enumerate(tops))
+    if dimension < needed:
         return {"status": "unchecked",
-                "reason": f"The pointer states reach n = {top} photons, so the check needs resonator levels up to "
-                          f"{top + 2}, and the resonator keeps {dimension} levels."}
+                "reason": f"The sampled photon numbers need {needed} resonator levels, and the resonator keeps "
+                          f"{dimension} levels."}
     try:
-        ladders = np.asarray([[float(chip.transition_frequency(resonator, n, n + 1, when={qubit: j}))
-                               for n in range(top + 1)] for j in range(levels)])
+        ladders = [np.asarray([float(chip.transition_frequency(resonator, n, n + 1, when={qubit: j}))
+                               for n in range(top + 1)]) for j, top in enumerate(tops)]
     except ValueError as error:
         return {"status": "unchecked", "reason": str(error)}
-    drift = np.asarray([np.max(np.abs(ladders[j, low:high + 1] - ladders[j, 0]))
+    drift = np.asarray([np.max(np.abs(ladders[j][low:high + 1] - ladders[j][0]))
                         for j, (low, high) in enumerate(ranges)])
-    low, high = min(ranges[0][0], ranges[1][0]), max(ranges[0][1], ranges[1][1])
-    chi = ladders[1, 0] - ladders[0, 0]
-    pulls = ladders[1, low:high + 1] - ladders[0, low:high + 1]
+    low = min(ranges[0][0], ranges[1][0])
+    chi = ladders[1][0] - ladders[0][0]
+    pulls = ladders[1][low:shared + 1] - ladders[0][low:shared + 1]
     return {
         "status": "checked",
         "reason": None,

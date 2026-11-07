@@ -56,8 +56,10 @@ This file records notable user-visible changes to quchip.
   `f_r|j - f_r|0` of its qubit level, so `levels > 2` no longer assumes
   `j*chi`. `kappa` is the energy linewidth of the resonator pole of the
   weak-probe drift without dephasing, and `kappa_detected` is the part that
-  reaches the port given as `output`. The chip's static model needs a
-  weak-probe route, as under `RWA()`. The `n_crit` interpolation is gone; the
+  reaches the port given as `output`, through its reference sections at the
+  drive frequency. That output path must be passive: an amplifier or a
+  thermal load on it raises. The chip's static model needs a weak-probe
+  route, as under `RWA()`. The `n_crit` interpolation is gone; the
   result reports `nonlinearity`, how much the pulls change over the photon
   numbers of the pointer states, and the derived `resonator_frequencies`,
   `chi`, `kappa` and `kappa_detected` in place of `chi_eff` and `validity`.
