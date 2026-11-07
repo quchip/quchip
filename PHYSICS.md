@@ -3581,10 +3581,10 @@ envelopes adds an error that the solver's `rtol` sets (§12).
 Gate-set solves use the chip's space policy. Without one, and when the product
 space has more than 64 states, the gate set selects
 `ExcitationCutoff(max_total=K)` with `K = n + 1` for `n` gate-set qubits. It
-raises `K` until each template block and its leakage change by less than
-`1e-6` at `K + 1`. After calibration it compares each calibrated gate at `K`
-and `K + 1`; when one changes by more, it raises `K` and calibrates again from
-the fitted knobs, up to the full product space. Both checks use the block with
+raises `K` until each template block, its leakage, and its average gate
+fidelity change by less than `1e-6` at `K + 1`. After calibration it compares
+each calibrated gate at `K` and `K + 1`; when one changes by more, it raises
+`K` and calibrates again from the fitted knobs, up to the full product space. Both checks use the block with
 the other gate-set qubits in level 0 and again with all of them in level 1. A
 cached gate acts on every register state, and the second context holds the
 most excitations, so it comes closest to the cutoff. Under the RWA the cutoff
@@ -3596,8 +3596,13 @@ transmons at `K = n + 2`, one echoed CR gate matches the full space to `3e-8`,
 but two at once differ by `5e-6`, and four 10 ns X gates at once by `8e-4`.
 Under an automatic cutoff, `unitary()` and `simulate()` solve a window with
 `m` gates at once at `K + m - 1`, capped at the full product space.
-`unitary()` keeps the components of the result on the `K` space. No gate runs
-at the edges of the window, so the transient excitations have returned there.
+`unitary()` keeps the components of the result on the `K` space. Gates at
+once can still end with population above `K`, for example in `|22>` after two
+strong pulses on levels without anharmonicity, so `unitary()` checks how much
+population any computational state keeps on the `K` space. When more than
+`1e-6` is missing, it solves the circuit in one piece at the larger cutoff and
+warns. The extra excitation per gate and the check with the other qubits in
+level 1 are heuristics, not bounds; `space=` sets the cutoff by hand.
 
 [koch]: https://arxiv.org/abs/cond-mat/0703002
 [vool]: https://arxiv.org/abs/1610.03438

@@ -426,6 +426,8 @@ This file records notable user-visible changes to quchip.
   circuit's schedule with noise. On a chip above 64 states, gate-set solves
   pick and raise an excitation cutoff with a warning, and gates that run at the
   same time solve with one more excitation for each gate after the first.
+  When such gates leave population above the cutoff, `GateSet.unitary()`
+  solves the circuit in one piece in the larger space, with a warning.
   Gate-set solves use QuTiP's `vern9` integrator at `rtol=1e-8` and
   `atol=1e-10`. A circuit with uncalibrated gates calibrates them at their
   seeds, with a notice. When the chip changes in place, its calibrations become

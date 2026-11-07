@@ -174,14 +174,17 @@ class GateSet:
         Solver space. ``"auto"`` keeps the chip's policy when it has one.
         Otherwise it keeps the full product space up to 64 states and above
         that picks ``ExcitationCutoff(n + 1)`` for ``n`` qubits, raising the
-        cutoff until the calibrated gates change by less than
-        ``cutoff_tolerance`` at the next cutoff, with the other qubits in
-        level 0 and in level 1. :meth:`unitary` and :meth:`simulate` solve
-        ``m`` gates at once with ``m - 1`` more excitations. A warning
-        states each choice. ``None`` forces the full product space.
+        cutoff until each calibration block's amplitudes, leakage, and
+        average gate fidelity change by less than ``cutoff_tolerance`` at
+        the next cutoff, with the other qubits in level 0 and in level 1.
+        :meth:`unitary` and :meth:`simulate` solve ``m`` gates at once with
+        ``m - 1`` more excitations. A warning states each choice. These rules
+        are heuristics, not bounds. ``None`` forces the full product space.
     cutoff_tolerance : float, default 1e-6
-        Largest change of a gate's computational amplitudes or leakage
-        accepted when the cutoff is raised by one.
+        Largest change of a gate's computational amplitudes, leakage, or
+        average gate fidelity accepted when the cutoff is raised by one, and
+        the largest population that gates at once may leave above the cutoff
+        in :meth:`unitary`.
     spectators : {"coupled", "all", "none"}, default "coupled"
         Other gate-set qubits in each calibration block. The fit then targets
         ``U ⊗ I`` on the joint block, with a free virtual Z on each spectator,
@@ -579,8 +582,9 @@ class GateSet:
             Override each native's ``explore`` flag.
         target : float, default 1e-3
             Infidelity above which the status is ``"poor_fit"``: at start
-            time 0, at the worst start time of ``placement_infidelity``, or
-            in the state of the other qubits of ``worst_spectators``.
+            time 0, at the worst sampled start time of
+            ``placement_infidelity``, or in the state of the other qubits of
+            ``worst_spectators``.
         progress : bool, default False
             Print one line per native as it finishes.
 
@@ -858,9 +862,10 @@ class GateSet:
             for key in keys:
                 native = self._natives[key]
                 assert native.sequence is not None
-                block_qubits = (*native.qubits, *self.spectators_of(native))
-                difference = max(difference, self._cutoff_change(native.sequence, block_qubits, native.duration,
-                                                                 current, larger))
+                spectators = self.spectators_of(native)
+                ideal = np.kron(native.ideal_matrix(), np.eye(2 ** len(spectators)))
+                difference = max(difference, self._cutoff_change(native.sequence, (*native.qubits, *spectators),
+                                                                 native.duration, current, larger, ideal))
             if difference <= self.cutoff_tolerance:
                 break
             cutoff += 1
@@ -892,7 +897,8 @@ class GateSet:
             native = self._natives[key]
             calibration = self._calibrations[key]
             block_qubits = calibration.block_qubits or native.qubits
-            difference = self._cutoff_change(calibration.sequence, block_qubits, native.duration, None, larger)
+            difference = self._cutoff_change(calibration.sequence, block_qubits, native.duration, None, larger,
+                                             calibration.ideal)
             calibration.cutoff_difference = difference
             if difference > self.cutoff_tolerance:
                 failing.append(key)
@@ -911,8 +917,8 @@ class GateSet:
         return failing
 
     def _cutoff_change(self, sequence: "QuantumSequence", block_qubits: Sequence[str], duration: float,
-                       current: "Chip | None", larger: "Chip") -> float:
-        """Largest change of a block and its leakage from ``current`` to ``larger``.
+                       current: "Chip | None", larger: "Chip", ideal: np.ndarray) -> float:
+        """Largest change of a block's entries, leakage, and average gate fidelity from ``current`` to ``larger``.
 
         The other gate-set qubits are in level 0 and then all in level 1.
         The second context holds the most excitations of any register
@@ -924,7 +930,9 @@ class GateSet:
             left, _ = self._block(sequence, block_qubits, duration, background=background, chip=current)
             right, _ = self._block(sequence, block_qubits, duration, background=background, chip=larger)
             change = max(change, float(np.abs(np.asarray(left.matrix) - np.asarray(right.matrix)).max()),
-                         float(np.abs(np.asarray(left.leakage) - np.asarray(right.leakage)).max()))
+                         float(np.abs(np.asarray(left.leakage) - np.asarray(right.leakage)).max()),
+                         abs(float(average_fidelity(np.asarray(left.matrix), ideal))
+                             - float(average_fidelity(np.asarray(right.matrix), ideal))))
         return change
 
     # ------------------------------------------------------------------- cache
@@ -1194,8 +1202,11 @@ class GateSet:
         Gates whose pieces are covariant reuse their cached propagator at any
         start time and frame. Overlapping gates and non-covariant gates run
         one solve per placement; under an automatic cutoff, ``m`` gates at
-        once solve with ``m - 1`` more excitations. Idle intervals use the
-        static lab Hamiltonian's eigensystem.
+        once solve with ``m - 1`` more excitations. When they leave more than
+        ``cutoff_tolerance`` of any computational state's population above
+        the cutoff, the circuit is solved in one piece in that larger space,
+        with a warning. Idle intervals use the static lab Hamiltonian's
+        eigensystem.
 
         Parameters
         ----------
@@ -1236,6 +1247,7 @@ class GateSet:
         result = np.eye(total.size, dtype=complex)
         cursor = 0.0
         solves = 0
+        most = 1
         for segment in segments:
             start = segment[0][0]
             stop = max(item[1] for item in segment)
@@ -1245,11 +1257,13 @@ class GateSet:
             if entry is not None and entry.covariant:
                 matrix = entry.placed(start, segment[0][3], total, idle)
             else:
+                at_once = _most_at_once([item[:2] for item in segment])
+                most = max(most, at_once)
                 cache_key = tuple((round(item[0], 9), item[2], tuple(sorted((k, round(v, 12))
                                                                              for k, v in item[3].items())))
                                   for item in segment)
                 if cache_key not in self._placed:
-                    chip, embedding = self._overlap_space(_most_at_once([item[:2] for item in segment]))
+                    chip, embedding = self._overlap_space(at_once)
                     # In a larger space, solve the solver coordinates and keep their components.
                     target = solver_sequence if embedding is None else self._on_solver(sequence, chip)
                     propagator = target.propagator(tlist=[start, stop], columns=embedding, frame=self.frame,
@@ -1264,6 +1278,24 @@ class GateSet:
             result = idle(duration - cursor) @ result
         columns, energies = self._states(order)
         block = project_computational(result @ columns, columns, energies, 0.0, duration, order)
+        chip, embedding = self._overlap_space(most)
+        # Gates at once can end with population above the cutoff. The composition on the K space drops it: the part
+        # that later gates bring back and the part that stays as leakage. The smallest singular value also covers
+        # superpositions of computational states.
+        kept = 1.0 if embedding is None else float(np.linalg.svd(result @ columns, compute_uv=False).min()) ** 2
+        missing = 1.0 - kept
+        if embedding is not None and missing > self.cutoff_tolerance:
+            columns, energies = self._states(order, chip=chip)
+            propagator = self._on_solver(sequence, chip).propagator(
+                tlist=[0.0, duration], columns=np.hstack([embedding, columns]), frame=self.frame,
+                options=self.options, dissipation=False, backend=self.backend)
+            matrix = np.asarray(propagator.matrix)
+            result = embedding.T @ matrix[:, :embedding.shape[1]]
+            block = project_computational(matrix[:, embedding.shape[1]:], columns, energies, 0.0, duration, order)
+            solves += 1
+            warnings.warn(f"Gates at once leave {missing:.1e} of the population above the gate set's cutoff, so "
+                          "unitary() solves the circuit in one piece in the larger space.", UserWarning,
+                          stacklevel=user_stacklevel())
         frame_offsets = self._offsets(sequence)
         correction = self._frame_correction(order, frame_offsets) * np.exp(1j * global_phase)
         return CircuitUnitary(full=result, computational=correction[:, None] * np.asarray(block.matrix),

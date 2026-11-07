@@ -50,7 +50,8 @@ def error_generator(block: np.ndarray, ideal: np.ndarray) -> tuple[dict[str, flo
     cycle benchmarking. The error before the gate is ``U_ideal† U U_ideal``. A
     rotation by θ about a Pauli axis has the coefficient θ/2. The distance is
     ``sin(Δ/2)``, where Δ is the smallest arc that holds the eigenphases of
-    ``U``, and 1 when Δ ≥ π.
+    ``U``, and 1 when Δ ≥ π: half the diamond norm of the unitary error.
+    Leakage is left out of both.
     """
     left, _, right = np.linalg.svd(block @ ideal.conj().T)
     unitary = left @ right
@@ -130,21 +131,26 @@ class GateCalibration:
         factor of ``Z(φ) V U_ideal†`` without its global phase: the error after
         the ideal gate.
     worst_case_distance : float
-        ``sin(Δ/2)`` from the eigenphase arc of ``U``. For a unitary error it
-        equals the diamond distance.
+        ``sin(Δ/2)`` from the eigenphase arc of ``U``: half the diamond norm
+        ``‖U·U† − 1‖⋄`` of the unitary error, with leakage left out.
     identifiability : dict
         Jacobian rank, condition number, and weak directions of the final fit,
         and ``jacobian_step_change``: the relative change of the knob columns
-        when the difference step shrinks tenfold.
+        when the difference step shrinks tenfold. The step change includes
+        solver noise and is not a gate error. A knob direction that changes
+        the residual by less than the solver noise is not determined by the
+        physics, whatever the rank.
     unitarity_defect : float
         ``max |U†U - I|`` over the computed columns, from the integrator.
     options, frame, cutoff
         Solver settings of the calibration.
     status : str
         ``"ok"``, ``"at_bound"``, ``"weak_direction"``, ``"unconverged"``
-        (the fit used all its evaluations), ``"solver_floor"``, ``"poor_fit"``
-        (infidelity above the calibration target at start time 0, at the
-        worst start time of ``placement_infidelity``, or in the state of
+        (the fit used all its evaluations), ``"solver_floor"`` (infidelity
+        below ten times ``unitarity_defect``; a hint, since the defect does
+        not measure coherent phase errors), ``"poor_fit"`` (infidelity above
+        the calibration target at start time 0, at the worst sampled start
+        time of ``placement_infidelity``, or in the state of
         ``worst_spectators``), or ``"stale"`` (the chip changed after the
         calibration, or a native inside this composite was calibrated again
         after it).
@@ -161,12 +167,16 @@ class GateCalibration:
         Computational state of the other gate-set qubits, as dressed levels 0
         and 1, in which the gate's own block has its lowest average gate
         fidelity, and that fidelity, with the implemented corrections.
-        ``None`` when the gate acts on every gate-set qubit.
+        ``None`` when the gate acts on every gate-set qubit. Each state is
+        scored on its own, so the score does not see phases that the other
+        qubits gather among themselves during the gate, such as their own
+        static ZZ.
     placement_infidelity : tuple of float or None
-        Smallest and largest ``1 - F_avg`` over start times in [0, 100) ns, with
-        the implemented corrections. A native whose pieces use different
-        carriers, such as the echoed cross-resonance gate, turns each piece
-        with its own carrier, so its error can change with the start time.
+        Smallest and largest ``1 - F_avg`` over 21 sampled start times in
+        [0, 100) ns, with the implemented corrections. A native whose pieces
+        use different carriers, such as the echoed cross-resonance gate, turns
+        each piece with its own carrier, so its error can change with the
+        start time.
     repetitions : dict of int to float
         Infidelity of N applications against the ideal to the N.
     dependencies : dict
@@ -246,10 +256,11 @@ class GateCalibration:
     def eigenvalue_infidelity(self) -> float:
         """Eigenvalue infidelity of :attr:`channel` against the ideal; see :meth:`ChannelResult.eigenvalue_infidelity`.
 
-        A spectral score, not an operational fidelity. It leaves out small
-        rotations that only tilt the gate against preparation and
-        measurement, so it is close to what gate-set tomography reports,
-        while ``infidelity`` counts them.
+        A spectral score, not an operational fidelity. It compares
+        eigenvalues only, so it does not see errors in the eigenvectors, such
+        as a small tilt of the rotation axis. Some of these only tilt the
+        gate against preparation and measurement, but not all: an SY in place
+        of an SX scores 0. ``infidelity`` counts them.
         """
         return self.channel.eigenvalue_infidelity(self.ideal)
 
