@@ -31,7 +31,7 @@ def plan_stranded_lines(
 
     ``classify(line)`` returns ``None`` for a survivor or a ``StrandedLine``
     for a removed target. ``result_kind`` selects the rule (``edge``,
-    ``leaf-fold`` or ``crosskerr``). Missing rules raise the target's message.
+    ``leaf-fold``, ``coupling`` or ``effective``). Missing rules raise the target's message.
     Return surviving lines and ``(line, rule)`` pairs in source order. The
     rules are applied only after the reduced model and the emitted edges exist."""
     survivor_lines: list[Any] = []

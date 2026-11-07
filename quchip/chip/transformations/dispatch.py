@@ -33,7 +33,7 @@ modules or :mod:`quchip.chip.sw`.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from quchip.chip.transformations.methods import reduction_method_names
 from quchip.chip.transformations.result import EliminationResult
@@ -47,11 +47,8 @@ if TYPE_CHECKING:
 class EliminationTarget:
     """One registered elimination target kind: how it recognizes a target and reduces it.
 
-    A new kind registers an instance with :func:`register_elimination_target`
-    at the bottom of its handler module. That module must be imported for the
-    side effect, which the package ``__init__`` does for the shipped handlers.
-    This is the same registration ritual as
-    :func:`~quchip.chip.retarget.register_retarget_rule`.
+    Each shipped kind registers an instance at the bottom of its handler
+    module, which the package ``__init__`` imports for that side effect.
 
     Attributes
     ----------
@@ -82,7 +79,7 @@ class EliminationTarget:
 _ELIMINATION_TARGETS: list[EliminationTarget] = []
 
 
-def register_elimination_target(target: EliminationTarget) -> None:
+def _register_elimination_target(target: EliminationTarget) -> None:
     """Register an elimination target kind.
 
     Parameters
@@ -93,7 +90,8 @@ def register_elimination_target(target: EliminationTarget) -> None:
     _ELIMINATION_TARGETS.append(target)
 
 
-def eliminate(chip: "Chip", target: Any, *, method: str = "sw", local: bool = False) -> EliminationResult:
+def eliminate(chip: "Chip", target: Any, *, method: Literal["sw", "exact"] = "sw",
+              local: bool = False) -> EliminationResult:
     """Reduce a far-detuned device, an edge coupling or effective terms, and return a reduced chip.
 
     ``target`` is resolved against the chip's device, coupling and

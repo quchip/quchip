@@ -28,6 +28,12 @@ This file records notable user-visible changes to quchip.
   return collapse channels from a `CouplingModel`, as `CollectiveDecayCoupling`
   in the extensions guide does. A saved chip with `baths` raises an error that
   names these replacements.
+- `register_retarget_rule()`, `register_elimination_target()` and
+  `register_reduction_method()` are private. The shipped retarget rule,
+  elimination targets and reduction methods work as before. `eliminate()`,
+  `eliminate_spectators()`, `active_patch()` and `QuantumSequence.active_patch()`
+  type `method` as `Literal["sw", "exact"]`, and the error for a control line
+  on an eliminated target says to unwire the line or keep the target.
 - Warnings are shorter, name the one action that sets or silences them, and
   point at the caller's line. The default-frame and automatic-carrier
   warnings have fixed text, so Python shows each once per line of code

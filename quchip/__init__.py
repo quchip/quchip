@@ -63,9 +63,6 @@ from quchip.chip import (
     active_patch,
     eliminate,
     eliminate_spectators,
-    register_elimination_target,
-    register_reduction_method,
-    register_retarget_rule,
 )
 from quchip.control import (
     ChargeDrive,
@@ -265,9 +262,6 @@ __all__ = [
     "SpectatorEliminationResult",
     "ActivePatchResult",
     "active_patch",
-    "register_retarget_rule",
-    "register_elimination_target",
-    "register_reduction_method",
     # Pulse envelopes
     "Gaussian",
     "GaussianDRAG",
