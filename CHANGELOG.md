@@ -458,8 +458,9 @@ This file records notable user-visible changes to quchip.
   `GateSet.unitary()` reuses each gate's propagator at new start times and
   frames when its Hamiltonian allows it, and `GateSet.simulate()` solves the
   circuit's schedule with noise. On a chip above 64 states, gate-set solves
-  pick and raise an excitation cutoff with a warning, and gates that run at the
-  same time solve with one more excitation for each gate after the first.
+  pick and raise an excitation cutoff with a warning, and a circuit with gates
+  that run at the same time solves in one piece with one more excitation for
+  each gate after the first.
   Gate-set solves use QuTiP's `vern9` integrator at `rtol=1e-8` and
   `atol=1e-10`. A circuit with uncalibrated gates calibrates them at their
   seeds, with a notice. When the chip changes in place, its calibrations become
