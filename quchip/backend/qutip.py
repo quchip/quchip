@@ -808,7 +808,7 @@ def _direct_steady_state(liouvillian: sparse.csr_matrix, dims: Sequence[int]) ->
     # Only the trace row's component (for a conserving chip, the elements of zero excitation difference) has a
     # nonzero right-hand side. Others solve to zero, and a transposed one holds the conjugate matrix: solving one
     # of each pair finds a singular one, and spsolve reports it, filling the whole state with NaN.
-    count, labels = sparse.csgraph.connected_components(constrained, directed=False)
+    count, labels = sparse.csgraph.connected_components(abs(constrained), directed=False)  # abs keeps imaginary edges
     transposed = labels[np.arange(size) % n * n + np.arange(size) // n]
     partner = np.empty(count, dtype=labels.dtype)
     partner[labels] = transposed
