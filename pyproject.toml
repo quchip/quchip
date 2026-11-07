@@ -31,7 +31,9 @@ dependencies = [
 dynamiqs = ["dynamiqs>=0.3.6", "jax<0.11.1"]
 viz = ["pyvis"]
 scqubits = ["scqubits>=4.2", "qutip<5.3.1"]
-test = ["pytest", "pyvis", "scqubits>=4.2", "qutip<5.3.1", "jupytext", "nbconvert", "ipykernel"]
+# CI bounds JAX's persistent compilation cache, and JAX needs filelock to
+# enforce that bound; without it JAX stores nothing.
+test = ["pytest", "pyvis", "scqubits>=4.2", "qutip<5.3.1", "jupytext", "nbconvert", "ipykernel", "filelock"]
 dev = ["ruff", "mypy", "pytest", "pyvis", "jupytext", "nbconvert", "ipykernel"]
 docs = ["sphinx", "furo", "myst-parser", "sphinx-copybutton"]
 
