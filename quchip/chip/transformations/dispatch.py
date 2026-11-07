@@ -157,8 +157,7 @@ def eliminate(chip: "Chip", target: Any, *, method: str = "sw", local: bool = Fa
         transformed ports. The removed mode's reference section reads its
         intermediate states from all local Hamiltonian terms, including
         spectator dressing.
-        ``chi`` describes only the patch. Chips with baths
-        raise ``NotImplementedError``. In a chain of local steps, an
+        ``chi`` describes only the patch. In a chain of local steps, an
         operator on a kept device spreads over each patch that it meets, so
         the order of the steps sets its size. If every coupler of a ring
         goes first, a drive on one transmon spreads over all of them.

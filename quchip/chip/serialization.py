@@ -39,8 +39,8 @@ def _serialize_frame(raw_frame: Any) -> str | float | dict[str, float] | None:
 def serialize_chip(chip: "Chip") -> dict[str, Any]:
     """Serialize chip topology into a JSON-safe dictionary.
 
-    Captures devices, couplings, baths, frame, approximation strategy, space
-    policy, and, if present, the control equipment wiring. The chip label, if any, is included
+    Captures devices, couplings, frame, approximation strategy, space policy,
+    and, if present, the control equipment wiring. The chip label, if any, is included
     verbatim. Backend identity is *not* serialized, so deserialization uses the
     process default backend unless changed afterwards.
     """
@@ -60,8 +60,6 @@ def serialize_chip(chip: "Chip") -> dict[str, Any]:
         data["level_symbols"] = dict(chip._level_symbols)
     if chip.effective_terms:
         data["effective_terms"] = [terms.to_dict() for terms in chip.effective_terms]
-    if chip.baths:
-        data["baths"] = [bath.to_dict() for bath in chip.baths]
     if chip.port_network is not None:
         data["port_network"] = chip.port_network.to_dict()
     if chip.control_equipment is not None:
@@ -101,6 +99,13 @@ def deserialize_chip(data: dict[str, Any]) -> "Chip":
     unknown = set(data) - allowed
     if unknown:
         raise TypeError(f"Unsupported serialized Chip fields: {sorted(unknown)}")
+    if data.get("baths"):
+        raise TypeError(
+            "Serialized Chip field 'baths' is no longer supported, because Bath was removed. "
+            "Set each device's thermal_occupation for thermal channels, put the devices' ports on one "
+            "feedline for correlated decay into a shared line, or return collapse channels from a "
+            "CouplingModel for loss across several devices."
+        )
     if "approximation" not in data:
         raise TypeError("Serialized Chip payload is missing required field 'approximation'.")
     approximation = Approximation.from_dict(data["approximation"])
@@ -120,9 +125,6 @@ def deserialize_chip(data: dict[str, Any]) -> "Chip":
         couplings.append(BaseCoupling.from_dict(cd, *(device_map[label] for label in endpoints)))
     coupling_map = {coupling.label: coupling for coupling in couplings}
 
-    from quchip.chip.baths import Bath
-
-    baths = [Bath.from_dict(bd) for bd in data.get("baths", [])]
     from quchip.chip.port_network import PortNetwork
     port_network = (
         PortNetwork.from_dict(data["port_network"])
@@ -144,7 +146,6 @@ def deserialize_chip(data: dict[str, Any]) -> "Chip":
         frame=data.get("frame", "lab"),
         approximation=approximation,
         basis=cast(Literal["native", "eigen"], data.get("basis", "native")),
-        baths=baths or None,
         effective_terms=[EffectiveTerms.from_dict(item) for item in data.get("effective_terms", [])],
         port_network=port_network,
         space=None if data.get("space") is None else ExcitationCutoff.from_dict(data["space"]),
@@ -178,7 +179,6 @@ def clone_chip(chip: "Chip") -> "Chip":
         approximation=chip.approximation,
         basis=chip.basis,
         backend=chip._backend,
-        baths=[bath.copy() for bath in chip.baths] or None,
         effective_terms=chip.effective_terms,
         port_network=None if chip.port_network is None else chip.port_network.copy(),
         space=chip.space,

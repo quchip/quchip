@@ -8,7 +8,6 @@ problem. Dressed-state analysis lives in :mod:`quchip.chip.analysis`.
 # via the chip's public methods.
 
 from quchip.chip.analysis import KerrMatrix
-from quchip.chip.baths import Bath
 from quchip.chip.chip import Chip
 from quchip.chip.port_network import ComponentPort, NetworkPort, PortNetwork
 from quchip.chip.ports import Port
@@ -33,7 +32,6 @@ __all__ = [
     "Chip",
     "DressedResult",
     "KerrMatrix",
-    "Bath",
     "Port",
     "PortNetwork",
     "ComponentPort",

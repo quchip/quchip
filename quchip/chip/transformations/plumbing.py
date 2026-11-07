@@ -65,13 +65,12 @@ def rebuild_chip(
     couplings: Any,
     port_replacements: dict[str, Any] | None = None,
     effective_terms: Any = None,
-    baths: Any = None,
 ) -> Any:
     """Rebuild the retained graph with the source's calculation settings.
 
     Keep the backend, basis, approximation, space policy, label and surviving state shorthand.
-    Filter per-device frames to retained labels. Copy baths and effective terms,
-    unless replacements are supplied. Removed port targets need explicit
+    Filter per-device frames to retained labels. Copy effective terms, unless
+    replacements are supplied. Removed port targets need explicit
     replacements. Control equipment is attached separately."""
     from quchip.chip.chip import Chip
 
@@ -103,7 +102,6 @@ def rebuild_chip(
         approximation=source_chip.approximation,
         basis=source_chip.basis,
         backend=source_chip._backend,
-        baths=[bath.copy() for bath in source_chip.baths] if baths is None else baths,
         port_network=network,
         effective_terms=source_chip.effective_terms if effective_terms is None else effective_terms,
         space=source_chip.space,

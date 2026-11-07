@@ -44,7 +44,6 @@ from quchip.backend import get_default_backend, set_default_backend  # noqa: E40
 from quchip.chip.effective import EffectiveTerms
 from quchip.chip import (
     ActivePatchResult,
-    Bath,
     Port,
     PortNetwork,
     ComponentPort,
@@ -253,7 +252,6 @@ __all__ = [
     "TunableCapacitive",
     "DressedResult",
     "KerrMatrix",
-    "Bath",
     "Port",
     "PortNetwork",
     "ComponentPort",
