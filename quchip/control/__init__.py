@@ -13,6 +13,7 @@ from quchip.control.drive import (
 )
 from quchip.control.drives_two_photon import TwoPhotonDrive
 from quchip.control.envelopes import (
+    CosineEnvelope,
     Envelope,
     Gaussian,
     GaussianDRAG,
@@ -40,6 +41,7 @@ __all__ = [
     "ControlEquipment",
     "CrosstalkMatrix",
     # Pulse envelopes
+    "CosineEnvelope",
     "Envelope",
     "Gaussian",
     "GaussianDRAG",

@@ -25,14 +25,12 @@ from importlib import import_module  # noqa: E402
 __version__ = "0.4.0"
 
 from quchip.analysis import (  # noqa: E402
-    CRHamiltonianResult,
     CRSusceptibilityResult,
     DispersiveReadoutResult,
     EffectiveHamiltonianResult,
     StaticZZResult,
     PortTone,
     VNA,
-    analyze_cross_resonance,
     analyze_cr_susceptibility,
     analyze_dispersive_readout,
     analyze_static_zz,
@@ -44,7 +42,6 @@ from quchip.backend import get_default_backend, set_default_backend  # noqa: E40
 from quchip.chip.effective import EffectiveTerms
 from quchip.chip import (
     ActivePatchResult,
-    Bath,
     Port,
     PortNetwork,
     ComponentPort,
@@ -64,13 +61,11 @@ from quchip.chip import (
     active_patch,
     eliminate,
     eliminate_spectators,
-    register_elimination_target,
-    register_reduction_method,
-    register_retarget_rule,
 )
 from quchip.control import (
     ChargeDrive,
     ControlEquipment,
+    CosineEnvelope,
     CouplingDrive,
     Crosstalk,
     CrosstalkMatrix,
@@ -253,7 +248,6 @@ __all__ = [
     "TunableCapacitive",
     "DressedResult",
     "KerrMatrix",
-    "Bath",
     "Port",
     "PortNetwork",
     "ComponentPort",
@@ -267,10 +261,8 @@ __all__ = [
     "SpectatorEliminationResult",
     "ActivePatchResult",
     "active_patch",
-    "register_retarget_rule",
-    "register_elimination_target",
-    "register_reduction_method",
     # Pulse envelopes
+    "CosineEnvelope",
     "Gaussian",
     "GaussianDRAG",
     "LinearRamp",
@@ -338,12 +330,10 @@ __all__ = [
     "FitParameterReport",
     "ObservableReport",
     # Analysis
-    "analyze_cross_resonance",
     "analyze_cr_susceptibility",
     "analyze_dispersive_readout",
     "analyze_static_zz",
     "effective_hamiltonian",
-    "CRHamiltonianResult",
     "CRSusceptibilityResult",
     "DispersiveReadoutResult",
     "EffectiveHamiltonianResult",

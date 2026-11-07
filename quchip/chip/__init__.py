@@ -8,12 +8,10 @@ problem. Dressed-state analysis lives in :mod:`quchip.chip.analysis`.
 # via the chip's public methods.
 
 from quchip.chip.analysis import KerrMatrix
-from quchip.chip.baths import Bath
 from quchip.chip.chip import Chip
 from quchip.chip.port_network import ComponentPort, NetworkPort, PortNetwork
 from quchip.chip.ports import Port
 from quchip.chip.couplings import Capacitive, Coupling, CrossKerr, TunableCapacitive
-from quchip.chip.retarget import register_retarget_rule
 from quchip.chip.transformations import (
     ActivePatchResult,
     ChipTransform,
@@ -24,8 +22,6 @@ from quchip.chip.transformations import (
     active_patch,
     eliminate,
     eliminate_spectators,
-    register_elimination_target,
-    register_reduction_method,
 )
 from quchip.engine.dressing import DressedResult
 
@@ -33,7 +29,6 @@ __all__ = [
     "Chip",
     "DressedResult",
     "KerrMatrix",
-    "Bath",
     "Port",
     "PortNetwork",
     "ComponentPort",
@@ -51,7 +46,4 @@ __all__ = [
     "SpectatorEliminationResult",
     "ActivePatchResult",
     "active_patch",
-    "register_retarget_rule",
-    "register_elimination_target",
-    "register_reduction_method",
 ]

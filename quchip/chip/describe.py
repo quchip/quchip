@@ -170,21 +170,6 @@ def describe_chip(chip: "Chip") -> str:
             )
             lines.append(f"    signal chain: {summary}")
 
-    if chip.baths:
-        lines.append("")
-        lines += _section(f"Baths ({len(chip.baths)})")
-        for bath in chip.baths:
-            targets = ", ".join(bath.resolve_targets(chip))
-            detail = f"{bath.label} — model={bath.recipe} on {targets}"
-            extras = [
-                _param_text(name, getattr(bath, name), unit)
-                for name, unit in (("temperature", "mK"), ("rate", "1/ns"))
-                if getattr(bath, name) is not None
-            ]
-            if extras:
-                detail += f"   ({'   '.join(extras)})"
-            lines.append(detail)
-
     if chip.ports:
         lines.append("")
         lines += _section(f"Ports ({len(chip.ports)})")

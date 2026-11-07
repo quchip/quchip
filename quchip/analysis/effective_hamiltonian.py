@@ -22,7 +22,13 @@ from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 import numpy as np
 
-from quchip.chip.sw import bare_hamiltonian, pathway_attribution, sylvester_generator
+from quchip.chip.sw import (
+    bare_hamiltonian,
+    bare_index,
+    degeneracy_error,
+    pathway_attribution,
+    sylvester_generator,
+)
 from quchip.devices.base import BaseDevice
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
 
@@ -51,14 +57,6 @@ def _computational_p_mask(dims: tuple[int, ...], idx_a: int, idx_b: int) -> np.n
             spectators_grounded &= occupations[i] == 0
     computational = (occupations[idx_a] <= 1) & (occupations[idx_b] <= 1)
     return spectators_grounded & computational
-
-
-def _bare_index_pair(dims: tuple[int, ...], idx_a: int, idx_b: int, level_a: int, level_b: int) -> int:
-    """Full product-basis index for ``(a, b)`` at the given levels, spectators grounded."""
-    occ = [0] * len(dims)
-    occ[idx_a] = level_a
-    occ[idx_b] = level_b
-    return int(np.ravel_multi_index(tuple(occ), dims))
 
 
 @dataclass(frozen=True)
@@ -163,12 +161,11 @@ def analyze_static_zz(chip: "Chip", device_a: str | BaseDevice, device_b: str | 
 
     idx_a, dev_a = chip._resolve_device_index(device_a)
     idx_b, dev_b = chip._resolve_device_index(device_b)
-    device_labels = tuple(dev.label for dev in chip.devices)
 
-    h, _, dims = bare_hamiltonian(chip)
+    h, labels, dims = bare_hamiltonian(chip)
     p_mask = _computational_p_mask(dims, idx_a, idx_b)
-    s, _ = sylvester_generator(h, p_mask)
-    i_idx = _bare_index_pair(dims, idx_a, idx_b, 1, 1)
+    s, _ = sylvester_generator(h, p_mask, error=degeneracy_error(labels, dims))
+    i_idx = bare_index(labels, dims, dev_a.label, dev_b.label)
     raw_pathways = pathway_attribution(h, s, p_mask, i_idx, i_idx)
     pathways = [(tuple(int(x) for x in np.unravel_index(k, dims)), amount) for k, amount in raw_pathways]
 
@@ -177,7 +174,7 @@ def analyze_static_zz(chip: "Chip", device_a: str | BaseDevice, device_b: str | 
         pathways=pathways,
         device_a=dev_a.label,
         device_b=dev_b.label,
-        device_labels=device_labels,
+        device_labels=tuple(labels),
     )
 
 
