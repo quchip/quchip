@@ -25,14 +25,12 @@ from importlib import import_module  # noqa: E402
 __version__ = "0.4.0"
 
 from quchip.analysis import (  # noqa: E402
-    CRHamiltonianResult,
     CRSusceptibilityResult,
     DispersiveReadoutResult,
     EffectiveHamiltonianResult,
     StaticZZResult,
     PortTone,
     VNA,
-    analyze_cross_resonance,
     analyze_cr_susceptibility,
     analyze_dispersive_readout,
     analyze_static_zz,
@@ -330,12 +328,10 @@ __all__ = [
     "FitParameterReport",
     "ObservableReport",
     # Analysis
-    "analyze_cross_resonance",
     "analyze_cr_susceptibility",
     "analyze_dispersive_readout",
     "analyze_static_zz",
     "effective_hamiltonian",
-    "CRHamiltonianResult",
     "CRSusceptibilityResult",
     "DispersiveReadoutResult",
     "EffectiveHamiltonianResult",

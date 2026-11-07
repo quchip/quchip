@@ -34,6 +34,11 @@ This file records notable user-visible changes to quchip.
   `eliminate_spectators()`, `active_patch()` and `QuantumSequence.active_patch()`
   type `method` as `Literal["sw", "exact"]`, and the error for a control line
   on an eliminated target says to unwire the line or keep the target.
+- quchip 0.5 removes `analyze_cross_resonance()` and `CRHamiltonianResult`,
+  which fitted measured Bloch-vector trajectories and did not use a chip. For
+  a chip's cross-resonance response, use `analyze_cr_susceptibility()` for the
+  weak-drive `IX` and `ZX` terms per unit of drive amplitude, or calibrate the
+  gate with `GateSet`.
 - Warnings are shorter, name the one action that sets or silences them, and
   point at the caller's line. The default-frame and automatic-carrier
   warnings have fixed text, so Python shows each once per line of code
