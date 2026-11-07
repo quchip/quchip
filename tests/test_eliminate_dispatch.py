@@ -104,8 +104,16 @@ def test_coupling_target_raises_on_pump_targeting_eliminated_coupling():
         couplings=[tc],
         control_equipment=ControlEquipment([pump]),
     )
-    with pytest.raises(ValueError, match="pumps the eliminated coupling 'tc0'"):
+    message = r"pumps the eliminated coupling 'tc0'.*chip\.unwire\('pump'\).*or keep the coupling"
+    with pytest.raises(ValueError, match=message):
         eliminate(wired, "tc0")
+
+
+def test_unknown_method_lists_the_valid_methods():
+    """An unknown reduction method raises ValueError that lists the valid names."""
+    chip, *_ = _readout_chip()
+    with pytest.raises(ValueError, match=r"Unknown method 'swx' for eliminate\(\); expected 'exact' or 'sw'\."):
+        eliminate(chip, "r", method="swx")
 
 
 def test_pair_keys_survive_device_vs_coupling_scan_order_mismatch():

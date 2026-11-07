@@ -21,7 +21,7 @@ from quchip import (
     Resonator,
     Square,
 )
-from quchip.extensions import ChargePhaseDrive
+from tests.extension_guide import ChargePhaseDrive
 
 DEVICES = {
     "duffing": lambda: DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q"),

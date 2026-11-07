@@ -5,7 +5,6 @@ import numpy as np
 import pytest
 
 from quchip import (
-    Bath,
     ChargeBasisTransmon,
     ChargeDrive,
     Chip,
@@ -16,6 +15,7 @@ from quchip import (
     Square,
 )
 from quchip.engine import build_problem
+from quchip.declarative import CollapseChannel, CouplingModel, Scalar, parameter
 from quchip.engine.ir import DriveOp
 
 
@@ -164,6 +164,16 @@ def test_fluxonium_uses_the_same_phase_grid_to_local_eigen_path() -> None:
 
 
 def test_attached_physics_uses_one_resolved_local_basis() -> None:
+    class SharedChargeLoss(CouplingModel):
+        g: Scalar = parameter(unit="GHz")
+        rate: Scalar = parameter(unit="1/ns")
+
+        def interaction(self, a, b, p):
+            return p.g * (a.charge * b.charge)
+
+        def dissipation(self, a, b, p):
+            return (CollapseChannel(a.charge * b.I + a.I * b.charge, p.rate, "shared_charge"),)
+
     device = ChargeBasisTransmon(
         E_C=0.25,
         E_J=12.0,
@@ -179,9 +189,8 @@ def test_attached_physics_uses_one_resolved_local_basis() -> None:
     coupling = Capacitive(device, resonator, g=0.02)
     chip = Chip(
         [device, resonator],
-        couplings=[coupling],
+        couplings=[coupling, SharedChargeLoss(device, resonator, g=0.0, rate=1e-4)],
         control_equipment=ControlEquipment([drive]),
-        baths=[Bath("collective_decay", targets=[device, resonator], rate=1e-4)],
     )
     pulse = DriveOp(
         target_label="q",
@@ -202,7 +211,7 @@ def test_attached_physics_uses_one_resolved_local_basis() -> None:
     assert problem.engine_result.dims == (3, 2)
     assert all(term.operator.shape == (6, 6) for term in problem.engine_result.dynamic_terms)
     assert all(term.operator.shape == (6, 6) for term in problem.engine_result.collapse_terms)
-    assert any(term.channel == "collective_decay" for term in problem.engine_result.collapse_terms)
+    assert any(term.channel == "shared_charge" for term in problem.engine_result.collapse_terms)
     assert all(np.asarray(chip.backend.to_array(op)).shape == (6, 6) for op in problem.e_ops)
     assert np.asarray(chip.backend.to_array(problem.initial_state)).shape == (6, 1)
     matrix = np.asarray(problem.engine_result.hamiltonian().matrix(t=0.0))

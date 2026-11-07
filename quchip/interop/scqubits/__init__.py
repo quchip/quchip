@@ -97,8 +97,8 @@ def to_scqubits(device_or_chip: Any, **opts: Any) -> Any:
     -------
     scqubits object
         Related device or ``HilbertSpace``, with energies in the current scqubits
-        unit, ``scqubits.get_units()``. The export omits chip control equipment and
-        baths with a warning. Port networks and effective terms are unsupported.
+        unit, ``scqubits.get_units()``. The export omits chip control equipment
+        with a warning. Port networks and effective terms are unsupported.
         See :func:`~quchip.interop.scqubits.composite.export_chip`.
 
     Raises

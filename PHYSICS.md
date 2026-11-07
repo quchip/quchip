@@ -56,8 +56,8 @@ through `ω = 2π f`.
 From parity-invariant initial states, such as energy eigenstates, populations
 under a charge drive alone, or through charge couplings alone, do not depend
 on the sign of `[φ, n]`. The sign changes observable physics when
-one device couples through both charge and phase, for example through
-`ChargePhaseDrive`, or through a `ChargeDrive` and a `PhaseDrive` on one device.
+one device couples through both charge and phase, for example through the
+extension guide's `ChargePhaseDrive`, or through a `ChargeDrive` and a `PhaseDrive` on one device.
 
 ## 1. Units and the 2π convention
 
@@ -293,7 +293,7 @@ supplies no omitted charge or flux operator.
 
 ### 3.3 Collapse operators
 
-Sources: [`quchip/devices/base.py`](https://github.com/quchip/quchip/blob/main/quchip/devices/base.py), [`quchip/chip/baths.py`](https://github.com/quchip/quchip/blob/main/quchip/chip/baths.py)
+Sources: [`quchip/devices/base.py`](https://github.com/quchip/quchip/blob/main/quchip/devices/base.py)
 
 The Markov master equation uses the [Lindblad dissipator][lindblad]:
 
@@ -303,7 +303,7 @@ D[A]rho = A rho A† - (A†A rho + rho A†A)/2
 ```
 
 `H_angular` is in rad/ns and each `gamma_k` is in 1/ns. Devices, drives,
-couplings and baths author `CollapseChannel` records, which keep the local
+couplings and ports author `CollapseChannel` records, which keep the local
 operator separate from its non-negative rate. The engine projects and embeds
 the operator and keeps the rate unchanged. Backend lowering applies
 `sqrt(rate)` exactly once.
@@ -343,17 +343,9 @@ them with `None`, at construction or later, and later writes get the
 constructor's validation. Each solve rebuilds the collapse operators from the
 current values.
 
-`Bath` recipes add shared channels to the intrinsic device noise. Attach a
-bath at construction or later with `chip.add_bath(...)`.
-
-| Recipe | Jump operators and assumptions |
-| --- | --- |
-| Thermal | Independent ladder jumps. Occupation uses one local frequency per target. |
-| Collective decay | One equal-weight, equal-phase jump `sum_i a_i`. |
-| Correlated dephasing | One common-mode jump `sum_i n_i`. |
-
-The default bath rate is `1/ns`. Collective recipes do not encode a general
-correlation matrix, and correlated thermal baths are unsupported. `Exact()`
+Loss that several devices share comes from a coupling's `CollapseChannel`,
+for example one jump `a + b` for collective decay, or from ports on one
+feedline. One shared channel does not encode a general correlation matrix. `Exact()`
 retains Hamiltonian terms but does not derive global dressed dissipators, and
 local dissipation can fail in ultrastrong coupling ([Beaudoin et al.][beaudoin]).
 
@@ -707,8 +699,8 @@ error at QuTiP's default tolerances was 5.0e-8. In the lab frame, it took
 points in the first of the rotating, planned, and lab frames that fits each
 of them. In the planned frame, each point gets its own plan, as with
 `"auto"`. A solve with `dissipation=False` leaves the collapse channels out,
-so they do not need to fit its frame. On a chip with a collective bath, such
-a solve and `subspace_propagator()` use the rotating frame. Ports still need
+so they do not need to fit its frame. On a chip with a collective decay
+channel, such a solve and `subspace_propagator()` use the rotating frame. Ports still need
 to fit, because drives through a port and the Hamiltonian that a cascade
 generates (§3.3.2) stay in a solve without dissipation.
 
@@ -947,7 +939,7 @@ the rotating frame at `chip.freq(device)`, this carrier makes the drive's
 weight-`k` bands static. With an explicit `reference_freq`, the selected
 weight-`k` partner turns as `exp(2πi k (chip.freq(device) - reference_freq) t)`
 instead, and its Hermitian partner with the opposite sign. `ChargeDrive`,
-`PhaseDrive` and the extension `ChargePhaseDrive` set `k = 1`. `TwoPhotonDrive` sets `k = 2`, the zero-detuning
+`PhaseDrive` and the extension guide's `ChargePhaseDrive` set `k = 1`. `TwoPhotonDrive` sets `k = 2`, the zero-detuning
 Kerr-cat pump of the static model, without pump-induced Stark shifts. quchip
 warns with the chosen carrier once per line in each sequence. Drives without a
 declared or inherited `carrier_harmonic`, such as flux and coupling drives, and
@@ -1113,7 +1105,7 @@ about the transition frequency, so the RWA holds only when that detuning is
 much larger than the drive's matrix elements and bandwidth. When it is not,
 use `Exact()`, whose result is continuous through zero.
 
-`ChargePhaseDrive` (in `quchip.extensions`) maps `I` to the charge operator
+`ChargePhaseDrive` (in the extension guide) maps `I` to the charge operator
 and `Q` to the phase operator, `H = I Q_c − Q P`, where `s = I + iQ` is the
 delivered analytic signal, envelope and carrier together. With the Fock
 operators `Q_c = i(a† - a)` and `P = a + a†` this is `i(s a† - s* a)`: a positive
@@ -2237,7 +2229,7 @@ error. A channel solved at one start time is not moved to another by frame
 conjugation. Under RWA, a delayed gate keeps its channel up to such a
 conjugation only when the whole generator is covariant under the time
 shift, and RWA does not guarantee that: several carriers, coupled devices or
-baths can break it.
+thermal channels can break it.
 
 The computational labels `C` are those with every level in `{0, 1}`, and
 `d_C` is their number. Every number below uses the block `Λ_C` of the
@@ -2329,8 +2321,7 @@ interactions. The retained correction includes per-level shifts, and the
 authored endpoint parameters stay unchanged. Surviving component channels
 follow a captured operator projection, but their rates stay component-owned.
 Removed-component channels already use the retained coordinates. Surviving
-controls and collective or thermal baths follow the captured coordinate
-changes. Controls that target removed components, and retargeted ports,
+controls follow the captured coordinate changes. Controls that target removed components, and retargeted ports,
 require explicit conversion rules.
 
 An effective-terms target keeps every device and edge. It diagonalizes the
@@ -2609,8 +2600,7 @@ Reducing an excitation-conserving model records each retained channel's total
 level change in `EffectiveTerms.excitation_changes`. A projected surviving
 operator keeps its authored operator's change. A port on a surviving mode
 keeps the change of its target's operator, built at compile time, and a
-transformed port operator declares the change of the port it replaces. Each
-retained `Bath` operator keeps the change of its authored operator. Band
+transformed port operator declares the change of the port it replaces. Band
 decomposition treats every other total change as a structural zero, so this
 check gives the same answer for concrete values and under `jax.grad` or
 `jax.jit`. An operator that crosses an earlier map without declared level
@@ -2811,7 +2801,7 @@ and no internal loss, the value is
 degenerate modes. The entry evaluates the ratio at `f_k`. Between `f_k` and
 `f_tilde`, `|D_p D_k|` has a smaller minimum, so the ratio is a resonance
 diagnostic, not a bound over frequency. The entry is `None` when the reduced
-chip has no vacuum one-excitation model, for example with a thermal bath.
+chip has no vacuum one-excitation model, for example with thermal occupation.
 
 The coupled pole supports a conserving model's vacuum `VNA.sweep()` only.
 Pumped, finite-power, noisy, excited-reference and general stationary field
@@ -2819,13 +2809,12 @@ routes reject it. A time-domain solve also rejects a coherent input that
 reaches the pole's ports and an `OutputField` whose channel carries emission
 from those ports. It rejects diffusive monitoring with a nonzero efficiency of
 such a channel. The same rule covers a hidden channel that acted on the removed
-mode, such as its internal loss or a bath on it. The field and the record would
+mode, such as its internal loss or a thermal channel. The field and the record would
 contain only the adiabatic part of the removed mode, so they would miss the
 pole near its frequency. For those observables, keep the boundary mode.
 
 `EffectiveTerms.omitted_responses` records each carried channel that lacks a
-removed mode's response, including a bath with removed targets and a
-transformed port. The record stays with the channel through later reductions,
+removed mode's response, including a transformed port. The record stays with the channel through later reductions,
 also when the port network no longer holds the pole or the section. Pure-state
 SSE monitors every channel, so it rejects every chip with such a channel. A
 traced efficiency counts as nonzero, also when its value is zero.
@@ -3000,8 +2989,7 @@ other devices and forms that matrix only when you read it.
 
 `local=True` implements `method="sw"` only. The exact route uses the
 whole-chip eigensystem, resolved into excitation sectors when possible, and
-its dressed states are not local. The local route does not transform baths, so
-a chip with baths raises `NotImplementedError`. Coupling and effective-terms
+its dressed states are not local. Coupling and effective-terms
 targets do not accept `local=True`. `active_patch()` and
 `QuantumSequence.active_patch()` forward `local`.
 

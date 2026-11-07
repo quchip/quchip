@@ -11,7 +11,6 @@ from typing import Any, Callable
 
 from quchip.chip.retarget import RetargetContext, lookup_retarget_rule
 from quchip.control.equipment import ControlEquipment
-from quchip.utils.values import copy_value
 
 
 @dataclass(frozen=True)
@@ -31,7 +30,7 @@ def plan_stranded_lines(
 
     ``classify(line)`` returns ``None`` for a survivor or a ``StrandedLine``
     for a removed target. ``result_kind`` selects the rule (``edge``,
-    ``leaf-fold`` or ``crosskerr``). Missing rules raise the target's message.
+    ``leaf-fold``, ``coupling`` or ``effective``). Missing rules raise the target's message.
     Return surviving lines and ``(line, rule)`` pairs in source order. The
     rules are applied only after the reduced model and the emitted edges exist."""
     survivor_lines: list[Any] = []
@@ -65,15 +64,14 @@ def rebuild_chip(
     couplings: Any,
     port_replacements: dict[str, Any] | None = None,
     effective_terms: Any = None,
-    baths: Any = None,
 ) -> Any:
     """Rebuild the retained graph with the source's calculation settings.
 
     Keep the backend, basis, approximation, space policy, label and surviving state shorthand.
-    Filter per-device frames to retained labels. Copy baths and effective terms,
-    unless replacements are supplied. Removed port targets need explicit
+    Filter per-device frames to retained labels. Copy effective terms, unless
+    replacements are supplied. Removed port targets need explicit
     replacements. Control equipment is attached separately."""
-    from quchip.chip.chip import Chip
+    from quchip.chip.partition import sub_chip
 
     device_list = list(devices)
     survivor_labels = {device.label for device in device_list}
@@ -91,27 +89,10 @@ def rebuild_chip(
         if source_chip.port_network is None
         else source_chip.port_network._copy_with_port_replacements(replacements)
     )
-
-    rebuilt = Chip(
-        devices=device_list,
-        couplings=list(couplings) or None,
-        label=source_chip.label,
-        frame=copy_value(
-            {key: value for key, value in source_chip.frame.items() if key in survivor_labels}
-            if isinstance(source_chip.frame, dict) else source_chip.frame
-        ),
-        approximation=source_chip.approximation,
-        basis=source_chip.basis,
-        backend=source_chip._backend,
-        baths=[bath.copy() for bath in source_chip.baths] if baths is None else baths,
-        port_network=network,
+    return sub_chip(
+        source_chip, device_list, couplings, label=source_chip.label, port_network=network,
         effective_terms=source_chip.effective_terms if effective_terms is None else effective_terms,
-        space=source_chip.space,
     )
-    from quchip.chip.states import copy_state_configuration
-
-    copy_state_configuration(source_chip, rebuilt)
-    return rebuilt
 
 
 def reattach_equipment(

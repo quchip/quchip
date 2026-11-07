@@ -655,3 +655,50 @@ class Square(Envelope):
             Local times in ns.
         """
         return qnp.ones_like(t, dtype=complex) * self.amplitude
+
+
+class CosineEnvelope(Envelope):
+    r"""Raised-cosine pulse with zero endpoints and its peak at mid-pulse.
+
+    .. math::
+
+       E(t) = \frac{A}{2}\left[1 - \cos\!\left(\frac{2\pi t}{\tau}\right)\right],
+       \qquad 0 \le t \le \tau.
+
+    Parameters
+    ----------
+    duration : float
+        Pulse duration :math:`\tau` in ns. Must be positive.
+    amplitude : float, default 1.0
+        Peak in-phase amplitude :math:`A`. The consuming drive supplies its
+        physical unit.
+
+    References
+    ----------
+    Motzoi et al., *Phys. Rev. Lett.* 103, 110501 (2009),
+    https://doi.org/10.1103/PhysRevLett.103.110501.
+    """
+
+    duration: Scalar = parameter(positive=True, unit="ns")
+    amplitude: Scalar = parameter(default=1.0)
+
+    def area(self) -> Any:
+        """Return ``A τ / 2``."""
+        return qnp.asarray(0.5 * self.amplitude * self.duration, dtype=complex)
+
+    def value(self, t: Any) -> Any:
+        """Evaluate the raised-cosine envelope.
+
+        Parameters
+        ----------
+        t : scalar or array-like
+            Local times in ns.
+        """
+        return qnp.asarray(
+            0.5 * self.amplitude * (1.0 - qnp.cos(2.0 * qnp.pi * t / self.duration)),
+            dtype=complex,
+        )
+
+
+# quchip 0.4 saved this envelope under its former extensions module.
+Envelope._registry["quchip.extensions.envelopes.CosineEnvelope"] = CosineEnvelope

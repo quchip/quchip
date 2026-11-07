@@ -1962,7 +1962,7 @@ class QuantumSequence:
             raise ValueError("levels must name at least one level, and each level once.")
         return names, labels
 
-    def active_patch(self, *, hops: int = 1, method: str = "sw", local: bool = False,
+    def active_patch(self, *, hops: int = 1, method: Literal["sw", "exact"] = "sw", local: bool = False,
                      order: Any | None = None) -> "ActivePatchResult":
         """Reduce the chip to this schedule's active patch (spectators eliminated).
 

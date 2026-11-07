@@ -10,7 +10,7 @@ import pytest
 from quchip import RWA, ChargeDrive, Chip, DuffingTransmon, Exact, Gaussian, QuantumSequence, Qubit, Square
 from quchip.engine.approximations import resolve_drive_program
 from quchip.engine.ir import Carrier, Constant, ImagPart, Multiply, RealPart, evaluate_signal_program
-from quchip.extensions import ChargePhaseDrive
+from tests.extension_guide import ChargePhaseDrive
 
 TIMES = np.array([0.0, 0.03, 0.11, 0.4])
 
