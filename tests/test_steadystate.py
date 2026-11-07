@@ -316,3 +316,20 @@ def test_non_unique_stationary_system_above_the_diagnostic_cap_is_reported_singu
                  Chip([Resonator(freq=6.0, levels=17, label="r", T2=10.0)], frame="rotating",
                       backend="qutip").steadystate().state)
     assert np.isnan(state.full()).all()
+
+
+@pytest.mark.filterwarnings("error::numpy.exceptions.ComplexWarning")
+def test_drive_entries_couple_the_stationary_blocks_without_a_complex_cast() -> None:
+    """A real drive enters the generator only as purely imaginary entries, and they still couple its blocks."""
+    import qutip
+
+    from quchip.backend.qutip import _direct_steady_state
+
+    mode = qutip.destroy(12)
+    hamiltonian, collapse = 0.1 * (mode + mode.dag()), [mode]
+    liouvillian = qutip.liouvillian(hamiltonian, collapse)
+
+    state = _direct_steady_state(liouvillian.to("csr").data_as("csr_matrix"), [12])
+
+    np.testing.assert_allclose(state.full(), qutip.steadystate(hamiltonian, collapse).full(), rtol=0, atol=1e-12)
+    assert complex(qutip.expect(mode, state)) == pytest.approx(-0.2j, abs=1e-12)  # the coherent state -2iΩ/κ
