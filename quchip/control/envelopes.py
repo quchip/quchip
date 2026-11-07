@@ -54,7 +54,7 @@ from quchip.declarative.parameters import (
     validate_sign,
 )
 from quchip.utils.jax_utils import array_namespace as _pick_namespace
-from quchip.utils.jax_utils import maybe_concrete_scalar
+from quchip.utils.jax_utils import concrete_array_module, maybe_concrete_scalar
 from quchip.utils.registry import Registrable
 
 def _synthesize_envelope_init(cls: type["Envelope"]) -> Any:
@@ -170,7 +170,10 @@ class Envelope(Registrable, ABC, registry_root=True, metaclass=DeclarativeMeta):
         QuTiP otherwise ramps a step across one interpolation interval of up to
         25 ps. The dynamiqs backend evaluates the envelope directly.
         """
-        return qnp.linspace(0.0, self.duration, 65)
+        return self._sampling_times(qnp)
+
+    def _sampling_times(self, xp: Any) -> Any:
+        return xp.linspace(0.0, self.duration, 65)
 
     def area(self) -> Any:
         """Return the complex area ``∫₀^τ E(t) dt``, in ns times the amplitude unit.
@@ -204,10 +207,11 @@ class Envelope(Registrable, ABC, registry_root=True, metaclass=DeclarativeMeta):
             Return real I values instead of complex I/Q values.
         """
         xp = _pick_namespace(local_time)
-        values = xp.asarray(
-            self.value(xp.asarray(local_time, dtype=float)),
-            dtype=complex,
-        )
+        t = xp.asarray(local_time, dtype=float)
+        # A built-in formula samples NumPy times with NumPy when its parameters are concrete.
+        formula = xp is np and {"value", "_value"} <= vars(type(self)).keys()
+        values = self._value(t, concrete_array_module(self)) if formula else self.value(t)  # type: ignore[attr-defined]
+        values = xp.asarray(values, dtype=complex)
         return values.real if real else values
 
     def to_dict(self) -> dict[str, Any]:
@@ -236,65 +240,18 @@ class Envelope(Registrable, ABC, registry_root=True, metaclass=DeclarativeMeta):
         return f"{type(self).__name__}({params})"
 
 
-def _gaussian_flat_top(t: Any, duration: Any, edge_duration: Any, sigmas: Any, amplitude: Any) -> Any:
-    r"""Complex flat-top waveform with Gaussian ramp-up / ramp-down edges.
-
-    Shared by :class:`GaussianEdge` and :class:`SquareWithGaussianEdges`,
-    which differ only in how they derive ``edge_duration`` (a stored
-    parameter vs. ``edge_frac * duration``). Each edge is a Gaussian of
-    width :math:`\sigma = \tau_e / (2 N_\sigma)` (``edge_duration`` =
-    :math:`\tau_e`, ``sigmas`` = :math:`N_\sigma`); the plateau between the
-    edges holds constant ``amplitude``.
-
-    Pure ``qnp`` arithmetic throughout, so every argument (including
-    ``duration``, ``edge_duration``, and ``amplitude``) may be a JAX tracer
-    and the waveform stays differentiable end-to-end.
-    """
-    sigma = edge_duration / (2.0 * sigmas)
-    two_sigma_sq = 2.0 * sigma**2
-    out = qnp.ones_like(t, dtype=complex) * amplitude
-
-    out = qnp.where(
-        t < edge_duration,
-        amplitude * qnp.exp(-((t - edge_duration) ** 2) / two_sigma_sq),
-        out,
-    )
-
-    fall_center = duration - edge_duration
-    out = qnp.where(
-        t > fall_center,
-        amplitude * qnp.exp(-((t - fall_center) ** 2) / two_sigma_sq),
-        out,
-    )
-
-    return qnp.asarray(out, dtype=complex)
-
-
-def _gaussian_flat_top_area(duration: Any, edge_duration: Any, sigmas: Any, amplitude: Any) -> Any:
-    """Return the area of :func:`_gaussian_flat_top`: the plateau plus two half-Gaussian edges."""
-    sigma = edge_duration / (2.0 * sigmas)
-    edges = sigma * qnp.sqrt(2.0 * qnp.pi) * erf(qnp.sqrt(2.0) * sigmas)
-    return qnp.asarray(amplitude * (duration - 2.0 * edge_duration + edges), dtype=complex)
-
-
 def _gaussian_area(duration: Any, sigmas: Any, amplitude: Any) -> Any:
     """Return the area of a centered Gaussian whose window ends ``sigmas`` widths from its center."""
     sigma = duration / (2.0 * sigmas)
     return qnp.asarray(amplitude * sigma * qnp.sqrt(2.0 * qnp.pi) * erf(sigmas / qnp.sqrt(2.0)), dtype=complex)
 
 
-def _gaussian_sampling_times(duration: Any, sigmas: Any) -> Any:
+def _gaussian_sampling_times(duration: Any, sigmas: Any, xp: Any) -> Any:
     sigma = duration / (2 * sigmas)
-    half_width = qnp.minimum(duration / 2, 6 * sigma)
-    return qnp.concatenate((qnp.asarray([0.0]),
-                            duration / 2 + qnp.linspace(-half_width, half_width, 65),
-                            qnp.asarray([duration])))
-
-
-def _gaussian_edge_sampling_times(duration: Any, edge_duration: Any, sigmas: Any) -> Any:
-    width = qnp.minimum(edge_duration, 6 * edge_duration / (2 * sigmas))
-    rising = qnp.linspace(edge_duration - width, edge_duration, 33)
-    return qnp.concatenate((qnp.asarray([0.0]), rising, duration - rising, qnp.asarray([duration])))
+    half_width = xp.minimum(duration / 2, 6 * sigma)
+    return xp.concatenate((xp.asarray([0.0]),
+                           duration / 2 + xp.linspace(-half_width, half_width, 65),
+                           xp.asarray([duration])))
 
 
 class Gaussian(Envelope):
@@ -338,8 +295,8 @@ class Gaussian(Envelope):
     sigmas: Scalar = parameter(default=3, positive=True)
     amplitude: Scalar = parameter(default=1.0)
 
-    def sampling_times(self) -> Any:
-        return _gaussian_sampling_times(self.duration, self.sigmas)
+    def _sampling_times(self, xp: Any) -> Any:
+        return _gaussian_sampling_times(self.duration, self.sigmas, xp)
 
     def area(self) -> Any:
         """Return ``A σ √(2π) erf(N_σ/√2)``, the area of the window."""
@@ -353,10 +310,13 @@ class Gaussian(Envelope):
         t : scalar or array-like
             Local times in ns.
         """
+        return self._value(t, qnp)
+
+    def _value(self, t: Any, xp: Any) -> Any:
         center = self.duration / 2.0
         sigma = self.duration / (2.0 * self.sigmas)
-        return qnp.asarray(
-            self.amplitude * qnp.exp(-((t - center) ** 2) / (2 * sigma**2)),
+        return xp.asarray(
+            self.amplitude * xp.exp(-((t - center) ** 2) / (2 * sigma**2)),
             dtype=complex,
         )
 
@@ -395,8 +355,8 @@ class GaussianDRAG(Envelope):
     amplitude: Scalar = parameter(default=1.0)
     beta: Scalar = parameter(default=0.0, unit="ns")
 
-    def sampling_times(self) -> Any:
-        return _gaussian_sampling_times(self.duration, self.sigmas)
+    def _sampling_times(self, xp: Any) -> Any:
+        return _gaussian_sampling_times(self.duration, self.sigmas, xp)
 
     def area(self) -> Any:
         """Return the area of the in-phase Gaussian. The derivative quadrature integrates to zero."""
@@ -410,11 +370,14 @@ class GaussianDRAG(Envelope):
         t : scalar or array-like
             Local times in ns.
         """
+        return self._value(t, qnp)
+
+    def _value(self, t: Any, xp: Any) -> Any:
         center = self.duration / 2.0
         sigma = self.duration / (2.0 * self.sigmas)
-        in_phase = self.amplitude * qnp.exp(-((t - center) ** 2) / (2.0 * sigma**2))
+        in_phase = self.amplitude * xp.exp(-((t - center) ** 2) / (2.0 * sigma**2))
         derivative = -(t - center) * in_phase / sigma**2
-        return qnp.asarray(in_phase + 1j * self.beta * derivative, dtype=complex)
+        return xp.asarray(in_phase + 1j * self.beta * derivative, dtype=complex)
 
 
 class GaussianEdge(Envelope):
@@ -461,12 +424,17 @@ class GaussianEdge(Envelope):
         if edge is not None and dur is not None and 2 * edge > dur:
             raise ValueError(f"2 * edge_duration ({2 * self.edge_duration}) exceeds duration ({self.duration})")
 
-    def sampling_times(self) -> Any:
-        return _gaussian_edge_sampling_times(self.duration, self.edge_duration, self.sigmas)
+    def _sampling_times(self, xp: Any) -> Any:
+        edge_duration = self.edge_duration
+        width = xp.minimum(edge_duration, 6 * edge_duration / (2 * self.sigmas))
+        rising = xp.linspace(edge_duration - width, edge_duration, 33)
+        return xp.concatenate((xp.asarray([0.0]), rising, self.duration - rising, xp.asarray([self.duration])))
 
     def area(self) -> Any:
         """Return ``A(τ − 2τ_e) + A σ √(2π) erf(√2 N_σ)``: the plateau and two half-Gaussian edges."""
-        return _gaussian_flat_top_area(self.duration, self.edge_duration, self.sigmas, self.amplitude)
+        edge_duration = self.edge_duration
+        edges = edge_duration / (2.0 * self.sigmas) * qnp.sqrt(2.0 * qnp.pi) * erf(qnp.sqrt(2.0) * self.sigmas)
+        return qnp.asarray(self.amplitude * (self.duration - 2.0 * edge_duration + edges), dtype=complex)
 
     def value(self, t: Any) -> Any:
         """Evaluate the flat-top Gaussian-edge envelope.
@@ -476,7 +444,17 @@ class GaussianEdge(Envelope):
         t : scalar or array-like
             Local times in ns.
         """
-        return _gaussian_flat_top(t, self.duration, self.edge_duration, self.sigmas, self.amplitude)
+        return self._value(t, qnp)
+
+    def _value(self, t: Any, xp: Any) -> Any:
+        edge_duration, amplitude = self.edge_duration, self.amplitude
+        sigma = edge_duration / (2.0 * self.sigmas)
+        two_sigma_sq = 2.0 * sigma**2
+        out = xp.ones_like(t, dtype=complex) * amplitude
+        out = xp.where(t < edge_duration, amplitude * xp.exp(-((t - edge_duration) ** 2) / two_sigma_sq), out)
+        fall_center = self.duration - edge_duration
+        out = xp.where(t > fall_center, amplitude * xp.exp(-((t - fall_center) ** 2) / two_sigma_sq), out)
+        return xp.asarray(out, dtype=complex)
 
 
 class SquareWithGaussianEdges(Envelope):
@@ -521,22 +499,9 @@ class SquareWithGaussianEdges(Envelope):
         """Ramp duration in ns (``edge_frac * duration``)."""
         return self.edge_frac * self.duration
 
-    def sampling_times(self) -> Any:
-        return _gaussian_edge_sampling_times(self.duration, self.edge_duration, self.sigmas)
-
-    def area(self) -> Any:
-        """Return ``A(τ − 2τ_e) + A σ √(2π) erf(√2 N_σ)``: the plateau and two half-Gaussian edges."""
-        return _gaussian_flat_top_area(self.duration, self.edge_duration, self.sigmas, self.amplitude)
-
-    def value(self, t: Any) -> Any:
-        """Evaluate the fraction-parameterized Gaussian-edge envelope.
-
-        Parameters
-        ----------
-        t : scalar or array-like
-            Local times in ns.
-        """
-        return _gaussian_flat_top(t, self.duration, self.edge_duration, self.sigmas, self.amplitude)
+    # The shape is GaussianEdge's with a derived edge_duration.
+    _sampling_times, area, _value = GaussianEdge._sampling_times, GaussianEdge.area, GaussianEdge._value
+    value = GaussianEdge.value  # type: ignore[assignment]
 
 
 class LinearRamp(Envelope):
@@ -594,8 +559,8 @@ class LinearRamp(Envelope):
         if ramp is not None and dur is not None and ramp > dur:
             raise ValueError(f"ramp_duration ({self.ramp_duration}) must be <= duration ({self.duration})")
 
-    def sampling_times(self) -> Any:
-        return qnp.concatenate((qnp.linspace(0.0, self.ramp_duration, 33), qnp.asarray([self.duration])))
+    def _sampling_times(self, xp: Any) -> Any:
+        return xp.concatenate((xp.linspace(0.0, self.ramp_duration, 33), xp.asarray([self.duration])))
 
     def area(self) -> Any:
         """Return ``A(τ − τ_r/2)``: the ramp and the hold."""
@@ -615,8 +580,11 @@ class LinearRamp(Envelope):
             Complex-valued waveform. It rises linearly over ``ramp_duration``
             and then holds constant at ``amplitude``.
         """
-        return qnp.asarray(
-            self.amplitude * qnp.minimum(t / self.ramp_duration, 1.0),
+        return self._value(t, qnp)
+
+    def _value(self, t: Any, xp: Any) -> Any:
+        return xp.asarray(
+            self.amplitude * xp.minimum(t / self.ramp_duration, 1.0),
             dtype=complex,
         )
 
@@ -639,8 +607,8 @@ class Square(Envelope):
     duration: Scalar = parameter(positive=True, unit="ns")
     amplitude: Scalar = parameter(default=1.0)
 
-    def sampling_times(self) -> Any:
-        return qnp.asarray([0.0, self.duration])
+    def _sampling_times(self, xp: Any) -> Any:
+        return xp.asarray([0.0, self.duration])
 
     def area(self) -> Any:
         """Return ``A τ``."""
@@ -654,7 +622,10 @@ class Square(Envelope):
         t : scalar or array-like
             Local times in ns.
         """
-        return qnp.ones_like(t, dtype=complex) * self.amplitude
+        return self._value(t, qnp)
+
+    def _value(self, t: Any, xp: Any) -> Any:
+        return xp.ones_like(t, dtype=complex) * self.amplitude
 
 
 class CosineEnvelope(Envelope):
@@ -694,8 +665,11 @@ class CosineEnvelope(Envelope):
         t : scalar or array-like
             Local times in ns.
         """
-        return qnp.asarray(
-            0.5 * self.amplitude * (1.0 - qnp.cos(2.0 * qnp.pi * t / self.duration)),
+        return self._value(t, qnp)
+
+    def _value(self, t: Any, xp: Any) -> Any:
+        return xp.asarray(
+            0.5 * self.amplitude * (1.0 - xp.cos(2.0 * xp.pi * t / self.duration)),
             dtype=complex,
         )
 

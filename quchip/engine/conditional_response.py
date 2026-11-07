@@ -5,10 +5,10 @@ from typing import Any
 
 from quchip.engine.ir import CoherenceResponseProblem, LinearResponseProblem
 from quchip.engine.linear_response import (
-    _UnsupportedLinearModel, _build_vacuum_response_problem, _sector_response_model,
+    _UnsupportedLinearModel, _build_vacuum_response_problem, _reference_transfers, _sector_response_model,
 )
 from quchip.utils.constants import TWO_PI
-from quchip.utils.jax_utils import contains_tracer
+from quchip.utils.jax_utils import contains_tracer, select_array_module
 
 
 def build_conditional_response(
@@ -22,7 +22,7 @@ def build_conditional_response(
             "Conditional VNA requires a static excitation-conserving model, lowering ports, "
             "lowering or conserving loss channels, vacuum inputs and no downstream output network."
         ) from error
-    sectors, xp = model.sectors, chip.backend.array_module
+    sectors = model.sectors
     if any(level >= dim for level, dim in zip(reference, sectors.dims, strict=True)):
         raise ValueError("Conditional VNA reference exceeds a device's resolved level count.")
     total = sum(reference)
@@ -42,6 +42,9 @@ def build_conditional_response(
             "Keep the boundary mode for an excited-reference VNA sweep."
         )
     system = sectors.eigensystem(total)
+    # Concrete operators stay on the host, where each new shape compiles no XLA program.
+    xp = select_array_module(sectors.traced or contains_tracer((
+        model.channels, model.scattering, system.eigenvectors, system.labeling.indices, system.labeling.overlaps)))
     row = system.space.row(reference)
     index = system.labeling.indices[row]
     overlap = xp.asarray(system.labeling.overlaps[row])
@@ -55,7 +58,7 @@ def build_conditional_response(
     elif bool(invalid):
         raise ValueError(message)
     rho = xp.outer(vector, vector.conj())
-    energy = system.eigenvalues[index]
+    energy = xp.asarray(system.eigenvalues)[index]
     sizes = tuple(sectors.space(n).size for n in range(total + 2))
     from quchip.utils.memory import dense_bytes, require_memory
 
@@ -95,7 +98,7 @@ def build_conditional_response(
                                                + xp.sum(xp.abs(escaped_derivative)**2)),
         sector_dimensions=sizes, coherence_count=sum(sizes[n] * sizes[n - 1] for n in range(1, len(sizes))),
     )
-    inbound, outbound = model.transfers(frequencies)
+    inbound, outbound = _reference_transfers(model.references, frequencies)
     return CoherenceResponseProblem(
         frequencies=frequencies, hamiltonians=hamiltonians, lowering=lowering, conserving=conserving,
         sources=tuple(sources), scattering=model.scattering, plane_indices=model.plane_indices,

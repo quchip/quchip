@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import itertools
 import math
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from functools import lru_cache, partial, reduce
 from typing import Any, Sequence
@@ -110,21 +111,17 @@ def _summed_modulation(modulations: Sequence[Any]) -> Any:
 def _dia_structure(dims: tuple[int, ...], offsets: tuple[int, ...]) -> Any:
     """Pytree structure of an unbatched sparse-DIA qarray whose one leaf is its diagonals.
 
-    Construct a zero sparse template once per structure, including inside JIT.
+    Trace a template abstractly, which compiles none of dynamiqs' checks, in a
+    fresh thread outside the caller's compile-time evaluation, under which the
+    error callback in a nested check's inactive branch would execute.
     Cache only its structure; dynamiqs selects the concrete class.
     """
-    n = math.prod(dims)
+    def template(rows: list[Any]) -> QArray:
+        return dq.sparsedia_from_dict(dict(zip(offsets, rows)), dims=dims) if rows else dq.zeros(*dims, layout=dq.dia)
 
-    # Run the constructor's validation eagerly: nested JIT error callbacks can
-    # execute while their inactive branch is traced in compile-time evaluation.
-    with jax.ensure_compile_time_eval(), jax.disable_jit():
-        if offsets:
-            template = dq.sparsedia_from_dict(
-                {offset: jnp.zeros(n - abs(offset), dtype=jnp.complex128) for offset in offsets}, dims=dims,
-            )
-        else:
-            template = dq.zeros(*dims, layout=dq.dia)
-    return jtu.tree_structure(template)
+    shapes = [jax.ShapeDtypeStruct((math.prod(dims) - abs(offset),), jnp.complex128) for offset in offsets]
+    with ThreadPoolExecutor(1) as pool:
+        return pool.submit(lambda: jtu.tree_structure(jax.eval_shape(template, shapes))).result()
 
 
 def _dia_qarray(dims: tuple[int, ...], offsets: tuple[int, ...], diags: Any) -> QArray:
@@ -331,19 +328,6 @@ def _stack_slot_signals(signals: list[Any]) -> Any:
     return Add(tuple(parts))
 
 
-class _SignalCallable(eqx.Module):
-    """Equinox wrapper: evaluates a signal-program AST under JAX tracing.
-
-    Registering via ``eqx.Module`` makes the signal a pytree, so dynamiqs
-    can vmap across batched parameters inside the carrier/envelope tree.
-    """
-
-    signal: Any
-
-    def __call__(self, t: float) -> Any:
-        return jnp.asarray(evaluate_signal_program(self.signal, t, xp=jnp))
-
-
 class _SummedHamiltonian(eqx.Module):
     """``H(t) = H₀ + Σ_k c_k(t)·A_k`` assembled as one qarray per call.
 
@@ -357,12 +341,12 @@ class _SummedHamiltonian(eqx.Module):
     rows: tuple[tuple[int, ...], ...] | None = eqx.field(static=True)
     base: Any
     terms: tuple[Any, ...]
-    signals: tuple[_SignalCallable, ...]
+    signals: tuple[Any, ...]
 
     def __call__(self, t: float) -> Any:
         data = self.base
         for index, (term, signal) in enumerate(zip(self.terms, self.signals)):
-            scaled = signal(t) * term
+            scaled = evaluate_signal_program(signal, t, xp=jnp) * term
             if self.rows is None:
                 data = data + scaled
             else:
@@ -376,8 +360,7 @@ def _summed_hamiltonian(static_ops: Sequence[Any], static_coeffs: Sequence[Any],
     operators = [*static_ops, *dyn_ops]
     if any(op.ndim != 2 for op in operators):
         return None
-    signals = tuple(_SignalCallable(signal) for signal in dyn_signals)
-    if any(jax.eval_shape(signal, 0.0).shape for signal in signals):
+    if any(jax.eval_shape(partial(evaluate_signal_program, signal, xp=jnp), 0.0).shape for signal in dyn_signals):
         return None
     if all(op.layout is dq.dia for op in operators):
         offsets = tuple(sorted({int(offset) for op in operators for offset in op.data.offsets}))
@@ -403,12 +386,11 @@ def _summed_hamiltonian(static_ops: Sequence[Any], static_coeffs: Sequence[Any],
     leaves, treedef = jtu.tree_flatten(template)
     if len(leaves) != 1:
         return None
-    hamiltonian = _SummedHamiltonian(treedef, rows, base, terms, signals)
-    edges = [edge for edge in map(_signal_discontinuities, dyn_signals) if edge is not None]
+    hamiltonian = _SummedHamiltonian(treedef, rows, base, terms, tuple(dyn_signals))
     # dynamiqs keeps the callable as static pytree metadata; a plain function
     # compares by identity, whereas the module would compare its arrays, which
     # may be tracers of an earlier trace.
-    return dq.timecallable(lambda t: hamiltonian(t), discontinuity_ts=jnp.concatenate(edges) if edges else None)
+    return dq.timecallable(lambda t: hamiltonian(t), discontinuity_ts=_signal_discontinuities(Add(tuple(dyn_signals))))
 
 
 @dataclass(frozen=True)
@@ -1425,7 +1407,7 @@ class DynamiqsBackend(Backend):
 
         Static terms are summed as qarrays. Dynamic terms with
         ``ScalarModulation`` time-dependence are wrapped with
-        ``dynamiqs.modulated`` and a JAX-traceable :class:`_SignalCallable`.
+        ``dynamiqs.modulated`` with its JAX-traceable signal program.
         ``tlist`` passes through in metadata but is not used for sampling,
         because Dynamiqs evaluates callables on the integrator's adaptive grid.
 
@@ -1476,12 +1458,9 @@ class DynamiqsBackend(Backend):
     ) -> Any:
         """Sum static ``coeff·op`` terms and modulated dynamic terms into one RHS.
 
-        Static terms accumulate as ``Σ coeff·op``; each dynamic term wraps its
-        signal-program AST in a JAX-traceable :class:`_SignalCallable` via
-        ``dynamiqs.modulated``. Shared by :meth:`prepare_hamiltonian` and the
-        cached-jit single-solve so the static/dynamic split lives in one place
-        (the cached path passes traced operators/coefficients as jit arguments,
-        so this stays fully traceable). The time-dependent terms form one sum:
+        Static terms accumulate as ``Σ coeff·op``, and each dynamic term evaluates its signal program in JAX.
+        Shared by :meth:`prepare_hamiltonian` and the cached-jit solves, so the static/dynamic split lives in one
+        place and stays traceable. The time-dependent terms form one sum:
         dynamiqs' ``+`` re-broadcasts every earlier term, so adding N terms one
         at a time nests their callables up to N deep and traces each signal
         O(N) times.
@@ -1493,7 +1472,8 @@ class DynamiqsBackend(Backend):
         if not dyn_ops:
             return rhs
         dynamic = [
-            dq.modulated(_SignalCallable(signal), op, discontinuity_ts=_signal_discontinuities(signal))
+            dq.modulated(partial(evaluate_signal_program, signal, xp=jnp), op,
+                         discontinuity_ts=_signal_discontinuities(signal))
             for op, signal in zip(dyn_ops, dyn_signals)
         ]
         terms = dynamic if rhs is None else [dq.constant(rhs), *dynamic]
