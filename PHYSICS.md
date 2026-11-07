@@ -2418,9 +2418,10 @@ kappa = -2 Re λ = (|C v|² + v†K v)/|v|²
 
 so the loss channels, the rows `c_k` of `C`, and the retained internal losses
 partition `kappa`. The pole is the one nearest `f_r|0`, and the resonator must
-dominate its eigenvector. The linewidth of `VNA.resonances()` keeps the
-dephasing broadening. It is the response linewidth, twice the decay rate of
-the amplitude coherence, and not the energy linewidth. At `Delta = 1 GHz`,
+dominate its eigenvector. The linewidth of `VNA.resonances()` is the response
+linewidth, twice the decay rate of the amplitude coherence. It includes the
+broadening of the conserving channels, so it differs from the energy linewidth
+when they are present and equals it without them. At `Delta = 1 GHz`,
 `g = 50 MHz`, a resonator loss of `0.01/ns` and qubit dephasing
 `gamma_phi = 0.02/ns`, the response linewidth is `0.01007444/ns` and `kappa`
 is `0.00997519/ns`, the initial decay rate of the excitation number.
