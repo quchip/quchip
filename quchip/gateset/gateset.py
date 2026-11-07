@@ -82,7 +82,8 @@ class CircuitUnitary:
     Attributes
     ----------
     full : numpy.ndarray
-        Lab-frame propagator ``U(T, 0)`` in solver coordinates.
+        Lab-frame propagator ``U(T, 0)`` in solver coordinates. For a circuit
+        solved in a larger space, its block on the solver coordinates.
     computational : numpy.ndarray
         Circuit unitary on the computational states, with the virtual-Z
         frame correction ``Π_q RZ_q(-F_q)`` applied.
@@ -98,7 +99,7 @@ class CircuitUnitary:
         Ideal circuit unitary in the same order.
     solves : int
         Propagator solves that composition needed (overlapping or
-        non-covariant gates).
+        non-covariant gates), or 1 for a circuit solved in one piece.
     """
 
     full: np.ndarray
@@ -174,14 +175,16 @@ class GateSet:
         Solver space. ``"auto"`` keeps the chip's policy when it has one.
         Otherwise it keeps the full product space up to 64 states and above
         that picks ``ExcitationCutoff(n + 1)`` for ``n`` qubits, raising the
-        cutoff until the calibrated gates change by less than
-        ``cutoff_tolerance`` at the next cutoff, with the other qubits in
-        level 0 and in level 1. :meth:`unitary` and :meth:`simulate` solve
-        ``m`` gates at once with ``m - 1`` more excitations. A warning
-        states each choice. ``None`` forces the full product space.
+        cutoff until each calibration block's amplitudes, leakage, and
+        average gate fidelity change by less than ``cutoff_tolerance`` at
+        the next cutoff, with the other qubits in level 0 and in level 1.
+        :meth:`unitary` and :meth:`simulate` solve a circuit with ``m`` gates
+        at once in one piece with ``m - 1`` more excitations. A warning states
+        each choice. These rules are heuristics, not bounds. ``None`` forces
+        the full product space.
     cutoff_tolerance : float, default 1e-6
-        Largest change of a gate's computational amplitudes or leakage
-        accepted when the cutoff is raised by one.
+        Largest change of a gate's computational amplitudes, leakage, or
+        average gate fidelity accepted when the cutoff is raised by one.
     spectators : {"coupled", "all", "none"}, default "coupled"
         Other gate-set qubits in each calibration block. The fit then targets
         ``U ⊗ I`` on the joint block, with a free virtual Z on each spectator,
@@ -508,6 +511,12 @@ class GateSet:
             self._delivered[key] = lower_pulse(self.solver_chip, op)
         return self._delivered[key]
 
+    def _window(self, key: tuple[str, tuple[str, ...]], placed: Sequence[Any]) -> tuple[float, float, list[Any]]:
+        """Return a placed gate's start and end, with its end at its last delivered field, and its template ops."""
+        template = list(self._on_solver(self._calibrations[key].sequence).scheduled_ops)
+        start = float(placed[0].start_time) - float(template[0].start_time)
+        return start, start + self._span(template, self._natives[key].duration), template
+
     def _span(self, ops: Sequence[Any], duration: float, start: float = 0.0) -> float:
         """Return the end of ``[start, start + duration]`` extended to the last delivered field."""
         stop = start + float(duration)
@@ -579,8 +588,9 @@ class GateSet:
             Override each native's ``explore`` flag.
         target : float, default 1e-3
             Infidelity above which the status is ``"poor_fit"``: at start
-            time 0, at the worst start time of ``placement_infidelity``, or
-            in the state of the other qubits of ``worst_spectators``.
+            time 0, at the worst sampled start time of
+            ``placement_infidelity``, or in the state of the other qubits of
+            ``worst_spectators``.
         progress : bool, default False
             Print one line per native as it finishes.
 
@@ -858,9 +868,10 @@ class GateSet:
             for key in keys:
                 native = self._natives[key]
                 assert native.sequence is not None
-                block_qubits = (*native.qubits, *self.spectators_of(native))
-                difference = max(difference, self._cutoff_change(native.sequence, block_qubits, native.duration,
-                                                                 current, larger))
+                spectators = self.spectators_of(native)
+                ideal = np.kron(native.ideal_matrix(), np.eye(2 ** len(spectators)))
+                difference = max(difference, self._cutoff_change(native.sequence, (*native.qubits, *spectators),
+                                                                 native.duration, current, larger, ideal))
             if difference <= self.cutoff_tolerance:
                 break
             cutoff += 1
@@ -892,7 +903,8 @@ class GateSet:
             native = self._natives[key]
             calibration = self._calibrations[key]
             block_qubits = calibration.block_qubits or native.qubits
-            difference = self._cutoff_change(calibration.sequence, block_qubits, native.duration, None, larger)
+            difference = self._cutoff_change(calibration.sequence, block_qubits, native.duration, None, larger,
+                                             calibration.ideal)
             calibration.cutoff_difference = difference
             if difference > self.cutoff_tolerance:
                 failing.append(key)
@@ -911,8 +923,8 @@ class GateSet:
         return failing
 
     def _cutoff_change(self, sequence: "QuantumSequence", block_qubits: Sequence[str], duration: float,
-                       current: "Chip | None", larger: "Chip") -> float:
-        """Largest change of a block and its leakage from ``current`` to ``larger``.
+                       current: "Chip | None", larger: "Chip", ideal: np.ndarray) -> float:
+        """Largest change of a block's entries, leakage, and average gate fidelity from ``current`` to ``larger``.
 
         The other gate-set qubits are in level 0 and then all in level 1.
         The second context holds the most excitations of any register
@@ -924,7 +936,9 @@ class GateSet:
             left, _ = self._block(sequence, block_qubits, duration, background=background, chip=current)
             right, _ = self._block(sequence, block_qubits, duration, background=background, chip=larger)
             change = max(change, float(np.abs(np.asarray(left.matrix) - np.asarray(right.matrix)).max()),
-                         float(np.abs(np.asarray(left.leakage) - np.asarray(right.leakage)).max()))
+                         float(np.abs(np.asarray(left.leakage) - np.asarray(right.leakage)).max()),
+                         abs(float(average_fidelity(np.asarray(left.matrix), ideal))
+                             - float(average_fidelity(np.asarray(right.matrix), ideal))))
         return change
 
     # ------------------------------------------------------------------- cache
@@ -1193,9 +1207,10 @@ class GateSet:
 
         Gates whose pieces are covariant reuse their cached propagator at any
         start time and frame. Overlapping gates and non-covariant gates run
-        one solve per placement; under an automatic cutoff, ``m`` gates at
-        once solve with ``m - 1`` more excitations. Idle intervals use the
-        static lab Hamiltonian's eigensystem.
+        one solve per placement. Under an automatic cutoff, a circuit with
+        ``m`` gates at once is solved in one piece with ``m - 1`` more
+        excitations, as in :meth:`simulate`. Idle intervals use the static
+        lab Hamiltonian's eigensystem.
 
         Parameters
         ----------
@@ -1216,15 +1231,15 @@ class GateSet:
         idle = self._idle_of()
         instances = []
         for key, first, count in placements:
-            template = list(self._on_solver(self._calibrations[key].sequence).scheduled_ops)
+            if not count:
+                continue
             placed = ops[first:first + count]
-            start = float(placed[0].start_time) - float(template[0].start_time) if count else None
+            start, stop, template = self._window(key, placed)
             offsets: dict[str, float] = {}
             for op, reference in zip(placed, template):
                 if op.frame is not None:
                     offsets[op.frame] = float(op.phase_offset) - float(reference.phase_offset)
-            if start is not None:
-                instances.append((start, start + self._entry(key).duration, key, offsets))
+            instances.append((start, stop, key, offsets))
         instances.sort(key=lambda item: item[0])
         segments: list[list[Any]] = []
         for instance in instances:
@@ -1233,37 +1248,47 @@ class GateSet:
             else:
                 segments.append([instance])
         duration = max([float(sequence.total_duration), *(item[1] for item in instances)])
-        result = np.eye(total.size, dtype=complex)
-        cursor = 0.0
-        solves = 0
-        for segment in segments:
-            start = segment[0][0]
-            stop = max(item[1] for item in segment)
-            if start > cursor:
-                result = idle(start - cursor) @ result
-            entry = self._entry(segment[0][2]) if len(segment) == 1 else None
-            if entry is not None and entry.covariant:
-                matrix = entry.placed(start, segment[0][3], total, idle)
-            else:
-                cache_key = tuple((round(item[0], 9), item[2], tuple(sorted((k, round(v, 12))
-                                                                             for k, v in item[3].items())))
-                                  for item in segment)
-                if cache_key not in self._placed:
-                    chip, embedding = self._overlap_space(_most_at_once([item[:2] for item in segment]))
-                    # In a larger space, solve the solver coordinates and keep their components.
-                    target = solver_sequence if embedding is None else self._on_solver(sequence, chip)
-                    propagator = target.propagator(tlist=[start, stop], columns=embedding, frame=self.frame,
-                                                   options=self.options, dissipation=False, backend=self.backend)
-                    matrix = np.asarray(propagator.matrix)
-                    self._placed[cache_key] = matrix if embedding is None else embedding.T @ matrix
-                    solves += 1
-                matrix = self._placed[cache_key]
-            result = matrix @ result
-            cursor = stop
-        if duration > cursor:
-            result = idle(duration - cursor) @ result
-        columns, energies = self._states(order)
-        block = project_computational(result @ columns, columns, energies, 0.0, duration, order)
+        chip, embedding = self._overlap_space(_most_at_once([item[:2] for item in instances]))
+        if embedding is not None:
+            # Gates at once need more excitations than the cached gates. Composed on the K space, each window would
+            # drop the population above K at its end, and the dropped amplitudes add up over later windows.
+            columns, energies = self._states(order, chip=chip)
+            propagator = self._on_solver(sequence, chip).propagator(
+                tlist=[0.0, duration], columns=np.hstack([embedding, columns]), frame=self.frame,
+                options=self.options, dissipation=False, backend=self.backend)
+            matrix = np.asarray(propagator.matrix)
+            result = embedding.T @ matrix[:, :embedding.shape[1]]
+            block = project_computational(matrix[:, embedding.shape[1]:], columns, energies, 0.0, duration, order)
+            solves = 1
+        else:
+            result = np.eye(total.size, dtype=complex)
+            cursor = 0.0
+            solves = 0
+            for segment in segments:
+                start = segment[0][0]
+                stop = max(item[1] for item in segment)
+                if start > cursor:
+                    result = idle(start - cursor) @ result
+                entry = self._entry(segment[0][2]) if len(segment) == 1 else None
+                if entry is not None and entry.covariant:
+                    matrix = entry.placed(start, segment[0][3], total, idle)
+                else:
+                    cache_key = tuple((round(item[0], 9), item[2], tuple(sorted((k, round(v, 12))
+                                                                                 for k, v in item[3].items())))
+                                      for item in segment)
+                    if cache_key not in self._placed:
+                        propagator = solver_sequence.propagator(tlist=[start, stop], frame=self.frame,
+                                                                options=self.options, dissipation=False,
+                                                                backend=self.backend)
+                        self._placed[cache_key] = np.asarray(propagator.matrix)
+                        solves += 1
+                    matrix = self._placed[cache_key]
+                result = matrix @ result
+                cursor = stop
+            if duration > cursor:
+                result = idle(duration - cursor) @ result
+            columns, energies = self._states(order)
+            block = project_computational(result @ columns, columns, energies, 0.0, duration, order)
         frame_offsets = self._offsets(sequence)
         correction = self._frame_correction(order, frame_offsets) * np.exp(1j * global_phase)
         return CircuitUnitary(full=result, computational=correction[:, None] * np.asarray(block.matrix),
@@ -1310,7 +1335,8 @@ class GateSet:
 
         The schedule runs with the gate-set solver settings. Under an
         automatic cutoff, a schedule with up to ``m`` gates at once solves
-        with ``m - 1`` more excitations. The final state is mapped into the
+        with ``m - 1`` more excitations; as in :meth:`unitary`, a gate lasts
+        until its last delivered field. The final state is mapped into the
         computational frame with the virtual-Z correction.
 
         Parameters
@@ -1334,9 +1360,7 @@ class GateSet:
         solver_sequence = self._on_solver(sequence)
         ops = list(solver_sequence.scheduled_ops)
         duration = self._span(ops, float(sequence.total_duration))
-        windows = [(min(float(op.start_time) for op in ops[first:first + count]),
-                    max(float(op.start_time) + float(op.envelope.duration) for op in ops[first:first + count]))
-                   for _, first, count in placements if count]
+        windows = [self._window(key, ops[first:first + count])[:2] for key, first, count in placements if count]
         chip, embedding = self._overlap_space(_most_at_once(windows))
         if embedding is not None:
             solver_sequence = self._on_solver(sequence, chip)
