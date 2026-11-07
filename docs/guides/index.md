@@ -6,6 +6,8 @@ microwave measurements, reductions and fitting.
 New to quchip? Start with {doc}`your first chip <defining-and-inspecting-a-chip>`.
 
 - {doc}`Extending quchip <../extensions>`: declare your own operators, models and controls.
+- {doc}`Import circuits from scqubits <scqubits>`: turn scqubits devices and
+  coupled systems into quchip models, and export them back.
 
 ## Spectra and dynamics
 
@@ -48,6 +50,7 @@ For API choices and common pitfalls, see the {doc}`cookbook <../cookbook>`.
 :maxdepth: 1
 
 Extending quchip <../extensions>
+Import circuits from scqubits <scqubits>
 Spectra and parameter sweeps <statics-and-parameter-studies>
 Pulses, leakage, and readout <dynamics-pulses-and-readout>
 Readout and fridge wiring <steady-state-and-vna>
