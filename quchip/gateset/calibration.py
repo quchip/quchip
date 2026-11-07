@@ -131,15 +131,16 @@ class GateCalibration:
         factor of ``Z(φ) V U_ideal†`` without its global phase: the error after
         the ideal gate.
     worst_case_distance : float
-        ``sin(Δ/2)`` from the eigenphase arc of ``U``: half the diamond norm
-        ``‖U·U† − 1‖⋄`` of the unitary error, with leakage left out.
+        ``sin(Δ/2)`` from the eigenphase arc Δ of ``U``, and 1 when Δ ≥ π:
+        half the diamond norm ``‖U·U† − 1‖⋄`` of the unitary error, with
+        leakage left out.
     identifiability : dict
         Jacobian rank, condition number, and weak directions of the final fit,
         and ``jacobian_step_change``: the relative change of the knob columns
         when the difference step shrinks tenfold. The step change includes
         solver noise and is not a gate error. A knob direction that changes
-        the residual by less than the solver noise is not determined by the
-        physics, whatever the rank.
+        the residual by less than the solver noise is not numerically
+        resolved at these solver settings, whatever the rank.
     unitarity_defect : float
         ``max |U†U - I|`` over the computed columns, from the integrator.
     options, frame, cutoff
@@ -168,9 +169,9 @@ class GateCalibration:
         and 1, in which the gate's own block has its lowest average gate
         fidelity, and that fidelity, with the implemented corrections.
         ``None`` when the gate acts on every gate-set qubit. Each state is
-        scored on its own, so the score does not see phases that the other
-        qubits gather among themselves during the gate, such as their own
-        static ZZ.
+        scored on its own, so this conditional-state score does not see
+        phases that the other qubits gather among themselves during the gate,
+        such as their own static ZZ.
     placement_infidelity : tuple of float or None
         Smallest and largest ``1 - F_avg`` over 21 sampled start times in
         [0, 100) ns, with the implemented corrections. A native whose pieces

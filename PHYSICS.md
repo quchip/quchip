@@ -3572,8 +3572,9 @@ windows do not overlap reuse their cached propagators through the placement
 rule, idle intervals use the eigensystem of the static lab Hamiltonian, and
 overlapping gates are solved together once per placement. With a line delay,
 gates that follow each other on the delayed line overlap and are solved
-together. The composed unitary matches a direct solve of the same schedule to
-the solver tolerance. With QuTiP, the linear interpolation of windowed
+together. Under an automatic excitation cutoff, a circuit with overlapping
+gates is solved in one piece instead (§17.6). The composed unitary matches a
+direct solve of the same schedule to the solver tolerance. With QuTiP, the linear interpolation of windowed
 envelopes adds an error that the solver's `rtol` sets (§12).
 
 ### 17.6 Excitation cutoff
@@ -3594,15 +3595,14 @@ Each drive adds a transient excitation to the state it acts on, so gates that
 run at the same time need more headroom than one gate. On a chain of four
 transmons at `K = n + 2`, one echoed CR gate matches the full space to `3e-8`,
 but two at once differ by `5e-6`, and four 10 ns X gates at once by `8e-4`.
-Under an automatic cutoff, `unitary()` and `simulate()` solve a window with
-`m` gates at once at `K + m - 1`, capped at the full product space.
-`unitary()` keeps the components of the result on the `K` space. Gates at
-once can still end with population above `K`, for example in `|22>` after two
-strong pulses on levels without anharmonicity, so `unitary()` checks how much
-population any computational state keeps on the `K` space. When more than
-`1e-6` is missing, it solves the circuit in one piece at the larger cutoff and
-warns. The extra excitation per gate and the check with the other qubits in
-level 1 are heuristics, not bounds; `space=` sets the cutoff by hand.
+Under an automatic cutoff, `unitary()` and `simulate()` solve a circuit with
+up to `m` gates at once in one piece at `K + m - 1`, capped at the full
+product space. Gates at once can end with population above `K`, for example
+in `|22>` after two strong pulses on levels without anharmonicity. Composed on
+the `K` space, each window would drop that population at its end, and the
+dropped amplitudes would add up over later windows. The extra excitation per
+gate and the check with the other qubits in level 1 are heuristics, not
+bounds; `space=` sets the cutoff by hand.
 
 [koch]: https://arxiv.org/abs/cond-mat/0703002
 [vool]: https://arxiv.org/abs/1610.03438

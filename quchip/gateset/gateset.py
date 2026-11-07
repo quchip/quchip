@@ -82,7 +82,8 @@ class CircuitUnitary:
     Attributes
     ----------
     full : numpy.ndarray
-        Lab-frame propagator ``U(T, 0)`` in solver coordinates.
+        Lab-frame propagator ``U(T, 0)`` in solver coordinates. For a circuit
+        solved in a larger space, its block on the solver coordinates.
     computational : numpy.ndarray
         Circuit unitary on the computational states, with the virtual-Z
         frame correction ``Π_q RZ_q(-F_q)`` applied.
@@ -98,7 +99,7 @@ class CircuitUnitary:
         Ideal circuit unitary in the same order.
     solves : int
         Propagator solves that composition needed (overlapping or
-        non-covariant gates).
+        non-covariant gates), or 1 for a circuit solved in one piece.
     """
 
     full: np.ndarray
@@ -177,14 +178,13 @@ class GateSet:
         cutoff until each calibration block's amplitudes, leakage, and
         average gate fidelity change by less than ``cutoff_tolerance`` at
         the next cutoff, with the other qubits in level 0 and in level 1.
-        :meth:`unitary` and :meth:`simulate` solve ``m`` gates at once with
-        ``m - 1`` more excitations. A warning states each choice. These rules
-        are heuristics, not bounds. ``None`` forces the full product space.
+        :meth:`unitary` and :meth:`simulate` solve a circuit with ``m`` gates
+        at once in one piece with ``m - 1`` more excitations. A warning states
+        each choice. These rules are heuristics, not bounds. ``None`` forces
+        the full product space.
     cutoff_tolerance : float, default 1e-6
         Largest change of a gate's computational amplitudes, leakage, or
-        average gate fidelity accepted when the cutoff is raised by one, and
-        the largest population that gates at once may leave above the cutoff
-        in :meth:`unitary`.
+        average gate fidelity accepted when the cutoff is raised by one.
     spectators : {"coupled", "all", "none"}, default "coupled"
         Other gate-set qubits in each calibration block. The fit then targets
         ``U ⊗ I`` on the joint block, with a free virtual Z on each spectator,
@@ -1201,12 +1201,10 @@ class GateSet:
 
         Gates whose pieces are covariant reuse their cached propagator at any
         start time and frame. Overlapping gates and non-covariant gates run
-        one solve per placement; under an automatic cutoff, ``m`` gates at
-        once solve with ``m - 1`` more excitations. When they leave more than
-        ``cutoff_tolerance`` of any computational state's population above
-        the cutoff, the circuit is solved in one piece in that larger space,
-        with a warning. Idle intervals use the static lab Hamiltonian's
-        eigensystem.
+        one solve per placement. Under an automatic cutoff, a circuit with
+        ``m`` gates at once is solved in one piece with ``m - 1`` more
+        excitations, as in :meth:`simulate`. Idle intervals use the static
+        lab Hamiltonian's eigensystem.
 
         Parameters
         ----------
@@ -1235,7 +1233,7 @@ class GateSet:
                 if op.frame is not None:
                     offsets[op.frame] = float(op.phase_offset) - float(reference.phase_offset)
             if start is not None:
-                instances.append((start, start + self._entry(key).duration, key, offsets))
+                instances.append((start, start + self._span(template, self._natives[key].duration), key, offsets))
         instances.sort(key=lambda item: item[0])
         segments: list[list[Any]] = []
         for instance in instances:
@@ -1244,47 +1242,10 @@ class GateSet:
             else:
                 segments.append([instance])
         duration = max([float(sequence.total_duration), *(item[1] for item in instances)])
-        result = np.eye(total.size, dtype=complex)
-        cursor = 0.0
-        solves = 0
-        most = 1
-        for segment in segments:
-            start = segment[0][0]
-            stop = max(item[1] for item in segment)
-            if start > cursor:
-                result = idle(start - cursor) @ result
-            entry = self._entry(segment[0][2]) if len(segment) == 1 else None
-            if entry is not None and entry.covariant:
-                matrix = entry.placed(start, segment[0][3], total, idle)
-            else:
-                at_once = _most_at_once([item[:2] for item in segment])
-                most = max(most, at_once)
-                cache_key = tuple((round(item[0], 9), item[2], tuple(sorted((k, round(v, 12))
-                                                                             for k, v in item[3].items())))
-                                  for item in segment)
-                if cache_key not in self._placed:
-                    chip, embedding = self._overlap_space(at_once)
-                    # In a larger space, solve the solver coordinates and keep their components.
-                    target = solver_sequence if embedding is None else self._on_solver(sequence, chip)
-                    propagator = target.propagator(tlist=[start, stop], columns=embedding, frame=self.frame,
-                                                   options=self.options, dissipation=False, backend=self.backend)
-                    matrix = np.asarray(propagator.matrix)
-                    self._placed[cache_key] = matrix if embedding is None else embedding.T @ matrix
-                    solves += 1
-                matrix = self._placed[cache_key]
-            result = matrix @ result
-            cursor = stop
-        if duration > cursor:
-            result = idle(duration - cursor) @ result
-        columns, energies = self._states(order)
-        block = project_computational(result @ columns, columns, energies, 0.0, duration, order)
-        chip, embedding = self._overlap_space(most)
-        # Gates at once can end with population above the cutoff. The composition on the K space drops it: the part
-        # that later gates bring back and the part that stays as leakage. The smallest singular value also covers
-        # superpositions of computational states.
-        kept = 1.0 if embedding is None else float(np.linalg.svd(result @ columns, compute_uv=False).min()) ** 2
-        missing = 1.0 - kept
-        if embedding is not None and missing > self.cutoff_tolerance:
+        chip, embedding = self._overlap_space(_most_at_once([item[:2] for item in instances]))
+        if embedding is not None:
+            # Gates at once need more excitations than the cached gates. Composed on the K space, each window would
+            # drop the population above K at its end, and the dropped amplitudes add up over later windows.
             columns, energies = self._states(order, chip=chip)
             propagator = self._on_solver(sequence, chip).propagator(
                 tlist=[0.0, duration], columns=np.hstack([embedding, columns]), frame=self.frame,
@@ -1292,10 +1253,36 @@ class GateSet:
             matrix = np.asarray(propagator.matrix)
             result = embedding.T @ matrix[:, :embedding.shape[1]]
             block = project_computational(matrix[:, embedding.shape[1]:], columns, energies, 0.0, duration, order)
-            solves += 1
-            warnings.warn(f"Gates at once leave {missing:.1e} of the population above the gate set's cutoff, so "
-                          "unitary() solves the circuit in one piece in the larger space.", UserWarning,
-                          stacklevel=user_stacklevel())
+            solves = 1
+        else:
+            result = np.eye(total.size, dtype=complex)
+            cursor = 0.0
+            solves = 0
+            for segment in segments:
+                start = segment[0][0]
+                stop = max(item[1] for item in segment)
+                if start > cursor:
+                    result = idle(start - cursor) @ result
+                entry = self._entry(segment[0][2]) if len(segment) == 1 else None
+                if entry is not None and entry.covariant:
+                    matrix = entry.placed(start, segment[0][3], total, idle)
+                else:
+                    cache_key = tuple((round(item[0], 9), item[2], tuple(sorted((k, round(v, 12))
+                                                                                 for k, v in item[3].items())))
+                                      for item in segment)
+                    if cache_key not in self._placed:
+                        propagator = solver_sequence.propagator(tlist=[start, stop], frame=self.frame,
+                                                                options=self.options, dissipation=False,
+                                                                backend=self.backend)
+                        self._placed[cache_key] = np.asarray(propagator.matrix)
+                        solves += 1
+                    matrix = self._placed[cache_key]
+                result = matrix @ result
+                cursor = stop
+            if duration > cursor:
+                result = idle(duration - cursor) @ result
+            columns, energies = self._states(order)
+            block = project_computational(result @ columns, columns, energies, 0.0, duration, order)
         frame_offsets = self._offsets(sequence)
         correction = self._frame_correction(order, frame_offsets) * np.exp(1j * global_phase)
         return CircuitUnitary(full=result, computational=correction[:, None] * np.asarray(block.matrix),

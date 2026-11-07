@@ -38,9 +38,11 @@ a warning:
 - `"poor_fit"`: the infidelity is above the target (default `1e-3`) at start
   time 0, at the worst of the start times that the placement check samples,
   or in the worst computational state of the other qubits. Each state of the
-  other qubits is scored on its own, so the status does not see phases that
-  these qubits gather among themselves during the gate, such as their own
-  static ZZ. Circuits see them through `unitary()` and `simulate()`.
+  other qubits is scored on its own, so this conditional-state score does not
+  see phases that these qubits gather among themselves during the gate, such
+  as their own static ZZ. The joint-block score sees them only between
+  spectators in the block. Circuits see them all through `unitary()` and
+  `simulate()`.
 - `"stale"`: the chip changed after the calibration, for example through
   `q0.freq = ...`, or a native inside this composite was calibrated again
   after it. The gate keeps its earlier pulses, and a circuit that uses it
@@ -122,8 +124,11 @@ print(run.probabilities)
 `unitary()` composes cached gate propagators, so a long circuit costs a few
 matrix products. Gates that overlap in time, gates on a chip without the RWA,
 gates whose pulses depend on absolute time, and gates on a drive that
-overrides `signal()` are solved directly, once per placement. `simulate()` solves the circuit's schedule, with the chip's
-collapse channels unless you pass `dissipation=False`.
+overrides `signal()` are solved directly, once per placement. Under an
+automatic excitation cutoff, a circuit with gates that overlap in time is
+solved in one piece (see Large chips). `simulate()` solves the circuit's
+schedule, with the chip's collapse channels unless you pass
+`dissipation=False`.
 
 The decomposition rules turn H, X, Y, Z, S, T, RX, RY, CX, CZ, and SWAP into
 the natives. A CX against the direction of the gate set's ZX90 gets an H on
@@ -163,12 +168,10 @@ When the chip's product space has more than 64 states and the chip sets no
 space policy, gate-set solves use an excitation cutoff. The gate set starts at
 one excitation above the number of gate-set qubits and raises the cutoff until
 the gates stop changing, with the other qubits in `|0>` and in `|1>`. Each
-drive adds a transient excitation, so `unitary()` and `simulate()` solve gates
-that run at the same time with one more excitation for each gate after the
-first. Such gates can still end with population above the cutoff. When they
-leave more than `cutoff_tolerance` of any computational state's population
-there, `unitary()` solves the circuit in one piece in the larger space. A warning states each
-cutoff. These rules are heuristics, not bounds. Pass
+drive adds a transient excitation, so `unitary()` and `simulate()` solve a
+circuit with gates that run at the same time in one piece, with one more
+excitation for each gate after the first. A warning states each cutoff. These
+rules are heuristics, not bounds. Pass
 `space=ExcitationCutoff(max_total=K)` to use one cutoff for every solve, or
 `space=None` for the full product space.
 

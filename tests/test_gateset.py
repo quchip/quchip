@@ -1010,8 +1010,12 @@ def test_gates_at_once_solve_with_one_more_excitation_each():
     assert together.leakage[3] == pytest.approx(run.leakage, abs=1e-6)
 
 
-def test_gates_at_once_that_end_above_the_cutoff_solve_the_circuit_in_one_piece():
-    """On harmonic qubits two gates at once end in |22>, above the cutoff, and the next two return to |11>."""
+def test_circuits_with_gates_at_once_solve_in_one_piece_above_the_cutoff():
+    """On harmonic qubits, gates at once reach |22>, above the cutoff, and return; unitary() matches simulate().
+
+    Quarter turns and their inverses go through |22> between two layers. Twenty layers of weak pulses each put
+    little in |22>, but the amplitudes add up, so composing the layers on the cutoff space would miss it.
+    """
     q0 = DuffingTransmon(freq=5.0, anharmonicity=0.0, levels=3, label="q0")
     q1 = DuffingTransmon(freq=5.2, anharmonicity=0.0, levels=3, label="q1")
     chip = Chip([q0, q1, Resonator(freq=7.0, levels=9, label="r")], frame="rotating")
@@ -1019,20 +1023,23 @@ def test_gates_at_once_that_end_above_the_cutoff_solve_the_circuit_in_one_piece(
     gates = GateSet(chip, ["q0", "q1"])
     for qubit, line in (("q0", "xy0"), ("q1", "xy1")):
         element = complex(chip.drive_matrix_elements(qubit)[line])
-        for name, sign in (("A", 1.0), ("B", -1.0)):
+        for name, duration, amplitude, ideal in (("A", 2.0, 0.125, expm(-0.25j * np.pi * PAULIS["X"])),
+                                                 ("B", 2.0, -0.125, expm(0.25j * np.pi * PAULIS["X"])),
+                                                 ("W", 1.0, 6.6247321714e-4, np.eye(2))):
             seq = QuantumSequence(chip)
-            pulse = seq.schedule(line, envelope=Square(duration=2.0, amplitude=0.125 / abs(element)),
-                                 freq=chip.freq(qubit), phase=-float(np.angle(element)) + (sign < 0) * np.pi)
-            gates.add(NativeGate(name, (qubit,), seq, knobs={"amplitude": Knob(pulse, "amplitude")},
-                                 ideal=expm(-0.25j * np.pi * sign * PAULIS["X"])))
+            pulse = seq.schedule(line, envelope=Square(duration=duration, amplitude=amplitude / abs(element)),
+                                 freq=chip.freq(qubit), phase=-float(np.angle(element)))
+            gates.add(NativeGate(name, (qubit,), seq, knobs={"amplitude": Knob(pulse, "amplitude")}, ideal=ideal,
+                                 free_z=()))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         gates.calibrate(max_nfev=0)
-    circuit = [("A", "q0"), ("A", "q1"), ("B", "q0"), ("B", "q1")]
-    with pytest.warns(UserWarning, match="solves the circuit in one piece"):
-        composed = gates.unitary(circuit)
-    run = gates.simulate(circuit, "11", dissipation=False)
-    assert np.abs(composed.computational[:, 3] - run.state).max() < 1e-6
+        assert gates.cutoff == 3
+        for circuit in ([("A", "q0"), ("A", "q1"), ("B", "q0"), ("B", "q1")], [("W", "q0"), ("W", "q1")] * 20):
+            composed = gates.unitary(circuit)
+            run = gates.simulate(circuit, "11", dissipation=False)
+            assert np.abs(composed.computational[:, 3] - run.state).max() < 1e-7
+            assert composed.leakage[3] == pytest.approx(run.leakage, abs=1e-7)
 
 
 @pytest.mark.validation
