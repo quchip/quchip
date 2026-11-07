@@ -38,17 +38,18 @@ def test_numerical_worker_failure_is_not_retried_sequentially(monkeypatch):
     batch = _batch()
     backend = batch.problems[0].backend
     calls = []
-    solve = backend.sesolve
+    import quchip.backend.qutip as native
 
-    def counted(**kwargs):
-        calls.append(len(calls))
-        return solve(**kwargs)
+    class Counted(native.SESolver):
+        def run(self, *args, **kwargs):
+            calls.append(len(calls))
+            return super().run(*args, **kwargs)
 
     class Executor:
         def map(self, task, items):
             return map(task, items)
 
-    monkeypatch.setattr(backend, "sesolve", counted)
+    monkeypatch.setattr(native, "SESolver", Counted)
     monkeypatch.setattr(backend, "_PARALLEL_MIN_BATCH", 1)
     monkeypatch.setattr(backend, "_get_executor", lambda _: Executor())
     with warnings.catch_warnings(record=True) as messages:

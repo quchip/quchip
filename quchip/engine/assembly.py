@@ -25,12 +25,11 @@ from __future__ import annotations
 import itertools
 import warnings
 from dataclasses import dataclass, field, replace
-from functools import partial
+from functools import partial, reduce
 from math import prod
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence, cast
 
 import jax
-import jax.numpy as jnp
 import numpy as np
 from scipy import sparse
 
@@ -140,14 +139,9 @@ def _support_semantic_transform(labels: Sequence[str], bases: Mapping[str, Basis
     transforms = [bases[label].energy_to_solver() for label in labels]
     if all(transform is None for transform in transforms):
         return None
-    resolved = [
-        jnp.eye(bases[label].resolved_dim, dtype=jnp.complex128) if transform is None else transform
-        for label, transform in zip(labels, transforms, strict=True)
-    ]
-    product_transform = resolved[0]
-    for transform in resolved[1:]:
-        product_transform = jnp.kron(product_transform, transform)
-    return product_transform
+    xp = concrete_array_module(transforms)
+    return reduce(xp.kron, [xp.eye(bases[label].resolved_dim, dtype=complex) if transform is None else transform
+                            for label, transform in zip(labels, transforms, strict=True)])
 
 
 def _resolve_system(chip: "Chip", backend: Backend) -> _SystemResolution:
@@ -529,12 +523,10 @@ def _project_dense(
         matrix = materialize_expr(operator, _ARRAY_LOWERER, local_bases=bases)
     else:
         matrix = backend.to_array(operator)
-    records = [bases[label] for label in labels]
-    xp = array_namespace(records[0].vectors)
-    transform = records[0].vectors
-    for record in records[1:]:
-        transform = xp.kron(transform, record.vectors)
-    return transform.conj().T @ matrix @ transform
+    vectors = [bases[label].vectors for label in labels]
+    xp = concrete_array_module(matrix, vectors)
+    transform = xp.asarray(reduce(xp.kron, vectors))
+    return transform.conj().T @ xp.asarray(matrix) @ transform
 
 
 def _build_static_h0(
@@ -797,7 +789,7 @@ def _concrete_port_resolution(
         # A port transformed inside jit or grad keeps a traced payload. Its
         # band decomposition then keeps every candidate the declared
         # excitation changes allow, so it is not pruned here.
-        xp = jnp if contains_tracer(payload) else np
+        xp = concrete_array_module(payload)
         values = xp.asarray(payload, dtype=complex)
         if transform is not None:
             concrete_transform = np.asarray(transform, dtype=complex)
@@ -1618,10 +1610,10 @@ def drive_bands(
             if any(terms.projection is not None for terms in chip.effective_terms):
                 # Select the signal's RWA partner in its authored coordinates,
                 # then transform each surviving band into the retained frame.
-                vectors = bases[pair[0]].vectors
-                for label in pair[1:]:
-                    vectors = jnp.kron(vectors, bases[label].vectors)
-                matrix = vectors @ jnp.asarray(backend.to_array(local_band)) @ vectors.conj().T
+                matrix = backend.to_array(local_band)
+                xp = concrete_array_module(matrix, [bases[label].vectors for label in pair])
+                vectors = xp.asarray(reduce(xp.kron, [bases[label].vectors for label in pair]))
+                matrix = vectors @ xp.asarray(matrix) @ vectors.conj().T
                 # The band changes the total energy level by the sum of its charges; declaring it keeps a
                 # conserving projection's structurally empty bands out even when the drive is traced.
                 band_expr = PhysicsExpr.from_matrix(matrix, labels=pair, dims=local_dims,

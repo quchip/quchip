@@ -10,6 +10,9 @@ This file records notable user-visible changes to quchip.
 
 #### Changes and migration
 
+- `FockSpace.matrix()`, `ChargeSpace.matrix()` and `PhaseGridSpace.matrix()` build on the host and
+  return read-only NumPy arrays (JAX arrays for a traced phase-grid `extent`); use `jnp.asarray(...)` where
+  JAX arrays are needed. Device `charge_coupling_operator()` and `phase_coupling_operator()` still return JAX.
 - quchip 0.5 removes the names that 0.4 deprecated. Use `thermal_occupation`
   for `thermal_population` (in constructors, `with_params()`, `set_noise()`,
   declared parameters, symbolic noise and saved device dictionaries),
@@ -976,6 +979,19 @@ This file records notable user-visible changes to quchip.
 
 #### Performance
 
+- `fit_a_dress()` on a JAX-backed chip compiles its residuals once per chip
+  structure, so repeated fits, also with other parameter values, skip the
+  compile: 0.2 s instead of 1.5 s for two transmons and a resonator.
+- On dynamiqs, rebinding a pulse value declared as `np.float64` with a Python
+  float, or the reverse, reuses the compiled solve instead of compiling it again.
+- Driven lossy QuTiP solves find each drive's Hermitian partner even where
+  `dag()` leaves a `-0.0`, so they take the faster packed master equation.
+- A concrete weak-probe or conditional `VNA.sweep()` on dynamiqs builds its sector
+  operators, port mixing and reference transfers with NumPy instead of compiling
+  one small XLA program per shape, so its first call takes well under a second.
+- On dynamiqs, pulse carriers and phases are formed from a cosine and a sine instead of a guarded complex
+  exponential, with the same values and gradients bit for bit. Pulse gradients run up to 1.8 times faster on
+  a CPU core and 1.3 times faster on a GPU.
 - `VNA.measure()` with noise and an automatic cutoff settles the means first
   and starts the noise comparison at the first agreeing pair, which keeps the
   same cutoff and skips the noise solves below it: 49 s instead of 55 s for a
@@ -1068,6 +1084,9 @@ This file records notable user-visible changes to quchip.
   11.4 s, with the same kept cutoff and noise spectra within 2e-13. The solutions are
   kept only while they fit in memory.
   ([#221](https://github.com/quchip/quchip/pull/221))
+- QuTiP pulse solves sample the built-in envelopes with NumPy when their
+  parameters are concrete, instead of compiling JAX operations, so the first
+  pulse solve in a session starts about 0.3 to 0.6 s sooner.
 
 #### Compatibility
 

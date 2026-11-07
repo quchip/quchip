@@ -20,7 +20,9 @@ from quchip.engine.ir import LinearResponseProblem
 from quchip.engine.output_network import pad_mixing
 from quchip.engine.reference import ReferencePlane, cw_transfer
 from quchip.utils.constants import TWO_PI
-from quchip.utils.jax_utils import concrete_array_module, maybe_concrete_scalar, raise_if
+from quchip.utils.jax_utils import (
+    concrete_array_module, contains_tracer, maybe_concrete_scalar, raise_if, select_array_module,
+)
 
 # Two ill-conditioned poles closer than this multiple of their round-off are not resolved.
 _POLE_RESOLUTION = 100.0
@@ -111,7 +113,8 @@ def _build_vacuum_response_problem(
     product space is never formed.
     """
     model = _sector_response_model(chip, plane_labels)
-    sectors, xp = model.sectors, chip.backend.array_module
+    sectors = model.sectors
+    xp = select_array_module(sectors.traced or contains_tracer((model.channels, model.scattering)))
     labels = tuple(device.label for device in chip.devices)
     excited = np.argmax(sectors.space(1).levels, axis=1)
     order = np.argsort(excited, kind="stable")
@@ -127,7 +130,7 @@ def _build_vacuum_response_problem(
                 xp.conj(shift) * kept - 0.5 * xp.abs(shift) ** 2 * identity - 0.5 * kept.conj().T @ kept
             )
         rows.append(model.channel_block(index, 0, 1)[0])
-    inbound, outbound = model.transfers(frequencies)
+    inbound, outbound = _reference_transfers(model.references, frequencies)
     problem = LinearResponseProblem(
         frequencies=frequencies,
         mode_labels=tuple(labels[index] for index in excited[order]),
@@ -334,7 +337,7 @@ class _SectorResponseModel:
     keys: tuple[str, ...] = ()
 
     def channel_block(self, index: int, row_total: int, column_total: int) -> Any:
-        xp = self.sectors.chip.backend.array_module
+        xp = concrete_array_module(self.channels[index])
         shape = (self.sectors.space(row_total).size, self.sectors.space(column_total).size)
         return sum(
             (xp.asarray(coefficient) * xp.asarray(self.sectors.block(matrix, support, row_total, column_total))
@@ -342,17 +345,21 @@ class _SectorResponseModel:
             start=xp.zeros(shape, dtype=complex),
         )
 
-    def transfers(self, frequencies: Any) -> tuple[Any, Any]:
-        xp = self.sectors.chip.backend.array_module
-        values = xp.atleast_1d(xp.asarray(frequencies, dtype=float))
 
-        def columns(runs: list[Any]) -> Any:
-            if not runs:
-                return xp.zeros((values.shape[0], 0), dtype=complex)
-            return xp.stack([xp.broadcast_to(cw_transfer(run, values, xp), values.shape) for run in runs], axis=1)
 
-        return (columns([reference.inbound for reference in self.references]),
-                columns([reference.outbound for reference in self.references]))
+def _reference_transfers(references: list[Any], frequencies: Any) -> tuple[Any, Any]:
+    """Return the inbound and outbound continuous-wave transfer columns of ``references``."""
+    xp = concrete_array_module(frequencies, tuple(element.tracked_values for reference in references
+                                                  for element in (*reference.inbound, *reference.outbound)))
+    values = xp.atleast_1d(xp.asarray(frequencies, dtype=float))
+
+    def columns(runs: list[Any]) -> Any:
+        if not runs:
+            return xp.zeros((values.shape[0], 0), dtype=complex)
+        return xp.stack([xp.broadcast_to(cw_transfer(run, values, xp), values.shape) for run in runs], axis=1)
+
+    return (columns([reference.inbound for reference in references]),
+            columns([reference.outbound for reference in references]))
 
 
 def _sector_response_model(chip: Any, plane_labels: tuple[str, ...]) -> _SectorResponseModel:
@@ -407,7 +414,7 @@ def _sector_response_model(chip: Any, plane_labels: tuple[str, ...]) -> _SectorR
         channels[:0] = [[(coefficient, *ports[source]) for source, coefficient in entry.coupling.items()]
                         for entry in entries]
 
-    xp = backend.array_module
+    xp = concrete_array_module(None if compiled is None else compiled.scattering)
     keys = (*(entry.exposure.label for entry in entries), *hidden_keys)
     external = tuple(entry.exposure.label for entry in entries if not entry.exposure._hidden)
     if any(label not in external for label in plane_labels):
@@ -515,20 +522,8 @@ def _build_linear_response_problem(
         raise ValueError(
             f"Unknown linear-response exposure. Available exposures: {list(external_labels)}"
         ) from error
-    frequency_values = xp.asarray(frequencies, dtype=float)
-    external_planes = [channel.reference for channel in compiled.channels if not channel.exposure._hidden]
-
-    def transfer_columns(runs: list[Any]) -> Any:
-        return xp.stack(
-            [
-                xp.broadcast_to(cw_transfer(run, frequency_values, xp), frequency_values.shape)
-                for run in runs
-            ],
-            axis=1,
-        )
-
-    inbound_transfer = transfer_columns([plane.inbound for plane in external_planes])
-    outbound_transfer = transfer_columns([plane.outbound for plane in external_planes])
+    inbound_transfer, outbound_transfer = _reference_transfers(
+        [channel.reference for channel in compiled.channels if not channel.exposure._hidden], frequencies)
     return LinearResponseProblem(
         frequencies=frequencies,
         mode_labels=labels,
