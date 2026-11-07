@@ -10,6 +10,9 @@ from types import MappingProxyType
 from typing import Any
 
 import jax.numpy as jnp
+import numpy as np
+
+from quchip.utils.jax_utils import contains_tracer
 
 
 @dataclass(frozen=True)
@@ -100,34 +103,28 @@ class FockSpace(LocalSpace):
         return self.levels
 
     def matrix(self, name: str) -> Any:
-        """Return a named charge-space matrix.
+        """Return a named Fock-space matrix as a read-only NumPy array.
 
         Parameters
         ----------
-        name : {"n", "cos_phi", "sin_phi", "I"}
+        name : {"a", "adag", "n", "I", "sigma_x", "sigma_y", "sigma_z", "sigma_plus", "sigma_minus"}
             Operator to construct.
         """
-        annihilation = jnp.diag(jnp.sqrt(jnp.arange(1, self.levels)), 1).astype(jnp.complex128)
-        if name == "a":
-            return annihilation
-        if name == "adag":
-            return annihilation.conj().T
-        if name == "n":
-            return jnp.diag(jnp.arange(self.levels, dtype=jnp.complex128))
-        if name == "I":
-            return jnp.eye(self.levels, dtype=jnp.complex128)
-        zero = jnp.zeros((self.levels, self.levels), dtype=jnp.complex128)
-        if name == "sigma_x":
-            return zero.at[0, 1].set(1).at[1, 0].set(1)
-        if name == "sigma_y":
-            return zero.at[0, 1].set(-1j).at[1, 0].set(1j)
-        if name == "sigma_z":
-            return zero.at[0, 0].set(1).at[1, 1].set(-1)
-        if name == "sigma_plus":
-            return zero.at[1, 0].set(1)
-        if name == "sigma_minus":
-            return zero.at[0, 1].set(1)
-        raise ValueError(f"Unknown Fock-space operator {name!r}.")
+        corners = {"sigma_x": [[0, 1], [1, 0]], "sigma_y": [[0, -1j], [1j, 0]], "sigma_z": [[1, 0], [0, -1]],
+                   "sigma_plus": [[0, 0], [1, 0]], "sigma_minus": [[0, 1], [0, 0]]}
+        if name in ("a", "adag"):
+            value = np.diag(np.sqrt(np.arange(1, self.levels)), 1).astype(complex)
+            value = value if name == "a" else value.conj().T
+        elif name == "n":
+            value = np.diag(np.arange(self.levels, dtype=complex))
+        elif name == "I":
+            value = np.eye(self.levels, dtype=complex)
+        elif name in corners:
+            value = np.pad(np.asarray(corners[name], dtype=complex), (0, self.levels - 2))
+        else:
+            raise ValueError(f"Unknown Fock-space operator {name!r}.")
+        value.setflags(write=False)
+        return value
 
     def operator(self, name: str, backend: Any) -> Any:
         if name == "a":
@@ -172,26 +169,24 @@ class ChargeSpace(LocalSpace):
         return self.num_basis
 
     def matrix(self, name: str) -> Any:
-        """Return a named phase-grid matrix.
+        """Return a named charge-space matrix as a read-only NumPy array.
 
         Parameters
         ----------
-        name : {"phi", "n", "n2", "cos_phi", "sin_phi", "I"}
+        name : {"n", "cos_phi", "sin_phi", "I"}
             Operator to construct.
         """
-        plus = jnp.eye(self.num_basis, k=1, dtype=jnp.complex128)
-        minus = jnp.eye(self.num_basis, k=-1, dtype=jnp.complex128)
         if name == "n":
-            cutoff = (self.num_basis - 1) // 2
-            value = jnp.diag(jnp.arange(-cutoff, cutoff + 1, dtype=jnp.complex128))
+            value = np.diag(np.arange(self.num_basis, dtype=complex) - (self.num_basis - 1) // 2)
         elif name == "cos_phi":
-            value = 0.5 * (plus + minus)
+            value = 0.5 * (np.eye(self.num_basis, k=1, dtype=complex) + np.eye(self.num_basis, k=-1, dtype=complex))
         elif name == "sin_phi":
-            value = (minus - plus) / (2j)
+            value = (np.eye(self.num_basis, k=-1, dtype=complex) - np.eye(self.num_basis, k=1, dtype=complex)) / (2j)
         elif name == "I":
-            value = jnp.eye(self.num_basis, dtype=jnp.complex128)
+            value = np.eye(self.num_basis, dtype=complex)
         else:
             raise ValueError(f"Unknown charge-space operator {name!r}.")
+        value.setflags(write=False)
         return value
 
 
@@ -227,32 +222,33 @@ class PhaseGridSpace(LocalSpace):
         return self.points
 
     def matrix(self, name: str) -> Any:
-        """Return one custom operator matrix.
+        """Return a named phase-grid matrix, read-only NumPy unless ``extent`` is traced.
 
         Parameters
         ----------
-        name : str
-            Key in :attr:`operators`.
+        name : {"phi", "n", "n2", "cos_phi", "sin_phi", "I"}
+            Operator to construct.
         """
-        phase = jnp.linspace(-self.extent, self.extent, self.points, endpoint=False)
         spacing = 2.0 * self.extent / self.points
-        plus = jnp.eye(self.points, k=1, dtype=jnp.complex128)
-        minus = jnp.eye(self.points, k=-1, dtype=jnp.complex128)
-        charge = -1j * (plus - minus) / (2.0 * spacing)
-        if name == "phi":
-            value = jnp.diag(phase.astype(jnp.complex128))
+        plus = np.eye(self.points, k=1, dtype=complex)
+        minus = np.eye(self.points, k=-1, dtype=complex)
+        if name in ("phi", "cos_phi", "sin_phi"):
+            # The JAX kernels sample the grid, so values match their eager construction bit for bit.
+            samples = {"phi": jnp.asarray, "cos_phi": jnp.cos, "sin_phi": jnp.sin}[name](
+                jnp.linspace(-self.extent, self.extent, self.points, endpoint=False))
+            if contains_tracer(samples):  # Staged inside an enclosing JAX trace.
+                return jnp.diag(samples.astype(complex))
+            value = np.diag(np.asarray(samples).astype(complex))
         elif name == "n":
-            value = charge
+            value = -1j * (plus - minus) / (2.0 * spacing)
         elif name == "n2":
-            value = -(plus - 2.0 * jnp.eye(self.points) + minus) / spacing**2
-        elif name == "cos_phi":
-            value = jnp.diag(jnp.cos(phase).astype(jnp.complex128))
-        elif name == "sin_phi":
-            value = jnp.diag(jnp.sin(phase).astype(jnp.complex128))
+            value = -(plus - 2.0 * np.eye(self.points) + minus) / spacing**2
         elif name == "I":
-            value = jnp.eye(self.points, dtype=jnp.complex128)
+            value = np.eye(self.points, dtype=complex)
         else:
             raise ValueError(f"Unknown phase-grid operator {name!r}.")
+        if isinstance(value, np.ndarray):  # A traced extent gives a JAX array.
+            value.setflags(write=False)
         return value
 
 

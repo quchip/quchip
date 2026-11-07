@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import gc
+import weakref
 
 import numpy as np
 import pytest
@@ -122,36 +124,35 @@ def test_fit_a_dress_moves_crosskerr_chi_with_no_stray_g_attribute() -> None:
     assert "ck.g" not in result.final_params
 
 
-def test_estimate_bare_g_seed_subchip_preserves_chip_intent(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The coupling seed sub-chip preserves basis, approximation, and backend intent."""
+@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])
+@pytest.mark.parametrize("approximation", [Exact(), RWA()])
+def test_estimate_bare_g_seed_roots_the_chip_cross_kerr(backend: str, approximation) -> None:
+    """The coupling seed roots the chip's own cross-Kerr in its frame, basis and approximation."""
+    if backend == "dynamiqs":
+        pytest.importorskip("dynamiqs")
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=4, label="q")
     r = Resonator(freq=7.0, levels=10, label="r")
     coupling = Capacitive(q, r, g=0.01, label="c")
-    chip = Chip(
-        [q, r],
-        [coupling],
-        frame="rotating",
-        basis="eigen",
-        backend="qutip",
-        approximation=Exact(),
-    )
+    chip = Chip([q, r], [coupling], frame="rotating", basis="eigen", backend=backend, approximation=approximation)
 
-    real_chip = fit_module.Chip
-    captured: dict = {}
+    seed = _estimate_bare_g(chip, coupling, TargetSpec("cross_kerr", coupling.label, -2e-4))
 
-    def spy_chip(devices, couplings=None, **kwargs):
-        captured["backend"] = kwargs.get("backend")
-        captured["basis"] = kwargs.get("basis")
-        captured["approximation"] = kwargs.get("approximation")
-        return real_chip(devices, couplings, **kwargs)
+    assert float(chip.with_params({"c.g": seed}).static_zz("q", "r")) == pytest.approx(-2e-4, rel=1e-8)
 
-    monkeypatch.setattr(fit_module, "Chip", spy_chip)
 
-    _estimate_bare_g(chip, coupling, TargetSpec("cross_kerr", coupling.label, -2e-4))
-
-    assert captured["backend"] is chip.backend
-    assert captured["basis"] == "eigen"
-    assert captured["approximation"] == Exact()
+@pytest.mark.optional_backend
+def test_fit_a_dress_on_dynamiqs_matches_qutip() -> None:
+    """A seeded cross-Kerr fit converges to the same bare parameters on dynamiqs and QuTiP."""
+    pytest.importorskip("dynamiqs")
+    params = {}
+    for backend in ("qutip", "dynamiqs"):
+        q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+        r = Resonator(freq=7.0, levels=5, label="r")
+        chip = Chip([q, r], [Capacitive(q, r, g=-0.0004, label="qr")], backend=backend)
+        result = fit_a_dress(chip)
+        assert result.converged
+        params[backend] = result.final_params
+    assert params["dynamiqs"] == pytest.approx(params["qutip"], rel=1e-8)
 
 
 def test_local_fit_subsystem_inherits_chip_basis_policy() -> None:
@@ -354,13 +355,8 @@ def test_automatic_desired_chip_fit_rejects_an_underdetermined_target_plan() -> 
         fit_a_dress(desired, constraints={q: {"anharmonicity": None}})
 
 
-def test_fit_a_dress_retains_scipy_jacobian_without_dynamiqs(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A QuTiP-only installation retains SciPy's numerical Jacobian."""
-
-    def unavailable(*args, **kwargs):
-        raise ImportError("dynamiqs unavailable")
-
-    monkeypatch.setattr(fit_module, "_jax_residual_functions", unavailable)
+def test_fit_a_dress_retains_scipy_jacobian_on_qutip() -> None:
+    """A QuTiP-backed chip retains SciPy's numerical Jacobian."""
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
     chip = Chip([q], frame="rotating")
 
@@ -596,3 +592,46 @@ def test_device_labels_for_local_eval_stays_one_hop_for_pair_targets() -> None:
 
     assert device_labels_for_local_eval(chip, "q1") == ("q0", "q1", "q2")
     assert device_labels_for_local_eval(chip, ("q1", "q2")) == ("q0", "q1", "q2", "q3")
+
+
+def test_jax_fits_follow_each_chips_fixed_values() -> None:
+    """Fits of equal-structure JAX chips, and of one chip after a fixed field changes, use their own values."""
+    pytest.importorskip("dynamiqs")
+    from quchip import FluxTunableTransmon
+
+    def pair(g: float) -> Chip:
+        q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
+        r = Resonator(freq=7.0, levels=3, label="r")
+        return Chip([q, r], [Capacitive(q, r, g=g, label="qr")], backend="dynamiqs")
+
+    constraints = {"q": {"anharmonicity": None}, "qr": {"cross_kerr": None}}
+    plan = {"vary": {"q": ("freq",), "r": ("freq",)}, "constraints": constraints}
+    fits = [fit_a_dress(pair(g), **plan).chip for g in (0.08, 0.15)]
+    changed = pair(0.08)
+    fit_a_dress(changed, **plan)
+    changed.coupling("qr").g = 0.15
+    fits.append(fit_a_dress(changed, **plan).chip)
+    for fitted in fits:
+        assert float(fitted.freq("q")) == pytest.approx(5.0, abs=1e-8)
+        assert float(fitted.freq("r")) == pytest.approx(7.0, abs=1e-8)
+    assert float(fits[0]["q"].freq) != pytest.approx(float(fits[1]["q"].freq), abs=1e-5)
+    assert float(fits[2]["q"].freq) == pytest.approx(float(fits[1]["q"].freq), abs=1e-8)
+
+    for anchor in (5.0, 5.2):  # flux_bias retunes freq from each chip's own calibration anchor
+        q = FluxTunableTransmon(freq=anchor, anharmonicity=-0.2, flux_bias=0.1, levels=3, label="q")
+        chip = Chip([q], backend="dynamiqs")
+        fitted = fit_a_dress(chip, vary={"q": ("flux_bias",)}, constraints={"q": {"freq": anchor - 0.05}}).chip
+        assert float(fitted.freq("q")) == pytest.approx(anchor - 0.05, abs=1e-8)
+
+
+def test_jax_fit_keeps_no_chip_alive() -> None:
+    """Neither the fitted chip, its input nor a copy of either outlives the caller's references."""
+    pytest.importorskip("dynamiqs")
+    label = "fit_liveness_probe"
+    chip = Chip([DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label=label)], backend="dynamiqs")
+    fitted = fit_a_dress(chip, vary={label: ("freq",)}, constraints={label: {"freq": 5.1}}).chip
+    refs = [weakref.ref(chip), weakref.ref(fitted)]
+    del chip, fitted
+    gc.collect()
+    assert [ref() for ref in refs] == [None, None]
+    assert not [obj for obj in gc.get_objects() if isinstance(obj, DuffingTransmon) and obj.label == label]

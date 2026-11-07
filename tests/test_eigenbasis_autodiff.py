@@ -125,3 +125,22 @@ def test_resolved_small_gap_keeps_its_analytic_eigenvector_derivative():
     expected = -2.0 / gap
     assert float(jax.jacfwd(expectation)(0.0)) == pytest.approx(expected, rel=1e-12)
     assert float(jax.jit(jax.grad(expectation))(0.0)) == pytest.approx(expected, rel=1e-12)
+
+
+@pytest.mark.parametrize("device", ["q", "c"])
+def test_gradient_through_one_device_beside_a_constant_eigen_basis(device: str) -> None:
+    """A traced device's eigen basis combines with a neighbour's constant eigen basis."""
+    pytest.importorskip("dynamiqs")
+    from quchip.devices.transmon.charge_basis import ChargeBasisTransmon
+
+    qubit = ChargeBasisTransmon(E_C=0.2, E_J=15.0, num_basis=21, levels=3, basis="eigen", label="q")
+    coupler = ChargeBasisTransmon(E_C=0.22, E_J=17.0, num_basis=21, levels=3, basis="eigen", label="c")
+    chip = Chip([qubit, coupler], couplings=[Capacitive(qubit, coupler, g=0.05)], backend="dynamiqs")
+
+    def qubit_freq(ej):
+        return chip.with_params({f"{device}.E_J": ej}).freq("q")
+
+    ej = float(chip.parameters[f"{device}.E_J"])
+    reference = (qubit_freq(ej + 1e-4) - qubit_freq(ej - 1e-4)) / 2e-4
+    assert abs(float(reference)) > 1e-4
+    assert float(jax.jit(jax.grad(qubit_freq))(ej)) == pytest.approx(float(reference), rel=1e-6)

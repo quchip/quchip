@@ -801,9 +801,9 @@ def _authored_entry_support(expr: Any) -> np.ndarray | None:
             left, right = (_authored_entry_support(arg) for arg in expr.args)
             if left is None or right is None:
                 return None
-            if expr.kind in ("add", "sub"):
-                return left | right
-            return left @ right if expr.kind == "matmul" else np.kron(left, right)
+            if expr.kind == "matmul":  # BLAS-fast and exact: nonnegative 0/1 terms never sum to zero
+                return np.matmul(left, right, dtype=np.float32) != 0
+            return left | right if expr.kind in ("add", "sub") else np.kron(left, right)
         if expr.kind not in ("op", "matrix") or contains_tracer(expr.numeric_values()):
             return None
         with jax.ensure_compile_time_eval():
