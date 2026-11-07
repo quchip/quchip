@@ -1143,6 +1143,12 @@ This file records notable user-visible changes to quchip.
   cutoff and corrects two stale source references. The README no longer
   describes the removed quchip.org walkthrough.
   ([#211](https://github.com/quchip/quchip/pull/211))
+- A resonance fluorescence guide reads the Mollow triplet with
+  `VNA.output_spectrum()` and the antibunching of a driven two-level emitter
+  with `VNA.g1()` and `VNA.g2()`, and compares `g2` with its textbook formula.
+  It splits the field with a 90° hybrid and cross-correlates the two lines.
+  The fridge guide copies one readout line for two feedlines with `include()`
+  and adds a pump through a directional coupler, a `beam_splitter()`.
 
 #### Development
 
