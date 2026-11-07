@@ -11,6 +11,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import reduce
 from math import prod
 from typing import TYPE_CHECKING, Any
 
@@ -19,7 +20,7 @@ import numpy as np
 
 from quchip.backend.protocol import State
 from quchip.engine.pulse_space import PulseSpace
-from quchip.utils.jax_utils import array_namespace, maybe_concrete_scalar
+from quchip.utils.jax_utils import array_namespace, concrete_array_module, maybe_concrete_scalar
 from quchip.utils.stack import user_stacklevel
 from quchip.utils.warning_categories import AccuracyWarning
 
@@ -98,9 +99,9 @@ def bare_local_kets(
             level = val
         else:
             authored = backend.to_array(val).reshape(basis.native_dim, -1)
-            projected = basis.vectors.conj().T @ authored
-            authored_norm = backend.array_module.linalg.norm(authored)
-            projected_norm = backend.array_module.linalg.norm(projected)
+            xp = concrete_array_module(authored, basis.vectors)
+            projected = xp.asarray(basis.vectors).conj().T @ xp.asarray(authored)
+            authored_norm, projected_norm = xp.linalg.norm(authored), xp.linalg.norm(projected)
             lost = maybe_concrete_scalar(authored_norm**2 - projected_norm**2)
             if lost is not None and lost > 1e-10:
                 warnings.warn(f"The basis of {dev.label!r} keeps all but {lost:.3g} of this state's norm. Raise "
@@ -263,11 +264,9 @@ def materialize_state_spec(
         )
 
     authored = backend.to_array(state).reshape(authored_dim, 1)
-    xp = array_namespace(ordered[0].vectors)
-    transform = ordered[0].vectors
-    for record in ordered[1:]:
-        transform = xp.kron(transform, record.vectors)
-    projected = transform.conj().T @ authored
+    xp = concrete_array_module(authored, [record.vectors for record in ordered])
+    transform = xp.asarray(reduce(xp.kron, [record.vectors for record in ordered]))
+    projected = transform.conj().T @ xp.asarray(authored)
     authored_norm = xp.linalg.norm(authored)
     projected_norm = xp.linalg.norm(projected)
     lost = maybe_concrete_scalar(authored_norm**2 - projected_norm**2)

@@ -2111,8 +2111,7 @@ class QuantumSequence:
 
         for index, updates in pulse_bindings.items():
             entry = cloned._entries[index]
-            if not isinstance(entry, _PulseEntry):  # pragma: no cover - inventory excludes it
-                raise KeyError(f"pulse.{index}")
+            assert isinstance(entry, _PulseEntry)
             envelope_updates = {
                 field.removeprefix("envelope."): value
                 for field, value in updates.items() if field not in _PULSE_FIELDS

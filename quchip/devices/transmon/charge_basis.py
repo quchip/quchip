@@ -6,6 +6,8 @@ import warnings
 from operator import index
 from typing import Any, ClassVar, Literal
 
+import jax.numpy as jnp
+
 from quchip.declarative.expr import PhysicsExpr
 from quchip.declarative.models import DeviceModel
 from quchip.declarative.ops import LocalOps
@@ -171,11 +173,11 @@ class ChargeBasisTransmon(DeviceModel):
 
     def charge_coupling_operator(self) -> Any:
         """Return the authored charge operator."""
-        return self.local_space().matrix("n")
+        return jnp.asarray(self.local_space().matrix("n"))
 
     def phase_coupling_operator(self) -> Any:
         """Return sin(phi) in the authored charge basis."""
-        return self.local_space().matrix("sin_phi")
+        return jnp.asarray(self.local_space().matrix("sin_phi"))
 
     def tunable_param_bounds(self, name: str, value: float) -> tuple[float, float]:
         """Return physical bounds for a tunable parameter.
