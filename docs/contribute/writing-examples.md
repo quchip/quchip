@@ -28,8 +28,7 @@ collect parameters, observables and checks for automated verification, but it
 does not replace the result shown to the reader.
 
 Use familiar physical names. Say “bath model,” “pulse schedule,” or “parameter
-sweep” instead of calling everything a “recipe.” `Bath.recipe` remains the
-constructor argument for choosing a built-in bath model.
+sweep” instead of calling everything a “recipe.”
 
 Give each page one title, shared by its heading, guide index and sidebar.
 Titles should name the calculation rather than a quchip implementation concept.

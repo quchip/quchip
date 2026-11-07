@@ -6,10 +6,11 @@ import numpy as np
 import pytest
 
 from quchip import (
-    RWA, Bath, Capacitive, Chip, DuffingTransmon, EffectiveTerms, PortNetwork,
+    RWA, Capacitive, Chip, DuffingTransmon, EffectiveTerms, PortNetwork,
     QuantumSequence, Resonator, eliminate, set_default_backend,
 )
 from quchip.chip.effective import OperatorProjection
+from quchip.extensions import CollectiveDecayCoupling
 from quchip.declarative import CollapseChannel, CouplingModel, DeviceModel, Scalar, parameter
 from quchip.interop.eigenbasis import EigenbasisDevice
 
@@ -92,15 +93,15 @@ def test_isolated_three_level_loss_keeps_spectator_under_compiled_local_eliminat
 
 @pytest.mark.validation
 @pytest.mark.optional_backend
-def test_collective_bath_frequency_gradient_matches_one_excitation_solution():
+def test_collective_decay_frequency_gradient_matches_one_excitation_solution():
     """Collective decay in a common frame matches the independent two-amplitude solution."""
     from scipy.linalg import expm
 
     pytest.importorskip("dynamiqs")
     a = DuffingTransmon(freq=5., anharmonicity=-.25, levels=2, label="a")
     b = DuffingTransmon(freq=5.05, anharmonicity=-.25, levels=2, label="b")
-    source = Chip([a, b], baths=[Bath("collective_decay", targets=[a, b], rate=.1, label="shared")],
-                  frame=5., approximation=RWA(), backend="dynamiqs")
+    shared = CollectiveDecayCoupling(a, b, exchange_strength=0., decay_rate=.1, label="shared")
+    source = Chip([a, b], [shared], frame=5., approximation=RWA(), backend="dynamiqs")
 
     def population(frequency):
         chip = source.with_params({"a.freq": frequency})
@@ -123,14 +124,14 @@ def test_collective_bath_frequency_gradient_matches_one_excitation_solution():
 
 @pytest.mark.validation
 @pytest.mark.optional_backend
-def test_reduced_collective_bath_frequency_derivative_survives_serialization():
-    """A collective Bath on a reduced chip keeps one phase in a common frame, also after a round trip."""
+def test_reduced_collective_decay_frequency_derivative_survives_serialization():
+    """A collective decay channel on a reduced chip keeps one phase in a common frame, also after a round trip."""
     pytest.importorskip("dynamiqs")
     a = DuffingTransmon(freq=5., anharmonicity=-.25, levels=3, label="a")
     b = DuffingTransmon(freq=5.05, anharmonicity=-.25, levels=3, label="b")
     bus = Resonator(freq=6.3, levels=2, label="bus")
-    source = Chip([a, b, bus], [Capacitive(a, bus, g=.05), Capacitive(b, bus, g=.05)],
-                  baths=[Bath("collective_decay", targets=[a, b], rate=.1, label="shared")],
+    shared = CollectiveDecayCoupling(a, b, exchange_strength=0., decay_rate=.1, label="shared")
+    source = Chip([a, b, bus], [Capacitive(a, bus, g=.05), Capacitive(b, bus, g=.05), shared],
                   frame=5., approximation=RWA(), backend="dynamiqs")
 
     def amplitude(frequency, reduce=True):
@@ -195,7 +196,8 @@ def test_traced_diagonal_basis_keeps_authored_order_and_rejects_reordered_levels
     def operator(frequency):
         a = Diagonal(freq=frequency, levels=3, label="a")
         b = Diagonal(freq=frequency, levels=3, label="b")
-        chip = Chip([a, b], baths=[Bath("collective_decay", rate=.1)], frame=1., backend="dynamiqs")
+        chip = Chip([a, b], [CollectiveDecayCoupling(a, b, exchange_strength=0., decay_rate=.1)], frame=1.,
+                    backend="dynamiqs")
         return chip.resolve().collapse_terms[0].operator.to_dense()
 
     compiled = jax.jit(operator)
@@ -245,36 +247,33 @@ def test_concrete_device_values_keep_sorted_levels_inside_a_trace():
 
 
 @pytest.mark.optional_backend
-def test_jitted_bath_rate_keeps_the_common_frame_check_of_stored_spectra():
-    """A collective bath on stored spectra passes the common-frame check under jit, as in plain evaluation."""
+def test_jitted_collective_rate_keeps_the_common_frame_check_of_stored_spectra():
+    """A collective decay channel on stored spectra passes the common-frame check under jit, as in plain evaluation."""
     pytest.importorskip("dynamiqs")
     a = EigenbasisDevice(np.array([0., 5., 9.8]), label="a")
     b = EigenbasisDevice(np.array([0., 5., 9.7]), label="b")
-    chip = Chip([a, b], baths=[Bath("collective_decay", targets=[a, b], rate=.1, label="shared")],
-                approximation=RWA(), frame=5., backend="dynamiqs")
+    shared = CollectiveDecayCoupling(a, b, exchange_strength=0., decay_rate=.1, label="shared")
+    chip = Chip([a, b], [shared], approximation=RWA(), frame=5., backend="dynamiqs")
 
     def rate(value):
-        return sum(term.rate for term in chip.with_params({"bath.shared.rate": value}).resolve().collapse_terms)
+        return sum(term.rate for term in chip.with_params({"shared.decay_rate": value}).resolve().collapse_terms)
 
     assert float(jax.jit(rate)(.1)) == pytest.approx(float(rate(.1)), abs=1e-15)
 
 
-def test_reduced_bath_rechecks_bands_after_an_undeclared_map():
-    """A bath operator that crosses a map with no declared level changes keeps its retained bands."""
+def test_collective_channel_rechecks_bands_after_an_undeclared_map():
+    """A collective channel that crosses a map with no declared level changes keeps its retained bands."""
     q = Resonator(freq=5., levels=2, label="q")
     r = Resonator(freq=5.5, levels=2, label="r")
-    bus = Resonator(freq=7., levels=2, label="bus")
-    # The earlier map mixes |00> and |11>, so it adds total level changes of two.
+    # The map mixes |00> and |11>, so it adds total level changes of two.
     mixing = np.eye(4, dtype=complex)
     mixing[np.ix_([0, 3], [0, 3])] = [[np.cos(.3), np.sin(.3)], [-np.sin(.3), np.cos(.3)]]
     projection = OperatorProjection(("q", "r"), (2, 2), ("q", "r"), (2, 2), mixing)
     terms = EffectiveTerms(("q", "r"), (2, 2), np.zeros((4, 4)), projection=projection, label="user")
-    source = Chip([q, r, bus], [Capacitive(r, bus, g=.05)], effective_terms=(terms,),
-                  baths=[Bath("collective_decay", targets=[q, r], rate=.1, label="shared")],
-                  approximation=RWA(), frame=5.)
-    for chip in (source, eliminate(source, "bus").chip):
-        with pytest.raises(ValueError, match="operator bands with different phases"):
-            chip.resolve()
+    shared = CollectiveDecayCoupling(q, r, exchange_strength=0., decay_rate=.1, label="shared")
+    chip = Chip([q, r], [shared], effective_terms=(terms,), approximation=RWA(), frame=5.)
+    with pytest.raises(ValueError, match="operator bands with different phases"):
+        chip.resolve()
 
 
 def test_common_frame_check_prunes_a_zero_structural_band():

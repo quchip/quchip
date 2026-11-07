@@ -7,7 +7,7 @@ from dataclasses import FrozenInstanceError
 import numpy as np
 import pytest
 
-from quchip import Bath, Chip, Exact, Resonator, Sweep
+from quchip import Chip, Exact, Resonator, Sweep
 
 
 def test_damped_mode_has_vacuum_steady_state() -> None:
@@ -216,23 +216,18 @@ def test_uniqueness_is_checked_up_to_the_diagnostic_dimension(backend) -> None:
 
 
 def test_thermal_mode_matches_truncated_bose_distribution() -> None:
-    """A thermal bath produces the Bose distribution after finite-level truncation."""
+    """A thermal occupation produces the Bose distribution after finite-level truncation."""
+    from quchip.utils.constants import k_B
+
     frequency = 5.0
     temperature = 300.0
     levels = 12
-    mode = Resonator(freq=frequency, levels=levels, label="r")
-    chip = Chip(
-        [mode],
-        baths=[Bath("thermal", temperature=temperature, rate=0.05)],
-        frame="rotating",
-        backend="qutip",
-    )
+    nbar = 1.0 / np.expm1(frequency / (k_B * temperature))
+    mode = Resonator(freq=frequency, levels=levels, T1=20.0, thermal_occupation=nbar, label="r")
+    chip = Chip([mode], frame="rotating", backend="qutip")
 
     result = chip.steadystate(e_ops={mode: mode.number_operator()})
 
-    from quchip.utils.constants import k_B
-
-    nbar = 1.0 / np.expm1(frequency / (k_B * temperature))
     ratio = nbar / (nbar + 1.0)
     probabilities = ratio ** np.arange(levels)
     probabilities /= probabilities.sum()

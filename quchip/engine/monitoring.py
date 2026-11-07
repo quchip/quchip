@@ -68,18 +68,13 @@ def _carried_without_poles(chip: Any) -> dict[tuple[str, str], tuple[str, ...]]:
 
     The keys are the channel's source and name, and the values are the labels
     of the responses. Effective terms declare the channels that reductions
-    carry, and baths record their removed targets. The record stays with the
-    channel when the port network no longer holds the response, because the
-    channel still lacks the removed mode.
+    carry. The record stays with the channel when the port network no longer
+    holds the response, because the channel still lacks the removed mode.
     """
     carried: dict[tuple[str, str], tuple[str, ...]] = {}
     for terms in chip.effective_terms:
         for name, labels in terms.omitted_responses.items():
             carried[(terms.label, name)] = labels
-    for bath in chip.baths:
-        for label in bath._omitted_responses:
-            for name in bath._channel_names(label):
-                carried[(bath.label, name)] = (*carried.get((bath.label, name), ()), label)
     return carried
 
 

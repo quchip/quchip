@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from quchip import (
-    Bath, Capacitive, ChargeDrive, Chip, DuffingTransmon, Gaussian, QuantumSequence, PortNetwork,
+    Capacitive, ChargeDrive, Chip, DuffingTransmon, Gaussian, QuantumSequence, PortNetwork,
 )
 from quchip.chip.transformations.active_patch import active_labels
 
@@ -142,13 +142,3 @@ def test_active_patch_warns_on_poor_sw_validity():
         patch = seq.active_patch(hops=0)
     assert patch.eliminated_labels == ("spec",)
     assert not patch.validity["spec"]["c01"]["is_valid"]
-
-
-def test_active_patch_retains_a_bath_targeting_a_spectator():
-    chip, qs, drives = _chain()
-    chip.add_bath(Bath("thermal", targets=[qs[3]], temperature=20.0))
-    seq = QuantumSequence(chip)
-    seq.schedule(drives[0], envelope=Gaussian(duration=20.0, sigmas=3, amplitude=0.02), freq=chip.freq(qs[0]))
-    patch = seq.active_patch(hops=1)
-    assert qs[3].label in patch.eliminated_labels
-    assert patch.chip.baths[0].resolve_targets(patch.chip) == [d.label for d in patch.chip.devices]

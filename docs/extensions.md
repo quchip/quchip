@@ -17,7 +17,7 @@ code returns quchip expressions and need not choose a numerical backend.
 | Classical hardware effect | `SignalTransform.apply()` | `CableLoss`, `Gain`, `Delay`, `Crosstalk` |
 | Scheduled waveform | `Envelope.value()` | `CosineEnvelope`, `GaussianDRAG` |
 | Unscheduled coefficient | `TimeCoefficient.value()` | `CosineCoefficient` |
-| Device, drive, coupling, or bath loss | `dissipation()` returning `CollapseChannel` | `LossyKerrCavity`, `LossyChargeDrive`, `CollectiveDecayCoupling`, `Bath` |
+| Device, drive, or coupling loss | `dissipation()` returning `CollapseChannel` | `LossyKerrCavity`, `LossyChargeDrive`, `CollectiveDecayCoupling` |
 | Custom local space | `LocalSpace.matrix()` with an explicit operator vocabulary | `SpinHalf` |
 | Third-party conversion | `ModelMapping.import_model()` and `ModelMapping.export_model()` | scqubits mappings |
 
@@ -225,7 +225,8 @@ class TwoPhotonLossMode(Mode):
 
 Rates use `1/ns`. The backend applies `sqrt(rate)` when constructing a
 Lindblad operator. Devices, drives, and couplings author channels on their
-local support. A `Bath` can author a channel across several targets.
+local support. A coupling's channel can act on both of its devices, as in
+`CollectiveDecayCoupling`.
 
 ## Custom spaces and interop
 

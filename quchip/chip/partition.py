@@ -1,9 +1,9 @@
 """Exact subsystem partitioning into connected components of a chip's independence graph.
 
 Two device labels share a component when *any* structural object couples them.
-Such an object is a coupling edge, a non-separable bath whose target set
-contains both, classical drive crosstalk between their lines, or the captured
-maps of one effective contribution, which can mix the devices they act on. All
+Such an object is a coupling edge, classical drive crosstalk between their
+lines, or the captured maps of one effective contribution, which can mix the
+devices they act on. All
 decisions use only labels and object presence, never parameter values, which
 can be JAX tracers.
 
@@ -147,22 +147,6 @@ class PartitionResult:
         return iter(self.components)
 
 
-def _component_baths(clone: "Chip", member_set: set[str]) -> list[Any]:
-    """Baths restricted to one component; explicit target lists are filtered."""
-    kept: list[Any] = []
-    for bath in clone.baths:
-        if bath._targets is None:
-            kept.append(bath.copy())  # "all devices" re-scopes naturally to the sub-chip
-            continue
-        targets = [t for t in bath.resolve_targets(clone) if t in member_set]
-        if not targets:
-            continue
-        data = bath.to_dict()
-        data["targets"] = targets
-        kept.append(type(bath).from_dict(data))
-    return kept
-
-
 def _split_network(chip: "Chip", groups: list[list[str]]) -> list[Any]:
     """Restrict the chip's field network to each device group, or explain why that changes the physics."""
     network = chip.port_network
@@ -217,7 +201,7 @@ def _distribute_control_lines(
 def _build_component_chip(
     chip: "Chip", clone: "Chip", index: int, group: list[str], lines: list[Any], network: Any
 ) -> "Chip":
-    """Assemble one component's solve-ready sub-chip: its devices, internal couplings, baths, frame, equipment."""
+    """Assemble one component's solve-ready sub-chip: its devices, internal couplings, frame, equipment."""
     from quchip.chip.chip import Chip as _Chip
     from quchip.control.equipment import ControlEquipment
     from quchip.utils.values import copy_value
@@ -240,7 +224,6 @@ def _build_component_chip(
         approximation=clone.approximation,
         basis=clone.basis,
         backend=clone._backend,
-        baths=_component_baths(clone, member_set) or None,
         port_network=network,
         effective_terms=[terms for terms in clone.effective_terms if set(terms.labels) <= member_set],
         space=clone.space,
