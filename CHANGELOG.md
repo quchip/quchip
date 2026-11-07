@@ -50,6 +50,17 @@ This file records notable user-visible changes to quchip.
   `CosineEnvelope` is now a built-in envelope: import it from `quchip`.
   Saved `quchip.extensions.envelopes.CosineEnvelope` entries still load, and
   its `area()` returns the closed form `A τ / 2`.
+- `analyze_dispersive_readout(chip, qubit, resonator, *, tau, ...)` takes a
+  chip and replaces the form that took `chi`, `kappa`, `kappa_detected` and
+  `n_crit` as numbers. Each pointer state uses the dressed pull
+  `f_r|j - f_r|0` of its qubit level, so `levels > 2` no longer assumes
+  `j*chi`. `kappa` is the energy linewidth of the resonator pole of the
+  weak-probe drift without dephasing, and `kappa_detected` is the part that
+  reaches the port given as `output`. The chip's static model needs a
+  weak-probe route, as under `RWA()`. The `n_crit` interpolation is gone; the
+  result reports `nonlinearity`, how much the pulls change over the photon
+  numbers of the pointer states, and the derived `resonator_frequencies`,
+  `chi`, `kappa` and `kappa_detected` in place of `chi_eff` and `validity`.
 - Warnings are shorter, name the one action that sets or silences them, and
   point at the caller's line. The default-frame and automatic-carrier
   warnings have fixed text, so Python shows each once per line of code
