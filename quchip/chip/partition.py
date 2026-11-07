@@ -198,35 +198,57 @@ def _distribute_control_lines(
     return lines_per, notes
 
 
+def internal_couplings(chip: "Chip", labels: Iterable[str]) -> list[Any]:
+    """Return the couplings of ``chip`` whose two devices are both in ``labels``."""
+    members = set(labels)
+    return [c for c in chip.couplings if c.device_a_label in members and c.device_b_label in members]
+
+
+def sub_chip(source: "Chip", devices: Sequence[Any], couplings: Iterable[Any], *, label: str | None,
+             port_network: Any = None, effective_terms: Sequence[Any] = ()) -> "Chip":
+    """Build a chip on ``devices`` with the calculation settings of ``source``.
+
+    The new chip keeps the approximation, basis, backend choice, space policy
+    and string-state order of ``source``. A per-device frame keeps the entries
+    of ``devices``. Partitioned solves, local fits, reductions and clones each
+    choose the couplings, port network, effective terms and control equipment.
+    """
+    from quchip.chip.chip import Chip as _Chip
+    from quchip.chip.states import copy_state_configuration
+    from quchip.utils.values import copy_value
+
+    kept = {device.label for device in devices}
+    frame: Any = (
+        {key: value for key, value in source.frame.items() if key in kept}
+        if isinstance(source.frame, dict) else source.frame
+    )
+    chip = _Chip(
+        devices=list(devices),
+        couplings=list(couplings) or None,
+        label=label,
+        frame=copy_value(frame),
+        approximation=source.approximation,
+        basis=source.basis,
+        backend=source._backend,
+        port_network=port_network,
+        effective_terms=effective_terms,
+        space=source.space,
+    )
+    copy_state_configuration(source, chip)
+    return chip
+
+
 def _build_component_chip(
     chip: "Chip", clone: "Chip", index: int, group: list[str], lines: list[Any], network: Any
 ) -> "Chip":
     """Assemble one component's solve-ready sub-chip: its devices, internal couplings, frame, equipment."""
-    from quchip.chip.chip import Chip as _Chip
     from quchip.control.equipment import ControlEquipment
-    from quchip.utils.values import copy_value
 
     member_set = set(group)
-    devices = [clone[label] for label in group]
-    couplings = [
-        c for c in clone.couplings
-        if c.device_a_label in member_set and c.device_b_label in member_set
-    ]
-    frame: Any = (
-        {k: v for k, v in clone.frame.items() if k in member_set}
-        if isinstance(clone.frame, dict) else clone.frame
-    )
-    sub = _Chip(
-        devices=devices,
-        couplings=couplings or None,
-        label=f"{chip.label}[{index}]" if chip.label else None,
-        frame=copy_value(frame),
-        approximation=clone.approximation,
-        basis=clone.basis,
-        backend=clone._backend,
-        port_network=network,
+    sub = sub_chip(
+        clone, [clone[label] for label in group], internal_couplings(clone, member_set),
+        label=f"{chip.label}[{index}]" if chip.label else None, port_network=network,
         effective_terms=[terms for terms in clone.effective_terms if set(terms.labels) <= member_set],
-        space=clone.space,
     )
     equipment = clone.control_equipment
     if equipment is not None and lines:
@@ -236,9 +258,6 @@ def _build_component_chip(
             if all(lbl in line_labels for lbl in _transform_drive_labels(t))
         ]
         sub.connect(ControlEquipment(lines=lines, signal_chain=chain).copy(sub.device_map, sub.coupling_map))
-    from quchip.chip.states import copy_state_configuration
-
-    copy_state_configuration(chip, sub)
     return sub
 
 

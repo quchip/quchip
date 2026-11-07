@@ -18,10 +18,8 @@ from quchip.approximations import Approximation
 from quchip.cutoff import ExcitationCutoff
 from quchip.chip.coupling_base import BaseCoupling
 from quchip.chip.effective import EffectiveTerms
-from quchip.chip.states import copy_state_configuration
 from quchip.control.equipment import ControlEquipment
 from quchip.devices.base import BaseDevice
-from quchip.utils.values import copy_value
 
 if TYPE_CHECKING:
     from quchip.chip.chip import Chip
@@ -165,25 +163,15 @@ def clone_chip(chip: "Chip") -> "Chip":
     is present, it is cloned and reconnected, so the clone's drives target the
     clone's devices and not the originals.
     """
-    from quchip.chip.chip import Chip
+    from quchip.chip.partition import sub_chip
 
     devices = [device.copy() for device in chip.devices]
     device_map = {device.label: device for device in devices}
-    couplings = [coupling.copy(device_map) for coupling in chip.couplings]
-    cloned = Chip(
-        devices=devices,
-        couplings=couplings or None,
-        control_equipment=None,
-        label=chip.label,
-        frame=copy_value(chip.frame),
-        approximation=chip.approximation,
-        basis=chip.basis,
-        backend=chip._backend,
-        effective_terms=chip.effective_terms,
+    cloned = sub_chip(
+        chip, devices, [coupling.copy(device_map) for coupling in chip.couplings], label=chip.label,
         port_network=None if chip.port_network is None else chip.port_network.copy(),
-        space=chip.space,
+        effective_terms=chip.effective_terms,
     )
     if chip.control_equipment is not None:
         cloned.connect(chip.control_equipment.copy(device_map, cloned.coupling_map))
-    copy_state_configuration(chip, cloned)
     return cloned
