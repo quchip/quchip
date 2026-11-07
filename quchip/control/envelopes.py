@@ -665,8 +665,11 @@ class CosineEnvelope(Envelope):
         t : scalar or array-like
             Local times in ns.
         """
-        return qnp.asarray(
-            0.5 * self.amplitude * (1.0 - qnp.cos(2.0 * qnp.pi * t / self.duration)),
+        return self._value(t, qnp)
+
+    def _value(self, t: Any, xp: Any) -> Any:
+        return xp.asarray(
+            0.5 * self.amplitude * (1.0 - xp.cos(2.0 * xp.pi * t / self.duration)),
             dtype=complex,
         )
 
