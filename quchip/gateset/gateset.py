@@ -29,12 +29,14 @@ if TYPE_CHECKING:
     from quchip.chip.chip import Chip
     from quchip.control.sequence import QuantumSequence
 
-#: Integration settings of gate-set solves (Section "Gate-set solver settings" of the guide).
-DEFAULT_OPTIONS = {"atol": 1e-12, "rtol": 1e-10, "nsteps": 10**7}
+#: QuTiP settings of gate-set solves (section "Solver settings" of the gate-set guide).
+DEFAULT_OPTIONS = {"method": "vern9", "atol": 1e-10, "rtol": 1e-8, "nsteps": 10**7}
+#: Tolerances of the dynamiqs ``Dopri8`` method in gate-set solves.
+DYNAMIQS_TOLERANCES = {"atol": 1e-12, "rtol": 1e-10, "max_steps": 10**7}
 
 
-def _tight_options(backend: Any) -> dict[str, Any]:
-    """Return the default gate-set tolerances in the form of the backend that solves."""
+def _default_solver_options(backend: Any) -> dict[str, Any]:
+    """Return the default gate-set solver settings in the form of the backend that solves."""
     import sys
 
     from quchip.backend import _coerce_backend
@@ -44,8 +46,7 @@ def _tight_options(backend: Any) -> dict[str, Any]:
     if module is not None and isinstance(resolved, module.DynamiqsBackend):
         import dynamiqs as dq
 
-        return {"method": dq.method.Dopri8(rtol=DEFAULT_OPTIONS["rtol"], atol=DEFAULT_OPTIONS["atol"],
-                                           max_steps=DEFAULT_OPTIONS["nsteps"])}
+        return {"method": dq.method.Dopri8(**DYNAMIQS_TOLERANCES)}
     return dict(DEFAULT_OPTIONS)
 
 #: Full product spaces up to this size skip the automatic excitation cutoff.
@@ -164,9 +165,9 @@ class GateSet:
     frame : FrameSpec, default "rotating"
         Integration frame of gate-set solves.
     options : dict, optional
-        Solver options. The default is ``atol=1e-12`` and ``rtol=1e-10`` in
-        the form of the backend that solves: QuTiP options, or a dynamiqs
-        ``Dopri8`` method.
+        Solver options, which replace the defaults. The default is QuTiP's
+        ``vern9`` at ``rtol=1e-8`` and ``atol=1e-10``, or a dynamiqs
+        ``Dopri8`` method at ``rtol=1e-10`` and ``atol=1e-12``.
     backend : object or str, optional
         Backend of gate-set solves.
     space : "auto", ExcitationCutoff, or None, default "auto"
@@ -255,7 +256,7 @@ class GateSet:
         # One options object per backend, so that a backend that caches compiled solves can reuse them.
         key = backend if isinstance(backend, str) else id(backend)
         if key not in self._default_options:
-            self._default_options[key] = _tight_options(backend)
+            self._default_options[key] = _default_solver_options(backend)
         return self._default_options[key]
 
     @options.setter

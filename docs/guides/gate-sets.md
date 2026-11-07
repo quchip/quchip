@@ -160,3 +160,13 @@ drive adds a transient excitation, so `unitary()` and `simulate()` solve gates
 that run at the same time with one more excitation for each gate after the
 first. A warning states each cutoff. Pass `space=ExcitationCutoff(max_total=K)`
 to use one cutoff for every solve, or `space=None` for the full product space.
+
+## Solver settings
+
+Gate-set solves use QuTiP's `vern9` integrator at `rtol=1e-8` and `atol=1e-10`,
+or a dynamiqs `Dopri8` method at `rtol=1e-10` and `atol=1e-12`. In checks on
+chips of two and three transmons, the calibrated errors changed by less than
+2e-5 of their value against solves with `adams` at `rtol=1e-10` and
+`atol=1e-12`, and the calibrations ran six to seven times faster. Pass
+`options=` to `GateSet` or `GateSet.standard()` to replace these settings, in
+the form of the backend that solves.

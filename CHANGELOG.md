@@ -416,24 +416,24 @@ This file records notable user-visible changes to quchip.
   ([#184](https://github.com/quchip/quchip/issues/184),
   [#183](https://github.com/quchip/quchip/pull/183))
 - `quchip.gateset` calibrates native gates and composes circuits from them.
-  `GateSet.standard()` declares DRAG SX and X gates and echoed
-  cross-resonance ZX90 gates; `NativeGate` and `Knob` declare your own. Each
-  fit targets the ideal gate on a block that includes coupled spectator
-  qubits, with free virtual Z phases, and reports the infidelity, leakage,
-  the generator of the error after the ideal gate, knob bounds, and fit
-  identifiability. `GateSet.unitary()`
-  reuses each gate's propagator at new start times and frames when its
-  Hamiltonian allows it, and `GateSet.simulate()` solves the circuit's
-  schedule with noise. On a chip above 64 states, gate-set solves pick and
-  raise an excitation cutoff with a warning, and gates that run at the same
-  time solve with one more excitation for each gate after the first. A
-  circuit with uncalibrated gates calibrates them at their seeds, with a
-  notice. When the chip changes in place, its calibrations become stale, and
-  the built-in natives take their carriers and seeds from the changed chip.
-  Calibrating again starts from the previous knobs and keeps them when the fit
-  converges within the target and at most doubles the previous error;
-  otherwise, and after a seed-only calibration, every start competes. Reports
-  also give the eigenvalue infidelity and the gate's channel as a
+  `GateSet.standard()` declares DRAG SX and X gates and echoed cross-resonance
+  ZX90 gates; `NativeGate` and `Knob` declare your own. Each fit targets the
+  ideal gate on a block that includes coupled spectator qubits, with free
+  virtual Z phases, and reports the infidelity, leakage, the generator of the
+  error after the ideal gate, knob bounds, and fit identifiability.
+  `GateSet.unitary()` reuses each gate's propagator at new start times and
+  frames when its Hamiltonian allows it, and `GateSet.simulate()` solves the
+  circuit's schedule with noise. On a chip above 64 states, gate-set solves
+  pick and raise an excitation cutoff with a warning, and gates that run at the
+  same time solve with one more excitation for each gate after the first.
+  Gate-set solves use QuTiP's `vern9` integrator at `rtol=1e-8` and
+  `atol=1e-10`. A circuit with uncalibrated gates calibrates them at their
+  seeds, with a notice. When the chip changes in place, its calibrations become
+  stale, and the built-in natives take their carriers and seeds from the
+  changed chip. Calibrating again starts from the previous knobs and keeps them
+  when the fit converges within the target and at most doubles the previous
+  error; otherwise, and after a seed-only calibration, every start competes.
+  Reports also give the eigenvalue infidelity and the gate's channel as a
   `ChannelResult`. When a CR target couples to another gate-set qubit, the
   echoed ZX90 also tries rotary starts, in which the target tone turns the
   target so that most of its static ZZ with that qubit averages out. On a chain

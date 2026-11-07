@@ -1159,9 +1159,7 @@ def test_rotary_seeds_cut_the_zz_error_on_the_chain_as_the_ix_zx_zz_model_predic
     """On the chain, the ZX90's target-spectator error at the template and at the 2.59-turn seeds is within 5% of
     the IX/ZX/ZZ model with the 40 ns echoes as windows of ZZ alone, and the seeds cut it to about 11%."""
     chip = three_transmons()
-    # The norms are compared at 5%, so the solves can use looser tolerances than the gate set's defaults.
-    gates = GateSet.standard(chip, ["q0", "q1", "q2"], pairs=[("q0", "q1")], cr_duration=400.0, rotary=False,
-                             options={"atol": 1e-10, "rtol": 1e-8})
+    gates = GateSet.standard(chip, ["q0", "q1", "q2"], pairs=[("q0", "q1")], cr_duration=400.0, rotary=False)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         gates.calibrate(("ZX90", ("q0", "q1")), max_nfev=0)
