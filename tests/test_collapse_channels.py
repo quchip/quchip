@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 import quchip
-from quchip import Bath, Chip, DuffingTransmon
+from quchip import Chip, DuffingTransmon
 from quchip.control.drive import BaseDrive
 from quchip.declarative import CollapseChannel
 from quchip.declarative.dissipation import collapse_parameter_paths
@@ -150,22 +150,6 @@ def test_drive_and_coupling_channels_keep_owner_and_support_in_engine_terms():
         "collective_decay",
         ("shared_line.decay_rate",),
     )
-
-
-def test_bath_returns_collapse_channels_without_a_private_tuple_shape():
-    a = _transmon("a")
-    b = _transmon("b")
-    chip = Chip([a, b])
-    bath = Bath("collective_decay", targets=[a, b], rate=0.006, label="common")
-    chip.add_bath(bath)
-
-    (channel,) = bath.collapse_channels(chip)
-
-    assert isinstance(channel, CollapseChannel)
-    assert channel.name == "collective_decay"
-    assert np.asarray(channel.rate.matrix()).item() == pytest.approx(0.006)
-    bath_term = next(term for term in chip.collapse_contributions() if term[3] == "common")
-    assert bath_term[2:] == ((), "common", "collective_decay", ("bath.common.rate",))
 
 
 def test_component_hooks_reject_raw_collapse_tuples():

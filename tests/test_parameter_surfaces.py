@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 
 from quchip import (
-    Bath,
     Capacitive,
     ChargeDrive,
     Chip,
@@ -400,7 +399,7 @@ def test_transform_relations_validate_after_joint_rebinding() -> None:
         chip.with_params({"control.0.lower": 2.})
 
 
-def test_chip_parameter_inventory_includes_drive_control_and_bath_owners() -> None:
+def test_chip_parameter_inventory_includes_drive_and_control_owners() -> None:
     from quchip.declarative import CollapseChannel, Scalar, parameter
 
     class LossyDrive(ChargeDrive):
@@ -419,29 +418,25 @@ def test_chip_parameter_inventory_includes_drive_control_and_bath_owners() -> No
         [source, victim],
         signal_chain=[Crosstalk(source, victim, beta=0.02, theta=0.1, delay=0.5)],
     )
-    bath = Bath("thermal", targets=[q0], temperature=20.0, rate=0.005, label="cold")
-    chip = Chip([q0, q1], control_equipment=equipment, baths=[bath])
+    chip = Chip([q0, q1], control_equipment=equipment)
 
     assert chip.parameters["drive.source.loss_rate"] == 0.01
     assert chip.parameters["control.0.beta"] == 0.02
-    assert chip.parameters["bath.cold.temperature"] == 20.0
     rebound = chip.with_params(
         {
             "drive.source.loss_rate": 0.03,
             "control.0.beta": 0.04,
-            "bath.cold.temperature": 25.0,
         }
     )
 
     assert chip.parameters["drive.source.loss_rate"] == 0.01
     assert rebound.parameters["drive.source.loss_rate"] == 0.03
     assert rebound.parameters["control.0.beta"] == 0.04
-    assert rebound.parameters["bath.cold.temperature"] == 25.0
     from quchip.engine import build_problem
 
     engine_result = build_problem(rebound, [], np.asarray([0.0, 1.0])).engine_result
     paths = {path for term in engine_result.collapse_terms for path in term.parameter_paths}
-    assert {"drive.source.loss_rate", "bath.cold.temperature", "bath.cold.rate"} <= paths
+    assert "drive.source.loss_rate" in paths
 
     first = build_problem(chip, [], np.asarray([0.0, 1.0])).engine_result
     source.loss_rate = 0.03

@@ -159,15 +159,16 @@ def test_transverse_drive_zero_amplitude_does_not_prove_conservation():
 @pytest.mark.unit
 def test_jump_no_jump_product_prevents_false_vacuum_closure():
     """A jump preserving the vacuum can still move it through L dagger L."""
-    from quchip import Bath
     from quchip.declarative import CollapseChannel
 
-    class NonNormal(Bath):
-        def dissipation(self, chip, bases=None):
+    class NonNormal(Resonator):
+        _type_prefix = "non_normal"
+
+        def dissipation(self, op, p):
             return (CollapseChannel(np.array([[1.0, 1.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]), 0.1, "mixed"),)
 
-    q = Resonator(freq=0.25, levels=3, label="q")
-    chip = Chip([q], baths=[NonNormal("collective_decay", rate=0.1)], frame="lab")
+    q = NonNormal(freq=0.25, levels=3, label="q")
+    chip = Chip([q], frame="lab")
     problem = QuantumSequence(chip).build_problem([0, 1], initial_state={})
     assert problem.engine_result.excitation_space is None
     result = chip.solve(problem)
@@ -206,11 +207,11 @@ def test_truncated_basis_product_keeps_paths_through_discarded_levels():
 @pytest.mark.parametrize("sign", [1, -1])
 def test_collective_bright_dark_states(sign):
     """Collective decay keeps interference and the analytic bright/dark decay rates."""
-    from quchip import Bath
+    from quchip.extensions import CollectiveDecayCoupling
 
     a = Resonator(freq=0.25, levels=2, label="a")
     b = Resonator(freq=0.25, levels=2, label="b")
-    chip = Chip([a, b], baths=[Bath("collective_decay", rate=0.1)], frame=0.25)
+    chip = Chip([a, b], [CollectiveDecayCoupling(a, b, exchange_strength=0.0, decay_rate=0.1)], frame=0.25)
     initial = chip.compact_state({"a": 1}, (sign, {"b": 1}))
     times = np.linspace(0, 5, 21)
     result = QuantumSequence(chip).simulate(tlist=times, initial_state=initial)

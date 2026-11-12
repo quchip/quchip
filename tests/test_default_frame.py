@@ -9,7 +9,6 @@ import numpy as np
 import pytest
 
 from quchip import (
-    Bath,
     Capacitive,
     ChargeDrive,
     Chip,
@@ -21,6 +20,7 @@ from quchip import (
     Square,
     eliminate,
 )
+from quchip.extensions import CollectiveDecayCoupling
 from quchip.engine.frames import IncompatibleFrameError
 from quchip.engine.problem import DEFAULT_FRAME_WARNINGS
 
@@ -35,12 +35,13 @@ UNRELIABLE = re.escape(
 
 
 def _pair(frame=None, bath=False, coupled=True):
-    """Return a driven transmon and resonator, optionally with a collective bath that cannot rotate."""
+    """Return a driven transmon and resonator, optionally with a collective decay channel that cannot rotate."""
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q", T1=2e4)
     r = Resonator(freq=7.0, levels=3, label="r")
-    baths = [Bath("collective_decay", targets=[q, r], rate=1e-3, label="loss")] if bath else None
     couplings = [Capacitive(q, r, g=0.05, label="qr")] if coupled else []
-    chip = Chip([q, r], couplings, frame=frame, baths=baths)
+    if bath:
+        couplings.append(CollectiveDecayCoupling(q, r, exchange_strength=0.0, decay_rate=1e-3, label="loss"))
+    chip = Chip([q, r], couplings, frame=frame)
     chip.wire(ChargeDrive(q, label="xy"))
     sequence = QuantumSequence(chip)
     sequence.schedule("xy", envelope=Gaussian(duration=20.0, amplitude=0.02), freq=float(chip.freq(q)))
@@ -241,7 +242,7 @@ def test_a_batch_without_a_frame_checks_every_point() -> None:
     _, sequence = _pair(bath=True, coupled=False)
     # A zero rate leaves no collective jump, so the first point alone fits the rotating frame.
     with pytest.warns(UserWarning, match=LAB_FALLBACK) as record:
-        batch = sequence.build_batch(sequence.vary("bath.loss.rate", [0.0, 1e-3]), tlist=TIMES)
+        batch = sequence.build_batch(sequence.vary("loss.decay_rate", [0.0, 1e-3]), tlist=TIMES)
     assert [problem.resolved_frame.mode for problem in batch.problems] == ["lab", "lab"]
     assert len(record) == 1
     sequence = QuantumSequence(_resonant_pair())
@@ -285,7 +286,8 @@ def _strongly_driven_pair():
     """Return exchange-coupled modes with a collective decay, under strong tones that untie their planned frame."""
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=2, label="q")
     r = Resonator(freq=7.0, levels=2, label="r")
-    chip = Chip([q, r], [Capacitive(q, r, g=0.05)], baths=[Bath("collective_decay", targets=[q, r], rate=1e-3)])
+    chip = Chip([q, r], [Capacitive(q, r, g=0.05),
+                         CollectiveDecayCoupling(q, r, exchange_strength=0.0, decay_rate=1e-3)])
     chip.wire(ChargeDrive(q, label="dq"), ChargeDrive(r, label="dr"))
     sequence = QuantumSequence(chip)
     sequence.schedule("dq", envelope=Square(duration=20.0, amplitude=1.0), freq=5.0)
@@ -315,15 +317,15 @@ def test_a_point_solved_in_the_batch_frame_starts_in_the_state_of_its_own_solve(
     """A ket at a nonzero start time is a vector of the frame of the point's own solve, also in a lab-frame batch."""
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=2, label="q")
     r = Resonator(freq=7.0, levels=2, label="r")
-    chip = Chip([q, r], baths=[Bath("collective_decay", targets=[q, r], rate=1e-3, label="loss")])
+    chip = Chip([q, r], [CollectiveDecayCoupling(q, r, exchange_strength=0.0, decay_rate=1e-3, label="loss")])
     sequence = QuantumSequence(chip)
     ket = np.array([1, 0, 1, 0], dtype=complex).reshape(-1, 1) / np.sqrt(2)
     times = np.array([0.05, 0.15])
-    # At a zero rate the bath has no jump, so that point alone fits the rotating frame.
+    # At a zero rate the channel has no jump, so that point alone fits the rotating frame.
     with pytest.warns(UserWarning, match=LAB_FALLBACK):
-        batch = sequence.simulate_batch(sequence.vary("bath.loss.rate", [0.0, 1e-3]), tlist=times, initial_state=ket)
+        batch = sequence.simulate_batch(sequence.vary("loss.decay_rate", [0.0, 1e-3]), tlist=times, initial_state=ket)
     with pytest.warns(UserWarning, match="so this solve uses the rotating frame"):
-        single = sequence.with_params({"bath.loss.rate": 0.0}).simulate(times, initial_state=ket)
+        single = sequence.with_params({"loss.decay_rate": 0.0}).simulate(times, initial_state=ket)
     assert (batch[0].frame.mode, single.frame.mode) == ("lab", "rotating")
     for time in times:
         np.testing.assert_allclose(batch[0].state(time, dm=True, frame="lab").full(),

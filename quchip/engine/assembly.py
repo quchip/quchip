@@ -637,10 +637,10 @@ def _collect_collapse_terms(
                 terms.projection is not None for terms in chip.effective_terms
             )
             # A static collapse operator is only frame-invariant up to one global
-            # phase; multi-device channels (collective baths, custom couplings) can
+            # phase; multi-device channels (custom couplings, shared ports) can
             # beat between unequal device frames, so they get the same check as
             # retained-coordinate effective channels.
-            # Support-free channels (baths) already span the whole chip.
+            # A support-free channel spans the whole chip.
             check_support = support or tuple(range(len(labels)))
             if (check_frames and (retained_coordinates or len(check_support) > 1)
                     and not _is_concrete_zero(resolved_rate)):
@@ -2223,10 +2223,6 @@ def compile_hamiltonian_template(
         slh = chip.port_network.resolve(slh, _compiled=resolution.network,
                                         _generated=_compact_network_hamiltonian(chip, resolution, backend))
     channel_supports = list(collapse_supports)
-    for bath in chip.baths:
-        targets = tuple(bath.resolve_targets(chip))
-        if not bath.separable and len(targets) > 1:
-            channel_supports.append(targets)
     network_supports = (
         ()
         if chip.port_network is None

@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from quchip import (
-    Bath, Capacitive, ChargeDrive, Chip, DuffingTransmon, EffectiveTerms, Exact, PhysicsExpr, PortNetwork,
+    Capacitive, ChargeDrive, Chip, DuffingTransmon, EffectiveTerms, Exact, PhysicsExpr, PortNetwork,
     QuantumSequence, Resonator, RWA, Square, VNA, eliminate,
 )
 
@@ -165,16 +165,13 @@ def test_multiport_response_rejects_records_of_hidden_channels_on_the_removed_mo
     """A hidden channel on a removed readout lacks its pole, also after a later reduction carries it."""
     from dataclasses import replace
 
-    from quchip import Bath, with_monitoring
+    from quchip import with_monitoring
     from quchip.engine import solve_problem
 
     base = _hanger(probe=True)
     # The q0-r1 coupling makes the later local reduction of r0 carry the channel of r1.
     chip = Chip(list(base.devices), [*base.couplings, Capacitive(base["q0"], base["r1"], g=.02)],
                 port_network=base.port_network, frame=5.2, approximation=RWA())
-    if not local:
-        # Local reduction does not transform baths.
-        chip.add_bath(Bath("thermal", targets=["r1", "q0"], temperature=20., rate=1e-4, label="fridge"))
     once = eliminate(chip, "r1", local=local).chip
     terms = next(terms for terms in once.effective_terms if terms.omitted_responses)
     assert terms.omitted_responses == {"internal_photon_loss": ("r1",)}
@@ -364,10 +361,12 @@ def test_deserialized_pole_on_a_linear_chip_enters_the_vacuum_sweep():
     np.testing.assert_allclose(VNA(chip).sweep(frequencies).matrix, expected, atol=1e-11, rtol=0)
 
 
-def _two_readout_hanger(detuning=0., *, one_way=False, internal_quality_factor=None, baths=(), backend="qutip"):
+def _two_readout_hanger(detuning=0., *, one_way=False, internal_quality_factor=None, thermal_occupation=None,
+                        backend="qutip"):
     """A kept readout r0 and a removed readout r1 on one line; only r1 couples to the qubit."""
     qubit = DuffingTransmon(freq=5.3, anharmonicity=-.26, levels=2, label="q")
-    kept = Resonator(freq=6., levels=2, internal_quality_factor=internal_quality_factor, label="r0")
+    kept = Resonator(freq=6., levels=2, internal_quality_factor=internal_quality_factor,
+                     thermal_occupation=thermal_occupation, label="r0")
     removed = Resonator(freq=6. + detuning, levels=2, label="r1")
     network = PortNetwork(label="line")
     right = [network.port("r0_right", target=kept, rate=.006), network.port("r1_right", target=removed, rate=.006)]
@@ -379,7 +378,7 @@ def _two_readout_hanger(detuning=0., *, one_way=False, internal_quality_factor=N
     network.expose("right", input=right[0].input, output=right[-1].output)
     network.expose("left", input=left[0].input, output=left[-1].output)
     chip = Chip([qubit, kept, removed], [Capacitive(qubit, removed, g=.04, label="c")], port_network=network,
-                frame=6., approximation=RWA(), baths=list(baths), backend=backend)
+                frame=6., approximation=RWA(), backend=backend)
     chip.wire(ChargeDrive(kept, label="d"))
     return chip
 
@@ -403,15 +402,15 @@ def test_retained_pole_reports_the_return_path_of_a_kept_readout(local):
 
 @pytest.mark.unit
 def test_return_path_entry_follows_direction_loss_and_model_support():
-    """A one-way path gives zero, kept loss lowers the value, and a thermal bath makes it unavailable."""
+    """A one-way path gives zero, kept loss lowers the value, and thermal occupation makes it unavailable."""
     lossless = eliminate(_two_readout_hanger(), "r1").validity["r1_response"]["self_energy_over_width"]
     one_way = eliminate(_two_readout_hanger(one_way=True), "r1").validity["r1_response"]
     assert one_way["self_energy_over_width"] == 0. and bool(one_way["is_valid"])
     # An internal rate of 0.006 /ns raises the amplitude damping of r0 from 0.006 /ns to 0.009 /ns.
     lossy = eliminate(_two_readout_hanger(internal_quality_factor=2*np.pi*6./.006), "r1").validity["r1_response"]
     np.testing.assert_allclose(lossy["self_energy_over_width"], lossless*2/3, rtol=1e-12)
-    bath = Bath("thermal", targets=["r0"], temperature=50., rate=1e-4)
-    reduction = eliminate(_two_readout_hanger(baths=(bath,)), "r1")
+    thermal = _two_readout_hanger(internal_quality_factor=2*np.pi*6./1e-4, thermal_occupation=.01)
+    reduction = eliminate(thermal, "r1")
     assert reduction.validity["r1_response"] == {"self_energy_over_width": None, "is_valid": None}
     assert "r1_response |Σ|/h=unavailable" in reduction.describe()
 

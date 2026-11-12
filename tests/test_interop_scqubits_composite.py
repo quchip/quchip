@@ -19,7 +19,6 @@ import pytest
 scq = pytest.importorskip("scqubits")
 
 from quchip import Chip  # noqa: E402
-from quchip.chip.baths import Bath  # noqa: E402
 from quchip.chip.couplings import Capacitive, Coupling, CrossKerr, TunableCapacitive  # noqa: E402
 from quchip.control.drive import ChargeDrive  # noqa: E402
 from quchip.control.equipment import ControlEquipment  # noqa: E402
@@ -317,22 +316,6 @@ def test_export_tunable_capacitive_matches_oracle():
     got = _ground_shifted(hs.eigenvals(evals_count=6))
     want = _solver_spectrum(chip, 6)
     np.testing.assert_allclose(got, want, atol=1e-6)
-
-
-def test_export_drops_baths_with_warning():
-    """A chip-level ``Bath`` is dropped with a single warning naming baths."""
-    tmon = ChargeBasisTransmon(E_C=0.2, E_J=30.0, n_g=0.25, levels=4, num_basis=63, basis="eigen", label="tmon")
-    res = Resonator(freq=6.0, levels=3, label="osc")
-    chip = Chip(
-        [tmon, res],
-        couplings=[Capacitive(tmon, res, g=0.035)],
-        baths=[Bath("thermal", temperature=20.0)],
-        approximation=Exact(),
-    )
-
-    with pytest.warns(UserWarning, match="baths"):
-        hs = to_scqubits(chip)
-    assert isinstance(hs, scq.HilbertSpace)
 
 
 def test_export_fluxonium_warns_cross_basis():

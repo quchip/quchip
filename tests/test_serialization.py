@@ -119,6 +119,14 @@ def test_device_round_trip_is_json_safe() -> None:
     assert device.levels == 4
 
 
+def test_a_saved_chip_with_baths_names_the_removal_and_the_replacements() -> None:
+    """A chip saved with chip-level baths raises an error that names the replacements."""
+    data = Chip([DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=2, label="q")]).to_dict()
+    data["baths"] = [{"type": "quchip.chip.baths.Bath", "recipe": "thermal", "temperature": 20.0}]
+    with pytest.raises(TypeError, match="Bath was removed.*thermal_occupation.*feedline.*CouplingModel"):
+        Chip.from_dict(data)
+
+
 def test_resonator_round_trip_preserves_internal_quality_factor() -> None:
     """A Resonator's to_dict/from_dict round trip preserves its quality factor."""
     resonator = Resonator(freq=7.2, levels=6, label="r0", internal_quality_factor=2e4)

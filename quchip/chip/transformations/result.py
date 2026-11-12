@@ -183,7 +183,7 @@ class EliminationResult:
         amplitude damping. The entry reports the largest value, and
         ``is_valid`` uses ``self_energy_over_width < 0.1``. Both are ``None``
         when the reduced chip has no vacuum one-excitation model, for example
-        with a thermal bath. The exact route of a device adds
+        with thermal occupation. The exact route of a device adds
         ``"<mode>_labeling"``: the ``labels`` mapping gives each diagnostic
         label's occupation its largest dressed ``weight``, its ``runner_up``
         and its ``margin`` to ``threshold`` ``0.5 + 1e-6``. The entry also

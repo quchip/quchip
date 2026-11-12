@@ -25,7 +25,6 @@ from quchip.backend.protocol import Backend, Operator, State
 from quchip.approximations import Approximation, RWA, require_approximation
 from quchip.cutoff import ExcitationCutoff, active_cutoff, require_space
 from quchip.chip.analysis import ChipAnalysis, KerrMatrix
-from quchip.chip.baths import Bath
 from quchip.chip.effective import EffectiveTerms
 from quchip.chip.port_network import PortNetwork
 from quchip.chip.ports import Port
@@ -211,8 +210,6 @@ class Chip:
         overrides this policy.
     backend : str or Backend, optional
         Chip-specific backend. ``None`` uses the process default.
-    baths : list[Bath], optional
-        Shared or collective unobserved environments.
     port_network : PortNetwork, optional
         Complete accessible field boundary. Attach at most one network.
 
@@ -245,7 +242,6 @@ class Chip:
         approximation: Approximation = RWA(),
         basis: Literal["native", "eigen"] = "native",
         backend: str | Backend | None = None,
-        baths: list[Bath] | None = None,
         port_network: PortNetwork | None = None,
         effective_terms: Sequence[EffectiveTerms] = (),
         space: ExcitationCutoff | None = None,
@@ -289,12 +285,6 @@ class Chip:
                 "They share one namespace so eliminate() resolves targets unambiguously."
             )
         self._coupling_map: dict[str, BaseCoupling] = {c.label: c for c in self._couplings}
-        bath_duplicates = [lbl for lbl, n in Counter(b.label for b in baths or ()).items() if n > 1]
-        if bath_duplicates:
-            raise ValueError(f"Duplicate bath labels: {bath_duplicates}. Each bath must have a unique label.")
-        for bath in baths or ():
-            self._validate_bath(bath)
-        self._baths = tuple(baths) if baths else ()
         if port_network is not None and not isinstance(port_network, PortNetwork):
             raise TypeError(
                 f"Expected a PortNetwork, got {type(port_network).__name__}: {port_network!r}"
@@ -502,16 +492,6 @@ class Chip:
                 ),
                 tuple(
                     (
-                        bath.label,
-                        bath.recipe,
-                        tuple(bath.resolve_targets(self)),
-                        _concrete_cache_value(bath.temperature, traced=True),
-                        _concrete_cache_value(bath.rate, traced=True),
-                    )
-                    for bath in self.baths
-                ),
-                tuple(
-                    (
                         port.label,
                         tuple(port.resolve_targets(self)),
                         tuple(
@@ -560,7 +540,7 @@ class Chip:
     # ------------------------------------------------------------------
     #
     # The chip is the single place that knows which component families
-    # exist (devices, couplings, baths, drive lines). These methods hand
+    # exist (devices, couplings, drive lines, ports). These methods hand
     # the engine flat lists of local contributions tagged with their
     # *support* — the device indices each operator acts on — so the engine
     # embeds by arity and never enumerates families itself. Adding a new
@@ -612,8 +592,7 @@ class Chip:
 
         Returns ``(operator, rate, support, source, channel, parameter_paths)``
         tuples. An operator local to a device or a drive line has one device
-        index, and a coupling's two-body operator has two. An operator already
-        embedded in the full space (baths) has an empty tuple. Rates are in
+        index, and a coupling's two-body operator has two. Rates are in
         1/ns and are ready for the Lindblad equation. Each component owns its
         rate physics, including any intrinsic 2π (for example, κ = 2π·f/Q for a
         resonator).
@@ -709,21 +688,6 @@ class Chip:
                             coupling,
                         )
                     )
-            for bath in self.baths:
-                if skip(bath):
-                    continue
-                for channel, parameter_paths in bath._collapse_channels_with_paths(self, bases):
-                    out.append(
-                        (
-                            channel.operator,
-                            channel.rate,
-                            (),
-                            bath.label,
-                            channel.name,
-                            parameter_paths,
-                            bath,
-                        )
-                    )
             for terms in self.effective_terms:
                 if skip(terms):
                     continue
@@ -753,9 +717,7 @@ class Chip:
             projected = []
             labels = tuple(device.label for device in self.devices)
             for operator, rate, support, source, channel_name, paths, owner in out:
-                if not isinstance(owner, EffectiveTerms) and not (
-                    isinstance(owner, Bath) and owner._retained is not None
-                ):
+                if not isinstance(owner, EffectiveTerms):
                     operator_labels = tuple(labels[index] for index in support) if support else labels
                     owner_key = f"port:{owner.label}" if isinstance(owner, Port) else None
                     retained = retained_operator(self, operator, operator_labels, backend, owner_key,
@@ -916,11 +878,6 @@ class Chip:
         return prod(self.dims)
 
     @property
-    def baths(self) -> tuple[Bath, ...]:
-        """Chip-level baths (shared or collective dissipation), in insertion order."""
-        return self._baths
-
-    @property
     def ports(self) -> tuple[Port, ...]:
         """Accessible Markovian input-output channels, in declaration order."""
         return () if self._port_network is None else self._port_network.ports
@@ -969,65 +926,14 @@ class Chip:
         self._resolved_result_cache = None
         return network
 
-    def add_bath(self, bath: Bath) -> Bath:
-        """Attach a bath to this chip and return it (for fluent use).
-
-        Parameters
-        ----------
-        bath : Bath
-            Shared or collective dissipation model that targets this chip.
-
-        Notes
-        -----
-        You can add baths at any time after construction. The next simulate or
-        solve call collects the bath's collapse operators without a chip
-        rebuild. The bath is validated immediately, so bad input fails here,
-        not at solve time with an unclear error. Bad input is a non-``Bath``
-        argument, a target label not on this chip, or a label that collides
-        with an attached bath.
-        """
-        # Without the immediate bath validation, a label collision would
-        # silently overwrite an entry on the `physics_notes` audit surface.
-        self._validate_bath(bath)
-        if bath.label in {b.label for b in self._baths}:
-            raise ValueError(
-                f"Duplicate bath label: '{bath.label}' is already attached to this chip. "
-                "Each bath must have a unique label."
-            )
-        self._baths = (*self._baths, bath)
-        return bath
-
-    def _validate_bath(self, bath: Bath) -> None:
-        """Reject non-Bath objects and unknown target labels at attach time.
-
-        Devices are fixed at construction, so an unknown target can never
-        become valid later — failing here beats an opaque error at solve
-        time.
-        """
-        if not isinstance(bath, Bath):
-            raise TypeError(f"Expected a Bath, got {type(bath).__name__}: {bath!r}")
-        if bath._retained is not None:
-            size = int(np.prod(self.authored_dims))
-            if any(op.shape != (size, size) for _, *operators, _ in bath._retained.values() for op in operators):
-                raise ValueError("Retained bath operators do not match this chip's authored dimensions.")
-        unknown = [lbl for lbl in bath.resolve_targets(self) if lbl not in self._device_map]
-        if unknown:
-            raise ValueError(
-                f"Bath {bath.label!r} targets unknown device(s) {unknown}; "
-                f"this chip has {sorted(self._device_map)}"
-            )
-
     def set_noise(
         self,
         config: Mapping[str | BaseDevice, Mapping[str, Any]] | None = None,
-        *,
-        baths: list[Bath] | None = None,
     ) -> None:
         """Replace this chip's entire noise description in one call.
 
-        Omitted device noise fields reset to ``None``. An omitted ``baths``
-        clears all baths. The complete target state is validated before any
-        write. Declare custom noise rates with ``parameter(noise=True)`` and
+        Omitted device noise fields reset to ``None``. The complete target
+        state is validated before any write. Declare custom noise rates with ``parameter(noise=True)`` and
         implement them in :meth:`~quchip.devices.base.BaseDevice.dissipation`,
         so they stay sweepable, differentiable, and serializable. It prints the
         applied changes, and a repeated identical call is a silent no-op.
@@ -1037,9 +943,6 @@ class Chip:
         config : mapping, optional
             ``{device_or_label: {noise_param: value}}``. Devices can appear as
             objects or labels, once each. Non-noise parameters are rejected.
-        baths : list[Bath], optional
-            The chip's complete new bath list (validated like
-            :meth:`add_bath`).
 
         """
         # Resolve config keys (objects or labels; each device at most once).
@@ -1053,13 +956,6 @@ class Chip:
             resolved[label] = dict(params)
 
         # Validate the complete target state before writing anything.
-        new_baths = list(baths) if baths else []
-        bath_duplicates = [lbl for lbl, n in Counter(b.label for b in new_baths).items() if n > 1]
-        if bath_duplicates:
-            raise ValueError(f"Duplicate bath labels: {bath_duplicates}. Each bath must have a unique label.")
-        for bath in new_baths:
-            self._validate_bath(bath)
-
         targets: dict[str, dict[str, Any]] = {}
         for label, device in self._device_map.items():
             names = type(device).noise_parameter_names()
@@ -1088,17 +984,6 @@ class Chip:
 
         for label, candidate in candidates.items():
             self._device_map[label]._commit_parameter_candidate(candidate)
-
-        old_ids = {id(bath) for bath in self._baths}
-        new_ids = {id(bath) for bath in new_baths}
-        for bath in self._baths:
-            if id(bath) not in new_ids:
-                changes.append(f"baths: - {bath.label} (model={bath.recipe})")
-        for bath in new_baths:
-            if id(bath) not in old_ids:
-                extra = f", {bath.temperature} mK" if bath.temperature is not None else ""
-                changes.append(f"baths: + {bath.label} (model={bath.recipe}{extra})")
-        self._baths = tuple(new_baths)
 
         for line in changes:
             print(line)
@@ -1576,15 +1461,15 @@ class Chip:
 
         Returns a dict with the key ``"chip"`` for the chip-level entry. Each
         component has the key ``"<kind>:<label>"``, where ``kind`` is one of
-        ``"device"``, ``"coupling"``, ``"drive"``, ``"bath"``, ``"port"``,
-        ``"network"``, ``"effective"``. Each key maps to that component's
+        ``"device"``, ``"coupling"``, ``"drive"``, ``"port"``, ``"network"``,
+        ``"effective"``. Each key maps to that component's
         declared approximations: Hilbert truncation, model regime, RWA status,
         noise-channel selection, and any other non-obvious assumption it
         explicitly declares.
 
         Keys are kind-qualified, not bare labels, because the label namespaces
-        are *not* globally disjoint. A device, coupling, drive, and bath can
-        share a label, and on this audit surface one component's entry must not
+        are *not* globally disjoint. A device, drive, and port can share a
+        label, and on this audit surface one component's entry must not
         silently overwrite another's. Drives are enumerated from the
         :attr:`control_equipment` wiring, not from per-device
         ``connected_drives``, so an edge-target
@@ -1593,8 +1478,8 @@ class Chip:
 
         The chip-level ``"chip"`` entry states the local-Lindblad
         approximation, under which this chip builds every collapse operator
-        (see :meth:`collapse_contributions`). The entry is present even without
-        baths, because it always applies. The dict is for inspection and audit,
+        (see :meth:`collapse_contributions`). The entry is always present,
+        because the approximation always applies. The dict is for inspection and audit,
         not for runtime dispatch.
         """
         notes: dict[str, list[str]] = {
@@ -1611,8 +1496,6 @@ class Chip:
                 notes[f"drive:{line.label}"] = list(line.physics_notes())
         for coupling in self._couplings:
             notes[f"coupling:{coupling.label}"] = list(coupling.physics_notes())
-        for bath in self.baths:
-            notes[f"bath:{bath.label}"] = list(bath.physics_notes())
         for port in self.ports:
             notes[f"port:{port.label}"] = list(port.physics_notes())
         if self.port_network is not None:
@@ -1674,9 +1557,6 @@ class Chip:
             for index, transform in enumerate(self._control_equipment.signal_chain):
                 for name, value in transform.parameter_values().items():
                     add(f"control.{index}.{name}", ("control", index, name, value))
-        for index, bath in enumerate(self._baths):
-            for name, value in bath.parameter_values().items():
-                add(f"bath.{bath.label}.{name}", ("bath", index, name, value))
         for index, port in enumerate(self.ports):
             for name, value in port.parameter_values().items():
                 add(f"port.{port.label}.{name}", ("port", index, name, value))
@@ -1723,10 +1603,6 @@ class Chip:
                 "signal_chain": tuple(
                     type(transform).__name__
                     for transform in signal_chain
-                ),
-                "baths": tuple(
-                    (bath.label, bath.recipe, tuple(bath.resolve_targets(self)))
-                    for bath in self._baths
                 ),
                 "ports": tuple(
                     (port.label, tuple(port.resolve_targets(self)))
@@ -1781,8 +1657,6 @@ class Chip:
                 transform = cloned._control_equipment._signal_chain[index]
                 setattr(transform, name, value)
                 changed_transforms[index] = transform
-            elif kind == "bath":
-                cloned._baths[index].set_parameter_value(name, value)
             elif kind == "network":
                 assert cloned._port_network is not None
                 cloned._port_network.set_parameter_value(name, value)
@@ -2436,7 +2310,7 @@ class Chip:
         """Return a plain-text report of everything on the chip, in sections.
 
         The report shows devices with their declared parameters (units
-        included), noise settings, couplings, control wiring, and baths: the
+        included), noise settings, couplings, and control wiring: the
         "what did I just build?" view. Returns a string, so use
         ``print(chip.describe())``. Traced parameters show as ``<traced>`` and
         are never concretized.
