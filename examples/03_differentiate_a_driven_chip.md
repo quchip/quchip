@@ -489,7 +489,6 @@ def final_population(perturbation):
     result = rebound.simulate(
         tlist=times,
         initial_state={"q": 0},
-        partition=False,
     )
     return jnp.real(result.population("q", level=1)[-1])
 
@@ -580,7 +579,6 @@ def experiment_outputs(shared):
         result = rebound.simulate(
             tlist=multi_times,
             initial_state={"q": 0},
-            partition=False,
         )
         values.append(jnp.real(result.population("q", level=1)[-1]))
     return jnp.stack(values)
@@ -621,7 +619,6 @@ the loss gradient for an optimization step.
 reference_result = sequence.simulate(
     tlist=times,
     initial_state={"q": 0},
-    partition=False,
 )
 
 gradient_receipt = {
@@ -649,7 +646,7 @@ print(f"RESULT gradient={json.dumps(gradient_receipt, sort_keys=True, separators
 Output:
 
 ```text
-RESULT gradient={"backend":"dynamiqs","base_population":0.9955197597010083,"figure":"../docs/images/differentiate_a_driven_chip.svg","first_order_only":true,"fixed_structure_during_trace":true,"gradient_per_reference_perturbation":{"pulse.0.amplitude":0.0015756847934132964,"pulse.0.freq":0.0033782484014230805,"pulse.0.sigmas":-0.0015669142083585888},"multi_sequence_count":3,"multi_sequence_jacobian_shape":[3,3],"multi_sequence_loss_gradient":[-0.09312829969383697,0.045324706488043695,0.093128299693837],"original_sequence_unchanged":true,"parameter_paths":["pulse.0.amplitude","pulse.0.sigmas","pulse.0.freq"],"solver":"sesolve"}
+RESULT gradient={"backend":"dynamiqs","base_population":0.9955197597010083,"figure":"../docs/images/differentiate_a_driven_chip.svg","first_order_only":true,"fixed_structure_during_trace":true,"gradient_per_reference_perturbation":{"pulse.0.amplitude":0.0015756847934132964,"pulse.0.freq":0.0033782484014230805,"pulse.0.sigmas":-0.0015669142083585888},"multi_sequence_count":3,"multi_sequence_jacobian_shape":[3,3],"multi_sequence_loss_gradient":[-0.09312829969382512,0.045324706488042786,0.09312829969382519],"original_sequence_unchanged":true,"parameter_paths":["pulse.0.amplitude","pulse.0.sigmas","pulse.0.freq"],"solver":"sesolve"}
 ```
 
 <!-- executed-output:end -->
