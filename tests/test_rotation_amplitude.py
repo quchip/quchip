@@ -7,7 +7,7 @@ from scipy.integrate import solve_ivp
 from quchip import (RWA, ChargeDrive, Chip, Crosstalk, Delay, DuffingTransmon, Gaussian, GaussianDRAG, PhaseDrive,
                     QuantumSequence, Square)
 from quchip.control.signal import Gain, SignalTransform
-from quchip.extensions.envelopes import CosineEnvelope
+from quchip import CosineEnvelope
 
 TIGHT = {"atol": 1e-12, "rtol": 1e-10}
 

@@ -61,7 +61,7 @@ from quchip.chip.sw import (
     cross_block_gap,
 )
 from quchip.engine.excitation import authored_excitation_changes, excitation_sectors, excitation_structure
-from quchip.chip.transformations.dispatch import EliminationTarget, register_elimination_target
+from quchip.chip.transformations.dispatch import EliminationTarget, _register_elimination_target
 from quchip.chip.transformations.methods import (
     DeviceReductionContext,
     _sw_dressed_transition,
@@ -756,10 +756,8 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
             rule_target=rule_target,
             missing_rule_message=(
                 f"Control line '{line.label}' ({type(line).__name__}) targets the "
-                f"eliminated {what}. No retarget rule converts it "
-                f"(register_retarget_rule({type(line).__name__}, {type(rule_target).__name__}, "
-                f"'{result_kind}', ...)); unwire the line first (chip.unwire('{line.label}')), "
-                "or keep the target."
+                f"eliminated {what}, and no retarget rule converts it to the reduced chip. "
+                f"Unwire the line first (chip.unwire('{line.label}')), or keep the target."
             ),
         )
 
@@ -1399,7 +1397,7 @@ def _retained_levels(state: Any, dims: dict[str, int], mode_label: str) -> dict[
     return levels
 
 
-register_elimination_target(EliminationTarget(
+_register_elimination_target(EliminationTarget(
     kind="device",
     claims=lambda chip, target: resolve_label(target) in chip.device_map,
     reduce=reduce_device,

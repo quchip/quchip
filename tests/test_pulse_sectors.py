@@ -207,7 +207,7 @@ def test_truncated_basis_product_keeps_paths_through_discarded_levels():
 @pytest.mark.parametrize("sign", [1, -1])
 def test_collective_bright_dark_states(sign):
     """Collective decay keeps interference and the analytic bright/dark decay rates."""
-    from quchip.extensions import CollectiveDecayCoupling
+    from tests.extension_guide import CollectiveDecayCoupling
 
     a = Resonator(freq=0.25, levels=2, label="a")
     b = Resonator(freq=0.25, levels=2, label="b")

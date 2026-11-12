@@ -11,6 +11,7 @@ import numpy.testing as npt
 import pytest
 
 from quchip.control.envelopes import (
+    CosineEnvelope,
     Gaussian,
     GaussianDRAG,
     GaussianEdge,
@@ -29,6 +30,7 @@ BUILT_INS = [
     GaussianEdge(duration=60.0, edge_duration=12.0, sigmas=2.0, amplitude=0.2),
     SquareWithGaussianEdges(duration=50.0, amplitude=0.1, edge_frac=0.2, sigmas=3.0),
     LinearRamp(duration=60.0, ramp_duration=50.0, amplitude=4.0),
+    CosineEnvelope(duration=30.0, amplitude=0.8),
 ]
 
 
@@ -125,6 +127,19 @@ class TestSample:
         [(times, _)] = signal_features(EnvelopeRef(envelope))
         npt.assert_allclose(times, knots, rtol=0, atol=1e-14)
 
+    @pytest.mark.parametrize("envelope", BUILT_INS, ids=lambda envelope: type(envelope).__name__)
+    def test_concrete_sampling_stays_on_the_host(self, envelope):
+        """Float parameters and NumPy times sample each built-in envelope without a JAX transfer."""
+        import jax
+
+        from quchip.engine.ir import EnvelopeRef
+        from quchip.engine.sampling import signal_features
+
+        t = np.linspace(0.0, float(envelope.duration), 101)
+        with jax.transfer_guard("disallow"):
+            envelope.sample(t)
+            signal_features(EnvelopeRef(envelope))
+
 
 class TestArea:
     """The closed-form areas agree with independent quadrature, and the general quadrature traces."""
@@ -151,14 +166,15 @@ class TestArea:
         npt.assert_allclose(complex(envelope.area()), reference, rtol=0, atol=1e-12)
         npt.assert_allclose(complex(Envelope.area(envelope)), reference, rtol=0, atol=1e-12)
 
-    def test_general_quadrature_of_an_extension_envelope_traces(self):
-        """A raised cosine has area A τ / 2, and the amplitude derivative of its area is τ / 2 under jit."""
+    def test_general_quadrature_traces(self):
+        """The general rule gives a raised cosine the area A τ / 2, and the amplitude derivative τ / 2 under jit."""
         import jax
 
-        from quchip.extensions.envelopes import CosineEnvelope
+        from quchip.control.envelopes import Envelope
 
-        npt.assert_allclose(complex(CosineEnvelope(duration=30.0, amplitude=0.8).area()), 12.0, rtol=0, atol=1e-13)
-        slope = jax.jit(jax.grad(lambda a: CosineEnvelope(duration=30.0, amplitude=a).area().real))(0.8)
+        envelope = CosineEnvelope(duration=30.0, amplitude=0.8)
+        npt.assert_allclose(complex(Envelope.area(envelope)), 12.0, rtol=0, atol=1e-13)
+        slope = jax.jit(jax.grad(lambda a: Envelope.area(envelope.with_params({"amplitude": a})).real))(0.8)
         npt.assert_allclose(slope, 15.0, rtol=0, atol=1e-12)
 
     def test_closed_form_derivative_with_respect_to_width(self):

@@ -10,7 +10,7 @@ from quchip import (
     QuantumSequence, Resonator, eliminate, set_default_backend,
 )
 from quchip.chip.effective import OperatorProjection
-from quchip.extensions import CollectiveDecayCoupling
+from tests.extension_guide import CollectiveDecayCoupling
 from quchip.declarative import CollapseChannel, CouplingModel, DeviceModel, Scalar, parameter
 from quchip.interop.eigenbasis import EigenbasisDevice
 

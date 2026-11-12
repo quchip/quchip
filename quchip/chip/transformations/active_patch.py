@@ -15,7 +15,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
@@ -294,8 +294,8 @@ def _one_excitation_reader(chip: "Chip", method: str) -> Any:
     return read
 
 
-def _eliminate_chain(chip: "Chip", model: "EliminationOrder | None", doomed: list[str], method: str,
-                     local: bool, caller: str, kept: set[str]
+def _eliminate_chain(chip: "Chip", model: "EliminationOrder | None", doomed: list[str],
+                     method: Literal["sw", "exact"], local: bool, caller: str, kept: set[str]
                      ) -> tuple[Any, list[Any], list[str], list[str], dict[str, float | None] | None]:
     """Fold ``doomed`` into ``chip`` one at a time, in the default order of ``model`` or in the given order.
 
@@ -376,7 +376,8 @@ def _eliminate_chain(chip: "Chip", model: "EliminationOrder | None", doomed: lis
 
 
 def eliminate_spectators(
-    chip: "Chip", keep: Any, *, order: Iterable[Any] | None = None, method: str = "sw", local: bool = False,
+    chip: "Chip", keep: Any, *, order: Iterable[Any] | None = None, method: Literal["sw", "exact"] = "sw",
+    local: bool = False,
 ) -> SpectatorEliminationResult:
     """Reduce a chip to the kept devices by eliminating the other devices one at a time.
 
@@ -493,7 +494,7 @@ def _strip_dead_control_lines(chip: "Chip", sequence: "QuantumSequence", doomed:
 
 
 def active_patch(
-    sequence: "QuantumSequence", *, hops: int = 1, method: str = "sw", local: bool = False,
+    sequence: "QuantumSequence", *, hops: int = 1, method: Literal["sw", "exact"] = "sw", local: bool = False,
     order: Iterable[Any] | None = None,
 ) -> ActivePatchResult:
     """Reduce a chip to its schedule-active patch by eliminating spectators.

@@ -14,7 +14,7 @@ import quchip.backend._sector_stationary as sector_solver
 from quchip import (RWA, VNA, Capacitive, ChargeBasisTransmon, Chip, DuffingTransmon, ExcitationCutoff,
                     PortNetwork, Resonator)
 from quchip.declarative import CollapseChannel, CouplingModel, Scalar, parameter
-from quchip.extensions import CollectiveDecayCoupling
+from tests.extension_guide import CollectiveDecayCoupling
 
 OFFSETS = np.array([-0.02, -1e-3, -1e-5, 0.0, 1e-5, 1e-3, 0.02])
 

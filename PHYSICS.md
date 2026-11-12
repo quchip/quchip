@@ -56,8 +56,8 @@ through `ω = 2π f`.
 From parity-invariant initial states, such as energy eigenstates, populations
 under a charge drive alone, or through charge couplings alone, do not depend
 on the sign of `[φ, n]`. The sign changes observable physics when
-one device couples through both charge and phase, for example through
-`ChargePhaseDrive`, or through a `ChargeDrive` and a `PhaseDrive` on one device.
+one device couples through both charge and phase, for example through the
+extension guide's `ChargePhaseDrive`, or through a `ChargeDrive` and a `PhaseDrive` on one device.
 
 ## 1. Units and the 2π convention
 
@@ -939,7 +939,7 @@ the rotating frame at `chip.freq(device)`, this carrier makes the drive's
 weight-`k` bands static. With an explicit `reference_freq`, the selected
 weight-`k` partner turns as `exp(2πi k (chip.freq(device) - reference_freq) t)`
 instead, and its Hermitian partner with the opposite sign. `ChargeDrive`,
-`PhaseDrive` and the extension `ChargePhaseDrive` set `k = 1`. `TwoPhotonDrive` sets `k = 2`, the zero-detuning
+`PhaseDrive` and the extension guide's `ChargePhaseDrive` set `k = 1`. `TwoPhotonDrive` sets `k = 2`, the zero-detuning
 Kerr-cat pump of the static model, without pump-induced Stark shifts. quchip
 warns with the chosen carrier once per line in each sequence. Drives without a
 declared or inherited `carrier_harmonic`, such as flux and coupling drives, and
@@ -1105,7 +1105,7 @@ about the transition frequency, so the RWA holds only when that detuning is
 much larger than the drive's matrix elements and bandwidth. When it is not,
 use `Exact()`, whose result is continuous through zero.
 
-`ChargePhaseDrive` (in `quchip.extensions`) maps `I` to the charge operator
+`ChargePhaseDrive` (in the extension guide) maps `I` to the charge operator
 and `Q` to the phase operator, `H = I Q_c − Q P`, where `s = I + iQ` is the
 delivered analytic signal, envelope and carrier together. With the Fock
 operators `Q_c = i(a† - a)` and `P = a + a†` this is `i(s a† - s* a)`: a positive
