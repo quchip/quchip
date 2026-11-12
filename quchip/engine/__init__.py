@@ -296,6 +296,7 @@ def simulate(
     states: StateStorage | None = None,
     dissipation: bool = True,
     run_args: dict | None = None,
+    frame: Any = None,
 ) -> "SimulationResult":
     """Build a :class:`SolveProblem`, dispatch it, and wrap the solver output.
 
@@ -351,6 +352,10 @@ def simulate(
         Keep all states, only the final state, or no states.
     dissipation : bool, default=True
         Include resolved collapse channels in the solve.
+    frame : FrameSpec or None, default=None
+        Integration-frame override, as in :func:`build_problem`. ``None`` uses
+        the chip's frame. An explicit frame solves the joint chip without
+        partitioning.
     partition : bool, default True
         When the chip splits into independent sub-chips (see :meth:`Chip.partition`),
         dispatch one solve per component and combine the results into a
@@ -396,8 +401,9 @@ def simulate(
     context = prepare_solve_problem_context(
         chip, tlist, drive_ops=drive_ops, approximation=approximation, initial_states=[initial_state],
         solver=solver, options=options, run_args=run_args, e_ops=e_ops, states=states, dissipation=dissipation,
+        frame=frame,
     )
-    if partition and solver in (None, "sesolve", "mesolve"):
+    if partition and frame is None and solver in (None, "sesolve", "mesolve"):
         from quchip.engine.partitioned import maybe_simulate_partitioned
 
         partitioned = maybe_simulate_partitioned(

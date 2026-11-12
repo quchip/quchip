@@ -898,6 +898,35 @@ class DynamiqsBackend(Backend):
     # Single-problem solver dispatch
     # ------------------------------------------------------------------
 
+    def solve_propagator(self, problem: Any, columns: Any = None) -> Any:
+        if problem.stochastic:
+            raise ValueError("Propagators use the deterministic solvers, not trajectory solvers.")
+        prepared = self.prepare_hamiltonian(problem.engine_result, problem.tlist)
+        tlist, collapse_ops, _solver, options, _e_ops = self._resolve_solve_config(problem, prepared)
+        kwargs: dict[str, Any] = {
+            "method": self._method_from_dict(options),
+            "progress_meter": self._options_from_dict(options)["progress_meter"],
+        }
+        if options.get("gradient") is not None:
+            kwargs["gradient"] = options["gradient"]
+        hamiltonian = prepared.rhs
+        times = jnp.asarray(tlist, dtype=float)
+        if collapse_ops:
+            if columns is not None:
+                raise ValueError("columns= selects input kets of a closed system. Pass dissipation=False, "
+                                 "or omit columns to compute the superoperator.")
+            dimension = math.prod(problem.engine_result.dims)
+            require_memory(16 * 3 * dimension**4, task=f"The D²×D² propagator superoperator at D = {dimension}",
+                           remedy="Reduce the device cutoffs, or set an excitation cutoff.")
+            result = dq.mepropagator(hamiltonian, list(collapse_ops), times, save_propagators=False, **kwargs)
+            return result.final_propagator.to_jax()
+        if columns is None:
+            return dq.sepropagator(hamiltonian, times, save_propagators=False, **kwargs).final_propagator.to_jax()
+        # Each input column evolves as one batch element.
+        states = dq.asqarray(jnp.asarray(columns, dtype=jnp.complex128).T[..., None], dims=hamiltonian.dims)
+        result = dq.sesolve(hamiltonian, states, times, save_states=False, **kwargs)
+        return result.final_state.to_jax()[..., 0].T
+
     def sesolve(
         self,
         H: Any,

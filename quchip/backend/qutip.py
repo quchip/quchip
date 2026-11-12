@@ -1263,6 +1263,31 @@ class QuTiPBackend(Backend):
             rhs, self.coerce_state(problem.initial_state, dims=problem.engine_result.dims), problem.tlist, **kwargs)
         return SolverResult(times=problem.tlist, solver=problem.solver, native=native)
 
+    def solve_propagator(self, problem: Any, columns: Any = None) -> Any:
+        if problem.stochastic:
+            raise ValueError("Propagators use the deterministic solvers, not trajectory solvers.")
+        prepared = self._prepare_problem_hamiltonian(problem)
+        tlist, collapse_ops, _solver, options, _e_ops = self._resolve_solve_config(problem, prepared)
+        rhs = self._coerce_solver_rhs(prepared.rhs)
+        options = {**self._runner_options(options), "store_states": False, "store_final_state": True}
+        if collapse_ops:
+            if columns is not None:
+                raise ValueError("columns= selects input kets of a closed system. Pass dissipation=False, "
+                                 "or omit columns to compute the superoperator.")
+            _require_superoperator_memory(
+                rhs, collapse_ops, task="QuTiP's D²×D² propagator superoperator",
+                remedy="Reduce the device cutoffs, or set an excitation cutoff.",
+            )
+            generator = qutip.liouvillian(rhs, collapse_ops)
+            return MESolver(generator, options=options).run(qutip.qeye_like(generator), tlist).final_state.full()
+        space = rhs.dims[0]
+        if columns is None:
+            start = qutip.qeye(space)
+        else:
+            block = np.asarray(columns, dtype=complex)
+            start = Qobj(block, dims=[space, [block.shape[1]]])
+        return SESolver(rhs, options=options).run(start, tlist).final_state.full()
+
     def trajectory_view(
         self, native: Any, problem: Any, *, index: int | None, states: bool, deterministic: bool,
     ) -> tuple[Any, Any, Any]:

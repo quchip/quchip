@@ -16,6 +16,11 @@ New to quchip? Start with {doc}`your first chip <defining-and-inspecting-a-chip>
 - {doc}`What happens during a qubit measurement? <continuous-measurement>`:
   follow single trajectories, map their density, and condition on an endpoint.
 
+## Gates and circuits
+
+- {doc}`Gate sets and circuits <gate-sets>`:
+  calibrate native gates and compose circuits from their cached propagators.
+
 ## Microwave networks
 
 - {doc}`Readout and fridge wiring <steady-state-and-vna>`:
@@ -49,4 +54,5 @@ Gradients and parameter fitting <differentiability>
 Cookbook <../cookbook>
 SQA 2026 examples <from-sqa-2026>
 What happens during a qubit measurement? <continuous-measurement>
+Gate sets and circuits <gate-sets>
 ```

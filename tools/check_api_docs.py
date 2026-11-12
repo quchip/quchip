@@ -24,7 +24,7 @@ from sphinx.ext.napoleon.docstring import NumpyDocstring
 PUBLIC_MODULES = (
     "quchip", "quchip.analysis", "quchip.approximations", "quchip.backend",
     "quchip.chip", "quchip.control", "quchip.declarative", "quchip.devices",
-    "quchip.engine", "quchip.extensions", "quchip.inverse_design",
+    "quchip.engine", "quchip.extensions", "quchip.gateset", "quchip.inverse_design",
     "quchip.interop", "quchip.results", "quchip.utils", "quchip.viz",
 )
 RETURNED_TYPES = (
