@@ -101,7 +101,7 @@ stages.
 The filters have half-power edges at 4 and 8 GHz. The output filter's
 `thermal_occupation` declares a matched absorptive load. The input filter
 sees a vacuum source, with thermal attenuators downstream. The resonators'
-intrinsic loss baths are vacuum too.
+intrinsic losses also see vacuum.
 
 Connect the input chain to circulator port 1, the bus to port 2, and the receiver chain to port 3.
 Name the external network ports `drive` for the source and `readout` for the receiver. Each port
@@ -444,7 +444,7 @@ conserves the total excitation and has more than 64 product states, the
 solver keeps the states with at most `K` excitations and warns which `K` it
 kept. Sampling
 describes stationary Gaussian field moments. Colored thermal noise into the
-chip needs an explicit dynamical filter or bath model. This setup does not
+chip needs an explicit filter mode on the chip. This setup does not
 include amplifier saturation, finite reverse isolation, or reverse amplifier
 noise.
 
@@ -571,6 +571,73 @@ correlations with the devices need a field calculation or a detector calibration
 that includes them. In that case, use a calibrated
 `IQReadout(means, iq_covariance)` directly, and do not add the same apparatus
 noise again.
+
+## Repeat the line for more feedlines
+
+A chip with several feedlines uses one line design for all of them. Declare
+the line once, as a `PortNetwork` without quantum ports, and copy it into the
+fridge network with `include()`. This line also adds a pump tone through a
+−20 dB directional coupler.
+
+```python
+line = PortNetwork(label="readout_line")
+coupler = line.beam_splitter("coupler", eta=0.99)
+line_circulator = line.circulator("circ")
+line_hemt = line.amplifier("hemt", gain_db=40, added_noise=8.0140842782029)
+line.connect(coupler.output_terminal("left"), line_circulator.input_terminal("1"))
+line.link(line_circulator.port(3), line_hemt)
+line.expose("drive", input=coupler.input_terminal("left"), output=line_circulator.output_terminal("1"))
+line.expose("pump", input=coupler.input_terminal("right"), output=coupler.output_terminal("right"))
+line.expose("chip", at=line_circulator.port(2))
+line.expose("readout", at=line_hemt.port(2))
+```
+
+A directional coupler is a four-port part. `beam_splitter()` models it for
+the fields that travel toward the chip: `eta=0.99` passes 99% of the drive
+line's power and couples 1% of the pump's power into the line. The other 99%
+of the pump leaves through the coupler's fourth port, which the `pump` plane
+gives as its outgoing field. The reverse field from circulator port 1 returns
+to the `drive` plane without the 99/1 split. Here that field is vacuum,
+because the setup has no reverse amplifier noise, so the split would change
+nothing. Directional parts have named terminals, `left` and
+`right`, so wire them one direction at a time with `connect()` and
+`expose(input=..., output=...)`.
+
+Each copy of the line gets a prefix. `copy.port()` gives a plane that the
+template exposed with `at=`, and `copy.input()` and `copy.output()` give the
+two terminals of the other planes.
+
+```python
+feedlines = PortNetwork(label="feedlines")
+feedline_modes = [Resonator(freq=f, levels=2, internal_quality_factor=20_000, label=name)
+                  for f, name in ((6.3, "a"), (6.7, "b"))]
+for mode in feedline_modes:
+    copy = feedlines.include(line, prefix=mode.label)
+    coupling = feedlines.port(f"{mode.label}_coupler", target=mode, external_quality_factor=2_000)
+    feedlines.link(coupling, copy.port("chip"))
+    for plane in ("drive", "pump"):
+        feedlines.expose(f"{mode.label}_{plane}", input=copy.input(plane), output=copy.output(plane))
+    feedlines.expose(f"{mode.label}_readout", at=copy.port("readout"))
+
+two_feedlines = Chip(feedline_modes, port_network=feedlines, frame="rotating")
+lines = VNA(two_feedlines).sweep([6.3, 6.7])
+pump_db = 20 * np.log10(np.abs(lines.s("a_readout", "a_pump") / lines.s("a_readout", "a_drive")))
+print(f"RESULT pump_relative_to_drive_dB={pump_db[0]:.4f}")
+print(f"RESULT crosstalk_between_feedlines={np.max(np.abs(lines.s('b_readout', 'a_drive'))):.1f}")
+```
+
+Output:
+
+```text
+RESULT pump_relative_to_drive_dB=-19.9564
+RESULT crosstalk_between_feedlines=0.0
+```
+
+For equal input powers, the pump arrives at `10 log10(0.01/0.99) = −19.96` dB relative to the drive. The two copies
+share no component, so a drive on one feedline does not reach the other. Their
+parameters have separate paths, such as `network.component.a/hemt.gain_db`
+and `network.component.b/hemt.gain_db`. The template does not change, so you
+can include it again under another prefix.
 
 For lifetime design, continue with [Purcell filtering and T1](slh-networks.md).
 For pulse shaping and cavity depletion, see [pulses, leakage, and readout](dynamics-pulses-and-readout.md#empty-the-resonator-after-readout).

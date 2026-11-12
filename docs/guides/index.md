@@ -6,6 +6,8 @@ microwave measurements, reductions and fitting.
 New to quchip? Start with {doc}`your first chip <defining-and-inspecting-a-chip>`.
 
 - {doc}`Extending quchip <../extensions>`: declare your own operators, models and controls.
+- {doc}`Import circuits from scqubits <scqubits>`: turn scqubits devices and
+  coupled systems into quchip models, and export them back.
 
 ## Spectra and dynamics
 
@@ -25,6 +27,8 @@ New to quchip? Start with {doc}`your first chip <defining-and-inspecting-a-chip>
 
 - {doc}`Readout and fridge wiring <steady-state-and-vna>`:
   calculate VNA traces and qubit readout with receiver noise.
+- {doc}`Resonance fluorescence and photon correlations <resonance-fluorescence>`:
+  read the output spectrum, `g1` and `g2` of a driven emitter.
 
 ## Model reduction and fitting
 
@@ -46,9 +50,11 @@ For API choices and common pitfalls, see the {doc}`cookbook <../cookbook>`.
 :maxdepth: 1
 
 Extending quchip <../extensions>
+Import circuits from scqubits <scqubits>
 Spectra and parameter sweeps <statics-and-parameter-studies>
 Pulses, leakage, and readout <dynamics-pulses-and-readout>
 Readout and fridge wiring <steady-state-and-vna>
+Resonance fluorescence and photon correlations <resonance-fluorescence>
 Model reduction <chip-transformations>
 Gradients and parameter fitting <differentiability>
 Cookbook <../cookbook>
