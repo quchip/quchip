@@ -41,7 +41,6 @@ jobs:
       JAX_COMPILATION_CACHE_DIR: ${{ github.workspace }}/.jax-cache
       JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS: "0"
       JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES: "-1"
-      JAX_COMPILATION_CACHE_MAX_SIZE: "500000000"
     steps:
       - name: Require a valid change classification
         env:
