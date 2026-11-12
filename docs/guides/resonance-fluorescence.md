@@ -149,12 +149,15 @@ sidebands. Right: `g2` from quchip and from the textbook formula.
 
 Many microwave experiments measure photon correlations with linear
 amplifiers. A 90° hybrid splits the field into two lines, each with its own
-amplifier. The two amplifiers add independent noise. This noise adds a
-background to the cross-correlation of the two lines, but it does not
-correlate them, so noise moments measured with the emitter off remove the
-background. The hybrid sends half of the power
-into each line, and vacuum enters its second input, so the cross-correlation
-is still the `g2` of the emitter.
+amplifier. The hybrid sends half of the power into each line, and vacuum
+enters its second input, so before the amplifiers the normalized
+cross-correlation of the two lines is still the `g2` of the emitter. The two
+amplifiers add independent noise, which adds backgrounds to the
+cross-correlation but does not correlate the lines. If the noise is stable
+and does not depend on the signal, the noise moments measured with the
+emitter off and the signal power in each line give these backgrounds. After
+their subtraction, the cross-correlation normalized by the signal powers
+recovers the `g2` of the emitter.
 
 ```python
 setup = PortNetwork(label="hbt")
