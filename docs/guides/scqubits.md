@@ -73,8 +73,10 @@ imported circuit energies, so quchip cannot differentiate through `EJ` or
 ## Export a model
 
 `to_scqubits()` exports a device or a chip. A `DuffingTransmon` becomes a
-`Transmon` whose `EJ` and `EC` reproduce its frequency and anharmonicity to
-within 1 kHz in the charge basis, with `ncut=30` by default.
+`Transmon` at the charge sweet spot, `ng=0`, whose `EJ` and `EC` reproduce its
+frequency and anharmonicity to within 1 kHz in the charge basis, with
+`ncut=30` by default. Only these two transitions are fitted: the higher
+transitions follow the charge model, not the Duffing ladder.
 
 ```python
 duffing = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=4, label="d")

@@ -70,7 +70,7 @@ Spectrum area / incoherent flux: 0.9997
 
 `total_fluctuation_spectrum` is the normally ordered spectrum in quanta, so
 its area is the incoherent photon flux. The ±30 MHz grid misses only the far
-tails of the sidebands. The coherent part has no width, so the result reports
+tails of the triplet. The coherent part has no width, so the result reports
 it as `signal_coherent_flux` instead.
 
 ## Measure photon antibunching
@@ -149,8 +149,10 @@ sidebands. Right: `g2` from quchip and from the textbook formula.
 
 Many microwave experiments measure photon correlations with linear
 amplifiers. A 90° hybrid splits the field into two lines, each with its own
-amplifier, and the cross-correlation of the two lines excludes the
-uncorrelated noise of the two amplifiers. The hybrid sends half of the power
+amplifier. The two amplifiers add independent noise. This noise adds a
+background to the cross-correlation of the two lines, but it does not
+correlate them, so noise moments measured with the emitter off remove the
+background. The hybrid sends half of the power
 into each line, and vacuum enters its second input, so the cross-correlation
 is still the `g2` of the emitter.
 

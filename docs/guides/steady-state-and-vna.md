@@ -597,7 +597,9 @@ the fields that travel toward the chip: `eta=0.99` passes 99% of the drive
 line's power and couples 1% of the pump's power into the line. The other 99%
 of the pump leaves through the coupler's fourth port, which the `pump` plane
 gives as its outgoing field. The reverse field from circulator port 1 returns
-to the `drive` plane. Directional parts have named terminals, `left` and
+to the `drive` plane without the 99/1 split. Here that field is vacuum,
+because the setup has no reverse amplifier noise, so the split would change
+nothing. Directional parts have named terminals, `left` and
 `right`, so wire them one direction at a time with `connect()` and
 `expose(input=..., output=...)`.
 
@@ -631,7 +633,7 @@ RESULT pump_relative_to_drive_dB=-19.9564
 RESULT crosstalk_between_feedlines=0.0
 ```
 
-The pump arrives at `10 log10(0.01/0.99) = −19.96` dB relative to the drive. The two copies
+For equal input powers, the pump arrives at `10 log10(0.01/0.99) = −19.96` dB relative to the drive. The two copies
 share no component, so a drive on one feedline does not reach the other. Their
 parameters have separate paths, such as `network.component.a/hemt.gain_db`
 and `network.component.b/hemt.gain_db`. The template does not change, so you
