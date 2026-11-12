@@ -250,11 +250,11 @@ def basis_row(p_index: Any, labels: list[str], dims: tuple[int, ...], excited_la
     raise KeyError(target)
 
 
-def bare_index(labels: list[str], dims: tuple[int, ...], excited_label: str | None = None) -> int:
-    """Full bare product-basis index for the ground state, or for the ``n=1`` occupation of one label."""
+def bare_index(labels: list[str], dims: tuple[int, ...], *excited_labels: str) -> int:
+    """Full bare product-basis index for the ground state, or for the ``n=1`` occupation of the given labels."""
     occ = [0] * len(dims)
-    if excited_label is not None:
-        occ[labels.index(excited_label)] = 1
+    for label in excited_labels:
+        occ[labels.index(label)] = 1
     return int(np.ravel_multi_index(tuple(occ), dims))
 
 

@@ -2379,24 +2379,79 @@ rates, in 1/ns. It includes `2π f_r/Q_internal` and thermal emission when
 configured. A ladder channel contributes `(nbar+1)/T1`, or `nbar+1` without a
 supplied `T1`. An external port is transformed separately and is absent from
 this diagnostic. Do not use it as a total linewidth or detected loss without
-checking the channels. For an untruncated harmonic thermal bath, the linewidth
-equals the downward minus the upward rate: `T1=1000 ns` and `nbar=0.5` give a
-downward rate of `0.0015/ns` but a linewidth of `0.001/ns`. An external-only
-port gives a nonzero linewidth even when the intrinsic diagnostic is zero.
-Truncated thermal spectra also require cutoff convergence.
+checking the channels. `analyze_dispersive_readout` takes the energy linewidth
+of the weak-probe pole instead (§10.2). For an untruncated harmonic thermal
+bath, the linewidth equals the downward minus the upward rate: `T1=1000 ns`
+and `nbar=0.5` give a downward rate of `0.0015/ns` but a linewidth of
+`0.001/ns`. An external-only port gives a nonzero linewidth even when the
+intrinsic diagnostic is zero. Truncated thermal spectra also require cutoff
+convergence.
 
 ### 10.2 Pointer states and readout figures of merit
 
-`analyze_dispersive_readout` assumes a linear cavity with coherent conditional
-steady states and vacuum energy-loss channels. `kappa` is the total energy
-linewidth, including observed and unobserved loss, and excludes pure
-dephasing. `kappa_detected` is the observed part, and `eta=efficiency` is the
-detector efficiency. The defaults `kappa_detected=None` and `efficiency=1` mean
-complete ideal collection.
+`analyze_dispersive_readout(chip, qubit, resonator, ...)` derives its inputs
+from the chip and evaluates closed-form steady-state figures of merit. It is a
+quick estimate from statics. `IQReadout.from_wiring` models the full wiring
+and receiver.
+
+The pulls come from the dressed spectrum of the chip's Hamiltonian
+approximation and finite basis:
+
+```text
+f_r|j = transition_frequency(resonator, 0, 1, when={qubit: j})
+chi = f_r|1 - f_r|0
+```
+
+Each pointer state uses the pull of its own level, so `levels>2` follows the
+derived multilevel pulls of the model instead of an assumed `j*chi`.
+
+`kappa` is the energy linewidth of the resonator pole of the weak-probe drift
+`A = -iH - C†C/2` of §8.1, with the qubit in level 0. The drift omits the
+broadening of the channels that conserve the excitation number, such as
+dephasing, which the vacuum route adds to `H`. `H` is then `H_0 - iK/2`, where
+`H_0` is Hermitian and the diagonal `K` holds the internal loss rates of the
+poles that `eliminate()` retained. A pole `λ` with right eigenvector `v` has
+
+```text
+kappa = -2 Re λ = (|C v|² + v†K v)/|v|²
+```
+
+so the loss channels, the rows `c_k` of `C`, and the retained internal losses
+partition `kappa`. The pole is the one nearest `f_r|0`, and the resonator must
+dominate its eigenvector. The linewidth of `VNA.resonances()` is the response
+linewidth, twice the decay rate of the amplitude coherence. It includes the
+broadening of the conserving channels, so it differs from the energy linewidth
+when they are present and equals it without them. At `Delta = 1 GHz`,
+`g = 50 MHz`, a resonator loss of `0.01/ns` and qubit dephasing
+`gamma_phi = 0.02/ns`, the response linewidth is `0.01007444/ns` and `kappa`
+is `0.00997519/ns`, the initial decay rate of the excitation number.
+
+`kappa_detected` is the part of `kappa` that reaches the exposed port
+`output`:
+
+```text
+kappa_detected = |t_out(f_d)|² |c_out v|²/|v|²
+f_d = f_r|0 - delta_r
+```
+
+Here `c_out` is the row of the port's output field, which includes the
+Markovian network up to the plane, and `t_out` is the outbound transfer of the
+plane's reference sections. The steady output oscillates at the drive
+frequency `f_d`, so a reference filter with a notch at `f_d` gives zero
+detected loss, also when it transmits at the pole frequency. Without
+attenuation between the port and the plane, a reflection port gives the
+dressed external rate, and each direction of a symmetric hanger gives half of
+it. Without `output`, `kappa_detected = kappa`, which means complete
+collection. `eta=efficiency` is the detector efficiency.
+
+The output path must be passive, with vacuum noise. An amplifier or a thermal
+load in its reference sections raises, because gain would multiply the signal
+while the SNR keeps the vacuum noise. `IQReadout.from_wiring` models the
+receiver chain.
 
 ```text
 delta_r = f_r|0 - f_drive                         [GHz]
-delta_j = 2pi*(delta_r + j*chi_eff)                [rad/ns]
+delta_j = 2pi*(delta_r + f_r|j - f_r|0)            [rad/ns]
 alpha_j = -i*eps/(kappa/2 + i*delta_j)
 nbar_j = |alpha_j|²
 sigma = 1/sqrt(2 eta kappa_detected tau)
@@ -2410,7 +2465,8 @@ detected loss or efficiency gives zero SNR and an assignment error of one half,
 while the pointer states and dephasing still use the total linewidth. Thermal
 input needs a different noise model.
 
-Give either `eps` in rad/ns or a nonnegative target `n_photons`:
+Give either `eps` in rad/ns, the drive of the resonator mode's amplitude, or a
+nonnegative target `n_photons`:
 
 ```text
 eps = sqrt(nbar_0*((kappa/2)²+delta_0²))
@@ -2421,16 +2477,33 @@ The second expression is the small-pull limit, and its resonant form follows
 [Gambetta et al.][gambetta]. The helper uses the full pointer detuning instead
 of this limit. [Krantz et al.][krantz], section V, reviews readout.
 
-`n_crit` optionally applies `chi_eff=chi/(1+nbar_0/n_crit)`. This is a
-phenomenological interpolation, not controlled strong-drive theory. `levels>2`
-assumes the linear pull `j*chi` and does not derive multilevel cavity
-frequencies. `kappa`, `tau` and a supplied `n_crit` must be positive, with at
-least two levels, `0<=kappa_detected<=kappa` and `0<=efficiency<=1`. Concrete
-invalid inputs raise, and traced callers must enforce the same domains.
+The pulls are zero-photon pulls. `nonlinearity` reports how they change with
+the photon number. For each pointer state, it takes the integer photon numbers
+`n` that hold all but `1e-3` of its Poisson distribution and computes
+`f_r|j(n) = transition_frequency(resonator, n, n+1, when={qubit: j})`. It
+reports the largest drift from `f_r|j(0)` in GHz and in units of the half
+width `kappa/4pi`, and the largest change of the pull `f_r|1(n)-f_r|0(n)`
+relative to `|chi|`. It has no pass threshold and does not certify validity.
+The upper state `|j, n+1>` mixes down to `|0, n+j+1>`, so each evaluated
+`(j, n)` needs at least `n+j+2` resonator levels. The diagnostic stays
+unchecked when the truncation is smaller, when the dressed labels cannot cover
+those `n`, and inside `jax.jit`. The cutoffs of the other devices still need
+their own convergence check.
 
-The calculation excludes ring-up transients and measurement-induced qubit T1.
-Its GHz-to-angular conversions occur at the helper boundary, separately from
-Hamiltonian assembly.
+The closed form assumes one isolated resonator mode, damped weakly compared
+with the mode spacings, and vacuum inputs. It also assumes negligible
+dephasing, one `kappa` and an output coupling that do not depend on the qubit
+state, and negligible ordinary, Purcell and measurement-induced qubit decay
+during the acquisition. The SNR and the assignment error compare levels 0 and
+1, also when `levels>2`. Ring-up transients are not modeled. The notes of the
+result list these assumptions.
+
+`tau` must be positive, with at least two levels and `0<=efficiency<=1`.
+Concrete invalid inputs raise, and traced callers must enforce the same
+domains. The pulls, `kappa` and the figures of merit stay differentiable under
+JAX on a fixed structure. `kappa_detected` with an `output` needs the pole's
+eigenvector, so a JAX derivative through it raises. The helper's GHz-to-angular
+conversions occur at its boundary, separately from Hamiltonian assembly.
 
 ### 10.3 The Schrieffer-Wolff route (`method="sw"`)
 

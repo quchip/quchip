@@ -8,8 +8,7 @@ cross_resonance
 dispersive_readout
     :func:`analyze_dispersive_readout` — closed-form steady-state readout
     figures of merit (pointer states, SNR, assignment error, measurement
-    dephasing) from the χ/κ that :func:`~quchip.chip.transformations.eliminate`
-    reports.
+    dephasing) from a chip's dressed pulls and resonator linewidth.
 effective_hamiltonian
     :func:`analyze_static_zz` — exact static ZZ between two devices plus its
     2nd-order SW virtual-pathway attribution. :func:`effective_hamiltonian` —

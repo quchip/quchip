@@ -70,6 +70,7 @@ def try_build_weak_probe_problem(
     frequencies: Any,
     *,
     plane_labels: tuple[str, ...],
+    conserving: bool = True,
 ) -> tuple[LinearResponseProblem, str] | None:
     """Return a compact problem for an infinitesimal probe and its route, or ``None``.
 
@@ -77,14 +78,17 @@ def try_build_weak_probe_problem(
     An excitation-conserving chip with a stationary vacuum is projected onto its
     vacuum and one-excitation states (``"vacuum_response"``). Both are exact for
     an infinitesimal probe. Only the harmonic route stays exact for a finite
-    probe or noisy inputs.
+    probe or noisy inputs. ``conserving=False`` omits the broadening of the
+    channels that conserve ``N``, such as dephasing, so the damping of the
+    drift is the energy loss alone. The harmonic route has no such channels.
     """
     problem = try_build_linear_response_problem(chip, frequencies, plane_labels=plane_labels)
     if problem is not None:
         return problem, "linear_response"
     try:
         with _backend_context(chip.backend):
-            return _build_vacuum_response_problem(chip, frequencies, plane_labels=plane_labels), "vacuum_response"
+            return _build_vacuum_response_problem(chip, frequencies, plane_labels=plane_labels,
+                                                  conserving=conserving), "vacuum_response"
     except _UnsupportedLinearModel:
         return None
 
@@ -94,6 +98,7 @@ def _build_vacuum_response_problem(
     frequencies: Any,
     *,
     plane_labels: tuple[str, ...],
+    conserving: bool = True,
 ) -> LinearResponseProblem:
     """Project an excitation-conserving chip onto its vacuum and one-excitation states.
 
@@ -103,8 +108,9 @@ def _build_vacuum_response_problem(
     stationary, and to first order in the probe the coherences ``|1_j><0|``
     evolve in the one-excitation block alone, whatever the anharmonicities,
     cross-Kerr terms or cutoffs. A conserving channel with ``L|0> = c|0>`` adds
-    ``c* L_1 - |c|²/2 - (L†L)_1 / 2`` to that block. Every block comes from the
-    terms' local operators, so the full product space is never formed.
+    ``c* L_1 - |c|²/2 - (L†L)_1 / 2`` to that block, unless ``conserving`` is
+    false. Every block comes from the terms' local operators, so the full
+    product space is never formed.
     """
     model = _sector_response_model(chip, plane_labels)
     sectors = model.sectors
@@ -116,18 +122,20 @@ def _build_vacuum_response_problem(
     block = TWO_PI * (xp.asarray(sectors.hamiltonian(1)) - xp.asarray(sectors.hamiltonian(0))[0, 0] * identity)
     rows = []
     for index in range(len(model.channels)):
-        shift = model.channel_block(index, 0, 0)[0, 0]
-        kept = model.channel_block(index, 1, 1)
-        block = block + 1j * (
-            xp.conj(shift) * kept - 0.5 * xp.abs(shift) ** 2 * identity - 0.5 * kept.conj().T @ kept
-        )
+        # A lowering channel has zero diagonal blocks, so this adds only the conserving channels.
+        if conserving:
+            shift = model.channel_block(index, 0, 0)[0, 0]
+            kept = model.channel_block(index, 1, 1)
+            block = block + 1j * (
+                xp.conj(shift) * kept - 0.5 * xp.abs(shift) ** 2 * identity - 0.5 * kept.conj().T @ kept
+            )
         rows.append(model.channel_block(index, 0, 1)[0])
     inbound, outbound = _reference_transfers(model.references, frequencies)
     problem = LinearResponseProblem(
         frequencies=frequencies,
         mode_labels=tuple(labels[index] for index in excited[order]),
         hamiltonian=block[np.ix_(order, order)],
-        couplings=xp.stack(rows)[:, order],
+        couplings=xp.stack(rows)[:, order] if rows else xp.zeros((0, order.size), dtype=complex),
         scattering=model.scattering,
         plane_indices=model.plane_indices,
         inbound_transfer=inbound,
@@ -277,7 +285,7 @@ def _with_mode_responses(problem: LinearResponseProblem, model: Any, order: Any)
     sectors = model.sectors
     chip, compiled = sectors.chip, sectors.network
     network = chip.port_network
-    modes = network._mode_responses
+    modes = () if network is None else network._mode_responses
     if not modes:
         return problem
     backend = chip.backend
@@ -346,6 +354,8 @@ def _reference_transfers(references: list[Any], frequencies: Any) -> tuple[Any, 
     values = xp.atleast_1d(xp.asarray(frequencies, dtype=float))
 
     def columns(runs: list[Any]) -> Any:
+        if not runs:
+            return xp.zeros((values.shape[0], 0), dtype=complex)
         return xp.stack([xp.broadcast_to(cw_transfer(run, values, xp), values.shape) for run in runs], axis=1)
 
     return (columns([reference.inbound for reference in references]),
