@@ -120,3 +120,32 @@ def test_valid_sw_jit_batched_values_and_derivatives():
     values, derivatives = jax.jit(jax.vmap(jax.value_and_grad(reduced_frequency)))(frequencies)
     np.testing.assert_allclose(values, frequencies + 0.02**2 / (frequencies - 5.0), atol=1e-12)
     np.testing.assert_allclose(derivatives, 1.0 - 0.02**2 / (frequencies - 5.0)**2, atol=1e-12)
+
+
+@pytest.mark.parametrize("basis", ["native", "eigen"])
+def test_effective_hamiltonian_is_the_dense_projection_in_the_energy_basis(basis):
+    """``P (H + ½[S, V]) P`` of a chip whose native solver basis is not its energy basis, and of one whose is."""
+    from quchip import Exact
+    from quchip.declarative import DeviceModel, Scalar, parameter
+
+    class TiltedMode(DeviceModel):
+        freq: Scalar = parameter(default=5.)
+
+        def local_hamiltonian(self, op, p):
+            return p.freq * op.n + .3 * op.sigma_x + .2 * op.sigma_y
+
+    q, r = TiltedMode(levels=3, label="q"), Resonator(freq=7., levels=4, label="r")
+    chip = Chip([q, r], [Capacitive(q, r, g=.05)], basis=basis, approximation=Exact())
+    h, labels, dims = bare_hamiltonian(chip)
+    h = np.asarray(h)
+    authored = np.asarray(chip.resolve(frame="lab").hamiltonian().matrix(backend=chip.backend))
+    np.testing.assert_allclose(np.linalg.eigvalsh(h), np.linalg.eigvalsh(authored), atol=1e-12)
+    # The tilted mode's local block is diagonal: its levels are the energy basis.
+    q_block = h[::dims[1], ::dims[1]]
+    np.testing.assert_allclose(q_block - np.diag(np.diag(q_block)), 0.0, atol=1e-12)
+
+    p_mask, _ = mode_blocks(dims, labels, "r")
+    s, _ = sylvester_generator(h, p_mask)
+    s, v, p = np.asarray(s), h - np.diag(np.diag(h)), np.flatnonzero(p_mask)
+    expected = (h + 0.5 * (s @ v - v @ s))[np.ix_(p, p)]
+    np.testing.assert_allclose(np.asarray(h_effective_second_order(h, s, p_mask)), expected, atol=1e-14)

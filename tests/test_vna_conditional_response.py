@@ -102,23 +102,48 @@ def test_nonconserving_model_and_pumps_are_rejected():
         vna.sweep([6.], when={"q": 1})
 
 
-def test_exact_qnd_model_matches_analytic_conditional_lorentzian():
-    """A stationary QND reference gives the exact shifted cavity pole and internal linewidth."""
+@pytest.mark.parametrize("backend", ["qutip", pytest.param("dynamiqs", marks=pytest.mark.optional_backend)])
+def test_exact_qnd_model_matches_analytic_conditional_lorentzian(backend):
+    """A stationary QND reference gives the exact shifted cavity pole and internal linewidth.
+
+    On dynamiqs, a derivative traced through the pull also matches the analytic
+    derivative and a central difference of concrete sweeps.
+    """
     from quchip import CrossKerr
 
+    if backend == "dynamiqs":
+        pytest.importorskip("dynamiqs")
     q = DuffingTransmon(freq=5., anharmonicity=-.25, levels=3, label="q", T2=100.)
     r = Resonator(freq=6., levels=3, label="r", internal_quality_factor=60000.)
     network = PortNetwork()
     network.port("p", target=r, rate=.01)
     chi = -.003
-    chip = Chip([q, r], [CrossKerr(q, r, chi=chi)], port_network=network, approximation=Exact())
+    chip = Chip([q, r], [CrossKerr(q, r, chi=chi, label="qr")], port_network=network, approximation=Exact(),
+                backend=backend)
     frequencies = np.array([5.99, 6. + chi, 6., 6.01])
     result = VNA(chip).sweep(frequencies, when={"q": 1})
     kappa = .01 + 2 * np.pi * 6 / 60000
-    expected = 1 - .01 / (kappa / 2 + 2j * np.pi * (frequencies - 6. - chi))
-    np.testing.assert_allclose(result.matrix[:, 0, 0], expected, rtol=1e-10, atol=1e-11)
+    detuning = kappa / 2 + 2j * np.pi * (frequencies - 6. - chi)
+    np.testing.assert_allclose(result.matrix[:, 0, 0], 1 - .01 / detuning, rtol=1e-10, atol=1e-11)
+    vacuum = VNA(chip).sweep(frequencies).matrix[:, 0, 0]
+    np.testing.assert_allclose(vacuum, 1 - .01 / (detuning + 2j * np.pi * chi), rtol=1e-10, atol=1e-11)
     assert result.diagnostics[0]["reference_escape_rate"] == pytest.approx(0., abs=1e-15)
     assert result.diagnostics[0]["reference_stationarity_residual"] == pytest.approx(0., abs=1e-15)
+    if backend == "dynamiqs":
+        import jax
+        import jax.numpy as jnp
+
+        def signal(pull):
+            value = VNA(chip.with_params({"qr.chi": pull})).sweep(frequencies, when={"q": 1}).matrix[:, 0, 0]
+            return jnp.stack((value.real, value.imag))
+
+        derivative = jax.jacfwd(signal)(chi)
+        derivative = derivative[0] + 1j * derivative[1]
+        np.testing.assert_allclose(derivative, -.01 * 2j * np.pi / detuning**2, rtol=1e-8)
+        step = 1e-7
+        difference = (signal(chi + step) - signal(chi - step)) / (2 * step)
+        # Truncation, of relative order (2π step / linewidth)², and round-off stay below 1e-6.
+        np.testing.assert_allclose(derivative, difference[0] + 1j * difference[1], rtol=1e-6)
 
 
 @pytest.mark.validation
@@ -223,6 +248,7 @@ def test_conditional_response_jit_gradient_matches_finite_difference(monkeypatch
     # Both backends solve the same blocks to a 1e-11 relative tolerance.
     for point in (parameters, np.array([.055, .0003])):
         np.testing.assert_allclose(compiled(point), signal(point, "qutip"), atol=1e-10)
+        np.testing.assert_allclose(signal(point), signal(point, "qutip"), atol=1e-10)
 
 
 @pytest.mark.optional_backend

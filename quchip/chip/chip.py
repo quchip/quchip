@@ -40,7 +40,7 @@ from quchip.engine.dressing import DressedResult
 from quchip.engine.frames import FramePlan, static_frame
 from quchip.utils.jax_utils import contains_tracer, maybe_concrete_scalar
 from quchip.utils.labeling import LabelKeyedDict, resolve_label
-from quchip.utils.values import TracedKey, scoped_entry, scoped_hit
+from quchip.utils.values import TracedKey, copy_value, scoped_entry, scoped_hit
 
 if TYPE_CHECKING:
     from quchip.chip.partition import PartitionResult
@@ -1756,9 +1756,6 @@ class Chip:
         bindings : mapping[str, Any]
             Fully qualified parameter paths and replacement values.
         """
-        from quchip.utils.values import copy_value
-
-        bindings = dict(bindings)
         targets = self._parameter_targets()
         unknown = set(bindings) - set(targets)
         if unknown:

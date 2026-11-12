@@ -254,8 +254,9 @@ def test_driven_gate_matches_an_independent_lab_frame_propagator():
 
 @pytest.mark.validation
 @pytest.mark.optional_backend
-def test_propagator_entry_gradient_matches_finite_differences():
-    """On dynamiqs, the derivative of a gate entry with respect to the pulse amplitude matches central differences."""
+@pytest.mark.parametrize("name, value", [("amplitude", 0.1), ("sigmas", 3.0)])
+def test_propagator_entry_gradient_matches_finite_differences(name, value):
+    """On dynamiqs, the derivative of a gate entry with respect to an envelope parameter matches central differences."""
     import jax
 
     chip = driven_transmon(levels=3)
@@ -263,13 +264,14 @@ def test_propagator_entry_gradient_matches_finite_differences():
                 control_equipment=chip.control_equipment)
     options = tight("dynamiqs")
 
-    def entry(amplitude):
+    def entry(x):
         sequence = QuantumSequence(chip)
-        sequence.schedule("xy", envelope=Gaussian(duration=6.0, sigmas=3.0, amplitude=amplitude), freq=5.0)
+        envelope = Gaussian(**{"duration": 6.0, "sigmas": 3.0, "amplitude": 0.1, name: x})
+        sequence.schedule("xy", envelope=envelope, freq=5.0)
         record = sequence.subspace_propagator("q", tlist=np.array([0.0, 6.0]), options=options)
         return record.matrix[1, 0].real
 
-    amplitude, step = 0.1, 1e-5
-    derivative = jax.grad(entry)(amplitude)
-    finite = (entry(amplitude + step) - entry(amplitude - step)) / (2 * step)
+    step = 1e-5
+    derivative = jax.grad(entry)(value)
+    finite = (entry(value + step) - entry(value - step)) / (2 * step)
     np.testing.assert_allclose(derivative, finite, rtol=1e-6, atol=1e-9)

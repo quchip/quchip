@@ -80,17 +80,15 @@ class _QuTiPBatchShared:
 
 
 @dataclass(frozen=True)
-class _QuTiPBatchTask:
-    """One compact point handed to a sequential or loky batch worker."""
+class _QuTiPBatchDynamics:
+    """The generator inputs of batch points that differ only in their initial state and ``e_ops``."""
 
     static_rhs: Qobj | None
     dynamic_qobjs: tuple[Qobj, ...]
     dynamic_signals: tuple[Any, ...]
-    initial_state: Any
     c_ops: tuple[Qobj, ...]
     solver_name: str
     options: dict[str, Any]
-    e_ops: tuple[Qobj, ...] | None
 
 
 def _coeff_callable(signal: Any) -> Callable[[float, Any], complex]:
@@ -468,17 +466,6 @@ def _summed_envelope_coefficient(envelopes: Sequence[Any], sample_tlist: Any,
     return total
 
 
-def _qobj_key(op: Qobj) -> tuple:
-    """Exact content key of an operator; equal operators stored differently may get different keys."""
-    payload: tuple[bytes, ...]
-    if isinstance(op.data, qutip.data.CSR):
-        matrix = op.data_as("csr_matrix")
-        payload = (matrix.indptr.tobytes(), matrix.indices.tobytes(), matrix.data.tobytes())
-    else:
-        payload = (np.ascontiguousarray(op.full()).tobytes(),)
-    return (repr(op.dims), type(op.data).__name__, *payload)
-
-
 def _assemble_qobjevo(static_rhs: Qobj | None, op_signal_pairs: Any, sample_tlist: Any,
                       rtol: float = _QUTIP_DEFAULT_RTOL, oversized: list[bool] | None = None) -> qutip.QobjEvo:
     """Combine an optional static operator and dynamic entries into a QobjEvo.
@@ -493,7 +480,7 @@ def _assemble_qobjevo(static_rhs: Qobj | None, op_signal_pairs: Any, sample_tlis
     groups: dict[tuple, tuple[Qobj, Any, list[Any]]] = {}
     for op, signal in op_signal_pairs:
         QuTiPBackend._validate_input(signal)
-        key = _qobj_key(op)
+        key = _canonical_key(op)
         for band in decompose_carrier_bands(signal):
             freq = maybe_concrete_scalar(band.freq)
             groups.setdefault((key, id(band) if freq is None else freq), (op, band.freq, []))[2].append(band.envelope)
@@ -506,12 +493,12 @@ def _assemble_qobjevo(static_rhs: Qobj | None, op_signal_pairs: Any, sample_tlis
 
 
 def _canonical_key(op: Qobj) -> tuple:
-    """Content key of an operator, equal for equal matrices however they are stored."""
+    """Content key of an operator, equal for equal matrices however stored and whatever the sign of a zero."""
     matrix = (op.data_as("csr_matrix") if isinstance(op.data, qutip.data.CSR) else sparse.csr_matrix(op.full())).copy()
     matrix.sum_duplicates()
     matrix.eliminate_zeros()
     return (repr(op.dims), matrix.indptr.astype(np.int64).tobytes(), matrix.indices.astype(np.int64).tobytes(),
-            matrix.data.tobytes())
+            (matrix.data + 0.0).tobytes())
 
 
 # Times at which a Hamiltonian's paired coefficients must be conjugate before
@@ -618,12 +605,11 @@ def _row_blocks(matrix: sparse.csr_matrix, count: int) -> list[tuple[int, int, s
     return [(int(lo), int(hi), matrix[lo:hi]) for lo, hi in zip(bounds[:-1], bounds[1:]) if hi > lo]
 
 
-def _share(pool: ThreadPoolExecutor, task: Callable[[Any], None], items: Sequence[Any]) -> None:
-    """Run ``task`` over ``items``: the first on this thread, the rest on ``pool``."""
+def _share(pool: ThreadPoolExecutor, task: Callable[[Any], Any], items: Sequence[Any]) -> list[Any]:
+    """Run ``task`` over ``items``, the first on this thread and the rest on ``pool``; return the results."""
     pending = [pool.submit(task, item) for item in items[1:]]
-    task(items[0])
-    for future in pending:
-        future.result()
+    first = task(items[0])
+    return [first, *(future.result() for future in pending)]
 
 
 def _product_pool(threads: int) -> ThreadPoolExecutor:
@@ -690,46 +676,44 @@ class _PackedLindbladian(qutip.QobjEvo):
         self._blocks = _row_blocks(stacked, threads)
         # The calling thread takes the first share of each step while the pool runs the rest.
         self._pool = _product_pool(len(self._blocks) - 1) if len(self._blocks) > 1 else None
-        bounds = np.linspace(0, 2 * packing.size, len(self._blocks) + 1).astype(int)
-        threaded_scaling = 2 * packing.size * len(dynamic) >= _THREADED_SCALING_MIN_ENTRIES
-        self._chunks = list(zip(bounds[:-1], bounds[1:])) if threaded_scaling else [(0, 2 * packing.size)]
+        span = 2 * packing.size
+        bounds = np.linspace(0, span, len(self._blocks) + 1).astype(int)
+        threaded_scaling = span * len(dynamic) >= _THREADED_SCALING_MIN_ENTRIES
+        self._chunks = list(zip(bounds[:-1], bounds[1:])) if threaded_scaling else [(0, span)]
         self._coefficients = [coefficient for _, coefficient in dynamic]
-        self._size = packing.size
-        self._inputs = np.empty(2 * len(superoperators) * packing.size, dtype=complex)
+        # The stacked input [x, conj(x), c_1·x, c_1·conj(x), ...]; row k of ``_scaled`` is c_k·[x, conj(x)].
+        self._inputs = np.empty(len(superoperators) * span, dtype=complex)
+        self._state, self._conjugate = self._inputs[:packing.size], self._inputs[packing.size:span]
+        self._scaled = self._inputs[span:].reshape(len(dynamic), span)
+        self._factors = np.empty((len(dynamic), 1), dtype=complex)
 
-    def _scale_inputs(self, factors: list[complex], chunk: tuple[int, int]) -> None:
-        """Write ``c_k·[x, conj(x)]`` over one chunk of every coefficient's input block."""
+    def _scale_inputs(self, chunk: tuple[int, int]) -> None:
         low, high = chunk
-        span = 2 * self._size
-        for k, factor in enumerate(factors, start=1):
-            np.multiply(self._inputs[low:high], factor, out=self._inputs[k * span + low:k * span + high])
+        np.multiply(self._inputs[low:high], self._factors, out=self._scaled[:, low:high])
 
-    def _apply(self, result: np.ndarray, added: np.ndarray | None, scale: complex,
-               block: tuple[int, int, sparse.csr_matrix]) -> None:
+    def _apply(self, added: np.ndarray | None, scale: complex, block: tuple[int, int, sparse.csr_matrix]) -> np.ndarray:
         low, high, rows = block
         product = rows @ self._inputs
         if scale != 1:
             product *= scale
         if added is not None:
             product += added[low:high]
-        result[low:high] = product
+        return product
 
     def matmul_data(self, t: Any, state: Any, out: Any = None, scale: complex = 1) -> Any:
-        size, inputs = self._size, self._inputs
-        x = (state.as_ndarray() if isinstance(state, qutip.data.Dense) else state.to_array()).reshape(-1)
-        inputs[:size] = x
-        np.conjugate(x, out=inputs[size:2 * size])
-        factors = [coefficient(t) for coefficient in self._coefficients]
+        x = state.as_ndarray() if isinstance(state, qutip.data.Dense) else state.to_array()
+        self._state[:] = x.reshape(-1)
+        np.conjugate(self._state, out=self._conjugate)
+        self._factors[:, 0] = [coefficient(t) for coefficient in self._coefficients]
         added = None
         if out is not None:
             added = (out.as_ndarray() if isinstance(out, qutip.data.Dense) else out.to_array()).reshape(-1)
-        result = np.empty(size, dtype=complex)
         if self._pool is None:
-            self._scale_inputs(factors, (0, 2 * size))
-            self._apply(result, added, scale, self._blocks[0])
+            self._scale_inputs(self._chunks[0])
+            result = self._apply(added, scale, self._blocks[0])
         else:
-            _share(self._pool, partial(self._scale_inputs, factors), self._chunks)
-            _share(self._pool, partial(self._apply, result, added, scale), self._blocks)
+            _share(self._pool, self._scale_inputs, self._chunks)
+            result = np.concatenate(_share(self._pool, partial(self._apply, added, scale), self._blocks))
         return qutip.data.Dense(result.reshape(-1, 1), copy=False)
 
 
@@ -782,7 +766,7 @@ def _annihilates(liouvillian: sparse.csr_matrix, state: Any) -> bool:
     size = math.isqrt(liouvillian.shape[0])
     if not isinstance(state, Qobj) or not state.isoper or state.shape != (size, size):
         return False
-    vector = np.asarray(qutip.operator_to_vector(state).full(), dtype=complex).reshape(-1)
+    vector = state.full().reshape(-1, order="F")
     scale = float(abs(liouvillian).sum(axis=0).max()) * float(np.linalg.norm(vector))
     return bool(np.linalg.norm(liouvillian @ vector) <= _STATIONARY_REUSE_EPS * np.finfo(float).eps * scale)
 
@@ -820,11 +804,18 @@ def _direct_steady_state(liouvillian: sparse.csr_matrix, dims: Sequence[int]) ->
     trace = sparse.csr_matrix(
         (np.full(n, weight, dtype=complex), (np.zeros(n, dtype=int), np.arange(0, size, n + 1))), shape=(size, size),
     )
-    target = np.zeros(size, dtype=complex)
-    target[0] = weight
     constrained = (liouvillian + trace).tocsr()
-    _require_lu_memory(constrained)
-    vector = sparse.linalg.spsolve(constrained, target)
+    # Only the trace row's component (for a conserving chip, the elements of zero excitation difference) has a
+    # nonzero right-hand side. Others solve to zero, and a transposed one holds the conjugate matrix: solving one
+    # of each pair finds a singular one, and spsolve reports it, filling the whole state with NaN.
+    count, labels = sparse.csgraph.connected_components(abs(constrained), directed=False)  # abs keeps imaginary edges
+    transposed = labels[np.arange(size) % n * n + np.arange(size) // n]
+    partner = np.empty(count, dtype=labels.dtype)
+    partner[labels] = transposed
+    kept = labels <= partner[labels] if np.array_equal(partner[labels], transposed) else np.full(size, True)
+    _require_lu_memory(block := constrained[kept][:, kept])
+    vector = np.zeros(size, dtype=complex)
+    vector[kept] = sparse.linalg.spsolve(block, np.where(np.arange(size) == 0, weight, 0j)[kept])
     rho = vector.reshape(n, n, order="F")
     return Qobj(0.5 * (rho + rho.conj().T), dims=[list(dims), list(dims)], isherm=True)
 
@@ -1331,9 +1322,7 @@ class QuTiPBackend(Backend):
         e_ops: list[Operator] | None = None,
         options: dict[str, Any] | None = None,
     ) -> SolverResult:
-        runner = SESolver(self._coerce_solver_rhs(H), options=self._runner_options(options))
-        result = runner.run(psi0, tlist, e_ops=e_ops)
-        return self._wrap_result(result, solver="sesolve", extra_stats=self._solver_stats(runner))
+        return self._initial_value_solver("sesolve", H, tlist, None, options)(psi0, e_ops)
 
     def mesolve(
         self,
@@ -1344,25 +1333,39 @@ class QuTiPBackend(Backend):
         e_ops: list[Operator] | None = None,
         options: dict[str, Any] | None = None,
     ) -> SolverResult:
+        return self._initial_value_solver("mesolve", H, tlist, c_ops, options)(rho0, e_ops)
+
+    def _initial_value_solver(
+        self, solver: str, H: Any, tlist: Any, c_ops: list[Operator] | None, options: dict[str, Any] | None,
+    ) -> Callable[[State, list[Operator] | None], SolverResult]:
+        """Build a generator once; the returned function solves it from an initial state with ``e_ops``."""
         rhs = self._coerce_solver_rhs(H)
-        _require_superoperator_memory(
-            rhs, c_ops or [], task="QuTiP mesolve's D²×D² Liouvillian",
-            remedy="Use backend='dynamiqs', whose mesolve applies the Lindblad generator without "
-                   "forming it, or reduce the device cutoffs.",
-        )
         options = self._runner_options(options)
-        lifted = None if options.get("matrix_form") else _lindblad_generator(rhs, c_ops or [], tlist)
-        if lifted is None:
-            runner = MESolver(rhs, c_ops, options=options)
-        else:
-            # A superoperator collapse term joins the generator as its constant part.
-            generator, constant = lifted
-            if _packs_hermitian_state(rho0, options):
-                runner = _HermitianMESolver(generator, constant, options=options)
+        if solver == "mesolve":
+            _require_superoperator_memory(
+                rhs, c_ops or [], task="QuTiP mesolve's D²×D² Liouvillian",
+                remedy="Use backend='dynamiqs', whose mesolve applies the Lindblad generator without "
+                       "forming it, or reduce the device cutoffs.",
+            )
+        lifted = (None if solver == "sesolve" or options.get("matrix_form")
+                  else _lindblad_generator(rhs, c_ops or [], tlist))
+
+        def solve(state: State, e_ops: list[Operator] | None) -> SolverResult:
+            if solver == "sesolve":
+                runner = SESolver(rhs, options=options)
+            elif lifted is None:
+                runner = MESolver(rhs, c_ops, options=options)
             else:
-                runner = MESolver(generator, [constant], options=options)
-        result = runner.run(rho0, tlist, e_ops=e_ops)
-        return self._wrap_result(result, solver="mesolve", extra_stats=self._solver_stats(runner))
+                # A superoperator collapse term joins the generator as its constant part. MESolver
+                # adds it to a superoperator generator in place, so each runner takes a copy.
+                generator, constant = lifted[0].copy(), lifted[1]
+                packed = _packs_hermitian_state(state, options)
+                runner = (_HermitianMESolver(generator, constant, options=options) if packed
+                          else MESolver(generator, [constant], options=options))
+            result = runner.run(state, tlist, e_ops=e_ops)
+            return self._wrap_result(result, solver=solver, extra_stats=self._solver_stats(runner))
+
+        return solve
 
     def _stationary_liouvillian(self, engine_result: Any) -> Qobj:
         """Lower one static engine description to QuTiP's native stationary system."""
@@ -1434,7 +1437,7 @@ class QuTiPBackend(Backend):
             if state is None:
                 state = qutip.steadystate(liouvillian, method=method, solver=solver, **options)
 
-        state_vector = np.asarray(qutip.operator_to_vector(state).full(), dtype=complex).reshape(-1)
+        state_vector = state.full().reshape(-1, order="F")
         residual = float(np.linalg.norm(sparse_liouvillian @ state_vector))
         dimension = state.shape[0]
         nullity = None
@@ -1504,13 +1507,7 @@ class QuTiPBackend(Backend):
         native_sources = [(label, self.from_canonical_operator(operator)) for label, operator in sources]
         dims = native_sources[0][1].dims
         dimension = math.prod(engine_result.dims)
-        targets = np.stack(
-            [
-                np.asarray(qutip.operator_to_vector(operator).full(), dtype=complex).reshape(-1)
-                for _, operator in native_sources
-            ],
-            axis=1,
-        )
+        targets = np.stack([operator.full().reshape(-1, order="F") for _, operator in native_sources], axis=1)
         targets[-1, :] = 0.0
         size = matrix.shape[0]
         keep = sparse.diags([1.0] * (size - 1) + [0.0], format="csr", dtype=complex)
@@ -1554,9 +1551,7 @@ class QuTiPBackend(Backend):
         liouvillian = self.prepare_stationary(engine_result, prepared=prepared).liouvillian
         matrix = self._scipy_liouvillian(liouvillian)
         initial_operator = self.from_canonical_operator(initial)
-        initial_vector = np.asarray(
-            qutip.operator_to_vector(initial_operator).full(), dtype=complex
-        ).reshape(-1)
+        initial_vector = initial_operator.full().reshape(-1, order="F")
         dimension = initial_operator.shape[0]
         native_observables = tuple(
             (label, self.from_canonical_operator(operator))
@@ -1828,57 +1823,45 @@ class QuTiPBackend(Backend):
         assert isinstance(shared, _QuTiPBatchShared)
         sample_tlist = shared.sample_tlist
 
-        tasks: list[_QuTiPBatchTask] = []
+        # Points that share operators, signals, collapse terms and options share one generator.
+        groups: dict[tuple, _QuTiPBatchDynamics] = {}
+        # One point: its generator inputs, initial state and e_ops.
+        tasks: list[tuple[_QuTiPBatchDynamics, Any, list[Qobj] | None]] = []
         for index, problem in enumerate(batch.problems):
             engine_result = problem.engine_result
-            c_ops = self._collapse_operators(engine_result)
             solver_name = problem.solver_name(self)
-            opts = self._resolve_problem_options(
-                problem,
-                metadata=engine_result.metadata,
-                tlist=tlist_arr,
-                solver_name=solver_name,
-            )
-            tasks.append(
-                _QuTiPBatchTask(
-                    static_rhs=shared.static_rhs[index],
-                    dynamic_qobjs=shared.dynamic_qobjs[index],
-                    dynamic_signals=shared.dynamic_signals[index],
-                    initial_state=self.coerce_state(
-                        problem.initial_state,
-                        dims=problem.engine_result.dims,
-                    ),
-                    c_ops=tuple(c_ops),
-                    solver_name=solver_name,
-                    options=dict(opts),
-                    e_ops=(tuple(problem.e_ops) if isinstance(problem.e_ops, list) else None),
-                )
-            )
+            opts = dict(self._resolve_problem_options(problem, metadata=engine_result.metadata, tlist=tlist_arr,
+                                                      solver_name=solver_name))
+            key = (id(shared.static_rhs[index]), tuple(map(id, shared.dynamic_qobjs[index])),
+                   tuple(map(id, shared.dynamic_signals[index])), tuple(map(id, engine_result.collapse_terms)),
+                   solver_name, repr(opts))
+            if key not in groups:
+                groups[key] = _QuTiPBatchDynamics(
+                    shared.static_rhs[index], shared.dynamic_qobjs[index], shared.dynamic_signals[index],
+                    tuple(self._collapse_operators(engine_result)), solver_name, opts)
+            initial_state = self.coerce_state(problem.initial_state, dims=engine_result.dims)
+            tasks.append((groups[key], initial_state, list(problem.e_ops) if isinstance(problem.e_ops, list) else None))
 
         # Workers do not report warnings, so the main process names the windows that use callables.
         # The points of one batch share their options.
-        if _oversized_windows([signal.signal for task in tasks for signal in task.dynamic_signals],
-                              sample_tlist, _task_rtol(tasks[0])):
+        if _oversized_windows([signal.signal for group in groups.values() for signal in group.dynamic_signals],
+                              sample_tlist, _task_rtol(tasks[0][0])):
             _warn_callable_windows()
 
-        def build_and_solve(task: _QuTiPBatchTask) -> SolverResult:
-            op_signal_pairs = (
-                (operator, signal.signal)
-                for operator, signal in zip(task.dynamic_qobjs, task.dynamic_signals)
-            )
-            rhs = _assemble_qobjevo(task.static_rhs, op_signal_pairs, sample_tlist, _task_rtol(task))
-            kwargs = self._element_solver_kwargs(
-                task.solver_name,
-                rhs,
-                task.initial_state,
-                tlist_arr,
-                e_ops=list(task.e_ops) if task.e_ops is not None else None,
-                c_ops=list(task.c_ops),
-                options=task.options,
-            )
-            return getattr(self, task.solver_name)(**kwargs)
+        # A sequential batch builds each group's generator once, and a worker builds it for each of its points.
+        built: list[Any] = [None, None]
 
-        reference = tasks[0]
+        def build_and_solve(task: tuple[_QuTiPBatchDynamics, Any, list[Qobj] | None]) -> SolverResult:
+            group, initial_state, e_ops = task
+            if built[0] is not group:
+                signals = (signal.signal for signal in group.dynamic_signals)
+                rhs = _assemble_qobjevo(group.static_rhs, zip(group.dynamic_qobjs, signals), sample_tlist,
+                                        _task_rtol(group))
+                built[:] = group, self._initial_value_solver(group.solver_name, rhs, tlist_arr,
+                                                             list(group.c_ops) or None, group.options)
+            return built[1](initial_state, None if e_ops is None else list(e_ops))
+
+        reference = tasks[0][0]
         operators = ([op for op in (reference.static_rhs, *reference.dynamic_qobjs) if op is not None],
                      reference.c_ops)
         return self._parallel_map(

@@ -153,3 +153,27 @@ def test_matrix_contribution_declares_excitation_changes_without_changing_its_va
     assert declared_excitation_changes(plain) is None
     assert declared_excitation_changes(PhysicsExpr.literal(1.0)) is None
     assert jnp.array_equal(materialize_array(declared), materialize_array(plain))
+
+
+@pytest.mark.parametrize("dim", [3, 8, 40])
+def test_authored_entry_support_of_products_matches_brute_force(dim):
+    """The support of authored products and sums equals an entry-by-entry reference, empty rows included."""
+    import numpy as np
+
+    from quchip.declarative.expr import _authored_entry_support
+
+    rng = np.random.default_rng(dim)
+    sa, sb, sc = (rng.random((dim, dim)) < density for density in (0.1, 0.3, 0.7))
+    sa[rng.integers(dim), :] = sb[:, rng.integers(dim)] = False
+    a, b, c = (
+        PhysicsExpr.from_matrix(np.where(s, rng.standard_normal((dim, dim)), 0.0), labels=("q",), dims=(dim,))
+        for s in (sa, sb, sc)
+    )
+
+    def product(x, y):
+        return np.array([[any(x[i, k] and y[k, j] for k in range(dim)) for j in range(dim)] for i in range(dim)])
+
+    np.testing.assert_array_equal(_authored_entry_support(a @ b), product(sa, sb))
+    np.testing.assert_array_equal(
+        _authored_entry_support(a @ b @ c + 2.0 * c @ a), product(product(sa, sb), sc) | product(sc, sa)
+    )
