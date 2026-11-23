@@ -36,6 +36,8 @@ result = sequence.simulate(
 print(f"Final excited-state population: {result.population(q, 1)[-1]:.3f}")
 ```
 
+Output:
+
 ```text
 Final excited-state population: 0.745
 ```
@@ -47,5 +49,5 @@ Read the |2⟩ population with `result.population(q, 2)`.
 For this pulse, five levels instead of four change the final |1⟩ population by
 less than one part in a million.
 
-Continue with {doc}`pulses, leakage, and readout <../guides/dynamics-pulses-and-readout>`
+Continue with {doc}`pulses, leakage, and readout <../guides/pulses-and-readout>`
 to compare short and long pulses on a coupled transmon–resonator model.

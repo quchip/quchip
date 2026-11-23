@@ -742,5 +742,5 @@ parameters have separate paths, such as `network.component.a/hemt.gain_db`
 and `network.component.b/hemt.gain_db`. The template does not change, so you
 can include it again under another prefix.
 
-For lifetime design, continue with [Purcell filtering and T1](slh-networks.md).
-For pulse shaping and cavity depletion, see [pulses, leakage, and readout](dynamics-pulses-and-readout.md#empty-the-resonator-after-readout).
+For lifetime design, continue with [Purcell filtering and T1](../studies/purcell-filter.md).
+For pulse shaping and cavity depletion, see [resonator depletion with CLEAR](../studies/resonator-depletion.md).

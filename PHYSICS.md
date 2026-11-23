@@ -3408,7 +3408,7 @@ weight `w_r`. An ensemble mean is `Σ_r w_r x_r`, plus the no-click run with
 solves that run apart. `full` marks a run that filled its dynamiqs `nmaxclick`
 buffer, whose evolution can stop early. `run_expect(key)` gives the
 expectation of each run without weights. See
-[the solver guide](docs/guides/choosing-a-backend.md) and
+[the solver guide](docs/reference/backends-and-solvers.md) and
 [Wiseman and Milburn, chapter 4][wiseman].
 
 

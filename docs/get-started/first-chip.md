@@ -176,6 +176,6 @@ solver evaluated. `fit.history_params` and `fit.history_residuals` hold the
 parameters and the target residuals in GHz at the same points, so you can
 follow a fit without running it again.
 
-Continue with [spectra and parameter sweeps](statics-and-parameter-studies.md)
+Continue with [spectra and parameter sweeps](../guides/spectra-and-sweeps.md)
 to sweep the coupled spectrum. For imported or custom models, see
-[scqubits interoperability](../api.md) and [extensions](../extensions.md).
+[scqubits interoperability](../guides/scqubits.md) and [extensions](../extensions.md).

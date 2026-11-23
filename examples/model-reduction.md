@@ -17,6 +17,8 @@ jupyter:
 
 # Model reduction
 
+<!-- notebook-download -->
+
 Can a smaller model reproduce the same pulse experiment? Drive the end of a
 four-transmon chain, keep its nearest neighbour, and compare the reduced
 model with the full chip. Later sections remove a readout from its feedline,
@@ -71,9 +73,13 @@ patch = sequence.active_patch(hops=1, method="sw")
 
 ```python
 import shutil
+from pathlib import Path
 import matplotlib.pyplot as plt
 
-plt.style.use("../docs/_static/quchip.mplstyle")
+# In a quchip checkout, use the documentation style and save the figures there.
+docs = Path("../docs")
+if docs.is_dir():
+    plt.style.use(docs / "_static/quchip.mplstyle")
 plt.rcParams["text.usetex"] = bool(shutil.which("latex"))
 
 topology_figure, topology_axes = plt.subplots(2, 1, figsize=(7.2, 3.0), layout="constrained")
@@ -99,7 +105,8 @@ for axis, model, title in zip(
     axis.set_title(title, loc="left")
     axis.axis("off")
 
-topology_figure.savefig("../docs/images/active_patch_topology.svg")
+if docs.is_dir():
+    topology_figure.savefig(docs / "images/active_patch_topology.svg")
 plt.show()
 ```
 
@@ -164,9 +171,8 @@ residual_axis.set(
     ylim=(1.0e-10, 2.0e-2),
 )
 
-figure_path = "../docs/images/reduce_and_replay.svg"
-
-figure.savefig(figure_path)
+if docs.is_dir():
+    figure.savefig(docs / "images/reduce_and_replay.svg")
 plt.show()
 ```
 
@@ -275,56 +281,27 @@ multilevel and finite-pulse effects. When you change the experiment, increase
 `hops` to keep more neighbours and compare again.
 
 <details>
-<summary>Numerical checks and record</summary>
+<summary>Numerical checks</summary>
 
 ```python
-import json
-
-full_dimension = int(np.prod(chip.dims))
-reduced_dimension = int(np.prod(patch.chip.dims))
-same_schedule = sequence.settings["entries"] == patch.sequence.settings["entries"]
-
 validity_records = [
     record
     for eliminated_device in patch.validity.values()
     for record in eliminated_device.values()
 ]
-max_g_over_delta = max(float(record["g_over_delta"]) for record in validity_records)
-minimum_block_gap = min(float(record["min_block_gap"]) for record in validity_records)
-all_folds_valid = all(bool(record["is_valid"]) for record in validity_records)
-
 boundary_detuning = abs(float(chip.freq("q2")) - float(chip.freq("q1")))
-boundary_ratio = coupling_strength / boundary_detuning
-residual_tolerance = 5.0 * boundary_ratio**2
+residual_tolerance = 5.0 * (coupling_strength / boundary_detuning) ** 2
 maximum_residual = float(np.max(population_residual))
 
-if not all_folds_valid:
-    raise RuntimeError("The active patch contains an invalid elimination step.")
-if maximum_residual >= residual_tolerance:
-    raise RuntimeError("The reduced dynamics exceed the validity-derived tolerance.")
-if not same_schedule:
-    raise RuntimeError("The reduced sequence does not preserve the scheduled entries.")
-if tuple(device.label for device in chip.devices) != ("q0", "q1", "q2", "q3"):
-    raise RuntimeError("active_patch() mutated the original chip.")
+assert all(bool(record["is_valid"]) for record in validity_records)
+assert sequence.settings["entries"] == patch.sequence.settings["entries"]
+assert tuple(device.label for device in chip.devices) == ("q0", "q1", "q2", "q3")
+assert maximum_residual < residual_tolerance
 
-reduction_receipt = {
-    "active_labels": list(patch.active_labels),
-    "all_folds_valid": all_folds_valid,
-    "eliminated_labels": list(patch.eliminated_labels),
-    "figure": figure_path,
-    "full_dimension": full_dimension,
-    "maximum_population_residual": maximum_residual,
-    "maximum_g_over_delta": max_g_over_delta,
-    "minimum_block_gap_ghz": minimum_block_gap,
-    "original_chip_unchanged": tuple(device.label for device in chip.devices) == ("q0", "q1", "q2", "q3"),
-    "peak_full_population": float(np.max(full_population)),
-    "reduced_dimension": reduced_dimension,
-    "reduction_method": "sw",
-    "residual_tolerance": residual_tolerance,
-    "same_schedule": same_schedule,
-}
-
-print(f"RESULT reduction={json.dumps(reduction_receipt, sort_keys=True, separators=(',', ':'))}")
+print(f"Kept {list(patch.active_labels)}, removed {list(patch.eliminated_labels)}: "
+      f"{int(np.prod(chip.dims))} -> {int(np.prod(patch.chip.dims))} states")
+print(f"Largest g/Delta: {max(float(record['g_over_delta']) for record in validity_records):.3f}")
+print(f"Largest population difference: {maximum_residual:.1e} (tolerance {residual_tolerance:.1e})")
 ```
 
 <!-- executed-output:start -->
@@ -332,7 +309,9 @@ print(f"RESULT reduction={json.dumps(reduction_receipt, sort_keys=True, separato
 Output:
 
 ```text
-RESULT reduction={"active_labels":["q0","q1"],"all_folds_valid":true,"eliminated_labels":["q3","q2"],"figure":"../docs/images/reduce_and_replay.svg","full_dimension":81,"maximum_g_over_delta":0.03432606492529982,"maximum_population_residual":3.7142772963960624e-06,"minimum_block_gap_ghz":0.3495885714285709,"original_chip_unchanged":true,"peak_full_population":0.7480171143273022,"reduced_dimension":9,"reduction_method":"sw","residual_tolerance":0.0058775348055535755,"same_schedule":true}
+Kept ['q0', 'q1'], removed ['q3', 'q2']: 81 -> 9 states
+Largest g/Delta: 0.034
+Largest population difference: 3.7e-06 (tolerance 5.9e-03)
 ```
 
 <!-- executed-output:end -->
@@ -673,7 +652,7 @@ assert cutoff_errors[2] < 1e-5
 ## Other changes to the model
 
 Use `with_params()` to change numerical parameters, as the [spectrum
-guide](statics-and-parameter-studies.md) does during a sweep. `chip.partition()`
+guide](spectra-and-sweeps.md) does during a sweep. `chip.partition()`
 separates independent components exactly, but an active patch approximates
 coupled spectators. If shared Hamiltonian terms, loss, or drive crosstalk keep
 components in a joint solve, inspect `partition.notes`.

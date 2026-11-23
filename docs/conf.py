@@ -23,6 +23,7 @@ extensions = [
     "sphinx_copybutton",
     "themed_images",
     "section_navigation",
+    "page_redirects",
 ]
 
 templates_path = ["_templates"]
@@ -61,6 +62,21 @@ myst_heading_anchors = 4
 # Attribute sections use field lists so autodoc indexes each attribute once.
 # Existing source-link and docstring cross-reference allowances remain below.
 suppress_warnings = ["docutils", "ref.python", "myst.xref_missing", "ref.ref", "ref.footnote"]
+
+# -- Moved pages -------------------------------------------------------------
+
+# The old address of each moved page keeps working through a redirect page.
+page_redirects = {
+    "examples/hello-chip": "guides/pulses-and-readout",
+    "guides/chip-transformations": "guides/model-reduction",
+    "guides/choosing-a-backend": "reference/backends-and-solvers",
+    "guides/continuous-measurement": "studies/continuous-measurement",
+    "guides/defining-and-inspecting-a-chip": "get-started/first-chip",
+    "guides/differentiability": "guides/gradients-and-fitting",
+    "guides/dynamics-pulses-and-readout": "guides/pulses-and-readout",
+    "guides/slh-networks": "studies/purcell-filter",
+    "guides/statics-and-parameter-studies": "guides/spectra-and-sweeps",
+}
 
 # -- HTML --------------------------------------------------------------------
 

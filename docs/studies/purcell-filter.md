@@ -2,7 +2,7 @@
 
 Compare two circuits: how much does a Purcell filter improve T1, and does it
 preserve the readout bandwidth? Include intrinsic loss in every mode.
-The [readout guide](steady-state-and-vna.md) covers the fridge wiring and
+The [readout guide](../guides/steady-state-and-vna.md) covers the fridge wiring and
 measured S parameters. Frequencies are in GHz and times in ns.
 
 ## Declare the two circuits
@@ -311,4 +311,4 @@ give this T1 protection. That protection needs a coupled resonator in the
 quantum model, which changes the decay channels.
 
 To remove a readout from its feedline and keep its weak-probe response, see
-[Remove a readout from its feedline](chip-transformations.md#remove-a-readout-from-its-feedline).
+[Remove a readout from its feedline](../guides/model-reduction.md#remove-a-readout-from-its-feedline).

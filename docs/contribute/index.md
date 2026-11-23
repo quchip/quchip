@@ -21,6 +21,5 @@ Software citation metadata is in [CITATION.cff](https://github.com/quchip/quchip
 
 Writing examples <writing-examples>
 Contributing <../contributing>
-Release notes <../release-notes>
 Code of conduct <../conduct>
 ```

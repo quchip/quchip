@@ -109,11 +109,11 @@ f01 = 4.9980 GHz, f12 = 4.6986 GHz, chi_Z = 0.285 MHz
 
 The remaining calls read dressed transition frequencies and the resonator frequency conditioned on the qubit state. With quchip's $Z=|0\rangle\langle0|-|1\rangle\langle1|$, half the ground-minus-excited difference is the coefficient $\chi_Z$ of $Z\,n_r$.
 
-[Your first chip](https://docs.quchip.org/guides/defining-and-inspecting-a-chip) inspects a similar model's Hamiltonian and dropped terms, changes a parameter, and fits bare parameters to dressed targets.
+[Your first chip](https://docs.quchip.org/get-started/first-chip) inspects a similar model's Hamiltonian and dropped terms, changes a parameter, and fits bare parameters to dressed targets.
 
 ## Add dynamics and readout
 
-The [dynamics guide](https://docs.quchip.org/guides/dynamics-pulses-and-readout) adds control lines and pulse sequences to the chip above. It compares short and selective Gaussian qubit drives in the full multilevel model, reads them as gates, then simulates conditional resonator readout.
+The [pulses guide](https://docs.quchip.org/guides/pulses-and-readout) adds control lines and pulse sequences to the chip above. It compares short and selective Gaussian qubit drives in the full multilevel model, reads them as gates, then simulates conditional resonator readout.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://docs.quchip.org/_static/readme/hello_dispersive_readout_iq-dark.png">
@@ -126,20 +126,26 @@ each prepared qubit state.
 
 ## Guides
 
-- [Your first chip](https://docs.quchip.org/guides/defining-and-inspecting-a-chip): build a coupled model, inspect its Hamiltonian, and fit dressed targets.
-- [Spectra and parameter sweeps](https://docs.quchip.org/guides/statics-and-parameter-studies): follow an avoided crossing and compare a fluxonium model with measured spectroscopy.
-- [Pulses, leakage, and readout](https://docs.quchip.org/guides/dynamics-pulses-and-readout): compare pulse selectivity, read pulses as gates, and simulate conditional resonator response and cavity depletion.
-- [What happens during a qubit measurement?](https://docs.quchip.org/guides/continuous-measurement): follow single measurement trajectories, map their density, and condition on an endpoint.
+- [Your first chip](https://docs.quchip.org/get-started/first-chip): build a coupled model, inspect its Hamiltonian, and fit dressed targets.
+- [Spectra and parameter sweeps](https://docs.quchip.org/guides/spectra-and-sweeps): follow an avoided crossing, check state labels, and change parameters.
+- [Pulses, leakage, and readout](https://docs.quchip.org/guides/pulses-and-readout): compare pulse selectivity, read pulses as gates, and simulate conditional resonator response.
 - [Readout and fridge wiring](https://docs.quchip.org/guides/steady-state-and-vna): calculate VNA traces, their resonances, and qubit readout with receiver noise.
-- [Model reduction](https://docs.quchip.org/guides/chip-transformations): compare a reduced model with the full pulse simulation, remove a readout from its feedline, solve in an exact excitation space, and truncate the excitation number.
-- [Gradients and parameter fitting](https://docs.quchip.org/guides/differentiability): differentiate spectra and pulse responses, and fit measured circuit parameters.
+- [Model reduction](https://docs.quchip.org/guides/model-reduction): compare a reduced model with the full pulse simulation, remove a readout from its feedline, solve in an exact excitation space, and truncate the excitation number.
+- [Gradients and parameter fitting](https://docs.quchip.org/guides/gradients-and-fitting): differentiate spectra and pulse responses, and fit model parameters.
+- [Gate sets and circuits](https://docs.quchip.org/guides/gate-sets): calibrate native gates and compose circuits from them.
+- [Resonance fluorescence and photon correlations](https://docs.quchip.org/guides/resonance-fluorescence): read the output spectrum, `g1` and `g2` of a driven emitter.
+- [Import circuits from scqubits](https://docs.quchip.org/guides/scqubits): turn scqubits devices and coupled systems into quchip models and back.
 - [Extending quchip](https://docs.quchip.org/extensions): define custom models, controls, dissipation and interoperability mappings.
 - [Cookbook](https://docs.quchip.org/cookbook): practical API choices, tips and common pitfalls.
-- [SQA 2026 examples](https://docs.quchip.org/guides/from-sqa-2026): five short calculations from the talk.
 
-## Focused studies
+The spectra, pulses, model reduction and gradients guides are also Jupyter notebooks in [`examples/`](https://github.com/quchip/quchip/tree/main/examples).
 
-- [Purcell filtering and T1](https://docs.quchip.org/guides/slh-networks): how much can a Purcell filter suppress qubit decay while keeping the readout bandwidth?
+## Studies
+
+- [Purcell filtering and T1](https://docs.quchip.org/studies/purcell-filter): how much can a Purcell filter suppress qubit decay while keeping the readout bandwidth?
+- [Fluxonium spectroscopy](https://docs.quchip.org/studies/fluxonium-spectroscopy): does one model reproduce published fluxonium and readout data, and does a gradient fit recover the circuit energies?
+- [Resonator depletion with CLEAR](https://docs.quchip.org/studies/resonator-depletion): how much faster does a CLEAR pulse empty a filtered readout resonator than waiting?
+- [What happens during a qubit measurement?](https://docs.quchip.org/studies/continuous-measurement): follow single measurement trajectories, map their density, and condition on an endpoint.
 
 ## How quchip works
 
@@ -151,7 +157,7 @@ A predictive chip model needs more than a Hamiltonian. Device physics, control-l
   <img src="https://docs.quchip.org/_static/readme/quchip_pipeline_light.png" alt="quchip pipeline from declared devices and control parameters through model resolution, simulation, observables, and gradients" width="1084">
 </picture>
 
-QuTiP is the default simulation backend. The optional dynamiqs backend is JAX-native and keeps declared device and control parameters differentiable through a solve. The [backend guide](https://docs.quchip.org/guides/choosing-a-backend.html) compares their numerical and workflow tradeoffs. The scqubits integration imports and exports selected device and composite models.
+QuTiP is the default simulation backend. The optional dynamiqs backend is JAX-native and keeps declared device and control parameters differentiable through a solve. The [backend guide](https://docs.quchip.org/reference/backends-and-solvers.html) compares their numerical and workflow tradeoffs. The scqubits integration imports and exports selected device and composite models.
 
 `quchip` uses GHz for ordinary frequencies, ns for time, and mK for temperature. The [physics guide](https://docs.quchip.org/physics) documents the implemented conventions and approximations.
 

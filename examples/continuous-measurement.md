@@ -17,6 +17,8 @@ jupyter:
 
 # What happens during a qubit measurement?
 
+<!-- notebook-download -->
+
 A qubit starts in $|+\rangle=(|0\rangle+|1\rangle)/\sqrt{2}$. When we monitor
 $\sigma_z$, some trajectories go quickly toward a pole, while others wander
 or reverse direction before they settle. Generate these individual histories
@@ -167,10 +169,15 @@ $\sigma_z$ eigenstate is stationary under this measurement.
 
 ```python
 import shutil
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 from matplotlib.patches import Arc, Circle, FancyArrowPatch
 
-plt.style.use("../docs/_static/quchip.mplstyle")
+# In a quchip checkout, use the documentation style and save the figures there.
+docs = Path("../docs")
+if docs.is_dir():
+    plt.style.use(docs / "_static/quchip.mplstyle")
 plt.rcParams["text.usetex"] = bool(shutil.which("latex"))
 
 z = bloch[:, :, 2]
@@ -249,7 +256,8 @@ for kind, indices in selected.items():
     trace.scatter([0], [0], s=26, facecolor="white", edgecolor="#16181C", zorder=20, clip_on=False)
     cursor = trace.axvline(t[-1], color="#9AA0A8", lw=1.1, ls=(0, (4, 4)), visible=False)
     history_figures[name] = (fig, artists, cursor)
-    fig.savefig(f"../docs/images/measurement_{name}.svg")
+    if docs.is_dir():
+        fig.savefig(docs / f"images/measurement_{name}.svg")
     plt.show()
 ```
 
@@ -372,7 +380,8 @@ optimal_line, = axes[1].plot(t, optimal, color="#C92F33", ls="--", lw=1.6, label
 axes[1].legend(loc="lower right", fontsize=8, frameon=True, framealpha=1,
                facecolor="#FFFFFF", edgecolor="#E7EAEE")
 density_fig.colorbar(image, ax=axes, label="Density / column peak", fraction=0.035, pad=0.02)
-density_fig.savefig("../docs/images/measurement_density.svg")
+if docs.is_dir():
+    density_fig.savefig(docs / "images/measurement_density.svg")
 plt.show()
 ```
 
@@ -408,6 +417,7 @@ Final frame. [PDF](../images/measurement_density.pdf)
 from matplotlib.animation import FFMpegWriter
 from IPython.display import Video, display
 
+video_folder = docs / "_static" if docs.is_dir() else Path()
 frames = np.r_[np.linspace(0, len(t) - 1, 240).astype(int), np.full(45, len(t) - 1)]
 writer_options = {"fps": 30, "codec": "h264",
                   "extra_args": ["-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart"]}
@@ -415,7 +425,7 @@ writer_options = {"fps": 30, "codec": "h264",
 # Eight seconds of motion followed by a 1.5-second hold, as in the readout clips.
 for name, (fig, artists, cursor) in history_figures.items():
     writer = FFMpegWriter(**writer_options)
-    with writer.saving(fig, f"../docs/_static/measurement_{name}.mp4", dpi=200):
+    with writer.saving(fig, video_folder / f"measurement_{name}.mp4", dpi=200):
         for j in frames:
             for i, arrow, line, dot in artists:
                 arrow.set_positions((0, 0), bloch[i, j, [0, 2]])
@@ -426,7 +436,7 @@ for name, (fig, artists, cursor) in history_figures.items():
             writer.grab_frame(facecolor="white")
 
 writer = FFMpegWriter(**writer_options)
-with writer.saving(density_fig, "../docs/_static/measurement_density.mp4", dpi=200):
+with writer.saving(density_fig, video_folder / "measurement_density.mp4", dpi=200):
     for j in frames:
         for image, density in density_images:
             revealed = density.copy()
@@ -437,7 +447,7 @@ with writer.saving(density_fig, "../docs/_static/measurement_density.mp4", dpi=2
         writer.grab_frame(facecolor="white")
 
 for name in (*history_figures, "density"):
-    display(Video(f"../docs/_static/measurement_{name}.mp4", embed=False))
+    display(Video(str(video_folder / f"measurement_{name}.mp4"), embed=False))
 ```
 
 </details>

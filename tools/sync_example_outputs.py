@@ -18,13 +18,18 @@ import nbformat
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_PAIRS = (
-    "00_hello_chip",
-    "01_resolve_and_sweep",
-    "02_reduce_and_replay",
-    "03_differentiate_a_driven_chip",
-    "04_continuous_measurement",
+GUIDE_PAIRS = (
+    "spectra-and-sweeps",
+    "pulses-and-readout",
+    "model-reduction",
+    "gradients-and-fitting",
 )
+STUDY_PAIRS = (
+    "fluxonium-spectroscopy",
+    "resonator-depletion",
+    "continuous-measurement",
+)
+DEFAULT_PAIRS = GUIDE_PAIRS + STUDY_PAIRS
 OUTPUT_START = "<!-- executed-output:start -->"
 OUTPUT_END = "<!-- executed-output:end -->"
 OUTPUT_RE = re.compile(

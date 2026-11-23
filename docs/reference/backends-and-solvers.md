@@ -35,7 +35,7 @@ most `K` excitations, an explicit approximation that the same record reports.
 QuTiP stores the operators of the compact space as CSR matrices. dynamiqs
 stores each one as a dense array of the compact dimension, and quchip raises
 `MemoryError` before it allocates an array that does not fit.
-The [model reduction guide](chip-transformations.md#use-an-exact-excitation-space)
+The [model reduction guide](../guides/model-reduction.md#use-an-exact-excitation-space)
 solves a 24-transmon ring in its exact space and compares a cutoff with the
 full solve.
 
@@ -160,8 +160,8 @@ QuTiP nullity and condition-number diagnostics are calculated only up to
 Hilbert dimension 16. Adjust `diagnostic_max_dimension` as needed.
 
 Before trusting a result, compare the observable at tighter tolerances and
-larger local spaces. The [differentiability guide](differentiability.md)
-checks gradients. The [readout guide](steady-state-and-vna.md) checks
+larger local spaces. The [gradients guide](../guides/gradients-and-fitting.md)
+checks gradients. The [readout guide](../guides/steady-state-and-vna.md) checks
 stationary and transient field responses.
 
 ## Native stochastic trajectories

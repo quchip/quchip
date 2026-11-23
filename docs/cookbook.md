@@ -106,7 +106,7 @@ frame in which the model is stationary.
 ## Compare conditional readout responses
 
 For a chip with a port network, such as `clear_chip` in the
-{doc}`pulses guide <guides/dynamics-pulses-and-readout>`, use a dressed
+{doc}`resonator depletion study <studies/resonator-depletion>`, use a dressed
 reference label:
 
 ```python
@@ -477,8 +477,8 @@ calibration.
 QuTiP is the default. Choose dynamiqs for JAX gradients and compiled batches.
 The initial state and declared dissipation select `sesolve` or `mesolve`
 automatically. Use `dissipation=False` only for an intentional closed-system
-comparison. See {doc}`Backends and solvers <guides/choosing-a-backend>` for
-integration settings and {doc}`Gradients and parameter fitting <guides/differentiability>`
+comparison. See {doc}`Backends and solvers <reference/backends-and-solvers>` for
+integration settings and {doc}`Gradients and parameter fitting <guides/gradients-and-fitting>`
 for checks on derivatives.
 
 ## Filter warnings

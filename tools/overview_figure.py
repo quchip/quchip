@@ -1,8 +1,8 @@
 """Draw the overview figure of the README and the documentation front page.
 
-Each panel repeats the model of one guide: the avoided crossing of the
-statics guide, the short Gaussian pulse of the dynamics guide, the sampled
-VNA trace of the fridge guide, and the fluxonium fit of the gradients guide.
+Each panel repeats the model of one page: the avoided crossing of the
+spectra guide, the short Gaussian pulse of the pulses guide, the sampled VNA
+trace of the fridge guide, and the fluxonium fit of the fluxonium study.
 The fit downloads the published measurements.
 
     python3 tools/overview_figure.py
@@ -56,7 +56,7 @@ PAPER_DATA = (
 
 
 def avoided_crossing():
-    """Two transmons on a bus, with q2 swept through q1 (statics guide)."""
+    """Two transmons on a bus, with q2 swept through q1 (spectra guide)."""
     q1 = DuffingTransmon(freq=5.30, anharmonicity=-0.65, levels=4, label="q1")
     q2 = DuffingTransmon(freq=5.58, anharmonicity=-0.65, levels=4, label="q2")
     bus = Resonator(freq=6.55, levels=4, label="bus")
@@ -75,7 +75,7 @@ def avoided_crossing():
 
 
 def short_pulse():
-    """Populations during the short Gaussian pulse of the dynamics guide."""
+    """Populations during the short Gaussian pulse of the pulses guide."""
     qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.30, levels=6, label="q")
     readout = Resonator(freq=6.8, levels=10, internal_quality_factor=6800, label="r")
     chip = Chip([qubit, readout], [Capacitive(qubit, readout, g=0.060, label="qr")],
@@ -149,7 +149,7 @@ def vna_trace():
 
 
 def fluxonium_fit():
-    """Fit E_C, E_J and E_L to the measured fluxonium spectrum (gradients guide)."""
+    """Fit E_C, E_J and E_L to the measured fluxonium spectrum (fluxonium study)."""
     with urlopen(PAPER_DATA) as response:  # noqa: S310 - fixed public research archive
         rows = list(csv.DictReader(io.StringIO(response.read().decode("utf-8"))))
     flux_all = np.asarray([float(row["phi_ext_qubit"]) for row in rows if row["phi_ext_qubit"]])
