@@ -157,7 +157,7 @@ The [guides](docs/guides/index.md) and [cookbook](docs/cookbook.md) explain how 
 
 Readable Jupytext Markdown is the canonical source. Commit its executed `.ipynb` partner with the `python3` kernel, identical code cells, and inspected outputs. Use standard fenced Python cells, not percent-format scripts.
 
-Notebook outputs stay in the executed `.ipynb`. Save only figures selected for the website under `docs/images/`. Include the canonical Markdown from its page under `docs/guides/`. Figures load `docs/_static/quchip.mplstyle` and save a single light `.svg`. Then `python3 tools/theme_figures.py` derives the `-dark.svg`, `.pdf`, and README `-dark.png` variants and rejects colors outside the palette. It also copies each README pair to `docs/_static/readme/`, where the README links to it. `python3 tools/overview_figure.py` redraws the overview figure of the README and the documentation front page from the models of four guides.
+Notebook outputs stay in the executed `.ipynb`. Save only figures selected for the website under `docs/images/`, and only when that folder exists, so that a downloaded notebook also runs outside the repository. Include the canonical Markdown from its page under `docs/guides/` or `docs/studies/`, and link the notebook there. Figures load `docs/_static/quchip.mplstyle` and save a single light `.svg`. Then `python3 tools/theme_figures.py` derives the `-dark.svg`, `.pdf`, and README `-dark.png` variants and rejects colors outside the palette. It also copies each README pair to `docs/_static/readme/`, where the README links to it. `python3 tools/overview_figure.py` redraws the overview figure of the README and the documentation front page from the models of three guides and the fluxonium study.
 
 From the repository root, replace `<name>` with the example stem and run:
 
@@ -173,7 +173,9 @@ jupytext --to md --test-strict examples/<name>.ipynb
 
 The diff must be empty and the strict round trip must pass. Before you commit, inspect the executed notebook. Setup cells stay silent, stdout contains only intended receipts, and each intended figure appears once. Run the focused example test and the project checks above.
 
-Re-execute each notebook whose printed results your change alters. Before each release, the `release` suite executes every notebook again and compares its textual outputs with the committed ones.
+Re-execute each notebook whose printed results your change alters. The `validation` suite executes the guide notebooks again and compares their textual outputs with the committed ones. The study notebooks download data or run long solves, so the `release` suite executes them before each release.
+
+Guides without a notebook are Markdown pages under `docs/` that show each printed result in an `Output:` block. After a change, refresh their output and figures with `python3 tools/execute_markdown.py docs/guides/<name>.md`. The `validation` suite executes these pages again and compares the output.
 
 ## Physics conventions
 

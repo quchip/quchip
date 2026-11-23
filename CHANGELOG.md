@@ -1121,6 +1121,18 @@ This file records notable user-visible changes to quchip.
 
 #### Documentation and examples
 
+- The documentation separates guides from studies. A guide teaches one
+  workflow on a small chip. A study answers one physical question and
+  compares the answer with published data or a known limit. The spectra,
+  pulses, model reduction and gradients guides and the fluxonium, CLEAR and
+  measurement studies are Jupyter notebooks in `examples/`, named after their
+  pages, and each page links its notebook for download. A downloaded notebook
+  also runs outside the repository. The fluxonium spectrum, readout and fit
+  form one study, and the gradients guide fits two parameters with the JAX
+  Jacobian. The first-chip guide moves to Get started, and the backends page,
+  the cookbook and the release notes move to Reference. The SQA 2026 page
+  links each calculation of the talk to its page. Old page addresses
+  redirect to the new ones. ([#164](https://github.com/quchip/quchip/pull/164))
 - The model reduction guide removes a readout from a two-way hanger feedline,
   moved from the Purcell study. It describes the time-domain limits, the
   return-path validity entry, one-port reference sections,
@@ -1132,8 +1144,8 @@ This file records notable user-visible changes to quchip.
   tolerance.
   ([#164](https://github.com/quchip/quchip/pull/164))
 - The pulses guide sets its π amplitudes with `chip.rotation_amplitude()`
-  and reads both pulses as gates with `subspace_propagator()`. It checks the
-  CLEAR carrier against the conditional weak-probe reflection,
+  and reads both pulses as gates with `subspace_propagator()`. The CLEAR
+  study checks its carrier against the conditional weak-probe reflection,
   `VNA.sweep(..., when=...)`. The readout guide reads the resonances from the
   poles of the response with `VNA.resonances()`, and the measurement guide
   reads each run with `run_expect()`. The cookbook adds pulse `detuning=` and
@@ -1143,7 +1155,8 @@ This file records notable user-visible changes to quchip.
   level-order check for traced devices. The first-chip guide describes the
   fit history fields. The README gives χ_Z with ground-positive Z and prints
   the values of its example chip. The README and the documentation front page
-  open with an overview figure that uses the models of four guides.
+  open with an overview figure that uses the models of three guides and the
+  fluxonium study.
   ([#164](https://github.com/quchip/quchip/pull/164))
 - `PHYSICS.md` §10.4 identifies the Löwdin map of
   `eliminate(..., method="exact")` with the canonical Schrieffer–Wolff
@@ -1196,10 +1209,12 @@ This file records notable user-visible changes to quchip.
 
 #### Development
 
-- An opt-in `release` test suite executes each example notebook again and
-  compares its textual outputs with the committed notebook. Run it before a
-  release with `python -m pytest -m release`.
-  ([#164](https://github.com/quchip/quchip/pull/164))
+- The `validation` suite executes the guide notebooks and the guides without
+  a notebook again, and compares their printed output with the committed
+  text. An opt-in `release` suite does the same for the study notebooks. Run
+  it before a release with `python -m pytest -m release`.
+  `tools/execute_markdown.py` refreshes the output of a guide without a
+  notebook. ([#164](https://github.com/quchip/quchip/pull/164))
 - `CONTRIBUTING.md` documents the release-note format, and the pull request
   template uses checkboxes for AI assistance.
   ([#75](https://github.com/quchip/quchip/pull/75),
