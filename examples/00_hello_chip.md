@@ -343,8 +343,8 @@ print(f"RESULT readout={json.dumps(readout_receipt, sort_keys=True)}")
 Output:
 
 ```text
-RESULT drive={"final_p1": {"long": 0.9808148840117945, "short": 0.3267935016823718}, "peak_p2": {"long": 0.03849846278076714, "short": 0.5637942301892077}}
-RESULT readout={"conditional_resonator_frequencies_ghz": [6.801997782702374, 6.801428548310606], "final_iq_separation": 0.902032482780983, "solver": "mesolve"}
+RESULT drive={"final_p1": {"long": 0.9808149707332251, "short": 0.32679650020181494}, "peak_p2": {"long": 0.038498459087516326, "short": 0.5637942341748111}}
+RESULT readout={"conditional_resonator_frequencies_ghz": [6.801997782702374, 6.801428548310606], "final_iq_separation": 0.9021586131595647, "solver": "mesolve"}
 ```
 
 <!-- executed-output:end -->
