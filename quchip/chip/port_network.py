@@ -289,7 +289,7 @@ class IncludedNetwork:
     """Access one prefixed copy of a template network inside a host.
 
     ``component(name)`` returns a copied component. Template exposures made with
-    ``expose(..., at=...)`` are available through ``side(name)``. Asymmetric
+    ``expose(..., at=...)`` are available through ``port(name)``. Asymmetric
     exposures use ``input(name)`` and ``output(name)``.
 
     Parameters
@@ -1585,7 +1585,7 @@ class PortNetwork:
         prefix.
 
         The template's exposures become interfaces rather than host planes. Exposures
-        made with ``expose(..., at=...)`` are available through ``side(name)``.
+        made with ``expose(..., at=...)`` are available through ``port(name)``.
         Asymmetric exposures use ``input(name)`` and ``output(name)``. Wire the
         returned interfaces with :meth:`link`, :meth:`cascade`, or :meth:`expose`.
 

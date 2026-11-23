@@ -10,6 +10,9 @@ This file records notable user-visible changes to quchip.
 
 #### Changes and migration
 
+- `FockSpace.matrix()`, `ChargeSpace.matrix()` and `PhaseGridSpace.matrix()` build on the host and
+  return read-only NumPy arrays (JAX arrays for a traced phase-grid `extent`); use `jnp.asarray(...)` where
+  JAX arrays are needed. Device `charge_coupling_operator()` and `phase_coupling_operator()` still return JAX.
 - quchip 0.5 removes the names that 0.4 deprecated. Use `thermal_occupation`
   for `thermal_population` (in constructors, `with_params()`, `set_noise()`,
   declared parameters, symbolic noise and saved device dictionaries),
@@ -17,6 +20,52 @@ This file records notable user-visible changes to quchip.
   `external_port()` and `external_ports` for `exposure()` and `exposures`,
   and `NetworkPort` and `ComponentPort` for `FieldExposure` and `FieldSide`.
   The `check_truncation()` result methods stay until 0.6.
+- quchip 0.5 removes `Bath` with `Chip(baths=...)`, `chip.baths`,
+  `chip.add_bath()`, `set_noise(baths=...)` and the `bath.<label>.<name>`
+  parameter paths. Device, drive, coupling and port channels now own all loss
+  physics. Set each device's `thermal_occupation` for thermal channels; the
+  removed thermal model used `n̄ = 1/expm1(h f/(k_B T))`, which is
+  `1/expm1(f/(0.020837 T))` for f in GHz and T in mK. Put the devices' ports
+  on one feedline for correlated decay into a shared line. For other loss
+  across several devices, such as collective decay or correlated dephasing,
+  return collapse channels from a `CouplingModel`, as `CollectiveDecayCoupling`
+  in the extensions guide does. A saved chip with `baths` raises an error that
+  names these replacements.
+- `register_retarget_rule()`, `register_elimination_target()` and
+  `register_reduction_method()` are private. The shipped retarget rule,
+  elimination targets and reduction methods work as before. `eliminate()`,
+  `eliminate_spectators()`, `active_patch()` and `QuantumSequence.active_patch()`
+  type `method` as `Literal["sw", "exact"]`, and the error for a control line
+  on an eliminated target says to unwire the line or keep the target.
+- quchip 0.5 removes `analyze_cross_resonance()` and `CRHamiltonianResult`,
+  which fitted measured Bloch-vector trajectories and did not use a chip. For
+  a chip's cross-resonance response, use `analyze_cr_susceptibility()` for the
+  weak-drive `IX` and `ZX` terms per unit of drive amplitude, or calibrate the
+  gate with `GateSet`.
+- quchip 0.5 removes the `quchip.extensions` module. Its reference classes
+  `FrequencyModulatedMode`, `LossyKerrCavity`, `ModulatedCapacitive`,
+  `CollectiveDecayCoupling`, `ChargePhaseDrive`, `LossyChargeDrive`,
+  `CableLoss` and `SpinHalf` are now code in the extensions guide, which the
+  tests run; copy the classes you use into your code. A saved chip that holds
+  one of them loads after you define the class and change each `type` entry
+  from `quchip.extensions.<module>.<Class>` to the new module path.
+  `CableLoss` takes keyword arguments, as other transforms do.
+  `CosineEnvelope` is now a built-in envelope: import it from `quchip`.
+  Saved `quchip.extensions.envelopes.CosineEnvelope` entries still load, and
+  its `area()` returns the closed form `A τ / 2`.
+- `analyze_dispersive_readout(chip, qubit, resonator, *, tau, ...)` takes a
+  chip and replaces the form that took `chi`, `kappa`, `kappa_detected` and
+  `n_crit` as numbers. Each pointer state uses the dressed pull
+  `f_r|j - f_r|0` of its qubit level, so `levels > 2` no longer assumes
+  `j*chi`. `kappa` is the energy linewidth of the resonator pole of the
+  weak-probe drift without dephasing, and `kappa_detected` is the part that
+  reaches the port given as `output`, through its reference sections at the
+  drive frequency. That output path must be passive: an amplifier or a
+  thermal load on it raises. The chip's static model needs a weak-probe
+  route, as under `RWA()`. The `n_crit` interpolation is gone; the
+  result reports `nonlinearity`, how much the pulls change over the photon
+  numbers of the pointer states, and the derived `resonator_frequencies`,
+  `chi`, `kappa` and `kappa_detected` in place of `chi_eff` and `validity`.
 - Warnings are shorter, name the one action that sets or silences them, and
   point at the caller's line. The default-frame and automatic-carrier
   warnings have fixed text, so Python shows each once per line of code
@@ -306,17 +355,18 @@ This file records notable user-visible changes to quchip.
   `CoherentInput` port drive and a `ChargeDrive` flips. `PHYSICS.md` gained a
   cross-walk from quchip's conventions to these references.
   ([#222](https://github.com/quchip/quchip/pull/222))
-- `ChargePhaseDrive` now drives a transition at a positive carrier, as
-  `ChargeDrive` does, and takes the automatic carrier `chip.freq(target)`. Its
-  Hamiltonian stays `I·Q_c − Q·P`, but with the textbook charge sign above it
-  is `i(s a† − s* a)` on a Fock device: the resonant sideband at twice the
-  rate of `ChargeDrive` with no counter-rotating term, so its π amplitude is
-  half that of `ChargeDrive`. It now also accepts devices whose operators are
-  matrices, such as `ChargeBasisTransmon` and `Fluxonium`, where the resonant
-  sideband is the stronger of two. Previously, a 20 ns Gaussian at
-  ChargeDrive's π amplitude and +5 GHz left a 5 GHz transmon in `|0>`, and
-  only a negative carrier drove it. To keep the Hamiltonian of a 0.4 schedule
-  on a Fock device, negate `freq` and replace the pulse phase φ by π − φ.
+- The extension guide's `ChargePhaseDrive` now drives a transition at a
+  positive carrier, as `ChargeDrive` does, and takes the automatic carrier
+  `chip.freq(target)`. Its Hamiltonian stays `I·Q_c − Q·P`, but with the
+  textbook charge sign above it is `i(s a† − s* a)` on a Fock device: the
+  resonant sideband at twice the rate of `ChargeDrive` with no
+  counter-rotating term, so its π amplitude is half that of `ChargeDrive`. It
+  now also accepts devices whose operators are matrices, such as
+  `ChargeBasisTransmon` and `Fluxonium`, where the resonant sideband is the
+  stronger of two. Previously, a 20 ns Gaussian at ChargeDrive's π amplitude
+  and +5 GHz left a 5 GHz transmon in `|0>`, and only a negative carrier drove
+  it. To keep the Hamiltonian of a 0.4 schedule on a Fock device, negate
+  `freq` and replace the pulse phase φ by π − φ.
   ([#221](https://github.com/quchip/quchip/pull/221),
   [#222](https://github.com/quchip/quchip/pull/222))
 
@@ -343,6 +393,9 @@ This file records notable user-visible changes to quchip.
   `jax.jit`.
   ([#198](https://github.com/quchip/quchip/issues/198),
   [#208](https://github.com/quchip/quchip/pull/208))
+- `analyze_static_zz()` reports a coupled degeneracy in its pathway
+  attribution with the same `EliminationError` as `eliminate()`, which names
+  the two levels and their coupling. Its results are unchanged.
 - `EliminationResult.pathways(final, initial)` attributes any element of an
   SW-retained Hamiltonian to virtual states, including dispersive and Lamb
   shifts. It takes level mappings such as `{"qa": 1}`.
@@ -358,11 +411,21 @@ This file records notable user-visible changes to quchip.
   The record gives the leakage of each input, and `fidelity(target)` returns
   the average gate fidelity, which counts that leakage. The solves leave out
   collapse channels, which `omitted_channels` names, and `dissipation=True`
-  raises.
+  raises and points to `subspace_channel()`.
   ([#193](https://github.com/quchip/quchip/issues/193),
   [#207](https://github.com/quchip/quchip/pull/207),
   [#209](https://github.com/quchip/quchip/issues/209),
   [#210](https://github.com/quchip/quchip/pull/210))
+- `sequence.subspace_channel(devices, levels=(0, 1))` returns the gate with
+  the chip's collapse channels as a `ChannelResult`: a superoperator on the
+  same dressed labels and frames, from `d²` pure-state master-equation
+  solves. It gives the infidelity in quchip's frame, with ideal preparation
+  and measurement, and the eigenvalue infidelity, a spectral score that a
+  frame tilt does not change, with the average leakage beside it. Labels may
+  include leakage levels, and `seepage()` reads them. `error(target)` returns
+  the error map after the ideal gate, with its Pauli transfer matrix, Pauli
+  fidelities, Pauli rates and twirl. PHYSICS.md §9.5 gives the definitions.
+  ([#223](https://github.com/quchip/quchip/pull/223))
 - `Envelope.area()` returns the complex area of an envelope: closed forms for
   the built-in shapes, and Gauss-Legendre quadrature between the sampling
   times for other shapes, also under JAX tracing.
@@ -405,6 +468,34 @@ This file records notable user-visible changes to quchip.
   the shift.
   ([#184](https://github.com/quchip/quchip/issues/184),
   [#183](https://github.com/quchip/quchip/pull/183))
+- `quchip.gateset` calibrates native gates and composes circuits from them.
+  `GateSet.standard()` declares DRAG SX and X gates and echoed cross-resonance
+  ZX90 gates; `NativeGate` and `Knob` declare your own. Each fit targets the
+  ideal gate on a block that includes coupled spectator qubits, with free
+  virtual Z phases, and reports the infidelity, leakage, the generator of the
+  error after the ideal gate, knob bounds, and fit identifiability.
+  `GateSet.unitary()` reuses each gate's propagator at new start times and
+  frames when its Hamiltonian allows it, and `GateSet.simulate()` solves the
+  circuit's schedule with noise. On a chip above 64 states, gate-set solves
+  pick and raise an excitation cutoff with a warning, and a circuit with gates
+  that run at the same time solves in one piece with one more excitation for
+  each gate after the first.
+  Gate-set solves use QuTiP's `vern9` integrator at `rtol=1e-8` and
+  `atol=1e-10`. A circuit with uncalibrated gates calibrates them at their
+  seeds, with a notice. When the chip changes in place, its calibrations become
+  stale, and the built-in natives take their carriers and seeds from the
+  changed chip. Calibrating again starts from the previous knobs and keeps them
+  when the fit converges within the target and at most doubles the previous
+  error; otherwise, and after a seed-only calibration, every start competes.
+  Reports also give the eigenvalue infidelity and the gate's channel as a
+  `ChannelResult`. When a CR target couples to another gate-set qubit, the
+  echoed ZX90 also tries rotary starts, in which the target tone turns the
+  target so that most of its static ZZ with that qubit averages out. On a chain
+  of three transmons this takes the ZX90 on the first pair from `5.5e-3` to
+  `1.6e-4`.
+- `QuantumSequence.propagator()` returns the lab-frame propagator of a
+  schedule from one solve, or its superoperator when the chip has collapse
+  channels. `QuantumSequence.extend()` appends another sequence.
 - `ExcitationCutoff(max_total=K)` keeps the product energy labels whose levels
   sum to at most `K`. Set it with `Chip(..., space=...)` or `chip.with_space(...)`.
   It is separate from `RWA()` and `Exact()`, and quchip never sets it. The
@@ -531,7 +622,7 @@ This file records notable user-visible changes to quchip.
   dressing from interactions outside the patch, as with `local=False`. `chi`
   describes only the patch. `Chip.partition()` keeps the devices of each
   captured map in one part. Both `active_patch()` entry points forward
-  `local`. `method="exact"` and chips with baths raise `NotImplementedError`.
+  `local`. `method="exact"` raises `NotImplementedError`.
   ([#112](https://github.com/quchip/quchip/pull/112),
   [#113](https://github.com/quchip/quchip/pull/113),
   [#130](https://github.com/quchip/quchip/issues/130),
@@ -616,14 +707,26 @@ This file records notable user-visible changes to quchip.
   device add as phasors. Previously, any transform on the line raised. A
   transform must set the new class attribute
   `SignalTransform.linear_time_invariant` to take part; `Gain`, `Delay`,
-  `Crosstalk`, `CrosstalkMatrix` and `CableLoss` set it, and a transform
-  without it still raises. `ControlEquipment.tone_transfer(line, frequency)`
-  returns the transfer to each line.
+  `Crosstalk`, `CrosstalkMatrix` and the extension guide's `CableLoss` set it,
+  and a transform without it still raises.
+  `ControlEquipment.tone_transfer(line, frequency)` returns the transfer to
+  each line.
   ([#218](https://github.com/quchip/quchip/issues/218),
   [#221](https://github.com/quchip/quchip/pull/221))
 
 #### Fixes
 
+- Under `RWA()`, a pulse with a zero carrier (`freq=0.0`, or
+  `freq + detuning = 0`) keeps its complete real drive, as under `Exact()`.
+  Both partners of a zero-frequency band are resonant, but `RWA()` kept one,
+  so the drive had half its amplitude at phase 0 and did not go to zero at
+  phase `π/2`. On a 50 MHz mode, a 20 ns Gaussian pulse of amplitude 0.02
+  gave `P1 = 0.085` with `freq=0.0` and `0.276` with `freq=None`; both now
+  give `0.276`. A zero carrier still follows `phase=` and `vz()`: on a
+  charge line its carrier phase `p` scales a real envelope by `cos p`. A
+  carrier near zero
+  but not zero keeps one partner under `RWA()`; use `Exact()` there.
+  ([#224](https://github.com/quchip/quchip/pull/224))
 - Every calculation evaluates a generic `Coupling` with the chip's backend.
   Previously, `resolve()`, `eliminate()`, `chip.state()` and `chip.freq()` used
   the process default backend, so on a dynamiqs chip while QuTiP was the
@@ -649,8 +752,8 @@ This file records notable user-visible changes to quchip.
   carries emission from the response's ports, and for diffusive monitoring of
   such a channel with a nonzero efficiency, including pure-state SSE.
   Monitoring a hidden channel that acted on the removed readout, such as its
-  internal loss or a bath on it, also raises.
-  `EffectiveTerms.omitted_responses` and the baths record these channels. The
+  internal loss, also raises.
+  `EffectiveTerms.omitted_responses` records these channels. The
   record survives serialization and later reductions, and stays when the port
   network drops the response. Previously, these outputs omitted the response
   with no error, e.g. a steady output amplitude 160 times too large at the
@@ -661,11 +764,11 @@ This file records notable user-visible changes to quchip.
 - After `eliminate()` removes a readout with a one-port reflection or
   transmission section, diffusive monitoring with a nonzero efficiency raises
   `NotImplementedError` for the line output through the section and for a
-  hidden channel that acted on the readout, such as its internal loss or a
-  bath on it. Native monitoring applies no reference section, so these
+  hidden channel that acted on the readout, such as its internal loss.
+  Native monitoring applies no reference section, so these
   records missed the readout's response, e.g. a mean of the internal-loss
   field almost 800 times too small under a weak resonant input. The
-  transformed port, the carried channels and the baths record the readout.
+  transformed port and the carried channels record the readout.
   `OutputField` traces, other records and unconditional solves still run.
   ([#175](https://github.com/quchip/quchip/issues/175),
   [#178](https://github.com/quchip/quchip/pull/178))
@@ -698,9 +801,9 @@ This file records notable user-visible changes to quchip.
   ([#128](https://github.com/quchip/quchip/issues/128),
   [#142](https://github.com/quchip/quchip/pull/142))
 - `jax.grad` and `jax.jit` with a traced device frequency pass the
-  collapse-channel frame check after `eliminate()` and for a collective `Bath`
-  in a common frame, also on a reduced chip. Previously, they raised a
-  `ValueError`. `jax.jit` of the rate of a collective `Bath` on
+  collapse-channel frame check after `eliminate()` and for a collective decay
+  channel in a common frame, also on a reduced chip. Previously, they raised a
+  `ValueError`. `jax.jit` of the rate of a collective channel on
   `EigenbasisDevice` targets also passes the check. After `eliminate()`, a
   traced coupling also passes the check on the port of a surviving mode in
   per-device frames. Traced `VNA.sweep()` calls keep the mode-space route of
@@ -876,6 +979,19 @@ This file records notable user-visible changes to quchip.
 
 #### Performance
 
+- `fit_a_dress()` on a JAX-backed chip compiles its residuals once per chip
+  structure, so repeated fits, also with other parameter values, skip the
+  compile: 0.2 s instead of 1.5 s for two transmons and a resonator.
+- On dynamiqs, rebinding a pulse value declared as `np.float64` with a Python
+  float, or the reverse, reuses the compiled solve instead of compiling it again.
+- Driven lossy QuTiP solves find each drive's Hermitian partner even where
+  `dag()` leaves a `-0.0`, so they take the faster packed master equation.
+- A concrete weak-probe or conditional `VNA.sweep()` on dynamiqs builds its sector
+  operators, port mixing and reference transfers with NumPy instead of compiling
+  one small XLA program per shape, so its first call takes well under a second.
+- On dynamiqs, pulse carriers and phases are formed from a cosine and a sine instead of a guarded complex
+  exponential, with the same values and gradients bit for bit. Pulse gradients run up to 1.8 times faster on
+  a CPU core and 1.3 times faster on a GPU.
 - `VNA.measure()` with noise and an automatic cutoff settles the means first
   and starts the noise comparison at the first agreeing pair, which keeps the
   same cutoff and skips the noise solves below it: 49 s instead of 55 s for a
@@ -968,6 +1084,9 @@ This file records notable user-visible changes to quchip.
   11.4 s, with the same kept cutoff and noise spectra within 2e-13. The solutions are
   kept only while they fit in memory.
   ([#221](https://github.com/quchip/quchip/pull/221))
+- QuTiP pulse solves sample the built-in envelopes with NumPy when their
+  parameters are concrete, instead of compiling JAX operations, so the first
+  pulse solve in a session starts about 0.3 to 0.6 s sooner.
 
 #### Compatibility
 
@@ -1034,7 +1153,7 @@ This file records notable user-visible changes to quchip.
   ([#129](https://github.com/quchip/quchip/issues/129),
   [#143](https://github.com/quchip/quchip/pull/143))
 - Correct dispersive signs, readout rate definitions, VNA phase notation, and
-  reduction limits. Document device and bath models, convergence requirements,
+  reduction limits. Document device models, convergence requirements,
   and parametric control. Add primary references for the physical conventions.
   Align guide calculations, fitting targets, and plots with ground-positive Z.
   ([#122](https://github.com/quchip/quchip/pull/122))
@@ -1068,6 +1187,12 @@ This file records notable user-visible changes to quchip.
   cutoff and corrects two stale source references. The README no longer
   describes the removed quchip.org walkthrough.
   ([#211](https://github.com/quchip/quchip/pull/211))
+- A resonance fluorescence guide reads the Mollow triplet with
+  `VNA.output_spectrum()` and the antibunching of a driven two-level emitter
+  with `VNA.g1()` and `VNA.g2()`, and compares `g2` with its textbook formula.
+  It splits the field with a 90° hybrid and cross-correlates the two lines.
+  The fridge guide copies one readout line for two feedlines with `include()`
+  and adds a pump through a directional coupler, a `beam_splitter()`.
 
 #### Development
 

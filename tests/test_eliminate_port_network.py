@@ -12,7 +12,7 @@ import jax
 import jax.numpy as jnp
 
 from quchip import (
-    Bath, Capacitive, Chip, CrossKerr, DuffingTransmon, Exact, PortNetwork, QuantumSequence, Resonator, RWA,
+    Capacitive, Chip, CrossKerr, DuffingTransmon, Exact, PortNetwork, QuantumSequence, Resonator, RWA,
     eliminate, with_monitoring,
 )
 from quchip.engine import solve_problem
@@ -421,7 +421,7 @@ def test_reduced_boundary_serializes_with_the_chip() -> None:
     )
 
 
-def _monitored_readout(shared: bool, *, bath: bool) -> Chip:
+def _monitored_readout(shared: bool) -> Chip:
     """A transmon and a lossy readout on a one-port line, alone or upstream of a kept readout."""
     qubit = DuffingTransmon(freq=5.3, anharmonicity=-0.26, levels=2, T1=50e3, label="q")
     readout = Resonator(freq=6.0, levels=3, internal_quality_factor=2e4, label="r")
@@ -436,9 +436,8 @@ def _monitored_readout(shared: bool, *, bath: bool) -> Chip:
         network.cascade(port, downstream)
         output = downstream.output
     network.expose("line", input=port.input, output=output)
-    baths = [Bath("thermal", targets=["r"], temperature=20., rate=1e-4, label="fridge")] if bath else []
     return Chip(devices, [Capacitive(qubit, readout, g=0.04)], port_network=network, frame=6.0,
-                approximation=RWA(), baths=baths)
+                approximation=RWA())
 
 
 def _monitoring_problem(chip: Chip, observed: str = "q"):
@@ -452,8 +451,7 @@ def _monitoring_problem(chip: Chip, observed: str = "q"):
 @pytest.mark.parametrize("local", [False, True])
 def test_section_rejects_records_that_miss_the_readout_response(shared, local) -> None:
     """Records of the line and of channels on the removed readout raise; other records and solves run."""
-    # Local reduction does not transform baths.
-    reduced = eliminate(_monitored_readout(shared, bath=not local), "r", local=local).chip
+    reduced = eliminate(_monitored_readout(shared), "r", local=local).chip
     data = json.loads(json.dumps(reduced.to_dict()))
     chips = [Chip.from_dict(data)]
     if not shared:
@@ -462,8 +460,6 @@ def test_section_rejects_records_that_miss_the_readout_response(shared, local) -
             {"label": "line", "input": ["r_port", "field"], "output": ["r_port", "field"]}])
         chips.append(Chip.from_dict(data))
     affected = {"line", "hidden.retained_r.internal_photon_loss"}
-    if not local:
-        affected |= {"hidden.fridge.thermal_emission:r", "hidden.fridge.thermal_absorption:r"}
     for chip in chips:
         # The output field applies the section at the carrier.
         QuantumSequence(chip).build_problem(np.linspace(0., 2., 3), e_ops={"line": OutputField("line")})

@@ -291,12 +291,7 @@ class PartitionedSimulationResult:
         require_memory(dense_bytes(len(self.times), dimension, copies=4), task="Joint partitioned history export",
                        remedy="Read local observables or component states instead.")
         per_component_trajectories = self._collect_component_ket_trajectories()
-        joint_steps = [backend.tensor_states(*step) for step in zip(*per_component_trajectories)]
-        permutation = self._chip_order_permutation()
-        if permutation is None:
-            return joint_steps
-        dims, order = permutation
-        return [backend.permute_state(state, dims, order) for state in joint_steps]
+        return [self._tensor_in_chip_order(backend, list(step)) for step in zip(*per_component_trajectories)]
 
     @property
     def final_state(self) -> Any:
@@ -337,6 +332,10 @@ class PartitionedSimulationResult:
         power = 1 if all(backend.is_ket(state) for state in states) else 2
         require_memory(dense_bytes(*(dimension,) * power, copies=4), task="Joint partitioned state export",
                        remedy="Read local observables or component states instead.")
+        return self._tensor_in_chip_order(backend, states)
+
+    def _tensor_in_chip_order(self, backend: Any, states: list) -> Any:
+        """Tensor one state per component, then permute the product into :attr:`device_order`."""
         joint = backend.tensor_states(*self._promote_to_common_state_kind(backend, states))
         permutation = self._chip_order_permutation()
         if permutation is None:

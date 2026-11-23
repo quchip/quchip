@@ -163,10 +163,13 @@ def test_readme_figures_are_current_copies_of_the_docs_figures() -> None:
 
 
 @pytest.mark.examples
-@pytest.mark.parametrize("guide", ["defining-and-inspecting-a-chip", "steady-state-and-vna", "slh-networks"])
+@pytest.mark.parametrize("guide", ["defining-and-inspecting-a-chip", "steady-state-and-vna", "slh-networks",
+                                   "resonance-fluorescence", "scqubits"])
 @pytest.mark.validation
 def test_guide_outputs_match_a_fresh_execution(guide: str, guide_workspace) -> None:
     """Standalone guides execute their physical checks and reproduce shown output."""
+    if guide == "scqubits":
+        pytest.importorskip("scqubits")
     path = ROOT / "docs" / "guides" / f"{guide}.md"
     source = path.read_text(encoding="utf-8")
     blocks = EXECUTED_BLOCK_RE.findall(source)

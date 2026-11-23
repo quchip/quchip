@@ -936,7 +936,7 @@ class BaseDevice(StateVersioned, Registrable, ABC, registry_root=True):
             self.resolved_dimension(self.basis or "native"),
         )
         energies = resolve_device_basis(self, basis="native").energies
-        return energies[upper] - energies[lower]
+        return jnp.asarray(energies[upper] - energies[lower])
 
     # -- Classification ----------------------------------------------------
 

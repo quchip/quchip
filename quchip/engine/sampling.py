@@ -7,13 +7,14 @@ from typing import Any
 
 import numpy as np
 
+from quchip.control.envelopes import Envelope
 from quchip.engine.ir import (
     CoefficientRef, EnvelopeRef, Shift, Window, decompose_carrier_bands,
     evaluate_signal_program, signal_children,
 )
 from quchip.engine.solver_hints import _static_spectral_span, operator_norm_bound
 from quchip.utils.constants import TWO_PI
-from quchip.utils.jax_utils import contains_tracer
+from quchip.utils.jax_utils import concrete_array_module, contains_tracer
 
 _POINTS_PER_PERIOD = 32
 _POINTS_PER_DECAY = 16
@@ -68,8 +69,12 @@ def signal_features(signal: Any, offsets: tuple[float, ...] = (0.0,)) -> list[tu
     if isinstance(signal, Window):
         features.append((_concrete([signal.start, signal.stop]).astype(float), offsets))
     if isinstance(signal, EnvelopeRef):
-        times = _concrete(signal.envelope.sampling_times())
-        duration = float(_concrete(signal.envelope.duration))
+        envelope = signal.envelope
+        # Built-in sampling times evaluate with NumPy when the parameters are concrete.
+        xp = concrete_array_module(envelope)
+        own = type(envelope).sampling_times is Envelope.sampling_times
+        times = _concrete(envelope._sampling_times(xp) if own else envelope.sampling_times())
+        duration = float(_concrete(envelope.duration))
         if times.ndim != 1 or np.any((times < 0) | (times > duration)):
             raise ValueError("Envelope sampling_times() must return local times between zero and duration.")
         features.append((times.astype(float), offsets))

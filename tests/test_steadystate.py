@@ -7,7 +7,7 @@ from dataclasses import FrozenInstanceError
 import numpy as np
 import pytest
 
-from quchip import Bath, Chip, Exact, Resonator, Sweep
+from quchip import Chip, Exact, Resonator, Sweep
 
 
 def test_damped_mode_has_vacuum_steady_state() -> None:
@@ -216,23 +216,18 @@ def test_uniqueness_is_checked_up_to_the_diagnostic_dimension(backend) -> None:
 
 
 def test_thermal_mode_matches_truncated_bose_distribution() -> None:
-    """A thermal bath produces the Bose distribution after finite-level truncation."""
+    """A thermal occupation produces the Bose distribution after finite-level truncation."""
+    from quchip.utils.constants import k_B
+
     frequency = 5.0
     temperature = 300.0
     levels = 12
-    mode = Resonator(freq=frequency, levels=levels, label="r")
-    chip = Chip(
-        [mode],
-        baths=[Bath("thermal", temperature=temperature, rate=0.05)],
-        frame="rotating",
-        backend="qutip",
-    )
+    nbar = 1.0 / np.expm1(frequency / (k_B * temperature))
+    mode = Resonator(freq=frequency, levels=levels, T1=20.0, thermal_occupation=nbar, label="r")
+    chip = Chip([mode], frame="rotating", backend="qutip")
 
     result = chip.steadystate(e_ops={mode: mode.number_operator()})
 
-    from quchip.utils.constants import k_B
-
-    nbar = 1.0 / np.expm1(frequency / (k_B * temperature))
     ratio = nbar / (nbar + 1.0)
     probabilities = ratio ** np.arange(levels)
     probabilities /= probabilities.sum()
@@ -250,7 +245,7 @@ def test_closed_system_rejects_non_unique_stationary_manifold() -> None:
 
 def test_time_dependent_resolved_hamiltonian_is_rejected() -> None:
     """Stationary solving rejects component-owned time dependence and points to time evolution."""
-    from quchip.extensions import FrequencyModulatedMode
+    from tests.extension_guide import FrequencyModulatedMode
 
     mode = FrequencyModulatedMode(
         frequency=5.0,
@@ -278,3 +273,58 @@ def test_steady_state_batch_preserves_sweep_shape_and_expectations() -> None:
     np.testing.assert_allclose(np.real(result.expect(mode)), [0.0, 0.09998, 0.19936], atol=8e-4)
     with pytest.raises(FrozenInstanceError):
         result._shape = (99,)
+
+
+def test_conserving_chip_above_the_diagnostic_cap_matches_a_dense_stationary_solve() -> None:
+    """A lossy, thermal, dephased chip conserving excitations matches a dense trace-constrained solve."""
+    from quchip import RWA, Capacitive, DuffingTransmon
+    from quchip.engine.steady_state import build_steadystate_problem
+
+    qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, T1=300.0, T2=200.0, label="q")
+    readout = Resonator(freq=5.3, levels=7, internal_quality_factor=500, thermal_occupation=0.3, label="r")
+    chip = Chip([qubit, readout], [Capacitive(qubit, readout, g=0.08)], approximation=RWA(), backend="qutip")
+    problem = build_steadystate_problem(chip)
+    constrained = problem.backend.prepare_stationary(problem.engine_result).liouvillian.full()
+    constrained[0] += np.eye(21).reshape(-1)
+    reference = np.linalg.solve(constrained, np.eye(21 * 21)[0]).reshape(21, 21, order="F")
+
+    result = chip.steadystate(e_ops={"r": "n"})
+
+    np.testing.assert_allclose(result.state.full(), reference, rtol=0, atol=1e-12)
+    assert float(np.real(result.expect("r"))) > 0.1
+    assert result.residual < 1e-12
+
+
+@pytest.mark.parametrize("bit_flip", [False, True])
+def test_non_unique_stationary_system_above_the_diagnostic_cap_is_reported_singular(bit_flip) -> None:
+    """Pure dephasing, or bit flips leaving only a coherence stationary, give no state rather than an arbitrary one."""
+    import qutip
+    from scipy.sparse.linalg import MatrixRankWarning
+
+    from quchip.backend.qutip import _direct_steady_state
+
+    mode = qutip.destroy(9)
+    liouvillian = qutip.liouvillian(qutip.tensor(qutip.qeye(2), mode.dag() * mode),
+                                    [qutip.tensor(qutip.sigmax(), qutip.qeye(9)), qutip.tensor(qutip.qeye(2), mode)])
+    with pytest.warns(MatrixRankWarning, match="singular"):
+        state = (_direct_steady_state(liouvillian.to("csr").data_as("csr_matrix"), [2, 9]) if bit_flip else
+                 Chip([Resonator(freq=6.0, levels=17, label="r", T2=10.0)], frame="rotating",
+                      backend="qutip").steadystate().state)
+    assert np.isnan(state.full()).all()
+
+
+@pytest.mark.filterwarnings("error::numpy.exceptions.ComplexWarning")
+def test_drive_entries_couple_the_stationary_blocks_without_a_complex_cast() -> None:
+    """A real drive enters the generator only as purely imaginary entries, and they still couple its blocks."""
+    import qutip
+
+    from quchip.backend.qutip import _direct_steady_state
+
+    mode = qutip.destroy(12)
+    hamiltonian, collapse = 0.1 * (mode + mode.dag()), [mode]
+    liouvillian = qutip.liouvillian(hamiltonian, collapse)
+
+    state = _direct_steady_state(liouvillian.to("csr").data_as("csr_matrix"), [12])
+
+    np.testing.assert_allclose(state.full(), qutip.steadystate(hamiltonian, collapse).full(), rtol=0, atol=1e-12)
+    assert complex(qutip.expect(mode, state)) == pytest.approx(-0.2j, abs=1e-12)  # the coherent state -2iΩ/κ

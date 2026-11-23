@@ -6,7 +6,7 @@ from typing import Any
 import numpy as np
 
 from quchip.backend.containers import LinearResponseSolverResult
-from quchip.utils.jax_utils import contains_tracer
+from quchip.utils.jax_utils import concrete_array_module
 from quchip.utils.values import DeferredValue
 
 # Relative residual that each conditional-response block and JAX derivative solve must reach.
@@ -79,6 +79,9 @@ def coherence_response(problem: Any, *, xp: Any) -> Any:
     from quchip.backend.containers import CoherenceResponseSolverResult
     from quchip.utils.memory import dense_bytes, krylov_bytes, require_memory
 
+    # A concrete problem prepares its operators on the host, and only the frequency solve uses ``result_xp``.
+    result_xp, xp = xp, concrete_array_module(problem.hamiltonians, problem.lowering, problem.conserving,
+                                              problem.sources, problem.frequencies, problem.scattering)
     H = tuple(xp.asarray(h, dtype=complex) for h in problem.hamiltonians)
     lower = tuple(xp.asarray(channel, dtype=complex) for channel in problem.lowering)
     kept = tuple(xp.asarray(channel, dtype=complex) for channel in problem.conserving)
@@ -102,18 +105,17 @@ def coherence_response(problem: Any, *, xp: Any) -> Any:
     direct_sectors = tuple(n for n in active_sectors if counts[n - 1] <= _COHERENCE_DENSE_LIMIT)
     generators = {n: dense(n) for n in direct_sectors}
     frequencies = xp.atleast_1d(xp.array(problem.frequencies, dtype=float, copy=True))
-    indices = list(problem.plane_indices)
-    plane = xp.asarray(indices)
+    plane = xp.asarray(problem.plane_indices, dtype=int)
     scattering = xp.asarray(problem.scattering)[xp.ix_(plane, plane)]
     operators = (drift, lower, kept, sources, generators)
-    if xp is not np and contains_tracer((operators, frequencies, scattering)):
+    if xp is not np:
         # A traced sweep keeps one loop, so the program of the caller does not grow with the sweep.
         responses, residuals = _compiled_sweep_solve()(operators, frequencies, scattering, plane)
     else:
         # Eager sweeps of every length reuse one executable for each frequency.
-        solve = partial(_solve_frequency, xp=np) if xp is np else _compiled_frequency_solve()
-        solved = [solve(*operators, frequency, scattering, plane) for frequency in np.asarray(frequencies)]
-        responses, residuals = (xp.stack(values) for values in zip(*solved, strict=True))
+        solve = partial(_solve_frequency, xp=np) if result_xp is np else _compiled_frequency_solve()
+        solved = [solve(*operators, frequency, scattering, plane) for frequency in frequencies]
+        responses, residuals = (result_xp.stack(values) for values in zip(*solved, strict=True))
 
     def condition_numbers() -> Any:
         # Report the largest diagonal-block condition, not a full-generator condition.

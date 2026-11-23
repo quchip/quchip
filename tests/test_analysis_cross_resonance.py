@@ -1,4 +1,4 @@
-"""Cross-resonance coefficient recovery, uncertainty, and dressed susceptibility."""
+"""Dressed weak-drive cross-resonance susceptibility."""
 
 from __future__ import annotations
 
@@ -7,164 +7,10 @@ from quchip.approximations import RWA
 import numpy as np
 import pytest
 
-from quchip import (
-    CRHamiltonianResult,
-    analyze_cross_resonance,
-    analyze_cr_susceptibility,
-)
-from quchip.analysis.cross_resonance import bloch_model
+from quchip import analyze_cr_susceptibility
 from quchip.chip import Capacitive, Chip
 from quchip.control import ChargeDrive, ControlEquipment
 from quchip.devices.transmon.duffing import DuffingTransmon
-
-
-def _make_synthetic_data(
-    t: np.ndarray,
-    px0: float,
-    py0: float,
-    pz0: float,
-    px1: float,
-    py1: float,
-    pz1: float,
-    td: float = 1e6,
-    noise_level: float = 0.0,
-    rng: np.random.Generator | None = None,
-) -> tuple[np.ndarray, ...]:
-    """Generate synthetic Bloch traces from known parameters."""
-    p0 = bloch_model(t, px0, py0, pz0, td, 0.0, 0.0, 0.0)
-    p1 = bloch_model(t, px1, py1, pz1, td, 0.0, 0.0, 0.0)
-    if noise_level > 0 and rng is not None:
-        p0 = p0 + noise_level * rng.standard_normal(p0.shape)
-        p1 = p1 + noise_level * rng.standard_normal(p1.shape)
-    return p0[0], p0[1], p0[2], p1[0], p1[1], p1[2]
-
-
-def _closed_form_x_axis_trace(t: np.ndarray, px: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Analytic Bloch trace for H = pi * px * X from the +Z initial state."""
-    phase = 2 * np.pi * abs(px) * t
-    sign = np.sign(px)
-    return (
-        np.zeros_like(t),
-        -sign * np.sin(phase),
-        np.cos(phase),
-    )
-
-
-# ---------------------------------------------------------------------------
-# bloch_model unit tests
-# ---------------------------------------------------------------------------
-
-
-def test_bloch_model_zero_drive():
-    """Zero drive → initial state [0, 0, 1] decays to zero (no precession)."""
-    t = np.linspace(0, 1e-6, 50)
-    td = 5e-7  # short decay
-    m = bloch_model(t, 0.0, 0.0, 0.0, td, 0.0, 0.0, 0.0)
-    assert m.shape == (3, len(t))
-    assert abs(float(m[2, 0]) - 1.0) < 0.01, "Initial Z should be near 1"
-    assert float(m[2, -1]) < 0.5, "Z should decay significantly by end"
-
-
-def test_bloch_model_pure_z_precession():
-    """Pure Z drive → no precession (only Z component)."""
-    t = np.linspace(0, 1e-6, 100)
-    px, py, pz = 0.0, 0.0, 2e6  # 2 MHz Z drive
-    m = bloch_model(t, px, py, pz, 1e8, 0.0, 0.0, 0.0)
-    assert m.shape == (3, len(t))
-    # Initial state |0> is an eigenstate of sigma_z, so a co-axial drive only phases it.
-    assert np.all(np.abs(m[2] - 1.0) < 0.01), "Z eigenstate shouldn't precess under Z drive"
-
-
-def test_bloch_model_pure_x_precession():
-    """Pure X drive → Y/Z oscillate at the drive frequency, X stays 0."""
-    t = np.linspace(0, 1e-6, 200)
-    f = 3e6  # 3 MHz
-    m = bloch_model(t, f, 0.0, 0.0, 1e9, 0.0, 0.0, 0.0)
-    assert np.max(np.abs(m[0])) < 0.05, "X should stay near 0 for pure X drive"
-    assert np.std(m[1]) > 0.1, "Y should oscillate for pure X drive"
-
-
-# ---------------------------------------------------------------------------
-# analyze_cross_resonance unit tests
-# ---------------------------------------------------------------------------
-
-
-def test_recovery_known_coefficients_noise_free():
-    """Recover known CR coefficients from exact (noise-free) Bloch trajectories."""
-    # Known CR coefficients in Hz
-    IX_true, IY_true, IZ_true = 2.3e6, 2.6e6, 0.1e6
-    ZX_true, ZY_true, ZZ_true = 2.6e6, -0.2e6, 0.15e6
-
-    # From I and Z components:
-    # ctrl0 parameters: IX + ZX, IY + ZY, IZ + ZZ
-    # ctrl1 parameters: IX - ZX, IY - ZY, IZ - ZZ
-    px0, py0, pz0 = IX_true + ZX_true, IY_true + ZY_true, IZ_true + ZZ_true
-    px1, py1, pz1 = IX_true - ZX_true, IY_true - ZY_true, IZ_true - ZZ_true
-
-    t_ns = np.linspace(0, 500, 80)  # ns
-    t_s = t_ns * 1e-9  # seconds for the Bloch model (Hz coefficients)
-    c0x, c0y, c0z, c1x, c1y, c1z = _make_synthetic_data(t_s, px0, py0, pz0, px1, py1, pz1)
-
-    result = analyze_cross_resonance(
-        t_ns,
-        {"x": c0x, "y": c0y, "z": c0z},
-        {"x": c1x, "y": c1y, "z": c1z},
-    )
-
-    assert isinstance(result, CRHamiltonianResult)
-
-    # 10% tolerance on noise-free data; results are GHz, truths are the
-    # Hz-valued Bloch-model inputs.
-    tol = 0.10
-    for name, true_val_hz in [
-        ("IX", IX_true),
-        ("IY", IY_true),
-        ("IZ", IZ_true),
-        ("ZX", ZX_true),
-        ("ZY", ZY_true),
-        ("ZZ", ZZ_true),
-    ]:
-        val, _ = result.coeffs()[name]
-        true_val = true_val_hz * 1e-9
-        rel_err = abs(val - true_val) / (abs(true_val) + 1e-18)
-        assert rel_err < tol, (
-            f"{name}: recovered {val * 1e3:.4f} MHz, expected {true_val * 1e3:.4f} MHz (rel err = {rel_err:.2%})"
-        )
-
-
-@pytest.mark.parametrize(
-    ("IX_true", "ZX_true"),
-    [
-        (1.8e6, 0.0),
-        (0.0, 1.4e6),
-        (-0.45e6, 1.35e6),
-    ],
-)
-def test_ix_zx_conventions_from_closed_form_x_axis_traces(IX_true, ZX_true):
-    """Hand-derived pure-X traces catch IX/ZX sign and decomposition mistakes."""
-    t_ns = np.linspace(0, 1200, 140)  # ns (1.2 us)
-    t_s = t_ns * 1e-9  # seconds for the closed-form trace (Hz coefficients)
-    px0 = IX_true + ZX_true
-    px1 = IX_true - ZX_true
-    c0x, c0y, c0z = _closed_form_x_axis_trace(t_s, px0)
-    c1x, c1y, c1z = _closed_form_x_axis_trace(t_s, px1)
-
-    result = analyze_cross_resonance(
-        t_ns,
-        {"x": c0x, "y": c0y, "z": c0z},
-        {"x": c1x, "y": c1y, "z": c1z},
-    )
-
-    npt = np.testing
-    npt.assert_allclose(result.IX, IX_true * 1e-9, atol=0.12e6 * 1e-9, rtol=0.08)
-    npt.assert_allclose(result.ZX, ZX_true * 1e-9, atol=0.12e6 * 1e-9, rtol=0.08)
-    for name in ("IY", "IZ", "ZY", "ZZ"):
-        assert abs(getattr(result, name)) < 0.15e6 * 1e-9, f"{name} should stay near zero"
-
-
-# ---------------------------------------------------------------------------
-# Weak-drive susceptibility tests
-# ---------------------------------------------------------------------------
 
 
 def _driven_pair(*, two_control_lines: bool = False, backend: str | None = None):
@@ -252,56 +98,6 @@ def test_cr_susceptibility_rejects_same_device_and_wrong_target_drive() -> None:
     chip.wire(target_drive)
     with pytest.raises(ValueError, match="does not target control"):
         analyze_cr_susceptibility(chip, control, target, drive=target_drive)
-
-
-@pytest.mark.parametrize("failure", ["rank", "nonfinite", "nonconverged", "no_dof"])
-def test_cr_fit_reports_unavailable_uncertainty_and_real_status(monkeypatch, failure):
-    """An inspectable candidate is not evidence of convergence or finite uncertainty."""
-    from scipy.optimize import OptimizeResult
-    import quchip.analysis.cross_resonance as cr
-
-    count = 2 if failure == "no_dof" else 5
-    jac = np.eye(3 * count, 7)
-    if failure == "rank":
-        jac[:, -1] = jac[:, 0]
-    elif failure == "nonfinite":
-        jac[0, 0] = np.nan
-    candidate = OptimizeResult(
-        x=np.array([1e6, 0, 0, 1e-6, 0, 0, 0]), jac=jac, cost=0.1,
-        success=failure != "nonconverged", message="budget exhausted" if failure == "nonconverged" else "converged",
-    )
-    monkeypatch.setattr(cr, "least_squares", lambda *args, **kwargs: candidate)
-    times = np.linspace(0, 100, count)
-    xyz = {"x": np.zeros(count), "y": np.zeros(count), "z": np.ones(count)}
-    result = analyze_cross_resonance(times, xyz, xyz)
-    assert result.converged is (failure != "nonconverged")
-    assert candidate.message in result.message
-    assert result.cov_ctrl0 is None
-    assert result.cov_ctrl1 is None
-    assert all(error is None for _, error in result.coeffs().values())
-    assert "unavailable" in repr(result)
-    assert np.isfinite(result.IX)
-
-
-def test_cr_covariance_respects_parameter_units(monkeypatch):
-    """Frequency and decay-time units cannot create artificial rank deficiency."""
-    from scipy.optimize import OptimizeResult
-    import quchip.analysis.cross_resonance as cr
-
-    count = 5
-    scales = np.array([1e-6, 2e-6, 3e-6, 1e12, 1, 1, 1])
-    candidate = OptimizeResult(
-        x=np.array([1e6, 0, 0, 1e-6, 0, 0, 0]),
-        jac=np.eye(3 * count, 7) * scales, cost=0.1,
-        success=True, message="converged",
-    )
-    monkeypatch.setattr(cr, "least_squares", lambda *args, **kwargs: candidate)
-    xyz = {"x": np.zeros(count), "y": np.zeros(count), "z": np.ones(count)}
-    result = analyze_cross_resonance(np.linspace(0, 100, count), xyz, xyz)
-    expected_variances = 0.2 / (3 * count - 7) / scales**2
-    np.testing.assert_allclose(result.cov_ctrl0, np.diag(expected_variances), rtol=1e-12)
-    for name, index in (("IX", 0), ("IY", 1), ("IZ", 2), ("ZX", 0), ("ZY", 1), ("ZZ", 2)):
-        assert result.coeffs()[name][1] == pytest.approx(np.sqrt(expected_variances[index] / 2) * 1e-9)
 
 
 @pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])

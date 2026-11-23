@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from quchip.chip import Chip, PortNetwork
+from quchip.chip.partition import internal_couplings, sub_chip
 from quchip.utils.labeling import resolve_label
 
 
@@ -57,32 +58,10 @@ def build_local_subsystem(chip: Chip, labels: tuple[str, ...]) -> Chip:
         raise NotImplementedError(
             "Local fit extraction cannot discard retained effective terms; evaluate the full chip."
         )
-    network = _local_port_network(chip, keep)
     devices = [device.copy() for device in chip.devices if device.label in keep]
     device_map = {device.label: device for device in devices}
-    couplings = [
-        coupling.copy(device_map)
-        for coupling in chip.couplings
-        if coupling.device_a_label in keep and coupling.device_b_label in keep
-    ]
-    frame: Any = (
-        {label: value for label, value in chip.frame.items() if label in keep}
-        if isinstance(chip.frame, dict) else chip.frame
-    )
-    local = Chip(
-        devices=devices,
-        couplings=couplings,
-        frame=frame,
-        approximation=chip.approximation,
-        basis=chip.basis,
-        backend=chip.backend,
-        port_network=network,
-        space=chip.space,
-    )
-    from quchip.chip.states import copy_state_configuration
-
-    copy_state_configuration(chip, local)
-    return local
+    couplings = [coupling.copy(device_map) for coupling in internal_couplings(chip, keep)]
+    return sub_chip(chip, devices, couplings, label=None, port_network=_local_port_network(chip, keep))
 
 
 def _local_port_network(chip: Chip, keep: set[str]) -> PortNetwork | None:

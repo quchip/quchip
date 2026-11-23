@@ -44,11 +44,9 @@ from quchip.chip.effective import (
     EffectiveTerms,
     OperatorProjection,
     _in_device_order,
-    _retained_owners,
     lineage,
     lineage_labels,
     retained_support,
-    transport_retained_operator,
 )
 from quchip.declarative.dissipation import CollapseChannel
 from quchip.chip.ports import Port
@@ -63,7 +61,7 @@ from quchip.chip.sw import (
     cross_block_gap,
 )
 from quchip.engine.excitation import authored_excitation_changes, excitation_sectors, excitation_structure
-from quchip.chip.transformations.dispatch import EliminationTarget, register_elimination_target
+from quchip.chip.transformations.dispatch import EliminationTarget, _register_elimination_target
 from quchip.chip.transformations.methods import (
     DeviceReductionContext,
     _sw_dressed_transition,
@@ -661,8 +659,6 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
             "local=True implements method='sw' only. The exact route diagonalizes the whole chip, so its "
             "dressed states are not local."
         )
-    if local and chip.baths:
-        raise NotImplementedError("local=True does not yet transform baths. Use local=False for a chip with baths.")
     touching = [c for c in chip.couplings if mode_label in (c.device_a_label, c.device_b_label)]
     survivors = []
     for c in touching:
@@ -738,8 +734,7 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
     # A control line wired to the eliminated mode (or to a coupling that
     # touches it) has no image in the reduced model unless a registered rule
     # converts it (chip/retarget.py). plan_stranded_lines() looks the rules up
-    # *before* any fold work, so a missing rule fails fast — exactly like the
-    # bath guard above.
+    # *before* any fold work, so a missing rule fails fast.
     result_kind = "edge" if is_multi else "leaf-fold"
     equipment = chip.control_equipment
     def classify(line: Any) -> StrandedLine | None:
@@ -761,10 +756,8 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
             rule_target=rule_target,
             missing_rule_message=(
                 f"Control line '{line.label}' ({type(line).__name__}) targets the "
-                f"eliminated {what}. No retarget rule converts it "
-                f"(register_retarget_rule({type(line).__name__}, {type(rule_target).__name__}, "
-                f"'{result_kind}', ...)); unwire the line first (chip.unwire('{line.label}')), "
-                "or keep the target."
+                f"eliminated {what}, and no retarget rule converts it to the reduced chip. "
+                f"Unwire the line first (chip.unwire('{line.label}')), or keep the target."
             ),
         )
 
@@ -1082,7 +1075,6 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
         couplings=[c for c in kept_couplings if kept_numeric.issuperset((c.device_a_label, c.device_b_label))],
         port_replacements=port_replacements,
         effective_terms=(),
-        baths=(),
     )
     # Keep every computed correction in the retained product coordinates.
     # Scalar summaries and convenient exchange edges are only a decomposition
@@ -1210,31 +1202,6 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
                     carry(channel.operator, terms.labels, terms.dims, channel.rate, f"{terms.label}.{channel.name}",
                           None if declared is None else declared.get(channel.name),
                           terms.omitted_responses.get(channel.name, ()))
-    projected_baths = []
-    for bath in chip.baths:
-        copied = bath.copy()
-        copied._retained = {}
-        # Authored bath operators first cross the maps of earlier reductions.
-        crossed = _retained_owners(chip, tuple(labels), None)[0] if bath._retained is None else []
-        for label, frequency, lowering, number in bath._target_operators(chip, source_bases):
-            # A conserving reduction keeps each operator's total level change, as for channels, when
-            # every earlier map that the operator crosses also conserves the total level index.
-            changes = None if sectors is None or any(t.excitation_changes is None for t in crossed) else tuple(
-                authored_excitation_changes(op, tuple(labels), chip.backend,
-                                            source_bases if chip_bases is None else chip_bases)
-                for op in (lowering, number)
-            )
-            matrices = [_array(chip.backend.to_array(materialize_expr(op, chip.backend)))
-                        for op in (lowering, number)]
-            if bath._retained is None:
-                transported = [transport_retained_operator(chip, op, tuple(labels), tuple(chip.authored_dims))
-                               for op in matrices]
-                matrices = [op if moved is None else _array(moved[0]) for op, moved in zip(matrices, transported)]
-            copied._retained[label] = (frequency, *[step_embedding.conj().T @ op @ step_embedding
-                                                   for op in matrices], changes)
-        if boundary_ports and mode_label in copied._retained:
-            copied._omitted_responses = tuple(sorted({*bath._omitted_responses, mode_label}))
-        projected_baths.append(copied)
     projection = None if lone and not joined else (step if step is not None else OperatorProjection.capture(
         numeric, tuple(numeric_survivors), tuple(numeric_final.authored_dims), step_embedding,
         unchanged_labels=unchanged_labels,
@@ -1264,7 +1231,7 @@ def reduce_device(chip: "Chip", target: Any, method: str, *, local: bool = False
         effective_terms = (terms,)
     final = rebuild_chip(chip, devices=reduced_devices, couplings=kept_couplings,
                          port_replacements=port_replacements,
-                         effective_terms=effective_terms, baths=projected_baths)
+                         effective_terms=effective_terms)
     if boundary_ports:
         if local:
             frequency, weight = _local_dressed_transition(chip, resolution, mode_label, mode_lowering, approximation)
@@ -1430,7 +1397,7 @@ def _retained_levels(state: Any, dims: dict[str, int], mode_label: str) -> dict[
     return levels
 
 
-register_elimination_target(EliminationTarget(
+_register_elimination_target(EliminationTarget(
     kind="device",
     claims=lambda chip, target: resolve_label(target) in chip.device_map,
     reduce=reduce_device,

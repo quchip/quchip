@@ -6,9 +6,8 @@ the user must unwire such a line. A per-(drive type, target type, result kind)
 registry lets a converter replace the line with equivalent lines wired to the
 reduced chip. For example, a :class:`~quchip.control.drive.FluxDrive` on an
 eliminated coupler becomes a :class:`~quchip.control.drive.ParametricDrive`
-that pumps each emitted edge. Extensions of this registry never touch
-:func:`~quchip.chip.transformations.eliminate` itself. A target with no
-registered rule still raises the fail-fast unwire/keep error.
+that pumps each emitted edge. A target with no rule raises an error before
+the reduction starts, which says to unwire the line or keep the target.
 """
 
 from __future__ import annotations
@@ -32,20 +31,21 @@ class RetargetContext:
         The final reduced chip. Every emitted or upgraded edge already
         exists on it; control equipment is not yet attached.
     mode_label
-        Label of the eliminated device (or coupling, for ``"crosskerr"``).
+        Label of the eliminated device, coupling or effective terms.
     result_kind
         Structure of what the reduction produced. The value is ``"edge"`` when
         the eliminated device mediated exchange between two or more survivors
         (one effective edge per survivor pair). The value is ``"leaf-fold"``
-        for a single-survivor leaf and ``"crosskerr"`` for a coupling target.
+        for a single-survivor leaf, ``"coupling"`` for a coupling target and
+        ``"effective"`` for effective terms.
     edges
-        For ``"edge"`` and ``"crosskerr"``: the per-pair reduction entries,
-        keyed ``(label_a, label_b)`` in emission order. Each entry has at least
-        ``"coupling"`` (the edge's label on the reduced chip). For ``"edge"``,
-        each entry also has the exchange bookkeeping (``"j_eff"``,
-        ``"dJ_domega_c"``, ...). The entries are always pair-keyed for any
-        number of pairs, so one entry is the two-survivor case, not a different
-        shape. ``None`` for ``"leaf-fold"``.
+        For ``"edge"``: the per-pair reduction entries, keyed
+        ``(label_a, label_b)`` in emission order. Each entry has
+        ``"coupling"`` (the edge's label on the reduced chip) and the exchange
+        bookkeeping (``"j_eff"``, ``"dJ_domega_c"``, ...). The entries are
+        always pair-keyed for any number of pairs, so one entry is the
+        two-survivor case, not a different shape. An empty mapping for
+        ``"coupling"`` and ``"effective"``, and ``None`` for ``"leaf-fold"``.
     """
 
     chip: Any
@@ -82,15 +82,12 @@ class RetargetResult:
 _RETARGET_RULES: dict[tuple[type, type, str], Any] = {}
 
 
-def register_retarget_rule(drive_type: type, target_type: type, result_kind: str, rule: Any) -> None:
+def _register_retarget_rule(drive_type: type, target_type: type, result_kind: str, rule: Any) -> None:
     """Register a converter for ``(drive type, eliminated-target type, result kind)``.
 
     Lookup (:func:`lookup_retarget_rule`) walks both types' MROs, so a rule
     registered for a base type also covers its subclasses. ``result_kind``
-    matches exactly. Use this extension point to teach
-    :func:`~quchip.chip.transformations.eliminate` to carry a new kind of
-    stranded control line without changing
-    :func:`~quchip.chip.transformations.eliminate`.
+    matches exactly.
 
     Parameters
     ----------
@@ -98,9 +95,10 @@ def register_retarget_rule(drive_type: type, target_type: type, result_kind: str
         Control-line class the rule handles.
     target_type : type
         Eliminated-target class the rule handles: a device type (the
-        eliminated mode itself) for ``"edge"``/``"leaf-fold"``.
+        eliminated mode itself) for ``"edge"``/``"leaf-fold"``, or the coupling
+        type for a pump on an eliminated coupling.
     result_kind : str
-        ``"edge"``, ``"leaf-fold"``, or ``"crosskerr"``.
+        ``"edge"``, ``"leaf-fold"``, ``"coupling"`` or ``"effective"``.
     rule : callable
         ``rule(line, ctx: RetargetContext) -> RetargetResult``.
     """
@@ -154,4 +152,4 @@ def _flux_edge_pump_rule(line: Any, ctx: RetargetContext) -> RetargetResult:
     return RetargetResult(lines=tuple(lines), transforms=tuple(copies + gains), note=note)
 
 
-register_retarget_rule(FluxDrive, BaseDevice, "edge", _flux_edge_pump_rule)
+_register_retarget_rule(FluxDrive, BaseDevice, "edge", _flux_edge_pump_rule)

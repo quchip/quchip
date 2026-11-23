@@ -116,3 +116,22 @@ def test_state_lookup_is_exact_by_default_with_explicit_nearest():
             result.state_at(time, method="nearest")
     with pytest.raises(ValueError, match="method"):
         result.state_at(1.0, method="interpolate")
+
+
+@pytest.mark.parametrize("noisy", [False, True])
+def test_batch_over_initial_states_matches_separate_solves(noisy):
+    from quchip import ChargeDrive, Gaussian
+
+    seq, q = _sequence("qutip")
+    drive = ChargeDrive(q, label="xy")
+    seq._chip.wire(drive)
+    seq.schedule(drive, envelope=Gaussian(duration=4.0, sigmas=3.0, amplitude=0.1), freq=seq._chip.freq(q))
+    # Point 0 again after point 1: one solve must not change the dynamics of the next.
+    states = [{"q": 0}, {"q": 1}, {"q": 0}]
+    kwargs = dict(tlist=np.linspace(0.0, 4.0, 5), dissipation=noisy, e_ops={"q": q.number_operator()})
+    batch = seq.simulate_batch(seq.vary("initial_state", states), **kwargs)
+    for result, state in zip(batch, states):
+        separate = seq.simulate(initial_state=state, **kwargs)
+        np.testing.assert_array_equal(result.expect("q"), separate.expect("q"))
+        np.testing.assert_array_equal(result._backend.to_array(result.final_state),
+                                      separate._backend.to_array(separate.final_state))

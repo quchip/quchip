@@ -182,10 +182,9 @@ def _combine(chip: "Chip", components: tuple[Any, ...], prepare: Any) -> State:
     backend = chip.backend
     norm = backend.norm(psi)
     # Backend.norm may return a traced 0-d array (dynamiqs). A concrete zero
-    # norm raises. Otherwise the divisor itself must be guarded (mirrors
-    # Bath._bose's safe-denominator pattern): xp.where evaluates both branches,
-    # so dividing by the (possibly zero) traced norm directly would still
-    # produce 0/0 -> NaN in the unselected branch. Replacing the zero norm
+    # norm raises. Otherwise the divisor itself must be guarded: xp.where
+    # evaluates both branches, so dividing by the (possibly zero) traced norm
+    # directly would still produce 0/0 -> NaN in the unselected branch. Replacing the zero norm
     # with 1.0 before the division makes an all-zero traced amplitude set
     # return the already-zero (unnormalized) state instead of NaN.
     concrete_norm = maybe_concrete_scalar(norm)

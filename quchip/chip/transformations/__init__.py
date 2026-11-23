@@ -1,16 +1,7 @@
-"""Model reduction: ``eliminate()`` and its device, coupling and effective-term target registry.
+"""Model reduction: ``eliminate()`` and its device, coupling and effective-term targets.
 
-Public surface only. The extension seams are
-:func:`register_elimination_target` for a new target kind and
-:func:`register_reduction_method` for a new device reduction route.
-:func:`register_elimination_target` is documented on
-:mod:`quchip.chip.transformations.dispatch`, and
-:func:`register_reduction_method` on
-:mod:`quchip.chip.transformations.methods`. Importing this package registers
-the shipped handlers (below).
+Importing this package registers the shipped target handlers (below).
 """
-# The shipped-handler registration uses the same side-effect-import pattern as
-# the `quchip.chip.retarget` rule registry.
 
 from __future__ import annotations
 
@@ -20,13 +11,8 @@ from quchip.chip.transformations.active_patch import (
     active_patch,
     eliminate_spectators,
 )
-from quchip.chip.transformations.dispatch import (
-    EliminationTarget,
-    eliminate,
-    register_elimination_target,
-)
+from quchip.chip.transformations.dispatch import EliminationTarget, eliminate
 from quchip.chip.sw import EliminationError
-from quchip.chip.transformations.methods import register_reduction_method
 from quchip.chip.transformations.result import ChipTransform, EliminationResult, ReductionMap
 
 # Import handler modules for their registration side effects. Chip keeps device,
@@ -47,6 +33,4 @@ __all__ = [
     "eliminate_spectators",
     "SpectatorEliminationResult",
     "EliminationTarget",
-    "register_elimination_target",
-    "register_reduction_method",
 ]

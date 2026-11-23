@@ -11,9 +11,10 @@ import quchip.analysis.measurement as measurement
 import quchip.analysis.vna as vna_analysis
 import quchip.engine.routes as routes
 import quchip.backend._sector_stationary as sector_solver
-from quchip import (RWA, VNA, Bath, Capacitive, ChargeBasisTransmon, Chip, DuffingTransmon, ExcitationCutoff,
+from quchip import (RWA, VNA, Capacitive, ChargeBasisTransmon, Chip, DuffingTransmon, ExcitationCutoff,
                     PortNetwork, Resonator)
 from quchip.declarative import CollapseChannel, CouplingModel, Scalar, parameter
+from tests.extension_guide import CollectiveDecayCoupling
 
 OFFSETS = np.array([-0.02, -1e-3, -1e-5, 0.0, 1e-5, 1e-3, 0.02])
 
@@ -437,7 +438,8 @@ def test_modes_are_reported_in_the_probe_frame_of_the_solve():
         b = Resonator(freq=5.0, levels=3, label="b", T1=100.0)
         network = PortNetwork(label="line")
         network.expose("line", at=network.port("a", target=a, rate=0.1))
-        return Chip([a, b], port_network=network, baths=[Bath("collective_decay", targets=[a, b], rate=0.1)],
+        shared = CollectiveDecayCoupling(a, b, exchange_strength=0.0, decay_rate=0.1)
+        return Chip([a, b], [shared], port_network=network,
                      approximation=RWA(), space=space)
 
     offsets = [-0.01, -0.001, 0.0, 0.001, 0.01]

@@ -25,12 +25,11 @@ from __future__ import annotations
 import itertools
 import warnings
 from dataclasses import dataclass, field, replace
-from functools import partial
+from functools import partial, reduce
 from math import prod
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence, cast
 
 import jax
-import jax.numpy as jnp
 import numpy as np
 from scipy import sparse
 
@@ -140,14 +139,9 @@ def _support_semantic_transform(labels: Sequence[str], bases: Mapping[str, Basis
     transforms = [bases[label].energy_to_solver() for label in labels]
     if all(transform is None for transform in transforms):
         return None
-    resolved = [
-        jnp.eye(bases[label].resolved_dim, dtype=jnp.complex128) if transform is None else transform
-        for label, transform in zip(labels, transforms, strict=True)
-    ]
-    product_transform = resolved[0]
-    for transform in resolved[1:]:
-        product_transform = jnp.kron(product_transform, transform)
-    return product_transform
+    xp = concrete_array_module(transforms)
+    return reduce(xp.kron, [xp.eye(bases[label].resolved_dim, dtype=complex) if transform is None else transform
+                            for label, transform in zip(labels, transforms, strict=True)])
 
 
 def _resolve_system(chip: "Chip", backend: Backend) -> _SystemResolution:
@@ -529,12 +523,10 @@ def _project_dense(
         matrix = materialize_expr(operator, _ARRAY_LOWERER, local_bases=bases)
     else:
         matrix = backend.to_array(operator)
-    records = [bases[label] for label in labels]
-    xp = array_namespace(records[0].vectors)
-    transform = records[0].vectors
-    for record in records[1:]:
-        transform = xp.kron(transform, record.vectors)
-    return transform.conj().T @ matrix @ transform
+    vectors = [bases[label].vectors for label in labels]
+    xp = concrete_array_module(matrix, vectors)
+    transform = xp.asarray(reduce(xp.kron, vectors))
+    return transform.conj().T @ xp.asarray(matrix) @ transform
 
 
 def _build_static_h0(
@@ -645,10 +637,10 @@ def _collect_collapse_terms(
                 terms.projection is not None for terms in chip.effective_terms
             )
             # A static collapse operator is only frame-invariant up to one global
-            # phase; multi-device channels (collective baths, custom couplings) can
+            # phase; multi-device channels (custom couplings, shared ports) can
             # beat between unequal device frames, so they get the same check as
             # retained-coordinate effective channels.
-            # Support-free channels (baths) already span the whole chip.
+            # A support-free channel spans the whole chip.
             check_support = support or tuple(range(len(labels)))
             if (check_frames and (retained_coordinates or len(check_support) > 1)
                     and not _is_concrete_zero(resolved_rate)):
@@ -797,7 +789,7 @@ def _concrete_port_resolution(
         # A port transformed inside jit or grad keeps a traced payload. Its
         # band decomposition then keeps every candidate the declared
         # excitation changes allow, so it is not pruned here.
-        xp = jnp if contains_tracer(payload) else np
+        xp = concrete_array_module(payload)
         values = xp.asarray(payload, dtype=complex)
         if transform is not None:
             concrete_transform = np.asarray(transform, dtype=complex)
@@ -1618,10 +1610,10 @@ def drive_bands(
             if any(terms.projection is not None for terms in chip.effective_terms):
                 # Select the signal's RWA partner in its authored coordinates,
                 # then transform each surviving band into the retained frame.
-                vectors = bases[pair[0]].vectors
-                for label in pair[1:]:
-                    vectors = jnp.kron(vectors, bases[label].vectors)
-                matrix = vectors @ jnp.asarray(backend.to_array(local_band)) @ vectors.conj().T
+                matrix = backend.to_array(local_band)
+                xp = concrete_array_module(matrix, [bases[label].vectors for label in pair])
+                vectors = xp.asarray(reduce(xp.kron, [bases[label].vectors for label in pair]))
+                matrix = vectors @ xp.asarray(matrix) @ vectors.conj().T
                 # The band changes the total energy level by the sum of its charges; declaring it keeps a
                 # conserving projection's structurally empty bands out even when the drive is traced.
                 band_expr = PhysicsExpr.from_matrix(matrix, labels=pair, dims=local_dims,
@@ -2231,10 +2223,6 @@ def compile_hamiltonian_template(
         slh = chip.port_network.resolve(slh, _compiled=resolution.network,
                                         _generated=_compact_network_hamiltonian(chip, resolution, backend))
     channel_supports = list(collapse_supports)
-    for bath in chip.baths:
-        targets = tuple(bath.resolve_targets(chip))
-        if not bath.separable and len(targets) > 1:
-            channel_supports.append(targets)
     network_supports = (
         ()
         if chip.port_network is None
@@ -2314,16 +2302,20 @@ def instantiate_engine_result(
                 tag=compiled.tag,
             )
         )
+        concrete_carrier = maybe_concrete_scalar(item.signal.carrier)
         if (
             compiled.filter_signal_bands
             and item.signal.carrier is not None
             and compiled.weight != 0
+            and concrete_carrier != 0.0
         ):
+            # A zero carrier keeps both partners, so the RWA drops none; a traced carrier may still be zero.
             fresh_dropped.append(
                 DroppedTerm(
                     source=item.drive.label,
                     operator=(f"{compiled.origin} band w={compiled.weight:+d} on {item.target.label} (fast partner)"),
-                    reason="counter-rotating drive component under RWA",
+                    reason=("counter-rotating drive component under RWA" if concrete_carrier is not None
+                            else "counter-rotating drive component under RWA, none at a zero carrier"),
                     band_weights=(compiled.weight,),
                     frame_frequency=abs(abs(item.signal.carrier)
                                         + (1 if compiled.weight > 0 else -1) * compiled.device_frame_freq),

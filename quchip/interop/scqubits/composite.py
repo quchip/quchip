@@ -354,9 +354,9 @@ def export_chip(chip: Chip, **opts: Any) -> Any:
     Resolve or clone the chip with :class:`~quchip.approximations.Exact` before
     export.
 
-    Chip-level control equipment and baths have no scqubits counterpart,
-    because scqubits models neither drives nor dissipation. The export drops
-    them with one :class:`~quchip.AccuracyWarning` that names the dropped items.
+    Chip-level control equipment has no scqubits counterpart, because
+    scqubits models neither drives nor dissipation. The export drops it with
+    one :class:`~quchip.AccuracyWarning`.
 
     Parameters
     ----------
@@ -410,8 +410,6 @@ def export_chip(chip: Chip, **opts: Any) -> Any:
     dropped: list[str] = []
     if chip.control_equipment is not None:
         dropped.append("control equipment (drive lines and signal chain)")
-    if chip.baths:
-        dropped.append("chip-level baths")
     if dropped:
         warnings.warn(f"scqubits models neither drives nor dissipation, so the export drops {' and '.join(dropped)}.",
                       AccuracyWarning, stacklevel=user_stacklevel())

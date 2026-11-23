@@ -7,7 +7,7 @@ from quchip import (
     Capacitive, ChargeBasisTransmon, Chip, DuffingTransmon, Exact, Fluxonium, Resonator, eliminate,
 )
 from quchip.chip.effective import EffectiveTerms
-from quchip.extensions import SpinHalf
+from tests.extension_guide import SpinHalf
 
 # |<0|n|1>| is about 1.15 for this charge-basis transmon. The fluxonium's
 # <0|n|1> is imaginary.

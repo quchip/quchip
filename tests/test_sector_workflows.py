@@ -323,3 +323,40 @@ def test_direct_coupling_target_does_not_consume_an_eigensystem_budget():
                                           "qr": {"cross_kerr": None, "coupling_strength": 0.05}},
                          vary={"qr": ["g"]}, max_hilbert_dim=1)
     assert result.chip.coupling_map["qr"].g == pytest.approx(0.05, abs=1e-10)
+
+
+@pytest.mark.optional_backend
+def test_eager_sector_derivatives_match_central_differences():
+    """Eager jacrev and grad of dressed sector queries match central differences."""
+    pytest.importorskip("dynamiqs")
+    chip = pair(backend="dynamiqs")
+    queries = {"freq": lambda bound: bound.freq("q"),
+               "dispersive_shift": lambda bound: bound.dispersive_shift("q", "r"),
+               "kerr_matrix": lambda bound: bound.kerr_matrix().values.ravel()}
+    point, steps = np.array([5.0, 0.04]), np.diag([1e-4, 1e-5])
+    for name, read in queries.items():
+        def query(x, read=read):
+            return read(chip.with_params({"q.freq": x[0], "qr.g": x[1]}))
+        central = np.stack([(np.asarray(query(point + step)) - np.asarray(query(point - step))) / (2 * step.sum())
+                            for step in steps], axis=-1)
+        jacobian = np.asarray(jax.jacrev(query)(jnp.asarray(point)))
+        np.testing.assert_allclose(jacobian, central, rtol=1e-6, atol=1e-9, err_msg=name)
+        if name != "kerr_matrix":
+            np.testing.assert_allclose(jax.grad(query)(jnp.asarray(point)), jacobian, rtol=1e-12, err_msg=name)
+
+
+@pytest.mark.optional_backend
+def test_single_state_sectors_give_bare_values_and_gradients():
+    """On one device each sector holds one product state, so values and gradients are the bare ones."""
+    pytest.importorskip("dynamiqs")
+    chip = Chip([DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")], backend="dynamiqs")
+
+    def outputs(x):
+        bound = chip.with_params({"q.freq": x[0], "q.anharmonicity": x[1]})
+        assert bound.analysis._sector_model() is not None
+        return jnp.stack([bound.freq("q"), bound.kerr_matrix().values[0, 0]])
+
+    point = jnp.array([5.0, -0.25])
+    np.testing.assert_allclose(outputs(point), [5.0, -0.25], atol=1e-12)
+    np.testing.assert_allclose(jax.jacrev(outputs)(point), np.eye(2), atol=1e-12)
+    np.testing.assert_allclose(jax.jacfwd(outputs)(point), np.eye(2), atol=1e-12)

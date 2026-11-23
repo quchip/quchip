@@ -53,7 +53,7 @@ def test_flux_drive_on_eliminated_bridge_converts_to_parametric_pump():
 
 
 def test_charge_drive_on_eliminated_leaf_still_raises_with_upgraded_message():
-    """A ChargeDrive probe on an eliminated leaf raises ValueError, naming register_retarget_rule and chip.unwire()."""
+    """A ChargeDrive probe on an eliminated leaf raises ValueError that says to unwire the line or keep the target."""
     q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
     r = Resonator(freq=7.0, levels=4, label="r")
     probe = ChargeDrive(r, label="probe")
@@ -65,8 +65,8 @@ def test_charge_drive_on_eliminated_leaf_still_raises_with_upgraded_message():
     with pytest.raises(ValueError) as exc_info:
         eliminate(chip, "r")
     message = str(exc_info.value)
-    assert "register_retarget_rule" in message
-    assert "chip.unwire('probe')" in message
+    assert "no retarget rule converts it" in message
+    assert "chip.unwire('probe')" in message and "or keep the target" in message
 
 
 def test_parametric_drive_on_doomed_leg_edge_raises():
@@ -83,8 +83,8 @@ def test_parametric_drive_on_doomed_leg_edge_raises():
     with pytest.raises(ValueError) as exc_info:
         eliminate(chip, "r")
     message = str(exc_info.value)
-    assert "register_retarget_rule" in message
-    assert "chip.unwire('pump')" in message
+    assert "no retarget rule converts it" in message
+    assert "chip.unwire('pump')" in message and "or keep the target" in message
 
 
 def _three_survivor_chip():

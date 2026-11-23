@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 
 from quchip import (
-    Bath,
     Capacitive,
     ChargeDrive,
     Chip,
@@ -284,6 +283,42 @@ def test_sequence_hamiltonian_is_the_resolved_result_view() -> None:
     )
 
 
+def _rotating_sequence(freq=5.0, g=0.02, amplitude=0.02):
+    chip = _chip().with_params({"q.freq": freq, "qr.g": g})
+    chip.set_frame("rotating")
+    drive = ChargeDrive(chip["q"], label="xy")
+    chip.wire(drive)
+    sequence = QuantumSequence(chip)
+    sequence.schedule(drive, envelope=Gaussian(duration=20.0, amplitude=amplitude, sigmas=3.0), freq=5.0)
+    return sequence, chip
+
+
+def _excited(sequence, chip):
+    result = sequence.simulate(tlist=np.linspace(0.0, 20.0, 11), initial_state=chip.state({"q": 0, "r": 0}),
+                               options={"rtol": 1e-10, "atol": 1e-12})
+    return np.asarray(result.population("q", 1)).real
+
+
+def test_rebinds_of_a_resolved_sequence_match_fresh_builds() -> None:
+    sequence, chip = _rotating_sequence()
+    original = _excited(sequence, chip)
+    pulse_rebound = sequence.with_params({"pulse.0.amplitude": 0.03})
+    chip_rebound = sequence.with_params({"q.freq": 5.01, "qr.g": 0.025})
+
+    pulse_fresh = _excited(*_rotating_sequence(amplitude=0.03))
+    np.testing.assert_allclose(_excited(pulse_rebound, chip), pulse_fresh, rtol=0, atol=1e-12)
+    fresh, fresh_chip = _rotating_sequence(freq=5.01, g=0.025)
+    rebound = _excited(chip_rebound, fresh_chip)
+    np.testing.assert_allclose(rebound, _excited(fresh, fresh_chip), rtol=0, atol=1e-12)
+    assert np.max(np.abs(rebound - original)) > 1e-3
+
+    # An edit to the source after rebinding re-resolves the source and leaves the rebound copy alone.
+    chip["q"].freq = 5.02
+    fresh, fresh_chip = _rotating_sequence(freq=5.02)
+    np.testing.assert_allclose(_excited(sequence, fresh_chip), _excited(fresh, fresh_chip), rtol=0, atol=1e-12)
+    np.testing.assert_allclose(_excited(pulse_rebound, _rotating_sequence()[1]), pulse_fresh, rtol=0, atol=1e-12)
+
+
 @pytest.mark.validation
 def test_chip_with_params_is_differentiable_on_dynamiqs() -> None:
     pytest.importorskip("dynamiqs")
@@ -364,7 +399,7 @@ def test_transform_relations_validate_after_joint_rebinding() -> None:
         chip.with_params({"control.0.lower": 2.})
 
 
-def test_chip_parameter_inventory_includes_drive_control_and_bath_owners() -> None:
+def test_chip_parameter_inventory_includes_drive_and_control_owners() -> None:
     from quchip.declarative import CollapseChannel, Scalar, parameter
 
     class LossyDrive(ChargeDrive):
@@ -383,29 +418,25 @@ def test_chip_parameter_inventory_includes_drive_control_and_bath_owners() -> No
         [source, victim],
         signal_chain=[Crosstalk(source, victim, beta=0.02, theta=0.1, delay=0.5)],
     )
-    bath = Bath("thermal", targets=[q0], temperature=20.0, rate=0.005, label="cold")
-    chip = Chip([q0, q1], control_equipment=equipment, baths=[bath])
+    chip = Chip([q0, q1], control_equipment=equipment)
 
     assert chip.parameters["drive.source.loss_rate"] == 0.01
     assert chip.parameters["control.0.beta"] == 0.02
-    assert chip.parameters["bath.cold.temperature"] == 20.0
     rebound = chip.with_params(
         {
             "drive.source.loss_rate": 0.03,
             "control.0.beta": 0.04,
-            "bath.cold.temperature": 25.0,
         }
     )
 
     assert chip.parameters["drive.source.loss_rate"] == 0.01
     assert rebound.parameters["drive.source.loss_rate"] == 0.03
     assert rebound.parameters["control.0.beta"] == 0.04
-    assert rebound.parameters["bath.cold.temperature"] == 25.0
     from quchip.engine import build_problem
 
     engine_result = build_problem(rebound, [], np.asarray([0.0, 1.0])).engine_result
     paths = {path for term in engine_result.collapse_terms for path in term.parameter_paths}
-    assert {"drive.source.loss_rate", "bath.cold.temperature", "bath.cold.rate"} <= paths
+    assert "drive.source.loss_rate" in paths
 
     first = build_problem(chip, [], np.asarray([0.0, 1.0])).engine_result
     source.loss_rate = 0.03

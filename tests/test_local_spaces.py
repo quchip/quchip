@@ -5,7 +5,9 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from quchip import ChargeSpace, CustomSpace, LocalOps, PhaseGridSpace
+from quchip import ChargeSpace, CustomSpace, FockSpace, LocalOps, PhaseGridSpace
+from quchip.devices.fluxonium import Fluxonium
+from quchip.devices.transmon.charge_basis import ChargeBasisTransmon
 from quchip.engine.basis import resolve_local_basis
 
 
@@ -31,8 +33,32 @@ def test_phase_grid_space_materializes_phase_and_charge_operators() -> None:
     phase = op.phi.matrix()
     charge = op.n.matrix()
 
-    np.testing.assert_allclose(np.diag(phase), np.linspace(-2.0, 2.0, 5, endpoint=False))
+    grid = np.linspace(-2.0, 2.0, 5, endpoint=False)
+    np.testing.assert_allclose(np.diag(phase), grid)
     np.testing.assert_allclose(charge, charge.conj().T)
+    np.testing.assert_allclose(space.matrix("sin_phi"), np.diag(np.sin(grid)), atol=1e-15)
+    np.testing.assert_allclose(space.matrix("n2"), -(np.eye(5, k=1) - 2 * np.eye(5) + np.eye(5, k=-1)) / 0.8**2)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("space, name", [(PhaseGridSpace(5, 2.0), "cos_phi"), (PhaseGridSpace(5, 2.0), "n"),
+                                         (ChargeSpace(5), "sin_phi"), (FockSpace(3), "sigma_y")])
+def test_concrete_space_matrices_are_read_only(space, name) -> None:
+    with pytest.raises(ValueError):
+        space.matrix(name)[0, 0] = 1.0
+
+
+@pytest.mark.validation
+@pytest.mark.parametrize("device, value", [
+    (lambda x: Fluxonium(E_C=1.0, E_J=4.0, E_L=1.0, phi_ext=x, levels=3, num_basis=60), 0.3),
+    (lambda x: Fluxonium(E_C=1.0, E_J=4.0, E_L=1.0, phi_ext=0.3, levels=3, num_basis=60, phi_max=x), 15.0),
+    (lambda x: ChargeBasisTransmon(E_C=0.3, E_J=6.0, n_g=x, levels=3, num_basis=21), 0.2),
+])
+def test_space_device_frequency_gradients_match_central_differences(device, value) -> None:
+    gradient = jax.grad(lambda x: device(x).freq)(value)
+    step = 1e-5
+    reference = (device(value + step).freq - device(value - step).freq) / (2 * step)
+    assert gradient == pytest.approx(reference, rel=1e-5, abs=1e-9)
 
 
 @pytest.mark.unit

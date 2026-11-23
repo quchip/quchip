@@ -268,15 +268,14 @@ def test_eliminate_bridge_composes_sequentially_over_a_chain():
     assert pairs == {frozenset({"qb1", "cr"}), frozenset({"qb2", "cr"})}
 
 
-def test_eliminate_retains_thermal_bath_and_intrinsic_loss():
+def test_eliminate_retains_thermal_and_intrinsic_loss():
     """Independent thermal channels and intrinsic loss retain their mapped generator."""
-    from quchip import Bath, eliminate
+    from quchip import eliminate
     from qutip import lindblad_dissipator
 
-    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=2, label="q")
-    r = Resonator(freq=7.0, internal_quality_factor=5000.0, levels=3, label="r")
-    chip = Chip([q, r], [Capacitive(q, r, g=0.05)],
-                baths=[Bath("thermal", targets=[q, r], temperature=20., rate=.01)])
+    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=2, T1=100.0, thermal_occupation=0.01, label="q")
+    r = Resonator(freq=7.0, internal_quality_factor=5000.0, thermal_occupation=0.02, levels=3, label="r")
+    chip = Chip([q, r], [Capacitive(q, r, g=0.05)])
     result = eliminate(chip, "r")
     before = chip.backend._collapse_operators(chip.resolve(frame="lab"))
     after = result.chip.backend._collapse_operators(result.chip.resolve(frame="lab"))

@@ -67,24 +67,6 @@ def test_projection_survives_clone_serialization_and_new_noise_activation(method
             np.testing.assert_allclose(transformed, u.conj().T @ original @ u, atol=1e-12)
 
 
-@pytest.mark.parametrize("method", ["sw", "exact"])
-def test_bath_channels_follow_reduction_and_keep_their_rate_parameter(method):
-    from quchip import Bath
-
-    source = _source()
-    source["q"].T1 = source["r"].T1 = None
-    source.add_bath(Bath("collective_decay", rate=.01, label="common"))
-    edge = eliminate(source, "edge", method=method)
-    result = eliminate(edge.chip, "r", method=method)
-    u = np.asarray(edge.mapping.embedding @ result.mapping.embedding)
-    before, after = _jumps(source), _jumps(Chip.from_dict(result.chip.to_dict()))
-    assert len(before) == len(after) == 1
-    for original, transformed in zip(before, after):
-        np.testing.assert_allclose(transformed, u.conj().T @ original @ u, atol=1e-12)
-    changed = result.chip.with_params({"bath.common.rate": .04})
-    np.testing.assert_allclose(_jumps(changed)[-1], 2 * after[-1], atol=1e-12)
-
-
 @pytest.mark.validation
 @pytest.mark.parametrize("basis", ["native", "eigen"])
 def test_surviving_channel_projection_uses_authored_coordinates(basis):

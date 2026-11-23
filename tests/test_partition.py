@@ -7,7 +7,7 @@ from quchip.approximations import RWA
 import numpy as np
 import pytest
 
-from quchip import Bath, Capacitive, ChargeDrive, Chip, DuffingTransmon, Gaussian, check_truncation
+from quchip import Capacitive, ChargeDrive, Chip, DuffingTransmon, Gaussian, check_truncation
 from quchip.chip.partition import (
     split_drive_ops,
     split_e_ops,
@@ -19,21 +19,19 @@ def _four_qubits():
     return [DuffingTransmon(freq=5.0 + 0.1 * i, anharmonicity=-0.25, levels=3, label=f"q{i}") for i in range(4)]
 
 
-def _disconnected_chip(with_bath: bool = False, with_lines: bool = False):
+def _disconnected_chip(with_lines: bool = False):
     q0, q1, q2, q3 = _four_qubits()
-    baths = [Bath("thermal", targets=[q0, q2], temperature=20.0, rate=0.001)] if with_bath else None
     chip = Chip(
         [q0, q1, q2, q3],
         couplings=[Capacitive(q0, q1, g=0.005, label="c01"), Capacitive(q2, q3, g=0.005, label="c23")],
-        baths=baths,
     )
     if with_lines:
         chip.wire(ChargeDrive(target=q0, label="d0"), ChargeDrive(target=q2, label="d2"))
     return chip
 
 
-def _partitioned_disconnected_chip(with_bath: bool = False, with_lines: bool = False):
-    chip = _disconnected_chip(with_bath=with_bath, with_lines=with_lines)
+def _partitioned_disconnected_chip(with_lines: bool = False):
+    chip = _disconnected_chip(with_lines=with_lines)
     return chip, chip.partition()
 
 
@@ -62,15 +60,6 @@ def test_partition_trivial_returns_independent_chip():
     derived[q0.label].freq = 6.1
     assert q0.freq != 6.1
     assert derived[q0.label].freq == 6.1
-
-
-def test_partition_filters_bath_targets():
-    """Partitioning filters each bath's target list down to the devices that landed in its own sub-chip."""
-    _, part = _partitioned_disconnected_chip(with_bath=True)
-    bath0 = part.components[0].chip.baths[0]
-    bath1 = part.components[1].chip.baths[0]
-    assert bath0.resolve_targets(part.components[0].chip) == ["q0"]
-    assert bath1.resolve_targets(part.components[1].chip) == ["q2"]
 
 
 def test_partition_subchip_schedules_without_duplicate_drive_error():

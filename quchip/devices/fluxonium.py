@@ -6,6 +6,8 @@ from math import pi
 from operator import index
 from typing import Any, ClassVar, Literal
 
+import jax.numpy as jnp
+
 from quchip.declarative.expr import PhysicsExpr
 from quchip.declarative.models import DeviceModel
 from quchip.declarative.ops import LocalOps
@@ -190,11 +192,11 @@ class Fluxonium(DeviceModel):
 
     def charge_coupling_operator(self) -> Any:
         """Return the authored charge operator."""
-        return self.local_space().matrix("n")
+        return jnp.asarray(self.local_space().matrix("n"))
 
     def phase_coupling_operator(self) -> Any:
         """Return the authored phase operator."""
-        return self.local_space().matrix("phi")
+        return jnp.asarray(self.local_space().matrix("phi"))
 
     def flux_coupling_operator(self) -> Any:
         """Return the authored flux-line phase operator."""

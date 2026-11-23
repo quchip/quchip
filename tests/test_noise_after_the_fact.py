@@ -1,4 +1,4 @@
-"""Tests for post-construction noise, baths, and custom dissipation hooks.
+"""Tests for post-construction noise and custom dissipation hooks.
 
 Noise added, changed, or removed after chip construction must be fully reflected in the next
 ``simulate`` call, with no rebuild or cache poking required.
@@ -10,18 +10,14 @@ import numpy as np
 import pytest
 
 from quchip import (
-    Bath,
-    Capacitive,
     Chip,
     CollapseChannel,
     DuffingTransmon,
     Resonator,
     Scalar,
-    eliminate,
     parameter,
     simulate,
 )
-from quchip.utils.constants import k_B
 
 TLIST = np.linspace(0.0, 300.0, 61)
 
@@ -118,100 +114,6 @@ def test_posthoc_declarative_sign_constraints_enforced():
 # ---------------------------------------------------------------------------
 
 
-def test_add_bath_reflected_in_next_simulate():
-    """chip.add_bath() on an existing chip is reflected in the next simulate call."""
-    mode = Resonator(freq=5.0, levels=5, label="m")
-    chip = Chip([mode])
-    tlist = np.linspace(0.0, 400.0, 81)
-    e_ops = {mode: mode.number_operator()}
-
-    before = simulate(chip, [], tlist, initial_state=chip.bare_state(), e_ops=e_ops)
-    assert np.real(before.expect("m"))[-1] == pytest.approx(0.0, abs=1e-9)
-
-    bath = chip.add_bath(Bath("thermal", temperature=100.0, rate=0.05))
-    assert bath in chip.baths  # fluent return + visible on the chip
-
-    after = simulate(chip, [], tlist, initial_state=chip.bare_state(), e_ops=e_ops)
-    n_bar = 1.0 / np.expm1(5.0 / (k_B * 100.0))
-    assert np.real(after.expect("m"))[-1] == pytest.approx(n_bar, rel=0.05)
-
-
-def test_add_bath_matches_constructor_bath():
-    """A bath added via add_bath() produces identical dynamics to the same bath in the constructor."""
-    def make_chip(with_bath_in_ctor: bool) -> Chip:
-        q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
-        baths = [Bath("thermal", temperature=25.0, rate=1e-3)] if with_bath_in_ctor else None
-        return Chip([q], baths=baths)
-
-    ctor = make_chip(True)
-    posthoc = make_chip(False)
-    posthoc.add_bath(Bath("thermal", temperature=25.0, rate=1e-3))
-
-    assert len(ctor.collapse_contributions()) == len(posthoc.collapse_contributions()) == 2
-
-    tlist = np.linspace(0.0, 200.0, 41)
-    kw: dict = {"e_ops": {"q": ctor["q"].number_operator()}}
-    a = simulate(ctor, [], tlist, initial_state=ctor.bare_state({"q": 1}), **kw)
-    b = simulate(posthoc, [], tlist, initial_state=posthoc.bare_state({"q": 1}), **kw)
-    np.testing.assert_allclose(np.real(a.expect("q")), np.real(b.expect("q")), atol=1e-10)
-
-
-def test_add_bath_rejects_non_bath_immediately():
-    """add_bath() rejects a non-Bath argument immediately, not as an AttributeError at solve time."""
-    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
-    chip = Chip([q])
-
-    with pytest.raises(TypeError, match="Bath"):
-        chip.add_bath(42)  # type: ignore[arg-type]
-    assert chip.baths == ()  # the rejected attach must not stick
-
-
-def test_bath_with_unknown_target_rejected_at_attach_time():
-    """add_bath() with an unknown target label fails at attach time, not at solve time."""
-    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
-    chip = Chip([q])
-
-    with pytest.raises(ValueError, match="ghost"):
-        chip.add_bath(Bath("thermal", targets=["ghost"], temperature=30.0, rate=1e-3))
-    assert chip.baths == ()
-
-    with pytest.raises(ValueError, match="ghost"):
-        Chip([q.copy()], baths=[Bath("thermal", targets=["ghost"], temperature=30.0, rate=1e-3)])
-
-
-def test_clone_and_eliminate_do_not_share_bath_objects():
-    """clone() and eliminate() copy baths, so mutating the copy never leaks back to the original."""
-    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=3, label="q")
-    r = Resonator(freq=7.0, levels=3, label="r")
-    chip = Chip(
-        [q, r],
-        couplings=[Capacitive(q, r, g=0.05)],
-        baths=[Bath("thermal", temperature=30.0, rate=1e-4)],
-    )
-
-    cloned = chip.clone()
-    assert cloned.baths[0] is not chip.baths[0]
-    cloned.baths[0].temperature = 500.0
-    assert chip.baths[0].temperature == 30.0  # no leak back to the original
-
-    reduced = eliminate(chip, r).chip
-    assert reduced.baths[0] is not chip.baths[0]
-
-
-def test_add_bath_round_trips_serialization():
-    """A bath added via add_bath() round-trips through to_dict/from_dict."""
-    q = DuffingTransmon(freq=5.0, anharmonicity=-0.25, levels=2, label="q")
-    chip = Chip([q])
-    chip.add_bath(Bath("thermal", targets=[q], temperature=25.0, rate=2e-3, label="fridge"))
-
-    restored = Chip.from_dict(chip.to_dict())
-    assert len(restored.baths) == 1
-    fridge = restored.baths[0]
-    assert fridge.recipe == "thermal" and fridge.label == "fridge"
-    assert fridge.temperature == 25.0 and fridge.rate == 2e-3
-    assert fridge.resolve_targets(restored) == ["q"]
-
-
 # ---------------------------------------------------------------------------
 # 3. Custom device dissipation
 # ---------------------------------------------------------------------------
@@ -303,19 +205,13 @@ def test_set_noise_is_the_complete_noise_description():
     """chip.set_noise() replaces the entire noise configuration; unmentioned params are cleared."""
     chip, q, r = _lossless_pair()
     q.T1 = 10_000.0                                                    # initial noise to replace
-    chip.add_bath(Bath("thermal", temperature=100.0, rate=1e-3))       # initial bath to replace
 
-    chip.set_noise(
-        {"r": dict(internal_quality_factor=5_000.0)},
-        baths=[Bath("collective_decay", targets=[q, r], rate=1e-4, label="col")],
-    )
+    chip.set_noise({"r": dict(internal_quality_factor=5_000.0)})
     assert q.T1 is None                       # unmentioned -> cleared (replace-all)
     assert r.internal_quality_factor == 5_000.0
-    assert [b.label for b in chip.baths] == ["col"]
 
     chip.set_noise()                          # no args == clear everything
     assert r.internal_quality_factor is None
-    assert chip.baths == ()
 
 
 def test_set_noise_matches_equivalent_attribute_writes():
@@ -345,23 +241,17 @@ def test_set_noise_can_reduce_relaxation_and_coherence_times_together():
 
 
 def test_set_noise_is_atomic_on_invalid_input():
-    """chip.set_noise() applies nothing when any target or bath in the call is invalid."""
+    """chip.set_noise() applies nothing when any target in the call is invalid."""
     chip, q, r = _lossless_pair()
     q.T1 = 50_000.0
 
     with pytest.raises(ValueError, match="T2"):
-        chip.set_noise(
-            {q: dict(T1=50_000.0, T2=150_000.0)},                     # target violates T2 <= 2*T1
-            baths=[Bath("thermal", temperature=100.0, rate=1e-3)],
-        )
-    assert q.T1 == 50_000.0 and q.T2 is None and chip.baths == ()     # nothing applied
+        chip.set_noise({q: dict(T1=50_000.0, T2=150_000.0)})          # target violates T2 <= 2*T1
+    assert q.T1 == 50_000.0 and q.T2 is None                          # nothing applied
 
     with pytest.raises(ValueError, match="ghost"):
-        chip.set_noise(
-            {q: dict(T1=1_000.0)},
-            baths=[Bath("thermal", targets=["ghost"], temperature=100.0, rate=1e-3)],
-        )
-    assert q.T1 == 50_000.0                                           # bad bath blocked the whole call
+        chip.set_noise({q: dict(T1=1_000.0), "ghost": dict(T1=1_000.0)})
+    assert q.T1 == 50_000.0                                           # bad target blocked the whole call
 
 
 def test_set_noise_rejects_non_noise_and_unknown_keys():

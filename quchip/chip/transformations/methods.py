@@ -6,9 +6,7 @@ surviving pair parameters and how to carry the eliminated mode's jump operator
 into the reduced frame. They also include whether a residual ZZ and a pathway
 attribution are available, and what higher-order physics the reduction drops.
 This module puts those decision points into a :class:`ReductionMethod`
-strategy. New routes, such as a higher-order Schrieffer-Wolff method or numeric
-fit, register with :func:`register_reduction_method`, following the rule
-registry in :mod:`quchip.chip.retarget`.
+strategy, and each strategy registers under its name.
 
 Dispatch keys on the *static* ``method`` string, never on a traced value. The
 two shipped strategies, :class:`SchriefferWolffMethod` and
@@ -301,7 +299,7 @@ class ExactReduction(ReductionMethod):
 _REDUCTION_METHODS: dict[str, ReductionMethod] = {}
 
 
-def register_reduction_method(method: ReductionMethod) -> None:
+def _register_reduction_method(method: ReductionMethod) -> None:
     """Register a reduction strategy under its name.
 
     Parameters
@@ -322,5 +320,5 @@ def reduction_method_names() -> tuple[str, ...]:
     return tuple(_REDUCTION_METHODS)
 
 
-register_reduction_method(SchriefferWolffMethod())
-register_reduction_method(ExactReduction())
+_register_reduction_method(SchriefferWolffMethod())
+_register_reduction_method(ExactReduction())

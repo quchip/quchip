@@ -95,9 +95,9 @@ def _lowest_eigenpairs(matrix: Any, levels: int) -> tuple[Any, Any]:
 
     A traced matrix uses :func:`_differentiable_eigenpairs`, which supports
     forward- and reverse-mode differentiation through device parameters. A
-    constant matrix is solved with NumPy, so it is never staged inside
-    ``jit`` and compiles no device program; a custom-derivative call would
-    always be staged.
+    constant matrix is solved and returned with NumPy, so it is never staged
+    inside ``jit`` and compiles no device program; a custom-derivative call
+    would always be staged.
     """
     if contains_tracer(matrix):
         values, vectors = _differentiable_eigenpairs(matrix, levels)
@@ -110,7 +110,7 @@ def _lowest_eigenpairs(matrix: Any, levels: int) -> tuple[Any, Any]:
     # The pivot is locally constant; derivatives include the phase adjustment.
     pivots = vectors[xp.argmax(xp.abs(vectors), axis=0), xp.arange(levels)]
     phases = xp.conj(pivots) / xp.abs(pivots)
-    return jnp.asarray(values), jnp.asarray(vectors * phases)
+    return values, vectors * phases
 
 
 @dataclass(frozen=True)
@@ -150,7 +150,7 @@ class BasisRecord:
             Zero-based isolated energy level.
         """
         if self.kind == "eigen":
-            return jnp.eye(self.resolved_dim, dtype=jnp.complex128)[:, level]
+            return np.eye(self.resolved_dim, dtype=complex)[:, level]
         return self.energy_vectors[:, level]
 
     def energy_to_solver(self) -> Any | None:
@@ -209,7 +209,7 @@ def _diagonal_eigenpairs(hamiltonian: Any, levels: int, label: str | None = None
     if not contains_tracer(hamiltonian):
         values = np.real(np.diagonal(np.asarray(hamiltonian)))
         order = np.argsort(values, kind="stable")[:levels]
-        return jnp.asarray(values[order]), jnp.asarray(axes[:, order])
+        return values[order], axes[:, order]
     energies = jnp.real(jnp.diagonal(hamiltonian))
     kept = energies[:levels]
     reordered = jnp.any(jnp.diff(kept) < 0)
@@ -217,7 +217,7 @@ def _diagonal_eigenpairs(hamiltonian: Any, levels: int, label: str | None = None
         reordered = reordered | (jnp.max(kept) > jnp.min(energies[levels:]))
     jax.debug.callback(partial(_reject_reordered_levels, label), reordered)
     # If the check is skipped, results that read these energies become NaN.
-    return jnp.where(reordered, jnp.nan, kept), jnp.asarray(axes[:, :levels])
+    return jnp.where(reordered, jnp.nan, kept), axes[:, :levels]
 
 
 def _reject_reordered_levels(label: str | None, reordered: Any) -> None:
@@ -261,10 +261,10 @@ def resolve_local_basis(
     if basis == "native":
         if levels is not None:
             raise ValueError("levels is only valid when basis='eigen'.")
-        energies, energy_vectors = eigenpairs(hamiltonian, native_dim)
+        energies, energy_vectors = copy_value(eigenpairs(hamiltonian, native_dim), readonly=True)
         return BasisRecord(
             kind="native",
-            vectors=jnp.asarray(np.eye(native_dim, dtype=hamiltonian.dtype)),
+            vectors=copy_value(np.eye(native_dim, dtype=hamiltonian.dtype), readonly=True),
             energies=energies,
             energy_vectors=energy_vectors,
             native_dim=native_dim,
@@ -277,7 +277,7 @@ def resolve_local_basis(
         raise ValueError("levels is required when basis='eigen'.")
     if levels < 1 or levels > native_dim:
         raise ValueError(f"levels must be between 1 and {native_dim}, got {levels}.")
-    energies, vectors = eigenpairs(hamiltonian, levels)
+    energies, vectors = copy_value(eigenpairs(hamiltonian, levels), readonly=True)
     return BasisRecord(
         kind="eigen",
         vectors=vectors,

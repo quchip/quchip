@@ -24,7 +24,7 @@ References: Bravyi, DiVincenzo & Loss, Ann. Phys. 326, 2793 (2011)
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from functools import partial
+from functools import partial, reduce
 from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
@@ -126,16 +126,10 @@ def bare_hamiltonian(
     transforms = [record.energy_to_solver() for record in records]
     xp = concrete_array_module(h, transforms)
     h = xp.asarray(h, dtype=complex)
-    semantic_to_solver: Any | None = None
-    for record, local_transform in zip(records, transforms):
-        if local_transform is None:
-            local_transform = xp.eye(record.resolved_dim, dtype=complex)
-        semantic_to_solver = (
-            xp.asarray(local_transform)
-            if semantic_to_solver is None
-            else xp.kron(semantic_to_solver, local_transform)
-        )
-    if semantic_to_solver is not None:
+    if any(transform is not None for transform in transforms):  # else each solver basis is its energy basis
+        semantic_to_solver = reduce(xp.kron, [
+            xp.eye(record.resolved_dim, dtype=complex) if transform is None else xp.asarray(transform)
+            for record, transform in zip(records, transforms)])
         h = semantic_to_solver.conj().T @ h @ semantic_to_solver
     return h, labels, result.dims
 
@@ -256,11 +250,11 @@ def basis_row(p_index: Any, labels: list[str], dims: tuple[int, ...], excited_la
     raise KeyError(target)
 
 
-def bare_index(labels: list[str], dims: tuple[int, ...], excited_label: str | None = None) -> int:
-    """Full bare product-basis index for the ground state, or for the ``n=1`` occupation of one label."""
+def bare_index(labels: list[str], dims: tuple[int, ...], *excited_labels: str) -> int:
+    """Full bare product-basis index for the ground state, or for the ``n=1`` occupation of the given labels."""
     occ = [0] * len(dims)
-    if excited_label is not None:
-        occ[labels.index(excited_label)] = 1
+    for label in excited_labels:
+        occ[labels.index(label)] = 1
     return int(np.ravel_multi_index(tuple(occ), dims))
 
 

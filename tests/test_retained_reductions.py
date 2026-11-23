@@ -93,7 +93,7 @@ def test_parallel_mode_legs_match_their_combined_interaction(method, bridge):
 @pytest.mark.parametrize("method", ["sw", "exact"])
 @pytest.mark.parametrize("backend", ["qutip", "dynamiqs"])
 def test_removed_coupling_preserves_its_projected_collective_channel(method, backend):
-    from quchip.extensions import CollectiveDecayCoupling
+    from tests.extension_guide import CollectiveDecayCoupling
 
     q = DuffingTransmon(freq=5., anharmonicity=-.3, levels=3, label="q")
     r = Resonator(freq=7., levels=3, label="r")

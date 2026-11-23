@@ -1,4 +1,4 @@
-"""Physics checks for the installed extension reference implementations."""
+"""Physics checks for the reference classes of the extension guide and the built-in CosineEnvelope."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ import quchip
 from quchip import (
     ChargeDrive,
     Chip,
+    CosineEnvelope,
     DuffingTransmon,
     GaussianDRAG,
     QuantumSequence,
@@ -22,10 +23,9 @@ from quchip import (
 from quchip.control.envelopes import Envelope
 from quchip.control.signal import AnalyticSignal, SignalTransform
 from quchip.devices.spaces import CustomSpace
-from quchip.extensions import (
+from tests.extension_guide import (
     CableLoss,
     ChargePhaseDrive,
-    CosineEnvelope,
     LossyKerrCavity,
     SpinHalf,
 )
@@ -80,6 +80,9 @@ def test_cosine_envelope_is_a_zero_endpoint_raised_cosine():
     restored = Envelope.from_dict(envelope.to_dict())
     assert isinstance(restored, CosineEnvelope)
     np.testing.assert_allclose(restored.sample(np.asarray([0.0, 5.0, 10.0])), [0.0, 2.0, 0.0])
+    # quchip 0.4 saved this envelope under its former extensions module.
+    saved = {**envelope.to_dict(), "type": "quchip.extensions.envelopes.CosineEnvelope"}
+    assert isinstance(Envelope.from_dict(saved), CosineEnvelope)
     assert jax.grad(lambda amplitude: jnp.real(CosineEnvelope(10.0, amplitude).value(5.0)))(2.0) == pytest.approx(1.0)
 
 
@@ -102,13 +105,13 @@ def test_charge_phase_drive_maps_delivered_iq_to_two_observables():
 
 def test_cable_loss_is_ordered_serializable_and_differentiable():
     raw = AnalyticSignal(quchip.engine.ir.Constant(1.0))
-    transform = CableLoss("xy", loss_db=6.0)
+    transform = CableLoss(line="xy", loss_db=6.0)
 
     delivered = transform.apply({("xy", 0): raw})[("xy", 0)]
     restored = SignalTransform.from_dict(transform.to_dict())
     gradient = jax.grad(
         lambda loss_db: jnp.real(
-            CableLoss("xy", loss_db).apply({("xy", 0): raw})[("xy", 0)].evaluate(0.0, xp=jnp)
+            CableLoss(line="xy", loss_db=loss_db).apply({("xy", 0): raw})[("xy", 0)].evaluate(0.0, xp=jnp)
         )
     )(6.0)
 

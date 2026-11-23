@@ -16,7 +16,7 @@ from quchip.chip.sw import bare_hamiltonian, degeneracy_error, interaction_gener
 from quchip.chip.transformations.coordinate_change import (
     embed_on_labels, isolated_hamiltonian, labeled_eigenvectors, product_energies, retain_coordinate_change,
 )
-from quchip.chip.transformations.dispatch import EliminationTarget, register_elimination_target
+from quchip.chip.transformations.dispatch import EliminationTarget, _register_elimination_target
 from quchip.chip.transformations.plumbing import StrandedLine, plan_stranded_lines, reattach_equipment
 from quchip.chip.transformations.result import EliminationResult
 from quchip.utils.labeling import LabelKeyedDict, resolve_label
@@ -61,10 +61,8 @@ def reduce_coupling(chip: "Chip", target: Any, method: str) -> EliminationResult
             rule_target=coupling,
             missing_rule_message=(
                 f"Control line '{line.label}' ({type(line).__name__}) pumps the eliminated "
-                f"coupling '{coupling_label}'. No retarget rule converts it "
-                f"(register_retarget_rule({type(line).__name__}, {type(coupling).__name__}, "
-                f"'{result_kind}', ...)); unwire the line first (chip.unwire('{line.label}')), "
-                "or keep the coupling."
+                f"coupling '{coupling_label}', and no retarget rule converts it to the reduced chip. "
+                f"Unwire the line first (chip.unwire('{line.label}')), or keep the coupling."
             ),
         )
 
@@ -129,7 +127,7 @@ def reduce_coupling(chip: "Chip", target: Any, method: str) -> EliminationResult
                              notes=notes, mapping=mapping)
 
 
-register_elimination_target(EliminationTarget(
+_register_elimination_target(EliminationTarget(
     kind="coupling",
     claims=lambda chip, target: resolve_label(target) in chip.coupling_map,
     reduce=reduce_coupling,

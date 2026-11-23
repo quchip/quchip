@@ -91,13 +91,14 @@ from quchip.utils.jax_utils import (
 from quchip.utils.labeling import resolve_label
 from quchip.utils.values import copy_value
 from quchip.utils.stack import user_stacklevel
-from quchip.utils.warning_categories import AutoChoiceWarning
+from quchip.utils.warning_categories import AutoChoiceWarning, QuchipWarning
 
 if TYPE_CHECKING:
     from quchip.chip.transformations.active_patch import ActivePatchResult
     from quchip.declarative.expr import PhysicsExpr
     from quchip.engine.ir import FrameSpec, SolveBatch, SolveProblem
-    from quchip.results.propagator import PropagatorResult
+    from quchip.results.channel import ChannelResult
+    from quchip.results.propagator import Propagator, PropagatorResult
     from quchip.results.results import SimulationBatchResult, SimulationResult
 
 
@@ -509,8 +510,11 @@ class QuantumSequence:
             coupling drives, and coherent inputs stay at baseband. ``None``
             gives a baseband pulse on every line: the envelope without
             carrier modulation, through the drive's authored I/Q mapping.
-            ``0.0`` is a carrier at zero frequency, which
-            follows :meth:`vz` and which ``RWA()`` splits into partners. The
+            ``0.0`` is a carrier at zero frequency. It follows :meth:`vz`
+            and ``phase``: on a charge line its carrier phase ``p`` scales a
+            real envelope by ``cos p``, and ``RWA()`` keeps its complete real
+            field, as ``Exact()`` does. A carrier near zero but not zero keeps
+            one partner under ``RWA()``; use ``Exact()`` there. The
             automatic carrier is evaluated when the pulse is scheduled: it
             follows traced parameters only when the scheduling runs inside
             the differentiated function, and rebinding the sequence leaves it
@@ -1460,6 +1464,7 @@ class QuantumSequence:
         dissipation: bool = True,
         run_args: dict | None = None,
         duration: Any | None = None,
+        frame: FrameSpec | None = None,
     ) -> "SimulationResult":
         """Build and solve one scheduled simulation.
 
@@ -1509,6 +1514,10 @@ class QuantumSequence:
             Include declared collapse channels when ``True``.
         duration : float, optional
             Positive simulation end time in ns when ``tlist`` is omitted.
+        frame : FrameSpec or None, default=None
+            Integration-frame override, as in :meth:`build_problem`. ``None``
+            uses the chip's frame. An explicit frame solves the joint chip
+            without partitioning.
 
         Returns
         -------
@@ -1559,6 +1568,7 @@ class QuantumSequence:
                 approximation=approximation,
                 states=states,
                 dissipation=dissipation,
+                frame=frame,
             )
     def simulate_batch(
         self,
@@ -1634,6 +1644,124 @@ class QuantumSequence:
             )
         return result
 
+    def propagator(
+        self,
+        tlist: Any | None = None,
+        *,
+        columns: Any = None,
+        frame: FrameSpec | None = None,
+        options: dict | None = None,
+        approximation: Approximation | None = None,
+        dissipation: bool = True,
+        backend: Any | None = None,
+        duration: Any | None = None,
+    ) -> "Propagator":
+        """Compute the propagator of this schedule, expressed in the lab frame.
+
+        The calculation integrates the identity, or the given input states,
+        once from the first to the last time. It uses every retained
+        coordinate: the full product space, or every label with ``N <= K``
+        under an :class:`~quchip.cutoff.ExcitationCutoff`. The result is
+        returned in the lab frame, so the integration frame changes only cost
+        and accuracy (see :class:`~quchip.results.propagator.Propagator`).
+
+        Parameters
+        ----------
+        tlist : array_like or None, default=None
+            Times in ns. Only the first and last values are used. ``None``
+            uses ``[0, total_duration]``.
+        columns : array_like or None, default=None
+            ``(d, k)`` lab-frame input states at the first time, in solver
+            coordinates, or a sequence of native kets. Closed systems only.
+        frame : FrameSpec or None, default=None
+            Integration frame. ``None`` uses the chip's frame, or the rotating
+            frame with a warning on a chip without one. A rotating frame is
+            usually faster and more accurate for carrier pulses.
+        options : dict or None, default=None
+            Backend solver options, such as tolerances.
+        approximation : Approximation or None, default=None
+            Engine approximation override.
+        dissipation : bool, default=True
+            Include collapse channels. With channels, the result is a
+            superoperator on column-stacked density matrices.
+        backend : object or {"qutip", "dynamiqs"}, optional
+            Per-call backend override.
+        duration : float or None, default=None
+            End time in ns when ``tlist`` is omitted. It must reach the
+            schedule end.
+
+        Returns
+        -------
+        Propagator
+            Lab-frame unitary, block of output states, or superoperator.
+        """
+        from quchip.engine.problem import build_solve_problem
+        from quchip.results.propagator import Propagator
+
+        with self._scoped_backend(backend):
+            if tlist is None:
+                grid = self._resolve_tlist(None, duration=duration)
+                times = np.array([0.0, float(grid.bounds[-1])])
+            else:
+                if duration is not None:
+                    raise ValueError("duration and tlist are mutually exclusive.")
+                times = np.asarray(tlist, dtype=float)
+                if times.ndim != 1 or times.size < 2:
+                    raise ValueError("tlist needs at least a start and an end time.")
+                times = times[[0, -1]]
+            problem = build_solve_problem(
+                self._chip, self._materialize_drive_ops(), times, options=options,
+                approximation=approximation, states="final", dissipation=dissipation, frame=frame,
+                _product_space=True,
+            )
+            if columns is not None and not hasattr(columns, "shape"):
+                columns = np.stack(
+                    [np.asarray(state.full() if hasattr(state, "full") else state).reshape(-1) for state in columns],
+                    axis=1,
+                )
+            return Propagator.from_problem(problem, columns=columns)
+
+    def extend(self, other: "QuantumSequence") -> None:
+        """Append the entries of another sequence on the same chip.
+
+        A barrier first aligns the cursors of every device, coupling, and
+        input that *other*'s pulses, delays, and barriers use, so its pulses
+        start together. Virtual-Z shifts take no time and keep their program
+        order, so a device that *other* only shifts does not join the
+        barrier. *other*'s entries then replay from there with their own
+        delays, barriers, and virtual-Z shifts. Pulse handles of *other* do
+        not transfer. A pulse
+        scheduled in *other* with an explicit ``start_time`` raises, because
+        its absolute time would not move with the cursor.
+
+        Parameters
+        ----------
+        other : QuantumSequence
+            Sequence built for this sequence's chip.
+        """
+        if other is self:
+            raise ValueError("A sequence cannot extend itself.")
+        if other._chip is not self._chip:
+            raise ValueError("extend() needs a sequence built for the same chip object.")
+        targets: list[str] = []
+        for entry in other._entries:
+            if isinstance(entry, _PulseEntry):
+                if entry.requested_start_time is not None:
+                    raise ValueError(
+                        "extend() needs cursor-timed pulses. Replace start_time= with delay() in the appended sequence."
+                    )
+                labels: tuple[str, ...] = (entry.target_label,)
+            elif isinstance(entry, _DelayEntry):
+                labels = (entry.device_label,)
+            elif isinstance(entry, _FrameShiftEntry):
+                continue
+            else:
+                labels = entry.device_labels or tuple(self._device_labels())
+            targets.extend(label for label in labels if label not in targets)
+        if targets:
+            self._entries.append(_BarrierEntry(device_labels=tuple(targets)))
+        self._entries.extend(other._entries)
+
     def subspace_propagator(
         self,
         devices: str | BaseDevice | Sequence[str | BaseDevice],
@@ -1677,7 +1805,7 @@ class QuantumSequence:
         dissipation : bool, default=False
             ``False`` leaves out the chip's collapse channels, so the matrix is
             the propagator of the Hamiltonian alone. ``True`` raises, because
-            the matrix cannot include them. The result's
+            the matrix cannot include them; :meth:`subspace_channel` does. The result's
             :attr:`~quchip.results.propagator.PropagatorResult.omitted_channels`
             names the channels that the solve left out.
         progress : bool, default=False
@@ -1696,22 +1824,14 @@ class QuantumSequence:
             If ``dissipation`` is ``True``, ``frame`` is unknown, or a device
             or level is missing or repeated.
         """
-        import itertools
-
         from quchip.results.propagator import FRAMES, subspace_propagator
 
         if dissipation:
             raise ValueError("subspace_propagator() gives the propagator of the Hamiltonian alone, so it cannot "
-                             "include collapse channels. Use simulate() for the evolution with them.")
+                             "include collapse channels. Use subspace_channel() for the gate with them.")
         if frame not in FRAMES:
             raise ValueError(f"frame must be one of {FRAMES}; got {frame!r}.")
-        selected = (devices,) if isinstance(devices, (str, BaseDevice)) else tuple(devices)
-        names = tuple(resolve_label(device) for device in selected)
-        if not names or len(set(names)) != len(names):
-            raise ValueError("Select at least one device, and each device once.")
-        labels = tuple(itertools.product(tuple(levels), repeat=len(names)))
-        if not labels or len(set(levels)) != len(tuple(levels)):
-            raise ValueError("levels must name at least one level, and each level once.")
+        names, labels = self._subspace_labels(devices, levels)
         with self._scoped_backend(backend):
             problem_batch = self.build_batch(
                 self.vary("initial_state", [dict(zip(names, label)) for label in labels]),
@@ -1727,7 +1847,122 @@ class QuantumSequence:
             batch = self._chip.solve_many(problem_batch, progress=progress, max_workers=max_workers)
         return subspace_propagator(batch, names, labels, frame, omitted)
 
-    def active_patch(self, *, hops: int = 1, method: str = "sw", local: bool = False,
+    def subspace_channel(
+        self,
+        devices: str | BaseDevice | Sequence[str | BaseDevice],
+        levels: Sequence[int] = (0, 1),
+        *,
+        frame: str = "dressed",
+        tlist: Any | None = None,
+        duration: Any | None = None,
+        solver: str | None = None,
+        options: dict | None = None,
+        backend: Any | None = None,
+        approximation: Approximation | None = None,
+        progress: bool = False,
+        max_workers: int | None = None,
+    ) -> "ChannelResult":
+        """Return the channel of this sequence, with collapse channels, on the dressed states of a product of levels.
+
+        The labels are those of :meth:`subspace_propagator`: each selected
+        device takes one of ``levels`` and every other device level 0. For d
+        labels, one batch solves d² pure inputs with the chip's collapse
+        channels: each dressed label state and, for each pair of labels, two
+        superpositions of them. Linearity gives the image of every
+        ``|d_i⟩⟨d_j|``. The final states are projected on the label targets,
+        and the record converts the superoperator to ``frame`` on both sides,
+        as :meth:`subspace_propagator` does for its matrix. Population that
+        leaves the labels, such as an excited spectator, counts as leakage.
+        Population that moves between the labels, such as the thermal
+        excitation of a selected qubit, stays in the channel.
+
+        Parameters
+        ----------
+        devices : device object, str, or sequence of them
+            Selected devices, in the order of the levels of each label.
+        levels : sequence of int, default=(0, 1)
+            Levels of each selected device. Add level 2, for example, to follow
+            leakage and seepage.
+        frame : {"dressed", "lab", "integration"}, default="dressed"
+            Frame of the returned superoperator.
+        tlist, duration, solver, options, backend, approximation
+            As for :meth:`simulate`. The channel runs from ``tlist[0]`` to ``tlist[-1]``.
+        progress : bool, default=False
+            Show backend batch progress when supported.
+        max_workers : int or None, default=None
+            As for :meth:`simulate_batch`.
+
+        Returns
+        -------
+        ChannelResult
+            Superoperator, labels, leakage of each input, frame frequencies,
+            included collapse channels, and the batch of solves.
+
+        Raises
+        ------
+        ValueError
+            If ``frame`` is unknown, a device or level is missing or repeated,
+            or ``solver`` selects trajectories.
+
+        Warns
+        -----
+        QuchipWarning
+            If the chip has no collapse channels. :meth:`subspace_propagator`
+            then gives the same gate with d solves instead of d².
+        """
+        import itertools
+
+        from quchip.engine.ir import SolveBatch
+        from quchip.results.channel import subspace_channel
+        from quchip.results.propagator import FRAMES
+
+        if frame not in FRAMES:
+            raise ValueError(f"frame must be one of {FRAMES}; got {frame!r}.")
+        names, labels = self._subspace_labels(devices, levels)
+        with self._scoped_backend(backend):
+            label_batch = self.build_batch(
+                self.vary("initial_state", [dict(zip(names, label)) for label in labels]),
+                tlist=tlist,
+                duration=duration,
+                solver=solver,
+                options=options,
+                approximation=approximation,
+                states="final",
+                dissipation=True,
+            )
+            problems = list(label_batch.problems)
+            if problems[0].stochastic:
+                raise ValueError("A channel needs the master equation; trajectory solvers give conditioned states.")
+            channels = tuple(channel.key for channel in problems[0].engine_result.slh.channels)
+            if not channels:
+                warnings.warn("The chip has no collapse channels; subspace_propagator() gives this gate with "
+                              "fewer solves.", QuchipWarning, stacklevel=user_stacklevel())
+            native = problems[0].backend
+            half = 2**-0.5
+            for i, j in itertools.combinations(range(len(labels)), 2):
+                first, second = problems[i].initial_state, problems[j].initial_state
+                for phase in (1.0, 1j):
+                    state = native.linear_combination([(half, first), (half * phase, second)])
+                    problems.append(replace(problems[i], initial_state=state))
+            pure_inputs = SolveBatch(chip=label_batch.chip, problems=tuple(problems), shape=(len(problems),))
+            batch = self._chip.solve_many(pure_inputs, progress=progress, max_workers=max_workers)
+        return subspace_channel(batch, names, labels, frame, channels)
+
+    @staticmethod
+    def _subspace_labels(devices: Any, levels: Sequence[int]) -> tuple[tuple[str, ...], tuple[tuple[int, ...], ...]]:
+        """Return the selected device labels and every product of ``levels`` on them."""
+        import itertools
+
+        selected = (devices,) if isinstance(devices, (str, BaseDevice)) else tuple(devices)
+        names = tuple(resolve_label(device) for device in selected)
+        if not names or len(set(names)) != len(names):
+            raise ValueError("Select at least one device, and each device once.")
+        labels = tuple(itertools.product(tuple(levels), repeat=len(names)))
+        if not labels or len(set(levels)) != len(tuple(levels)):
+            raise ValueError("levels must name at least one level, and each level once.")
+        return names, labels
+
+    def active_patch(self, *, hops: int = 1, method: Literal["sw", "exact"] = "sw", local: bool = False,
                      order: Any | None = None) -> "ActivePatchResult":
         """Reduce the chip to this schedule's active patch (spectators eliminated).
 
@@ -1876,8 +2111,7 @@ class QuantumSequence:
 
         for index, updates in pulse_bindings.items():
             entry = cloned._entries[index]
-            if not isinstance(entry, _PulseEntry):  # pragma: no cover - inventory excludes it
-                raise KeyError(f"pulse.{index}")
+            assert isinstance(entry, _PulseEntry)
             envelope_updates = {
                 field.removeprefix("envelope."): value
                 for field, value in updates.items() if field not in _PULSE_FIELDS

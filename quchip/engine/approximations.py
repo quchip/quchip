@@ -61,19 +61,19 @@ def resolve_drive_program(
 
     if isinstance(program, (RealPart, ImagPart)):
         # A band co-rotates with a weight-w operator band when w and its frequency have one sign, for either sign
-        # of the carrier. The bands come in (+f, -f) halves; a zero carrier keeps the conventional half.
+        # of the carrier. A band at exactly zero frequency has an equally resonant partner, so both stay, and a
+        # zero carrier keeps the complete real drive, as under Exact().
         bands = program.bands()
-        conventional = [index % 2 == (1 if weight > 0 else 0) for index in range(len(bands))]
         frequencies = [maybe_concrete_scalar(band.freq) for band in bands]
         if all(value is not None for value in frequencies):
-            kept = [band for band, value, half in zip(bands, frequencies, conventional)
-                    if value is not None and (weight * value > 0.0 or (value == 0.0 and half))]
+            kept = [band for band, value in zip(bands, frequencies)
+                    if value is not None and (weight * value > 0.0 or value == 0.0)]
             children = tuple(Multiply((band.envelope, Carrier(freq=band.freq, sign=1), frame)) for band in kept)
         else:
             children = tuple(
-                Multiply((Scale(band.envelope, _co_rotating(weight, band.freq, half)), Carrier(freq=band.freq, sign=1),
+                Multiply((Scale(band.envelope, _co_rotating(weight, band.freq)), Carrier(freq=band.freq, sign=1),
                           frame))
-                for band, half in zip(bands, conventional)
+                for band in bands
             )
         return children[0] if len(children) == 1 else Add(children)
 
@@ -83,8 +83,8 @@ def resolve_drive_program(
     return Multiply((program, frame))
 
 
-def _co_rotating(weight: int, frequency: Any, conventional: bool) -> Any:
+def _co_rotating(weight: int, frequency: Any) -> Any:
     """Return 1 for a traced band that :func:`resolve_drive_program` keeps, else 0."""
     import jax.numpy as jnp
 
-    return jnp.where(weight * frequency > 0.0, 1.0, jnp.where(frequency == 0.0, float(conventional), 0.0))
+    return jnp.where((weight * frequency > 0.0) | (frequency == 0.0), 1.0, 0.0)

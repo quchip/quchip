@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from quchip import Chip, QuantumSequence
-from quchip.extensions import FrequencyModulatedMode
+from tests.extension_guide import FrequencyModulatedMode
 
 
 def _level_one_energy(amplitude: float, frequency: float, time: float, phase: float) -> jax.Array:

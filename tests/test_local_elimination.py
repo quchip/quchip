@@ -6,7 +6,6 @@ import numpy as np
 import pytest
 
 from quchip import (
-    Bath,
     Capacitive,
     ChargeDrive,
     Chip,
@@ -350,10 +349,6 @@ def test_local_reduction_raises_outside_its_scope():
         eliminate(chip, "r0", method="exact", local=True)
     with pytest.raises(NotImplementedError, match="coupling targets"):
         eliminate(chip, "q0_r0", local=True)
-    bathed = _ring(2, noise=False)
-    bathed.add_bath(Bath("collective_decay", targets=["q0", "q1"], rate=1e-4))
-    with pytest.raises(NotImplementedError, match="baths"):
-        eliminate(bathed, "r0", local=True)
 
 
 def _final_state(chip, pump=False):

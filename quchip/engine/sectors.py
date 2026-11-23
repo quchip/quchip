@@ -15,12 +15,12 @@ one-excitation blocks the same way.
 
 from __future__ import annotations
 
-import dataclasses
 import functools
 from dataclasses import dataclass
 from math import prod
 from typing import TYPE_CHECKING, Any, Sequence
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -40,7 +40,7 @@ from quchip.engine.assembly import (
     _resolve_system,
 )
 from quchip.engine.excitation import (
-    excitation_structure, sector_eigh, sector_levels, sector_size,
+    excitation_structure, scatter, sector_levels, sector_size,
 )
 from quchip.engine.slh import cascade_hamiltonian
 from quchip.utils.constants import TWO_PI
@@ -49,6 +49,37 @@ from quchip.utils.values import scoped_entry, scoped_hit
 
 if TYPE_CHECKING:
     from quchip.chip.chip import Chip
+
+
+def _block_hamiltonian(energies: Sequence[Any], levels: Any, operators: Sequence[Any], pairs: Sequence[Any]) -> Any:
+    """Assemble a block from the device energies and each term's ``_level_pairs`` matrix elements."""
+    xp = concrete_array_module(energies, operators)
+    diagonal = xp.zeros(levels.shape[0])
+    for axis, energy in enumerate(energies):
+        diagonal = diagonal + xp.asarray(energy)[levels[:, axis]]
+    hamiltonian = xp.diag(diagonal).astype(complex)
+    if pairs:  # Terms can share an element, so one scatter adds all of them.
+        concatenate = np.concatenate if isinstance(pairs[0][0], np.ndarray) else jnp.concatenate
+        index = (concatenate([pair[0] for pair in pairs]), concatenate([pair[1] for pair in pairs]))
+        values = xp.concatenate([xp.asarray(op)[pair[2], pair[3]] for op, pair in zip(operators, pairs, strict=True)])
+        hamiltonian = scatter(hamiltonian, index, values, add=True)
+    return hamiltonian
+
+
+def _eigensystem(energies: Sequence[Any], levels: Any, operators: Sequence[Any], pairs: Sequence[Any]) -> tuple:
+    """Return a block's ascending eigenpairs, with phases fixed, and the arrays of its bare labeling."""
+    matrix = _block_hamiltonian(energies, levels, operators, pairs)
+    xp = concrete_array_module(matrix)
+    # A real symmetric block diagonalizes several times faster than a complex one.
+    eigenvalues, eigenvectors = xp.linalg.eigh(matrix.real if xp is np and not np.any(matrix.imag) else matrix)
+    eigenvectors = eigenvectors.astype(complex)
+    labeling = label_eigensystem(eigenvectors, BareProductReference((levels.shape[0],)), policy=assign_rowwise_greedy)
+    # The reference is the sector's product energy basis, so the amplitudes are the vectors.
+    eigenvectors = eigenvectors * gauge_phases(eigenvectors, labeling.indices)
+    return eigenvalues, eigenvectors, labeling.indices, labeling.overlaps, labeling.margins, labeling.duplicates
+
+
+_traced_eigensystem = jax.jit(_eigensystem)
 
 
 def _level_pairs(dims: Sequence[int], support: tuple[int, ...], row_levels: np.ndarray,
@@ -388,11 +419,8 @@ class SectorModel:
         """
         rows, columns, local_rows, local_columns = self._pairs_for(support, row_totals, column_totals)
         shape = (self.space(row_totals).size, self.space(column_totals).size)
-        if contains_tracer(operator):
-            return jnp.zeros(shape, dtype=complex).at[rows, columns].set(operator[local_rows, local_columns])
-        out = np.zeros(shape, dtype=complex)
-        out[rows, columns] = np.asarray(operator)[local_rows, local_columns]
-        return out
+        xp = concrete_array_module(operator)
+        return scatter(xp.zeros(shape, complex), (rows, columns), xp.asarray(operator)[local_rows, local_columns])
 
     def hamiltonian(self, totals: int | Sequence[int]) -> Any:
         """Return the static lab-frame Hamiltonian block on ``totals``, in GHz.
@@ -402,29 +430,20 @@ class SectorModel:
         totals : int or sequence of int
             One total energy-level index, or the totals of a class.
         """
-        space = self.space(totals)
-        xp = concrete_array_module(self.energies, tuple(operator for operator, _ in self.terms))
-        diagonal = xp.zeros(space.size)
-        for index, energies in enumerate(self.energies):
-            diagonal = diagonal + xp.asarray(energies)[space.levels[:, index]]
-        hamiltonian = xp.diag(diagonal).astype(complex)
-        gathered = [(self._pairs_for(support, totals, totals), operator) for operator, support in self.terms]
-        if gathered:
-            rows = np.concatenate([pairs[0] for pairs, _ in gathered])
-            columns = np.concatenate([pairs[1] for pairs, _ in gathered])
-            values = xp.concatenate([xp.asarray(operator)[pairs[2], pairs[3]] for pairs, operator in gathered])
-            if xp is np:
-                np.add.at(hamiltonian, (rows, columns), values)
-            else:
-                hamiltonian = hamiltonian.at[rows, columns].add(values)
-        return hamiltonian
+        return _block_hamiltonian(*self._block(totals))
+
+    def _block(self, totals: Any) -> tuple[Any, ...]:
+        """Return the energies, levels, term operators and term level pairs that assemble a block."""
+        pairs = tuple(self._pairs_for(support, totals, totals) for _, support in self.terms)
+        return self.energies, self.space(totals).levels, tuple(operator for operator, _ in self.terms), pairs
 
     def eigensystem(self, total: int) -> SectorEigensystem:
         """Diagonalize the block that holds ``total`` and assign its bare labels.
 
         Each block is diagonalized once per model, and a result that holds
         tracers is reused only inside its trace. A concrete block is
-        diagonalized on the host, and a traced block uses one ``eigh``.
+        diagonalized on the host, and a traced block is assembled, diagonalized,
+        labeled and phase-fixed in one compiled program.
 
         Parameters
         ----------
@@ -436,25 +455,14 @@ class SectorModel:
         if scoped_hit(entry, key):
             return entry[2]
         space = self.space(key)
-        matrix = self.hamiltonian(key)
-        eigenvalues: Any
-        eigenvectors: Any
-        if not contains_tracer(matrix) and not np.any(np.asarray(matrix).imag):
-            # A real symmetric block diagonalizes several times faster than a complex one.
-            eigenvalues, real_vectors = np.linalg.eigh(np.asarray(matrix).real)
-            eigenvectors = real_vectors.astype(complex)
-        else:
-            eigenvalues, eigenvectors = sector_eigh(matrix, np.zeros(space.size, dtype=np.int64))
-        labeling = label_eigensystem(eigenvectors, BareProductReference((space.size,)), policy=assign_rowwise_greedy)
-        # The reference is the sector's product energy basis, so the amplitudes are the vectors.
-        eigenvectors = eigenvectors * gauge_phases(eigenvectors, labeling.indices)
+        block = self._block(key)
+        eigenvalues, eigenvectors, *arrays = (_traced_eigensystem if contains_tracer(block) else _eigensystem)(*block)
         if not contains_tracer(eigenvalues):
             # Concrete energies take the backend's array type, as those of the full eigensystem do.
             eigenvalues = self.chip.backend.array_module.asarray(eigenvalues)
-        system = SectorEigensystem(space, eigenvalues, eigenvectors, dataclasses.replace(labeling, keys=space.labels))
+        system = SectorEigensystem(space, eigenvalues, eigenvectors, Labeling(space.labels, *arrays))
         # Inside a trace, even a concrete block gives a traced labeling.
-        traced = contains_tracer((eigenvalues, eigenvectors, labeling.indices, labeling.overlaps, labeling.margins))
-        self._eigensystems[key] = scoped_entry(key, system, traced=traced)
+        self._eigensystems[key] = scoped_entry(key, system, traced=contains_tracer((eigenvalues, eigenvectors, arrays)))
         return system
 
     def embed(self, totals: int | Sequence[int], vector: Any) -> Any:
@@ -477,13 +485,7 @@ class SectorModel:
         rows = np.ravel_multi_index(tuple(space.levels.T), self.dims)
         transforms = [self.bases[device.label].energy_to_solver() for device in self.chip.devices]
         xp = concrete_array_module(vector, transforms)
-        product: Any
-        if xp is np:
-            product = np.zeros(dimension, dtype=complex)
-            product[rows] = vector
-        else:
-            product = jnp.zeros(dimension, dtype=complex).at[rows].set(vector)
-        tensor = product.reshape(self.dims)
+        tensor = scatter(xp.zeros(dimension, dtype=complex), rows, vector).reshape(self.dims)
         for axis, transform in enumerate(transforms):
             if transform is not None:
                 tensor = xp.moveaxis(xp.tensordot(xp.asarray(transform), tensor, axes=([1], [axis])), 0, axis)
@@ -517,10 +519,7 @@ class SectorModel:
         eigenvectors = xp.zeros((size, size), dtype=complex)
         for key in keys:
             span = slice(offsets[key], offsets[key] + systems[key].space.size)
-            if xp is np:
-                eigenvectors[span, span] = systems[key].eigenvectors
-            else:
-                eigenvectors = eigenvectors.at[span, span].set(systems[key].eigenvectors)
+            eigenvectors = scatter(eigenvectors, (span, span), systems[key].eigenvectors)
         owners = [self.class_of(sum(label)) for label in labels]
         rows = [systems[key].space.row(label) for label, key in zip(labels, owners, strict=True)]
         positions = [offsets[key] + row for key, row in zip(owners, rows, strict=True)]

@@ -11,7 +11,7 @@ from quchip import (
     Chip, ChargeDrive, CollapseChannel, CouplingModel, CustomSpace, DuffingTransmon,
     Exact, Gaussian, PortNetwork, QuantumSequence, Resonator, eliminate,
 )
-from quchip.extensions import SpinHalf as ReferenceSpin
+from tests.extension_guide import SpinHalf as ReferenceSpin
 from quchip.declarative.models import DeviceModel
 from quchip.declarative.parameters import Scalar, parameter
 

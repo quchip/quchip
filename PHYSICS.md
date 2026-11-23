@@ -10,7 +10,7 @@ Sections 1–7 describe how quchip builds and resolves a model. Sections 8–11
 describe what it computes: observables, stationary response, dressed
 quantities, model reductions and parametric control. Sections 12–16 state the
 engine's assumptions, the limits of JAX tracing, source pointers and
-measurement records.
+measurement records. Section 17 describes propagators, gate sets and circuits.
 
 ## Conventions at a glance
 
@@ -32,6 +32,7 @@ measurement records.
 | Dispersive shift | The full pull `χ = f_r\|1 − f_r\|0 = E(1,1) − E(1,0) − E(0,1) + E(0,0)`. | §10.1 |
 | Kerr matrix | Off the diagonal the full pull (static ZZ), on the diagonal the dressed anharmonicity. | §9.3 |
 | Virtual Z | `vz(θ)` adds θ to the phase of later pulses. It acts as `exp(+iθZ/2) = R_z(−θ)`. | §5.3, cross-walk |
+| Gate error | The error map acts after the ideal gate: `Λ = E ∘ U`. Channels act on column-stacked density matrices. | §9.5 |
 
 ### Cross-walk to common references
 
@@ -55,8 +56,8 @@ through `ω = 2π f`.
 From parity-invariant initial states, such as energy eigenstates, populations
 under a charge drive alone, or through charge couplings alone, do not depend
 on the sign of `[φ, n]`. The sign changes observable physics when
-one device couples through both charge and phase, for example through
-`ChargePhaseDrive`, or through a `ChargeDrive` and a `PhaseDrive` on one device.
+one device couples through both charge and phase, for example through the
+extension guide's `ChargePhaseDrive`, or through a `ChargeDrive` and a `PhaseDrive` on one device.
 
 ## 1. Units and the 2π convention
 
@@ -292,7 +293,7 @@ supplies no omitted charge or flux operator.
 
 ### 3.3 Collapse operators
 
-Sources: [`quchip/devices/base.py`](https://github.com/quchip/quchip/blob/main/quchip/devices/base.py), [`quchip/chip/baths.py`](https://github.com/quchip/quchip/blob/main/quchip/chip/baths.py)
+Sources: [`quchip/devices/base.py`](https://github.com/quchip/quchip/blob/main/quchip/devices/base.py)
 
 The Markov master equation uses the [Lindblad dissipator][lindblad]:
 
@@ -302,7 +303,7 @@ D[A]rho = A rho A† - (A†A rho + rho A†A)/2
 ```
 
 `H_angular` is in rad/ns and each `gamma_k` is in 1/ns. Devices, drives,
-couplings and baths author `CollapseChannel` records, which keep the local
+couplings and ports author `CollapseChannel` records, which keep the local
 operator separate from its non-negative rate. The engine projects and embeds
 the operator and keeps the rate unchanged. Backend lowering applies
 `sqrt(rate)` exactly once.
@@ -342,17 +343,9 @@ them with `None`, at construction or later, and later writes get the
 constructor's validation. Each solve rebuilds the collapse operators from the
 current values.
 
-`Bath` recipes add shared channels to the intrinsic device noise. Attach a
-bath at construction or later with `chip.add_bath(...)`.
-
-| Recipe | Jump operators and assumptions |
-| --- | --- |
-| Thermal | Independent ladder jumps. Occupation uses one local frequency per target. |
-| Collective decay | One equal-weight, equal-phase jump `sum_i a_i`. |
-| Correlated dephasing | One common-mode jump `sum_i n_i`. |
-
-The default bath rate is `1/ns`. Collective recipes do not encode a general
-correlation matrix, and correlated thermal baths are unsupported. `Exact()`
+Loss that several devices share comes from a coupling's `CollapseChannel`,
+for example one jump `a + b` for collective decay, or from ports on one
+feedline. One shared channel does not encode a general correlation matrix. `Exact()`
 retains Hamiltonian terms but does not derive global dressed dissipators, and
 local dissipation can fail in ultrastrong coupling ([Beaudoin et al.][beaudoin]).
 
@@ -706,8 +699,8 @@ error at QuTiP's default tolerances was 5.0e-8. In the lab frame, it took
 points in the first of the rotating, planned, and lab frames that fits each
 of them. In the planned frame, each point gets its own plan, as with
 `"auto"`. A solve with `dissipation=False` leaves the collapse channels out,
-so they do not need to fit its frame. On a chip with a collective bath, such
-a solve and `subspace_propagator()` use the rotating frame. Ports still need
+so they do not need to fit its frame. On a chip with a collective decay
+channel, such a solve and `subspace_propagator()` use the rotating frame. Ports still need
 to fit, because drives through a port and the Hamiltonian that a cascade
 generates (§3.3.2) stay in a solve without dissipation.
 
@@ -946,17 +939,18 @@ the rotating frame at `chip.freq(device)`, this carrier makes the drive's
 weight-`k` bands static. With an explicit `reference_freq`, the selected
 weight-`k` partner turns as `exp(2πi k (chip.freq(device) - reference_freq) t)`
 instead, and its Hermitian partner with the opposite sign. `ChargeDrive`,
-`PhaseDrive` and the extension `ChargePhaseDrive` set `k = 1`. `TwoPhotonDrive` sets `k = 2`, the zero-detuning
+`PhaseDrive` and the extension guide's `ChargePhaseDrive` set `k = 1`. `TwoPhotonDrive` sets `k = 2`, the zero-detuning
 Kerr-cat pump of the static model, without pump-induced Stark shifts. quchip
 warns with the chosen carrier once per line in each sequence. Drives without a
 declared or inherited `carrier_harmonic`, such as flux and coupling drives, and
 coherent inputs keep a baseband pulse. `freq=None` gives a baseband pulse on
 every line: the envelope without carrier modulation, through the drive's
 authored I/Q mapping. `freq=0.0` is a carrier at zero frequency. It follows its
-frame, and `RWA()` splits it into partners (§6.2). The automatic carrier is
-evaluated when the pulse is scheduled. It follows traced parameters only when
-the scheduling runs inside the differentiated function, and rebinding a
-sequence keeps it.
+frame: on a charge line its carrier phase `p`, from `phase=` and `vz()`,
+scales a real envelope by `cos p`, and `RWA()` keeps both of its partners
+(§6.2). The automatic carrier is evaluated when the pulse is scheduled. It
+follows traced parameters only when the scheduling runs inside the
+differentiated function, and rebinding a sequence keeps it.
 
 Each carrier pulse follows the phase reference of one device, its frame.
 `QuantumSequence.vz(device, θ)` emits no pulse. It adds θ to the phase of every
@@ -1086,7 +1080,32 @@ either sign of `f_drive`. Since `cos(-ωt + φ) = cos(ωt - φ)`, a carrier at
 `-f` drives the same transition as `+f` with the conjugate phase. A traced
 carrier keeps the same partner through a 0/1 weight on both bands.
 
-`ChargePhaseDrive` (in `quchip.extensions`) maps `I` to the charge operator
+A signal band at exactly zero frequency has no counter-rotating partner: both
+halves of `Re s(t)` are equally resonant. `RWA()` keeps both, so a pulse whose
+carrier is zero (`freq=0.0` with no detuning, or `freq + detuning = 0`) gets
+the complete real field `Re s(t)` on each retained excitation band, the same
+drive term as `Exact()`. Static bands and operator bands that `RWA()` removes
+stay removed. On a line that drives with `Re s(t)`, such as `ChargeDrive` or
+`TwoPhotonDrive`, an envelope `A(t) + iB(t)` with carrier phase `p` gives the
+real waveform `A cos p − B sin p`. The phase `p` adds `phase=`, the
+accumulated `vz()` and, for `freq + detuning = 0`, the term `2π δ t₀` of a
+detuning `δ` at the pulse start `t₀`. A real envelope at `p = 0` gives the
+`freq=None` pulse, and at `p = π/2` the pulse does not drive. A phase change
+at zero frequency changes the waveform and is not a Z rotation. Lines with
+another I/Q mapping, such as `ChargePhaseDrive`, keep their own map. The rule
+is the same for concrete and traced frequencies and in batches.
+
+A carrier near zero but not zero keeps one partner, so under `RWA()` the
+Hamiltonian jumps at `f_drive = 0`. On a 50 MHz mode, a Gaussian pulse of
+20 ns and amplitude 0.02 gives `P1 = 0.276` at `freq=0.0` and `0.085` at
+`freq=1e-6`. At exactly zero, a JAX derivative with respect to the carrier
+holds the selection fixed; the derivative of the RWA Hamiltonian itself is
+not defined there. The dropped partner is detuned from its transition by
+about the transition frequency, so the RWA holds only when that detuning is
+much larger than the drive's matrix elements and bandwidth. When it is not,
+use `Exact()`, whose result is continuous through zero.
+
+`ChargePhaseDrive` (in the extension guide) maps `I` to the charge operator
 and `Q` to the phase operator, `H = I Q_c − Q P`, where `s = I + iQ` is the
 delivered analytic signal, envelope and carrier together. With the Fock
 operators `Q_c = i(a† - a)` and `P = a + a†` this is `i(s a† - s* a)`: a positive
@@ -1102,12 +1121,9 @@ fluxonia couple both sidebands with their own weights, and flux-tunable
 transmons generally do too.
 
 Weight-zero bands keep the complete real signal, including DC and oscillating
-longitudinal modulation, with no raising and lowering split. For longitudinal
-bands, `freq=0` and a carrier-free signal (`freq=None`) agree when they
-deliver the same real envelope: no detuning and no virtual-Z phase. For a
-linear quadrature drive on other bands, they differ under `RWA()`. It keeps
-one partner of a zero-frequency carrier, but the complete real field of a
-carrier-free signal.
+longitudinal modulation, with no raising and lowering split. On every band,
+`freq=0` and a carrier-free signal (`freq=None`) agree when they deliver the
+same real envelope: no detuning and no carrier phase.
 
 `FluxDrive` uses the target's `flux_coupling_operator()`. Duffing and
 flux-tunable transmons use the energy-level index. Fluxonium uses phase, which
@@ -2177,8 +2193,108 @@ F = (Tr(M† M) + |Tr(V† M)|²) / (d (d + 1))
 for a unitary target `V` of dimension `d`. Leakage lowers `Tr(M† M)`, so it
 lowers `F`. The solves leave out declared collapse channels, and
 `omitted_channels` names them, so `M` is the propagator of the Hamiltonian.
-`dissipation=True` raises. On dynamiqs, the matrix and the fidelity are
+`dissipation=True` raises; §9.5 gives the channel with them. On dynamiqs, the matrix and the fidelity are
 differentiable in chip and pulse parameters (§13).
+
+### 9.5 Subspace channels
+
+Sources: [`quchip/results/channel.py`](https://github.com/quchip/quchip/blob/main/quchip/results/channel.py), [`quchip/control/sequence.py`](https://github.com/quchip/quchip/blob/main/quchip/control/sequence.py)
+
+`QuantumSequence.subspace_channel(devices, levels=(0, 1))` gives the gate
+with the chip's collapse channels, ports included. The labels are those of
+§9.4. For `d` labels, one batch of master-equation solves starts `d²` pure
+states, all built in the frame and space of the dissipative solve: each
+dressed label state `|i⟩`, and for each pair `i < j` the states
+`|+⟩ = (|i⟩ + |j⟩)/√2` and `|+i⟩ = (|i⟩ + i|j⟩)/√2`. Linearity gives
+
+```text
+Λ(|i⟩⟨j|) = Λ(|+⟩⟨+|) + i Λ(|+i⟩⟨+i|) − (1 + i)/2 (Λ(|i⟩⟨i|) + Λ(|j⟩⟨j|)),    Λ(|j⟩⟨i|) = Λ(|i⟩⟨j|)†
+```
+
+The final density matrices are projected on the label targets of §4.2, and
+the frame of §9.4 acts on both sides, with `Δ_k = E_k − F_k`:
+
+```text
+Λ[(i,j),(k,l)] = exp(i 2π T (Δ_i − Δ_j)) ⟨target_i|ρ_out(k,l)|target_j⟩ exp(−i 2π t0 (Δ_k − Δ_l))
+```
+
+The ground energy cancels. `superoperator[i + d j, k + d l]` holds this
+entry, so it acts on column-stacked density matrices. Trajectory solvers
+give conditioned states and raise. Unselected devices start in level 0, and
+population that leaves the labels, such as an excited spectator or a level
+above the labels, is lost from the record. `leakage[k]` is that loss for
+input `k`. Population that moves between labels, such as the thermal
+excitation of a selected qubit, stays in the channel as a computational
+error. A channel solved at one start time is not moved to another by frame
+conjugation. Under RWA, a delayed gate keeps its channel up to such a
+conjugation only when the whole generator is covariant under the time
+shift, and RWA does not guarantee that: several carriers, coupled devices or
+thermal channels can break it.
+
+The computational labels `C` are those with every level in `{0, 1}`, and
+`d_C` is their number. Every number below uses the block `Λ_C` of the
+channel on them (Wood and Gambetta, PRA 97, 032306 (2018)):
+
+```text
+average leakage    L = 1 − Tr[P_C Λ(P_C)]/d_C
+seepage              = Tr[P_C Λ(P_L)]/d_L          (labels L with a level above 1, the C ← L block)
+process fidelity   F_e = Tr(S_U† S_Λ_C)/d_C²,      S_U = conj(U) ⊗ U
+infidelity         1 − F_avg = (d_C (1 − F_e) + L)/(d_C + 1)
+```
+
+The infidelity is the error in quchip's frame, with ideal preparation and
+measurement in the dressed states. Leaked population counts as zero overlap,
+and the block is not renormalized. Transitions into labeled leakage levels
+count in `L`. A frame tilt of the gate counts as error here, for example
+`Rz(a) U Rz(a)` for a quarter turn `U`, which at first order only tilts the
+gate against preparation and measurement. For `U = I` the same error is a
+genuine rotation `Rz(2a)`.
+
+`eigenvalue_infidelity(U)` is a spectral score, not an operational
+fidelity. It pairs the eigenvalues `λ` of `S_Λ_C` with the eigenvalues `μ`
+of `S_U` by a minimum-weight matching of `|λ − μ|`, and returns
+`d_C (1 − |Σ conj(μ) λ|/d_C²)/(d_C + 1)`, as pyGSTi's
+`eigenvalue_avg_gate_infidelity`. A fixed change of basis within `C`,
+applied to both the channel and the target, keeps it, so the quarter-turn
+tilts above drop out at first order. A change of the record's frame that
+differs at the start and the end is not such a change, and it can change
+the score. Leakage is not added, but it lowers
+the eigenvalues: a uniform loss `ℓ` gives `d_C ℓ/(d_C + 1)`. Report the
+average leakage beside it. Randomized benchmarking need not agree with
+either number: with coherent errors it can exceed both or see axis errors
+between gates that neither number shows.
+
+`error(U)` returns the map after the ideal gate, `E = Λ_C ∘ U†`, so that
+`Λ_C = E ∘ U`. With levels 0 and 1 on each of `n` devices, the Pauli
+transfer matrix uses unnormalized Pauli products `P`, first device most
+significant (pyGSTi's `pp` basis):
+
+```text
+R[a, b] = Tr(P_a Λ(P_b))/2ⁿ,    f(P) = R[P, P],    p(P) = 4⁻ⁿ Σ_Q (−1)^⟨P,Q⟩ f(Q)
+```
+
+where `⟨P,Q⟩ = 1` when `P` and `Q` anticommute. The twirl
+`4⁻ⁿ Σ_P S_P S_Λ S_P` keeps the diagonal of `R`, and `p(P)` are the Pauli
+weights of the twirled map. On a leaky map they sum to `f(I…I) = 1 − L`.
+For ideal Pauli layers and a cycle whose channel does not change from one
+repetition to the next, the twirled error map is the Pauli channel that
+randomized compiling and cycle benchmarking see.
+
+For a qubit with `T1` and `T2`, the jump operators `√γ₁ a` and `√(2γ_φ) n`
+with `γ₁ = 1/T1` and `γ_φ = 1/T2 − 1/(2 T1)` give, over an idle time `D`,
+
+```text
+p_X = p_Y = (1 − e^(−γ₁D))/4,    p_Z = (1 + e^(−γ₁D) − 2 e^(−(γ₁/2 + γ_φ)D))/4
+```
+
+To first order in the rates, a gate of duration `T` on `n` qubits that stay
+in their computational levels has `1 − F_avg = d/(2(d + 1)) T Σ_q (γ₁,q + γ_φ,q)`
+with `d = 2ⁿ`, relative to the closed evolution, whatever the gate (Abad et
+al., PRL 129, 150504 (2022)).
+Transient population of higher levels changes this at order `γ ∫ p₂ dt`.
+On dynamiqs, the superoperator, the infidelity and the Pauli quantities are
+differentiable in chip and pulse parameters (§13). The eigenvalue
+infidelity uses NumPy.
 
 ## 10. Adiabatic elimination and dispersive readout
 
@@ -2205,8 +2321,7 @@ interactions. The retained correction includes per-level shifts, and the
 authored endpoint parameters stay unchanged. Surviving component channels
 follow a captured operator projection, but their rates stay component-owned.
 Removed-component channels already use the retained coordinates. Surviving
-controls and collective or thermal baths follow the captured coordinate
-changes. Controls that target removed components, and retargeted ports,
+controls follow the captured coordinate changes. Controls that target removed components, and retargeted ports,
 require explicit conversion rules.
 
 An effective-terms target keeps every device and edge. It diagonalizes the
@@ -2264,24 +2379,79 @@ rates, in 1/ns. It includes `2π f_r/Q_internal` and thermal emission when
 configured. A ladder channel contributes `(nbar+1)/T1`, or `nbar+1` without a
 supplied `T1`. An external port is transformed separately and is absent from
 this diagnostic. Do not use it as a total linewidth or detected loss without
-checking the channels. For an untruncated harmonic thermal bath, the linewidth
-equals the downward minus the upward rate: `T1=1000 ns` and `nbar=0.5` give a
-downward rate of `0.0015/ns` but a linewidth of `0.001/ns`. An external-only
-port gives a nonzero linewidth even when the intrinsic diagnostic is zero.
-Truncated thermal spectra also require cutoff convergence.
+checking the channels. `analyze_dispersive_readout` takes the energy linewidth
+of the weak-probe pole instead (§10.2). For an untruncated harmonic thermal
+bath, the linewidth equals the downward minus the upward rate: `T1=1000 ns`
+and `nbar=0.5` give a downward rate of `0.0015/ns` but a linewidth of
+`0.001/ns`. An external-only port gives a nonzero linewidth even when the
+intrinsic diagnostic is zero. Truncated thermal spectra also require cutoff
+convergence.
 
 ### 10.2 Pointer states and readout figures of merit
 
-`analyze_dispersive_readout` assumes a linear cavity with coherent conditional
-steady states and vacuum energy-loss channels. `kappa` is the total energy
-linewidth, including observed and unobserved loss, and excludes pure
-dephasing. `kappa_detected` is the observed part, and `eta=efficiency` is the
-detector efficiency. The defaults `kappa_detected=None` and `efficiency=1` mean
-complete ideal collection.
+`analyze_dispersive_readout(chip, qubit, resonator, ...)` derives its inputs
+from the chip and evaluates closed-form steady-state figures of merit. It is a
+quick estimate from statics. `IQReadout.from_wiring` models the full wiring
+and receiver.
+
+The pulls come from the dressed spectrum of the chip's Hamiltonian
+approximation and finite basis:
+
+```text
+f_r|j = transition_frequency(resonator, 0, 1, when={qubit: j})
+chi = f_r|1 - f_r|0
+```
+
+Each pointer state uses the pull of its own level, so `levels>2` follows the
+derived multilevel pulls of the model instead of an assumed `j*chi`.
+
+`kappa` is the energy linewidth of the resonator pole of the weak-probe drift
+`A = -iH - C†C/2` of §8.1, with the qubit in level 0. The drift omits the
+broadening of the channels that conserve the excitation number, such as
+dephasing, which the vacuum route adds to `H`. `H` is then `H_0 - iK/2`, where
+`H_0` is Hermitian and the diagonal `K` holds the internal loss rates of the
+poles that `eliminate()` retained. A pole `λ` with right eigenvector `v` has
+
+```text
+kappa = -2 Re λ = (|C v|² + v†K v)/|v|²
+```
+
+so the loss channels, the rows `c_k` of `C`, and the retained internal losses
+partition `kappa`. The pole is the one nearest `f_r|0`, and the resonator must
+dominate its eigenvector. The linewidth of `VNA.resonances()` is the response
+linewidth, twice the decay rate of the amplitude coherence. It includes the
+broadening of the conserving channels, so it differs from the energy linewidth
+when they are present and equals it without them. At `Delta = 1 GHz`,
+`g = 50 MHz`, a resonator loss of `0.01/ns` and qubit dephasing
+`gamma_phi = 0.02/ns`, the response linewidth is `0.01007444/ns` and `kappa`
+is `0.00997519/ns`, the initial decay rate of the excitation number.
+
+`kappa_detected` is the part of `kappa` that reaches the exposed port
+`output`:
+
+```text
+kappa_detected = |t_out(f_d)|² |c_out v|²/|v|²
+f_d = f_r|0 - delta_r
+```
+
+Here `c_out` is the row of the port's output field, which includes the
+Markovian network up to the plane, and `t_out` is the outbound transfer of the
+plane's reference sections. The steady output oscillates at the drive
+frequency `f_d`, so a reference filter with a notch at `f_d` gives zero
+detected loss, also when it transmits at the pole frequency. Without
+attenuation between the port and the plane, a reflection port gives the
+dressed external rate, and each direction of a symmetric hanger gives half of
+it. Without `output`, `kappa_detected = kappa`, which means complete
+collection. `eta=efficiency` is the detector efficiency.
+
+The output path must be passive, with vacuum noise. An amplifier or a thermal
+load in its reference sections raises, because gain would multiply the signal
+while the SNR keeps the vacuum noise. `IQReadout.from_wiring` models the
+receiver chain.
 
 ```text
 delta_r = f_r|0 - f_drive                         [GHz]
-delta_j = 2pi*(delta_r + j*chi_eff)                [rad/ns]
+delta_j = 2pi*(delta_r + f_r|j - f_r|0)            [rad/ns]
 alpha_j = -i*eps/(kappa/2 + i*delta_j)
 nbar_j = |alpha_j|²
 sigma = 1/sqrt(2 eta kappa_detected tau)
@@ -2295,7 +2465,8 @@ detected loss or efficiency gives zero SNR and an assignment error of one half,
 while the pointer states and dephasing still use the total linewidth. Thermal
 input needs a different noise model.
 
-Give either `eps` in rad/ns or a nonnegative target `n_photons`:
+Give either `eps` in rad/ns, the drive of the resonator mode's amplitude, or a
+nonnegative target `n_photons`:
 
 ```text
 eps = sqrt(nbar_0*((kappa/2)²+delta_0²))
@@ -2306,16 +2477,33 @@ The second expression is the small-pull limit, and its resonant form follows
 [Gambetta et al.][gambetta]. The helper uses the full pointer detuning instead
 of this limit. [Krantz et al.][krantz], section V, reviews readout.
 
-`n_crit` optionally applies `chi_eff=chi/(1+nbar_0/n_crit)`. This is a
-phenomenological interpolation, not controlled strong-drive theory. `levels>2`
-assumes the linear pull `j*chi` and does not derive multilevel cavity
-frequencies. `kappa`, `tau` and a supplied `n_crit` must be positive, with at
-least two levels, `0<=kappa_detected<=kappa` and `0<=efficiency<=1`. Concrete
-invalid inputs raise, and traced callers must enforce the same domains.
+The pulls are zero-photon pulls. `nonlinearity` reports how they change with
+the photon number. For each pointer state, it takes the integer photon numbers
+`n` that hold all but `1e-3` of its Poisson distribution and computes
+`f_r|j(n) = transition_frequency(resonator, n, n+1, when={qubit: j})`. It
+reports the largest drift from `f_r|j(0)` in GHz and in units of the half
+width `kappa/4pi`, and the largest change of the pull `f_r|1(n)-f_r|0(n)`
+relative to `|chi|`. It has no pass threshold and does not certify validity.
+The upper state `|j, n+1>` mixes down to `|0, n+j+1>`, so each evaluated
+`(j, n)` needs at least `n+j+2` resonator levels. The diagnostic stays
+unchecked when the truncation is smaller, when the dressed labels cannot cover
+those `n`, and inside `jax.jit`. The cutoffs of the other devices still need
+their own convergence check.
 
-The calculation excludes ring-up transients and measurement-induced qubit T1.
-Its GHz-to-angular conversions occur at the helper boundary, separately from
-Hamiltonian assembly.
+The closed form assumes one isolated resonator mode, damped weakly compared
+with the mode spacings, and vacuum inputs. It also assumes negligible
+dephasing, one `kappa` and an output coupling that do not depend on the qubit
+state, and negligible ordinary, Purcell and measurement-induced qubit decay
+during the acquisition. The SNR and the assignment error compare levels 0 and
+1, also when `levels>2`. Ring-up transients are not modeled. The notes of the
+result list these assumptions.
+
+`tau` must be positive, with at least two levels and `0<=efficiency<=1`.
+Concrete invalid inputs raise, and traced callers must enforce the same
+domains. The pulls, `kappa` and the figures of merit stay differentiable under
+JAX on a fixed structure. `kappa_detected` with an `output` needs the pole's
+eigenvector, so a JAX derivative through it raises. The helper's GHz-to-angular
+conversions occur at its boundary, separately from Hamiltonian assembly.
 
 ### 10.3 The Schrieffer-Wolff route (`method="sw"`)
 
@@ -2485,8 +2673,7 @@ Reducing an excitation-conserving model records each retained channel's total
 level change in `EffectiveTerms.excitation_changes`. A projected surviving
 operator keeps its authored operator's change. A port on a surviving mode
 keeps the change of its target's operator, built at compile time, and a
-transformed port operator declares the change of the port it replaces. Each
-retained `Bath` operator keeps the change of its authored operator. Band
+transformed port operator declares the change of the port it replaces. Band
 decomposition treats every other total change as a structural zero, so this
 check gives the same answer for concrete values and under `jax.grad` or
 `jax.jit`. An operator that crosses an earlier map without declared level
@@ -2687,7 +2874,7 @@ and no internal loss, the value is
 degenerate modes. The entry evaluates the ratio at `f_k`. Between `f_k` and
 `f_tilde`, `|D_p D_k|` has a smaller minimum, so the ratio is a resonance
 diagnostic, not a bound over frequency. The entry is `None` when the reduced
-chip has no vacuum one-excitation model, for example with a thermal bath.
+chip has no vacuum one-excitation model, for example with thermal occupation.
 
 The coupled pole supports a conserving model's vacuum `VNA.sweep()` only.
 Pumped, finite-power, noisy, excited-reference and general stationary field
@@ -2695,13 +2882,12 @@ routes reject it. A time-domain solve also rejects a coherent input that
 reaches the pole's ports and an `OutputField` whose channel carries emission
 from those ports. It rejects diffusive monitoring with a nonzero efficiency of
 such a channel. The same rule covers a hidden channel that acted on the removed
-mode, such as its internal loss or a bath on it. The field and the record would
+mode, such as its internal loss or a thermal channel. The field and the record would
 contain only the adiabatic part of the removed mode, so they would miss the
 pole near its frequency. For those observables, keep the boundary mode.
 
 `EffectiveTerms.omitted_responses` records each carried channel that lacks a
-removed mode's response, including a bath with removed targets and a
-transformed port. The record stays with the channel through later reductions,
+removed mode's response, including a transformed port. The record stays with the channel through later reductions,
 also when the port network no longer holds the pole or the section. Pure-state
 SSE monitors every channel, so it rejects every chip with such a channel. A
 traced efficiency counts as nonzero, also when its value is zero.
@@ -2876,8 +3062,7 @@ other devices and forms that matrix only when you read it.
 
 `local=True` implements `method="sw"` only. The exact route uses the
 whole-chip eigensystem, resolved into excitation sectors when possible, and
-its dressed states are not local. The local route does not transform baths, so
-a chip with baths raises `NotImplementedError`. Coupling and effective-terms
+its dressed states are not local. Coupling and effective-terms
 targets do not accept `local=True`. `active_patch()` and
 `QuantumSequence.active_patch()` forward `local`.
 
@@ -3226,6 +3411,262 @@ expectation of each run without weights. See
 [the solver guide](docs/guides/choosing-a-backend.md) and
 [Wiseman and Milburn, chapter 4][wiseman].
 
+
+## 17. Gate sets and propagators
+
+Sources: [`quchip/results/propagator.py`](https://github.com/quchip/quchip/blob/main/quchip/results/propagator.py), [`quchip/gateset/`](https://github.com/quchip/quchip/tree/main/quchip/gateset)
+
+### 17.1 Propagators and the computational frame
+
+`QuantumSequence.propagator()` returns the lab-frame propagator
+`U(t1, t0)` on solver coordinates from one solve, also when the solve runs in
+the rotating frame: `U_lab = R(t1) U_solver R(t0)^†` with
+`R(t) = exp(-2πi t Σ_i f_frame,i n_i)`, with the integration-frame
+frequencies `f_frame,i` of §4.1. With collapse channels it returns the
+superoperator on column-stacked density matrices. The gate set projects the
+propagator on the dressed computational states `W_c` of `chip.state()` and
+removes each device's dressed precession:
+
+```text
+V = W_c^† e^{2πi F t1} U(t1, t0) e^{-2πi F t0} W_c,    F = Σ_i f_i ñ_i,
+```
+
+with `f_i = chip.freq(i)` and `ñ_i` the dressed level label. This is the
+dressed frame of §9.4 without its ground-energy phase: `V` is the matrix of
+`subspace_propagator(qubits)` times `exp(-2πi E(0) (t1 - t0))`, from one solve
+instead of one solve per input. An idle interval leaves only the static ZZ
+phases. The part of each output column outside `W_c` is the leakage of that
+input. A chip that does not conserve the excitation number uses `chip.state()`
+on the product space for `W_c`.
+
+### 17.2 Virtual Z and placement
+
+`vz(q, θ)` shifts the phase of every later pulse in frame `q`. On a segment
+whose Hamiltonian is covariant (below), this equals conjugation by
+`exp(iθN)` with `N` the total excitation number. A circuit `RZ_q(λ)` is
+`vz(q, -λ)` and costs no time. A circuit ends with the correction
+`Π_q RZ_q(-F_q)`, where `F_q` sums the `vz` angles of frame `q`. This follows
+[McKay et al.][mckay].
+
+A gate solved once at start time 0 is reused at start time `τ` and frame offset
+`θ` as
+
+```text
+U_τ = C U_0 C^†,    C = exp(i(θ - 2π f_c τ) N),
+```
+
+where `f_c` is the carrier `freq` of the gate's pulses. Detunings are referenced
+to each pulse's start, so they do not enter `C`. The gate set lowers each pulse
+alone, after the signal chain, so it knows the delivered terms of every pulse
+and their time windows. Delays and crosstalk move and copy these windows. The
+gate splits into pieces where no delivered window is open, and a piece is
+reused when:
+
+- each static term conserves `N`, each collapse operator changes `N` by one
+  fixed charge, and the chip has no time-dependent terms of its own;
+- each transform of the signal chain declares `linear_time_invariant`, as the
+  built-in delays, gains, and crosstalk do, so the delivered field of a piece
+  is the sum of its pulses' fields and each moves with its pulse;
+- the carrier pulses of the piece share one `freq` `f_c` and one frame;
+- each delivered term of a pulse has one charge `q`. A term of a carrier
+  pulse turns by `exp(iqθ)` when the pulse phase turns by `θ`. A term of a
+  baseband pulse in a carrier piece has charge 0: `C` would turn a transverse
+  baseband term that a time shift and a `vz` leave unchanged;
+- the drive builds the pulse's signal with the shared `signal()`, and each
+  term is built from the pulse envelope, carriers, and the standard signal
+  algebra, with no coefficient of absolute time.
+
+Under the second, third, and last conditions, a carrier pulse that starts `τ`
+later gives the field of the same pulse with its phase turned by `-2π f_c τ`,
+moved by `τ`. The phase condition therefore also covers the start time. The
+gate set proves it on the structure of each delivered coefficient. It lowers
+each carrier pulse again with a stand-in for its phase. The stand-in has no
+arithmetic, comparison, hash, conversion, or truth value, so the lowering can
+only store it. It must reach each delivered tree only as the angle of a polar
+scale, and the tree must equal the first lowering everywhere else. Such a
+polar scale carries phase harmonic 1. A sum takes the union of its children's
+harmonics, a product adds them, a conjugate negates them, a real or imaginary
+part takes both signs, and an integer power adds them that many times. A term
+passes when its only harmonic is its charge `q`, which holds for every phase,
+amplitude, and envelope. A lowering that computes with the phase fails the
+term, even when the result is the same field: `E(t) cos φ` written as a scale
+factor fails, and `Re(e^{iφ} E(t))` is checked. A lowering that tests the
+phase value also fails, for example one that changes the field only at `φ =
+0`. It fails at every phase, before a placement reaches that value. The signal
+bands of a term do not settle this. At zero delivered frequency, `f_c + δ =
+0`, both sidebands of a pulse fall on one band, and a flux pulse then changes
+its amplitude, not its phase, when the phase turns.
+
+A chip without the RWA fails the first condition. A piece that fails is solved
+again at each new placement, and the report states the reason. A custom signal
+transform that clips or gates signals at fixed times fails the second
+condition, even when its signal nodes are of the standard kinds. A drive that
+overrides `signal()` fails the last condition, because the gate set cannot
+follow how its field moves with the start time. A drive that only defines its
+own `hamiltonian()` keeps reuse when its terms pass the phase check.
+
+### 17.3 Calibration residual
+
+A native gate has knobs (pulse fields with bounds and scales), an ideal
+unitary `U`, and free virtual-Z qubits. The calibration block holds the gate's
+qubits and, by default, the gate-set qubits that the gate's delivered pulses
+act on (signal-chain crosstalk included) or that a coupling path reaches
+without passing another gate-set qubit. The target is `U ⊗ I` on this joint
+block, and each spectator gets a free virtual Z, so static ZZ and drive
+crosstalk during the gate enter the objective. The fit minimizes `|r|²` over
+the knobs, a phase `φ_q` per free qubit, and a global phase `γ`:
+
+```text
+M = (U ⊗ I)^† Z(φ) V,    r = [(M - e^{iγ} I)/√(d+1), ℓ/√d],
+```
+
+where `ℓ` holds the leaked amplitudes. At the optimal `γ`,
+`|r|² = 1 - F_avg + (d - |Tr M|)²/(d(d+1))`. The second term is of higher
+order in the gate error, so near a good gate `|r|²` and `1 - F_avg` agree to
+leading order. The knob columns of the Jacobian are forward differences with
+a fixed step of `1e-4` in the scaled knobs, shortened to the distance to a
+bound when both bounds are closer, and the phase columns are exact.
+The calibrated sequence ends with `vz(q, -φ_q)`.
+
+The report gives the error after the ideal gate, as cycle benchmarking and
+cycle error reconstruction define it. Its generator is `H = i log U_P`, where
+`U_P` is the polar part of `Z(φ) V (U ⊗ I)^† = (U ⊗ I) M (U ⊗ I)^†`, and its
+Pauli coefficients are `Tr(P H)/d` (a rotation `θ` about `P` gives `θ/2`).
+The error before the gate, the polar part of `M`, has the same eigenphases
+and worst-case distance. It also gives the leakage, the Jacobian condition number and its
+change under a ten times smaller step, knobs at a bound, the infidelity of
+the gate's own block with all spectators in `|0>`, with each other gate-set
+qubit in `|1>`, and in the computational state of the other qubits where it
+is largest (all with the implemented corrections, read from the composed gate
+on every gate-set qubit), and the infidelity after `N` repetitions. Over
+sampled start times in [0, 100) ns at fixed frame offsets, it gives the
+smallest and largest `1 - F_avg` with the implemented corrections. A
+reusable gate with one carrier changes with the start time by the
+conjugation by `C`, expressed in the computational frame. When the ideal
+commutes with it, as for the built-in SX and X, only the
+orientation of the coherent error changes and `F_avg` stays the same.
+Otherwise the operation itself changes with the start time: an SX on a 5 GHz
+qubit driven at `freq = 4.99` with `detuning = 0.01` has its axis turned by
+90° when it starts 25 ns later, and its `F_avg` against SX drops to 0.5. A
+gate whose pieces use different carriers turns each piece with its own
+carrier, so its error can change with the start time even when the intended
+action of each piece commutes with its own rotation. For two transmons
+100 MHz apart with `g = 3 MHz`, the echoed CR of §17.4 has
+`1 - F_avg = 5.0e-5` at its calibration start and between `3.7e-5` and
+`1.4e-4` over the sampled starts. Its dominant observed harmonic has a
+period of `1/(2 Δf) = 5 ns`, which fits interference between the errors of
+the two CR halves, between which the echo flips the control; other error
+terms can have other periods. The cache applies these changes exactly; the
+fit at start 0 does not average over them. The `solver_floor`
+status is a heuristic: the integrator's unitarity defect does not bound a
+coherent phase error.
+
+The free spectator Z is a frame update in program order. A later pulse in the
+spectator's frame that overlaps the gate in time sees the update for its whole
+duration, so such overlapping gates are solved together and do not inherit
+the isolated calibration's fidelity.
+
+### 17.4 Built-in natives
+
+`drag_sx()` schedules one `GaussianDRAG` pulse at the dressed qubit frequency
+with phase `-arg m`, where `m` is the dressed `0 -> 1` element of the line. The
+seeds are `β = 1/(4π |α|)` and the amplitude of `Chip.rotation_amplitude()`,
+`A = θ/(2π |m| |∫E dt|)` on a line without transforms (§6.2.1). The
+knobs are the amplitude and `β`, which keeps the fit small. The pulse
+detuning is an optional knob, bounded to ±5 MHz. It can lower the joint error,
+for example by centering the carrier between the frequencies that a spectator
+ZZ shift gives, but near the optimum of `β` a detuning and a change of `β` act
+almost alike. With both knobs and a spectator in the block, the fit on two
+transmons 100 MHz apart moved to the detuning bound with `β ≈ ±10 ns`. For an
+X fit with `spectators="none"` next to a neighbor 100 MHz away with
+`g = 3 MHz`, scored with the neighbor in `|0>`, a 30 ns ±4σ pulse has
+`1 - F_avg = 1.5e-4`, mostly population left in the neighbor; the defaults
+(40 ns, ±3σ) give `1.9e-6`.
+
+`cross_resonance()` drives the control at the target frequency. The seeds are
+the complex amplitudes `a` of the CR tone and `c` of the target tone that solve
+
+```text
+z_a a + z_c c = 1/(4 h ∫E dt),        x_a a + x_c c = s N/∫E dt
+```
+
+for `h` halves. `z_a = C_Z/A` and `x_a = C_I/A` are the susceptibility
+coefficients of §9.2 for the CR line. `z_c = (t_0 - t_1)/2` and
+`x_c = (t_0 + t_1)/2` come from the target line's dressed `0 -> 1` elements
+with the control in 0 and in 1. The first equation sets the ZX angle to π/2
+over the gate. The template has `N = 0`, so the target tone cancels IX. The
+echoed form runs CR+, the calibrated X on the control, CR- with both tones
+shifted by π, and X again. The Gaussian edges have `σ = 6/(2π|Δ|)` for the
+control-target detuning `Δ`. The joints between the edges and the plateau
+leave a spectral tail at `Δ` that falls as `Δ⁻³`.
+
+Rotary seeds (Sundaresan et al., PRX Quantum 1, 020318 (2020)) have `N > 0` and
+`s = ±1`. The target tone then turns the target by `N` turns per half about the
+ZX axis, along it or against it. CR- reverses the tone, and IX commutes with ZX
+and with the X on the control, so the two turns cancel for any `N`. With `θ(t)
+= 2πN ∫_0^t E / ∫_0^T E` on one half, a static `ζ Z_t Z_s/4` between the target
+and a spectator gives a first-order term of size `(πζ/2) |∫ cos(θ(t) - θ(T)/2)
+dt|` in the error generator after the gate for that half. The sine part
+vanishes for a symmetric tone. The seeds take `N` at the zeros of this integral
+below a peak target-tone Rabi rate of `|α|/8` of the target, and the knob keeps
+the same bound. The zeros are whole turns for a square tone and lie between
+whole turns for Gaussian edges: `N = 0.72, 1.62, 2.59, 3.58, 4.58` for a 200 ns
+half with 47.7 ns edges. The ZX term adds ±1/8 turn per half with the control
+state, so the two control branches have different zeros and a residual of first
+order in `ζ` stays: the seeds reduce this term but do not remove it. In a model
+of the control, target, and spectator with only these IX, ZX, and ZZ terms and
+instantaneous echoes, the norm of the target-spectator part of the error
+generator at `N = 2.59` is 6% of its value at `N = 0`, and the part beyond
+first order falls as `ζ²`. The ZZ during the echo pulses, when the tones are
+off, also contributes. The first echo falls after the target has turned by `N`
+turns, so this part depends on `N` too, and it combines with the residual of
+the halves as a vector of error-generator coefficients, not by adding norms.
+The gate set solves each rotary seed once, with the virtual-Z phases fitted,
+fits from the template and from the two best seeds, and keeps the lowest cost.
+A calibration that runs again from fitted knobs and keeps them screens no
+seeds. `GateSet.standard()` adds the seeds when the target couples to another
+gate-set qubit, directly or through devices that are not gate-set qubits.
+
+### 17.5 Circuits
+
+A circuit compiles to one `QuantumSequence`. Each gate occupies its authored
+window, extended to its last delivered field when a line delays it. Gates whose
+windows do not overlap reuse their cached propagators through the placement
+rule, idle intervals use the eigensystem of the static lab Hamiltonian, and
+overlapping gates are solved together once per placement. With a line delay,
+gates that follow each other on the delayed line overlap and are solved
+together. Under an automatic excitation cutoff, a circuit with overlapping
+gates is solved in one piece instead (§17.6). The composed unitary matches a
+direct solve of the same schedule to the solver tolerance. With QuTiP, the linear interpolation of windowed
+envelopes adds an error that the solver's `rtol` sets (§12).
+
+### 17.6 Excitation cutoff
+
+Gate-set solves use the chip's space policy. Without one, and when the product
+space has more than 64 states, the gate set selects
+`ExcitationCutoff(max_total=K)` with `K = n + 1` for `n` gate-set qubits. It
+raises `K` until each template block, its leakage, and its average gate
+fidelity change by less than `1e-6` at `K + 1`. After calibration it compares
+each calibrated gate at `K` and `K + 1`; when one changes by more, it raises
+`K` and calibrates again from the fitted knobs, up to the full product space. Both checks use the block with
+the other gate-set qubits in level 0 and again with all of them in level 1. A
+cached gate acts on every register state, and the second context holds the
+most excitations, so it comes closest to the cutoff. Under the RWA the cutoff
+projector commutes with `N`, so the placement rule of §17.2 still holds.
+
+Each drive adds a transient excitation to the state it acts on, so gates that
+run at the same time need more headroom than one gate. On a chain of four
+transmons at `K = n + 2`, one echoed CR gate matches the full space to `3e-8`,
+but two at once differ by `5e-6`, and four 10 ns X gates at once by `8e-4`.
+Under an automatic cutoff, `unitary()` and `simulate()` count the gates at
+once from the windows of §17.5, which end at each gate's last delivered field,
+and solve a circuit with up to `m` of them in one piece at `K + m - 1`, capped
+at the full product space. Gates at once can end with population above `K`, for example
+in `|22>` after two strong pulses on levels without anharmonicity. Composed on
+the `K` space, each window would drop that population at its end, and the
+dropped amplitudes would add up over later windows. The extra excitation per
+gate and the check with the other qubits in level 1 are heuristics, not
+bounds; `space=` sets the cutoff by hand.
 
 [koch]: https://arxiv.org/abs/cond-mat/0703002
 [vool]: https://arxiv.org/abs/1610.03438

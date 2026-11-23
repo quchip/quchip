@@ -216,7 +216,7 @@ The filter raises T1 from 29.1 to 57.9 µs, approaching the qubit's intrinsic
 
 The integrated loss budget explains the T1 improvement:
 
-| Bath | Without filter | With filter |
+| Loss channel | Without filter | With filter |
 |---|---:|---:|
 | Qubit intrinsic | 48.3% | 96.2% |
 | Readout intrinsic | 1.75% | 3.48% |

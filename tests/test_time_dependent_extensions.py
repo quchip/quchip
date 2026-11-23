@@ -10,7 +10,7 @@ from quchip import Chip, DuffingTransmon
 from quchip.declarative.models import _symbolic_parameters
 from quchip.declarative.ops import LocalOps
 from quchip.engine.ir import evaluate_signal_program
-from quchip.extensions import FrequencyModulatedMode, ModulatedCapacitive
+from tests.extension_guide import FrequencyModulatedMode, ModulatedCapacitive
 from quchip.utils.constants import TWO_PI
 
 import pytest

@@ -15,11 +15,18 @@ New to quchip? Start with {doc}`your first chip <defining-and-inspecting-a-chip>
 - {doc}`What happens during a qubit measurement? <continuous-measurement>`:
   follow single trajectories, map their density, and condition on an endpoint.
 
+## Gates and circuits
+
+- {doc}`Gate sets and circuits <gate-sets>`:
+  calibrate native gates and compose circuits from their cached propagators.
+
 ## Microwave networks
 
 - {doc}`Readout and fridge wiring <steady-state-and-vna>`:
   calculate VNA traces, their resonances, and qubit readout with receiver
   noise.
+- {doc}`Resonance fluorescence and photon correlations <resonance-fluorescence>`:
+  read the output spectrum, `g1` and `g2` of a driven emitter.
 
 ## Model reduction and fitting
 
@@ -37,6 +44,8 @@ from the talk.
 
 For studies of specific physical questions, see {doc}`../studies/index`.
 For API choices and common pitfalls, see the {doc}`cookbook <../cookbook>`.
+To turn scqubits devices and coupled systems into quchip models and back,
+see {doc}`Import circuits from scqubits <scqubits>`.
 To declare your own operators, models and controls, see
 {doc}`Extending quchip <../extensions>`.
 
@@ -45,12 +54,15 @@ To declare your own operators, models and controls, see
 :maxdepth: 1
 
 Extending quchip <../extensions>
+Import circuits from scqubits <scqubits>
 Spectra and parameter sweeps <statics-and-parameter-studies>
 Pulses, leakage, and readout <dynamics-pulses-and-readout>
 Readout and fridge wiring <steady-state-and-vna>
+Resonance fluorescence and photon correlations <resonance-fluorescence>
 Model reduction <chip-transformations>
 Gradients and parameter fitting <differentiability>
 Cookbook <../cookbook>
 SQA 2026 examples <from-sqa-2026>
 What happens during a qubit measurement? <continuous-measurement>
+Gate sets and circuits <gate-sets>
 ```

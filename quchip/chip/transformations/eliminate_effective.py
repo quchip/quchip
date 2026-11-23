@@ -17,7 +17,7 @@ from quchip.chip.sw import bare_hamiltonian
 from quchip.chip.transformations.coordinate_change import (
     embed_on_labels, isolated_hamiltonian, labeled_eigenvectors, retain_coordinate_change,
 )
-from quchip.chip.transformations.dispatch import EliminationTarget, register_elimination_target
+from quchip.chip.transformations.dispatch import EliminationTarget, _register_elimination_target
 from quchip.chip.transformations.plumbing import reattach_equipment
 from quchip.chip.transformations.result import EliminationResult
 from quchip.utils.labeling import LabelKeyedDict, resolve_label
@@ -104,7 +104,7 @@ def _level_diagnostics(labels: tuple[str, ...], dims: tuple[int, ...], energies:
     return params
 
 
-register_elimination_target(EliminationTarget(
+_register_elimination_target(EliminationTarget(
     kind="effective terms",
     claims=lambda chip, target: resolve_label(target) in {terms.label for terms in chip.effective_terms},
     reduce=reduce_effective_terms,

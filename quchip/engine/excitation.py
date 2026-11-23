@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from functools import cached_property, lru_cache
+from functools import cached_property, lru_cache, reduce
 from math import prod
 from typing import Any
 
@@ -22,7 +22,7 @@ import numpy as np
 from quchip.declarative.expr import (
     PhysicsExpr, _bound_values, declared_excitation_changes, is_energy_diagonal, materialize_expr,
 )
-from quchip.utils.jax_utils import contains_tracer
+from quchip.utils.jax_utils import concrete_array_module, contains_tracer
 
 
 def excitation_sectors(dims: tuple[int, ...]) -> np.ndarray:
@@ -104,30 +104,31 @@ def sector_eigh(h: Any, sectors: np.ndarray) -> tuple[Any, Any]:
     between them. A concrete Hamiltonian is diagonalized on the host, where
     the differently sized blocks compile no device programs.
     """
-    if not contains_tracer(h):
-        h = np.asarray(h)
-        eigenvalues: Any = np.zeros(h.shape[0], dtype=h.real.dtype)
-        eigenvectors: Any = np.zeros(h.shape, dtype=h.dtype)
-        start = 0
-        for sector in np.unique(sectors):
-            rows = np.flatnonzero(sectors == sector)
-            columns = np.arange(start, start + rows.size)
-            eigenvalues[columns], eigenvectors[np.ix_(rows, columns)] = np.linalg.eigh(h[np.ix_(rows, rows)])
-            start += rows.size
-        order: Any = np.argsort(eigenvalues, kind="stable")
-        return eigenvalues[order], eigenvectors[:, order]
-    eigenvalues = jnp.zeros(h.shape[0], dtype=h.real.dtype)
-    eigenvectors = jnp.zeros(h.shape, dtype=h.dtype)
+    xp = concrete_array_module(h)
+    h = xp.asarray(h)
+    eigenvalues: Any = xp.zeros(h.shape[0], dtype=h.real.dtype)
+    eigenvectors: Any = xp.zeros(h.shape, dtype=h.dtype)
     start = 0
     for sector in np.unique(sectors):
         rows = np.flatnonzero(sectors == sector)
         columns = np.arange(start, start + rows.size)
-        values, vectors = jnp.linalg.eigh(h[np.ix_(rows, rows)])
-        eigenvalues = eigenvalues.at[columns].set(values)
-        eigenvectors = eigenvectors.at[np.ix_(rows, columns)].set(vectors)
+        values, vectors = xp.linalg.eigh(h[np.ix_(rows, rows)])
+        eigenvalues = scatter(eigenvalues, columns, values)
+        eigenvectors = scatter(eigenvectors, np.ix_(rows, columns), vectors)
         start += rows.size
-    order = jnp.argsort(eigenvalues)
+    order = np.argsort(eigenvalues, kind="stable") if xp is np else jnp.argsort(eigenvalues)
     return eigenvalues[order], eigenvectors[:, order]
+
+
+def scatter(matrix: Any, index: Any, values: Any, add: bool = False) -> Any:
+    """Return ``matrix`` with ``values`` set, or added, at ``index``; a NumPy array is written in place."""
+    if not isinstance(matrix, np.ndarray):
+        return matrix.at[index].add(values) if add else matrix.at[index].set(values)
+    if add:
+        np.add.at(matrix, index, values)
+    else:
+        matrix[index] = values
+    return matrix
 
 
 def concrete_excitation_changes(
@@ -284,12 +285,9 @@ def _energy_matrix(node: Any, support: tuple[str, ...], backend: Any, bases: Map
                    remedy="Use factored operators or declare their excitation_changes.")
     with jax.ensure_compile_time_eval(), backend.eager_operators():
         matrix = backend.to_array(materialize_expr(node, backend, bindings=bindings, local_bases=bases))
-        vectors = records[0].energy_vectors
-        for record in records[1:]:
-            vectors = jnp.kron(vectors, record.energy_vectors)
-    if contains_tracer((matrix, vectors)):
+    if contains_tracer(matrix):
         return None
-    vectors = np.asarray(vectors, dtype=complex)
+    vectors = np.asarray(reduce(np.kron, [record.energy_vectors for record in records]), dtype=complex)
     values = vectors.conj().T @ np.asarray(matrix, dtype=complex) @ vectors
     return values, tuple(int(record.energy_vectors.shape[1]) for record in records)
 
