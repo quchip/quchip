@@ -184,3 +184,38 @@ chips of two and three transmons, the calibrated errors changed by less than
 `atol=1e-12`, and the calibrations ran six to seven times faster. Pass
 `options=` to `GateSet` or `GateSet.standard()` to replace these settings, in
 the form of the backend that solves.
+
+## Run qutip-qip circuits
+
+`to_qutip_qip()` turns a gate set into a
+[qutip-qip](https://qutip-qip.readthedocs.io) processor. It needs qutip-qip
+0.5 or later. Install the optional dependency with
+`pip install quchip[qutip-qip]`.
+
+```python
+from qutip_qip.circuit import QubitCircuit
+from qutip_qip.operations.gates import CX, H
+from quchip.interop.qutip_qip import to_qutip_qip
+
+processor = to_qutip_qip(gates)
+qc = QubitCircuit(2)
+qc.add_gate(H, targets=0)
+qc.add_gate(CX, controls=0, targets=1)
+result = processor.run_state(processor.generate_init_processor_state(), qc=qc)
+state = processor.get_final_circuit_state(result.states[-1])
+processor.plot_pulses()
+```
+
+Circuit qubit `i` is `gates.qubits[i]`. The processor compiles each gate with
+the natives and rules of the gate set. qutip-qip first resolves other gates,
+such as ISWAP, into CX, RX, RY, and RZ. `run_state` integrates the chip's
+Hamiltonian, so static ZZ, crosstalk, and leakage are in the result. Register
+states use the dressed computational basis, as in `simulate()`, and leakage
+shows as missing norm or trace. `run_state(noisy=True)`, the default, includes
+the chip's collapse channels: set T1 and T2 on the devices, not with
+`add_noise()`.
+
+A native without a calibration keeps its closed-form seed, and
+`to_qutip_qip()` fits only its virtual-Z phases, with a warning. Calibrate the
+gate set first to run on calibrated gates. `from_qutip_qip(qc, gates)` gives
+the gate-set instructions of a circuit, for `unitary()` and `simulate()`.

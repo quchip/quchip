@@ -31,6 +31,8 @@ dependencies = [
 dynamiqs = ["dynamiqs>=0.3.6", "jax<0.11.1"]
 viz = ["pyvis"]
 scqubits = ["scqubits>=4.2", "qutip<5.3.1"]
+# The processor uses the circuit API of qutip-qip 0.5, from its development versions on.
+qutip-qip = ["qutip-qip>=0.5.0.dev0"]
 test = ["pytest", "pyvis", "scqubits>=4.2", "qutip<5.3.1", "jupytext", "nbconvert", "ipykernel"]
 dev = ["ruff", "mypy", "pytest", "pyvis", "jupytext", "nbconvert", "ipykernel"]
 docs = ["sphinx", "furo", "myst-parser", "sphinx-copybutton"]

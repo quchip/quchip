@@ -493,6 +493,14 @@ This file records notable user-visible changes to quchip.
   target so that most of its static ZZ with that qubit averages out. On a chain
   of three transmons this takes the ZX90 on the first pair from `5.5e-3` to
   `1.6e-4`.
+- `to_qutip_qip(gates)` returns a qutip-qip processor that compiles
+  `QubitCircuit` gates with a gate set and runs them on the chip's
+  Hamiltonian with `run_state`. Register states use the dressed computational
+  basis, RZ is virtual, and noise comes from the chip's collapse channels.
+  Natives without a calibration use their closed-form seeds with fitted
+  virtual-Z phases, with a warning. `from_qutip_qip(circuit, gates)` converts
+  a circuit into gate-set instructions. Both need qutip-qip 0.5 or later.
+  Install with `pip install quchip[qutip-qip]`.
 - `QuantumSequence.propagator()` returns the lab-frame propagator of a
   schedule from one solve, or its superoperator when the chip has collapse
   channels. `QuantumSequence.extend()` appends another sequence.

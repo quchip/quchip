@@ -453,7 +453,7 @@ class GateSet:
         self._overlap_spaces.clear()
         self._model_reason = None
 
-    def _overlap_space(self, count: int) -> tuple["Chip", np.ndarray | None]:
+    def _overlap_space(self, count: int, stacklevel: int = 3) -> tuple["Chip", np.ndarray | None]:
         """Return the chip of a solve with ``count`` gates at once, and the solver coordinates in it.
 
         Each drive adds a transient excitation, so an automatic cutoff rises
@@ -476,7 +476,7 @@ class GateSet:
             self._overlap_spaces[cutoff] = (chip, embedding)
             where = "on the full product space" if cutoff == maximum else f"with ExcitationCutoff(max_total={cutoff})"
             warnings.warn(f"{count} gates at once solve {where}: an automatic cutoff rises by one excitation for "
-                          f"each gate after the first.", UserWarning, stacklevel=3)
+                          f"each gate after the first.", UserWarning, stacklevel=stacklevel)
         return self._overlap_spaces[cutoff]
 
     def _on_solver(self, sequence: "QuantumSequence", chip: "Chip | None" = None) -> "QuantumSequence":
@@ -1357,14 +1357,7 @@ class GateSet:
         order = self.qubits if qubits is None else tuple(resolve_label(q) for q in qubits)
         circuit = list(circuit)
         sequence, placements, global_phase = self._compile(circuit, policy)
-        solver_sequence = self._on_solver(sequence)
-        ops = list(solver_sequence.scheduled_ops)
-        duration = self._span(ops, float(sequence.total_duration))
-        windows = [self._window(key, ops[first:first + count])[:2] for key, first, count in placements if count]
-        chip, embedding = self._overlap_space(_most_at_once(windows))
-        if embedding is not None:
-            solver_sequence = self._on_solver(sequence, chip)
-        columns, energies = self._states(order, chip=None if embedding is None else chip)
+        solver_sequence, duration, columns, mapping, _ = self._readout(sequence, placements, global_phase, order)
         dimension = 2 ** len(order)
         if initial is None:
             initial = "0" * len(order)
@@ -1374,8 +1367,6 @@ class GateSet:
             vector[int("".join(str(int(b)) for b in initial), 2)] = 1.0
             initial = vector
         initial = np.asarray(initial, dtype=complex)
-        correction = self._frame_correction(order, self._offsets(sequence)) * np.exp(1j * global_phase)
-        mapping = correction[:, None] * np.exp(2j * np.pi * energies * duration)[:, None] * columns.conj().T
         if duration <= 0.0:
             # Only virtual gates: no time passes, so the frame correction is the whole circuit.
             step = mapping @ columns
@@ -1383,7 +1374,8 @@ class GateSet:
             populations = np.abs(state) ** 2 if initial.ndim == 1 else np.real(np.diag(state))
             return CircuitRun(state=state, probabilities=self._probabilities(populations, order),
                               leakage=float(1.0 - populations.sum()))
-        open_system = dissipation and bool(_static_problem(chip, dissipation=True).engine_result.collapse_terms)
+        open_system = dissipation and bool(_static_problem(solver_sequence._chip, dissipation=True)
+                                           .engine_result.collapse_terms)
         if initial.ndim == 1 and not open_system:
             propagator = solver_sequence.propagator(tlist=[0.0, duration], columns=columns @ initial[:, None],
                                                     frame=self.frame, options=self.options, dissipation=False,
@@ -1406,6 +1398,28 @@ class GateSet:
         populations = np.real(np.diag(state))
         return CircuitRun(state=state, probabilities=self._probabilities(populations, order),
                           leakage=float(1.0 - populations.sum()), result=superoperator)
+
+    def _readout(self, sequence: "QuantumSequence", placements: Sequence[tuple[Any, int, int]], global_phase: float,
+                 order: Sequence[str]) -> tuple["QuantumSequence", float, np.ndarray, np.ndarray, np.ndarray | None]:
+        """Return the solver sequence, its duration, the computational columns, the readout map, and the embedding.
+
+        The sequence runs on the solver chip, or on a larger space when gates
+        run at the same time (see :meth:`_overlap_space`); the embedding then
+        puts the solver coordinates into it. The readout map takes the final
+        lab-frame state to computational amplitudes, with the dressed phases
+        and the virtual-Z correction removed.
+        """
+        solver_sequence = self._on_solver(sequence)
+        ops = list(solver_sequence.scheduled_ops)
+        duration = self._span(ops, float(sequence.total_duration))
+        windows = [self._window(key, ops[first:first + count])[:2] for key, first, count in placements if count]
+        chip, embedding = self._overlap_space(_most_at_once(windows), stacklevel=4)
+        if embedding is not None:
+            solver_sequence = self._on_solver(sequence, chip)
+        columns, energies = self._states(order, chip=None if embedding is None else chip)
+        correction = self._frame_correction(order, self._offsets(sequence)) * np.exp(1j * global_phase)
+        mapping = correction[:, None] * np.exp(2j * np.pi * energies * duration)[:, None] * columns.conj().T
+        return solver_sequence, duration, columns, mapping, embedding
 
     @staticmethod
     def _probabilities(populations: np.ndarray, order: Sequence[str]) -> dict[str, float]:

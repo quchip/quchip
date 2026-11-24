@@ -156,6 +156,8 @@ from quchip.utils.warning_categories import AccuracyWarning, AutoChoiceWarning, 
 _LAZY_INTEROP_EXPORTS = {
     "from_scqubits": ("quchip.interop.scqubits", "from_scqubits"),
     "to_scqubits": ("quchip.interop.scqubits", "to_scqubits"),
+    "from_qutip_qip": ("quchip.interop.qutip_qip", "from_qutip_qip"),
+    "to_qutip_qip": ("quchip.interop.qutip_qip", "to_qutip_qip"),
 }
 
 _LAZY_VIZ_EXPORTS = {
@@ -346,6 +348,8 @@ __all__ = [
     # Interop (lazy)
     "from_scqubits",
     "to_scqubits",
+    "from_qutip_qip",
+    "to_qutip_qip",
     # Visualization (lazy)
     "plot_energy_levels",
     "plot_expectation",
