@@ -61,9 +61,10 @@ ideal gate, and a status. A status other than `"ok"` comes with a warning:
 - `"stale"`: the chip changed after the calibration, for example through
   `q0.freq = ...`, or a native inside this composite was calibrated again
   after it. The gate keeps its earlier pulses, and a circuit that uses it
-  warns. Calibrate it again. The built-in natives then take their carriers,
-  seeds, and automatic CR durations from the changed chip. A native that you declare keeps its
-  template, so declare it again when its carrier comes from the chip.
+  warns. Calibrate it again. The built-in natives then take their carriers
+  and seeds from the changed chip. A CR keeps its duration, and warns when the
+  automatic choice for the changed chip differs. A native that you declare
+  keeps its template, so declare it again when its carrier comes from the chip.
 
 `gateset.calibration("ZX90", ("q0", "q1")).summary()` prints the full report.
 For gates on up to five qubits it also gives the eigenvalue infidelity, a

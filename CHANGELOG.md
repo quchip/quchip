@@ -505,8 +505,9 @@ This file records notable user-visible changes to quchip.
   the same choice. It refuses a tone less than 5 MHz from a control
   transition, where a given duration builds with a warning. It warns when the
   tone is less than 60 MHz from the control's 1-2 transition or the two qubits
-  are less than 60 MHz apart. An automatic duration is chosen again when the
-  chip changes in place. `calibrate()` prints one line
+  are less than 60 MHz apart. An automatic duration stays when the chip
+  changes in place, with a warning when the choice for the changed chip
+  differs. `calibrate()` prints one line
   per native by default, and `CircuitRun.fidelity()` compares a run with the
   ideal output of the circuit.
 - `to_qutip_qip(gateset)` returns a qutip-qip processor that compiles

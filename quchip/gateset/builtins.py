@@ -398,8 +398,9 @@ def cross_resonance(
         transition, where a given duration builds with an
         ``AccuracyWarning``. An ``AccuracyWarning`` also flags a tone less than
         60 MHz from the control's 1-2 transition, near the avoided crossing of
-        ``|11>`` and ``|20>``, and qubits less than 60 MHz apart. A choice
-        made here is made again when the chip changes in place.
+        ``|11>`` and ``|20>``, and qubits less than 60 MHz apart. A duration
+        chosen here stays when the chip changes in place, with a warning that
+        gives the duration this rule picks for the changed chip.
     line : str or drive, optional
         CR line on the control. The default is the control's only charge line.
     cancel : bool, default True
@@ -538,7 +539,33 @@ def cross_resonance(
             return sequence, knobs_for([plus, minus])
 
         gate = NativeGate.composite(name, qubits, build, ideal="ZX90", free_z=qubits, seeds=seeds)
-    gate._declare = lambda changed: cross_resonance(
-        changed, control_label, target_label, duration=duration_request, line=cr_line, cancel=cancel,
-        cancel_line=target_line, echo=echo, edge=edge_request, sigmas=sigmas, rotary=rotary, name=name)
+    def declare(changed: "Chip") -> NativeGate:
+        # The gate keeps its duration when the chip changes in place, so a sweep keeps one gate length.
+        try:
+            native = cross_resonance(changed, control_label, target_label, duration=duration, line=cr_line,
+                                     cancel=cancel, cancel_line=target_line, echo=echo, edge=edge_request,
+                                     sigmas=sigmas, rotary=rotary, name=name)
+        except ValueError as error:
+            if duration_request is None:
+                error.add_note(f"{name} on {control_label}->{target_label} keeps the {duration:g} ns that "
+                               "cross_resonance chose for the chip before the change.")
+            raise
+        if duration_request is None:
+            # Each later change keeps this duration too, and compares it with the choice for that chip.
+            native._declare = declare
+            try:
+                now = _cr_plan(changed, control_label, target_label, cr_line, target_line, echo=echo,
+                               edge=edge_request, sigmas=sigmas, duration=None)
+            except ValueError:
+                # The choice refuses the changed chip, and the kept duration built with an AccuracyWarning.
+                return native
+            if now.duration != duration:
+                category = AccuracyWarning if now.duration > duration else AutoChoiceWarning
+                warnings.warn(f"{name} on {control_label}->{target_label} keeps duration={duration!r} after the "
+                              f"chip change. For the changed chip, cross_resonance would choose "
+                              f"{now.duration!r}, set by {now.reason}. Build the gate set again to use it.",
+                              category, stacklevel=user_stacklevel())
+        return native
+
+    gate._declare = declare
     return gate

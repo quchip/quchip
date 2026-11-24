@@ -437,7 +437,8 @@ class GateSet:
                 durations[(control, target)] = plan.duration
                 automatic[(control, target)] = plan.reason
             with warnings.catch_warnings():
-                # An automatic duration stays automatic, so the native chooses again after an in-place chip change.
+                # The native records an automatic duration as its own choice: it keeps it after an in-place chip
+                # change and warns when the choice for the changed chip differs.
                 warnings.filterwarnings("ignore", "cross_resonance chose", AutoChoiceWarning)
                 duration = None if (control, target) in automatic else durations[(control, target)]
                 gateset.add(cross_resonance(chip, control, target, duration=duration, echo=echo, rotary=on))
@@ -1271,8 +1272,8 @@ class GateSet:
         if previous is None:
             return
         try:
-            # The built-in natives take their carriers, seeds and automatic durations from the chip, so declare
-            # them again from the changed one. Nothing changes until every declaration succeeds.
+            # The built-in natives take their carriers and seeds from the chip, so declare them again from the
+            # changed one. Nothing changes until every declaration succeeds.
             declared = dict(self._natives)
             for key, native in self._natives.items():
                 if native._declare is not None:

@@ -1376,16 +1376,26 @@ def test_cross_resonance_refuses_a_pair_without_zx():
 
 
 @pytest.mark.unit
-def test_an_automatic_cr_duration_is_chosen_again_after_an_in_place_chip_change():
-    """standard() keeps an automatic CR duration automatic: a chip edit chooses it again, or refuses on every call."""
+def test_an_automatic_cr_duration_stays_after_an_in_place_chip_change():
+    """standard() keeps the CR duration that it chose when the chip changes in place, and warns with the new choice.
+
+    Near a control transition the kept duration builds with a warning. A change that it cannot build raises on every
+    call and leaves every native as it was. A duration given by hand stays without a notice.
+    """
     chip = cr_pair(0.1)
     with pytest.warns(AutoChoiceWarning, match=r"cr_duration=290\.0"):
         gateset = GateSet.standard(chip, pairs=[("c", "t")])
     control = chip.device_map["c"]
+    # The tone is 3 MHz from the control's two-photon 0-2 transition, where the automatic choice refuses.
     control.freq = 5.1665
+    with pytest.warns(AccuracyWarning, match="closer than the automatic choice allows"):
+        gateset._sync_chip()
+    # With the qubits 50 MHz apart, 290 ns is too short for the edges of the control's 0-1 transition.
+    control.freq = 5.05
     for _ in range(2):
-        with pytest.raises(ValueError, match="No automatic CR duration for c->t"):
+        with pytest.raises(ValueError, match="A 290 ns CR on c->t is too short") as refused:
             gateset._sync_chip()
+        assert "keeps the 290 ns" in refused.value.__notes__[0]
     # A refused change leaves every native as it was, so undoing it restores the gate set.
     control.freq = 5.1
     with warnings.catch_warnings():
@@ -1395,8 +1405,16 @@ def test_an_automatic_cr_duration_is_chosen_again_after_an_in_place_chip_change(
                   for each in (gateset, fresh)]
     assert errors[0] == pytest.approx(errors[1], rel=1e-9) and errors[1] < 1e-3
     control.freq = 5.2
-    with pytest.warns(AutoChoiceWarning, match=r"chose duration=390\.0 for c->t"):
+    with pytest.warns(AccuracyWarning, match=r"keeps duration=290\.0 .* would choose 390\.0"):
         gateset._sync_chip()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        given = GateSet.standard(chip, pairs=[("c", "t")], cr_duration=290.0)
+    control.freq = 5.1
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        given._sync_chip()
+    assert not [warning for warning in caught if "would choose" in str(warning.message)]
 
 
 @pytest.mark.unit
