@@ -63,8 +63,12 @@ ideal gate, and a status. A status other than `"ok"` comes with a warning:
   after it. The gate keeps its earlier pulses, and a circuit that uses it
   warns. Calibrate it again. The built-in natives then take their carriers
   and seeds from the changed chip. A CR keeps its duration, and warns when the
-  automatic choice for the changed chip differs. A native that you declare
-  keeps its template, so declare it again when its carrier comes from the chip.
+  automatic choice for the changed chip differs. Its edges get longer as the
+  qubits come closer in frequency, and a change that makes them too long for
+  the kept duration raises an error. For a sweep that brings the qubits close,
+  pass a `cr_duration` that is long enough at the closest point. A native that
+  you declare keeps its template, so declare it again when its carrier comes
+  from the chip.
 
 `gateset.calibration("ZX90", ("q0", "q1")).summary()` prints the full report.
 For gates on up to five qubits it also gives the eigenvalue infidelity, a

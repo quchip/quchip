@@ -400,7 +400,8 @@ def cross_resonance(
         60 MHz from the control's 1-2 transition, near the avoided crossing of
         ``|11>`` and ``|20>``, and qubits less than 60 MHz apart. A duration
         chosen here stays when the chip changes in place, with a warning that
-        gives the duration this rule picks for the changed chip.
+        gives the duration this rule picks for the changed chip. A change that
+        makes the edges too long for the kept duration raises an error.
     line : str or drive, optional
         CR line on the control. The default is the control's only charge line.
     cancel : bool, default True
