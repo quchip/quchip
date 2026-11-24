@@ -214,7 +214,9 @@ the form of the backend that solves.
 
 `run()`, `unitary()`, `ideal()`, and `schedule()` also take a qutip-qip
 `QubitCircuit`. They need qutip-qip 0.5 or later, which needs Python 3.12.
-Install the optional dependency with `pip install quchip[qutip-qip]`.
+Install the optional dependency with `pip install quchip[qutip-qip]`. Until
+qutip-qip 0.5 is on PyPI, install it from GitHub first with
+`pip install git+https://github.com/qutip/qutip-qip.git`.
 
 ```python
 from qutip_qip.circuit import QubitCircuit

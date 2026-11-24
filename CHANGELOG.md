@@ -522,7 +522,8 @@ This file records notable user-visible changes to quchip.
   `unitary()`, `ideal()`, and `schedule()` take a `QubitCircuit`, and
   `from_qutip_qip(circuit, gateset)` converts one into gate-set instructions.
   The integration needs qutip-qip 0.5 or later, which needs Python 3.12.
-  Install it with `pip install quchip[qutip-qip]`.
+  Install it with `pip install quchip[qutip-qip]`. Until qutip-qip 0.5 is on
+  PyPI, install qutip-qip from GitHub first.
 - `QuantumSequence.propagator()` returns the lab-frame propagator of a
   schedule from one solve, or its superoperator when the chip has collapse
   channels. `QuantumSequence.extend()` appends another sequence.

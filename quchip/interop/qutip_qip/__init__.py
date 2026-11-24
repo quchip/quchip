@@ -23,20 +23,23 @@ __all__ = ["from_qutip_qip", "to_qutip_qip"]
 #: Gates that qutip-qip resolves a gate into when the gate set has no rule for it.
 BASIS = ["CX", "RX", "RY", "RZ"]
 
+#: Where to get qutip-qip 0.5 while PyPI has only older versions.
+_SOURCE = "\nUntil qutip-qip 0.5 is on PyPI, install it from https://github.com/qutip/qutip-qip first."
+
 
 def _require_qutip_qip() -> None:
     """Import qutip-qip on demand so quchip remains usable without it."""
     try:
         import qutip_qip
     except ModuleNotFoundError:
-        needs = "" if sys.version_info >= (3, 12) else " qutip-qip 0.5 needs Python 3.12 or later."
+        needs = _SOURCE if sys.version_info >= (3, 12) else "\nqutip-qip 0.5 needs Python 3.12 or later."
         raise ImportError(
             "qutip-qip is required for this feature. "
             "Install it with:  pip install quchip[qutip-qip]" + needs
         ) from None
     version = tuple(int(part) for part in qutip_qip.__version__.split(".")[:2])
     if version < (0, 5):
-        raise ImportError(f"quchip needs qutip-qip 0.5 or later; found qutip-qip {qutip_qip.__version__}.")
+        raise ImportError(f"quchip needs qutip-qip 0.5 or later; found qutip-qip {qutip_qip.__version__}." + _SOURCE)
 
 
 def to_qutip_qip(gateset: "GateSet") -> Any:
