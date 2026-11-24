@@ -6,7 +6,7 @@ unitary. :meth:`GateSet.calibrate` fits the knobs and the post-gate virtual-Z
 phases against the ideal, and caches each gate's propagator. Circuits compile
 to a pulse schedule (:meth:`GateSet.schedule`), to a propagator composed from
 the cache (:meth:`GateSet.unitary`), or to a simulation
-(:meth:`GateSet.simulate`).
+(:meth:`GateSet.run`).
 """
 
 from quchip.gateset.builtins import cross_resonance, drag_sx

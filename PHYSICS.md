@@ -3638,7 +3638,7 @@ gates is solved in one piece instead (§17.6). The composed unitary matches a
 direct solve of the same schedule to the solver tolerance. With QuTiP, the linear interpolation of windowed
 envelopes adds an error that the solver's `rtol` sets (§12).
 
-`GateSet.simulate()` solves the schedule once and maps the final lab-frame
+`GateSet.run()` solves the schedule once and maps the final lab-frame
 state with `e^{2πi F T}`, `W_c^†`, and the virtual-Z correction of
 §17.2. The qutip-qip processor of `quchip.interop.qutip_qip` integrates the same
 Hamiltonian in the gate set's frame with `qutip.mesolve`, returns to the lab

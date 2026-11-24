@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from quchip.engine.ir import EngineResult, FrameSpec, SolveProblem
     from quchip.results.results import SimulationBatchResult, SimulationResult
     from quchip.results.steady_state import SteadyStateResult
+    from quchip.gateset import CircuitRun, GateSet
 
 
 def _format_float(value: float | None) -> str:
@@ -322,18 +323,21 @@ class Chip:
         # values produced under a JAX trace are never retained.
         self._unresolved_hamiltonian_cache: tuple[Any, Any, PhysicsExpr] | None = None
         self._resolved_result_cache: tuple[Any, Any, EngineResult] | None = None
+        # The gate set of run(). Copies, dictionaries, and pickles of the chip leave it out.
+        self._gateset: GateSet | None = None
 
         if frame is not None:
             self.set_frame(frame)
 
     def __getstate__(self) -> dict[str, Any]:
-        """Return the authored state without caches that the chip rebuilds on demand."""
+        """Return the authored state without the gate set and the caches that the chip rebuilds on demand."""
         state = self.__dict__.copy()
-        state.update(_analysis=None, _unresolved_hamiltonian_cache=None, _resolved_result_cache=None)
+        state.update(_analysis=None, _unresolved_hamiltonian_cache=None, _resolved_result_cache=None, _gateset=None)
         return state
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         self.__dict__.update(state)
+        self._gateset = None
         self._analysis = ChipAnalysis(self)
 
     # ------------------------------------------------------------------
@@ -1991,6 +1995,79 @@ class Chip:
         from quchip.chip.states import bare_state
 
         return bare_state(self, *components, **device_state_kwargs)
+
+    # ------------------------------------------------------------------
+    # Gate set
+    # ------------------------------------------------------------------
+
+    @property
+    def gateset(self) -> GateSet | None:
+        """Gate set that :meth:`run` uses, or ``None``.
+
+        Assign a :class:`~quchip.gateset.GateSet` built on this chip, or
+        ``None`` to remove it. The gate set follows in-place changes of the
+        chip. Copies of the chip from :meth:`clone`, :meth:`with_params`,
+        :meth:`with_space`, :meth:`from_dict`, ``copy``, and ``pickle`` have no
+        gate set, and :meth:`to_dict` leaves it out.
+
+        Examples
+        --------
+        >>> chip.gateset = GateSet.standard(chip, pairs=[("q0", "q1")])  # doctest: +SKIP
+        >>> chip.gateset.calibrate()  # doctest: +SKIP
+        >>> chip.run(circuit).fidelity()  # doctest: +SKIP
+        """
+        return self._gateset
+
+    @gateset.setter
+    def gateset(self, gateset: GateSet | None) -> None:
+        self._gateset = None if gateset is None else self._own_gateset(gateset)
+
+    def run(self, circuit: Any, initial: Any = None, *, gateset: GateSet | None = None, **options: Any) -> CircuitRun:
+        """Run a circuit with the chip's gate set and return the computational state.
+
+        This calls :meth:`GateSet.run <quchip.gateset.GateSet.run>` of
+        :attr:`gateset`, or of ``gateset`` when you give one, for example to
+        compare a second gate set with the first.
+
+        Parameters
+        ----------
+        circuit : qutip_qip.circuit.QubitCircuit or iterable of instructions
+            Circuit on the gate set's qubits.
+        initial : str, tuple of bits, array_like, or qutip.Qobj, optional
+            Initial register state. The default is all zeros.
+        gateset : GateSet, optional
+            Gate set to use in place of :attr:`gateset`. It must be built on this chip.
+        **options
+            Passed to :meth:`GateSet.run <quchip.gateset.GateSet.run>`: ``qubits``,
+            ``policy``, and ``dissipation``.
+
+        Returns
+        -------
+        CircuitRun
+            Final state, probabilities, leakage, and the ideal output.
+
+        Raises
+        ------
+        ValueError
+            The chip has no gate set and you give none, or the gate set is built on another chip.
+        """
+        if gateset is None:
+            if self._gateset is None:
+                raise ValueError("The chip has no gate set. Set chip.gateset = GateSet.standard(chip), or pass "
+                                 "gateset=.")
+            gateset = self._gateset
+        return self._own_gateset(gateset).run(circuit, initial, **options)
+
+    def _own_gateset(self, gateset: Any) -> GateSet:
+        """Return ``gateset`` when it is a gate set built on this chip, and raise otherwise."""
+        from quchip.gateset import GateSet
+
+        if not isinstance(gateset, GateSet):
+            raise TypeError(f"chip.gateset takes a GateSet or None, not {type(gateset).__name__}.")
+        if gateset.chip is not self:
+            raise ValueError("The gate set is built on another chip. Build one on this chip, for example with "
+                             "GateSet.standard(chip).")
+        return gateset
 
     # ------------------------------------------------------------------
     # Control equipment

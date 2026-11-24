@@ -8,26 +8,41 @@ reuses its propagator at every place in a circuit where the physics allows it.
 ## Calibrate a standard gate set
 
 `GateSet.standard()` declares a DRAG SX and X on each qubit and an echoed
-cross-resonance ZX90 on each directed pair. The CR duration depends on the
-coupling and the detuning, so you give it.
+cross-resonance ZX90 on each directed pair. Without `qubits`, it takes the
+computational devices with one charge line. Without `cr_duration`, it picks
+the shortest CR duration, in steps of 10 ns, at which the seed CR drive stays
+weak on the control. The seed's Rabi rate on the control's 0-1 and 1-2
+transitions, and its perturbative two-photon rate on the 0-2 transition, stay
+at most 0.4 of each transition's detuning from the tone. The fit can raise the
+drive past this bound. By default, the nearest of these transitions also sets
+the Gaussian edges of the CR pulses.
 
 ```python
 from quchip import Capacitive, ChargeDrive, Chip, DuffingTransmon
 from quchip.gateset import GateSet
 
-q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.33, levels=3, label="q0")
-q1 = DuffingTransmon(freq=5.1, anharmonicity=-0.33, levels=3, label="q1")
+q0 = DuffingTransmon(freq=5.1, anharmonicity=-0.33, levels=3, label="q0")
+q1 = DuffingTransmon(freq=5.0, anharmonicity=-0.33, levels=3, label="q1")
 chip = Chip([q0, q1], couplings=[Capacitive(q0, q1, g=0.003, label="J")])
 chip.wire(ChargeDrive(q0, label="xy0"), ChargeDrive(q1, label="xy1"))
 
-gates = GateSet.standard(chip, ["q0", "q1"], pairs=[("q0", "q1")], cr_duration=400.0)
-gates.calibrate()
-print(gates.describe())
+gateset = GateSet.standard(chip, pairs=[("q0", "q1")])
+gateset.calibrate()
+print(gateset.describe())
 ```
 
-Each calibration reports the average gate infidelity, the leakage, the fitted
-knobs, the generator of the error after the ideal gate, and a status. A status other than `"ok"` comes with
-a warning:
+One notice gives the choices as arguments to pass:
+`qubits=['q0', 'q1']` and `cr_duration=290.0`. The control's 0-1 transition,
+100 MHz from the tone, sets the duration. The control sits 100 MHz above the target.
+With the control 100 MHz below the target, the same rule gives 420 ns. The
+rule refuses a tone less than 5 MHz from one of these transitions. It warns
+when the tone is less than 60 MHz from the 1-2 transition, near the avoided
+crossing of `|11>` and `|20>`, and when the qubits are less than 60 MHz apart.
+
+`calibrate()` prints a line for each native as its fit ends, and
+`progress=False` turns this off. Each calibration reports the average gate
+infidelity, the leakage, the fitted knobs, the generator of the error after the
+ideal gate, and a status. A status other than `"ok"` comes with a warning:
 
 - `"at_bound"`: a knob ends at a bound, so the optimum is outside the range.
 - `"weak_direction"`: the fit does not determine some knob combination.
@@ -42,15 +57,15 @@ a warning:
   see phases that these qubits gather among themselves during the gate, such
   as their own static ZZ. The joint-block score sees them only between
   spectators in the block. Circuits see them all through `unitary()` and
-  `simulate()`.
+  `run()`.
 - `"stale"`: the chip changed after the calibration, for example through
   `q0.freq = ...`, or a native inside this composite was calibrated again
   after it. The gate keeps its earlier pulses, and a circuit that uses it
-  warns. Calibrate it again. The built-in natives then take their carriers
-  and seeds from the changed chip. A native that you declare keeps its
+  warns. Calibrate it again. The built-in natives then take their carriers,
+  seeds, and automatic CR durations from the changed chip. A native that you declare keeps its
   template, so declare it again when its carrier comes from the chip.
 
-`gates.calibration("ZX90", ("q0", "q1")).summary()` prints the full report.
+`gateset.calibration("ZX90", ("q0", "q1")).summary()` prints the full report.
 For gates on up to five qubits it also gives the eigenvalue infidelity, a
 spectral score that pyGSTi also reports. It compares eigenvalues only, so it
 does not see errors in the eigenvectors, such as a small tilt of the rotation
@@ -65,13 +80,14 @@ set keeps it and tries no other start, so a gate that still fits costs a few
 solves. Otherwise, and after `calibrate(max_nfev=0)`, every start competes,
 the previous knobs among them.
 
-`gates.calibrate(max_nfev=0)` skips the knob search. Each native keeps its
+`gateset.calibrate(max_nfev=0)` skips the knob search. Each native keeps its
 best start, which for the built-in natives is a closed-form seed from the
 chip, and the fit sets only the virtual-Z phases. On the chip above, the seeds
-give SX and X errors within a factor of three of the calibrated ones and a ZX90
-error near `4e-3`, so calibration matters most for the two-qubit gate. A
-circuit that uses an uncalibrated gate calibrates it this way, with a notice,
-so `gates.unitary(...)` also works before `calibrate()`.
+give SX and X errors within a factor of three of the calibrated ones. The ZX90
+seed gives `7e-3`, against `4e-5` after calibration, so calibration matters
+most for the two-qubit gate. A circuit that uses an uncalibrated gate
+calibrates it this way, with a notice, so `gateset.unitary(...)` also works
+before `calibrate()`.
 
 ## What the fit targets
 
@@ -110,29 +126,37 @@ RZ is virtual: a circuit `RZ(λ)` becomes `vz(q, -λ)` and costs no time. The
 free Z phases of each fit become trailing `vz` entries of the calibrated
 sequence.
 
-## Compose and simulate circuits
+## Compose and run circuits
 
 ```python
+chip.gateset = gateset
 circuit = [("H", "q0"), ("CX", ("q0", "q1"))]
-result = gates.unitary(circuit)
-print(result.fidelity(), result.leakage)
-
-run = gates.simulate(circuit, "00")
-print(run.probabilities)
+run = chip.run(circuit)
+print(run.probabilities, 1 - run.fidelity())
+print(1 - gateset.unitary(circuit).fidelity())
 ```
 
+`chip.run()` runs a circuit with the gate set in `chip.gateset`. It solves
+the circuit's schedule from `|00>`, or from a bit string or register state
+that you give. The solve includes the chip's collapse channels unless you pass
+`dissipation=False`. `run.fidelity()` compares the final state with the
+circuit's ideal output and gives `1 - F = 1.5e-4` here.
+`gateset.run(circuit)` gives the same result, and
+`chip.run(circuit, gateset=other)` runs a second gate set on this chip, for
+example to compare two calibrations. Copies of the chip, such as those from
+`with_params()`, have no gate set.
+
 `unitary()` composes cached gate propagators, so a long circuit costs a few
-matrix products. Gates that overlap in time, gates on a chip without the RWA,
-gates whose pulses depend on absolute time, and gates on a drive that
-overrides `signal()` are solved directly, once per placement. Under an
-automatic excitation cutoff, a circuit with gates that overlap in time is
-solved in one piece (see Large chips). `simulate()` solves the circuit's
-schedule, with the chip's collapse channels unless you pass
-`dissipation=False`.
+matrix products. Its `fidelity()` averages over all inputs and gives
+`1 - F_avg = 2.1e-4` here. Gates that overlap in time, gates on a chip
+without the RWA, gates whose pulses depend on absolute time, and gates on a
+drive that overrides `signal()` are solved directly, once per placement.
+Under an automatic excitation cutoff, a circuit with gates that overlap in
+time is solved in one piece (see Large chips).
 
 The decomposition rules turn H, X, Y, Z, S, T, RX, RY, CX, CZ, and SWAP into
 the natives. A CX against the direction of the gate set's ZX90 gets an H on
-both qubits before and after it. Add your own with `gates.rule(name, qubits, expansion)`, where
+both qubits before and after it. Add your own with `gateset.rule(name, qubits, expansion)`, where
 `qubits` is the gate's qubit count and `expansion` returns the instructions
 that replace it.
 
@@ -168,7 +192,7 @@ When the chip's product space has more than 64 states and the chip sets no
 space policy, gate-set solves use an excitation cutoff. The gate set starts at
 one excitation above the number of gate-set qubits and raises the cutoff until
 the gates stop changing, with the other qubits in `|0>` and in `|1>`. Each
-drive adds a transient excitation, so `unitary()` and `simulate()` solve a
+drive adds a transient excitation, so `unitary()` and `run()` solve a
 circuit with gates that run at the same time in one piece, with one more
 excitation for each gate after the first. A warning states each cutoff. These
 rules are heuristics, not bounds. Pass
@@ -187,35 +211,46 @@ the form of the backend that solves.
 
 ## Run qutip-qip circuits
 
-`to_qutip_qip()` turns a gate set into a
-[qutip-qip](https://qutip-qip.readthedocs.io) processor. It needs qutip-qip
-0.5 or later. Install the optional dependency with
-`pip install quchip[qutip-qip]`.
+`run()`, `unitary()`, `ideal()`, and `schedule()` also take a qutip-qip
+`QubitCircuit`. They need qutip-qip 0.5 or later, which needs Python 3.12.
+Install the optional dependency with `pip install quchip[qutip-qip]`.
 
 ```python
 from qutip_qip.circuit import QubitCircuit
 from qutip_qip.operations.gates import CX, H
-from quchip.interop.qutip_qip import to_qutip_qip
 
-processor = to_qutip_qip(gates)
 qc = QubitCircuit(2)
 qc.add_gate(H, targets=0)
 qc.add_gate(CX, controls=0, targets=1)
-result = processor.run_state(processor.generate_init_processor_state(), qc=qc)
+print(1 - chip.run(qc).fidelity(), 1 - gateset.unitary(qc).fidelity())
+```
+
+Circuit qubit `i` is `gateset.qubits[i]`, so this is the circuit above, with
+the same errors. A gate that the gate set has as a native or a rule keeps its
+name and angles. qutip-qip first resolves other gates, such as ISWAP, into CX,
+RX, RY, and RZ. `from_qutip_qip(qc, gateset)` gives the gate-set
+instructions.
+
+`to_qutip_qip()` turns the gate set into a
+[qutip-qip](https://qutip-qip.readthedocs.io) processor, for tools that work
+on qutip-qip processors, such as `plot_pulses()`.
+
+```python
+from quchip import to_qutip_qip
+
+processor = to_qutip_qip(gateset)
+result = processor.run_state(qc=qc)
 state = processor.get_final_circuit_state(result.states[-1])
 processor.plot_pulses()
 ```
 
-Circuit qubit `i` is `gates.qubits[i]`. The processor compiles each gate with
-the natives and rules of the gate set. qutip-qip first resolves other gates,
-such as ISWAP, into CX, RX, RY, and RZ. `run_state` integrates the chip's
-Hamiltonian, so static ZZ, crosstalk, and leakage are in the result. Register
-states use the dressed computational basis, as in `simulate()`, and leakage
-shows as missing norm or trace. `run_state(noisy=True)`, the default, includes
-the chip's collapse channels: set T1 and T2 on the devices, not with
-`add_noise()`.
-
-A native without a calibration keeps its closed-form seed, and
-`to_qutip_qip()` fits only its virtual-Z phases, with a warning. Calibrate the
-gate set first to run on calibrated gates. `from_qutip_qip(qc, gates)` gives
-the gate-set instructions of a circuit, for `unitary()` and `simulate()`.
+The processor compiles each gate with the natives and rules of the gate set,
+and `run_state` integrates the chip's Hamiltonian. Static ZZ, crosstalk, and
+leakage are in the result, which matches `chip.run(qc)`. `run_state` starts
+in the dressed `|0...0⟩`. Give it a bit string such as `"01"`, or a register
+state, to start elsewhere. Register states use the dressed computational basis,
+as in `run()`, and leakage shows as missing norm or trace.
+`run_state(noisy=True)`, the default, includes the chip's collapse channels:
+set T1 and T2 on the devices, not with `add_noise()`. A circuit that uses a
+native without a calibration runs its closed-form seed with fitted virtual-Z
+phases, with a warning.

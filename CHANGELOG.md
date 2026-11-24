@@ -475,8 +475,11 @@ This file records notable user-visible changes to quchip.
   virtual Z phases, and reports the infidelity, leakage, the generator of the
   error after the ideal gate, knob bounds, and fit identifiability.
   `GateSet.unitary()` reuses each gate's propagator at new start times and
-  frames when its Hamiltonian allows it, and `GateSet.simulate()` solves the
-  circuit's schedule with noise. On a chip above 64 states, gate-set solves
+  frames when its Hamiltonian allows it, and `GateSet.run()` solves the
+  circuit's schedule with noise. With the gate set in `chip.gateset`,
+  `chip.run()` runs circuits on the chip, and `chip.run(circuit, gateset=...)`
+  runs them with another gate set. Copies, dictionaries, and pickles of the
+  chip leave the gate set out. On a chip above 64 states, gate-set solves
   pick and raise an excitation cutoff with a warning, and a circuit with gates
   that run at the same time solves in one piece with one more excitation for
   each gate after the first.
@@ -492,15 +495,31 @@ This file records notable user-visible changes to quchip.
   echoed ZX90 also tries rotary starts, in which the target tone turns the
   target so that most of its static ZZ with that qubit averages out. On a chain
   of three transmons this takes the ZX90 on the first pair from `5.5e-3` to
-  `1.6e-4`.
-- `to_qutip_qip(gates)` returns a qutip-qip processor that compiles
+  `1.6e-4`. Without `qubits`, `GateSet.standard()` takes the computational
+  devices with one charge line. Without `cr_duration`, it gives each pair the
+  shortest multiple of 10 ns at which the seed drive on the control's 0-1,
+  1-2 and two-photon 0-2 transitions stays at most 0.4 of each detuning, with
+  CR edges set by the nearest of these transitions. One notice gives the
+  chosen `qubits=` and `cr_duration=` to pass, and `cr_duration` also takes
+  a mapping from pairs to durations. `cross_resonance(duration=None)` makes
+  the same choice. It refuses a tone less than 5 MHz from a control
+  transition, where a given duration builds with a warning. It warns when the
+  tone is less than 60 MHz from the control's 1-2 transition or the two qubits
+  are less than 60 MHz apart. An automatic duration is chosen again when the
+  chip changes in place. `calibrate()` prints one line
+  per native by default, and `CircuitRun.fidelity()` compares a run with the
+  ideal output of the circuit.
+- `to_qutip_qip(gateset)` returns a qutip-qip processor that compiles
   `QubitCircuit` gates with a gate set and runs them on the chip's
-  Hamiltonian with `run_state`. Register states use the dressed computational
-  basis, RZ is virtual, and noise comes from the chip's collapse channels.
-  Natives without a calibration use their closed-form seeds with fitted
-  virtual-Z phases, with a warning. `from_qutip_qip(circuit, gates)` converts
-  a circuit into gate-set instructions. Both need qutip-qip 0.5 or later.
-  Install with `pip install quchip[qutip-qip]`.
+  Hamiltonian with `run_state`, which starts in the dressed `|0...0⟩` or
+  takes a bit string. Register states use the dressed computational basis,
+  RZ is virtual, and noise comes from the chip's collapse channels. A circuit
+  that uses a native without a calibration runs its closed-form seed with
+  fitted virtual-Z phases, with a warning. `GateSet.run()`,
+  `unitary()`, `ideal()`, and `schedule()` take a `QubitCircuit`, and
+  `from_qutip_qip(circuit, gateset)` converts one into gate-set instructions.
+  The integration needs qutip-qip 0.5 or later, which needs Python 3.12.
+  Install it with `pip install quchip[qutip-qip]`.
 - `QuantumSequence.propagator()` returns the lab-frame propagator of a
   schedule from one solve, or its superoperator when the chip has collapse
   channels. `QuantumSequence.extend()` appends another sequence.

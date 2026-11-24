@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import itertools
 import json
+import sys
 import warnings
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -71,6 +72,27 @@ def _static_problem(chip: "Chip", dissipation: bool = False) -> Any:
                                dissipation=dissipation, _product_space=True)
 
 
+def _default_qubits(chip: "Chip") -> tuple[list[str], str]:
+    """Return the computational devices with exactly one charge line, in chip order, and a sentence that says so."""
+    from quchip.control.drive import ChargeDrive
+
+    equipment = chip.control_equipment
+    lines = [] if equipment is None else [line for line in equipment.lines if isinstance(line, ChargeDrive)]
+    chosen: list[tuple[str, int]] = []
+    skipped: list[tuple[str, int]] = []
+    for device in chip.devices:
+        if device.computational:
+            count = sum(line.device_label == device.label for line in lines)
+            (chosen if count == 1 else skipped).append((device.label, count))
+    if not chosen:
+        raise ValueError("The chip has no computational device with exactly one charge line; pass qubits=.")
+    labels = [label for label, _ in chosen]
+    reason = "The qubits are the computational devices with one charge line"
+    if skipped:
+        reason += "; it skipped " + ", ".join(f"{label} ({count} charge lines)" for label, count in skipped)
+    return labels, reason + "."
+
+
 class _Unresolved(KeyError):
     """No native or rule gives an instruction."""
 
@@ -126,7 +148,7 @@ class CircuitUnitary:
 
 @dataclass
 class CircuitRun:
-    """Result of :meth:`GateSet.simulate`.
+    """Result of :meth:`GateSet.run`.
 
     Attributes
     ----------
@@ -139,12 +161,80 @@ class CircuitRun:
         Population outside the computational states.
     result : object
         The underlying propagator or simulation result.
+    ideal : numpy.ndarray or None
+        Ideal output of the circuit from the same initial state, in the order
+        of :attr:`state`. The other qubits that the circuit's gates act on
+        start in |0>, and the output keeps its normalized part with them in
+        |0>, as the run reads them. None when that part is empty.
     """
 
     state: np.ndarray
     probabilities: dict[str, float]
     leakage: float
     result: Any = field(repr=False, default=None)
+    ideal: np.ndarray | None = field(repr=False, default=None)
+
+    def fidelity(self, target: Any = None) -> float:
+        """Return the fidelity of :attr:`state` with the ideal output of the circuit or with a target state.
+
+        A ket ψ and a pure target φ give ``|⟨φ|ψ⟩|²``, and a density matrix ρ
+        gives ``⟨φ|ρ|φ⟩``. A mixed target σ gives ``(Tr √(√σ ρ √σ))²``.
+        :attr:`state` is not renormalized, so leaked population counts as
+        error.
+
+        Parameters
+        ----------
+        target : str, tuple of bits, array_like, or qutip.Qobj, optional
+            Bit string, or a ``2^n`` ket or density matrix in the order of
+            :attr:`state`. The default is :attr:`ideal`.
+        """
+        if target is None:
+            if self.ideal is None:
+                raise ValueError("This run has no ideal output, since the ideal circuit moves the qubits that the "
+                                 "run does not read out of |0>. Pass a target.")
+            target = self.ideal
+        state = np.asarray(self.state)
+        target = _register_state(target, int(round(np.log2(state.shape[0]))))
+        if target.ndim == 1:
+            if state.ndim == 1:
+                return float(abs(np.vdot(target, state)) ** 2)
+            return float(np.real(np.vdot(target, state @ target)))
+        if state.ndim == 1:
+            return float(np.real(np.vdot(state, target @ state)))
+        # Uhlmann fidelity as the squared trace norm of √σ √ρ, with positive semidefinite roots.
+        singular = np.linalg.svd(_psd_root(target) @ _psd_root(state), compute_uv=False)
+        return float(np.sum(singular) ** 2)
+
+
+def _register_state(value: Any, n: int) -> np.ndarray:
+    """Return a register ket or density matrix from a bit string, an array, or a qutip Qobj."""
+    if hasattr(value, "isket") and hasattr(value, "full"):
+        # A qutip Qobj.
+        value = value.full().ravel() if value.isket else value.full()
+    if isinstance(value, (str, tuple, list)) and len(value) == n and all(str(b) in ("0", "1") for b in value):
+        vector = np.zeros(2 ** n, dtype=complex)
+        vector[int("".join(str(int(b)) for b in value), 2)] = 1.0
+        return vector
+    array = np.asarray(value, dtype=complex)
+    return array[:, 0] if array.ndim == 2 and array.shape[1] == 1 else array
+
+
+def _apply_gate(tensor: np.ndarray, matrix: np.ndarray, axes: Sequence[int]) -> np.ndarray:
+    """Apply a gate to the qubit axes ``axes`` of a state tensor with one axis of length 2 per qubit."""
+    if not axes:
+        return matrix[0, 0] * tensor
+    count = len(axes)
+    gate = matrix.reshape((2,) * (2 * count))
+    moved = np.tensordot(gate, tensor, axes=(list(range(count, 2 * count)), list(axes)))
+    return np.moveaxis(moved, list(range(count)), list(axes))
+
+
+def _psd_root(matrix: np.ndarray) -> np.ndarray:
+    """Return the positive semidefinite square root of a Hermitian matrix, with negative roundoff eigenvalues cut."""
+    values, vectors = np.linalg.eigh((matrix + matrix.conj().T) / 2)
+    return (vectors * np.sqrt(np.clip(values, 0.0, None))) @ vectors.conj().T
+
+
 
 
 class GateSet:
@@ -178,7 +268,7 @@ class GateSet:
         cutoff until each calibration block's amplitudes, leakage, and
         average gate fidelity change by less than ``cutoff_tolerance`` at
         the next cutoff, with the other qubits in level 0 and in level 1.
-        :meth:`unitary` and :meth:`simulate` solve a circuit with ``m`` gates
+        :meth:`unitary` and :meth:`run` solve a circuit with ``m`` gates
         at once in one piece with ``m - 1`` more excitations. A warning states
         each choice. These rules are heuristics, not bounds. ``None`` forces
         the full product space.
@@ -244,7 +334,8 @@ class GateSet:
         self._previous: dict[tuple[str, tuple[str, ...]], tuple[dict[str, float], float | None]] = {}
         self._seed_only: set[tuple[str, tuple[str, ...]]] = set()
         # Digest of the chip the derived state belongs to, and the digest each calibration used.
-        self._fingerprint: str | None = None
+        # The natives are declared on the chip as it is now, so a change before the first solve declares them again.
+        self._fingerprint: str | None = _chip_fingerprint(self.chip)
         self._calibrated_on: dict[tuple[str, tuple[str, ...]], str | None] = {}
         self._stale: dict[tuple[str, tuple[str, ...]], str] = {}
 
@@ -270,32 +361,39 @@ class GateSet:
     def standard(
         cls,
         chip: "Chip",
-        qubits: Sequence[Any],
+        qubits: Sequence[Any] | None = None,
         *,
         pairs: Iterable[tuple[Any, Any]] = (),
         sx_duration: float = 40.0,
         x_duration: float | None = None,
-        cr_duration: float | None = None,
+        cr_duration: float | Mapping[tuple[Any, Any], float] | None = None,
         echo: bool = True,
         rotary: bool | None = None,
         **options: Any,
     ) -> "GateSet":
         """Return a gate set with DRAG SX and X on each qubit and a ZX90 on each directed pair.
 
+        One ``AutoChoiceWarning`` gives the qubits and CR durations that it
+        chose, written as arguments to pass.
+
         Parameters
         ----------
         chip : Chip
             Chip with one charge line per qubit.
-        qubits : sequence of str or device
-            Computational qubits.
+        qubits : sequence of str or device, optional
+            Computational qubits. The default is every device marked
+            ``computational`` that has exactly one charge line, in chip
+            order.
         pairs : iterable of (control, target), default ()
             Directed cross-resonance pairs.
         sx_duration : float, default 40.0
             SX pulse duration in ns.
         x_duration : float or None, default None
             X pulse duration in ns. The default is ``sx_duration``.
-        cr_duration : float or None
-            Total CR tone duration in ns. Required with pairs.
+        cr_duration : float, mapping, or None, default None
+            Total CR tone duration in ns, for every pair, or a mapping from
+            (control, target) to ns. A pair without a duration gets the one
+            that :func:`~quchip.gateset.cross_resonance` chooses.
         echo : bool, default True
             Echo each CR with X pulses on the control.
         rotary : bool or None, default None
@@ -306,25 +404,54 @@ class GateSet:
         **options
             Passed to :class:`GateSet`.
         """
-        from quchip.gateset.builtins import cross_resonance, drag_sx
+        from quchip.gateset.builtins import _charge_line, _cr_plan, cross_resonance, drag_sx
 
-        pairs = list(pairs)
-        if pairs and cr_duration is None:
-            raise ValueError("cr_duration is required with pairs; the right value depends on g and the detuning.")
-        gates = cls(chip, qubits, **options)
-        for qubit in gates.qubits:
-            gates.add(drag_sx(chip, qubit, duration=sx_duration))
-            gates.add(drag_sx(chip, qubit, duration=sx_duration if x_duration is None else x_duration,
+        pairs = [(resolve_label(control), resolve_label(target)) for control, target in pairs]
+        if isinstance(cr_duration, Mapping):
+            durations = {(resolve_label(c), resolve_label(t)): float(value) for (c, t), value in cr_duration.items()}
+            unknown = sorted(set(durations) - set(pairs))
+            if unknown:
+                raise ValueError(f"cr_duration names pairs that are not in pairs: {unknown}.")
+        else:
+            durations = {} if cr_duration is None else {pair: float(cr_duration) for pair in pairs}
+        chosen, reasons = [], []
+        if qubits is None:
+            qubits, reason = _default_qubits(chip)
+            chosen.append(f"qubits={list(qubits)!r}")
+            reasons.append(reason)
+        gateset = cls(chip, qubits, **options)
+        for qubit in gateset.qubits:
+            gateset.add(drag_sx(chip, qubit, duration=sx_duration))
+            gateset.add(drag_sx(chip, qubit, duration=sx_duration if x_duration is None else x_duration,
                               angle=np.pi, name="X"))
+        automatic: dict[tuple[str, str], str | None] = {}
         for control, target in pairs:
-            assert cr_duration is not None
             on = rotary
             if on is None:
                 # A static ZZ between the target and a spectator is what the rotary tone averages out.
-                others = gates._reach([resolve_label(target)]) - {resolve_label(control)}
-                on = echo and gates.spectators != "none" and bool(others)
-            gates.add(cross_resonance(chip, control, target, duration=cr_duration, echo=echo, rotary=on))
-        return gates
+                others = gateset._reach([target]) - {control}
+                on = echo and gateset.spectators != "none" and bool(others)
+            if (control, target) not in durations:
+                plan = _cr_plan(chip, control, target, _charge_line(chip, control, None),
+                                _charge_line(chip, target, None), echo=echo, edge=None, sigmas=2.5, duration=None)
+                durations[(control, target)] = plan.duration
+                automatic[(control, target)] = plan.reason
+            with warnings.catch_warnings():
+                # An automatic duration stays automatic, so the native chooses again after an in-place chip change.
+                warnings.filterwarnings("ignore", "cross_resonance chose", AutoChoiceWarning)
+                duration = None if (control, target) in automatic else durations[(control, target)]
+                gateset.add(cross_resonance(chip, control, target, duration=duration, echo=echo, rotary=on))
+        if automatic:
+            ordered = {pair: durations[pair] for pair in pairs}
+            values = set(ordered.values())
+            chosen.append(f"cr_duration={values.pop()!r}" if len(values) == 1 else f"cr_duration={ordered!r}")
+            reasons.append("; ".join(f"{control}->{target} is set by {why}"
+                                     for (control, target), why in automatic.items()) + ".")
+        if chosen:
+            keep = "Pass them to keep these choices." if len(chosen) > 1 else "Pass it to keep this choice."
+            warnings.warn(f"GateSet.standard chose {', '.join(chosen)}. {keep} " + " ".join(reasons),
+                          AutoChoiceWarning, stacklevel=user_stacklevel())
+        return gateset
 
     def add(self, native: NativeGate) -> NativeGate:
         """Add a native gate after checking its template.
@@ -564,7 +691,7 @@ class GateSet:
         max_nfev: int = 200,
         explore: bool | None = None,
         target: float = 1e-3,
-        progress: bool = False,
+        progress: bool = True,
     ) -> dict[tuple[str, tuple[str, ...]], GateCalibration]:
         """Calibrate natives against their ideals and fill the cache.
 
@@ -591,7 +718,7 @@ class GateSet:
             time 0, at the worst sampled start time of
             ``placement_infidelity``, or in the state of the other qubits of
             ``worst_spectators``.
-        progress : bool, default False
+        progress : bool, default True
             Print one line per native as it finishes.
 
         Returns
@@ -985,6 +1112,16 @@ class GateSet:
 
     # ---------------------------------------------------------------- circuits
 
+    def _circuit(self, circuit: Any) -> list[Any]:
+        """Return the instructions of a circuit; a qutip-qip circuit goes through ``from_qutip_qip``."""
+        module = sys.modules.get("qutip_qip.circuit")
+        qubit_circuit = getattr(module, "QubitCircuit", None)
+        if qubit_circuit is not None and isinstance(circuit, qubit_circuit):
+            from quchip.interop.qutip_qip import from_qutip_qip
+
+            return from_qutip_qip(circuit, self)
+        return list(circuit)
+
     def _normalize(self, instruction: Any) -> tuple[str, tuple[Any, ...], tuple[float, ...]]:
         if not isinstance(instruction, (tuple, list)) or not instruction:
             raise TypeError(f"An instruction is (name, qubits) or (name, qubits, params); got {instruction!r}.")
@@ -1041,7 +1178,12 @@ class GateSet:
                         continue
                     break
                 else:
-                    raise _Unresolved(f"No native or rule gives {name} on {qubits}.")
+                    hint = ""
+                    if len(qubits) == 2 and not any(len(key[1]) == 2 and set(key[1]) == set(qubits)
+                                                    for key in self._natives):
+                        hint = (f" The gate set has no two-qubit native on {qubits}; "
+                                "GateSet.standard(..., pairs=[(control, target)]) adds a ZX90.")
+                    raise _Unresolved(f"No native or rule gives {name} on {qubits}.{hint}")
         return out
 
     def schedule(self, circuit: Iterable[Any], *, policy: str = "asap") -> "QuantumSequence":
@@ -1049,15 +1191,17 @@ class GateSet:
 
         Parameters
         ----------
-        circuit : iterable of instructions
+        circuit : iterable of instructions, or qutip_qip.circuit.QubitCircuit
             ``(name, qubits)`` or ``(name, qubits, params)``. RZ compiles to
             ``vz(q, -λ)``, IDLE(T) to a delay, and other names to natives
-            through the decomposition rules.
+            through the decomposition rules. A qutip-qip circuit converts
+            with :func:`~quchip.interop.qutip_qip.from_qutip_qip`; its qubit
+            ``i`` is the gate set's ``qubits[i]``.
         policy : {"asap", "serial"}, default "asap"
             ``"asap"`` overlaps gates on disjoint qubits; ``"serial"`` runs
             one gate at a time.
         """
-        return self._compile(circuit, policy)[0]
+        return self._compile(self._circuit(circuit), policy)[0]
 
     def _compile(self, circuit: Iterable[Any], policy: str) -> tuple[Any, list[tuple[Any, int, int]], float]:
         from quchip.control.sequence import QuantumSequence, _PulseEntry
@@ -1116,29 +1260,35 @@ class GateSet:
         warnings.warn(f"Not calibrated: {names}. quchip calibrates them at their seeds and fits only the virtual-Z "
                       "phases, as calibrate(max_nfev=0) does. Run calibrate() to fit the knobs.", AutoChoiceWarning,
                       stacklevel=user_stacklevel())
-        self.calibrate(*missing, max_nfev=0)
+        self.calibrate(*missing, max_nfev=0, progress=False)
 
     def _sync_chip(self) -> None:
         """Follow an in-place change of the chip: reset what the gate set derived from it, and mark older gates."""
         fingerprint = _chip_fingerprint(self.chip)
         if fingerprint == self._fingerprint:
             return
-        changed = self._fingerprint is not None
-        self._fingerprint = fingerprint
-        if not changed:
+        previous, self._fingerprint = self._fingerprint, fingerprint
+        if previous is None:
             return
+        try:
+            # The built-in natives take their carriers, seeds and automatic durations from the chip, so declare
+            # them again from the changed one. Nothing changes until every declaration succeeds.
+            declared = dict(self._natives)
+            for key, native in self._natives.items():
+                if native._declare is not None:
+                    declared[key] = native._declare(self.chip)
+                    if not declared[key].is_composite:
+                        self._check_template(declared[key])
+        except BaseException:
+            # The gate set keeps the natives and the fingerprint of the old chip, so the next call declares again.
+            self._fingerprint = previous
+            raise
+        self._natives.update(declared)
         if self._solver_chip is not None:
             space = self._solver_chip.space
             self._set_solver_chip(self.chip if space is None or self.chip.space is not None
                                   else self.chip.with_space(space))
         self._cutoff_checked = False
-        # The built-in natives take their carriers and seeds from the chip, so declare them again from the changed one.
-        for key, native in list(self._natives.items()):
-            if native._declare is not None:
-                declared = native._declare(self.chip)
-                if not declared.is_composite:
-                    self._check_template(declared)
-                self._natives[key] = declared
         stale = [key for key in self._calibrations if self._calibrated_on.get(key) != fingerprint]
         for key in stale:
             self._calibrations[key].status = "stale"
@@ -1171,34 +1321,35 @@ class GateSet:
         """
         order = self.qubits if qubits is None else tuple(resolve_label(q) for q in qubits)
         result = np.eye(2 ** len(order), dtype=complex)
-        for instruction in circuit:
-            result = self._ideal_of(instruction, order) @ result
+        for instruction in self._circuit(circuit):
+            for matrix, positions in self._ideal_parts(instruction, order):
+                result = embed(matrix, positions, len(order)) @ result if positions else matrix[0, 0] * result
         return result
 
-    def _ideal_of(self, instruction: Any, order: tuple[str, ...]) -> np.ndarray:
+    def _ideal_parts(self, instruction: Any, order: Sequence[str]) -> list[tuple[np.ndarray, list[int]]]:
+        """Return the ideal of an instruction as gates on positions in ``order``; a global phase has none."""
         name, qubits, params = self._normalize(instruction)
-        dimension = 2 ** len(order)
         if name == "GLOBALPHASE":
-            return np.exp(1j * (params[0] if params else 0.0)) * np.eye(dimension)
+            return [(np.array([[np.exp(1j * (params[0] if params else 0.0))]]), [])]
         if name == "IDLE":
-            return np.eye(dimension, dtype=complex)
+            return []
         outside = [q for q in qubits if q not in order]
         if outside:
             raise ValueError(f"{name} acts on {outside}, outside the qubits {list(order)}.")
         positions = [order.index(q) for q in qubits]
         if name in IDEALS:
-            return embed(ideal_unitary(name, params), positions, len(order))
+            return [(ideal_unitary(name, params), positions)]
         if (name, qubits) in self._natives:
-            return embed(self._natives[(name, qubits)].ideal_matrix(), positions, len(order))
+            return [(self._natives[(name, qubits)].ideal_matrix(), positions)]
         rules = rule_table(self._user_rules)
         for count, expansion in rules.get(name, []):
             if count == len(qubits):
-                body = []
+                parts = []
                 for item in expansion(*params):
                     slots = item[1]
                     mapped = tuple(qubits[s] for s in slots) if isinstance(slots, tuple) else qubits[slots]
-                    body.append((item[0], mapped, *item[2:]))
-                return self.ideal(body, qubits=order)
+                    parts.extend(self._ideal_parts((item[0], mapped, *item[2:]), order))
+                return parts
         raise KeyError(f"No ideal for {name} on {qubits}.")
 
     def unitary(self, circuit: Iterable[Any], *, qubits: Sequence[Any] | None = None,
@@ -1209,7 +1360,7 @@ class GateSet:
         start time and frame. Overlapping gates and non-covariant gates run
         one solve per placement. Under an automatic cutoff, a circuit with
         ``m`` gates at once is solved in one piece with ``m - 1`` more
-        excitations, as in :meth:`simulate`. Idle intervals use the static
+        excitations, as in :meth:`run`. Idle intervals use the static
         lab Hamiltonian's eigensystem.
 
         Parameters
@@ -1222,7 +1373,7 @@ class GateSet:
         policy : {"asap", "serial"}, default "asap"
             Scheduling policy.
         """
-        circuit = list(circuit)
+        circuit = self._circuit(circuit)
         order = self.qubits if qubits is None else tuple(resolve_label(q) for q in qubits)
         sequence, placements, global_phase = self._compile(circuit, policy)
         solver_sequence = self._on_solver(sequence)
@@ -1322,7 +1473,7 @@ class GateSet:
             raise ValueError(f"Expected {len(order)} bits for {list(order)}; got {bits!r}.")
         return dict(zip(order, values))
 
-    def simulate(
+    def run(
         self,
         circuit: Iterable[Any],
         initial: Any = None,
@@ -1331,7 +1482,9 @@ class GateSet:
         policy: str = "asap",
         dissipation: bool = True,
     ) -> CircuitRun:
-        """Simulate a circuit's pulse schedule and return the computational state.
+        """Run a circuit's pulse schedule on the chip and return the computational state.
+
+        ``chip.run(circuit)`` calls this method of ``chip.gateset``.
 
         The schedule runs with the gate-set solver settings. Under an
         automatic cutoff, a schedule with up to ``m`` gates at once solves
@@ -1343,37 +1496,35 @@ class GateSet:
         ----------
         circuit : iterable of instructions
             As for :meth:`schedule`.
-        initial : str, tuple of bits, or array_like, optional
+        initial : str, tuple of bits, array_like, or qutip.Qobj, optional
             Bit string, or a ``2^n`` ket or density matrix in computational
             order. The default is all zeros.
         qubits : sequence of str or device, optional
             Computational qubits; other devices start and are read in dressed
-            level 0. The default is every gate-set qubit.
+            level 0. The default is every gate-set qubit. This sets the order of
+            the result only: a qutip-qip circuit's qubit ``i`` is still the gate
+            set's ``qubits[i]``.
         policy : {"asap", "serial"}, default "asap"
             Scheduling policy.
         dissipation : bool, default True
             Include the chip's collapse channels.
         """
         order = self.qubits if qubits is None else tuple(resolve_label(q) for q in qubits)
-        circuit = list(circuit)
+        circuit = self._circuit(circuit)
         sequence, placements, global_phase = self._compile(circuit, policy)
         solver_sequence, duration, columns, mapping, _ = self._readout(sequence, placements, global_phase, order)
-        dimension = 2 ** len(order)
-        if initial is None:
-            initial = "0" * len(order)
-        if isinstance(initial, (str, tuple, list)) and len(initial) == len(order) and all(
-                str(b) in ("0", "1") for b in initial):
-            vector = np.zeros(dimension, dtype=complex)
-            vector[int("".join(str(int(b)) for b in initial), 2)] = 1.0
-            initial = vector
-        initial = np.asarray(initial, dtype=complex)
+        initial = _register_state("0" * len(order) if initial is None else initial, len(order))
+        ideal = self._ideal_output(circuit, order, initial)
         if duration <= 0.0:
             # Only virtual gates: no time passes, so the frame correction is the whole circuit.
-            step = mapping @ columns
-            state = step @ initial if initial.ndim == 1 else step @ initial @ step.conj().T
+            if initial.ndim == 1:
+                state = mapping @ (columns @ initial)
+            else:
+                step = mapping @ columns
+                state = step @ initial @ step.conj().T
             populations = np.abs(state) ** 2 if initial.ndim == 1 else np.real(np.diag(state))
             return CircuitRun(state=state, probabilities=self._probabilities(populations, order),
-                              leakage=float(1.0 - populations.sum()))
+                              leakage=float(1.0 - populations.sum()), ideal=ideal)
         open_system = dissipation and bool(_static_problem(solver_sequence._chip, dissipation=True)
                                            .engine_result.collapse_terms)
         if initial.ndim == 1 and not open_system:
@@ -1383,7 +1534,7 @@ class GateSet:
             state = mapping @ np.asarray(propagator.matrix)[:, 0]
             populations = np.abs(state) ** 2
             return CircuitRun(state=state, probabilities=self._probabilities(populations, order),
-                              leakage=float(1.0 - populations.sum()), result=propagator)
+                              leakage=float(1.0 - populations.sum()), result=propagator, ideal=ideal)
         rho = initial if initial.ndim == 2 else np.outer(initial, initial.conj())
         superoperator = solver_sequence.propagator(tlist=[0.0, duration], frame=self.frame, options=self.options,
                                                    dissipation=dissipation, backend=self.backend)
@@ -1397,7 +1548,46 @@ class GateSet:
         state = mapping @ final @ mapping.conj().T
         populations = np.real(np.diag(state))
         return CircuitRun(state=state, probabilities=self._probabilities(populations, order),
-                          leakage=float(1.0 - populations.sum()), result=superoperator)
+                          leakage=float(1.0 - populations.sum()), result=superoperator, ideal=ideal)
+
+    def _ideal_output(self, circuit: list[Any], order: Sequence[str], initial: np.ndarray) -> np.ndarray | None:
+        """Return the normalized ideal output on the qubits in ``order``, or None when it has no weight.
+
+        The other qubits that the circuit's gates act on start in |0>, and the
+        output keeps the part with them in |0>, as :meth:`run` reads them.
+        """
+        read = len(order)
+        parts = [part for instruction in circuit
+                 for part in self._ideal_parts(instruction, (*order, *(q for q in self.qubits if q not in order)))]
+        # Unread qubits that no gate acts on stay in |0>, so they are left out.
+        active = sorted({position for _, positions in parts for position in positions if position >= read})
+        place = {position: read + index for index, position in enumerate(active)}
+        parts = [(matrix, [place.get(position, position) for position in positions]) for matrix, positions in parts]
+        count = read + len(active)
+
+        def evolve(vector: np.ndarray) -> np.ndarray:
+            # Each gate acts on its own qubit axes, so the cost follows one ket, not a full unitary.
+            tensor = np.zeros(2 ** count, dtype=complex)
+            tensor[::2 ** len(active)] = vector
+            tensor = tensor.reshape((2,) * count)
+            for matrix, positions in parts:
+                tensor = _apply_gate(tensor, matrix, positions)
+            return tensor.reshape(len(vector), -1)[:, 0]
+
+        if initial.ndim == 1:
+            kept = evolve(initial)
+            weight = float(np.real(np.vdot(kept, kept)))
+            return kept / np.sqrt(weight) if weight > 1e-12 else None
+        # A density matrix evolves as the sum of its eigenvectors, weighted by their populations. Every positive
+        # population counts, since the kept part can be a small fraction of the input; negative ones are roundoff.
+        values, vectors = np.linalg.eigh((initial + initial.conj().T) / 2)
+        output = np.zeros(initial.shape, dtype=complex)
+        for value, vector in zip(values, vectors.T):
+            if value > 0:
+                branch = evolve(np.sqrt(value) * vector)
+                output += np.outer(branch, branch.conj())
+        weight = float(np.real(np.trace(output)))
+        return output / weight if weight > 1e-12 else None
 
     def _readout(self, sequence: "QuantumSequence", placements: Sequence[tuple[Any, int, int]], global_phase: float,
                  order: Sequence[str]) -> tuple["QuantumSequence", float, np.ndarray, np.ndarray, np.ndarray | None]:

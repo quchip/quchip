@@ -297,8 +297,8 @@ class NativeGate:
     ) -> "NativeGate":
         """Create a native whose pulses include other calibrated natives.
 
-        ``build(gates)`` returns the sequence and its knobs. It inserts
-        calibrated natives with ``seq.extend(gates.schedule([...]))``. The gate
+        ``build(gateset)`` returns the sequence and its knobs. It inserts
+        calibrated natives with ``seq.extend(gateset.schedule([...]))``. The gate
         set calibrates those natives first, and their pulses stay fixed while
         this gate is calibrated.
 
