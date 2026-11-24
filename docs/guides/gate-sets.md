@@ -73,7 +73,7 @@ does not see errors in the eigenvectors, such as a small tilt of the rotation
 axis, and it can be much smaller than the average gate infidelity. Some of
 these errors only tilt the gate against state preparation and measurement, but
 not all: an SY in place of an SX scores 0. `.channel` gives the gate as a
-`ChannelResult`.
+`SubspaceChannel`.
 
 Calibrating a native again starts from its previous knobs. When that fit
 converges within the target and at most doubles the previous error, the gate

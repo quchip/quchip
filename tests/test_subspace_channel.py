@@ -7,8 +7,8 @@ import pytest
 import qutip
 
 from quchip import RWA, ChargeDrive, Chip, DuffingTransmon, Gaussian, QuantumSequence
-from quchip.results.channel import ChannelResult
-from quchip.results.propagator import PropagatorResult
+from quchip.results.channel import SubspaceChannel
+from quchip.results.propagator import SubspacePropagator
 from quchip.utils.warning_categories import QuchipWarning
 
 TIGHT = {"atol": 1e-12, "rtol": 1e-10}
@@ -40,7 +40,7 @@ def half_pi(chip, duration=20.0, amplitude=None):
 
 def record(superoperator, labels=((0,), (1,)), devices=("q",)):
     superoperator = np.asarray(superoperator, dtype=complex)
-    return ChannelResult(superoperator=superoperator, labels=labels, devices=devices, leakage=None, frame="dressed",
+    return SubspaceChannel(superoperator=superoperator, labels=labels, devices=devices, leakage=None, frame="dressed",
                          frequencies={}, times=(0.0, 1.0), channels=(), batch=None)
 
 
@@ -69,14 +69,16 @@ def test_frame_tilt_counts_in_quchips_frame_but_not_in_the_spectral_score():
 
 @pytest.mark.unit
 def test_leaky_closed_channel_matches_the_propagator_fidelity():
-    """Without collapse channels, the channel infidelity equals 1 − PropagatorResult.fidelity()."""
+    """Without collapse channels, the channel infidelity equals 1 − SubspacePropagator.fidelity()."""
     rng = np.random.default_rng(5)
     matrix = np.linalg.qr(rng.normal(size=(2, 2)) + 1j * rng.normal(size=(2, 2)))[0] @ np.diag([1.0, np.sqrt(0.9)])
-    propagator = PropagatorResult(matrix=matrix, labels=(), devices=(), leakage=None, frame="dressed", frequencies={},
+    propagator = SubspacePropagator(matrix=matrix, labels=(), devices=(), leakage=None, frame="dressed", frequencies={},
                                   ground_energy=0.0, times=(0.0, 1.0), omitted_channels=(), batch=None)
     channel = record(conjugation(matrix))
     np.testing.assert_allclose(channel.infidelity(SY), 1 - propagator.fidelity(SY), rtol=0, atol=1e-15)
     np.testing.assert_allclose(channel.average_leakage(), 0.05, rtol=0, atol=1e-15)
+    np.testing.assert_allclose(channel.fidelity(SY), propagator.fidelity(SY), rtol=0, atol=1e-15)
+    np.testing.assert_allclose(propagator.infidelity(SY), channel.infidelity(SY), rtol=0, atol=1e-15)
 
 
 @pytest.mark.unit

@@ -12,7 +12,7 @@ lab frame,
 
 where ``f_i`` are the integration-frame frequencies and ``n_i`` the level
 indices. The integration frame therefore changes only cost and accuracy.
-A :class:`PropagatorResult` holds the propagator on the dressed states of a
+A :class:`SubspacePropagator` holds the propagator on the dressed states of a
 product of levels, from one ket solve per input.
 """
 
@@ -33,7 +33,7 @@ FRAMES = ("dressed", "lab", "integration")
 
 
 @dataclass(frozen=True)
-class PropagatorResult:
+class SubspacePropagator:
     """Propagator of a sequence on the dressed states of a product of levels.
 
     ``matrix[i, j]`` is ``⟨d_i|U(T, t₀)|d_j⟩`` in the record's frame. Here
@@ -91,17 +91,38 @@ class PropagatorResult:
     def fidelity(self, target: Any) -> Any:
         """Return the average gate fidelity of the propagator against a unitary target.
 
-        For a target V of dimension d, the average over pure inputs in the
-        labels is ``(Tr(M†M) + |Tr(V†M)|²) / (d(d + 1))``, with M the
-        :attr:`matrix`. Leakage lowers ``Tr(M†M)``, so it lowers the fidelity.
-        The target is written in the frame and label order of this record.
+        For a target V of dimension d, the average over pure inputs is
+        ``(Tr(M†M) + |Tr(V†M)|²) / (d(d + 1))``. A target on all labels takes M
+        as the :attr:`matrix`. A target on the computational labels only,
+        those whose levels are all 0 or 1, takes M as the block of
+        :attr:`matrix` on them, and then equals the score of
+        :class:`~quchip.results.channel.SubspaceChannel` without dissipation.
+        Leakage lowers ``Tr(M†M)``, so it lowers the fidelity.
 
         Parameters
         ----------
-        target : array_like, shape (d, d)
+        target : array_like, shape (d, d) or (d_C, d_C)
             Unitary target in the frame and label order of this record.
         """
-        return average_fidelity(self.matrix, target)
+        return average_fidelity(self._block(target), target)
+
+    def infidelity(self, target: Any) -> Any:
+        """Return ``1 − F_avg`` against a unitary target, with F_avg from :meth:`fidelity`.
+
+        Parameters
+        ----------
+        target : array_like, shape (d, d) or (d_C, d_C)
+            Unitary target in the frame and label order of this record.
+        """
+        return 1.0 - self.fidelity(target)
+
+    def _block(self, target: Any) -> Any:
+        """Return the matrix, or its block on the computational labels for a target of that size."""
+        size, dimension = np.shape(target)[0], np.shape(self.matrix)[0]
+        computational = [index for index, levels in enumerate(self.labels) if all(level in (0, 1) for level in levels)]
+        if size == dimension or size != len(computational):
+            return self.matrix
+        return self.matrix[np.ix_(computational, computational)]
 
 
 def _namespace(*values: Any) -> Any:
@@ -185,7 +206,7 @@ def average_fidelity(matrix: Any, target: Any) -> Any:
 
 
 def subspace_propagator(batch: Any, devices: tuple[str, ...], labels: tuple[tuple[int, ...], ...], frame: str,
-                        omitted_channels: tuple[str, ...]) -> PropagatorResult:
+                        omitted_channels: tuple[str, ...]) -> SubspacePropagator:
     """Return the propagator of a batch whose points start in the dressed states of ``labels``.
 
     Point j of ``batch`` starts in the dressed state of ``labels[j]``. Row i
@@ -220,7 +241,7 @@ def subspace_propagator(batch: Any, devices: tuple[str, ...], labels: tuple[tupl
     shift = xp.stack([xp.asarray(value, dtype=float) for value in shifts])
     matrix = (xp.exp(1j * TWO_PI * stop * shift)[:, None] * amplitudes
               * xp.exp(-1j * TWO_PI * start * shift)[None, :])
-    return PropagatorResult(
+    return SubspacePropagator(
         matrix=matrix,
         labels=tuple(labels),
         devices=tuple(devices),

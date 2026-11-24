@@ -20,7 +20,7 @@ from quchip import (
     Square,
     analyze_static_zz,
 )
-from quchip.results.propagator import PropagatorResult
+from quchip.results.propagator import SubspacePropagator
 
 # A lab-frame solve accumulates 2π·500 rad over 100 ns, so its phase error needs rtol = 1e-12.
 TIGHT = {"atol": 1e-13, "rtol": 1e-12}
@@ -50,7 +50,7 @@ def driven_transmon(levels=2, frame="rotating", **kwargs):
 def test_average_fidelity_counts_leakage():
     """F = (Tr M†M + |Tr V†M|²) / (d(d + 1)): 1 for the target, 1/3 for an orthogonal gate, lower with leakage."""
     def record(matrix):
-        return PropagatorResult(matrix=np.asarray(matrix, dtype=complex), labels=(), devices=(), leakage=None,
+        return SubspacePropagator(matrix=np.asarray(matrix, dtype=complex), labels=(), devices=(), leakage=None,
                                 frame="dressed", frequencies={}, ground_energy=0.0, times=(0.0, 1.0),
                                 omitted_channels=(), batch=None)
 
@@ -61,6 +61,17 @@ def test_average_fidelity_counts_leakage():
     np.testing.assert_allclose(leaky.fidelity(np.eye(2)), (1.9 + (1 + kept) ** 2) / 6, rtol=0, atol=1e-15)
     with pytest.raises(ValueError, match="shape"):
         leaky.fidelity(np.eye(3))
+    # With a level-2 label, a qubit-size target scores the computational block, so leakage to 2 counts as error.
+    rng = np.random.default_rng(3)
+    unitary = np.linalg.qr(rng.normal(size=(3, 3)) + 1j * rng.normal(size=(3, 3)))[0]
+    qutrit = SubspacePropagator(matrix=unitary, labels=((0,), (1,), (2,)), devices=("q",), leakage=None,
+                                frame="dressed", frequencies={}, ground_energy=0.0, times=(0.0, 1.0),
+                                omitted_channels=(), batch=None)
+    block = unitary[:2, :2]
+    expected = (np.trace(block.conj().T @ block).real + abs(np.trace(block)) ** 2) / 6
+    np.testing.assert_allclose(qutrit.fidelity(np.eye(2)), expected, rtol=0, atol=1e-15)
+    np.testing.assert_allclose(qutrit.fidelity(np.eye(3)), (3 + abs(np.trace(unitary)) ** 2) / 12, rtol=0, atol=1e-15)
+    np.testing.assert_allclose(qutrit.infidelity(np.eye(2)), 1 - qutrit.fidelity(np.eye(2)), rtol=0, atol=0)
 
 
 @pytest.mark.unit

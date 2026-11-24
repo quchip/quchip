@@ -403,13 +403,15 @@ This file records notable user-visible changes to quchip.
   [#208](https://github.com/quchip/quchip/pull/208))
 - `sequence.subspace_propagator(devices, levels=(0, 1))` returns the
   propagator of a sequence on the dressed states of the selected levels, as a
-  `PropagatorResult`. One batch starts each label in its dressed state, and
+  `SubspacePropagator`. One batch starts each label in its dressed state, and
   the record converts the label amplitudes to the dressed frame by default, or
   to the lab or integration frame. The dressed frame turns each device at its
   dressed frequency under the solve's approximation and cutoff, so an idle
   pair of qubits gives `diag(1, 1, 1, exp(-2πiζT))` with the static ZZ `ζ`.
   The record gives the leakage of each input, and `fidelity(target)` returns
-  the average gate fidelity, which counts that leakage. The solves leave out
+  the average gate fidelity, which counts that leakage, and `infidelity()`
+  its complement. A target on the computational labels only scores their
+  block, as `SubspaceChannel` does. The solves leave out
   collapse channels, which `omitted_channels` names, and `dissipation=True`
   raises and points to `subspace_channel()`.
   ([#193](https://github.com/quchip/quchip/issues/193),
@@ -417,10 +419,10 @@ This file records notable user-visible changes to quchip.
   [#209](https://github.com/quchip/quchip/issues/209),
   [#210](https://github.com/quchip/quchip/pull/210))
 - `sequence.subspace_channel(devices, levels=(0, 1))` returns the gate with
-  the chip's collapse channels as a `ChannelResult`: a superoperator on the
+  the chip's collapse channels as a `SubspaceChannel`: a superoperator on the
   same dressed labels and frames, from `d²` pure-state master-equation
   solves. It gives the infidelity in quchip's frame, with ideal preparation
-  and measurement, and the eigenvalue infidelity, a spectral score that a
+  and measurement (`fidelity()` gives its complement), and the eigenvalue infidelity, a spectral score that a
   frame tilt does not change, with the average leakage beside it. Labels may
   include leakage levels, and `seepage()` reads them. `error(target)` returns
   the error map after the ideal gate, with its Pauli transfer matrix, Pauli
@@ -491,7 +493,7 @@ This file records notable user-visible changes to quchip.
   when the fit converges within the target and at most doubles the previous
   error; otherwise, and after a seed-only calibration, every start competes.
   Reports also give the eigenvalue infidelity and the gate's channel as a
-  `ChannelResult`. When a CR target couples to another gate-set qubit, the
+  `SubspaceChannel`. When a CR target couples to another gate-set qubit, the
   echoed ZX90 also tries rotary starts, in which the target tone turns the
   target so that most of its static ZZ with that qubit averages out. On a chain
   of three transmons this takes the ZX90 on the first pair from `5.5e-3` to

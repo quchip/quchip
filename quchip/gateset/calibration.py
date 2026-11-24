@@ -36,7 +36,7 @@ from quchip.results.propagator import average_fidelity
 from quchip.inverse_design.fit import _identifiability_receipt
 
 if TYPE_CHECKING:
-    from quchip.results.channel import ChannelResult
+    from quchip.results.channel import SubspaceChannel
 
 #: Finite-difference step of the scaled knobs.
 DIFF_STEP = 1e-4
@@ -236,26 +236,26 @@ class GateCalibration:
         return 1.0 - self.fidelity
 
     @property
-    def channel(self) -> ChannelResult:
+    def channel(self) -> SubspaceChannel:
         """Channel ``ρ ↦ B ρ B†`` of the calibrated block ``B`` on the computational states of ``block_qubits``.
 
         Population that leaves the computational states is lost, so the
         channel decreases the trace by :attr:`leakage_per_input`. The record
         has no solves of its own: ``batch`` is ``None``.
         """
-        from quchip.results.channel import ChannelResult
+        from quchip.results.channel import SubspaceChannel
 
         block = np.asarray(self.block)
         qubits = self.block_qubits or self.qubits
         duration = 0.0 if self.sequence is None else float(self.sequence.total_duration)
-        return ChannelResult(superoperator=np.kron(block.conj(), block),
+        return SubspaceChannel(superoperator=np.kron(block.conj(), block),
                              labels=tuple(itertools.product((0, 1), repeat=len(qubits))), devices=tuple(qubits),
                              leakage=np.asarray(self.leakage_per_input), frame="dressed", frequencies={},
                              times=(0.0, duration), channels=(), batch=None)
 
     @property
     def eigenvalue_infidelity(self) -> float:
-        """Eigenvalue infidelity of :attr:`channel` against the ideal; see :meth:`ChannelResult.eigenvalue_infidelity`.
+        """Eigenvalue infidelity of :attr:`channel` against the ideal (:meth:`SubspaceChannel.eigenvalue_infidelity`).
 
         A spectral score, not an operational fidelity. It compares
         eigenvalues only, so it does not see errors in the eigenvectors, such
