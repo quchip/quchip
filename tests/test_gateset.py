@@ -1505,7 +1505,8 @@ def test_with_params_binds_knobs_and_pulse_values_and_keeps_the_timing():
     carrier = gateset.with_params({"SX[q].pulse.0.freq": parameters["SX[q].pulse.0.freq"]})
     assert gateset.entry("SX", "q").covariant and not carrier.entry("SX", "q").covariant
     circuit = [("SX", "q"), ("RZ", "q", 0.3), ("SX", "q")]
-    assert same_up_to_phase(carrier.unitary(circuit).computational, gateset.unitary(circuit).computational) < 1e-8
+    # The second SX is a new vern9 solve at rtol 1e-8 on one side and a reused one on the other.
+    assert same_up_to_phase(carrier.unitary(circuit).computational, gateset.unitary(circuit).computational) < 1e-7
 
 
 def dynamiqs_pair(g: float = 0.003) -> Chip:
