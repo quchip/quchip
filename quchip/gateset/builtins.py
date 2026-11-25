@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import warnings
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
@@ -50,9 +51,11 @@ def drag_sx(
     """Return a single-qubit rotation native with one ``GaussianDRAG`` pulse.
 
     The pulse runs at ``freq=chip.freq(qubit)`` with ``phase=-arg(m)``, where
-    ``m`` is the qubit's dressed ``0 -> 1`` drive matrix element on the line,
-    so it rotates about +X. The knobs are the amplitude and, for devices with
-    more than two levels, the DRAG coefficient β. The amplitude seed comes
+    ``m`` is the qubit's dressed ``0 -> 1`` element that the line delivers
+    through the signal chain, as in
+    :meth:`~quchip.chip.chip.Chip.rotation_amplitude`, so it rotates about +X.
+    The knobs are the amplitude and, for devices with more than two levels,
+    the DRAG coefficient β. The amplitude seed comes
     from :meth:`~quchip.chip.chip.Chip.rotation_amplitude`, and the β seed is
     ``1 / (4π |α|)``, with α the dressed anharmonicity.
 
@@ -90,7 +93,7 @@ def drag_sx(
 
     label = resolve_label(qubit)
     line_label = _charge_line(chip, label, line)
-    element = complex(chip.drive_matrix_elements(label)[line_label])
+    element = _delivered(chip, line_label, [label], chip.freq(label))[0]
     levels = int(chip.device_map[label].levels) if hasattr(chip.device_map[label], "levels") else 2
     beta = 0.0
     if levels > 2:
@@ -123,15 +126,35 @@ def drag_sx(
     return gate
 
 
-def _conditional_elements(chip: "Chip", control: str, target: str, line_label: str) -> tuple[complex, complex]:
-    """Return a line's dressed target ``0 -> 1`` elements with the control in 0 and in 1."""
+def _delivered(chip: "Chip", line_label: str, transitions: Sequence[Any], frequency: Any) -> list[complex]:
+    """Return a tone's dressed element on each transition, summed over the lines that the signal chain feeds.
+
+    A tone at ``frequency`` on the line reaches line ``M`` as ``H_M`` times
+    itself, with ``H`` from ``tone_transfer`` at the carrier, so its element
+    is ``Σ_M H_M m_M``, as in :meth:`~quchip.chip.chip.Chip.rotation_amplitude`.
+    Envelope bandwidth and delays that differ between paths are left out.
+    """
     equipment = chip.control_equipment
     assert equipment is not None
-    line = next(line for line in equipment.lines if line.label == line_label)
+    if not equipment.signal_chain:
+        return [complex(chip.drive_matrix_elements(transition, drives=[line_label])[line_label])
+                for transition in transitions]
+    transfer = equipment.tone_transfer(line_label, frequency)
+    reached = [name for name, value in transfer.items() if abs(complex(value)) != 0.0]
+    out = []
+    for transition in transitions:
+        elements = chip.drive_matrix_elements(transition, drives=reached)
+        out.append(complex(sum(elements[name] * transfer[name] for name in reached)))
+    return out
+
+
+def _conditional_elements(chip: "Chip", control: str, target: str, line_label: str) -> tuple[complex, complex]:
+    """Return a target-frequency tone's delivered target ``0 -> 1`` elements with the control in 0 and in 1."""
     control_device, target_device = chip.device_map[control], chip.device_map[target]
-    t0 = chip.drive_matrix_elements(({}, {target_device: 1}), drives=[line])[line]
-    t1 = chip.drive_matrix_elements(({control_device: 1}, {control_device: 1, target_device: 1}), drives=[line])[line]
-    return complex(t0), complex(t1)
+    t0, t1 = _delivered(chip, line_label, [({}, {target_device: 1}),
+                                           ({control_device: 1}, {control_device: 1, target_device: 1})],
+                        chip.freq(target))
+    return t0, t1
 
 
 def _rotary_turns(envelope: Any, most: float) -> list[float]:
@@ -221,27 +244,25 @@ def _cr_edge(detuning: float, sigmas: float) -> float:
     return 2 * sigmas * 6.0 / (2 * np.pi * detuning) if detuning > 0 else float("inf")
 
 
-def _automatic_cr_duration(chip: "Chip", control: str, cr_line: str, transitions: dict[str, float], unit: float,
-                           halves: int, edge: float, sigmas: float) -> tuple[float, str]:
+def _automatic_cr_duration(transitions: dict[str, float], elements: Sequence[float], unit: float, halves: int,
+                           edge: float, sigmas: float) -> tuple[float, str]:
     """Return the shortest total CR duration on a 10 ns grid that keeps the drive weak and fits the edges, and why.
 
     ``unit`` is the seed CR peak amplitude times the area of one tone at unit
-    amplitude. A peak amplitude A drives the control's 0-1 and 1-2
-    transitions at ``Ω01 = A |<1|D|0>|`` and ``Ω12 = A |<2|D|1>|`` (cyclic GHz,
-    dressed elements of the CR line). The duration keeps ``Ω01/|Δ|``,
+    amplitude. ``elements`` holds ``|m01|`` and, with a 1-2 transition,
+    ``|m12|``: the control's dressed elements per unit CR amplitude that the CR
+    and cancellation tones deliver together. A peak amplitude A drives the
+    control's 0-1 and 1-2 transitions at ``Ω01 = A |m01|`` and
+    ``Ω12 = A |m12|`` (cyclic GHz). The duration keeps ``Ω01/|Δ|``,
     ``Ω12/|Δ + α_c|``, and the two-photon ``Ω01 Ω12 / (2 |Δ| |2Δ + α_c|)`` at
     most ``CR_DRIVE_RATIO``.
     """
     from quchip.control.envelopes import GaussianEdge
 
-    equipment = chip.control_equipment
-    assert equipment is not None
-    line = next(item for item in equipment.lines if item.label == cr_line)
-    device = chip.device_map[control]
-    m01 = abs(complex(chip.drive_matrix_elements(({}, {device: 1}), drives=[line])[line]))
+    m01 = elements[0]
     limits = {"0-1": CR_DRIVE_RATIO * transitions["0-1"] / m01}
     if "1-2" in transitions:
-        m12 = abs(complex(chip.drive_matrix_elements(({device: 1}, {device: 2}), drives=[line])[line]))
+        m12 = elements[1]
         limits["1-2"] = CR_DRIVE_RATIO * transitions["1-2"] / m12
         limits["two-photon 0-2"] = float(np.sqrt(
             2 * CR_DRIVE_RATIO * transitions["0-1"] * transitions["two-photon 0-2"] / (m01 * m12)))
@@ -276,10 +297,17 @@ def _cr_plan(chip: "Chip", control: str, target: str, cr_line: str, target_line:
     """
     from quchip.analysis.cross_resonance import analyze_cr_susceptibility
 
-    response = analyze_cr_susceptibility(chip, control, target, drive=cr_line)
-    zx, ix = complex(response.ZX_per_amplitude), complex(response.IX_per_amplitude)
+    # The analysis checks the CR line. The seeds take the elements that the signal chain delivers, which are the
+    # analysis's own-line elements on a chip without signal transforms.
+    analyze_cr_susceptibility(chip, control, target, drive=cr_line)
+    m0, m1 = _conditional_elements(chip, control, target, cr_line)
+    zx, ix = (m0 - m1) / 2, (m0 + m1) / 2
     halves = 2 if echo else 1
     pair = f"{control}->{target}"
+    transitions = _cr_transitions(chip, control, target)
+    device = chip.device_map[control]
+    control_transitions = [({}, {device: 1}), *([({device: 1}, {device: 2})] if "1-2" in transitions else [])]
+    drives = _delivered(chip, cr_line, control_transitions, chip.freq(target))
     elements = None
     if target_line is not None:
         elements = _conditional_elements(chip, control, target, target_line)
@@ -291,19 +319,21 @@ def _cr_plan(chip: "Chip", control: str, target: str, cr_line: str, target_line:
                              f"joint response is singular (condition number {condition:.1e}). Check the coupling "
                              f"and the cancellation line {target_line}, or pass cancel=False.")
         # The seed CR amplitude after the joint solve with the cancellation tone, times the area of one tone.
-        unit = abs(complex(np.linalg.solve(coefficients, np.array([1 / (4 * halves), 0.0], dtype=complex))[0]))
+        solution = np.linalg.solve(coefficients, np.array([1 / (4 * halves), 0.0], dtype=complex))
+        unit = abs(complex(solution[0]))
+        # The cancellation tone runs with the CR tone at a fixed complex ratio and also drives the control.
+        ratio = complex(solution[1] / solution[0])
+        cancelling = _delivered(chip, target_line, control_transitions, chip.freq(target))
+        drives = [cr + ratio * other for cr, other in zip(drives, cancelling)]
     else:
-        equipment = chip.control_equipment
-        assert equipment is not None
-        line = next(item for item in equipment.lines if item.label == cr_line)
-        drive = abs(complex(chip.drive_matrix_elements(({}, {chip.device_map[control]: 1}), drives=[line])[line]))
+        drive = abs(drives[0])
         # Without the cancellation tone the CR tone alone makes the ZX, so a ZX at roundoff level has no seed.
         if not abs(zx) > 64 * np.finfo(float).eps * drive:
             raise ValueError(f"The CR drive on {cr_line} gives {pair} no ZX: {abs(zx):.1e} per unit amplitude, "
                              f"against {drive:.2e} on the control's 0-1 transition. Check the coupling and the "
                              "drive line.")
         unit = 1.0 / (4 * halves * abs(zx))
-    transitions = _cr_transitions(chip, control, target)
+    strengths = [abs(item) for item in drives]
     nearest = min(transitions, key=transitions.__getitem__)
     close = transitions[nearest] < _CR_GUARD
     notes: list[tuple[type[Warning], str]] = []
@@ -327,12 +357,12 @@ def _cr_plan(chip: "Chip", control: str, target: str, cr_line: str, target_line:
         if close:
             would = ""
             if transitions[nearest] > 0:
-                chosen, _ = _automatic_cr_duration(chip, control, cr_line, transitions, unit, halves, edge, sigmas)
+                chosen, _ = _automatic_cr_duration(transitions, strengths, unit, halves, edge, sigmas)
                 would = f" The rule would choose {chosen:g} ns." if np.isfinite(chosen) else ""
             raise ValueError(f"No automatic CR duration for {pair}: the tone is {_mhz(transitions[nearest])} from the "
                              f"control's {nearest} transition.{would} Give the duration by hand to build the gate "
                              "anyway, or move the pair away from this transition.")
-        duration, reason = _automatic_cr_duration(chip, control, cr_line, transitions, unit, halves, edge, sigmas)
+        duration, reason = _automatic_cr_duration(transitions, strengths, unit, halves, edge, sigmas)
     elif close:
         notes.append((AccuracyWarning, f"The CR tone on {pair} is {_mhz(transitions[nearest])} from the control's "
                                        f"{nearest} transition, closer than the automatic choice allows, so the CR "
@@ -369,11 +399,14 @@ def cross_resonance(
     it. Both are ``GaussianEdge`` flat tops. The knobs are the CR amplitude and
     phase and the cancellation amplitude and phase. The seeds solve two linear
     equations for the complex amplitudes of the two tones: the ZX term turns
-    the target by π/2 over the gate, and the IX term is zero. The CR line's
-    coefficients come from
-    :func:`~quchip.analysis.cross_resonance.analyze_cr_susceptibility`, and the
-    target line's come from the same dressed elements, with the control in 0
-    and 1.
+    the target by π/2 over the gate, and the IX term is zero. The coefficients
+    of each tone are its dressed elements on the target's 0-1 transition with
+    the control in 0 and in 1, as in
+    :func:`~quchip.analysis.cross_resonance.analyze_cr_susceptibility`, summed
+    over the lines that the signal chain delivers the tone to, as in
+    :meth:`~quchip.chip.chip.Chip.rotation_amplitude`. The chain enters at the
+    carrier frequency only, so envelope bandwidth and delays that differ
+    between paths are left out.
 
     With ``echo=True`` the native is composite: CR+, X on the control, CR-,
     and X on the control, where CR- reverses the phases of both tones. The X
@@ -391,8 +424,9 @@ def cross_resonance(
         10 ns at which each tone lasts longer than two edges and the seed CR
         amplitude A keeps the drive on the control weak: ``Ω01/|Δ|``,
         ``Ω12/|Δ + α_c|`` and the two-photon ``Ω01 Ω12 / (2 |Δ| |2Δ + α_c|)``
-        stay at most 0.4, with dressed ``Δ = f_c - f_t``, ``Ω01 = A |<1|D|0>|``
-        and ``Ω12 = A |<2|D|1>|`` on the control. A two-level control keeps
+        stay at most 0.4, with dressed ``Δ = f_c - f_t`` and Ω01 and Ω12 the
+        control's drive rates from both tones together, through the signal
+        chain. A two-level control keeps
         the first ratio only. An ``AutoChoiceWarning`` gives the duration and
         what set it. The choice refuses a tone less than 5 MHz from a control
         transition, where a given duration builds with an
@@ -437,7 +471,11 @@ def cross_resonance(
         tone and lie between whole turns for shaped edges. The ZX term turns
         the two control branches by ±π/4 more per half, so part of the ZZ
         stays. The target tone's peak Rabi rate stays below ``|α|/8``
-        of the target, in the seeds and in the fit. Needs ``echo`` and
+        of the target, in the seeds and in the fit, and the rotary starts
+        keep the target's peak rate from both tones below ``|α|/8`` in both
+        control states. The weak-drive rule of an automatic ``duration``
+        holds for the seed without rotary turns; the rotary starts can drive
+        the control harder, and the fit screens them. Needs ``echo`` and
         ``cancel``.
     name : str, default "ZX90"
         Gate name.
@@ -488,7 +526,14 @@ def cross_resonance(
             rate /= 8
             peak = max(abs(t0), abs(t1))
             upper = rate / peak
-            for turns in _rotary_turns(shape, (rate - abs(ix * cr_amplitude)) * area):
+            # With N turns, the two tones together drive the target at a peak rate N/A ± ZX in the two control
+            # states, so the turns stop where that rate reaches |α|/8. Each turn also moves the target-tone
+            # amplitude by the same step, so more turns than (upper + |a_c|)/step exceed its bound.
+            most = rate * area - 1 / (4 * halves)
+            step = abs(complex(amplitudes(1.0)[1] - cancellation))
+            if step > 0:
+                most = min(most, (upper + cancel_amplitude) / step)
+            for turns in _rotary_turns(shape, most):
                 for sign in (1, -1):
                     cr, cancellation = amplitudes(sign * turns)
                     if abs(cancellation) < upper:

@@ -63,14 +63,16 @@ from quchip.control.drive import BaseDrive
 from quchip.engine import ir
 from quchip.engine.ir import signal_children, signal_window_bounds
 from quchip.results.propagator import solver_levels
+from quchip.utils.jax_utils import concrete_array_module, contains_tracer
 
 _CHARGE_ATOL = 1e-12
 _PULSE_LOCAL_NODES = (ir.Constant, ir.EnvelopeRef, ir.Carrier, ir.Window, ir.Shift, ir.Scale, ir.PolarScale,
                       ir.Add, ir.Multiply, ir.Conjugate, ir.RealPart, ir.ImagPart, ir.SignalPower)
 
 
-def _dense(term_operator: Any) -> np.ndarray:
-    return np.asarray(term_operator.to_dense())
+def _dense(term_operator: Any) -> Any:
+    dense = term_operator.to_dense()
+    return concrete_array_module(dense).asarray(dense)
 
 
 def _charges(matrix: np.ndarray, total: np.ndarray) -> frozenset[int]:
@@ -212,7 +214,10 @@ def _same(before: Any, after: Any) -> bool:
     right, right_tree = jtu.tree_flatten(after)
     # PyTreeDef compares by value at runtime; jax's stubs give mypy no signature for it.
     same_tree = left_tree == right_tree  # type: ignore[operator]
-    return same_tree and all(np.array_equal(np.asarray(a), np.asarray(b)) for a, b in zip(left, right))
+    # A traced leaf has no value while tracing, so it matches only itself.
+    return same_tree and all(
+        a is b if contains_tracer(a) or contains_tracer(b) else np.array_equal(np.asarray(a), np.asarray(b))
+        for a, b in zip(left, right))
 
 
 def _harmonics(signal: Any, probed: Any, phase: Any) -> frozenset[int] | None:
@@ -440,7 +445,7 @@ class GatePropagator:
             angle = offsets.get(piece.frame, 0.0) if piece.frame is not None else 0.0
             if piece.carrier is not None:
                 angle = angle - 2 * np.pi * piece.carrier * start
-            phases = np.exp(1j * angle * total)
+            phases = concrete_array_module(angle).exp(1j * angle * total)
             result = (phases[:, None] * piece.matrix * phases.conj()[None, :]) @ result
             cursor = piece.stop
         if self.duration > cursor:
@@ -454,12 +459,16 @@ class Idle:
     def __init__(self, problem: Any) -> None:
         engine_result = problem.engine_result
         hamiltonian = sum(term.coefficient * _dense(term.operator) for term in engine_result.static_terms)
-        hamiltonian = np.asarray(hamiltonian, dtype=complex)
-        self.frequencies, self.vectors = np.linalg.eigh(0.5 * (hamiltonian + hamiltonian.conj().T))
-        self._cache: dict[float, np.ndarray] = {}
+        # A chip with traced values gives a traced Hamiltonian, which JAX diagonalizes.
+        xp = concrete_array_module(hamiltonian)
+        hamiltonian = xp.asarray(hamiltonian, dtype=complex)
+        self.frequencies, self.vectors = xp.linalg.eigh(0.5 * (hamiltonian + hamiltonian.conj().T))
+        self._xp = xp
+        self._cache: dict[float, Any] = {}
 
-    def __call__(self, interval: float) -> np.ndarray:
+    def __call__(self, interval: float) -> Any:
         key = round(float(interval), 12)
         if key not in self._cache:
-            self._cache[key] = (self.vectors * np.exp(-1j * self.frequencies * key)[None, :]) @ self.vectors.conj().T
+            phases = self._xp.exp(-1j * self.frequencies * key)
+            self._cache[key] = (self.vectors * phases[None, :]) @ self.vectors.conj().T
         return self._cache[key]

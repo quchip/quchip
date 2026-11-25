@@ -31,6 +31,8 @@ from quchip import (
     Square,
     analyze_cr_susceptibility,
 )
+from quchip.control.signal import SignalTransform
+from quchip.declarative.parameters import parameter, setting
 from quchip.gateset import CircuitRun, GateSet, Knob, NativeGate, Seed, cross_resonance, drag_sx
 from quchip.gateset.cache import covariance, split_pieces
 from quchip.gateset.calibration import _Residual, average_fidelity, error_generator
@@ -491,6 +493,19 @@ def test_rotary_seeds_turn_the_target_where_its_zz_with_a_spectator_averages_out
         assert abs(n - round(n)) > 0.05
         assert abs(trapezoid(np.cos(2 * np.pi * n * (running / area - 0.5)), times)) < 1e-6 * 200.0
         assert seed.values["cancel_amplitude"] * max(abs(t0), abs(t1)) < rate
+        assert (n + 1 / 8) / area <= rate * (1 + 1e-6)
+    # The search keeps every turn count whose joint solution keeps the target tone below |α|/8 and the target's
+    # peak rate from both tones, N/A + 1/(8A) in one of the control states, at most |α|/8.
+    from quchip.gateset.builtins import _unit_area
+
+    unit = _unit_area(GaussianEdge(duration=200.0, edge_duration=50.0, sigmas=2.5, amplitude=1.0))
+    response = analyze_cr_susceptibility(chip, "q0", "q1", drive="xy0")
+    coefficients = np.array([[response.ZX_per_amplitude, (t0 - t1) / 2], [response.IX_per_amplitude, (t0 + t1) / 2]])
+    kept = sum(abs(np.linalg.solve(coefficients, [1 / (8 * unit), sign * n / unit])[1]) * max(abs(t0), abs(t1)) < rate
+               and (n + 1 / 8) / unit <= rate
+               for n in _rotary_turns(GaussianEdge(duration=200.0, edge_duration=50.0, sigmas=2.5, amplitude=1.0), 50.0)
+               for sign in (1, -1))
+    assert len(native.seeds) == kept
 
 
 @pytest.mark.unit
@@ -1300,13 +1315,13 @@ def test_standard_takes_the_computational_devices_with_one_charge_line():
     assert gateset.qubits == ("q0", "q1")
 
 
-def cr_pair(delta: float, *, two_level: bool = False, g: float = 0.003) -> Chip:
+def cr_pair(delta: float, *, two_level: bool = False, g: float = 0.003, signal_chain=None) -> Chip:
     """Control 5.0 + delta GHz and target 5.0 GHz, 3-level transmons with α = -330 MHz unless the control is a qubit."""
     control = (Qubit(freq=5.0 + delta, label="c") if two_level
                else DuffingTransmon(freq=5.0 + delta, anharmonicity=-0.33, levels=3, label="c"))
     target = DuffingTransmon(freq=5.0, anharmonicity=-0.33, levels=3, label="t")
     chip = Chip([control, target], couplings=[Capacitive(control, target, g=g)])
-    chip.wire(ChargeDrive(control, label="xc"), ChargeDrive(target, label="xt"))
+    chip.wire(ChargeDrive(control, label="xc"), ChargeDrive(target, label="xt"), signal_chain=signal_chain)
     return chip
 
 
@@ -1350,6 +1365,296 @@ def test_cross_resonance_refuses_a_tone_on_a_control_transition_and_warns_near_a
         warnings.simplefilter("error")
         cross_resonance(cr_pair(0.15), "c", "t", duration=640.0)
 
+
+
+@pytest.mark.unit
+def test_cross_resonance_seeds_take_the_elements_that_the_signal_chain_delivers():
+    """A tone's element sums the lines that the signal chain feeds, ``H_c m_c + H_t m_t`` at the carrier, with the
+    β1 β2 path of chained crosstalk. A weak CR tone turns the target as these elements predict in both control
+    states. SX takes its phase from the delivered element too."""
+    from quchip.control.signal import Crosstalk
+    from quchip.gateset.builtins import _conditional_elements, _cr_plan
+
+    plain = cr_pair(-0.1)
+    plan = _cr_plan(plain, "c", "t", "xc", "xt", echo=True, edge=None, sigmas=2.5, duration=400.0)
+    response = analyze_cr_susceptibility(plain, "c", "t", drive="xc")
+    assert plan.zx == response.ZX_per_amplitude and plan.ix == response.IX_per_amplitude
+    # xc leaks into xt, and xt leaks back into xc, so a tone on xc also returns to xc. A delay τ turns the
+    # carrier by exp(2πifτ).
+    b1, th1, d1, b2, th2, d2 = 0.2, 0.7, 0.13, 0.3, -0.4, 0.07
+    chained = cr_pair(-0.1, signal_chain=[Crosstalk("xc", "xt", beta=b1, theta=th1, delay=d1),
+                                          Crosstalk("xt", "xc", beta=b2, theta=th2, delay=d2)])
+    f = float(chained.freq("t"))
+    h_t = b1 * np.exp(1j * th1 + 2j * np.pi * f * d1)
+    h_c = 1 + h_t * b2 * np.exp(1j * th2 + 2j * np.pi * f * d2)
+    m_c, m_t = (np.array(_conditional_elements(plain, "c", "t", line)) for line in ("xc", "xt"))
+    delivered = np.array(_conditional_elements(chained, "c", "t", "xc"))
+    np.testing.assert_allclose(delivered, h_c * m_c + h_t * m_t, rtol=1e-12)
+
+    def first_order(chip):
+        sequence = QuantumSequence(chip)
+        sequence.schedule("xc", envelope=GaussianEdge(duration=100.0, edge_duration=20.0, sigmas=2.5, amplitude=2e-4),
+                          freq=chip.freq("t"), frame="t")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", AutoChoiceWarning)
+            matrix = np.asarray(sequence.subspace_propagator(["c", "t"], tlist=[0.0, 101.0]).matrix)
+        return np.array([matrix[1, 0], matrix[3, 2]])
+
+    # Both chips have the same Hamiltonian, so the ratio of the target's first-order amplitudes is the ratio of the
+    # elements, in each control state.
+    ratio = first_order(chained) / first_order(plain)
+    np.testing.assert_allclose(ratio, delivered / m_c, rtol=1e-3)
+    conjugated = (np.conj(h_c) * m_c + np.conj(h_t) * m_t) / m_c
+    assert np.all(np.abs(ratio / conjugated - 1) > 1)
+    transfer = chained.control_equipment.tone_transfer("xt", f)
+    elements = chained.drive_matrix_elements("t")
+    expected = sum(complex(transfer[line]) * complex(elements[line]) for line in transfer)
+    phase = drag_sx(chained, "t").sequence.parameters["pulse.0.phase"]
+    assert abs(np.exp(1j * phase) - np.exp(-1j * np.angle(expected))) < 1e-12
+
+
+@pytest.mark.optional_backend
+def test_circuit_angles_trace_through_unitary_and_run_under_jit_and_grad():
+    """jax.jit and jax.grad of an RZ angle match eager values and central differences. Inside jax.jit the gate set
+    solves a gate that it has not cached once, outside the trace, so the compiled unitary holds no solver loop. Gates
+    at once that no traced angle reaches are also solved once, outside the trace, and cached."""
+    jax = pytest.importorskip("jax")
+    pytest.importorskip("dynamiqs")
+    import jax.numpy as jnp
+
+    chip = two_transmons()
+    gateset = GateSet(chip, ["q0", "q1"], backend="dynamiqs")
+    gateset.add(drag_sx(chip, "q0", duration=20.0))
+    gateset.add(drag_sx(chip, "q1", duration=20.0))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        gateset.calibrate(max_nfev=0, progress=False)
+    gateset._entries.clear()
+
+    def circuit(theta):
+        return [("SX", "q0"), ("RZ", "q0", theta), ("SX", "q0")]
+
+    def unitary_population(theta):
+        return jnp.abs(gateset.unitary(circuit(theta)).computational[0, 0]) ** 2
+
+    def run_population(theta):
+        return gateset.run(circuit(theta), dissipation=False).probabilities["00"]
+
+    assert "while" not in str(jax.make_jaxpr(unitary_population)(0.7))
+    assert all(isinstance(piece.matrix, np.ndarray) for piece in gateset._entries[("SX", ("q0",))].pieces)
+    theta, step = 0.7, 1e-5
+    for population in (unitary_population, run_population):
+        value = population(theta)
+        slope = (population(theta + step) - population(theta - step)) / (2 * step)
+        np.testing.assert_allclose(jax.jit(population)(theta), value, atol=1e-10)
+        np.testing.assert_allclose(jax.jit(jax.grad(population))(theta), slope, rtol=1e-6)
+
+    def layered(angle):
+        return [("SX", "q0"), ("SX", "q1"), ("RZ", "q0", angle), ("SX", "q0")]
+
+    gateset._placed.clear()
+    expected = np.asarray(gateset.unitary(layered(theta)).computational)
+    gateset._placed.clear()
+    solves = []
+
+    def layered_population(angle):
+        unitary = gateset.unitary(layered(angle))
+        solves.append(unitary.solves)
+        return jnp.abs(unitary.computational[0, 0]) ** 2
+
+    assert "while" not in str(jax.make_jaxpr(layered_population)(theta))
+    jax.grad(layered_population)(theta)
+    assert solves == [1, 0]
+    np.testing.assert_allclose(jax.jit(lambda angle: gateset.unitary(layered(angle)).computational)(theta), expected,
+                               atol=1e-10)
+
+
+@pytest.mark.unit
+def test_with_params_binds_knobs_and_pulse_values_and_keeps_the_timing():
+    """``parameters`` lists chip paths, knobs and pulse values, and a knob moves its pulse field. A composite keeps its
+    own pulses. Timing bindings, unknown paths and calibrating the copy raise. A carrier binding makes the native
+    solve at each placement, which a binding to the calibrated value shows."""
+    _, gateset = one_qubit_set()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        gateset.calibrate(progress=False)
+    parameters = gateset.parameters
+    assert {"q.freq", "SX[q].amplitude", "SX[q].pulse.0.amplitude", "X[q].pulse.1.amplitude"} <= set(parameters)
+    amplitude = parameters["SX[q].amplitude"]
+    assert parameters["SX[q].pulse.0.amplitude"] == amplitude
+    bound = gateset.with_params({"SX[q].amplitude": 1.1 * amplitude})
+    assert bound.parameters["SX[q].pulse.0.amplitude"] == pytest.approx(1.1 * amplitude)
+    assert bound.parameters["SX[q].amplitude"] == pytest.approx(1.1 * amplitude)
+    assert gateset.parameters["SX[q].amplitude"] == amplitude
+    assert bound.unitary([("SX", "q")]).fidelity() < gateset.unitary([("SX", "q")]).fidelity() - 1e-3
+    assert same_up_to_phase(bound.unitary([("X", "q")]).computational,
+                            gateset.unitary([("X", "q")]).computational) < 1e-12
+    with pytest.raises(KeyError, match="Unknown gate-set parameter paths"):
+        gateset.with_params({"SX[q].nothing": 1.0})
+    with pytest.raises(ValueError, match="sets the schedule's timing"):
+        gateset.with_params({"SX[q].pulse.0.duration": 3.0})
+    with pytest.raises(ValueError, match="cannot calibrate"):
+        bound.calibrate()
+    from quchip.control.signal import Delay
+
+    qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.3, levels=2, label="d")
+    delayed = Chip([qubit])
+    delayed.wire(ChargeDrive(qubit, label="xd"), signal_chain=[Delay("xd", 0.0)])
+    with pytest.raises(ValueError, match="delays pulses in the signal chain"):
+        GateSet(delayed, ["d"]).with_params({"control.0.delta_t": 20.0})
+    carrier = gateset.with_params({"SX[q].pulse.0.freq": parameters["SX[q].pulse.0.freq"]})
+    assert gateset.entry("SX", "q").covariant and not carrier.entry("SX", "q").covariant
+    circuit = [("SX", "q"), ("RZ", "q", 0.3), ("SX", "q")]
+    assert same_up_to_phase(carrier.unitary(circuit).computational, gateset.unitary(circuit).computational) < 1e-8
+
+
+def dynamiqs_pair(g: float = 0.003) -> Chip:
+    """Transmons at 5.0 and 5.2 GHz with α = -330 MHz and the given coupling, on the dynamiqs backend."""
+    q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.33, levels=3, label="q0")
+    q1 = DuffingTransmon(freq=5.2, anharmonicity=-0.33, levels=3, label="q1")
+    chip = Chip([q0, q1], couplings=[Capacitive(q0, q1, g=g, label="J")], backend="dynamiqs")
+    chip.wire(ChargeDrive(q0, label="xy0"), ChargeDrive(q1, label="xy1"))
+    return chip
+
+
+class Lag(SignalTransform, serializable=True):
+    """A delay of one line that the user writes, so with_params() does not know its parameter by name."""
+
+    linear_time_invariant = True
+
+    line: str = setting()
+    lag: float = parameter()
+
+    def __init__(self, line: str, lag: float) -> None:
+        object.__setattr__(self, "line", line)
+        object.__setattr__(self, "lag", lag)
+
+    def apply(self, signals):
+        return {key: signal.shifted(self.lag) if key[0] == self.line else signal for key, signal in signals.items()}
+
+    def referenced_lines(self):
+        return (self.line,)
+
+
+@pytest.mark.unit
+def test_with_params_refuses_chip_values_that_move_a_calibrated_time_window():
+    """A coupling bound from zero keeps the SX pieces. A lag of the user's own transform moves the SX pulse out of
+    its calibrated window, so using the gate raises, alone or at the same time as another gate."""
+    q0 = DuffingTransmon(freq=5.0, anharmonicity=-0.33, levels=3, label="q0")
+    q1 = DuffingTransmon(freq=5.2, anharmonicity=-0.33, levels=3, label="q1")
+    chip = Chip([q0, q1], couplings=[Capacitive(q0, q1, g=0.0, label="J")])
+    chip.wire(ChargeDrive(q0, label="xy0"), ChargeDrive(q1, label="xy1"), signal_chain=[Lag("xy0", 0.0)])
+    gateset = GateSet(chip, ["q0", "q1"])
+    gateset.add(drag_sx(chip, "q0", duration=20.0))
+    gateset.add(drag_sx(chip, "q1", duration=20.0))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        gateset.calibrate(max_nfev=0, progress=False)
+    assert gateset.with_params({"J.g": 0.003}).unitary([("SX", "q0")]).fidelity() > 0.9
+    for circuit in ([("SX", "q0")], [("SX", "q0"), ("SX", "q1")]):
+        with pytest.raises(ValueError, match="time window of the pulse on 'xy0' moves"):
+            gateset.with_params({"control.0.lag": 5.0}).unitary(circuit)
+    with pytest.raises(ValueError, match="time window of the pulse on 'xy0' moves"):
+        gateset.with_params({"control.0.lag": 5.0}).run([("SX", "q0"), ("SX", "q1")])
+
+
+@pytest.mark.optional_backend
+def test_with_params_keeps_the_calibrated_clocks_and_follows_the_dressed_states():
+    """A qubit moved by δ idles against the calibrated clock, 1 - F = (2/3) sin²(πδT), with derivative
+    (2/3) πT sin(2πδT). With g doubled, an idle is diagonal on the new dressed states, and each turns by
+    exp(-2πi (E'_k - E'_00 - e_k) t) against the calibrated clocks e_k = Σ f_q n_q."""
+    jax = pytest.importorskip("jax")
+    pytest.importorskip("dynamiqs")
+    qubit = DuffingTransmon(freq=5.0, anharmonicity=-0.33, levels=3, label="q")
+    single = Chip([qubit], backend="dynamiqs")
+    single.wire(ChargeDrive(qubit, label="xy"))
+    idle = GateSet(single, ["q"], backend="dynamiqs")
+
+    def error(delta):
+        return 1 - idle.with_params({"q.freq": 5.0 + delta}).unitary([("IDLE", "q", 40.0)]).fidelity(np.eye(2))
+
+    delta, time = 0.003, 40.0
+    assert error(delta) == pytest.approx(2 / 3 * np.sin(np.pi * delta * time) ** 2, rel=1e-10)
+    slope = 2 / 3 * np.pi * time * np.sin(2 * np.pi * delta * time)
+    assert jax.grad(error)(delta) == pytest.approx(slope, rel=1e-9)
+    assert jax.jit(jax.grad(error))(delta) == pytest.approx(slope, rel=1e-9)
+
+    chip = dynamiqs_pair()
+    gateset = GateSet(chip, ["q0", "q1"], backend="dynamiqs")
+    changed = chip.with_params({"J.g": 0.006})
+    block = np.asarray(gateset.with_params({"J.g": 0.006}).unitary([("IDLE", "q0", 50.0)]).computational)
+    labels = [(0, 0), (0, 1), (1, 0), (1, 1)]
+    clocks = [n0 * float(chip.freq("q0")) + n1 * float(chip.freq("q1")) for n0, n1 in labels]
+    turns = np.array([float(changed.energy(q0=n0, q1=n1) - changed.energy(q0=0, q1=0)) - clock
+                      for (n0, n1), clock in zip(labels, clocks)])
+    np.testing.assert_allclose(block / block[0, 0], np.diag(np.exp(-2j * np.pi * turns * 50.0)), atol=1e-9)
+
+    # A copy keeps the gate set as it was: a later change of the source chip reaches new copies only.
+    drifted = idle.with_params({"q.freq": 5.003})
+    before = error(delta)
+    qubit.freq = 5.001
+    idle.unitary([("IDLE", "q", time)])
+    assert 1 - drifted.unitary([("IDLE", "q", time)]).fidelity(np.eye(2)) == pytest.approx(before, rel=1e-12)
+    # A new copy at 5.004 GHz idles 3 MHz away from the moved source, so its error is the one above.
+    assert error(0.004) == pytest.approx(before, rel=1e-10)
+    # A traced lag has no number to check the windows with, so with_params() refuses it.
+    lagging = DuffingTransmon(freq=5.0, anharmonicity=-0.33, levels=3, label="p")
+    lagged = Chip([lagging], backend="dynamiqs")
+    lagged.wire(ChargeDrive(lagging, label="xp"), signal_chain=[Lag("xp", 1.0)])
+    lag_set = GateSet(lagged, ["p"], backend="dynamiqs")
+    lag_set.add(drag_sx(lagged, "p", duration=20.0))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        lag_set.calibrate(max_nfev=0, progress=False)
+    for bindings in ({"control.0.lag": "traced"}, {"control.0.lag": 5.0, "p.freq": "traced"}):
+        def bound_error(value, bindings=bindings):
+            values = {path: value if item == "traced" else item for path, item in bindings.items()}
+            return 1 - lag_set.with_params(values).unitary([("SX", "p")]).fidelity()
+
+        with pytest.raises(ValueError, match="cannot check when chip values are traced"):
+            jax.grad(bound_error)(1.0)
+    with pytest.raises(ValueError, match="cannot check when chip values are traced"):
+        jax.grad(lambda f: lag_set.with_params({"control.0.lag": 5.0}).with_params({"p.freq": f}).unitary(
+            [("SX", "p")]).fidelity())(5.0)
+
+
+@pytest.mark.validation
+def test_with_params_gradients_match_central_differences():
+    """jax.grad through with_params of a chip value, a knob and a pulse value of a seeded SX, away from its optimum,
+    matches central differences, and the frequency's difference converges as h²; run() differentiates too."""
+    jax = pytest.importorskip("jax")
+    pytest.importorskip("dynamiqs")
+    chip = dynamiqs_pair()
+    gateset = GateSet(chip, ["q0", "q1"], backend="dynamiqs")
+    gateset.add(drag_sx(chip, "q0", duration=20.0))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        gateset.calibrate(max_nfev=0, progress=False)
+    for path, step in (("q0.freq", 1e-5), ("SX[q0].beta", 1e-4), ("SX[q0].pulse.0.amplitude", 1e-6)):
+        x0 = float(gateset.parameters[path]) + (0.002 if path == "q0.freq" else 0.0)
+
+        def error(x, path=path):
+            return 1 - gateset.with_params({path: x}).unitary([("SX", "q0")]).fidelity()
+
+        slope = float(jax.grad(error)(x0))
+        coarse, fine = (float((error(x0 + h) - error(x0 - h)) / (2 * h)) for h in (step, step / 2))
+        np.testing.assert_allclose(fine, slope, rtol=1e-6)
+        if path == "q0.freq":
+            assert 3.0 < abs(coarse - slope) / abs(fine - slope) < 5.0
+
+    def flipped(frequency):
+        bound = gateset.with_params({"q0.freq": frequency})
+        return bound.run([("SX", "q0"), ("SX", "q0")], dissipation=False).probabilities["10"]
+
+    slope = float(jax.grad(flipped)(5.002))
+    np.testing.assert_allclose((flipped(5.002 + 5e-6) - flipped(5.002 - 5e-6)) / 1e-5, slope, rtol=1e-5)
+
+    # A concrete copy reuses the SX at its second placement; a traced one solves each placement.
+    circuit = [("SX", "q0"), ("RZ", "q0", 0.3), ("SX", "q0")]
+    reused = gateset.with_params({"q0.freq": 5.002}).unitary(circuit)
+    assert reused.solves == 0
+    traced = jax.jit(lambda frequency: gateset.with_params({"q0.freq": frequency}).unitary(circuit).computational)
+    np.testing.assert_allclose(traced(5.002), reused.computational, atol=1e-9)
 
 
 @pytest.mark.unit

@@ -511,7 +511,12 @@ This file records notable user-visible changes to quchip.
   changes in place, with a warning when the choice for the changed chip
   differs. `calibrate()` prints one line
   per native by default, and `CircuitRun.fidelity()` compares a run with the
-  ideal output of the circuit.
+  ideal output of the circuit. On the dynamiqs backend, `unitary()` and
+  `run()` take JAX-traced RZ angles under `jax.grad` and `jax.jit`, and
+  `GateSet.with_params()` evaluates the calibrated gates at changed or traced
+  chip and pulse values, with the paths in `GateSet.parameters`. The seeds of
+  `drag_sx()` and `cross_resonance()` take the drive elements that the
+  signal chain delivers, so line crosstalk enters their amplitudes and phases.
 - `to_qutip_qip(gateset)` returns a qutip-qip processor that compiles
   `QubitCircuit` gates with a gate set and runs them on the chip's
   Hamiltonian with `run_state`, which starts in the dressed `|0...0⟩` or

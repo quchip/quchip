@@ -165,6 +165,48 @@ both qubits before and after it. Add your own with `gateset.rule(name, qubits, e
 `qubits` is the gate's qubit count and `expansion` returns the instructions
 that replace it.
 
+## Gradients and drift
+
+On the dynamiqs backend, `unitary()` and `run()` take JAX-traced RZ angles,
+so `jax.grad` and `jax.jit` reach a circuit's fidelity and probabilities.
+Inside `jax.jit`, the gate set solves each gate once, outside the trace, and
+the compiled function keeps only the algebra of the angles.
+
+`gateset.with_params(bindings)` evaluates the calibrated gates at changed or
+traced chip and pulse values, without calibrating again. `gateset.parameters`
+lists the paths: chip values such as `"q0.freq"`, knobs such as
+`"SX[q0].beta"`, and pulse values such as `"SX[q0].pulse.0.amplitude"`. The
+pulses keep their calibrated carriers and timing, and the frame clocks keep
+the calibrated qubit frequencies, so a drifted qubit shows its error as a Z
+rotation. The dressed states and the idle evolution follow the changed chip.
+
+```python
+import jax
+from quchip.gateset import drag_sx
+
+d0 = DuffingTransmon(freq=5.1, anharmonicity=-0.33, levels=3, label="q0")
+d1 = DuffingTransmon(freq=5.0, anharmonicity=-0.33, levels=3, label="q1")
+pair = Chip([d0, d1], couplings=[Capacitive(d0, d1, g=0.003, label="J")], backend="dynamiqs")
+pair.wire(ChargeDrive(d0, label="xy0"), ChargeDrive(d1, label="xy1"))
+sx_set = GateSet(pair, ["q0", "q1"], backend="dynamiqs")
+sx_set.add(drag_sx(pair, "q0"))
+sx_set.calibrate()
+
+def sx_error(frequency):
+    drifted = sx_set.with_params({"q0.freq": frequency})
+    return 1 - drifted.unitary([("SX", "q0")]).fidelity()
+
+print(jax.grad(sx_error)(5.101))
+```
+
+A binding of a pulse's start time or duration, or of a delay in the signal
+chain, raises, since the timing stays as calibrated. The copy evaluates the
+gate set as it is when `with_params()` runs, so a later change of the gate
+set does not reach it. A composite native, such as the echoed CR, holds its own copy
+of the pulses of its parts, so a binding of a part does not reach it. A
+binding of a pulse carrier, and any traced chip value, makes the gate set
+solve each gate at each placement.
+
 ## Declare your own native
 
 A native is a `QuantumSequence` that starts at time 0, its knobs, and its

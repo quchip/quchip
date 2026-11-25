@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import itertools
 import json
@@ -10,6 +11,7 @@ import warnings
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from math import prod
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -22,6 +24,7 @@ from quchip.gateset.ideals import IDEALS, canonical_name, embed, ideal_unitary, 
 from quchip.gateset.native import NativeGate, bind_pulses
 from quchip.gateset.blocks import computational_states, project_computational
 from quchip.results.propagator import average_fidelity, solver_levels
+from quchip.utils.jax_utils import concrete_array_module, contains_tracer, outside_trace, staging
 from quchip.utils.labeling import resolve_label
 from quchip.utils.stack import user_stacklevel
 from quchip.utils.warning_categories import AutoChoiceWarning
@@ -97,6 +100,16 @@ class _Unresolved(KeyError):
     """No native or rule gives an instruction."""
 
 
+def _value(value: Any) -> Any:
+    """Return a concrete number as a float and keep a traced one, so circuit angles can be traced."""
+    return value if contains_tracer(value) else float(value)
+
+
+def _phase_factor(angle: Any) -> Any:
+    """Return ``exp(iθ)`` for a concrete or traced angle."""
+    return concrete_array_module(angle).exp(1j * angle)
+
+
 @dataclass
 class CircuitUnitary:
     """Propagator of a circuit composed from cached gates.
@@ -142,8 +155,8 @@ class CircuitUnitary:
             Reference unitary in the order of ``qubits``. The default is the
             ideal circuit.
         """
-        target = self.ideal if ideal is None else np.asarray(ideal, dtype=complex)
-        return float(average_fidelity(self.computational, target))
+        target = self.ideal if ideal is None else concrete_array_module(ideal).asarray(ideal, dtype=complex)
+        return _value(average_fidelity(self.computational, target))
 
 
 @dataclass
@@ -193,17 +206,18 @@ class CircuitRun:
                 raise ValueError("This run has no ideal output, since the ideal circuit moves the qubits that the "
                                  "run does not read out of |0>. Pass a target.")
             target = self.ideal
-        state = np.asarray(self.state)
+        xp = concrete_array_module(self.state, target)
+        state = xp.asarray(self.state)
         target = _register_state(target, int(round(np.log2(state.shape[0]))))
         if target.ndim == 1:
             if state.ndim == 1:
-                return float(abs(np.vdot(target, state)) ** 2)
-            return float(np.real(np.vdot(target, state @ target)))
+                return _value(xp.abs(xp.vdot(target, state)) ** 2)
+            return _value(xp.real(xp.vdot(target, state @ target)))
         if state.ndim == 1:
-            return float(np.real(np.vdot(state, target @ state)))
+            return _value(xp.real(xp.vdot(state, target @ state)))
         # Uhlmann fidelity as the squared trace norm of √σ √ρ, with positive semidefinite roots.
-        singular = np.linalg.svd(_psd_root(target) @ _psd_root(state), compute_uv=False)
-        return float(np.sum(singular) ** 2)
+        singular = xp.linalg.svd(_psd_root(target) @ _psd_root(state), compute_uv=False)
+        return _value(xp.sum(singular) ** 2)
 
 
 def _register_state(value: Any, n: int) -> np.ndarray:
@@ -215,7 +229,7 @@ def _register_state(value: Any, n: int) -> np.ndarray:
         vector = np.zeros(2 ** n, dtype=complex)
         vector[int("".join(str(int(b)) for b in value), 2)] = 1.0
         return vector
-    array = np.asarray(value, dtype=complex)
+    array = concrete_array_module(value).asarray(value, dtype=complex)
     return array[:, 0] if array.ndim == 2 and array.shape[1] == 1 else array
 
 
@@ -224,15 +238,17 @@ def _apply_gate(tensor: np.ndarray, matrix: np.ndarray, axes: Sequence[int]) -> 
     if not axes:
         return matrix[0, 0] * tensor
     count = len(axes)
+    xp = concrete_array_module(tensor, matrix)
     gate = matrix.reshape((2,) * (2 * count))
-    moved = np.tensordot(gate, tensor, axes=(list(range(count, 2 * count)), list(axes)))
-    return np.moveaxis(moved, list(range(count)), list(axes))
+    moved = xp.tensordot(gate, tensor, axes=(list(range(count, 2 * count)), list(axes)))
+    return xp.moveaxis(moved, list(range(count)), list(axes))
 
 
 def _psd_root(matrix: np.ndarray) -> np.ndarray:
     """Return the positive semidefinite square root of a Hermitian matrix, with negative roundoff eigenvalues cut."""
-    values, vectors = np.linalg.eigh((matrix + matrix.conj().T) / 2)
-    return (vectors * np.sqrt(np.clip(values, 0.0, None))) @ vectors.conj().T
+    xp = concrete_array_module(matrix)
+    values, vectors = xp.linalg.eigh((matrix + matrix.conj().T) / 2)
+    return (vectors * xp.sqrt(xp.clip(values, 0.0, None))) @ vectors.conj().T
 
 
 
@@ -338,6 +354,14 @@ class GateSet:
         self._fingerprint: str | None = _chip_fingerprint(self.chip)
         self._calibrated_on: dict[tuple[str, tuple[str, ...]], str | None] = {}
         self._stale: dict[tuple[str, tuple[str, ...]], str] = {}
+        # A gate set from with_params() keeps the gate set it came from, which holds the pulse structure and timing.
+        self._source: GateSet | None = None
+        self._traced = False
+        self._traced_chip = False
+        self._carrier_bound: frozenset[tuple[str, tuple[str, ...]]] = frozenset()
+        self._frozen: tuple[Any, GateSet] | None = None
+        self._checked: set[tuple[str, tuple[str, ...]]] = set()
+        self._chip_paths: frozenset[str] = frozenset()
 
     # ------------------------------------------------------------------ setup
 
@@ -462,6 +486,7 @@ class GateSet:
         native : NativeGate
             Gate on gate-set qubits whose template uses the gate set's chip.
         """
+        self._refuse_bound("add natives")
         outside = [label for label in native.qubits if label not in self.qubits]
         if outside:
             raise ValueError(f"{native.name} acts on {outside}, which are not gate-set qubits {list(self.qubits)}.")
@@ -597,15 +622,101 @@ class GateSet:
         cutoff = min(self.cutoff + count - 1, maximum)
         if cutoff not in self._overlap_spaces:
             chip = self.chip if cutoff == maximum else self.chip.with_space(ExcitationCutoff(max_total=cutoff))
-            outer = {tuple(row): i for i, row in enumerate(solver_levels(_static_problem(chip).engine_result))}
-            inner = solver_levels(self._lab_problem().engine_result)
-            embedding = np.zeros((len(outer), len(inner)))
-            embedding[[outer[tuple(row)] for row in inner], np.arange(len(inner))] = 1.0
-            self._overlap_spaces[cutoff] = (chip, embedding)
+            if self._source is not None:
+                # The levels of the space are structure, so the calibrated gate set gives them.
+                embedding = self._source._overlap_space(count, stacklevel + 1)[1]
+                assert embedding is not None
+                self._overlap_spaces[cutoff] = (chip, embedding)
+                return self._overlap_spaces[cutoff]
+
+            def embedding_of() -> np.ndarray:
+                outer = {tuple(row): i for i, row in enumerate(solver_levels(_static_problem(chip).engine_result))}
+                inner = solver_levels(self._lab_problem().engine_result)
+                embedding = np.zeros((len(outer), len(inner)))
+                embedding[[outer[tuple(row)] for row in inner], np.arange(len(inner))] = 1.0
+                return embedding
+
+            self._overlap_spaces[cutoff] = (chip, outside_trace(embedding_of))
             where = "on the full product space" if cutoff == maximum else f"with ExcitationCutoff(max_total={cutoff})"
             warnings.warn(f"{count} gates at once solve {where}: an automatic cutoff rises by one excitation for "
                           f"each gate after the first.", UserWarning, stacklevel=stacklevel)
         return self._overlap_spaces[cutoff]
+
+    @property
+    def _structure(self) -> "GateSet":
+        """The gate set whose calibrated pulses give the pulse structure and timing: itself, or its source."""
+        return self if self._source is None else self._source
+
+    def _eager(self, fn: Callable[..., Any], *args: Any) -> Any:
+        """Compute fixed work outside a JAX trace, or inline on a chip with traced values."""
+        return fn(*args) if self._traced_chip else outside_trace(fn, *args)
+
+    def _refuse_bound(self, action: str) -> None:
+        if self._source is not None:
+            raise ValueError(f"A gate set from with_params() evaluates the calibrated gates at bound values, so it "
+                             f"cannot {action}. Use the gate set it came from.")
+
+    def _snapshot(self) -> "GateSet":
+        """Return a frozen copy of the calibrated state, from which :meth:`with_params` copies take their structure.
+
+        The snapshot holds its own clone of the chip, so a later change of this
+        gate set, in place or by calibration, does not reach the copies made
+        before it. It is reused while this gate set stays the same.
+        """
+        self._sync_chip()
+        token = (self._fingerprint, id(self.solver_chip), tuple(map(id, self._natives.values())),
+                 tuple((key, id(item), item.status) for key, item in self._calibrations.items()))
+        if self._frozen is None or self._frozen[0] != token:
+            frozen = copy.copy(self)
+            frozen.chip = self.chip.with_params({})
+            solver = self.solver_chip
+            frozen._solver_chip = frozen.chip if solver is self.chip else frozen.chip.with_space(solver.space)
+            frozen._calibrations = {}
+            for key, item in self._calibrations.items():
+                frozen._calibrations[key] = copy.copy(item)
+                frozen._calibrations[key].sequence = item.sequence._copy_with_chip(frozen.chip)
+            frozen._natives = dict(self._natives)
+            frozen._entries, frozen._placed, frozen._delivered = dict(self._entries), dict(self._placed), dict(
+                self._delivered)
+            frozen._overlap_spaces = {}
+            frozen._calibrating, frozen._used, frozen._settings = [], [], []
+            frozen._user_rules = {name: list(rules) for name, rules in self._user_rules.items()}
+            frozen._frozen, frozen._checked = None, set()
+            self._frozen = (token, frozen)
+        return self._frozen[1]
+
+    def _breaks_structure(self, key: tuple[str, tuple[str, ...]], chip: "Chip", model: str) -> str:
+        """Return how a solver chip with other values breaks a native's calibrated pieces, or ``""``.
+
+        The pieces must keep their time windows, and a piece that the gate set
+        reuses at other placements must stay reusable with the chip's terms,
+        whose reason against reuse ``model`` gives.
+        """
+        template = list(self._on_solver(self._calibrations[key].sequence).scheduled_ops)
+        delivered = [self._delivered_of(op) for op in template]
+        records = [lower_pulse(chip, op) for op in template]
+        for op, record, own in zip(template, delivered, records):
+            if own.support != record.support and not (own.support is not None and record.support is not None
+                                                      and np.allclose(own.support, record.support, rtol=0, atol=1e-9)):
+                return f"the time window of the pulse on {op.drive_label!r} moves"
+        for _, _, indices in split_pieces([item.support for item in delivered]):
+            covariant, _, carrier, frame = covariance(template, delivered, indices, self._model())
+            after = covariance(template, records, indices, model)
+            if covariant and (not after[0] or (after[2], after[3]) != (carrier, frame)):
+                return after[1] or "a piece that the gate set reuses changes its carrier or frame"
+        return ""
+
+    def _check_bound(self, key: tuple[str, tuple[str, ...]]) -> None:
+        """Raise when concrete bound chip values break the calibrated pieces of a native, once per native."""
+        structure = self._structure
+        if self._source is None or self.chip is structure.chip or self._traced_chip or key in self._checked:
+            return
+        model = outside_trace(lambda: model_check(self._lab_problem()) or signal_check(self.chip))
+        change = outside_trace(structure._breaks_structure, key, self.solver_chip, model)
+        if change:
+            raise ValueError(f"With the bound chip values, {key[0]} on {key[1]} cannot keep its calibrated pieces: "
+                             f"{change}. Change the chip and calibrate again.")
+        self._checked.add(key)
 
     def _on_solver(self, sequence: "QuantumSequence", chip: "Chip | None" = None) -> "QuantumSequence":
         target = self.solver_chip if chip is None else chip
@@ -613,7 +724,7 @@ class GateSet:
 
     def _lab_problem(self) -> Any:
         if self._lab is None:
-            lab = _static_problem(self.solver_chip)
+            lab = self._eager(_static_problem, self.solver_chip)
             if lab.engine_result.dynamic_terms:
                 raise ValueError("The chip has time-dependent terms of its own; gate sets need a chip whose "
                                  "Hamiltonian changes only through scheduled pulses.")
@@ -623,7 +734,7 @@ class GateSet:
     def _model(self) -> str:
         """Why the chip's own terms break placement reuse, or ``""``."""
         if self._model_reason is None:
-            self._model_reason = model_check(self._lab_problem()) or signal_check(self.chip)
+            self._model_reason = outside_trace(lambda: model_check(self._lab_problem()) or signal_check(self.chip))
         return self._model_reason
 
     def _delivered_of(self, op: Any) -> Delivered:
@@ -635,15 +746,23 @@ class GateSet:
                number(getattr(op, "freq", None)), number(getattr(op, "detuning", None)), getattr(op, "frame", None),
                number(op.start_time), type(op.envelope).__name__, number(op.envelope.duration))
         if key not in self._delivered:
-            self._lab_problem()
-            self._delivered[key] = lower_pulse(self.solver_chip, op)
+            if contains_tracer(getattr(op, "phase_offset", None)):
+                # The record holds the pulse's structure, which does not depend on its phase, so zero stands in.
+                op = replace(op, phase_offset=0.0)
+            self._delivered[key] = outside_trace(self._lower, op)
         return self._delivered[key]
+
+    def _lower(self, op: Any) -> Delivered:
+        self._lab_problem()
+        return lower_pulse(self.solver_chip, op)
 
     def _window(self, key: tuple[str, tuple[str, ...]], placed: Sequence[Any]) -> tuple[float, float, list[Any]]:
         """Return a placed gate's start and end, with its end at its last delivered field, and its template ops."""
-        template = list(self._on_solver(self._calibrations[key].sequence).scheduled_ops)
+        self._check_bound(key)
+        structure = self._structure
+        template = list(structure._on_solver(structure._calibrations[key].sequence).scheduled_ops)
         start = float(placed[0].start_time) - float(template[0].start_time)
-        return start, start + self._span(template, self._natives[key].duration), template
+        return start, start + structure._span(template, structure._natives[key].duration), template
 
     def _span(self, ops: Sequence[Any], duration: float, start: float = 0.0) -> float:
         """Return the end of ``[start, start + duration]`` extended to the last delivered field."""
@@ -660,10 +779,18 @@ class GateSet:
 
     def _states(self, qubits: Sequence[str], background: Mapping[str, int] | None = None,
                 chip: "Chip | None" = None) -> tuple[np.ndarray, np.ndarray]:
-        problem = self._lab_problem() if chip is None else _static_problem(chip)
-        levels = solver_levels(problem.engine_result)
-        columns, energies = computational_states(problem, tuple(qubits), levels, background)
-        return np.asarray(columns), np.asarray(energies)
+        def states() -> tuple[Any, Any]:
+            problem = self._lab_problem() if chip is None else _static_problem(chip)
+            levels = solver_levels(problem.engine_result)
+            columns, energies = computational_states(problem, tuple(qubits), levels, background)
+            xp = concrete_array_module(columns, energies)
+            return xp.asarray(columns), xp.asarray(energies)
+
+        columns, energies = self._eager(states)
+        if self._source is not None:
+            # The frame clocks keep the calibrated chip's dressed frequencies.
+            energies = self._source._states(qubits, background)[1]
+        return columns, energies
 
     def _block(self, sequence: "QuantumSequence", qubits: Sequence[str], duration: float, *,
                background: Mapping[str, int] | None = None, chip: "Chip | None" = None) -> tuple[Any, float]:
@@ -683,6 +810,155 @@ class GateSet:
         correction = self._frame_correction(tuple(qubits), self._offsets(sequence))
         block = replace(block, matrix=correction[:, None] * np.asarray(block.matrix))
         return block, _defect(propagator)
+
+    # ------------------------------------------------------------- rebinding
+
+    @property
+    def parameters(self) -> Mapping[str, Any]:
+        """Values that :meth:`with_params` can bind, by path.
+
+        Chip paths are those of :attr:`~quchip.chip.chip.Chip.parameters`,
+        such as ``"q0.freq"``. ``"NAME[q0,q1].knob"`` names a calibrated knob
+        of a native, such as ``"ZX90[q0,q1].cr_amplitude"``, and
+        ``"NAME[q0,q1].pulse.<n>.<field>"`` a value of the n-th pulse of its
+        calibrated sequence, as in
+        :attr:`~quchip.control.sequence.QuantumSequence.parameters`, such as
+        ``"SX[q0].pulse.0.beta"``.
+        """
+        values = dict(self.chip.parameters)
+        for key, calibration in self._calibrations.items():
+            prefix = _native_path(key)
+            values.update({f"{prefix}.{name}": knob.value for name, knob in calibration.knobs.items()})
+            values.update({f"{prefix}.{path}": value for path, value in calibration.sequence.parameters.items()
+                           if path.startswith("pulse.")})
+        return MappingProxyType(values)
+
+    def with_params(self, bindings: Mapping[str, Any]) -> "GateSet":
+        """Return a gate set that evaluates the calibrated gates at changed chip and pulse values.
+
+        Nothing is calibrated again. Each native keeps its calibrated pulses,
+        free-Z phases and timing, except the values that ``bindings`` set.
+        The values can be JAX tracers, so ``jax.grad`` of a gate or circuit
+        fidelity reaches chip and pulse values. The dressed states and the
+        idle evolution follow the new chip, while the frame clocks keep the
+        calibrated chip's dressed frequencies, so a drifted qubit shows its
+        error as a Z rotation. The structure stays as calibrated: the
+        excitation cutoff, the spectators, the pulses' time windows, and which
+        gates the gate set reuses at other start times. A native whose pulse
+        carrier a binding moves, and every native when chip values are traced,
+        is solved at each placement. The copy evaluates the gate set as it is
+        when ``with_params`` runs, so a later change of this gate set does not
+        reach it.
+
+        Parameters
+        ----------
+        bindings : mapping of str to float or array
+            Paths of :attr:`parameters` and their values. A knob moves its
+            tied pulse fields as in calibration. A composite native, such as
+            an echoed CR, holds its own copy of the pulses of its parts, so a
+            binding of a part does not reach it.
+
+        Returns
+        -------
+        GateSet
+            A gate set that runs ``unitary``, ``run`` and ``entry`` but does
+            not calibrate or add natives.
+
+        Raises
+        ------
+        KeyError
+            If a path is not in :attr:`parameters`.
+        ValueError
+            If a binding moves a pulse's start time or duration, or a delay of
+            the signal chain, which set the schedule's timing. If two bindings
+            set the same pulse field. If concrete bound chip values move a
+            pulse's time window or stop the reuse of a gate at other
+            placements, which raises when the gate is first used. If chip
+            values are traced and a chip value bound on this copy or an earlier
+            one can move the delivered fields in time: a parameter of a signal
+            transform other than the factor of a ``Gain`` or the amplitude and
+            phase of a crosstalk, or of a drive that builds its own signal.
+        """
+        origin = self if self._source is not None else self._snapshot()
+        available = origin.parameters
+        unknown = sorted(set(bindings) - set(available))
+        if unknown:
+            raise KeyError(f"Unknown gate-set parameter paths {unknown}; gateset.parameters lists the paths.")
+        targets = origin._structure.chip._parameter_targets()
+        chip_bindings = {path: value for path, value in bindings.items() if path in targets}
+        for path in chip_bindings:
+            kind, _, name, _ = targets[path]
+            if kind == "control" and name in ("delta_t", "delay"):
+                raise ValueError(f"{path} delays pulses in the signal chain, which sets the gates' timing, and "
+                                 "with_params() keeps the calibrated timing. Change the chip and calibrate again.")
+        traced_chip = origin._traced_chip or contains_tracer(list(chip_bindings.values()))
+        bound_paths = origin._chip_paths | frozenset(chip_bindings)
+        if traced_chip:
+            # A traced chip skips the check of the windows at solve time, so every bound chip value, also a concrete
+            # or an inherited one, must keep them by structure.
+            for path in sorted(bound_paths):
+                kind, index, name, _ = targets[path]
+                if not _keeps_windows(origin._structure.chip, kind, index, name):
+                    raise ValueError(f"{path} can move the fields that pulses deliver in time, which with_params() "
+                                     "cannot check when chip values are traced. Bind every chip value concretely, "
+                                     f"or leave {path} as calibrated.")
+        chip_paths = set(chip_bindings)
+        pulses: dict[tuple[str, tuple[str, ...]], dict[str, Any]] = {}
+        knobs: dict[tuple[str, tuple[str, ...]], dict[str, Any]] = {}
+        for path, value in bindings.items():
+            if path in chip_paths:
+                continue
+            key, field_path = _parse_native_path(path)
+            calibration = origin._calibrations[key]
+            if field_path in calibration.knobs:
+                resolved = {knob.name: knob for knob in origin._natives[key].resolved_knobs()}[field_path]
+                updates = resolved.bindings(value)
+                knobs.setdefault(key, {})[field_path] = value
+            else:
+                updates = {field_path: value}
+            for target in updates:
+                if target.split(".", 2)[2] in ("start_time", "duration"):
+                    raise ValueError(f"{path} moves {target}, which sets the schedule's timing, and with_params() "
+                                     "keeps the calibrated timing.")
+            repeated = sorted(pulses.setdefault(key, {}).keys() & updates.keys())
+            if repeated:
+                raise ValueError(f"Two bindings set {repeated} of {_native_path(key)}.")
+            pulses[key].update(updates)
+        carriers = {key for key, updates in pulses.items()
+                    if any(target.split(".", 2)[2] in ("freq", "detuning") for target in updates)}
+
+        bound = copy.copy(origin)
+        bound._source = origin._structure
+        bound._traced = origin._traced or contains_tracer(list(bindings.values()))
+        bound._traced_chip = traced_chip
+        bound._chip_paths = bound_paths
+        bound._carrier_bound = origin._carrier_bound | carriers
+        bound._frozen, bound._checked = None, set()
+        if chip_bindings:
+            bound.chip = origin.chip.with_params(chip_bindings)
+            solver = origin.solver_chip
+            bound._solver_chip = bound.chip if solver is origin.chip else bound.chip.with_space(solver.space)
+            bound._lab, bound._idle = None, None
+            bound._entries = {}
+        else:
+            bound._entries = {key: entry for key, entry in origin._entries.items() if key not in pulses}
+        bound._calibrations = {}
+        for key, calibration in origin._calibrations.items():
+            sequence = calibration.sequence
+            if bound.chip is not origin.chip:
+                sequence = sequence._copy_with_chip(bound.chip)
+            if key in pulses:
+                sequence = bind_pulses(sequence, pulses[key])
+            if sequence is not calibration.sequence:
+                calibration = copy.copy(calibration)
+                calibration.sequence = sequence
+                calibration.knobs = {**calibration.knobs, **{name: replace(calibration.knobs[name], value=value)
+                                                              for name, value in knobs.get(key, {}).items()}}
+            bound._calibrations[key] = calibration
+        bound._placed, bound._delivered, bound._overlap_spaces = {}, {}, {}
+        bound._calibrating, bound._used, bound._settings = [], [], []
+        bound._user_rules = {name: list(rules) for name, rules in origin._user_rules.items()}
+        return bound
 
     # ------------------------------------------------------------- calibration
 
@@ -728,6 +1004,7 @@ class GateSet:
             Calibration reports by ``(name, qubits)``. A ``UserWarning`` names
             each native whose status is not ``"ok"``.
         """
+        self._refuse_bound("calibrate")
         selected = keys = self._select(selection)
         self._sync_chip()
         self._previous = {key: ({name: knob.value for name, knob in calibration.knobs.items()},
@@ -779,6 +1056,9 @@ class GateSet:
             cycle = " -> ".join(f"{name}{qubits}" for name, qubits in [*self._calibrating, key])
             raise RecursionError(f"Composite natives form a cycle: {cycle}.")
         native = self._natives[key]
+        if staging() or (native.sequence is not None and contains_tracer(dict(native.sequence.parameters))):
+            raise ValueError(f"{native.name} on {native.qubits} needs calibration, which fits its knobs with SciPy on "
+                             "concrete values. Calibrate outside jax.jit and jax.grad, with concrete pulse values.")
         self._calibrating.append(key)
         self._settings.append((max_nfev, explore, target, progress))
         try:
@@ -1073,28 +1353,66 @@ class GateSet:
 
     def _idle_of(self) -> Idle:
         if self._idle is None:
-            self._idle = Idle(self._lab_problem())
+            self._idle = self._eager(Idle, self._lab_problem())
         return self._idle
 
-    def _entry(self, key: tuple[str, tuple[str, ...]]) -> GatePropagator:
-        """Return the cached propagator of a calibrated native."""
-        if key not in self._entries:
-            calibration = self._calibrations[key]
-            native = self._natives[key]
-            sequence = self._on_solver(calibration.sequence)
-            ops = list(sequence.scheduled_ops)
-            duration = self._span(ops, native.duration)
-            delivered = [self._delivered_of(op) for op in ops]
-            pieces = []
-            defect = 0.0
-            for start, stop, indices in split_pieces([item.support for item in delivered]):
-                covariant, reason, carrier, frame = covariance(ops, delivered, indices, self._model())
-                propagator = sequence.propagator(tlist=[start, stop], frame=self.frame, options=self.options,
-                                                 dissipation=False, backend=self.backend)
+    def _entry(self, key: tuple[str, tuple[str, ...]],
+               staged: dict[tuple[str, tuple[str, ...]], GatePropagator] | None = None) -> GatePropagator:
+        """Return the propagator of a calibrated native, cached unless it is traced.
+
+        Fixed pulses are solved once, also inside ``jax.jit``. A propagator of
+        traced pulses stays out of the cache, and ``staged`` keeps it for the
+        rest of one call.
+        """
+        if key in self._entries:
+            return self._entries[key]
+        if staged is not None and key in staged:
+            return staged[key]
+        if contains_tracer(dict(self._calibrations[key].sequence.parameters)):
+            entry, traced = self._gate_propagator(key)
+        else:
+            entry, traced = outside_trace(self._gate_propagator, key)
+        if traced:
+            if staged is not None:
+                staged[key] = entry
+            return entry
+        self._entries[key] = entry
+        return entry
+
+    def _gate_propagator(self, key: tuple[str, tuple[str, ...]]) -> tuple[GatePropagator, bool]:
+        """Return the piecewise propagator of a calibrated native, and whether it is traced.
+
+        The pieces and their reuse come from the pulse structure of the calibrated gate set, and the solves from
+        this gate set's pulses and chip.
+        """
+        structure = self._structure
+        template = list(structure._on_solver(structure._calibrations[key].sequence).scheduled_ops)
+        calibration = self._calibrations[key]
+        native = self._natives[key]
+        sequence = self._on_solver(calibration.sequence)
+        duration = structure._span(template, native.duration)
+        delivered = [structure._delivered_of(op) for op in template]
+        self._check_bound(key)
+        pieces = []
+        defect = 0.0
+        traced = False
+        for start, stop, indices in split_pieces([item.support for item in delivered]):
+            covariant, reason, carrier, frame = covariance(template, delivered, indices, structure._model())
+            if key in self._carrier_bound:
+                covariant, reason = False, "a with_params() binding moves the carrier of one of its pulses"
+            elif self._traced_chip:
+                covariant, reason = False, "with_params() traces chip values, and reuse cannot be checked then"
+            propagator = sequence.propagator(tlist=[start, stop], frame=self.frame, options=self.options,
+                                             dissipation=False, backend=self.backend)
+            matrix = propagator.matrix
+            if contains_tracer(matrix):
+                # A traced propagator has no unitarity defect to report.
+                traced, defect = True, float("nan")
+            else:
+                matrix = np.asarray(matrix)
                 defect = max(defect, _defect(propagator))
-                pieces.append(Piece(start, stop, carrier, frame, covariant, reason, np.asarray(propagator.matrix)))
-            self._entries[key] = GatePropagator(duration, pieces, defect)
-        return self._entries[key]
+            pieces.append(Piece(start, stop, carrier, frame, covariant, reason, matrix))
+        return GatePropagator(duration, pieces, defect), traced
 
     def entry(self, name: str, qubits: Any) -> GatePropagator:
         """Return the cached propagator of a calibrated native.
@@ -1134,9 +1452,9 @@ class GateSet:
         if isinstance(qubits, (str, int)) or not isinstance(qubits, Iterable):
             qubits = (qubits,)
         labels = tuple(q if isinstance(q, int) else resolve_label(q) for q in qubits)
-        if isinstance(params, (int, float, np.floating, np.integer)):
+        if isinstance(params, (int, float, np.floating, np.integer)) or getattr(params, "ndim", None) == 0:
             params = (params,)
-        return name, labels, tuple(float(p) for p in params)
+        return name, labels, tuple(_value(p) for p in params)
 
     def _expand(self, circuit: Iterable[Any], depth: int = 0,
                 stack: tuple[tuple[str, tuple[str, ...]], ...] = ()) -> list[tuple[Any, ...]]:
@@ -1157,6 +1475,8 @@ class GateSet:
             if name == "RZ":
                 out.append(("RZ", qubits[0], params[0]))
             elif name == "IDLE":
+                if contains_tracer(params[0]):
+                    raise ValueError("An IDLE duration sets the schedule's timing, so it cannot be traced.")
                 out.extend(("IDLE", q, params[0]) for q in qubits)
             elif name == "GLOBALPHASE":
                 out.append(("GLOBALPHASE", params[0] if params else 0.0))
@@ -1204,12 +1524,21 @@ class GateSet:
         """
         return self._compile(self._circuit(circuit), policy)[0]
 
-    def _compile(self, circuit: Iterable[Any], policy: str) -> tuple[Any, list[tuple[Any, int, int]], float]:
+    def _compile(self, circuit: Iterable[Any], policy: str,
+                 concrete: bool = False) -> tuple[Any, list[tuple[Any, int, int]], float]:
+        """Return a circuit's schedule, its native placements, and its global phase.
+
+        ``concrete=True`` sets traced RZ angles to zero after the expansion,
+        so the schedule has the same placements and holds no traced value.
+        """
         from quchip.control.sequence import QuantumSequence, _PulseEntry
 
         if policy not in ("asap", "serial"):
             raise ValueError(f"policy must be 'asap' or 'serial'; got {policy!r}.")
         items = self._expand(circuit)
+        if concrete:
+            items = [(item[0], item[1], 0.0) if item[0] == "RZ" and contains_tracer(item[2]) else item
+                     for item in items]
         if not self._calibrating:
             self._sync_chip()
             self._seed_missing(item[1] for item in items if item[0] == "native")
@@ -1265,6 +1594,9 @@ class GateSet:
 
     def _sync_chip(self) -> None:
         """Follow an in-place change of the chip: reset what the gate set derived from it, and mark older gates."""
+        if self._source is not None:
+            # A gate set from with_params() holds its own chip copy and evaluates it as bound.
+            return
         fingerprint = _chip_fingerprint(self.chip)
         if fingerprint == self._fingerprint:
             return
@@ -1306,7 +1638,7 @@ class GateSet:
         offsets = dict.fromkeys(self.qubits, 0.0)
         for entry in sequence._entries:
             if isinstance(entry, _FrameShiftEntry):
-                offsets[entry.device_label] = offsets.get(entry.device_label, 0.0) + float(entry.angle)
+                offsets[entry.device_label] = offsets.get(entry.device_label, 0.0) + _value(entry.angle)
         return offsets
 
     def ideal(self, circuit: Iterable[Any], *, qubits: Sequence[Any] | None = None) -> np.ndarray:
@@ -1331,7 +1663,7 @@ class GateSet:
         """Return the ideal of an instruction as gates on positions in ``order``; a global phase has none."""
         name, qubits, params = self._normalize(instruction)
         if name == "GLOBALPHASE":
-            return [(np.array([[np.exp(1j * (params[0] if params else 0.0))]]), [])]
+            return [(_phase_factor(params[0] if params else 0.0) * np.ones((1, 1)), [])]
         if name == "IDLE":
             return []
         outside = [q for q in qubits if q not in order]
@@ -1381,6 +1713,25 @@ class GateSet:
         ops = list(solver_sequence.scheduled_ops)
         total = solver_levels(self._lab_problem().engine_result).sum(axis=1)
         idle = self._idle_of()
+        staged: dict[tuple[str, tuple[str, ...]], GatePropagator] = {}
+        # A schedule without traced phases is fixed, so its solves run once, also inside jax.jit, and are cached.
+        fixed = not self._traced and not contains_tracer([getattr(op, "phase_offset", None) for op in ops])
+
+        def solve(target: "QuantumSequence", tlist: list[float], **kwargs: Any) -> Any:
+            def matrix() -> Any:
+                return target.propagator(tlist=tlist, frame=self.frame, options=self.options, dissipation=False,
+                                         backend=self.backend, **kwargs).matrix
+
+            return outside_trace(matrix) if fixed else matrix()
+
+        shadow: list[Any] = []
+
+        def concrete_sequence() -> Any:
+            """The schedule with its traced RZ angles at zero: the same pulses where no traced angle reaches them."""
+            if not shadow:
+                shadow.append(self._on_solver(self._compile(circuit, policy, concrete=True)[0]))
+            return shadow[0]
+
         instances = []
         for key, first, count in placements:
             if not count:
@@ -1390,7 +1741,7 @@ class GateSet:
             offsets: dict[str, float] = {}
             for op, reference in zip(placed, template):
                 if op.frame is not None:
-                    offsets[op.frame] = float(op.phase_offset) - float(reference.phase_offset)
+                    offsets[op.frame] = _value(op.phase_offset) - _value(reference.phase_offset)
             instances.append((start, stop, key, offsets))
         instances.sort(key=lambda item: item[0])
         segments: list[list[Any]] = []
@@ -1405,10 +1756,8 @@ class GateSet:
             # Gates at once need more excitations than the cached gates. Composed on the K space, each window would
             # drop the population above K at its end, and the dropped amplitudes add up over later windows.
             columns, energies = self._states(order, chip=chip)
-            propagator = self._on_solver(sequence, chip).propagator(
-                tlist=[0.0, duration], columns=np.hstack([embedding, columns]), frame=self.frame,
-                options=self.options, dissipation=False, backend=self.backend)
-            matrix = np.asarray(propagator.matrix)
+            matrix = solve(self._on_solver(sequence, chip), [0.0, duration], columns=np.hstack([embedding, columns]))
+            matrix = concrete_array_module(matrix).asarray(matrix)
             result = embedding.T @ matrix[:, :embedding.shape[1]]
             block = project_computational(matrix[:, embedding.shape[1]:], columns, energies, 0.0, duration, order)
             solves = 1
@@ -1421,20 +1770,32 @@ class GateSet:
                 stop = max(item[1] for item in segment)
                 if start > cursor:
                     result = idle(start - cursor) @ result
-                entry = self._entry(segment[0][2]) if len(segment) == 1 else None
+                # Traced chip values make every gate solve at its placement, so its entry would go unused.
+                entry = self._entry(segment[0][2], staged) if len(segment) == 1 and not self._traced_chip else None
                 if entry is not None and entry.covariant:
                     matrix = entry.placed(start, segment[0][3], total, idle)
+                elif contains_tracer([item[3] for item in segment]):
+                    # A traced angle keys no cache, so each trace solves this placement again.
+                    matrix = solver_sequence.propagator(tlist=[start, stop], frame=self.frame, options=self.options,
+                                                        dissipation=False, backend=self.backend).matrix
+                    solves += 1
                 else:
                     cache_key = tuple((round(item[0], 9), item[2], tuple(sorted((k, round(v, 12))
                                                                                  for k, v in item[3].items())))
                                       for item in segment)
-                    if cache_key not in self._placed:
-                        propagator = solver_sequence.propagator(tlist=[start, stop], frame=self.frame,
-                                                                options=self.options, dissipation=False,
-                                                                backend=self.backend)
-                        self._placed[cache_key] = np.asarray(propagator.matrix)
+                    matrix = self._placed.get(cache_key)
+                    if matrix is None:
+                        if fixed or self._traced:
+                            matrix = solve(solver_sequence, [start, stop])
+                        else:
+                            # Only RZ angles are traced, and none reaches these gates, so the schedule with the
+                            # angles at zero gives their propagator, solved once and cached.
+                            matrix = outside_trace(lambda: concrete_sequence().propagator(
+                                tlist=[start, stop], frame=self.frame, options=self.options, dissipation=False,
+                                backend=self.backend).matrix)
                         solves += 1
-                    matrix = self._placed[cache_key]
+                        if not contains_tracer(matrix):
+                            matrix = self._placed[cache_key] = np.asarray(matrix)
                 result = matrix @ result
                 cursor = stop
             if duration > cursor:
@@ -1442,18 +1803,20 @@ class GateSet:
             columns, energies = self._states(order)
             block = project_computational(result @ columns, columns, energies, 0.0, duration, order)
         frame_offsets = self._offsets(sequence)
-        correction = self._frame_correction(order, frame_offsets) * np.exp(1j * global_phase)
-        return CircuitUnitary(full=result, computational=correction[:, None] * np.asarray(block.matrix),
-                              leakage=np.asarray(block.leakage), frame_offsets=frame_offsets, duration=duration,
+        correction = self._frame_correction(order, frame_offsets) * _phase_factor(global_phase)
+        xp = concrete_array_module(block.matrix, correction)
+        return CircuitUnitary(full=result, computational=correction[:, None] * xp.asarray(block.matrix),
+                              leakage=xp.asarray(block.leakage), frame_offsets=frame_offsets, duration=duration,
                               qubits=order, ideal=self.ideal(circuit, qubits=order), solves=solves)
 
     @staticmethod
     def _frame_correction(order: Sequence[str], offsets: Mapping[str, float]) -> np.ndarray:
         """Diagonal of ``Π_q RZ_q(-F_q)`` on computational states, first qubit most significant."""
-        diagonal = np.ones(1, dtype=complex)
+        xp = concrete_array_module(offsets)
+        diagonal = xp.ones(1, dtype=complex)
         for qubit in order:
             angle = -offsets.get(qubit, 0.0)
-            diagonal = np.kron(diagonal, np.array([np.exp(-0.5j * angle), np.exp(0.5j * angle)]))
+            diagonal = xp.kron(diagonal, xp.array([xp.exp(-0.5j * angle), xp.exp(0.5j * angle)]))
         return diagonal
 
     def initial_state(self, bits: Any) -> Any:
@@ -1523,33 +1886,36 @@ class GateSet:
             else:
                 step = mapping @ columns
                 state = step @ initial @ step.conj().T
-            populations = np.abs(state) ** 2 if initial.ndim == 1 else np.real(np.diag(state))
+            xp = concrete_array_module(state)
+            populations = xp.abs(state) ** 2 if initial.ndim == 1 else xp.real(xp.diag(state))
             return CircuitRun(state=state, probabilities=self._probabilities(populations, order),
-                              leakage=float(1.0 - populations.sum()), ideal=ideal)
+                              leakage=_value(1.0 - populations.sum()), ideal=ideal)
         open_system = dissipation and bool(_static_problem(solver_sequence._chip, dissipation=True)
                                            .engine_result.collapse_terms)
         if initial.ndim == 1 and not open_system:
             propagator = solver_sequence.propagator(tlist=[0.0, duration], columns=columns @ initial[:, None],
                                                     frame=self.frame, options=self.options, dissipation=False,
                                                     backend=self.backend)
-            state = mapping @ np.asarray(propagator.matrix)[:, 0]
-            populations = np.abs(state) ** 2
+            xp = concrete_array_module(propagator.matrix, mapping)
+            state = mapping @ xp.asarray(propagator.matrix)[:, 0]
+            populations = xp.abs(state) ** 2
             return CircuitRun(state=state, probabilities=self._probabilities(populations, order),
-                              leakage=float(1.0 - populations.sum()), result=propagator, ideal=ideal)
+                              leakage=_value(1.0 - populations.sum()), result=propagator, ideal=ideal)
         rho = initial if initial.ndim == 2 else np.outer(initial, initial.conj())
         superoperator = solver_sequence.propagator(tlist=[0.0, duration], frame=self.frame, options=self.options,
                                                    dissipation=dissipation, backend=self.backend)
         start = columns @ rho @ columns.conj().T
+        xp = concrete_array_module(superoperator.matrix, mapping)
         if superoperator.kind == "superoperator":
             d = start.shape[0]
-            final = (np.asarray(superoperator.matrix) @ start.reshape(-1, order="F")).reshape(d, d, order="F")
+            final = (xp.asarray(superoperator.matrix) @ start.reshape(-1, order="F")).reshape(d, d, order="F")
         else:
-            unitary = np.asarray(superoperator.matrix)
+            unitary = xp.asarray(superoperator.matrix)
             final = unitary @ start @ unitary.conj().T
         state = mapping @ final @ mapping.conj().T
-        populations = np.real(np.diag(state))
+        populations = xp.real(xp.diag(state))
         return CircuitRun(state=state, probabilities=self._probabilities(populations, order),
-                          leakage=float(1.0 - populations.sum()), result=superoperator, ideal=ideal)
+                          leakage=_value(1.0 - populations.sum()), result=superoperator, ideal=ideal)
 
     def _ideal_output(self, circuit: list[Any], order: Sequence[str], initial: np.ndarray) -> np.ndarray | None:
         """Return the normalized ideal output on the qubits in ``order``, or None when it has no weight.
@@ -1575,9 +1941,13 @@ class GateSet:
                 tensor = _apply_gate(tensor, matrix, positions)
             return tensor.reshape(len(vector), -1)[:, 0]
 
+        xp = concrete_array_module([matrix for matrix, _ in parts])
         if initial.ndim == 1:
             kept = evolve(initial)
-            weight = float(np.real(np.vdot(kept, kept)))
+            weight = xp.real(xp.vdot(kept, kept))
+            if xp is not np:
+                # A traced weight has no value to test, so the kept part is normalized as it stands.
+                return kept / xp.sqrt(weight)
             return kept / np.sqrt(weight) if weight > 1e-12 else None
         # A density matrix evolves as the sum of its eigenvectors, weighted by their populations. Every positive
         # population counts, since the kept part can be a small fraction of the input; negative ones are roundoff.
@@ -1586,8 +1956,10 @@ class GateSet:
         for value, vector in zip(values, vectors.T):
             if value > 0:
                 branch = evolve(np.sqrt(value) * vector)
-                output += np.outer(branch, branch.conj())
-        weight = float(np.real(np.trace(output)))
+                output = output + xp.outer(branch, branch.conj())
+        weight = xp.real(xp.trace(output))
+        if xp is not np:
+            return output / weight
         return output / weight if weight > 1e-12 else None
 
     def _readout(self, sequence: "QuantumSequence", placements: Sequence[tuple[Any, int, int]], global_phase: float,
@@ -1602,19 +1974,20 @@ class GateSet:
         """
         solver_sequence = self._on_solver(sequence)
         ops = list(solver_sequence.scheduled_ops)
-        duration = self._span(ops, float(sequence.total_duration))
+        # Every pulse belongs to a gate, so the gates' windows reach the last delivered field.
         windows = [self._window(key, ops[first:first + count])[:2] for key, first, count in placements if count]
+        duration = max([float(sequence.total_duration), *(stop for _, stop in windows)])
         chip, embedding = self._overlap_space(_most_at_once(windows), stacklevel=4)
         if embedding is not None:
             solver_sequence = self._on_solver(sequence, chip)
         columns, energies = self._states(order, chip=None if embedding is None else chip)
-        correction = self._frame_correction(order, self._offsets(sequence)) * np.exp(1j * global_phase)
+        correction = self._frame_correction(order, self._offsets(sequence)) * _phase_factor(global_phase)
         mapping = correction[:, None] * np.exp(2j * np.pi * energies * duration)[:, None] * columns.conj().T
         return solver_sequence, duration, columns, mapping, embedding
 
     @staticmethod
     def _probabilities(populations: np.ndarray, order: Sequence[str]) -> dict[str, float]:
-        return {"".join(map(str, bits)): float(populations[i])
+        return {"".join(map(str, bits)): _value(populations[i])
                 for i, bits in enumerate(itertools.product((0, 1), repeat=len(order)))}
 
     # ----------------------------------------------------------------- report
@@ -1638,6 +2011,39 @@ class GateSet:
 
     def __repr__(self) -> str:
         return f"GateSet(qubits={self.qubits}, natives={[f'{n}{q}' for n, q in self._natives]})"
+
+
+def _keeps_windows(chip: "Chip", kind: str, index: int, name: str) -> bool:
+    """Whether a chip parameter leaves the time windows of delivered fields fixed by its structure.
+
+    Device, coupling and port values set the Hamiltonian and the loss, and the
+    built-in gains and crosstalks scale and turn copies of a signal. A drive
+    that builds its own signal and other transforms can move it in time.
+    """
+    from quchip.control.drive import BaseDrive
+    from quchip.control.equipment import CrosstalkMatrix
+    from quchip.control.signal import Crosstalk, Gain
+
+    if kind in ("device", "coupling", "port"):
+        return True
+    equipment = chip.control_equipment
+    if kind == "drive":
+        return type(equipment.lines[index]).signal is BaseDrive.signal
+    transform = equipment.signal_chain[index]
+    return (type(transform) is Gain and name == "factor") or (
+        type(transform) in (Crosstalk, CrosstalkMatrix) and name in ("beta", "theta"))
+
+
+def _native_path(key: tuple[str, tuple[str, ...]]) -> str:
+    """Return the ``NAME[q0,q1]`` prefix of a native's paths."""
+    return f"{key[0]}[{','.join(key[1])}]"
+
+
+def _parse_native_path(path: str) -> tuple[tuple[str, tuple[str, ...]], str]:
+    """Split ``NAME[q0,q1].field`` into the native's key and the field."""
+    name, _, rest = path.partition("[")
+    qubits, _, field = rest.partition("].")
+    return (name, tuple(qubits.split(","))), field
 
 
 def _chip_fingerprint(chip: "Chip") -> str:

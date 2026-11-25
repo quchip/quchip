@@ -13,6 +13,8 @@ from typing import Any
 
 import numpy as np
 
+from quchip.utils.jax_utils import concrete_array_module
+
 _I = np.eye(2, dtype=complex)
 _X = np.array([[0, 1], [1, 0]], dtype=complex)
 _Y = np.array([[0, -1j], [1j, 0]], dtype=complex)
@@ -20,13 +22,18 @@ _Z = np.diag([1.0, -1.0]).astype(complex)
 PAULIS = {"I": _I, "X": _X, "Y": _Y, "Z": _Z}
 
 
-def _rotation(pauli: np.ndarray) -> Callable[[float], np.ndarray]:
-    return lambda theta: np.cos(theta / 2) * _I - 1j * np.sin(theta / 2) * pauli
+def _rotation(pauli: np.ndarray) -> Callable[[Any], Any]:
+    def rotation(theta: Any) -> Any:
+        xp = concrete_array_module(theta)
+        return xp.cos(theta / 2) * _I - 1j * xp.sin(theta / 2) * pauli
+
+    return rotation
 
 
-def _zx(theta: float) -> np.ndarray:
+def _zx(theta: Any) -> Any:
+    xp = concrete_array_module(theta)
     generator = np.kron(_Z, _X)
-    return np.cos(theta / 2) * np.eye(4) - 1j * np.sin(theta / 2) * generator
+    return xp.cos(theta / 2) * np.eye(4) - 1j * xp.sin(theta / 2) * generator
 
 
 #: Registered ideal unitaries. A callable takes the gate's parameters.
@@ -108,11 +115,13 @@ def ideal_unitary(ideal: Any, params: Sequence[float] = ()) -> np.ndarray:
         matrix = entry(*params) if callable(entry) else entry
     else:
         matrix = ideal
-    matrix = np.asarray(matrix, dtype=complex)
+    xp = concrete_array_module(matrix)
+    matrix = xp.asarray(matrix, dtype=complex)
     dimension = matrix.shape[0]
     if matrix.ndim != 2 or matrix.shape[1] != dimension or dimension & (dimension - 1) or dimension < 2:
         raise ValueError(f"An ideal unitary must be 2^n x 2^n; got shape {matrix.shape}.")
-    if np.abs(matrix.conj().T @ matrix - np.eye(dimension)).max() > 1e-9:
+    # A traced matrix has no values to check while tracing.
+    if xp is np and np.abs(matrix.conj().T @ matrix - np.eye(dimension)).max() > 1e-9:
         raise ValueError("The ideal matrix is not unitary.")
     return matrix
 
@@ -120,10 +129,11 @@ def ideal_unitary(ideal: Any, params: Sequence[float] = ()) -> np.ndarray:
 def embed(matrix: np.ndarray, positions: Sequence[int], count: int) -> np.ndarray:
     """Embed a gate on qubit ``positions`` into ``count`` qubits, first most significant."""
     k = len(positions)
-    gate = np.asarray(matrix).reshape((2,) * (2 * k))
+    xp = concrete_array_module(matrix)
+    gate = xp.asarray(matrix).reshape((2,) * (2 * k))
     identity = np.eye(2 ** count, dtype=complex).reshape((2,) * (2 * count))
-    out = np.tensordot(gate, identity, axes=(list(range(k, 2 * k)), list(positions)))
-    return np.moveaxis(out, list(range(k)), list(positions)).reshape(2 ** count, 2 ** count)
+    out = xp.tensordot(gate, identity, axes=(list(range(k, 2 * k)), list(positions)))
+    return xp.moveaxis(out, list(range(k)), list(positions)).reshape(2 ** count, 2 ** count)
 
 
 def pauli_components(generator: np.ndarray) -> dict[str, float]:
