@@ -273,8 +273,8 @@ def solver_levels(engine_result: Any) -> np.ndarray:
 
 def _frame_phases(levels: np.ndarray, frequencies: np.ndarray, time: Any, xp: Any) -> Any:
     """Diagonal of ``R(t) = exp(-2πi t Σ f_i n_i)`` on the solver coordinates."""
-    generator = levels @ frequencies
-    return xp.exp(-2j * np.pi * time * xp.asarray(generator))
+    generator = xp.asarray(levels, dtype=float) @ xp.asarray(frequencies, dtype=float)
+    return xp.exp(-2j * np.pi * time * generator)
 
 
 @dataclass(frozen=True, eq=False)
@@ -339,7 +339,8 @@ class Propagator:
         levels = solver_levels(engine_result)
         labels = tuple(device.label for device in problem.chip.devices)
         frame = problem.resolved_frame.frequencies
-        frequencies = np.array([float(frame.get(label, 0.0)) for label in labels])
+        # Frame frequencies can be traced, so they stay arrays of the backend.
+        frequencies = xp.stack([xp.asarray(frame.get(label, 0.0), dtype=float) for label in labels])
         times = xp.asarray(problem.tlist, dtype=float)
         t0, t1 = times[0], times[-1]
         start = _frame_phases(levels, frequencies, t0, xp)
@@ -398,7 +399,8 @@ class Propagator:
     def solver_frame(self) -> Any:
         """Return the matrix in the problem's integration frame."""
         xp = self._problem.backend.array_module
-        frequencies = np.array([float(self.frame_frequencies.get(label, 0.0)) for label in self.labels])
+        frequencies = xp.stack([xp.asarray(self.frame_frequencies.get(label, 0.0), dtype=float)
+                                for label in self.labels])
         start = _frame_phases(self.levels, frequencies, self.t0, xp)
         end = _frame_phases(self.levels, frequencies, self.t1, xp)
         if self.kind == "superoperator":

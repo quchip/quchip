@@ -195,6 +195,24 @@ def test_dynamiqs_propagator_matches_qutip():
     assert np.abs(np.asarray(block.matrix) - np.asarray(full.matrix) @ np.asarray(columns)).max() < 1e-8
 
 
+@pytest.mark.optional_backend
+def test_dynamiqs_propagator_runs_under_jax_jit():
+    """Inside jax.jit the frame frequencies are traced values, and the propagator applies them as it does eagerly."""
+    jax = pytest.importorskip("jax")
+    pytest.importorskip("dynamiqs")
+    chip = two_transmons()
+    seq = QuantumSequence(chip)
+    drag_pulse(seq, chip)
+
+    def matrix(amplitude):
+        bound = seq.with_params({"pulse.0.amplitude": amplitude})
+        return bound.propagator(frame="rotating", backend="dynamiqs").matrix
+
+    # The first solve runs inside jax.jit, where the chip's dressed frequencies are staged too.
+    traced = np.asarray(jax.jit(matrix)(0.04))
+    np.testing.assert_allclose(traced, np.asarray(matrix(0.04)), atol=1e-12)
+
+
 @pytest.mark.validation
 def test_two_level_rotation_matches_the_pulse_area():
     """A resonant Gaussian on an ideal qubit gives exp(-iθX/2) with θ = 2π|m|A∫E dt."""
