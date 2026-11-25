@@ -879,7 +879,9 @@ class GateSet:
             transform other than the factor of a ``Gain`` or the amplitude and
             phase of a crosstalk, or of a drive that builds its own signal.
         """
-        origin = self if self._source is not None else self._snapshot()
+        # The snapshot and the concrete parts of the copy are built outside any trace, so the copy can check and cache
+        # what they give also when its first use is inside jax.jit.
+        origin = self if self._source is not None else outside_trace(self._snapshot)
         available = origin.parameters
         unknown = sorted(set(bindings) - set(available))
         if unknown:
@@ -935,20 +937,24 @@ class GateSet:
         bound._carrier_bound = origin._carrier_bound | carriers
         bound._frozen, bound._checked = None, set()
         if chip_bindings:
-            bound.chip = origin.chip.with_params(chip_bindings)
-            solver = origin.solver_chip
-            bound._solver_chip = bound.chip if solver is origin.chip else bound.chip.with_space(solver.space)
+            def bind_chip() -> tuple[Any, Any]:
+                chip = origin.chip.with_params(chip_bindings)
+                solver = origin.solver_chip
+                return chip, chip if solver is origin.chip else chip.with_space(solver.space)
+
+            bound.chip, bound._solver_chip = bind_chip() if traced_chip else outside_trace(bind_chip)
             bound._lab, bound._idle = None, None
             bound._entries = {}
         else:
             bound._entries = {key: entry for key, entry in origin._entries.items() if key not in pulses}
         bound._calibrations = {}
         for key, calibration in origin._calibrations.items():
-            sequence = calibration.sequence
-            if bound.chip is not origin.chip:
-                sequence = sequence._copy_with_chip(bound.chip)
-            if key in pulses:
-                sequence = bind_pulses(sequence, pulses[key])
+            def rebind(sequence: Any = calibration.sequence, updates: Any = pulses.get(key)) -> Any:
+                if bound.chip is not origin.chip:
+                    sequence = sequence._copy_with_chip(bound.chip)
+                return sequence if updates is None else bind_pulses(sequence, updates)
+
+            sequence = rebind() if traced_chip or contains_tracer(pulses.get(key)) else outside_trace(rebind)
             if sequence is not calibration.sequence:
                 calibration = copy.copy(calibration)
                 calibration.sequence = sequence
