@@ -144,15 +144,21 @@ def outside_trace(fn: Callable[..., T], /, *args: Any, **kwargs: Any) -> T:
     Work that does not depend on the traced inputs would then run again on
     every call of the compiled function, and a cache could not keep its
     result. JAX keeps its trace state per thread, so a worker thread computes
-    ``fn`` eagerly. ``fn`` must not read a traced value. Warnings that ``fn``
-    raises are raised again in the calling thread.
+    ``fn`` eagerly, on the caller's default device. ``fn`` must not read a
+    traced value. Warnings that ``fn`` raises are raised again in the calling
+    thread.
     """
     if not staging():
         return fn(*args, **kwargs)
     from quchip.utils.stack import user_stacklevel
 
+    # jax.ensure_compile_time_eval() cannot replace the thread: a dynamiqs solve inside it fails the equinox check
+    # that its save times ascend (JAX 0.11, equinox 0.13). A ``with jax.default_device()`` block also holds per
+    # thread, so the worker enters the caller's.
+    device = jax.config.jax_default_device
+
     def call() -> tuple[T, list[warnings.WarningMessage]]:
-        with warnings.catch_warnings(record=True) as caught:
+        with warnings.catch_warnings(record=True) as caught, jax.default_device(device):
             warnings.simplefilter("always")
             return fn(*args, **kwargs), caught
 
