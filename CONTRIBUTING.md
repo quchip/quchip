@@ -60,7 +60,7 @@ python -m pytest -m release --durations=10
 ```
 
 Validation runs in one pytest process, even in pre-merge CI. Measure
-changes with this sequential command, because parallel wall time does not
+changes with the sequential validation command above, because parallel wall time does not
 show that a suite is cheaper. Five minutes is the target, not a measured CI
 guarantee. When you decrease repeated setup or solver work, keep
 independent numerical references, failure paths, and statistical sample
