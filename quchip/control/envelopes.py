@@ -54,7 +54,7 @@ from quchip.declarative.parameters import (
     validate_sign,
 )
 from quchip.utils.jax_utils import array_namespace as _pick_namespace
-from quchip.utils.jax_utils import concrete_array_module, maybe_concrete_scalar
+from quchip.utils.jax_utils import concrete_array_module, is_jax_array, maybe_concrete_scalar
 from quchip.utils.registry import Registrable
 
 def _synthesize_envelope_init(cls: type["Envelope"]) -> Any:
@@ -211,7 +211,8 @@ class Envelope(Registrable, ABC, registry_root=True, metaclass=DeclarativeMeta):
         # A built-in formula samples NumPy times with NumPy when its parameters are concrete.
         formula = xp is np and {"value", "_value"} <= vars(type(self)).keys()
         values = self._value(t, concrete_array_module(self)) if formula else self.value(t)  # type: ignore[attr-defined]
-        values = xp.asarray(values, dtype=complex)
+        # Traced parameters give JAX values at NumPy times too.
+        values = (_pick_namespace(values) if is_jax_array(values) else xp).asarray(values, dtype=complex)
         return values.real if real else values
 
     def to_dict(self) -> dict[str, Any]:

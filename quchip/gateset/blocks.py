@@ -15,9 +15,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+import jax.numpy as jnp
 import numpy as np
 
 from quchip.results.propagator import _namespace, average_fidelity
+from quchip.utils.jax_utils import contains_tracer
 
 
 @dataclass(frozen=True, eq=False)
@@ -131,9 +133,12 @@ def computational_states(
         if not conserving:
             # Without excitation conservation, the dressed state spans the whole product space.
             columns.append(xp.asarray(np.asarray(chip.state(mapping).full()).reshape(-1)))
-            energies.append(sum(float(chip.freq(label)) * level for label, level in mapping.items()))
+            energies.append(sum(_frequency(chip, label) * level for label, level in mapping.items()))
             continue
         state = chip.compact_state(mapping, dressed=True)
+        if contains_tracer(state.values):
+            # A chip with traced values gives traced kets.
+            xp = jnp
         values = xp.asarray(state.values).reshape(-1)
         rows = []
         for row in np.asarray(state.space.levels).tolist():
@@ -146,8 +151,14 @@ def computational_states(
         column = xp.zeros(levels.shape[0], dtype=complex)
         column = column.at[np.array(rows)].set(values) if hasattr(column, "at") else _scatter(column, rows, values)
         columns.append(column)
-        energies.append(sum(float(chip.freq(label)) * level for label, level in mapping.items()))
+        energies.append(sum(_frequency(chip, label) * level for label, level in mapping.items()))
     return xp.stack(columns, axis=1), xp.asarray(energies)
+
+
+def _frequency(chip: Any, label: str) -> Any:
+    """Return a dressed frequency as a float, or as it is when JAX traces it (inside ``jax.jit`` also a fixed one)."""
+    value = chip.freq(label)
+    return value if contains_tracer(value) else float(value)
 
 
 def _conserves(chip: Any) -> bool:

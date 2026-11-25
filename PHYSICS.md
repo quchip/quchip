@@ -3567,9 +3567,11 @@ the isolated calibration's fidelity.
 ### 17.4 Built-in natives
 
 `drag_sx()` schedules one `GaussianDRAG` pulse at the dressed qubit frequency
-with phase `-arg m`, where `m` is the dressed `0 -> 1` element of the line. The
-seeds are `β = 1/(4π |α|)` and the amplitude of `Chip.rotation_amplitude()`,
-`A = θ/(2π |m| |∫E dt|)` on a line without transforms (§6.2.1). The
+with phase `-arg m`, where `m = Σ_l H_l(f) m_l` is the delivered `0 -> 1`
+element of §6.2.1: the dressed element of each line that the signal chain
+reaches, times the chain's transfer at the carrier. The seeds are
+`β = 1/(4π |α|)` and the amplitude of `Chip.rotation_amplitude()`,
+`A = θ/(2π |m| |∫E dt|)` (§6.2.1). The
 knobs are the amplitude and `β`, which keeps the fit small. The pulse
 detuning is an optional knob, bounded to ±5 MHz. It can lower the joint error,
 for example by centering the carrier between the frequencies that a spectator
@@ -3588,10 +3590,14 @@ the complex amplitudes `a` of the CR tone and `c` of the target tone that solve
 z_a a + z_c c = 1/(4 h ∫E dt),        x_a a + x_c c = s N/∫E dt
 ```
 
-for `h` halves. `z_a = C_Z/A` and `x_a = C_I/A` are the susceptibility
-coefficients of §9.2 for the CR line. `z_c = (t_0 - t_1)/2` and
-`x_c = (t_0 + t_1)/2` come from the target line's dressed `0 -> 1` elements
-with the control in 0 and in 1. The first equation sets the ZX angle to π/2
+for `h` halves. With `m_0` and `m_1` the delivered elements (§6.2.1) of the
+CR tone on the target's `0 -> 1` transition with the control in 0 and in 1,
+`z_a = (m_0 - m_1)/2` and `x_a = (m_0 + m_1)/2`. On a line without transforms
+these are the susceptibility coefficients `C_Z/A` and `C_I/A` of §9.2.
+`z_c = (t_0 - t_1)/2` and `x_c = (t_0 + t_1)/2` come from the delivered
+elements `t_0` and `t_1` of the target tone, so crosstalk between the two
+lines enters both equations. The chain enters at the carrier frequency only,
+so envelope bandwidth and delays that differ between paths are left out. The first equation sets the ZX angle to π/2
 over the gate. The template has `N = 0`, so the target tone cancels IX. The
 echoed form runs CR+, the calibrated X on the control, CR- with both tones
 shifted by π, and X again. The Gaussian edges have `σ = 6/(2π|Δ|)` for the
@@ -3607,7 +3613,11 @@ and a spectator gives a first-order term of size `(πζ/2) |∫ cos(θ(t) - θ(T
 dt|` in the error generator after the gate for that half. The sine part
 vanishes for a symmetric tone. The seeds take `N` at the zeros of this integral
 below a peak target-tone Rabi rate of `|α|/8` of the target, and the knob keeps
-the same bound. The zeros are whole turns for a square tone and lie between
+the same bound. The two tones together drive the target at a peak rate of
+`N/∫E dt ± 1/(4h ∫E dt)` in the two control states, so the seeds also stop at
+the `N` where this rate reaches `|α|/8`. The weak-drive rule of an automatic
+CR duration holds for the template, at `N = 0`; a rotary seed can drive the
+control harder, and the fit screens it. The zeros are whole turns for a square tone and lie between
 whole turns for Gaussian edges: `N = 0.72, 1.62, 2.59, 3.58, 4.58` for a 200 ns
 half with 47.7 ns edges. The ZX term adds ±1/8 turn per half with the control
 state, so the two control branches have different zeros and a residual of first
@@ -3636,7 +3646,17 @@ gates that follow each other on the delayed line overlap and are solved
 together. Under an automatic excitation cutoff, a circuit with overlapping
 gates is solved in one piece instead (§17.6). The composed unitary matches a
 direct solve of the same schedule to the solver tolerance. With QuTiP, the linear interpolation of windowed
-envelopes adds an error that the solver's `rtol` sets (§12).
+envelopes adds an error that the solver's `rtol` sets (§12). On the dynamiqs
+backend, RZ angles can be JAX tracers. Inside `jax.jit`, the gate set solves
+each gate with fixed pulses, and each group of overlapping gates that no traced
+angle reaches, once outside the trace, so the compiled function holds only the
+algebra of the angles.
+
+`GateSet.run()` solves the schedule once and maps the final lab-frame
+state with `e^{2πi F T}`, `W_c^†`, and the virtual-Z correction of
+§17.2. The qutip-qip processor of `quchip.interop.qutip_qip` integrates the same
+Hamiltonian in the gate set's frame with `qutip.mesolve`, returns to the lab
+frame with `R(T)`, and applies the same map.
 
 ### 17.6 Excitation cutoff
 
@@ -3656,7 +3676,7 @@ Each drive adds a transient excitation to the state it acts on, so gates that
 run at the same time need more headroom than one gate. On a chain of four
 transmons at `K = n + 2`, one echoed CR gate matches the full space to `3e-8`,
 but two at once differ by `5e-6`, and four 10 ns X gates at once by `8e-4`.
-Under an automatic cutoff, `unitary()` and `simulate()` count the gates at
+Under an automatic cutoff, `unitary()` and `run()` count the gates at
 once from the windows of §17.5, which end at each gate's last delivered field,
 and solve a circuit with up to `m` of them in one piece at `K + m - 1`, capped
 at the full product space. Gates at once can end with population above `K`, for example
@@ -3665,6 +3685,24 @@ the `K` space, each window would drop that population at its end, and the
 dropped amplitudes would add up over later windows. The extra excitation per
 gate and the check with the other qubits in level 1 are heuristics, not
 bounds; `space=` sets the cutoff by hand.
+
+### 17.7 Bound values
+
+`GateSet.with_params()` evaluates the calibrated gates at other chip and pulse
+values without a new calibration. The pulses keep their calibrated carriers,
+phases, virtual-Z corrections and timing, apart from the bound values. The
+dressed computational states and the idle eigensystem come from the bound
+chip, while the frame clocks keep the calibrated dressed frequencies. A qubit
+moved by `δ` therefore idles against its calibrated clock, and an idle of length
+`T` on one qubit has `1 - F_avg = (2/3) sin²(πδT)`. The pieces of §17.2, their
+time windows, the excitation cutoff and the spectators stay as calibrated.
+Concrete bound values must keep each window and the reuse of each reused piece,
+which the gate set checks when it first uses each gate. A traced value has no
+number to check, so when chip values are traced, every bound chip value must
+leave the windows fixed by structure: device, coupling and port values, values
+of a drive that does not build its own signal, and the factor of a `Gain` or
+the amplitude and phase of a crosstalk. With traced chip values, and after a
+binding of a pulse carrier, a gate is solved at each placement.
 
 [koch]: https://arxiv.org/abs/cond-mat/0703002
 [vool]: https://arxiv.org/abs/1610.03438

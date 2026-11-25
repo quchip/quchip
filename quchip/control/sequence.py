@@ -97,8 +97,8 @@ if TYPE_CHECKING:
     from quchip.chip.transformations.active_patch import ActivePatchResult
     from quchip.declarative.expr import PhysicsExpr
     from quchip.engine.ir import FrameSpec, SolveBatch, SolveProblem
-    from quchip.results.channel import ChannelResult
-    from quchip.results.propagator import Propagator, PropagatorResult
+    from quchip.results.channel import SubspaceChannel
+    from quchip.results.propagator import Propagator, SubspacePropagator
     from quchip.results.results import SimulationBatchResult, SimulationResult
 
 
@@ -1777,7 +1777,7 @@ class QuantumSequence:
         dissipation: bool = False,
         progress: bool = False,
         max_workers: int | None = None,
-    ) -> "PropagatorResult":
+    ) -> "SubspacePropagator":
         """Return the propagator of this sequence on the dressed states of a product of levels.
 
         The inputs are the labels that give each selected device one of
@@ -1806,7 +1806,7 @@ class QuantumSequence:
             ``False`` leaves out the chip's collapse channels, so the matrix is
             the propagator of the Hamiltonian alone. ``True`` raises, because
             the matrix cannot include them; :meth:`subspace_channel` does. The result's
-            :attr:`~quchip.results.propagator.PropagatorResult.omitted_channels`
+            :attr:`~quchip.results.propagator.SubspacePropagator.omitted_channels`
             names the channels that the solve left out.
         progress : bool, default=False
             Show backend batch progress when supported.
@@ -1815,7 +1815,7 @@ class QuantumSequence:
 
         Returns
         -------
-        PropagatorResult
+        SubspacePropagator
             Matrix, labels, leakage of each input, frame frequencies, and the batch of solves.
 
         Raises
@@ -1861,7 +1861,7 @@ class QuantumSequence:
         approximation: Approximation | None = None,
         progress: bool = False,
         max_workers: int | None = None,
-    ) -> "ChannelResult":
+    ) -> "SubspaceChannel":
         """Return the channel of this sequence, with collapse channels, on the dressed states of a product of levels.
 
         The labels are those of :meth:`subspace_propagator`: each selected
@@ -1894,7 +1894,7 @@ class QuantumSequence:
 
         Returns
         -------
-        ChannelResult
+        SubspaceChannel
             Superoperator, labels, leakage of each input, frame frequencies,
             included collapse channels, and the batch of solves.
 

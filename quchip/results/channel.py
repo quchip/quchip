@@ -22,7 +22,7 @@ _PAULIS = {
 
 
 @dataclass(frozen=True)
-class ChannelResult:
+class SubspaceChannel:
     """Channel of a sequence on the dressed states of a product of levels.
 
     ``superoperator`` maps the column-stacked input ``vec(ρ)`` to the output
@@ -32,7 +32,7 @@ class ChannelResult:
     approximation and excitation cutoff and Λ is the evolution from the first
     saved time t₀ to the last saved time T with the chip's collapse channels.
     The frame is applied to both sides, as in
-    :class:`~quchip.results.propagator.PropagatorResult`. Population that
+    :class:`~quchip.results.propagator.SubspacePropagator`. Population that
     leaves the labels is lost from the record, so the channel decreases the
     trace when there is leakage.
 
@@ -109,6 +109,21 @@ class ChannelResult:
         populations = self._populations(xp)
         return xp.sum(populations[np.ix_(computational, leaked)]) / len(leaked)
 
+    def fidelity(self, target: Any) -> Any:
+        """Return F_avg against a unitary target: ``1 −`` :meth:`infidelity`.
+
+        Without dissipation this equals
+        :meth:`SubspacePropagator.fidelity <quchip.results.propagator.SubspacePropagator.fidelity>` with the
+        same target.
+
+        Parameters
+        ----------
+        target : array_like, shape (d_C, d_C)
+            Unitary target on the computational labels, in the frame and label
+            order of this record.
+        """
+        return 1.0 - self.infidelity(target)
+
     def infidelity(self, target: Any) -> Any:
         """Return 1 − F_avg against a unitary target, in quchip's frame, with ideal preparation and measurement.
 
@@ -164,7 +179,7 @@ class ChannelResult:
         overlap = abs(np.sum(np.conj(ideal[columns]) * found[rows])) / dimension**2
         return float(dimension * (1.0 - overlap) / (dimension + 1))
 
-    def error(self, target: Any) -> ChannelResult:
+    def error(self, target: Any) -> SubspaceChannel:
         """Return the error map after the ideal gate, ``E = Λ ∘ U⁻¹``, so that ``Λ = E ∘ U``.
 
         For a target on the computational labels, the map acts on them; for a
@@ -232,7 +247,7 @@ class ChannelResult:
         rates = xp.asarray(signs) @ xp.stack([xp.asarray(fidelities[name]) for name in names]) / len(names)
         return dict(zip(names, rates))
 
-    def twirl(self) -> ChannelResult:
+    def twirl(self) -> SubspaceChannel:
         """Return the Pauli twirl ``4⁻ⁿ Σ_P P Λ(P ρ P) P``.
 
         Its :meth:`ptm` is the diagonal of this record's. Twirl the
@@ -284,7 +299,7 @@ class ChannelResult:
         vectors = np.stack([_pauli(name).reshape(-1, order="F") for name in names], axis=1)
         return names, xp.asarray(vectors)
 
-    def _replace(self, xp: Any, superoperator: Any, labels: tuple[tuple[int, ...], ...]) -> ChannelResult:
+    def _replace(self, xp: Any, superoperator: Any, labels: tuple[tuple[int, ...], ...]) -> SubspaceChannel:
         dimension = len(labels)
         diagonal = [index * (dimension + 1) for index in range(dimension)]
         leakage = 1.0 - xp.sum(xp.real(superoperator[np.ix_(diagonal, diagonal)]), axis=0)
@@ -316,7 +331,7 @@ def _conjugation(xp: Any, unitary: Any) -> Any:
 
 
 def subspace_channel(batch: Any, devices: tuple[str, ...], labels: tuple[tuple[int, ...], ...], frame: str,
-                     channels: tuple[str, ...]) -> ChannelResult:
+                     channels: tuple[str, ...]) -> SubspaceChannel:
     """Return the channel of a batch whose points start in the pure inputs of ``labels``.
 
     The first d points start in the dressed states of ``labels``. For each
@@ -368,7 +383,7 @@ def subspace_channel(batch: Any, devices: tuple[str, ...], labels: tuple[tuple[i
     superoperator = xp.stack([column.T.reshape(-1) for column in columns], axis=1)
     diagonal = [index * (dimension + 1) for index in range(dimension)]
     leakage = 1.0 - xp.sum(xp.real(superoperator[np.ix_(diagonal, diagonal)]), axis=0)
-    return ChannelResult(
+    return SubspaceChannel(
         superoperator=superoperator,
         labels=tuple(labels),
         devices=tuple(devices),

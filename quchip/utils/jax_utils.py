@@ -7,13 +7,18 @@ JAX is a required dependency of quchip (see ``pyproject.toml``).
 
 from __future__ import annotations
 
-from typing import Any, Callable
+import warnings
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Callable, TypeVar, cast
 
 import jax
 from jax.core import Tracer
 from jax.tree_util import tree_leaves
 import jax.numpy as jnp
 import numpy as np
+
+
+T = TypeVar("T")
 
 
 def contains_tracer(pytree: Any) -> bool:
@@ -125,3 +130,44 @@ def maybe_concrete_scalar(value: Any) -> float | None:
         # 0-d object arrays (e.g. an envelope or other non-numeric payload
         # passed as a declared parameter) are not concrete scalars.
         return None
+
+
+def staging() -> bool:
+    """Return True inside ``jax.jit``, where JAX stages every operation, also on concrete values."""
+    return isinstance(jnp.zeros(()), Tracer)
+
+
+def outside_trace(fn: Callable[..., T], /, *args: Any, **kwargs: Any) -> T:
+    """Return ``fn(*args, **kwargs)``, computed outside any JAX trace.
+
+    Inside ``jax.jit``, JAX stages every operation, also on concrete values.
+    Work that does not depend on the traced inputs would then run again on
+    every call of the compiled function, and a cache could not keep its
+    result. JAX keeps its trace state per thread, so a worker thread computes
+    ``fn`` eagerly, on the caller's default device. ``fn`` must not read a
+    traced value. Warnings that ``fn`` raises are raised again in the calling
+    thread.
+    """
+    if not staging():
+        return fn(*args, **kwargs)
+    from quchip.utils.stack import user_stacklevel
+
+    # jax.ensure_compile_time_eval() cannot replace the thread: a dynamiqs solve inside it fails the equinox check
+    # that its save times ascend (JAX 0.11, equinox 0.13). A ``with jax.default_device()`` block also holds per
+    # thread, so the worker enters the caller's.
+    # JAX reads a flag that has a context manager as an attribute of jax.config, which Config does not declare.
+    device = cast(Any, jax.config).jax_default_device
+
+    def call() -> tuple[T, list[warnings.WarningMessage]]:
+        with warnings.catch_warnings(record=True) as caught, jax.default_device(device):
+            warnings.simplefilter("always")
+            return fn(*args, **kwargs), caught
+
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        result, caught = pool.submit(call).result()
+    finally:
+        pool.shutdown(wait=False)
+    for item in caught:
+        warnings.warn(item.message, item.category, stacklevel=user_stacklevel())
+    return result

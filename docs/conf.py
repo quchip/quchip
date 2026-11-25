@@ -41,6 +41,9 @@ autodoc_typehints = "description"
 # Add types to authored entries without inventing empty parameter tables for
 # result records whose public fields are documented as attributes.
 autodoc_typehints_description_target = "documented"
+# The qutip-qip processor subclasses qutip-qip classes, and qutip-qip is an
+# optional dependency that the docs build does not install.
+autodoc_mock_imports = ["qutip_qip"]
 
 napoleon_google_docstring = False
 napoleon_numpy_docstring = True

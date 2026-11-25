@@ -403,13 +403,15 @@ This file records notable user-visible changes to quchip.
   [#208](https://github.com/quchip/quchip/pull/208))
 - `sequence.subspace_propagator(devices, levels=(0, 1))` returns the
   propagator of a sequence on the dressed states of the selected levels, as a
-  `PropagatorResult`. One batch starts each label in its dressed state, and
+  `SubspacePropagator`. One batch starts each label in its dressed state, and
   the record converts the label amplitudes to the dressed frame by default, or
   to the lab or integration frame. The dressed frame turns each device at its
   dressed frequency under the solve's approximation and cutoff, so an idle
   pair of qubits gives `diag(1, 1, 1, exp(-2πiζT))` with the static ZZ `ζ`.
   The record gives the leakage of each input, and `fidelity(target)` returns
-  the average gate fidelity, which counts that leakage. The solves leave out
+  the average gate fidelity, which counts that leakage, and `infidelity()`
+  its complement. A target on the computational labels only scores their
+  block, as `SubspaceChannel` does. The solves leave out
   collapse channels, which `omitted_channels` names, and `dissipation=True`
   raises and points to `subspace_channel()`.
   ([#193](https://github.com/quchip/quchip/issues/193),
@@ -417,10 +419,10 @@ This file records notable user-visible changes to quchip.
   [#209](https://github.com/quchip/quchip/issues/209),
   [#210](https://github.com/quchip/quchip/pull/210))
 - `sequence.subspace_channel(devices, levels=(0, 1))` returns the gate with
-  the chip's collapse channels as a `ChannelResult`: a superoperator on the
+  the chip's collapse channels as a `SubspaceChannel`: a superoperator on the
   same dressed labels and frames, from `d²` pure-state master-equation
   solves. It gives the infidelity in quchip's frame, with ideal preparation
-  and measurement, and the eigenvalue infidelity, a spectral score that a
+  and measurement (`fidelity()` gives its complement), and the eigenvalue infidelity, a spectral score that a
   frame tilt does not change, with the average leakage beside it. Labels may
   include leakage levels, and `seepage()` reads them. `error(target)` returns
   the error map after the ideal gate, with its Pauli transfer matrix, Pauli
@@ -475,8 +477,11 @@ This file records notable user-visible changes to quchip.
   virtual Z phases, and reports the infidelity, leakage, the generator of the
   error after the ideal gate, knob bounds, and fit identifiability.
   `GateSet.unitary()` reuses each gate's propagator at new start times and
-  frames when its Hamiltonian allows it, and `GateSet.simulate()` solves the
-  circuit's schedule with noise. On a chip above 64 states, gate-set solves
+  frames when its Hamiltonian allows it, and `GateSet.run()` solves the
+  circuit's schedule with noise. With the gate set in `chip.gateset`,
+  `chip.run()` runs circuits on the chip, and `chip.run(circuit, gateset=...)`
+  runs them with another gate set. Copies, dictionaries, and pickles of the
+  chip leave the gate set out. On a chip above 64 states, gate-set solves
   pick and raise an excitation cutoff with a warning, and a circuit with gates
   that run at the same time solves in one piece with one more excitation for
   each gate after the first.
@@ -488,11 +493,42 @@ This file records notable user-visible changes to quchip.
   when the fit converges within the target and at most doubles the previous
   error; otherwise, and after a seed-only calibration, every start competes.
   Reports also give the eigenvalue infidelity and the gate's channel as a
-  `ChannelResult`. When a CR target couples to another gate-set qubit, the
+  `SubspaceChannel`. When a CR target couples to another gate-set qubit, the
   echoed ZX90 also tries rotary starts, in which the target tone turns the
   target so that most of its static ZZ with that qubit averages out. On a chain
   of three transmons this takes the ZX90 on the first pair from `5.5e-3` to
-  `1.6e-4`.
+  `1.6e-4`. Without `qubits`, `GateSet.standard()` takes the computational
+  devices with one charge line. Without `cr_duration`, it gives each pair the
+  shortest multiple of 10 ns at which the seed drive on the control's 0-1,
+  1-2 and two-photon 0-2 transitions stays at most 0.4 of each detuning, with
+  CR edges set by the nearest of these transitions. One notice gives the
+  chosen `qubits=` and `cr_duration=` to pass, and `cr_duration` also takes
+  a mapping from pairs to durations. `cross_resonance(duration=None)` makes
+  the same choice. It refuses a tone less than 5 MHz from a control
+  transition, where a given duration builds with a warning. It warns when the
+  tone is less than 60 MHz from the control's 1-2 transition or the two qubits
+  are less than 60 MHz apart. An automatic duration stays when the chip
+  changes in place, with a warning when the choice for the changed chip
+  differs. `calibrate()` prints one line
+  per native by default, and `CircuitRun.fidelity()` compares a run with the
+  ideal output of the circuit. On the dynamiqs backend, `unitary()` and
+  `run()` take JAX-traced RZ angles under `jax.grad` and `jax.jit`, and
+  `GateSet.with_params()` evaluates the calibrated gates at changed or traced
+  chip and pulse values, with the paths in `GateSet.parameters`. The seeds of
+  `drag_sx()` and `cross_resonance()` take the drive elements that the
+  signal chain delivers, so line crosstalk enters their amplitudes and phases.
+- `to_qutip_qip(gateset)` returns a qutip-qip processor that compiles
+  `QubitCircuit` gates with a gate set and runs them on the chip's
+  Hamiltonian with `run_state`, which starts in the dressed `|0...0⟩` or
+  takes a bit string. Register states use the dressed computational basis,
+  RZ is virtual, and noise comes from the chip's collapse channels. A circuit
+  that uses a native without a calibration runs its closed-form seed with
+  fitted virtual-Z phases, with a warning. `GateSet.run()`,
+  `unitary()`, `ideal()`, and `schedule()` take a `QubitCircuit`, and
+  `from_qutip_qip(circuit, gateset)` converts one into gate-set instructions.
+  The integration needs qutip-qip 0.5 or later, which needs Python 3.12.
+  Install it with `pip install quchip[qutip-qip]`. Until qutip-qip 0.5 is on
+  PyPI, install qutip-qip from GitHub first.
 - `QuantumSequence.propagator()` returns the lab-frame propagator of a
   schedule from one solve, or its superoperator when the chip has collapse
   channels. `QuantumSequence.extend()` appends another sequence.
