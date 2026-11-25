@@ -1379,7 +1379,7 @@ Changes since [v0.3.1](https://github.com/quchip/quchip/compare/v0.3.1...v0.3.2)
 - Amplifiers require explicit `added_noise`. Temperature, noise-figure, and
   `noise_frequency` constructor arguments have been removed; convert these
   inputs to noise quanta before declaring components. See the
-  [network-noise migration guidance](docs/cookbook.md#declare-network-noise).
+  [network-noise migration guidance](docs/cookbook.md#define-network-noise).
 
 ### API documentation
 
