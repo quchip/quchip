@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import warnings
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, TypeVar, cast
 
 import jax
 from jax.core import Tracer
@@ -155,7 +155,8 @@ def outside_trace(fn: Callable[..., T], /, *args: Any, **kwargs: Any) -> T:
     # jax.ensure_compile_time_eval() cannot replace the thread: a dynamiqs solve inside it fails the equinox check
     # that its save times ascend (JAX 0.11, equinox 0.13). A ``with jax.default_device()`` block also holds per
     # thread, so the worker enters the caller's.
-    device = jax.config.jax_default_device
+    # JAX reads a flag that has a context manager as an attribute of jax.config, which Config does not declare.
+    device = cast(Any, jax.config).jax_default_device
 
     def call() -> tuple[T, list[warnings.WarningMessage]]:
         with warnings.catch_warnings(record=True) as caught, jax.default_device(device):
