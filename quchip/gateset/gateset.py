@@ -2027,6 +2027,7 @@ def _keeps_windows(chip: "Chip", kind: str, index: int, name: str) -> bool:
     if kind in ("device", "coupling", "port"):
         return True
     equipment = chip.control_equipment
+    assert equipment is not None
     if kind == "drive":
         return type(equipment.lines[index]).signal is BaseDrive.signal
     transform = equipment.signal_chain[index]
