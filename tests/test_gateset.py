@@ -1634,9 +1634,12 @@ def test_with_params_gradients_match_central_differences():
     def error(values):
         return 1 - gateset.with_params(dict(zip(paths, values))).unitary([("SX", "q0")]).fidelity()
 
-    # One compiled function gives the gradient and the values that the differences take.
+    # One compiled function gives the gradient and the values that the differences take, and it gives the value of
+    # an ordinary copy, here with all three values moved.
     value_and_grad = jax.jit(jax.value_and_grad(error))
     slope = np.asarray(value_and_grad(start)[1])
+    moved = start + [0.0, 0.02, 0.01 * start[2]]
+    np.testing.assert_allclose(value_and_grad(moved)[0], error(moved), rtol=0, atol=1e-10)
     for index, step in enumerate((1e-5, 1e-4, 1e-6)):
         shift = np.eye(3)[index]
         coarse, fine = ((value_and_grad(start + h * shift)[0] - value_and_grad(start - h * shift)[0]) / (2 * h)
