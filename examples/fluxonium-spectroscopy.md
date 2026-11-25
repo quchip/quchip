@@ -87,8 +87,8 @@ Readout resonator: 5.1751 GHz, coupling g = 37.16 MHz
 
 ## Reproduce the qubit spectrum
 
-Figure 2 of the paper covers $0.5\leq\Phi_{\mathrm{ext}}/\Phi_0\leq0.85$. The
-model curve uses 351 evenly spaced flux values, more than twice the
+Figure 2 of the paper covers $0.5\leq\Phi_{\mathrm{ext}}/\Phi_0\leq0.85$, and
+the model curve uses 351 evenly spaced flux values, more than twice the
 measurement density. To evaluate the residuals, we interpolate that
 independent curve at the measured coordinates. quchip receives the authors'
 fitted energies unchanged.
@@ -227,7 +227,7 @@ deleted.
 
 The released model couples a resonator to the fluxonium oscillator coordinate
 $c$ through $g(ca^\dagger+c^\dagger a)$. `CouplingModel` is quchip's public
-extension point for declaring that interaction without changing the device
+extension point for defining that interaction without changing the device
 models.
 
 ```python
@@ -249,10 +249,10 @@ class FluxoniumReadoutCoupling(CouplingModel):
 
 ```
 
-Use the published interaction with the fitted circuit parameters. Keep every
-coupling band with `Exact()`. Counter-rotating terms contribute strongly to the
-fluxonium's dispersive shift, and under `RWA()` the $\chi_Z$ RMSE against the
-data increases from 0.77 MHz to 1.42 MHz.
+Use the published interaction with the fitted circuit parameters, and keep
+every coupling band with `Exact()`, since counter-rotating terms contribute
+strongly to the fluxonium's dispersive shift: under `RWA()` the $\chi_Z$ RMSE
+against the data increases from 0.77 MHz to 1.42 MHz.
 
 ```python
 paper_q = Fluxonium(
@@ -285,8 +285,8 @@ paper_chip = Chip(
 ```
 
 `chip.freq("readout")` is the resonator transition with the qubit in
-$|0\rangle$. `chip.dispersive_shift()` returns the full state-dependent pull.
-Its negative half is $\chi_Z$, the coefficient of $Z n_r$ in $H/h$.
+$|0\rangle$, and `chip.dispersive_shift()` returns the full state-dependent
+pull, whose negative half is $\chi_Z$, the coefficient of $Z n_r$ in $H/h$.
 
 ```python
 readout_rows = [row for row in readout_rows if row["phi_ext_disshift"]]
@@ -396,8 +396,8 @@ higher-level resonances in the dispersive shift.
 
 The paper operates at the sweet spot for idle and control, then pulses to
 $\Phi_{\mathrm{ext}}/\Phi_0=0.6567$ during readout. These two points give
-a compact numerical check against the values in the text.
-Both sets of dispersive coefficients below use quchip's $\chi_Z$ convention.
+a compact numerical check against the values in the text, and both sets of
+dispersive coefficients below use quchip's $\chi_Z$ convention.
 
 ```python
 sweet_spot = readout_observables(0.5)
@@ -468,13 +468,13 @@ RESULT paper_statics={"chi_median_absolute_error_mhz":0.1767,"chi_rmse_mhz":0.76
 </details>
 
 The authors fitted the circuit parameters to these measurements, so use
-this result as a cross-implementation check of their static model. A
+this result as a cross-implementation check of their static model, while a
 fabrication-level prediction needs independent circuit parameters.
 
 ## Fit measured spectroscopy
 
-The authors fitted the spectrum to get $E_C$, $E_J$, and $E_L$. Here we start
-away from their parameters and minimize a differentiable quchip loss.
+The authors fitted the spectrum to get $E_C$, $E_J$, and $E_L$, and here we
+start away from their parameters and minimize a differentiable quchip loss.
 
 Every eighth measurement goes into the fit, and the points between them
 are held out. The plotted model uses its own 351-point flux grid.
@@ -545,8 +545,7 @@ def spectrum_prediction(coordinates, flux):
 ```
 
 Fit a smooth robust loss, which limits the influence of spectroscopy
-outliers, with SciPy's bounded optimizer. JAX supplies the loss
-gradient.
+outliers, with SciPy's bounded optimizer and the loss gradient from JAX.
 
 ```python
 def pseudo_huber(residual):
@@ -591,9 +590,9 @@ recovered_energies = np.asarray(
 )
 ```
 
-The evaluation starts from a new 351-point model grid. After that
-forward calculation, interpolation puts the model at the held-out
-measurement coordinates for the residual check.
+The evaluation computes the model on a new 351-point flux grid and then
+interpolates it at the held-out measurement coordinates for the residual
+check.
 
 ```python
 model_flux = jnp.linspace(0.5, 0.85, 351)
@@ -701,7 +700,7 @@ RESULT experimental_statics={"fit_success":true,"holdout_median_absolute_error_m
 </details>
 
 The recovered circuit energies are within $0.6\%$ of the authors' values.
-The few large spectroscopy residuals stay in the holdout RMSE, and the
+The few large spectroscopy residuals stay in the holdout RMSE, while the
 median error is $0.88$ MHz. This section fits the isolated fluxonium
 spectrum, while the paper's full fit also included the coupled readout
 resonator.

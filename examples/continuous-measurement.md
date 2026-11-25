@@ -26,8 +26,8 @@ and the ensemble density from the same dispersive-readout model.
 
 [Murch et al. (2013)](https://doi.org/10.1038/nature12539) tracked conditional
 superconducting-qubit states and checked them with tomography on repeated
-preparations. Here we simulate ideal detection and no intrinsic qubit decay. The
-figures show those measurement dynamics. They do not fit the experiment's
+preparations. Here we simulate ideal detection and no intrinsic qubit decay, so
+the figures show those measurement dynamics but do not fit the experiment's
 finite-efficiency data or perform an experimental tomography validation.
 
 ## Set the measurement strength from the resonator
@@ -36,7 +36,7 @@ The resonator has a 20 MHz linewidth and a full conditional frequency pull of
 $-4$ MHz. Drive halfway between its two conditional resonances, then compare
 the steady fields for the qubit in $|0\rangle$ and $|1\rangle$. Apply a 400 ns
 square readout pulse to the coupled qubit and resonator, once from each qubit
-basis state. The final cavity fields set the measurement rate.
+basis state, and the final cavity fields set the measurement rate.
 
 ```python
 import numpy as np
@@ -87,16 +87,16 @@ which $L=\sqrt{\Gamma_m/2}\,\sigma_z$ represents. Then
 $\mathcal D[L]\rho=(\Gamma_m/2)(\sigma_z\rho\sigma_z-\rho)$, and the
 unconditional coherence decays as $e^{-\Gamma_m t}$. Here `gamma` means
 $\Gamma_m$, in $\mathrm{ns}^{-1}$. The cavity settles on a scale
-$2/\kappa\approx16$ ns, much shorter than $1/\Gamma_m$. The reduced model starts
-with the field already settled and tracks out the deterministic Stark rotation,
+$2/\kappa\approx16$ ns, much shorter than $1/\Gamma_m$, and the reduced model
+starts with the field already settled and tracks out the deterministic Stark rotation,
 so it omits the initial cavity transient.
 
 ## Monitor the qubit
 
-Give the qubit its transition frequency and set the chip to its rotating frame. This
-frame removes free precession, and only the measurement backaction stays. `T1=None` omits
-relaxation. `T2=1/gamma` represents the measurement-induced dephasing, with no additional
-unobserved dephasing. The effective frequency includes the steady Stark shift.
+Give the qubit its transition frequency and set the chip to its rotating frame, which
+removes free precession so that only the measurement backaction stays. `T1=None` omits
+relaxation, and `T2=1/gamma` represents the measurement-induced dephasing, with no
+additional unobserved dephasing. The effective frequency includes the steady Stark shift.
 
 The standard channel is $L=\sqrt{2\Gamma_m}\,n$, with $n=(I-\sigma_z)/2$. Its
 dissipator equals the Pauli form above. A homodyne phase of $\pi$ matches the
@@ -148,9 +148,9 @@ Bloch data: (3000, 201, 3); final |z| > 0.95: 0.748
 `dt=0.05` ns sets the native integration step, and the 5 ns save interval only
 sets the plot sampling. QuTiP runs the seeded trajectories across four worker
 processes. `run_expect()` reads one observable of every run as an array with
-axes `(shot, saved time)`. `paths-plus-z.npz` saves the stacked array with axes
-`(shot, saved time, x/y/z)`. The file does not keep the states, because these
-three observables contain the qubit information used here. The 3,000-shot
+axes `(shot, saved time)`, and `paths-plus-z.npz` saves the stacked array with
+axes `(shot, saved time, x/y/z)` but not the states, because these three
+observables contain the qubit information used here. The 3,000-shot
 ensemble includes the four histories shown below.
 
 ## Compare individual histories
@@ -330,7 +330,7 @@ $x_\mathrm{opt}(t)=\sqrt{1-z_\mathrm{opt}(t)^2}$. The paper's measurement time i
 $\tau=1/(2\Gamma_m)$ in our convention.
 
 Select $z(1000\,\mathrm{ns})=0.8\pm0.03$ from the existing ensemble. The
-dashed curve is the analytic most-likely path. The solid curve is the
+dashed curve is the analytic most-likely path, while the solid curve is the
 selected paths' mean, which is a different statistic. This no-drive result
 needs no optimizer or additional solve.
 
@@ -395,7 +395,7 @@ plt.show()
 </video>
 
 The 160 bins show raw counts with no smoothing or interpolation. We divide each time column by its
-own maximum to show where paths concentrate. The shades cannot compare absolute probabilities
+own maximum to show where paths concentrate, so the shades cannot compare absolute probabilities
 between columns or panels. The endpoint window gives a finite subensemble around the analytic
 path's exact boundary condition.
 
@@ -457,7 +457,7 @@ for name in (*history_figures, "density"):
 If you discard the measurement record, you get
 $\langle x\rangle=e^{-\Gamma_m t}$ and $\langle z\rangle=0$. The final excited
 and ground populations average to one half. For observables bounded by
-$[-1,1]$, $1/\sqrt{N}$ bounds the standard error at any time. Report the
+$[-1,1]$, $1/\sqrt{N}$ bounds the standard error at any time, so report the
 largest discrepancy together with that scale. Refine the integration timestep
 when you study finer trajectory features.
 
@@ -481,8 +481,8 @@ Max Bloch-radius error: 6.03e-04
 
 `paths-plus-z.npz` contains the `(shot, time, 3)` Bloch array and the values
 of time, measurement rate, photon number, and drive amplitude. The fixed seed
-and native method reproduce the ensemble with the same QuTiP version. Parallel
-workers can return the shots in a different order.
+and native method reproduce the ensemble with the same QuTiP version, although
+parallel workers can return the shots in a different order.
 
 For the experimental reconstruction and the path equations, see
 [Murch et al., Nature 502, 211 (2013)](https://arxiv.org/abs/1305.7270) and

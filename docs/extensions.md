@@ -1,13 +1,13 @@
 # Extending quchip
 
-An extension declares local physics. quchip projects its operators into the
-resolved basis and embeds them in the chip Hilbert space. It then applies
-frames and RWA and converts the result for the selected backend. Extension
-code returns quchip expressions and need not choose a numerical backend.
+An extension defines local physics: quchip projects its operators into the
+resolved basis, embeds them in the chip Hilbert space, applies frames and RWA,
+and converts the result for the selected backend. Extension code returns
+quchip expressions and need not choose a numerical backend.
 
 ## Choose an extension type
 
-| Physics | Author writes | Built in | On this page |
+| Physics | You write | Built in | On this page |
 |---|---|---|---|
 | Static device | parameters and `DeviceModel.local_hamiltonian()` | `DuffingTransmon` | `Mode` |
 | Static coupling | endpoints, parameters, and `CouplingModel.interaction()` | `Capacitive` | |
@@ -21,16 +21,16 @@ code returns quchip expressions and need not choose a numerical backend.
 | Custom local space | `LocalSpace.matrix()` with an explicit operator vocabulary | | `SpinHalf` |
 | Third-party conversion | `ModelMapping.import_model()` and `ModelMapping.export_model()` | scqubits mappings | |
 
-The classes on this page are complete, but quchip does not ship them. Copy a
-class into your own code to use it. The quchip tests run the code on this page
+The classes on this page are complete but quchip does not ship them, so copy
+a class into your own code to use it. The quchip tests run the code on this page
 and check the physics of each class: analytical limits, serialization,
 projection, RWA, and JAX paths where each property applies.
 
 ## Static devices
 
-Declare parameters and the Hamiltonian in the device's local operator
-vocabulary. The constructor, validation, serialization, and JAX pytree are
-synthesized from the fields.
+Define the parameters and the Hamiltonian in the device's local operator
+vocabulary, and quchip generates the constructor, validation, serialization,
+and JAX pytree from the fields.
 
 ```python
 from typing import Any
@@ -47,8 +47,8 @@ class Mode(FockDevice):
         return p.freq * op.n
 ```
 
-`p.freq` is symbolic during authoring. The engine binds the instance value when
-it resolves the model for a backend.
+`p.freq` is symbolic while you define the model, and the engine binds the
+instance value when it resolves the model for a backend.
 
 ## Component-owned time dependence
 
@@ -126,8 +126,8 @@ class ModulatedCapacitive(CouplingModel):
         )
 ```
 
-These terms are projected into the basis selected from the static Hamiltonian.
-quchip does not construct an instantaneous moving basis.
+quchip projects these terms into the basis selected from the static
+Hamiltonian and does not construct an instantaneous moving basis.
 
 ## Drives and envelopes
 
@@ -193,12 +193,11 @@ when that carrier makes the drive's weight-`k` bands co-rotating, as both
 drives above do. A drive without it keeps such a pulse at baseband.
 `freq=None` gives a baseband pulse on every line.
 
-Declare drive values with `parameter()` and structural choices with
-`setting()`. Constructors and serialization are synthesized. Define a scheduled
-waveform by subclassing `Envelope` and implementing `value(t)`. Define an
-unscheduled scalar coefficient by subclassing `TimeCoefficient` and
-implementing `value(t)`. Both implementations should use `quchip.qnp` to remain
-JAX-traceable. This half-sine pulse rises from zero to its peak at mid-pulse:
+Define drive values with `parameter()` and structural choices with
+`setting()`, and quchip generates the constructors and serialization. Define a
+scheduled waveform by subclassing `Envelope` and an unscheduled scalar
+coefficient by subclassing `TimeCoefficient`, and implement `value(t)` in
+both. Both implementations must use `quchip.qnp` to remain JAX-traceable. This half-sine pulse rises from zero to its peak at mid-pulse:
 
 ```python
 from quchip import Envelope, qnp
@@ -220,9 +219,9 @@ Use a complex envelope for IQ control. `GaussianDRAG` implements
 $E(t) = I(t) + i\beta\,dI/dt$, with signed $\beta$ in ns. An IQ envelope is one
 complex control signal, not two drive lines.
 
-An envelope owns local shape and relative I/Q only. Pass global phase to
-`sequence.schedule(..., phase=...)`. Timing and carrier belong to that
-scheduled pulse as well.
+An envelope owns only the local shape and the relative I/Q, while the global
+phase, the timing and the carrier belong to the scheduled pulse: pass the
+global phase to `sequence.schedule(..., phase=...)`.
 
 Control equipment transforms complete analytic signals before `hamiltonian()`.
 A delayed crosstalk copy therefore keeps the source carrier, both quadratures,
@@ -230,7 +229,7 @@ and the carrier phase accumulated during the delay.
 
 ## Dissipation
 
-Declare a configurable loss rate with `parameter(noise=True)`. Return the
+Define a configurable loss rate with `parameter(noise=True)`, and return the
 unscaled jump operator and its rate separately. This Kerr cavity adds
 two-photon loss to the channels it inherits:
 
@@ -257,9 +256,9 @@ class LossyKerrCavity(KerrCavity):
         )
 ```
 
-Rates use `1/ns`. The backend applies `sqrt(rate)` when constructing a
-Lindblad operator. Devices, drives, and couplings author channels on their
-local support. A drive's channel acts on its target device:
+Rates use `1/ns`, and the backend applies `sqrt(rate)` when it builds a
+Lindblad operator. Devices, drives, and couplings define channels on their
+local support, and a drive's channel acts on its target device:
 
 ```python
 from quchip import ChargeDrive
@@ -296,8 +295,8 @@ class CollectiveDecayCoupling(CouplingModel):
 
 ## Custom spaces and interop
 
-A custom local space defines its dimension and the matrices available by name.
-Its `LocalSpace.matrix()` implementation must return a matrix with that fixed
+A custom local space defines its dimension and the matrices available by name,
+and its `LocalSpace.matrix()` implementation must return a matrix with that fixed
 dimension. This two-level spin has the Hamiltonian $H = -\omega\sigma_z/2$ on
 a `CustomSpace` with its own operator vocabulary:
 
@@ -363,26 +362,26 @@ class SpinHalf(DeviceModel):
 `computational = True` marks the device as a qubit, and `basis` lets a chip
 solve it in its native or energy basis.
 
-Named ports and observables use the same vocabulary: an operator declared as
+Named ports and observables use the same vocabulary: an operator defined as
 `op["dipole"]` is available through `device.local_operator("dipole")` and
 `network.port(..., operator="dipole")`. The conventional names `"a"`, `"a_dag"`,
 `"n"`, `"X"`, `"Y"`, `"Z"`, and `"I"` keep their device-hook meanings.
 
 Default T1 and thermal channels use `lowering_operator()` and
-`raising_operator()`. T2 uses `number_operator()`. Override those hooks to
-select your model's transitions and dephasing operator, or declare the
+`raising_operator()`, and T2 uses `number_operator()`. Override those hooks to
+select your model's transitions and dephasing operator, or define the
 complete channels in `dissipation()`. Matrix-element normalization sets how a
-channel's rate relates to measured lifetimes. quchip does not infer selection
-rules or dipole strengths from energy levels. The energy-level index used by
-frames is separate from these physical operators.
+channel's rate relates to measured lifetimes, since quchip does not infer
+selection rules or dipole strengths from energy levels. The energy-level index
+used by frames is separate from these physical operators.
 
 For an intrinsically finite model, override `truncation_boundary()` to return
-`None`. For a numerical cutoff, supply a `TruncationBoundary`. An undeclared
-custom cutoff is reported unavailable.
+`None`. For a numerical cutoff, supply a `TruncationBoundary`: quchip reports
+a custom cutoff without one as unavailable.
 
 Units remain GHz, ns and mK for every model: enter 1 MHz as `0.001` GHz and 1
-microsecond as `1000` ns. Frames give one reference frequency per device.
-Multitone terms can keep explicit time dependence. Local spaces are finite.
+microsecond as `1000` ns. Frames give one reference frequency per device,
+multitone terms can keep explicit time dependence, and local spaces are finite.
 
 Subclass `ModelMapping` when a third-party object needs an explicit
 conversion. Set `source` for import, `target` and `library` for export, and
@@ -391,12 +390,12 @@ implement only the directions the mapping supports.
 ## Control equipment
 
 Subclass `SignalTransform` for a classical hardware effect that acts on complete
-analytic signals. Implement `apply(signals)` and return a new signal map. Declare
+analytic signals, implement `apply(signals)`, and return a new signal map. Define
 numeric fields with `parameter()` and structural fields with `setting()`. Opt into
 persistence with `serializable=True`, and import the extension before loading a
 saved chip that uses it. Sweeps rebind parameters on independent transforms, whose
 generated constructors use keyword arguments. Override `validate()` for
-relationships between fields. Construction and binding call it after assigning all
+relationships between fields: construction and binding call it after assigning all
 candidate values, and numerical validation must keep tracing.
 
 ```python
@@ -440,7 +439,7 @@ Test only the properties the extension claims:
 5. serialization;
 6. a finite, nonzero JAX gradient through each differentiable parameter;
 7. the complete `Chip` or `QuantumSequence` path;
-8. both backends only when backend lowering changes.
+8. both backends only when the conversion to backend operators changes.
 
 If the engine must branch on an extension's concrete class, the model
 needs a public physical capability instead.

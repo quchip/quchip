@@ -172,8 +172,8 @@ bends away from its tangent faster than $f_{01}$ over this range.
 
 Hold the anharmonicity fixed and fit the qubit frequency and the coupling to
 the two targets. SciPy's `least_squares` takes the residual and its JAX
-Jacobian. With two parameters and two targets, the fit finds a zero of the
-residual.
+Jacobian, and since there are two parameters and two targets, the fit finds a
+zero of the residual.
 
 ```python
 from scipy.optimize import least_squares
@@ -216,7 +216,7 @@ see the [fluxonium spectroscopy study](../studies/fluxonium-spectroscopy.md).
 Differentiate the final excited-state population with respect to pulse
 amplitude, Gaussian shape, and detuning.
 
-The dynamiqs backend keeps these declared parameters differentiable through
+The dynamiqs backend keeps these defined parameters differentiable through
 the time-domain solve. Install the backend with
 `pip install 'quchip[dynamiqs]'`.
 
@@ -256,7 +256,7 @@ original_parameters = dict(sequence.parameters)
 
 One unit in the perturbation vector means $1\%$ in pulse amplitude, $1\%$ in
 the Gaussian parameter $N_\sigma$, or $1$ MHz in pulse detuning. quchip defines
-$\sigma=\mathrm{duration}/(2N_\sigma)$. So increasing $N_\sigma$ by $1\%$
+$\sigma=\mathrm{duration}/(2N_\sigma)$, so increasing $N_\sigma$ by $1\%$
 narrows the physical Gaussian width by approximately $1\%$. The derivatives
 predict changes in final population on these three scales. `jax.value_and_grad`
 returns the population and its derivatives together.
@@ -343,7 +343,7 @@ Each bar predicts the population change for the perturbation named on its axis.
 <summary>Advanced: share calibration parameters across three experiments</summary>
 
 Combine three pulse experiments with a shared qubit frequency, amplitude
-scale, and carrier correction. Their durations and nominal detunings stay
+scale, and carrier correction, while their durations and nominal detunings stay
 fixed.
 
 ```python
@@ -451,10 +451,10 @@ assert multi_jacobian.shape == (len(experiments), len(shared_names))
 
 The traced calculation keeps the device graph, Hilbert-space dimensions, and
 RWA band selection fixed. dynamiqs supports this automatic-differentiation
-path. QuTiP remains available for ordinary solves and sweeps but does not
+path, while QuTiP remains available for ordinary solves and sweeps but does not
 give gradients. Near degenerate subspaces, be careful with eigenvector
 derivatives. Devices that are diagonal by construction, such as
-`DuffingTransmon`, keep their authored level order under tracing. A traced
+`DuffingTransmon`, keep the level order that the device defines under tracing. A traced
 call raises when its values put those levels out of energy order, for example
 when a transmon spectrum turns over within its levels. Gradients inherit the
 solver tolerances, local-basis truncation, frame, approximation, and loss

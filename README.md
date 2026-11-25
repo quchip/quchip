@@ -24,7 +24,7 @@
 
 `quchip` is an open-source Python toolkit to model quantum devices. Its
 built-in models cover circuit QED, and custom Hamiltonians, operators, and
-loss channels describe other systems. Declare the chip once, then use the same
+loss channels describe other systems. Define the chip once and use the same
 model for dressed-state analysis, model reduction, control sequences,
 open-system simulation, parameter sweeps, and JAX gradients.
 
@@ -105,7 +105,7 @@ print(f"f01 = {f01:.4f} GHz, f12 = {f12:.4f} GHz, chi_Z = {1e3 * chi_z:.3f} MHz"
 f01 = 4.9980 GHz, f12 = 4.6986 GHz, chi_Z = 0.285 MHz
 ```
 
-`unresolved_hamiltonian()` keeps the local device and coupling expressions you declared. `hamiltonian()` applies the chip's basis, frame, and approximation. Both return inspectable symbolic expressions. If a resolved expression is time-dependent and you need its numerical array, call `.matrix(t=...)`.
+`unresolved_hamiltonian()` keeps the local device and coupling expressions as you defined them, while `hamiltonian()` applies the chip's basis, frame, and approximation. Both return inspectable symbolic expressions. If a resolved expression is time-dependent and you need its numerical array, call `.matrix(t=...)`.
 
 The remaining calls read dressed transition frequencies and the resonator frequency conditioned on the qubit state. With quchip's $Z=|0\rangle\langle0|-|1\rangle\langle1|$, half the ground-minus-excited difference is the coefficient $\chi_Z$ of $Z\,n_r$.
 
@@ -149,15 +149,15 @@ The spectra, pulses, model reduction and gradients guides are also Jupyter noteb
 
 ## How quchip works
 
-A predictive chip model needs more than a Hamiltonian. Device physics, control-line transformations, frames, approximations, dissipation, and measured observables each need an explicit place in it. Gain, delay, and crosstalk stay properties of the control chain instead of being folded into Hamiltonian coefficients by hand.
+A predictive chip model needs more than a Hamiltonian: device physics, control-line transformations, frames, approximations, dissipation, and measured observables each need an explicit place in it. Gain, delay, and crosstalk stay properties of the control chain instead of being folded into Hamiltonian coefficients by hand.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://docs.quchip.org/_static/readme/quchip_pipeline_dark.png">
   <source media="(prefers-color-scheme: light)" srcset="https://docs.quchip.org/_static/readme/quchip_pipeline_light.png">
-  <img src="https://docs.quchip.org/_static/readme/quchip_pipeline_light.png" alt="quchip pipeline from declared devices and control parameters through model resolution, simulation, observables, and gradients" width="1084">
+  <img src="https://docs.quchip.org/_static/readme/quchip_pipeline_light.png" alt="quchip pipeline from defined devices and control parameters through model resolution, simulation, observables, and gradients" width="1084">
 </picture>
 
-QuTiP is the default simulation backend. The optional dynamiqs backend is JAX-native and keeps declared device and control parameters differentiable through a solve. The [backend guide](https://docs.quchip.org/reference/backends-and-solvers.html) compares their numerical and workflow tradeoffs. The scqubits integration imports and exports selected device and composite models.
+QuTiP is the default simulation backend. The optional dynamiqs backend is JAX-native and keeps the defined device and control parameters differentiable through a solve. The [backend guide](https://docs.quchip.org/reference/backends-and-solvers.html) compares their numerical and workflow tradeoffs. The scqubits integration imports and exports selected device and composite models.
 
 `quchip` uses GHz for ordinary frequencies, ns for time, and mK for temperature. The [physics guide](https://docs.quchip.org/physics) documents the implemented conventions and approximations.
 

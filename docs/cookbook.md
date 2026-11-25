@@ -26,7 +26,7 @@ Frequencies are in GHz, times in ns, temperatures in mK and decay rates in
 | A reduced model of chosen devices | `eliminate_spectators(chip, keep)` |
 | Diagonalize effective terms, such as a junction cosine | `eliminate(chip, label, method="exact")` |
 
-The {doc}`guides <guides/index>` develop these workflows. The
+The {doc}`guides <guides/index>` develop these workflows, and the
 {doc}`focused studies <studies/index>` apply them to specific physical questions.
 
 ## Keep model inputs and observables distinct
@@ -43,14 +43,14 @@ dressed = chip.freq(q)
 readout_if_excited = chip.freq(r, when={q: 1})
 ```
 
-Use device objects while building the model. Use their labels when you get
-results or binding parameters. `chip.freq()` dresses automatically, so a
-preceding `dress()` call is not needed.
+Use device objects while you build the model, and their labels when you read
+results or bind parameters. `chip.freq()` dresses the chip itself, so it
+needs no `dress()` call first.
 
-Dressed queries and default solves share `chip.approximation`. The default
-`RWA()` drops counter-rotating bands in both. Construct the chip with
-`approximation=Exact()` to keep them. Dressed queries always use the lab
-frame. Pulse solves on a chip without a frame, such as this one, use the
+Dressed calculations and default solves use the same `chip.approximation`,
+whose default `RWA()` drops the counter-rotating bands in both, and a chip
+built with `approximation=Exact()` keeps them. Dressed calculations always use
+the lab frame. Pulse solves on a chip without a frame, such as this one, use the
 rotating frame and warn with that choice. Pass `frame=` to `Chip()` to choose
 a frame. If a solve overrides the approximation, use the same choice for its
 carrier and state preparation. `chip.resolve(frame="lab", approximation=...)`
@@ -61,31 +61,32 @@ by negative two for the coefficient of `Z=|0><0|-|1><1|` times resonator
 number. `kerr_matrix()` collects full pulls off diagonal and dressed
 anharmonicities on the diagonal.
 
-Inspect `unresolved_hamiltonian()` for the declared expression and
+Inspect `unresolved_hamiltonian()` for the expression as defined and
 `hamiltonian()` for the expression after basis, frame and approximation
 choices. `chip.resolve().dropped_terms_summary()` lists discarded terms.
-`Exact()` keeps the declared Hamiltonian terms. Finite local spaces and
-component approximations still apply.
+`Exact()` keeps the Hamiltonian terms as defined, while finite local spaces
+and component approximations still apply.
 
 ## Fit a large conserving model
 
-`fit_a_dress()` uses the same excitation sectors as labeled dressed queries.
+`fit_a_dress()` uses the same excitation sectors as labeled dressed calculations.
 For 24 devices with at least two levels each, ground-conditioned frequencies
 need the vacuum and a 24-state block. With at least three levels per device,
 anharmonicities and pair shifts also need the 300-state two-excitation block.
 Smaller local cutoffs reduce that count.
 
-The engine must prove conservation from the retained operators. Default `RWA()`
-provides this for ordinary interactions. An explicitly conserving model can
-qualify under `Exact()` too. Unknown or nonconserving operators use the full
-space. No excitation cutoff is inserted.
+The engine must prove conservation from the retained operators: the default
+`RWA()` provides this for ordinary interactions, and an explicitly conserving
+model can qualify under `Exact()` too. Unknown or nonconserving operators use
+the full space, and no excitation cutoff is inserted.
 
 `max_hilbert_dim` limits the largest matrix used by each fit target. The limit
 is checked again after rebinding or tracing. Traced parameters of a local
 Hamiltonian that is not diagonal by construction, such as a
 `ChargeBasisTransmon`, give a traced energy basis. Conservation of an
-undeclared operator on that device is then unknown. Keep a sufficient limit
-for the full fallback, or supply a valid structural operator declaration.
+operator on that device without a defined structure is then unknown, so keep a
+sufficient limit for the full fallback, or supply a valid structural operator
+definition.
 `evaluator="full"` retains the complete device model even when it uses sectors.
 `evaluator="local"` remains an explicit neighborhood approximation.
 
@@ -97,7 +98,7 @@ Eligible deterministic pulses also use exact invariant excitation spaces.
 `VNA(chip).sweep(frequencies)` supports pump-free models that are static in
 the lab frame, including capacitive couplings under `Exact()`. It solves one
 stationary state per chip parameter point, then evaluates the weak response
-at each probe frequency. The declared loss channels and approximation stay
+at each probe frequency. The model's loss channels and approximation stay
 unchanged. Counter-rotating terms move the stationary state out of the vacuum,
 so this sweep uses the full Liouvillian, of size D² × D² for Hilbert-space
 dimension D. Fixed pumps, `measure()` and `finite_power()` still require a tone
@@ -125,12 +126,12 @@ local cutoff includes it. Use enough resonator levels to retain two photons.
 An excited reference stays fixed in the probe source. Its response includes
 loss and coherence recycling, but it does not model population evolution during
 an acquisition. Inspect `diagnostics` for `reference_escape_rate` and
-`reference_stationarity_residual`, both in `1/ns`. They must be small on the
-response timescale. They do not provide a fit-error bound.
+`reference_stationarity_residual`, both in `1/ns`: they must be small on the
+response timescale, and they do not provide a fit-error bound.
 
 This route rejects pumps, thermal inputs and stationary solver options.
 Use scheduled coherent inputs when the preparation, delay or acquisition
-window matters. `VNA.measure()` continues to describe stationary measurements.
+window matters. `VNA.measure()` describes stationary measurements.
 
 ## Read the resonances of a readout
 
@@ -169,13 +170,13 @@ constrained values, such as pulse duration and edge length, in the same call.
 Activate optional noise before JAX tracing, then vary its numerical values.
 `thermal_occupation` is the bath's mean occupation, not the qubit's initial
 excited-state probability. `set_noise()` replaces the complete noise
-configuration. Use `with_params()` for a partial change.
+configuration, so use `with_params()` for a partial change.
 
 For `FluxTunableTransmon`, sweep `flux_bias` to move along its calibrated
 frequency curve. Set `freq` and `flux_bias` together to change the calibration
 anchor. Its charge operator also follows `flux_bias`, so capacitive `g` and
 charge-drive amplitudes refer to zero flux, not to the anchor. `to_dict()` and
-`from_dict()` save and restore model declarations.
+`from_dict()` save and restore model definitions.
 
 ## Keep the pulse handle for sweeps
 
@@ -198,12 +199,12 @@ batch = sequence.simulate_batch(
 )
 ```
 
-Separate sweep axes form a Cartesian grid. `zip()` pairs values. Here the two
-pulses have equal nominal area. Use `delay()` and `barrier()` for serial timing,
+Separate sweep axes form a Cartesian grid, while `zip()` pairs values: here the
+two pulses have equal nominal area. Use `delay()` and `barrier()` for serial timing,
 and an explicit `start_time` for overlap.
 
-A scheduled carrier stays fixed when device parameters change. Use the pulse's
-`freq` parameter to retune it. For independently built experiments, pass their
+A scheduled carrier stays fixed when device parameters change, so use the
+pulse's `freq` parameter to retune it. For independently built experiments, pass their
 `build_problem()` results to `solve_many()`.
 
 ## Detune a pulse or choose its phase frame
@@ -289,7 +290,7 @@ rates = channel.error([[0, -1], [1, 0]]).pauli_rates()
 `infidelity()` is the error in quchip's frame, with ideal preparation and
 measurement, and it counts leakage. `eigenvalue_infidelity()` is a spectral
 score that a fixed unitary conjugation of the gate and target leaves
-unchanged; give `average_leakage()` beside it. `error(target)` is the map
+unchanged. Give `average_leakage()` beside it. `error(target)` is the map
 after the ideal gate, and `pauli_rates()` gives the Pauli weights of its
 twirl. Here the
 infidelity is 7.0e-3, mostly the coherent error of the first-guess pulse,
@@ -314,9 +315,9 @@ counts = result.measure(q).sample(1024, seed=7).counts()
 Use `states="final"` when only the final state matters. Then
 `result.population(q, level=1)` holds only the final value, and
 `result.final_population(q, level=1)` returns it with either choice.
-`states="none"` saves only requested expectation traces. Later state measurements require saved
-states. `observable_at()` can select or interpolate a saved trace. State
-queries use saved times and do not interpolate quantum states.
+`states="none"` saves only requested expectation traces. State measurements after the solve require saved
+states. `observable_at()` can select or interpolate a saved trace. Methods
+that return states use saved times and do not interpolate quantum states.
 
 A level label names its dressed state everywhere: `chip.state(q=1)`,
 `initial_state={"q": 1}` or `"e"`, the targets of `overlap()` and
@@ -348,7 +349,7 @@ saved = result.compact_state()
 ```
 
 The factory also accepts weighted superpositions, such as
-`chip.compact_state((1, {}), (1j, {"q": 1}))`. It normalizes the sum. With
+`chip.compact_state((1, {}), (1j, {"q": 1}))`, and it normalizes the sum. With
 `dressed=False`, a device can also take a local ket, so a bare product needs no
 product-space vector on a large chip.
 Pass `saved` as the next solve's `initial_state`, with the same captured local
@@ -356,7 +357,7 @@ bases. Start the next time grid at the previous final time to continue
 absolute-time controls.
 
 Inspect `result.stats["excitation_reduction"]` for dimensions and the proof
-or fallback reason. Local queries keep the state compact. Existing native
+or fallback reason. Local calculations keep the state compact. Existing native
 state exports expand only when requested and check memory first. A full
 population dictionary also requires product-space storage. Use `population`
 for individual device occupations on large models.
@@ -364,7 +365,7 @@ for individual device occupations on large models.
 ## Truncate the total excitation
 
 Under `Exact()`, counter-rotating pair terms connect every excitation sector.
-Labeled queries and pulse solves of a large chip then need the full product
+Labeled calculations and pulse solves of a large chip then need the full product
 space. `ExcitationCutoff(max_total=K)` keeps the product labels whose levels sum
 to at most `K`, and it keeps every matrix element between them. It is an
 explicit approximation of the model, separate from `RWA()` and `Exact()`.
@@ -392,7 +393,7 @@ not be monotone. Check the local level truncation separately, with more
 A label above the cutoff raises, and so does a supplied state with more than
 `1e-20` of its weight above the cutoff. quchip treats a smaller residue as
 basis-conversion round-off and drops it without renormalization. Pulse solves
-evolve the truncated model. Their default initial state is the truncated
+evolve the truncated model, and their default initial state is the truncated
 model's vacuum-assigned eigenvector.
 `check_truncation(result)[ExcitationCutoff(K)]` gives the maximum sampled
 population in the sectors that one step can move above the cutoff. This value
@@ -413,7 +414,7 @@ solve the full product space. An undriven `steadystate()` of such a chip
 returns the vacuum when the lowering channels prove it unique.
 `result.diagnostics["route"]` names the route that each call took and why.
 
-## Declare network noise
+## Define network noise
 
 ```python
 from quchip import PortNetwork
@@ -424,12 +425,12 @@ twpa = network.amplifier("twpa", gain_db=20, added_noise=0.5)
 ```
 
 `thermal_occupation` is the passive load's mean thermal population in quanta.
-If you omit it, the load is in vacuum. `added_noise` is the required
+When you omit it, the load is in vacuum. `added_noise` is the required
 input-referred symmetrized noise in quanta, at least `(1 - 1/G) / 2` for power
 gain `G`. Both are constant across frequency sweeps. The TWPA model describes
 linear phase-preserving gain.
 
-For existing network declarations, rename `occupation` or `loss_occupation`
+For existing network definitions, rename `occupation` or `loss_occupation`
 to `thermal_occupation`. Temperature, noise figure, and `noise_frequency`
 arguments are removed. Supply noise quanta directly, including in saved
 component parameters.
@@ -475,7 +476,7 @@ calibration.
 | A gate fidelity | `fidelity()` counts leakage. `omitted_channels` names the collapse channels that the propagator leaves out; `subspace_channel()` keeps them. |
 
 QuTiP is the default. Choose dynamiqs for JAX gradients and compiled batches.
-The initial state and declared dissipation select `sesolve` or `mesolve`
+The initial state and the model's dissipation select `sesolve` or `mesolve`
 automatically. Use `dissipation=False` only for an intentional closed-system
 comparison. See {doc}`Backends and solvers <reference/backends-and-solvers>` for
 integration settings and {doc}`Gradients and parameter fitting <guides/gradients-and-fitting>`

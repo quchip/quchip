@@ -20,11 +20,11 @@ jupyter:
 <!-- notebook-download -->
 
 Track an avoided crossing, inspect its dressed-state assignments, and change
-the model's parameters without changing the declared chip.
+the model's parameters without changing the defined chip.
 
 quchip uses GHz for frequencies and couplings.
 
-## Declare the coupled model
+## Define the coupled model
 
 Sweep one transmon through the other, where their bus-mediated interaction
 produces an avoided crossing. For this study, use `RWA()` in a rotating
@@ -69,8 +69,8 @@ chip = Chip(
 
 ## Sweep the avoided crossing
 
-`Sweep` names the public parameter path to change. `SpectrumSweep` builds
-an isolated chip at each point, so the original declaration does not
+`Sweep` names the public parameter path to change, and `SpectrumSweep`
+builds an isolated chip at each point, so the chip as you defined it does not
 change. `overlap_threshold=0.0` keeps both intentionally hybridized
 one-excitation labels available at the centre of the avoided crossing.
 
@@ -84,8 +84,8 @@ sweep_result = SpectrumSweep(
 ).run(progress=False)
 ```
 
-Subtract the ground energy from the two qubit-like branches. The bus-like
-excitation stays above this frequency window.
+Subtract the ground energy from the two qubit-like branches, while the
+bus-like excitation stays above this frequency window.
 
 ```python
 ground_energy = sweep_result.eigenvalues[:, 0]
@@ -186,16 +186,16 @@ plt.show()
 :width: 720px
 :alt: Dressed transmon avoided crossing with the q1 bare-state assignment weight below
 
-The bare declarations cross while the dressed transitions retain a finite
+The bare frequencies cross while the dressed transitions retain a finite
 splitting. The assignment weight exposes the hybridized region directly.
 ```
 
-The dashed lines are the bare declarations. Red follows the more $q_1$-like
-dressed transition, and black the more $q_2$-like one. At the crossing, the
-branch separation is $2J\approx4.0$ MHz. Second-order dispersive perturbation
-theory gives $4.0$ MHz, and the two agree to 0.3%. The RWA drops the
-counter-rotating coupling bands. With `Exact()`, their Bloch–Siegert shift
-raises the splitting to approximately 4.4 MHz.
+The dashed lines are the bare frequencies, while red follows the
+more $q_1$-like dressed transition and black the more $q_2$-like one. At the
+crossing, the branch separation is $2J\approx4.0$ MHz. Second-order
+dispersive perturbation theory gives $4.0$ MHz, and the two agree to 0.3%. The
+RWA drops the counter-rotating coupling bands, and with `Exact()` their
+Bloch–Siegert shift raises the splitting to approximately 4.4 MHz.
 
 The lower panel shows why a bare-state label needs care at the crossing: its
 assignment weight decreases to approximately one half as the two excitations
@@ -203,7 +203,7 @@ hybridize.
 
 ## Inspect the model after the sweep
 
-The declared frequencies are inputs. `chip.freq()` returns dressed
+The defined frequencies are inputs, while `chip.freq()` returns dressed
 $0\rightarrow1$ transitions, and `chip.static_zz()` returns the
 conditional two-qubit shift for this coupled model.
 
@@ -325,8 +325,8 @@ Dressed q2 of shifted_chip: 5.397877 GHz
 ## Independent and linked parameter studies
 
 `Sweep.expand()` shows the parameter dictionaries before a calculation starts.
-Independent axes form a Cartesian grid. If the parameters must move together,
-`Sweep.zip()` pairs the values.
+Independent axes form a Cartesian grid, while `Sweep.zip()` pairs the values
+of parameters that must move together.
 
 ```python
 frequency_values = Sweep([5.28, 5.30, 5.32], name="q2.freq")
@@ -362,7 +362,7 @@ Output:
 <!-- executed-output:end -->
 
 If each point needs a dressed spectrum, pass one of the two axis lists to
-`SpectrumSweep`. If you need only a few points or a custom observable,
+`SpectrumSweep`, and if you need only a few points or a custom observable,
 use `with_params()` directly.
 
 ## Check labels before interpreting branches

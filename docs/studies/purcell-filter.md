@@ -5,7 +5,7 @@ preserve the readout bandwidth? Include intrinsic loss in every mode.
 The [readout guide](../guides/steady-state-and-vna.md) covers the fridge wiring and
 measured S parameters. Frequencies are in GHz and times in ns.
 
-## Declare the two circuits
+## Define the two circuits
 
 Both circuits use the same bare qubit and readout parameters:
 
@@ -220,7 +220,7 @@ The integrated loss budget explains the T1 improvement:
 |---|---:|---:|
 | Qubit intrinsic | 48.3% | 96.2% |
 | Readout intrinsic | 1.75% | 3.48% |
-| Filter intrinsic | — | <0.001% |
+| Filter intrinsic | n/a | <0.001% |
 | Feedline | 49.9% | 0.329% |
 
 The table gives fractions of the excitation lost by 120 µs, excluding
@@ -304,11 +304,11 @@ for name, chip in chips.items():
 np.testing.assert_allclose(linewidths[1], linewidths[0], rtol=0.05)
 ```
 
-The loaded linewidth is **1.033 MHz without the filter** and **1.051 MHz with
-it**. These values are within the broad-filter estimate's 5% design tolerance.
-A `network.filter()` applies a transfer function to the signal path and cannot
-give this T1 protection. That protection needs a coupled resonator in the
-quantum model, which changes the decay channels.
+The loaded linewidth is 1.033 MHz without the filter and 1.051 MHz with it,
+within the broad-filter estimate's 5% design tolerance. A `network.filter()`
+applies a transfer function to the signal path and cannot give this T1
+protection, since that protection needs a coupled resonator in the quantum
+model, which changes the decay channels.
 
 To remove a readout from its feedline and keep its weak-probe response, see
 [Remove a readout from its feedline](../guides/model-reduction.md#remove-a-readout-from-its-feedline).

@@ -25,13 +25,13 @@ segments that build up and remove the coherent field faster. How much faster
 does it empty a readout resonator behind a Purcell filter? Frequencies are in
 GHz and times in ns.
 
-## Declare the filtered readout
+## Define the filtered readout
 
 Use the filtered circuit from the [Purcell study](purcell-filter.md): a 5 GHz
-transmon, a 7 GHz readout resonator, and a 7.02 GHz Purcell filter. The line
-couples to the filter. Both pulses use the same 7.004945 GHz carrier, a
+transmon, a 7 GHz readout resonator, and a 7.02 GHz Purcell filter, with the
+line coupled to the filter. Both pulses use the same 7.004945 GHz carrier, a
 weak-drive estimate of the conditional response midpoint that includes the
-lossy filter. Use that carrier as the IQ reference too.
+lossy filter, and that carrier is also the IQ reference.
 
 ```python
 import numpy as np
@@ -92,7 +92,7 @@ Excited-reference escape rate: 1.73e-05 /ns
 
 The carrier lies 6.8 kHz above the dip midpoint, under 1% of the 1 MHz
 readout linewidth. `chip.freq()` diagonalizes the closed Hamiltonian, which
-treats the filter as a lossless mode. That mode puts the readout midpoint
+treats the filter as a lossless mode and so puts the readout midpoint
 3.2 MHz below the dips. The filter's 230 MHz linewidth is much larger than
 its 20 MHz detuning from the readout, so the driven response keeps little of
 that pull. The excited reference escapes at 1/(57.9 µs), the filtered T1 of
@@ -102,9 +102,9 @@ on the readout timescale.
 ## Design the two pulses
 
 Both pulses start at 100 ns and use the same carrier and hold amplitude
-(in √photons/ns). The square pulse stops at 900 ns. CLEAR uses two loading
-segments, a hold, and then two depletion segments that end at 1300 ns. A
-negative amplitude is a π phase reversal. These five coefficients are a
+(in √photons/ns). The square pulse stops at 900 ns, while CLEAR uses two
+loading segments, a hold, and then two depletion segments that end at
+1300 ns, where a negative amplitude is a π phase reversal. These five coefficients are a
 weak-drive starting design for this circuit, so retune them if you change
 the circuit or carrier.
 
@@ -128,8 +128,8 @@ for start, duration, scale in zip(segment_edges[:-1], np.diff(segment_edges), se
 ## Simulate both preparations
 
 Prepare dressed |0,0,0⟩ and |1,0,0⟩ states of the resolved RWA model, and
-run each pulse on both preparations. Record the occupations and the readout
-field αᵣ = ⟨aᵣ⟩. The explicit time grid resolves the fast qubit–resonator
+run each pulse on both preparations, recording the occupations and the
+readout field αᵣ = ⟨aᵣ⟩. The explicit time grid resolves the fast qubit–resonator
 exchange. The `matrix_form` solver option requires
 [QuTiP 5.3+](https://qutip.readthedocs.io/en/qutip-5.3.x/apidoc/solver.html).
 

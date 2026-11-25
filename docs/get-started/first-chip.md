@@ -3,7 +3,7 @@
 Build a coupled transmon–resonator model, read its dressed frequencies, and
 find bare parameters that meet a design target. Frequencies are in GHz.
 
-## Declare the model
+## Define the model
 
 ```python
 from quchip import Capacitive, Chip, DuffingTransmon, Resonator, fit_a_dress
@@ -15,7 +15,7 @@ chip = Chip([q, r], [qr])
 ```
 
 Labels name the model's parameters: `q.freq`, `q.anharmonicity`, and `qr.g`.
-Inspect the declaration with `describe()`:
+Inspect the definition with `describe()`:
 
 ```python
 print(chip.describe())
@@ -46,7 +46,7 @@ qr : q ↔ r
 ```
 
 The `Sectors` line shows that this RWA model conserves the total excitation
-number $N$, the sum of the device levels. Dressed queries therefore diagonalize
+number $N$, the sum of the device levels. Dressed calculations therefore diagonalize
 one small block for each $N$ instead of all 20 levels.
 `chip.excitation_structure()` lists the terms that decide this.
 
@@ -77,7 +77,7 @@ anharmonicities on the diagonal.
 
 ## Change a parameter
 
-`with_params()` returns a new chip, and the source declaration stays available.
+`with_params()` returns a new chip, and the chip you defined stays available.
 
 ```python
 shifted = chip.with_params({"q.freq": 5.1})
@@ -95,7 +95,7 @@ Changed bare / dressed: 5.100 / 5.098685 GHz
 
 ## Inspect the Hamiltonian
 
-`unresolved_hamiltonian()` shows the Hamiltonian you declared. `hamiltonian()` is the
+`unresolved_hamiltonian()` shows the Hamiltonian you defined, while `hamiltonian()` is the
 expression selected for simulation, after basis, frame, and RWA choices. Both show as
 equations in a notebook.
 
@@ -123,8 +123,8 @@ conventions.
 
 ## Fit a dressed target
 
-For `fit_a_dress()`, device values specify desired **dressed** frequencies
-and anharmonicities. Coupling values specify desired full cross-Kerr pulls.
+For `fit_a_dress()`, device values specify the desired dressed frequencies
+and anharmonicities, and coupling values specify the desired full cross-Kerr pulls.
 The fit returns the bare parameters that produce those targets.
 
 ```python

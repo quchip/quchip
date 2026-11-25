@@ -5,13 +5,13 @@
 # quchip documentation
 
 ```{container} docs-intro
-Model quantum devices in Python. Declare devices, couplings,
+Model quantum devices in Python. Define devices, couplings,
 controls, and losses, then calculate spectra, simulate pulses, or fit parameters.
 ```
 
 ## Install
 
-Python 3.11 or newer is required.
+quchip requires Python 3.11 or newer.
 
 ```bash
 python -m pip install quchip

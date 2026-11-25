@@ -101,8 +101,8 @@ values are fixed model inputs, independent of the amplifiers' physical
 stages.
 
 The filters have half-power edges at 4 and 8 GHz. The output filter's
-`thermal_occupation` declares a matched absorptive load. The input filter
-sees a vacuum source, with thermal attenuators downstream. The resonators'
+`thermal_occupation` makes it a matched absorptive load. The input filter sees a
+vacuum source, with thermal attenuators downstream, and the resonators'
 intrinsic losses also see vacuum.
 
 Connect the input chain to circulator port 1, the bus to port 2, and the
@@ -298,7 +298,7 @@ increases the fluctuation level but does not change this curve.
 
 `vna.resonances()` gives the poles of the same small-signal response, without
 a fit. Each pole has a lab-frame frequency, a linewidth κ, and a weight on
-each mode. `dominant` names the mode with the largest weight. κ is the full
+each mode, and `dominant` names the mode with the largest weight. κ is the full
 width at half maximum of the pole's own Lorentzian in power. A measured dip
 also contains the background and the other poles, so its width can differ
 from κ.
@@ -322,14 +322,14 @@ r3: 6.60078 GHz, kappa/2pi = 15.28 MHz
 The bus and the other resonators pull r1 down by 1.0 MHz and r3 up by
 0.8 MHz. The linewidths are 1–4% above the nominal 17.8, 10.7, and 14.8 MHz.
 Each nominal value adds the internal loss to the second-order external rate
-of the formula above, for one resonator alone. The poles include the
+of the formula above, for one resonator alone, while the poles include the
 couplings to all orders and the exchange through the shared bus.
 
 <details>
 <summary>Check the poles against the sweep</summary>
 
 `poles.scattering()` rebuilds S from the poles and their residues, with the
-reference planes of the ports. It agrees with the swept S21 to round-off.
+reference planes of the ports, and it agrees with the swept S21 to round-off.
 
 ```python
 # Axes: frequency, output, input, with the ports in the order (drive, readout).
@@ -490,7 +490,7 @@ the captured arrays.
 Stationary harmonic calculations use mode-space equations without a Fock
 cutoff, and nonlinear devices use the density-matrix solver. On a chip that
 conserves the total excitation and has more than 64 product states, the
-solver keeps only the states with at most `K` excitations. It warns which `K`
+solver keeps only the states with at most `K` excitations and warns which `K`
 it kept. Sampling describes stationary Gaussian field moments. Colored thermal
 noise into the chip needs an explicit filter mode on the chip. This setup does
 not include amplifier saturation, finite reverse isolation, or reverse
@@ -523,8 +523,8 @@ rabi.schedule(xy, envelope=Square(duration=40.0, amplitude=0.025), freq=5.0)
 result = rabi.simulate(tlist=np.linspace(0, 40, 81))
 ```
 
-For the readout, couple the same qubit to r2 with g = 90 MHz. The
-qubit–resonator detuning is 1.5 GHz. A port network with only the bus
+For the readout, couple the same qubit to r2 with g = 90 MHz, at a
+qubit–resonator detuning of 1.5 GHz. A port network with only the bus
 coupler puts the reference plane at the chip. `when={q: state}` gives the
 conditional reflection of the bus, with the qubit held in that state.
 
@@ -588,17 +588,17 @@ measurement = result.measure(q, t=10.0)
 shots = measurement.sample(1000, readout=detector, seed=7)
 ```
 
-`detector.contributions` gives the source covariance budget. The HEMT and
-the output cable contribute most of the noise.
+`detector.contributions` gives the source covariance budget, in which the HEMT
+and the output cable contribute most of the noise.
 
 Both panels use this detector, and a midpoint threshold classifies the IQ
-shots. The overlap gives an error of approximately 8% for each outcome. So
+shots. The overlap gives an error of approximately 8% for each outcome, so
 the recorded Rabi curve spans approximately 0.08–0.92, while the quantum
 population spans 0–1. The qubit starts in |0⟩, so this floor is a detection
 error. A longer window or a stronger tone separates the clouds further, but
 the qubit decays during the window. With the T1 above, about 6% of the |1⟩
 shots decay within 1 μs, which moves their integrated field toward the |0⟩
-mean. The sampled shots do not include that decay. They also take the
+mean. The sampled shots do not include that decay, and they also take the
 prepared populations as the dressed states of the coupled chip, a transfer
 that this calculation does not simulate.
 
@@ -677,7 +677,7 @@ noise again.
 
 ## Repeat the line for more feedlines
 
-A chip with several feedlines uses one line design for all of them. Declare
+A chip with several feedlines uses one line design for all of them. Define
 the line once, as a `PortNetwork` without quantum ports, and copy it into the
 fridge network with `include()`. This line also adds a pump tone through a
 −20 dB directional coupler.

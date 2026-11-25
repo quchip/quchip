@@ -2,7 +2,7 @@
 
 Start with a physical question and a runnable calculation. Show the result,
 then add the model details needed to interpret it. The {doc}`../cookbook`
-collects user recipes. This page describes how to write and publish them.
+collects user recipes, and this page describes how to write and publish them.
 
 ## Organize the calculation
 
@@ -12,11 +12,11 @@ coupling, control and solver APIs, with object references and short labels.
 
 Group sections around an experiment. Wiring and measurement belong together
 when they explain the same signal. Link separate studies when the physical
-question changes. Keep code cells focused on the declaration, solution or
+question changes. Keep code cells focused on the definition, solution or
 inspection of the model. Put plotting code in a separate, collapsible block.
 
 State units, frames, approximations and truncations where they affect the
-answer. Use a component's declared parameters for the model inputs and
+answer. Use a component's defined parameters for the model inputs and
 identify dressed quantities as results of the coupled system. Keep the
 original model when you sweep, fit or reduce it.
 
@@ -40,8 +40,9 @@ tests, but the record does not replace the result shown to the reader.
 Use familiar physical names. Say “bath model,” “pulse schedule,” or “parameter
 sweep” instead of calling everything a “recipe.”
 
-Give each page one title, shared by its heading, guide index and sidebar.
-Titles should name the calculation rather than a quchip implementation concept.
+Give each page one title that names the calculation rather than a quchip
+implementation concept, and use it for the heading, the guide index and the
+sidebar.
 
 ## Plot the observable
 
@@ -51,8 +52,8 @@ axis scaling for IQ plots and a logarithmic scale when the range requires it.
 
 Use the style in `docs/_static/quchip.mplstyle`: red, blue and charcoal, with
 light and dark SVG variants and PDF downloads. Every committed figure must
-come from the accompanying code. Inspect the rendered page in both themes.
-Check labels, legends, figure size and collapsed code blocks.
+come from the accompanying code. Inspect the rendered page in both themes,
+and check its labels, legends, figure size and collapsed code blocks.
 
 `chip.plot_graph()` shows bare parameters by default. Use `values="dressed"`
 or `values="both"` when the comparison calls for dressed observables.
@@ -87,7 +88,7 @@ A page is either Markdown with its printed output or a Jupyter notebook.
 
 Inspect the figures and run the focused example test and the documentation
 build. Validation executes the Markdown pages and the guide notebooks again
-and compares their printed output with the committed text. The release suite
+and compares their printed output with the committed text, while the release suite
 does the same for the study notebooks. The
 {doc}`contributing guide <../contributing>` gives the execution and validation
 commands.

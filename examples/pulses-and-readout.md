@@ -23,9 +23,9 @@ How does pulse duration change leakage, and how does the qubit state appear in
 resonator readout? Use one coupled model for both experiments, and read the
 pulses as gates between them. Frequencies are in GHz and times in ns.
 
-## Declare the chip
+## Define the chip
 
-The transmon couples to a 6.8 GHz resonator with a 1 MHz linewidth. Separate
+The transmon couples to a 6.8 GHz resonator with a 1 MHz linewidth, and separate
 charge lines address the qubit and the readout.
 
 ```python
@@ -87,7 +87,7 @@ drive_batch = drive_sequence.simulate_batch(
 )
 ```
 
-Read the populations of |0⟩, |1⟩, and |2⟩. The arrays are indexed by
+Read the populations of |0⟩, |1⟩, and |2⟩ in arrays indexed by
 `(level, pulse, time)`.
 
 ```python
@@ -167,17 +167,17 @@ Long: final P1 = 98.1%; peak P2 = 3.8%
 
 <!-- executed-output:end -->
 
-Equal pulse area does not guarantee equal inversion in a multilevel system.
-The smaller peak P2 shows why the longer pulse comes closer to the target.
+Equal pulse area does not guarantee equal inversion in a multilevel system,
+and the smaller peak P2 shows why the longer pulse comes closer to the target.
 
 ## Read the pulses as gates
 
 `subspace_propagator(qubit)` runs a pulse from each dressed qubit state, |0⟩
 and |1⟩, with the resonator empty. It returns the 2 × 2 matrix in the frame
 of the dressed frequencies and the leakage of each input out of these
-states. On the 0→1 transition, the charge operator Q of the line has the
-dressed matrix element ⟨1|Q|0⟩ ≈ i. A real π pulse therefore aims at −iY up
-to a global phase. `fidelity()` gives the average gate fidelity, which counts
+states. Since the charge operator Q of the line has the dressed matrix element
+⟨1|Q|0⟩ ≈ i on the 0→1 transition, a real π pulse aims at −iY up to a global
+phase. `fidelity()` gives the average gate fidelity, which counts
 the leakage. A propagator describes the Hamiltonian alone, so the call
 leaves out the resonator loss.
 
@@ -205,10 +205,10 @@ Long: fidelity to −iY = 0.988; leakage from |0⟩ = 4.3e-05
 
 <!-- executed-output:end -->
 
-The short pulse moves most of |0⟩ out of the qubit states. The long pulse
-leaks little, so most of its error is coherent. The drive also couples |1⟩ to
-|2⟩, which shifts the 0→1 transition during the pulse. The result is a nearly
-π rotation with a tilted axis and a small angle error. The amplitude is a
+The short pulse moves most of |0⟩ out of the qubit states, while the long
+pulse leaks little, so most of its error is coherent. The drive also couples
+|1⟩ to |2⟩, which shifts the 0→1 transition during the pulse, and the result
+is a nearly π rotation with a tilted axis and a small angle error. The amplitude is a
 first guess for a calibration.
 
 ## Read out the prepared qubit state
@@ -233,9 +233,9 @@ readout_sequence = QuantumSequence(chip)
 _ = readout_sequence.schedule(readout_line, envelope=readout_pulse, freq=readout_carrier)
 ```
 
-Apply the same pulse to separately prepared dressed |0,0⟩ and |1,0⟩ states.
-As these are new preparations, the readout comparison does not inherit the
-previous experiment's leakage. Follow the two IQ pointers during the 900 ns
+Apply the same pulse to dressed |0,0⟩ and |1,0⟩ states that are prepared
+separately, so the readout comparison does not inherit the leakage of the
+previous experiment. Follow the two IQ pointers during the 900 ns
 readout pulse.
 
 ```python

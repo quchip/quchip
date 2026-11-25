@@ -23,7 +23,7 @@ start with the one that matches your question. New to quchip? Start with
    read the output spectrum, `g1` and `g2` of a driven emitter.
 8. {doc}`Import circuits from scqubits <scqubits>`: turn scqubits devices and
    coupled systems into quchip models and back.
-9. {doc}`Extending quchip <../extensions>`: declare your own operators,
+9. {doc}`Extending quchip <../extensions>`: define your own operators,
    models, and controls.
 
 Guides 1, 2, 4, and 5 are also Jupyter notebooks, and each of these pages

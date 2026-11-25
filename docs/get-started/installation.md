@@ -32,4 +32,4 @@ python -c "import quchip; print(quchip.__version__)"
 quchip is a 0.x project, so pin the version for reproducible
 calculations, for example `quchip==0.4.0`.
 
-Next, {doc}`declare your first chip <first-chip>`.
+Next, {doc}`define your first chip <first-chip>`.

@@ -1,10 +1,10 @@
 # Your first simulation
 
 How much population does a Gaussian pulse leave in a transmon's first excited
-state? Declare a four-level transmon, wire a charge drive, and apply a 20 ns pulse.
+state? Define a four-level transmon, wire a charge drive, and apply a 20 ns pulse.
 Frequencies are in GHz and times are in ns.
 
-## Declare the chip and drive
+## Define the chip and drive
 
 ```python
 import numpy as np
@@ -16,8 +16,8 @@ line = ChargeDrive(q, label="xy")
 chip.wire(line)
 ```
 
-The model uses a rotating frame and the rotating-wave approximation. It
-declares no loss channels, so this calculation describes coherent
+The model uses a rotating frame and the rotating-wave approximation, and it
+defines no loss channels, so this calculation describes coherent
 evolution.
 
 ## Schedule and simulate

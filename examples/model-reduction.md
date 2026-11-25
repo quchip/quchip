@@ -25,7 +25,7 @@ model with the full chip. Later sections remove a readout from its feedline,
 solve a 24-transmon ring in an exact excitation space, and truncate the
 excitation number of the driven chain. Frequencies are in GHz and times in ns.
 
-## Declare the chain
+## Define the chain
 
 Neighbouring transmons are separated by 350 MHz and coupled at 12 MHz. The
 full model has 81 basis states.
@@ -251,7 +251,7 @@ To remove a specific device directly, use
 `.describe()`. `method="exact"` uses the kept block of the diagonalized model
 instead of the second-order Schrieffer–Wolff approximation. Its kept-block
 energies are exact to all orders in the retained Hamiltonian, but it does not
-restore bands that `RWA()` discarded. Both methods use the declared finite
+restore bands that `RWA()` discarded. Both methods use the defined finite
 Hilbert space. Eliminating a coupling keeps both endpoints.
 
 On a large chip, `eliminate(chip, "q3", local=True)` computes the SW
@@ -259,12 +259,12 @@ reduction from a patch around the device. The result matches the full
 reduction up to round-off omissions, which its notes report in GHz, and
 repeated local eliminations stay local.
 
-To keep a chosen set of devices, call `eliminate_spectators(chip, keep)`. It
+To keep a chosen set of devices, call `eliminate_spectators(chip, keep)`, which
 removes the spectators one `eliminate()` step at a time and returns every
 step. `active_patch()` uses the same default order, which here removes `q3`
 and then `q2`. When another spectator links a spectator to a kept device near
-it in frequency, the default order removes the linking spectator first. The
-chain then keeps the fourth-order exchange shift between the spectator and the
+it in frequency, the default order removes the linking spectator first, so the
+chain keeps the fourth-order exchange shift between the spectator and the
 kept device. Under `local=True`, the order also limits how far the operators
 of the kept devices spread. Pass `order=` to either function to set the steps.
 A device that stays on the chip, such as a kept coupler, can link a removed
@@ -321,7 +321,7 @@ Largest population difference: 3.7e-06 (tolerance 5.9e-03)
 ## Remove a readout from its feedline
 
 `eliminate()` also removes readout resonators that couple to a feedline. A
-hanger emits into both directions of its line. Give each readout two ports
+hanger emits into both directions of its line, so give each readout two ports
 with half the external rate, and cascade the ports in opposite orders along
 the two directions. A one-way cascade gives an all-pass response in the
 lossless limit, so it does not describe the hanger notch.
@@ -385,8 +385,8 @@ readout keeps one coupled response at its original position, so the line
 keeps its dip and its reflection into the opposite direction. Both
 transformed ports retain the qubits' directional Purcell decay.
 
-Time-domain dynamics omit this response. A time-domain input, output field, or
-measurement record on this feedline therefore raises `NotImplementedError`.
+Time-domain dynamics omit this response, so a time-domain input, output field,
+or measurement record on this feedline raises `NotImplementedError`.
 Keep the readout mode for them. Other time-domain results, such as the decay
 of an excited `rb`, miss the return path of the response: `ra` scatters part
 of the field that `rb` emits back into `rb`. `reduction.validity["ra_response"]`
@@ -426,7 +426,7 @@ This vacuum weak-probe calculation supports global SW, local SW, and global
 exact elimination. Inspect `reduction.notes` and `reduction.validity` before
 you use the reduced model. The retained response keeps the dispersive limits
 described in the [physics
-reference](../physics.md#105-collapse-transforms-and-validity-metrics). It
+reference](../physics.md#105-collapse-transforms-and-validity-metrics), and it
 also omits the share of survivor decay that dresses the pole. Here the T1 of
 `qa` damps the pole of `ra`, and this omitted damping sets the S difference
 above. Keep the readout mode for pumped, finite-power, noisy, or
@@ -512,12 +512,12 @@ Idle ring: 24 of 282429536481 states
 <!-- executed-output:end -->
 
 The charge drive on the chain changes the excitation number, so its solve
-uses the full product space. The idle ring keeps its single excitation, and
+uses the full product space, while the idle ring keeps its single excitation, and
 `stats["excitation_reduction"]` records the proof.
 
 In the one-excitation space, the RWA Hamiltonian is a 24 × 24 hopping matrix
-with `g` between ring neighbours. The common 5 GHz diagonal adds only a
-global phase. Its propagator gives an independent reference for every
+with `g` between ring neighbours, and the common 5 GHz diagonal adds only a
+global phase. The propagator of this matrix gives an independent reference for every
 transmon's population.
 
 ```python
@@ -545,8 +545,8 @@ Maximum population difference: 3.1e-13
 <!-- executed-output:end -->
 
 The solve diagonalizes the constant 24-state generator, so the difference is
-floating-point roundoff. Decay adds the vacuum to the space. With T1 on every
-transmon, the master equation runs on 25 states:
+floating-point roundoff. Decay adds the vacuum to the space, so with T1
+on every transmon the master equation runs on 25 states:
 
 ```python
 lossy_ring = ring.with_params({f"q{index}.T1": 20_000.0 for index in range(ring_size)})
@@ -568,7 +568,7 @@ Lossy ring: mesolve on 25 states
 <!-- executed-output:end -->
 
 A transverse drive or thermal raising can require the full space, and
-stochastic solvers keep it. `chip.state()`, labeled dressed queries, the
+stochastic solvers keep it. `chip.state()`, labeled dressed calculations, the
 default initial state, weak-probe VNA sweeps, and `fit_a_dress()` also use
 only the excitation sectors they need, as the
 [cookbook](../cookbook.md#fit-a-large-conserving-model) describes. The
@@ -593,8 +593,8 @@ assert population_difference < 1e-10
 
 ## Truncate the excitation number
 
-The driven chain above needs its full product space. On a larger chip, that
-space can be too large for the memory. `ExcitationCutoff(max_total=K)` keeps
+The driven chain above needs its full product space, which on a larger chip
+can be too large for the memory. `ExcitationCutoff(max_total=K)` keeps
 only the product states with at most `K` excitations. It changes the model,
 so compare results at increasing `K`. Here the full 81-state solve is the
 untruncated reference:

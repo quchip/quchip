@@ -4,10 +4,10 @@ orphan: true
 
 # SQA 2026 examples
 
-The talk showed five short calculations. Each one is now part of a page that
+The talk showed five short calculations. Each one is part of a page that
 runs it in full, with its output and checks.
 
-- Your first chip: declare a transmon and a resonator and read their
+- Your first chip: define a transmon and a resonator and read their
   Hamiltonian, in {doc}`your first chip <../get-started/first-chip>`.
 - Calculate and sweep the spectrum: change one bare frequency and follow the
   dressed transitions, in {doc}`spectra and parameter sweeps <spectra-and-sweeps>`.
