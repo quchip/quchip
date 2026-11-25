@@ -1015,6 +1015,11 @@ This file records notable user-visible changes to quchip.
 
 #### Performance
 
+- On dynamiqs, a propagator solve compiles once for each Hamiltonian structure and solver configuration,
+  instead of at every solve. Repeated `subspace_propagator()` and `subspace_channel()` calls, gate-set
+  calibrations and `GateSet.with_params()` evaluations then skip the compile: a 20 ns SX propagator on two
+  transmons takes 0.01 s instead of 0.6 s after its first solve.
+  ([#235](https://github.com/quchip/quchip/pull/235))
 - `fit_a_dress()` on a JAX-backed chip compiles its residuals once per chip
   structure, so repeated fits, also with other parameter values, skip the
   compile: 0.2 s instead of 1.5 s for two transmons and a resonator.

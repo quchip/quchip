@@ -212,3 +212,15 @@ def test_cached_jit_solve_no_stale_value_reuse() -> None:
         assert float(np.max(np.abs(np.asarray(r.expect[0]) - np.asarray(ru.expect[0])))) < 1e-9
     # ... and the two genuinely differ (proves it did not silently return one)
     assert float(np.max(np.abs(np.asarray(r_lo.expect[0]) - np.asarray(r_hi.expect[0])))) > 1e-3
+
+    # Propagators of one structure also share one compiled solve, and each matches a direct dynamiqs solve.
+    u_lo, u_hi = (np.asarray(backend.solve_propagator(p)) for p in (p_lo, p_hi))
+    (solve,) = (value for key, value in cache.items() if key[0] == "propagator")
+    assert solve._cache_size() == 1
+    for p, u in ((p_lo, u_lo), (p_hi, u_hi)):
+        prepared = backend.prepare_hamiltonian(p.engine_result)
+        times, _, _, options, _ = backend._resolve_solve_config(p, prepared)
+        direct = dynamiqs.sepropagator(prepared.rhs, times, save_propagators=False, progress_meter=False,
+                                       method=backend._method_from_dict(options))
+        npt.assert_allclose(u, np.asarray(direct.final_propagator.to_jax()), rtol=0, atol=1e-12)
+    assert float(np.max(np.abs(u_lo - u_hi))) > 1e-3

@@ -883,29 +883,51 @@ class DynamiqsBackend(Backend):
     def solve_propagator(self, problem: Any, columns: Any = None) -> Any:
         if problem.stochastic:
             raise ValueError("Propagators use the deterministic solvers, not trajectory solvers.")
-        prepared = self.prepare_hamiltonian(problem.engine_result, problem.tlist)
-        tlist, collapse_ops, _solver, options, _e_ops = self._resolve_solve_config(problem, prepared)
+        engine_result = problem.engine_result
+        tlist, collapse_ops, _solver, options, _e_ops = self._resolve_solve_config(problem, engine_result)
         kwargs: dict[str, Any] = {
             "method": self._method_from_dict(options),
             "progress_meter": self._options_from_dict(options)["progress_meter"],
         }
         if options.get("gradient") is not None:
             kwargs["gradient"] = options["gradient"]
-        hamiltonian = prepared.rhs
-        times = jnp.asarray(tlist, dtype=float)
         if collapse_ops:
             if columns is not None:
                 raise ValueError("columns= selects input kets of a closed system. Pass dissipation=False, "
                                  "or omit columns to compute the superoperator.")
-            dimension = math.prod(problem.engine_result.dims)
+            dimension = math.prod(engine_result.dims)
             require_memory(16 * 3 * dimension**4, task=f"The D²×D² propagator superoperator at D = {dimension}",
                            remedy="Reduce the device cutoffs, or set an excitation cutoff.")
-            result = dq.mepropagator(hamiltonian, list(collapse_ops), times, save_propagators=False, **kwargs)
+            kind = "mepropagator"
+        else:
+            kind = "sepropagator" if columns is None else "columns"
+        static_ops, static_coeffs, dyn_ops, dyn_signals = self._hamiltonian_terms(engine_result)
+        if not static_ops and not dyn_ops:
+            raise ValueError("EngineResult must contain at least one static or dynamic term.")
+        # dynamiqs compares the callables of a Hamiltonian by identity, and each solve builds new ones, so a direct
+        # solve compiles again every time. One jitted solve for each configuration takes the operators, signal
+        # programs and times as arguments, and compiles once for each structure.
+        key = ("propagator", kind, *sorted(kwargs.items()))
+        cache = self._get_jit_solve_cache()
+        solve = cache.get(key)
+        if solve is None:
+            solve = cache[key] = jax.jit(partial(self._native_propagator, kind, kwargs))
+        coeffs = [jnp.asarray(coeff, dtype=jnp.complex128) for coeff in static_coeffs]
+        inputs = None if columns is None else jnp.asarray(columns, dtype=jnp.complex128)
+        times = jnp.asarray(tlist, dtype=float)
+        return solve(static_ops, coeffs, dyn_ops, dyn_signals, list(collapse_ops), inputs, times)
+
+    def _native_propagator(self, kind: str, kwargs: dict[str, Any], static_ops: Any, static_coeffs: Any, dyn_ops: Any,
+                           dyn_signals: Any, collapse_ops: list[Any], columns: Any, times: Any) -> Any:
+        """Return the final propagator, the final superoperator, or the evolved input columns."""
+        hamiltonian = self._assemble_modulated_rhs(static_ops, static_coeffs, dyn_ops, dyn_signals)
+        if kind == "mepropagator":
+            result = dq.mepropagator(hamiltonian, collapse_ops, times, save_propagators=False, **kwargs)
             return result.final_propagator.to_jax()
-        if columns is None:
+        if kind == "sepropagator":
             return dq.sepropagator(hamiltonian, times, save_propagators=False, **kwargs).final_propagator.to_jax()
         # Each input column evolves as one batch element.
-        states = dq.asqarray(jnp.asarray(columns, dtype=jnp.complex128).T[..., None], dims=hamiltonian.dims)
+        states = dq.asqarray(columns.T[..., None], dims=hamiltonian.dims)
         result = dq.sesolve(hamiltonian, states, times, save_states=False, **kwargs)
         return result.final_state.to_jax()[..., 0].T
 
@@ -1427,6 +1449,14 @@ class DynamiqsBackend(Backend):
         --------
         quchip.backend.protocol.Backend.prepare_hamiltonian
         """
+        rhs = self._assemble_modulated_rhs(*self._hamiltonian_terms(engine_result))
+        if rhs is None:
+            raise ValueError("EngineResult must contain at least one static or dynamic term.")
+
+        return PreparedHamiltonian(rhs=rhs, metadata=dict(engine_result.metadata))
+
+    def _hamiltonian_terms(self, engine_result: Any) -> tuple[list[Any], list[Any], list[Any], list[Any]]:
+        """Return the static operators and coefficients, and each dynamic operator with the sum of its signals."""
         static_ops = [
             self.from_canonical_operator(term.operator)
             for term in engine_result.static_terms
@@ -1442,12 +1472,7 @@ class DynamiqsBackend(Backend):
                 dyn_signals.append([])
             dyn_signals[slot].append(signal)
         dyn_signals = [signals[0] if len(signals) == 1 else Add(tuple(signals)) for signals in dyn_signals]
-
-        rhs = self._assemble_modulated_rhs(static_ops, static_coeffs, dyn_ops, dyn_signals)
-        if rhs is None:
-            raise ValueError("EngineResult must contain at least one static or dynamic term.")
-
-        return PreparedHamiltonian(rhs=rhs, metadata=dict(engine_result.metadata))
+        return static_ops, static_coeffs, dyn_ops, dyn_signals
 
     def _assemble_modulated_rhs(
         self,
